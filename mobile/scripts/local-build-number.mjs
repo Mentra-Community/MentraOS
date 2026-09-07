@@ -34,8 +34,10 @@ export function parseVersionCode(buildGradle) {
 }
 
 export function parsePinnedEnv(raw) {
-  if (typeof raw !== "string" || raw.trim() === "") return null
-  const value = Number.parseInt(raw, 10)
+  if (typeof raw !== "string") return null
+  const trimmed = raw.trim()
+  if (!/^\d+$/.test(trimmed)) return null
+  const value = Number.parseInt(trimmed, 10)
   return Number.isSafeInteger(value) && value > 0 ? value : null
 }
 

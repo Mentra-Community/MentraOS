@@ -7,6 +7,7 @@ import test from "node:test"
 import {
   evaluateAutolinkingCache,
   normalizeAutolinkingGraph,
+  parseApplicationId,
   syncAutolinkingCache,
 } from "./clear-autolinking-cache.mjs"
 
@@ -189,7 +190,51 @@ test("scenario 5: null packageName or resolver failure is unresolved and dirty",
 })
 
 test("missing cached graph is not a wipe", () => {
-  assert.deepEqual(evaluateAutolinkingCache({cached: null, resolved: graph()}), {wiped: false, reason: "nothing-cached"})
+  assert.deepEqual(evaluateAutolinkingCache({cached: null, resolved: graph()}), {
+    wiped: false,
+    reason: "nothing-cached",
+  })
+})
+
+test("parseApplicationId reads defaultConfig applicationId", () => {
+  assert.equal(
+    parseApplicationId(`
+android {
+    defaultConfig {
+        applicationId 'com.mentra.mentra.stable'
+        versionCode 1
+    }
+}
+`),
+    "com.mentra.mentra.stable",
+  )
+  assert.equal(parseApplicationId('        applicationId "com.mentra.mentra"\n'), "com.mentra.mentra")
+  assert.equal(parseApplicationId("// applicationId 'com.mentra.mentra.stable'\n"), null)
+  assert.equal(parseApplicationId(undefined), null)
+})
+
+test("generated applicationId suffix drift wipes even when the resolver stays on the base package", () => {
+  const resolved = graph()
+  const decision = evaluateAutolinkingCache({
+    cached: resolved,
+    resolved,
+    entryPointSource: ENTRY,
+    packageListExists: true,
+    effectivePackageName: "com.mentra.mentra.stable",
+  })
+  assert.deepEqual(decision, {wiped: true, reason: "packageName"})
+})
+
+test("matching generated applicationId stays clean", () => {
+  const resolved = graph()
+  const decision = evaluateAutolinkingCache({
+    cached: resolved,
+    resolved,
+    entryPointSource: ENTRY,
+    packageListExists: true,
+    effectivePackageName: "com.mentra.mentra",
+  })
+  assert.deepEqual(decision, {wiped: false, reason: "clean"})
 })
 
 async function withAutolinkingFixture(cachedGraph, extra = {}) {
@@ -205,9 +250,16 @@ async function withAutolinkingFixture(cachedGraph, extra = {}) {
   )
   await mkdir(join(root, "android/build/generated/autolinking"), {recursive: true})
   await mkdir(join(root, "android/app/build/generated/autolinking/src/main/java/com/facebook/react"), {recursive: true})
+  await mkdir(join(root, "android/app"), {recursive: true})
   await writeFile(cachedPath, JSON.stringify(cachedGraph))
   await writeFile(entryPath, extra.entryPointSource ?? ENTRY)
   await writeFile(packageListPath, "class PackageList {}")
+  if (extra.applicationId) {
+    await writeFile(
+      join(root, "android/app/build.gradle"),
+      `android {\n    defaultConfig {\n        applicationId '${extra.applicationId}'\n    }\n}\n`,
+    )
+  }
   return root
 }
 
@@ -220,7 +272,11 @@ test("syncAutolinkingCache scenario 2: stale cached packageName wipes the fixtur
       log() {},
     })
     assert.deepEqual(decision, {wiped: true, reason: "packageName"})
-    await assert.rejects(import("node:fs/promises").then((fs) => fs.access(join(root, "android/build/generated/autolinking/autolinking.json"))))
+    await assert.rejects(
+      import("node:fs/promises").then((fs) =>
+        fs.access(join(root, "android/build/generated/autolinking/autolinking.json")),
+      ),
+    )
   } finally {
     await rm(root, {recursive: true, force: true})
   }
@@ -258,6 +314,21 @@ test("syncAutolinkingCache scenario 5: resolver failure wipes", async () => {
       log() {},
     })
     assert.deepEqual(decision, {wiped: true, reason: "unresolved"})
+  } finally {
+    await rm(root, {recursive: true, force: true})
+  }
+})
+
+test("syncAutolinkingCache wipes when generated applicationId drifted from the resolver", async () => {
+  const cached = graph()
+  const root = await withAutolinkingFixture(cached, {applicationId: "com.mentra.mentra.stable"})
+  try {
+    const decision = await syncAutolinkingCache({
+      cwd: root,
+      resolve: async () => cached,
+      log() {},
+    })
+    assert.deepEqual(decision, {wiped: true, reason: "packageName"})
   } finally {
     await rm(root, {recursive: true, force: true})
   }

@@ -39,8 +39,10 @@ test("parseVersionCode ignores commented or inline mentions", () => {
 
 test("parsePinnedEnv accepts positive integers only", () => {
   assert.equal(parsePinnedEnv("123"), 123)
+  assert.equal(parsePinnedEnv(" 456 "), 456)
   assert.equal(parsePinnedEnv(" "), null)
   assert.equal(parsePinnedEnv("abc"), null)
+  assert.equal(parsePinnedEnv("123abc"), null)
   assert.equal(parsePinnedEnv("-5"), null)
   assert.equal(parsePinnedEnv(undefined), null)
 })
@@ -81,6 +83,14 @@ test("falls back to fresh when build.gradle has no parseable versionCode", async
 test("an invalid explicit pin is ignored in favour of the project value", async () => {
   const cwd = await makeProject(GRADLE_WITH_VERSION)
   const env = {[PINNED_BUILD_NUMBER_ENV]: "not-a-number"}
+  const result = await pinLocalBuildNumber({cwd, env, freshBuildNumber: () => 1, log: () => {}})
+  assert.equal(result.source, "android-project")
+  assert.equal(env[PINNED_BUILD_NUMBER_ENV], "52925218")
+})
+
+test("a numeric-prefix pin such as 123abc is treated as invalid", async () => {
+  const cwd = await makeProject(GRADLE_WITH_VERSION)
+  const env = {[PINNED_BUILD_NUMBER_ENV]: "123abc"}
   const result = await pinLocalBuildNumber({cwd, env, freshBuildNumber: () => 1, log: () => {}})
   assert.equal(result.source, "android-project")
   assert.equal(env[PINNED_BUILD_NUMBER_ENV], "52925218")
