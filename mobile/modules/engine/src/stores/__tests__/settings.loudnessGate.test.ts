@@ -10,8 +10,8 @@ let failGateSave = false
 let logSpy: ReturnType<typeof spyOn>
 
 mock.module("react-native-localize", () => ({getTimeZone: () => "UTC"}))
-mock.module("./glasses", () => ({useGlassesStore: {getState: () => ({deviceModel: "Mentra Live"})}}))
-mock.module("../utils/storage", () => ({
+mock.module("../glasses", () => ({useGlassesStore: {getState: () => ({deviceModel: "Mentra Live"})}}))
+mock.module("../../utils/storage", () => ({
   storage: {
     load: (key: string) => (saved.has(key) ? Res.ok(saved.get(key)) : Res.error(new Error("Missing value"))),
     loadSubKeys: () => Res.ok({}),
@@ -24,8 +24,8 @@ mock.module("../utils/storage", () => ({
 }))
 
 function restartSettings() {
-  delete require.cache[require.resolve("./settings")]
-  return require("./settings") as typeof import("./settings")
+  delete require.cache[require.resolve("../settings")]
+  return require("../settings") as typeof import("../settings")
 }
 
 describe("loudness gate settings migration", () => {

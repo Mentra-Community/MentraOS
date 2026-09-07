@@ -1052,7 +1052,10 @@ export const useSettingsStore = create<SettingsState>()(
         const LOUDNESS_GATE_MIGRATION_KEY = "migration:loudness_gate_default_off_v1"
         const loudnessGateMigrationDone = storage.load<boolean>(LOUDNESS_GATE_MIGRATION_KEY)
         if (loudnessGateMigrationDone.is_error() || !loudnessGateMigrationDone.value) {
-          const result = await get().setSetting(SETTINGS.loudness_gate_enabled.key, false)
+          // updateServer: true, matching the android_blur / camera_fov migrations. The flag is
+          // inert until the Cloud V2 settings sync lands, but this setting is saveOnServer, so
+          // the intent recorded here is the one that should carry over.
+          const result = await get().setSetting(SETTINGS.loudness_gate_enabled.key, false, true)
           if (result.is_error()) {
             console.log("SETTINGS: loudness gate migration failed:", result.error)
           } else {
