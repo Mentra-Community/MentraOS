@@ -23,6 +23,9 @@ import org.mockito.ArgumentCaptor;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
 
+import java.util.ArrayDeque;
+import java.util.Deque;
+
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 33)
 public class PhotoFeedbackControllerTest {
@@ -120,6 +123,41 @@ public class PhotoFeedbackControllerTest {
                 AudioAssets.CAMERA_SNAP, AsgConstants.CAMERA_SNAP_PLAYBACK_VOLUME);
         verify(hardwareManager, never()).playAudioAssetOverlayTracked(
                 AudioAssets.CAMERA_PREP_CLICK, AsgConstants.CAMERA_PREP_CLICK_PLAYBACK_VOLUME);
+    }
+
+    @Test
+    public void warmCapture_doesNotPlayOnTheCallersThread() {
+        // start() runs inline on the UART reader thread; opening the I2S path blocks there.
+        Deque<Runnable> queued = new ArrayDeque<>();
+        PhotoFeedbackController deferred =
+                new PhotoFeedbackController(hardwareManager, handler, clock, queued::add);
+
+        deferred.start("warm-async", true);
+
+        verify(hardwareManager, never())
+                .playAudioAssetOverlayTracked(
+                        AudioAssets.CAMERA_SNAP, AsgConstants.CAMERA_SNAP_PLAYBACK_VOLUME);
+        assertThat(queued).hasSize(1);
+
+        queued.remove().run();
+        verify(hardwareManager)
+                .playAudioAssetOverlayTracked(
+                        AudioAssets.CAMERA_SNAP, AsgConstants.CAMERA_SNAP_PLAYBACK_VOLUME);
+    }
+
+    @Test
+    public void warmCaptureFailingBeforeDispatch_staysSilent() {
+        Deque<Runnable> queued = new ArrayDeque<>();
+        PhotoFeedbackController deferred =
+                new PhotoFeedbackController(hardwareManager, handler, clock, queued::add);
+
+        PhotoFeedbackController.Token token = deferred.start("warm-failed", true);
+        deferred.stopForFailure(token);
+        queued.remove().run();
+
+        verify(hardwareManager, never())
+                .playAudioAssetOverlayTracked(
+                        AudioAssets.CAMERA_SNAP, AsgConstants.CAMERA_SNAP_PLAYBACK_VOLUME);
     }
 
     @Test

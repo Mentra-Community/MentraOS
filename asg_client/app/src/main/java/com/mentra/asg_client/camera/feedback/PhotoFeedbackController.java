@@ -14,6 +14,9 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.Executor;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 /**
  * Owns the request-scoped camera prep and snap audio state machine.
@@ -58,6 +61,7 @@ public final class PhotoFeedbackController {
     @Nullable private final IHardwareManager mHardwareManager;
     private final Handler mHandler;
     private final Clock mClock;
+    private final Executor mAudioExecutor;
     private final Set<Token> mActiveFeedback = new HashSet<>();
     private final Set<Token> mPlayingSnapFeedback = new HashSet<>();
     private final Map<String, Token> mFeedbackByRequestId = new HashMap<>();
@@ -80,14 +84,26 @@ public final class PhotoFeedbackController {
                     public long elapsedRealtimeNanos() {
                         return SystemClock.elapsedRealtimeNanos();
                     }
-                });
+                },
+                Executors.newSingleThreadExecutor(
+                        runnable -> new Thread(runnable, "photo-feedback-audio")));
+    }
+
+    /** Test constructor: audio work runs inline so assertions stay deterministic. */
+    PhotoFeedbackController(
+            @Nullable IHardwareManager hardwareManager, Handler handler, Clock clock) {
+        this(hardwareManager, handler, clock, Runnable::run);
     }
 
     PhotoFeedbackController(
-            @Nullable IHardwareManager hardwareManager, Handler handler, Clock clock) {
+            @Nullable IHardwareManager hardwareManager,
+            Handler handler,
+            Clock clock,
+            Executor audioExecutor) {
         mHardwareManager = hardwareManager;
         mHandler = handler;
         mClock = clock;
+        mAudioExecutor = audioExecutor;
     }
 
     /** Starts request-time feedback and returns the token owed an exposure-time snap. */
@@ -113,7 +129,17 @@ public final class PhotoFeedbackController {
             if (cameraWarm) {
                 // Device testing measured warm capture at <20ms. Immediate shutter feedback
                 // feels more responsive than waiting for the exposure callback.
-                playSnap(feedbackToken, "warm camera — immediate button feedback");
+                //
+                // Dispatch off the caller's thread. start() runs inline on the UART reader
+                // thread (SerialPortBridge.RecvThread -> SerialSession.dispatch ->
+                // ButtonEventSubscriber -> takePhotoLocally), and opening the I2S path costs
+                // MediaPlayer.prepare() plus I2SAudioController.I2S_START_SETTLE_MS of
+                // Thread.sleep. Running that here would stall every MCU event behind the
+                // serial reader and push back the enqueuePhotoRequest() call that follows.
+                // A capture that fails before this runs marks the token terminal, so playSnap
+                // correctly stays silent.
+                mAudioExecutor.execute(
+                        () -> playSnap(feedbackToken, "warm camera — immediate button feedback"));
                 return feedbackToken;
             }
 
@@ -271,6 +297,12 @@ public final class PhotoFeedbackController {
             for (Token feedbackToken : new HashSet<>(mPlayingSnapFeedback)) {
                 stopSnapLocked(feedbackToken);
             }
+        }
+        // Every token is terminal now, so a queued warm snap will no-op rather than play into
+        // a destroyed service. shutdown() (not shutdownNow()) avoids interrupting a settle
+        // sleep mid-playback.
+        if (mAudioExecutor instanceof ExecutorService) {
+            ((ExecutorService) mAudioExecutor).shutdown();
         }
     }
 
