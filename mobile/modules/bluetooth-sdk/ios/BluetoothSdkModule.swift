@@ -695,6 +695,7 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
 
         // MARK: - STT Model Management
 
+        #if !os(macOS)
         AsyncFunction("setSttModelDetails") { (path: String, languageCode: String) in
             STTTools.setSttModelDetails(path, languageCode)
         }
@@ -747,6 +748,7 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
                 speed: speed
             )
         }
+        #endif
     }
 
     @MainActor
@@ -933,7 +935,6 @@ private extension ConnectOptions {
         )
     }
 }
-
 
 
 

@@ -109,6 +109,10 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
     android: {
       // icon: "./assets/app-icons/ic_launcher.png",
       package: androidPackage,
+      // Keep the current BackHandler behavior while API 36 predictive-back
+      // flows are validated on device. React Native supports the new dispatcher,
+      // so this temporary opt-out can be removed after regression testing.
+      predictiveBackGestureEnabled: false,
       ...(variant.googleServicesFile ? {googleServicesFile: variant.googleServicesFile} : {}),
       versionCode: buildNumber,
       adaptiveIcon: {
@@ -226,24 +230,10 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
     plugins: [
       // our custom plugins:
       "./plugins/remove-ipad-orientations.js",
-      // crust's own config plugin carries its Android build contract (Mapbox
-      // downloads repo, protobuf-javalite exclusion, core-library desugaring).
+      // Crust owns the Android dependencies and iOS Mapbox SPM/build-order setup.
       "@mentra/crust",
+      "@mentra/acs-meeting",
       "./plugins/android.ts",
-      // Mapbox Navigation SDK v3 for iOS — added as a Swift Package (SPM is the
-      // ONLY supported v3 install path; CocoaPods can't resolve it). The
-      // mapbox-navigation-ios package transitively brings MapboxMaps,
-      // MapboxCommon, MapboxCoreMaps, and Turf, so SPM is the SOLE Mapbox
-      // provider. We intentionally do NOT use @rnmapbox/maps — its CocoaPods
-      // copies of those same frameworks collided with SPM's at the build-graph
-      // level ("Multiple commands produce …MapboxCommon.framework"). The runtime
-      // pk. token is injected into Info.plist as MBXAccessToken (above); the
-      // secret Downloads:Read token is read from ~/.netrc at build time.
-      "./plugins/mapbox-nav-ios.ts",
-      // Crust is a CocoaPods target; SPM products linked to the app project
-      // aren't visible to it. This links the Mapbox products into the Crust
-      // pod target (via Podfile post_install) so its Swift can import them.
-      "./plugins/mapbox-nav-crust-link.ts",
       // Xcode 26 rejects pod resource-bundle targets still pinned to iOS 11.
       "./plugins/ios-pod-min-deployment-target.ts",
       [
@@ -317,7 +307,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
         {
           android: {
             minSdkVersion: 28,
-            targetSdkVersion: 35,
+            targetSdkVersion: 36,
             compileSdkVersion: 36,
             enableCoreLibraryDesugaring: true,
           },

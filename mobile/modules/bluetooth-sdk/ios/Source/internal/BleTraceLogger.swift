@@ -1,6 +1,8 @@
 import Foundation
 import os.log
+#if canImport(UIKit)
 import UIKit
+#endif
 
 enum BleTraceLogger {
     private static let log = OSLog(subsystem: "com.mentra.bluetoothsdk", category: "MentraBleTrace")
@@ -66,9 +68,14 @@ enum BleTraceLogger {
             "event": event,
             "component": component,
             "pid": ProcessInfo.processInfo.processIdentifier,
-            "model": UIDevice.current.model,
-            "systemVersion": UIDevice.current.systemVersion,
         ]
+        #if os(macOS)
+        payload["model"] = "Mac"
+        payload["systemVersion"] = ProcessInfo.processInfo.operatingSystemVersionString
+        #else
+        payload["model"] = UIDevice.current.model
+        payload["systemVersion"] = UIDevice.current.systemVersion
+        #endif
         for (key, value) in extra {
             payload[key] = value
         }

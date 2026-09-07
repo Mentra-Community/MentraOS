@@ -1,6 +1,7 @@
 import {waitFor} from "@testing-library/react-native"
 import {router} from "expo-router"
 
+import {initI18n} from "@/i18n"
 import mantle from "@/services/MantleManager"
 import {
   audioPlaybackService,
@@ -16,7 +17,6 @@ import {
 // eslint-disable-next-line no-restricted-imports
 import {isGlassesConnected, useGlassesStore} from "../../modules/engine/src/stores/glasses"
 import {engine, SETTINGS} from "@mentra/engine"
-import {initI18n} from "@/i18n"
 import {crustModuleMock, emitCrustEvent, resetCrustModuleMock} from "@/test-utils/mockCrustModule"
 import {
   bluetoothSdkMock,
@@ -526,6 +526,7 @@ describe("MantleManager", () => {
     expect(title).toBe("Reconnect your glasses")
     expect(message).toMatch(/connected over Bluetooth/)
     expect(buttons).toHaveLength(1)
+    expect(buttons[0].text).toBe("OK")
     buttons[0].onPress()
     await request
 

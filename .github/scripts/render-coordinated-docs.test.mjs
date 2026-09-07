@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import {mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync} from "node:fs"
+import {existsSync, mkdirSync, mkdtempSync, readdirSync, readFileSync, rmSync, writeFileSync} from "node:fs"
 import {tmpdir} from "node:os"
 import path from "node:path"
 import test from "node:test"
@@ -18,8 +18,8 @@ function fixture() {
       variables: {
         "release-version": "3.1.0",
         "release-artifacts-url": "https://example.com/stable",
-        "example-app-version": "0.1.21-beta.5",
-        "example-app-url": "https://example.com/example.apk",
+        "example-app-download-label": "Browse React Native example APK releases",
+        "example-app-url": "https://github.com/Mentra/Starter/releases",
         "example-app-ios-url": "https://testflight.apple.com/join/source",
       },
     }),
@@ -28,7 +28,7 @@ function fixture() {
     path.join(source, "page.mdx"),
     [
       "Release {{release-version}}",
-      "[Android]({{example-app-url}})",
+      "[{{example-app-download-label}}]({{example-app-url}})",
       "[iPhone]({{example-app-ios-url}})",
       "[Artifacts]({{release-artifacts-url}})",
     ].join("\n"),
@@ -92,15 +92,20 @@ test("renders exact coordinated release variables without changing source", (con
     rendered.variables["release-artifacts-url"],
     "https://github.com/Mentra/MentraOS/releases/tag/mentra-builds-v3.1.0",
   )
-  assert.equal(rendered.variables["example-app-version"], "3.1.0-beta.57")
+  assert.equal(
+    rendered.variables["example-app-download-label"],
+    "Download the React Native example APK for SDK 3.1.0-beta.57",
+  )
   assert.equal(rendered.variables["example-app-url"], starterKitResult.artifacts[0].url)
   assert.equal(rendered.variables["example-app-ios-url"], exampleTestflightResult.distribution.installUrl)
   assert.equal(original.variables["release-version"], "3.1.0")
+  assert.equal(original.variables["example-app-download-label"], "Browse React Native example APK releases")
+  assert.equal(original.variables["example-app-url"], "https://github.com/Mentra/Starter/releases")
   assert.equal(
     readFileSync(path.join(output, "page.mdx"), "utf8"),
     [
-      "Release {{release-version}}",
-      `[Android](${starterKitResult.artifacts[0].url})`,
+      "Release 3.1.0-beta.57",
+      `[Download the React Native example APK for SDK 3.1.0-beta.57](${starterKitResult.artifacts[0].url})`,
       `[iPhone](${exampleTestflightResult.distribution.installUrl})`,
       "[Artifacts](https://github.com/Mentra/MentraOS/releases/tag/mentra-builds-v3.1.0)",
     ].join("\n"),
@@ -108,7 +113,45 @@ test("renders exact coordinated release variables without changing source", (con
   assert.match(readFileSync(path.join(source, "page.mdx"), "utf8"), /\{\{example-app-url\}\}/)
 })
 
-test("rejects unresolved URL variables", (context) => {
+test("source-only and stable docs use honest version-neutral example links", (context) => {
+  const {root, source, output} = fixture()
+  context.after(() => rmSync(root, {recursive: true, force: true}))
+  const docsRoot = fileURLToPath(new URL("../../mintlify-docs/", import.meta.url))
+  const sourceConfig = readFileSync(path.join(docsRoot, "docs.json"), "utf8")
+  const {variables} = JSON.parse(sourceConfig)
+  writeFileSync(path.join(source, "docs.json"), sourceConfig)
+
+  assert.equal(variables["example-app-download-label"], "Browse React Native example APK releases")
+  assert.equal(variables["example-app-url"], "https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit/releases")
+  assert.equal(variables["example-app-version"], undefined)
+
+  for (const file of ["software-update.mdx", "quickstart.mdx"]) {
+    const content = readFileSync(path.join(docsRoot, "bluetooth-sdk", file), "utf8")
+    assert.doesNotMatch(content, /\{\{example-app-version\}\}|This is the exact Android build/)
+    writeFileSync(path.join(source, file), content)
+  }
+
+  renderCoordinatedDocs({
+    sourceDir: source,
+    outputDir: output,
+    releasePlan: {
+      releaseIdentity: variables["release-version"],
+      releaseSetId: `mentra-${variables["release-version"]}`,
+      artifactContainerTag: `mentra-v${variables["release-version"]}`,
+    },
+    repository: "Mentra-Community/MentraOS",
+  })
+
+  const rendered = JSON.parse(readFileSync(path.join(output, "docs.json"), "utf8"))
+  assert.deepEqual(rendered.variables, variables)
+  assert.match(
+    readFileSync(path.join(output, "software-update.mdx"), "utf8"),
+    /\[Browse React Native example APK releases\]\(https:\/\/github\.com\/Mentra-Community\/Mentra-Bluetooth-SDK-Starter-Kit\/releases\)/,
+  )
+  assert.equal(readFileSync(path.join(source, "docs.json"), "utf8"), sourceConfig)
+})
+
+test("rejects unresolved documentation variables", (context) => {
   const {root, source, output} = fixture()
   context.after(() => rmSync(root, {recursive: true, force: true}))
   writeFileSync(path.join(source, "page.mdx"), "[Unknown]({{unknown-url}})")
@@ -125,7 +168,7 @@ test("rejects unresolved URL variables", (context) => {
         },
         repository: "Mentra/MentraOS",
       }),
-    /Unresolved URL variable/,
+    /Unresolved documentation variable/,
   )
 })
 
@@ -173,7 +216,29 @@ test("Bluetooth SDK current-release copy uses configured variables", () => {
   const files = readdirSync(docsRoot, {recursive: true}).filter((file) => file.endsWith(".mdx"))
   const content = files.map((file) => readFileSync(path.join(docsRoot, file), "utf8")).join("\n")
 
-  assert.doesNotMatch(content, /0\.1\.21-beta\.5/)
+  assert.doesNotMatch(content, /\d+\.\d+\.\d+-(?:beta|dev)\.\d+/)
   assert.doesNotMatch(content, /bluetooth-sdk-ota|asg-client-sdk/)
   assert.match(content, /\{\{release-version\}\}/)
+  const configPath = fileURLToPath(new URL("../../mintlify-docs/docs.json", import.meta.url))
+  const {variables} = JSON.parse(readFileSync(configPath, "utf8"))
+  assert.doesNotMatch(JSON.stringify(variables), /\d+\.\d+\.\d+-(?:beta|dev)\.\d+/)
+})
+
+test("air-gapped deployment is not published or linked", () => {
+  const docsRoot = fileURLToPath(new URL("../../mintlify-docs/", import.meta.url))
+  const config = JSON.parse(readFileSync(path.join(docsRoot, "docs.json"), "utf8"))
+  const files = readdirSync(docsRoot, {recursive: true}).filter((file) => file.endsWith(".mdx"))
+  const content = files.map((file) => readFileSync(path.join(docsRoot, file), "utf8")).join("\n")
+  const sdkReadme = readFileSync(
+    fileURLToPath(new URL("../../mobile/modules/bluetooth-sdk/README.md", import.meta.url)),
+    "utf8",
+  )
+
+  assert.doesNotMatch(JSON.stringify(config), /air-gapped-deployment/)
+  assert.doesNotMatch(content, /\/bluetooth-sdk\/air-gapped-deployment/)
+  assert.doesNotMatch(sdkReadme, /\/bluetooth-sdk\/air-gapped-deployment/)
+  assert.equal(
+    existsSync(path.join(docsRoot, "bluetooth-sdk/air-gapped-deployment.mdx")),
+    false,
+  )
 })

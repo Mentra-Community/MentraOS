@@ -1,6 +1,6 @@
 ---
 title: "Distribution"
-description: "Pack a release and get your miniapp onto users' glasses."
+description: "Prepare and install miniapp builds for local testing."
 icon: "upload"
 ---
 
@@ -10,13 +10,13 @@ import BetaNote from '/snippets/beta-note.mdx'
 <BetaNote />
 
 A miniapp is a **bundle that runs on the user's phone**: there's no server to
-host, no domain, no uptime to manage. Distribution means producing that bundle
-and getting it installed. There are three ways to get a miniapp onto a device,
-from quickest to widest reach.
+host, no domain, no uptime to manage. MentraOS 3.0 supports local development
+and testing, but it does not provide a supported way to distribute a miniapp to
+users.
 
 <LegacyCloudNote />
 
-## 1. Dev install (you, iterating)
+## Dev install (you, iterating)
 
 While you're building, [`mentra-miniapp dev`](/app-devs/reference/cli#dev) serves
 your project over the LAN with hot reload. Scan the QR from the Mentra App and
@@ -30,9 +30,10 @@ test multiple dev miniapps together. Rescanning the same package updates that
 entry. Use a release install when you want the miniapp to run without the
 computer.
 
-## 2. Release install (sharing a build over LAN)
+## Release install (local testing over LAN)
 
-To put a real, installed build on one or more phones without going through the Mentra Miniapp Store, run:
+To put a real, installed build on one or more test phones on your local network,
+run:
 
 ```bash
 mentra-miniapp release
@@ -41,24 +42,30 @@ mentra-miniapp release
 This builds, packs, and serves the bundle behind a `miniapp://release` QR. Anyone
 on the same network can scan it to install. The miniapp installs on the device,
 **runs offline, and persists across restarts**: no laptop required once it's
-installed. Great for testers, demos, and dogfooding.
+installed. This is intended for local testing, demos, and dogfooding; it is not
+a supported distribution channel.
 
 Each install is logged in your terminal, and the server stays up so multiple
 devices can install from the same QR.
 
-## 3. Store submission (reaching everyone)
+## Future distribution
 
-To reach users who aren't on your network, publish to the Mentra Miniapp Store.
-The artifact is the ZIP produced by:
+In a future release, developers will upload miniapps through the
+[Mentra Developer Console](https://console.mentraglass.com), and users will
+download them from the
+[Mentra Miniapp Store](https://apps.mentraglass.com). The Developer Console and
+Mentra Miniapp Store do not support Miniapp SDK distribution in MentraOS 3.0.
+
+The CLI can already produce the ZIP artifact intended for that future workflow:
 
 ```bash
 mentra-miniapp pack
 ```
 
-Submit `build/<packageName>-<version>.zip` through the Developer Console. Make
-sure your [`miniapp.json`](/app-devs/core-concepts/miniapp-manifest) is accurate
-before you pack: its `hardwareRequirements` decide which glasses can see your
-miniapp, and its `permissions` drive the OS prompts users see.
+The artifact is written to `build/<packageName>-<version>.zip`. Make sure your
+[`miniapp.json`](/app-devs/core-concepts/miniapp-manifest) is accurate before you
+pack: its `hardwareRequirements` will decide which glasses can see your miniapp,
+and its `permissions` will drive the OS prompts users see.
 
 <Note>
 Camera, photo, and live-streaming features run through the on-glasses Bluetooth
@@ -68,10 +75,10 @@ for those workflows.
 
 ## Versioning
 
-Bump `version` in `miniapp.json` for every release you distribute. The CLI names
-the artifact `<packageName>-<version>.zip`, and installed miniapps are stored per
-version (`lmas/<package>/<version>/`), so a new version installs cleanly alongside
-or over the old one.
+Bump `version` in `miniapp.json` for every release build. The CLI names the
+artifact `<packageName>-<version>.zip`, and installed miniapps are stored per
+version (`lmas/<package>/<version>/`), so a new version installs cleanly
+alongside or over the old one.
 
 ## Next steps
 
@@ -80,6 +87,6 @@ or over the old one.
     `dev`, `release`, and `pack` in detail.
   </Card>
   <Card title="The manifest" icon="file-code" href="/app-devs/core-concepts/miniapp-manifest">
-    Get permissions and hardware requirements right before you ship.
+    Get permissions and hardware requirements right before you build a release.
   </Card>
 </CardGroup>
