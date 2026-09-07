@@ -64,8 +64,8 @@ export function DeviceSettingsSection() {
   const glassesInfo = useEngineSnapshot(engine.glasses.info, (onChange) => engine.glasses.onInfo(onChange))
   const [autoBrightness, setAutoBrightness] = useSetting(SETTINGS.auto_brightness.key)
   const [brightness, setBrightness] = useSetting(SETTINGS.brightness.key)
-  // Button-action settings are no longer surfaced in the UI — the action button always launches the
-  // camera (forced at runtime in ButtonActions.tsx). See the commented-out ButtonSettings block below.
+  // Button-action settings are no longer surfaced: subscriptions route the button
+  // to miniapps; otherwise the glasses handle native capture without launching an app.
   // const [defaultButtonActionEnabled, setDefaultButtonActionEnabled] = useSetting(
   //   SETTINGS.default_button_action_enabled.key,
   // )
@@ -208,9 +208,8 @@ export function DeviceSettingsSection() {
       )}
 
       {/* Button Settings — Mentra Live only (G2's button is a touchpad and conflicts with the native menu).
-          Hidden for now: the action button always launches the camera. ButtonActions.tsx already forces
-          `default_button_action_app` to com.mentra.camera at runtime for any Mentra Live (camera) glasses, so
-          there's nothing for the user to configure. Re-enable this block if we ship a real button-config UX. */}
+          Hidden: button subscriptions control native capture, without launching Gallery.
+          Re-enable this block if we ship a real button-config UX. */}
       {/* {glassesConnected && defaultWearable === DeviceTypes.LIVE && (
         <ButtonSettings
           enabled={defaultButtonActionEnabled}
@@ -303,4 +302,3 @@ export function DeviceSettingsSection() {
     </View>
   )
 }
-

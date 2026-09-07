@@ -180,10 +180,10 @@ class BuiltInMiniappCatalog {
     const apps: ClientApp[] = [
       {
         packageName: cameraPackageName,
-        name: translate("miniApps:camera"),
+        name: translate("miniApps:gallery"),
         type: "standard",
         offline: true,
-        logoUrl: require("@assets/applet-icons/camera.png"),
+        logoUrl: require("@assets/applet-icons/gallery.png"),
         webviewUrl: "",
         permissions: [],
         offlineRoute: "/asg/gallery",
@@ -192,12 +192,6 @@ class BuiltInMiniappCatalog {
         loading: false,
         healthy: true,
         hidden: false,
-        onStart: () => {
-          engine.settings.set(SETTINGS.offline_camera_running.key, true)
-        },
-        onStop: () => {
-          engine.settings.set(SETTINGS.offline_camera_running.key, false)
-        },
         hardwareRequirements: [
           {type: HardwareType.CAMERA, level: HardwareRequirementLevel.REQUIRED},
           {type: HardwareType.EXIST, level: HardwareRequirementLevel.REQUIRED},
