@@ -1,5 +1,6 @@
 import "tsx/cjs"
 import {ExpoConfig, ConfigContext} from "@expo/config"
+import {VARIANT_RE, resolveAndroidPackageName} from "./scripts/android-package-name.cjs"
 import {getBuildNumber} from "./scripts/build-number.mjs"
 
 const familyBaseVersion = require("../package.json").version as string
@@ -47,18 +48,15 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
   // a parallel-installable build with package com.mentra.mentra.stable and app
   // label "stable". Leave unset for the normal Mentra build.
   const variantName = process.env.MENTRAOS_BUILD_NAME?.trim() || null
-  const isValidVariant = variantName && /^[a-zA-Z][a-zA-Z0-9_ ]*$/.test(variantName)
+  const isValidVariant = Boolean(variantName && VARIANT_RE.test(variantName))
   if (variantName && !isValidVariant) {
     throw new Error(
       `MENTRAOS_BUILD_NAME="${variantName}" is invalid. Must start with a letter and contain only letters, digits, spaces, or underscores.`,
     )
   }
   const appName = isValidVariant ? variantName : variant.appName
-  const baseId = variant.packageName
-  // replace non-alphanumeric characters with underscores:
-  const normalizedVariantId = variantName?.toLowerCase().replace(/[^a-zA-Z0-9_]/g, "")
-  const androidPackage = isValidVariant ? `${baseId}.${normalizedVariantId}` : baseId
-  const iosBundleId = isValidVariant ? `${baseId}.${normalizedVariantId}` : baseId
+  const androidPackage = resolveAndroidPackageName()
+  const iosBundleId = androidPackage
 
   // Mapbox runtime token (pk.…) — boots the Mapbox Navigation SDK v3 on BOTH
   // platforms now (iOS migrated off Google Nav to match Android). Injected as:
