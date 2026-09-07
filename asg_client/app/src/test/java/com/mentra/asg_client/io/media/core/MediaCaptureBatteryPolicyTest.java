@@ -17,9 +17,12 @@ import com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager;
 import com.mentra.asg_client.io.hardware.managers.K900HardwareManager;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
 import java.lang.reflect.Field;
+import java.io.File;
 import java.lang.reflect.Method;
 import java.time.Duration;
 import org.junit.Test;
+import org.junit.Rule;
+import org.junit.rules.TemporaryFolder;
 import org.junit.runner.RunWith;
 import org.mockito.MockedStatic;
 import org.robolectric.RobolectricTestRunner;
@@ -31,9 +34,12 @@ import org.robolectric.shadows.ShadowSystemClock;
 @RunWith(RobolectricTestRunner.class)
 @Config(application = Application.class, sdk = 33)
 public class MediaCaptureBatteryPolicyTest {
+    @Rule public final TemporaryFolder temporaryFolder = new TemporaryFolder();
 
     @Test
     public void queuedVideoStartRechecksAfterTeardownAndReleasesLifecycle() throws Exception {
+        File captureDir = temporaryFolder.newFolder("VID_queued");
+        File output = new File(captureDir, "base.mp4");
         Context context = RuntimeEnvironment.getApplication();
         K900HardwareManager hardware = new K900HardwareManager(context);
         K900BluetoothManager transport = mock(K900BluetoothManager.class);
@@ -54,7 +60,7 @@ public class MediaCaptureBatteryPolicyTest {
         lifecycle.beginStop();
         Runnable queued = () -> {
             try {
-                start.invoke(service, "/tmp/queued.mp4", "queued", null, true, true, 0, false);
+                start.invoke(service, output.getAbsolutePath(), "queued", null, true, true, 0, false);
             } catch (Exception e) { throw new AssertionError(e); }
         };
         assertThat(lifecycle.requestStart(queued)).isEqualTo(VideoRecordingLifecycle.StartResult.QUEUED);
@@ -65,6 +71,7 @@ public class MediaCaptureBatteryPolicyTest {
             org.mockito.Mockito.verify(service).playBatteryLowSound();
         }
         assertThat(lifecycle.requestStart(() -> {})).isEqualTo(VideoRecordingLifecycle.StartResult.START_NOW);
+        assertThat(captureDir).doesNotExist();
     }
     private static void set(Object target, String name, Object value) throws Exception {
         Field field = MediaCaptureService.class.getDeclaredField(name);

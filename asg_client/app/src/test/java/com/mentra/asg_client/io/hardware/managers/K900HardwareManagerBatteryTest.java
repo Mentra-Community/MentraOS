@@ -70,6 +70,17 @@ public class K900HardwareManagerBatteryTest {
     }
 
     @Test
+    public void unknownHardwareSocRetainsKnownFallback() {
+        K900HardwareManager manager = connectedManager();
+        assertThat(manager.getBatteryLevel()).isEqualTo(-1);
+        for (int level : new int[] {0, 3, 9, 14}) {
+            assertThat(BatteryConstants.isCameraBatteryLow(level, manager)).isTrue();
+        }
+        assertThat(BatteryConstants.isCameraBatteryLow(15, manager)).isFalse();
+        assertThat(BatteryConstants.isCameraBatteryLow(-1, manager)).isFalse();
+    }
+
+    @Test
     public void staleFutureAndMismatchedSocCannotGrantException() {
         K900HardwareManager manager = connectedManager();
         long now = SystemClock.elapsedRealtime();

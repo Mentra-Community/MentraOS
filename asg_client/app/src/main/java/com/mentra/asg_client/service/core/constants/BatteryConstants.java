@@ -9,10 +9,10 @@ import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
 public class BatteryConstants {
     /** Preserve normal/unknown-SOC behavior; only verified hardware may grant an exception. */
     public static boolean isCameraBatteryLow(int fallbackBatteryLevel, IHardwareManager hardwareManager) {
-        // StateManager is updated separately; use one BES cache for both starts
-        // and running services, falling back only before hardware initializes.
-        int batteryLevel = hardwareManager != null
-                ? hardwareManager.getBatteryLevel() : fallbackBatteryLevel;
+        // Prefer the shared BES cache, but do not discard a known fallback
+        // while hardware is still waiting for its first battery reading.
+        int hardwareBatteryLevel = hardwareManager != null ? hardwareManager.getBatteryLevel() : -1;
+        int batteryLevel = hardwareBatteryLevel >= 0 ? hardwareBatteryLevel : fallbackBatteryLevel;
         return batteryLevel >= 0
                 && batteryLevel < MIN_BATTERY_LEVEL
                 && (batteryLevel <= AsgConstants.CAMERA_CHARGING_BATTERY_FLOOR

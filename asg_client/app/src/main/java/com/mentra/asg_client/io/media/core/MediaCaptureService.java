@@ -16,6 +16,7 @@ import com.mentra.asg_client.camera.CameraNeoService;
 import com.mentra.asg_client.camera.feedback.PhotoFeedbackController;
 import com.mentra.asg_client.camera.feedback.PhotoLightController;
 import com.mentra.asg_client.camera.lifecycle.PhotoExifMetadataWriter;
+import com.mentra.asg_client.camera.lifecycle.VideoRecordingSession;
 import com.mentra.asg_client.camera.model.CameraOperationError;
 import com.mentra.asg_client.camera.model.CapturedPhoto;
 import com.mentra.asg_client.camera.model.PhotoCaptureSettings;
@@ -1220,6 +1221,7 @@ public class MediaCaptureService {
         // Queue admission cannot authorize a later capture using expired evidence.
         int batteryLevel = mStateManager != null ? mStateManager.getBatteryLevel() : -1;
         if (BatteryConstants.isCameraBatteryLow(batteryLevel, hardwareManager)) {
+            VideoRecordingSession.deleteCorruptCapture(videoFilePath);
             videoRecordingLifecycle.startFailed();
             playBatteryLowSound();
             if (mMediaCaptureListener != null) {

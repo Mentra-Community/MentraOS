@@ -36,14 +36,18 @@ public class VideoRecordingSessionTest {
     };
 
     @Test
-    public void chargingLossDuringCameraPreparationRejectsRecorderStart() {
+    public void chargingLossDuringCameraPreparationRejectsRecorderStart() throws IOException {
         VideoRecordingSession session = newSession();
-        session.prepareRequest("queued", "/tmp/queued.mp4", null);
+        File captureDir = temporaryFolder.newFolder("VID_rejected");
+        File output = new File(captureDir, "base.mp4");
+        assertThat(output.createNewFile()).isTrue();
+        session.prepareRequest("queued", output.getAbsolutePath(), null);
         batteryLow = true;
         org.assertj.core.api.Assertions.assertThatThrownBy(() -> session.startRecording(null, null))
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("Battery too low for video capture");
         assertThat(session.isRecording()).isFalse();
+        assertThat(captureDir).doesNotExist();
     }
 
     @Test

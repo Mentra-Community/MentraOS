@@ -231,7 +231,10 @@ public final class VideoRecordingSession {
     public void startRecording(CameraCaptureSession session, CaptureRequest.Builder previewBuilder)
             throws CameraAccessException {
         if (hooks.isCameraBatteryLow()) {
-            // The service handles startup errors with the normal recorder/camera cleanup.
+            // Release the prepared encoder before deleting its incomplete output.
+            // The caller still owns camera/session teardown and error delivery.
+            release();
+            deleteCorruptCapture(currentVideoPath);
             throw new IllegalStateException("Battery too low for video capture");
         }
         if (session == null || mediaRecorder == null) {
