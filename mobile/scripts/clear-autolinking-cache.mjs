@@ -14,6 +14,7 @@ const ENTRY_POINT_PATH = join(
   "src/main/java/com/facebook/react/ReactNativeApplicationEntryPoint.java",
 )
 const PACKAGE_LIST_PATH = join(APP_AUTOLINKING_DIR, "src/main/java/com/facebook/react/PackageList.java")
+const APP_BUILD_GRADLE_PATH = join("android", "app", "build.gradle")
 const RESOLVE_TIMEOUT_MS = 30_000
 
 /**
@@ -49,6 +50,13 @@ export function normalizeAutolinkingGraph(config) {
   })
 }
 
+export function parseApplicationId(buildGradle) {
+  if (typeof buildGradle !== "string") return null
+  const match = buildGradle.match(/^\s*applicationId\s+['"]([^'"]+)['"]\s*$/m)
+  const value = match?.[1]?.trim()
+  return value ? value : null
+}
+
 export function evaluateAutolinkingCache({
   cached,
   resolved,
@@ -56,6 +64,7 @@ export function evaluateAutolinkingCache({
   forceWipe = false,
   entryPointSource,
   packageListExists = false,
+  effectivePackageName,
 } = {}) {
   if (forceWipe) return {wiped: true, reason: "force"}
   if (!cached) return {wiped: false, reason: "nothing-cached"}
@@ -64,14 +73,16 @@ export function evaluateAutolinkingCache({
   if (typeof packageName !== "string" || packageName.length === 0) {
     return {wiped: true, reason: "unresolved"}
   }
+  const expectedPackageName =
+    typeof effectivePackageName === "string" && effectivePackageName.length > 0 ? effectivePackageName : packageName
   const cachedPackageName = cached?.project?.android?.packageName
-  if (packageName !== cachedPackageName) {
+  if (expectedPackageName !== packageName || expectedPackageName !== cachedPackageName) {
     return {wiped: true, reason: "packageName"}
   }
   if (normalizeAutolinkingGraph(resolved) !== normalizeAutolinkingGraph(cached)) {
     return {wiped: true, reason: "graph"}
   }
-  if (typeof entryPointSource !== "string" || !entryPointSource.includes(`${packageName}.BuildConfig`)) {
+  if (typeof entryPointSource !== "string" || !entryPointSource.includes(`${expectedPackageName}.BuildConfig`)) {
     return {wiped: true, reason: "entry-point"}
   }
   if (!packageListExists) {
@@ -134,6 +145,7 @@ export async function syncAutolinkingCache({
   }
   const entryPointSource = await readTextIfPresent(join(cwd, ENTRY_POINT_PATH))
   const packageListExists = (await readTextIfPresent(join(cwd, PACKAGE_LIST_PATH))) != null
+  const effectivePackageName = parseApplicationId(await readTextIfPresent(join(cwd, APP_BUILD_GRADLE_PATH)))
   const decision = evaluateAutolinkingCache({
     cached,
     resolved,
@@ -141,6 +153,7 @@ export async function syncAutolinkingCache({
     forceWipe,
     entryPointSource,
     packageListExists,
+    effectivePackageName,
   })
   if (decision.wiped) {
     await rm(join(cwd, ROOT_AUTOLINKING_DIR), {recursive: true, force: true})

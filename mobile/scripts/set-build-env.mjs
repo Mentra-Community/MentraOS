@@ -60,7 +60,7 @@ export function resolveBuildUser({
   }
 }
 
-export async function setBuildEnv() {
+export async function setBuildEnv({syncAutolinking = true} = {}) {
   // Keep src/generated/bundledMiniapps.ts in sync with assets/miniapps/*.zip
   // before any prebuild/bundle so newly-dropped bundles get shipped.
   await generateBundledMiniapps()
@@ -71,8 +71,12 @@ export async function setBuildEnv() {
 
   // Wipe the Gradle autolinking cache only when the resolved graph drifted
   // (see clear-autolinking-cache.mjs). MENTRA_FORCE_AUTOLINK_WIPE=1 restores
-  // the old unconditional wipe.
-  await syncAutolinkingCache()
+  // the old unconditional wipe. Callers that run their own authoritative
+  // post-prebuild check (scripts/android.mjs) pass syncAutolinking: false so
+  // the ~1.3s graph resolution is not paid twice per build.
+  if (syncAutolinking) {
+    await syncAutolinkingCache()
+  }
 
   const gitCommit = (await $`git rev-parse --short HEAD`).stdout.trim()
   const gitBranch =
