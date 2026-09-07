@@ -22,16 +22,29 @@ import java.util.concurrent.atomic.AtomicReference;
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 33)
 public class VideoRecordingSessionTest {
+    private boolean batteryLow;
 
     @Rule
     public final TemporaryFolder temporaryFolder = new TemporaryFolder();
 
     private final VideoRecordingSession.Hooks hooks = new VideoRecordingSession.Hooks() {
+        @Override public boolean isCameraBatteryLow() { return batteryLow; }
         @Override public ImuRecorder ensureImuRecorder() { return null; }
         @Override public ImuRecorder currentImuRecorder() { return null; }
         @Override public int videoOrientation() { return 90; }
         @Override public void onSessionTerminated() {}
     };
+
+    @Test
+    public void chargingLossDuringCameraPreparationRejectsRecorderStart() {
+        VideoRecordingSession session = newSession();
+        session.prepareRequest("queued", "/tmp/queued.mp4", null);
+        batteryLow = true;
+        org.assertj.core.api.Assertions.assertThatThrownBy(() -> session.startRecording(null, null))
+                .isInstanceOf(IllegalStateException.class)
+                .hasMessage("Battery too low for video capture");
+        assertThat(session.isRecording()).isFalse();
+    }
 
     @Test
     public void prepareRequest_storesVideoIdPathAndSettings() {

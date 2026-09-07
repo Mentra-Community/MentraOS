@@ -47,6 +47,9 @@ public final class VideoRecordingSession {
 
     /** Cross-cutting integration points back into the camera service. */
     public interface Hooks {
+        /** Evaluate current battery policy immediately before recording starts. */
+        boolean isCameraBatteryLow();
+
         /** Lazy-create or return the host service's IMU recorder. */
         ImuRecorder ensureImuRecorder();
 
@@ -227,6 +230,10 @@ public final class VideoRecordingSession {
      */
     public void startRecording(CameraCaptureSession session, CaptureRequest.Builder previewBuilder)
             throws CameraAccessException {
+        if (hooks.isCameraBatteryLow()) {
+            // The service handles startup errors with the normal recorder/camera cleanup.
+            throw new IllegalStateException("Battery too low for video capture");
+        }
         if (session == null || mediaRecorder == null) {
             notifyError(currentVideoId, "Cannot start recording, camera not ready.");
             return;

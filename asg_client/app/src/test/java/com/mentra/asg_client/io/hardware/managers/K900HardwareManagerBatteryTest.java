@@ -17,6 +17,7 @@ import java.time.Duration;
 import org.robolectric.shadows.ShadowSystemClock;
 import com.mentra.asg_client.io.bluetooth.interfaces.IBluetoothManager;
 import com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager;
+import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.BesUartTransportCoordinator;
 import java.util.concurrent.atomic.AtomicReference;
 import org.junit.Test;
 import org.junit.runner.RunWith;
@@ -55,6 +56,17 @@ public class K900HardwareManagerBatteryTest {
         manager.notifyBatteryReading(4, 4200);
         assertThat(manager.getChargingStatus()).isTrue(); // Legacy display heuristic is unchanged.
         assertThat(BatteryConstants.isCameraBatteryLow(4, manager)).isTrue();
+    }
+
+    @Test
+    public void cameraPolicyUsesHardwareSocInsteadOfLaggingStateManager() {
+        K900HardwareManager manager = connectedManager();
+        manager.notifyBatteryReading(9, 3700, true, SystemClock.elapsedRealtime());
+        assertThat(BatteryConstants.isCameraBatteryLow(8, manager)).isFalse();
+        manager.notifyBatteryReading(9, 3700, false, SystemClock.elapsedRealtime());
+        assertThat(BatteryConstants.isCameraBatteryLow(99, manager)).isTrue();
+        assertThat(BatteryConstants.isCameraBatteryLow(9, null)).isTrue();
+        assertThat(BatteryConstants.isCameraBatteryLow(-1, null)).isFalse();
     }
 
     @Test
@@ -116,6 +128,11 @@ public class K900HardwareManagerBatteryTest {
     public void uartProofInvalidationRejectsOldQueuedEvidenceAfterReconnection() throws Exception {
         K900BluetoothManager transport = mock(K900BluetoothManager.class, org.mockito.Mockito.CALLS_REAL_METHODS);
         doReturn(true).when(transport).isConnected();
+        BesUartTransportCoordinator coordinator = mock(BesUartTransportCoordinator.class);
+        when(coordinator.isReadyForNormalUse()).thenReturn(true);
+        java.lang.reflect.Field coordinatorField = K900BluetoothManager.class.getDeclaredField("transportCoordinator");
+        coordinatorField.setAccessible(true);
+        coordinatorField.set(transport, coordinator);
         java.lang.reflect.Field proof = K900BluetoothManager.class.getDeclaredField("framedPathProven");
         proof.setAccessible(true);
         proof.setBoolean(transport, true);
@@ -130,6 +147,9 @@ public class K900HardwareManagerBatteryTest {
         assertThat(transport.isCurrentUartEvidence(received)).isFalse();
         ShadowSystemClock.advanceBy(Duration.ofMillis(1));
         assertThat(transport.isCurrentUartEvidence(SystemClock.elapsedRealtime())).isTrue();
+        when(coordinator.isReadyForNormalUse()).thenReturn(false);
+        assertThat(transport.isCurrentUartEvidence(SystemClock.elapsedRealtime())).isFalse();
+        when(coordinator.isReadyForNormalUse()).thenReturn(true);
         doReturn(false).when(transport).isConnected();
         assertThat(transport.isCurrentUartEvidence(SystemClock.elapsedRealtime())).isFalse();
     }

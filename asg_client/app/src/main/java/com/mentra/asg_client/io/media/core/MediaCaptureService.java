@@ -1216,6 +1216,20 @@ public class MediaCaptureService {
             boolean enableSound,
             int maxRecordingTimeMinutes,
             boolean save) {
+        // Both button and command starts arrive here after recorder teardown.
+        // Queue admission cannot authorize a later capture using expired evidence.
+        int batteryLevel = mStateManager != null ? mStateManager.getBatteryLevel() : -1;
+        if (BatteryConstants.isCameraBatteryLow(batteryLevel, hardwareManager)) {
+            videoRecordingLifecycle.startFailed();
+            playBatteryLowSound();
+            if (mMediaCaptureListener != null) {
+                mMediaCaptureListener.onMediaError(
+                        requestId, "Battery too low for video capture",
+                        MediaUploadQueueManager.MEDIA_TYPE_VIDEO);
+            }
+            return;
+        }
+
         // Check if any streaming is active - videos cannot interrupt streams
         if (RtmpStreamingService.isStreaming()
                 || SrtStreamingService.isStreaming()

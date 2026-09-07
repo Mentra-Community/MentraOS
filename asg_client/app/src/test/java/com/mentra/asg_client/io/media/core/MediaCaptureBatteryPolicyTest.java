@@ -31,6 +31,41 @@ import org.robolectric.shadows.ShadowSystemClock;
 @RunWith(RobolectricTestRunner.class)
 @Config(application = Application.class, sdk = 33)
 public class MediaCaptureBatteryPolicyTest {
+
+    @Test
+    public void queuedVideoStartRechecksAfterTeardownAndReleasesLifecycle() throws Exception {
+        Context context = RuntimeEnvironment.getApplication();
+        K900HardwareManager hardware = new K900HardwareManager(context);
+        K900BluetoothManager transport = mock(K900BluetoothManager.class);
+        when(transport.isCurrentUartEvidence(anyLong())).thenReturn(true);
+        hardware.setTransport(transport);
+        hardware.notifyBatteryReading(9, 3700, true, SystemClock.elapsedRealtime());
+        MediaCaptureService service = mock(MediaCaptureService.class, CALLS_REAL_METHODS);
+        doNothing().when(service).playBatteryLowSound();
+        VideoRecordingLifecycle lifecycle = new VideoRecordingLifecycle();
+        set(service, "videoRecordingLifecycle", lifecycle);
+        set(service, "hardwareManager", hardware);
+        Method start = MediaCaptureService.class.getDeclaredMethod("startVideoRecording",
+                String.class, String.class, com.mentra.asg_client.settings.VideoSettings.class,
+                boolean.class, boolean.class, int.class, boolean.class);
+        start.setAccessible(true);
+        lifecycle.requestStart(() -> {});
+        lifecycle.recordingStarted();
+        lifecycle.beginStop();
+        Runnable queued = () -> {
+            try {
+                start.invoke(service, "/tmp/queued.mp4", "queued", null, true, true, 0, false);
+            } catch (Exception e) { throw new AssertionError(e); }
+        };
+        assertThat(lifecycle.requestStart(queued)).isEqualTo(VideoRecordingLifecycle.StartResult.QUEUED);
+        hardware.notifyBatteryReading(9, 3700, false, SystemClock.elapsedRealtime());
+        try (MockedStatic<CameraNeoService> camera = mockStatic(CameraNeoService.class)) {
+            lifecycle.recordingTerminated().run();
+            camera.verifyNoInteractions();
+            org.mockito.Mockito.verify(service).playBatteryLowSound();
+        }
+        assertThat(lifecycle.requestStart(() -> {})).isEqualTo(VideoRecordingLifecycle.StartResult.START_NOW);
+    }
     private static void set(Object target, String name, Object value) throws Exception {
         Field field = MediaCaptureService.class.getDeclaredField(name);
         field.setAccessible(true);

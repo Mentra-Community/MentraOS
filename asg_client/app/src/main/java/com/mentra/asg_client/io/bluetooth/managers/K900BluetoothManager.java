@@ -1181,7 +1181,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
     /** Evidence received before a UART reset/recovery cannot authorize the current link. */
     public boolean isCurrentUartEvidence(long receivedAtElapsedMs) {
-        return framedPathProven && isConnected()
+        return framedPathProven && isConnected() && transportCoordinator.isReadyForNormalUse()
                 && receivedAtElapsedMs > uartEvidenceInvalidatedAtElapsedMs;
     }
 
