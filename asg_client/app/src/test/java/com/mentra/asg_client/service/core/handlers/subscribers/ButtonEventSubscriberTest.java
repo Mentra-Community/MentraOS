@@ -4,6 +4,7 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
+import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
 import static org.mockito.Mockito.when;
@@ -40,6 +41,7 @@ public class ButtonEventSubscriberTest {
     private K900BluetoothManager bluetoothManager;
     private LinkStateMachine linkState;
     private IHardwareManager hardwareManager;
+    private IStateManager stateManager;
     private Queue<Runnable> batteryTasks;
     private ButtonEventSubscriber subscriber;
 
@@ -49,6 +51,7 @@ public class ButtonEventSubscriberTest {
         captureService = mock(MediaCaptureService.class);
         bluetoothManager = mock(K900BluetoothManager.class);
         hardwareManager = mock(IHardwareManager.class);
+        stateManager = mock(IStateManager.class);
         batteryTasks = new ArrayDeque<>();
         AsgSettings asgSettings = mock(AsgSettings.class);
         linkState = new LinkStateMachine();
@@ -67,8 +70,35 @@ public class ButtonEventSubscriberTest {
                 new ButtonEventSubscriber(
                         serviceManager,
                         hardwareManager,
-                        mock(IStateManager.class),
+                        stateManager,
                         batteryTasks::add);
+    }
+
+    @Test
+    public void longPressUsesSharedChargingExceptionAndPreservesNormalBoundary() {
+        for (boolean active : new boolean[] {false, true}) {
+            for (int level : new int[] {-1, 0, 3, 4, 14, 15, 19}) {
+                when(stateManager.getBatteryLevel()).thenReturn(level);
+                when(hardwareManager.allowsLowBatteryCamera(level)).thenReturn(active);
+                clearInvocations(captureService);
+                subscriber.onMcuEvent(new ButtonEvent(ButtonEvent.Type.CAMERA_LONG_PRESS));
+                if (level < 0 || level >= 15 || (level > 3 && active)) {
+                    verify(captureService).startVideoRecording(null, true, 0, level);
+                } else {
+                    verify(captureService).playBatteryLowSound();
+                    verify(captureService, never()).startVideoRecording(null, true, 0, level);
+                }
+            }
+        }
+    }
+
+    @Test
+    public void lowBatteryNeverBlocksButtonStopOfExistingRecording() {
+        when(stateManager.getBatteryLevel()).thenReturn(3);
+        when(captureService.isRecordingVideo()).thenReturn(true);
+        subscriber.onMcuEvent(new ButtonEvent(ButtonEvent.Type.CAMERA_LONG_PRESS));
+        verify(captureService).stopVideoRecording();
+        verify(captureService, never()).playBatteryLowSound();
     }
 
     private void shortPress() {

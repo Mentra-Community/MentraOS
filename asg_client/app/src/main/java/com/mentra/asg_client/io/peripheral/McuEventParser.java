@@ -63,7 +63,9 @@ public final class McuEventParser {
                 if (b == null) {
                     return null;
                 }
-                return new BatteryEvent(b.optInt("pt", -1), b.optInt("vt", -1));
+                return new BatteryEvent(
+                        b.optInt("pt", -1), b.optInt("vt", -1),
+                        Boolean.TRUE.equals(b.opt("active_charging")));
 
             case "hm_spkcode":
                 if (b == null) {

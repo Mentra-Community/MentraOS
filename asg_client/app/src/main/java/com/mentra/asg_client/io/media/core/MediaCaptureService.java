@@ -984,8 +984,7 @@ public class MediaCaptureService {
         // Check if battery is too low to start recording (query current level for accuracy)
         if (mStateManager != null) {
             int currentBatteryLevel = mStateManager.getBatteryLevel();
-            if (currentBatteryLevel >= 0
-                    && currentBatteryLevel < BatteryConstants.MIN_BATTERY_LEVEL) {
+            if (BatteryConstants.isCameraBatteryLow(currentBatteryLevel, hardwareManager)) {
                 Log.w(
                         TAG,
                         "🚫 Battery too low to start recording: "
@@ -1976,7 +1975,7 @@ public class MediaCaptureService {
         // BATTERY CHECK: Reject if battery too low
         if (mStateManager != null) {
             int batteryLevel = mStateManager.getBatteryLevel();
-            if (batteryLevel >= 0 && batteryLevel < BatteryConstants.MIN_BATTERY_LEVEL) {
+            if (BatteryConstants.isCameraBatteryLow(batteryLevel, hardwareManager)) {
                 Log.w(TAG, "🚫 Photo rejected - battery too low (" + batteryLevel + "%)");
                 playBatteryLowSound();
                 if (mMediaCaptureListener != null) {
@@ -2672,7 +2671,7 @@ public class MediaCaptureService {
         // Check battery level before proceeding
         if (mStateManager != null) {
             int batteryLevel = mStateManager.getBatteryLevel();
-            if (batteryLevel >= 0 && batteryLevel < BatteryConstants.MIN_BATTERY_LEVEL) {
+            if (BatteryConstants.isCameraBatteryLow(batteryLevel, hardwareManager)) {
                 Log.w(TAG, "🚫 Photo rejected - battery too low (" + batteryLevel + "%)");
                 playBatteryLowSound();
                 sendPhotoErrorResponse(
@@ -4922,7 +4921,7 @@ public class MediaCaptureService {
         // Check battery level before proceeding (defense-in-depth)
         if (mStateManager != null) {
             int batteryLevel = mStateManager.getBatteryLevel();
-            if (batteryLevel >= 0 && batteryLevel < BatteryConstants.MIN_BATTERY_LEVEL) {
+            if (BatteryConstants.isCameraBatteryLow(batteryLevel, hardwareManager)) {
                 Log.w(TAG, "🚫 Photo rejected - battery too low (" + batteryLevel + "%)");
                 playBatteryLowSound();
                 sendPhotoErrorResponse(
@@ -5060,7 +5059,7 @@ public class MediaCaptureService {
         logBlePhotoStep(requestId, "battery_check", "checking minimum battery requirement");
         if (mStateManager != null) {
             int batteryLevel = mStateManager.getBatteryLevel();
-            if (batteryLevel >= 0 && batteryLevel < BatteryConstants.MIN_BATTERY_LEVEL) {
+            if (BatteryConstants.isCameraBatteryLow(batteryLevel, hardwareManager)) {
                 Log.w(TAG, "🚫 Photo rejected - battery too low (" + batteryLevel + "%)");
                 playBatteryLowSound();
                 sendPhotoErrorResponse(
@@ -6972,8 +6971,7 @@ public class MediaCaptureService {
 
                             int batteryLevel = hardwareManager.getBatteryLevel();
 
-                            if (batteryLevel >= 0
-                                    && batteryLevel < BatteryConstants.MIN_BATTERY_LEVEL) {
+                            if (BatteryConstants.isCameraBatteryLow(batteryLevel, hardwareManager)) {
                                 Log.w(
                                         TAG,
                                         "🔋⚠️ Battery dropped to "

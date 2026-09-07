@@ -565,6 +565,13 @@ public class SrtStreamingService extends Service {
       mStreamState = StreamState.STARTING;
     }
 
+    if (mHardwareManager != null && BatteryConstants.isCameraBatteryLow(
+        mHardwareManager.getBatteryLevel(), mHardwareManager)) {
+      if (sStatusCallback != null) sStatusCallback.onStreamError("battery_low", mCurrentStreamId);
+      stopStreaming();
+      return;
+    }
+
     try {
       wakeUpScreen();
       try { Thread.sleep(100); } catch (InterruptedException e) { Log.w(TAG, "Interrupted"); }
@@ -908,7 +915,7 @@ public class SrtStreamingService extends Service {
               shouldReschedule = true;
             } else if (mStreamState == StreamState.STREAMING) {
               int batteryLevel = mHardwareManager.getBatteryLevel();
-              if (batteryLevel >= 0 && batteryLevel < BatteryConstants.MIN_BATTERY_LEVEL) {
+              if (BatteryConstants.isCameraBatteryLow(batteryLevel, mHardwareManager)) {
                 Log.w(TAG, "🔋⚠️ Battery too low (" + batteryLevel + "%) - stopping SRT stream");
                 shouldStop = true;
                 if (mHardwareManager.supportsAudioPlayback()) mHardwareManager.playAudioAsset(AudioAssets.BATTERY_LOW);

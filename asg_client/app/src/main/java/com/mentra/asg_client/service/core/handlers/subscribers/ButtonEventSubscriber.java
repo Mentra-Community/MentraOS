@@ -169,7 +169,7 @@ public final class ButtonEventSubscriber implements IPeripheralBus.McuEventListe
                                 + "%");
 
                 // Check if battery is too low to start recording
-                if (batteryLevel >= 0 && batteryLevel < BatteryConstants.MIN_BATTERY_LEVEL) {
+                if (BatteryConstants.isCameraBatteryLow(batteryLevel, hardwareManager)) {
                     Log.w(
                             TAG,
                             "🚫 Battery too low to start recording: "

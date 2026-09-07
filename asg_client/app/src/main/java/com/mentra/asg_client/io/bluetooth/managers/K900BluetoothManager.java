@@ -1,6 +1,7 @@
 package com.mentra.asg_client.io.bluetooth.managers;
 
 import android.content.Context;
+import android.os.SystemClock;
 import android.util.Log;
 
 import com.mentra.asg_client.AsgConstants;
@@ -59,6 +60,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     private final String currentBootId;
     private volatile String liveBesOtaOwner = "";
     private volatile boolean framedPathProven;
+    private volatile long uartEvidenceInvalidatedAtElapsedMs = -1;
     private volatile BesOtaUartListener besOtaUartListener;
 
     public interface BesOtaAuthorizationCallback {
@@ -336,7 +338,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
         @Override
         public void invalidateLinkProof() {
-            framedPathProven = false;
+            invalidateFramedPathProof();
             linkState.streamDiscontinuity();
         }
 
@@ -1177,6 +1179,17 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         return framedPathProven;
     }
 
+    /** Evidence received before a UART reset/recovery cannot authorize the current link. */
+    public boolean isCurrentUartEvidence(long receivedAtElapsedMs) {
+        return framedPathProven && isConnected()
+                && receivedAtElapsedMs > uartEvidenceInvalidatedAtElapsedMs;
+    }
+
+    private void invalidateFramedPathProof() {
+        uartEvidenceInvalidatedAtElapsedMs = SystemClock.elapsedRealtime();
+        framedPathProven = false;
+    }
+
     private BesUartTransportCoordinator.SafetyPolicy currentBesOtaSafetyPolicy() {
         BesOtaStateStore.UartPolicy policy =
                 besOtaStateStore.uartPolicy(currentBootId, framedPathProven, liveBesOtaOwner);
@@ -1905,7 +1918,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
         // Close transport state before releasing the file lease so cleanup cannot resume a
         // deferred baud transition on a port that is already going down.
-        framedPathProven = false;
+        invalidateFramedPathProof();
         linkState.serialClosed();
         transportCoordinator.onSerialClosed();
         if (currentFileTransfer != null && currentFileTransfer.isActive) {
@@ -2128,7 +2141,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
         // A proof belongs to one exact SerialSession. Never let an sr_syvr from the
         // previous file descriptor authorize traffic on a newly adopted session.
-        framedPathProven = false;
+        invalidateFramedPathProof();
         linkState.serialReady();
         transportCoordinator.onSerialReady(session);
         Log.d(TAG, "🔌 ✅ Serial port marked as open");
@@ -2164,7 +2177,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         if (bSucc) {
             linkState.serialReady();
         } else {
-            framedPathProven = false;
+            invalidateFramedPathProof();
             linkState.serialClosed();
             transportCoordinator.onSerialClosed();
         }

@@ -874,6 +874,13 @@ public class RtmpStreamingService extends Service {
             mStreamState = StreamState.STARTING;
         }
 
+        if (mHardwareManager != null && BatteryConstants.isCameraBatteryLow(
+                mHardwareManager.getBatteryLevel(), mHardwareManager)) {
+            if (sStatusCallback != null) sStatusCallback.onStreamError("battery_low", mCurrentStreamId);
+            stopStreaming();
+            return;
+        }
+
         try {
             // Always wake up the screen before any camera access
             // This is crucial for reconnection attempts when screen might be off
@@ -1517,7 +1524,7 @@ public class RtmpStreamingService extends Service {
                             // Only check battery when actually streaming
                             int batteryLevel = mHardwareManager.getBatteryLevel();
 
-                            if (batteryLevel >= 0 && batteryLevel < BatteryConstants.MIN_BATTERY_LEVEL) {
+                            if (BatteryConstants.isCameraBatteryLow(batteryLevel, mHardwareManager)) {
                                 Log.w(TAG, "🔋⚠️ Battery dropped to " + batteryLevel +
                                     "% during streaming - stopping");
                                 shouldStop = true;
