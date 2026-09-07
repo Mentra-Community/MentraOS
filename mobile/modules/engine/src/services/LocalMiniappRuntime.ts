@@ -66,7 +66,7 @@ import {
   type MiniappAuthToken,
   type TtsSynthesisResult,
 } from "../runtime/config"
-import {getAnalytics, getUiSeams} from "../runtime/bootstrap"
+import {getAnalytics, getMiniappConfiguration, getUiSeams, isFeatureEnabled} from "../runtime/bootstrap"
 import {invokeScanQrSeam} from "../runtime/scanQrSeam"
 import {normalizeStreamAudioConfig, normalizeStreamVideoConfig, resolveCaptureAudio} from "../runtime/streamConfig"
 import {toLanguageHint} from "@mentra/cloud-protocol/languages"
@@ -76,7 +76,7 @@ import ttsModelManager from "./TTSModelManager"
 import {NavigationHandlers} from "./NavigationHandlers"
 import type {ClientApp} from "../types/applet"
 import {useAppStatusStore} from "../stores/apps"
-import {getDevAppAttestation, getDevAppSourcePackage} from "./AppRegistry"
+import appRegistry, {getDevAppAttestation, getDevAppSourcePackage} from "./AppRegistry"
 import {resolveForegroundLocationPermission} from "./ForegroundLocationPermission"
 import {advanceMiniappPingLiveness} from "./MiniappLiveness"
 import {listPhoneCalendarEvents, PhoneCalendarError} from "./PhoneCalendarService"
@@ -189,14 +189,7 @@ const LOG_TAG = "LOCAL_MINIAPP"
 const DIAGNOSTIC_MAX_LIST_ITEMS = 100
 const DIAGNOSTIC_MAX_STRING_LENGTH = 512
 
-function diagnosticStringList(values: Iterable<string>): string[] {
-  return [...values]
-    .map((value) => value.slice(0, DIAGNOSTIC_MAX_STRING_LENGTH))
-    .sort()
-    .slice(0, DIAGNOSTIC_MAX_LIST_ITEMS)
-}
-
-const SYSTEM_MINIAPP_PACKAGES = new Set([
+const SYSTEM_MINIAPP_PACKAGE_SET = new Set([
   "com.mentra.camera",
   "com.mentra.gallery",
   "com.mentra.settings",
@@ -207,6 +200,14 @@ const SYSTEM_MINIAPP_PACKAGES = new Set([
   "com.mentra.feedback",
   "com.mentra.miniappdev",
 ])
+
+function diagnosticStringList(values: Iterable<string>): string[] {
+  return [...values]
+    .map((value) => value.slice(0, DIAGNOSTIC_MAX_STRING_LENGTH))
+    .sort()
+    .slice(0, DIAGNOSTIC_MAX_LIST_ITEMS)
+}
+
 const PING_INTERVAL_MS = 5_000
 const MINIAPP_AUTH_REFRESH_HEADROOM_MS = 5 * 60 * 1000
 const MINIAPP_AUTH_REFRESH_MIN_DELAY_MS = 5_000
@@ -1445,6 +1446,7 @@ class LocalMiniappRuntime {
         packageName,
         capabilities,
         permissions: declaredPermissions,
+        configuration: getMiniappConfiguration(packageName),
         hostFeatures: {captureAudio: true},
         ...(initialAuth ? {auth: initialAuth} : {}),
       },
@@ -1468,6 +1470,9 @@ class LocalMiniappRuntime {
   }
 
   private async requestMiniappAuth(packageName: string, opts?: {minTtlMs?: number}): Promise<MiniappAuthToken | null> {
+    // Core owns miniapp-backend token minting. A Runtime-only deployment has
+    // no such capability, so fail once instead of entering the retry loop.
+    if (!cloudClientService.hasCore()) return null
     const authPackageName = getDevAppSourcePackage(packageName) ?? packageName
     const devAttestation = getDevAppAttestation(packageName) ?? undefined
     return cloudClientService.getMiniappAuthToken(authPackageName, {
@@ -1703,6 +1708,34 @@ class LocalMiniappRuntime {
         message: "subscribe requires a subscriptions array",
       })
       return
+    }
+
+    for (const subscription of rawStreams ?? []) {
+      const stream = typeof subscription === "string" ? subscription : subscription.stream
+      if (stream.startsWith("translation:") && !isFeatureEnabled("cloudSpeech")) {
+        this.sendResult(packageName, requestId, false, undefined, {
+          code: MiniappErrorCode.NOT_IMPLEMENTED,
+          message: "Cloud speech is disabled by this deployment",
+        })
+        return
+      }
+      if (!stream.startsWith("transcription:")) continue
+      const forceLocal = typeof subscription === "object" && subscription.forceLocal === true
+      const includeCloud = typeof subscription === "object" && subscription.includeCloud === true
+      if (forceLocal && !isFeatureEnabled("onDeviceSpeech")) {
+        this.sendResult(packageName, requestId, false, undefined, {
+          code: MiniappErrorCode.NOT_IMPLEMENTED,
+          message: "On-device speech is disabled by this deployment",
+        })
+        return
+      }
+      if ((!forceLocal || includeCloud) && !isFeatureEnabled("cloudSpeech")) {
+        this.sendResult(packageName, requestId, false, undefined, {
+          code: MiniappErrorCode.NOT_IMPLEMENTED,
+          message: "Cloud speech is disabled by this deployment",
+        })
+        return
+      }
     }
 
     console.log(`${LOG_TAG}: SUBSCRIBE from ${packageName}: [${streams.join(", ")}]`)
@@ -2244,11 +2277,11 @@ class LocalMiniappRuntime {
       typeof rawText === "string"
         ? [rawText.trim()].filter(Boolean)
         : Array.isArray(rawText)
-          ? rawText
-              .filter((sentence): sentence is string => typeof sentence === "string")
-              .map((sentence) => sentence.trim())
-              .filter(Boolean)
-          : []
+        ? rawText
+            .filter((sentence): sentence is string => typeof sentence === "string")
+            .map((sentence) => sentence.trim())
+            .filter(Boolean)
+        : []
     const enableSanitization = payload.enableSanitization !== false
     const sentences = prepareTtsSentences(rawSentences, enableSanitization)
     if (sentences.length === 0) {
@@ -2333,6 +2366,7 @@ class LocalMiniappRuntime {
 
       const playOfflineTts = async (reason?: string): Promise<boolean> => {
         if (run.cancelled) return true
+        if (!isFeatureEnabled("onDeviceSpeech")) return false
         if (!offlineSupportsVoice || !(await ttsModelManager.isModelAvailable())) {
           return false
         }
@@ -2577,7 +2611,9 @@ class LocalMiniappRuntime {
       const permission = await resolveForegroundLocationPermission(Location, () => AppState.currentState)
       const {status} = permission
       console.log(
-        `${LOG_TAG}: location poll permission status=${status} appState=${AppState.currentState} elapsed=${Date.now() - permissionStartedAt}ms`,
+        `${LOG_TAG}: location poll permission status=${status} appState=${AppState.currentState} elapsed=${
+          Date.now() - permissionStartedAt
+        }ms`,
       )
       if (status !== "granted") {
         this.sendResult(packageName, requestId, false, undefined, {
@@ -3138,11 +3174,7 @@ class LocalMiniappRuntime {
    * session.system.scanQr — host camera overlay. Must not clear miniapp
    * foreground; the host seam is responsible for presenting a Modal on top.
    */
-  private async handleScanQr(
-    packageName: string,
-    payload: Record<string, unknown>,
-    requestId?: string,
-  ): Promise<void> {
+  private async handleScanQr(packageName: string, payload: Record<string, unknown>, requestId?: string): Promise<void> {
     try {
       const result = await invokeScanQrSeam(getUiSeams().scanQr, payload)
       this.sendResult(packageName, requestId, true, result)
@@ -3465,7 +3497,15 @@ class LocalMiniappRuntime {
       return
     }
     // A stream is the glasses camera (and mic) leaving the device; gate it like a photo.
-    if (!this.requireManifestPermission(packageName, requestId, "CAMERA", "to stream the camera", MiniappRequestType.STREAM_START)) {
+    if (
+      !this.requireManifestPermission(
+        packageName,
+        requestId,
+        "CAMERA",
+        "to stream the camera",
+        MiniappRequestType.STREAM_START,
+      )
+    ) {
       return
     }
     try {
@@ -3582,8 +3622,20 @@ class LocalMiniappRuntime {
     // A meeting puts the glasses camera and mic in front of remote strangers; it
     // needs both declared, same as photo/stream and mic capture do individually.
     if (
-      !this.requireManifestPermission(packageName, requestId, "CAMERA", "to join a meeting", MiniappRequestType.MEETING_JOIN) ||
-      !this.requireManifestPermission(packageName, requestId, "MICROPHONE", "to join a meeting", MiniappRequestType.MEETING_JOIN)
+      !this.requireManifestPermission(
+        packageName,
+        requestId,
+        "CAMERA",
+        "to join a meeting",
+        MiniappRequestType.MEETING_JOIN,
+      ) ||
+      !this.requireManifestPermission(
+        packageName,
+        requestId,
+        "MICROPHONE",
+        "to join a meeting",
+        MiniappRequestType.MEETING_JOIN,
+      )
     ) {
       return
     }
@@ -4333,8 +4385,15 @@ class LocalMiniappRuntime {
   }
 
   private isSystemPackage(packageName: string): boolean {
-    if (SYSTEM_MINIAPP_PACKAGES.has(packageName)) return true
-    return this.interopApps().find((app) => app.packageName === packageName)?.isMiniappDev === true
+    const app = this.interopApps().find((candidate) => candidate.packageName === packageName)
+    if (SYSTEM_MINIAPP_PACKAGE_SET.has(packageName)) {
+      if (app?.offline) return true
+      if (app?.local && app.version) {
+        return appRegistry.getReleaseIdentity(packageName, app.version)?.source === "bundled_asset"
+      }
+      return false
+    }
+    return app?.isMiniappDev === true
   }
 
   private async startInteropApp(packageName: string): Promise<boolean> {

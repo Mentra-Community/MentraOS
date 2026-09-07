@@ -12,8 +12,9 @@ import {translate} from "@/i18n"
 import {showLeaveAppAlert} from "@/utils/AlertUtils"
 import {checkAndRequestNotificationAccessSpecialPermission} from "@/utils/NotificationServiceUtils"
 import {checkFeaturePermissions, PermissionFeatures, requestFeaturePermissions} from "@/utils/PermissionsUtils"
+import {deploymentStore} from "@/services/deployment"
 
-const PRIVACY_POLICY_URL = "https://mentraglass.com/privacy-policy"
+const CONSUMER_PRIVACY_POLICY_URL = "https://mentraglass.com/privacy-policy"
 
 export default function PrivacySettingsScreen() {
   const [notificationsEnabled, setNotificationsEnabled] = useState(true)
@@ -24,6 +25,9 @@ export default function PrivacySettingsScreen() {
   const [appState, setAppState] = useState(AppState.currentState)
   const {theme} = useAppTheme()
   const {goBack} = useNavigationStore.getState()
+  const deployment = deploymentStore.getActive()
+  const privacyPolicyUrl =
+    deployment.kind === "workspace" ? deployment.manifest.links.privacyPolicyUrl : CONSUMER_PRIVACY_POLICY_URL
 
   // Check permissions when screen loads
   useEffect(() => {
@@ -123,7 +127,7 @@ export default function PrivacySettingsScreen() {
   }, []) // subscribe only once
 
   const handleOpenPrivacyPolicy = () => {
-    showLeaveAppAlert(PRIVACY_POLICY_URL)
+    showLeaveAppAlert(privacyPolicyUrl)
   }
 
   const handleToggleNotifications = async () => {
