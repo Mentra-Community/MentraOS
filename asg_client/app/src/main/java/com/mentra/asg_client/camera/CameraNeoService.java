@@ -46,6 +46,7 @@ import com.mentra.asg_client.camera.policy.PhotoMode;
 import com.mentra.asg_client.camera.request.PreviewRequestConfigurator;
 import com.mentra.asg_client.io.hardware.core.HardwareManagerFactory;
 import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
+import com.mentra.asg_client.service.core.constants.BatteryConstants;
 import com.mentra.asg_client.io.media.utils.MediaStorage;
 import com.mentra.asg_client.sensors.ImuRecorder;
 import com.mentra.asg_client.service.system.core.SystemControllerFactory;
@@ -295,6 +296,11 @@ public class CameraNeoService extends LifecycleService {
 
     private final PhotoSession.Hooks photoSessionHooks =
             new PhotoSession.Hooks() {
+                @Override
+                public boolean isCameraBatteryLow() {
+                    return BatteryConstants.isCameraBatteryLow(-1, hardwareManager);
+                }
+
                 @Override
                 public Object serviceLock() {
                     return SERVICE_LOCK;
@@ -585,6 +591,11 @@ public class CameraNeoService extends LifecycleService {
     /** Bridges {@link VideoRecordingSession} back into the camera service lifecycle. */
     private final VideoRecordingSession.Hooks videoHooks =
             new VideoRecordingSession.Hooks() {
+                @Override
+                public boolean isCameraBatteryLow() {
+                    return BatteryConstants.isCameraBatteryLow(-1, hardwareManager);
+                }
+
                 @Override
                 public ImuRecorder ensureImuRecorder() {
                     if (mImuRecorder == null) {
@@ -1783,6 +1794,8 @@ public class CameraNeoService extends LifecycleService {
                                             videoSession.currentVideoId(),
                                             "Failed to start recording: " + ce.getMessage());
                                     closeCamera();
+                                    VideoRecordingSession.deleteCorruptCapture(
+                                            videoSession.currentVideoPath());
                                     conditionalStopSelf();
                                 }
                             } else {

@@ -47,6 +47,33 @@ import org.robolectric.annotation.Config;
 @Config(sdk = 33)
 public class PhotoSessionTest {
 
+    @Test
+    public void queuedPhotoRejectsChargingLossBeforeShutter() {
+        PhotoSession.Hooks hooks = mockConfiguredCameraHooks();
+        when(hooks.isCameraBatteryLow()).thenReturn(true);
+        CameraNeoService.PhotoCaptureCallback callback = mock(CameraNeoService.PhotoCaptureCallback.class);
+        PhotoSession session = new PhotoSession(hooks);
+        QueuedPhotoRequestQueue.getInstance().offer(
+                new QueuedPhotoRequest("/tmp/low.jpg", "large", false, true, null, callback));
+        session.pollFirstQueuedRequestIntoCurrent();
+        session.capturePhoto();
+        verify(callback).onPhotoError(any(CameraOperationError.class));
+        assertThat(QueuedPhotoRequestQueue.getInstance().isEmpty()).isTrue();
+    }
+
+    @Test
+    public void preparedPhotoRechecksBatteryBeforeShutter() throws Exception {
+        PhotoSession.Hooks hooks = mockConfiguredCameraHooks();
+        CameraNeoService.PhotoCaptureCallback callback = mock(CameraNeoService.PhotoCaptureCallback.class);
+        PhotoSession session = new PhotoSession(hooks);
+        activateQueuedRequest(session,
+                new QueuedPhotoRequest("/tmp/low.jpg", "large", false, true, null, callback));
+        when(hooks.isCameraBatteryLow()).thenReturn(true);
+        session.capturePhoto();
+        verify(callback).onPhotoError(any(CameraOperationError.class));
+        verify(hooks.coordinator().device(), never()).createCaptureRequest(CameraDevice.TEMPLATE_STILL_CAPTURE);
+    }
+
     @Before
     @After
     public void drainQueue() {

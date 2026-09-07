@@ -364,6 +364,12 @@ public class WhipStreamingService extends Service {
       }
       mStreamState = StreamState.STARTING;
     }
+    // Recheck here too: a reconnect can outlive the command's battery evidence.
+    if (mHardwareManager != null && BatteryConstants.isCameraBatteryLow(
+        mHardwareManager.getBatteryLevel(), mHardwareManager)) {
+      handleStartupFailure("battery_low", "Battery too low to start streaming");
+      return;
+    }
     if (!mIsReconnecting && mStartupStartedAtMs == 0) {
       mStartupStartedAtMs = SystemClock.elapsedRealtime();
     }
@@ -1444,7 +1450,7 @@ public class WhipStreamingService extends Service {
           } else if (mStreamState == StreamState.STREAMING) {
             int batteryLevel = mHardwareManager.getBatteryLevel();
 
-            if (batteryLevel >= 0 && batteryLevel < BatteryConstants.MIN_BATTERY_LEVEL) {
+            if (BatteryConstants.isCameraBatteryLow(batteryLevel, mHardwareManager)) {
               Log.w(TAG, "Battery dropped to " + batteryLevel
                   + "% during WHIP streaming - stopping");
               shouldStop = true;
