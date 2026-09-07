@@ -3,6 +3,7 @@ package com.mentra.acsmeeting.source
 import android.content.Context
 import android.media.AudioAttributes
 import android.util.Log
+import com.mentra.acsmeeting.network.ScopedNetworkChangeDetector
 import com.mentra.acsmeeting.network.ScopedSoftApNetwork
 import com.mentra.acsmeeting.telemetry.PipelineStats
 import com.mentra.acsmeeting.trace.SoftApTrace
@@ -13,6 +14,8 @@ import org.webrtc.EglBase
 import org.webrtc.IceCandidate
 import org.webrtc.MediaConstraints
 import org.webrtc.MediaStream
+import org.webrtc.NetworkChangeDetector
+import org.webrtc.NetworkMonitor
 import org.webrtc.PeerConnection
 import org.webrtc.PeerConnectionFactory
 import org.webrtc.RtpTransceiver
@@ -320,6 +323,22 @@ class LocalWhipIngestSource(
 
   private fun ensureFactory() {
     if (factory != null) return
+    // The SoftAP Network is requested without NET_CAPABILITY_INTERNET, so libwebrtc's stock
+    // NetworkMonitorAutoDetect never enumerates the hotspot and ICE gathers no host candidate for
+    // it — the call negotiates but never carries a frame. Injecting the scoped detector into the
+    // NetworkMonitor (the same technique the glasses use in WhipStreamingService.initWebRtc) is
+    // what makes the interface visible. It must be installed before the monitor spins up, so it is
+    // set ahead of PeerConnectionFactory.initialize.
+    scopedNetwork?.let { scoped ->
+      NetworkMonitor.getInstance().setNetworkChangeDetectorFactory(
+        object : NetworkMonitor.NetworkChangeDetectorFactory {
+          override fun create(
+            observer: NetworkChangeDetector.Observer,
+            appContext: Context,
+          ): NetworkChangeDetector = ScopedNetworkChangeDetector(observer, appContext, scoped)
+        },
+      )
+    }
     PeerConnectionFactory.initialize(
       PeerConnectionFactory.InitializationOptions.builder(context).createInitializationOptions(),
     )
