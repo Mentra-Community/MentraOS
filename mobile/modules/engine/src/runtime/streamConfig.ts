@@ -12,11 +12,15 @@ export const normalizeStreamVideoConfig = (value: unknown): StreamVideoConfig | 
   const width = finiteNumber(value.width)
   const height = finiteNumber(value.height)
   const bitrate = finiteNumber(value.bitrate)
+  const minBitrateBps = finiteNumber(value.minBitrateBps)
+  const initialBitrateBps = finiteNumber(value.initialBitrateBps)
   const frameRate = finiteNumber(value.frameRate)
   const fps = frameRate ?? finiteNumber(value.fps)
   if (width !== undefined) config.width = width
   if (height !== undefined) config.height = height
   if (bitrate !== undefined) config.bitrate = bitrate
+  if (minBitrateBps !== undefined) config.minBitrateBps = Math.max(0, Math.trunc(minBitrateBps))
+  if (initialBitrateBps !== undefined) config.initialBitrateBps = Math.max(0, Math.trunc(initialBitrateBps))
   if (fps !== undefined) config.fps = fps
   return Object.keys(config).length > 0 ? config : undefined
 }

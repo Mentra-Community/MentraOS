@@ -109,6 +109,8 @@ let syncGlassesPresentationState: (status: {state: string}) => void
 
 describe("MantleManager", () => {
   beforeAll(async () => {
+    // Alerts surface translated copy (e.g. the Wi-Fi-needs-glasses blocker), so
+    // initialize i18n before init(); otherwise translate() returns raw keys.
     await initI18n()
     routerPushSpy = jest.spyOn(router, "push").mockImplementation(() => {})
     jest.useFakeTimers()

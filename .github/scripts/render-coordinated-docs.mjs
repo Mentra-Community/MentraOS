@@ -5,21 +5,20 @@ import {pathToFileURL} from "node:url"
 
 const RELEASE_IDENTITY_PATTERN = /^\d+\.\d+\.\d+(?:-(?:dev|beta)\.[1-9]\d*)?$/
 
-function renderUrlVariables(directory, variables) {
+function renderVariables(directory, variables) {
   for (const entry of readdirSync(directory, {withFileTypes: true})) {
     const entryPath = path.join(directory, entry.name)
     if (entry.isDirectory()) {
-      renderUrlVariables(entryPath, variables)
+      renderVariables(entryPath, variables)
       continue
     }
     if (!entry.isFile() || !entry.name.endsWith(".mdx")) continue
 
     const source = readFileSync(entryPath, "utf8")
     const rendered = Object.entries(variables)
-      .filter(([name]) => name.endsWith("-url"))
       .reduce((content, [name, value]) => content.replaceAll(`{{${name}}}`, value), source)
-    if (/\{\{[A-Za-z0-9_-]+-url\}\}/.test(rendered)) {
-      throw new Error(`Unresolved URL variable in ${entryPath}`)
+    if (/\{\{[A-Za-z0-9_-]+\}\}/.test(rendered)) {
+      throw new Error(`Unresolved documentation variable in ${entryPath}`)
     }
     if (rendered !== source) writeFileSync(entryPath, rendered)
   }
@@ -139,7 +138,7 @@ export function renderCoordinatedDocs({
     )
   }
   writeFileSync(configPath, `${JSON.stringify(config, null, 2)}\n`)
-  renderUrlVariables(output, config.variables)
+  renderVariables(output, config.variables)
 
   return {releaseIdentity: releasePlan.releaseIdentity, outputDir: output}
 }

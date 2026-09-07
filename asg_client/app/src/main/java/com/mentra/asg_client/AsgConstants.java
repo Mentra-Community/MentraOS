@@ -1,6 +1,15 @@
 package com.mentra.asg_client;
 
 public class AsgConstants {
+    /** A charger never permits camera use at or below this known battery percentage. */
+    public static final int CAMERA_CHARGING_BATTERY_FLOOR = 3;
+
+    /** Expire the low-battery exception if fresh BES charger replies stop arriving. */
+    public static final long CAMERA_ACTIVE_CHARGE_MAX_AGE_MS = 30_000L;
+
+    /** Refresh charger evidence before expiry, without blocking camera or UART threads. */
+    public static final long CAMERA_BATTERY_REFRESH_MS = 5_000L;
+
     /** Mentra Live hotspot idle timeout after the last local HTTP activity. */
     public static final long HOTSPOT_INACTIVITY_TIMEOUT_MS = 120_000L;
 

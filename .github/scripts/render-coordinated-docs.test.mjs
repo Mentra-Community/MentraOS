@@ -104,8 +104,8 @@ test("renders exact coordinated release variables without changing source", (con
   assert.equal(
     readFileSync(path.join(output, "page.mdx"), "utf8"),
     [
-      "Release {{release-version}}",
-      `[{{example-app-download-label}}](${starterKitResult.artifacts[0].url})`,
+      "Release 3.1.0-beta.57",
+      `[Download the React Native example APK for SDK 3.1.0-beta.57](${starterKitResult.artifacts[0].url})`,
       `[iPhone](${exampleTestflightResult.distribution.installUrl})`,
       "[Artifacts](https://github.com/Mentra/MentraOS/releases/tag/mentra-builds-v3.1.0)",
     ].join("\n"),
@@ -146,12 +146,12 @@ test("source-only and stable docs use honest version-neutral example links", (co
   assert.deepEqual(rendered.variables, variables)
   assert.match(
     readFileSync(path.join(output, "software-update.mdx"), "utf8"),
-    /\[\{\{example-app-download-label\}\}\]\(https:\/\/github\.com\/Mentra-Community\/Mentra-Bluetooth-SDK-Starter-Kit\/releases\)/,
+    /\[Browse React Native example APK releases\]\(https:\/\/github\.com\/Mentra-Community\/Mentra-Bluetooth-SDK-Starter-Kit\/releases\)/,
   )
   assert.equal(readFileSync(path.join(source, "docs.json"), "utf8"), sourceConfig)
 })
 
-test("rejects unresolved URL variables", (context) => {
+test("rejects unresolved documentation variables", (context) => {
   const {root, source, output} = fixture()
   context.after(() => rmSync(root, {recursive: true, force: true}))
   writeFileSync(path.join(source, "page.mdx"), "[Unknown]({{unknown-url}})")
@@ -168,7 +168,7 @@ test("rejects unresolved URL variables", (context) => {
         },
         repository: "Mentra/MentraOS",
       }),
-    /Unresolved URL variable/,
+    /Unresolved documentation variable/,
   )
 })
 

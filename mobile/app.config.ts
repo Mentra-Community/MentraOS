@@ -1,5 +1,6 @@
 import "tsx/cjs"
 import {ExpoConfig, ConfigContext} from "@expo/config"
+import {VARIANT_RE, resolveAndroidPackageName} from "./scripts/android-package-name.cjs"
 import {getBuildNumber} from "./scripts/build-number.mjs"
 
 const familyBaseVersion = require("../package.json").version as string
@@ -47,18 +48,15 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
   // a parallel-installable build with package com.mentra.mentra.stable and app
   // label "stable". Leave unset for the normal Mentra build.
   const variantName = process.env.MENTRAOS_BUILD_NAME?.trim() || null
-  const isValidVariant = variantName && /^[a-zA-Z][a-zA-Z0-9_ ]*$/.test(variantName)
+  const isValidVariant = Boolean(variantName && VARIANT_RE.test(variantName))
   if (variantName && !isValidVariant) {
     throw new Error(
       `MENTRAOS_BUILD_NAME="${variantName}" is invalid. Must start with a letter and contain only letters, digits, spaces, or underscores.`,
     )
   }
   const appName = isValidVariant ? variantName : variant.appName
-  const baseId = variant.packageName
-  // replace non-alphanumeric characters with underscores:
-  const normalizedVariantId = variantName?.toLowerCase().replace(/[^a-zA-Z0-9_]/g, "")
-  const androidPackage = isValidVariant ? `${baseId}.${normalizedVariantId}` : baseId
-  const iosBundleId = isValidVariant ? `${baseId}.${normalizedVariantId}` : baseId
+  const androidPackage = resolveAndroidPackageName()
+  const iosBundleId = androidPackage
 
   // Mapbox runtime token (pk.…) — boots the Mapbox Navigation SDK v3 on BOTH
   // platforms now (iOS migrated off Google Nav to match Android). Injected as:
@@ -250,25 +248,10 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
     plugins: [
       // our custom plugins:
       "./plugins/remove-ipad-orientations.js",
-      // crust's own config plugin carries its Android build contract (Mapbox
-      // downloads repo, protobuf-javalite exclusion, core-library desugaring).
+      // Crust owns the Android dependencies and iOS Mapbox SPM/build-order setup.
       "@mentra/crust",
       "@mentra/acs-meeting",
       "./plugins/android.ts",
-      // Mapbox Navigation SDK v3 for iOS — added as a Swift Package (SPM is the
-      // ONLY supported v3 install path; CocoaPods can't resolve it). The
-      // mapbox-navigation-ios package transitively brings MapboxMaps,
-      // MapboxCommon, MapboxCoreMaps, and Turf, so SPM is the SOLE Mapbox
-      // provider. We intentionally do NOT use @rnmapbox/maps — its CocoaPods
-      // copies of those same frameworks collided with SPM's at the build-graph
-      // level ("Multiple commands produce …MapboxCommon.framework"). The runtime
-      // pk. token is injected into Info.plist as MBXAccessToken (above); the
-      // secret Downloads:Read token is read from ~/.netrc at build time.
-      "./plugins/mapbox-nav-ios.ts",
-      // Crust is a CocoaPods target; SPM products linked to the app project
-      // aren't visible to it. This links the Mapbox products into the Crust
-      // pod target (via Podfile post_install) so its Swift can import them.
-      "./plugins/mapbox-nav-crust-link.ts",
       // Xcode 26 rejects pod resource-bundle targets still pinned to iOS 11.
       "./plugins/ios-pod-min-deployment-target.ts",
       [

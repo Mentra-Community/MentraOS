@@ -1,7 +1,7 @@
 import fs from "fs"
 import path from "path"
 
-import {ConfigPlugin, withDangerousMod} from "@expo/config-plugins"
+import {ConfigPlugin, withDangerousMod} from "expo/config-plugins"
 
 /**
  * Expo Config Plugin — make the Mapbox Navigation SPM modules importable from
@@ -10,7 +10,7 @@ import {ConfigPlugin, withDangerousMod} from "@expo/config-plugins"
  *
  * The problem: `Crust` is a CocoaPods static-library target (in Pods.xcodeproj),
  * and the Mapbox SPM products (MapboxNavigationCore / MapboxDirections /
- * MapboxMaps) are added to the APP target in Mentra.xcodeproj (mapbox-nav-ios.ts).
+ * MapboxMaps) are added to the APP target in the app project (withMapboxNavIos.ts).
  * Crust's Swift needs to `import MapboxNavigationCore` etc.
  *
  * IMPORTANT — why we do NOT add package_product_dependencies to Crust:
@@ -67,7 +67,7 @@ const MARKER_END = "# @generated end mapbox-nav-crust-link"
 const PRODUCTS = ["MapboxNavigationCore", "MapboxDirections", "MapboxMaps"]
 const CRUST_TARGET = "Crust"
 const HOST_TARGET = "MapboxNavOrder"
-// Must match the repo + version pinned in plugins/mapbox-nav-ios.ts so the host
+// Must match the repo + version pinned in plugin/src/withMapboxNavIos.ts so the host
 // target resolves the SAME package the app target uses (one Mapbox provider).
 const NAV_REPO = "https://github.com/mapbox/mapbox-navigation-ios.git"
 const NAV_MIN_VERSION = "3.0.0"
@@ -75,10 +75,10 @@ const NAV_MIN_VERSION = "3.0.0"
 function crustLinkRuby(): string {
   const rubyList = PRODUCTS.map((p) => `'${p}'`).join(", ")
   return [
-    `    ${MARKER_BEGIN} (DO NOT MODIFY — plugins/mapbox-nav-crust-link.ts)`,
+    `    ${MARKER_BEGIN} (DO NOT MODIFY — plugin/src/withMapboxNavCrustLink.ts)`,
     `    # Guarantee the Mapbox SPM swiftmodules are built BEFORE Crust compiles,`,
     `    # without linking them into libCrust.a (which would duplicate-symbol against`,
-    `    # the app target's own copy). See plugins/mapbox-nav-crust-link.ts header.`,
+    `    # the app target's own copy). See plugin/src/withMapboxNavCrustLink.ts header.`,
     `    __mb_products  = [${rubyList}]`,
     `    __mb_host_name = '${HOST_TARGET}'`,
     `    __mb_repo      = '${NAV_REPO}'`,
