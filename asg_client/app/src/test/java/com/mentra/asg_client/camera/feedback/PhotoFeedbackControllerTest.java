@@ -25,6 +25,8 @@ import org.robolectric.annotation.Config;
 
 import java.util.ArrayDeque;
 import java.util.Deque;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
 
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 33)
@@ -141,6 +143,45 @@ public class PhotoFeedbackControllerTest {
 
         queued.remove().run();
         verify(hardwareManager)
+                .playAudioAssetOverlayTracked(
+                        AudioAssets.CAMERA_SNAP, AsgConstants.CAMERA_SNAP_PLAYBACK_VOLUME);
+    }
+
+    @Test
+    public void warmCaptureQueuedBehindInFlightShot_defersSnapToExposure() {
+        // Warm but not ready: enqueuePhotoRequest() queues this behind the running capture, so an
+        // immediate shutter would sound well before the frame it belongs to.
+        PhotoFeedbackController.Token token = controller.start("warm-queued", true, false);
+
+        verify(hardwareManager, never())
+                .playAudioAssetOverlayTracked(
+                        AudioAssets.CAMERA_SNAP, AsgConstants.CAMERA_SNAP_PLAYBACK_VOLUME);
+        // Still warm, so no hold-still cue either.
+        verify(hardwareManager, never())
+                .playAudioAssetOverlayTracked(
+                        AudioAssets.CAMERA_PREP_CLICK, AsgConstants.CAMERA_PREP_CLICK_PLAYBACK_VOLUME);
+
+        controller.playSnap(token, "JPEG ready");
+        verify(hardwareManager)
+                .playAudioAssetOverlayTracked(
+                        AudioAssets.CAMERA_SNAP, AsgConstants.CAMERA_SNAP_PLAYBACK_VOLUME);
+    }
+
+    @Test
+    public void warmCaptureAfterCleanup_doesNotThrowOnTheCallerThread() {
+        // cleanup() shuts the audio executor down. start() runs inline on the UART reader thread,
+        // which has no catch-all, so a RejectedExecutionException here would kill the serial
+        // reader and every MCU event behind it.
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        PhotoFeedbackController controllerWithRealExecutor =
+                new PhotoFeedbackController(hardwareManager, handler, clock, executor);
+        controllerWithRealExecutor.cleanup();
+        assertThat(executor.isShutdown()).isTrue();
+
+        PhotoFeedbackController.Token token = controllerWithRealExecutor.start("warm-raced", true);
+
+        assertThat(token).isNotNull();
+        verify(hardwareManager, never())
                 .playAudioAssetOverlayTracked(
                         AudioAssets.CAMERA_SNAP, AsgConstants.CAMERA_SNAP_PLAYBACK_VOLUME);
     }

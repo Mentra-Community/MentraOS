@@ -881,7 +881,10 @@ public class MediaCaptureService {
             @Nullable PhotoCaptureSettings captureSettings) {
         boolean cameraWarm =
                 CameraNeoService.isCameraWarm(size, isFromSdk, exposureTimeNs, captureSettings);
-        return photoFeedbackController.start(requestId, cameraWarm);
+        // Warm says "no cold ISP start, so no hold-still cue". Ready says "this capture starts now
+        // rather than queueing", which is the stricter fact the request-time shutter needs.
+        boolean shutterNow = cameraWarm && CameraNeoService.isCameraReadyForImmediateCapture();
+        return photoFeedbackController.start(requestId, cameraWarm, shutterNow);
     }
 
     /** Flash privacy LED synchronized with shutter sound for photo capture */

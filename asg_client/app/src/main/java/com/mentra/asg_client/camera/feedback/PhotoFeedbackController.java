@@ -17,6 +17,7 @@ import java.util.Set;
 import java.util.concurrent.Executor;
 import java.util.concurrent.ExecutorService;
 import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 
 /**
  * Owns the request-scoped camera prep and snap audio state machine.
@@ -106,9 +107,28 @@ public final class PhotoFeedbackController {
         mAudioExecutor = audioExecutor;
     }
 
-    /** Starts request-time feedback and returns the token owed an exposure-time snap. */
+    /**
+     * Test-only shorthand that treats every warm request as ready to fire the shutter now.
+     * Production callers must use {@link #start(String, boolean, boolean)} so a warm request that
+     * queues behind an in-flight capture does not get an immediate snap.
+     */
     @Nullable
-    public Token start(String requestId, boolean cameraWarm) {
+    Token start(String requestId, boolean cameraWarm) {
+        return start(requestId, cameraWarm, cameraWarm);
+    }
+
+    /**
+     * Starts request-time feedback and returns the token owed an exposure-time snap.
+     *
+     * @param cameraWarm the capture will reuse the open HAL session, so no hold-still prep cue is
+     *     owed. See {@code CameraNeoService#isCameraWarm}.
+     * @param shutterNow the capture will also start immediately rather than queue behind an
+     *     in-flight one, so the shutter can be played at request time. Warm but not ready still
+     *     skips the prep cue and takes its snap from the exposure callback, which is where a
+     *     queued capture's shutter actually belongs.
+     */
+    @Nullable
+    public Token start(String requestId, boolean cameraWarm, boolean shutterNow) {
         if (mHardwareManager == null) {
             Log.w(TAG, "hardwareManager is null, cannot play camera feedback");
             return null;
@@ -126,6 +146,15 @@ public final class PhotoFeedbackController {
             mHandler.postDelayed(
                     feedbackToken.mSafetyTimeoutRunnable, FEEDBACK_SAFETY_TIMEOUT_MS);
 
+            if (cameraWarm && !shutterNow) {
+                // Warm session, but a capture is already in flight, so enqueuePhotoRequest() will
+                // queue this one behind it. Firing the shutter now would sound the snap well
+                // before the frame it belongs to. Skip the prep cue as usual and let
+                // onExposureStarted / onPhotoFrameAvailable place the snap.
+                Log.d(TAG, "Warm capture queued behind an in-flight shot — snap waits for exposure");
+                return feedbackToken;
+            }
+
             if (cameraWarm) {
                 // Device testing measured warm capture at <20ms. Immediate shutter feedback
                 // feels more responsive than waiting for the exposure callback.
@@ -138,8 +167,19 @@ public final class PhotoFeedbackController {
                 // serial reader and push back the enqueuePhotoRequest() call that follows.
                 // A capture that fails before this runs marks the token terminal, so playSnap
                 // correctly stays silent.
-                mAudioExecutor.execute(
-                        () -> playSnap(feedbackToken, "warm camera — immediate button feedback"));
+                //
+                // execute() throws RejectedExecutionException once cleanup() has shut the
+                // executor down. start() is called inline on the UART reader thread, which has
+                // no catch-all above it (MediaCaptureService.takePhotoLocally does not guard
+                // this call), so an escaping unchecked exception there would take down the
+                // serial reader and with it every subsequent MCU event. Losing the shutter
+                // sound on a capture that raced service teardown is the cheaper failure.
+                try {
+                    mAudioExecutor.execute(
+                            () -> playSnap(feedbackToken, "warm camera — immediate button feedback"));
+                } catch (RejectedExecutionException e) {
+                    Log.w(TAG, "Audio executor is shut down; skipping warm shutter feedback", e);
+                }
                 return feedbackToken;
             }
 
