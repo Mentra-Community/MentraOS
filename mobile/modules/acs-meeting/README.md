@@ -4,6 +4,14 @@ Phone-native Azure Communication Services client that puts a MentraOS wearer int
 Microsoft Teams meeting as a guest. The glasses provide the camera and the microphone;
 the phone does all the WebRTC and ACS work.
 
+## Host setup
+
+Add `"@mentra/acs-meeting"` to the host's Expo `plugins` list, including when
+this module is installed through `@mentra/engine`, then run Expo prebuild for
+the target platform. The plugin enables Android core library desugaring and
+builds `AzureCommunicationCommon` as the framework required by ACS on iOS.
+These requirements apply even when the host does not use Crust or Mapbox.
+
 The phone is a **relay, not a capture device**. It subscribes to whatever the glasses
 already published to Cloudflare, decodes it, and re-publishes it into ACS. No frame
 crosses the JavaScript bridge. Production never generates pixels on the phone.
@@ -380,6 +388,18 @@ rollback; it takes effect on the next join.
 
 `scripts/acs-ladder.ts` in the Mentra-Call repo parses these lines and prints pass/fail
 over a trailing 10-second window, including the `recv`-vs-`dec` attribution.
+
+## iOS host setup
+
+Add `"@mentra/acs-meeting"` to the host's Expo `plugins` list, then run
+`expo prebuild --platform ios` and `pod install`. The Mentra App and example
+OEM host already include it.
+
+The plugin builds only `AzureCommunicationCommon` as a dynamic framework with
+`BUILD_LIBRARY_FOR_DISTRIBUTION=YES`. Calling's binary requires that framework at
+runtime and imports its generated Swift header and stable module interface at
+build time. CocoaPods' default static-library layout cannot satisfy this contract.
+The host's other pods retain their configured linkage.
 
 ## Tests
 

@@ -24,7 +24,7 @@ Pod::Spec.new do |s|
   # CocoaPods dependency — Mapbox Nav v3 dropped reliable CocoaPods support, so
   # `pod install` cannot resolve 'MapboxNavigationCore' ("Unable to find a
   # specification"). The SPM package is wired into the Xcode project by
-  # mobile/plugins/mapbox-nav-ios.ts at prebuild, and its MapboxMaps dependency
+  # @mentra/crust/plugin/src/withMapboxNavIos.ts at prebuild, and its MapboxMaps dependency
   # + Downloads-token auth come from the @rnmapbox/maps config plugin. So there
   # is intentionally NO `s.dependency 'MapboxNavigationCore'` here.
 
@@ -34,7 +34,7 @@ Pod::Spec.new do |s|
   # Swift/Objective-C compatibility + Mapbox SPM module visibility.
   #
   # MapboxNavigationCore / MapboxMaps / MapboxDirections are linked into the
-  # Crust target as Swift Package products (see plugins/mapbox-nav-crust-link.ts).
+  # Crust target as Swift Package products (see plugin/src/withMapboxNavCrustLink.ts).
   # MapboxDirections builds as a STATIC LIBRARY, so SPM emits it as a bare
   # `MapboxDirections.swiftmodule` in the build-products dir rather than a
   # `.framework`. For `import MapboxDirections` to resolve from this CocoaPods

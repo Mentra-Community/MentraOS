@@ -1,5 +1,6 @@
 import {spawn} from "node:child_process"
-import {mkdtemp, readFile, rm, writeFile} from "node:fs/promises"
+import {createHash} from "node:crypto"
+import {mkdtemp, readdir, readFile, rm, writeFile} from "node:fs/promises"
 import {homedir, tmpdir} from "node:os"
 import path from "node:path"
 import {fileURLToPath} from "node:url"
@@ -302,6 +303,101 @@ export async function runPodInstall({
     }
   }
   throw lastError
+}
+
+/**
+ * `pod install` is not free and not idempotent from Xcode's point of view: it
+ * re-copies every public/private header into ios/Pods/Headers, which refreshes
+ * ~12k mtimes. Xcode then treats each one as a changed input and recompiles the
+ * world — a no-change `bun ios` paid ~35s of pod install plus ~80s of pointless
+ * Swift/ObjC recompiles. So only run it when its inputs actually moved.
+ */
+const POD_STAMP_FILE = ".mentra-pod-install.stamp"
+
+async function readIfExists(target) {
+  try {
+    return await readFile(target)
+  } catch {
+    return null
+  }
+}
+
+/** First-party podspecs only — node_modules podspecs move with bun.lock. */
+export async function firstPartyPodspecs(projectRoot) {
+  const modulesDir = path.join(projectRoot, "modules")
+  let moduleEntries
+  try {
+    moduleEntries = await readdir(modulesDir, {withFileTypes: true})
+  } catch {
+    return []
+  }
+  const found = []
+  for (const entry of moduleEntries) {
+    if (!entry.isDirectory()) continue
+    const iosDir = path.join(modulesDir, entry.name, "ios")
+    let files
+    try {
+      files = await readdir(iosDir)
+    } catch {
+      continue
+    }
+    for (const file of files) {
+      if (file.endsWith(".podspec")) found.push(path.join(iosDir, file))
+    }
+  }
+  return found.sort()
+}
+
+export async function computePodFingerprint({iosDir, projectRoot}) {
+  const inputs = [
+    path.join(iosDir, "Podfile"),
+    path.join(iosDir, "Podfile.lock"),
+    path.join(projectRoot, "package.json"),
+    path.join(projectRoot, "bun.lock"),
+    ...(await firstPartyPodspecs(projectRoot)),
+  ]
+  const hash = createHash("sha256")
+  for (const input of inputs) {
+    hash.update(path.relative(projectRoot, input))
+    hash.update("\0")
+    hash.update((await readIfExists(input)) ?? "<missing>")
+    hash.update("\0")
+  }
+  return hash.digest("hex")
+}
+
+/** Why pod install has to run, or null when the Pods tree is already correct. */
+export async function podInstallReason({iosDir, projectRoot}) {
+  const podsDir = path.join(iosDir, "Pods")
+  const manifest = await readIfExists(path.join(podsDir, "Manifest.lock"))
+  if (!manifest) return "ios/Pods/Manifest.lock is missing"
+  const lock = await readIfExists(path.join(iosDir, "Podfile.lock"))
+  if (!lock) return "ios/Podfile.lock is missing"
+  if (!lock.equals(manifest)) return "Podfile.lock and Pods/Manifest.lock disagree"
+  const stamp = await readIfExists(path.join(podsDir, POD_STAMP_FILE))
+  if (!stamp) return "no pod install stamp from a previous run"
+  const fingerprint = await computePodFingerprint({iosDir, projectRoot})
+  if (`${stamp}`.trim() !== fingerprint) return "Podfile, first-party podspec, or dependency change"
+  return null
+}
+
+export async function runPodInstallIfNeeded({
+  cwd = "ios",
+  projectRoot = process.cwd(),
+  force = false,
+  ...podInstallOptions
+} = {}) {
+  const iosDir = path.resolve(projectRoot, cwd)
+  const reason = force ? "MENTRA_POD_INSTALL=force" : await podInstallReason({iosDir, projectRoot})
+  if (!reason) {
+    console.log("CocoaPods already in sync — skipping pod install (saves ~2 min of needless recompiling).")
+    console.log("Force it with MENTRA_POD_INSTALL=force.")
+    return {skipped: true}
+  }
+  console.log(`Running pod install: ${reason}.`)
+  await runPodInstall({cwd, ...podInstallOptions})
+  await writeFile(path.join(iosDir, "Pods", POD_STAMP_FILE), `${await computePodFingerprint({iosDir, projectRoot})}\n`)
+  return {skipped: false, reason}
 }
 
 const isDirectRun = process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)

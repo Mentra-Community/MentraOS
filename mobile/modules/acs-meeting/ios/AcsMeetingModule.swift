@@ -100,7 +100,7 @@ final class QueuePolicyScheduler: PolicyScheduler {
   }
 }
 
-final class AcsMeetingSession {
+final class AcsMeetingSession: NSObject {
   private static let glassesRequiresUnmutedTransport = true
   private let onState: ([String: Any]) -> Void
   private let onIncomingPcm: (String, Int, Int) -> Void
@@ -119,7 +119,6 @@ final class AcsMeetingSession {
   private var frameSender = AcsFrameSender()
   private var pcmBridge: PcmBridge?
   private var audioOut: RawOutgoingAudioStream?
-  private var audioIn: RawIncomingAudioStream?
   private var localOut: LocalOutgoingAudioStream?
   private let phoneMic = PhoneMicCapturer()
   private var outgoingReady = false
@@ -179,7 +178,7 @@ final class AcsMeetingSession {
         self.callClient = client
         let options = CallAgentOptions()
         options.displayName = displayName ?? "Mentra Call"
-        let agent = try AcsWait.value { completion in
+        let agent = try CallbackOperation<CallAgent>().wait(onLateSuccess: { $0.dispose() }) { completion in
           client.createCallAgent(userCredential: credential, options: options, completionHandler: completion)
         }
         self.callAgent = agent
@@ -194,19 +193,22 @@ final class AcsMeetingSession {
         let videoStream = VirtualOutgoingVideoStream(videoStreamOptions: videoOptions)
         self.frameSender.attach(videoStream)
 
-        let outProps = RawOutgoingAudioStreamProperties()
-        outProps.sampleRate = .hz48000
-        outProps.channelMode = .mono
-        outProps.format = .pcm16Bit
-        outProps.bufferDuration = .ms20
+        let outAudioFormat = RawOutgoingAudioStreamProperties()
+        outAudioFormat.sampleRate = .hz48000
+        outAudioFormat.channelMode = .mono
+        outAudioFormat.format = .pcm16Bit
+
         let outAudioOptions = RawOutgoingAudioStreamOptions()
-        outAudioOptions.properties = outProps
+        outAudioFormat.bufferDuration = .ms20
+        outAudioOptions.properties = outAudioFormat
         let outgoing = RawOutgoingAudioStream(options: outAudioOptions)
-        outgoing.events.onStateChanged = { [weak self] _ in
-          guard let self else { return }
-          self.outgoingReady = outgoing.state == .started
-          NSLog("ACS-SPIKE iOS raw outgoing audio state=\(outgoing.state)")
-          self.applyAudioPolicy("virtual-stream-state")
+        outgoing.events.onStateChanged = { [weak self, weak outgoing] _ in
+          guard let self, let outgoing else { return }
+          self.queue.async {
+            guard self.audioOut === outgoing else { return }
+            self.outgoingReady = outgoing.state == .started
+            self.applyAudioPolicyOnQueue("virtual-stream-state")
+          }
         }
         self.audioOut = outgoing
 
@@ -222,18 +224,19 @@ final class AcsMeetingSession {
         let local: LocalOutgoingAudioStream? = plan.armVirtual ? nil : LocalOutgoingAudioStream()
         self.localOut = local
 
-        let inProps = RawIncomingAudioStreamProperties()
-        inProps.sampleRate = .hz16000
-        inProps.channelMode = .mono
-        inProps.format = .pcm16Bit
+        let inAudioFormat = RawIncomingAudioStreamProperties()
+        inAudioFormat.sampleRate = .hz16000
+        inAudioFormat.channelMode = .mono
+        inAudioFormat.format = .pcm16Bit
         let inAudioOptions = RawIncomingAudioStreamOptions()
-        inAudioOptions.properties = inProps
+        inAudioOptions.properties = inAudioFormat
         let incoming = RawIncomingAudioStream(options: inAudioOptions)
         incoming.events.onMixedAudioBufferReceived = { [weak self] args in
-          guard let self, let data = pcm16Data(from: args.audioBuffer.buffer) else { return }
-          self.onIncomingPcm(data.base64EncodedString(), 16000, 1)
+          guard let pcm = args.audioBuffer.buffer as? AVAudioPCMBuffer,
+                let samples = pcm.int16ChannelData else { return }
+          let data = Data(bytes: samples[0], count: Int(pcm.frameLength) * Int(pcm.format.channelCount) * 2)
+          self?.onIncomingPcm(data.base64EncodedString(), Int(pcm.format.sampleRate), Int(pcm.format.channelCount))
         }
-        self.audioIn = incoming
 
         let joinOptions = JoinCallOptions()
         let outgoingVideo = OutgoingVideoOptions()
@@ -251,25 +254,13 @@ final class AcsMeetingSession {
         joinOptions.incomingAudioOptions = incomingAudio
 
         let locator = TeamsMeetingLinkLocator(meetingLink: meetingUrl)
-        let call = try AcsWait.value { completion in
+        let call = try CallbackOperation<Call>().wait(onLateSuccess: { lateCall in
+          lateCall.hangUp(options: nil) { _ in }
+        }) { completion in
           agent.join(with: locator, joinCallOptions: joinOptions, completionHandler: completion)
         }
         self.call = call
-        call.events.onStateChanged = { [weak self] _ in
-          guard let self, self.lastError == nil else { return }
-          switch call.state {
-          case .connecting: self.emit("connecting")
-          case .inLobby: self.emit("lobby")
-          case .connected:
-            self.emit("connected")
-            self.applyAudioPolicy("call-connected")
-          case .disconnecting, .disconnected: self.emit("disconnected")
-          default: break
-          }
-        }
-        call.events.onOutgoingAudioStateChanged = { [weak self] _ in
-          self?.applyAudioPolicy("outgoing-audio-state")
-        }
+        call.delegate = self
 
         let bridge = PcmBridge(dumpWav: dumpWav)
         self.pcmBridge = bridge
@@ -398,13 +389,16 @@ final class AcsMeetingSession {
   private func feedOutgoingPcm(_ pcm: Data, sampleRate: Int, channels: Int) {
     guard !muted, outgoingReady, let stream = audioOut else { return }
     for frame in pcmBridge?.ingest(pcm16Le: pcm, sampleRate: sampleRate, channels: channels) ?? [] {
-      guard let audio = pcm16Buffer(from: frame, sampleRate: 48_000, channels: 1) else { continue }
+      guard let format = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: 48000, channels: 1, interleaved: true),
+            let pcm = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(frame.count / 2)),
+            let samples = pcm.int16ChannelData else { continue }
+      pcm.frameLength = pcm.frameCapacity
+      frame.copyBytes(to: UnsafeMutableRawBufferPointer(start: samples[0], count: frame.count))
       let buffer = RawAudioBuffer()
-      buffer.buffer = audio
+      buffer.buffer = pcm
       stream.send(buffer: buffer) { error in
-        if let error {
-          NSLog("ACS-SPIKE sendRawAudioBuffer failed: \(error)")
-        }
+        buffer.dispose()
+        if let error { NSLog("ACS-SPIKE sendRawAudioBuffer failed: \(error)") }
       }
     }
   }
@@ -427,13 +421,14 @@ final class AcsMeetingSession {
     mediaSource = .idle
     whep?.stop()
     frameSender.detach()
-    if let call {
-      call.events.removeAll()
-      if case .failure(let error) = AcsWait.finish({ completion in
-        call.hangUp(options: nil, completionHandler: completion)
-      }) {
-        NSLog("ACS-SPIKE leave hangUp failed: \(error)")
+    do {
+      if let call {
+        try CallbackOperation<Void>().wait { completion in
+          call.hangUp(options: nil) { completion((), $0) }
+        }
       }
+    } catch {
+      NSLog("ACS-SPIKE leave hangUp failed: \(error)")
     }
     // Dispose independently of hang-up: a failed hang-up must not leak the ACS
     // agent, and each join/leave cycle must release the previous agent.
@@ -442,10 +437,7 @@ final class AcsMeetingSession {
     callClient = nil
     call = nil
     whep = nil
-    audioOut?.events.removeAll()
-    audioIn?.events.removeAll()
     audioOut = nil
-    audioIn = nil
     localOut = nil
     pcmBridge = nil
     outgoingReady = false
@@ -500,8 +492,13 @@ final class SessionAudioController: AudioStreamController {
     switch CallGuard.require(session?.currentCall()) {
     case .failure(let error): return .failure(error)
     case .success(let call):
-      return AcsWait.finish { completion in
-        call.muteOutgoingAudio(completionHandler: completion)
+      do {
+        try CallbackOperation<Void>().wait { completion in
+          call.muteOutgoingAudio { completion((), $0) }
+        }
+        return .success(())
+      } catch {
+        return .failure(error)
       }
     }
   }
@@ -510,8 +507,13 @@ final class SessionAudioController: AudioStreamController {
     switch CallGuard.require(session?.currentCall()) {
     case .failure(let error): return .failure(error)
     case .success(let call):
-      return AcsWait.finish { completion in
-        call.unmuteOutgoingAudio(completionHandler: completion)
+      do {
+        try CallbackOperation<Void>().wait { completion in
+          call.unmuteOutgoingAudio { completion((), $0) }
+        }
+        return .success(())
+      } catch {
+        return .failure(error)
       }
     }
   }
@@ -520,10 +522,37 @@ final class SessionAudioController: AudioStreamController {
     switch CallGuard.require(session?.currentCall()) {
     case .failure(let error): return .failure(error)
     case .success(let call):
-      return AcsWait.finish { completion in
-        call.stopAudio(stream: call.activeOutgoingAudioStream, completionHandler: completion)
+      let stream = call.activeOutgoingAudioStream
+      do {
+        try CallbackOperation<Void>().wait { completion in
+          call.stopAudio(stream: stream) { completion((), $0) }
+        }
+        return .success(())
+      } catch {
+        return .failure(error)
       }
     }
+  }
+}
+
+extension AcsMeetingSession: CallDelegate {
+  func call(_ call: Call, didChangeState args: PropertyChangedEventArgs) {
+    // A failed join has already reported a terminal error and torn the call
+    // down; ignore any late ACS state callback so it cannot overwrite error.
+    if lastError != nil { return }
+    switch call.state {
+    case .connecting: emit("connecting")
+    case .inLobby: emit("lobby")
+    case .connected:
+      emit("connected")
+      applyAudioPolicy("call-connected")
+    case .disconnecting, .disconnected: emit("disconnected")
+    default: break
+    }
+  }
+
+  func call(_: Call, didUpdateOutgoingAudioState _: PropertyChangedEventArgs) {
+    applyAudioPolicy("outgoing-audio-state")
   }
 }
 
@@ -535,71 +564,6 @@ struct AcsOutgoingVideo {
 
   static let hd = AcsOutgoingVideo(width: 1280, height: 720, fps: 15, maxBitrateBps: 2_500_000)
   static let allowedSizes: Set<String> = ["1280x720", "960x540"]
-}
-
-private enum AcsWait {
-  static func value<T>(_ body: (@escaping (T?, Error?) -> Void) -> Void) throws -> T {
-    let lock = DispatchSemaphore(value: 0)
-    var value: T?
-    var error: Error?
-    body { next, nextError in
-      value = next
-      error = nextError
-      lock.signal()
-    }
-    lock.wait()
-    if let error { throw error }
-    guard let value else {
-      throw NSError(domain: "MentraAcsMeeting", code: 2, userInfo: [NSLocalizedDescriptionKey: "ACS returned no value"])
-    }
-    return value
-  }
-
-  static func finish(_ body: (@escaping (Error?) -> Void) -> Void) -> Result<Void, Error> {
-    let lock = DispatchSemaphore(value: 0)
-    var error: Error?
-    body { next in
-      error = next
-      lock.signal()
-    }
-    lock.wait()
-    if let error { return .failure(error) }
-    return .success(())
-  }
-}
-
-private func pcm16Buffer(from frame: Data, sampleRate: Double, channels: AVAudioChannelCount) -> AVAudioPCMBuffer? {
-  guard let format = AVAudioFormat(commonFormat: .pcmFormatInt16, sampleRate: sampleRate, channels: channels, interleaved: true) else {
-    return nil
-  }
-  let frames = AVAudioFrameCount(frame.count / (2 * Int(channels)))
-  guard frames > 0, let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: frames) else { return nil }
-  buffer.frameLength = frames
-  frame.withUnsafeBytes { raw in
-    guard let src = raw.bindMemory(to: Int16.self).baseAddress, let dest = buffer.int16ChannelData?[0] else { return }
-    dest.update(from: src, count: Int(frames) * Int(channels))
-  }
-  return buffer
-}
-
-private func pcm16Data(from buffer: AVAudioBuffer?) -> Data? {
-  guard let pcm = buffer as? AVAudioPCMBuffer else { return nil }
-  let frames = Int(pcm.frameLength)
-  let channels = Int(pcm.format.channelCount)
-  guard frames > 0, channels > 0 else { return nil }
-  if let int16 = pcm.int16ChannelData {
-    return Data(bytes: int16[0], count: frames * channels * 2)
-  }
-  guard let floats = pcm.floatChannelData else { return nil }
-  var out = [Int16](repeating: 0, count: frames * channels)
-  for channel in 0 ..< channels {
-    let src = floats[channel]
-    for frame in 0 ..< frames {
-      let clipped = max(-1.0, min(1.0, src[frame]))
-      out[frame * channels + channel] = Int16(clipped * Float(Int16.max))
-    }
-  }
-  return out.withUnsafeBytes { Data($0) }
 }
 
 private func requireString(_ options: [String: Any], _ key: String) throws -> String {

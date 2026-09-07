@@ -130,6 +130,10 @@ jobs:
           rm -rf node_modules
           bun install --no-frozen-lockfile
 
+      - name: Validate CocoaPods post-install project integrity
+        working-directory: ./mobile
+        run: bun ./scripts/check-mapbox-pods-project.ts
+
       - name: Setup environment
         working-directory: ./mobile
         # Copy the dummy .env, then overwrite the Mapbox runtime token line with

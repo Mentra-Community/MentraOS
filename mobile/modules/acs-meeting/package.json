@@ -25,6 +25,9 @@
   "publishConfig": {
     "access": "public"
   },
+  "dependencies": {
+    "@expo/config-plugins": "~55.0.10"
+  },
   "devDependencies": {
     "expo-module-scripts": "^55.0.2",
     "typescript": "~5.9.2"
@@ -35,6 +38,7 @@
     "react-native": "*"
   },
   "files": [
+    "app.plugin.js",
     "android",
     "!android/.gradle",
     "!android/build",
