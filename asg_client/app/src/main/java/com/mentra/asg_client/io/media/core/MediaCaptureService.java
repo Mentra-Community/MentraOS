@@ -881,8 +881,16 @@ public class MediaCaptureService {
             @Nullable PhotoCaptureSettings captureSettings) {
         boolean cameraWarm =
                 CameraNeoService.isCameraWarm(size, isFromSdk, exposureTimeNs, captureSettings);
-        // Warm says "no cold ISP start, so no hold-still cue". Ready says "this capture starts now
-        // rather than queueing", which is the stricter fact the request-time shutter needs.
+        // Warm says "no cold ISP start, so no hold-still cue". Ready says "this capture should
+        // start now rather than queueing", the stricter fact the request-time shutter needs.
+        //
+        // Both are predictions, not guarantees: each takes SERVICE_LOCK on its own, and the LED
+        // work below runs before enqueuePhotoRequest() takes it again, so another request can
+        // start a capture in between and leave shutterNow stale-true. Closing that would mean
+        // deciding the feedback inside the same lock acquisition the enqueue uses, which is a
+        // wider change to this boundary than the audio fix warrants. The residual case degrades
+        // to the old behaviour — a snap slightly ahead of its frame — rather than a wrong or
+        // missing sound, and the common rapid-press case it does catch is the one users hit.
         boolean shutterNow = cameraWarm && CameraNeoService.isCameraReadyForImmediateCapture();
         return photoFeedbackController.start(requestId, cameraWarm, shutterNow);
     }
