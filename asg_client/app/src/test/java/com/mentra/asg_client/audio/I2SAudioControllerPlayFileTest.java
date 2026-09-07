@@ -1,16 +1,30 @@
 package com.mentra.asg_client.audio;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.Mockito.mockConstruction;
+import static org.mockito.Mockito.mock;
+import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.Mockito.never;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.when;
 import static org.robolectric.Shadows.shadowOf;
 
 import android.app.Application;
 import android.content.Intent;
+import android.content.Context;
+import android.content.res.AssetManager;
+import android.content.res.AssetFileDescriptor;
+import android.media.MediaPlayer;
+import android.os.Looper;
 import androidx.test.core.app.ApplicationProvider;
 import com.mentra.asg_client.service.core.AsgClientService;
 import java.io.File;
+import java.io.FileDescriptor;
 import java.io.FileOutputStream;
 import java.util.ArrayList;
 import java.util.List;
+import java.time.Duration;
+import org.mockito.MockedConstruction;
 import org.junit.After;
 import org.junit.Before;
 import org.junit.Test;
@@ -91,6 +105,67 @@ public class I2SAudioControllerPlayFileTest {
         controller.stopPlayback();
         List<Boolean> afterStop = playingFlags(drainStartedServices());
         assertThat(afterStop).contains(false);
+    }
+
+    @Test
+    public void prepStop_usesSilenceAndRechecksLateCallbackBeforeStartingSnap() throws Exception {
+        useMockAssetSource();
+        try (MockedConstruction<MediaPlayer> players = mockConstruction(MediaPlayer.class)) {
+            long prep = controller.playOverlayAssetTracked(AudioAssets.CAMERA_PREP_CLICK, 0.1f);
+            MediaPlayer beep = players.constructed().get(0);
+            when(beep.getCurrentPosition()).thenReturn(100, 1000, 1200);
+            controller.stopOverlayPlayback(prep);
+            controller.playOverlayAssetTracked(AudioAssets.CAMERA_SNAP, 0.1f);
+            MediaPlayer snap = players.constructed().get(1);
+            verify(beep, never()).release();
+            verify(snap, never()).start();
+
+            shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(140));
+            verify(beep, never()).release();
+            verify(snap, never()).start();
+            shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(140));
+            verify(beep).release();
+            verify(snap).start();
+            controller.stopPlayback();
+        }
+    }
+
+    @Test
+    public void cancelledQueuedSnap_doesNotPlayWhenBeepFinishes() throws Exception {
+        useMockAssetSource();
+        try (MockedConstruction<MediaPlayer> players = mockConstruction(MediaPlayer.class)) {
+            long prep = controller.playOverlayAssetTracked(AudioAssets.CAMERA_PREP_CLICK, 0.1f);
+            MediaPlayer beep = players.constructed().get(0);
+            when(beep.getCurrentPosition()).thenReturn(100, 300);
+            controller.stopOverlayPlayback(prep);
+            long snapToken = controller.playOverlayAssetTracked(AudioAssets.CAMERA_SNAP, 0.1f);
+            MediaPlayer snap = players.constructed().get(1);
+            controller.stopOverlayPlayback(snapToken);
+            shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(140));
+            verify(snap, never()).start();
+            controller.stopPlayback();
+        }
+    }
+
+    @Test
+    public void prepStop_delayTargetsSafeSilentWindow() {
+        assertThat(I2SAudioController.prepStopDelayMs(100)).isEqualTo(140);
+        assertThat(I2SAudioController.prepStopDelayMs(240)).isZero();
+        assertThat(I2SAudioController.prepStopDelayMs(700)).isZero();
+        assertThat(I2SAudioController.prepStopDelayMs(899)).isEqualTo(241);
+        assertThat(I2SAudioController.prepStopDelayMs(1000)).isEqualTo(140);
+    }
+
+    private void useMockAssetSource() throws Exception {
+        // Exercise handoff logic independently of Robolectric's packaged FLAC handling.
+        Context context = mock(Context.class);
+        AssetManager assets = mock(AssetManager.class);
+        AssetFileDescriptor descriptor = mock(AssetFileDescriptor.class);
+        when(context.getApplicationContext()).thenReturn(context);
+        when(context.getAssets()).thenReturn(assets);
+        when(assets.openFd(anyString())).thenReturn(descriptor);
+        when(descriptor.getFileDescriptor()).thenReturn(new FileDescriptor());
+        controller = new I2SAudioController(context);
     }
 
     private File writeToneWav() throws Exception {

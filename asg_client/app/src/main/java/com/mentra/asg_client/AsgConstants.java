@@ -90,8 +90,24 @@ public class AsgConstants {
 
     public static final long CAMERA_WARM_UP_MAX_DURATION_MS = 60_000L;
 
+    /**
+     * Shortest gap between two camera-button photos. Presses inside this window are dropped.
+     *
+     * <p>Sized off camera_snap.wav (515ms) so two shutters can never overlap: every camera sound
+     * is played by ASG through the I2S bridge to BES, and starting overlapping MediaPlayers on
+     * that path is what makes rapid button mashing garble audio. One photo per second still does
+     * not feel like waiting on a cooldown.
+     */
+    public static final long BUTTON_PHOTO_MIN_INTERVAL_MS = 1_000L;
+
     /** Cadence for the short hold-still click while a cold photo spins up the camera. */
     public static final long CAMERA_PREP_CLICK_INTERVAL_MS = 900L;
+
+    /** The 186ms prep beep plus a tail margin; only stop the sequence in its silence. */
+    public static final long CAMERA_PREP_STOP_AFTER_MS = 240L;
+
+    /** Avoid stopping near the next beep when playback-position reporting is slightly behind. */
+    public static final long CAMERA_PREP_STOP_BEFORE_MS = 800L;
 
     /** Minimum AE settling time after first convergence for a cold camera photo. */
     public static final long COLD_CAMERA_EXPOSURE_SETTLE_DELAY_MS = 475L;

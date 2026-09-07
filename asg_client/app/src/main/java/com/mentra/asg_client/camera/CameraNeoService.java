@@ -97,7 +97,7 @@ public class CameraNeoService extends LifecycleService {
 
     // Camera keep-alive settings
     private static final long CAMERA_KEEP_ALIVE_MS =
-            3000; // Keep camera open for 3 seconds after photo
+            8000; // Keep camera open for 8 seconds after photo
 
     private IHardwareManager hardwareManager;
 
@@ -513,6 +513,27 @@ public class CameraNeoService extends LifecycleService {
                     && sInstance.cameraCoordinator.hasConfiguredCamera()
                     && sInstance.photoSession.willReuseConfiguredCamera(
                             size, isFromSdk, exposureTimeNs, captureSettings);
+        }
+    }
+
+    /**
+     * Whether an enqueued capture would be dispatched immediately rather than queued behind one
+     * already in flight.
+     *
+     * <p>Deliberately separate from {@link #isCameraWarm}, whose contract is only "this capture
+     * reuses the open session" — a rapid second press is still warm by that definition even though
+     * it queues. Callers that want to act at request time (playing the shutter before any camera
+     * callback arrives) need this stricter reading instead, and it mirrors the {@code
+     * shotState() == IDLE} branch {@code enqueuePhotoRequest} uses to decide the same thing.
+     *
+     * <p>Read under {@code SERVICE_LOCK} for the same reason {@link #isCameraWarm} is: so the
+     * answer is consistent with the state the following enqueue actually observes.
+     */
+    public static boolean isCameraReadyForImmediateCapture() {
+        synchronized (SERVICE_LOCK) {
+            return sInstance != null
+                    && sInstance.cameraCoordinator.hasConfiguredCamera()
+                    && sInstance.photoSession.shotState() == AeStateMachine.ShotState.IDLE;
         }
     }
 
