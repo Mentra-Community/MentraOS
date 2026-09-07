@@ -52,14 +52,22 @@ find_or_create_app() {
   local display_name="$2"
   local object_id
   if [[ -n "$client_id" ]]; then
-    object_id="$(az ad app show --id "$client_id" --query id -o tsv)"
+    object_id="$(az ad app show --id "$client_id" --query id -o tsv)" || return
   else
-    local matches
-    matches="$(az ad app list --display-name "$display_name" --query 'length(@)' -o tsv)"
+    local apps matches escaped_display_name
+    # --display-name is a prefix search. Escape OData string literals and use
+    # one exact-name snapshot for both the count and selected object id.
+    # Leave this assignment unquoted for Bash 3.2's replacement escaping.
+    escaped_display_name=${display_name//\'/\'\'}
+    apps="$(az ad app list --filter "displayName eq '$escaped_display_name'" -o json)" || return
+    # Graph comparisons can be case-insensitive; require the literal name.
+    apps="$(jq -ce --arg name "$display_name" \
+      'if type != "array" then error("Expected an app registration array") else map(select(.displayName == $name)) end' <<<"$apps")" || return
+    matches="$(jq -r 'length' <<<"$apps")" || return
     if [[ "$matches" == "0" ]]; then
-      object_id="$(az ad app create --display-name "$display_name" --sign-in-audience AzureADMyOrg --query id -o tsv)"
+      object_id="$(az ad app create --display-name "$display_name" --sign-in-audience AzureADMyOrg --query id -o tsv)" || return
     elif [[ "$matches" == "1" ]]; then
-      object_id="$(az ad app list --display-name "$display_name" --query '[0].id' -o tsv)"
+      object_id="$(jq -er '.[0].id | select(type == "string" and length > 0)' <<<"$apps")" || return
     else
       printf 'More than one app registration is named %s; pass its client id explicitly.\n' "$display_name" >&2
       exit 1
