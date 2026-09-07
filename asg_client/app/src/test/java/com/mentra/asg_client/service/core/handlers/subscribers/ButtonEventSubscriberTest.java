@@ -1,13 +1,19 @@
 package com.mentra.asg_client.service.core.handlers.subscribers;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyBoolean;
 import static org.mockito.ArgumentMatchers.anyString;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.times;
 import static org.mockito.Mockito.when;
+import static org.robolectric.Shadows.shadowOf;
 
+import android.os.Looper;
+
+import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.audio.AudioAssets;
 import com.mentra.asg_client.io.bluetooth.interfaces.ICompanionTransport;
 import com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager;
@@ -18,6 +24,7 @@ import com.mentra.asg_client.io.peripheral.events.ButtonEvent;
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
 import com.mentra.asg_client.settings.AsgSettings;
+import java.time.Duration;
 import java.util.ArrayDeque;
 import java.util.Queue;
 import org.junit.Before;
@@ -169,5 +176,55 @@ public class ButtonEventSubscriberTest {
         shortPress();
 
         verify(captureService).takePhotoLocally(anyString(), anyBoolean(), anyBoolean());
+    }
+
+    @Test
+    public void mashedCameraButton_capturesOnceWithinTheMinimumInterval() {
+        // Every camera sound is ASG-side (MediaPlayer -> I2S -> BES), so stacking captures stacks
+        // overlapping players on that path. One press through, the rest dropped.
+        shortPress();
+        shortPress();
+        shortPress();
+        shortPress();
+
+        verify(captureService, times(1))
+                .takePhotoLocally(anyString(), anyBoolean(), anyBoolean());
+    }
+
+    @Test
+    public void cameraButton_capturesAgainOnceTheIntervalElapses() {
+        shortPress();
+        shadowOf(Looper.getMainLooper())
+                .idleFor(Duration.ofMillis(AsgConstants.BUTTON_PHOTO_MIN_INTERVAL_MS));
+
+        shortPress();
+
+        verify(captureService, times(2))
+                .takePhotoLocally(anyString(), anyBoolean(), anyBoolean());
+    }
+
+    @Test
+    public void droppedCameraPress_isStillForwardedToThePhone() {
+        // The phone/app path must stay unthrottled: only local capture is rate-limited.
+        when(bluetoothManager.isConnected()).thenReturn(true);
+
+        shortPress();
+        shortPress();
+
+        verify(captureService, times(1))
+                .takePhotoLocally(anyString(), anyBoolean(), anyBoolean());
+        verify(bluetoothManager, times(2)).sendMessage(any(byte[].class));
+    }
+
+    @Test
+    public void rateLimit_doesNotBlockStoppingAVideoRecording() {
+        when(captureService.isRecordingVideo()).thenReturn(true);
+
+        shortPress();
+        shortPress();
+
+        verify(captureService, times(2)).stopVideoRecording();
+        verify(captureService, never())
+                .takePhotoLocally(anyString(), anyBoolean(), anyBoolean());
     }
 }
