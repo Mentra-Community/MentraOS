@@ -41,16 +41,18 @@ function writeHeader(file, contents) {
 }
 
 for (const mode of ["xc", "dynamic", "static"]) {
-  test(`ACS exports the ${mode} Common header without replacing the real framework`, (t) => {
+  test(`ACS resolves the ${mode} Common header without replacing the real framework`, (t) => {
     const files = fixture(t)
     writeHeader(files[mode], `${mode} header`)
     const result = files.run()
     assert.equal(result.status, 0, result.stdout + result.stderr)
-    assert.equal(readFileSync(files.public, "utf8"), `${mode} header`)
+    assert.equal(existsSync(files.public), mode !== "xc")
     assert.equal(readFileSync(files[mode], "utf8"), `${mode} header`)
     assert.equal(existsSync(files.fake), mode === "static")
     if (mode === "static") assert.equal(readFileSync(files.fake, "utf8"), "static header")
 
+    if (mode === "xc") return
+    assert.equal(readFileSync(files.public, "utf8"), `${mode} header`)
     const originalMtime = statSync(files.public).mtimeMs
     assert.equal(files.run().status, 0)
     assert.equal(statSync(files.public).mtimeMs, originalMtime, "unchanged headers should not trigger rebuilds")
@@ -67,8 +69,18 @@ test("ACS prefers the selected XCFramework slice over stale source-build headers
   writeHeader(files.static, "old static header")
   const result = files.run()
   assert.equal(result.status, 0, result.stdout + result.stderr)
-  assert.equal(readFileSync(files.public, "utf8"), "selected platform header")
+  assert.equal(existsSync(files.public), false)
   assert.equal(existsSync(files.fake), false)
+})
+
+test("vendored Common removes a stale loose header that would split Swift credential types", (t) => {
+  const files = fixture(t)
+  writeHeader(files.xc, "modular framework header")
+  writeHeader(files.public, "old public header copy")
+  const result = files.run()
+  assert.equal(result.status, 0, result.stdout + result.stderr)
+  assert.equal(existsSync(files.public), false)
+  assert.equal(readFileSync(files.xc, "utf8"), "modular framework header")
 })
 
 test("ACS fails with searched paths when no Common header is available", (t) => {

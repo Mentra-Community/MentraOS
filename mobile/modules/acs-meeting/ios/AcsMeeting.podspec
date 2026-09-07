@@ -23,9 +23,9 @@ Pod::Spec.new do |s|
   s.pod_target_xcconfig = {
     'DEFINES_MODULE' => 'YES',
     # Calling's umbrella does #import <AzureCommunicationCommon/AzureCommunicationCommon-Swift.h>.
-    # Use the real framework for vendored XCFrameworks and source-built dynamic
-    # pods. Only the static-lib fallback needs a header-only framework. All modes
-    # expose a public header for Calling's Swift interface rebuild.
+    # Vendored Common headers must resolve inside their framework module.
+    # Source-built pods retain the public-header compatibility fallback, and
+    # only the static-lib fallback needs a header-only framework.
     'FRAMEWORK_SEARCH_PATHS' => '$(inherited) "${PODS_XCFRAMEWORKS_BUILD_DIR}/AzureCommunicationCommon" "${PODS_CONFIGURATION_BUILD_DIR}/AzureCommunicationCommon" "${PODS_CONFIGURATION_BUILD_DIR}/AcsMeeting"',
     'HEADER_SEARCH_PATHS' => '$(inherited) "${PODS_CONFIGURATION_BUILD_DIR}" "${PODS_CONFIGURATION_BUILD_DIR}/AzureCommunicationCommon"',
   }
@@ -66,7 +66,16 @@ Pod::Spec.new do |s|
         # CocoaPods' embed script prefers ${BUILT_PRODUCTS_DIR}/$(basename) and would
         # then codesign an empty header-only bundle ("bundle format unrecognized").
         rm -rf "${PODS_CONFIGURATION_BUILD_DIR}/AzureCommunicationCommon.framework"
-        copy_if_changed "$SRC" "${PODS_ROOT}/Headers/Public/AzureCommunicationCommon/AzureCommunicationCommon-Swift.h"
+        PUBLIC_HDR="${PODS_ROOT}/Headers/Public/AzureCommunicationCommon/AzureCommunicationCommon-Swift.h"
+        if [ -f "$XC_HDR" ]; then
+          # A loose copy shadows the vendored framework's modular header. Clang
+          # then imports its credential into Calling as a second Swift type,
+          # incompatible with Common.CommunicationTokenCredential. Remove copies
+          # left by earlier builds and let the framework search path resolve it.
+          rm -f "$PUBLIC_HDR"
+        else
+          copy_if_changed "$SRC" "$PUBLIC_HDR"
+        fi
         if [ ! -f "$XC_HDR" ] && [ ! -f "$FW_HDR" ]; then
           FAKE_HEADERS="${PODS_CONFIGURATION_BUILD_DIR}/AcsMeeting/AzureCommunicationCommon.framework/Headers"
           copy_if_changed "$SRC" "$FAKE_HEADERS/AzureCommunicationCommon-Swift.h"
