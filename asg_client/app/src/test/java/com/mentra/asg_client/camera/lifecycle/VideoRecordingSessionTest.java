@@ -3,6 +3,7 @@ package com.mentra.asg_client.camera.lifecycle;
 import static org.assertj.core.api.Assertions.assertThat;
 
 import android.util.Size;
+import android.media.MediaRecorder;
 
 import com.mentra.asg_client.sensors.ImuRecorder;
 import com.mentra.asg_client.settings.VideoSettings;
@@ -16,6 +17,7 @@ import org.robolectric.annotation.Config;
 
 import java.io.File;
 import java.io.IOException;
+import java.lang.reflect.Field;
 import java.util.concurrent.Executor;
 import java.util.concurrent.atomic.AtomicReference;
 
@@ -36,8 +38,12 @@ public class VideoRecordingSessionTest {
     };
 
     @Test
-    public void chargingLossDuringCameraPreparationRejectsRecorderStart() throws IOException {
+    public void chargingLossDuringCameraPreparationRejectsRecorderStart() throws Exception {
         VideoRecordingSession session = newSession();
+        MediaRecorder recorder = org.mockito.Mockito.mock(MediaRecorder.class);
+        Field recorderField = VideoRecordingSession.class.getDeclaredField("mediaRecorder");
+        recorderField.setAccessible(true);
+        recorderField.set(session, recorder);
         File captureDir = temporaryFolder.newFolder("VID_rejected");
         File output = new File(captureDir, "base.mp4");
         assertThat(output.createNewFile()).isTrue();
@@ -47,6 +53,13 @@ public class VideoRecordingSessionTest {
                 .isInstanceOf(IllegalStateException.class)
                 .hasMessage("Battery too low for video capture");
         assertThat(session.isRecording()).isFalse();
+        // Rejection must not release a surface still owned by the camera session.
+        // The service closes that session, releases the recorder, then deletes output.
+        assertThat(captureDir).exists();
+        org.mockito.Mockito.verify(recorder, org.mockito.Mockito.never()).release();
+        session.release();
+        org.mockito.Mockito.verify(recorder).release();
+        VideoRecordingSession.deleteCorruptCapture(session.currentVideoPath());
         assertThat(captureDir).doesNotExist();
     }
 

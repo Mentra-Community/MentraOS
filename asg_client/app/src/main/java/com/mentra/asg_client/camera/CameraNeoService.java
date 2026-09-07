@@ -1794,6 +1794,8 @@ public class CameraNeoService extends LifecycleService {
                                             videoSession.currentVideoId(),
                                             "Failed to start recording: " + ce.getMessage());
                                     closeCamera();
+                                    VideoRecordingSession.deleteCorruptCapture(
+                                            videoSession.currentVideoPath());
                                     conditionalStopSelf();
                                 }
                             } else {

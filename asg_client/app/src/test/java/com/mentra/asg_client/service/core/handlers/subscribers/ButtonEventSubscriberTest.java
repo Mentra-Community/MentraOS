@@ -79,6 +79,7 @@ public class ButtonEventSubscriberTest {
         for (boolean active : new boolean[] {false, true}) {
             for (int level : new int[] {-1, 0, 3, 4, 14, 15, 19}) {
                 when(stateManager.getBatteryLevel()).thenReturn(level);
+                when(hardwareManager.getBatteryLevel()).thenReturn(level);
                 when(hardwareManager.allowsLowBatteryCamera(level)).thenReturn(active);
                 clearInvocations(captureService);
                 subscriber.onMcuEvent(new ButtonEvent(ButtonEvent.Type.CAMERA_LONG_PRESS));
