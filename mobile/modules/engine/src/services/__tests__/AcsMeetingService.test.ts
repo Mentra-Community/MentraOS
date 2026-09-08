@@ -44,13 +44,10 @@ mock.module("expo-audio", () => ({
   createAudioPlayer: () => ({}),
   setAudioModeAsync: async () => {},
 }))
-mock.module("react-native", () => ({
-  AppState: {addEventListener: () => ({remove: () => {}})},
-  Platform: {OS: "android"},
-}))
-mock.module("@mentra/bluetooth-sdk/internal", () => ({
-  default: {},
-}))
+import {reactNative} from "./reactNativeTestMock"
+
+reactNative.Platform = {OS: "android"}
+import "./bluetoothSdkTestMock"
 
 const {
   default: acsMeetingService,
@@ -268,6 +265,27 @@ describe("AcsMeetingService", () => {
     expect(native.restartVideoSource).toHaveBeenCalledTimes(1)
     await acsMeetingService.leave("com.mentra.call")
     expect(network.size).toBe(0)
+  })
+
+  test("a SoftAP call does not rebuild ingest when the default route flaps onto cellular", async () => {
+    // Joining the glasses hotspot is what *causes* NetInfo to report none → cellular. Rebuilding
+    // the WHIP listener on that flap changes the ingest port after start_stream already went out,
+    // and the glasses POST hits a tombstone (HTTP 410). A real hotspot loss is onScopedNetworkLost.
+    const native = fakeNative()
+    setAcsMeetingNativeForTests(native)
+    const network = fakePhoneNetwork()
+    setAcsMeetingPhoneNetworkForTests(network)
+    await acsMeetingService.join("com.mentra.call", {
+      meetingUrl: "https://teams.microsoft.com/l/meetup-join/x",
+      token: "tok",
+      videoSource: {type: "softap", ssid: "MentraLive_ce9cf6", passphrase: "x"},
+    })
+    network.emit({type: "none", isConnected: false})
+    network.emit({type: "cellular", isConnected: true})
+    await flush()
+    expect(native.restartVideoSource).not.toHaveBeenCalled()
+    expect(native.updateVideoSource).not.toHaveBeenCalled()
+    await acsMeetingService.leave("com.mentra.call")
   })
 
   test("a native without restartVideoSource falls back to a same-URL updateVideoSource", async () => {
@@ -534,9 +552,10 @@ describe("AcsMeetingService", () => {
     await acsMeetingService.leave("com.mentra.call")
   })
 
-  test("a network change rebuilds a SoftAP feed even though there is no URL to re-feed", async () => {
-    // The phone changing networks is exactly when it may have dropped off the hotspot, so having
-    // no URL must not mean skipping the repair.
+  test("a default-network change does not rebuild a SoftAP feed", async () => {
+    // SoftAP media is bound to the scoped hotspot. Joining that hotspot is what makes NetInfo
+    // flap `none → cellular`, and rebuilding the WHIP listener on that flap changes the ingest
+    // port after the glasses already have the old URL. A real hotspot loss is onScopedNetworkLost.
     const native = fakeNative()
     setAcsMeetingNativeForTests(native)
     let emit: ((state: {type: string; isConnected: boolean | null}) => void) | null = null
@@ -556,7 +575,7 @@ describe("AcsMeetingService", () => {
     emit!({type: "cellular", isConnected: true})
     await flush()
 
-    expect(native.restartVideoSource).toHaveBeenCalled()
+    expect(native.restartVideoSource).not.toHaveBeenCalled()
     await acsMeetingService.leave("com.mentra.call")
   })
 
@@ -635,6 +654,121 @@ describe("scoped network passthrough", () => {
     setAcsMeetingNativeForTests({...native, leaveScopedNetwork: undefined} as never)
 
     await expect(acsMeetingService.leaveScopedNetwork()).resolves.toBeUndefined()
+  })
+})
+
+/**
+ * Mid-call hotspot loss, and the false positive that goes with it.
+ *
+ * Android reports the scoped network going away whether we walked out of range or asked for it to
+ * go away, so the honest signal depends entirely on intent: a loss is only a failure while the call
+ * is still supposed to be running.
+ */
+describe("scoped network loss", () => {
+  afterEach(async () => {
+    await acsMeetingService.leaveScopedNetwork()
+    setAcsMeetingNativeForTests(undefined)
+  })
+
+  async function joinedScoped() {
+    const native = fakeNative()
+    setAcsMeetingNativeForTests(native)
+    await acsMeetingService.joinScopedNetwork("MentraLive-1234", "pw")
+    return native
+  }
+
+  test("an unexpected loss reaches every subscriber", async () => {
+    const native = await joinedScoped()
+    const seen: Array<{code: string; message: string}> = []
+    acsMeetingService.onScopedNetworkLost((error) => seen.push(error))
+
+    native.emit("onScopedNetworkLost", {code: "SOFTAP_NETWORK_LOST", message: "network onLost"})
+
+    expect(seen).toEqual([{code: "SOFTAP_NETWORK_LOST", message: "network onLost"}])
+  })
+
+  /** The bug this guard exists for: Leave manufacturing the error it is in the middle of avoiding. */
+  test("the loss we asked for is not reported", async () => {
+    const native = await joinedScoped()
+    const seen: unknown[] = []
+    acsMeetingService.onScopedNetworkLost((error) => seen.push(error))
+
+    acsMeetingService.beginScopedTeardown()
+    native.emit("onScopedNetworkLost", {code: "SOFTAP_NETWORK_LOST", message: "released"})
+
+    expect(seen).toEqual([])
+  })
+
+  /** Intent must be raised before the release, not after it, or the callback wins the race. */
+  test("leaveScopedNetwork raises the intent before it releases", async () => {
+    const native = fakeNative()
+    const seen: unknown[] = []
+    let lostDuringRelease = false
+    native.leaveScopedNetwork.mockImplementationOnce(async () => {
+      native.emit("onScopedNetworkLost", {code: "SOFTAP_NETWORK_LOST", message: "released"})
+      lostDuringRelease = true
+    })
+    setAcsMeetingNativeForTests(native)
+    await acsMeetingService.joinScopedNetwork("MentraLive-1234", "pw")
+    acsMeetingService.onScopedNetworkLost((error) => seen.push(error))
+
+    await acsMeetingService.leaveScopedNetwork()
+
+    expect(lostDuringRelease).toBe(true)
+    expect(seen).toEqual([])
+  })
+
+  test("a fresh join clears the previous call's terminal intent", async () => {
+    const native = await joinedScoped()
+    acsMeetingService.beginScopedTeardown()
+    const seen: unknown[] = []
+    acsMeetingService.onScopedNetworkLost((error) => seen.push(error))
+
+    await acsMeetingService.joinScopedNetwork("MentraLive-1234", "pw")
+    native.emit("onScopedNetworkLost", {code: "SOFTAP_NETWORK_LOST", message: "network onLost"})
+
+    expect(seen).toHaveLength(1)
+  })
+
+  test("unsubscribing stops delivery", async () => {
+    const native = await joinedScoped()
+    const seen: unknown[] = []
+    const unsubscribe = acsMeetingService.onScopedNetworkLost((error) => seen.push(error))
+
+    unsubscribe()
+    native.emit("onScopedNetworkLost", {code: "SOFTAP_NETWORK_LOST", message: "network onLost"})
+
+    expect(seen).toEqual([])
+  })
+
+  /** One subscriber throwing must not swallow the loss for the one that would act on it. */
+  test("a throwing subscriber does not stop the others", async () => {
+    const native = await joinedScoped()
+    const seen: unknown[] = []
+    acsMeetingService.onScopedNetworkLost(() => {
+      throw new Error("listener exploded")
+    })
+    acsMeetingService.onScopedNetworkLost((error) => seen.push(error))
+    const originalWarn = console.warn
+    console.warn = () => {}
+
+    try {
+      native.emit("onScopedNetworkLost", {code: "SOFTAP_NETWORK_LOST", message: "network onLost"})
+    } finally {
+      console.warn = originalWarn
+    }
+
+    expect(seen).toHaveLength(1)
+  })
+
+  test("a malformed native event still names the failure", async () => {
+    const native = await joinedScoped()
+    const seen: Array<{code: string; message: string}> = []
+    acsMeetingService.onScopedNetworkLost((error) => seen.push(error))
+
+    native.emit("onScopedNetworkLost", {})
+
+    expect(seen[0]).toEqual({code: "SOFTAP_NETWORK_LOST", message: "The glasses hotspot went away"})
   })
 })
 
