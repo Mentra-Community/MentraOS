@@ -54,6 +54,17 @@ android {
   }
 }
 
+// Expo assemble uses --configure-on-demand --build-cache. Incremental Kotlin in this
+// module has already produced two poisoned outputs (a phantom canReuseSource overload,
+// then WhenMappings "already exists"). A full recompile of this library is cheap; a
+// half-written runtime_library_classes_dir is not. Do not delete AGP's dest in doFirst —
+// that leaves bundleLibRuntimeToDirDebug as a missing directory on the next assemble.
+afterEvaluate {
+  tasks.withType(org.jetbrains.kotlin.gradle.tasks.KotlinCompile).configureEach {
+    incremental = false
+  }
+}
+
 dependencies {
   coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.4'
   implementation 'com.squareup.okhttp3:okhttp:4.12.0'
