@@ -1,15 +1,12 @@
 /// <reference types="bun-types" />
 
-import {beforeEach, describe, expect, mock, test} from "bun:test"
+import {afterAll, beforeEach, describe, expect, mock, test} from "bun:test"
 
 const mockUpdateBluetoothSettings = mock(() => Promise.resolve())
 
-mock.module("@mentra/bluetooth-sdk/internal", () => ({
-  __esModule: true,
-  default: {
-    updateBluetoothSettings: mockUpdateBluetoothSettings,
-  },
-}))
+import {bluetoothSdk} from "./bluetoothSdkTestMock"
+
+bluetoothSdk.updateBluetoothSettings = mockUpdateBluetoothSettings
 
 // Import AFTER the mock is registered
 const MicStateCoordinator = require("../MicStateCoordinator").default
@@ -19,6 +16,7 @@ const flushMicWrite = () => new Promise((r) => setTimeout(r, 320))
 
 describe("MicStateCoordinator", () => {
   beforeEach(async () => {
+    bluetoothSdk.updateBluetoothSettings = mockUpdateBluetoothSettings
     for (const packageName of ["com.a", "com.b", "com.voice"]) {
       MicStateCoordinator.clearMiniappGateOverrides(packageName)
     }
@@ -258,5 +256,14 @@ describe("MicStateCoordinator", () => {
     ).toEqual({
       voice_activity_detection_enabled: false,
     })
+  })
+})
+
+afterAll(() => {
+  MicStateCoordinator.setLocalRequirements({
+    pcm: false,
+    lc3: false,
+    vadEnabled: true,
+    loudnessGateEnabled: true,
   })
 })
