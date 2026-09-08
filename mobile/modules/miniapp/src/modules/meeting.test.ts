@@ -7,6 +7,7 @@ import {
   MEETING_HOST_UPDATE_MESSAGE,
   MeetingModule,
   parseMeetingMediaSource,
+  parseMeetingSoftApProgress,
   validateMeetingVideoSource,
 } from "./meeting"
 
@@ -199,6 +200,75 @@ describe("MeetingModule", () => {
     expect(parseMeetingMediaSource("subscribing")).toBeUndefined()
     expect(parseMeetingMediaSource(null)).toBeUndefined()
     expect(parseMeetingMediaSource(3)).toBeUndefined()
+  })
+
+  test("applies the SoftAP checklist from host state", async () => {
+    const {session} = mockSession(async () => ({
+      state: "connecting",
+      muted: false,
+      provider: "acs-teams",
+      softap: {
+        traceId: "t-1",
+        phase: "starting",
+        elapsedMs: 4200,
+        steps: [
+          {step: "hotspot", status: "done", detail: "Hotspot MentraLive_38f108", durationMs: 3500},
+          {step: "scopedJoin", status: "running", detail: "Phone joining MentraLive_38f108"},
+          {step: "acsJoin", status: "pending"},
+          {step: "publish", status: "pending"},
+          {step: "live", status: "pending"},
+        ],
+      },
+    }))
+    const meeting = new MeetingModule(session)
+    await meeting.getState()
+    expect(meeting.state.softap).toEqual({
+      traceId: "t-1",
+      phase: "starting",
+      elapsedMs: 4200,
+      steps: [
+        {step: "hotspot", status: "done", detail: "Hotspot MentraLive_38f108", error: undefined, durationMs: 3500},
+        {step: "scopedJoin", status: "running", detail: "Phone joining MentraLive_38f108", error: undefined, durationMs: undefined},
+        {step: "acsJoin", status: "pending", detail: undefined, error: undefined, durationMs: undefined},
+        {step: "publish", status: "pending", detail: undefined, error: undefined, durationMs: undefined},
+        {step: "live", status: "pending", detail: undefined, error: undefined, durationMs: undefined},
+      ],
+    })
+  })
+
+  test("SoftAP checklist parse is tolerant: unknown steps drop, malformed payloads read as absent", () => {
+    expect(parseMeetingSoftApProgress(undefined)).toBeUndefined()
+    expect(parseMeetingSoftApProgress(null)).toBeUndefined()
+    expect(parseMeetingSoftApProgress("starting")).toBeUndefined()
+    expect(parseMeetingSoftApProgress({phase: "warp", steps: []})).toBeUndefined()
+    expect(parseMeetingSoftApProgress({phase: "failed", steps: "nope"})).toBeUndefined()
+    expect(
+      parseMeetingSoftApProgress({
+        phase: "failed",
+        elapsedMs: "soon",
+        steps: [
+          {step: "hotspot", status: "done"},
+          {step: "teleport", status: "done"},
+          {step: "publish", status: "failed", error: "WHIP request failed: connect timeout"},
+          null,
+          {step: "live", status: "later"},
+        ],
+      }),
+    ).toEqual({
+      traceId: undefined,
+      phase: "failed",
+      elapsedMs: 0,
+      steps: [
+        {step: "hotspot", status: "done", detail: undefined, error: undefined, durationMs: undefined},
+        {
+          step: "publish",
+          status: "failed",
+          detail: undefined,
+          error: "WHIP request failed: connect timeout",
+          durationMs: undefined,
+        },
+      ],
+    })
   })
 })
 
