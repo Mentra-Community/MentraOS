@@ -1,5 +1,11 @@
 package com.mentra.acsmeeting
 
+import android.content.Intent
+import android.os.Build
+import android.provider.Settings
+import com.mentra.acsmeeting.network.InternetHold
+import com.mentra.acsmeeting.network.ScopedNetworkChangeDetector
+import com.mentra.acsmeeting.network.ScopedNetworkError
 import com.mentra.acsmeeting.network.ScopedSoftApNetwork
 import com.mentra.acsmeeting.source.MeetingVideoSourceSpec
 import com.mentra.acsmeeting.video.VideoProfile
@@ -16,9 +22,60 @@ class AcsMeetingModule : Module() {
    */
   private var scopedNetwork: ScopedSoftApNetwork? = null
 
+  /**
+   * Holds cellular up across the hotspot join, and reports what the default network became.
+   *
+   * Module-scoped for the same reason as [scopedNetwork]: the hold has to outlive the individual
+   * `joinScopedNetwork` call and be releasable by the same teardown that releases the scoped join.
+   */
+  private var internetHold: InternetHold? = null
+
+  /**
+   * Put the system Wi-Fi toggle in front of the user.
+   *
+   * SoftAP calling needs the station radio, but `WifiManager.setWifiEnabled` has been a no-op for
+   * non-privileged apps since Android 10, so the app cannot turn it on itself. The inline settings
+   * panel overlays the call UI, which keeps a one-tap recovery in the same screen instead of only
+   * reporting a failure the user has to go fix elsewhere.
+   */
+  private fun promptToEnableWifi() {
+    val intent =
+      Intent(
+        if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.Q) Settings.Panel.ACTION_WIFI
+        else Settings.ACTION_WIFI_SETTINGS,
+      )
+    val activity = appContext.currentActivity
+    // #region agent log
+    com.mentra.acsmeeting.network.DebugTap.log(
+      "A",
+      "AcsMeetingModule.kt:promptToEnableWifi",
+      "prompting user to enable wifi",
+      mapOf("hasActivity" to (activity != null), "sdkInt" to Build.VERSION.SDK_INT),
+    )
+    // #endregion
+    runCatching {
+      if (activity != null) {
+        activity.startActivity(intent)
+      } else {
+        intent.addFlags(Intent.FLAG_ACTIVITY_NEW_TASK)
+        appContext.reactContext?.startActivity(intent)
+      }
+    }
+  }
+
   override fun definition() = ModuleDefinition {
     Name("MentraAcsMeeting")
-    Events("onState", "onIncomingPcm")
+    // `onScopedNetworkLost` fires only for a hotspot that went away while we still wanted it: the
+    // scoped state machine drops the framework's `onLost` for a network we released ourselves, so a
+    // normal Leave or End cannot manufacture a mid-call network error.
+    Events("onState", "onIncomingPcm", "onScopedNetworkLost")
+
+    // Before any PeerConnectionFactory exists in this process: libwebrtc's network monitor only
+    // reads the detector factory when it (re)starts, and without this detector it never sees the
+    // internet-less hotspot network, so the phone's WHIP answer has no host candidate.
+    OnCreate {
+      ScopedNetworkChangeDetector.install { scopedNetwork }
+    }
 
     /**
      * Join the glasses hotspot as a scoped, internet-less network and return this phone's address
@@ -28,12 +85,112 @@ class AcsMeetingModule : Module() {
     AsyncFunction("joinScopedNetwork") { ssid: String, passphrase: String ->
       val context = appContext.reactContext ?: throw IllegalStateException("no react context")
       val scoped = scopedNetwork ?: ScopedSoftApNetwork(context.applicationContext).also { scopedNetwork = it }
-      scoped.join(ssid, passphrase)
+      // Cellular first, and validated, because the next line is what takes office Wi-Fi away. A
+      // phone whose cellular cannot carry TLS strands the ACS join for its whole timeout with
+      // device-wide DNS failures, which reads as a hotspot problem and is not one.
+      val hold = internetHold ?: InternetHold(context.applicationContext).also { internetHold = it }
+      val cellular = hold.awaitValidatedCellular()
+      if (!cellular.validated) {
+        hold.release()
+        throw IllegalStateException(
+          "SOFTAP_NO_CELLULAR_INTERNET: this phone's mobile data did not come up, so Teams would " +
+            "lose its connection the moment we join the glasses hotspot. Turn mobile data on and retry.",
+        )
+      }
+      val listener = object : ScopedSoftApNetwork.Listener {
+        override fun onAvailable(network: android.net.Network, localIpv4: String) = Unit
+
+        override fun onLost(error: ScopedNetworkError) {
+          com.mentra.acsmeeting.trace.SoftApTrace.failure("scoped_network_lost_midcall", "code" to error.code)
+          sendEvent(
+            "onScopedNetworkLost",
+            mapOf("code" to error.code, "message" to (error.message ?: "The glasses hotspot went away")),
+          )
+        }
+      }
+      try {
+        scoped.join(ssid, passphrase, listener)
+      } catch (error: ScopedNetworkError.WifiDisabled) {
+        // Open the panel and *wait*. Throwing here used to tear the hotspot down in ~20ms,
+        // then a retry reminted ACS after the user turned Wi-Fi on — and Android often made
+        // that new Wi-Fi the default route with no internet, so token mint hung on DNS.
+        promptToEnableWifi()
+        com.mentra.acsmeeting.trace.SoftApTrace.stage("wifi_enable_wait", "timeoutMs" to ScopedSoftApNetwork.WIFI_ENABLE_WAIT_MS)
+        val enabled = scoped.awaitWifiEnabled()
+        com.mentra.acsmeeting.trace.SoftApTrace.stage(
+          "wifi_enable_wait_done",
+          "enabled" to enabled,
+        )
+        if (!enabled) throw error
+        Thread.sleep(ScopedSoftApNetwork.WIFI_ENABLE_SETTLE_MS)
+        scoped.join(ssid, passphrase, listener)
+      }
       scoped.localIpv4() ?: throw IllegalStateException("scoped network has no IPv4 address")
     }
 
+    /**
+     * Undo for the `scopedJoin` step, so both network requests are dropped by the one idempotent
+     * teardown rather than by separate exit paths. A held cellular request that outlived its call
+     * keeps the radio up for nothing.
+     */
     AsyncFunction("leaveScopedNetwork") {
       scopedNetwork?.release()
+      internetHold?.release()
+    }
+
+    /**
+     * The app's validated default network, waited for before the ACS join.
+     *
+     * Separate from the cellular hold on purpose: holding a request asks Android to bring cellular
+     * up, it does not say when this app's default route switches to it. Only this answers that, and
+     * it is the precondition for a join that has to reach the internet.
+     */
+    AsyncFunction("awaitValidatedDefaultNetwork") {
+      val context = appContext.reactContext ?: throw IllegalStateException("no react context")
+      val hold = internetHold ?: InternetHold(context.applicationContext).also { internetHold = it }
+      val network = hold.awaitValidatedDefault()
+      mapOf(
+        "transport" to network.transport,
+        "validated" to network.validated,
+        "present" to network.present,
+        "usable" to network.usable,
+        "detail" to network.toString(),
+      )
+    }
+
+    /**
+     * The joined hotspot as the framework describes it. `prefix` is the invariant the media path is
+     * checked against: the selected ICE candidate must sit inside it.
+     */
+    AsyncFunction("scopedNetworkInfo") {
+      val scoped = scopedNetwork
+      mapOf(
+        "available" to (scoped?.isAvailable() == true),
+        "localIpv4" to scoped?.localIpv4(),
+        "prefix" to scoped?.scopedPrefix()?.toString(),
+      )
+    }
+
+    // Blocking TCP probe (<= ~6s worst case); AsyncFunction runs it off the JS thread.
+    AsyncFunction("probeScopedGateway") {
+      val scoped = scopedNetwork ?: return@AsyncFunction mapOf("reachable" to false, "detail" to "no scoped network")
+      val verdict = scoped.probeGateway()
+      // #region agent log
+      com.mentra.acsmeeting.network.DebugTap.log(
+        "G",
+        "AcsMeetingModule.kt:probeScopedGateway",
+        "gateway probe",
+        mapOf(
+          "reachable" to verdict.reachable,
+          "detail" to verdict.detail,
+          "localIpv4" to scoped.localIpv4(),
+          "gateway" to scoped.gatewayIpv4(),
+          "routes" to com.mentra.acsmeeting.network.DebugTap.shell("ip -4 route show table all"),
+          "rules" to com.mentra.acsmeeting.network.DebugTap.shell("ip rule"),
+        ),
+      )
+      // #endregion
+      mapOf("reachable" to verdict.reachable, "detail" to verdict.detail)
     }
 
     AsyncFunction("join") { options: Map<String, Any?> ->
@@ -61,16 +218,26 @@ class AcsMeetingModule : Module() {
         },
         scopedNetwork = scopedNetwork,
       ).also { session = it }
-      meeting.join(token, meetingUrl, videoSource, displayName, dumpWav, audioSource, video)
-      // The SoftAP ingest URL is only known after the listener binds, so it rides back on the join
-      // result rather than being an input. The orchestrator forwards it to the glasses.
-      meeting.getState() + buildMap {
+      val joined = meeting.join(token, meetingUrl, videoSource, displayName, dumpWav, audioSource, video)
+      // Prefer the join snapshot: getState() can race a leave from a respawned miniapp
+      // restore and drop the URL the orchestrator needs to tell the glasses.
+      joined + buildMap {
         meeting.softApIngestUrl()?.let { put("ingestUrl", it) }
       }
     }
 
     AsyncFunction("leave") {
       session?.leave()
+    }
+
+    /**
+     * End the Teams group call for everyone. Rejects when there is no call, when this participant
+     * is known not to be allowed to, or when ACS refuses — and tears this device down regardless,
+     * so a rejection means "we could not end it for the others", never "you are still in it".
+     */
+    AsyncFunction("endForEveryone") {
+      val meeting = session ?: throw IllegalStateException("no_active_call")
+      meeting.endForEveryone()
     }
 
     AsyncFunction("setMuted") { muted: Boolean ->
@@ -98,6 +265,8 @@ class AcsMeetingModule : Module() {
       session = null
       scopedNetwork?.release()
       scopedNetwork = null
+      internetHold?.release()
+      internetHold = null
     }
   }
 
