@@ -29,13 +29,16 @@ export function releaseAssetUploadUrl(repository, releaseId, name) {
   return `https://uploads.github.com/repos/${repository}/releases/${releaseId}/assets?name=${encodeURIComponent(name)}`
 }
 
-// uploads.github.com rejects an asset upload that arrives without a
-// Content-Length, answering HTTP 400 with an HTML "Whoa there!" page rather
-// than a JSON API error. `gh api --input` streams the file, so whether it sends
-// a length at all depends on the gh build installed on the runner — which is
-// how ~110 MB Mentra Live APKs started failing without this script changing.
-// Send the bytes as a Buffer instead: the request then always carries an exact
-// Content-Length and never falls back to chunked encoding.
+// Sends the whole asset as a Buffer, so the request always carries an exact
+// Content-Length rather than depending on how the installed `gh` build streams
+// `--input`, and reports the status and body when GitHub refuses.
+//
+// uploads.github.com answers a refused upload with an HTML "Whoa there!" page
+// instead of a JSON API error, so without that reporting the only signal is an
+// exit code. The ~110 MB Mentra Live APK uploaded in 10.7s on 2026-09-04 and
+// has since taken ~4 minutes before returning HTTP 400 from the same host, so
+// the remaining failure is the runner's upload path, not this request: a small
+// asset still uploads to the same release and token in under a second.
 export async function uploadReleaseAsset({repository, releaseId, name, body, token, fetchImpl = fetch}) {
   if (!token) throw new Error("GH_TOKEN is required to upload a release asset")
   const response = await fetchImpl(releaseAssetUploadUrl(repository, releaseId, name), {
