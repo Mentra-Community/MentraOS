@@ -7,6 +7,7 @@
 import audioPlaybackService from "./AudioPlaybackService"
 import {SETTINGS, useSettingsStore} from "../stores/settings"
 import {ACS_CALL_MIC, type ResolvedAudioSource, type SourceReason} from "./acsAudioSource"
+import type {SoftapProgress} from "./SoftapCallTransport"
 
 export {ACS_CALL_MIC}
 export type {ResolvedAudioSource, SourceReason}
@@ -32,6 +33,36 @@ export interface MeetingParticipant {
   isSpeaking: boolean
 }
 
+/**
+ * One runtime participant capability.
+ *
+ * `allowed` is nullable because "denied" and "not known yet" are different facts. ACS delivers
+ * capabilities asynchronously, so every call is briefly unknown, and collapsing that into `false`
+ * would hide controls on calls that do in fact permit them.
+ */
+export interface MeetingCapability {
+  allowed: boolean | null
+  reason: string | null
+}
+
+export interface MeetingCapabilities {
+  /** Whether this participant may end the Teams group call for everyone. Presenters only. */
+  hangUpForEveryone: MeetingCapability
+}
+
+export function parseMeetingCapabilities(raw: unknown): MeetingCapabilities | undefined {
+  if (!raw || typeof raw !== "object") return undefined
+  const value = (raw as Record<string, unknown>).hangUpForEveryone
+  if (!value || typeof value !== "object") return undefined
+  const capability = value as Record<string, unknown>
+  return {
+    hangUpForEveryone: {
+      allowed: typeof capability.allowed === "boolean" ? capability.allowed : null,
+      reason: typeof capability.reason === "string" && capability.reason ? capability.reason : null,
+    },
+  }
+}
+
 export interface MeetingState {
   state: MeetingPhase
   muted: boolean
@@ -44,6 +75,14 @@ export interface MeetingState {
   audioSafety?: AudioSafety
   mediaSource?: MediaSourceState
   participants?: MeetingParticipant[]
+  /** Runtime capabilities. Omitted by natives that predate them; read that as unknown. */
+  capabilities?: MeetingCapabilities
+  /**
+   * SoftAP join checklist, attached only to the state events the SoftAP orchestrator emits while
+   * it walks hotspot → scoped join → ACS join → publish → live. Native ACS events never carry it,
+   * so a consumer keeps the last one it saw rather than treating its absence as a reset.
+   */
+  softap?: SoftapProgress
 }
 
 /**
@@ -158,6 +197,21 @@ export function parseAcsVideoSource(raw: unknown): AcsVideoSource {
   throw new Error(`unsupported videoSource.type: ${String(value.type)}`)
 }
 
+/**
+ * The app's default network after a hotspot join.
+ *
+ * `usable` is the only field to branch on; the rest is for the note the wearer sees and the trace.
+ * A held cellular request brings the radio up but does not promise the default route has switched
+ * or validated, so this is asked separately rather than inferred from the hold.
+ */
+export interface DefaultNetworkStatus {
+  transport: string
+  validated: boolean
+  present: boolean
+  usable: boolean
+  detail: string
+}
+
 type NativeModule = {
   join(options: {
     meetingUrl: string
@@ -171,6 +225,11 @@ type NativeModule = {
     video?: AcsOutgoingVideo
   }): Promise<MeetingState & {ingestUrl?: string}>
   leave(): Promise<void>
+  /**
+   * End the group call for everyone, then tear this device down. Rejects when the capability is
+   * denied or ACS refuses — and has still left the call. Absent on natives that predate End.
+   */
+  endForEveryone?(): Promise<MeetingState>
   setMuted(muted: boolean): Promise<MeetingState>
   setAudioSource(source: "glasses" | "phone"): Promise<MeetingState>
   updateVideoSource(whepUrl: string): Promise<void>
@@ -182,6 +241,18 @@ type NativeModule = {
    */
   joinScopedNetwork?(ssid: string, passphrase: string): Promise<string>
   leaveScopedNetwork?(): Promise<void>
+  /**
+   * TCP-probe the hotspot gateway over the scoped network. Absent on natives that predate it.
+   * `detail` is a one-line human summary (address, port, latency or the failure).
+   */
+  probeScopedGateway?(): Promise<{reachable: boolean; detail: string}>
+  /** The joined hotspot: `prefix` is what the media path must stay inside. */
+  scopedNetworkInfo?(): Promise<{available: boolean; localIpv4: string | null; prefix: string | null}>
+  /**
+   * Wait for the app's default network to be validated, after the hotspot join changed it.
+   * Absent on natives that predate the cellular transition handling.
+   */
+  awaitValidatedDefaultNetwork?(): Promise<DefaultNetworkStatus>
   getState(): Promise<MeetingState>
   addListener(event: string, listener: (event: Record<string, unknown>) => void): {remove: () => void}
 }
@@ -282,6 +353,14 @@ class AcsMeetingService {
   private lastMediaRestartAt = 0
   /** Callers parked in [waitForFirstFrame], woken by the next `mediaSource` verdict. */
   private readonly firstFrameWaiters = new Set<(error?: Error) => void>()
+  private scopedLostSub: {remove: () => void} | null = null
+  private readonly scopedLostListeners = new Set<(error: {code: string; message: string}) => void>()
+  /**
+   * Set before the scoped network is released, so the loss we are about to cause is not reported as
+   * one that happened to us. Android emits `onLost` for a deliberate release, and a naive wiring
+   * turns every successful Leave and End into a mid-call network error.
+   */
+  private scopedTerminating = false
 
   setStateHandler(handler: (packageName: string, state: MeetingState) => void): void {
     this.onState = handler
@@ -316,12 +395,91 @@ class AcsMeetingService {
     if (!native?.joinScopedNetwork) {
       throw new Error("This host cannot join the glasses hotspot; SoftAP calling is unavailable")
     }
+    this.scopedTerminating = false
+    this.bindScopedNetworkLost(native)
     return await native.joinScopedNetwork(ssid, passphrase)
+  }
+
+  /**
+   * Subscribe to "the glasses hotspot went away while we still wanted it".
+   *
+   * Only unexpected losses arrive here. Native drops the framework callback for a network it
+   * released itself, and [leaveScopedNetwork] raises the terminal intent before releasing, so a
+   * normal Leave or End cannot manufacture a mid-call failure.
+   */
+  onScopedNetworkLost(listener: (error: {code: string; message: string}) => void): () => void {
+    this.scopedLostListeners.add(listener)
+    return () => this.scopedLostListeners.delete(listener)
+  }
+
+  private bindScopedNetworkLost(native: NativeModule): void {
+    if (this.scopedLostSub) return
+    try {
+      this.scopedLostSub = native.addListener("onScopedNetworkLost", (event) => {
+        if (this.scopedTerminating) {
+          console.log("[AcsMeeting] phase=scoped-lost-expected", {code: event.code})
+          return
+        }
+        const error = {
+          code: typeof event.code === "string" ? event.code : "SOFTAP_NETWORK_LOST",
+          message: typeof event.message === "string" ? event.message : "The glasses hotspot went away",
+        }
+        console.warn("[AcsMeeting] phase=scoped-lost", error)
+        for (const listener of [...this.scopedLostListeners]) {
+          try {
+            listener(error)
+          } catch (listenerError) {
+            console.warn("[AcsMeeting] scoped-lost listener threw", listenerError)
+          }
+        }
+      })
+    } catch (error) {
+      // A native that predates the event simply never reports mid-call loss; that is a smaller
+      // problem than failing the join over a missing listener.
+      console.warn("[AcsMeeting] scoped network loss events unavailable", error)
+      this.scopedLostSub = null
+    }
+  }
+
+  /** Raise the terminal intent so the release we are about to do is not read as a failure. */
+  beginScopedTeardown(): void {
+    this.scopedTerminating = true
+  }
+
+  /**
+   * Wait until the phone's default network is validated again after the hotspot join.
+   *
+   * Joining the glasses hotspot takes the phone off Wi-Fi, and ACS needs the internet for the very
+   * next step. Waiting is what turns a 40-second join timeout with device-wide DNS failures into a
+   * short, named wait — or an honest failure. Null when the host cannot tell.
+   */
+  async awaitValidatedDefaultNetwork(): Promise<DefaultNetworkStatus | null> {
+    const native = getNative()
+    if (!native?.awaitValidatedDefaultNetwork) return null
+    return await native.awaitValidatedDefaultNetwork()
+  }
+
+  /**
+   * Can this phone reach the glasses over the hotspot it just joined? Null when the host cannot
+   * tell (no native support), so the orchestrator narrates nothing rather than a guess.
+   */
+  async probeScopedGateway(): Promise<{reachable: boolean; detail: string} | null> {
+    const native = getNative()
+    if (!native?.probeScopedGateway) return null
+    return await native.probeScopedGateway()
   }
 
   /** Safe to call when nothing was joined: teardown runs after failed starts too. */
   async leaveScopedNetwork(): Promise<void> {
-    await getNative()?.leaveScopedNetwork?.()
+    // Intent first, release second. The other order is the false-positive bug: Android reports the
+    // loss we asked for, and the call reports a network failure as it is successfully ending.
+    this.scopedTerminating = true
+    try {
+      await getNative()?.leaveScopedNetwork?.()
+    } finally {
+      this.scopedLostSub?.remove()
+      this.scopedLostSub = null
+    }
   }
 
   /**
@@ -453,6 +611,36 @@ class AcsMeetingService {
   }
 
   /**
+   * End the Teams group call for everyone.
+   *
+   * Host state is released either way: native tears this device down whatever the hang-up did, so
+   * holding the meeting slot open after a rejection would leave the miniapp unable to start another
+   * call. The rejection still propagates — the caller has to be able to say "you left, but the
+   * meeting may still be active" instead of claiming a clean end.
+   */
+  async endForEveryone(packageName: string): Promise<MeetingState> {
+    if (this.owner && this.owner !== packageName) {
+      throw new Error("This miniapp does not own the active meeting")
+    }
+    const native = getNative()
+    if (!native?.endForEveryone) {
+      throw new Error("Update the Mentra App to end a meeting for everyone")
+    }
+    try {
+      const state = await native.endForEveryone()
+      console.log("[AcsMeeting] phase=end-for-everyone-ok", {state: state.state})
+      return state
+    } finally {
+      await this.releaseHostState()
+    }
+  }
+
+  /** Whether the wearer may end this meeting for everyone, as ACS last reported it. */
+  hangUpForEveryoneCapability(): MeetingCapability {
+    return this.lastState.capabilities?.hangUpForEveryone ?? {allowed: null, reason: null}
+  }
+
+  /**
    * Drop everything the host set up around a session: the network watcher, return
    * audio, native listeners, ownership. Runs after native has been told to leave
    * (or after a join that never produced a native call).
@@ -465,6 +653,8 @@ class AcsMeetingService {
     this.unwatchPhoneNetwork()
     await this.stopPcm()
     this.unbindNative()
+    this.scopedLostSub?.remove()
+    this.scopedLostSub = null
     this.owner = null
     this.whepUrl = null
     this.videoSource = null
@@ -540,6 +730,7 @@ class AcsMeetingService {
         }
         const participants = parseMeetingParticipants(event.participants)
         const mediaSource = parseMediaSource(event.mediaSource)
+        const capabilities = parseMeetingCapabilities(event.capabilities)
         const state: MeetingState = {
           state: (event.state as MeetingPhase) ?? "idle",
           muted: Boolean(event.muted),
@@ -552,6 +743,8 @@ class AcsMeetingService {
           audioSafety,
           ...(mediaSource ? {mediaSource} : {}),
           ...(participants ? {participants} : {}),
+          // Absent means unknown, so keep the last known verdict rather than clearing it.
+          ...((capabilities ?? this.lastState.capabilities) ? {capabilities: capabilities ?? this.lastState.capabilities} : {}),
         }
         this.lastState = state
         console.log("[AcsMeeting] phase=native-state", {
@@ -617,10 +810,15 @@ class AcsMeetingService {
   private async restartMediaSource(native: NativeModule, reason: string): Promise<void> {
     const whepUrl = this.whepUrl
     const softap = this.videoSource?.type === "softap"
-    // A softap call has no URL to re-feed, but it is still worth rebuilding: the phone changing
-    // networks is exactly when it may have dropped off the hotspot.
+    // SoftAP media is bound to the scoped hotspot, not the phone's default route. Joining that
+    // hotspot is what *causes* NetInfo to flap `none:offline → cellular:online` — the default
+    // route looks gone for a beat, then cellular comes back. Rebuilding the WHIP listener on
+    // that flap changes the ingest port after the glasses already have the old URL, and their
+    // POST hits a tombstone (HTTP 410). A real hotspot loss is `onScopedNetworkLost`, not this
+    // default-network watch. WHEP still needs the rebuild: that path rides the default route.
+    if (softap) return
     if (!this.owner || !MEDIA_ACTIVE_PHASES.has(this.lastState.state)) return
-    if (!whepUrl && !softap) return
+    if (!whepUrl) return
     const now = Date.now()
     if (now - this.lastMediaRestartAt < MEDIA_RESTART_MIN_INTERVAL_MS) return
     this.lastMediaRestartAt = now
