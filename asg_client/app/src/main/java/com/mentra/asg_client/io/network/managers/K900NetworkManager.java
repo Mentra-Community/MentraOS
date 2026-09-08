@@ -326,6 +326,18 @@ public class K900NetworkManager extends BaseNetworkManager {
             }
             if (!gatewayIp.isEmpty() && !ssid.isEmpty() && !password.isEmpty()) {
                 mHotspotStarting = false;
+                // #region agent log
+                // Readiness is settings + gateway. xy_ssid/xy_pwd persist across hotspot-off, so
+                // this asserts whether ap0 is genuinely beaconing when we report "enabled".
+                java.util.Map<String, Object> readyFields = new java.util.HashMap<>();
+                readyFields.put("ssid", ssid);
+                readyFields.put("passwordLen", password.length());
+                readyFields.put("gatewayIp", gatewayIp);
+                readyFields.put("ap0", DebugTap.interfaceState("ap0"));
+                readyFields.put("wlan0", DebugTap.interfaceState("wlan0"));
+                readyFields.put("wifiEnabled", wifiManager != null && wifiManager.isWifiEnabled());
+                DebugTap.log("B", "K900NetworkManager.java:327", "hotspot reported ready", readyFields);
+                // #endregion
                 onHotspotStarted(ssid, password, gatewayIp);
                 notificationManager.showHotspotStateNotification(true);
                 notificationManager.showDebugNotification(
@@ -334,6 +346,16 @@ public class K900NetworkManager extends BaseNetworkManager {
                 return;
             }
             if (SystemClock.elapsedRealtime() >= mHotspotReadinessDeadlineMs) {
+                // #region agent log
+                java.util.Map<String, Object> timeoutFields = new java.util.HashMap<>();
+                timeoutFields.put("gatewayIpEmpty", gatewayIp.isEmpty());
+                timeoutFields.put("ssidEmpty", ssid.isEmpty());
+                timeoutFields.put("passwordEmpty", password.isEmpty());
+                timeoutFields.put("ap0", DebugTap.interfaceState("ap0"));
+                timeoutFields.put("wifiEnabled", wifiManager != null && wifiManager.isWifiEnabled());
+                DebugTap.log(
+                        "B", "K900NetworkManager.java:336", "hotspot readiness timed out", timeoutFields);
+                // #endregion
                 failVendorHotspotStartup(generation, "K900 vendor hotspot did not become ready");
                 return;
             }
