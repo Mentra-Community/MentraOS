@@ -233,11 +233,6 @@ jobs:
           token: ${{ steps.starter-kit-app-token.outputs.token || secrets.STARTER_KIT_COORDINATOR_TOKEN || secrets.MENTRA_BLUETOOTH_SDK_IOS_PUSH_TOKEN }}
           path: starter-kit
 
-      - uses: actions/setup-node@v4
-        if: steps.app-store.outputs.exists != 'true'
-        with:
-          node-version: "20"
-
       - name: Set up Ruby signing tools
         if: steps.app-store.outputs.exists != 'true'
         uses: ruby/setup-ruby@v1
