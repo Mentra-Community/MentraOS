@@ -317,36 +317,46 @@ jobs:
             --output tsv)
           [[ "$image_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
           [[ "$image_digest" == "${{ steps.source.outputs.source_digest }}" ]]
-          revision=$(az containerapp show \
-            --name "$AZURE_CONTAINER_APP" \
-            --resource-group "$AZURE_RESOURCE_GROUP" \
-            --query properties.latestReadyRevisionName \
-            --output tsv)
-          test -n "$revision"
-          core_revision=$(az containerapp show \
-            --name "$AZURE_CORE_CONTAINER_APP" \
-            --resource-group "$AZURE_RESOURCE_GROUP" \
-            --query properties.latestReadyRevisionName \
-            --output tsv)
-          test -n "$core_revision"
-
           # The ready revisions must run exactly the digest-pinned image this
           # run imported; otherwise the evidence would describe another build.
           expected_image="${{ steps.source.outputs.image }}"
-          runtime_revision_image=$(az containerapp revision show \
-            --name "$AZURE_CONTAINER_APP" \
-            --revision "$revision" \
-            --resource-group "$AZURE_RESOURCE_GROUP" \
-            --query 'properties.template.containers[0].image' \
-            --output tsv)
-          [[ "$runtime_revision_image" == "$expected_image" ]]
-          core_revision_image=$(az containerapp revision show \
-            --name "$AZURE_CORE_CONTAINER_APP" \
-            --revision "$core_revision" \
-            --resource-group "$AZURE_RESOURCE_GROUP" \
-            --query 'properties.template.containers[0].image' \
-            --output tsv)
-          [[ "$core_revision_image" == "$expected_image" ]]
+
+          # `az deployment group create` returns once ARM accepts the update,
+          # not once Container Apps has finished rolling the new revision out,
+          # so latestReadyRevisionName can still name the previous revision.
+          # Reading it once made this step fail whenever a release landed while
+          # the rollout before it was still settling. Wait for the revision that
+          # actually runs this run's image, then assert on that one.
+          ready_revision_for_image() {
+            local app="$1" attempt revision image
+            for attempt in $(seq 1 30); do
+              revision=$(az containerapp show \
+                --name "$app" \
+                --resource-group "$AZURE_RESOURCE_GROUP" \
+                --query properties.latestReadyRevisionName \
+                --output tsv)
+              if [[ -n "$revision" ]]; then
+                image=$(az containerapp revision show \
+                  --name "$app" \
+                  --revision "$revision" \
+                  --resource-group "$AZURE_RESOURCE_GROUP" \
+                  --query 'properties.template.containers[0].image' \
+                  --output tsv)
+                if [[ "$image" == "$expected_image" ]]; then
+                  echo "$revision"
+                  return 0
+                fi
+              fi
+              sleep 10
+            done
+            echo "$app has no ready revision running $expected_image" >&2
+            return 1
+          }
+
+          revision=$(ready_revision_for_image "$AZURE_CONTAINER_APP")
+          test -n "$revision"
+          core_revision=$(ready_revision_for_image "$AZURE_CORE_CONTAINER_APP")
+          test -n "$core_revision"
 
           {
             echo "workspace_origin=$workspace_origin"
