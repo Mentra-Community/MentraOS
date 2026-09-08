@@ -978,7 +978,7 @@ jobs:
 
   status:
     name: Export mobile build status
-    needs: [prepare, android, ios, ios-store]
+    needs: [prepare, android, ios, ios-publish, ios-upload, ios-store]
     if: always()
     runs-on: ubuntu-latest
     outputs:
@@ -993,13 +993,20 @@ jobs:
         env:
           ANDROID_RESULT: ${{ needs.android.result }}
           IOS_BUILD_RESULT: ${{ needs.ios.result }}
+          IOS_PUBLISH_RESULT: ${{ needs.ios-publish.result }}
+          IOS_UPLOAD_RESULT: ${{ needs.ios-upload.result }}
           IOS_STORE_RESULT: ${{ needs.ios-store.result }}
           APK_NAME: ${{ needs.prepare.outputs.apk_name }}
           IPA_NAME: ${{ needs.prepare.outputs.ipa_name }}
           ASSET_BASE_URL: ${{ needs.prepare.outputs.asset_base_url }}
         run: |
-          ios_result="$IOS_STORE_RESULT"
-          if [[ "$IOS_BUILD_RESULT" != "success" ]]; then ios_result="$IOS_BUILD_RESULT"; fi
+          ios_result=success
+          for stage_result in "$IOS_BUILD_RESULT" "$IOS_PUBLISH_RESULT" "$IOS_UPLOAD_RESULT" "$IOS_STORE_RESULT"; do
+            if [[ "$stage_result" != "success" ]]; then
+              ios_result="$stage_result"
+              break
+            fi
+          done
           {
             echo "android_result=$ANDROID_RESULT"
             echo "ios_result=$ios_result"
