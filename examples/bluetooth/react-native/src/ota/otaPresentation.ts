@@ -108,6 +108,21 @@ export function otaPresentation(
         tone: 'active',
         versionLabel: updateVersionLabel(releaseTransition),
       };
+    case 'battery_required':
+      // The engine owns the exact threshold (MINIMUM_OTA_BATTERY_LEVEL), but it
+      // is not re-exported from @mentra/engine/ota, so this copy deliberately
+      // omits the number rather than hardcoding one that can drift.
+      return {
+        detail: 'This screen updates automatically as the battery charges.',
+        message:
+          state.batteryLevel === null
+            ? `Charge your ${deviceName} before updating.`
+            : `${deviceName} is currently at ${state.batteryLevel}%. Charge it before updating.`,
+        primary: {action: 'install', disabled: true, label: 'Update Now'},
+        secondary: state.canDismiss ? {action: 'finish', label: 'Later'} : undefined,
+        title: `Charge ${deviceName} to Update`,
+        tone: 'neutral',
+      };
     case 'wifi_required':
       return {
         detail: 'Your glasses may install more than one update and restart several times. Keep them nearby until finished.',
@@ -139,6 +154,15 @@ export function otaPresentation(
         message: 'This mobile app is a development build, so automatic glasses updates are disabled.',
         primary: {action: 'finish', label: 'Continue'},
         title: 'Development Build',
+        tone: 'neutral',
+      };
+    case 'unofficial_client':
+      return {
+        message: state.glassesPackageName
+          ? `Your glasses are running a sideloaded client (${state.glassesPackageName}), so updates are blocked. Restore the stock client to update them.`
+          : 'Your glasses are running a sideloaded client, so updates are blocked. Restore the stock client to update them.',
+        primary: {action: 'finish', label: 'Continue'},
+        title: 'Updates Blocked',
         tone: 'neutral',
       };
     case 'check_failed':
