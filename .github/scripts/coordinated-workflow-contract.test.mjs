@@ -371,7 +371,15 @@ test("coordinated docs publish only after finalization to the matching channel",
   assert.match(docs, /--example-testflight/)
   assert.match(docs, /Cache-Control: public, max-age=0, must-revalidate/)
   assert.match(docs, /X-Robots-Tag: noindex/)
-  assert.match(docs, /Purge release-sensitive documentation routes/)
+  const purge = docs.slice(
+    docs.indexOf("- name: Purge release-sensitive"),
+    docs.indexOf("- name: Verify the published custom domain"),
+  )
+  const verify = docs.slice(docs.indexOf("- name: Verify the published custom domain"))
+  assert.match(purge, /continue-on-error: true/)
+  assert.match(purge, /timeout-minutes: 1/)
+  assert.doesNotMatch(verify, /continue-on-error: true/)
+  assert.match(verify, /exit 1/)
   assert.match(docs, /CLOUDFLARE_ZONE_ID: \$\{\{ vars\.CLOUDFLARE_ZONE_ID \}\}/)
   assert.match(docs, /zones\/\$CLOUDFLARE_ZONE_ID\/purge_cache/)
   assert.match(docs, /\$DOCS_URL\/mentra-live\/software-update\//)

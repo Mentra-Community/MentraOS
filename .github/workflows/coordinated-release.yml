@@ -1068,7 +1068,11 @@ jobs:
             --commit-message "Deploy MentraOS docs for $RELEASE_IDENTITY" \
             --commit-dirty=true
 
+      # Purging accelerates propagation; the required live-page check below
+      # determines whether the exact release is available to users.
       - name: Purge release-sensitive documentation routes
+        continue-on-error: true
+        timeout-minutes: 1
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_PAGES_API_TOKEN }}
           CLOUDFLARE_ZONE_ID: ${{ vars.CLOUDFLARE_ZONE_ID }}
