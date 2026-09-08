@@ -29,7 +29,33 @@ export function releaseAssetUploadUrl(repository, releaseId, name) {
   return `https://uploads.github.com/repos/${repository}/releases/${releaseId}/assets?name=${encodeURIComponent(name)}`
 }
 
-function main() {
+// uploads.github.com rejects an asset upload that arrives without a
+// Content-Length, answering HTTP 400 with an HTML "Whoa there!" page rather
+// than a JSON API error. `gh api --input` streams the file, so whether it sends
+// a length at all depends on the gh build installed on the runner — which is
+// how ~110 MB Mentra Live APKs started failing without this script changing.
+// Send the bytes as a Buffer instead: the request then always carries an exact
+// Content-Length and never falls back to chunked encoding.
+export async function uploadReleaseAsset({repository, releaseId, name, body, token, fetchImpl = fetch}) {
+  if (!token) throw new Error("GH_TOKEN is required to upload a release asset")
+  const response = await fetchImpl(releaseAssetUploadUrl(repository, releaseId, name), {
+    method: "POST",
+    headers: {
+      "accept": "application/vnd.github+json",
+      "authorization": `Bearer ${token}`,
+      "content-length": String(body.byteLength),
+      "content-type": "application/octet-stream",
+      "x-github-api-version": "2022-11-28",
+    },
+    body,
+  })
+  if (!response.ok) {
+    const detail = (await response.text()).replace(/\s+/g, " ").trim().slice(0, 300)
+    throw new Error(`Uploading ${name} failed with HTTP ${response.status}: ${detail}`)
+  }
+}
+
+async function main() {
   const args = parseArgs(process.argv.slice(2))
   const file = path.resolve(args.file)
   const name = args.name
@@ -47,19 +73,13 @@ function main() {
   const assets = pages.flat()
   const existing = matchingAsset(assets, name)
   if (!existing) {
-    gh(
-      [
-        "api",
-        "--method",
-        "POST",
-        "-H",
-        "Content-Type: application/octet-stream",
-        "--input",
-        file,
-        releaseAssetUploadUrl(repository, releaseId, name),
-      ],
-      {stdio: "inherit"},
-    )
+    await uploadReleaseAsset({
+      repository,
+      releaseId,
+      name,
+      body: readFileSync(file),
+      token: process.env.GH_TOKEN || process.env.GITHUB_TOKEN,
+    })
     console.log(`Published immutable release asset ${name}`)
   } else {
     const downloaded = gh(
@@ -73,4 +93,4 @@ function main() {
   }
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main()
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await main()
