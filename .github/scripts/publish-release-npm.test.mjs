@@ -199,3 +199,51 @@ test("gives up after the last attempt and surfaces the publish error", () => {
   )
   assert.equal(calls, 3)
 })
+
+test("retries when the recovery registry read also fails", () => {
+  let publishes = 0
+  let reads = 0
+  let pauses = 0
+  const status = publishWithRetry("@mentra/engine@3.2.0-dev.157", "sha512-abc", {
+    publish: () => {
+      publishes += 1
+      throw new Error("publish connection reset")
+    },
+    registryIntegrityOf: () => {
+      reads += 1
+      if (reads === 1) throw new Error("registry unavailable")
+      return "sha512-abc"
+    },
+    sleep: () => {
+      pauses += 1
+    },
+  })
+  assert.equal(status, "published")
+  assert.equal(publishes, 2)
+  assert.equal(reads, 2)
+  assert.equal(pauses, 1)
+})
+
+test("keeps bounded attempts and the publish error when every recovery read fails", () => {
+  let publishes = 0
+  let pauses = 0
+  const publishError = new Error("publish connection reset")
+  assert.throws(
+    () => publishWithRetry("@mentra/engine@3.2.0-dev.157", "sha512-abc", {
+      attempts: 3,
+      publish: () => {
+        publishes += 1
+        throw publishError
+      },
+      registryIntegrityOf: () => {
+        throw new Error("registry unavailable")
+      },
+      sleep: () => {
+        pauses += 1
+      },
+    }),
+    (error) => error === publishError,
+  )
+  assert.equal(publishes, 3)
+  assert.equal(pauses, 2)
+})
