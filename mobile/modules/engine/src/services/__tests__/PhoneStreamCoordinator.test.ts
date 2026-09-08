@@ -15,9 +15,14 @@ const startExternallyManagedStream = mock(async (req: unknown) => streamStatusFo
 const stopStream = mock(async () => {})
 const sendExternallyManagedStreamKeepAlive = mock(async (_req: unknown) => {})
 
-mock.module("@mentra/bluetooth-sdk/internal", () => ({
-  default: {startStream, startExternallyManagedStream, stopStream, sendExternallyManagedStreamKeepAlive},
-}))
+import {bluetoothSdk} from "./bluetoothSdkTestMock"
+
+Object.assign(bluetoothSdk, {
+  startStream,
+  startExternallyManagedStream,
+  stopStream,
+  sendExternallyManagedStreamKeepAlive,
+})
 
 const provisionManagedStream = mock(async (_destinations?: unknown) => ({
   liveInputId: "cf-input-test",
@@ -76,6 +81,12 @@ mock.module("../../utils/timers", () => ({
 let hlsHeadResponder: () => Response = () => new Response(null, {status: 200})
 const realFetch = globalThis.fetch
 beforeEach(() => {
+  Object.assign(bluetoothSdk, {
+    startStream,
+    startExternallyManagedStream,
+    stopStream,
+    sendExternallyManagedStreamKeepAlive,
+  })
   startStream.mockClear()
   startExternallyManagedStream.mockClear()
   stopStream.mockClear()
