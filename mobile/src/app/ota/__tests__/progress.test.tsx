@@ -22,6 +22,7 @@ import {useSettingsStore} from "../../../../modules/engine/src/stores/settings"
 const setSuperMode = (enabled: boolean) => useSettingsStore.getState().setSetting("super_mode", enabled, false)
 
 jest.mock("@/contexts/NavigationHistoryContext", () => ({
+  focusEffectLockScreen: jest.fn(),
   focusEffectPreventBack: jest.fn(),
   useNavigationHistory: () => ({replace: mockReplace}),
 }))

@@ -47,6 +47,44 @@ export const focusEffectPreventBack = (backFn?: (event?: PreventBackEvent) => vo
   )
 }
 
+// Stable identity so focusEffectPreventBack's focus effect (keyed on backFn)
+// runs once per focus instead of on every render of the locked screen.
+const noopBack = () => {}
+
+/**
+ * Hard-locks a one-way screen: no back gesture, no hardware back, no inherited
+ * back handler. Use it on screens that deliberately render no back affordance
+ * at all and that strand the user if they are left mid-flow (Mentra Live OTA).
+ *
+ * focusEffectPreventBack() on its own leaves two ways out:
+ *
+ *  - Android: `androidBackFn` is a single global slot that decPreventBack only
+ *    clears once the prevent-back count reaches zero. A screen we were pushed
+ *    on top of (any capsule host) is still holding that slot when it blurs, and
+ *    NavigationHost runs whatever is in it on hardware/gesture back — which
+ *    pops us off this screen. Claiming the slot with a no-op closes that path.
+ *  - iOS: the stack's `gestureEnabled` is a navigator-wide default of
+ *    `forceGestureEnabled || !preventBack`, so anything still holding
+ *    `forceGestureEnabled` (a miniapp host mid-teardown) re-enables the edge
+ *    swipe for every screen. A per-screen option beats the navigator default
+ *    and cannot be turned back on from elsewhere.
+ */
+export const focusEffectLockScreen = () => {
+  const navigation = useNavigation()
+
+  focusEffectPreventBack(noopBack)
+
+  useFocusEffect(
+    useCallback(() => {
+      // expo-router types useNavigation() against the generic navigator, which
+      // doesn't surface the native stack's gestureEnabled option.
+      const setGesture = navigation.setOptions as (options: {gestureEnabled?: boolean}) => void
+      setGesture({gestureEnabled: false})
+      return () => setGesture({gestureEnabled: undefined})
+    }, [navigation]),
+  )
+}
+
 export function usePushUnder() {
   const navigation = useNavigation()
 
