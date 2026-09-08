@@ -943,10 +943,85 @@ public class WhipStreamingService extends Service {
     handleStartupFailure("ice_timeout", "ICE did not connect; WHIP media path failed");
   }
 
+  /**
+   * SoftAP only: can these glasses reach the phone the WHIP URL points at? Runs `ip neigh`,
+   * one ping and `ip route get` against the URL host and returns a one-line summary. Called off
+   * the main thread — it blocks for up to ~3s when the host is silent.
+   *
+   * Read the result like this: `arp=FAILED/INCOMPLETE` means the phone never answered ARP, so
+   * L2 is the problem (phone asleep, wrong SSID, AP isolation); `arp=REACHABLE ping=0/1` means
+   * L2 is fine and something drops IP; `ping=1/1` with a TCP connect timeout means a firewall or
+   * the listener itself.
+   */
+  static String probeWhipHost(String whipUrl) {
+    String host;
+    try {
+      host = java.net.URI.create(whipUrl).getHost();
+    } catch (Exception e) {
+      return "probe skipped: bad url";
+    }
+    if (host == null || host.isEmpty()) return "probe skipped: no host";
+    String neigh = runShell("ip neigh show " + host, 2_000);
+    String arp = "none";
+    if (!neigh.isEmpty()) {
+      String[] parts = neigh.split("\\s+");
+      arp = parts[parts.length - 1];
+    }
+    String ping = runShell("ping -c 1 -W 2 " + host, 4_000);
+    String pingSummary = ping.contains("1 received") ? "1/1" : ping.contains("0 received") ? "0/1" : "err";
+    String route = runShell("ip route get " + host, 2_000);
+    String dev = "?";
+    int devAt = route.indexOf(" dev ");
+    if (devAt >= 0) {
+      String[] parts = route.substring(devAt + 5).trim().split("\\s+");
+      if (parts.length > 0) dev = parts[0];
+    }
+    return "glasses->phone " + host + " arp=" + arp + " ping=" + pingSummary + " via=" + dev;
+  }
+
+  private static String runShell(String command, long timeoutMs) {
+    try {
+      Process process = new ProcessBuilder("sh", "-c", command).redirectErrorStream(true).start();
+      java.io.InputStream stream = process.getInputStream();
+      java.io.ByteArrayOutputStream buffer = new java.io.ByteArrayOutputStream();
+      long deadline = SystemClock.elapsedRealtime() + timeoutMs;
+      byte[] chunk = new byte[1024];
+      while (SystemClock.elapsedRealtime() < deadline) {
+        if (stream.available() > 0) {
+          int read = stream.read(chunk);
+          if (read < 0) break;
+          buffer.write(chunk, 0, read);
+        } else if (!process.isAlive()) {
+          int read;
+          while ((read = stream.read(chunk)) > 0) buffer.write(chunk, 0, read);
+          break;
+        } else {
+          Thread.sleep(25);
+        }
+      }
+      if (process.isAlive()) process.destroy();
+      return buffer.toString("UTF-8").trim();
+    } catch (Exception e) {
+      return "";
+    }
+  }
+
   private void postOfferToWhip(SessionDescription offer, int generation) {
     logStartupStage("whip_request_started");
     Log.d(TAG, "POSTing SDP offer to WHIP URL: " + mWhipUrl);
     logSdpVideoSection("Offer", offer.description);
+    if (mIceMode == IcePostPolicy.Mode.HOST_ONLY) {
+      // Pre-flight in parallel with the POST so it costs no startup time: by the time a connect
+      // timeout fires the verdict is already in the trace, and the failure below appends a fresh one.
+      final String probeUrl = mWhipUrl;
+      Thread probe = new Thread(() -> {
+        String verdict = probeWhipHost(probeUrl);
+        SoftApTrace.stage("glasses_phone_probe", "verdict", verdict);
+        Log.i(TAG, "[STREAM_STARTUP] " + verdict);
+      }, "whip-host-probe");
+      probe.setDaemon(true);
+      probe.start();
+    }
 
     RequestBody body = RequestBody.create(
         offer.description, MediaType.parse("application/sdp"));
@@ -1063,7 +1138,15 @@ public class WhipStreamingService extends Service {
       public void onFailure(Call call, IOException e) {
         if (generation != mNegotiationGeneration) return;
         Log.e(TAG, "WHIP request failed", e);
-        handleStartupFailure("whip_request_failed", "WHIP request failed: " + e.getMessage());
+        String message = "WHIP request failed: " + e.getMessage();
+        if (mIceMode == IcePostPolicy.Mode.HOST_ONLY) {
+          // OkHttp calls back on a worker thread, so a blocking probe here is fine. The verdict
+          // rides the error over BLE so the phone UI shows *why* the glasses could not reach it.
+          String verdict = probeWhipHost(mWhipUrl);
+          SoftApTrace.stage("whip_request_failed", "error", e.getMessage(), "verdict", verdict);
+          message = message + " [" + verdict + "]";
+        }
+        handleStartupFailure("whip_request_failed", message);
       }
     });
   }
