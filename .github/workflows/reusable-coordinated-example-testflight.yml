@@ -327,6 +327,7 @@ jobs:
           export MATCH_GIT_BASIC_AUTHORIZATION
           keychain="mentra-example-${GITHUB_RUN_ID}.keychain-db"
           password="$(openssl rand -hex 32)"
+          echo "::add-mask::$password"
           security delete-keychain "$keychain" 2>/dev/null || true
           security create-keychain -p "$password" "$keychain"
           security set-keychain-settings -lut 21600 "$keychain"

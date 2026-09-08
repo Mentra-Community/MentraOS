@@ -661,6 +661,7 @@ jobs:
           export MATCH_GIT_BASIC_AUTHORIZATION
           keychain="mentra-coordinated-${GITHUB_RUN_ID}.keychain-db"
           password="$(openssl rand -hex 32)"
+          echo "::add-mask::$password"
           security delete-keychain "$keychain" 2>/dev/null || true
           security create-keychain -p "$password" "$keychain"
           security set-keychain-settings -lut 21600 "$keychain"
@@ -680,6 +681,7 @@ jobs:
           security list-keychains -d user -s "${keychains[@]}"
           security default-keychain -s "$keychain"
           bundle exec fastlane match appstore --readonly --keychain_name "$keychain" --keychain_password "$password"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain"
           echo "MENTRA_CI_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
           echo "MENTRA_CI_KEYCHAIN_PASSWORD=$password" >> "$GITHUB_ENV"
 
