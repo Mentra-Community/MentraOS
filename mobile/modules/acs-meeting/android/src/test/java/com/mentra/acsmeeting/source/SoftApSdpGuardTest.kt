@@ -1,5 +1,6 @@
 package com.mentra.acsmeeting.source
 
+import com.mentra.acsmeeting.network.Ipv4Prefix
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.Test
 
@@ -75,7 +76,7 @@ class SoftApSdpGuardTest {
     val verdict = SoftApSdpGuard.inspect(sdp(srflxCandidate))
 
     val rejected = verdict as SoftApSdpGuard.Verdict.Rejected
-    assertThat(rejected.code).isEqualTo(SoftApSdpGuard.REASON_NO_HOST_CANDIDATE)
+    assertThat(rejected.code).isEqualTo(SoftApSdpGuard.REASON_ONLY_NON_HOTSPOT)
     assertThat(rejected.detail).contains("typ srflx")
   }
 
@@ -84,7 +85,7 @@ class SoftApSdpGuardTest {
     val verdict = SoftApSdpGuard.inspect(sdp())
 
     val rejected = verdict as SoftApSdpGuard.Verdict.Rejected
-    assertThat(rejected.code).isEqualTo(SoftApSdpGuard.REASON_NO_HOST_CANDIDATE)
+    assertThat(rejected.code).isEqualTo(SoftApSdpGuard.REASON_NO_CANDIDATES)
     assertThat(rejected.detail).isEqualTo("no candidates at all")
   }
 
@@ -129,7 +130,7 @@ class SoftApSdpGuardTest {
     )
 
     val rejected = verdict as SoftApSdpGuard.Verdict.Rejected
-    assertThat(rejected.code).isEqualTo(SoftApSdpGuard.REASON_NO_HOST_CANDIDATE)
+    assertThat(rejected.code).isEqualTo(SoftApSdpGuard.REASON_ONLY_NON_HOTSPOT)
   }
 
   @Test
@@ -201,5 +202,74 @@ class SoftApSdpGuardTest {
         "candidate:1 1 udp 2122260223 192.168.43.20 51234 typ relay",
       ),
     ).isFalse()
+  }
+
+  @Test
+  fun `the candidate address is read positionally, with or without the a= prefix`() {
+    assertThat(SoftApSdpGuard.candidateAddress(hostCandidate)).isEqualTo("192.168.43.20")
+    assertThat(
+      SoftApSdpGuard.candidateAddress(
+        "candidate:3558496604 1 udp 2122260223 10.48.51.202 35664 typ host generation 0",
+      ),
+    ).isEqualTo("10.48.51.202")
+  }
+
+  /** `raddr` would win a scan for anything dotted-quad-shaped and blame the wrong interface. */
+  @Test
+  fun `a reflexive candidate reports its local address, not its raddr`() {
+    assertThat(
+      SoftApSdpGuard.candidateAddress(
+        "candidate:2 1 udp 1686052607 203.0.113.9 44444 typ srflx raddr 192.168.43.20 rport 51234",
+      ),
+    ).isEqualTo("203.0.113.9")
+  }
+
+  @Test
+  fun `a line without an address reports none rather than a stray token`() {
+    assertThat(SoftApSdpGuard.candidateAddress("a=mid:0")).isNull()
+    assertThat(SoftApSdpGuard.candidateAddress("")).isNull()
+  }
+
+  // -----------------------------------------------------------------
+  // Pinning a cellular-substituted host address back onto the hotspot
+  // -----------------------------------------------------------------
+
+  @Test
+  fun `a cellular host address is rewritten to the scoped SoftAP address`() {
+    val prefix = Ipv4Prefix("192.168.43.79", 24)
+    val original =
+      sdp("a=candidate:1 1 udp 2122260223 10.48.51.202 35664 typ host generation 0")
+
+    val pinned = SoftApSdpGuard.pinHostAddresses(original, "192.168.43.79", prefix)
+
+    assertThat(pinned.rewritten).containsExactly("10.48.51.202")
+    assertThat(pinned.sdp).contains("192.168.43.79 35664 typ host")
+    assertThat(pinned.sdp).doesNotContain("10.48.51.202")
+    assertThat(SoftApSdpGuard.inspect(pinned.sdp, prefix)).isInstanceOf(SoftApSdpGuard.Verdict.Ok::class.java)
+  }
+
+  @Test
+  fun `a host address already on the hotspot is left alone`() {
+    val prefix = Ipv4Prefix("192.168.43.79", 24)
+    val original = sdp(hostCandidate)
+
+    val pinned = SoftApSdpGuard.pinHostAddresses(original, "192.168.43.79", prefix)
+
+    assertThat(pinned.rewritten).isEmpty()
+    assertThat(pinned.sdp).isEqualTo(original)
+  }
+
+  @Test
+  fun `a reflexive raddr is not treated as the connection address to pin`() {
+    // Field 5 is 203.0.113.7; raddr is already the hotspot. Rewriting raddr would hide a srflx
+    // that ICE could still select, and would not fix the address the glasses send to.
+    val prefix = Ipv4Prefix("192.168.43.79", 24)
+    val original = sdp(srflxCandidate)
+
+    val pinned = SoftApSdpGuard.pinHostAddresses(original, "192.168.43.79", prefix)
+
+    assertThat(pinned.rewritten).isEmpty()
+    assertThat(pinned.sdp).contains("203.0.113.7")
+    assertThat(pinned.sdp).contains("raddr 192.168.43.20")
   }
 }
