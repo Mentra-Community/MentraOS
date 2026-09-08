@@ -105,6 +105,7 @@ export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
   forget: bindPublicMethod("forget"),
   displayText: bindPublicMethod("displayText"),
   clearDisplay: bindPublicMethod("clearDisplay"),
+  setDashboardContent: bindPublicMethod("setDashboardContent"),
   showDashboard: bindPublicMethod("showDashboard"),
   setDashboardPosition: bindPublicMethod("setDashboardPosition"),
   setHeadUpAngle: bindPublicMethod("setHeadUpAngle"),
