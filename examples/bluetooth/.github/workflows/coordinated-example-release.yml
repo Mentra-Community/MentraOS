@@ -340,7 +340,7 @@ jobs:
 
       - name: Download validated artifacts
         if: steps.existing.outputs.already_published != 'true'
-        run: gh run download "${{ steps.validation.outputs.run_id }}" --dir validated-artifacts
+        run: bash .github/scripts/download-example-artifacts.sh "${{ steps.validation.outputs.run_id }}"
 
       - name: Create source tag and deterministic result
         if: steps.existing.outputs.already_published != 'true'
