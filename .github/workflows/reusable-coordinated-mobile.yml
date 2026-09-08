@@ -541,7 +541,6 @@ jobs:
       EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID }}
     outputs:
       upload_artifact: coordinated-mobile-ios-upload-${{ github.run_id }}
-      upload_status: ${{ inputs.dry_run && 'built' || (steps.app-store.outputs.exists == 'true' && 'reused' || 'published') }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -735,6 +734,97 @@ jobs:
           [[ "$(plutil -extract CFBundleShortVersionString raw /tmp/mentra-mobile-info.plist)" == "$EXPECTED_VERSION" ]]
           [[ "$(plutil -extract CFBundleVersion raw /tmp/mentra-mobile-info.plist)" == "$EXPECTED_BUILD" ]]
 
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coordinated-mobile-ios-upload-${{ github.run_id }}
+          path: mobile-release
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Clean persistent-runner credentials
+        if: always()
+        run: |
+          if [[ -n "${MENTRA_CI_KEYCHAIN:-}" ]]; then
+            security delete-keychain "$MENTRA_CI_KEYCHAIN" 2>/dev/null || true
+          fi
+          if [[ -f "${MENTRA_PREVIOUS_KEYCHAINS:-}" ]]; then
+            previous_keychains=()
+            while IFS= read -r keychain; do
+              [[ -n "$keychain" ]] && previous_keychains+=("$keychain")
+            done < "$MENTRA_PREVIOUS_KEYCHAINS"
+            if (( ${#previous_keychains[@]} > 0 )); then
+              security list-keychains -d user -s "${previous_keychains[@]}" || true
+            fi
+          fi
+          if [[ -f "${MENTRA_PREVIOUS_DEFAULT_KEYCHAIN:-}" ]]; then
+            previous_default=$(head -1 "$MENTRA_PREVIOUS_DEFAULT_KEYCHAIN")
+            [[ -n "$previous_default" ]] && security default-keychain -d user -s "$previous_default" || true
+          fi
+          if [[ "${MENTRA_CONFIGURED_MAPBOX_NETRC:-}" == "true" && -f "$HOME/.netrc" ]]; then
+            sed -i '' '/machine api.mapbox.com/,+2d' "$HOME/.netrc" || true
+          fi
+
+  ios-publish:
+    name: Publish immutable iOS app from Ubuntu
+    needs: [prepare, ios]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_commit }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.ios.outputs.upload_artifact }}
+          path: mobile-release
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Publish immutable iOS release asset
+        timeout-minutes: 5
+        if: inputs.dry_run != true && inputs.compatibility_lab != true && needs.prepare.outputs.ios_asset_exists != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          node .github/scripts/publish-immutable-release-asset.mjs
+          --release-id "${{ needs.prepare.outputs.release_id }}"
+          --repository "${{ github.repository }}"
+          --file "mobile-release/ios/${{ needs.prepare.outputs.ipa_name }}"
+          --name "${{ needs.prepare.outputs.ipa_name }}"
+
+  ios-upload:
+    name: Upload the published iOS app to App Store Connect
+    needs: [prepare, ios, ios-publish]
+    runs-on: macos-15
+    timeout-minutes: 30
+    outputs:
+      upload_status: ${{ inputs.dry_run && 'built' || (steps.app-store.outputs.exists == 'true' && 'reused' || 'published') }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_commit }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.ios.outputs.upload_artifact }}
+          path: mobile-release
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Inject App Store Connect API credential
+        if: inputs.dry_run != true
+        uses: ./.github/actions/inject-signing
+        with:
+          ios: "true"
+          asc-api-key-p8-b64: ${{ secrets.ASC_API_KEY_P8_B64 }}
+          asc-api-key-id: ${{ secrets.ASC_API_KEY_ID }}
+          asc-api-issuer-id: ${{ secrets.ASC_API_ISSUER_ID }}
+
       - name: Resolve App Store Connect credential path
         if: inputs.dry_run != true
         id: asc
@@ -768,39 +858,9 @@ jobs:
           --build-number "${{ needs.prepare.outputs.build_number }}"
           --ipa "mobile-release/ios/${{ needs.prepare.outputs.ipa_name }}"
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: coordinated-mobile-ios-upload-${{ github.run_id }}
-          path: mobile-release
-          if-no-files-found: error
-          retention-days: 90
-
-      - name: Clean persistent-runner credentials
-        if: always()
-        run: |
-          if [[ -n "${MENTRA_CI_KEYCHAIN:-}" ]]; then
-            security delete-keychain "$MENTRA_CI_KEYCHAIN" 2>/dev/null || true
-          fi
-          if [[ -f "${MENTRA_PREVIOUS_KEYCHAINS:-}" ]]; then
-            previous_keychains=()
-            while IFS= read -r keychain; do
-              [[ -n "$keychain" ]] && previous_keychains+=("$keychain")
-            done < "$MENTRA_PREVIOUS_KEYCHAINS"
-            if (( ${#previous_keychains[@]} > 0 )); then
-              security list-keychains -d user -s "${previous_keychains[@]}" || true
-            fi
-          fi
-          if [[ -f "${MENTRA_PREVIOUS_DEFAULT_KEYCHAIN:-}" ]]; then
-            previous_default=$(head -1 "$MENTRA_PREVIOUS_DEFAULT_KEYCHAIN")
-            [[ -n "$previous_default" ]] && security default-keychain -d user -s "$previous_default" || true
-          fi
-          if [[ "${MENTRA_CONFIGURED_MAPBOX_NETRC:-}" == "true" && -f "$HOME/.netrc" ]]; then
-            sed -i '' '/machine api.mapbox.com/,+2d' "$HOME/.netrc" || true
-          fi
-
   ios-store:
     name: Process iOS upload and assign TestFlight group
-    needs: [prepare, ios]
+    needs: [prepare, ios, ios-upload]
     runs-on: ubuntu-latest
     timeout-minutes: 70
     steps:
@@ -821,20 +881,6 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
-
-      # Publish from Ubuntu after the existing Actions artifact transfer. The
-      # Mac runner's uplink cannot reliably finish a single GitHub release-asset
-      # POST before the upload endpoint times out.
-      - name: Publish immutable iOS release asset
-        if: inputs.dry_run != true && inputs.compatibility_lab != true && needs.prepare.outputs.ios_asset_exists != 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: >-
-          node .github/scripts/publish-immutable-release-asset.mjs
-          --release-id "${{ needs.prepare.outputs.release_id }}"
-          --repository "${{ github.repository }}"
-          --file "mobile-release/ios/${{ needs.prepare.outputs.ipa_name }}"
-          --name "${{ needs.prepare.outputs.ipa_name }}"
 
       - name: Inject App Store Connect API credential
         if: inputs.dry_run != true
@@ -867,7 +913,7 @@ jobs:
 
       - name: Write iOS release result
         env:
-          STATUS: ${{ needs.ios.outputs.upload_status }}
+          STATUS: ${{ needs.ios-upload.outputs.upload_status }}
         run: >-
           node .github/scripts/coordinated-mobile-records.mjs create-ios
           --plan release-intent/release-plan.json
