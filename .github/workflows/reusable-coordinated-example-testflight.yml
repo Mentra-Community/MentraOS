@@ -491,12 +491,10 @@ jobs:
           echo "${{ steps.app-store.outputs.exists == 'true' && 'reused' || 'published' }}" \
             > release-output/upload-status.txt
 
-      - uses: actions/upload-artifact@v4
+      - uses: ./.github/actions/upload-artifact-with-retry
         with:
           name: ${{ steps.coordinates.outputs.upload_artifact }}
           path: release-output
-          if-no-files-found: error
-          retention-days: 90
 
       - name: Clean persistent-runner credentials
         if: always()

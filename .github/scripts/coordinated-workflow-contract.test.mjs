@@ -431,7 +431,7 @@ test("iOS publishes the signed artifact before submitting those same bytes to Ap
   const upload = jobBlock(source, "ios-upload")
   const store = jobBlock(source, "ios-store")
   assert.doesNotMatch(build, /publish-immutable-release-asset\.mjs|app-store-connect-build\.mjs upload/)
-  assert.match(build, /actions\/upload-artifact@v4/)
+  assert.match(build, /uses: \.\/\.github\/actions\/upload-artifact-with-retry/)
   assert.match(publish, /needs: \[prepare, ios\]/)
   assert.match(publish, /runs-on: ubuntu-latest/)
   assert.match(publish, /timeout-minutes: 5/)

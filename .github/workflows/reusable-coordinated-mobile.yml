@@ -736,12 +736,10 @@ jobs:
           [[ "$(plutil -extract CFBundleShortVersionString raw /tmp/mentra-mobile-info.plist)" == "$EXPECTED_VERSION" ]]
           [[ "$(plutil -extract CFBundleVersion raw /tmp/mentra-mobile-info.plist)" == "$EXPECTED_BUILD" ]]
 
-      - uses: actions/upload-artifact@v4
+      - uses: ./.github/actions/upload-artifact-with-retry
         with:
           name: coordinated-mobile-ios-upload-${{ github.run_id }}
           path: mobile-release
-          if-no-files-found: error
-          retention-days: 90
 
       - name: Clean persistent-runner credentials
         if: always()
