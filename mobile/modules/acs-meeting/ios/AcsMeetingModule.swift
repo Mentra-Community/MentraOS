@@ -49,8 +49,41 @@ public class AcsMeetingModule: Module {
             // safe to run after a failed start.
         }
 
+        AsyncFunction("probeScopedGateway") { () -> [String: Any] in
+            // No scoped network exists on iOS, so there is nothing to probe. Report it as such rather
+            // than as unreachable, which the orchestrator would read as a live network failure.
+            ["reachable": false, "detail": "no scoped network on iOS"]
+        }
+
         AsyncFunction("leave") {
             self.session?.leave()
+        }
+
+        AsyncFunction("endForEveryone") { (promise: Promise) in
+            guard let session = self.session else {
+                promise.reject(NSError(
+                    domain: "MentraAcsMeeting",
+                    code: 3,
+                    userInfo: [NSLocalizedDescriptionKey: "No active meeting to end"]
+                ))
+                return
+            }
+            session.endForEveryone { error in
+                // Local teardown has already run by the time this fires, so a rejection here means
+                // "the meeting may still be running", never "you are still in it".
+                if let error {
+                    promise.reject(error)
+                } else {
+                    promise.resolve(session.snapshot())
+                }
+            }
+        }
+
+        AsyncFunction("scopedNetworkInfo") { () -> [String: Any?] in
+            // No scoped network on iOS, so there is no prefix for the ICE-path proof to check
+            // against. Reported as unavailable rather than as an empty prefix, which the proof
+            // would read as "could not describe the network" on a platform that has none.
+            ["available": false, "localIpv4": nil, "prefix": nil]
         }
 
         AsyncFunction("setMuted") { (muted: Bool) in
@@ -133,9 +166,15 @@ final class AcsMeetingSession {
     private static let mediaRestartBaseMs = 1000
     private static let mediaRestartMaxMs = 10000
     private var joinGeneration: UInt64 = 0
+    private var capabilitiesFeature: CapabilitiesCallFeature?
+    /// nil means "not reported yet", which the miniapp shows as End disabled rather than absent.
+    private var hangUpForEveryone: (allowed: Bool, reason: String)?
     private lazy var callDelegateProxy = AcsCallDelegateProxy(
         onStateChange: { [weak self] call in self?.handleCallStateChange(call) },
         onMuteChange: { [weak self] call in self?.handleCallMuteChange(call) }
+    )
+    private lazy var capabilitiesDelegateProxy = AcsCapabilitiesDelegateProxy(
+        onChanged: { [weak self] in self?.refreshCapabilities() }
     )
 
     init(onState: @escaping ([String: Any]) -> Void, onIncomingPcm: @escaping (String, Int, Int) -> Void) {
@@ -153,6 +192,15 @@ final class AcsMeetingSession {
             "audioSafety": lastSafety.rawValue,
             "mediaSource": mediaSource.rawValue,
         ]
+        // Always present, so a host that simply has not heard from Teams yet is distinguishable
+        // from one that cannot report capabilities at all. Keys are omitted rather than sent as
+        // null while unknown; the host parses a missing key as unknown.
+        var hangUp: [String: Any] = [:]
+        if let capability = hangUpForEveryone {
+            hangUp["allowed"] = capability.allowed
+            hangUp["reason"] = capability.reason
+        }
+        result["capabilities"] = ["hangUpForEveryone": hangUp]
         if let meetingUrl { result["meetingUrl"] = meetingUrl }
         if let lastError { result["error"] = lastError }
         return result
@@ -333,6 +381,7 @@ final class AcsMeetingSession {
         }
         self.call = call
         call.delegate = callDelegateProxy
+        attachCapabilities(call)
 
         let bridge = PcmBridge(dumpWav: dumpWav)
         pcmBridge = bridge
@@ -442,6 +491,102 @@ final class AcsMeetingSession {
         queue.async { self.leaveLocked() }
     }
 
+    /**
+     End the meeting for everyone, then tear this device down.
+
+     Local teardown runs whether or not ACS accepted the hang-up, and the error is reported after
+     it. The wearer is out of the call either way; what the caller learns from a rejection is only
+     that the others may still be in it.
+
+     A known-denied capability is refused locally rather than sent. Teams only lets a presenter end
+     a meeting for everyone, ACS rejects the attempt with an opaque error, and the wearer would have
+     sat through a confirm sheet for nothing. An *unknown* capability is not a refusal: it is the
+     ordinary state before the first capabilities event, and letting ACS answer is more honest than
+     guessing.
+     */
+    func endForEveryone(completion: @escaping (Error?) -> Void) {
+        queue.async { [weak self] in
+            guard let self else { return }
+            if let refusal = self.hangUpForEveryoneRefusal() {
+                completion(NSError(
+                    domain: "MentraAcsMeeting",
+                    code: 3,
+                    userInfo: [NSLocalizedDescriptionKey: refusal]
+                ))
+                return
+            }
+            guard let active = self.call else {
+                self.leaveLocked()
+                completion(NSError(
+                    domain: "MentraAcsMeeting",
+                    code: 3,
+                    userInfo: [NSLocalizedDescriptionKey: "No active meeting to end"]
+                ))
+                return
+            }
+            let options = HangUpOptions()
+            options.forEveryone = true
+            active.hangUp(options: options) { [weak self] error in
+                guard let self else {
+                    completion(error)
+                    return
+                }
+                if let error {
+                    NSLog("ACS-SPIKE endForEveryone failed: \(error)")
+                }
+                self.queue.async {
+                    self.leaveLocked()
+                    completion(error)
+                }
+            }
+        }
+    }
+
+    /// The refusal to report, or nil when the End should be attempted.
+    private func hangUpForEveryoneRefusal() -> String? {
+        guard let capability = readHangUpForEveryone(), !capability.allowed else { return nil }
+        return "hang_up_for_everyone_not_allowed:\(capability.reason)"
+    }
+
+    /**
+     Subscribe to the runtime capability that decides whether End is offered.
+
+     Subscribed rather than read once: Teams can grant the capability after admission (a wearer
+     promoted to presenter mid-call), and an End button that never turns on is the same bug as one
+     that lies about what it does.
+     */
+    private func attachCapabilities(_ call: Call) {
+        let feature = call.feature(Features.capabilities)
+        capabilitiesFeature = feature
+        feature.delegate = capabilitiesDelegateProxy
+        refreshCapabilities()
+    }
+
+    fileprivate func refreshCapabilities() {
+        queue.async { [weak self] in
+            guard let self else { return }
+            let next = self.readHangUpForEveryone()
+            guard next?.allowed != self.hangUpForEveryone?.allowed
+                || next?.reason != self.hangUpForEveryone?.reason else { return }
+            self.hangUpForEveryone = next
+            NSLog("ACS-SPIKE hangUpForEveryone allowed=\(next?.allowed.description ?? "unknown") reason=\(next?.reason ?? "-")")
+            self.onState(self.snapshot())
+        }
+    }
+
+    /// Drop the capability so the next call starts unknown instead of inheriting the last one's.
+    private func detachCapabilities() {
+        capabilitiesFeature?.delegate = nil
+        capabilitiesFeature = nil
+        hangUpForEveryone = nil
+    }
+
+    private func readHangUpForEveryone() -> (allowed: Bool, reason: String)? {
+        guard let feature = capabilitiesFeature else { return nil }
+        guard let capability = feature.capabilities.first(where: { $0.type == .hangUpForEveryone }) else { return nil }
+        return (capability.isAllowed, String(describing: capability.reason))
+    }
+
     fileprivate func applyAudioPolicy(_ reason: String) {
         queue.async { self.applyAudioPolicyOnQueue(reason) }
     }
@@ -488,6 +633,7 @@ final class AcsMeetingSession {
         // Detach before stop so the teardown's own idle transition does not emit a
         // snapshot (or schedule a rebuild) for a call that is going away.
         cancelMediaRestart()
+        detachCapabilities()
         whep?.onStateChange = nil
         mediaSource = .idle
         whep?.stop()
@@ -660,6 +806,21 @@ private final class AcsCallDelegateProxy: NSObject, CallDelegate {
 
     func call(_ call: Call, didUpdateOutgoingAudioState _: PropertyChangedEventArgs) {
         onMuteChange(call)
+    }
+}
+
+private final class AcsCapabilitiesDelegateProxy: NSObject, CapabilitiesCallFeatureDelegate {
+    private let onChanged: () -> Void
+
+    init(onChanged: @escaping () -> Void) {
+        self.onChanged = onChanged
+    }
+
+    func capabilitiesCallFeature(
+        _: CapabilitiesCallFeature,
+        didChangeCapabilities _: CapabilitiesChangedEventArgs
+    ) {
+        onChanged()
     }
 }
 
