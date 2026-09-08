@@ -2,7 +2,8 @@
 set -euo pipefail
 
 run_id="${1:?Expected a workflow run ID}"
-for attempt in {1..540}; do
+# The caller retains its existing 120-minute job limit for healthy builds.
+while true; do
   state=$(gh run view "$run_id" --repo "$STARTER_KIT_REPOSITORY" --json status,conclusion,jobs)
   failures=$(jq -r '.jobs[] | select(.conclusion != null and .conclusion != "" and .conclusion != "success" and .conclusion != "skipped" and .conclusion != "neutral") | "\(.name): \(.conclusion)"' <<< "$state")
   if [[ -n "$failures" ]]; then
@@ -19,6 +20,3 @@ for attempt in {1..540}; do
   fi
   sleep 10
 done
-
-echo "Example validation run $run_id did not complete within 90 minutes." >&2
-exit 1

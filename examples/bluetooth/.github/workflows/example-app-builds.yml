@@ -255,9 +255,9 @@ jobs:
       - name: Read Bluetooth SDK version
         id: sdk-version
         run: |
-          version=$(jq -r '.dependencies["@mentra/bluetooth-sdk"]' examples/react-native/package.json | sed 's/^[^0-9]*//')
-          if [ -z "$version" ] || [ "$version" = "null" ]; then
-            echo "Could not read @mentra/bluetooth-sdk version from package.json" >&2
+          version=$(jq -er '.dependencies["@mentra/bluetooth-sdk"]' examples/react-native/package.json)
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "The example requires an exact @mentra/bluetooth-sdk version, got: $version" >&2
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
@@ -363,9 +363,9 @@ jobs:
       - name: Read Bluetooth SDK version
         id: sdk-version
         run: |
-          version=$(jq -r '.dependencies["@mentra/bluetooth-sdk"]' examples/react-native-elevenlabs-audio/package.json | sed 's/^[^0-9]*//')
-          if [ -z "$version" ] || [ "$version" = "null" ]; then
-            echo "Could not read @mentra/bluetooth-sdk version from package.json" >&2
+          version=$(jq -er '.dependencies["@mentra/bluetooth-sdk"]' examples/react-native-elevenlabs-audio/package.json)
+          if [[ ! "$version" =~ ^[0-9]+\.[0-9]+\.[0-9]+(-[0-9A-Za-z.-]+)?$ ]]; then
+            echo "The example requires an exact @mentra/bluetooth-sdk version, got: $version" >&2
             exit 1
           fi
           echo "version=$version" >> "$GITHUB_OUTPUT"
