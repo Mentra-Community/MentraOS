@@ -204,7 +204,8 @@ test("mobile destinations use real TestFlight groups without changing the releas
   assert.match(example, /PlistBuddy -c 'Print :com\.apple\.developer\.networking\.HotspotConfiguration'/)
   assert.equal([...example.matchAll(/--app-id "\$EXAMPLE_APP_ID"/g)].length, 5)
   assert.match(example, /starterKit\.releaseCommit/)
-  assert.match(example, /runs-on: \[self-hosted, macOS, ARM64\]/)
+  assert.match(jobBlock(example, "ios"), /runs-on: macos-15/)
+  assert.match(jobBlock(example, "ios"), /DEVELOPER_DIR: \/Applications\/Xcode_26\.2\.app\/Contents\/Developer/)
   assert.match(example, /app-store-connect-build\.mjs upload/)
   assert.match(mobile, /app-store-connect-build\.mjs upload/)
   assert.match(example, /app-store-connect-build\.mjs assign/)
@@ -333,7 +334,7 @@ test("coordinated docs publish only after finalization to the matching channel",
   assert.match(example, /continue-on-error: true/)
   assert.doesNotMatch(example, /STARTER_KIT_APP_PRIVATE_KEY:/)
   assert.match(example, /permission-contents: read/)
-  assert.match(example, /^      group: mentra-ios-signing-runner$/m)
+  assert.doesNotMatch(example, /group: mentra-ios-signing-runner/)
   assert.match(
     example,
     /token: \$\{\{ steps\.starter-kit-app-token\.outputs\.token \|\| secrets\.STARTER_KIT_COORDINATOR_TOKEN/,
