@@ -161,6 +161,40 @@ afterEach(() => {
 })
 
 describe("OtaInstallCoordinator hotspot transport selection", () => {
+  it("preserves the current file context and clears percentages between files and phases", async () => {
+    useGlassesStore.getState().setGlassesInfo({
+      connection: {state: "connected", fullyBooted: true},
+      hotspotOtaVersion: 1,
+      wifi: {state: "disconnected"},
+    })
+    mockHotspotPrepare.mockImplementationOnce(async (_check, report) => {
+      report({
+        phase: "downloading",
+        artifact: {kind: "apk", index: 0, totalCount: 3, artifactPercent: 100, bytesWritten: 100, contentLength: 100},
+      })
+      expect(otaInstallCoordinator.snapshot()).toMatchObject({
+        hotspotArtifactPercent: 100,
+        hotspotArtifact: {kind: "apk", index: 0, totalCount: 3},
+      })
+      report({
+        phase: "downloading",
+        artifact: {kind: "mtk", index: 1, totalCount: 3, artifactPercent: 0, bytesWritten: 0, contentLength: 0},
+      })
+      expect(otaInstallCoordinator.snapshot()).toMatchObject({
+        hotspotArtifactPercent: null,
+        hotspotArtifact: {kind: "mtk", index: 1, totalCount: 3},
+      })
+      report({phase: "joining_hotspot"})
+      expect(otaInstallCoordinator.snapshot()).toMatchObject({hotspotArtifactPercent: null, hotspotArtifact: null})
+      return "http://192.168.43.2:8791/version.json"
+    })
+    otaInstallCoordinator.prepare(checkResult())
+    otaInstallCoordinator.attach()
+    await flushNativeStartPromise()
+    expect(mockHotspotPrepare).toHaveBeenCalledTimes(1)
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+  })
+
   it("waits for an explicit glasses Wi-Fi status before choosing a transport", () => {
     useGlassesStore.getState().setGlassesInfo({hotspotOtaVersion: 1})
 
