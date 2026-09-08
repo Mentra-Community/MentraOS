@@ -3728,6 +3728,12 @@ class MentraLive: NSObject, SGCManager {
         // cannot leave a stale build number in RN (ASG is source of truth for PackageInfo).
         DeviceStore.shared.apply("glasses", "buildNumber", "")
         DeviceStore.shared.apply("glasses", "appVersion", "")
+        // packageName must clear with buildNumber: the OTA guard treats an absent package as
+        // "stock, predates the field", so a retained .thirdparty value from a previous session
+        // would permanently block OTA for the next (possibly pre-field, possibly restored stock)
+        // glasses. Both arrive together in version_info_1, so clearing them together keeps
+        // "have a build ⇒ have this session's identity" true.
+        DeviceStore.shared.apply("glasses", "packageName", "")
         DeviceStore.shared.apply("glasses", "besFirmwareVersion", "")
         DeviceStore.shared.apply("glasses", "mtkFirmwareVersion", "")
         // Modern ASG builds omit ota_version_url entirely (the phone owns manifest selection),

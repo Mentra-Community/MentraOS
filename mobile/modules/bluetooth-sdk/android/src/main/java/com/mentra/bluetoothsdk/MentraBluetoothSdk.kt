@@ -1339,6 +1339,7 @@ class MentraBluetoothSdk private constructor(
                 systemTimeMs = versionInfo.systemTimeMs ?: status.systemTimeMs,
                 otaVersionUrl = versionInfo.otaVersionUrl.ifBlank { status.otaVersionUrl },
                 appVersion = versionInfo.appVersion.ifBlank { status.appVersion },
+                packageName = versionInfo.packageName.ifBlank { status.packageName },
                 hotspotOtaVersion =
                     if (versionInfo.hotspotOtaVersion > 0) {
                         versionInfo.hotspotOtaVersion

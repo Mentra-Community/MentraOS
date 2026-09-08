@@ -204,6 +204,9 @@ export const useGlassesStore = create<GlassesState>()(
         if (!isGlassesConnected(next.connection)) {
           next.wifiStatusKnown = false
           next.hotspotOtaVersion = 0
+          // Identity is session-bound: a retained sideloaded package would block OTA for the
+          // next glasses, since the check reads an absent package as stock.
+          next.packageName = ""
         }
         return next
       }),

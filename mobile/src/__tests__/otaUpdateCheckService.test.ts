@@ -115,6 +115,39 @@ describe("OtaUpdateCheckService", () => {
     expect(result.hasCheckCompleted).toBe(true)
   })
 
+  it("does not inherit a sideloaded package across a session boundary", async () => {
+    // A .thirdparty unit connects, then a stock (or pre-field) unit connects. The store clears
+    // packageName on disconnect, so the next session must not be judged by the old identity —
+    // otherwise restoring the stock client leaves OTA blocked until the app restarts.
+    useGlassesStore.getState().setGlassesInfo({
+      buildNumber: "120",
+      packageName: "com.mentra.asg_client.thirdparty",
+    })
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
+    expect(useGlassesStore.getState().packageName).toBe("")
+
+    useGlassesStore.getState().setGlassesInfo({
+      connection: {state: "connected", fullyBooted: true},
+      buildNumber: "40",
+    })
+    global.fetch = jest.fn(() =>
+      Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({apps: {"com.mentra.asg_client": {versionCode: 10}}}),
+      } as unknown as Response),
+    ) as unknown as typeof fetch
+
+    const result = await checkCurrentGlassesForUpdate({
+      refreshVersionInfo: false,
+      fixClockBeforeCheck: false,
+      waitForBesVersionMs: 0,
+      waitForMtkVersionMs: 0,
+    })
+
+    expect(result.skippedReason).toBeUndefined()
+    expect(result.hasCheckCompleted).toBe(true)
+  })
+
   it("allows a pinned mobile build regardless of the ASG app version", async () => {
     useGlassesStore.getState().setGlassesInfo({appVersion: "49076573-dev", buildNumber: "40"})
     global.fetch = jest.fn(() =>
