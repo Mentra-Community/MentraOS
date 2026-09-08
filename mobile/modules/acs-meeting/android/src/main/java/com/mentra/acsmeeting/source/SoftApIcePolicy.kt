@@ -32,7 +32,9 @@ object SoftApIcePolicy {
   fun networkIgnoreMask(): Int =
     PeerConnectionFactory.Options.ADAPTER_TYPE_CELLULAR or
       PeerConnectionFactory.Options.ADAPTER_TYPE_VPN or
-      PeerConnectionFactory.Options.ADAPTER_TYPE_LOOPBACK
+      PeerConnectionFactory.Options.ADAPTER_TYPE_LOOPBACK or
+      PeerConnectionFactory.Options.ADAPTER_TYPE_ETHERNET or
+      PeerConnectionFactory.Options.ADAPTER_TYPE_ANY
 
   /** Whether [adapterType] is gathered on, given [mask]. Mirrors libwebrtc's own bitwise test. */
   fun allowsAdapter(mask: Int, adapterType: Int): Boolean = (mask and adapterType) == 0
