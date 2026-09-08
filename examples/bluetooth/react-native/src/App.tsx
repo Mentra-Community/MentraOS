@@ -19,14 +19,11 @@ export default function App() {
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [otaVisible, setOtaVisible] = useState(false);
   const [waitingForWifi, setWaitingForWifi] = useState(false);
-  const [otaWifiTargetSsid, setOtaWifiTargetSsid] = useState<string | null>(null);
   const otaCompletedGenerationRef = useRef<number | null>(null);
   const sdk = useBluetoothSdkExample({activeTab: tab});
   const currentWifi = connectedWifiStatus(sdk.glasses);
-  const otaWifiSetupComplete = otaWifiTargetSsid !== null
-    && currentWifi?.ssid === otaWifiTargetSsid
-    && sdk.wifiConnectingSsid === null
-    && sdk.wifiConnectError === null;
+  // A failed attempt to join another network must not block the current one.
+  const otaWifiSetupComplete = currentWifi !== null && sdk.wifiConnectingSsid === null;
   const mentraLiveConnected = isMentraLiveRuntime(sdk.glasses);
   const connectionGeneration = mentraLiveConnected && sdk.glasses.connected
     ? sdk.glassesConnectionGeneration
@@ -72,7 +69,6 @@ export default function App() {
   };
 
   const openWifiSetup = () => {
-    setOtaWifiTargetSsid(null);
     setWaitingForWifi(true);
     setOtaVisible(false);
     setTab('system');
@@ -117,13 +113,7 @@ export default function App() {
               {tab === 'device' && <DeviceScreen sdk={sdk} onOpenOta={openOta} />}
               {tab === 'camera' && <CameraScreen sdk={sdk} />}
               {tab === 'stream' && <StreamScreen sdk={sdk} />}
-              {tab === 'system' && <SystemScreen sdk={{
-                ...sdk,
-                sendWifiCredentials: async (ssid, password, requiresPassword) => {
-                  if (waitingForWifi) setOtaWifiTargetSsid(ssid);
-                  await sdk.sendWifiCredentials(ssid, password, requiresPassword);
-                },
-              }} />}
+              {tab === 'system' && <SystemScreen sdk={sdk} />}
               {tab === 'console' && <ConsoleScreen sdk={sdk} />}
             </View>
             {!keyboardVisible && <TabBar active={tab} onChange={setTab} />}
