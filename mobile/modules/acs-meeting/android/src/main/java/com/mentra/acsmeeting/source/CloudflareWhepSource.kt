@@ -113,8 +113,8 @@ class CloudflareWhepSource(
     // Reuse the existing subscriber only when the URL is unchanged AND the peer is
     // still healthy. After ICE DISCONNECTED/FAILED (e.g. a Wi-Fi drop that
     // reuses the same Cloudflare WHEP URL) we must rebuild, or glasses video and
-    // mic never recover. See canReuseSource for why CONNECTING is reusable.
-    if (canReuseSource(currentUrl, state, config)) return
+    // mic never recover. See SourceReusePolicy for why CONNECTING is reusable.
+    if (SourceReusePolicy.canReuse(currentUrl, state, config)) return
     start(config)
   }
 
