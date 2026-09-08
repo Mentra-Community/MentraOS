@@ -41,6 +41,7 @@ permissions:
 concurrency:
   group: coordinated-sdk-native-publication
   cancel-in-progress: false
+  queue: max
 
 jobs:
   prepare:

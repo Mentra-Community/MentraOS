@@ -101,6 +101,7 @@ permissions:
 concurrency:
   group: coordinated-mobile-publication
   cancel-in-progress: false
+  queue: max
 
 jobs:
   prepare:
@@ -536,6 +537,7 @@ jobs:
     concurrency:
       group: mentra-ios-signing-runner
       cancel-in-progress: false
+      queue: max
     env:
       EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY }}
       EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID }}

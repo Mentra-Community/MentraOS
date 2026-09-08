@@ -51,6 +51,7 @@ permissions:
 concurrency:
   group: coordinated-ota-publication
   cancel-in-progress: false
+  queue: max
 
 env:
   ASG_RELEASE_TAG: mentra-coordinated-asg

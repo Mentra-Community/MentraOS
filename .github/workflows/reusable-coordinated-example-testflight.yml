@@ -118,6 +118,7 @@ jobs:
     concurrency:
       group: mentra-ios-signing-runner
       cancel-in-progress: false
+      queue: max
     outputs:
       upload_artifact: ${{ steps.coordinates.outputs.upload_artifact }}
       upload_status: ${{ steps.app-store.outputs.exists == 'true' && 'reused' || 'published' }}
