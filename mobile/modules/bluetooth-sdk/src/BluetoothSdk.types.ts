@@ -884,6 +884,8 @@ export type OtaStatusEvent = {
   step_type: "apk" | "mtk" | "bes"
   phase: "download" | "install"
   step_percent: number
+  /** Real bytes received in the current download; absent on older glasses. */
+  bytes_downloaded?: number
   overall_percent: number
   status: "in_progress" | "step_complete" | "complete" | "failed" | "idle"
   error_message?: string
@@ -1283,6 +1285,8 @@ export interface OtaStatus {
   stepType: "apk" | "mtk" | "bes"
   phase: "download" | "install"
   stepPercent: number
+  /** Real bytes received in the current download; independent of rounded percent. */
+  bytesDownloaded?: number
   overallPercent: number
   status: "in_progress" | "step_complete" | "complete" | "failed" | "idle"
   error?: string

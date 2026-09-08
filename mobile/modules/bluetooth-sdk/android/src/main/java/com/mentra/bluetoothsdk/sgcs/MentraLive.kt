@@ -4047,7 +4047,8 @@ class MentraLive : SGCManager() {
                         osOverallPercent,
                         osStatus,
                         osErrorMessage,
-                        if (glassesTimeMs > 0) glassesTimeMs else null
+                        if (glassesTimeMs > 0) glassesTimeMs else null,
+                        if (json.has("bytes_downloaded")) json.optLong("bytes_downloaded", 0) else null
                 )
             }
             "ota_progress" -> {

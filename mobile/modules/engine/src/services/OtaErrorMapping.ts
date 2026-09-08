@@ -28,6 +28,9 @@ export function shouldShowChangeWifiForOtaDownloadFailure(
   otaProgress: OtaProgress | null | undefined,
   localErrorMessage: string,
 ): boolean {
+  if (otaStatus?.error === "insufficient_storage" || otaProgress?.errorMessage === "insufficient_storage") {
+    return false
+  }
   if (otaStatus?.status === "failed" && otaStatus.phase === "download") {
     return true
   }
@@ -50,6 +53,8 @@ export function getOtaErrorMessage(error?: string): string {
       return "Secure connection failed — try a different WiFi network"
     case "download_failed":
       return "Download failed — check glasses WiFi connection"
+    case "insufficient_storage":
+      return "Not enough storage on your glasses — free up space before trying again"
     case "firmware_too_large":
       return "Firmware file is unexpectedly large — please contact support"
     case "firmware_verify_failed":
