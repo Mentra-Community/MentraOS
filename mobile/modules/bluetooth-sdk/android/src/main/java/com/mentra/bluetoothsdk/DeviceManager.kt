@@ -664,7 +664,7 @@ class DeviceManager {
                 " ",
                 " ",
                 "text_wall",
-                "\$TIME12$ \$DATE$ \$GBATT$ \$CONNECTION_STATUS$",
+                DashboardContentFormatter.template(""),
                 null,
                 null
             )
@@ -676,7 +676,7 @@ class DeviceManager {
                 " ",
                 " ",
                 "text_wall",
-                "\$TIME12$ \$DATE$ \$GBATT$ \$CONNECTION_STATUS$",
+                DashboardContentFormatter.template(""),
                 null,
                 null
             )
@@ -722,6 +722,8 @@ class DeviceManager {
     // native re-dispatch coherent (dashboard exit re-applies a complete scene,
     // not whatever element happened to arrive last).
     private val sceneStates = arrayOfNulls<SceneFrame>(2)
+    private var dashboardSceneCleanupPending = false
+    private val pendingDashboardSceneElementIds = linkedSetOf<String>()
     // MARK: - End Unique
 
     // MARK: - Voice Data Handling
@@ -1019,6 +1021,8 @@ class DeviceManager {
             Bridge.log("MAN: DeviceManager.sendCurrentState(): sgc not ready")
             return
         }
+
+        clearPendingDashboardSceneElements(currentStateIndex)
 
         // Cancel any pending clear display work item
         // sendStateWorkItem?.let { mainHandler.removeCallbacks(it) }
@@ -1519,6 +1523,45 @@ class DeviceManager {
         sgc?.clearDisplay()
     }
 
+    internal fun setDashboardContent(content: String) {
+        val nextState =
+            ViewState(
+                " ",
+                " ",
+                " ",
+                "text_wall",
+                DashboardContentFormatter.template(content),
+                null,
+                null,
+            )
+        val previousScene = sceneStates[1]
+        if (previousScene == null && viewStates[1] == nextState) {
+            return
+        }
+
+        previousScene?.let { frame ->
+            dashboardSceneCleanupPending = true
+            pendingDashboardSceneElementIds.addAll(frame.elements.map { it.id })
+        }
+        sceneStates[1] = null
+        viewStates[1] = nextState
+
+        if (headUp && contextualDashboard) {
+            sendCurrentState()
+        }
+    }
+
+    private fun clearPendingDashboardSceneElements(stateIndex: Int) {
+        if (stateIndex != 1 || !dashboardSceneCleanupPending) return
+
+        dashboardSceneCleanupPending = false
+        val elementIds = pendingDashboardSceneElementIds.toList()
+        pendingDashboardSceneElementIds.clear()
+        if (elementIds.isNotEmpty()) {
+            sgc?.clearSceneElements(elementIds)
+        }
+    }
+
     fun displayEvent(event: Map<String, Any>) {
         val view = event["view"] as? String
         if (view == null) {
@@ -1549,7 +1592,9 @@ class DeviceManager {
         // wipes everything anyway.
         sceneStates[stateIndex]?.let { prevFrame ->
             sceneStates[stateIndex] = null
-            if (layoutType != "clear_view") {
+            if (stateIndex == 1 && dashboardSceneCleanupPending) {
+                pendingDashboardSceneElementIds.addAll(prevFrame.elements.map { it.id })
+            } else if (layoutType != "clear_view") {
                 sgc?.clearSceneElements(prevFrame.elements.map { it.id })
             }
         }
@@ -1614,7 +1659,13 @@ class DeviceManager {
             // clearDisplay is the per-device "wipe what's there" (blank-in-place
             // on G2 — no page rebuild).
             val prevLegacyType = viewStates[stateIndex].layoutType
-            if (prevLegacyType.isNotEmpty() && prevLegacyType != "clear_view" && prevLegacyType != "scene") {
+            val cleanupDeferred = stateIndex == 1 && dashboardSceneCleanupPending
+            if (
+                !cleanupDeferred &&
+                    prevLegacyType.isNotEmpty() &&
+                    prevLegacyType != "clear_view" &&
+                    prevLegacyType != "scene"
+            ) {
                 sgc?.clearDisplay()
             }
         } else if (prevFrame.appId != frame.appId) {
@@ -1624,7 +1675,11 @@ class DeviceManager {
             // them), then paint the new frame from scratch. In practice the
             // boot message interposes between apps, so this isn't visible as a
             // blank.
-            sgc?.clearSceneElements(prevFrame.elements.map { it.id })
+            if (stateIndex == 1 && dashboardSceneCleanupPending) {
+                pendingDashboardSceneElementIds.addAll(prevFrame.elements.map { it.id })
+            } else {
+                sgc?.clearSceneElements(prevFrame.elements.map { it.id })
+            }
             frame = frame.copy(replay = true, elements = frame.elements.map { it.copy(change = "created") })
         }
 
@@ -1637,18 +1692,19 @@ class DeviceManager {
 
         val hUp = headUp && contextualDashboard
         if ((stateIndex == 0 && !hUp) || (stateIndex == 1 && hUp)) {
-            dispatchSceneFrame(frame)
+            dispatchSceneFrame(stateIndex, frame)
         }
     }
 
     /** Guarded scene dispatch — mirrors sendCurrentState's send conditions. */
-    private fun dispatchSceneFrame(frame: SceneFrame) {
+    private fun dispatchSceneFrame(stateIndex: Int, frame: SceneFrame) {
         if (screenDisabled) return
         if (sgc?.type?.contains(DeviceTypes.SIMULATED) == true) return
         if (sgc?.fullyBooted != true) {
             Bridge.log("MAN: dispatchSceneFrame(): sgc not ready")
             return
         }
+        clearPendingDashboardSceneElements(stateIndex)
         sgc?.applySceneFrame(frame)
     }
 

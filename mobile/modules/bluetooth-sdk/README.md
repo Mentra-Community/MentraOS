@@ -329,6 +329,38 @@ const ledAck = await BluetoothSdk.rgbLedControl(
 console.log(ledAck.state)
 ```
 
+## Dashboard Content
+
+`setDashboardContent(content)` keeps the standard `$TIME12$ $DATE$ $GBATT$
+$CONNECTION_STATUS$` status header and places non-empty content below it after a
+blank line. Pass the exact empty string to reset the dashboard to the status
+header only. The template is held in memory for the SDK process/session, and its
+status placeholders are refreshed each time the dashboard renders. Calling this
+method does not open the dashboard; it updates an active contextual dashboard
+immediately or appears on the next head-up. Repeating the same content is a
+no-op.
+
+React Native / Expo:
+
+```ts
+await BluetoothSdk.setDashboardContent('Next meeting at 2 PM')
+await BluetoothSdk.setDashboardContent('')
+```
+
+Kotlin:
+
+```kotlin
+sdk.setDashboardContent("Next meeting at 2 PM")
+sdk.setDashboardContent("")
+```
+
+Swift (iOS and macOS):
+
+```swift
+await sdk.setDashboardContent("Next meeting at 2 PM")
+await sdk.setDashboardContent("")
+```
+
 Settings commands that return `SettingsAckSuccessEvent` reject when the ASG reports an error ack. The SDK updates its local settings store only after that ASG ack resolves successfully, so observed SDK state reflects the acknowledged glasses state rather than a queued request. Raw `settings_ack` listener events still use `SettingsAckEvent` because they can include both success and failure statuses. `rgbLedControl(...)` resolves from a successful ASG `rgb_led_control_response` and rejects when the ASG reports `state: "error"`; raw `settings_ack` and `rgb_led_control_response` events remain available through listeners.
 
 WiFi, hotspot, and version-info commands resolve from the ASG response path, not local dispatch:

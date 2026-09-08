@@ -77,6 +77,7 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   displayEvent(params: Record<string, unknown>): Promise<void>
   displayText(text: string, x?: number, y?: number, size?: number): Promise<void>
   clearDisplay(): Promise<void>
+  setDashboardContent(content: string): Promise<void>
 
   // Connection Commands
   requestStatus(): Promise<void>

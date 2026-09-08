@@ -337,7 +337,7 @@ struct ViewState {
         ),
         ViewState(
             topText: " ", bottomText: " ", title: " ", layoutType: "text_wall",
-            text: "$TIME12$ $DATE$ $GBATT$ $CONNECTION_STATUS$"
+            text: DashboardContentFormatter.template(for: "")
         ),
         ViewState(
             topText: " ", bottomText: " ", title: " ", layoutType: "text_wall", text: "",
@@ -345,7 +345,7 @@ struct ViewState {
         ),
         ViewState(
             topText: " ", bottomText: " ", title: " ", layoutType: "text_wall",
-            text: "$TIME12$ $DATE$ $GBATT$ $CONNECTION_STATUS$", data: nil,
+            text: DashboardContentFormatter.template(for: ""), data: nil,
             animationData: nil
         ),
     ]
@@ -355,6 +355,8 @@ struct ViewState {
     // sentinel so sendCurrentState routes here. Holding the WHOLE frame keeps
     // native re-dispatch coherent (dashboard exit re-applies a complete scene).
     var sceneStates: [SceneFrame?] = [nil, nil]
+    private var dashboardSceneCleanupPending = false
+    private var pendingDashboardSceneElementIds = Set<String>()
 
     override init() {
         Bridge.log("MAN: init()")
@@ -768,15 +770,8 @@ struct ViewState {
         }
 
         Task {
-            var currentViewState: ViewState!
-            if headUp {
-                currentViewState = self.viewStates[1]
-            } else {
-                currentViewState = self.viewStates[0]
-            }
-            if headUp && !self.contextualDashboard {
-                currentViewState = self.viewStates[0]
-            }
+            let currentStateIndex = headUp && self.contextualDashboard ? 1 : 0
+            let currentViewState = self.viewStates[currentStateIndex]
 
             if sgc?.type.contains(DeviceTypes.SIMULATED) ?? true {
                 // dont send the event to glasses that aren't there:
@@ -787,6 +782,8 @@ struct ViewState {
             if !fullyBooted {
                 return
             }
+
+            await clearPendingDashboardSceneElements(for: currentStateIndex)
 
             // cancel any pending clear display work item:
             sendStateWorkItem?.cancel()
@@ -833,8 +830,7 @@ struct ViewState {
                     borderRadius: currentViewState.borderRadius ?? 0
                 )
             case "scene":
-                let sceneIndex = (headUp && self.contextualDashboard) ? 1 : 0
-                if let frame = self.sceneStates[sceneIndex] {
+                if let frame = self.sceneStates[currentStateIndex] {
                     await sgc?.applySceneFrame(frame)
                 }
             case "clear_view":
@@ -1196,6 +1192,47 @@ struct ViewState {
         Task { await sgc?.sendTextWall(text) }
     }
 
+    func setDashboardContent(_ content: String) async {
+        let nextState = ViewState(
+            topText: " ", bottomText: " ", title: " ", layoutType: "text_wall",
+            text: DashboardContentFormatter.template(for: content), data: nil, animationData: nil
+        )
+        let previousScene = sceneStates[1]
+        let currentState = viewStates[1]
+        if previousScene == nil,
+           currentState.layoutType == nextState.layoutType,
+           currentState.text == nextState.text,
+           currentState.topText == nextState.topText,
+           currentState.bottomText == nextState.bottomText,
+           currentState.title == nextState.title,
+           currentState.data == nextState.data
+        {
+            return
+        }
+
+        if let previousScene {
+            dashboardSceneCleanupPending = true
+            pendingDashboardSceneElementIds.formUnion(previousScene.elements.map(\.id))
+        }
+        sceneStates[1] = nil
+        viewStates[1] = nextState
+
+        if headUp && contextualDashboard {
+            sendCurrentState()
+        }
+    }
+
+    private func clearPendingDashboardSceneElements(for stateIndex: Int) async {
+        guard stateIndex == 1, dashboardSceneCleanupPending else { return }
+
+        dashboardSceneCleanupPending = false
+        let elementIds = Array(pendingDashboardSceneElementIds)
+        pendingDashboardSceneElementIds.removeAll()
+        if !elementIds.isEmpty {
+            await sgc?.clearSceneElements(elementIds)
+        }
+    }
+
     func displayEvent(_ event: [String: Any]) {
         guard let view = event["view"] as? String else {
             Bridge.log("MAN: invalid view")
@@ -1232,7 +1269,9 @@ struct ViewState {
         // wipes everything anyway.
         if let prevFrame = sceneStates[stateIndex] {
             sceneStates[stateIndex] = nil
-            if layoutType != "clear_view" {
+            if stateIndex == 1, dashboardSceneCleanupPending {
+                pendingDashboardSceneElementIds.formUnion(prevFrame.elements.map(\.id))
+            } else if layoutType != "clear_view" {
                 let ids = prevFrame.elements.map(\.id)
                 Task { [weak self] in
                     await self?.sgc?.clearSceneElements(ids)
@@ -1325,7 +1364,12 @@ struct ViewState {
             // clearDisplay is the per-device "wipe what's there" (blank-in-place
             // on G2 - no page rebuild).
             let prevLegacyType = viewStates[stateIndex].layoutType
-            if !prevLegacyType.isEmpty, prevLegacyType != "clear_view", prevLegacyType != "scene" {
+            let cleanupDeferred = stateIndex == 1 && dashboardSceneCleanupPending
+            if !cleanupDeferred,
+               !prevLegacyType.isEmpty,
+               prevLegacyType != "clear_view",
+               prevLegacyType != "scene"
+            {
                 sgc?.clearDisplay()
             }
         } else if let prevFrame, prevFrame.appId != frame.appId {
@@ -1334,9 +1378,13 @@ struct ViewState {
             // glasses. Sweep the old app's elements (SGC registries still map
             // them), then paint the new frame from scratch. The boot message
             // interposes between apps in practice, so this isn't visible.
-            let ids = prevFrame.elements.map(\.id)
-            Task { [weak self] in
-                await self?.sgc?.clearSceneElements(ids)
+            if stateIndex == 1, dashboardSceneCleanupPending {
+                pendingDashboardSceneElementIds.formUnion(prevFrame.elements.map(\.id))
+            } else {
+                let ids = prevFrame.elements.map(\.id)
+                Task { [weak self] in
+                    await self?.sgc?.clearSceneElements(ids)
+                }
             }
             frame = frame.asReplay()
         }
@@ -1352,12 +1400,12 @@ struct ViewState {
 
         let hUp = headUp && contextualDashboard
         if (stateIndex == 0 && !hUp) || (stateIndex == 1 && hUp) {
-            dispatchSceneFrame(frame)
+            dispatchSceneFrame(frame, stateIndex: stateIndex)
         }
     }
 
     /// Guarded scene dispatch - mirrors sendCurrentState's send conditions.
-    private func dispatchSceneFrame(_ frame: SceneFrame) {
+    private func dispatchSceneFrame(_ frame: SceneFrame, stateIndex: Int) {
         if screenDisabled { return }
         if sgc?.type.contains(DeviceTypes.SIMULATED) ?? true { return }
         guard sgc?.fullyBooted == true else {
@@ -1365,7 +1413,9 @@ struct ViewState {
             return
         }
         Task { [weak self] in
-            await self?.sgc?.applySceneFrame(frame)
+            guard let self else { return }
+            await self.clearPendingDashboardSceneElements(for: stateIndex)
+            await self.sgc?.applySceneFrame(frame)
         }
     }
 

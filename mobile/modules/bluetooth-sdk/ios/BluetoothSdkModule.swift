@@ -135,6 +135,11 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             try? await sdk.displayText(text, x: x ?? 0, y: y ?? 0, size: size ?? 24)
         }
 
+        AsyncFunction("setDashboardContent") { (content: String) in
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            await sdk.setDashboardContent(content)
+        }
+
         // MARK: - Connection Commands
 
         AsyncFunction("connectDefault") {
@@ -935,6 +940,5 @@ private extension ConnectOptions {
         )
     }
 }
-
 
 
