@@ -98,7 +98,9 @@ jobs:
             [[ "$(gh api "repos/$STARTER_KIT_REPOSITORY/git/ref/tags/sdk-$RELEASE_IDENTITY" --jq .object.sha)" == "$release_commit" ]]
             [[ "$(jq -er '.artifacts | length' "$result")" =~ ^(3|4)$ ]]
             while IFS= read -r url; do
-              curl --fail --silent --show-error --location --head "$url" >/dev/null
+              curl --fail --silent --show-error --location --head \
+                --retry 5 --retry-all-errors --retry-delay 10 --retry-max-time 180 --max-time 30 \
+                "$url" >/dev/null
             done < <(jq -r '.artifacts[].url' "$result")
             echo "already_published=true" >> "$GITHUB_OUTPUT"
             echo "result_url=https://github.com/$STARTER_KIT_REPOSITORY/releases/download/$ARTIFACT_CONTAINER_TAG/$result_name" >> "$GITHUB_OUTPUT"
@@ -407,7 +409,10 @@ jobs:
           # Publish the result last. Its presence is the cross-repository completion signal.
           upload_immutable "$RESULT_NAME"
           result_url="https://github.com/$STARTER_KIT_REPOSITORY/releases/download/$ARTIFACT_CONTAINER_TAG/$RESULT_NAME"
-          curl --fail --silent --show-error --location --head "$result_url" >/dev/null
+          # GitHub can briefly return 404 on the public URL after a successful upload.
+          curl --fail --silent --show-error --location --head \
+            --retry 5 --retry-all-errors --retry-delay 10 --retry-max-time 180 --max-time 30 \
+            "$result_url" >/dev/null
           echo "result_url=$result_url" >> "$GITHUB_OUTPUT"
 
       - name: Summarize the coordinated example release
