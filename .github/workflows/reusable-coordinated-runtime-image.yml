@@ -104,6 +104,8 @@ jobs:
         env:
           RELEASE_TAG: ${{ steps.coordinates.outputs.release_tag }}
           SOURCE_TAG: ${{ steps.coordinates.outputs.source_tag }}
+          REGISTRY_USER: ${{ github.actor }}
+          REGISTRY_PASSWORD: ${{ github.token }}
         run: |
           set -euo pipefail
           inspect_digest() {
@@ -120,12 +122,14 @@ jobs:
           if [[ -n "$release_digest" && -n "$source_digest" ]]; then
             [[ "$release_digest" == "$source_digest" ]]
           elif [[ -n "$release_digest" ]]; then
-            [[ "$release_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
-            docker buildx imagetools create --tag "$SOURCE_TAG" "$CLOUD_IMAGE@$release_digest"
+            # Complete a half-published release by naming the same manifest, not
+            # by rewrapping it — see .github/scripts/publish-registry-tags.mjs.
+            node .github/scripts/publish-registry-tags.mjs \
+              --image "$CLOUD_IMAGE" --digest "$release_digest" --tag "$SOURCE_TAG"
             source_digest="$release_digest"
           elif [[ -n "$source_digest" ]]; then
-            [[ "$source_digest" =~ ^sha256:[0-9a-f]{64}$ ]]
-            docker buildx imagetools create --tag "$RELEASE_TAG" "$CLOUD_IMAGE@$source_digest"
+            node .github/scripts/publish-registry-tags.mjs \
+              --image "$CLOUD_IMAGE" --digest "$source_digest" --tag "$RELEASE_TAG"
             release_digest="$source_digest"
           fi
           if [[ -n "$release_digest" ]]; then
@@ -180,11 +184,15 @@ jobs:
           DIGEST: ${{ steps.build.outputs.digest }}
           RELEASE_TAG: ${{ steps.coordinates.outputs.release_tag }}
           SOURCE_TAG: ${{ steps.coordinates.outputs.source_tag }}
+          REGISTRY_USER: ${{ github.actor }}
+          REGISTRY_PASSWORD: ${{ github.token }}
         run: |
           set -euo pipefail
-          [[ "$DIGEST" =~ ^sha256:[0-9a-f]{64}$ ]]
-          docker buildx imagetools create --tag "$RELEASE_TAG" "$CLOUD_IMAGE@$DIGEST"
-          docker buildx imagetools create --tag "$SOURCE_TAG" "$CLOUD_IMAGE@$DIGEST"
+          node .github/scripts/publish-registry-tags.mjs \
+            --image "$CLOUD_IMAGE" \
+            --digest "$DIGEST" \
+            --tag "$RELEASE_TAG" \
+            --tag "$SOURCE_TAG"
 
       - name: Verify reused image provenance
         if: inputs.dry_run != true && steps.existing.outputs.reused == 'true'
