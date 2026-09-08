@@ -113,12 +113,11 @@ jobs:
   ios:
     name: Publish React Native example to TestFlight
     needs: preflight
-    runs-on: [self-hosted, macOS, ARM64]
+    env:
+      DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
+    # Each hosted job owns its signing state and artifact transfer.
+    runs-on: macos-15
     timeout-minutes: 90
-    concurrency:
-      group: mentra-ios-signing-runner
-      cancel-in-progress: false
-      queue: max
     outputs:
       upload_artifact: ${{ steps.coordinates.outputs.upload_artifact }}
       upload_status: ${{ steps.app-store.outputs.exists == 'true' && 'reused' || 'published' }}
@@ -234,14 +233,17 @@ jobs:
           token: ${{ steps.starter-kit-app-token.outputs.token || secrets.STARTER_KIT_COORDINATOR_TOKEN || secrets.MENTRA_BLUETOOTH_SDK_IOS_PUSH_TOKEN }}
           path: starter-kit
 
-      - name: Add runner-managed tools to PATH
+      - name: Set up Ruby signing tools
         if: steps.app-store.outputs.exists != 'true'
-        run: |
-          {
-            echo "$HOME/.rbenv/shims"
-            echo "$HOME/.rbenv/bin"
-            echo "$HOME/.bun/bin"
-          } >> "$GITHUB_PATH"
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+          bundler-cache: true
+          working-directory: mobile
+
+      - name: Install CocoaPods for the selected Ruby
+        if: steps.app-store.outputs.exists != 'true'
+        run: gem install cocoapods --version 1.16.2 --no-document
 
       - uses: oven-sh/setup-bun@v2
         if: steps.app-store.outputs.exists != 'true'
@@ -304,7 +306,6 @@ jobs:
           ASC_ISSUER_ID: ${{ secrets.ASC_API_ISSUER_ID }}
         run: |
           set -euo pipefail
-          export PATH="$HOME/.rbenv/shims:$HOME/.rbenv/bin:$PATH"
           previous_keychains="${RUNNER_TEMP}/mentra-example-previous-keychains-${GITHUB_RUN_ID}.txt"
           previous_default="${RUNNER_TEMP}/mentra-example-previous-default-keychain-${GITHUB_RUN_ID}.txt"
           security list-keychains -d user \
@@ -319,9 +320,9 @@ jobs:
           } >> "$GITHUB_ENV"
           MATCH_GIT_BASIC_AUTHORIZATION="$(printf '%s' "$RAW_MATCH_GIT_BASIC_AUTHORIZATION" | tr -d '\r\n')"
           export MATCH_GIT_BASIC_AUTHORIZATION
-          bundle install
           keychain="mentra-example-${GITHUB_RUN_ID}.keychain-db"
           password="$(openssl rand -hex 32)"
+          echo "::add-mask::$password"
           security delete-keychain "$keychain" 2>/dev/null || true
           security create-keychain -p "$password" "$keychain"
           security set-keychain-settings -lut 21600 "$keychain"
@@ -399,7 +400,6 @@ jobs:
           archive="$RUNNER_TEMP/mentra-example-react-native.xcarchive"
           output="$RUNNER_TEMP/mentra-example-react-native-export"
           rm -rf "$archive" "$output"
-          export PATH="$HOME/.rbenv/shims:$HOME/.rbenv/bin:$PATH"
           BUNDLE_GEMFILE="$GITHUB_WORKSPACE/mobile/Gemfile" bundle exec ruby \
             "$GITHUB_WORKSPACE/.github/scripts/configure-example-ios-signing.rb" \
             ios/MentraSDKRN.xcodeproj
@@ -536,7 +536,7 @@ jobs:
           # A failed response can leave an intermediate artifact behind.
           overwrite: true
 
-      - name: Clean persistent-runner credentials
+      - name: Clean signing credentials
         if: always()
         run: |
           if [[ -n "${MENTRA_CI_KEYCHAIN:-}" ]]; then
