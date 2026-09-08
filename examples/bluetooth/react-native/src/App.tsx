@@ -10,6 +10,7 @@ import { StreamScreen } from './screens/StreamScreen';
 import { SystemScreen } from './screens/SystemScreen';
 import { ConsoleScreen } from './screens/ConsoleScreen';
 import { otaFlowAdmission } from './otaFlowAdmission';
+import { connectedWifiStatus } from './sdkFormat';
 import { colors } from './components/theme';
 import { isMentraLiveRuntime, useBluetoothSdkExample } from './useBluetoothSdkExample';
 
@@ -18,8 +19,14 @@ export default function App() {
   const [keyboardVisible, setKeyboardVisible] = useState(false);
   const [otaVisible, setOtaVisible] = useState(false);
   const [waitingForWifi, setWaitingForWifi] = useState(false);
+  const [otaWifiTargetSsid, setOtaWifiTargetSsid] = useState<string | null>(null);
   const otaCompletedGenerationRef = useRef<number | null>(null);
   const sdk = useBluetoothSdkExample({activeTab: tab});
+  const currentWifi = connectedWifiStatus(sdk.glasses);
+  const otaWifiSetupComplete = otaWifiTargetSsid !== null
+    && currentWifi?.ssid === otaWifiTargetSsid
+    && sdk.wifiConnectingSsid === null
+    && sdk.wifiConnectError === null;
   const mentraLiveConnected = isMentraLiveRuntime(sdk.glasses);
   const connectionGeneration = mentraLiveConnected && sdk.glasses.connected
     ? sdk.glassesConnectionGeneration
@@ -65,6 +72,7 @@ export default function App() {
   };
 
   const openWifiSetup = () => {
+    setOtaWifiTargetSsid(null);
     setWaitingForWifi(true);
     setOtaVisible(false);
     setTab('system');
@@ -88,22 +96,34 @@ export default function App() {
           />
         ) : (
           <SafeAreaView style={styles.root} edges={['top']}>
-            {waitingForWifi && (
+            {waitingForWifi && tab === 'system' && (
               <View style={styles.otaResume}>
-                <Text style={styles.otaResumeText}>Finish Wi-Fi setup, then continue the update.</Text>
-                <Pressable
-                  accessibilityRole="button"
-                  onPress={openOta}
-                  style={styles.otaResumeButton}>
-                  <Text style={styles.otaResumeLabel}>Continue update</Text>
-                </Pressable>
+                <Text style={styles.otaResumeText}>
+                  {otaWifiSetupComplete
+                    ? `Connected to ${currentWifi?.ssid}`
+                    : 'Connect to a Wi-Fi network to continue the update.'}
+                </Text>
+                {otaWifiSetupComplete && (
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={openOta}
+                    style={styles.otaResumeButton}>
+                    <Text style={styles.otaResumeLabel}>Continue update</Text>
+                  </Pressable>
+                )}
               </View>
             )}
             <View style={styles.screen}>
               {tab === 'device' && <DeviceScreen sdk={sdk} onOpenOta={openOta} />}
               {tab === 'camera' && <CameraScreen sdk={sdk} />}
               {tab === 'stream' && <StreamScreen sdk={sdk} />}
-              {tab === 'system' && <SystemScreen sdk={sdk} />}
+              {tab === 'system' && <SystemScreen sdk={{
+                ...sdk,
+                sendWifiCredentials: async (ssid, password, requiresPassword) => {
+                  if (waitingForWifi) setOtaWifiTargetSsid(ssid);
+                  await sdk.sendWifiCredentials(ssid, password, requiresPassword);
+                },
+              }} />}
               {tab === 'console' && <ConsoleScreen sdk={sdk} />}
             </View>
             {!keyboardVisible && <TabBar active={tab} onChange={setTab} />}
