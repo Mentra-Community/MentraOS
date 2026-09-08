@@ -173,6 +173,40 @@ export function proveCall(events) {
     detail: describeCandidates(glassesCandidate, phoneCandidate),
   })
 
+  // The real SoftAP invariant: selected media interface == the scoped network we joined. The
+  // candidate proof above only shows a private-subnet candidate was *gathered*, and the SDP guard
+  // only inspects what was offered; neither says which pair ICE actually chose. A cellular 10.x
+  // host candidate is private too, so this is the proof that separates a hotspot call from a call
+  // that quietly went out over LTE.
+  const offHotspot = events.find((event) => event.stage === "ingest_selected_pair_off_hotspot")
+  const selected = events.filter((event) => event.stage === "ingest_selected_pair")
+  const unknownPair = events.filter((event) => event.stage === "ingest_selected_pair_unknown")
+  results.push({
+    name: "selected ICE pair is on the scoped hotspot prefix",
+    ok: !offHotspot && selected.length > 0,
+    detail: describeSelectedPair(offHotspot, selected, unknownPair),
+  })
+
+  // Two samples of *the same* pair, so "connected" is distinguished from "carrying media". Growth
+  // measured across a pair change or a session restart is not evidence, so the source reports
+  // whether the comparison was possible and this proof refuses to pass without it.
+  if (selected.length > 0) {
+    const last = selected.at(-1)
+    const flowing = selected.some(
+      (event) => event.fields.bytesFlowing === "true" && event.fields.comparable !== "false",
+    )
+    const comparable = selected.some((event) => event.fields.comparable !== "false")
+    results.push({
+      name: "bytes increased across two samples of the same selected pair",
+      ok: flowing,
+      detail: flowing
+        ? `pair=${last.fields.pairId} bytesReceived=${last.fields.bytesReceived}`
+        : comparable
+          ? `never increased (last bytesReceived=${last.fields.bytesReceived})`
+          : `no comparable sample pair (${last.fields.notComparable ?? "unknown"})`,
+    })
+  }
+
   // Host-only ICE is what keeps the media off cellular. A configured STUN server on this path means
   // the glasses spent gathering time on a server the hotspot cannot reach.
   const ice = events.find((event) => event.stage === "ice_configured")
@@ -181,6 +215,41 @@ export function proveCall(events) {
     ok: Boolean(ice && ice.fields.mode === "host" && Number(ice.fields.stunServers ?? 1) === 0),
     detail: ice ? `mode=${ice.fields.mode} stunServers=${ice.fields.stunServers}` : "never configured ICE",
   })
+
+  // A rejected answer used to be one code for four different faults, which is how a run that had
+  // regressed from one to another looked unchanged. The native side now narrows it before logging,
+  // so the verdict names the fault instead of repeating the symptom.
+  const rejected = events.filter((event) => event.stage === "ingest_answer_rejected")
+  results.push({
+    name: "the answer carried a hotspot candidate",
+    ok: rejected.length === 0,
+    detail: rejected.length ? describeIceFault(rejected.at(-1)) : "accepted",
+  })
+
+  // Joining the hotspot takes the phone off Wi-Fi, so cellular becomes the route ACS signs in
+  // over. A run where that route had not validated yet spent 30s stalled and then blew the join
+  // step's timeout, with device-wide DNS failures — a capture that looked like a hotspot fault and
+  // was not one. Absent stages mean a host that predates the check, not a failure.
+  const cellular = events.find((event) => event.stage === "cellular_validated")
+  if (cellular) {
+    results.push({
+      name: "cellular validated before the hotspot join",
+      ok: cellular.fields.validated === "true",
+      detail: `held=${cellular.fields.held} validated=${cellular.fields.validated} waitedMs=${cellular.fields.waitedMs}`,
+    })
+  }
+
+  const defaultNetwork = events.find((event) => event.stage === "default_network_after_join")
+  if (defaultNetwork) {
+    // The route the app actually got, not the one it asked for. Holding a cellular request brings
+    // the radio up; it does not say when this app's default switched to it or that it validated.
+    const usable = defaultNetwork.fields.present === "true" && defaultNetwork.fields.validated === "true"
+    results.push({
+      name: "the phone had a validated default network for the ACS join",
+      ok: usable,
+      detail: `transport=${defaultNetwork.fields.transport} validated=${defaultNetwork.fields.validated} present=${defaultNetwork.fields.present}`,
+    })
+  }
 
   const fatal = events.filter((event) => FATAL_STAGES.includes(event.stage))
   results.push({
@@ -206,9 +275,68 @@ export function proveCall(events) {
       ok: has("whip_listener_closed") && has("scoped_network_released"),
       detail: `listener=${has("whip_listener_closed")} network=${has("scoped_network_released")}`,
     })
+    // Android reports the scoped network as lost while we are deliberately releasing it, and
+    // `ScopedNetworkState.release()` is what suppresses it: an expected loss never reaches this
+    // stage. So a loss logged *after* the teardown started is the false positive the terminal-intent
+    // flag exists to prevent, and it would make a clean Leave look like a hotspot failure. A loss
+    // before the stop is a genuine mid-call drop, which the soak deliberately provokes, so it is
+    // judged by the mid-call-drop case rather than counted against teardown here.
+    const stopAt = stages.indexOf("softap_call_stop")
+    const lateLost = events.filter(
+      (event, index) => event.stage === "scoped_network_lost" && index > stopAt,
+    )
+    results.push({
+      name: "teardown did not report a hotspot loss it caused",
+      ok: lateLost.length === 0,
+      detail: lateLost.length
+        ? `${lateLost.length} unsuppressed onLost after softap_call_stop`
+        : "clean",
+    })
   }
 
   return results
+}
+
+/**
+ * What each fault means for whoever is reading the run, plus the observations that narrowed it.
+ *
+ * Keys match `SoftApIceDiagnosis.fields()`; an older capture without them falls back to the code so
+ * this never throws on a log from a previous build.
+ */
+export const ICE_FAULTS = {
+  MISSING_INTERFACE: "the hotspot address was not in the kernel interface table, so ICE had nothing to gather",
+  ERASED_ENTRY: "libwebrtc's inventory had no usable hotspot entry (absent, or a handle collision dropped it)",
+  FAILED_BINDING: "the address was present and published, yet no candidate was gathered: the socket bind failed",
+  WRONG_ADDRESS: "candidates were gathered off the hotspot, so a hotspot port advertised the wrong address",
+  INDETERMINATE: "the observations do not narrow to one cause",
+}
+
+export function describeIceFault(event) {
+  const fields = event?.fields ?? {}
+  const fault = fields.fault
+  if (!fault) return fields.code ?? "rejected without a diagnosis"
+  const narrowed = ICE_FAULTS[fault] ?? "unrecognised fault"
+  return (
+    `${fault}: ${narrowed}` +
+    ` [scoped=${fields.scopedAddress}@${fields.scopedOwner}` +
+    ` inTable=${fields.scopedInTable} published=${fields.publishedInventory}` +
+    ` hotspotEntry=${fields.publishedHotspot} collision=${fields.handleCollision}` +
+    ` gathered=${fields.gathered} onHotspot=${fields.hotspotCandidates} off=${fields.offHotspot}]`
+  )
+}
+
+function describeSelectedPair(offHotspot, selected, unknown) {
+  if (offHotspot) {
+    return `selected ${offHotspot.fields.local} which is outside ${offHotspot.fields.prefix}`
+  }
+  if (selected.length > 0) {
+    const last = selected.at(-1)
+    return `pair=${last.fields.pairId ?? "?"} local=${last.fields.local}`
+  }
+  // Insufficient evidence, not a pass: the transport never named a selected pair, so nothing here
+  // identifies which path carried the call.
+  if (unknown.length > 0) return `never resolved a selected pair (${unknown.at(-1).fields.reason})`
+  return "no selected-pair sample; ICE never connected or this is an older build"
 }
 
 function describeCandidates(glasses, phone) {
