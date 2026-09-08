@@ -137,12 +137,9 @@ jobs:
         if: steps.availability.outputs.available == 'true'
         id: collect
         env:
-          ARTIFACT_SUFFIX: ${{ inputs.artifact_suffix }}
+          ARTIFACT_SUFFIX: ${{ inputs.artifact_suffix || steps.sdk-version.outputs.version }}
         run: |
           artifact_suffix="$ARTIFACT_SUFFIX"
-          if [[ -z "$artifact_suffix" && -f .github/coordinated-example-release.json ]]; then
-            artifact_suffix=$(jq -er .releaseIdentity .github/coordinated-example-release.json)
-          fi
           suffix="${artifact_suffix:+-$artifact_suffix}"
           output="mentra-example-android${suffix}.apk"
           cp examples/android/app/build/outputs/apk/debug/app-debug.apk "$output"
@@ -224,7 +221,7 @@ jobs:
         id: collect
         working-directory: examples/ios
         env:
-          ARTIFACT_SUFFIX: ${{ inputs.artifact_suffix }}
+          ARTIFACT_SUFFIX: ${{ inputs.artifact_suffix || steps.sdk-version.outputs.version }}
         run: |
           app_path=$(find build/Build/Products/Debug-iphoneos -maxdepth 1 -name '*.app' -print -quit)
           if [ -z "$app_path" ]; then
@@ -234,9 +231,6 @@ jobs:
           mkdir Payload
           cp -R "$app_path" Payload/
           artifact_suffix="$ARTIFACT_SUFFIX"
-          if [[ -z "$artifact_suffix" && -f ../../.github/coordinated-example-release.json ]]; then
-            artifact_suffix=$(jq -er .releaseIdentity ../../.github/coordinated-example-release.json)
-          fi
           suffix="${artifact_suffix:+-$artifact_suffix}"
           output="mentra-example-ios${suffix}-unsigned.ipa"
           zip -qry "$output" Payload
@@ -342,12 +336,9 @@ jobs:
       - name: Collect APK
         id: collect
         env:
-          ARTIFACT_SUFFIX: ${{ inputs.artifact_suffix }}
+          ARTIFACT_SUFFIX: ${{ inputs.artifact_suffix || steps.sdk-version.outputs.version }}
         run: |
           artifact_suffix="$ARTIFACT_SUFFIX"
-          if [[ -z "$artifact_suffix" && -f .github/coordinated-example-release.json ]]; then
-            artifact_suffix=$(jq -er .releaseIdentity .github/coordinated-example-release.json)
-          fi
           suffix="${artifact_suffix:+-$artifact_suffix}"
           output="mentra-example-react-native${suffix}.apk"
           cp examples/react-native/android/app/build/outputs/apk/release/app-release.apk "$output"
@@ -444,12 +435,9 @@ jobs:
       - name: Collect APK
         id: collect
         env:
-          ARTIFACT_SUFFIX: ${{ inputs.artifact_suffix }}
+          ARTIFACT_SUFFIX: ${{ inputs.artifact_suffix || steps.sdk-version.outputs.version }}
         run: |
           artifact_suffix="$ARTIFACT_SUFFIX"
-          if [[ -z "$artifact_suffix" && -f .github/coordinated-example-release.json ]]; then
-            artifact_suffix=$(jq -er .releaseIdentity .github/coordinated-example-release.json)
-          fi
           suffix="${artifact_suffix:+-$artifact_suffix}"
           output="mentra-example-rn-elevenlabs-audio${suffix}.apk"
           cp examples/react-native-elevenlabs-audio/android/app/build/outputs/apk/release/app-release.apk "$output"
