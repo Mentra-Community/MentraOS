@@ -167,14 +167,24 @@ describe("OtaUpdateCheckService", () => {
 
   it("keeps a known package when a version_info response omits the field", async () => {
     // requestVersionInfo() resolves from ANY version_info chunk, and only chunk 1 carries
-    // package_name. A chunk-3 resolution must not blank a known identity: "" reads as stock,
-    // which would fail OPEN and let a sideloaded client through the guard.
+    // package_name. The bridges therefore omit the key unless it is known; if they emitted ""
+    // instead, the raw-spread apply below would blank a known identity, and a blank package
+    // reads as stock — failing OPEN on the exact client the guard just identified.
     useGlassesStore.getState().setGlassesInfo({
       buildNumber: "120",
       packageName: "com.mentra.asg_client.thirdparty",
     })
-    useGlassesStore.getState().setGlassesInfo({besFirmwareVersion: "17.26.1.14"})
+
+    const chunkWithoutIdentity = await bluetoothSdkMock.requestVersionInfo()
+    // The omission is the contract under test, not an accident of the fixture.
+    expect(Object.prototype.hasOwnProperty.call(chunkWithoutIdentity, "packageName")).toBe(false)
+    useGlassesStore.getState().setGlassesInfo(chunkWithoutIdentity)
+
     expect(useGlassesStore.getState().packageName).toBe("com.mentra.asg_client.thirdparty")
+
+    // That same apply does blank buildNumber, which is pre-existing behaviour for every field
+    // the responding chunk omits and is out of scope here; restore it so the guard is reached.
+    useGlassesStore.getState().setGlassesInfo({buildNumber: "120"})
 
     global.fetch = jest.fn() as unknown as typeof fetch
     const result = await checkCurrentGlassesForUpdate({
