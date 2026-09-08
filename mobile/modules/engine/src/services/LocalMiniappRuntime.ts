@@ -89,7 +89,8 @@ import acsMeetingService, {
   type AcsVideoSource,
   type MeetingState,
 } from "./AcsMeetingService"
-import {createSoftapCallDeps, SoftapCallTransport} from "./SoftapCallTransport"
+import {createSoftapCallDeps, SoftapCallTransport, type SoftapTeardownMode} from "./SoftapCallTransport"
+import {PermissionFeatures, permissions} from "../facades/permissions"
 
 // =============================================================================
 // Types
@@ -402,6 +403,8 @@ class LocalMiniappRuntime {
    * network as well as the ACS call — the transport owns all three.
    */
   private softapTransport: SoftapCallTransport | null = null
+  /** Live only while a SoftAP call is up, so a lost hotspot cannot outlive the call it belonged to. */
+  private softapScopedLostUnsub: (() => void) | null = null
 
   /** Connected miniapps keyed by packageName. */
   private connectedApps: Map<string, ConnectedMiniapp> = new Map()
@@ -1356,6 +1359,9 @@ class LocalMiniappRuntime {
         break
       case MiniappRequestType.MEETING_LEAVE:
         void this.handleMeetingLeave(packageName, requestId)
+        break
+      case MiniappRequestType.MEETING_END:
+        void this.handleMeetingEnd(packageName, requestId)
         break
       case MiniappRequestType.MEETING_SET_MUTED:
         void this.handleMeetingSetMuted(packageName, payload, requestId)
@@ -3728,6 +3734,12 @@ class LocalMiniappRuntime {
     args: {meetingUrl: string; token: string; displayName?: string; video?: AcsOutgoingVideo},
   ): Promise<MeetingState> {
     await this.stopSoftapTransport()
+    if (!(await permissions.check(PermissionFeatures.LOCAL_WIFI))) {
+      const granted = await permissions.request(PermissionFeatures.LOCAL_WIFI)
+      if (!granted) {
+        throw new Error("Nearby devices permission is required to join the glasses hotspot")
+      }
+    }
     const transport = new SoftapCallTransport(
       createSoftapCallDeps({
         packageName,
@@ -3745,6 +3757,23 @@ class LocalMiniappRuntime {
           },
           joinScopedNetwork: (ssid, passphrase) => acsMeetingService.joinScopedNetwork(ssid, passphrase),
           leaveScopedNetwork: () => acsMeetingService.leaveScopedNetwork(),
+          probeGateway: async () => {
+            const verdict = await acsMeetingService.probeScopedGateway()
+            // No native probe means no verdict, and the orchestrator must not read that as "down".
+            return verdict ?? {reachable: true, detail: "probe unsupported on this host"}
+          },
+          awaitValidatedDefaultNetwork: () => acsMeetingService.awaitValidatedDefaultNetwork(),
+          onGlassesStreamStatus: (listener) => {
+            const sub = BluetoothSdk.addListener("stream_status", (event) => {
+              listener({
+                status: event.status,
+                streamId: event.streamId,
+                reason: "reason" in event && typeof event.reason === "string" ? event.reason : undefined,
+                error: "error" in event && typeof event.error === "string" ? event.error : undefined,
+              })
+            })
+            return () => sub.remove()
+          },
           joinMeeting: (pkg, options) =>
             acsMeetingService.join(pkg, {
               meetingUrl: options.meetingUrl,
@@ -3754,6 +3783,9 @@ class LocalMiniappRuntime {
               ...(args.video ? {video: args.video} : {}),
             }),
           leaveMeeting: (pkg) => acsMeetingService.leave(pkg),
+          endMeeting: async (pkg) => {
+            await acsMeetingService.endForEveryone(pkg)
+          },
           ingestUrl: () => acsMeetingService.softApIngestUrl(),
           startPublishing: (pkg, options) => phoneStreamCoordinator.startUnmanaged(pkg, options),
           stopPublishing: (pkg) => phoneStreamCoordinator.stop(pkg),
@@ -3761,22 +3793,71 @@ class LocalMiniappRuntime {
       }),
     )
     this.softapTransport = transport
+    // A hotspot that vanishes mid-call is a real failure and a normal teardown is not, so both
+    // guards are checked: the transport must still be this one (a stale event from a finished call
+    // must never touch the next one) and it must not already be terminating. Teardown itself is
+    // left to the miniapp's terminal path, which calls `meeting.leave` — one owner, one unwind.
+    this.softapScopedLostUnsub = acsMeetingService.onScopedNetworkLost((error) => {
+      if (this.softapTransport !== transport) {
+        console.log("[LocalMiniappRuntime] scoped loss for a superseded SoftAP call; ignoring", error)
+        return
+      }
+      if (transport.isTerminating()) {
+        console.log("[LocalMiniappRuntime] scoped loss during teardown; expected", error)
+        return
+      }
+      console.warn("[LocalMiniappRuntime] SoftAP hotspot lost mid-call", error)
+      const current = acsMeetingService.getState()
+      this.sendToMiniapp(packageName, {
+        type: MiniappResponseType.MEETING_STATE,
+        ...current,
+        state: "error",
+        error: `SOFTAP_NETWORK_LOST: ${error.message}`,
+        softap: transport.progress(),
+      })
+    })
     try {
-      await transport.start()
+      await transport.start({
+        // Every transition reaches the miniapp as a meeting-state event carrying the checklist.
+        // Before the ACS join there is no native state yet, so the phase reads `connecting`: the
+        // join *is* in progress, and `idle` would make the miniapp think the call ended.
+        onProgress: (progress) => {
+          const current = acsMeetingService.getState()
+          const state: MeetingState = {
+            ...current,
+            state: current.state === "idle" ? "connecting" : current.state,
+            softap: progress,
+          }
+          this.sendToMiniapp(packageName, {type: MiniappResponseType.MEETING_STATE, ...state})
+        },
+      })
     } catch (error) {
       // start() already unwound whatever it built, so only the handle needs clearing.
       if (this.softapTransport === transport) this.softapTransport = null
+      this.softapScopedLostUnsub?.()
+      this.softapScopedLostUnsub = null
       throw error
     }
     return acsMeetingService.getState()
   }
 
-  /** Tears down an active SoftAP call, if there is one. Safe to call when there is not. */
-  private async stopSoftapTransport(): Promise<void> {
+  /**
+   * Tears down an active SoftAP call, if there is one. Safe to call when there is not, and safe to
+   * call twice: `stop()` is the single SoftAP exit and is itself idempotent.
+   *
+   * `mode: "end"` terminates the meeting for everyone on the way out and rethrows if it could not,
+   * after the hotspot and the scoped network are already released.
+   */
+  private async stopSoftapTransport(options: {mode?: SoftapTeardownMode} = {}): Promise<void> {
     const transport = this.softapTransport
     if (!transport) return
     this.softapTransport = null
-    await transport.stop()
+    // Terminal intent before the first release, so the scoped network we are about to drop cannot
+    // be reported as a hotspot that walked away.
+    acsMeetingService.beginScopedTeardown()
+    this.softapScopedLostUnsub?.()
+    this.softapScopedLostUnsub = null
+    await transport.stop(options)
   }
 
   private async handleMeetingLeave(packageName: string, requestId?: string): Promise<void> {
@@ -3794,6 +3875,28 @@ class LocalMiniappRuntime {
       this.sendResult(packageName, requestId, false, undefined, {
         code: MiniappErrorCode.INTERNAL,
         message: err instanceof Error ? err.message : "ACS meeting leave failed",
+      })
+    }
+  }
+
+  /**
+   * End the meeting for everyone, then tear this device down.
+   *
+   * A rejection here always means "the others may still be in the meeting", never "you are still in
+   * it": both paths below complete local teardown before the error surfaces.
+   */
+  private async handleMeetingEnd(packageName: string, requestId?: string): Promise<void> {
+    try {
+      if (this.softapTransport) {
+        await this.stopSoftapTransport({mode: "end"})
+      } else {
+        await acsMeetingService.endForEveryone(packageName)
+      }
+      this.sendResult(packageName, requestId, true)
+    } catch (err) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "Could not end the meeting for everyone",
       })
     }
   }
