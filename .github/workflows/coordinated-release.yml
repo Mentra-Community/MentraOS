@@ -519,13 +519,27 @@ jobs:
         env:
           RESULT_NAME: ${{ steps.request.outputs.result_name }}
           RESULT_URL: ${{ steps.request.outputs.result_url }}
+          RUN_URL: ${{ steps.request.outputs.run_url }}
+          GH_TOKEN: ${{ steps.starter-kit-request-token.outputs.token || secrets.STARTER_KIT_COORDINATOR_TOKEN || secrets.MENTRA_BLUETOOTH_SDK_IOS_PUSH_TOKEN }}
         run: |
           set -euo pipefail
           mkdir -p starter-kit-result
           for _ in {1..630}; do
-            if curl --fail --silent --show-error --location "$RESULT_URL" \
+            if curl --fail --silent --show-error --location --connect-timeout 10 --max-time 30 "$RESULT_URL" \
               --output "starter-kit-result/$RESULT_NAME" 2>/dev/null; then
               exit 0
+            fi
+            if [[ -n "$RUN_URL" ]]; then
+              # A transient API failure must not be mistaken for a failed build.
+              run_state=$(gh run view "${RUN_URL##*/}" --repo Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit \
+                --json status,conclusion 2>/dev/null || true)
+              if [[ "$(jq -r '.status // empty' <<< "${run_state:-null}")" == "completed" ]]; then
+                conclusion=$(jq -r '.conclusion // "unknown"' <<< "$run_state")
+                if [[ "$conclusion" != "success" ]]; then
+                  echo "Starter Kit run concluded $conclusion: $RUN_URL" >&2
+                  exit 1
+                fi
+              fi
             fi
             sleep 10
           done

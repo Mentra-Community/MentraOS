@@ -253,7 +253,19 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           APK_ASSET: ${{ steps.names.outputs.apk_asset }}
         run: |
-          gh release download "$ASG_RELEASE_TAG" --pattern "$APK_ASSET" --dir coordinated-ota-work
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            rm -f "coordinated-ota-work/$APK_ASSET"
+            if timeout 120s gh release download "$ASG_RELEASE_TAG" --pattern "$APK_ASSET" --dir coordinated-ota-work; then
+              break
+            fi
+            if [[ "$attempt" == 3 ]]; then
+              rm -f "coordinated-ota-work/$APK_ASSET"
+              echo "ASG download failed after three attempts (120 seconds each)." >&2
+              exit 1
+            fi
+            sleep 5
+          done
           mv "coordinated-ota-work/$APK_ASSET" coordinated-ota-work/asg.apk
 
       - name: Setup Java for ASG build and APK verification
