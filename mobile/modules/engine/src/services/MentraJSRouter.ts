@@ -379,9 +379,9 @@ export class MentraJSRouter {
    * router gates this to registered packages and keeps LocalMiniappView from
    * reaching into runtime internals.
    */
-  probeForegroundLiveness(packageName: string, reason = "foreground-open"): void {
+  probeForegroundLiveness(packageName: string, reason = "foreground-open", timeoutMs?: number): void {
     if (!this.registered.has(packageName)) return
-    this.runtime.probeForegroundLiveness(packageName, reason)
+    this.runtime.probeForegroundLiveness(packageName, reason, timeoutMs)
   }
 
   // ----------------------------------------------------------------
