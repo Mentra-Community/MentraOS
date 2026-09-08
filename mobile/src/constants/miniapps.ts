@@ -30,4 +30,5 @@ export const SYSTEM_APPS = [
   mentraAiPackageName,
   notifyPackageName,
   feedbackPackageName,
+  miniappDeveloperPackageName,
 ]

@@ -2,7 +2,9 @@ package com.mentra.asg_client.service.core.handlers.subscribers;
 
 import android.content.Context;
 import android.os.PowerManager;
+import android.os.SystemClock;
 import android.util.Log;
+import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.audio.AudioAssets;
 import com.mentra.asg_client.io.bluetooth.interfaces.ICompanionTransport;
 import com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager;
@@ -36,6 +38,12 @@ public final class ButtonEventSubscriber implements IPeripheralBus.McuEventListe
     private final IHardwareManager hardwareManager;
     private final IStateManager stateManager;
     private final Executor batteryAnnouncementExecutor;
+
+    /**
+     * elapsedRealtime of the last accepted camera press. MCU events are dispatched inline on the
+     * UART reader thread, so this is only ever touched from that one thread.
+     */
+    private long lastPhotoPressElapsedMs;
 
     public ButtonEventSubscriber(
             AsgClientServiceManager serviceManager,
@@ -199,6 +207,30 @@ public final class ButtonEventSubscriber implements IPeripheralBus.McuEventListe
                 Log.d(TAG, "⏹️ Stopping video recording (short press during recording)");
                 captureService.stopVideoRecording();
             } else {
+                // Rate-limit the button so mashing it cannot stack captures, and with them the
+                // shutter sounds. Every camera sound is ASG-side: MediaPlayer -> I2S -> BES,
+                // which owns the speakers. Overlapping those players is what garbles audio, so
+                // throttling the press is what throttles the sound.
+                //
+                // A plain elapsed-time gate, not an occupancy check: a cold capture can outlast
+                // this window, so a second press can still queue behind one. That is the
+                // remaining gap, and closing it needs a capture-busy signal wired through to
+                // here rather than a longer timer, which would start to feel like a cooldown.
+                long nowMs = SystemClock.elapsedRealtime();
+                long sinceLastMs = nowMs - lastPhotoPressElapsedMs;
+                if (lastPhotoPressElapsedMs != 0L
+                        && sinceLastMs < AsgConstants.BUTTON_PHOTO_MIN_INTERVAL_MS) {
+                    Log.d(
+                            TAG,
+                            "🚫 Dropping camera press "
+                                    + sinceLastMs
+                                    + "ms after the last one (minimum "
+                                    + AsgConstants.BUTTON_PHOTO_MIN_INTERVAL_MS
+                                    + "ms)");
+                    return;
+                }
+                lastPhotoPressElapsedMs = nowMs;
+
                 Log.d(TAG, "📸 Taking photo locally (short press) with LED: " + ledEnabled);
                 // Get saved photo size for button press
                 String photoSize = serviceManager.getAsgSettings().getButtonPhotoSize();

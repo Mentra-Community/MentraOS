@@ -3,6 +3,8 @@ import {createHash} from "node:crypto"
 import path from "node:path"
 
 import {validateCloudV2DeploymentRecord} from "./coordinated-cloud-v2-records.mjs"
+import {validatePrivateDeploymentRecord} from "./coordinated-private-deployment-records.mjs"
+import {validateRuntimeImageRecord} from "./coordinated-runtime-image-records.mjs"
 
 const STABLE_VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/
 const COMMIT_PATTERN = /^[0-9a-f]{40}$/
@@ -578,6 +580,16 @@ export function finalizeReleaseManifest({plan, results, completedAt}) {
   const starterKit = validateStarterKitEvidence(plan, results.starterKit, artifacts)
   const exampleTestflight = validateProductionExampleTestflight(plan, results.exampleTestflight)
   const cloud = validateCloudV2DeploymentRecord({plan, record: results.cloud})
+  const runtimeImage =
+    plan.channel === "production" ? undefined : validateRuntimeImageRecord({plan, record: results.runtimeImage})
+  const privateDeployment =
+    plan.channel === "dev"
+      ? validatePrivateDeploymentRecord({
+          plan,
+          record: results.privateDeployment,
+          runtimeImage,
+        })
+      : undefined
 
   let promotion
   if (plan.channel === "production") {
@@ -612,6 +624,8 @@ export function finalizeReleaseManifest({plan, results, completedAt}) {
     otaManifest,
     artifacts,
     cloud,
+    ...(runtimeImage ? {runtimeImage} : {}),
+    ...(privateDeployment ? {privateDeployment} : {}),
     ...(starterKit ? {starterKit} : {}),
     ...(exampleTestflight ? {exampleTestflight} : {}),
     ...(promotion ? {promotion} : {}),

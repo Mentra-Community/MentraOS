@@ -7,14 +7,19 @@ import android.media.AudioManager;
 import android.media.MediaPlayer;
 import android.os.Build;
 import android.os.SystemClock;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 
 import com.mentra.asg_client.service.core.AsgClientService;
+import com.mentra.asg_client.AsgConstants;
 
 import java.io.File;
 import java.io.IOException;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Handles I2S audio playback for devices that route speaker output through the MCU. This controller
@@ -35,6 +40,11 @@ public class I2SAudioController {
 
     private MediaPlayer mediaPlayer;
     private final Map<Long, MediaPlayer> overlayPlayers = new HashMap<>();
+    private final Handler cameraAudioHandler = new Handler(Looper.getMainLooper());
+    private final Set<Long> prepOverlays = new HashSet<>();
+    private final Set<Long> stoppingPrepOverlays = new HashSet<>();
+    private final Set<Long> snapOverlays = new HashSet<>();
+    private final Map<Long, Runnable> waitingCameraStarts = new HashMap<>();
     private long playbackGeneration;
     private long overlayPlaybackGeneration;
 
@@ -77,7 +87,8 @@ public class I2SAudioController {
         isControllingI2S = true;
 
         long i2sRequestedAtMs = SystemClock.elapsedRealtime();
-        if (!notifyI2SState(true, true)) {
+        // Do not restart the bridge underneath a loading beep that is still finishing.
+        if (overlayPlayers.isEmpty() && mediaPlayer == null && !notifyI2SState(true, true)) {
             Log.w(TAG, "Failed to start I2S path; skipping overlay playback");
             refreshControlFlag();
             return 0L;
@@ -101,6 +112,7 @@ public class I2SAudioController {
                             }
                             Log.d(TAG, "I2S overlay playback completed");
                             mp.release();
+                            finishCameraOverlay(overlayToken);
                             closeI2SIfIdle();
                             refreshControlFlag();
                         }
@@ -118,6 +130,7 @@ public class I2SAudioController {
                                             + ", extra="
                                             + extra);
                             mp.release();
+                            finishCameraOverlay(overlayToken);
                             closeI2SIfIdle();
                             refreshControlFlag();
                             return true;
@@ -125,7 +138,25 @@ public class I2SAudioController {
                     });
 
             trackedPlayer.prepare();
-            startPlayerAfterI2sSettle(trackedPlayer, i2sRequestedAtMs);
+            boolean prep = AudioAssets.CAMERA_PREP_CLICK.equals(assetName);
+            if (AudioAssets.CAMERA_SNAP.equals(assetName)) {
+                snapOverlays.add(overlayToken);
+            }
+            if (prep && !snapOverlays.isEmpty()) {
+                overlayPlayers.remove(overlayToken);
+                trackedPlayer.release();
+                return 0L;
+            }
+            if ((prep || AudioAssets.CAMERA_SNAP.equals(assetName))
+                    && !stoppingPrepOverlays.isEmpty()) {
+                waitingCameraStarts.put(overlayToken,
+                        () -> startCameraOverlay(overlayToken, trackedPlayer, prep, i2sRequestedAtMs));
+            } else {
+                startPlayerAfterI2sSettle(trackedPlayer, i2sRequestedAtMs);
+                if (prep) {
+                    prepOverlays.add(overlayToken);
+                }
+            }
             Log.d(TAG, "I2S overlay playback started");
             return overlayToken;
         } catch (Exception e) {
@@ -133,6 +164,7 @@ public class I2SAudioController {
             if (overlayPlayer != null) {
                 overlayPlayers.remove(overlayToken, overlayPlayer);
                 overlayPlayer.release();
+                finishCameraOverlay(overlayToken);
             }
             closeI2SIfIdle();
             refreshControlFlag();
@@ -142,15 +174,81 @@ public class I2SAudioController {
 
     /** Stop one overlay only when its token still identifies an active player. */
     public synchronized boolean stopOverlayPlayback(long overlayToken) {
-        MediaPlayer overlayPlayer = overlayPlayers.remove(overlayToken);
+        MediaPlayer overlayPlayer = overlayPlayers.get(overlayToken);
         if (overlayPlayer == null) {
             return false;
         }
+        if (stoppingPrepOverlays.contains(overlayToken)) {
+            return true;
+        }
+        if (prepOverlays.contains(overlayToken)) {
+            long delayMs = prepStopDelayMs(overlayPlayer.getCurrentPosition());
+            if (delayMs > 0L) {
+                stoppingPrepOverlays.add(overlayToken);
+                cameraAudioHandler.postDelayed(() -> {
+                    synchronized (I2SAudioController.this) {
+                        stoppingPrepOverlays.remove(overlayToken);
+                        // Re-read playback position: a late callback may land in the next beep.
+                        stopOverlayPlayback(overlayToken);
+                    }
+                }, delayMs);
+                return true;
+            }
+        }
+        overlayPlayers.remove(overlayToken);
         isControllingI2S = true;
         stopAndRelease(overlayPlayer);
+        finishCameraOverlay(overlayToken);
         closeI2SIfIdle();
         refreshControlFlag();
         return true;
+    }
+
+    static long prepStopDelayMs(long positionMs) {
+        long phase = positionMs % AsgConstants.CAMERA_PREP_CLICK_INTERVAL_MS;
+        if (phase < AsgConstants.CAMERA_PREP_STOP_AFTER_MS) {
+            return AsgConstants.CAMERA_PREP_STOP_AFTER_MS - phase;
+        }
+        return phase < AsgConstants.CAMERA_PREP_STOP_BEFORE_MS ? 0L
+                : AsgConstants.CAMERA_PREP_CLICK_INTERVAL_MS - phase
+                        + AsgConstants.CAMERA_PREP_STOP_AFTER_MS;
+    }
+
+    private void startCameraOverlay(
+            long token, MediaPlayer player, boolean prep, long i2sRequestedAtMs) {
+        if (overlayPlayers.get(token) != player) {
+            return;
+        }
+        if (prep && !snapOverlays.isEmpty()) {
+            overlayPlayers.remove(token);
+            player.release();
+            return;
+        }
+        try {
+            startPlayerAfterI2sSettle(player, i2sRequestedAtMs);
+            if (prep) {
+                prepOverlays.add(token);
+            }
+        } catch (IllegalStateException e) {
+            Log.e(TAG, "Unable to start deferred camera sound", e);
+            overlayPlayers.remove(token);
+            snapOverlays.remove(token);
+            player.release();
+        }
+    }
+
+    private void finishCameraOverlay(long token) {
+        prepOverlays.remove(token);
+        snapOverlays.remove(token);
+        stoppingPrepOverlays.remove(token);
+        waitingCameraStarts.remove(token);
+        if (stoppingPrepOverlays.isEmpty()) {
+            Map<Long, Runnable> ready = new HashMap<>(waitingCameraStarts);
+            waitingCameraStarts.clear();
+            for (Runnable start : ready.values()) {
+                start.run();
+            }
+        }
     }
 
     /** Play a local WAV/PCM file as a single primary I2S job. */
@@ -307,6 +405,11 @@ public class I2SAudioController {
     }
 
     private void stopOverlayPlayers() {
+        cameraAudioHandler.removeCallbacksAndMessages(null);
+        waitingCameraStarts.clear();
+        prepOverlays.clear();
+        snapOverlays.clear();
+        stoppingPrepOverlays.clear();
         for (MediaPlayer overlayPlayer : overlayPlayers.values()) {
             stopAndRelease(overlayPlayer);
         }

@@ -158,6 +158,52 @@ const fr = {
     permissionDeniedTitle: "Autorisation refusée",
     permissionDeniedBody: "Activez l'accès à la caméra dans les Réglages pour scanner des codes QR.",
   },
+  profileSettings: {
+    ...en.profileSettings,
+    workspaceName: "Nom",
+    workspaceUrl: "URL de l'espace de travail",
+    mentraWorkspace: "Mentra",
+  },
+  versionCheck: {
+    ...en.versionCheck,
+    managedUpdateDescription:
+      "Cette version de l'application Mentra n'est plus prise en charge par {{name}}. Les mises à jour sont distribuées par la gestion des appareils de votre organisation. Contactez votre administrateur informatique pour mettre à jour.",
+    contactSupport: "Contacter l'assistance",
+  },
+  workspace: {
+    or: "ou",
+    title: "Connexion de l'organisation",
+    heading: "Connectez-vous à votre organisation",
+    description: "Saisissez l'adresse fournie par votre administrateur informatique.",
+    connectAction: "Se connecter à votre organisation",
+    urlLabel: "Adresse de l'organisation",
+    urlPlaceholder: "entreprise.exemple.com",
+    urlHelper: "Exemple : entreprise.exemple.com",
+    unknownResolutionError: "Impossible de charger cet espace de travail. Réessayez.",
+    notFoundError:
+      "Aucun espace de travail Mentra n'a été trouvé à cette adresse. Vérifiez l'adresse ou demandez à votre administrateur informatique.",
+    configurationError:
+      "Cet espace de travail n'a pas pu être vérifié. Demandez à votre administrateur informatique de vérifier sa configuration.",
+    confirmTitle: "Confirmer l'organisation",
+    candidateExpired: "Cette confirmation a expiré. Saisissez à nouveau l'adresse de votre organisation.",
+    enterAnotherUrl: "Saisir l'adresse de l'organisation",
+    connectTo: "Se connecter à {{name}}",
+    continueTo: "Continuer vers {{name}}",
+    workspaceLabel: "Espace de travail",
+    signInLabel: "Connexion",
+    microsoftOrganizationAccount: "Compte d'organisation Microsoft",
+    mentraAccount: "Compte Mentra",
+    confirmDescription:
+      "En continuant, cette organisation devient votre déploiement Mentra actif. Ses services et règles s'appliquent avant la connexion.",
+    signInDescription: "Continuez avec le compte d'organisation configuré pour cet espace de travail.",
+    continueWithMicrosoft: "Continuer avec Microsoft",
+    returnToMentra: "Revenir à Mentra",
+    change: "Modifier",
+    noActiveWorkspace: "Aucun espace de travail d'organisation n'est actif.",
+    signInFailedTitle: "Échec de la connexion",
+    signInFailedDescription:
+      "Microsoft n'a pas pu vous connecter à cet espace de travail. Réessayez ou contactez votre équipe informatique.",
+  },
 } satisfies TranslationResource
 
 export default fr

@@ -34,6 +34,8 @@ export type {
   ScanQrOptions,
   ScanQrResult,
   SubjectTokenType,
+  LocalMiniappPolicy,
+  ManagedMiniappPolicyEntry,
 } from "./runtime/bootstrap"
 
 // Settings contract: the typed key registry (schema descriptors — the same

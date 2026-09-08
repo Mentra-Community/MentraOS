@@ -8,7 +8,13 @@
  * remain in a private MentraOS host package; they shrink as screens move onto
  * `engine.*`.
  */
-import {configure, start as bootstrapStart, stop as bootstrapStop, updateUiSeams} from "./runtime/bootstrap"
+import {
+  configure,
+  getConfigValues,
+  start as bootstrapStart,
+  stop as bootstrapStop,
+  updateUiSeams,
+} from "./runtime/bootstrap"
 import {cloudClientService} from "./services/CloudClientService"
 import {hydrateDeviceStore, demoteOrphanedDefaultWearable} from "./services/DeviceStoreHydration"
 import {startGlassesSettingsSync, stopGlassesSettingsSync} from "./services/GlassesSettingsSync"
@@ -98,16 +104,20 @@ export const engine = {
     startOtaService()
     // Forward glasses mic_lc3 frames to the v2 cloud session so cloud transcription
     // works for any host (not just the Mentra app's host-side MantleManager fork).
-    startAudioCloudUplink()
-    try {
-      await cloudClientService.syncCoreTokenToBluetooth()
-    } catch (error) {
-      console.warn(
-        "engine.start: initial Cloud V2 core token sync failed:",
-        error instanceof Error ? error.message : error,
-      )
+    if (getConfigValues().runtimeRealtimeSession !== false && getConfigValues().features?.cloudSpeech !== false) {
+      startAudioCloudUplink()
     }
-    startSupportProfileSync()
+    if (cloudClientService.hasCore()) {
+      try {
+        await cloudClientService.syncCoreTokenToBluetooth()
+      } catch (error) {
+        console.warn(
+          "engine.start: initial Cloud V2 core token sync failed:",
+          error instanceof Error ? error.message : error,
+        )
+      }
+      startSupportProfileSync()
+    }
     // Push device-setting changes to the glasses for ANY host, so
     // engine.glasses.settings.set() reaches the device (not just the Mentra app).
     startGlassesSettingsSync()
@@ -115,10 +125,10 @@ export const engine = {
     startPhoneNotificationsSync()
     // Android internal/e2e: laptop captions tester can broadcast a failure intent;
     // engine owns turning that into a Cloud V2 report.
-    startCaptionsTesterReportService()
+    if (cloudClientService.hasCore()) startCaptionsTesterReportService()
     // MentraJS crashloop-disabled is runtime state; engine owns filing the
     // automatic report while hosts only render alert/telemetry side effects.
-    startMentraJSCrashloopReportService()
+    if (cloudClientService.hasCore()) startMentraJSCrashloopReportService()
     // Bring up the local-miniapp engine so a bare OEM can run MentraJS miniapps:
     // the LocalMiniappRuntime (registry + WebView bridge), the MentraJS router
     // (crust-bound spawn/dispatch pump + launcher wiring), the DisplayProcessor

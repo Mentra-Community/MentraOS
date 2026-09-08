@@ -1,3 +1,4 @@
+import AVFoundation
 import Foundation
 
 /// Downmix/resample PCM16 to 48 kHz mono ~20 ms blocks for ACS raw outgoing audio.
@@ -62,6 +63,54 @@ final class PcmBridge {
   }
 
   static let targetRate = 48_000
+
+  static func audioBuffer(pcm16Le data: Data, sampleRate: Int, channels: Int) -> AVAudioPCMBuffer? {
+    guard channels > 0, data.count >= channels * MemoryLayout<Int16>.size else { return nil }
+    guard let format = AVAudioFormat(
+      commonFormat: .pcmFormatInt16,
+      sampleRate: Double(sampleRate),
+      channels: AVAudioChannelCount(channels),
+      interleaved: false
+    ) else { return nil }
+    let frameCount = data.count / (channels * MemoryLayout<Int16>.size)
+    guard let buffer = AVAudioPCMBuffer(pcmFormat: format, frameCapacity: AVAudioFrameCount(frameCount)),
+          let destinations = buffer.int16ChannelData else { return nil }
+    buffer.frameLength = AVAudioFrameCount(frameCount)
+    data.withUnsafeBytes { raw in
+      let samples = raw.bindMemory(to: Int16.self)
+      for frame in 0 ..< frameCount {
+        for channel in 0 ..< channels {
+          destinations[channel][frame] = samples[frame * channels + channel]
+        }
+      }
+    }
+    return buffer
+  }
+
+  static func pcm16Data(from buffer: AVAudioPCMBuffer) -> Data? {
+    let frames = Int(buffer.frameLength)
+    let channels = Int(buffer.format.channelCount)
+    guard frames > 0, channels > 0 else { return nil }
+
+    var output = [Int16](repeating: 0, count: frames * channels)
+    if let sources = buffer.int16ChannelData {
+      for frame in 0 ..< frames {
+        for channel in 0 ..< channels {
+          output[frame * channels + channel] = sources[channel][frame]
+        }
+      }
+    } else if let sources = buffer.floatChannelData {
+      for frame in 0 ..< frames {
+        for channel in 0 ..< channels {
+          let clipped = max(-1.0, min(1.0, sources[channel][frame]))
+          output[frame * channels + channel] = Int16(clipped * Float(Int16.max))
+        }
+      }
+    } else {
+      return nil
+    }
+    return output.withUnsafeBufferPointer { Data(buffer: $0) }
+  }
 
   static func toMono(_ pcm16Le: Data, sampleRate: Int, channels: Int) -> Data {
     let samples = pcm16Le.withUnsafeBytes { Array($0.bindMemory(to: Int16.self)) }

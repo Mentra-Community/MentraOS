@@ -393,7 +393,8 @@ jobs:
           }
           trap record_duration EXIT
 
-          xcodebuild -workspace Mentra.xcworkspace \
+          xcodebuild -quiet \
+                     -workspace Mentra.xcworkspace \
                      -scheme Mentra \
                      -configuration Release \
                      -destination 'generic/platform=iOS' \
@@ -453,7 +454,8 @@ jobs:
           # Retry serially. The fallback only runs after a failed cached build,
           # and limiting concurrency avoids the observed CocoaPods VFS overlay
           # disappearing while parallel compile and XCFramework copy jobs run.
-          xcodebuild -workspace Mentra.xcworkspace \
+          xcodebuild -quiet \
+                     -workspace Mentra.xcworkspace \
                      -scheme Mentra \
                      -jobs 1 \
                      -configuration Release \
