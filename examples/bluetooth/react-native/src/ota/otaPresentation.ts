@@ -156,6 +156,13 @@ export function otaPresentation(
         title: 'Development Build',
         tone: 'neutral',
       };
+    case 'unofficial_client':
+      return {
+        message: 'Your glasses are running custom software. Automatic updates are disabled to preserve it.',
+        primary: {action: 'finish', label: 'Continue'},
+        title: 'Custom Glasses Software',
+        tone: 'neutral',
+      };
     case 'check_failed':
       return {
         message: "Couldn't check for updates. Please check your connection and try again.",
