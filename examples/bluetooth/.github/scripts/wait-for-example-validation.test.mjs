@@ -19,6 +19,10 @@ const count = fs.existsSync(countPath) ? Number(fs.readFileSync(countPath, 'utf8
 fs.writeFileSync(countPath, String(count + 1));
 const states = JSON.parse(fs.readFileSync(path.join(dir, 'states.json'), 'utf8'));
 if (!states[count]) process.exit(9);
+if (states[count].readError) {
+  console.error(states[count].readError);
+  process.exit(1);
+}
 console.log(JSON.stringify(states[count]));
 `, {mode: 0o755})
   writeFileSync(path.join(dir, 'sleep'), '#!/bin/sh\nexit 0\n', {mode: 0o755})
@@ -59,4 +63,49 @@ test('rejects a failed workflow even when no failed job is reported', t => {
   const result = check(t, [{status: 'completed', conclusion: 'failure', jobs: []}])
   assert.equal(result.status, 1)
   assert.match(result.stderr, /concluded failure/)
+})
+
+test('recovers from two transient status read failures', t => {
+  const result = check(t, [
+    {readError: 'i/o timeout'},
+    {readError: 'HTTP 502'},
+    {status: 'completed', conclusion: 'success', jobs: []},
+  ])
+  assert.equal(result.status, 0)
+  assert.equal(result.calls, 3)
+})
+
+test('stops after three consecutive status read failures', t => {
+  const result = check(t, [
+    {readError: 'i/o timeout'},
+    {readError: 'i/o timeout'},
+    {readError: 'i/o timeout'},
+    {status: 'completed', conclusion: 'success', jobs: []},
+  ])
+  assert.equal(result.status, 1)
+  assert.equal(result.calls, 3)
+  assert.match(result.stderr, /3\/3 consecutive attempts/)
+})
+
+test('resets the read failure count after a successful running-state read', t => {
+  const result = check(t, [
+    {readError: 'i/o timeout'},
+    {readError: 'i/o timeout'},
+    {status: 'in_progress', conclusion: '', jobs: []},
+    {readError: 'i/o timeout'},
+    {readError: 'i/o timeout'},
+    {status: 'completed', conclusion: 'success', jobs: []},
+  ])
+  assert.equal(result.status, 0)
+  assert.equal(result.calls, 6)
+})
+
+test('still fails immediately on a failed job after recovering a status read', t => {
+  const result = check(t, [
+    {readError: 'i/o timeout'},
+    {status: 'in_progress', conclusion: '', jobs: [{name: 'build', conclusion: 'failure'}]},
+  ])
+  assert.equal(result.status, 1)
+  assert.equal(result.calls, 2)
+  assert.match(result.stderr, /build: failure/)
 })
