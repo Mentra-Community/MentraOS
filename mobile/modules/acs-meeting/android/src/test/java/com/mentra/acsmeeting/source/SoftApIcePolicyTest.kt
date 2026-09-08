@@ -40,10 +40,24 @@ class SoftApIcePolicyTest {
       .isTrue()
   }
 
+  /**
+   * The reason `ScopedNetworkChangeDetector` publishes decoy entries for interfaces it does not
+   * want. `ADAPTER_TYPE_UNKNOWN` is `0`, so no mask can ever exclude it: an interface the network
+   * monitor never announced is an interface ICE will gather on no matter what this mask says.
+   */
   @Test
-  fun `ethernet stays allowed for tethered debugging`() {
-    assertThat(SoftApIcePolicy.allowsAdapter(mask, PeerConnectionFactory.Options.ADAPTER_TYPE_ETHERNET))
+  fun `an unknown adapter cannot be masked, so no interface may go unannounced`() {
+    assertThat(PeerConnectionFactory.Options.ADAPTER_TYPE_UNKNOWN).isEqualTo(0)
+    assertThat(SoftApIcePolicy.allowsAdapter(mask, PeerConnectionFactory.Options.ADAPTER_TYPE_UNKNOWN))
       .isTrue()
+  }
+
+  @Test
+  fun `ethernet and ANY are excluded so a leftover AutoDetect network cannot gather`() {
+    assertThat(SoftApIcePolicy.allowsAdapter(mask, PeerConnectionFactory.Options.ADAPTER_TYPE_ETHERNET))
+      .isFalse()
+    assertThat(SoftApIcePolicy.allowsAdapter(mask, PeerConnectionFactory.Options.ADAPTER_TYPE_ANY))
+      .isFalse()
   }
 
   @Test
