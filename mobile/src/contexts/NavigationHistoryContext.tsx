@@ -83,6 +83,24 @@ export const focusEffectLockScreen = () => {
       return () => setGesture({gestureEnabled: undefined})
     }, [navigation]),
   )
+
+  // Backstop for a back action dispatched in JS rather than by the gesture.
+  // Only GO_BACK/POP are blocked: a locked screen still has to be able to leave
+  // through its own controls, and those go out as REPLACE/POP_TO_TOP/POP_TO
+  // (goBack() is never one of the exits). Blocking removal outright would
+  // strand the user on the screen for good.
+  useFocusEffect(
+    useCallback(
+      () =>
+        navigation.addListener("beforeRemove", (event: any) => {
+          const actionType = event?.data?.action?.type ?? ""
+          if (actionType === "GO_BACK" || actionType === "POP") {
+            event.preventDefault()
+          }
+        }),
+      [navigation],
+    ),
+  )
 }
 
 export function usePushUnder() {

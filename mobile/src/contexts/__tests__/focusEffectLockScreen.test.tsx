@@ -5,8 +5,12 @@ import {focusEffectLockScreen} from "@/contexts/NavigationHistoryContext"
 import {useNavigationStore} from "@/stores/navigation"
 
 const mockSetOptions = jest.fn()
+const mockBeforeRemoveListeners: Array<(event: unknown) => void> = []
 const mockNavigation = {
-  addListener: jest.fn(() => jest.fn()),
+  addListener: jest.fn((event: string, listener: (event: unknown) => void) => {
+    if (event === "beforeRemove") mockBeforeRemoveListeners.push(listener)
+    return jest.fn()
+  }),
   setOptions: mockSetOptions,
 }
 
@@ -44,16 +48,27 @@ function PreviousScreen({onBack}: {onBack: () => void}) {
   return null
 }
 
+/** Dispatch a removal at every registered beforeRemove listener, as the navigator does. */
+function dispatchRemoval(actionType: string) {
+  const preventDefault = jest.fn()
+  const event = {data: {action: {type: actionType}}, preventDefault}
+  for (const listener of mockBeforeRemoveListeners) listener(event)
+  return preventDefault
+}
+
 describe("focusEffectLockScreen", () => {
   beforeEach(() => {
     jest.clearAllMocks()
+    mockBeforeRemoveListeners.length = 0
     useNavigationStore.setState({androidBackFn: undefined, preventBack: false, preventBackCount: 0})
   })
 
-  it("claims the Android back slot from the screen it was pushed on top of", () => {
-    // decPreventBack only clears androidBackFn once the count reaches zero, so
-    // the screen underneath still holds the slot when it blurs — NavigationHost
-    // would run its handler (minimize / goBack) and pop us off the OTA flow.
+  it("claims the shared back-handler slot from the screen it was pushed on top of", () => {
+    // The slot itself is platform-independent; NavigationHost is its Android
+    // consumer. decPreventBack only clears androidBackFn once the prevent-back
+    // count reaches zero, so the screen underneath still holds the slot when it
+    // blurs — NavigationHost would run its handler (minimize / goBack) and pop
+    // the user off the locked screen.
     const previousScreenBack = jest.fn()
     const previous = render(<PreviousScreen onBack={previousScreenBack} />)
     const locked = render(<LockedScreen />)
@@ -78,5 +93,21 @@ describe("focusEffectLockScreen", () => {
     mockSetOptions.mockClear()
     locked.unmount()
     expect(mockSetOptions).toHaveBeenCalledWith({gestureEnabled: undefined})
+  })
+
+  it("blocks a back action dispatched in JS", () => {
+    render(<LockedScreen />)
+    expect(dispatchRemoval("GO_BACK")).toHaveBeenCalled()
+    expect(dispatchRemoval("POP")).toHaveBeenCalled()
+  })
+
+  it("still lets the screen's own controls leave", () => {
+    // handleFinished leaves via replace() / clearHistoryAndGoHome(); blocking
+    // those would strand the user on the locked screen for good.
+    render(<LockedScreen />)
+    expect(dispatchRemoval("REPLACE")).not.toHaveBeenCalled()
+    expect(dispatchRemoval("POP_TO_TOP")).not.toHaveBeenCalled()
+    expect(dispatchRemoval("POP_TO")).not.toHaveBeenCalled()
+    expect(dispatchRemoval("NAVIGATE")).not.toHaveBeenCalled()
   })
 })
