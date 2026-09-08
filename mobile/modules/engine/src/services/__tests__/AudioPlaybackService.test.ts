@@ -13,9 +13,10 @@ import {
   setOwnAppAudioPlaying,
 } from "./audioTestMocks"
 
+import {reactNative, reactNativeAppState} from "./reactNativeTestMock"
+
 const setAudioModeAsync = mock(async () => {})
 const tailTimerCallbacks: Array<() => void> = []
-const appState = {currentState: "active"}
 const silentAudioSource = 9001
 
 const audioPlayer = {
@@ -36,10 +37,8 @@ mock.module("../audioPlaybackAssets", () => ({
   SILENT_AUDIO_SOURCE: silentAudioSource,
 }))
 
-mock.module("react-native", () => ({
-  AppState: appState,
-  Platform: {OS: "android"},
-}))
+reactNative.Platform = {OS: "android"}
+reactNativeAppState.currentState = "active"
 
 mock.module("../../utils/timers", () => ({
   BgTimer: {
@@ -63,7 +62,7 @@ describe("AudioPlaybackService live PCM streams", () => {
     await audioPlaybackService.stopAll()
     stopAudioCloudUplink()
     resetAudioTestMocks()
-    appState.currentState = "active"
+    reactNativeAppState.currentState = "active"
     Object.assign(audioPlaybackService, {audioRouteWarmUntil: 0})
     tailTimerCallbacks.length = 0
     startAudioCloudUplink()
@@ -91,7 +90,7 @@ describe("AudioPlaybackService live PCM streams", () => {
   })
 
   test("skips optional route prewarm so background URL playback cannot stall", async () => {
-    appState.currentState = "background"
+    reactNativeAppState.currentState = "background"
     await audioPlaybackService.play(
       {audioUrl: "https://example.test/background.wav", requestId: "background"},
       () => {},
