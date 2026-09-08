@@ -2,6 +2,9 @@
 
 import {mock} from "bun:test"
 
+import {bluetoothSdk} from "./bluetoothSdkTestMock"
+import {cloudClientService} from "./cloudClientServiceTestMock"
+
 type Lc3Event = {lc3: number[]}
 
 let onLc3Frame: ((event: Lc3Event) => void) | null = null
@@ -35,9 +38,12 @@ export const setLegacyCameraFov = mock(async (request: Record<string, unknown>) 
 }))
 export const updateBluetoothSettings = mock(async (_patch: Record<string, unknown>) => {})
 
-mock.module("@mentra/bluetooth-sdk/internal", () => ({
-  __esModule: true,
-  default: {
+export function emitLc3Frame(lc3: number[]): void {
+  onLc3Frame?.({lc3})
+}
+
+function installAudioBluetoothSdk(): void {
+  Object.assign(bluetoothSdk, {
     addListener: addAudioListener,
     getGlassesMediaVolume,
     pcmStreamAbort,
@@ -51,22 +57,23 @@ mock.module("@mentra/bluetooth-sdk/internal", () => ({
     setLegacyCameraFov,
     setOwnAppAudioPlaying,
     updateBluetoothSettings,
-  },
-}))
+  })
+}
 
-mock.module("../CloudClientService", () => ({
-  cloudClientService: {
+function installAudioCloudClient(): void {
+  Object.assign(cloudClientService, {
     hasAudioSubscriptions: () => true,
     isConnected: () => true,
     sendAudioFrame,
-  },
-}))
-
-export function emitLc3Frame(lc3: number[]): void {
-  onLc3Frame?.({lc3})
+  })
 }
 
+installAudioBluetoothSdk()
+installAudioCloudClient()
+
 export function resetAudioTestMocks(): void {
+  installAudioBluetoothSdk()
+  installAudioCloudClient()
   onLc3Frame = null
   addAudioListener.mockClear()
   removeAudioListener.mockClear()
