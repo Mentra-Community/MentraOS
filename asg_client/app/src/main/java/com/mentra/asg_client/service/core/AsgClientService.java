@@ -1186,11 +1186,15 @@ public class AsgClientService extends Service implements NetworkStateListener, T
 
     /**
      * Send version information to phone in chunks to work around BLE MTU limitations. Chunk 1
-     * (version_info_1): app_version, build_number, device_model, android_version. Chunk 3
-     * (version_info_3): bes_fw_version, mtk_fw_version, bt_mac_address, wifi_mac_address,
+     * (version_info_1): package_name, app_version, build_number, device_model, android_version.
+     * Chunk 3 (version_info_3): bes_fw_version, mtk_fw_version, bt_mac_address, wifi_mac_address,
      * serial_number. The phone parses any version_info* message field-by-field, so chunk numbering
      * gaps are fine (version_info_2 used to carry ota_version_url; the glasses no longer advertise
      * a manifest).
+     *
+     * <p>package_name must stay in chunk 1 alongside build_number: the phone's OTA check waits on
+     * build_number and then decides immediately, so identity arriving in a later chunk would leave
+     * a window where the check runs and assumes the stock client.
      */
     public void sendVersionInfo() {
         Log.i(TAG, "📊 Sending version information (chunked for MTU)");
@@ -1263,6 +1267,13 @@ public class AsgClientService extends Service implements NetworkStateListener, T
                 // Chunk 1: Basic device info (smaller payload)
                 JSONObject chunk1 = new JSONObject();
                 chunk1.put("type", "version_info_1");
+                // Runtime package identity. A build made without Mentra's release keystore
+                // installs as "com.mentra.asg_client.thirdparty" and coexists with the stock
+                // system app, so build_number alone cannot tell the phone which client it is
+                // actually talking to. Without this the phone compares a sideloaded client's
+                // version against the stock manifest pin, installs the stock APK the sideloaded
+                // client is not, and re-prompts forever.
+                chunk1.put("package_name", getPackageName());
                 chunk1.put("app_version", appVersion);
                 chunk1.put("build_number", buildNumber);
                 chunk1.put("device_model", deviceModel);

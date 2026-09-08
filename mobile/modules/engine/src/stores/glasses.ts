@@ -132,6 +132,7 @@ const initialState: GlassesStore = {
   systemTimeMs: 0,
   otaVersionUrl: "",
   appVersion: "",
+  packageName: "",
   bluetoothName: "",
   serialNumber: "",
   style: "",
@@ -203,6 +204,11 @@ export const useGlassesStore = create<GlassesState>()(
         if (!isGlassesConnected(next.connection)) {
           next.wifiStatusKnown = false
           next.hotspotOtaVersion = 0
+          // packageName is deliberately NOT cleared here. It is only ever safe to clear together
+          // with buildNumber, which the native session boundary does atomically (both arrive in
+          // version_info_1). Clearing identity alone would leave a stale sideloaded buildNumber
+          // paired with a blank package, and the OTA guard reads a blank package as stock — the
+          // exact update loop this guard exists to prevent. Stale-together is fail-closed.
         }
         return next
       }),

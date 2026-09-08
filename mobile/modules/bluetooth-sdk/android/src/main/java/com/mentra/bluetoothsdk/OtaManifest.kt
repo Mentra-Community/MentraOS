@@ -24,7 +24,12 @@ internal object OtaManifestDefaults {
 }
 
 internal object OtaManifestChecker {
-    private const val ASG_CLIENT_PACKAGE = "com.mentra.asg_client"
+    /**
+     * Package the stock Mentra glasses client installs as, and the key every apps-shaped manifest
+     * is pinned under. A client reporting any other package is a sideloaded build that this
+     * manifest cannot describe.
+     */
+    internal const val ASG_CLIENT_PACKAGE = "com.mentra.asg_client"
 
     fun normalizeHttpUrl(value: String): String {
         val trimmed = value.trim()

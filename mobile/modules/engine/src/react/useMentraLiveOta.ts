@@ -34,6 +34,7 @@ export type MentraLiveOtaScreen =
   | "wifi_required"
   | "up_to_date"
   | "dev_build"
+  | "unofficial_client"
   | "check_failed"
   | "update_info_unavailable"
   | "starting"
@@ -103,6 +104,8 @@ export type MentraLiveOtaState = {
   releaseTransition: MentraLiveOtaReleaseTransition | null
   /** Release notes crossed by this update, newest first. Populated on completion. */
   changelogs: ReleaseChangelog[]
+  /** Sideloaded glasses client package, set only on the `unofficial_client` screen. */
+  glassesPackageName: string | null
 }
 
 export type UseMentraLiveOtaOptions = {
@@ -129,7 +132,7 @@ export type MentraLiveOtaController = {
   openWifiSetup: () => void
 }
 
-type CheckState = "checking" | "update_available" | "no_update" | "dev_build" | "error"
+type CheckState = "checking" | "update_available" | "no_update" | "dev_build" | "unofficial_client" | "error"
 
 const AUTO_CHAIN_NETWORK_RETRY_DELAY_MS = 5000
 const AUTO_CHAIN_COMPLETE_DELAY_MS = 750
@@ -216,6 +219,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
   const [isUpdateRequired, setIsUpdateRequired] = useState(true)
   const [isVersionChange, setIsVersionChange] = useState(false)
   const [errorKind, setErrorKind] = useState<"network" | "pin_unavailable">("network")
+  const [unofficialClientPackage, setUnofficialClientPackage] = useState<string | null>(null)
   const [updateFingerprint, setUpdateFingerprint] = useState<string | null>(null)
   const [offeredReleaseTransition, setOfferedReleaseTransition] = useState<MentraLiveOtaReleaseTransition | null>(null)
   const [completedReleaseTransition, setCompletedReleaseTransition] = useState<MentraLiveOtaReleaseTransition | null>(
@@ -377,6 +381,14 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
           checkCompletedRef.current = true
           ota.clearUpdateAvailable()
           setCheckState("dev_build")
+          return
+        }
+        if (result.skippedReason === "unofficial_client") {
+          stopOtaAutoChain()
+          checkCompletedRef.current = true
+          ota.clearUpdateAvailable()
+          setUnofficialClientPackage(result.packageName ?? null)
+          setCheckState("unofficial_client")
           return
         }
         if (!result.hasCheckCompleted) {
@@ -642,6 +654,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
         completedUpdate: false,
         releaseTransition: null,
         changelogs: [],
+        glassesPackageName: null,
       }
     }
 
@@ -653,6 +666,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
         screen = wifiRequired ? "wifi_required" : batteryBlocked ? "battery_required" : "update_available"
       } else if (checkState === "no_update") screen = "up_to_date"
       else if (checkState === "dev_build") screen = "dev_build"
+      else if (checkState === "unofficial_client") screen = "unofficial_client"
       else screen = errorKind === "pin_unavailable" ? "update_info_unavailable" : "check_failed"
 
       let error: MentraLiveOtaError | null = null
@@ -688,7 +702,11 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
         error,
         canInstall: screen === "update_available" && canInstall,
         canRetry: screen === "check_failed",
-        canFinish: screen === "up_to_date" || screen === "dev_build" || screen === "update_info_unavailable",
+        canFinish:
+          screen === "up_to_date" ||
+          screen === "dev_build" ||
+          screen === "unofficial_client" ||
+          screen === "update_info_unavailable",
         canDismiss:
           (screen === "update_available" || screen === "wifi_required" || screen === "battery_required") &&
           !isUpdateRequired &&
@@ -706,6 +724,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
               ? completedReleaseTransition
               : null,
         changelogs: screen === "up_to_date" ? completedChangelogs : [],
+        glassesPackageName: screen === "unofficial_client" ? unofficialClientPackage : null,
       }
     }
 
@@ -768,8 +787,10 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
       completedUpdate: false,
       releaseTransition: releaseTransitionFromRange(otaAutoChainReleaseRange()),
       changelogs,
+      glassesPackageName: null,
     }
   }, [
+    unofficialClientPackage,
     checkState,
     batteryBlocked,
     completedChangelogs,

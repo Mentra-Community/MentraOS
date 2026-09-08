@@ -52,6 +52,152 @@ describe("OtaUpdateCheckService", () => {
     expect(global.fetch).not.toHaveBeenCalled()
   })
 
+  it("skips the check when the glasses run a sideloaded client package", async () => {
+    useGlassesStore.getState().setGlassesInfo({
+      buildNumber: "120",
+      packageName: "com.mentra.asg_client.thirdparty",
+    })
+    global.fetch = jest.fn() as unknown as typeof fetch
+
+    const result = await checkCurrentGlassesForUpdate({
+      refreshVersionInfo: false,
+      fixClockBeforeCheck: false,
+      waitForBesVersionMs: 0,
+      waitForMtkVersionMs: 0,
+    })
+
+    expect(result.skippedReason).toBe("unofficial_client")
+    expect(result.packageName).toBe("com.mentra.asg_client.thirdparty")
+    expect(result.updateAvailable).toBe(false)
+    // Installing the manifest APK would replace a package this client is not, so the
+    // manifest must not even be fetched: the prompt could never be satisfied.
+    expect(global.fetch).not.toHaveBeenCalled()
+  })
+
+  it("checks normally when the glasses report the stock client package", async () => {
+    useGlassesStore.getState().setGlassesInfo({buildNumber: "40", packageName: "com.mentra.asg_client"})
+    global.fetch = jest.fn(() =>
+      Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({apps: {"com.mentra.asg_client": {versionCode: 10}}}),
+      } as unknown as Response),
+    ) as unknown as typeof fetch
+
+    const result = await checkCurrentGlassesForUpdate({
+      refreshVersionInfo: false,
+      fixClockBeforeCheck: false,
+      waitForBesVersionMs: 0,
+      waitForMtkVersionMs: 0,
+    })
+
+    expect(result.skippedReason).toBeUndefined()
+    expect(result.hasCheckCompleted).toBe(true)
+  })
+
+  it("checks normally when the glasses predate the package_name field", async () => {
+    // Fielded glasses report no package_name at all; they must keep getting OTA.
+    useGlassesStore.getState().setGlassesInfo({buildNumber: "40"})
+    global.fetch = jest.fn(() =>
+      Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({apps: {"com.mentra.asg_client": {versionCode: 10}}}),
+      } as unknown as Response),
+    ) as unknown as typeof fetch
+
+    const result = await checkCurrentGlassesForUpdate({
+      refreshVersionInfo: false,
+      fixClockBeforeCheck: false,
+      waitForBesVersionMs: 0,
+      waitForMtkVersionMs: 0,
+    })
+
+    expect(result.skippedReason).toBeUndefined()
+    expect(result.hasCheckCompleted).toBe(true)
+  })
+
+  it("keeps identity paired with the build number across a disconnect", async () => {
+    // Regression: clearing packageName on disconnect while buildNumber survived left a stale
+    // sideloaded build paired with a blank package. A blank package reads as stock, so the
+    // reconnect would compare the leftover sideloaded build to the stock pin and prompt forever
+    // — the original loop. Identity may only be cleared together with the build number, which
+    // the native session boundary does atomically.
+    useGlassesStore.getState().setGlassesInfo({
+      buildNumber: "120",
+      packageName: "com.mentra.asg_client.thirdparty",
+    })
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
+    expect(useGlassesStore.getState().packageName).toBe("com.mentra.asg_client.thirdparty")
+    expect(useGlassesStore.getState().buildNumber).toBe("120")
+
+    // Reconnect before version_info_1 lands: stale build + stale identity is fail-closed.
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
+    global.fetch = jest.fn() as unknown as typeof fetch
+    const stale = await checkCurrentGlassesForUpdate({
+      refreshVersionInfo: false,
+      fixClockBeforeCheck: false,
+      waitForBesVersionMs: 0,
+      waitForMtkVersionMs: 0,
+    })
+    expect(stale.skippedReason).toBe("unofficial_client")
+    expect(global.fetch).not.toHaveBeenCalled()
+
+    // The native boundary clears both together, so the next session starts clean.
+    useGlassesStore.getState().setGlassesInfo({buildNumber: "", packageName: ""})
+    useGlassesStore.getState().setGlassesInfo({
+      connection: {state: "connected", fullyBooted: true},
+      buildNumber: "40",
+    })
+    global.fetch = jest.fn(() =>
+      Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({apps: {"com.mentra.asg_client": {versionCode: 10}}}),
+      } as unknown as Response),
+    ) as unknown as typeof fetch
+
+    const result = await checkCurrentGlassesForUpdate({
+      refreshVersionInfo: false,
+      fixClockBeforeCheck: false,
+      waitForBesVersionMs: 0,
+      waitForMtkVersionMs: 0,
+    })
+
+    expect(result.skippedReason).toBeUndefined()
+    expect(result.hasCheckCompleted).toBe(true)
+  })
+
+  it("keeps a known package when a version_info response omits the field", async () => {
+    // requestVersionInfo() resolves from ANY version_info chunk, and only chunk 1 carries
+    // package_name. The bridges therefore omit the key unless it is known; if they emitted ""
+    // instead, the raw-spread apply below would blank a known identity, and a blank package
+    // reads as stock — failing OPEN on the exact client the guard just identified.
+    useGlassesStore.getState().setGlassesInfo({
+      buildNumber: "120",
+      packageName: "com.mentra.asg_client.thirdparty",
+    })
+
+    const chunkWithoutIdentity = await bluetoothSdkMock.requestVersionInfo()
+    // The omission is the contract under test, not an accident of the fixture.
+    expect(Object.prototype.hasOwnProperty.call(chunkWithoutIdentity, "packageName")).toBe(false)
+    useGlassesStore.getState().setGlassesInfo(chunkWithoutIdentity)
+
+    expect(useGlassesStore.getState().packageName).toBe("com.mentra.asg_client.thirdparty")
+
+    // That same apply does blank buildNumber, which is pre-existing behaviour for every field
+    // the responding chunk omits and is out of scope here; restore it so the guard is reached.
+    useGlassesStore.getState().setGlassesInfo({buildNumber: "120"})
+
+    global.fetch = jest.fn() as unknown as typeof fetch
+    const result = await checkCurrentGlassesForUpdate({
+      refreshVersionInfo: false,
+      fixClockBeforeCheck: false,
+      waitForBesVersionMs: 0,
+      waitForMtkVersionMs: 0,
+    })
+
+    expect(result.skippedReason).toBe("unofficial_client")
+    expect(global.fetch).not.toHaveBeenCalled()
+  })
+
   it("allows a pinned mobile build regardless of the ASG app version", async () => {
     useGlassesStore.getState().setGlassesInfo({appVersion: "49076573-dev", buildNumber: "40"})
     global.fetch = jest.fn(() =>
