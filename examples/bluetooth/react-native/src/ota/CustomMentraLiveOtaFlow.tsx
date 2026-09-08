@@ -1,6 +1,7 @@
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo } from "react";
 import {
   ActivityIndicator,
+  BackHandler,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -50,6 +51,13 @@ export function CustomMentraLiveOtaFlow({
   onFinished,
   onOpenWifiSetup,
 }: CustomMentraLiveOtaFlowProps) {
+  useEffect(() => {
+    // Only the flow's buttons may leave OTA. This app has no navigation stack;
+    // without a handler, Android Back invokes the system's default exit action.
+    const subscription = BackHandler.addEventListener("hardwareBackPress", () => true);
+    return () => subscription.remove();
+  }, []);
+
   const controller = useMentraLiveOta({
     initialPage,
     initializeRuntime,
