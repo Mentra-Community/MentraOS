@@ -212,6 +212,8 @@ export enum MiniappRequestType {
    */
   MEETING_JOIN = "miniapp_meeting_join",
   MEETING_LEAVE = "miniapp_meeting_leave",
+  /** Terminate the meeting for everyone, not just this device. See `meeting.end()`. */
+  MEETING_END = "miniapp_meeting_end",
   MEETING_SET_MUTED = "miniapp_meeting_set_muted",
   MEETING_UPDATE_VIDEO_SOURCE = "miniapp_meeting_update_video_source",
   MEETING_GET_STATE = "miniapp_meeting_get_state",
