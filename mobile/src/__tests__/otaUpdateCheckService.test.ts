@@ -115,17 +115,34 @@ describe("OtaUpdateCheckService", () => {
     expect(result.hasCheckCompleted).toBe(true)
   })
 
-  it("does not inherit a sideloaded package across a session boundary", async () => {
-    // A .thirdparty unit connects, then a stock (or pre-field) unit connects. The store clears
-    // packageName on disconnect, so the next session must not be judged by the old identity —
-    // otherwise restoring the stock client leaves OTA blocked until the app restarts.
+  it("keeps identity paired with the build number across a disconnect", async () => {
+    // Regression: clearing packageName on disconnect while buildNumber survived left a stale
+    // sideloaded build paired with a blank package. A blank package reads as stock, so the
+    // reconnect would compare the leftover sideloaded build to the stock pin and prompt forever
+    // — the original loop. Identity may only be cleared together with the build number, which
+    // the native session boundary does atomically.
     useGlassesStore.getState().setGlassesInfo({
       buildNumber: "120",
       packageName: "com.mentra.asg_client.thirdparty",
     })
     useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
-    expect(useGlassesStore.getState().packageName).toBe("")
+    expect(useGlassesStore.getState().packageName).toBe("com.mentra.asg_client.thirdparty")
+    expect(useGlassesStore.getState().buildNumber).toBe("120")
 
+    // Reconnect before version_info_1 lands: stale build + stale identity is fail-closed.
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
+    global.fetch = jest.fn() as unknown as typeof fetch
+    const stale = await checkCurrentGlassesForUpdate({
+      refreshVersionInfo: false,
+      fixClockBeforeCheck: false,
+      waitForBesVersionMs: 0,
+      waitForMtkVersionMs: 0,
+    })
+    expect(stale.skippedReason).toBe("unofficial_client")
+    expect(global.fetch).not.toHaveBeenCalled()
+
+    // The native boundary clears both together, so the next session starts clean.
+    useGlassesStore.getState().setGlassesInfo({buildNumber: "", packageName: ""})
     useGlassesStore.getState().setGlassesInfo({
       connection: {state: "connected", fullyBooted: true},
       buildNumber: "40",
