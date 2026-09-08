@@ -51,6 +51,9 @@ class ScopedNetworkErrorTest {
                 ScopedNetworkError.CODE_LOST,
                 ScopedNetworkError.CODE_REQUEST_FAILED,
                 ScopedNetworkError.CODE_NO_LOCAL_ADDRESS,
+                ScopedNetworkError.CODE_NOT_READY,
+                ScopedNetworkError.CODE_WIFI_DISABLED,
+                ScopedNetworkError.CODE_VPN_ACTIVE,
             )
 
         assertThat(codes).doesNotHaveDuplicates()
@@ -63,6 +66,26 @@ class ScopedNetworkErrorTest {
             .contains("MentraLive-1234")
             .contains("30000")
         assertThat(ScopedNetworkError.Lost("MentraLive-1234").message).contains("MentraLive-1234")
+    }
+
+    @Test
+    fun `a capturing vpn is named as the cause and tells the user what to change`() {
+        val error = ScopedNetworkError.VpnCapturesApp()
+        assertThat(error.code).isEqualTo(ScopedNetworkError.CODE_VPN_ACTIVE)
+        assertThat(error.message).contains("VPN").contains("split tunneling")
+    }
+
+    /**
+     * "Joined but not usable" has to be its own code. Reported as a join success it becomes an ICE
+     * answer with no candidates, which is the symptom several unrelated faults share.
+     */
+    @Test
+    fun `a network that joined but never became usable names the missing source`() {
+        val error = ScopedNetworkError.NotReady("MentraLive-1234", "the kernel interface table")
+
+        assertThat(error.code).isEqualTo(ScopedNetworkError.CODE_NOT_READY)
+        assertThat(error.code).isNotEqualTo(ScopedNetworkError.CODE_NO_LOCAL_ADDRESS)
+        assertThat(error.message).contains("MentraLive-1234").contains("the kernel interface table")
     }
 
     @Test
