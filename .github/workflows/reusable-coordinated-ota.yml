@@ -59,12 +59,18 @@ env:
 jobs:
   ota:
     name: Select ASG and publish immutable OTA bundle
-    runs-on: [self-hosted, macOS, ARM64]
+    # Ubuntu, matching the standalone ASG build, which already produces this
+    # same production-signed APK there. The signed APK is ~105 MB and the
+    # release API takes it as a single POST with no resumable or block upload,
+    # so publishing it needs an uplink that can finish 105 MB inside GitHub's
+    # ~120s window. The self-hosted Macs share a residential connection that
+    # cannot, and the build itself needs nothing local: inject-signing supplies
+    # the keystore from secrets.
+    runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 90
     env:
-      # Keep coordinated builds isolated from persistent-runner Gradle state.
-      # A build failure remains a real failure instead of triggering a machine-
-      # wide cache deletion and an indiscriminate retry.
+      # Keep the Gradle home inside the workspace so a failed build stays a
+      # real failure instead of poisoning a cache shared with other jobs.
       GRADLE_USER_HOME: ${{ github.workspace }}/.gradle-coordinated-asg
     outputs:
       manifest_url: ${{ steps.names.outputs.manifest_url }}
@@ -74,13 +80,32 @@ jobs:
       asg_apk_name: ${{ steps.names.outputs.apk_asset }}
       asg_apk_url: ${{ steps.names.outputs.apk_url }}
     steps:
-      - name: Clean persistent-runner build outputs
-        run: rm -rf asg_client/app/build asg_client/.gradle asg_client/StreamPackLite coordinated-ota-work "$GRADLE_USER_HOME"
-
       - name: Checkout exact source
         uses: actions/checkout@v4
         with:
           fetch-depth: 0
+
+      - name: Init StreamPackLite submodule
+        # asg_client/settings.gradle builds :core, :extension-rtmp and
+        # :extension-srt out of this submodule, so the APK cannot compile
+        # without it. The persistent Mac runners kept it across jobs; an
+        # ephemeral runner has to fetch it. Path-scoped on purpose: .gitmodules
+        # also carries a dangling mcu_client/peripheral_uart_next/nrf5340 entry
+        # with an unfetchable relative self-URL, and a blanket recursive init
+        # would break if its gitlink ever lands.
+        run: git submodule update --init asg_client/StreamPackLite
+
+      - name: Free up disk space
+        # Ubuntu runners ship ~14GB free and a full ASG release build (NDK +
+        # Gradle + StreamPackLite) can exhaust it. Drop unused preinstalled
+        # toolchains; keep the Android SDK. Mirrors the standalone ASG build.
+        run: |
+          echo "Before:"; df -h / | tail -1
+          sudo rm -rf /usr/share/dotnet /opt/ghc /usr/local/.ghcup \
+            /usr/local/share/powershell /usr/local/share/chromium \
+            /opt/hostedtoolcache/CodeQL /usr/local/lib/node_modules 2>/dev/null || true
+          sudo docker image prune --all --force 2>/dev/null || true
+          echo "After:"; df -h / | tail -1
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -228,7 +253,19 @@ jobs:
           GH_TOKEN: ${{ github.token }}
           APK_ASSET: ${{ steps.names.outputs.apk_asset }}
         run: |
-          gh release download "$ASG_RELEASE_TAG" --pattern "$APK_ASSET" --dir coordinated-ota-work
+          set -euo pipefail
+          for attempt in 1 2 3; do
+            rm -f "coordinated-ota-work/$APK_ASSET"
+            if timeout 120s gh release download "$ASG_RELEASE_TAG" --pattern "$APK_ASSET" --dir coordinated-ota-work; then
+              break
+            fi
+            if [[ "$attempt" == 3 ]]; then
+              rm -f "coordinated-ota-work/$APK_ASSET"
+              echo "ASG download failed after three attempts (120 seconds each)." >&2
+              exit 1
+            fi
+            sleep 5
+          done
           mv "coordinated-ota-work/$APK_ASSET" coordinated-ota-work/asg.apk
 
       - name: Setup Java for ASG build and APK verification
@@ -259,6 +296,20 @@ jobs:
           asg-key-password: ${{ secrets.ASG_KEY_PASSWORD }}
           asg-key-alias: ${{ secrets.ASG_KEY_ALIAS }}
 
+      - name: Write the ASG backend configuration
+        if: steps.existing-asg.outputs.exists != 'true'
+        working-directory: asg_client
+        # app/build.gradle bakes MENTRAOS_HOST/PORT/SECURE into BuildConfig from
+        # asg_client/.env, which is gitignored, and falls back to "" per field
+        # when the file is missing. ServerConfigUtil only rejects null, so an
+        # absent .env silently yields a "http://:" upload URL instead of failing
+        # the build. Write it explicitly so the released APK never depends on
+        # leftover state in a runner's workspace.
+        run: |
+          set -euo pipefail
+          cp .env.example .env
+          grep -q '^MENTRAOS_HOST=..*' .env
+
       - name: Build signed ASG APK once
         if: steps.existing-asg.outputs.exists != 'true'
         run: >-
@@ -277,8 +328,10 @@ jobs:
           EXPECTED_VERSION_NAME: ${{ steps.asg-identity.outputs.version_name }}
         run: |
           set -euo pipefail
-          apksigner=$(find "$ANDROID_HOME/build-tools" -type f -name apksigner -perm +111 | LC_ALL=C sort | tail -1)
-          aapt=$(find "$ANDROID_HOME/build-tools" -type f -name aapt -perm +111 | LC_ALL=C sort | tail -1)
+          # -perm -111 (all three execute bits) is understood by both GNU and
+          # BSD find; the BSD-only "+111" spelling is an error on GNU findutils.
+          apksigner=$(find "$ANDROID_HOME/build-tools" -type f -name apksigner -perm -111 | LC_ALL=C sort | tail -1)
+          aapt=$(find "$ANDROID_HOME/build-tools" -type f -name aapt -perm -111 | LC_ALL=C sort | tail -1)
           test -n "$apksigner"
           test -n "$aapt"
           $apksigner verify --print-certs coordinated-ota-work/asg.apk > coordinated-ota-work/apksigner-output.txt

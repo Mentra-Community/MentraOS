@@ -354,7 +354,12 @@ jobs:
           MENTRA_COORDINATED_OUTPUT_DIR: ${{ github.workspace }}/mobile-release/android
           MENTRA_COORDINATED_RELEASE_IDENTITY: ${{ needs.prepare.outputs.release_identity }}
           RNMAPBOX_MAPS_DOWNLOAD_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
-          SENTRY_ALLOW_FAILURE: "false"
+          # A Sentry outage must not fail a release build. sentry-cli still
+          # logs the failure loudly, and debug files can be uploaded after
+          # the fact; losing a coordinated release to someone else's 503 is
+          # the more expensive outcome. Seen 2026-09-08: an archive failed
+          # on "sentry reported an error: unknown error (http status: 503)".
+          SENTRY_ALLOW_FAILURE: "true"
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
         run: bun run release:android
 
@@ -691,7 +696,12 @@ jobs:
         env:
           MENTRA_COORDINATED_OUTPUT_DIR: ${{ github.workspace }}/mobile-release/ios
           MENTRA_COORDINATED_RELEASE_IDENTITY: ${{ needs.prepare.outputs.release_identity }}
-          SENTRY_ALLOW_FAILURE: "false"
+          # A Sentry outage must not fail a release build. sentry-cli still
+          # logs the failure loudly, and debug files can be uploaded after
+          # the fact; losing a coordinated release to someone else's 503 is
+          # the more expensive outcome. Seen 2026-09-08: an archive failed
+          # on "sentry reported an error: unknown error (http status: 503)".
+          SENTRY_ALLOW_FAILURE: "true"
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
           MENTRA_TESTFLIGHT_INTERNAL_ONLY: ${{ inputs.compatibility_lab }}
         run: |
