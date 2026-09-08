@@ -33,6 +33,19 @@ object AcsInvestigation {
   val decoderMode = DecoderMode.TEXTURE
   val zeroCopy = false
   val pixelFormat = PixelFormatArm.I420
+
+  /**
+   * libwebrtc's own `LS_INFO` stream during a SoftAP call.
+   *
+   * The one place that says which interfaces `BasicNetworkManager` kept, what adapter type it gave
+   * each one, and every `BindSocketToNetwork` result — the evidence that separated a hotspot the
+   * kernel had from one libwebrtc had erased. It is also loud, and it is the native stack's whole
+   * log, not ours.
+   *
+   * Flip to false once the SoftAP path is green on device. Keep the `NetworkFacts` stages either
+   * way: they are ours, bounded, and the thing that makes the next regression readable.
+   */
+  const val LIBWEBRTC_VERBOSE = true
 }
 
 data class SyntheticConfig(
