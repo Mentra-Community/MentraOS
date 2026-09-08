@@ -4,7 +4,9 @@ import test from "node:test"
 
 import {
   analyze,
+  describeIceFault,
   groupByCall,
+  ICE_FAULTS,
   isPrivateIpv4,
   parseTrace,
   proveCall,
@@ -29,11 +31,13 @@ function cleanCall(traceId = "abc123") {
   return [
     line("softap_call_start", {}, {traceId}),
     line("hotspot_enabled", {ssid: "MentraLive-1234"}, {traceId}),
+    line("cellular_validated", {held: true, validated: true, viaCallback: true, waitedMs: 820}, {traceId}),
     line("scoped_join_requested", {ssid: "MentraLive-1234", avoidsInternetCapability: true}, {traceId}),
     line("scoped_network_available", {localIpv4: "192.168.43.20", defaultNetworkIsCellular: true}, {traceId}),
     line("scoped_network_joined", {bindAddress: "192.168.43.20"}, {traceId}),
     line("whip_listener_bound", {host: "192.168.43.20", port: 8790}, {traceId}),
     line("ingest_host_candidate", {candidate: "candidate:1 1 udp 2122 192.168.43.20 8790 typ host"}, {traceId}),
+    line("default_network_after_join", {transport: "cellular", validated: true, present: true}, {traceId}),
     line("acs_joined", {ingestUrl: "http://192.168.43.20:8790/whip"}, {traceId}),
     line("ice_configured", {mode: "host", stunServers: 0}, {traceId}),
     line("ice_hotspot_candidate", {candidate: "candidate:1 1 udp 2122 192.168.43.1 5000 typ host"}, {traceId}),
@@ -43,6 +47,18 @@ function cleanCall(traceId = "abc123") {
     line("ingest_first_frame", {}, {traceId}),
     line("first_frame_in_acs", {}, {traceId}),
     line("softap_call_live", {}, {traceId}),
+    line(
+      "ingest_selected_pair",
+      {
+        pairId: "RTCIceCandidatePair_A_B",
+        local: "192.168.43.20",
+        remote: "192.168.43.1",
+        bytesReceived: 48000,
+        bytesFlowing: true,
+        comparable: true,
+      },
+      {traceId},
+    ),
   ].join("\n")
 }
 
@@ -167,6 +183,239 @@ test("a missing phone candidate fails with a detail that says which side", () =>
   const results = proveCall(parseTrace(oneSided))
 
   assert.match(named(results, "private-subnet host candidate").detail, /phone/)
+})
+
+test("a selected pair off the hotspot fails even though the call reached live", () => {
+  // The failure this exists for: every gathered candidate was private, the SDP guard was happy, the
+  // call went live — and ICE still chose the cellular interface. Only the selected pair shows it.
+  const offHotspot =
+    cleanCall() +
+    "\n" +
+    line("ingest_selected_pair_off_hotspot", {local: "10.51.2.7", prefix: "192.168.43.0/24"}, {level: "E"})
+
+  const results = proveCall(parseTrace(offHotspot))
+
+  assert.equal(named(results, "selected ICE pair").ok, false)
+  assert.match(named(results, "selected ICE pair").detail, /10\.51\.2\.7.*192\.168\.43\.0\/24/)
+})
+
+test("a call that never sampled a selected pair does not pass the ICE-path proof", () => {
+  // An older build logs no sample at all. Treating silence as success would let exactly the
+  // regression this proof was added for ship unnoticed.
+  const noSample = cleanCall()
+    .split("\n")
+    .filter((entry) => !entry.includes("stage=ingest_selected_pair"))
+    .join("\n")
+
+  const results = proveCall(parseTrace(noSample))
+
+  assert.equal(named(results, "selected ICE pair").ok, false)
+  assert.match(named(results, "selected ICE pair").detail, /no selected-pair sample/)
+})
+
+test("a selected pair carrying no bytes fails the flow proof but not the path proof", () => {
+  const idle = cleanCall().replace("bytesReceived=48000 bytesFlowing=true", "bytesReceived=0 bytesFlowing=false")
+
+  const results = proveCall(parseTrace(idle))
+
+  assert.equal(named(results, "selected ICE pair").ok, true)
+  assert.equal(named(results, "bytes increased").ok, false)
+})
+
+/**
+ * Growth measured across a pair change is not evidence of media, and the previous verifier compared
+ * two numbers with no pair identity at all. A capture whose samples were never comparable has to
+ * fail rather than inherit a pass from a number that went up.
+ */
+test("samples that were never comparable fail the flow proof and say why", () => {
+  const incomparable = cleanCall().replace(
+    "bytesFlowing=true comparable=true",
+    "bytesFlowing=false comparable=false notComparable=pair_changed",
+  )
+
+  const results = proveCall(parseTrace(incomparable))
+
+  const proof = named(results, "bytes increased")
+  assert.equal(proof.ok, false)
+  assert.match(proof.detail, /no comparable sample pair \(pair_changed\)/)
+})
+
+test("the path proof names the pair it followed, so two runs can be told apart", () => {
+  const detail = named(proveCall(parseTrace(cleanCall())), "selected ICE pair").detail
+
+  assert.match(detail, /pair=RTCIceCandidatePair_A_B/)
+})
+
+test("an unresolved pair reports why rather than claiming the path is proven", () => {
+  const unknown =
+    cleanCall()
+      .split("\n")
+      .filter((entry) => !entry.includes("stage=ingest_selected_pair"))
+      .join("\n") + "\n" + line("ingest_selected_pair_unknown", {reason: "no_scoped_prefix"})
+
+  const results = proveCall(parseTrace(unknown))
+
+  assert.equal(named(results, "selected ICE pair").ok, false)
+  assert.match(named(results, "selected ICE pair").detail, /no_scoped_prefix/)
+})
+
+test("a hotspot loss logged during teardown fails as a false positive", () => {
+  // `ScopedNetworkState.release()` suppresses the expected loss, so one that still reaches the trace
+  // after the stop began is the bug that makes a clean Leave look like a hotspot failure.
+  const noisy =
+    cleanCall() +
+    "\n" +
+    cleanTeardown()
+      .split("\n")
+      .flatMap((entry) =>
+        entry.includes("stage=scoped_network_released")
+          ? [entry, line("scoped_network_lost", {ssid: "MentraLive-1234"}, {level: "E"})]
+          : [entry],
+      )
+      .join("\n")
+
+  const results = proveCall(parseTrace(noisy))
+
+  assert.equal(named(results, "teardown did not report a hotspot loss").ok, false)
+})
+
+test("a genuine mid-call drop is not counted against teardown", () => {
+  // The soak deliberately kills the hotspot mid-call. That loss is real, is judged by the mid-call
+  // drop case, and must not also be reported as a teardown suppression bug.
+  const dropped =
+    cleanCall() + "\n" + line("scoped_network_lost", {ssid: "MentraLive-1234"}, {level: "E"}) + "\n" + cleanTeardown()
+
+  const results = proveCall(parseTrace(dropped))
+
+  assert.equal(named(results, "teardown did not report a hotspot loss").ok, true)
+})
+
+/**
+ * The four faults below all produced the same symptom on device. The analyzer has to name which one
+ * a capture shows, because "no hotspot candidate" is what made two of them indistinguishable.
+ */
+const rejection = (fields) =>
+  line(
+    "ingest_answer_rejected",
+    {
+      code: "no_candidates_gathered",
+      scopedAddress: "192.168.43.79",
+      scopedOwner: "wlan0",
+      scopedInTable: true,
+      scopedPrefix: "192.168.43.79/24",
+      publishedInventory: "wlan0[CONNECTION_WIFI]#0(192.168.43.79)",
+      publishedHotspot: true,
+      handleCollision: false,
+      gathered: 0,
+      hotspotCandidates: 0,
+      offHotspot: "none",
+      ...fields,
+    },
+    {level: "E"},
+  )
+
+test("a rejected answer fails and names the narrowed fault", () => {
+  const capture = cleanCall() + "\n" + rejection({fault: "FAILED_BINDING"})
+
+  const results = proveCall(parseTrace(capture))
+
+  const proof = named(results, "the answer carried a hotspot candidate")
+  assert.equal(proof.ok, false)
+  assert.match(proof.detail, /FAILED_BINDING/)
+  assert.match(proof.detail, /socket bind failed/)
+})
+
+test("each fault reports a distinct explanation rather than the shared symptom", () => {
+  const details = Object.keys(ICE_FAULTS).map((fault) =>
+    named(proveCall(parseTrace(rejection({fault}))), "the answer carried a hotspot candidate").detail,
+  )
+
+  assert.equal(new Set(details).size, Object.keys(ICE_FAULTS).length)
+})
+
+test("a handle collision is visible in the detail, not just the fault name", () => {
+  const detail = describeIceFault(
+    parseTrace(
+      rejection({
+        fault: "ERASED_ENTRY",
+        handleCollision: true,
+        publishedInventory: "wlan0[CONNECTION_WIFI]#0(192.168.43.79),rmnet_data0[CONNECTION_4G]#0(10.48.51.7)",
+      }),
+    )[0],
+  )
+
+  assert.match(detail, /collision=true/)
+  assert.match(detail, /rmnet_data0\[CONNECTION_4G\]#0/)
+})
+
+test("a capture from a build without the diagnosis falls back to the code", () => {
+  const legacy = line("ingest_answer_rejected", {code: "no_softap_host_candidate"}, {level: "E"})
+
+  const proof = named(proveCall(parseTrace(legacy)), "the answer carried a hotspot candidate")
+
+  assert.equal(proof.ok, false)
+  assert.equal(proof.detail, "no_softap_host_candidate")
+})
+
+test("a clean call passes the answer proof", () => {
+  const proof = named(proveCall(parseTrace(cleanCall())), "the answer carried a hotspot candidate")
+
+  assert.equal(proof.ok, true)
+  assert.equal(proof.detail, "accepted")
+})
+
+test("cellular that never validated fails, and says how long it waited", () => {
+  // The run that cost 30s of stall plus the whole join timeout. Proceeding onto the hotspot with
+  // no working cellular strands ACS, and the resulting capture blames the hotspot.
+  const stranded = cleanCall().replace(
+    "held=true validated=true viaCallback=true waitedMs=820",
+    "held=true validated=false viaCallback=false waitedMs=15000",
+  )
+
+  const proof = named(proveCall(parseTrace(stranded)), "cellular validated")
+
+  assert.equal(proof.ok, false)
+  assert.match(proof.detail, /validated=false/)
+  assert.match(proof.detail, /waitedMs=15000/)
+})
+
+test("an unvalidated default network after the join fails and names the transport", () => {
+  // Distinct from the cellular check: that one asks whether the radio works, this one asks which
+  // route the app actually got afterwards. Only the second explains an ACS join failing on a
+  // hotspot that was itself fine.
+  const unvalidated = cleanCall().replace(
+    "transport=cellular validated=true present=true",
+    "transport=cellular validated=false present=true",
+  )
+
+  const proof = named(proveCall(parseTrace(unvalidated)), "validated default network")
+
+  assert.equal(proof.ok, false)
+  assert.match(proof.detail, /transport=cellular/)
+})
+
+test("no default network at all fails even when the field says validated", () => {
+  // A stale capability snapshot must not read as a live route.
+  const absent = cleanCall().replace(
+    "transport=cellular validated=true present=true",
+    "transport=none validated=true present=false",
+  )
+
+  assert.equal(named(proveCall(parseTrace(absent)), "validated default network").ok, false)
+})
+
+test("a host that predates the internet checks is not judged on them", () => {
+  // Absent stages mean an older build, not a failure. Inventing one would fail every capture taken
+  // before this pass, including the ones we still compare against.
+  const older = cleanCall()
+    .split("\n")
+    .filter((entry) => !entry.includes("stage=cellular_validated") && !entry.includes("stage=default_network_after_join"))
+    .join("\n")
+
+  const results = proveCall(parseTrace(older))
+
+  assert.equal(named(results, "cellular validated"), undefined)
+  assert.equal(named(results, "validated default network"), undefined)
 })
 
 test("a configured STUN server fails the host-only proof", () => {
