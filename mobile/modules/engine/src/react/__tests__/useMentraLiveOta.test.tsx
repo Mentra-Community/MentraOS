@@ -1,8 +1,15 @@
 /// <reference types="bun-types" />
 
-import React from "react"
+import {createRequire} from "node:module"
+
 import TestRenderer, {act} from "react-test-renderer"
 import {beforeEach, describe, expect, mock, test} from "bun:test"
+
+// Engine is a workspace member of both mobile/ and sdk/, so a bare `react`
+// import here is the sdk copy while react-test-renderer binds the mobile copy.
+// Load the hook against the renderer's React or every hook throws.
+const rendererRequire = createRequire(require.resolve("react-test-renderer"))
+mock.module("react", () => rendererRequire("react"))
 
 import type {OtaInstallSnapshot} from "../../services/OtaInstallCoordinator"
 import type {OtaCheckCurrentGlassesResult} from "../../services/OtaUpdateCheckService"
