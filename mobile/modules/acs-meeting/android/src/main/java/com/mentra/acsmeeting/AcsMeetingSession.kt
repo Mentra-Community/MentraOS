@@ -176,6 +176,9 @@ class AcsMeetingSession(
   // Health of the glasses WHEP feed, reported alongside the ACS phase so the host
   // can tell "call is up, glasses video is dead" from a healthy call.
   @Volatile private var mediaSource = SourceState.IDLE
+  // The transport of the active call. A SoftAP source must not be auto-rebuilt: its URL is an
+  // output of binding, so a rebuild rebinds a new port and strands the glasses on the old one.
+  @Volatile private var currentSourceKind = SourceKind.WHEP
   private var mediaRestartAttempts = 0
   private var mediaRestartTask: ScheduledFuture<*>? = null
 
@@ -371,6 +374,7 @@ class AcsMeetingSession(
         stats.pix = AcsInvestigation.pixelFormat.name.lowercase()
         stats.zcOn = if (AcsInvestigation.zeroCopy) 1 else 0
         mediaRestartAttempts = 0
+        currentSourceKind = if (synthetic) SourceKind.DIRECT else videoSource.kind
         media.setStateListener { state, reason ->
           // Fired from WebRTC/OkHttp threads; hop to the session executor so it
           // serializes with join/leave/policy like everything else.
@@ -525,6 +529,15 @@ class AcsMeetingSession(
    */
   fun restartVideoSource() {
     executor.execute {
+      // A SoftAP source cannot be rebuilt in place: forceRestart() rebinds a new OS-chosen port and
+      // mints a fresh ingestUrl, but the glasses keep POSTing to the old port and nothing re-pushes
+      // the new URL, which permanently strands the call in CONNECTING. Leaving the listener bound on
+      // its stable port instead lets the glasses' own WHIP reconnect recover against the same URL;
+      // a network-level recovery is the orchestrator's job (re-run the SoftapCallTransport sequence).
+      if (currentSourceKind == SourceKind.SOFTAP) {
+        Log.w(TAG, "restartVideoSource ignored for SoftAP; a rebuild would strand the glasses on a dead port")
+        return@execute
+      }
       cancelMediaRestart()
       media.forceRestart()
     }
@@ -547,10 +560,12 @@ class AcsMeetingSession(
    */
   private fun scheduleMediaRestart(reason: String?) {
     if (call == null || phase == "idle" || phase == "disconnected" || phase == "error") return
-    // SoftAP ingest owns a bound port the glasses already have. Rebuilding mints a new listener
-    // and the glasses' next POST hits a tombstone (HTTP 410). WHEP can rebuild; SoftAP cannot.
-    if (media.ingestUrl != null) {
-      Log.w(TAG, "SoftAP ingest failed ($reason); not rebuilding — glasses still have ${media.ingestUrl}")
+    // SoftAP recovery must never rebuild the source from here: forceRestart() rebinds a new port and
+    // ingestUrl the glasses are never told about, so the call would strand in CONNECTING. The
+    // FAILED state is still surfaced to the host (onMediaSourceState emits a snapshot), and the
+    // still-bound listener lets the glasses' own WHIP reconnect recover on the unchanged URL.
+    if (currentSourceKind == SourceKind.SOFTAP) {
+      Log.w(TAG, "SoftAP media source failed ($reason); session-level rebuild suppressed, listener left bound for glasses reconnect")
       return
     }
     if (mediaRestartTask?.isDone == false) return
@@ -1029,6 +1044,7 @@ class AcsMeetingSession(
       cancelMediaRestart()
       media.setStateListener(null)
       mediaSource = SourceState.IDLE
+      currentSourceKind = SourceKind.WHEP
       media.stop()
       frameSender.detach()
     } catch (error: Exception) {
