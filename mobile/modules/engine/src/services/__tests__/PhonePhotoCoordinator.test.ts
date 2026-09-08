@@ -9,13 +9,13 @@ const requestPhotoNative = mock(async (_req: unknown): Promise<undefined> => und
 const warmUpCameraNative = mock(async (_req: unknown): Promise<undefined> => undefined)
 const stopCameraWarmUpNative = mock(async (_requestId: string): Promise<undefined> => undefined)
 
-mock.module("@mentra/bluetooth-sdk/internal", () => ({
-  default: {
-    requestPhoto: requestPhotoNative,
-    warmUpCamera: warmUpCameraNative,
-    stopCameraWarmUp: stopCameraWarmUpNative,
-  },
-}))
+import {bluetoothSdk} from "./bluetoothSdkTestMock"
+
+Object.assign(bluetoothSdk, {
+  requestPhoto: requestPhotoNative,
+  warmUpCamera: warmUpCameraNative,
+  stopCameraWarmUp: stopCameraWarmUpNative,
+})
 
 // --- cloud-v2 managed-photo service (CloudClientService singleton) --------
 const PRESIGN = {
@@ -28,9 +28,9 @@ const awaitManagedPhotoReady = mock(
   async (_requestId: string): Promise<{readUrl?: string}> => ({readUrl: "https://r2.test/signed"}),
 )
 
-mock.module("../CloudClientService", () => ({
-  cloudClientService: {startManagedPhoto, awaitManagedPhotoReady},
-}))
+import {cloudClientService} from "./cloudClientServiceTestMock"
+
+Object.assign(cloudClientService, {startManagedPhoto, awaitManagedPhotoReady})
 
 // --- glasses store + readiness ---------------------------------------------
 // The coordinator's connected precheck reads the engine glasses store via
@@ -50,6 +50,11 @@ mock.module("../GlassesReadiness", () => ({
 const {CAPTURE_PIPELINE_TIMEOUT_MS, PhonePhotoCoordinator, PhotoError} = await import("../PhonePhotoCoordinator")
 
 beforeEach(() => {
+  Object.assign(bluetoothSdk, {
+    requestPhoto: requestPhotoNative,
+    warmUpCamera: warmUpCameraNative,
+    stopCameraWarmUp: stopCameraWarmUpNative,
+  })
   requestPhotoNative.mockClear()
   warmUpCameraNative.mockClear()
   stopCameraWarmUpNative.mockClear()
