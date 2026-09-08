@@ -60,7 +60,10 @@ function collectArtifactReferences(manifest) {
   if (manifest.mtk_full_ota) {
     const entry = manifest.mtk_full_ota;
     if (typeof entry.url !== 'string' || !entry.url) throw new Error('MTK full OTA is missing a URL.');
-    references.push({entry, key: 'url', label: 'MTK full OTA', sha256: requireSha256(entry, 'MTK full OTA')});
+    if (!Number.isSafeInteger(entry.size) || entry.size <= 0 || entry.size > 1024 * 1024 * 1024) {
+      throw new Error('MTK full OTA must declare a positive integer size no larger than 1 GiB.');
+    }
+    references.push({entry, key: 'url', label: 'MTK full OTA', sha256: requireSha256(entry, 'MTK full OTA'), size: entry.size});
   }
 
   const bes = manifest.bes_firmware;
@@ -97,21 +100,26 @@ export async function buildPortableOtaBundle({manifest, outputDirectory, localAr
   const bundledByHash = new Map();
   for (const reference of references) {
     const source = reference.entry[reference.key];
-    let fileName = bundledByHash.get(reference.sha256);
-    if (!fileName) {
+    let bundled = bundledByHash.get(reference.sha256);
+    if (!bundled) {
       const data = await readSource(source, localArtifacts);
       const actualSha256 = sha256(data);
       if (actualSha256 !== reference.sha256) {
         throw new Error(`${reference.label} hash mismatch: expected ${reference.sha256}, got ${actualSha256}.`);
       }
-      fileName = `${reference.sha256}${artifactExtension(source)}`;
+      const fileName = `${reference.sha256}${artifactExtension(source)}`;
       const destination = join(artifactsDirectory, fileName);
       writeFileSync(destination, data);
       utimesSync(destination, FIXED_MTIME, FIXED_MTIME);
-      bundledByHash.set(reference.sha256, fileName);
+      bundled = {fileName, size: data.length};
+      bundledByHash.set(reference.sha256, bundled);
+    }
+    // Validate every reference, including artifacts deduplicated by hash.
+    if (reference.size !== undefined && reference.size !== bundled.size) {
+      throw new Error(`${reference.label} size mismatch: expected ${reference.size}, got ${bundled.size}.`);
     }
 
-    const relativePath = `artifacts/${fileName}`;
+    const relativePath = `artifacts/${bundled.fileName}`;
     reference.entry[reference.key] = relativePath;
     if (reference.key === 'url' && typeof reference.entry.firmwareUrl === 'string') {
       reference.entry.firmwareUrl = relativePath;
@@ -153,7 +161,7 @@ export async function buildPortableOtaBundle({manifest, outputDirectory, localAr
 
   const sums = [...bundledByHash.entries()]
     .sort(([left], [right]) => left.localeCompare(right))
-    .map(([hash, fileName]) => `${hash}  artifacts/${fileName}`)
+    .map(([hash, artifact]) => `${hash}  artifacts/${artifact.fileName}`)
     .join('\n');
   const sumsPath = join(outputDirectory, 'SHA256SUMS');
   writeFileSync(sumsPath, `${sums}\n`);

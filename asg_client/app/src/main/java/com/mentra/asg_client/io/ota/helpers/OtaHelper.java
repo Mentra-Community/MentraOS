@@ -140,6 +140,7 @@ public class OtaHelper {
     // Progress throttling - send every 2s OR every 5% change
     private long lastProgressSentTime = 0;
     private int lastProgressSentPercent = 0;
+    private volatile long downloadBytes = 0;
     private static final long PROGRESS_MIN_INTERVAL_MS = 2000; // 2 seconds
     private static final int PROGRESS_MIN_CHANGE_PERCENT = 5;   // 5%
     // Current update stage for progress reporting
@@ -2376,7 +2377,7 @@ public class OtaHelper {
 
     private JSONObject buildBesInstallStartStatus() {
         updateSessionFromProgress("install", 0, "STARTED", null);
-        lastProgressSentTime = System.currentTimeMillis();
+        lastProgressSentTime = android.os.SystemClock.elapsedRealtime();
         lastProgressSentPercent = 0;
         lastOtaPhoneStage = "install";
         lastOtaPhoneProgress = 0;
@@ -2540,15 +2541,9 @@ public class OtaHelper {
                 Log.i(TAG, "MTK firmware update initiated - system will handle in background");
             }, 1000); // 1 second delay
 
-            // 10-minute timeout: if no broadcast arrives, clear isMtkOtaInProgress
-            final long MTK_INSTALL_TIMEOUT_MS = 10 * 60 * 1000;
-            mtkHandler.postDelayed(() -> {
-                if (isMtkOtaInProgress) {
-                    Log.e(TAG, "MTK install timeout after " + (MTK_INSTALL_TIMEOUT_MS / 60000) + " min — no broadcast received, clearing flag");
-                    isMtkOtaInProgress = false;
-                    sendMtkInstallProgressToPhone("FAILED", 0, "MTK install timed out — no response from system");
-                }
-            }, MTK_INSTALL_TIMEOUT_MS);
+            // Only a terminal system-updater result releases install ownership. The phone
+            // detects stalled progress, but elapsed time does not mean update_engine stopped.
+            // In particular, a retry must not replace the ZIP while it is still being read.
 
             return true;
         } catch (Exception e) {
@@ -2569,7 +2564,7 @@ public class OtaHelper {
      * @param context Application context
      * @return true if downloaded and verified successfully
      */
-    private boolean downloadMtkFirmware(String firmwareUrl, JSONObject firmwareInfo, Context context) {
+    boolean downloadMtkFirmware(String firmwareUrl, JSONObject firmwareInfo, Context context) {
         try {
             boolean success = downloadMtkFirmwareInternal(firmwareUrl, firmwareInfo, context);
             if (success) {
@@ -2653,6 +2648,8 @@ public class OtaHelper {
 
         currentUpdateType = "mtk";
 
+        final long progressSize = expectedSize > 0 ? expectedSize : fileSize;
+        sendProgressToPhone("download", 0, 0, progressSize, "STARTED", null);
         try {
             while ((len = in.read(buffer)) > 0) {
                 total += len;
@@ -2664,7 +2661,8 @@ public class OtaHelper {
                 }
                 out.write(buffer, 0, len);
 
-                int progress = fileSize > 0 ? (int) (total * 100 / fileSize) : 0;
+                int progress = progressSize > 0 ? (int) (total * 100 / progressSize) : 0;
+                sendProgressToPhone("download", progress, total, progressSize, "PROGRESS", null);
                 if (progress >= lastProgress + 10 || progress == 100) {
                     Log.d(TAG, "MTK firmware download progress: " + progress + "%");
                     EventBus.getDefault().post(new DownloadProgressEvent(
@@ -2693,6 +2691,7 @@ public class OtaHelper {
         boolean verified = verifyMtkFirmwareChecksum(firmwareFile.getAbsolutePath(), firmwareInfo);
         if (verified) {
             Log.i(TAG, "MTK firmware file verified successfully");
+            sendProgressToPhone("download", 100, total, progressSize, "FINISHED", null);
             return true;
         } else {
             firmwareFile.delete();
@@ -2781,13 +2780,14 @@ public class OtaHelper {
     private void sendProgressToPhone(String stage, int progress, long bytesDownloaded,
                                      long totalBytes, String status, String errorMessage) {
 
+        downloadBytes = "download".equals(stage) ? bytesDownloaded : 0;
         updateSessionFromProgress(stage, progress, status, errorMessage);
 
         if (phoneConnectionProvider == null || !isPhoneConnected()) {
             return;
         }
 
-        long now = System.currentTimeMillis();
+        long now = android.os.SystemClock.elapsedRealtime();
         boolean shouldSend = false;
 
         // Always send STARTED, FINISHED, FAILED immediately
@@ -2975,6 +2975,10 @@ public class OtaHelper {
             // Phone bridge (MentraLive.java) reads all fields from the top level of the JSON
             // object, so we add "type" directly to sessionState rather than nesting it under "data".
             sessionState.put("type", "ota_status");
+            if ("download".equals(sessionState.optString("phase"))
+                    && currentUpdateType.equals(sessionState.optString("step_type"))) {
+                sessionState.put("bytes_downloaded", downloadBytes);
+            }
             if ("failed".equals(sessionState.optString("status"))) {
                 sessionState.put("glasses_time_ms", System.currentTimeMillis());
             }
