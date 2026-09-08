@@ -4635,6 +4635,9 @@ class MentraLive : SGCManager() {
                     }
 
                     // Update DeviceStore for any fields we recognize
+                    (fields["package_name"] as? String)?.trim()?.takeIf { it.isNotEmpty() }?.let {
+                        DeviceStore.apply("glasses", "packageName", it)
+                    }
                     if (fields.containsKey("app_version")) {
                         DeviceStore.apply("glasses", "appVersion", fields["app_version"] as String)
                     }

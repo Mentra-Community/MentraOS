@@ -52,6 +52,69 @@ describe("OtaUpdateCheckService", () => {
     expect(global.fetch).not.toHaveBeenCalled()
   })
 
+  it("skips the check when the glasses run a sideloaded client package", async () => {
+    useGlassesStore.getState().setGlassesInfo({
+      buildNumber: "120",
+      packageName: "com.mentra.asg_client.thirdparty",
+    })
+    global.fetch = jest.fn() as unknown as typeof fetch
+
+    const result = await checkCurrentGlassesForUpdate({
+      refreshVersionInfo: false,
+      fixClockBeforeCheck: false,
+      waitForBesVersionMs: 0,
+      waitForMtkVersionMs: 0,
+    })
+
+    expect(result.skippedReason).toBe("unofficial_client")
+    expect(result.packageName).toBe("com.mentra.asg_client.thirdparty")
+    expect(result.updateAvailable).toBe(false)
+    // Installing the manifest APK would replace a package this client is not, so the
+    // manifest must not even be fetched: the prompt could never be satisfied.
+    expect(global.fetch).not.toHaveBeenCalled()
+  })
+
+  it("checks normally when the glasses report the stock client package", async () => {
+    useGlassesStore.getState().setGlassesInfo({buildNumber: "40", packageName: "com.mentra.asg_client"})
+    global.fetch = jest.fn(() =>
+      Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({apps: {"com.mentra.asg_client": {versionCode: 10}}}),
+      } as unknown as Response),
+    ) as unknown as typeof fetch
+
+    const result = await checkCurrentGlassesForUpdate({
+      refreshVersionInfo: false,
+      fixClockBeforeCheck: false,
+      waitForBesVersionMs: 0,
+      waitForMtkVersionMs: 0,
+    })
+
+    expect(result.skippedReason).toBeUndefined()
+    expect(result.hasCheckCompleted).toBe(true)
+  })
+
+  it("checks normally when the glasses predate the package_name field", async () => {
+    // Fielded glasses report no package_name at all; they must keep getting OTA.
+    useGlassesStore.getState().setGlassesInfo({buildNumber: "40"})
+    global.fetch = jest.fn(() =>
+      Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({apps: {"com.mentra.asg_client": {versionCode: 10}}}),
+      } as unknown as Response),
+    ) as unknown as typeof fetch
+
+    const result = await checkCurrentGlassesForUpdate({
+      refreshVersionInfo: false,
+      fixClockBeforeCheck: false,
+      waitForBesVersionMs: 0,
+      waitForMtkVersionMs: 0,
+    })
+
+    expect(result.skippedReason).toBeUndefined()
+    expect(result.hasCheckCompleted).toBe(true)
+  })
+
   it("allows a pinned mobile build regardless of the ASG app version", async () => {
     useGlassesStore.getState().setGlassesInfo({appVersion: "49076573-dev", buildNumber: "40"})
     global.fetch = jest.fn(() =>

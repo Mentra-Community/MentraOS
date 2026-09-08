@@ -439,6 +439,11 @@ const en = {
     devBuild: "Development Build",
     devBuildNoOta:
       "This mobile app is a development build, so automatic glasses updates are disabled. Use the developer settings manifest override to update them manually.",
+    unofficialClient: "Updates Blocked",
+    unofficialClientNoOta:
+      "Your glasses are running a sideloaded client, so updates are blocked. Restore the stock client to update them.",
+    unofficialClientNoOtaNamed:
+      "Your glasses are running a sideloaded client ({{packageName}}), so updates are blocked. Restore the stock client to update them.",
     noUpdatesAvailable: "Your glasses are running the latest version.",
     checkFailed: "Check Failed",
     checkFailedMessage: "Couldn't check for updates. Please check your connection and try again.",

@@ -302,6 +302,22 @@ function OtaFlowContent({
     )
   }
 
+  if (state.screen === "unofficial_client") {
+    return (
+      <FlowPage
+        actions={<FlowButton colors={colors} label={translate("common:continue")} onPress={controller.finish} />}
+        colors={colors}
+        icon="settings"
+        title={translate("ota:unofficialClient")}>
+        <BodyText colors={colors}>
+          {state.glassesPackageName
+            ? translate("ota:unofficialClientNoOtaNamed", {packageName: state.glassesPackageName})
+            : translate("ota:unofficialClientNoOta")}
+        </BodyText>
+      </FlowPage>
+    )
+  }
+
   if (state.screen === "up_to_date") {
     return (
       <FlowPage

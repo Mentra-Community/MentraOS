@@ -3075,6 +3075,9 @@ class MentraLive: NSObject, SGCManager {
                 }
 
                 // Update local fields for any we recognize
+                if let packageName = nonEmptyStringValue(fields, "package_name") {
+                    DeviceStore.shared.apply("glasses", "packageName", packageName)
+                }
                 if let appVersion = fields["app_version"] as? String {
                     DeviceStore.shared.apply("glasses", "appVersion", appVersion)
                 }

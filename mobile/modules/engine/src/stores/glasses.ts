@@ -132,6 +132,7 @@ const initialState: GlassesStore = {
   systemTimeMs: 0,
   otaVersionUrl: "",
   appVersion: "",
+  packageName: "",
   bluetoothName: "",
   serialNumber: "",
   style: "",

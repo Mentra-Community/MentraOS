@@ -155,6 +155,13 @@ export type VersionInfoResult = {
   systemTimeMs?: number
   otaVersionUrl: string
   appVersion: string
+  /**
+   * Package the glasses client actually runs as, from `version_info_1`. Empty string on glasses
+   * whose client predates the field. `"com.mentra.asg_client"` is the stock client; anything else
+   * is a sideloaded build (Android forces a distinct package on any build not signed with Mentra's
+   * release key) that coexists with the stock app and must not be driven by OTA.
+   */
+  packageName: string
   /** Phone-served hotspot OTA protocol version; 0 means unsupported/legacy glasses. */
   hotspotOtaVersion: number
 }
@@ -1330,6 +1337,13 @@ export interface GlassesStatus {
   systemTimeMs?: number
   otaVersionUrl: string
   appVersion: string
+  /**
+   * Package the glasses client actually runs as, from `version_info_1`. Empty string on glasses
+   * whose client predates the field. `"com.mentra.asg_client"` is the stock client; anything else
+   * is a sideloaded build (Android forces a distinct package on any build not signed with Mentra's
+   * release key) that coexists with the stock app and must not be driven by OTA.
+   */
+  packageName: string
   /** Phone-served hotspot OTA protocol version; 0 means unsupported/legacy glasses. */
   hotspotOtaVersion: number
   bluetoothName: string

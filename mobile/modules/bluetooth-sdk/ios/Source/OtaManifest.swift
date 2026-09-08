@@ -48,7 +48,10 @@ struct OtaManifest: Decodable {
 }
 
 enum OtaManifestChecker {
-    private static let asgClientPackage = "com.mentra.asg_client"
+    /// Package the stock Mentra glasses client installs as, and the key every apps-shaped
+    /// manifest is pinned under. A client reporting any other package is a sideloaded build that
+    /// this manifest cannot describe.
+    static let asgClientPackage = "com.mentra.asg_client"
 
     static func normalizeHttpUrl(_ value: String) throws -> String {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)

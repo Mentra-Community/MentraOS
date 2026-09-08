@@ -1213,6 +1213,17 @@ class MentraBluetoothSdk private constructor(
                 "Cannot check OTA update because glasses build number is unavailable.",
             )
         }
+        // A sideloaded client installs under its own package and coexists with the stock system
+        // app, so its build number is not comparable to the manifest pin and installing the
+        // manifest's APK would not replace it. Refuse rather than answer about the wrong client.
+        // Blank means the glasses predate the field: assume stock and keep existing behavior.
+        if (status.packageName.isNotBlank() && status.packageName != OtaManifestChecker.ASG_CLIENT_PACKAGE) {
+            throw BluetoothSdkException(
+                "unofficial_client",
+                "Cannot check OTA update because the glasses run an unofficial client " +
+                    "(${status.packageName}).",
+            )
+        }
 
         val manifestUrl = resolveOtaVersionUrl(status)
         val manifest = OtaManifestChecker.fetch(manifestUrl)
