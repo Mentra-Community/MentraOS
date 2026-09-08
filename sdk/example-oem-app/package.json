@@ -62,7 +62,8 @@
   },
   "expo": {
     "autolinking": {
-      "nativeModulesDir": "../../mobile/modules"
+      "nativeModulesDir": "../../mobile/modules",
+      "exclude": ["@mentra/entra-auth"]
     }
   }
 }
