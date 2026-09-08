@@ -21,6 +21,7 @@ import {ModalProvider as LegacyModalProvider} from "@/utils/AlertUtils"
 import {ModalProvider} from "@/contexts/ModalContext"
 import {KonamiCodeProvider} from "@/utils/dev/konami"
 import ConnectionOverlayProvider from "@/contexts/ConnectionOverlayContext"
+import {DeploymentProvider, useDeployment} from "@/services/deployment"
 import {SaferAreaProvider, useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 import CoreStatusBar from "@/components/dev/CoreStatusBar"
 import {useShallow} from "zustand/shallow"
@@ -78,6 +79,7 @@ export const AllProviders = withWrappers(
   SafeAreaProvider,
   SaferAreaProvider,
   KeyboardProvider,
+  DeploymentProvider,
   AuthProvider,
   SplashLoaderProvider,
   DeeplinkProvider,
@@ -90,6 +92,7 @@ export const AllProviders = withWrappers(
   (props) => {
     const posthogApiKey = process.env.EXPO_PUBLIC_POSTHOG_API_KEY
     const isChina = engine.settings.get(SETTINGS.china_deployment.key)
+    const {activeDeployment, selectionResolved} = useDeployment()
 
     // If no API key is provided, disable PostHog to prevent errors
     if (!posthogApiKey) {
@@ -99,6 +102,11 @@ export const AllProviders = withWrappers(
 
     if (isChina) {
       console.log("PostHog is disabled for China")
+      return <>{props.children}</>
+    }
+
+    if (!selectionResolved || (activeDeployment.kind === "workspace" && !activeDeployment.manifest.telemetry)) {
+      console.log("PostHog is disabled by the active deployment")
       return <>{props.children}</>
     }
 

@@ -16,6 +16,7 @@ import com.mentra.asg_client.camera.CameraNeoService;
 import com.mentra.asg_client.camera.feedback.PhotoFeedbackController;
 import com.mentra.asg_client.camera.feedback.PhotoLightController;
 import com.mentra.asg_client.camera.lifecycle.PhotoExifMetadataWriter;
+import com.mentra.asg_client.camera.lifecycle.VideoRecordingSession;
 import com.mentra.asg_client.camera.model.CameraOperationError;
 import com.mentra.asg_client.camera.model.CapturedPhoto;
 import com.mentra.asg_client.camera.model.PhotoCaptureSettings;
@@ -881,7 +882,18 @@ public class MediaCaptureService {
             @Nullable PhotoCaptureSettings captureSettings) {
         boolean cameraWarm =
                 CameraNeoService.isCameraWarm(size, isFromSdk, exposureTimeNs, captureSettings);
-        return photoFeedbackController.start(requestId, cameraWarm);
+        // Warm says "no cold ISP start, so no hold-still cue". Ready says "this capture should
+        // start now rather than queueing", the stricter fact the request-time shutter needs.
+        //
+        // Both are predictions, not guarantees: each takes SERVICE_LOCK on its own, and the LED
+        // work below runs before enqueuePhotoRequest() takes it again, so another request can
+        // start a capture in between and leave shutterNow stale-true. Closing that would mean
+        // deciding the feedback inside the same lock acquisition the enqueue uses, which is a
+        // wider change to this boundary than the audio fix warrants. The residual case degrades
+        // to the old behaviour — a snap slightly ahead of its frame — rather than a wrong or
+        // missing sound, and the common rapid-press case it does catch is the one users hit.
+        boolean shutterNow = cameraWarm && CameraNeoService.isCameraReadyForImmediateCapture();
+        return photoFeedbackController.start(requestId, cameraWarm, shutterNow);
     }
 
     /** Flash privacy LED synchronized with shutter sound for photo capture */
@@ -984,8 +996,7 @@ public class MediaCaptureService {
         // Check if battery is too low to start recording (query current level for accuracy)
         if (mStateManager != null) {
             int currentBatteryLevel = mStateManager.getBatteryLevel();
-            if (currentBatteryLevel >= 0
-                    && currentBatteryLevel < BatteryConstants.MIN_BATTERY_LEVEL) {
+            if (BatteryConstants.isCameraBatteryLow(currentBatteryLevel, hardwareManager)) {
                 Log.w(
                         TAG,
                         "🚫 Battery too low to start recording: "
@@ -1217,6 +1228,21 @@ public class MediaCaptureService {
             boolean enableSound,
             int maxRecordingTimeMinutes,
             boolean save) {
+        // Both button and command starts arrive here after recorder teardown.
+        // Queue admission cannot authorize a later capture using expired evidence.
+        int batteryLevel = mStateManager != null ? mStateManager.getBatteryLevel() : -1;
+        if (BatteryConstants.isCameraBatteryLow(batteryLevel, hardwareManager)) {
+            VideoRecordingSession.deleteCorruptCapture(videoFilePath);
+            videoRecordingLifecycle.startFailed();
+            playBatteryLowSound();
+            if (mMediaCaptureListener != null) {
+                mMediaCaptureListener.onMediaError(
+                        requestId, "Battery too low for video capture",
+                        MediaUploadQueueManager.MEDIA_TYPE_VIDEO);
+            }
+            return;
+        }
+
         // Check if any streaming is active - videos cannot interrupt streams
         if (RtmpStreamingService.isStreaming()
                 || SrtStreamingService.isStreaming()
@@ -1976,7 +2002,7 @@ public class MediaCaptureService {
         // BATTERY CHECK: Reject if battery too low
         if (mStateManager != null) {
             int batteryLevel = mStateManager.getBatteryLevel();
-            if (batteryLevel >= 0 && batteryLevel < BatteryConstants.MIN_BATTERY_LEVEL) {
+            if (BatteryConstants.isCameraBatteryLow(batteryLevel, hardwareManager)) {
                 Log.w(TAG, "🚫 Photo rejected - battery too low (" + batteryLevel + "%)");
                 playBatteryLowSound();
                 if (mMediaCaptureListener != null) {
@@ -2672,7 +2698,7 @@ public class MediaCaptureService {
         // Check battery level before proceeding
         if (mStateManager != null) {
             int batteryLevel = mStateManager.getBatteryLevel();
-            if (batteryLevel >= 0 && batteryLevel < BatteryConstants.MIN_BATTERY_LEVEL) {
+            if (BatteryConstants.isCameraBatteryLow(batteryLevel, hardwareManager)) {
                 Log.w(TAG, "🚫 Photo rejected - battery too low (" + batteryLevel + "%)");
                 playBatteryLowSound();
                 sendPhotoErrorResponse(
@@ -4922,7 +4948,7 @@ public class MediaCaptureService {
         // Check battery level before proceeding (defense-in-depth)
         if (mStateManager != null) {
             int batteryLevel = mStateManager.getBatteryLevel();
-            if (batteryLevel >= 0 && batteryLevel < BatteryConstants.MIN_BATTERY_LEVEL) {
+            if (BatteryConstants.isCameraBatteryLow(batteryLevel, hardwareManager)) {
                 Log.w(TAG, "🚫 Photo rejected - battery too low (" + batteryLevel + "%)");
                 playBatteryLowSound();
                 sendPhotoErrorResponse(
@@ -5060,7 +5086,7 @@ public class MediaCaptureService {
         logBlePhotoStep(requestId, "battery_check", "checking minimum battery requirement");
         if (mStateManager != null) {
             int batteryLevel = mStateManager.getBatteryLevel();
-            if (batteryLevel >= 0 && batteryLevel < BatteryConstants.MIN_BATTERY_LEVEL) {
+            if (BatteryConstants.isCameraBatteryLow(batteryLevel, hardwareManager)) {
                 Log.w(TAG, "🚫 Photo rejected - battery too low (" + batteryLevel + "%)");
                 playBatteryLowSound();
                 sendPhotoErrorResponse(
@@ -6972,8 +6998,7 @@ public class MediaCaptureService {
 
                             int batteryLevel = hardwareManager.getBatteryLevel();
 
-                            if (batteryLevel >= 0
-                                    && batteryLevel < BatteryConstants.MIN_BATTERY_LEVEL) {
+                            if (BatteryConstants.isCameraBatteryLow(batteryLevel, hardwareManager)) {
                                 Log.w(
                                         TAG,
                                         "🔋⚠️ Battery dropped to "

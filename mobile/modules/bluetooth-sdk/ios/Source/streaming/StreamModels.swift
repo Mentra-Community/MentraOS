@@ -4,17 +4,23 @@ public struct StreamVideoConfig {
     public let width: Int?
     public let height: Int?
     public let bitrate: Int?
+    public let minBitrateBps: Int?
+    public let initialBitrateBps: Int?
     public let fps: Int?
 
     public init(
         width: Int? = nil,
         height: Int? = nil,
         bitrate: Int? = nil,
-        fps: Int? = nil
+        fps: Int? = nil,
+        minBitrateBps: Int? = nil,
+        initialBitrateBps: Int? = nil
     ) {
         self.width = width
         self.height = height
         self.bitrate = bitrate
+        self.minBitrateBps = minBitrateBps
+        self.initialBitrateBps = initialBitrateBps
         self.fps = fps
     }
 
@@ -23,6 +29,8 @@ public struct StreamVideoConfig {
         if let width { values["width"] = width }
         if let height { values["height"] = height }
         if let bitrate { values["bitrate"] = bitrate }
+        if let minBitrateBps { values["minBitrateBps"] = minBitrateBps }
+        if let initialBitrateBps { values["initialBitrateBps"] = initialBitrateBps }
         // ASG stream parsers shipped with the BLE key named "frameRate".
         if let fps { values["frameRate"] = fps }
         return values
@@ -34,7 +42,9 @@ public struct StreamVideoConfig {
             width: intValue(values["width"]),
             height: intValue(values["height"]),
             bitrate: intValue(values["bitrate"]),
-            fps: intValue(values["fps"])
+            fps: intValue(values["fps"]),
+            minBitrateBps: intValue(values["minBitrateBps"]),
+            initialBitrateBps: intValue(values["initialBitrateBps"])
         )
     }
 }

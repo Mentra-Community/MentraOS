@@ -97,6 +97,9 @@ const en = {
       "Could not connect to the custom server. Please try using the default server or check your connection.",
     upToDateTitle: "Up to Date",
     upToDateDescription: "MentraOS is up to date. Returning to home...",
+    managedUpdateDescription:
+      "This version of the Mentra App is no longer supported by {{name}}. Updates are delivered by your organization's device management. Contact your IT administrator to update.",
+    contactSupport: "Contact support",
   },
   simulatedGlasses: {
     showDashboard: "Show Dashboard",
@@ -436,6 +439,11 @@ const en = {
     devBuild: "Development Build",
     devBuildNoOta:
       "This mobile app is a development build, so automatic glasses updates are disabled. Use the developer settings manifest override to update them manually.",
+    unofficialClient: "Updates Blocked",
+    unofficialClientNoOta:
+      "Your glasses are running a sideloaded client, so updates are blocked. Restore the stock client to update them.",
+    unofficialClientNoOtaNamed:
+      "Your glasses are running a sideloaded client ({{packageName}}), so updates are blocked. Restore the stock client to update them.",
     noUpdatesAvailable: "Your glasses are running the latest version.",
     checkFailed: "Check Failed",
     checkFailedMessage: "Couldn't check for updates. Please check your connection and try again.",
@@ -801,6 +809,9 @@ const en = {
   },
   profileSettings: {
     title: "Profile Settings",
+    workspaceName: "Name",
+    workspaceUrl: "Workspace URL",
+    mentraWorkspace: "Mentra",
     noProfilePicture: "No profile picture available.",
     name: "Name",
     email: "Email",
@@ -993,6 +1004,38 @@ const en = {
       resending: "Resending...",
       resentSuccess: "Verification email sent!",
     },
+  },
+  workspace: {
+    or: "or",
+    title: "Organization sign-in",
+    heading: "Connect to your organization",
+    description: "Enter the address provided by your IT administrator.",
+    connectAction: "Sign in to your organization",
+    urlLabel: "Organization address",
+    urlPlaceholder: "company.example.com",
+    urlHelper: "Example: company.example.com",
+    unknownResolutionError: "We couldn't load this workspace. Try again.",
+    notFoundError:
+      "We couldn't find a Mentra workspace at that address. Check the address or ask your IT administrator.",
+    configurationError: "This workspace couldn't be verified. Ask your IT administrator to check its configuration.",
+    confirmTitle: "Confirm organization",
+    candidateExpired: "This confirmation expired. Enter your organization address again.",
+    enterAnotherUrl: "Enter organization address",
+    connectTo: "Connect to {{name}}",
+    continueTo: "Continue to {{name}}",
+    workspaceLabel: "Workspace",
+    signInLabel: "Sign-in",
+    microsoftOrganizationAccount: "Microsoft organization account",
+    mentraAccount: "Mentra account",
+    confirmDescription:
+      "Continuing makes this organization your active Mentra deployment. Its services and policies apply before sign-in.",
+    signInDescription: "Continue with the organization account configured for this workspace.",
+    continueWithMicrosoft: "Continue with Microsoft",
+    returnToMentra: "Return to Mentra",
+    change: "Change",
+    noActiveWorkspace: "No organization workspace is active.",
+    signInFailedTitle: "Sign-in failed",
+    signInFailedDescription: "Microsoft could not sign you in to this workspace. Try again or contact your IT team.",
   },
   warning: {
     nonProdBackend: "You are using a non-production backend.",

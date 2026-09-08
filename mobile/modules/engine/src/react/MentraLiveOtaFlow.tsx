@@ -103,6 +103,11 @@ const ENGLISH_COPY: Record<string, string> = {
   "ota:devBuild": "Development Build",
   "ota:devBuildNoOta":
     "This mobile app is a development build, so automatic glasses updates are disabled. Use the developer settings manifest override to update them manually.",
+  "ota:unofficialClient": "Updates Blocked",
+  "ota:unofficialClientNoOta":
+    "Your glasses are running a sideloaded client, so updates are blocked. Restore the stock client to update them.",
+  "ota:unofficialClientNoOtaNamed":
+    "Your glasses are running a sideloaded client ({{packageName}}), so updates are blocked. Restore the stock client to update them.",
   "ota:noUpdatesAvailable": "Your glasses are running the latest version.",
   "ota:checkFailed": "Check Failed",
   "ota:checkFailedMessage": "Couldn't check for updates. Please check your connection and try again.",
@@ -298,6 +303,22 @@ function OtaFlowContent({
         icon="settings"
         title={translate("ota:devBuild")}>
         <BodyText colors={colors}>{translate("ota:devBuildNoOta")}</BodyText>
+      </FlowPage>
+    )
+  }
+
+  if (state.screen === "unofficial_client") {
+    return (
+      <FlowPage
+        actions={<FlowButton colors={colors} label={translate("common:continue")} onPress={controller.finish} />}
+        colors={colors}
+        icon="settings"
+        title={translate("ota:unofficialClient")}>
+        <BodyText colors={colors}>
+          {state.glassesPackageName
+            ? translate("ota:unofficialClientNoOtaNamed", {packageName: state.glassesPackageName})
+            : translate("ota:unofficialClientNoOta")}
+        </BodyText>
       </FlowPage>
     )
   }

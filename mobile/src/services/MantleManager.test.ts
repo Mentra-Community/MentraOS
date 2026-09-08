@@ -109,6 +109,8 @@ let syncGlassesPresentationState: (status: {state: string}) => void
 
 describe("MantleManager", () => {
   beforeAll(async () => {
+    // Alerts surface translated copy (e.g. the Wi-Fi-needs-glasses blocker), so
+    // initialize i18n before init(); otherwise translate() returns raw keys.
     await initI18n()
     routerPushSpy = jest.spyOn(router, "push").mockImplementation(() => {})
     jest.useFakeTimers()
@@ -522,7 +524,9 @@ describe("MantleManager", () => {
     const [title, message, buttons] = mockShowAlert.mock.calls.at(-1)!
 
     expect(title).toBe("Reconnect your glasses")
-    expect(message).toMatch(/connected over Bluetooth/)
+    expect(message).toBe(
+      "Wi-Fi setup needs your glasses connected over Bluetooth. Turn them on and wait for them to reconnect, then try again.",
+    )
     expect(buttons).toHaveLength(1)
     expect(buttons[0].text).toBe("OK")
     buttons[0].onPress()

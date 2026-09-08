@@ -1170,6 +1170,12 @@ class MentraLive : SGCManager() {
             // and the phone-side OTA manifest check will compare against the wrong build.
             DeviceStore.apply("glasses", "buildNumber", "")
             DeviceStore.apply("glasses", "appVersion", "")
+            // packageName must clear with buildNumber: the OTA guard treats an absent package as
+            // "stock, predates the field", so a retained .thirdparty value from a previous session
+            // would permanently block OTA for the next (possibly pre-field, possibly restored
+            // stock) glasses. Both arrive together in version_info_1, so clearing them together
+            // keeps "have a build ⇒ have this session's identity" true.
+            DeviceStore.apply("glasses", "packageName", "")
             DeviceStore.apply("glasses", "besFirmwareVersion", "")
             DeviceStore.apply("glasses", "mtkFirmwareVersion", "")
             // Modern ASG builds omit ota_version_url entirely (the phone owns manifest
@@ -4635,6 +4641,9 @@ class MentraLive : SGCManager() {
                     }
 
                     // Update DeviceStore for any fields we recognize
+                    (fields["package_name"] as? String)?.trim()?.takeIf { it.isNotEmpty() }?.let {
+                        DeviceStore.apply("glasses", "packageName", it)
+                    }
                     if (fields.containsKey("app_version")) {
                         DeviceStore.apply("glasses", "appVersion", fields["app_version"] as String)
                     }

@@ -94,7 +94,7 @@ Mentra Live ships with `com.mentra.asg_client` as a **system app** signed with M
 
 The MentraOS phone app must stay backward-compatible with older `asg_client` builds already in the field. When changing phone-to-glasses or glasses-to-phone protocol behavior, new phone app code should continue to accept old `asg_client` message shapes and unchunked responses.
 
-The opposite direction is not a required compatibility target: a new `asg_client` build does not need to support older MentraOS phone apps. On startup, the phone app calls the cloud `GET /api/client/min-version` endpoint and compares its local app version with the cloud `required` and `recommended` versions. If the local app is below `required`, startup is blocked by the update flow instead of continuing into pairing or BLE use. Cloud V2 serves the values from `cloud-v2/packages/core/src/api/app.ts`, configured by `CLOUD_CLIENT_MIN_VERSION` and `CLOUD_CLIENT_RECOMMENDED_VERSION`; the mobile startup check is in `mobile/src/app/index.tsx`.
+The opposite direction is not a required compatibility target: a new `asg_client` build does not need to support older MentraOS phone apps. On startup, the phone app calls Runtime's unauthenticated `GET /api/client/min-version` endpoint and compares its local app version with the cloud `required` and `recommended` versions. If the local app is below `required`, startup is blocked by the update flow instead of continuing into pairing or BLE use. Runtime serves values configured by `CLOUD_CLIENT_MIN_VERSION` and `CLOUD_CLIENT_RECOMMENDED_VERSION`; Core temporarily keeps the same endpoint for already-released clients. The mobile startup check is in `mobile/src/app/index.tsx`.
 
 ### Connecting via ADB
 

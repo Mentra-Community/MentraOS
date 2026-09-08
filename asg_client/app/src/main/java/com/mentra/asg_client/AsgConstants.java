@@ -1,6 +1,15 @@
 package com.mentra.asg_client;
 
 public class AsgConstants {
+    /** A charger never permits camera use at or below this known battery percentage. */
+    public static final int CAMERA_CHARGING_BATTERY_FLOOR = 3;
+
+    /** Expire the low-battery exception if fresh BES charger replies stop arriving. */
+    public static final long CAMERA_ACTIVE_CHARGE_MAX_AGE_MS = 30_000L;
+
+    /** Refresh charger evidence before expiry, without blocking camera or UART threads. */
+    public static final long CAMERA_BATTERY_REFRESH_MS = 5_000L;
+
     /** Mentra Live hotspot idle timeout after the last local HTTP activity. */
     public static final long HOTSPOT_INACTIVITY_TIMEOUT_MS = 120_000L;
 
@@ -81,8 +90,24 @@ public class AsgConstants {
 
     public static final long CAMERA_WARM_UP_MAX_DURATION_MS = 60_000L;
 
+    /**
+     * Shortest gap between two camera-button photos. Presses inside this window are dropped.
+     *
+     * <p>Sized off camera_snap.wav (515ms) so two shutters can never overlap: every camera sound
+     * is played by ASG through the I2S bridge to BES, and starting overlapping MediaPlayers on
+     * that path is what makes rapid button mashing garble audio. One photo per second still does
+     * not feel like waiting on a cooldown.
+     */
+    public static final long BUTTON_PHOTO_MIN_INTERVAL_MS = 1_000L;
+
     /** Cadence for the short hold-still click while a cold photo spins up the camera. */
     public static final long CAMERA_PREP_CLICK_INTERVAL_MS = 900L;
+
+    /** The 186ms prep beep plus a tail margin; only stop the sequence in its silence. */
+    public static final long CAMERA_PREP_STOP_AFTER_MS = 240L;
+
+    /** Avoid stopping near the next beep when playback-position reporting is slightly behind. */
+    public static final long CAMERA_PREP_STOP_BEFORE_MS = 800L;
 
     /** Minimum AE settling time after first convergence for a cold camera photo. */
     public static final long COLD_CAMERA_EXPOSURE_SETTLE_DELAY_MS = 475L;

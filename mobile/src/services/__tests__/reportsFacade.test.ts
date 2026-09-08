@@ -12,6 +12,7 @@ jest.mock("../../../modules/engine/src/services/CloudClientService", () => ({
         complete: jest.fn(),
       },
     },
+    hasCore: jest.fn(() => true),
     getCoreUrl: jest.fn(() => "https://core.example"),
     syncCoreTokenToBluetooth: jest.fn(),
   },
@@ -30,6 +31,7 @@ jest.mock("../../../modules/engine/src/utils/devLogging", () => ({
 const submitMock = cloudClientService.core.reports.submit as jest.Mock
 const addLogsMock = cloudClientService.core.reports.addLogs as jest.Mock
 const completeMock = cloudClientService.core.reports.complete as jest.Mock
+const hasCoreMock = cloudClientService.hasCore as jest.Mock
 const getRecentLogsMock = logBuffer.getRecentLogs as jest.Mock
 
 const automaticInput = (throttleKey: string) => ({
@@ -48,10 +50,23 @@ describe("reports facade automatic throttling", () => {
     submitMock.mockReset()
     addLogsMock.mockReset()
     completeMock.mockReset()
+    hasCoreMock.mockReset().mockReturnValue(true)
     getRecentLogsMock.mockReset()
     addLogsMock.mockResolvedValue({stored: 1})
     completeMock.mockResolvedValue({status: "complete"})
     getRecentLogsMock.mockReturnValue([])
+  })
+
+  it("does not collect or submit reports when Core is unavailable", async () => {
+    hasCoreMock.mockReturnValue(false)
+
+    await expect(submitAutomaticReport(automaticInput(`core-free-${Date.now()}`))).resolves.toEqual({
+      status: "failed",
+      error: "Reports are unavailable in this deployment",
+    })
+
+    expect(submitMock).not.toHaveBeenCalled()
+    expect(getRecentLogsMock).not.toHaveBeenCalled()
   })
 
   it("does not throttle a later automatic report after Cloud V2 submit fails", async () => {

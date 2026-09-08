@@ -224,6 +224,17 @@ public interface IHardwareManager {
      */
     void notifyBatteryReading(int percent, int voltageMv);
 
+    /** Receive device-reported active charging, timestamped at UART receipt (elapsed realtime). */
+    default void notifyBatteryReading(
+            int percent, int voltageMv, boolean activeCharging, long receivedAtElapsedMs) {
+        notifyBatteryReading(percent, voltageMv);
+    }
+
+    /** Grant only a known above-floor battery sample with fresh, verified active charging. */
+    default boolean allowsLowBatteryCamera(int batteryLevel) {
+        return false;
+    }
+
     // ============================================
     // MTK LED Brightness Control
     // ============================================

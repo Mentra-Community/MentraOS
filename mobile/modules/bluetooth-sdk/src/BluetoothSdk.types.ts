@@ -155,6 +155,18 @@ export type VersionInfoResult = {
   systemTimeMs?: number
   otaVersionUrl: string
   appVersion: string
+  /**
+   * Package the glasses client actually runs as, from `version_info_1`.
+   * `"com.mentra.asg_client"` is the stock client; anything else is a sideloaded build (Android
+   * forces a distinct package on any build not signed with Mentra's release key) that coexists
+   * with the stock app and must not be driven by OTA.
+   *
+   * Omitted — not empty — whenever this result carries no identity: either the glasses predate
+   * the field, or the response resolved from a `version_info` chunk that does not carry it (only
+   * chunk 1 does). Omission is what keeps a response from overwriting an identity an earlier
+   * chunk established, so treat `undefined` as "unknown", never as "stock".
+   */
+  packageName?: string
   /** Phone-served hotspot OTA protocol version; 0 means unsupported/legacy glasses. */
   hotspotOtaVersion: number
 }
@@ -620,6 +632,10 @@ export type StreamVideoConfig = {
   width?: number
   height?: number
   bitrate?: number
+  /** WHIP minimum target in bps; omitted leaves it unset. Clamped to the maximum. */
+  minBitrateBps?: number
+  /** WHIP startup bitrate in bps, clamped to the requested bounds. */
+  initialBitrateBps?: number
   fps?: number
 }
 
@@ -1348,6 +1364,13 @@ export interface GlassesStatus {
   systemTimeMs?: number
   otaVersionUrl: string
   appVersion: string
+  /**
+   * Package the glasses client actually runs as, from `version_info_1`. Empty string on glasses
+   * whose client predates the field. `"com.mentra.asg_client"` is the stock client; anything else
+   * is a sideloaded build (Android forces a distinct package on any build not signed with Mentra's
+   * release key) that coexists with the stock app and must not be driven by OTA.
+   */
+  packageName: string
   /** Phone-served hotspot OTA protocol version; 0 means unsupported/legacy glasses. */
   hotspotOtaVersion: number
   bluetoothName: string

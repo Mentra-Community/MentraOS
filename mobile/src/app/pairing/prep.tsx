@@ -1,4 +1,4 @@
-import {DeviceTypes} from "@mentra/engine"
+import {DeviceTypes, engine} from "@mentra/engine"
 import {useRoute} from "@react-navigation/native"
 import {Image, Platform, ScrollView, View} from "react-native"
 import type {ImageStyle, ViewStyle} from "react-native"
@@ -13,11 +13,12 @@ import {useState} from "react"
 import GlassesTroubleshootingModal from "@/components/glasses/GlassesTroubleshootingModal"
 import {OnboardingGuide, OnboardingStep} from "@/components/onboarding/OnboardingGuide"
 import {CDN_BASE_URL} from "@/constants/appConfig"
-import {engine} from "@mentra/engine"
 import {getAr99DisplayName, getAr99ImageSource} from "@/utils/getGlassesImage"
 import {ThemedStyle} from "@/theme"
 import {preparePairingScan} from "@/utils/pairing/preparePairingScan"
 import {isMentraLiveSecurePairingEnabled} from "@/utils/pairing/securePairingFeature"
+import {deploymentStore} from "@/services/deployment"
+import {isGlassesModelAllowedByDeployment} from "@/services/deployment/glassesPolicy"
 
 export default function PairingPrepScreen() {
   const route = useRoute()
@@ -25,8 +26,13 @@ export default function PairingPrepScreen() {
   const displayName = deviceModel === DeviceTypes.AR99 ? getAr99DisplayName(ar99ProjectName) : deviceModel
   const {goBack, push, clearHistoryAndGoHome} = useNavigationStore.getState()
   const {themed} = useAppTheme()
+  const useRemoteMedia = deploymentStore.getActive().kind === "consumer"
 
   const advanceToPairing = async () => {
+    if (!isGlassesModelAllowedByDeployment(deviceModel, ar99ProjectName)) {
+      goBack()
+      return
+    }
     const readyToScan = await preparePairingScan(deviceModel)
     if (!readyToScan) return
 
@@ -55,20 +61,33 @@ export default function PairingPrepScreen() {
 
   const MentraLivePairingGuide = () => {
     const CDN_BASE = `${CDN_BASE_URL}/onboarding/mentra-live/light`
-    const steps: OnboardingStep[] = [
-      {
-        name: "power_on_tutorial",
-        type: "video",
-        source: `${CDN_BASE}/ONB1_power_button_loop.mp4`,
-        poster: require("@assets/onboarding/live/thumbnails/ONB0_power.png"),
-        transition: false,
-        title: translate("pairing:powerOn"),
-        subtitle: translate("onboarding:livePowerOnTutorial"),
-        info: translate("onboarding:livePowerOnInfo"),
-        playCount: -1,
-        showButtonImmediately: true,
-      },
-    ]
+    const poster = require("@assets/onboarding/live/thumbnails/ONB0_power.png")
+    const steps: OnboardingStep[] = useRemoteMedia
+      ? [
+          {
+            name: "power_on_tutorial",
+            type: "video",
+            source: `${CDN_BASE}/ONB1_power_button_loop.mp4`,
+            poster,
+            transition: false,
+            title: translate("pairing:powerOn"),
+            subtitle: translate("onboarding:livePowerOnTutorial"),
+            info: translate("onboarding:livePowerOnInfo"),
+            playCount: -1,
+            showButtonImmediately: true,
+          },
+        ]
+      : [
+          {
+            name: "power_on_tutorial",
+            type: "image",
+            source: poster,
+            transition: false,
+            title: translate("pairing:powerOn"),
+            subtitle: translate("onboarding:livePowerOnTutorial"),
+            info: translate("onboarding:livePowerOnInfo"),
+          },
+        ]
     if (isMentraLiveSecurePairingEnabled()) {
       steps.push({
         name: "pairing_mode_tutorial",

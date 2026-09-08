@@ -1247,6 +1247,17 @@ public final class MentraBluetoothSDK {
                 message: "Cannot check OTA update because glasses build number is unavailable."
             )
         }
+        // A sideloaded client installs under its own package and coexists with the stock system
+        // app, so its build number is not comparable to the manifest pin and installing the
+        // manifest's APK would not replace it. Refuse rather than answer about the wrong client.
+        // Empty means the glasses predate the field: assume stock and keep existing behavior.
+        guard status.packageName.isEmpty || status.packageName == OtaManifestChecker.asgClientPackage else {
+            throw BluetoothSdkError(
+                code: "unofficial_client",
+                message: "Cannot check OTA update because the glasses run an unofficial client "
+                    + "(\(status.packageName))."
+            )
+        }
 
         let manifestUrl = try resolveOtaVersionUrl(status: status)
         let manifest = try await OtaManifestChecker.fetch(manifestUrl)

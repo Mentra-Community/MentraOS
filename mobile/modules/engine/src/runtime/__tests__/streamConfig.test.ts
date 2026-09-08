@@ -10,6 +10,17 @@ import {
 } from "../streamConfig"
 
 describe("stream config normalizers", () => {
+  test("preserves optional bitrate controls and rejects nonfinite values", () => {
+    expect(normalizeStreamVideoConfig({minBitrateBps: 300_000, initialBitrateBps: 400_000})).toEqual({
+      minBitrateBps: 300_000,
+      initialBitrateBps: 400_000,
+    })
+    expect(normalizeStreamVideoConfig({minBitrateBps: NaN, initialBitrateBps: Infinity})).toBeUndefined()
+    expect(normalizeStreamVideoConfig({minBitrateBps: -1, initialBitrateBps: 400_000.9})).toEqual({
+      minBitrateBps: 0,
+      initialBitrateBps: 400_000,
+    })
+  })
   test("preserves local miniapp video fps", () => {
     expect(
       normalizeStreamVideoConfig({

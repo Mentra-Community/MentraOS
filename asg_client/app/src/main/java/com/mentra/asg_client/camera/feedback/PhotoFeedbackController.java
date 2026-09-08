@@ -14,6 +14,10 @@ import java.util.HashMap;
 import java.util.HashSet;
 import java.util.Map;
 import java.util.Set;
+import java.util.concurrent.Executor;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+import java.util.concurrent.RejectedExecutionException;
 
 /**
  * Owns the request-scoped camera prep and snap audio state machine.
@@ -43,7 +47,6 @@ public final class PhotoFeedbackController {
         private boolean mTerminal;
         private long mPrepClickPlaybackToken;
         private long mSnapPlaybackToken;
-        @Nullable private Runnable mPrepClickRunnable;
         @Nullable private Runnable mPrepResumeRunnable;
         @Nullable private Runnable mSnapRunnable;
         @Nullable private Runnable mSnapTrackingRunnable;
@@ -59,6 +62,7 @@ public final class PhotoFeedbackController {
     @Nullable private final IHardwareManager mHardwareManager;
     private final Handler mHandler;
     private final Clock mClock;
+    private final Executor mAudioExecutor;
     private final Set<Token> mActiveFeedback = new HashSet<>();
     private final Set<Token> mPlayingSnapFeedback = new HashSet<>();
     private final Map<String, Token> mFeedbackByRequestId = new HashMap<>();
@@ -81,19 +85,50 @@ public final class PhotoFeedbackController {
                     public long elapsedRealtimeNanos() {
                         return SystemClock.elapsedRealtimeNanos();
                     }
-                });
+                },
+                Executors.newSingleThreadExecutor(
+                        runnable -> new Thread(runnable, "photo-feedback-audio")));
+    }
+
+    /** Test constructor: audio work runs inline so assertions stay deterministic. */
+    PhotoFeedbackController(
+            @Nullable IHardwareManager hardwareManager, Handler handler, Clock clock) {
+        this(hardwareManager, handler, clock, Runnable::run);
     }
 
     PhotoFeedbackController(
-            @Nullable IHardwareManager hardwareManager, Handler handler, Clock clock) {
+            @Nullable IHardwareManager hardwareManager,
+            Handler handler,
+            Clock clock,
+            Executor audioExecutor) {
         mHardwareManager = hardwareManager;
         mHandler = handler;
         mClock = clock;
+        mAudioExecutor = audioExecutor;
     }
 
-    /** Starts request-time feedback and returns the token owed an exposure-time snap. */
+    /**
+     * Test-only shorthand that treats every warm request as ready to fire the shutter now.
+     * Production callers must use {@link #start(String, boolean, boolean)} so a warm request that
+     * queues behind an in-flight capture does not get an immediate snap.
+     */
     @Nullable
-    public Token start(String requestId, boolean cameraWarm) {
+    Token start(String requestId, boolean cameraWarm) {
+        return start(requestId, cameraWarm, cameraWarm);
+    }
+
+    /**
+     * Starts request-time feedback and returns the token owed an exposure-time snap.
+     *
+     * @param cameraWarm the capture will reuse the open HAL session, so no hold-still prep cue is
+     *     owed. See {@code CameraNeoService#isCameraWarm}.
+     * @param shutterNow the capture will also start immediately rather than queue behind an
+     *     in-flight one, so the shutter can be played at request time. Warm but not ready still
+     *     skips the prep cue and takes its snap from the exposure callback, which is where a
+     *     queued capture's shutter actually belongs.
+     */
+    @Nullable
+    public Token start(String requestId, boolean cameraWarm, boolean shutterNow) {
         if (mHardwareManager == null) {
             Log.w(TAG, "hardwareManager is null, cannot play camera feedback");
             return null;
@@ -111,8 +146,40 @@ public final class PhotoFeedbackController {
             mHandler.postDelayed(
                     feedbackToken.mSafetyTimeoutRunnable, FEEDBACK_SAFETY_TIMEOUT_MS);
 
+            if (cameraWarm && !shutterNow) {
+                // Warm session, but a capture is already in flight, so enqueuePhotoRequest() will
+                // queue this one behind it. Firing the shutter now would sound the snap well
+                // before the frame it belongs to. Skip the prep cue as usual and let
+                // onExposureStarted / onPhotoFrameAvailable place the snap.
+                Log.d(TAG, "Warm capture queued behind an in-flight shot — snap waits for exposure");
+                return feedbackToken;
+            }
+
             if (cameraWarm) {
-                Log.d(TAG, "Warm capture — snap is waiting for sensor exposure start");
+                // Device testing measured warm capture at <20ms. Immediate shutter feedback
+                // feels more responsive than waiting for the exposure callback.
+                //
+                // Dispatch off the caller's thread. start() runs inline on the UART reader
+                // thread (SerialPortBridge.RecvThread -> SerialSession.dispatch ->
+                // ButtonEventSubscriber -> takePhotoLocally), and opening the I2S path costs
+                // MediaPlayer.prepare() plus I2SAudioController.I2S_START_SETTLE_MS of
+                // Thread.sleep. Running that here would stall every MCU event behind the
+                // serial reader and push back the enqueuePhotoRequest() call that follows.
+                // A capture that fails before this runs marks the token terminal, so playSnap
+                // correctly stays silent.
+                //
+                // execute() throws RejectedExecutionException once cleanup() has shut the
+                // executor down. start() is called inline on the UART reader thread, which has
+                // no catch-all above it (MediaCaptureService.takePhotoLocally does not guard
+                // this call), so an escaping unchecked exception there would take down the
+                // serial reader and with it every subsequent MCU event. Losing the shutter
+                // sound on a capture that raced service teardown is the cheaper failure.
+                try {
+                    mAudioExecutor.execute(
+                            () -> playSnap(feedbackToken, "warm camera — immediate button feedback"));
+                } catch (RejectedExecutionException e) {
+                    Log.w(TAG, "Audio executor is shut down; skipping warm shutter feedback", e);
+                }
                 return feedbackToken;
             }
 
@@ -271,6 +338,12 @@ public final class PhotoFeedbackController {
                 stopSnapLocked(feedbackToken);
             }
         }
+        // Every token is terminal now, so a queued warm snap will no-op rather than play into
+        // a destroyed service. shutdown() (not shutdownNow()) avoids interrupting a settle
+        // sleep mid-playback.
+        if (mAudioExecutor instanceof ExecutorService) {
+            ((ExecutorService) mAudioExecutor).shutdown();
+        }
     }
 
     private boolean isPrepSuppressedLocked() {
@@ -312,39 +385,18 @@ public final class PhotoFeedbackController {
             mHardwareManager.stopAudioOverlayPlayback(
                     feedbackToken.mPrepClickPlaybackToken);
         }
+        // One continuous asset keeps the 900ms cadence independent of timers and player restarts.
         feedbackToken.mPrepClickPlaybackToken =
                 mHardwareManager.playAudioAssetOverlayTracked(
                         AudioAssets.CAMERA_PREP_CLICK,
                         AsgConstants.CAMERA_PREP_CLICK_PLAYBACK_VOLUME);
 
-        if (feedbackToken.mPrepClickRunnable == null) {
-            feedbackToken.mPrepClickRunnable =
-                    new Runnable() {
-                        @Override
-                        public void run() {
-                            synchronized (mLock) {
-                                if (!feedbackToken.mPrepClicksActive
-                                        || feedbackToken.mPrepClicksPaused
-                                        || feedbackToken.mTerminal
-                                        || mCurrentPrepFeedback != feedbackToken) {
-                                    return;
-                                }
-                                playPrepClickLocked(feedbackToken);
-                            }
-                        }
-                    };
-        }
-        mHandler.postDelayed(
-                feedbackToken.mPrepClickRunnable,
-                AsgConstants.CAMERA_PREP_CLICK_INTERVAL_MS);
+
     }
 
     private void stopPrepClicksLocked(Token feedbackToken) {
         feedbackToken.mPrepClicksActive = false;
         feedbackToken.mPrepClicksPaused = false;
-        if (feedbackToken.mPrepClickRunnable != null) {
-            mHandler.removeCallbacks(feedbackToken.mPrepClickRunnable);
-        }
         if (feedbackToken.mPrepResumeRunnable != null) {
             mHandler.removeCallbacks(feedbackToken.mPrepResumeRunnable);
             feedbackToken.mPrepResumeRunnable = null;
@@ -366,9 +418,6 @@ public final class PhotoFeedbackController {
             return;
         }
         feedbackToken.mPrepClicksPaused = true;
-        if (feedbackToken.mPrepClickRunnable != null) {
-            mHandler.removeCallbacks(feedbackToken.mPrepClickRunnable);
-        }
         if (feedbackToken.mPrepClickPlaybackToken > 0L && mHardwareManager != null) {
             mHardwareManager.stopAudioOverlayPlayback(
                     feedbackToken.mPrepClickPlaybackToken);
