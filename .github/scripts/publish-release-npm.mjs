@@ -76,7 +76,12 @@ export function publishWithRetry(
       publish()
       return "published"
     } catch (error) {
-      const landed = registryIntegrityOf(coordinate)
+      let landed = null
+      try {
+        landed = registryIntegrityOf(coordinate)
+      } catch (viewError) {
+        console.log(`npm view of ${coordinate} failed during publish recovery: ${viewError.message}`)
+      }
       if (landed !== null) {
         if (landed !== integrity) throw new Error(`${coordinate} already exists on npm with different bytes`)
         return "published"
