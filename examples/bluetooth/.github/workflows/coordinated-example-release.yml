@@ -291,7 +291,7 @@ jobs:
             sleep 10
           done
           [[ -n "$run_id" ]]
-          gh run watch "$run_id" --exit-status
+          bash .github/scripts/wait-for-example-validation.sh "$run_id"
           echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
           echo "url=https://github.com/$STARTER_KIT_REPOSITORY/actions/runs/$run_id" >> "$GITHUB_OUTPUT"
 
