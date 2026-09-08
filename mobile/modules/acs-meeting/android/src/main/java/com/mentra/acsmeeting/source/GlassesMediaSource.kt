@@ -39,9 +39,18 @@ data class TargetSize(val width: Int, val height: Int)
  * spans the answer → first frame window too. It cannot strand a caller, because
  * every `CONNECTING` is bounded: the offer post fails, or the answer's
  * first-frame deadline expires into `FAILED` and this returns false.
+ *
+ * SoftAP never reuses: the listener, port and peer belong to one publish attempt,
+ * and the ingest URL is an output of binding, not an input that could stay valid.
+ *
+ * Owned by an object rather than a file-level function so Kotlin incremental
+ * compile cannot see two [GlassesMediaSourceKt] facades and report a phantom
+ * overload of the same signature.
  */
-fun canReuseSource(currentUrl: String?, state: SourceState, next: SourceConfig): Boolean =
-  currentUrl == next.url && next.kind == SourceKind.WHEP && state != SourceState.FAILED
+object SourceReusePolicy {
+  fun canReuse(currentUrl: String?, state: SourceState, next: SourceConfig): Boolean =
+    currentUrl == next.url && next.kind == SourceKind.WHEP && state != SourceState.FAILED
+}
 
 /**
  * Observes source health transitions. `FAILED` is the one that matters: ICE
