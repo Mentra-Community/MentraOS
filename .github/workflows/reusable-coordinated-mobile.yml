@@ -735,17 +735,6 @@ jobs:
           [[ "$(plutil -extract CFBundleShortVersionString raw /tmp/mentra-mobile-info.plist)" == "$EXPECTED_VERSION" ]]
           [[ "$(plutil -extract CFBundleVersion raw /tmp/mentra-mobile-info.plist)" == "$EXPECTED_BUILD" ]]
 
-      - name: Publish immutable iOS release asset
-        if: inputs.dry_run != true && inputs.compatibility_lab != true && needs.prepare.outputs.ios_asset_exists != 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: >-
-          node .github/scripts/publish-immutable-release-asset.mjs
-          --release-id "${{ needs.prepare.outputs.release_id }}"
-          --repository "${{ github.repository }}"
-          --file "mobile-release/ios/${{ needs.prepare.outputs.ipa_name }}"
-          --name "${{ needs.prepare.outputs.ipa_name }}"
-
       - name: Resolve App Store Connect credential path
         if: inputs.dry_run != true
         id: asc
@@ -832,6 +821,20 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "24"
+
+      # Publish from Ubuntu after the existing Actions artifact transfer. The
+      # Mac runner's uplink cannot reliably finish a single GitHub release-asset
+      # POST before the upload endpoint times out.
+      - name: Publish immutable iOS release asset
+        if: inputs.dry_run != true && inputs.compatibility_lab != true && needs.prepare.outputs.ios_asset_exists != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          node .github/scripts/publish-immutable-release-asset.mjs
+          --release-id "${{ needs.prepare.outputs.release_id }}"
+          --repository "${{ github.repository }}"
+          --file "mobile-release/ios/${{ needs.prepare.outputs.ipa_name }}"
+          --name "${{ needs.prepare.outputs.ipa_name }}"
 
       - name: Inject App Store Connect API credential
         if: inputs.dry_run != true

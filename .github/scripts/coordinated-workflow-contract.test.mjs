@@ -420,3 +420,16 @@ test("Android release keeps the GitHub APK arm64-only and the Play AAB multi-ABI
   assert.match(mobileAndroid, /GitHub APK ABIs '\$\{apk_abis:-<none>\}' do not match required arm64-v8a/)
   assert.match(mobileAndroid, /Google Play AAB ABIs '\$\{aab_abis:-<none>\}' do not match required \$expected_aab_abis/)
 })
+
+test("iOS release assets publish from Ubuntu after the signed artifact transfer", () => {
+  const source = workflow("reusable-coordinated-mobile.yml")
+  const build = jobBlock(source, "ios")
+  const publish = jobBlock(source, "ios-store")
+  assert.doesNotMatch(build, /publish-immutable-release-asset\.mjs/)
+  assert.match(build, /actions\/upload-artifact@v4/)
+  assert.match(publish, /needs: \[prepare, ios\]/)
+  assert.match(publish, /runs-on: ubuntu-latest/)
+  assert.match(publish, /needs\.ios\.outputs\.upload_artifact/)
+  assert.ok(publish.indexOf("actions/download-artifact@v4") < publish.indexOf("publish-immutable-release-asset.mjs"))
+  assert.match(publish, /inputs\.dry_run != true && inputs\.compatibility_lab != true && needs\.prepare\.outputs\.ios_asset_exists != 'true'/)
+})
