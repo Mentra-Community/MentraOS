@@ -92,15 +92,15 @@ class GlassesMediaSourceContractTest {
     val config = SourceConfig(url)
     // A resumed glasses uplink re-sends the same URL. ACS never lost its
     // subscription, so rebuilding would only restart the wait for a first frame.
-    assertThat(canReuseSource(url, SourceState.LIVE, config)).isTrue()
+    assertThat(SourceReusePolicy.canReuse(url, SourceState.LIVE, config)).isTrue()
     // Includes the answer → first frame window, which LIVE no longer covers.
-    assertThat(canReuseSource(url, SourceState.CONNECTING, config)).isTrue()
+    assertThat(SourceReusePolicy.canReuse(url, SourceState.CONNECTING, config)).isTrue()
     // ICE dropped, or the answer never produced a frame: rebuild.
-    assertThat(canReuseSource(url, SourceState.FAILED, config)).isFalse()
+    assertThat(SourceReusePolicy.canReuse(url, SourceState.FAILED, config)).isFalse()
     // A new stream means a new WHEP URL, and a stopped source has none.
-    assertThat(canReuseSource(url, SourceState.LIVE, SourceConfig("https://example.com/whep-2"))).isFalse()
-    assertThat(canReuseSource(null, SourceState.IDLE, config)).isFalse()
-    assertThat(canReuseSource(url, SourceState.LIVE, SourceConfig(url, SourceKind.DIRECT))).isFalse()
+    assertThat(SourceReusePolicy.canReuse(url, SourceState.LIVE, SourceConfig("https://example.com/whep-2"))).isFalse()
+    assertThat(SourceReusePolicy.canReuse(null, SourceState.IDLE, config)).isFalse()
+    assertThat(SourceReusePolicy.canReuse(url, SourceState.LIVE, SourceConfig(url, SourceKind.DIRECT))).isFalse()
   }
 
   @Test
@@ -110,8 +110,8 @@ class GlassesMediaSourceContractTest {
     // even when the config and state would otherwise look reusable.
     val config = SourceConfig("", SourceKind.SOFTAP, bindAddress = "192.168.43.20")
 
-    assertThat(canReuseSource("", SourceState.LIVE, config)).isFalse()
-    assertThat(canReuseSource("", SourceState.CONNECTING, config)).isFalse()
+    assertThat(SourceReusePolicy.canReuse("", SourceState.LIVE, config)).isFalse()
+    assertThat(SourceReusePolicy.canReuse("", SourceState.CONNECTING, config)).isFalse()
   }
 
   @Test
