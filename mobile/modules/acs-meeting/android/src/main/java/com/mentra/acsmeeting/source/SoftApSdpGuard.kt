@@ -1,5 +1,7 @@
 package com.mentra.acsmeeting.source
 
+import com.mentra.acsmeeting.network.Ipv4Prefix
+
 /**
  * Checks that a SoftAP negotiation is actually staying on the SoftAP.
  *
@@ -10,10 +12,12 @@ package com.mentra.acsmeeting.source
  * healthy. So both the offer we receive and the answer we send are asserted against the hotspot
  * subnet before either is used.
  *
- * The candidate classification deliberately matches
- * `com.mentra.asg_client.io.streaming.config.IcePostPolicy` on the glasses: any RFC1918 `typ host`
- * candidate counts, so a hotspot on a subnet other than the default 192.168.43/24 does not fail the
- * gate. The two cannot share code across the module boundary, so
+ * When the host can describe the network it joined, candidates are matched against that exact
+ * prefix — the real invariant is "on the network we joined", and RFC1918 is only a stand-in for it.
+ * Cellular carriers hand out 10/8 addresses, so the stand-in accepts precisely the interface this
+ * gate exists to reject. Without a prefix (no scoped handle) the check falls back to RFC1918, which
+ * deliberately matches `com.mentra.asg_client.io.streaming.config.IcePostPolicy` on the glasses. The
+ * two cannot share code across the module boundary, so
  * [SoftApSdpGuardTest][com.mentra.acsmeeting.source.SoftApSdpGuardTest] pins the same cases the
  * glasses-side test pins.
  */
@@ -26,8 +30,18 @@ object SoftApSdpGuard {
     data class Rejected(val code: String, val detail: String) : Verdict
   }
 
-  /** No `typ host` candidate on a private subnet: nothing here can cross the SoftAP link. */
-  const val REASON_NO_HOST_CANDIDATE = "no_softap_host_candidate"
+  /**
+   * No `typ host` candidate on the hotspot subnet, split by whether anything was gathered at all.
+   *
+   * One code covered both for a long time and it cost real debugging time: "nothing gathered" and
+   * "gathered the wrong address" are different faults with different fixes, and the single code
+   * made a run that had regressed from one to the other look unchanged.
+   * [SoftApIceDiagnosis] narrows them further; these two are the coarse label.
+   */
+  const val REASON_NO_CANDIDATES = SoftApIceDiagnosis.CODE_NO_CANDIDATES
+
+  /** See [REASON_NO_CANDIDATES]. Candidates exist, none of them on the hotspot. */
+  const val REASON_ONLY_NON_HOTSPOT = SoftApIceDiagnosis.CODE_ONLY_NON_HOTSPOT
 
   /** Not SDP, or SDP with no media section. */
   const val REASON_MALFORMED = "malformed_sdp"
@@ -39,23 +53,24 @@ object SoftApSdpGuard {
    * older build that still gathers them, and dropping the call would be worse than a warning when a
    * valid hotspot candidate is also present.
    */
-  fun inspect(sdp: String?): Verdict {
+  fun inspect(sdp: String?, prefix: Ipv4Prefix? = null): Verdict {
     if (sdp.isNullOrBlank()) return Verdict.Rejected(REASON_MALFORMED, "empty sdp")
     if (!sdp.contains("m=")) return Verdict.Rejected(REASON_MALFORMED, "no media section")
 
     val candidates = candidateLines(sdp)
-    val host = candidates.filter { isSoftApHostCandidate(it) }
-    val routable = candidates.filterNot { isSoftApHostCandidate(it) }
+    val host = candidates.filter { isSoftApHostCandidate(it, prefix) }
+    val routable = candidates.filterNot { isSoftApHostCandidate(it, prefix) }
 
     if (host.isEmpty()) {
-      return Verdict.Rejected(
-        REASON_NO_HOST_CANDIDATE,
-        if (candidates.isEmpty()) {
-          "no candidates at all"
-        } else {
-          "only non-hotspot candidates: ${routable.joinToString("; ")}"
-        },
-      )
+      val scope = if (prefix != null) " (hotspot is $prefix)" else ""
+      return if (candidates.isEmpty()) {
+        Verdict.Rejected(REASON_NO_CANDIDATES, "no candidates at all$scope")
+      } else {
+        Verdict.Rejected(
+          REASON_ONLY_NON_HOTSPOT,
+          "only non-hotspot candidates$scope: ${routable.joinToString("; ")}",
+        )
+      }
     }
     return Verdict.Ok(host, routable)
   }
@@ -69,16 +84,65 @@ object SoftApSdpGuard {
       .toList()
 
   /**
-   * A `typ host` candidate whose connection address is RFC1918.
+   * A `typ host` candidate on the hotspot: inside [prefix] when we know it, RFC1918 otherwise.
    *
    * mDNS-obfuscated candidates (`<uuid>.local`) are rejected on purpose. libwebrtc emits them to
    * hide private addresses from remote peers, and the glasses cannot resolve them, so a negotiation
    * that only offers those is broken however healthy it looks. Seeing this fire means the answering
    * peer needs its mDNS obfuscation disabled.
    */
-  fun isSoftApHostCandidate(candidate: String): Boolean {
+  fun isSoftApHostCandidate(candidate: String, prefix: Ipv4Prefix? = null): Boolean {
     if (!candidate.contains("typ host")) return false
-    return candidate.split(Regex("\\s+")).any { isPrivateIpv4(it) }
+    val onHotspot: (String) -> Boolean = if (prefix != null) prefix::contains else ::isPrivateIpv4
+    return candidate.split(Regex("\\s+")).any(onHotspot)
+  }
+
+  /**
+   * What [pinHostAddresses] did to one answer.
+   *
+   * [rewritten] is the host-candidate addresses that were off the hotspot and got replaced.
+   * Empty means the gathered SDP already advertised the scoped IP, so signaling and native state
+   * already match and nothing was edited.
+   */
+  data class PinResult(val sdp: String, val rewritten: List<String>)
+
+  /**
+   * Force every `typ host` candidate onto [scopedAddress].
+   *
+   * Needed because a bindable network handle marks the ICE sockets onto the SoftAP — which is what
+   * actually delivers UDP — and then libwebrtc substitutes the phone's default-route address into
+   * the candidate. The glasses have no route to that address. Replacing only the connection address
+   * of host lines (field 5, not `raddr`) keeps srflx/relay untouched and leaves a candidate that
+   * was already on the hotspot alone.
+   *
+   * The socket is still the marked one libwebrtc created. This only changes what the glasses are
+   * told to send to, so it stays honest only when that socket is on [scopedAddress]'s network.
+   */
+  fun pinHostAddresses(sdp: String, scopedAddress: String, prefix: Ipv4Prefix): PinResult {
+    val rewritten = mutableListOf<String>()
+    val lines = sdp.split(Regex("(?<=\\r?\\n)", RegexOption.MULTILINE))
+    val pinned =
+      lines.joinToString("") { line ->
+        val body = line.trimEnd('\r', '\n')
+        if (!body.contains("candidate:") || !body.contains("typ host")) return@joinToString line
+        val address = candidateAddress(body) ?: return@joinToString line
+        if (prefix.contains(address) || address == scopedAddress) return@joinToString line
+        rewritten += address
+        line.replaceFirst(address, scopedAddress)
+      }
+    return PinResult(pinned, rewritten)
+  }
+
+  /**
+   * The connection address of a candidate line, for attributing it to a real interface.
+   *
+   * Field 5 of `candidate:<foundation> <component> <transport> <priority> <address> <port> ...`,
+   * per RFC 5245. Read positionally rather than by scanning for anything dotted-quad-shaped: a
+   * `raddr` on an srflx line would otherwise win and point at the wrong interface.
+   */
+  fun candidateAddress(candidate: String): String? {
+    val fields = candidate.trim().removePrefix("a=").split(Regex("\\s+"))
+    return fields.getOrNull(4)?.takeIf { it.count { char -> char == '.' } == 3 }
   }
 
   /** RFC1918: 10/8, 172.16/12, 192.168/16. Rejects loopback, link-local and public addresses. */
