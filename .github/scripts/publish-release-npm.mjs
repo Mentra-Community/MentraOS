@@ -60,6 +60,40 @@ function parseArgs(args) {
   return values
 }
 
+// npm publish --provenance mints a Sigstore signing certificate from
+// fulcio.sigstore.dev, so a blip reaching that CA fails the publish and, with
+// it, the coordinated release: seen 2026-09-08 as
+// CA_CREATE_SIGNING_CERTIFICATE_ERROR / "read ECONNRESET". Retry, and treat a
+// version that turns up on the registry with the bytes we packed as published,
+// because a publish can also fail after the tarball has already landed.
+export function publishWithRetry(
+  coordinate,
+  integrity,
+  {attempts = 4, publish, registryIntegrityOf, sleep = () => execFileSync("sleep", ["15"])},
+) {
+  for (let attempt = 1; attempt <= attempts; attempt += 1) {
+    try {
+      publish()
+      return "published"
+    } catch (error) {
+      let landed = null
+      try {
+        landed = registryIntegrityOf(coordinate)
+      } catch (viewError) {
+        console.log(`npm view of ${coordinate} failed during publish recovery: ${viewError.message}`)
+      }
+      if (landed !== null) {
+        if (landed !== integrity) throw new Error(`${coordinate} already exists on npm with different bytes`)
+        return "published"
+      }
+      if (attempt === attempts) throw error
+      console.log(`npm publish of ${coordinate} failed (attempt ${attempt}/${attempts}); retrying: ${error.message}`)
+      sleep()
+    }
+  }
+  throw new Error(`${coordinate} was not published`)
+}
+
 function run(command, args, options = {}) {
   console.log(`$ ${command} ${args.join(" ")}`)
   return execFileSync(command, args, {stdio: "inherit", ...options})
@@ -359,8 +393,11 @@ export function publishReleaseNpm({
       }
       status = "reused"
     } else if (!dryRun) {
-      run("npm", ["publish", tarball, "--tag", tag, "--access", "public", "--provenance"], {cwd: rootDir})
-      status = "published"
+      status = publishWithRetry(coordinate, integrity, {
+        publish: () =>
+          run("npm", ["publish", tarball, "--tag", tag, "--access", "public", "--provenance"], {cwd: rootDir}),
+        registryIntegrityOf: (spec) => parseViewValue(npmView(spec, "dist.integrity")),
+      })
     }
 
     let url = `https://registry.npmjs.org/${encodeURIComponent(name)}`
