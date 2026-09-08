@@ -15,6 +15,7 @@ function runManifestBuild(releaseVersion) {
     firmwarePath,
     JSON.stringify({
       mtk_patches: [{start_firmware: 'A', end_firmware: 'B', url: 'https://example.com/mtk.zip'}],
+      mtk_full_ota: {end_firmware: '20260908.0', url: 'https://example.com/full.zip', sha256: 'b'.repeat(64), size: 640341205},
       bes_firmware: {version: '1.0.0', url: 'https://example.com/bes.bin'},
     }),
   );
@@ -41,6 +42,14 @@ test('writes the coordinated release version independently of the ASG version', 
   const manifest = JSON.parse(readFileSync(outputPath, 'utf8'));
   assert.equal(manifest.releaseVersion, '3.1.0-beta.3');
   assert.equal(manifest.apps['com.mentra.asg_client'].versionName, 'asg.40');
+  assert.equal(manifest.mtk_full_ota.end_firmware, '20260908.0');
+  assert.equal(manifest.mtk_full_ota.size, 640341205);
+  const inputsPath = path.join(path.dirname(outputPath), 'inputs.json');
+  const collected = spawnSync(process.execPath, [
+    path.resolve('.github/scripts/collect-ota-release-inputs.mjs'), outputPath, inputsPath,
+  ], {encoding: 'utf8'});
+  assert.equal(collected.status, 0, collected.stderr);
+  assert.deepEqual(JSON.parse(readFileSync(inputsPath, 'utf8')).mtkFullOta, manifest.mtk_full_ota);
 });
 
 test('rejects a value outside the coordinated release identity format', () => {

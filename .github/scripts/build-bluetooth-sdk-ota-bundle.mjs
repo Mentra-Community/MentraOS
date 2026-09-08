@@ -57,6 +57,11 @@ function collectArtifactReferences(manifest) {
     }
     references.push({entry, key, label: `MTK patch ${index}`, sha256: requireSha256(entry, `MTK patch ${index}`)});
   });
+  if (manifest.mtk_full_ota) {
+    const entry = manifest.mtk_full_ota;
+    if (typeof entry.url !== 'string' || !entry.url) throw new Error('MTK full OTA is missing a URL.');
+    references.push({entry, key: 'url', label: 'MTK full OTA', sha256: requireSha256(entry, 'MTK full OTA')});
+  }
 
   const bes = manifest.bes_firmware;
   const besKey = typeof bes?.url === 'string' && bes.url.length > 0 ? 'url' : 'firmwareUrl';

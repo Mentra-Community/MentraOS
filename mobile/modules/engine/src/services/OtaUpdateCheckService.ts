@@ -32,6 +32,16 @@ export interface MtkPatch {
   sha256?: string
 }
 
+export interface MtkFullOta {
+  start_firmware?: never
+  end_firmware: string
+  url: string
+  sha256: string
+  size: number
+}
+
+export type MtkUpdate = MtkPatch | MtkFullOta
+
 export interface BesFirmware {
   version: string
   url: string
@@ -44,6 +54,7 @@ export interface VersionJson {
     [packageName: string]: VersionInfo
   }
   mtk_patches?: MtkPatch[]
+  mtk_full_ota?: MtkFullOta
   bes_firmware?: BesFirmware
   versionCode?: number
   versionName?: string
@@ -58,7 +69,8 @@ export interface OtaCheckResult {
   updateAvailable: boolean
   latestVersionInfo: VersionInfo | null
   updates: string[]
-  mtkPatch: MtkPatch | null
+  /** Selected MTK artifact: exact-base incremental, otherwise a newer full OTA. */
+  mtkPatch: MtkUpdate | null
   besVersion: string | null
   /** True when the pending APK step installs an OLDER build than the glasses currently run. */
   isApkDowngrade: boolean
@@ -254,15 +266,43 @@ export function findMatchingMtkPatch(
 
   return (
     patches.find((patch) => {
-      if (patch.start_firmware === currentVersion) {
-        return true
-      }
-      const serverDate = patch.start_firmware.includes("_")
-        ? patch.start_firmware.split("_").pop()
-        : patch.start_firmware
-      return serverDate === currentVersion
+      return normalizeMtkVersion(patch.start_firmware) === normalizeMtkVersion(currentVersion)
     }) || null
   )
+}
+
+function normalizeMtkVersion(version: string): string {
+  return version.trim().split("_").pop() ?? ""
+}
+
+/** Full OTAs are not rollback packages. Unknown versions must not grant eligibility. */
+export function selectMtkUpdate(
+  manifest: VersionJson | undefined,
+  currentVersion: string | undefined,
+): MtkUpdate | null {
+  const patch = findMatchingMtkPatch(manifest?.mtk_patches, currentVersion)
+  if (patch) return patch
+  const full = manifest?.mtk_full_ota
+  if (!full || !currentVersion || typeof full.end_firmware !== "string") return null
+  const current = normalizeMtkVersion(currentVersion)
+  const target = normalizeMtkVersion(full.end_firmware)
+  const versionPattern = /^\d{8}(?:\.\d{1,9})?$/
+  if (!versionPattern.test(current) || !versionPattern.test(target)) return null
+  const [currentDate, currentRevision = 0] = current.split(".").map(Number)
+  const [targetDate, targetRevision = 0] = target.split(".").map(Number)
+  if (targetDate < currentDate || (targetDate === currentDate && targetRevision <= currentRevision)) return null
+  if (
+    full.start_firmware !== undefined ||
+    typeof full.url !== "string" ||
+    !/^https?:\/\/[^/\s]+\//.test(full.url) ||
+    typeof full.sha256 !== "string" ||
+    !/^[a-fA-F0-9]{64}$/.test(full.sha256) ||
+    !Number.isSafeInteger(full.size) ||
+    full.size <= 0 ||
+    full.size > 1024 * 1024 * 1024
+  )
+    return null
+  return full
 }
 
 export function checkBesUpdate(besFirmware: BesFirmware | undefined, currentVersion: string | undefined): boolean {
@@ -360,7 +400,7 @@ export async function checkForOtaUpdate(
       `OTA: APK update available: ${apkUpdateAvailable} (current: ${currentBuildNumber}, direction: ${apkDirection ?? "none"})`,
     )
 
-    const mtkPatch = findMatchingMtkPatch(versionJson?.mtk_patches, currentMtkVersion)
+    const mtkPatch = selectMtkUpdate(versionJson, currentMtkVersion)
     const mtkUpdateAvailable = mtkPatch !== null
     if (!currentMtkVersion && versionJson?.mtk_patches?.length) {
       console.log(`OTA: MTK current version unknown - skipping MTK patch check`)

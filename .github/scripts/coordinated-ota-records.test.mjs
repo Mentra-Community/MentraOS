@@ -35,6 +35,7 @@ const releasePlan = {
   otaInputs: {
     firmwareManifest: {path: "asg_client/ota_manifests/firmware_live.json", sha256: "d".repeat(64)},
     mtkPatches: [{start_firmware: "20260709", end_firmware: "20260730", url: "https://example.com/mtk.zip"}],
+    mtkFullOta: {end_firmware: "20260730", url: "https://example.com/full.zip", sha256: "f".repeat(64), size: 640341205},
     besFirmware: {version: "26.8.1", url: "https://example.com/bes.bin"},
   },
 }
@@ -71,6 +72,7 @@ function fixture() {
           },
         },
         mtk_patches: releasePlan.otaInputs.mtkPatches,
+        mtk_full_ota: releasePlan.otaInputs.mtkFullOta,
         bes_firmware: releasePlan.otaInputs.besFirmware,
       },
       null,
@@ -258,10 +260,11 @@ test("compares promoted firmware semantically instead of by object key order", (
   )
 })
 
-test("rejects a manifest whose promoted firmware differs from release intent", () => {
+for (const field of ["bes_firmware", "mtk_full_ota"]) {
+test(`rejects a manifest whose ${field} differs from release intent`, () => {
   const fixtureData = fixture()
   const manifest = JSON.parse(readFileSync(fixtureData.manifestPath, "utf8"))
-  manifest.bes_firmware.version = "unexpected"
+  manifest[field].url = "https://example.com/unexpected"
   writeFileSync(fixtureData.manifestPath, JSON.stringify(manifest))
 
   assert.throws(
@@ -288,6 +291,7 @@ test("rejects a manifest whose promoted firmware differs from release intent", (
           runAttempt: 1,
         },
       }),
-    /BES input differs/,
+    /(?:BES input|MTK full OTA) differs/,
   )
 })
+}

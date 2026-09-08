@@ -46,14 +46,13 @@ import java.util.stream.Collectors;
 
 import com.mentra.asg_client.io.ota.session.OtaSessionManager;
 import com.mentra.asg_client.io.ota.utils.DowngradeGate;
+import com.mentra.asg_client.io.ota.utils.MtkOtaSelector;
 import com.mentra.asg_client.io.ota.utils.FirmwareDownloadException;
 import com.mentra.asg_client.io.ota.utils.OtaConstants;
 import com.mentra.asg_client.service.system.core.SystemControllerFactory;
 import com.mentra.asg_client.settings.AsgSettings;
 import com.mentra.asg_client.service.utils.SysProp;
 import com.mentra.asg_client.utils.WakeLockManager;
-
-import org.json.JSONArray;
 
 public class OtaHelper {
 
@@ -386,9 +385,9 @@ public class OtaHelper {
                     break;
                 }
             }
-            if (!wasMtkUpdatedThisSession() && !isMtkOtaInProgress() && rootJson.has("mtk_patches")) {
+            if (!wasMtkUpdatedThisSession() && !isMtkOtaInProgress()) {
                 String currentMtk = SysProp.getProperty(context, "ro.custom.ota.version");
-                JSONObject mtkPatch = findMatchingMtkPatch(rootJson.getJSONArray("mtk_patches"), currentMtk);
+                JSONObject mtkPatch = MtkOtaSelector.select(rootJson, currentMtk);
                 if (mtkPatch != null) steps.add("mtk");
             }
             if (rootJson.has("bes_firmware")) {
@@ -884,10 +883,10 @@ public class OtaHelper {
                 } else if (isMtkOtaInProgress()) {
                     Log.i(TAG, "📱 MTK update currently in progress - skipping MTK check");
                     mtkPatch = null;
-                } else if (rootJson.has("mtk_patches")) {
+                } else {
                     String currentMtkVersion = SysProp.getProperty(context, "ro.custom.ota.version");
                     Log.d(TAG, "Current MTK version: " + currentMtkVersion);
-                    mtkPatch = findMatchingMtkPatch(rootJson.getJSONArray("mtk_patches"), currentMtkVersion);
+                    mtkPatch = MtkOtaSelector.select(rootJson, currentMtkVersion);
                     if (mtkPatch != null) {
                         Log.i(TAG, "MTK patch found for current version: " + currentMtkVersion);
                     }
@@ -1144,9 +1143,9 @@ public class OtaHelper {
 
     private boolean hasApplicableFirmwareUpdate(JSONObject rootJson, Context context) {
         try {
-            if (!wasMtkUpdatedThisSession() && !isMtkOtaInProgress() && rootJson.has("mtk_patches")) {
+            if (!wasMtkUpdatedThisSession() && !isMtkOtaInProgress()) {
                 String currentMtkVersion = SysProp.getProperty(context, "ro.custom.ota.version");
-                if (findMatchingMtkPatch(rootJson.getJSONArray("mtk_patches"), currentMtkVersion) != null) {
+                if (MtkOtaSelector.select(rootJson, currentMtkVersion) != null) {
                     return true;
                 }
             }
@@ -2034,57 +2033,6 @@ public class OtaHelper {
 
     // ========== BES Firmware Update Methods ==========
     /**
-     * Find MTK firmware patch matching the current version.
-     * MTK requires sequential updates - must find patch starting from current version.
-     * @param patches Array of patch objects with start_firmware, end_firmware, url
-     * @param currentVersion Current MTK firmware version as reported by
-     *     {@code ro.custom.ota.version}, e.g. "MentraLive_20260820.1"; both sides are
-     *     normalized before comparison, so a bare "20260820.1" would also match
-     * @return Matching patch object, or null if no match or version unknown
-     */
-    private JSONObject findMatchingMtkPatch(JSONArray patches, String currentVersion) {
-        if (currentVersion == null || currentVersion.isEmpty()) {
-            Log.w(TAG, "Cannot match MTK patch - current version unknown");
-            return null;
-        }
-        String normalizedCurrentVersion = normalizeMtkFirmwareVersion(currentVersion);
-
-        try {
-            for (int i = 0; i < patches.length(); i++) {
-                JSONObject patch = patches.getJSONObject(i);
-                String startFirmware = patch.getString("start_firmware");
-                if (normalizeMtkFirmwareVersion(startFirmware).equals(normalizedCurrentVersion)) {
-                    Log.i(TAG, "Found matching MTK patch: " + startFirmware + " -> " + patch.getString("end_firmware"));
-                    return patch;
-                }
-            }
-        } catch (JSONException e) {
-            Log.e(TAG, "Error parsing MTK patches", e);
-            return null;
-        }
-
-        Log.i(TAG, "No MTK patch available for current version: " + currentVersion);
-        return null;
-    }
-
-    /**
-     * Reduce an MTK version string to its version suffix so manifest entries and the device
-     * property match regardless of any "MentraLive_"-style prefix. Both normally carry the
-     * prefix; this is defensive so a bare suffix on either side still matches.
-     */
-    private String normalizeMtkFirmwareVersion(String version) {
-        if (version == null) {
-            return "";
-        }
-        String trimmed = version.trim();
-        int separator = trimmed.lastIndexOf('_');
-        if (separator >= 0 && separator + 1 < trimmed.length()) {
-            return trimmed.substring(separator + 1);
-        }
-        return trimmed;
-    }
-
-    /**
      * Check if BES firmware update is available.
      * BES does not require sequential updates - can install any newer version directly.
      * If current version is unknown, assume update is needed.
@@ -2121,7 +2069,7 @@ public class OtaHelper {
      * Compare two version strings.
      * Supports dotted formats like "17.26.1.14" (BES) or bare dates like "20241130".
      * MTK patch matching does not use this - it uses normalized exact equality in
-     * {@link #findMatchingMtkPatch}.
+     * {@link MtkOtaSelector}.
      * @param version1 First version string
      * @param version2 Second version string
      * @return positive if version1 > version2, negative if version1 < version2, 0 if equal
@@ -2508,13 +2456,11 @@ public class OtaHelper {
                 return false;
             }
 
-            // Detect if this is a patch object (from findMatchingMtkPatch) or legacy firmware info
-            // Patch objects have start_firmware/end_firmware fields and are already version-matched
-            boolean isPatchObject = firmwareInfo.has("start_firmware");
+            // Both delta and full entries were selected before reaching the common installer.
+            boolean isSelectedMtkUpdate = firmwareInfo.has("end_firmware");
 
-            if (isPatchObject) {
-                // Patch object - version matching already done by findMatchingMtkPatch()
-                String startFirmware = firmwareInfo.optString("start_firmware", "unknown");
+            if (isSelectedMtkUpdate) {
+                String startFirmware = firmwareInfo.optString("start_firmware", "full OTA");
                 String endFirmware = firmwareInfo.optString("end_firmware", "unknown");
                 Log.i(TAG, "MTK patch update: " + startFirmware + " -> " + endFirmware);
             } else {
@@ -2674,18 +2620,25 @@ public class OtaHelper {
         conn.setReadTimeout(OtaConstants.READ_TIMEOUT_MS);
         conn.connect();
 
-        // 100 MiB hard cap. Server-advertised content-length is checked first; the
+        // Bounded full-OTA-capable limit. Content-length is checked first; the
         // streaming loop also enforces the cap so a missing/lying header
         // (Content-Length: -1) cannot drain disk.
-        final long maxBytes = 100L * 1024 * 1024;
-        long fileSize = conn.getContentLength();
+        final long maxBytes = AsgConstants.MTK_OTA_MAX_DOWNLOAD_BYTES;
+        long fileSize = conn.getContentLengthLong();
+        long expectedSize = firmwareInfo.optLong("size", 0);
 
-        if (fileSize > maxBytes) {
+        // Keep room for both the ZIP and extracted payload. Legacy deltas may lack size.
+        long requiredSize = expectedSize > 0 ? expectedSize : Math.max(fileSize, 0);
+        if (fileSize > maxBytes || requiredSize > maxBytes) {
             conn.disconnect();
             throw new FirmwareDownloadException(
                 FirmwareDownloadException.CODE_FILE_TOO_LARGE,
                 "MTK firmware file too large: " + fileSize + " bytes (max " + maxBytes + ")"
             );
+        }
+        if (requiredSize > 0 && asgDir.getUsableSpace() < requiredSize * 2) {
+            conn.disconnect();
+            throw new IOException("Insufficient space for MTK ZIP and payload: " + requiredSize);
         }
 
         InputStream in = conn.getInputStream();
@@ -2730,6 +2683,12 @@ public class OtaHelper {
         }
 
         Log.i(TAG, "MTK firmware downloaded to: " + firmwareFile.getAbsolutePath());
+
+        if (expectedSize > 0 && total != expectedSize) {
+            firmwareFile.delete();
+            throw new FirmwareDownloadException(
+                FirmwareDownloadException.CODE_VERIFY_FAILED, "MTK firmware size does not match manifest");
+        }
 
         boolean verified = verifyMtkFirmwareChecksum(firmwareFile.getAbsolutePath(), firmwareInfo);
         if (verified) {

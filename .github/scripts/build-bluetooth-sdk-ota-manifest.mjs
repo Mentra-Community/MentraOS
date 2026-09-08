@@ -54,6 +54,7 @@ const manifest = {
     },
   },
   mtk_patches: firmware.mtk_patches,
+  ...(firmware.mtk_full_ota ? {mtk_full_ota: firmware.mtk_full_ota} : {}),
   bes_firmware: firmware.bes_firmware,
 };
 

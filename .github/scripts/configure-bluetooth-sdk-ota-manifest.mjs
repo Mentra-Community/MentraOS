@@ -53,6 +53,9 @@ export function configureOtaManifest(manifest, finalManifestUrl) {
     resolveField(patch, 'url', manifestUrl);
     resolveField(patch, 'firmwareUrl', manifestUrl);
   }
+  if (configured.mtk_full_ota) {
+    resolveField(configured.mtk_full_ota, 'url', manifestUrl);
+  }
   if (configured.bes_firmware) {
     resolveField(configured.bes_firmware, 'url', manifestUrl);
     resolveField(configured.bes_firmware, 'firmwareUrl', manifestUrl);

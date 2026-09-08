@@ -162,6 +162,19 @@ must be refused.
 
 Update flows must preserve device recoverability, report progress where possible, and avoid interrupting active media operations without cleanup.
 
+MTK updates prefer an incremental patch whose start version matches the glasses.
+If no patch matches, a pinned `mtk_full_ota` can update a known older firmware
+directly. Full fallback requires a valid target version, URL, SHA-256, and size;
+unknown, equal, or newer installed versions do not qualify. A failed incremental
+does not silently switch to a full image. Both paths use the existing user-approved
+installation and Android compatibility checks; full OTAs do not enable rollback
+or request a userdata wipe. Release manifests pin the full artifact, including
+when the phone downloads and serves it over the glasses hotspot.
+Glasses reuse `asg/mtk_firmware.zip` rather than retaining one file per release.
+MTK downloads are capped at 1 GiB and reserve room for the ZIP plus payload
+before downloading when the artifact size is known. Historical development
+packages and post-install space reclamation are separate from this fallback.
+
 The MTK↔BES UART always starts at 460800 baud. Firmware that supports the negotiated fast link may upgrade to 1152000 only after reporting a compatible current firmware version. At startup, `asg_client` retries discovery at 460800 before making one bounded probe at 1152000, then returns to 460800 if neither rate answers. The alternate probe does not depend on app-local cached state, so an APK reinstall can recover a BES that survived at the negotiated rate. Once traffic confirms a negotiated 1152000 link, BES keeps that baud across UART driver restarts and Android sleep; ordinary phone heartbeats and expected MTK sleep silence must not return one endpoint to 460800. If an older BES nevertheless falls back or reboots while ASG remains alive, several small unframed reads or an idle-link health probe cause `asg_client` to verify 1152000, probe 460800, and renegotiate the fast link after finding BES at the rendezvous rate. If neither rate answers, ASG remains at 460800 and retries the two-rate scan with capped exponential backoff so a later BES boot cannot leave the endpoints split indefinitely. Each scan is bounded and recovery is suppressed during BES OTA, file transfer, and active baud transitions. After a successful BES OTA, BES reboots at 460800, so `asg_client` explicitly reopens the rendezvous baud, rediscovers the new firmware version, and negotiates again when supported. Older firmware on either side remains at 460800.
 
 ### Diagnostics and reporting

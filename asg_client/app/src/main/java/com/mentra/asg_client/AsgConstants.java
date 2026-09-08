@@ -43,6 +43,9 @@ public class AsgConstants {
     /** Protocol version for phone-served OTA artifacts over the Mentra Live hotspot. */
     public static final int HOTSPOT_OTA_VERSION = 1;
 
+    /** Bounded MTK ZIP download size, including full system OTAs (~611 MiB today). */
+    public static final long MTK_OTA_MAX_DOWNLOAD_BYTES = 1024L * 1024 * 1024;
+
     /** Canonical camera crop defaults shared with the phone and Bluetooth SDK. */
     public static final int CAMERA_FOV_DEFAULT = 118;
 
