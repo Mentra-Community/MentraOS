@@ -11,6 +11,7 @@ import {
   npmMembersInOrder,
   npmReleaseTag,
   npmViewPublishedTarball,
+  publishWithRetry,
   releaseMetadataArgs,
   requireNpmProvenanceSource,
   requirePlanSourceCommit,
@@ -137,4 +138,64 @@ test("stamps SDK and Engine packages from the same immutable release metadata", 
       "b".repeat(64),
     ],
   )
+})
+
+test("retries a publish that fails before Sigstore issues a certificate", () => {
+  let calls = 0
+  const status = publishWithRetry("@mentra/engine@3.2.0-dev.157", "sha512-abc", {
+    publish: () => {
+      calls += 1
+      if (calls < 3) throw new Error("CA_CREATE_SIGNING_CERTIFICATE_ERROR: read ECONNRESET")
+    },
+    registryIntegrityOf: () => null,
+    sleep: () => {},
+  })
+  assert.equal(status, "published")
+  assert.equal(calls, 3)
+})
+
+test("accepts a publish that landed even though the command reported failure", () => {
+  let calls = 0
+  const status = publishWithRetry("@mentra/engine@3.2.0-dev.157", "sha512-abc", {
+    publish: () => {
+      calls += 1
+      throw new Error("write ECONNRESET")
+    },
+    registryIntegrityOf: () => "sha512-abc",
+    sleep: () => {},
+  })
+  assert.equal(status, "published")
+  assert.equal(calls, 1)
+})
+
+test("refuses a registry copy whose bytes differ from the packed tarball", () => {
+  assert.throws(
+    () =>
+      publishWithRetry("@mentra/engine@3.2.0-dev.157", "sha512-abc", {
+        publish: () => {
+          throw new Error("boom")
+        },
+        registryIntegrityOf: () => "sha512-different",
+        sleep: () => {},
+      }),
+    /already exists on npm with different bytes/,
+  )
+})
+
+test("gives up after the last attempt and surfaces the publish error", () => {
+  let calls = 0
+  assert.throws(
+    () =>
+      publishWithRetry("@mentra/engine@3.2.0-dev.157", "sha512-abc", {
+        attempts: 3,
+        publish: () => {
+          calls += 1
+          throw new Error("read ECONNRESET")
+        },
+        registryIntegrityOf: () => null,
+        sleep: () => {},
+      }),
+    /read ECONNRESET/,
+  )
+  assert.equal(calls, 3)
 })
