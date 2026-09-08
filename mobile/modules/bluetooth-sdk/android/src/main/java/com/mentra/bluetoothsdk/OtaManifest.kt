@@ -158,7 +158,7 @@ internal object OtaManifestChecker {
             if (startFirmware.trim().substringAfterLast('_') == current) return true
         }
         val full = manifest.optJSONObject("mtk_full_ota") ?: return false
-        val target = full.optString("end_firmware", "").trim().substringAfterLast('_')
+        val target = (full.opt("end_firmware") as? String)?.trim()?.substringAfterLast('_') ?: return false
         val pattern = Regex("[0-9]{8}(\\.[0-9]{1,9})?")
         if (!pattern.matches(current) || !pattern.matches(target)) return false
         val currentParts = current.split('.').map { it.toLong() }

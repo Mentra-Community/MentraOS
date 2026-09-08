@@ -33,6 +33,14 @@ final class OtaManifestTests: XCTestCase {
     }
 
     func testDeltaRemainsAvailableAndFullNeedsMetadata() throws {
+        for start in [NSNull(), "20260709"] as [Any] {
+            var invalid = full
+            invalid["start_firmware"] = start
+            XCTAssertFalse(try hasUpdate(manifest(invalid), "20260709"))
+        }
+        var numericTarget = full
+        numericTarget["end_firmware"] = 20_260_908
+        XCTAssertThrowsError(try manifest(numericTarget))
         XCTAssertTrue(try hasUpdate(manifest(patches: [["start_firmware": "20260709"]]), "MentraLive_20260709"))
         XCTAssertFalse(try hasUpdate(manifest(), "20260709"))
         for key in ["end_firmware", "url", "sha256", "size"] {

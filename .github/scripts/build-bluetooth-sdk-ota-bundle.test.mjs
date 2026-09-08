@@ -110,7 +110,7 @@ test('rejects a hash mismatch independently for every OTA component', async (t) 
           'com.mentra.asg_client': {apkUrl: sources.asg, sha256: hash(expected.asg)},
         },
         mtk_patches: [{url: sources.mtk, sha256: hash(expected.mtk)}],
-        mtk_full_ota: {url: sources.full, sha256: hash(expected.full), size: expected.full.length},
+        mtk_full_ota: {end_firmware: '20260908.0', url: sources.full, sha256: hash(expected.full), size: expected.full.length},
         bes_firmware: {url: sources.bes, sha256: hash(expected.bes)},
       };
 
@@ -143,12 +143,27 @@ test('validates full size even when bytes were already bundled under the same ha
     const manifest = {
       apps: {'com.mentra.asg_client': {apkUrl: source, sha256: artifact.sha256}},
       mtk_patches: [artifact], bes_firmware: artifact,
-      mtk_full_ota: {...artifact, size},
+      mtk_full_ota: {...artifact, end_firmware: '20260908.0', size},
     };
     await assert.rejects(buildPortableOtaBundle({
       manifest, outputDirectory: join(root, 'bundle'), localArtifacts: {[source]: file},
     }), /MTK full OTA.*(?:size|GiB)/);
     assert.equal(existsSync(join(root, 'bundle', 'version.template.json')), false);
+  }
+});
+
+test('rejects malformed full target and any start_firmware key before fetching', async () => {
+  const root = mkdtempSync(join(tmpdir(), 'mentra-full-schema-'));
+  const artifact = {url: 'https://cdn.invalid/full.zip', sha256: hash('data'), size: 4};
+  for (const fields of [{}, {end_firmware: 20260908}, {end_firmware: 'unknown'},
+    {end_firmware: '20260908.0', start_firmware: null},
+    {end_firmware: '20260908.0', start_firmware: '20260709'}]) {
+    await assert.rejects(buildPortableOtaBundle({
+      manifest: {
+        apps: {'com.mentra.asg_client': {apkUrl: artifact.url, sha256: artifact.sha256}},
+        mtk_patches: [artifact], bes_firmware: artifact, mtk_full_ota: {...artifact, ...fields},
+      }, outputDirectory: join(root, 'bundle'),
+    }), /end_firmware and no start_firmware/);
   }
 });
 

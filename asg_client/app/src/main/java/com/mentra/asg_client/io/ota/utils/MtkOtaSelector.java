@@ -22,7 +22,8 @@ public final class MtkOtaSelector {
             }
         }
         JSONObject full = manifest.optJSONObject("mtk_full_ota");
-        if (full == null || !isNewer(full.optString("end_firmware"), current)) return null;
+        if (full == null || !(full.opt("end_firmware") instanceof String)
+                || !isNewer((String) full.opt("end_firmware"), current)) return null;
         long size = full.optLong("size", 0);
         if (full.has("start_firmware")
                 || !(full.opt("size") instanceof Integer || full.opt("size") instanceof Long)

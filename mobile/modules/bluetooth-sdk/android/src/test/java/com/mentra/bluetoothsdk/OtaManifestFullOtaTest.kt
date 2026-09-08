@@ -33,6 +33,10 @@ class OtaManifestFullOtaTest {
     }
 
     @Test fun deltaRemainsAvailableAndFullNeedsMetadata() {
+        assertFalse(hasUpdate(JSONObject().put("mtk_full_ota", full().put("end_firmware", 20260908)), "20260709"))
+        for (start in listOf(JSONObject.NULL, "20260709")) {
+            assertFalse(hasUpdate(JSONObject().put("mtk_full_ota", full().put("start_firmware", start)), "20260709"))
+        }
         val delta = JSONObject().put("start_firmware", "20260709")
         assertTrue(hasUpdate(JSONObject().put("mtk_patches", JSONArray().put(delta)), "MentraLive_20260709"))
         assertFalse(hasUpdate(JSONObject(), "20260709"))

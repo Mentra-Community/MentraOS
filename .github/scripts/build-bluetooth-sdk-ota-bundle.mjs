@@ -59,6 +59,11 @@ function collectArtifactReferences(manifest) {
   });
   if (manifest.mtk_full_ota) {
     const entry = manifest.mtk_full_ota;
+    if (typeof entry.end_firmware !== 'string' ||
+        !/^[0-9]{8}(\.[0-9]{1,9})?$/.test(entry.end_firmware.trim().split('_').at(-1)) ||
+        Object.hasOwn(entry, 'start_firmware')) {
+      throw new Error('MTK full OTA must declare a valid string end_firmware and no start_firmware.');
+    }
     if (typeof entry.url !== 'string' || !entry.url) throw new Error('MTK full OTA is missing a URL.');
     if (!Number.isSafeInteger(entry.size) || entry.size <= 0 || entry.size > 1024 * 1024 * 1024) {
       throw new Error('MTK full OTA must declare a positive integer size no larger than 1 GiB.');

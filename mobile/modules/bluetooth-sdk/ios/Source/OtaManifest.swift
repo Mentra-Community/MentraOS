@@ -35,7 +35,7 @@ struct BesFirmware: Decodable {
 
 struct MtkFullOta: Decodable {
     let endFirmware: String?
-    let startFirmware: String?
+    let hasStartFirmware: Bool
     let url: String?
     let sha256: String?
     let size: Int64?
@@ -44,6 +44,15 @@ struct MtkFullOta: Decodable {
         case endFirmware = "end_firmware"
         case startFirmware = "start_firmware"
         case url, sha256, size
+    }
+
+    init(from decoder: Decoder) throws {
+        let fields = try decoder.container(keyedBy: CodingKeys.self)
+        hasStartFirmware = fields.contains(.startFirmware)
+        endFirmware = try fields.decodeIfPresent(String.self, forKey: .endFirmware)
+        url = try fields.decodeIfPresent(String.self, forKey: .url)
+        sha256 = try fields.decodeIfPresent(String.self, forKey: .sha256)
+        size = try fields.decodeIfPresent(Int64.self, forKey: .size)
     }
 }
 
@@ -198,7 +207,7 @@ enum OtaManifestChecker {
         let pattern = "^[0-9]{8}(\\.[0-9]{1,9})?$"
         guard current.range(of: pattern, options: .regularExpression) != nil,
               target.range(of: pattern, options: .regularExpression) != nil,
-              full.startFirmware == nil,
+              !full.hasStartFirmware,
               let url = full.url, url.range(of: "^https?://[^/\\s]+/.*$", options: .regularExpression) != nil,
               let hash = full.sha256, hash.range(of: "^[a-fA-F0-9]{64}$", options: .regularExpression) != nil,
               let size = full.size, size > 0, size <= 1024 * 1024 * 1024

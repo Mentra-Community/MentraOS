@@ -522,6 +522,7 @@ public class OtaHelper {
             // Reset progress tracking
             lastProgressSentTime = 0;
             lastProgressSentPercent = 0;
+            downloadBytes = 0;
 
             Log.i(
                     TAG,
@@ -2376,7 +2377,7 @@ public class OtaHelper {
     }
 
     private JSONObject buildBesInstallStartStatus() {
-        updateSessionFromProgress("install", 0, "STARTED", null);
+        updateSessionFromProgress("install", 0, 0, "STARTED", null);
         lastProgressSentTime = android.os.SystemClock.elapsedRealtime();
         lastProgressSentPercent = 0;
         lastOtaPhoneStage = "install";
@@ -2618,22 +2619,13 @@ public class OtaHelper {
         // Bounded full-OTA-capable limit. Content-length is checked first; the
         // streaming loop also enforces the cap so a missing/lying header
         // (Content-Length: -1) cannot drain disk.
-        final long maxBytes = AsgConstants.MTK_OTA_MAX_DOWNLOAD_BYTES;
         long fileSize = conn.getContentLengthLong();
         long expectedSize = firmwareInfo.optLong("size", 0);
-
-        // Keep room for both the ZIP and extracted payload. Legacy deltas may lack size.
-        long requiredSize = expectedSize > 0 ? expectedSize : Math.max(fileSize, 0);
-        if (fileSize > maxBytes || requiredSize > maxBytes) {
+        try {
+            validateMtkResponse(expectedSize, fileSize, asgDir.getUsableSpace());
+        } catch (FirmwareDownloadException e) {
             conn.disconnect();
-            throw new FirmwareDownloadException(
-                FirmwareDownloadException.CODE_FILE_TOO_LARGE,
-                "MTK firmware file too large: " + fileSize + " bytes (max " + maxBytes + ")"
-            );
-        }
-        if (requiredSize > 0 && asgDir.getUsableSpace() < requiredSize * 2) {
-            conn.disconnect();
-            throw new IOException("Insufficient space for MTK ZIP and payload: " + requiredSize);
+            throw e;
         }
 
         InputStream in = conn.getInputStream();
@@ -2653,12 +2645,7 @@ public class OtaHelper {
         try {
             while ((len = in.read(buffer)) > 0) {
                 total += len;
-                if (total > maxBytes) {
-                    throw new FirmwareDownloadException(
-                        FirmwareDownloadException.CODE_FILE_TOO_LARGE,
-                        "MTK firmware exceeded " + maxBytes + " bytes during streaming (Content-Length=" + fileSize + ")"
-                    );
-                }
+                validateMtkReceivedBytes(expectedSize, total);
                 out.write(buffer, 0, len);
 
                 int progress = progressSize > 0 ? (int) (total * 100 / progressSize) : 0;
@@ -2699,6 +2686,30 @@ public class OtaHelper {
                 FirmwareDownloadException.CODE_VERIFY_FAILED,
                 "MTK firmware sha256 verification failed"
             );
+        }
+    }
+
+    static void validateMtkResponse(long expected, long advertised, long freeBytes) throws FirmwareDownloadException {
+        if (expected > 0 && advertised >= 0 && expected != advertised) {
+            throw new FirmwareDownloadException(FirmwareDownloadException.CODE_VERIFY_FAILED,
+                    "MTK response length does not match manifest");
+        }
+        long required = expected > 0 ? expected : Math.max(advertised, 0);
+        validateMtkReceivedBytes(0, required);
+        if (required > 0 && freeBytes < required * 2) {
+            throw new FirmwareDownloadException(AsgConstants.OTA_INSUFFICIENT_STORAGE,
+                    "Insufficient space for MTK ZIP and payload");
+        }
+    }
+
+    static void validateMtkReceivedBytes(long expected, long received) throws FirmwareDownloadException {
+        if (expected > 0 && received > expected) {
+            throw new FirmwareDownloadException(FirmwareDownloadException.CODE_VERIFY_FAILED,
+                    "MTK firmware exceeds manifest size");
+        }
+        if (received > AsgConstants.MTK_OTA_MAX_DOWNLOAD_BYTES) {
+            throw new FirmwareDownloadException(FirmwareDownloadException.CODE_FILE_TOO_LARGE,
+                    "MTK firmware exceeds maximum size");
         }
     }
 
@@ -2781,7 +2792,7 @@ public class OtaHelper {
                                      long totalBytes, String status, String errorMessage) {
 
         downloadBytes = "download".equals(stage) ? bytesDownloaded : 0;
-        updateSessionFromProgress(stage, progress, status, errorMessage);
+        updateSessionFromProgress(stage, progress, bytesDownloaded, status, errorMessage);
 
         if (phoneConnectionProvider == null || !isPhoneConnected()) {
             return;
@@ -2818,7 +2829,7 @@ public class OtaHelper {
         sendOtaStatus();
     }
 
-    private void updateSessionFromProgress(String stage, int progress, String status, String errorMessage) {
+    private void updateSessionFromProgress(String stage, int progress, long bytesDownloaded, String status, String errorMessage) {
         if (sessionManager == null || sessionManager.getSessionState() == null) return;
 
         int stepIndex = findStepIndex(currentUpdateType);
@@ -2849,6 +2860,9 @@ public class OtaHelper {
             }
         } else if ("FAILED".equals(status)) {
             sessionManager.setFailed(errorMessage != null ? errorMessage : "Update failed");
+        }
+        if ("download".equals(stage) && !"FAILED".equals(status)) {
+            sessionManager.updateDownloadProgress(progress, bytesDownloaded);
         }
     }
 
@@ -2975,10 +2989,6 @@ public class OtaHelper {
             // Phone bridge (MentraLive.java) reads all fields from the top level of the JSON
             // object, so we add "type" directly to sessionState rather than nesting it under "data".
             sessionState.put("type", "ota_status");
-            if ("download".equals(sessionState.optString("phase"))
-                    && currentUpdateType.equals(sessionState.optString("step_type"))) {
-                sessionState.put("bytes_downloaded", downloadBytes);
-            }
             if ("failed".equals(sessionState.optString("status"))) {
                 sessionState.put("glasses_time_ms", System.currentTimeMillis());
             }
@@ -3036,6 +3046,7 @@ public class OtaHelper {
             o.put("current_step", 1);
             o.put("step_type", currentUpdateType != null ? currentUpdateType : "apk");
             o.put("phase", lastOtaPhoneStage != null ? lastOtaPhoneStage : "download");
+            if ("download".equals(o.optString("phase"))) o.put("bytes_downloaded", downloadBytes);
             o.put("step_percent", lastOtaPhoneProgress);
             o.put("overall_percent", lastOtaPhoneProgress);
             String ev = lastOtaPhoneEventStatus;

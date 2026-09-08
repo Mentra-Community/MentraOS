@@ -28,6 +28,10 @@ public class MtkOtaSelectorTest {
     }
 
     @Test public void fullOnlyAndMissingMetadataFailClosed() throws Exception {
+        assertNull(MtkOtaSelector.select(new JSONObject().put("mtk_full_ota", full().put("end_firmware", 20260908)), "20260709"));
+        for (Object start : new Object[]{JSONObject.NULL, "20260709"}) {
+            assertNull(MtkOtaSelector.select(new JSONObject().put("mtk_full_ota", full().put("start_firmware", start)), "20260709"));
+        }
         JSONObject full = full();
         JSONObject manifest = new JSONObject().put("mtk_full_ota", full);
         assertSame(full, MtkOtaSelector.select(manifest, "20260709"));

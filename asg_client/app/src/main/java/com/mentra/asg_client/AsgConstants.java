@@ -45,6 +45,8 @@ public class AsgConstants {
 
     /** Bounded MTK ZIP download size, including full system OTAs (~611 MiB today). */
     public static final long MTK_OTA_MAX_DOWNLOAD_BYTES = 1024L * 1024 * 1024;
+    /** Non-retryable until the user frees storage on the glasses. */
+    public static final String OTA_INSUFFICIENT_STORAGE = "insufficient_storage";
 
     /** Canonical camera crop defaults shared with the phone and Bluetooth SDK. */
     public static final int CAMERA_FOV_DEFAULT = 118;

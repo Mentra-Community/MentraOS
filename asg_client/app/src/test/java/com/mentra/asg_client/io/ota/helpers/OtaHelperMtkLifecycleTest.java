@@ -13,6 +13,9 @@ import androidx.test.core.app.ApplicationProvider;
 import com.mentra.asg_client.io.ota.interfaces.IBesOtaRegistry;
 import com.mentra.asg_client.io.ota.receivers.MtkOtaReceiver;
 import com.mentra.asg_client.io.ota.utils.OtaConstants;
+import com.mentra.asg_client.io.ota.utils.FirmwareDownloadException;
+import com.mentra.asg_client.AsgConstants;
+import org.junit.Assert;
 import com.mentra.asg_client.service.system.core.SystemControllerFactory;
 import com.mentra.asg_client.service.system.interfaces.ISystemController;
 import java.lang.reflect.Method;
@@ -40,6 +43,7 @@ public class OtaHelperMtkLifecycleTest {
     }
 
     @After public void cleanup() {
+        if (helper != null) helper.getSessionManager().clear();
         if (helper != null) helper.cleanup();
         if (original != null) original.cleanup();
         OtaHelper.setMtkOtaInProgress(false);
@@ -85,5 +89,46 @@ public class OtaHelperMtkLifecycleTest {
         verify(phone, atLeast(3)).sendOtaStatus(status.capture());
         assertThat(status.getAllValues().stream().anyMatch(value -> value.optLong("bytes_downloaded") == 8192)).isTrue();
         assertThat(status.getValue().has("bytes_downloaded")).isFalse();
+    }
+
+    @Test public void activeSessionOwnsBytesAcrossQueriesStepsAndRetries() throws Exception {
+        createHelper();
+        helper.getSessionManager().createSession(new String[]{"apk", "mtk"}, "https://cdn/manifest.json");
+        Method report = OtaHelper.class.getDeclaredMethod("sendProgressToPhone", String.class, int.class,
+                long.class, long.class, String.class, String.class);
+        report.setAccessible(true);
+        report.invoke(helper, "download", 0, 8192L, 640341205L, "PROGRESS", null);
+        JSONObject snapshot = helper.getSessionManager().getSessionState();
+        assertThat(snapshot.getString("st")).isEqualTo("apk");
+        assertThat(snapshot.getLong("bytes_downloaded")).isEqualTo(8192);
+        Method phoneStatus = OtaHelper.class.getDeclaredMethod("buildOtaStatusForPhone");
+        phoneStatus.setAccessible(true);
+        assertThat(((JSONObject) phoneStatus.invoke(helper)).getLong("bytes_downloaded")).isEqualTo(8192);
+        helper.getSessionManager().advanceStep(1, "download");
+        assertThat(helper.getSessionManager().getSessionState().getLong("bytes_downloaded")).isZero();
+        helper.getSessionManager().updateDownloadProgress(1, 99999);
+        helper.getSessionManager().setFailed("test");
+        helper.getSessionManager().createSession(new String[]{"mtk"}, "https://cdn/manifest.json");
+        assertThat(helper.getSessionManager().getSessionState().getLong("bytes_downloaded")).isZero();
+        helper.getSessionManager().advanceStep(0, "install");
+        assertThat(helper.getSessionManager().getSessionState().has("bytes_downloaded")).isFalse();
+    }
+
+    @Test public void responseAndStreamBoundsFailBeforeOversizedWrites() throws Exception {
+        OtaHelper.validateMtkResponse(600, -1, 1200);
+        OtaHelper.validateMtkResponse(600, 600, 1200);
+        assertThat(Assert.assertThrows(FirmwareDownloadException.class,
+                () -> OtaHelper.validateMtkResponse(600, 700, 1200)).getErrorCode())
+                .isEqualTo(FirmwareDownloadException.CODE_VERIFY_FAILED);
+        assertThat(Assert.assertThrows(FirmwareDownloadException.class,
+                () -> OtaHelper.validateMtkResponse(600, 600, 1199)).getErrorCode())
+                .isEqualTo(AsgConstants.OTA_INSUFFICIENT_STORAGE);
+        OtaHelper.validateMtkReceivedBytes(600, 600);
+        assertThat(Assert.assertThrows(FirmwareDownloadException.class,
+                () -> OtaHelper.validateMtkReceivedBytes(600, 601)).getErrorCode())
+                .isEqualTo(FirmwareDownloadException.CODE_VERIFY_FAILED);
+        assertThat(Assert.assertThrows(FirmwareDownloadException.class,
+                () -> OtaHelper.validateMtkReceivedBytes(0, AsgConstants.MTK_OTA_MAX_DOWNLOAD_BYTES + 1)).getErrorCode())
+                .isEqualTo(FirmwareDownloadException.CODE_FILE_TOO_LARGE);
     }
 }
