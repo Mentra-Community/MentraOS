@@ -415,11 +415,16 @@ public struct VersionInfoResult: CustomStringConvertible {
             "buildNumber": buildNumber,
             "otaVersionUrl": otaVersionUrl,
             "appVersion": appVersion,
-            "packageName": packageName,
             "hotspotOtaVersion": hotspotOtaVersion,
         ]
         if let systemTimeMs {
             values["systemTimeMs"] = systemTimeMs
+        }
+        // Only when known. requestVersionInfo() resolves from ANY version_info chunk, and only
+        // chunk 1 carries package_name — emitting "" from a chunk-3 resolution would overwrite a
+        // known identity with "absent", which the OTA guard reads as stock.
+        if !packageName.isEmpty {
+            values["packageName"] = packageName
         }
         return values
     }

@@ -371,7 +371,6 @@ class Bridge {
             "besFirmwareVersion": stringValue(values, "besFirmwareVersion", "bes_fw_version") ?? "",
             "mtkFirmwareVersion": stringValue(values, "mtkFirmwareVersion", "mtk_fw_version") ?? "",
             "buildNumber": stringValue(values, "buildNumber", "build_number") ?? "",
-            "packageName": stringValue(values, "packageName", "package_name") ?? "",
             "otaVersionUrl": stringValue(values, "otaVersionUrl", "ota_version_url") ?? "",
             "appVersion": stringValue(values, "appVersion", "app_version") ?? "",
         ]
@@ -382,6 +381,11 @@ class Bridge {
             ?? intValue(values["hotspot_ota_version"])
         {
             body["hotspotOtaVersion"] = hotspotOtaVersion
+        }
+        // Only when present: this event fires per version_info chunk and only chunk 1 carries
+        // package_name, so an unconditional "" would clobber a known identity.
+        if let packageName = stringValue(values, "packageName", "package_name"), !packageName.isEmpty {
+            body["packageName"] = packageName
         }
         Bridge.sendTypedMessage("version_info", body: body)
     }

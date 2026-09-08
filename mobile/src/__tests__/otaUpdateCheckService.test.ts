@@ -148,6 +148,29 @@ describe("OtaUpdateCheckService", () => {
     expect(result.hasCheckCompleted).toBe(true)
   })
 
+  it("keeps a known package when a version_info response omits the field", async () => {
+    // requestVersionInfo() resolves from ANY version_info chunk, and only chunk 1 carries
+    // package_name. A chunk-3 resolution must not blank a known identity: "" reads as stock,
+    // which would fail OPEN and let a sideloaded client through the guard.
+    useGlassesStore.getState().setGlassesInfo({
+      buildNumber: "120",
+      packageName: "com.mentra.asg_client.thirdparty",
+    })
+    useGlassesStore.getState().setGlassesInfo({besFirmwareVersion: "17.26.1.14"})
+    expect(useGlassesStore.getState().packageName).toBe("com.mentra.asg_client.thirdparty")
+
+    global.fetch = jest.fn() as unknown as typeof fetch
+    const result = await checkCurrentGlassesForUpdate({
+      refreshVersionInfo: false,
+      fixClockBeforeCheck: false,
+      waitForBesVersionMs: 0,
+      waitForMtkVersionMs: 0,
+    })
+
+    expect(result.skippedReason).toBe("unofficial_client")
+    expect(global.fetch).not.toHaveBeenCalled()
+  })
+
   it("allows a pinned mobile build regardless of the ASG app version", async () => {
     useGlassesStore.getState().setGlassesInfo({appVersion: "49076573-dev", buildNumber: "40"})
     global.fetch = jest.fn(() =>

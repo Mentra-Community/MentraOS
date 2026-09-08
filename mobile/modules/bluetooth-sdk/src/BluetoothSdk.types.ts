@@ -160,8 +160,11 @@ export type VersionInfoResult = {
    * whose client predates the field. `"com.mentra.asg_client"` is the stock client; anything else
    * is a sideloaded build (Android forces a distinct package on any build not signed with Mentra's
    * release key) that coexists with the stock app and must not be driven by OTA.
+   *
+   * Absent when this event resolved from a `version_info` chunk that does not carry the field
+   * (only chunk 1 does), so it never overwrites a known identity with an empty one.
    */
-  packageName: string
+  packageName?: string
   /** Phone-served hotspot OTA protocol version; 0 means unsupported/legacy glasses. */
   hotspotOtaVersion: number
 }

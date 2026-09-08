@@ -488,7 +488,11 @@ public class Bridge private constructor() {
             body["besFirmwareVersion"] = stringField("besFirmwareVersion", "bes_fw_version")
             body["mtkFirmwareVersion"] = stringField("mtkFirmwareVersion", "mtk_fw_version")
             body["buildNumber"] = stringField("buildNumber", "build_number")
-            body["packageName"] = stringField("packageName", "package_name")
+            // Only when present: this event fires per version_info chunk and only chunk 1
+            // carries package_name, so an unconditional "" would clobber a known identity.
+            stringField("packageName", "package_name").takeIf { it.isNotEmpty() }?.let {
+                body["packageName"] = it
+            }
             (values["systemTimeMs"] as? Number ?: values["system_time_ms"] as? Number)?.let {
                 body["systemTimeMs"] = it.toLong()
             }
