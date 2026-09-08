@@ -10,6 +10,11 @@ declare class AcsMeetingNativeModule extends NativeModule<AcsMeetingModuleEvents
   updateVideoSource(whepUrl: string): Promise<void>
   /** Force a WHEP rebuild on the current URL (phone changed networks). */
   restartVideoSource(): Promise<void>
+  /** SoftAP: join the glasses hotspot as a scoped network; resolves to the phone's IPv4 on it. Android only. */
+  joinScopedNetwork(ssid: string, passphrase: string): Promise<string>
+  leaveScopedNetwork(): Promise<void>
+  /** SoftAP: TCP-probe the hotspot gateway over the scoped network. */
+  probeScopedGateway(): Promise<{reachable: boolean; detail: string}>
   getState(): Promise<AcsMeetingState>
 }
 
