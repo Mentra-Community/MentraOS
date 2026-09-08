@@ -491,10 +491,49 @@ jobs:
           echo "${{ steps.app-store.outputs.exists == 'true' && 'reused' || 'published' }}" \
             > release-output/upload-status.txt
 
-      - uses: ./.github/actions/upload-artifact-with-retry
+      # Keep retries in the workflow: the frozen source checkout may predate this policy.
+      - name: Upload IPA handoff (attempt 1 of 3)
+        id: ipa-upload-1
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
         with:
           name: ${{ steps.coordinates.outputs.upload_artifact }}
           path: release-output
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Wait before IPA upload attempt 2
+        if: steps.ipa-upload-1.outcome == 'failure'
+        run: sleep 10
+
+      - name: Upload IPA handoff (attempt 2 of 3)
+        id: ipa-upload-2
+        if: steps.ipa-upload-1.outcome == 'failure'
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.coordinates.outputs.upload_artifact }}
+          path: release-output
+          if-no-files-found: error
+          retention-days: 90
+          # A failed response can leave an intermediate artifact behind.
+          overwrite: true
+
+      - name: Wait before IPA upload attempt 3
+        if: steps.ipa-upload-2.outcome == 'failure'
+        run: sleep 10
+
+      - name: Upload IPA handoff (attempt 3 of 3)
+        id: ipa-upload-3
+        if: steps.ipa-upload-2.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.coordinates.outputs.upload_artifact }}
+          path: release-output
+          if-no-files-found: error
+          retention-days: 90
+          # A failed response can leave an intermediate artifact behind.
+          overwrite: true
 
       - name: Clean persistent-runner credentials
         if: always()
