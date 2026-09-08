@@ -49,12 +49,13 @@ describe("NavigationHost hardware back", () => {
   afterEach(() => jest.restoreAllMocks())
 
   it("hands back to an interceptor that claims it", () => {
+    // A hosted miniapp holds preventBack for as long as it is mounted.
     const interceptorBack = jest.fn(() => true)
-    useNavigationStore.setState({interceptor: interceptorStub(interceptorBack)})
+    useNavigationStore.setState({interceptor: interceptorStub(interceptorBack), preventBack: true})
     render(<NavigationHost />)
 
     expect(pressHardwareBack()).toBe(true)
-    expect(interceptorBack).toHaveBeenCalled()
+    expect(interceptorBack).toHaveBeenCalledTimes(1)
     expect(mockRouter.back).not.toHaveBeenCalled()
   })
 
@@ -64,9 +65,10 @@ describe("NavigationHost hardware back", () => {
     // declines once it is standing down, and back used to fall through to
     // router.back() — popping the screen the push just landed on.
     const lockedScreenBack = jest.fn()
+    const interceptorBack = jest.fn(() => false)
     useNavigationStore.setState({
       androidBackFn: lockedScreenBack,
-      interceptor: interceptorStub(() => false),
+      interceptor: interceptorStub(interceptorBack),
       preventBack: true,
     })
     render(<NavigationHost />)
@@ -74,13 +76,17 @@ describe("NavigationHost hardware back", () => {
     expect(pressHardwareBack()).toBe(true)
     expect(mockRouter.back).not.toHaveBeenCalled()
     expect(lockedScreenBack).toHaveBeenCalled()
+    expect(interceptorBack).toHaveBeenCalledTimes(1)
   })
 
   it("still goes back normally when nothing is guarding the screen", () => {
-    useNavigationStore.setState({interceptor: interceptorStub(() => false)})
+    const interceptorBack = jest.fn(() => false)
+    useNavigationStore.setState({interceptor: interceptorStub(interceptorBack)})
     render(<NavigationHost />)
 
     expect(pressHardwareBack()).toBe(true)
     expect(mockRouter.back).toHaveBeenCalled()
+    // goBack() is the single dispatch site when no guard is up.
+    expect(interceptorBack).toHaveBeenCalledTimes(1)
   })
 })
