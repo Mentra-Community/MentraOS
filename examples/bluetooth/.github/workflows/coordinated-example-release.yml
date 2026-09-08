@@ -182,7 +182,8 @@ jobs:
             update_lockfile() {
               local directory="$1"
               for attempt in {1..12}; do
-                if (cd "$directory" && bun install --lockfile-only); then
+                # Each retry must see newly published versions, not Bun's cached manifest.
+                if (cd "$directory" && bun install --lockfile-only --no-cache); then
                   return 0
                 fi
                 if (( attempt == 12 )); then
