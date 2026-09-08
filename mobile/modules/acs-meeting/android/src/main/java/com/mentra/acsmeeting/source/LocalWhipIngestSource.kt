@@ -3,6 +3,8 @@ package com.mentra.acsmeeting.source
 import android.content.Context
 import android.media.AudioAttributes
 import android.util.Log
+import com.mentra.acsmeeting.network.NetworkFacts
+import com.mentra.acsmeeting.network.ScopedNetworkChangeDetector
 import com.mentra.acsmeeting.network.ScopedSoftApNetwork
 import com.mentra.acsmeeting.telemetry.PipelineStats
 import com.mentra.acsmeeting.trace.SoftApTrace
@@ -11,6 +13,7 @@ import org.webrtc.DefaultVideoDecoderFactory
 import org.webrtc.DefaultVideoEncoderFactory
 import org.webrtc.EglBase
 import org.webrtc.IceCandidate
+import org.webrtc.Logging
 import org.webrtc.MediaConstraints
 import org.webrtc.MediaStream
 import org.webrtc.PeerConnection
@@ -79,6 +82,7 @@ class LocalWhipIngestSource(
   @Volatile private var boundUrl: String? = null
   @Volatile private var stateListener: SourceStateListener? = null
   @Volatile private var firstFrameDeadline: Runnable? = null
+  @Volatile private var selectedPairTask: Runnable? = null
 
   /**
    * Invalidates callbacks from a peer we are disposing. A negotiation can be mid-gather when the
@@ -109,16 +113,47 @@ class LocalWhipIngestSource(
     ensureFactory()
 
     val ingest = WhipIngestServer(this)
+    // #region agent log
+    com.mentra.acsmeeting.network.DebugTap.log(
+      "F",
+      "LocalWhipIngestSource.kt:112",
+      "whip server bind",
+      mapOf("bindAddress" to bindAddress, "scopedIpv4" to scopedNetwork?.localIpv4()),
+    )
+    // #endregion
     val endpoint = ingest.start(InetAddress.getByName(bindAddress))
     server = ingest
     boundUrl = "http://${endpoint.host}:${endpoint.port}${WhipIngestProtocol.BASE_PATH}"
     SoftApTrace.stage("ingest_source_listening", "url" to boundUrl)
     Log.i(TAG, "SoftAP ingest listening on $boundUrl")
+    // #region agent log
+    // Loopback self-connect proves the accept loop is alive; the routing dump is what the phone
+    // will use to answer the glasses' SYN. Both are the evidence a glasses-side connect timeout
+    // needs to be read correctly.
+    com.mentra.acsmeeting.network.DebugTap.log(
+      "F,G",
+      "LocalWhipIngestSource.kt:listening",
+      "whip listener self-check",
+      mapOf(
+        "url" to boundUrl,
+        "selfConnect" to
+          runCatching {
+            java.net.Socket().use {
+              it.connect(java.net.InetSocketAddress(endpoint.host, endpoint.port), 1_000)
+              "ok"
+            }
+          }.getOrElse { "failed: ${it.message}" },
+        "addrs" to com.mentra.acsmeeting.network.DebugTap.shell("ip -4 addr"),
+        "routes43" to com.mentra.acsmeeting.network.DebugTap.shell("ip -4 route show table all | grep -E '(192\\.168\\.4[0-9]|wlan)'"),
+        "rules" to com.mentra.acsmeeting.network.DebugTap.shell("ip rule"),
+      ),
+    )
+    // #endregion
   }
 
   /**
    * A SoftAP restart is always a full rebuild. There is no URL to keep: the listener, the port and
-   * the peer all belong to one publish attempt, and [canReuseSource] excludes this kind for that
+   * the peer all belong to one publish attempt, and [SourceReusePolicy] excludes this kind for that
    * reason.
    */
   override fun restart(config: SourceConfig) = start(config)
@@ -143,6 +178,7 @@ class LocalWhipIngestSource(
   override fun stop() {
     boundUrl = null
     cancelFirstFrameDeadline()
+    cancelSelectedPairProof()
     firstFrame.reset()
     runCatching { attachedVideo?.removeSink(relay.videoSink) }
     attachedVideo = null
@@ -178,7 +214,8 @@ class LocalWhipIngestSource(
     val gen = generation
     val currentFactory = factory ?: return Result.failure(IllegalStateException("factory_disposed"))
 
-    when (val verdict = SoftApSdpGuard.inspect(offer)) {
+    val prefix = scopedNetwork?.scopedPrefix()
+    when (val verdict = SoftApSdpGuard.inspect(offer, prefix)) {
       is SoftApSdpGuard.Verdict.Rejected -> {
         SoftApTrace.failure(
           "ingest_offer_rejected",
@@ -257,19 +294,72 @@ class LocalWhipIngestSource(
     }
     if (gen != generation) return negotiationFailed(sessionId, "superseded")
 
-    val local = peer.localDescription?.description
+    val gatheredSdp = peer.localDescription?.description
       ?: return negotiationFailed(sessionId, "no_local_description")
+    val scopedAddress = scopedNetwork?.localIpv4()
+    // Real handle marks the ICE sockets onto the SoftAP. libwebrtc then advertises the default
+    // route (cellular) as the candidate address. The glasses cannot reach that, so the answer they
+    // get is pinned to the scoped IP. No-op when gathering already told the truth.
+    val pinned =
+      if (prefix != null && scopedAddress != null) {
+        SoftApSdpGuard.pinHostAddresses(gatheredSdp, scopedAddress, prefix)
+      } else {
+        SoftApSdpGuard.PinResult(gatheredSdp, emptyList())
+      }
+    if (pinned.rewritten.isNotEmpty()) {
+      SoftApTrace.stage(
+        "ingest_answer_pinned",
+        "session" to sessionId,
+        "scopedAddress" to scopedAddress,
+        "replaced" to pinned.rewritten.joinToString(","),
+      )
+    }
+    val local = pinned.sdp
     answer.set(local)
+
+    // The full gathered set, attributed to real interfaces, captured at the moment of judgement.
+    // A missing hotspot candidate is the failure, and every observation that separates its causes
+    // exists only here: the kernel table, the inventory libwebrtc actually holds, and the address
+    // each candidate ended up carrying. Reconstructing any of it from later logs has already
+    // produced one wrong conclusion, so it is recorded together.
+    val table = NetworkFacts.snapshot()
+    val candidateFacts =
+      local.lineSequence()
+        .filter { it.contains("candidate:") }
+        .map { line ->
+          val address = SoftApSdpGuard.candidateAddress(line)
+          SoftApIceDiagnosis.CandidateFact(
+            address,
+            address?.let { NetworkFacts.ownerOf(it, table) },
+            SoftApSdpGuard.isSoftApHostCandidate(line.trim().removePrefix("a="), prefix),
+          )
+        }
+        .toList()
+    SoftApTrace.stage(
+      "ingest_answer_candidates",
+      "count" to candidateFacts.size,
+      "hotspotPrefix" to (prefix?.toString() ?: "unknown"),
+      "candidates" to candidateFacts.joinToString(" | ") { it.toString() },
+      "table" to NetworkFacts.render(NetworkFacts.gatherable(table)),
+    )
 
     // The answer is checked with the same guard as the offer. If libwebrtc gathered nothing on the
     // hotspot, returning this answer would produce a call that negotiates and then never carries a
     // frame — the exact silent failure the feasibility gate exists to rule out.
-    when (val verdict = SoftApSdpGuard.inspect(local)) {
+    when (val verdict = SoftApSdpGuard.inspect(local, prefix)) {
       is SoftApSdpGuard.Verdict.Rejected -> {
+        val diagnosis =
+          SoftApIceDiagnosis.diagnose(
+            scopedAddress,
+            scopedAddress?.let { NetworkFacts.ownerOf(it, table) },
+            prefix,
+            ScopedNetworkChangeDetector.lastPublished,
+            candidateFacts,
+          )
         SoftApTrace.failure(
           "ingest_answer_rejected",
-          "code" to verdict.code,
           "detail" to verdict.detail,
+          *diagnosis.fields(),
         )
         return negotiationFailed(sessionId, verdict.code)
       }
@@ -278,6 +368,7 @@ class LocalWhipIngestSource(
         "ingest_answer_ready",
         "session" to sessionId,
         "hostCandidates" to verdict.hostCandidates.size,
+        "scopedPrefix" to prefix?.toString(),
       )
     }
 
@@ -289,6 +380,7 @@ class LocalWhipIngestSource(
     SoftApTrace.stage("ingest_session_terminated", "session" to sessionId)
     generation++
     cancelFirstFrameDeadline()
+    cancelSelectedPairProof()
     disposePeer()
     if (state != SourceState.IDLE) transition(SourceState.FAILED, "publisher_terminated")
   }
@@ -320,9 +412,20 @@ class LocalWhipIngestSource(
 
   private fun ensureFactory() {
     if (factory != null) return
+    // Normally already installed by the module at creation; repeating it here is idempotent and
+    // covers a factory built from a code path that bypassed the module (tests, future callers).
+    scopedNetwork?.let { scoped -> ScopedNetworkChangeDetector.install { scoped } }
     PeerConnectionFactory.initialize(
       PeerConnectionFactory.InitializationOptions.builder(context).createInitializationOptions(),
     )
+    // The decision we cannot otherwise see is libwebrtc's own: at LS_INFO the native stack logs each
+    // interface BasicNetworkManager kept and the adapter type it assigned, the ports it allocated,
+    // and every BindSocketToNetwork result. That is what showed the hotspot entry being erased by a
+    // handle collision. Loud, so it is behind a flag to flip once the path is green on device.
+    if (AcsInvestigation.LIBWEBRTC_VERBOSE) {
+      runCatching { Logging.enableLogToDebugOutput(Logging.Severity.LS_INFO) }
+        .onFailure { Log.w(TAG, "libwebrtc verbose logging unavailable: ${it.message}") }
+    }
     val shared = EglBase.create().also { egl = it }.eglBaseContext
     // Same silenced device module as the Cloudflare path: libwebrtc renders every received audio
     // track through it, which would be the wearer's own microphone coming back out of the phone.
@@ -372,6 +475,7 @@ class LocalWhipIngestSource(
       ) {
         transition(SourceState.FAILED, "ice_${state.name.lowercase()}")
       }
+      if (state == PeerConnection.IceConnectionState.CONNECTED) armSelectedPairProof(gen)
     }
 
     override fun onIceConnectionReceivingChange(receiving: Boolean) = Unit
@@ -382,9 +486,17 @@ class LocalWhipIngestSource(
     }
 
     override fun onIceCandidate(candidate: IceCandidate) {
-      if (SoftApSdpGuard.isSoftApHostCandidate(candidate.sdp)) {
-        SoftApTrace.stage("ingest_host_candidate", "candidate" to candidate.sdp)
-      }
+      // Attribute the candidate to a real interface. `network-cost` in the SDP is libwebrtc's own
+      // verdict on the adapter type (10 wifi, 900 cellular, 50 unknown), so printing it next to
+      // the interface the kernel says owns the address shows exactly where the labels diverged.
+      val address = SoftApSdpGuard.candidateAddress(candidate.sdp)
+      SoftApTrace.stage(
+        "ingest_host_candidate",
+        "onHotspot" to SoftApSdpGuard.isSoftApHostCandidate(candidate.sdp, scopedNetwork?.scopedPrefix()),
+        "address" to (address ?: "none"),
+        "owner" to (address?.let { NetworkFacts.ownerOf(it) } ?: "ABSENT"),
+        "candidate" to candidate.sdp,
+      )
     }
 
     override fun onIceCandidatesRemoved(candidates: Array<out IceCandidate>) = Unit
@@ -464,6 +576,152 @@ class LocalWhipIngestSource(
     firstFrameDeadline = null
   }
 
+  /**
+   * Prove media is on the hotspot, not merely that the SDP mentioned it.
+   *
+   * [SoftApSdpGuard] checks what each side *offered*; ICE then picks a pair, and nothing so far says
+   * it picked one on the network we joined. A call running over cellular or home Wi-Fi is the exact
+   * failure SoftAP exists to avoid, and it does not announce itself — the tile is either black or
+   * looks fine while taking the long way round. Two samples rather than one so the byte counter has
+   * something to be compared against.
+   */
+  private fun armSelectedPairProof(gen: Int) {
+    cancelSelectedPairProof()
+    val first = Runnable {
+      if (gen != generation) return@Runnable
+      sampleIcePath(gen) { firstSample ->
+        val second = Runnable {
+          if (gen != generation) return@Runnable
+          sampleIcePath(gen) { secondSample -> reportIcePath(gen, firstSample, secondSample) }
+        }
+        selectedPairTask = second
+        mainHandler.postDelayed(second, SELECTED_PAIR_SAMPLE_GAP_MS)
+      }
+    }
+    selectedPairTask = first
+    mainHandler.postDelayed(first, SELECTED_PAIR_FIRST_SAMPLE_MS)
+  }
+
+  private fun cancelSelectedPairProof() {
+    selectedPairTask?.let { mainHandler.removeCallbacks(it) }
+    selectedPairTask = null
+  }
+
+  /** Reads the prefix per sample: the phone can lose and rejoin the hotspot mid-call. */
+  private fun sampleIcePath(gen: Int, onSample: (IcePathVerdict) -> Unit) {
+    val peer = pc ?: return
+    val prefix = scopedNetwork?.scopedPrefix()
+    runCatching {
+      peer.getStats { report ->
+        if (gen != generation) return@getStats
+        onSample(
+          SelectedIcePair.verdict(
+            iceTransports(report),
+            candidatePairs(report),
+            iceCandidates(report),
+            prefix,
+            gen,
+          ),
+        )
+      }
+    }.onFailure { Log.w(TAG, "SoftAP ingest stats read failed", it) }
+  }
+
+  private fun reportIcePath(gen: Int, first: IcePathVerdict, second: IcePathVerdict) {
+    if (gen != generation) return
+    when (second) {
+      is IcePathVerdict.OnHotspot -> {
+        val flow = SelectedIcePair.flow(first, second)
+        val compared = flow as? SelectedIcePair.Flow.Compared
+        SoftApTrace.stage(
+          "ingest_selected_pair",
+          "pairId" to second.pairId,
+          "local" to second.local,
+          "remote" to second.remote,
+          "bytesReceived" to second.bytesReceived,
+          // Only ever true off a same-pair comparison. An incomparable sample reports the reason
+          // instead of a verdict, because growth across a pair change is not evidence.
+          "bytesFlowing" to (compared?.flowing ?: false),
+          "comparable" to (compared != null),
+          "notComparable" to (flow as? SelectedIcePair.Flow.NotComparable)?.reason,
+        )
+        Log.i(
+          TAG,
+          "SoftAP ingest selected pair ${second.pairId} local=${second.local} " +
+            "remote=${second.remote} bytes=${second.bytesReceived} flow=$flow",
+        )
+        if (compared != null && !compared.flowing) {
+          // The pair is right but nothing is arriving yet. Named so the log says so, and left
+          // non-terminal on purpose: the first-frame gate already owns that verdict, and one slow
+          // sample must not kill a call that is about to paint.
+          SoftApTrace.failure(
+            "ingest_selected_pair_idle",
+            "pairId" to second.pairId,
+            "local" to second.local,
+            "bytesReceived" to second.bytesReceived,
+          )
+        }
+      }
+
+      is IcePathVerdict.OffHotspot -> {
+        SoftApTrace.failure(
+          "ingest_selected_pair_off_hotspot",
+          "pairId" to second.pairId,
+          "local" to second.local,
+          "prefix" to second.prefix,
+        )
+        Log.e(TAG, "SoftAP ingest selected a pair off the hotspot: ${second.local} not in ${second.prefix}")
+        transition(SourceState.FAILED, "ice_off_hotspot")
+      }
+
+      is IcePathVerdict.Unknown ->
+        SoftApTrace.stage("ingest_selected_pair_unknown", "reason" to second.reason)
+    }
+  }
+
+  /**
+   * The transport entries, for `selectedCandidatePairId`.
+   *
+   * Read from the report rather than inferred, because inference is what made the previous verifier
+   * untrustworthy. `RTCStatsReport` also carries the pre-spec `selectedCandidatePairId` under the
+   * same name on this build, so no aliasing is needed.
+   */
+  private fun iceTransports(report: org.webrtc.RTCStatsReport): List<IceTransportStats> =
+    report.statsMap.values
+      .filter { it.type == "transport" }
+      .map { stats ->
+        IceTransportStats(
+          id = stats.id,
+          selectedCandidatePairId = stats.members["selectedCandidatePairId"] as? String,
+        )
+      }
+
+  private fun candidatePairs(report: org.webrtc.RTCStatsReport): List<IceCandidatePairStats> =
+    report.statsMap.values
+      .filter { it.type == "candidate-pair" }
+      .map { stats ->
+        IceCandidatePairStats(
+          id = stats.id,
+          state = stats.members["state"] as? String,
+          nominated = stats.members["nominated"] as? Boolean ?: false,
+          localCandidateId = stats.members["localCandidateId"] as? String,
+          remoteCandidateId = stats.members["remoteCandidateId"] as? String,
+          // libwebrtc reports 64-bit counters as BigInteger, which is a Number but not a Long.
+          bytesReceived = (stats.members["bytesReceived"] as? Number)?.toLong() ?: 0L,
+        )
+      }
+
+  private fun iceCandidates(report: org.webrtc.RTCStatsReport): Map<String, IceCandidateStats> =
+    report.statsMap.values
+      .filter { it.type == "local-candidate" || it.type == "remote-candidate" }
+      .associate { stats ->
+        stats.id to IceCandidateStats(
+          id = stats.id,
+          address = (stats.members["address"] ?: stats.members["ip"]) as? String,
+          candidateType = stats.members["candidateType"] as? String,
+        )
+      }
+
   private fun notePromotableFrame() {
     if (!firstFrame.onFrame(generation)) return
     cancelFirstFrameDeadline()
@@ -501,5 +759,11 @@ class LocalWhipIngestSource(
      * here, so a first frame that has not arrived in 6 s is not late, it is not coming.
      */
     private const val FIRST_FRAME_TIMEOUT_MS = 6_000L
+
+    /** Let the nominated pair settle before reading it; ICE reports CONNECTED as it is choosing. */
+    private const val SELECTED_PAIR_FIRST_SAMPLE_MS = 500L
+
+    /** Long enough that a healthy 15 fps feed cannot show a flat byte counter across the two reads. */
+    private const val SELECTED_PAIR_SAMPLE_GAP_MS = 1_200L
   }
 }
