@@ -139,6 +139,16 @@ export async function prepareArtifacts(
   const prepared: PreparedOtaArtifact[] = []
   for (let index = 0; index < plan.length; index++) {
     const entry = plan[index]
+    // Announce each file before cache verification or native download callbacks,
+    // so the previous file's 100% cannot linger under the next file's label.
+    onProgress?.({
+      kind: entry.kind,
+      index,
+      totalCount: plan.length,
+      artifactPercent: 0,
+      bytesWritten: 0,
+      contentLength: 0,
+    })
 
     const cachedPath = `${directory}/${entry.sha256}`
     if (await RNFS.exists(cachedPath)) {

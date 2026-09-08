@@ -102,7 +102,7 @@ describe("progress.tsx display states", () => {
   it("starts in starting state", () => {
     setGlassesConnected()
     const {getByText} = render(<OtaProgressScreen />)
-    expect(getByText("Starting update...")).toBeDefined()
+    expect(getByText("ota:startingHotspotUpdate")).toBeDefined()
   })
 
   it("transitions to updating on in_progress ota_status", () => {

@@ -154,6 +154,26 @@ describe("planArtifacts", () => {
 })
 
 describe("prepareArtifacts", () => {
+  test("announces every file before its download, including an unknown-length transfer", async () => {
+    const progress = mock((_event: import("../OtaArtifactDownloader").OtaArtifactDownloadProgress) => {})
+    await prepareArtifacts(planArtifacts(checkResult()), progress, async (entry, destination, report) => {
+      expect(progress.mock.calls.at(-1)?.[0]).toMatchObject({kind: entry.kind, artifactPercent: 0, contentLength: 0})
+      report?.(100, entry.kind === "mtk" ? 0 : 100)
+      files.set(destination, entry.kind)
+      return {statusCode: 200}
+    })
+    expect(
+      progress.mock.calls.map(([event]) => [event.kind, event.index, event.totalCount, event.artifactPercent]),
+    ).toEqual([
+      ["apk", 0, 3, 0],
+      ["apk", 0, 3, 100],
+      ["mtk", 1, 3, 0],
+      ["mtk", 1, 3, 0],
+      ["bes", 2, 3, 0],
+      ["bes", 2, 3, 100],
+    ])
+  })
+
   test("downloads, verifies, and stores by hash", async () => {
     const plan = [{kind: "bes" as const, url: BES_URL, sha256: hashes.bes}]
     const prepared = await prepareArtifacts(plan)

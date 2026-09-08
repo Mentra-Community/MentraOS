@@ -22,6 +22,7 @@ import GlobalEventEmitter from "../utils/GlobalEventEmitter"
 import {isGlassesConnected, useGlassesStore} from "../stores/glasses"
 import {resolveOtaManifestUrl} from "./otaManifestUrl"
 import {hotspotOtaTransport, type HotspotOtaPhase} from "./HotspotOtaTransport"
+import type {OtaArtifactDownloadProgress} from "./OtaArtifactDownloader"
 import type {OtaCheckCurrentGlassesResult} from "./OtaUpdateCheckService"
 import {deriveDisplayState, type DisplayState} from "./otaDisplayState"
 import {
@@ -171,6 +172,7 @@ export interface OtaInstallSnapshot {
   /** Pre-ota_start phone staging/join state for a hotspot attempt. */
   hotspotPhase: HotspotOtaPhase
   hotspotArtifactPercent: number | null
+  hotspotArtifact: OtaArtifactDownloadProgress | null
   /** Transport selected from the checked glasses capabilities and Wi-Fi state. */
   transport: "wifi" | "hotspot"
 }
@@ -189,6 +191,7 @@ class OtaInstallCoordinator {
   private hotspotManifestUrl: string | null = null
   private hotspotPhase: HotspotOtaPhase = "idle"
   private hotspotArtifactPercent: number | null = null
+  private hotspotArtifact: OtaArtifactDownloadProgress | null = null
 
   // Genuinely session-local state (was component state/refs).
   private errorMsg = ""
@@ -303,6 +306,7 @@ class OtaInstallCoordinator {
     this.hotspotManifestUrl = null
     this.hotspotPhase = "idle"
     this.hotspotArtifactPercent = null
+    this.hotspotArtifact = null
     return this.selectedTransport
   }
 
@@ -510,6 +514,7 @@ class OtaInstallCoordinator {
       versionChangePhase: this.deriveVersionChangePhase(connected),
       hotspotPhase: this.hotspotPhase,
       hotspotArtifactPercent: this.hotspotArtifactPercent,
+      hotspotArtifact: this.hotspotArtifact ? {...this.hotspotArtifact} : null,
       transport: this.selectedTransport,
     }
   }
@@ -1501,7 +1506,9 @@ class OtaInstallCoordinator {
           }
           this.hotspotManifestUrl = await hotspotOtaTransport.prepare(this.preparedCheckResult, (progress) => {
             this.hotspotPhase = progress.phase
-            this.hotspotArtifactPercent = progress.artifact?.artifactPercent ?? null
+            this.hotspotArtifact = progress.artifact ? {...progress.artifact} : null
+            this.hotspotArtifactPercent =
+              progress.artifact && progress.artifact.contentLength > 0 ? progress.artifact.artifactPercent : null
             this.emitInternalChange()
           })
         }
@@ -1581,6 +1588,7 @@ class OtaInstallCoordinator {
     this.hotspotManifestUrl = null
     this.hotspotPhase = "idle"
     this.hotspotArtifactPercent = null
+    this.hotspotArtifact = null
     this.emitInternalChange()
   }
 

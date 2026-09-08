@@ -61,6 +61,7 @@ let installSnapshot: OtaInstallSnapshot = {
   versionChangePhase: null,
   hotspotPhase: "downloading" as const,
   hotspotArtifactPercent: 45,
+  hotspotArtifact: {kind: "mtk", index: 1, totalCount: 3, artifactPercent: 45, bytesWritten: 45, contentLength: 100},
   transport: "hotspot" as const,
 }
 
@@ -201,6 +202,14 @@ describe("useMentraLiveOta", () => {
       versionChangePhase: null,
       hotspotPhase: "downloading",
       hotspotArtifactPercent: 45,
+      hotspotArtifact: {
+        kind: "mtk",
+        index: 1,
+        totalCount: 3,
+        artifactPercent: 45,
+        bytesWritten: 45,
+        contentLength: 100,
+      },
       transport: "hotspot",
     }
   })
@@ -213,6 +222,14 @@ describe("useMentraLiveOta", () => {
       transport: "hotspot",
       hotspotPhase: "downloading",
       hotspotArtifactPercent: 45,
+      hotspotArtifact: {
+        kind: "mtk",
+        index: 1,
+        totalCount: 3,
+        artifactPercent: 45,
+        bytesWritten: 45,
+        contentLength: 100,
+      },
     })
 
     installSnapshot = {
