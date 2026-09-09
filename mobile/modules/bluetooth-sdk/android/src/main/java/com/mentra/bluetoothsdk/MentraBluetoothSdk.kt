@@ -497,6 +497,11 @@ class MentraBluetoothSdk private constructor(
         deviceManager.clearDisplay()
     }
 
+    /** Sets session-only content shown below the standard dashboard status header. */
+    fun setDashboardContent(content: String) {
+        deviceManager.setDashboardContent(content)
+    }
+
     fun showDashboard() {
         deviceManager.showDashboard()
     }

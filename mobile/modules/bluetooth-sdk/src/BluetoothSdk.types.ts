@@ -1117,6 +1117,8 @@ export interface BluetoothSdkPublicModule {
 
   displayText(text: string, x?: number, y?: number, size?: number): Promise<void>
   clearDisplay(): Promise<void>
+  /** Set session-only content below the dashboard status header. Pass an empty string to reset it. */
+  setDashboardContent(content: string): Promise<void>
   showDashboard(): Promise<void>
   setDashboardPosition(height: number, depth: number): Promise<void>
   setHeadUpAngle(angleDegrees: number): Promise<void>
