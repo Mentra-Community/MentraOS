@@ -358,6 +358,9 @@ struct ViewState {
     private var dashboardSceneCleanupPending = false
     private var dashboardSceneCleanupTask: Task<Void, Never>?
     private var pendingDashboardSceneElementIds = Set<String>()
+    private var dashboardSceneCleanupDeferred: Bool {
+        dashboardSceneCleanupPending || dashboardSceneCleanupTask != nil
+    }
 
     override init() {
         Bridge.log("MAN: init()")
@@ -1277,7 +1280,8 @@ struct ViewState {
         // wipes everything anyway.
         if let prevFrame = sceneStates[stateIndex] {
             sceneStates[stateIndex] = nil
-            if stateIndex == 1, dashboardSceneCleanupPending {
+            if stateIndex == 1, dashboardSceneCleanupDeferred {
+                dashboardSceneCleanupPending = true
                 pendingDashboardSceneElementIds.formUnion(prevFrame.elements.map(\.id))
             } else if layoutType != "clear_view" {
                 let ids = prevFrame.elements.map(\.id)
@@ -1372,7 +1376,7 @@ struct ViewState {
             // clearDisplay is the per-device "wipe what's there" (blank-in-place
             // on G2 - no page rebuild).
             let prevLegacyType = viewStates[stateIndex].layoutType
-            let cleanupDeferred = stateIndex == 1 && dashboardSceneCleanupPending
+            let cleanupDeferred = stateIndex == 1 && dashboardSceneCleanupDeferred
             if !cleanupDeferred,
                !prevLegacyType.isEmpty,
                prevLegacyType != "clear_view",
@@ -1386,7 +1390,8 @@ struct ViewState {
             // glasses. Sweep the old app's elements (SGC registries still map
             // them), then paint the new frame from scratch. The boot message
             // interposes between apps in practice, so this isn't visible.
-            if stateIndex == 1, dashboardSceneCleanupPending {
+            if stateIndex == 1, dashboardSceneCleanupDeferred {
+                dashboardSceneCleanupPending = true
                 pendingDashboardSceneElementIds.formUnion(prevFrame.elements.map(\.id))
             } else {
                 let ids = prevFrame.elements.map(\.id)

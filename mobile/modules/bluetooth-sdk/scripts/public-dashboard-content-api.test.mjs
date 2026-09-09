@@ -70,5 +70,5 @@ test("keeps displayEvent internal and defers dashboard scene cleanup until rende
     /private func dispatchSceneFrame[\s\S]*?await (?:self\.)?renderCurrentState\(\)/,
   )
   assert.match(androidManager, /cleanupDeferred = stateIndex == 1 && dashboardSceneCleanupPending/)
-  assert.match(appleManager, /cleanupDeferred = stateIndex == 1 && dashboardSceneCleanupPending/)
+  assert.match(appleManager, /cleanupDeferred = stateIndex == 1 && dashboardSceneCleanupDeferred/)
 })

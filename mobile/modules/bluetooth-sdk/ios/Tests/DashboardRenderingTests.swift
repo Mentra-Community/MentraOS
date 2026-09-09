@@ -59,6 +59,8 @@ final class DashboardRenderingTests: XCTestCase {
             "view": "dashboard",
             "scene": ["appId": "new-scene", "sceneEpoch": 2, "elements": [[String: Any]]()],
         ])
+        XCTAssertEqual(display.clearDisplayCount, 0)
+        XCTAssertTrue(display.scenes.isEmpty)
         display.finishCleanup()
         await update.value
         await manager.sendCurrentState().value
@@ -74,6 +76,7 @@ private final class PausedDisplay: SGCManager {
     let hasMic = false
     let cleanupStarted = XCTestExpectation(description: "cleanup suspended")
     var cleanupCount = 0
+    var clearDisplayCount = 0
     var texts: [String] = []
     var scenes: [SceneFrame] = []
     private var continuation: CheckedContinuation<Void, Never>?
@@ -99,7 +102,9 @@ private final class PausedDisplay: SGCManager {
         scenes.append(frame)
     }
 
-    func clearDisplay() {}
+    func clearDisplay() {
+        clearDisplayCount += 1
+    }
 
     // Unused device capabilities for the display test double.
     func setMicEnabled(_: Bool) {}
