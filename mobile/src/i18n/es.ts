@@ -50,6 +50,25 @@ const es = {
     hardwareIncompatibleMessage:
       "{{app}} requiere hardware que no está disponible en tus lentes conectados: {{missing}}",
   },
+  settings: {
+    ...en.settings,
+    forgetGlassesWhilePairing:
+      "El emparejamiento Bluetooth está en curso. Acepta o cierra primero el diálogo de emparejamiento del sistema y luego intenta desvincular las gafas de nuevo.",
+  },
+  pairing: {
+    ...en.pairing,
+    nearbyNotInPairingModeHint:
+      "Se encontraron gafas Mentra Live cerca, pero no están en modo de emparejamiento. Pulsa el botón de encendido 3 veces rápido y vuelve a intentarlo.",
+    notInPairingModeLabel: "No está en modo de emparejamiento",
+    notInPairingModeAlertTitle: "Activa el modo de emparejamiento",
+    notInPairingModeAlertMessage:
+      "Pulsa el botón de encendido 3 veces rápido. El LED parpadea y las gafas dicen un código de 4 caracteres. Luego selecciona las gafas de nuevo.",
+    pairingCodeLabel: "Código {{code}}",
+    legacyFirmwareLabel: "Firmware heredado",
+    livePairingModeInfo:
+      "Pulsa el botón de encendido 3 veces rápido. El LED parpadea y las gafas dicen un código de 4 caracteres (0–9, A–F). Compara ese código en la lista si aparece más de una unidad.",
+    noGlassesFoundHint: "Asegúrate de pulsar el botón de encendido 3 veces rápido y vuelve a intentarlo.",
+  },
   demoNavigator: {
     componentsTab: "Componentes",
     debugTab: "Debug",
@@ -127,6 +146,63 @@ const es = {
       content:
         "No se han agregado episodios favoritos todavía. ¡Presiona el corazón dentro de un episodio para agregarlo a tus favoritos!",
     },
+  },
+  qrScan: {
+    defaultTitle: "Escanear código QR",
+    defaultHint: "Apunta la cámara a un código QR",
+    checkingPermission: "Comprobando permiso de cámara\u2026",
+    permissionTitle: "Se necesita acceso a la cámara",
+    permissionBody: "Necesitamos tu cámara para escanear códigos QR. Solo se usa mientras esta pantalla está abierta.",
+    grantAccess: "Permitir acceso a la cámara",
+    openSettings: "Abrir ajustes",
+    permissionDeniedTitle: "Permiso denegado",
+    permissionDeniedBody: "Activa el acceso a la cámara en Ajustes para escanear códigos QR.",
+  },
+  profileSettings: {
+    ...en.profileSettings,
+    workspaceName: "Nombre",
+    workspaceUrl: "URL del espacio de trabajo",
+    mentraWorkspace: "Mentra",
+  },
+  versionCheck: {
+    ...en.versionCheck,
+    managedUpdateDescription:
+      "Esta versión de la app Mentra ya no es compatible con {{name}}. Las actualizaciones las distribuye la gestión de dispositivos de tu organización. Contacta con tu administrador de TI para actualizar.",
+    contactSupport: "Contactar con soporte",
+  },
+  workspace: {
+    or: "o",
+    title: "Inicio de sesión de la organización",
+    heading: "Conéctate a tu organización",
+    description: "Introduce la dirección que te dio tu administrador de TI.",
+    connectAction: "Inicia sesión en tu organización",
+    urlLabel: "Dirección de la organización",
+    urlPlaceholder: "empresa.ejemplo.com",
+    urlHelper: "Ejemplo: empresa.ejemplo.com",
+    unknownResolutionError: "No pudimos cargar este espacio de trabajo. Inténtalo de nuevo.",
+    notFoundError:
+      "No encontramos un espacio de trabajo de Mentra en esa dirección. Revisa la dirección o consulta a tu administrador de TI.",
+    configurationError:
+      "No se pudo verificar este espacio de trabajo. Pide a tu administrador de TI que revise su configuración.",
+    confirmTitle: "Confirmar organización",
+    candidateExpired: "Esta confirmación caducó. Vuelve a introducir la dirección de tu organización.",
+    enterAnotherUrl: "Introducir dirección de la organización",
+    connectTo: "Conectar con {{name}}",
+    continueTo: "Continuar con {{name}}",
+    workspaceLabel: "Espacio de trabajo",
+    signInLabel: "Inicio de sesión",
+    microsoftOrganizationAccount: "Cuenta de organización de Microsoft",
+    mentraAccount: "Cuenta de Mentra",
+    confirmDescription:
+      "Al continuar, esta organización se convierte en tu despliegue activo de Mentra. Sus servicios y políticas se aplican antes de iniciar sesión.",
+    signInDescription: "Continúa con la cuenta de la organización configurada para este espacio de trabajo.",
+    continueWithMicrosoft: "Continuar con Microsoft",
+    returnToMentra: "Volver a Mentra",
+    change: "Cambiar",
+    noActiveWorkspace: "No hay ningún espacio de trabajo de organización activo.",
+    signInFailedTitle: "Error al iniciar sesión",
+    signInFailedDescription:
+      "Microsoft no pudo iniciar tu sesión en este espacio de trabajo. Inténtalo de nuevo o contacta con tu equipo de TI.",
   },
 } satisfies TranslationResource
 

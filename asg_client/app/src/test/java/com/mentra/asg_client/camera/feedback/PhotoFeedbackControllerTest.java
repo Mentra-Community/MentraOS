@@ -2,6 +2,7 @@ package com.mentra.asg_client.camera.feedback;
 
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.ArgumentMatchers.eq;
+import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.never;
@@ -22,6 +23,11 @@ import org.mockito.ArgumentCaptor;
 import org.robolectric.RobolectricTestRunner;
 import org.robolectric.annotation.Config;
 
+import java.util.ArrayDeque;
+import java.util.Deque;
+import java.util.concurrent.ExecutorService;
+import java.util.concurrent.Executors;
+
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 33)
 public class PhotoFeedbackControllerTest {
@@ -36,46 +42,46 @@ public class PhotoFeedbackControllerTest {
         handler = mock(Handler.class);
         clock = new MutableClock();
         when(hardwareManager.supportsAudioPlayback()).thenReturn(true);
-        when(hardwareManager.playAudioAssetOverlayTracked(AudioAssets.CAMERA_PREP_CLICK))
+        when(hardwareManager.playAudioAssetOverlayTracked(
+                        AudioAssets.CAMERA_PREP_CLICK,
+                        AsgConstants.CAMERA_PREP_CLICK_PLAYBACK_VOLUME))
                 .thenReturn(41L);
-        when(hardwareManager.playAudioAssetOverlayTracked(AudioAssets.CAMERA_SNAP))
+        when(hardwareManager.playAudioAssetOverlayTracked(
+                        AudioAssets.CAMERA_SNAP,
+                        AsgConstants.CAMERA_SNAP_PLAYBACK_VOLUME))
                 .thenReturn(42L);
         controller = new PhotoFeedbackController(hardwareManager, handler, clock);
     }
 
     @Test
-    public void startColdCapture_playsPrepAndSchedulesCadenceAndTimeout() {
+    public void startColdCapture_playsSequenceWithoutCadenceTimer() {
         PhotoFeedbackController.Token token = controller.start("cold", false);
-        ArgumentCaptor<Runnable> cadenceRunnable = ArgumentCaptor.forClass(Runnable.class);
         ArgumentCaptor<Runnable> timeoutRunnable = ArgumentCaptor.forClass(Runnable.class);
 
         assertThat(token).isNotNull();
         verify(hardwareManager)
-                .playAudioAssetOverlayTracked(AudioAssets.CAMERA_PREP_CLICK);
-        verify(handler)
-                .postDelayed(
-                        cadenceRunnable.capture(),
-                        eq(AsgConstants.CAMERA_PREP_CLICK_INTERVAL_MS));
+                .playAudioAssetOverlayTracked(
+                        AudioAssets.CAMERA_PREP_CLICK,
+                        AsgConstants.CAMERA_PREP_CLICK_PLAYBACK_VOLUME);
+        verify(handler, never())
+                .postDelayed(any(Runnable.class), eq(AsgConstants.CAMERA_PREP_CLICK_INTERVAL_MS));
         verify(handler)
                 .postDelayed(
                         timeoutRunnable.capture(),
                         eq(PhotoFeedbackController.FEEDBACK_SAFETY_TIMEOUT_MS));
 
-        clearInvocations(hardwareManager);
-        cadenceRunnable.getValue().run();
-        verify(hardwareManager)
-                .playAudioAssetOverlayTracked(AudioAssets.CAMERA_PREP_CLICK);
-
         timeoutRunnable.getValue().run();
         clearInvocations(hardwareManager);
         controller.playSnap(token, "late frame");
         verify(hardwareManager, never())
-                .playAudioAssetOverlayTracked(AudioAssets.CAMERA_SNAP);
+                .playAudioAssetOverlayTracked(
+                        AudioAssets.CAMERA_SNAP,
+                        AsgConstants.CAMERA_SNAP_PLAYBACK_VOLUME);
     }
 
     @Test
     public void exposureStarted_schedulesSnapAtConfiguredLeadTime() {
-        PhotoFeedbackController.Token token = controller.start("warm", true);
+        PhotoFeedbackController.Token token = controller.start("warm", false);
         clearInvocations(handler, hardwareManager);
         long exposureMs = 250L;
         long expectedDelayMs = exposureMs - AsgConstants.CAMERA_SNAP_TARGET_LEAD_MS;
@@ -85,12 +91,15 @@ public class PhotoFeedbackControllerTest {
 
         verify(handler).postDelayed(snapRunnable.capture(), eq(expectedDelayMs));
         snapRunnable.getValue().run();
-        verify(hardwareManager).playAudioAssetOverlayTracked(AudioAssets.CAMERA_SNAP);
+        verify(hardwareManager)
+                .playAudioAssetOverlayTracked(
+                        AudioAssets.CAMERA_SNAP,
+                        AsgConstants.CAMERA_SNAP_PLAYBACK_VOLUME);
     }
 
     @Test
     public void exposureStarted_subtractsCallbackLatencyFromSnapDelay() {
-        PhotoFeedbackController.Token token = controller.start("warm", true);
+        PhotoFeedbackController.Token token = controller.start("warm", false);
         clearInvocations(handler, hardwareManager);
         long sensorTimestampNs = 1_000_000_000L;
         clock.elapsedRealtimeNs = sensorTimestampNs + 50_000_000L;
@@ -106,19 +115,109 @@ public class PhotoFeedbackControllerTest {
     }
 
     @Test
+    public void warmCapture_playsImmediatelyAndDoesNotRepeatAtExposure() {
+        PhotoFeedbackController.Token token = controller.start("warm", true);
+        verify(hardwareManager).playAudioAssetOverlayTracked(
+                AudioAssets.CAMERA_SNAP, AsgConstants.CAMERA_SNAP_PLAYBACK_VOLUME);
+        controller.onExposureStarted(token, 0L, 250_000_000L);
+        controller.playSnap(token, "JPEG ready");
+        verify(hardwareManager).playAudioAssetOverlayTracked(
+                AudioAssets.CAMERA_SNAP, AsgConstants.CAMERA_SNAP_PLAYBACK_VOLUME);
+        verify(hardwareManager, never()).playAudioAssetOverlayTracked(
+                AudioAssets.CAMERA_PREP_CLICK, AsgConstants.CAMERA_PREP_CLICK_PLAYBACK_VOLUME);
+    }
+
+    @Test
+    public void warmCapture_doesNotPlayOnTheCallersThread() {
+        // start() runs inline on the UART reader thread; opening the I2S path blocks there.
+        Deque<Runnable> queued = new ArrayDeque<>();
+        PhotoFeedbackController deferred =
+                new PhotoFeedbackController(hardwareManager, handler, clock, queued::add);
+
+        deferred.start("warm-async", true);
+
+        verify(hardwareManager, never())
+                .playAudioAssetOverlayTracked(
+                        AudioAssets.CAMERA_SNAP, AsgConstants.CAMERA_SNAP_PLAYBACK_VOLUME);
+        assertThat(queued).hasSize(1);
+
+        queued.remove().run();
+        verify(hardwareManager)
+                .playAudioAssetOverlayTracked(
+                        AudioAssets.CAMERA_SNAP, AsgConstants.CAMERA_SNAP_PLAYBACK_VOLUME);
+    }
+
+    @Test
+    public void warmCaptureQueuedBehindInFlightShot_defersSnapToExposure() {
+        // Warm but not ready: enqueuePhotoRequest() queues this behind the running capture, so an
+        // immediate shutter would sound well before the frame it belongs to.
+        PhotoFeedbackController.Token token = controller.start("warm-queued", true, false);
+
+        verify(hardwareManager, never())
+                .playAudioAssetOverlayTracked(
+                        AudioAssets.CAMERA_SNAP, AsgConstants.CAMERA_SNAP_PLAYBACK_VOLUME);
+        // Still warm, so no hold-still cue either.
+        verify(hardwareManager, never())
+                .playAudioAssetOverlayTracked(
+                        AudioAssets.CAMERA_PREP_CLICK, AsgConstants.CAMERA_PREP_CLICK_PLAYBACK_VOLUME);
+
+        controller.playSnap(token, "JPEG ready");
+        verify(hardwareManager)
+                .playAudioAssetOverlayTracked(
+                        AudioAssets.CAMERA_SNAP, AsgConstants.CAMERA_SNAP_PLAYBACK_VOLUME);
+    }
+
+    @Test
+    public void warmCaptureAfterCleanup_doesNotThrowOnTheCallerThread() {
+        // cleanup() shuts the audio executor down. start() runs inline on the UART reader thread,
+        // which has no catch-all, so a RejectedExecutionException here would kill the serial
+        // reader and every MCU event behind it.
+        ExecutorService executor = Executors.newSingleThreadExecutor();
+        PhotoFeedbackController controllerWithRealExecutor =
+                new PhotoFeedbackController(hardwareManager, handler, clock, executor);
+        controllerWithRealExecutor.cleanup();
+        assertThat(executor.isShutdown()).isTrue();
+
+        PhotoFeedbackController.Token token = controllerWithRealExecutor.start("warm-raced", true);
+
+        assertThat(token).isNotNull();
+        verify(hardwareManager, never())
+                .playAudioAssetOverlayTracked(
+                        AudioAssets.CAMERA_SNAP, AsgConstants.CAMERA_SNAP_PLAYBACK_VOLUME);
+    }
+
+    @Test
+    public void warmCaptureFailingBeforeDispatch_staysSilent() {
+        Deque<Runnable> queued = new ArrayDeque<>();
+        PhotoFeedbackController deferred =
+                new PhotoFeedbackController(hardwareManager, handler, clock, queued::add);
+
+        PhotoFeedbackController.Token token = deferred.start("warm-failed", true);
+        deferred.stopForFailure(token);
+        queued.remove().run();
+
+        verify(hardwareManager, never())
+                .playAudioAssetOverlayTracked(
+                        AudioAssets.CAMERA_SNAP, AsgConstants.CAMERA_SNAP_PLAYBACK_VOLUME);
+    }
+
+    @Test
     public void shortExposure_playsSnapImmediately() {
-        PhotoFeedbackController.Token token = controller.start("short", true);
+        PhotoFeedbackController.Token token = controller.start("short", false);
         clearInvocations(handler, hardwareManager);
 
         controller.onExposureStarted(
                 token, 0L, AsgConstants.CAMERA_SNAP_TARGET_LEAD_MS * 1_000_000L);
 
-        verify(hardwareManager).playAudioAssetOverlayTracked(AudioAssets.CAMERA_SNAP);
+        verify(hardwareManager)
+                .playAudioAssetOverlayTracked(
+                        AudioAssets.CAMERA_SNAP,
+                        AsgConstants.CAMERA_SNAP_PLAYBACK_VOLUME);
     }
 
     @Test
     public void failureBeforeDelayedSnap_preventsSnapPlayback() {
-        PhotoFeedbackController.Token token = controller.start("failed", true);
+        PhotoFeedbackController.Token token = controller.start("failed", false);
         clearInvocations(handler, hardwareManager);
         ArgumentCaptor<Runnable> snapRunnable = ArgumentCaptor.forClass(Runnable.class);
         long exposureMs = 250L;
@@ -132,12 +231,14 @@ public class PhotoFeedbackControllerTest {
         snapRunnable.getValue().run();
 
         verify(hardwareManager, never())
-                .playAudioAssetOverlayTracked(AudioAssets.CAMERA_SNAP);
+                .playAudioAssetOverlayTracked(
+                        AudioAssets.CAMERA_SNAP,
+                        AsgConstants.CAMERA_SNAP_PLAYBACK_VOLUME);
     }
 
     @Test
     public void laterColdCapture_waitsWhileEarlierRequestIsExposing() {
-        PhotoFeedbackController.Token first = controller.start("first", true);
+        PhotoFeedbackController.Token first = controller.start("first", false);
         controller.onExposureStarted(first, 0L, 0L);
         clearInvocations(hardwareManager);
 
@@ -145,7 +246,9 @@ public class PhotoFeedbackControllerTest {
 
         assertThat(queued).isNotNull();
         verify(hardwareManager, never())
-                .playAudioAssetOverlayTracked(AudioAssets.CAMERA_PREP_CLICK);
+                .playAudioAssetOverlayTracked(
+                        AudioAssets.CAMERA_PREP_CLICK,
+                        AsgConstants.CAMERA_PREP_CLICK_PLAYBACK_VOLUME);
     }
 
     @Test
@@ -160,19 +263,23 @@ public class PhotoFeedbackControllerTest {
         verify(handler).postDelayed(resumeRunnable.capture(), eq(0L));
         resumeRunnable.getValue().run();
         verify(hardwareManager)
-                .playAudioAssetOverlayTracked(AudioAssets.CAMERA_PREP_CLICK);
+                .playAudioAssetOverlayTracked(
+                        AudioAssets.CAMERA_PREP_CLICK,
+                        AsgConstants.CAMERA_PREP_CLICK_PLAYBACK_VOLUME);
     }
 
     @Test
     public void timeoutByRequestId_terminalizesMatchingFeedback() {
-        PhotoFeedbackController.Token token = controller.start("timed-out", true);
+        PhotoFeedbackController.Token token = controller.start("timed-out", false);
         clearInvocations(hardwareManager);
 
         controller.stopForTimeout("timed-out");
         controller.playSnap(token, "late frame");
 
         verify(hardwareManager, never())
-                .playAudioAssetOverlayTracked(AudioAssets.CAMERA_SNAP);
+                .playAudioAssetOverlayTracked(
+                        AudioAssets.CAMERA_SNAP,
+                        AsgConstants.CAMERA_SNAP_PLAYBACK_VOLUME);
     }
 
     @Test
@@ -185,7 +292,9 @@ public class PhotoFeedbackControllerTest {
         controller.start("cold", false);
 
         verify(hardwareManager, never())
-                .playAudioAssetOverlayTracked(AudioAssets.CAMERA_PREP_CLICK);
+                .playAudioAssetOverlayTracked(
+                        AudioAssets.CAMERA_PREP_CLICK,
+                        AsgConstants.CAMERA_PREP_CLICK_PLAYBACK_VOLUME);
         verify(handler)
                 .postDelayed(
                         resumeRunnable.capture(),
@@ -193,7 +302,9 @@ public class PhotoFeedbackControllerTest {
         clock.nowMs = PhotoFeedbackController.SNAP_PREP_RESUME_DELAY_MS;
         resumeRunnable.getValue().run();
         verify(hardwareManager)
-                .playAudioAssetOverlayTracked(AudioAssets.CAMERA_PREP_CLICK);
+                .playAudioAssetOverlayTracked(
+                        AudioAssets.CAMERA_PREP_CLICK,
+                        AsgConstants.CAMERA_PREP_CLICK_PLAYBACK_VOLUME);
     }
 
     @Test
@@ -220,7 +331,9 @@ public class PhotoFeedbackControllerTest {
 
     @Test
     public void laterSnap_doesNotTruncateEarlierSnap() {
-        when(hardwareManager.playAudioAssetOverlayTracked(AudioAssets.CAMERA_SNAP))
+        when(hardwareManager.playAudioAssetOverlayTracked(
+                        AudioAssets.CAMERA_SNAP,
+                        AsgConstants.CAMERA_SNAP_PLAYBACK_VOLUME))
                 .thenReturn(42L, 43L);
         PhotoFeedbackController.Token first = controller.start("first", true);
         controller.playSnap(first, "first");
@@ -230,25 +343,24 @@ public class PhotoFeedbackControllerTest {
         controller.playSnap(second, "second");
 
         verify(hardwareManager, never()).stopAudioOverlayPlayback(42L);
-        verify(hardwareManager).playAudioAssetOverlayTracked(AudioAssets.CAMERA_SNAP);
+        verify(hardwareManager)
+                .playAudioAssetOverlayTracked(
+                        AudioAssets.CAMERA_SNAP,
+                        AsgConstants.CAMERA_SNAP_PLAYBACK_VOLUME);
     }
 
     @Test
-    public void cleanup_stopsPrepAndMakesCadenceCallbackInert() {
-        ArgumentCaptor<Runnable> cadence = ArgumentCaptor.forClass(Runnable.class);
+    public void cleanup_stopsPrepSequence() {
         controller.start("cleanup", false);
-        verify(handler)
-                .postDelayed(
-                        cadence.capture(),
-                        eq(AsgConstants.CAMERA_PREP_CLICK_INTERVAL_MS));
         clearInvocations(hardwareManager);
 
         controller.cleanup();
-        cadence.getValue().run();
 
         verify(hardwareManager).stopAudioOverlayPlayback(41L);
         verify(hardwareManager, times(0))
-                .playAudioAssetOverlayTracked(AudioAssets.CAMERA_PREP_CLICK);
+                .playAudioAssetOverlayTracked(
+                        AudioAssets.CAMERA_PREP_CLICK,
+                        AsgConstants.CAMERA_PREP_CLICK_PLAYBACK_VOLUME);
     }
 
     private static final class MutableClock implements PhotoFeedbackController.Clock {

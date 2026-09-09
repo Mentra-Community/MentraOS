@@ -1,10 +1,10 @@
 import {engine} from "@mentra/engine"
 
 import {attemptReconnectToDefaultWearable} from "@/effects/Reconnect"
-import {useCoreStore} from "@mentra/engine/internal"
+import {useCoreStore} from "@mentra/engine-host-internal"
 import {useGlassesStore} from "../../modules/engine/src/stores/glasses"
 import {SETTINGS} from "@mentra/engine"
-import {useSettingsStore} from "@mentra/engine/internal"
+import {useSettingsStore} from "@mentra/engine-host-internal"
 import {resetBluetoothSdkMock} from "@/test-utils/mockBluetoothSdk"
 
 jest.mock("@/utils/PermissionsUtils", () => ({

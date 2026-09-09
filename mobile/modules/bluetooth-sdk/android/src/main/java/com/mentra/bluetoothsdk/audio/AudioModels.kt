@@ -94,6 +94,21 @@ data class MicLc3Event(
     }
 }
 
+internal data class MicHealth(
+    val sequenceGapEvents: Long,
+    val decodeFailures: Long,
+    val lastLc3ReceivedAt: Long?,
+    val lastPcmProducedAt: Long?,
+) {
+    fun toMap(): Map<String, Any> =
+        buildMap {
+            put("sequenceGapEvents", sequenceGapEvents)
+            put("decodeFailures", decodeFailures)
+            lastLc3ReceivedAt?.let { put("lastLc3ReceivedAt", it) }
+            lastPcmProducedAt?.let { put("lastPcmProducedAt", it) }
+        }
+}
+
 data class LocalTranscriptionEvent(
     val text: String,
     val isFinal: Boolean,

@@ -90,6 +90,40 @@ export class PhoneCameraFovCoordinator {
     })
   }
 
+  /**
+   * Re-assert the current override on the glasses.
+   *
+   * The on-connect device-settings push replays the persistent `camera_fov`,
+   * so glasses that connect mid-call come up at the user's saved value and
+   * silently drop a miniapp's override — a Mentra Call wearer loses the 102°
+   * bottom crop by connecting their glasses after joining.
+   *
+   * The effective lease is recomputed inside [enqueue], not captured at call
+   * time: a `setOverride` or `releaseForApp` already queued ahead of this must
+   * win, and it is this coordinator that has to be the authoritative last
+   * writer. Sends the complete override — `fov` *and* `roiPosition` — because
+   * the scalar alone leaves the ROI wherever the persistent setting put it.
+   *
+   * No-op in legacy mode: those commands restart the camera HAL, which is far
+   * too expensive to fire on every reconnect.
+   */
+  reapplyEffectiveOverride(): Promise<void> {
+    return this.enqueue(async () => {
+      if (this.legacyMode) return
+      const leaseId = this.effectiveLeaseId
+      if (!leaseId) return
+      const entry = [...this.overrides.values()].find((candidate) => candidate.leaseId === leaseId)
+      if (!entry) return
+      await BluetoothSdk.setCameraFovOverride({
+        leaseId,
+        fov: entry.fov,
+        roiPosition: entry.roiPosition,
+        ttlMs: CAMERA_FOV_OVERRIDE_TTL_MS,
+      })
+      this.scheduleRefresh()
+    })
+  }
+
   releaseForApp(packageName: string): Promise<void> {
     return this.enqueue(async () => {
       const removed = this.overrides.get(packageName)

@@ -37,6 +37,7 @@
   },
   "devDependencies": {
     "@types/bun": "latest",
+    "jose": "^5.9.6",
     "typescript": "^5.7.0"
   }
 }

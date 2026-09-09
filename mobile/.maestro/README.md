@@ -43,6 +43,7 @@ npm run test:maestro:ci
 
 ### Simulated Hardware Tests
 
+- `04b-mentra-live-adaptive-scan.yaml` - Direct Mentra Live scan, timeout help, and in-place retry
 - `04-simulated-glasses-pairing.yaml` - Pairing flow with simulated glasses (built-in feature)
 - `06-launch-app-simulated-glasses.yaml` - Launch Mira app on simulated glasses
 

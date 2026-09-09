@@ -100,4 +100,7 @@ export const mentraLive: Capabilities = {
 
   // WiFi capabilities - Mentra Live supports WiFi
   hasWifi: true,
+
+  // OTA capabilities - Mentra Live supports ASG/BES/MTK OTA updates
+  hasOta: true,
 };

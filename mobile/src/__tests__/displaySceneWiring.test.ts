@@ -22,7 +22,7 @@ import type {DisplayRequestResult} from "../../modules/engine/src/services/Local
 import {useGlassesStore} from "../../modules/engine/src/stores/glasses"
 import {useSettingsStore, SETTINGS} from "../../modules/engine/src/stores/settings"
 import {bluetoothSdkMock} from "../test-utils/mockBluetoothSdk"
-import {flushDisplayCoalesceForTests, useDisplayStore} from "@mentra/engine/internal"
+import {flushDisplayCoalesceForTests, useDisplayStore} from "@mentra/engine-host-internal"
 
 function setDeviceModel(model: string) {
   useSettingsStore.getState().setSetting(SETTINGS.default_wearable.key, model, false)

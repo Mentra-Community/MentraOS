@@ -9,7 +9,9 @@ import com.mentra.asg_client.io.peripheral.events.FactoryResetEvent;
 import com.mentra.asg_client.io.peripheral.events.FileTransferAckEvent;
 import com.mentra.asg_client.io.peripheral.events.HotspotTriggerEvent;
 import com.mentra.asg_client.io.peripheral.events.McuEvent;
+import com.mentra.asg_client.io.peripheral.events.PairingModeExitEvent;
 import com.mentra.asg_client.io.peripheral.events.ShutdownEvent;
+import com.mentra.asg_client.io.peripheral.events.SpeakPairingCodeEvent;
 import com.mentra.asg_client.io.peripheral.events.SwipeVolumeEvent;
 import com.mentra.asg_client.io.peripheral.events.SwitchEvent;
 import com.mentra.asg_client.io.peripheral.events.TouchEvent;
@@ -61,7 +63,19 @@ public final class McuEventParser {
                 if (b == null) {
                     return null;
                 }
-                return new BatteryEvent(b.optInt("pt", -1), b.optInt("vt", -1));
+                return new BatteryEvent(
+                        b.optInt("pt", -1), b.optInt("vt", -1),
+                        Boolean.TRUE.equals(b.opt("active_charging")));
+
+            case "hm_spkcode":
+                if (b == null) {
+                    return null;
+                }
+                String code = b.optString("code", "").trim();
+                return code.isEmpty() ? null : new SpeakPairingCodeEvent(code);
+
+            case "hm_pairexit":
+                return new PairingModeExitEvent(b == null ? "unknown" : b.optString("reason", "unknown"));
 
             case "sr_swst":
                 if (b == null) {

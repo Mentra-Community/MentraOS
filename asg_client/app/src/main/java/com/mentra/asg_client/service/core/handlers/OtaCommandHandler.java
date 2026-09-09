@@ -114,7 +114,8 @@ public class OtaCommandHandler implements ICommandHandler {
             return false;
         }
 
-        // Start OTA from phone request
+        // Start OTA from phone request. The persisted restart marker plus actual AP state are
+        // authoritative across ASG replacement; the phone does not label the transport.
         otaHelper.startOtaFromPhone(otaVersionUrl);
         Log.i(TAG, "📱 OTA started from phone command");
         return true;

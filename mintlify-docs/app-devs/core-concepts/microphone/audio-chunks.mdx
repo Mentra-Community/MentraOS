@@ -4,6 +4,10 @@ description: "Raw audio frames and voice-activity detection from the glasses mic
 icon: "microphone"
 ---
 
+import BetaNote from '/snippets/beta-note.mdx'
+
+<BetaNote />
+
 `session.mic` is the low-level audio input: raw frames and a voice-activity
 signal. If you want text, use [`session.transcription`](/app-devs/core-concepts/microphone/speech-to-text)
 instead. Reach for `mic` when you need the audio itself, like recording a clip or

@@ -20,6 +20,7 @@ includedFlows:
   - flows/01-auth-flow.yaml
   - flows/02-tab-navigation.yaml
   - flows/03-app-store.yaml
+  - flows/04b-mentra-live-adaptive-scan.yaml
   - flows/04-simulated-glasses-pairing.yaml
   - flows/05-no-internet-connection.yaml
   - flows/06-launch-app-simulated-glasses.yaml

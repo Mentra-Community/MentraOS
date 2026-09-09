@@ -48,6 +48,25 @@ const ko = {
     hardwareIncompatible: "하드웨어 비호환",
     hardwareIncompatibleMessage: "{{app}}은(는) 연결된 안경에서 사용할 수 없는 하드웨어가 필요합니다: {{missing}}",
   },
+  settings: {
+    ...en.settings,
+    forgetGlassesWhilePairing:
+      "Bluetooth 페어링이 진행 중입니다. 먼저 시스템 페어링 대화상자를 수락하거나 닫은 후 안경 페어링 해제를 다시 시도하세요.",
+  },
+  pairing: {
+    ...en.pairing,
+    nearbyNotInPairingModeHint:
+      "근처에 Mentra Live 안경이 있지만 페어링 모드가 아닙니다. 전원 버튼을 빠르게 3번 누른 뒤 다시 시도하세요.",
+    notInPairingModeLabel: "페어링 모드가 아님",
+    notInPairingModeAlertTitle: "페어링 모드 시작",
+    notInPairingModeAlertMessage:
+      "전원 버튼을 빠르게 3번 누르세요. LED가 깜빡이고 안경이 4자리 코드를 말합니다. 그런 다음 안경을 다시 선택하세요.",
+    pairingCodeLabel: "코드 {{code}}",
+    legacyFirmwareLabel: "레거시 펌웨어",
+    livePairingModeInfo:
+      "전원 버튼을 빠르게 3번 누르세요. LED가 깜빡이고 안경이 4자리 코드(0–9, A–F)를 말합니다. 여러 대가 보이면 그 코드로 확인하세요.",
+    noGlassesFoundHint: "전원 버튼을 빠르게 3번 눌렀는지 확인한 뒤 다시 시도하세요.",
+  },
   demoNavigator: {
     componentsTab: "컴포넌트",
     debugTab: "디버그",
@@ -120,6 +139,60 @@ const ko = {
       heading: "조금 텅 비어 있네요.",
       content: "즐겨찾기가 없습니다. 에피소드에 있는 하트를 눌러서 즐겨찾기에 추가하세요.",
     },
+  },
+  qrScan: {
+    defaultTitle: "QR 코드 스캔",
+    defaultHint: "카메라를 QR 코드에 맞춰 주세요",
+    checkingPermission: "카메라 권한을 확인하는 중\u2026",
+    permissionTitle: "카메라 접근이 필요합니다",
+    permissionBody: "QR 코드를 스캔하려면 카메라가 필요합니다. 이 화면이 열려 있는 동안에만 사용합니다.",
+    grantAccess: "카메라 접근 허용",
+    openSettings: "설정 열기",
+    permissionDeniedTitle: "권한이 거부됨",
+    permissionDeniedBody: "QR 코드를 스캔하려면 설정에서 카메라 접근을 켜 주세요.",
+  },
+  profileSettings: {
+    ...en.profileSettings,
+    workspaceName: "이름",
+    workspaceUrl: "워크스페이스 URL",
+    mentraWorkspace: "Mentra",
+  },
+  versionCheck: {
+    ...en.versionCheck,
+    managedUpdateDescription:
+      "이 버전의 Mentra 앱은 {{name}}에서 더 이상 지원되지 않습니다. 업데이트는 조직의 기기 관리 시스템을 통해 배포됩니다. 업데이트하려면 IT 관리자에게 문의하세요.",
+    contactSupport: "지원팀에 문의",
+  },
+  workspace: {
+    or: "또는",
+    title: "조직 로그인",
+    heading: "조직에 연결",
+    description: "IT 관리자가 제공한 주소를 입력하세요.",
+    connectAction: "조직에 로그인",
+    urlLabel: "조직 주소",
+    urlPlaceholder: "company.example.com",
+    urlHelper: "예: company.example.com",
+    unknownResolutionError: "이 워크스페이스를 불러올 수 없습니다. 다시 시도하세요.",
+    notFoundError: "해당 주소에서 Mentra 워크스페이스를 찾을 수 없습니다. 주소를 확인하거나 IT 관리자에게 문의하세요.",
+    configurationError: "이 워크스페이스를 확인할 수 없습니다. IT 관리자에게 구성 확인을 요청하세요.",
+    confirmTitle: "조직 확인",
+    candidateExpired: "이 확인이 만료되었습니다. 조직 주소를 다시 입력하세요.",
+    enterAnotherUrl: "조직 주소 입력",
+    connectTo: "{{name}}에 연결",
+    continueTo: "{{name}}(으)로 계속",
+    workspaceLabel: "워크스페이스",
+    signInLabel: "로그인",
+    microsoftOrganizationAccount: "Microsoft 조직 계정",
+    mentraAccount: "Mentra 계정",
+    confirmDescription: "계속하면 이 조직이 활성 Mentra 배포가 됩니다. 로그인 전에 해당 서비스와 정책이 적용됩니다.",
+    signInDescription: "이 워크스페이스에 구성된 조직 계정으로 계속하세요.",
+    continueWithMicrosoft: "Microsoft로 계속",
+    returnToMentra: "Mentra로 돌아가기",
+    change: "변경",
+    noActiveWorkspace: "활성화된 조직 워크스페이스가 없습니다.",
+    signInFailedTitle: "로그인 실패",
+    signInFailedDescription:
+      "Microsoft에서 이 워크스페이스에 로그인할 수 없습니다. 다시 시도하거나 IT 팀에 문의하세요.",
   },
 } satisfies TranslationResource
 

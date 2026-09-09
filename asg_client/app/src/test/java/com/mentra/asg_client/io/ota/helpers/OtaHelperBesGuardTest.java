@@ -4,11 +4,14 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatCode;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.anyString;
+import static org.mockito.ArgumentMatchers.argThat;
+import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.clearInvocations;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.never;
 import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.verifyNoInteractions;
 import static org.mockito.Mockito.when;
 
 import android.content.Context;
@@ -220,6 +223,55 @@ public class OtaHelperBesGuardTest {
     }
 
     @Test
+    public void phoneBesInstallPassesGuardToControllerWithoutPhonePresenceGate() {
+        StubRegistry registry = new StubRegistry();
+        IBesOtaController controller = mock(IBesOtaController.class);
+        ValidatedBesArtifact artifact = mock(ValidatedBesArtifact.class);
+        when(controller.startFirmwareUpdateWithInstallGuard(
+                        any(), anyString(), any(JSONObject.class)))
+                .thenReturn(true);
+        registry.setInstance(controller);
+        OtaHelper helper = newHelper(registry);
+        OtaHelper.PhoneConnectionProvider provider =
+                mock(OtaHelper.PhoneConnectionProvider.class);
+        helper.setPhoneConnectionProvider(provider);
+        clearInvocations(provider, controller);
+
+        assertThat(helper.startBesFirmwareInstall(controller, artifact, "ota-owner")).isTrue();
+
+        verify(controller)
+                .startFirmwareUpdateWithInstallGuard(
+                        eq(artifact),
+                        eq("ota-owner"),
+                        argThat(
+                                status ->
+                                        "bes".equals(status.optString("step_type"))
+                                                && "install".equals(status.optString("phase"))
+                                                && "in_progress".equals(
+                                                        status.optString("status"))));
+        verifyNoInteractions(provider);
+    }
+
+    @Test
+    public void phoneBesInstallReturnsControllerQueueFailure() {
+        StubRegistry registry = new StubRegistry();
+        IBesOtaController controller = mock(IBesOtaController.class);
+        ValidatedBesArtifact artifact = mock(ValidatedBesArtifact.class);
+        registry.setInstance(controller);
+        OtaHelper helper = newHelper(registry);
+        when(controller.startFirmwareUpdateWithInstallGuard(
+                        any(), anyString(), any(JSONObject.class)))
+                .thenReturn(false);
+        clearInvocations(controller);
+
+        assertThat(helper.startBesFirmwareInstall(controller, artifact, "ota-owner")).isFalse();
+
+        verify(controller)
+                .startFirmwareUpdateWithInstallGuard(
+                        eq(artifact), eq("ota-owner"), any(JSONObject.class));
+    }
+
+    @Test
     public void debugBesInstallIsRejectedWhilePhoneOtaOwnsAdmissionPermit() throws Exception {
         StubRegistry registry = new StubRegistry();
         IBesOtaController controller = mock(IBesOtaController.class);
@@ -273,6 +325,49 @@ public class OtaHelperBesGuardTest {
         verify(provider).sendOtaMessage(any(JSONObject.class));
         verify(provider).sendOtaStatus(any(JSONObject.class));
         verify(controller, never()).prepareForNewOtaSession();
+        assertThat(phoneInitiatedOta()).isFalse();
+        assertThat(ShadowPowerManager.getLatestWakeLock()).isSameAs(previousWakeLock);
+    }
+
+    @Test
+    public void phoneOtaLowBatteryRejectsIndependentlyOfStaleOtaState() throws Exception {
+        StubRegistry registry = new StubRegistry();
+        IBesOtaController controller = mock(IBesOtaController.class);
+        when(controller.getAuthoritativeStatus())
+                .thenReturn(new JSONObject().put("status", "complete"));
+        registry.setInstance(controller);
+        OtaHelper helper = newHelper(registry);
+        OtaHelper.PhoneConnectionProvider provider =
+                mock(OtaHelper.PhoneConnectionProvider.class);
+        when(provider.isPhoneConnected()).thenReturn(true);
+        helper.setPhoneConnectionProvider(provider);
+        assertThat(
+                        helper.getSessionManager()
+                                .createSession(
+                                        new String[] {"apk"},
+                                        "https://updates.example.invalid/version.json"))
+                .isTrue();
+        String sessionId = helper.getSessionManager().getSessionState().optString("sid");
+        helper.onBatteryStatusEvent(new BatteryStatusEvent(4, false, System.currentTimeMillis()));
+        clearInvocations(provider, controller);
+        WakeLockManager.release(WakeLockManager.WakeOwner.MTK_OTA);
+        PowerManager.WakeLock previousWakeLock = ShadowPowerManager.getLatestWakeLock();
+
+        helper.startOtaFromPhone("https://updates.example.invalid/version.json");
+
+        verify(provider, never()).sendOtaMessage(any(JSONObject.class));
+        verify(provider)
+                .sendOtaStatus(
+                        argThat(
+                                status ->
+                                        "failed".equals(status.optString("status"))
+                                                && "battery_low".equals(
+                                                        status.optString("error_message"))));
+        assertThat(helper.getSessionManager().getStatus()).isEqualTo("in_progress");
+        assertThat(helper.getSessionManager().getSessionState().optString("sid"))
+                .isEqualTo(sessionId);
+        verify(controller, never()).prepareForNewOtaSession();
+        assertThat(admissionPermit().availablePermits()).isEqualTo(1);
         assertThat(phoneInitiatedOta()).isFalse();
         assertThat(ShadowPowerManager.getLatestWakeLock()).isSameAs(previousWakeLock);
     }

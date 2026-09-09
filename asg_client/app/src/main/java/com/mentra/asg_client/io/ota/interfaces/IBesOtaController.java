@@ -50,6 +50,13 @@ public interface IBesOtaController {
      */
     boolean startFirmwareUpdate(ValidatedBesArtifact artifact, String ownerSessionId);
 
+    /**
+     * Begin a phone-controlled firmware update, writing the install status to the companion path
+     * immediately before BES authorization in the same ordered transport action.
+     */
+    boolean startFirmwareUpdateWithInstallGuard(
+            ValidatedBesArtifact artifact, String ownerSessionId, JSONObject installGuard);
+
     /** Authoritative BES OTA projection, or null when no durable BES transaction exists. */
     @Nullable
     JSONObject getAuthoritativeStatus();

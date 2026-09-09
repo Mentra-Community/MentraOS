@@ -26,7 +26,7 @@ type LocalNetworkEvents = {
 }
 
 declare class MentraLocalNetworkNativeModule extends NativeModule<LocalNetworkEvents> {
-  connect(ssid: string, password: string): Promise<{connected: boolean; ssid: string}>
+  connect(ssid: string, password: string): Promise<{connected: boolean; ssid: string; localAddress?: string}>
   request(
     requestId: string,
     url: string,

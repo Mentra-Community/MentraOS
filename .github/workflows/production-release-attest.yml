@@ -1,0 +1,124 @@
+name: Production Release - Record Human Acceptance
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_identity:
+        required: true
+        type: string
+      attempt:
+        required: true
+        type: number
+      check:
+        required: true
+        type: choice
+        options:
+          - staging-mobile-n-compatibility
+          - production-mobile-n-compatibility
+          - production-mobile-candidate-acceptance
+          - store-review-approved
+      evidence_asset:
+        required: true
+        type: string
+      evidence_sha256:
+        required: true
+        type: string
+
+permissions:
+  contents: write
+
+concurrency:
+  group: production-release-${{ inputs.release_identity }}-attempt-${{ inputs.attempt }}
+  cancel-in-progress: false
+
+jobs:
+  attest:
+    name: Validate and append human evidence
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Load current immutable promotion record
+        id: promotion
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          node .github/scripts/production-promotion-assets.mjs download-latest
+          --repository "$GITHUB_REPOSITORY"
+          --release "${{ inputs.release_identity }}"
+          --attempt "${{ inputs.attempt }}"
+          --output promotion-input/current.json
+          --github-output "$GITHUB_OUTPUT"
+
+      - name: Download and verify exact evidence asset
+        env:
+          GH_TOKEN: ${{ github.token }}
+          EVIDENCE_ASSET: ${{ inputs.evidence_asset }}
+          EVIDENCE_SHA256: ${{ inputs.evidence_sha256 }}
+        run: |
+          set -euo pipefail
+          [[ "$EVIDENCE_ASSET" == production-attestation-* ]]
+          [[ "$EVIDENCE_SHA256" =~ ^[0-9a-f]{64}$ ]]
+          assets=$(gh api --paginate --slurp \
+            "repos/${GITHUB_REPOSITORY}/releases/${{ steps.promotion.outputs.release_id }}/assets?per_page=100" | jq 'add')
+          matches=$(jq --arg name "$EVIDENCE_ASSET" '[.[] | select(.name == $name)]' <<< "$assets")
+          [[ "$(jq 'length' <<< "$matches")" == "1" ]]
+          asset_id=$(jq -er '.[0].id' <<< "$matches")
+          evidence_url=$(jq -er '.[0].url' <<< "$matches")
+          gh api -H "Accept: application/octet-stream" \
+            "repos/${GITHUB_REPOSITORY}/releases/assets/$asset_id" > promotion-input/attestation.json
+          actual=$(sha256sum promotion-input/attestation.json | cut -d' ' -f1)
+          [[ "$actual" == "$EVIDENCE_SHA256" ]]
+          echo "evidence_url=$evidence_url" >> "$GITHUB_ENV"
+
+      - name: Validate evidence and append the next state
+        id: next
+        run: |
+          set -euo pipefail
+          mkdir -p promotion-output
+          node .github/scripts/production-promotion-state.mjs attest-transition \
+            --record promotion-input/current.json \
+            --attestation promotion-input/attestation.json \
+            --check "${{ inputs.check }}" \
+            --actor "$GITHUB_ACTOR" \
+            --created-at "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" \
+            --provenance-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --evidence-url "$evidence_url" \
+            --asset-name "${{ inputs.evidence_asset }}" \
+            --sha256 "${{ inputs.evidence_sha256 }}" \
+            --output promotion-output/next.json
+          name=$(node --input-type=module -e '
+            import {readFileSync} from "node:fs";
+            import {promotionAssetName} from "./.github/scripts/production-promotion-state.mjs";
+            process.stdout.write(promotionAssetName(JSON.parse(readFileSync("promotion-output/next.json", "utf8"))));
+          ')
+          mv promotion-output/next.json "promotion-output/$name"
+          echo "record=promotion-output/$name" >> "$GITHUB_OUTPUT"
+
+      - name: Publish immutable next state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          node .github/scripts/production-promotion-assets.mjs publish-record
+          --record "${{ steps.next.outputs.record }}"
+          --release-id "${{ steps.promotion.outputs.release_id }}"
+          --repository "$GITHUB_REPOSITORY"
+
+      - name: Summarize accepted evidence
+        run: |
+          {
+            echo "## Human acceptance recorded"
+            echo
+            echo "- Check: \`${{ inputs.check }}\`"
+            echo "- State: \`$(jq -er .state '${{ steps.next.outputs.record }}')\`"
+            echo "- Evidence digest: \`${{ inputs.evidence_sha256 }}\`"
+            echo
+            echo "This workflow did not deploy Cloud or change an app store."
+          } >> "$GITHUB_STEP_SUMMARY"

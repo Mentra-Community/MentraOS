@@ -3,9 +3,10 @@
  * Shows a placeholder for AVIF files since React Native doesn't support them natively
  */
 
+import {Image} from "expo-image"
 import LinearGradient from "expo-linear-gradient"
-import {useState, useEffect} from "react"
-import {View, Image, ViewStyle, ImageStyle, TextStyle} from "react-native"
+import {memo, useEffect, useState} from "react"
+import {View, ViewStyle, ImageStyle, TextStyle} from "react-native"
 import {createShimmerPlaceholder} from "react-native-shimmer-placeholder"
 
 import {Text} from "@/components/ignite"
@@ -22,7 +23,7 @@ interface PhotoImageProps {
   showPlaceholder?: boolean
 }
 
-export function PhotoImage({photo, style, showPlaceholder = true}: PhotoImageProps) {
+export const PhotoImage = memo(function PhotoImage({photo, style, showPlaceholder = true}: PhotoImageProps) {
   const {theme, themed} = useAppTheme()
   const [isLoading, setIsLoading] = useState(true)
   const [hasError, setHasError] = useState(false)
@@ -67,6 +68,12 @@ export function PhotoImage({photo, style, showPlaceholder = true}: PhotoImagePro
 
   // ALL HOOKS MUST BE CALLED BEFORE ANY CONDITIONAL RETURNS
   useEffect(() => {
+    // FlashList reuses cell views. Clear state from the previous source before
+    // evaluating the media now occupying this cell.
+    setHasError(false)
+    setIsAvif(false)
+    setIsLoading(true)
+
     // If no imageUrl (e.g., video without thumbnail), skip validation
     if (!imageUrl) {
       setIsLoading(false)
@@ -120,7 +127,7 @@ export function PhotoImage({photo, style, showPlaceholder = true}: PhotoImagePro
     }
 
     checkFileAndFormat()
-  }, [photo, imageUrl])
+  }, [imageUrl, photo.mime_type, photo.name])
 
   const handleLoadEnd = () => {
     setIsLoading(false)
@@ -128,7 +135,7 @@ export function PhotoImage({photo, style, showPlaceholder = true}: PhotoImagePro
 
   const handleError = (error: any) => {
     // Extract error message safely without passing complex circular objects
-    const errorMessage = error?.nativeEvent?.error || error?.message || String(error)
+    const errorMessage = error?.error || error?.nativeEvent?.error || error?.message || String(error)
     console.error("[PhotoImage] Error loading image:", {
       name: photo.name,
       url: imageUrl,
@@ -235,11 +242,15 @@ export function PhotoImage({photo, style, showPlaceholder = true}: PhotoImagePro
         style={[style, isLoading && {opacity: 0}]}
         onLoadEnd={handleLoadEnd}
         onError={handleError}
-        resizeMode="cover"
+        contentFit="cover"
+        cachePolicy="disk"
+        recyclingKey={imageUrl}
+        transition={0}
+        allowDownscaling
       />
     </View>
   )
-}
+})
 
 const $placeholderContainer: ThemedStyle<ViewStyle> = ({colors, spacing}) => ({
   backgroundColor: colors.palette.neutral200,

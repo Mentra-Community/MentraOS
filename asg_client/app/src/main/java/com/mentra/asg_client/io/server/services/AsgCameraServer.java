@@ -104,7 +104,19 @@ public class AsgCameraServer extends AsgServer {
             RateLimiter rateLimiter,
             Logger logger,
             FileManager fileManager) {
-        super(config, networkProvider, cacheManager, rateLimiter, logger);
+        this(config, networkProvider, cacheManager, rateLimiter, logger, fileManager, null);
+    }
+
+    /** Construct a camera server restricted to a single local network address. */
+    public AsgCameraServer(
+            ServerConfig config,
+            NetworkProvider networkProvider,
+            CacheManager cacheManager,
+            RateLimiter rateLimiter,
+            Logger logger,
+            FileManager fileManager,
+            String bindAddress) {
+        super(config, networkProvider, cacheManager, rateLimiter, logger, bindAddress);
         this.fileManager = fileManager;
         this.galleryTrashManager =
                 new GalleryTrashManager(

@@ -89,6 +89,14 @@ class DeviceManager {
         get() = DeviceStore.store.get("bluetooth", "pending_wearable") as? String ?: ""
         set(value) = DeviceStore.apply("bluetooth", "pending_wearable", value)
 
+    private var pendingDeviceName: String
+        get() = DeviceStore.store.get("bluetooth", "pending_device_name") as? String ?: ""
+        set(value) = DeviceStore.apply("bluetooth", "pending_device_name", value)
+
+    private var pendingDeviceAddress: String
+        get() = DeviceStore.store.get("bluetooth", "pending_device_address") as? String ?: ""
+        set(value) = DeviceStore.apply("bluetooth", "pending_device_address", value)
+
     public var deviceName: String
         get() = DeviceStore.store.get("bluetooth", "device_name") as? String ?: ""
         set(value) = DeviceStore.apply("bluetooth", "device_name", value)
@@ -205,6 +213,7 @@ class DeviceManager {
     private var lastReadyHandledAtMs: Long = 0L
     private var lastReadyHandledKey: String = ""
     private var lastSystemTimeSyncConnectionKey: String = ""
+    private var pendingSystemTimeSync: Runnable? = null
 
     private var systemMicUnavailable: Boolean
         get() = DeviceStore.store.get("bluetooth", "systemMicUnavailable") as? Boolean ?: false
@@ -250,6 +259,12 @@ class DeviceManager {
     // Audio output format - defaults to LC3 for bandwidth savings
     private var audioOutputFormat: AudioOutputFormat = AudioOutputFormat.LC3
     private var lastLc3Event: Long? = null
+    private val micHealthLock = Any()
+    private var sequenceGapEvents = 0L
+    private var decodeFailures = 0L
+    private var lastLc3ReceivedAt: Long? = null
+    private var lastPcmProducedAt: Long? = null
+    private var lastLc3Sequence: Int? = null
     private var micReinitRunnable: Runnable? = null
     private var systemMicAvailabilityRecheckRunnable: Runnable? = null
 
@@ -649,7 +664,7 @@ class DeviceManager {
                 " ",
                 " ",
                 "text_wall",
-                "\$TIME12$ \$DATE$ \$GBATT$ \$CONNECTION_STATUS$",
+                DashboardContentFormatter.template(""),
                 null,
                 null
             )
@@ -661,7 +676,7 @@ class DeviceManager {
                 " ",
                 " ",
                 "text_wall",
-                "\$TIME12$ \$DATE$ \$GBATT$ \$CONNECTION_STATUS$",
+                DashboardContentFormatter.template(""),
                 null,
                 null
             )
@@ -707,6 +722,8 @@ class DeviceManager {
     // native re-dispatch coherent (dashboard exit re-applies a complete scene,
     // not whatever element happened to arrive last).
     private val sceneStates = arrayOfNulls<SceneFrame>(2)
+    private var dashboardSceneCleanupPending = false
+    private val pendingDashboardSceneElementIds = linkedSetOf<String>()
     // MARK: - End Unique
 
     // MARK: - Voice Data Handling
@@ -742,7 +759,69 @@ class DeviceManager {
      * this per uplink packet — otherwise the watchdog keeps re-enabling a working mic.
      */
     fun reportGlassesAudioActivity() {
-        lastLc3Event = System.currentTimeMillis()
+        val now = System.currentTimeMillis()
+        lastLc3Event = now
+        synchronized(micHealthLock) {
+            lastPcmProducedAt = now
+        }
+    }
+
+    private fun micHealthSnapshotLocked(): MicHealth =
+        MicHealth(
+            sequenceGapEvents = sequenceGapEvents,
+            decodeFailures = decodeFailures,
+            lastLc3ReceivedAt = lastLc3ReceivedAt,
+            lastPcmProducedAt = lastPcmProducedAt,
+        )
+
+    private fun resetMicHealth() {
+        synchronized(micHealthLock) {
+            sequenceGapEvents = 0
+            decodeFailures = 0
+            lastLc3ReceivedAt = null
+            lastPcmProducedAt = null
+            lastLc3Sequence = null
+        }
+        lastLc3Event = null
+    }
+
+    fun resetMicSequenceBaseline() {
+        synchronized(micHealthLock) { lastLc3Sequence = null }
+    }
+
+    private fun recordLc3Packet(sequenceNumber: Int?) {
+        var gap = false
+        val health = synchronized(micHealthLock) {
+            val now = System.currentTimeMillis()
+            lastLc3ReceivedAt = now
+            lastLc3Event = now
+            if (sequenceNumber != null) {
+                val normalized = sequenceNumber and 0xff
+                lastLc3Sequence?.let { previous ->
+                    val expected = (previous + 1) and 0xff
+                    if (normalized != expected) {
+                        gap = true
+                        sequenceGapEvents += 1
+                        Bridge.log("MAN: LC3 packet sequence mismatch. Expected: $expected, Got: $normalized")
+                    }
+                }
+                lastLc3Sequence = normalized
+            }
+            micHealthSnapshotLocked()
+        }
+        if (gap) Bridge.sendMicHealth(health, "sequence_gap")
+    }
+
+    private fun recordMicDecodeFailure() {
+        val health = synchronized(micHealthLock) {
+            decodeFailures += 1
+            micHealthSnapshotLocked()
+        }
+        Bridge.sendMicHealth(health, "decode_failure")
+    }
+
+    private fun recordMicPcmProduced() {
+        synchronized(micHealthLock) { lastPcmProducedAt = System.currentTimeMillis() }
     }
 
     /**
@@ -750,12 +829,14 @@ class DeviceManager {
      * canonical LC3 encoding. Note: frameSize here is for glasses→phone decoding, NOT for
      * phone→cloud encoding.
      */
-    fun handleGlassesMicData(rawLC3Data: ByteArray, frameSize: Int = 40) {
-        lastLc3Event = System.currentTimeMillis()
+    @JvmOverloads
+    fun handleGlassesMicData(rawLC3Data: ByteArray, frameSize: Int = 40, sequenceNumber: Int? = null) {
+        recordLc3Packet(sequenceNumber)
         val pcmData: ByteArray?
         synchronized(lc3Lock) {
             if (lc3DecoderPtr == 0L) {
                 Bridge.log("MAN: LC3 decoder not initialized, cannot process glasses audio")
+                recordMicDecodeFailure()
                 return
             }
 
@@ -764,14 +845,17 @@ class DeviceManager {
                 pcmData = Lc3Cpp.decodeLC3(lc3DecoderPtr, rawLC3Data, frameSize)
             } catch (e: Exception) {
                 Bridge.log("MAN: Failed to decode glasses LC3: ${e.message}")
+                recordMicDecodeFailure()
                 return
             }
         }
         if (pcmData != null && pcmData.isNotEmpty()) {
             // Re-encode to canonical LC3 via handlePcm (outside lock to avoid deadlock)
+            recordMicPcmProduced()
             handlePcm(pcmData)
         } else {
             Bridge.log("MAN: LC3 decode returned empty data")
+            recordMicDecodeFailure()
         }
     }
 
@@ -937,6 +1021,8 @@ class DeviceManager {
             Bridge.log("MAN: DeviceManager.sendCurrentState(): sgc not ready")
             return
         }
+
+        clearPendingDashboardSceneElements(currentStateIndex)
 
         // Cancel any pending clear display work item
         // sendStateWorkItem?.let { mainHandler.removeCallbacks(it) }
@@ -1148,7 +1234,7 @@ class DeviceManager {
             Bridge.log("MAN: Cleaning up previous sgc type: ${sgc?.type}")
             sgc?.cleanup()
             sgc = null
-            lastSystemTimeSyncConnectionKey = ""
+            resetSystemTimeSync()
         }
 
         if (sgc != null) {
@@ -1271,6 +1357,14 @@ class DeviceManager {
             return
         }
 
+        if (pendingDeviceName.isNotEmpty()) {
+            deviceName = pendingDeviceName
+        }
+        if (pendingDeviceAddress.isNotEmpty()) {
+            deviceAddress = pendingDeviceAddress
+        }
+        clearPendingConnection()
+
         val readyKey = "${sgc?.type}:${deviceName}"
         val now = System.currentTimeMillis()
         if (readyKey == lastReadyHandledKey && now - lastReadyHandledAtMs < 2000) {
@@ -1281,7 +1375,7 @@ class DeviceManager {
         lastReadyHandledAtMs = now
 
         Bridge.log("MAN: handleDeviceReady() ${sgc?.type}")
-        pendingWearable = ""
+        resetMicHealth()
         defaultWearable = sgc?.type ?: ""
         searching = false
 
@@ -1351,9 +1445,25 @@ class DeviceManager {
         }
 
         lastSystemTimeSyncConnectionKey = connectionKey
-        val timestampMs = System.currentTimeMillis()
-        Bridge.log("MAN: Syncing glasses system time once for connection: $timestampMs")
-        activeSgc.sendSetSystemTime(timestampMs)
+        pendingSystemTimeSync?.let { mainHandler.removeCallbacks(it) }
+        val sync =
+            Runnable {
+                pendingSystemTimeSync = null
+                if (lastSystemTimeSyncConnectionKey != connectionKey || sgc !== activeSgc) {
+                    return@Runnable
+                }
+                val timestampMs = System.currentTimeMillis()
+                Bridge.log("MAN: Syncing glasses system time once for connection: $timestampMs")
+                activeSgc.sendSetSystemTime(timestampMs)
+            }
+        pendingSystemTimeSync = sync
+        mainHandler.postDelayed(sync, 3000)
+    }
+
+    private fun resetSystemTimeSync() {
+        pendingSystemTimeSync?.let { mainHandler.removeCallbacks(it) }
+        pendingSystemTimeSync = null
+        lastSystemTimeSyncConnectionKey = ""
     }
 
     private fun handleG1Ready() {
@@ -1368,7 +1478,8 @@ class DeviceManager {
 
     fun handleDeviceDisconnected() {
         Bridge.log("MAN: Device disconnected")
-        lastSystemTimeSyncConnectionKey = ""
+        resetSystemTimeSync()
+        resetMicHealth()
         DeviceStore.apply("glasses", "headUp", false)
         DeviceStore.apply(
             "glasses",
@@ -1412,6 +1523,45 @@ class DeviceManager {
         sgc?.clearDisplay()
     }
 
+    internal fun setDashboardContent(content: String) {
+        val nextState =
+            ViewState(
+                " ",
+                " ",
+                " ",
+                "text_wall",
+                DashboardContentFormatter.template(content),
+                null,
+                null,
+            )
+        val previousScene = sceneStates[1]
+        if (previousScene == null && viewStates[1] == nextState) {
+            return
+        }
+
+        previousScene?.let { frame ->
+            dashboardSceneCleanupPending = true
+            pendingDashboardSceneElementIds.addAll(frame.elements.map { it.id })
+        }
+        sceneStates[1] = null
+        viewStates[1] = nextState
+
+        if (headUp && contextualDashboard) {
+            sendCurrentState()
+        }
+    }
+
+    private fun clearPendingDashboardSceneElements(stateIndex: Int) {
+        if (stateIndex != 1 || !dashboardSceneCleanupPending) return
+
+        dashboardSceneCleanupPending = false
+        val elementIds = pendingDashboardSceneElementIds.toList()
+        pendingDashboardSceneElementIds.clear()
+        if (elementIds.isNotEmpty()) {
+            sgc?.clearSceneElements(elementIds)
+        }
+    }
+
     fun displayEvent(event: Map<String, Any>) {
         val view = event["view"] as? String
         if (view == null) {
@@ -1442,7 +1592,9 @@ class DeviceManager {
         // wipes everything anyway.
         sceneStates[stateIndex]?.let { prevFrame ->
             sceneStates[stateIndex] = null
-            if (layoutType != "clear_view") {
+            if (stateIndex == 1 && dashboardSceneCleanupPending) {
+                pendingDashboardSceneElementIds.addAll(prevFrame.elements.map { it.id })
+            } else if (layoutType != "clear_view") {
                 sgc?.clearSceneElements(prevFrame.elements.map { it.id })
             }
         }
@@ -1507,7 +1659,13 @@ class DeviceManager {
             // clearDisplay is the per-device "wipe what's there" (blank-in-place
             // on G2 — no page rebuild).
             val prevLegacyType = viewStates[stateIndex].layoutType
-            if (prevLegacyType.isNotEmpty() && prevLegacyType != "clear_view" && prevLegacyType != "scene") {
+            val cleanupDeferred = stateIndex == 1 && dashboardSceneCleanupPending
+            if (
+                !cleanupDeferred &&
+                    prevLegacyType.isNotEmpty() &&
+                    prevLegacyType != "clear_view" &&
+                    prevLegacyType != "scene"
+            ) {
                 sgc?.clearDisplay()
             }
         } else if (prevFrame.appId != frame.appId) {
@@ -1517,7 +1675,11 @@ class DeviceManager {
             // them), then paint the new frame from scratch. In practice the
             // boot message interposes between apps, so this isn't visible as a
             // blank.
-            sgc?.clearSceneElements(prevFrame.elements.map { it.id })
+            if (stateIndex == 1 && dashboardSceneCleanupPending) {
+                pendingDashboardSceneElementIds.addAll(prevFrame.elements.map { it.id })
+            } else {
+                sgc?.clearSceneElements(prevFrame.elements.map { it.id })
+            }
             frame = frame.copy(replay = true, elements = frame.elements.map { it.copy(change = "created") })
         }
 
@@ -1530,18 +1692,19 @@ class DeviceManager {
 
         val hUp = headUp && contextualDashboard
         if ((stateIndex == 0 && !hUp) || (stateIndex == 1 && hUp)) {
-            dispatchSceneFrame(frame)
+            dispatchSceneFrame(stateIndex, frame)
         }
     }
 
     /** Guarded scene dispatch — mirrors sendCurrentState's send conditions. */
-    private fun dispatchSceneFrame(frame: SceneFrame) {
+    private fun dispatchSceneFrame(stateIndex: Int, frame: SceneFrame) {
         if (screenDisabled) return
         if (sgc?.type?.contains(DeviceTypes.SIMULATED) == true) return
         if (sgc?.fullyBooted != true) {
             Bridge.log("MAN: dispatchSceneFrame(): sgc not ready")
             return
         }
+        clearPendingDashboardSceneElements(stateIndex)
         sgc?.applySceneFrame(frame)
     }
 
@@ -1887,6 +2050,11 @@ class DeviceManager {
         )
     }
 
+    fun queryVideoRecordingStatus(requestId: String) {
+        Bridge.log("MAN: Querying video recording status: requestId=$requestId")
+        sgc?.queryVideoRecordingStatus(requestId)
+    }
+
     fun stopVideoRecording(requestId: String, webhookUrl: String?, authToken: String?) {
         Bridge.log(
             "MAN: onStopVideoRecording: requestId=$requestId, webhook=" +
@@ -1973,6 +2141,11 @@ class DeviceManager {
             return
         }
         initSGC(defaultWearable)
+        val live = sgc as? MentraLive
+        if (live?.isPairingYieldActive() == true) {
+            Bridge.log("MAN: connectDefault skipped — Mentra Live pairing yield active")
+            return
+        }
         searching = true
         sgc?.connectById(reconnectTarget)
         connectDefaultController()
@@ -2025,13 +2198,13 @@ class DeviceManager {
             return
         }
 
-        disconnect()
+        disconnect(clearPendingIdentity = false)
         Thread.sleep(100)
         searching = true
-        deviceName = name
+        pendingDeviceName = name
 
         initSGC(pendingWearable)
-        sgc?.connectById(deviceName)
+        sgc?.connectById(name)
     }
 
     fun connectDevice(deviceModel: String, deviceName: String) {
@@ -2058,11 +2231,12 @@ class DeviceManager {
         handleDeviceReady()
     }
 
-    fun disconnect() {
+    fun disconnect(clearPendingIdentity: Boolean = true) {
         sgc?.clearDisplay()
         sgc?.disconnect()
         sgc = null // Clear the SGC reference after disconnect
-        lastSystemTimeSyncConnectionKey = ""
+        resetSystemTimeSync()
+        resetMicHealth()
         searching = false
         micEnabled = false
         updateMicState()
@@ -2073,6 +2247,7 @@ class DeviceManager {
         // previously connected pair can never be reported for the next connection.
         DeviceStore.apply("glasses", "serialNumber", "")
         DeviceStore.apply("glasses", "bluetoothMacAddress", "")
+        DeviceStore.apply("glasses", "wifiMacAddress", "")
         DeviceStore.apply("glasses", "leftMacAddress", "")
         DeviceStore.apply("glasses", "rightMacAddress", "")
         DeviceStore.apply("glasses", "macAddress", "")
@@ -2088,6 +2263,15 @@ class DeviceManager {
         DeviceStore.apply("glasses", "controllerConnected", false)
         controller?.disconnect()
         controller = null
+        if (clearPendingIdentity) {
+            clearPendingConnection()
+        }
+    }
+
+    private fun clearPendingConnection() {
+        pendingDeviceName = ""
+        pendingDeviceAddress = ""
+        pendingWearable = ""
     }
 
     fun disconnectController() {
@@ -2101,20 +2285,73 @@ class DeviceManager {
     fun forget() {
         Bridge.log("MAN: Forgetting smart glasses")
 
-        // Call forget first to stop timers/handlers/reconnect logic
-        sgc?.forget()
-
-        // Then disconnect to close connections
-        disconnect()
+        val live = sgc as? MentraLive
+        if (live != null) {
+            // MentraLive.forget() disconnects GATT then removeBond. Do not refuse
+            // during CTKD bonding — Unpair is an explicit user request to drop the pair.
+            live.forget()
+            // MentraLive.forget() already destroyed the SGC. Clear the manager reference and
+            // session state without calling disconnect() again (that would hit a dead instance
+            // and leave a destroyed MentraLive retained for the next scan).
+            sgc = null
+            resetSystemTimeSync()
+            searching = false
+            micEnabled = false
+            updateMicState()
+            shouldSendBootingMessage = true
+            DeviceStore.apply("glasses", "deviceModel", "")
+            DeviceStore.apply("glasses", "serialNumber", "")
+            DeviceStore.apply("glasses", "bluetoothMacAddress", "")
+            DeviceStore.apply("glasses", "leftMacAddress", "")
+            DeviceStore.apply("glasses", "rightMacAddress", "")
+            DeviceStore.apply("glasses", "macAddress", "")
+            DeviceStore.apply("glasses", "fullyBooted", false)
+            DeviceStore.apply("glasses", "connected", false)
+            DeviceStore.apply(
+                    "glasses",
+                    "voiceActivityDetectionEnabled",
+                    BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED,
+            )
+            searchingController = false
+            DeviceStore.apply("glasses", "controllerConnected", false)
+            controller?.disconnect()
+            controller = null
+        } else {
+            // Typical abandonAttempt path: disconnect() already destroyed SGC and nulled
+            // this.sgc, so MentraLive.forget() never ran and Classic bonds stayed up —
+            // glasses keep IBRT ACL and stop BLE advertising. Only tear Live bonds when
+            // the selected/pending wearable is Mentra Live — forgetting G1/G2 must not
+            // unpair an unrelated Live unit.
+            val liveTarget =
+                    defaultWearable == DeviceTypes.LIVE || pendingWearable == DeviceTypes.LIVE
+            if (liveTarget) {
+                val extraAddress =
+                        when {
+                            defaultWearable == DeviceTypes.LIVE ->
+                                    deviceAddress.takeIf { it.isNotEmpty() }
+                            pendingWearable == DeviceTypes.LIVE ->
+                                    pendingDeviceAddress.takeIf { it.isNotEmpty() }
+                            else -> null
+                        }
+                MentraLive.unbondBondedMentraLiveDevices(
+                        Bridge.getContext(),
+                        extraAddress,
+                )
+            }
+            sgc?.forget()
+            disconnect()
+        }
 
         // Clear state
         defaultWearable = ""
         deviceName = ""
         deviceAddress = ""
+        clearPendingConnection()
         Bridge.saveSetting("default_wearable", "")
         Bridge.saveSetting("device_name", "")
         Bridge.saveSetting("device_address", "")
         Bridge.saveSetting("project_name", "")
+        Bridge.saveSetting("pending_wearable", "")
     }
 
     fun forgetController() {

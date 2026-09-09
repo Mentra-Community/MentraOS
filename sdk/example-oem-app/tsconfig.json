@@ -3,8 +3,7 @@
   "compilerOptions": {
     "strict": true,
     "paths": {
-      "@mentra/engine": ["../../mobile/modules/engine/build/index.d.ts"],
-      "@mentra/engine/devtools": ["../../mobile/modules/engine/build/devtools.d.ts"]
+      "@mentra/engine": ["../../mobile/modules/engine/build/index.d.ts"]
     }
   },
   "include": ["**/*.ts", "**/*.tsx"]

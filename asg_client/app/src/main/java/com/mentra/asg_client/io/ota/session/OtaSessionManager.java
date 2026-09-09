@@ -37,6 +37,8 @@ public class OtaSessionManager {
     private int mCurrentStepIndex;
     private String mCurrentPhase;
     private int mStepPercent;
+    // Live transfer state, deliberately not restored from disk after a process restart.
+    private long mDownloadBytes;
     private String mStatus;
     private String mErrorMessage;
     private String mVersionJsonUrl;
@@ -82,6 +84,7 @@ public class OtaSessionManager {
         mCurrentStepIndex = 0;
         mCurrentPhase = "download";
         mStepPercent = 0;
+        mDownloadBytes = 0;
         mStatus = "in_progress";
         mErrorMessage = null;
         mVersionJsonUrl = versionJsonUrl;
@@ -168,6 +171,7 @@ public class OtaSessionManager {
             state.put("st", getStepType(mCurrentStepIndex));
             state.put("sq", mStepSequence != null ? mStepSequence : new JSONArray());
             state.put("phase", mCurrentPhase);
+            if ("download".equals(mCurrentPhase)) state.put("bytes_downloaded", mDownloadBytes);
             state.put("sp", mStepPercent);
             state.put("op", computeOverallPercent());
             state.put("status", mStatus);
@@ -185,9 +189,17 @@ public class OtaSessionManager {
         mCurrentStepIndex = stepIndex;
         mCurrentPhase = phase;
         mStepPercent = 0;
+        mDownloadBytes = 0;
         mLastPersistedPercent = 0;
         mLastActivityAtElapsed = SystemClock.elapsedRealtime();
         persist();
+    }
+
+    /** Update live download evidence owned by the current session step. */
+    public synchronized void updateDownloadProgress(int stepPercent, long bytesDownloaded) {
+        if (!"download".equals(mCurrentPhase) || "complete".equals(mStatus) || "failed".equals(mStatus)) return;
+        mDownloadBytes = Math.max(0, bytesDownloaded);
+        updateProgress(stepPercent);
     }
 
     public synchronized void updateProgress(int stepPercent) {
@@ -228,10 +240,29 @@ public class OtaSessionManager {
         Log.i(TAG, "Session complete: " + mSessionId);
     }
 
-    public synchronized void setRestarting() {
+    public synchronized boolean setRestarting() {
         mRestartingSinceElapsed = SystemClock.elapsedRealtime();
-        persist();
+        if (!persistImmediately()) {
+            mRestartingSinceElapsed = -1;
+            Log.e(TAG, "Could not durably mark session as restarting");
+            return false;
+        }
         Log.i(TAG, "Session marked as restarting");
+        return true;
+    }
+
+    /**
+     * True only while an active OTA is intentionally replacing the ASG APK.
+     *
+     * <p>The network manager combines this durable fact with the physical K900 AP state: if the
+     * AP is on, shutdown leaves the SystemUI-owned hotspot alone; if it is off, there is nothing
+     * to preserve. The OTA protocol does not need to label its transport.
+     */
+    public synchronized boolean shouldPreserveHotspotOnShutdown() {
+        return mRestartingSinceElapsed >= 0
+                && hasActiveSession()
+                && "apk".equals(getStepType(mCurrentStepIndex))
+                && "install".equals(mCurrentPhase);
     }
 
     public synchronized boolean isInRestartGuard() {
@@ -314,6 +345,7 @@ public class OtaSessionManager {
     }
 
     public synchronized void clear() {
+        mDownloadBytes = 0;
         mSessionId = null;
         mTotalSteps = 0;
         mStepSequence = new JSONArray();
@@ -494,6 +526,15 @@ public class OtaSessionManager {
     }
 
     private void persist() {
+        persist(false);
+    }
+
+    /** Package replacement can kill this process immediately, so critical restart writes use commit. */
+    private boolean persistImmediately() {
+        return persist(true);
+    }
+
+    private boolean persist(boolean immediately) {
         try {
             JSONObject json = new JSONObject();
             json.put("session_id", mSessionId != null ? mSessionId : JSONObject.NULL);
@@ -507,9 +548,16 @@ public class OtaSessionManager {
             json.put("version_json_url", mVersionJsonUrl != null ? mVersionJsonUrl : JSONObject.NULL);
             json.put("last_activity_at_elapsed", mLastActivityAtElapsed);
             json.put("restarting_since_elapsed", mRestartingSinceElapsed);
-            mPrefs.edit().putString(KEY_SESSION_DATA, json.toString()).apply();
+            SharedPreferences.Editor editor =
+                    mPrefs.edit().putString(KEY_SESSION_DATA, json.toString());
+            if (immediately) {
+                return editor.commit();
+            }
+            editor.apply();
+            return true;
         } catch (JSONException e) {
             Log.e(TAG, "Failed to persist session", e);
+            return false;
         }
     }
 

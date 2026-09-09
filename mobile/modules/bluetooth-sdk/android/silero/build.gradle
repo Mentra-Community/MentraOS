@@ -16,7 +16,15 @@ android {
         targetSdkVersion 36
 
         ndk {
-            abiFilters "armeabi-v7a", "x86", "x86_64", "arm64-v8a"
+            // Honor reactNativeArchitectures (dev CI is arm64-only; staging
+            // production sets all four ABIs) so this module does not keep
+            // compiling every ABI on a filtered build.
+            def abiList = (findProperty("reactNativeArchitectures") ?: "armeabi-v7a,arm64-v8a,x86,x86_64")
+                .toString()
+                .split(",")
+                .collect { it.trim() }
+                .findAll { !it.isEmpty() }
+            abiFilters(*abiList)
         }
     }
 

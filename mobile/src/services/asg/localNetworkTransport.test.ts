@@ -14,10 +14,7 @@ import {
   localNetworkTransport,
   shouldUseScopedLocalNetwork,
 } from "../../../modules/engine/src/services/asg/localNetworkTransport"
-import {
-  emitLocalNetworkEvent,
-  mentraLocalNetworkMock as mockNativeModule,
-} from "../../test-utils/mockBluetoothSdk"
+import {emitLocalNetworkEvent, mentraLocalNetworkMock as mockNativeModule} from "../../test-utils/mockBluetoothSdk"
 
 describe("localNetworkTransport", () => {
   beforeEach(async () => {
@@ -25,7 +22,7 @@ describe("localNetworkTransport", () => {
     await localNetworkTransport.disconnect()
   })
 
-  it("uses the scoped native connection on Android 10+", async () => {
+  it("uses the scoped native connection on supported Android phones", async () => {
     await localNetworkTransport.connect("AndroidShare_test", "password")
 
     expect(mockNativeModule.connect).toHaveBeenCalledWith("AndroidShare_test", "password")
@@ -99,8 +96,11 @@ describe("localNetworkTransport", () => {
   })
 
   it("forwards native response metadata before download progress", async () => {
-    let resolveDownload: (result: {statusCode: number; bytesWritten: number; headers: Record<string, string>}) => void =
-      () => {}
+    let resolveDownload: (result: {
+      statusCode: number
+      bytesWritten: number
+      headers: Record<string, string>
+    }) => void = () => {}
     mockNativeModule.download.mockImplementationOnce(
       () =>
         new Promise((resolve) => {
@@ -134,9 +134,9 @@ describe("localNetworkTransport", () => {
     await expect(handle.promise).resolves.toMatchObject({statusCode: 206, bytesWritten: 4})
   })
 
-  it("keeps Android 9 on the legacy transport", () => {
-    expect(shouldUseScopedLocalNetwork("android", 28, true)).toBe(false)
-    expect(shouldUseScopedLocalNetwork("android", 29, true)).toBe(true)
-    expect(shouldUseScopedLocalNetwork("ios", 18, true)).toBe(false)
+  it("uses scoped transport only on Android when the native module is available", () => {
+    expect(shouldUseScopedLocalNetwork("android", true)).toBe(true)
+    expect(shouldUseScopedLocalNetwork("android", false)).toBe(false)
+    expect(shouldUseScopedLocalNetwork("ios", true)).toBe(false)
   })
 })

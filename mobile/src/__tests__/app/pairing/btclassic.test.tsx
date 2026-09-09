@@ -63,7 +63,7 @@ import BtClassicPairingScreen from "@/app/pairing/btclassic"
 import {usePushPrevious} from "@/contexts/NavigationHistoryContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {SETTINGS} from "@mentra/engine"
-import {useSettingsStore} from "@mentra/engine/internal"
+import {useSettingsStore} from "@mentra/engine-host-internal"
 import {useGlassesStore} from "../../../../modules/engine/src/stores/glasses"
 
 const device = {id: "a", model: "Mentra Live", name: "MENTRA_LIVE_BLE_001", address: "a"}
@@ -90,7 +90,7 @@ describe("btclassic pairing screen", () => {
     ;(usePushPrevious as jest.Mock).mockReturnValue(pushPrevious)
   })
 
-  it("kicks off the connect and reveals loading once Bluetooth Classic links", async () => {
+  it("reveals loading once Bluetooth Classic links and lets loading own the connect", async () => {
     render(<BtClassicPairingScreen />)
 
     act(() => {
@@ -98,34 +98,10 @@ describe("btclassic pairing screen", () => {
     })
 
     await waitFor(() => {
-      expect(engine.glasses.connect).toHaveBeenCalledWith(device, {saveAsDefault: false})
       expect(pushPrevious).toHaveBeenCalled()
     })
-
-    // The resolved kickoff must not trigger the failure route.
-    await act(async () => {})
+    expect(engine.glasses.connect).not.toHaveBeenCalled()
     expect(replace).not.toHaveBeenCalled()
-  })
-
-  it("routes a connect kickoff rejection to the failure screen", async () => {
-    ;(engine.glasses.connect as jest.Mock).mockRejectedValueOnce(new Error("bluetooth powered off"))
-
-    render(<BtClassicPairingScreen />)
-
-    act(() => {
-      useGlassesStore.getState().setGlassesInfo({bluetoothClassicConnected: true})
-    })
-
-    await waitFor(() => {
-      expect(replace).toHaveBeenCalledWith("/pairing/failure", {
-        error: "errors:pairingCouldNotStart",
-        deviceModel: "Mentra Live",
-      })
-    })
-    expect(pushPrevious).toHaveBeenCalled()
-    // Parity with loading.tsx's handlePairFailure: the failed attempt is
-    // cleared before the failure screen shows.
-    expect(engine.pairing.abandonAttempt).toHaveBeenCalled()
   })
 
   it("routes a connectDefault rejection to the failure screen while loading is on top", async () => {

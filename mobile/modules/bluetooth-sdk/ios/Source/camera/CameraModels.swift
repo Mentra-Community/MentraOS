@@ -863,3 +863,4 @@ public struct GalleryStatusEvent: CustomStringConvertible {
         "GalleryStatusEvent(total: \(total), photos: \(photos), videos: \(videos))"
     }
 }
+

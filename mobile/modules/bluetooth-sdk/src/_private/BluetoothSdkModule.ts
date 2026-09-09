@@ -45,6 +45,7 @@ import {
   VideoRecordingStartedStatusEvent,
   VideoRecordingSettings,
   VideoRecordingStoppedStatusEvent,
+  VideoRecordingStatusEvent,
   VersionInfoResult,
   WarmUpCameraParams,
   WifiSearchResult,
@@ -77,6 +78,7 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   displayEvent(params: Record<string, unknown>): Promise<void>
   displayText(text: string, x?: number, y?: number, size?: number): Promise<void>
   clearDisplay(): Promise<void>
+  setDashboardContent(content: string): Promise<void>
 
   // Connection Commands
   requestStatus(): Promise<void>
@@ -182,6 +184,7 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
     webhookUrl?: string,
     authToken?: string,
   ): Promise<VideoRecordingStoppedStatusEvent>
+  queryVideoRecordingStatus(requestId: string): Promise<VideoRecordingStatusEvent>
 
   // Stream Commands
   startStream(params: StreamStartRequest): Promise<StreamStatusEvent>
@@ -254,7 +257,7 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   ): Promise<boolean>
 
   /**
-   * Push a phone notification into the glasses' OWN notification centre - parallel to 
+   * Push a phone notification into the glasses' OWN notification centre - parallel to
    * the normal flow (miniapp forwarding + a locally drawn card).
    * Implemented only by Android G2 driver; every other driver inherits a no-op.
    */
@@ -303,7 +306,7 @@ const CAMERA_ROI_POSITION_VALUES: Record<CameraRoiPosition, CameraFovSetting["ro
 }
 
 // Named presets are a convenience layer over the numeric {fov, roiPosition} API.
-// The default is the full sensor; "standard" preserves the historical 102� crop.
+// The default is the full sensor; "standard" preserves the historical 102° crop.
 const CAMERA_FOV_PRESETS: Record<CameraFovPreset, CameraFovSetting> = {
   narrow: {fov: 82, roiPosition: 0},
   standard: {fov: 102, roiPosition: 0},
@@ -659,7 +662,3 @@ NativeBluetoothSdkModule.warmUpCamera = function (params: WarmUpCameraParams) {
 
 export default NativeBluetoothSdkModule
 export const BluetoothSdk = NativeBluetoothSdkModule as BluetoothSdkInternalModule
-
-
-
-

@@ -21,6 +21,7 @@ import com.mentra.asg_client.service.core.handlers.ImuCommandHandler;
 import com.mentra.asg_client.service.core.handlers.K900CommandHandler;
 import com.mentra.asg_client.service.core.handlers.KeepAwakeCommandHandler;
 import com.mentra.asg_client.service.core.handlers.OtaCommandHandler;
+import com.mentra.asg_client.service.core.handlers.PairingAudioCommandHandler;
 import com.mentra.asg_client.service.core.handlers.PhoneReadyCommandHandler;
 import com.mentra.asg_client.service.core.handlers.PhotoCommandHandler;
 import com.mentra.asg_client.service.core.handlers.PingCommandHandler;
@@ -408,7 +409,11 @@ public class CommandProcessor {
             Log.d(TAG, "✅ Registered KeepAwakeCommandHandler");
 
             commandHandlerRegistry.registerHandler(
-                    new StreamCommandHandler(context, stateManager, streamingManager));
+                    new StreamCommandHandler(
+                            context,
+                            stateManager,
+                            streamingManager,
+                            serviceManager.getNetworkManager()));
             Log.d(TAG, "✅ Registered StreamCommandHandler");
 
             commandHandlerRegistry.registerHandler(
@@ -470,6 +475,9 @@ public class CommandProcessor {
 
             commandHandlerRegistry.registerHandler(new I2SAudioCommandHandler());
             Log.d(TAG, "✅ Registered I2SAudioCommandHandler");
+
+            commandHandlerRegistry.registerHandler(new PairingAudioCommandHandler(context));
+            Log.d(TAG, "✅ Registered PairingAudioCommandHandler");
 
             Log.i(
                     TAG,

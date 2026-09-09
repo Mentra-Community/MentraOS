@@ -14,6 +14,7 @@
  */
 import { HttpError } from "./errors";
 import type { Logger } from "./logger";
+import { systemTimers, type CloudClientTimers } from "./timers";
 import type { HttpTransport } from "./transports";
 
 /**
@@ -58,17 +59,13 @@ export interface CreateHttpClientDeps {
   getToken?: () => Promise<string>;
   logger: Logger;
   fetch?: HttpTransport;
+  timers?: CloudClientTimers;
 }
 
 /** How many times to retry a transient failure on an idempotent call. */
 const MAX_RETRIES = 2;
 /** Base backoff in milliseconds; doubles per attempt (250, 500, ...). */
 const RETRY_BASE_MS = 250;
-
-/** Resolve after `ms`, used for retry backoff. */
-function delay(ms: number): Promise<void> {
-  return new Promise((resolve) => setTimeout(resolve, ms));
-}
 
 /**
  * Join a base URL and a path without producing a double slash or dropping one.
@@ -85,6 +82,7 @@ function joinUrl(baseUrl: string, path: string): string {
 export function createHttpClient(deps: CreateHttpClientDeps): HttpClient {
   const { baseUrl, getToken, logger } = deps;
   const executeFetch = deps.fetch ?? globalThis.fetch;
+  const timers = deps.timers ?? systemTimers;
 
   /**
    * Resolve the Bearer to attach: a per-call override wins, otherwise the
@@ -122,7 +120,7 @@ export function createHttpClient(deps: CreateHttpClientDeps): HttpClient {
       if (attempt > 0) {
         const backoff = RETRY_BASE_MS * 2 ** (attempt - 1);
         logger.debug("http retrying request", { method, path, attempt });
-        await delay(backoff);
+        await new Promise<void>((resolve) => timers.setTimeout(resolve, backoff));
       }
 
       let res: Response;

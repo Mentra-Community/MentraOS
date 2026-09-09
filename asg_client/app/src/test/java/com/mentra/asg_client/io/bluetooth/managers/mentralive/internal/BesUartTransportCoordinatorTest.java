@@ -59,6 +59,22 @@ public class BesUartTransportCoordinatorTest {
     }
 
     @Test
+    public void normalUseRejectsPolicyChangeAndProofCallbackBeforeQuarantine() {
+        coordinator.onSerialReady(host.session);
+        systemVersion("17.26.7.4");
+        assertThat(coordinator.isReadyForNormalUse()).isTrue();
+        safety.policy = BesUartTransportCoordinator.SafetyPolicy.VERSION_PROBE_ONLY;
+        assertThat(coordinator.isReadyForNormalUse()).isFalse();
+        java.util.concurrent.atomic.AtomicBoolean proof = new java.util.concurrent.atomic.AtomicBoolean();
+        coordinator.onSystemVersion("17.26.7.4", host.session, () -> proof.set(true));
+        assertThat(proof.get()).isTrue();
+        assertThat(coordinator.getState()).isEqualTo(BesUartTransportCoordinator.State.QUARANTINED);
+        assertThat(coordinator.isReadyForNormalUse()).isFalse();
+        safety.policy = BesUartTransportCoordinator.SafetyPolicy.NORMAL;
+        assertThat(coordinator.isReadyForNormalUse()).isFalse();
+    }
+
+    @Test
     public void rejectedFastSwitch_returnsToStableRendezvousState() throws Exception {
         coordinator.onSerialReady(host.session);
         assertThat(systemVersion("17.26.7.23"))
@@ -359,6 +375,7 @@ public class BesUartTransportCoordinatorTest {
         assertThat(coordinator.beginFileTransfer()).isNull();
         assertThat(coordinator.runOtaAuthorizationWrite(otaLease, () -> true)).isTrue();
         assertThat(coordinator.promoteOtaAuthorizationToTransfer(otaLease)).isTrue();
+        assertThat(host.invalidations).isEqualTo(1);
         assertThat(coordinator.inboundRoute(host.session))
                 .isEqualTo(BesUartTransportCoordinator.InboundRoute.OTA);
         assertThat(host.fastReceive).isTrue();
@@ -384,6 +401,61 @@ public class BesUartTransportCoordinatorTest {
         assertThat(host.fastReceive).isFalse();
         assertThat(coordinator.getOperation())
                 .isEqualTo(BesUartTransportCoordinator.Operation.NONE);
+    }
+
+    @Test
+    public void otaAuthorization_waitsForStartupDiscoveryBeforeLeasingAndWriting() throws Exception {
+        coordinator.onSerialReady(host.session);
+        assertThat(coordinator.getState())
+                .isEqualTo(BesUartTransportCoordinator.State.DISCOVERING);
+
+        ExecutorService caller = Executors.newSingleThreadExecutor();
+        Future<BesUartTransportCoordinator.OperationLease> leaseFuture =
+                caller.submit(coordinator::beginOtaAuthorization);
+        try {
+            Thread.sleep(50);
+            assertThat(leaseFuture.isDone()).isFalse();
+
+            assertThat(systemVersion("17.26.7.4"))
+                    .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.READY);
+            BesUartTransportCoordinator.OperationLease lease = leaseFuture.get(1, TimeUnit.SECONDS);
+
+            assertThat(lease).isNotNull();
+            assertThat(coordinator.getOperation())
+                    .isEqualTo(BesUartTransportCoordinator.Operation.OTA_AUTHORIZATION);
+            assertThat(
+                            coordinator.runOtaAuthorizationWrite(
+                                    lease,
+                                    () -> {
+                                        host.controlCommands.add("install_guard");
+                                        return true;
+                                    }))
+                    .isTrue();
+            assertThat(host.controlCommands).contains("install_guard");
+            coordinator.endOta(lease);
+        } finally {
+            caller.shutdownNow();
+        }
+    }
+
+    @Test
+    public void failedOtaEndsInRawFirstRecoveryInsteadOfPermanentQuarantine() throws Exception {
+        coordinator.onSerialReady(host.session);
+        assertThat(systemVersion("17.26.7.4"))
+                .isEqualTo(BesUartTransportCoordinator.SystemVersionResult.READY);
+        BesUartTransportCoordinator.OperationLease otaLease = coordinator.beginOtaAuthorization();
+        assertThat(otaLease).isNotNull();
+        assertThat(coordinator.promoteOtaAuthorizationToTransfer(otaLease)).isTrue();
+        coordinator.startSafetyRecovery();
+        safety.policy = BesUartTransportCoordinator.SafetyPolicy.RECOVERY_PROBE_ONLY;
+
+        coordinator.endOta(otaLease);
+
+        assertThat(coordinator.getState())
+                .isEqualTo(BesUartTransportCoordinator.State.SAFETY_RECOVERING);
+        assertThat(coordinator.inboundRoute(host.session))
+                .isEqualTo(BesUartTransportCoordinator.InboundRoute.OTA);
+        awaitRawWriteCount(1);
     }
 
     @Test
@@ -523,6 +595,13 @@ public class BesUartTransportCoordinatorTest {
         assertThat(host.openAttempts).containsExactly(AsgConstants.UART_FAST_BAUD);
         assertThat(host.rawWrites).hasSize(6);
         assertThat(countControlCommands("cs_syvr")).isEqualTo(2);
+
+        SerialSession currentSession = coordinator.getSerialSession();
+        assertThat(coordinator.inboundRoute(currentSession))
+                .isEqualTo(BesUartTransportCoordinator.InboundRoute.OTA);
+        assertThat(coordinator.getState())
+                .isEqualTo(BesUartTransportCoordinator.State.SAFETY_RECOVERING);
+        awaitRawWriteCount(7);
     }
 
     @Test

@@ -17,6 +17,7 @@
  * and docs/issues/004-cloud-client/design.md ("Subscriptions").
  */
 import type { HttpClient } from "../../http";
+import { systemTimers, type CloudClientTimers } from "../../timers";
 import type { AudioSubscription } from "@mentra/cloud-protocol";
 
 /** The REST path the cloud exposes for the full-replace subscription write. */
@@ -24,10 +25,12 @@ const SUBSCRIPTIONS_PATH = "/api/audio/subscriptions";
 
 export interface SubscriptionsDeps {
   http: HttpClient;
+  timers?: CloudClientTimers;
 }
 
 export class Subscriptions {
   private readonly http: HttpClient;
+  private readonly timers: CloudClientTimers;
 
   /**
    * The last set we sent. Kept so a reconnect can re-send the exact same set at
@@ -43,6 +46,7 @@ export class Subscriptions {
 
   constructor(deps: SubscriptionsDeps) {
     this.http = deps.http;
+    this.timers = deps.timers ?? systemTimers;
   }
 
   /**
@@ -130,7 +134,7 @@ export class Subscriptions {
 
       const delay = RETRY_DELAYS_MS[attempt];
       if (res.reason !== "stale-session" || delay === undefined) return;
-      await new Promise((resolve) => setTimeout(resolve, delay));
+      await new Promise<void>((resolve) => this.timers.setTimeout(resolve, delay));
     }
   }
 }

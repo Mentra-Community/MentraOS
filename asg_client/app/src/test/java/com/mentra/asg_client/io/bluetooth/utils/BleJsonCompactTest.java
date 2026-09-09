@@ -36,10 +36,14 @@ public class BleJsonCompactTest {
         assertThat(compact.getString("t")).isEqualTo("photo_status");
         assertThat(compact.getString("r")).isEqualTo("p1");
         assertThat(compact.getInt("s")).isEqualTo(3);
-        assertThat(compact.getLong("ts")).isEqualTo(100L);
-        assertThat(compact.has("rc")).isFalse();
+        assertThat(compact.getLong("timestamp")).isEqualTo(1_700_000_000_100L);
+        assertThat(compact.has("ts")).isFalse();
+        assertThat(compact.has("rc")).isTrue();
+        assertThat(compact.getBoolean("rc")).isFalse();
         assertThat(compact.getJSONObject("cm").getInt("aes")).isEqualTo(0);
-        assertThat(compact.getJSONObject("cm").has("m")).isFalse();
+        assertThat(compact.getJSONObject("cm").has("m")).isTrue();
+        assertThat(compact.getJSONObject("cm").getBoolean("m")).isFalse();
+        assertThat(compact.toString().length()).isLessThan(input.toString().length());
     }
 
     @Test
@@ -63,7 +67,7 @@ public class BleJsonCompactTest {
     }
 
     @Test
-    public void resolvedConfigDiffOmitsRepeatPayload() throws Exception {
+    public void resolvedConfigIsAlwaysSent() throws Exception {
         BleJsonCompact.markSessionConnected(1_000L);
         JSONObject config = new JSONObject("{\"source\":\"sdk\",\"manual\":false}");
         JSONObject first =
@@ -89,13 +93,100 @@ public class BleJsonCompactTest {
         JSONObject secondWire = BleJsonCompact.encode(second);
 
         assertThat(firstWire.has("resolvedConfig")).isTrue();
-        assertThat(secondWire.has("resolvedConfig")).isFalse();
-        assertThat(secondWire.getString(BleJsonCompact.KEY_RESOLVED_CONFIG_HASH))
-                .isEqualTo(BleJsonCompact.hashConfig(config));
+        assertThat(secondWire.has("resolvedConfig")).isTrue();
+        assertThat(secondWire.has(BleJsonCompact.KEY_RESOLVED_CONFIG_HASH)).isFalse();
 
+        BleJsonCompact.markSessionConnected(9_000L);
         JSONObject restoredSecond = BleJsonCompact.decode(secondWire);
         assertThat(restoredSecond.getJSONObject("resolvedConfig").getString("source"))
                 .isEqualTo("sdk");
+        assertThat(restoredSecond.getLong("timestamp")).isEqualTo(1_100L);
+    }
+
+    @Test
+    public void legacyResolvedConfigHashStillDecodesWhenCached() throws Exception {
+        JSONObject config = new JSONObject("{\"source\":\"sdk\",\"manual\":false}");
+        JSONObject full =
+                new JSONObject(
+                        "{\"t\":\"photo_status\",\"s\":2,\"resolvedConfig\":"
+                                + config
+                                + "}");
+        BleJsonCompact.decode(full);
+        JSONObject hashOnly =
+                new JSONObject(
+                        "{\"t\":\"photo_status\",\"s\":2,\"rch\":\""
+                                + BleJsonCompact.hashConfig(config)
+                                + "\"}");
+
+        JSONObject restored = BleJsonCompact.decode(hashOnly);
+
+        assertThat(restored.getJSONObject("resolvedConfig").getString("source"))
+                .isEqualTo("sdk");
+        assertThat(restored.has(BleJsonCompact.KEY_RESOLVED_CONFIG_HASH)).isFalse();
+    }
+
+    @Test
+    public void legacyResolvedConfigCacheMissKeepsHashForDiagnostics() throws Exception {
+        JSONObject hashOnly =
+                new JSONObject(
+                        "{\"t\":\"stream_status\",\"s\":\"streaming\",\"rch\":\"deadbeef\"}");
+
+        JSONObject restored = BleJsonCompact.decode(hashOnly);
+
+        assertThat(restored.getString(BleJsonCompact.KEY_RESOLVED_CONFIG_HASH))
+                .isEqualTo("deadbeef");
+        assertThat(restored.has("resolvedConfig")).isFalse();
+    }
+
+    @Test
+    public void ambiguousNestedWireKeysFallBackToVerboseJson() throws Exception {
+        JSONObject input =
+                new JSONObject(
+                        "{\"type\":\"stream_status\",\"payload\":{"
+                                + "\"s\":\"literal\",\"kind\":0,\"source\":1}}");
+
+        JSONObject wire = BleJsonCompact.encode(input);
+
+        assertThat(wire.has("type")).isTrue();
+        assertThat(wire.has("t")).isFalse();
+        assertThat(wire.getJSONObject("payload").getString("s")).isEqualTo("literal");
+        assertThat(wire.getJSONObject("payload").getInt("kind")).isZero();
+        assertThat(wire.getJSONObject("payload").getInt("source")).isEqualTo(1);
+        JSONObject restored = BleJsonCompact.decodeIfSupported(wire);
+        assertThat(restored.getJSONObject("payload").getString("s")).isEqualTo("literal");
+        assertThat(restored.getJSONObject("payload").getInt("kind")).isZero();
+        assertThat(restored.getJSONObject("payload").getInt("source")).isEqualTo(1);
+    }
+
+    @Test
+    public void numericEnumFieldsFallBackToVerboseJson() throws Exception {
+        JSONObject input =
+                new JSONObject(
+                        "{\"type\":\"stream_status\",\"payload\":{\"kind\":0,\"source\":1}}");
+
+        JSONObject wire = BleJsonCompact.encode(input);
+
+        assertThat(wire.has("type")).isTrue();
+        assertThat(wire.has("t")).isFalse();
+        assertThat(wire.getJSONObject("payload").getInt("kind")).isZero();
+        assertThat(wire.getJSONObject("payload").getInt("source")).isEqualTo(1);
+    }
+
+    @Test
+    public void absoluteTimestampSurvivesDifferentSessionEpochs() throws Exception {
+        BleJsonCompact.markSessionConnected(1_000L);
+        JSONObject input =
+                new JSONObject(
+                        "{\"type\":\"stream_status\",\"status\":\"streaming\","
+                                + "\"timestamp\":1700000000123}");
+
+        JSONObject wire = BleJsonCompact.encode(input);
+        BleJsonCompact.markSessionConnected(9_000L);
+        JSONObject restored = BleJsonCompact.decode(wire);
+
+        assertThat(wire.getLong("timestamp")).isEqualTo(1_700_000_000_123L);
+        assertThat(wire.has("ts")).isFalse();
+        assertThat(restored.getLong("timestamp")).isEqualTo(1_700_000_000_123L);
     }
 
     @Test
@@ -124,6 +215,59 @@ public class BleJsonCompactTest {
 
         assertThat(BleJsonCompact.encode(photoStatus).getString("t")).isEqualTo("photo_status");
         assertThat(BleJsonCompact.encode(streamStatus).getString("t")).isEqualTo("stream_status");
+    }
+
+    @Test
+    public void jsonValuesRoundTripAtEveryDepth() throws Exception {
+        JSONObject status =
+                new JSONObject(
+                        "{\"type\":\"stream_status\",\"status\":\"stopped\","
+                                + "\"streaming\":false,\"reconnecting\":false,"
+                                + "\"resolvedConfig\":{\"audio\":{\"echoCancellation\":false,"
+                                + "\"noiseSuppression\":false}},"
+                                + "\"nullValue\":null,\"emptyObject\":{},\"emptyArray\":[]}");
+
+        JSONObject wire = BleJsonCompact.encode(status);
+
+        assertThat(wire.has("streaming")).isTrue();
+        assertThat(wire.getBoolean("streaming")).isFalse();
+        assertThat(wire.has("rc")).isTrue();
+        assertThat(wire.getBoolean("rc")).isFalse();
+        JSONObject wireAudio = wire.getJSONObject("resolvedConfig").getJSONObject("audio");
+        assertThat(wireAudio.has("echoCancellation")).isTrue();
+        assertThat(wireAudio.getBoolean("echoCancellation")).isFalse();
+        assertThat(wireAudio.has("noiseSuppression")).isTrue();
+        assertThat(wireAudio.getBoolean("noiseSuppression")).isFalse();
+        assertThat(wire.has("nullValue")).isTrue();
+        assertThat(wire.isNull("nullValue")).isTrue();
+        assertThat(wire.getJSONObject("emptyObject").length()).isZero();
+        assertThat(wire.getJSONArray("emptyArray").length()).isZero();
+
+        JSONObject restored = BleJsonCompact.decode(wire);
+        assertThat(restored.getBoolean("streaming")).isFalse();
+        assertThat(restored.getBoolean("reconnecting")).isFalse();
+        JSONObject restoredAudio =
+                restored.getJSONObject("resolvedConfig").getJSONObject("audio");
+        assertThat(restoredAudio.getBoolean("echoCancellation")).isFalse();
+        assertThat(restoredAudio.getBoolean("noiseSuppression")).isFalse();
+        assertThat(restored.has("nullValue")).isTrue();
+        assertThat(restored.isNull("nullValue")).isTrue();
+        assertThat(restored.getJSONObject("emptyObject").length()).isZero();
+        assertThat(restored.getJSONArray("emptyArray").length()).isZero();
+    }
+
+    @Test
+    public void wifiScanPreservesIncompleteMarker() throws Exception {
+        JSONObject result =
+                new JSONObject(
+                        "{\"type\":\"wifi_scan_result\",\"networks\":[\"one\"],"
+                                + "\"scan_complete\":false}");
+
+        JSONObject wire = BleJsonCompact.encode(result);
+
+        assertThat(wire.has("scan_complete")).isTrue();
+        assertThat(wire.getBoolean("scan_complete")).isFalse();
+        assertThat(BleJsonCompact.decode(wire).getBoolean("scan_complete")).isFalse();
     }
 
     @Test

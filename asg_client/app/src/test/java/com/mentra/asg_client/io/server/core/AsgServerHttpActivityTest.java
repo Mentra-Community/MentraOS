@@ -11,6 +11,8 @@ import com.mentra.asg_client.io.server.interfaces.ServerConfig;
 import com.mentra.asg_client.logging.Logger;
 import fi.iki.elonen.NanoHTTPD;
 import java.io.ByteArrayInputStream;
+import java.net.InetAddress;
+import java.net.ServerSocket;
 import java.time.Duration;
 import java.util.concurrent.atomic.AtomicInteger;
 import org.junit.Test;
@@ -50,6 +52,60 @@ public class AsgServerHttpActivityTest {
         assertThat(activityCount.get()).isEqualTo(2);
     }
 
+    @Test
+    public void bindAddressRestrictsServerAndDeterminesAdvertisedUrl() {
+        ServerConfig config = mock(ServerConfig.class);
+        NetworkProvider networkProvider = mock(NetworkProvider.class);
+        CacheManager cacheManager = mock(CacheManager.class);
+        RateLimiter rateLimiter = mock(RateLimiter.class);
+        Logger logger = mock(Logger.class);
+        when(config.getPort()).thenReturn(0);
+        when(networkProvider.getBestIpAddress()).thenReturn("10.0.0.25");
+
+        TestServer server =
+                new TestServer(
+                        config,
+                        networkProvider,
+                        cacheManager,
+                        rateLimiter,
+                        logger,
+                        "127.0.0.1");
+
+        server.startServer();
+        try {
+            assertThat(server.isAlive()).isTrue();
+            assertThat(server.getHostname()).isEqualTo("127.0.0.1");
+            assertThat(server.getServerUrl())
+                    .isEqualTo("http://127.0.0.1:" + server.getListeningPort());
+        } finally {
+            server.stopServer();
+        }
+    }
+
+    @Test
+    public void bindFailureIsReportedToCaller() throws Exception {
+        try (ServerSocket occupied = new ServerSocket(0, 1, InetAddress.getByName("127.0.0.1"))) {
+            ServerConfig config = mock(ServerConfig.class);
+            NetworkProvider networkProvider = mock(NetworkProvider.class);
+            CacheManager cacheManager = mock(CacheManager.class);
+            RateLimiter rateLimiter = mock(RateLimiter.class);
+            Logger logger = mock(Logger.class);
+            when(config.getPort()).thenReturn(occupied.getLocalPort());
+
+            TestServer server =
+                    new TestServer(
+                            config,
+                            networkProvider,
+                            cacheManager,
+                            rateLimiter,
+                            logger,
+                            "127.0.0.1");
+
+            assertThat(server.startServer()).isFalse();
+            assertThat(server.isAlive()).isFalse();
+        }
+    }
+
     private static final class TestServer extends AsgServer {
         TestServer(
                 ServerConfig config,
@@ -58,6 +114,16 @@ public class AsgServerHttpActivityTest {
                 RateLimiter rateLimiter,
                 Logger logger) {
             super(config, networkProvider, cacheManager, rateLimiter, logger);
+        }
+
+        TestServer(
+                ServerConfig config,
+                NetworkProvider networkProvider,
+                CacheManager cacheManager,
+                RateLimiter rateLimiter,
+                Logger logger,
+                String bindAddress) {
+            super(config, networkProvider, cacheManager, rateLimiter, logger, bindAddress);
         }
 
         @Override

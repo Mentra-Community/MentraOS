@@ -50,6 +50,25 @@ const fr = {
     hardwareIncompatibleMessage:
       "{{app}} nécessite du matériel qui n'est pas disponible sur vos lunettes connectées : {{missing}}",
   },
+  settings: {
+    ...en.settings,
+    forgetGlassesWhilePairing:
+      "L'appairage Bluetooth est en cours. Acceptez ou fermez d'abord la boîte de dialogue d'appairage du système, puis essayez à nouveau de dissocier les lunettes.",
+  },
+  pairing: {
+    ...en.pairing,
+    nearbyNotInPairingModeHint:
+      "Des lunettes Mentra Live à proximité ont été trouvées, mais elles ne sont pas en mode d'appairage. Appuyez 3 fois rapidement sur le bouton d'alimentation, puis réessayez.",
+    notInPairingModeLabel: "Pas en mode d'appairage",
+    notInPairingModeAlertTitle: "Activez le mode d'appairage",
+    notInPairingModeAlertMessage:
+      "Appuyez 3 fois rapidement sur le bouton d'alimentation. La LED clignote et les lunettes énoncent un code à 4 caractères. Sélectionnez ensuite les lunettes à nouveau.",
+    pairingCodeLabel: "Code {{code}}",
+    legacyFirmwareLabel: "Firmware hérité",
+    livePairingModeInfo:
+      "Appuyez 3 fois rapidement sur le bouton d'alimentation. La LED clignote et les lunettes énoncent un code à 4 caractères (0–9, A–F). Comparez ce code dans la liste si plusieurs unités apparaissent.",
+    noGlassesFoundHint: "Assurez-vous d'avoir appuyé 3 fois rapidement sur le bouton d'alimentation, puis réessayez.",
+  },
   demoNavigator: {
     componentsTab: "Composants",
     debugTab: "Débogage",
@@ -126,6 +145,64 @@ const fr = {
       content:
         "Aucun favori n'a été ajouté pour le moment. Appuyez sur le cœur d'un épisode pour l'ajouter à vos favoris !",
     },
+  },
+  qrScan: {
+    defaultTitle: "Scanner un code QR",
+    defaultHint: "Pointez la caméra vers un code QR",
+    checkingPermission: "Vérification de l'autorisation caméra\u2026",
+    permissionTitle: "Accès à la caméra requis",
+    permissionBody:
+      "Nous avons besoin de votre caméra pour scanner des codes QR. Elle n'est utilisée que tant que cet écran est ouvert.",
+    grantAccess: "Autoriser l'accès à la caméra",
+    openSettings: "Ouvrir les réglages",
+    permissionDeniedTitle: "Autorisation refusée",
+    permissionDeniedBody: "Activez l'accès à la caméra dans les Réglages pour scanner des codes QR.",
+  },
+  profileSettings: {
+    ...en.profileSettings,
+    workspaceName: "Nom",
+    workspaceUrl: "URL de l'espace de travail",
+    mentraWorkspace: "Mentra",
+  },
+  versionCheck: {
+    ...en.versionCheck,
+    managedUpdateDescription:
+      "Cette version de l'application Mentra n'est plus prise en charge par {{name}}. Les mises à jour sont distribuées par la gestion des appareils de votre organisation. Contactez votre administrateur informatique pour mettre à jour.",
+    contactSupport: "Contacter l'assistance",
+  },
+  workspace: {
+    or: "ou",
+    title: "Connexion de l'organisation",
+    heading: "Connectez-vous à votre organisation",
+    description: "Saisissez l'adresse fournie par votre administrateur informatique.",
+    connectAction: "Se connecter à votre organisation",
+    urlLabel: "Adresse de l'organisation",
+    urlPlaceholder: "entreprise.exemple.com",
+    urlHelper: "Exemple : entreprise.exemple.com",
+    unknownResolutionError: "Impossible de charger cet espace de travail. Réessayez.",
+    notFoundError:
+      "Aucun espace de travail Mentra n'a été trouvé à cette adresse. Vérifiez l'adresse ou demandez à votre administrateur informatique.",
+    configurationError:
+      "Cet espace de travail n'a pas pu être vérifié. Demandez à votre administrateur informatique de vérifier sa configuration.",
+    confirmTitle: "Confirmer l'organisation",
+    candidateExpired: "Cette confirmation a expiré. Saisissez à nouveau l'adresse de votre organisation.",
+    enterAnotherUrl: "Saisir l'adresse de l'organisation",
+    connectTo: "Se connecter à {{name}}",
+    continueTo: "Continuer vers {{name}}",
+    workspaceLabel: "Espace de travail",
+    signInLabel: "Connexion",
+    microsoftOrganizationAccount: "Compte d'organisation Microsoft",
+    mentraAccount: "Compte Mentra",
+    confirmDescription:
+      "En continuant, cette organisation devient votre déploiement Mentra actif. Ses services et règles s'appliquent avant la connexion.",
+    signInDescription: "Continuez avec le compte d'organisation configuré pour cet espace de travail.",
+    continueWithMicrosoft: "Continuer avec Microsoft",
+    returnToMentra: "Revenir à Mentra",
+    change: "Modifier",
+    noActiveWorkspace: "Aucun espace de travail d'organisation n'est actif.",
+    signInFailedTitle: "Échec de la connexion",
+    signInFailedDescription:
+      "Microsoft n'a pas pu vous connecter à cet espace de travail. Réessayez ou contactez votre équipe informatique.",
   },
 } satisfies TranslationResource
 

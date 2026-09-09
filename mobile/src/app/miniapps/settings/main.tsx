@@ -20,7 +20,6 @@ export default function MainSettingsPage() {
   const [debugMode] = useSetting(SETTINGS.debug_mode.key)
   const [superMode] = useSetting(SETTINGS.super_mode.key)
   const [appearanceMenuEnabled] = useSetting(SETTINGS.appearance_menu_enabled.key)
-  const [miniappDevMode] = useSetting(SETTINGS.miniapp_dev_mode.key)
   const viewShotRef = useRef<View>(null)
 
   useRegisterCapsule({
@@ -92,13 +91,11 @@ export default function MainSettingsPage() {
                 onLongPress={() => superMode && push("/miniapps/settings/super")}
               />
             )}
-            {miniappDevMode && (
-              <RouteButton
-                icon={<Icon name="user-code" size={24} color={theme.colors.secondary_foreground} />}
-                label={translate("settings:miniappDeveloperSettings")}
-                onPress={() => push("/miniapps/settings/miniapp-dev")}
-              />
-            )}
+            <RouteButton
+              icon={<Icon name="user-code" size={24} color={theme.colors.secondary_foreground} />}
+              label={translate("settings:miniappDeveloperSettings")}
+              onPress={() => push("/miniapps/settings/miniapp-dev")}
+            />
           </Group>
         </View>
 

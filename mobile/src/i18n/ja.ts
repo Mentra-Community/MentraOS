@@ -48,6 +48,25 @@ const ja = {
     hardwareIncompatible: "ハードウェア非対応",
     hardwareIncompatibleMessage: "{{app}}は接続されたグラスで利用できないハードウェアが必要です: {{missing}}",
   },
+  settings: {
+    ...en.settings,
+    forgetGlassesWhilePairing:
+      "Bluetoothのペアリング中です。先にシステムのペアリングダイアログを承認または閉じてから、もう一度グラスのペアリング解除をお試しください。",
+  },
+  pairing: {
+    ...en.pairing,
+    nearbyNotInPairingModeHint:
+      "近くにMentra Liveが見つかりましたが、ペアリングモードではありません。電源ボタンを素早く3回押してから、もう一度お試しください。",
+    notInPairingModeLabel: "ペアリングモードではありません",
+    notInPairingModeAlertTitle: "ペアリングモードを開始",
+    notInPairingModeAlertMessage:
+      "電源ボタンを素早く3回押してください。LEDが点滅し、グラスが4文字のコードを読み上げます。その後、もう一度グラスを選択してください。",
+    pairingCodeLabel: "コード {{code}}",
+    legacyFirmwareLabel: "レガシーファームウェア",
+    livePairingModeInfo:
+      "電源ボタンを素早く3回押してください。LEDが点滅し、グラスが4文字のコード（0–9、A–F）を読み上げます。複数台が表示された場合は、そのコードで照合してください。",
+    noGlassesFoundHint: "電源ボタンを素早く3回押してから、もう一度お試しください。",
+  },
   demoNavigator: {
     componentsTab: "コンポーネント",
     debugTab: "デバッグ",
@@ -124,6 +143,62 @@ const ja = {
       content:
         "お気に入りのエピソードがまだありません。エピソードにあるハートマークにタップして、お気に入りに追加しましょう！",
     },
+  },
+  qrScan: {
+    defaultTitle: "QRコードをスキャン",
+    defaultHint: "カメラをQRコードに向けてください",
+    checkingPermission: "カメラの許可を確認しています\u2026",
+    permissionTitle: "カメラへのアクセスが必要です",
+    permissionBody: "QRコードのスキャンにカメラを使います。この画面を開いている間だけ使用します。",
+    grantAccess: "カメラへのアクセスを許可",
+    openSettings: "設定を開く",
+    permissionDeniedTitle: "許可が拒否されました",
+    permissionDeniedBody: "QRコードをスキャンするには、設定でカメラへのアクセスを有効にしてください。",
+  },
+  profileSettings: {
+    ...en.profileSettings,
+    workspaceName: "名前",
+    workspaceUrl: "ワークスペースURL",
+    mentraWorkspace: "Mentra",
+  },
+  versionCheck: {
+    ...en.versionCheck,
+    managedUpdateDescription:
+      "このバージョンのMentraアプリは{{name}}ではサポートされなくなりました。アップデートは組織のデバイス管理から配信されます。アップデートするにはIT管理者に連絡してください。",
+    contactSupport: "サポートに連絡",
+  },
+  workspace: {
+    or: "または",
+    title: "組織サインイン",
+    heading: "組織に接続",
+    description: "IT管理者から提供されたアドレスを入力してください。",
+    connectAction: "組織にサインイン",
+    urlLabel: "組織のアドレス",
+    urlPlaceholder: "company.example.com",
+    urlHelper: "例: company.example.com",
+    unknownResolutionError: "このワークスペースを読み込めませんでした。もう一度お試しください。",
+    notFoundError:
+      "そのアドレスにMentraワークスペースが見つかりませんでした。アドレスを確認するか、IT管理者にお問い合わせください。",
+    configurationError: "このワークスペースを検証できませんでした。IT管理者に設定の確認を依頼してください。",
+    confirmTitle: "組織の確認",
+    candidateExpired: "この確認は期限切れです。組織のアドレスをもう一度入力してください。",
+    enterAnotherUrl: "組織のアドレスを入力",
+    connectTo: "{{name}}に接続",
+    continueTo: "{{name}}へ進む",
+    workspaceLabel: "ワークスペース",
+    signInLabel: "サインイン",
+    microsoftOrganizationAccount: "Microsoft組織アカウント",
+    mentraAccount: "Mentraアカウント",
+    confirmDescription:
+      "続行すると、この組織がアクティブなMentraデプロイメントになります。サインイン前からそのサービスとポリシーが適用されます。",
+    signInDescription: "このワークスペースに設定された組織アカウントで続行してください。",
+    continueWithMicrosoft: "Microsoftで続行",
+    returnToMentra: "Mentraに戻る",
+    change: "変更",
+    noActiveWorkspace: "アクティブな組織ワークスペースはありません。",
+    signInFailedTitle: "サインインに失敗しました",
+    signInFailedDescription:
+      "Microsoftでこのワークスペースにサインインできませんでした。もう一度試すか、ITチームにお問い合わせください。",
   },
 } satisfies TranslationResource
 

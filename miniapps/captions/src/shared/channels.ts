@@ -14,6 +14,7 @@
 
 import type {
   CaptionSettings,
+  CaptionsDisplayCapabilities,
   CaptionsSnapshot,
   CloudClientStatus,
   DisplayPreview,
@@ -34,6 +35,8 @@ export interface Channels {
   "captions:display-preview": DisplayPreview
   /** Settings update (replaces SSE settings_update). */
   "captions:settings-update": CaptionSettings
+  /** Positioning support can change when the connected glasses change. */
+  "captions:display-capabilities": CaptionsDisplayCapabilities
   /** Phone-owned cloud-client status update. */
   "captions:cloud-status": CloudClientStatus
 
@@ -44,6 +47,7 @@ export interface Channels {
   "captions:set-use-offline-stt": {enabled: boolean}
   "captions:set-display-lines": {lines: number}
   "captions:set-display-width": {width: number}
+  "captions:set-caption-position": {position: "top" | "bottom"}
   "captions:set-word-breaking": {enabled: boolean}
   "captions:set-caption-timeout": {seconds: number}
   "captions:clear": Record<string, never>

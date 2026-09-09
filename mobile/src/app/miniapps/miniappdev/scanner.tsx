@@ -8,12 +8,11 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import showAlert from "@/utils/AlertUtils"
-import {decideDevLaunchRoute, engine} from "@mentra/engine"
-import {appRegistry, registerDevApp, type DevAppRecord} from "@mentra/engine/internal"
+import {decideDevOpenRoute, engine} from "@mentra/engine"
+import {appRegistry, registerDevApp, type DevAppRecord} from "@mentra/engine-host-internal"
 import {askPermissionsUI, checkPermissionsUI, PERMISSION_CONFIG} from "@/utils/PermissionsUtils"
-import {markMiniappDevMode} from "@/utils/miniappDevMode"
 import {storage} from "@/utils/storage/storage"
-import type {AppletInterface, AppletPermission} from "@/../../cloud/packages/types/src"
+import type {AppletInterface, AppletPermission} from "@mentra/engine"
 
 export default function MiniappDeveloperScannerScreen() {
   const {theme} = useAppTheme()
@@ -49,7 +48,6 @@ export default function MiniappDeveloperScannerScreen() {
           ])
           return
         }
-        markMiniappDevMode()
         showAlert("Installed", `${res.value.name} v${res.value.version} is on your home screen.`, [
           {text: "OK", onPress: () => goBack()},
         ])
@@ -96,12 +94,12 @@ export default function MiniappDeveloperScannerScreen() {
       }
 
       // Pass mDNS up front — storage hasn't been written yet on first scan, so
-      // decideDevLaunchRoute can't read `_dev_mdns` until we persist below.
-      const launchResult = await decideDevLaunchRoute(packageName ?? "", devUrl, {
+      // decideDevOpenRoute can't read `_dev_mdns` until we persist below.
+      const launchResult = await decideDevOpenRoute(packageName ?? "", devUrl, {
         alternateHosts: mdnsHost ? [mdnsHost] : undefined,
       })
 
-      const manifest = launchResult.manifest
+      const manifest = launchResult.decision === "live" ? launchResult.manifest : null
       // Keep an explicit identity separate from the offline-screen display
       // fallback — never persist routing keys under the shared `com.dev.unknown`.
       const knownPackageName = (manifest?.packageName || packageName)?.trim() || undefined
@@ -112,7 +110,9 @@ export default function MiniappDeveloperScannerScreen() {
         ? (manifest!.permissions as AppletPermission[])
         : []
 
-      const resolvedBase = (launchResult.resolvedUrl || devUrl).replace(/\/$/, "")
+      const resolvedBase = (
+        (launchResult.decision === "live" ? launchResult.resolvedUrl : undefined) || devUrl
+      ).replace(/\/$/, "")
       let iconUrl: string | undefined
       if (iconPath) {
         iconUrl = /^https?:\/\//.test(iconPath)
@@ -126,12 +126,6 @@ export default function MiniappDeveloperScannerScreen() {
       // miniapp remains independently launchable without rescanning. Its icon
       // is copied locally while the server is reachable.
       if (manifest && knownPackageName) {
-        // A fetched manifest means a real dev app loaded — latch the per-account
-        // "this user is a developer" signal (idempotent). Gated on the manifest
-        // so a failed/unreachable scan (decision "offline", no manifest) can't
-        // flip the flag, matching the URL loader's behavior.
-        markMiniappDevMode()
-
         const existing = engine.miniapps.list().find((app) => app.packageName === knownPackageName)
         if (existing?.running) await engine.miniapps.stop(knownPackageName)
         await registerDevApp({
@@ -139,7 +133,7 @@ export default function MiniappDeveloperScannerScreen() {
           name: name ?? knownPackageName,
           iconUrl: iconUrl ?? `${resolvedBase}/icon.png`,
           // Prefer the host that actually answered (may be mDNS / Metro failover).
-          devUrl: launchResult.resolvedUrl || devUrl,
+          devUrl: resolvedBase,
           // Explicit empty clears a prior QR's sidecar port / mDNS for this package.
           devPort: Number.isFinite(portNum) ? portNum : undefined,
           mdnsHost: mdnsHost ?? "",
@@ -176,6 +170,13 @@ export default function MiniappDeveloperScannerScreen() {
       if (launchResult.decision === "offline") {
         clearHistoryAndGoHome()
         push("/applet/dev-offline", {packageName, name, iconUrl})
+        return
+      }
+
+      if (launchResult.decision === "cached") {
+        clearHistoryAndGoHome()
+        await engine.miniapps.refresh()
+        await engine.miniapps.setForeground(packageName)
         return
       }
 

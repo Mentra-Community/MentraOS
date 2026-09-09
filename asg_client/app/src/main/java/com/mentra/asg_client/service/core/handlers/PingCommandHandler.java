@@ -2,6 +2,8 @@ package com.mentra.asg_client.service.core.handlers;
 
 import android.util.Log;
 
+import com.mentra.asg_client.io.network.interfaces.INetworkManager;
+import com.mentra.asg_client.io.ota.session.OtaSessionManager;
 import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
 import com.mentra.asg_client.service.communication.interfaces.IResponseBuilder;
 import com.mentra.asg_client.service.legacy.interfaces.ICommandHandler;
@@ -62,6 +64,7 @@ public class PingCommandHandler implements ICommandHandler {
         Log.d(TAG, "🏓 Received ping data: " + (data != null ? data.toString() : "null"));
 
         try {
+            refreshOtaHotspotActivity();
             Log.d(TAG, "🏓 🔨 Building ping response...");
             JSONObject pingResponse = responseBuilder.buildPingResponse();
             Log.d(TAG, "🏓 📤 Sending ping response: " + pingResponse.toString());
@@ -74,4 +77,22 @@ public class PingCommandHandler implements ICommandHandler {
             return false;
         }
     }
-} 
+
+    /** Let the existing OTA heartbeat refresh the hotspot's shared inactivity timer. */
+    private void refreshOtaHotspotActivity() {
+        try {
+            if (serviceManager == null || serviceManager.getContext() == null) {
+                return;
+            }
+            INetworkManager networkManager = serviceManager.getNetworkManager();
+            if (networkManager != null
+                    && networkManager.isHotspotEnabled()
+                    && new OtaSessionManager(serviceManager.getContext()).hasActiveSession()) {
+                networkManager.updateHttpActivity();
+            }
+        } catch (Exception e) {
+            // Hotspot bookkeeping must never make the BLE heartbeat fail.
+            Log.w(TAG, "Could not refresh OTA hotspot activity", e);
+        }
+    }
+}

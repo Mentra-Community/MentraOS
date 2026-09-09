@@ -21,12 +21,15 @@ export type {
   ConnectAckPayload,
   DisplayCapabilities,
   GlassesCapabilities,
+  HostFeatures,
   MiniappAuthState,
   MiniappRequestError,
   MiniappSessionOptions,
   MiniappVisibility,
 } from "./session"
 export type {AuthFetchOptions, AuthModule} from "./modules/auth"
+export {MiniappConfigurationError} from "./modules/configuration"
+export type {ConfigurationModule} from "./modules/configuration"
 
 export {makeRequestId, parseEnvelope, serializeEnvelope} from "./envelope"
 export type {MiniappEnvelope} from "./envelope"
@@ -48,12 +51,9 @@ export {
 export type {LanguageHint, TranscriptionLanguage} from "./modules/languages"
 export type {CloudClientAudioTransport, CloudClientConnectionStatus, CloudClientStatus} from "./modules/cloud"
 
-// Hardware requirement types — re-exported from @mentra/types so miniapp
-// authors can type their miniapp.json manifest without pulling in the types
-// package directly. Keep explicit exports (enums as value, interfaces as
-// type) per @mentra/types' Bun-compat convention.
-export {HardwareType, HardwareRequirementLevel} from "@mentra/types"
-export type {HardwareRequirement} from "@mentra/types"
+// Canonical miniapp manifest hardware contract.
+export {HardwareType, HardwareRequirementLevel} from "./hardware"
+export type {HardwareRequirement} from "./hardware"
 
 // Transports — exported for advanced uses (forced transport injection, tests)
 export {createTransport} from "./transport/auto"
@@ -130,7 +130,14 @@ export type {
   StreamStatus,
   StreamVideoConfig,
 } from "./modules/stream"
-export type {ShareOptions, ShareResult, DownloadOptions, DownloadResult} from "./modules/system"
+export type {
+  ShareOptions,
+  ShareResult,
+  DownloadOptions,
+  DownloadResult,
+  ScanQrOptions,
+  ScanQrResult,
+} from "./modules/system"
 export type {MiniappInfo, MiniappActionInfo, MiniappCompatibility, ListMiniappsOptions} from "./modules/miniapps"
 export type {ActionContext, ActionHandler, InvokeOptions} from "./modules/actions"
 
@@ -176,6 +183,18 @@ export type {PhoneModule, PhoneNotificationsModule, PhoneCalendarModule} from ".
 export type {TranscriptionModule, TranscriptionConfig, TranscriptionOptions} from "./modules/transcription"
 export type {TranslationModule} from "./modules/translation"
 export type {SpeakerModule} from "./modules/speaker"
+export type {
+  MeetingModule,
+  MeetingJoinOptions,
+  MeetingState,
+  MeetingPhase,
+  MeetingProvider,
+  MeetingVideoSource,
+  MeetingParticipant,
+  MeetingParticipantState,
+  MeetingMediaSource,
+} from "./modules/meeting"
+export {MEETING_HOST_UPDATE_MESSAGE, parseMeetingMediaSource, parseMeetingParticipants} from "./modules/meeting"
 
 // Permission types
 export type {PermissionType, PermissionRecord} from "./session"

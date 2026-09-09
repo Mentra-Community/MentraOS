@@ -2,15 +2,15 @@
  * DisplayProcessor
  *
  * Processes display events with pixel-accurate text wrapping using the same
- * display-utils library as the cloud. This ensures the mobile preview matches
- * exactly what is shown on the glasses.
+ * Engine display utilities. This ensures the mobile preview matches exactly
+ * what is shown on the glasses.
  *
  * Key responsibilities:
  * 1. Intercept display events before sending to native SGC
  * 2. Wrap text using the correct device profile (G1, etc.)
  * 3. Ensure GlassesDisplayMirror shows exactly what glasses will show
  *
- * @see cloud/issues/026-mobile-display-processor for design docs
+ * @see notes/miniapp-display-api-redesign.md for the current display design
  */
 
 import {

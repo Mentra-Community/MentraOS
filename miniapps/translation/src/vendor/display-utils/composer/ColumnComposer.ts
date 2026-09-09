@@ -11,7 +11,7 @@
  * 2. Merges columns line-by-line with pixel-precise space padding
  * 3. Returns a single pre-composed string ready for native to chunk & send
  *
- * @see cloud/issues/026-mobile-display-processor for design docs
+ * @see notes/miniapp-display-api-redesign.md for the current display design
  */
 
 import type { DisplayProfile } from "../profiles/types";

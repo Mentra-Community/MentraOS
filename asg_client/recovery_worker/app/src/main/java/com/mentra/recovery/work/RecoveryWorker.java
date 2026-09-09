@@ -104,6 +104,9 @@ public class RecoveryWorker extends Worker {
       return Result.success();
     }
 
+    // We have now exhausted restart plus late-PONG checks. Stop any vendor AP before the
+    // backup reinstall; disabling an already-stopped AP is harmless and needs no ownership bit.
+    stopVendorHotspot(context);
     store.setState(RecoveryConstants.STATE_REINSTALLING_BACKUP, "RESTART_FAILED");
     telemetry.emit(
         "mentra_recovery_reinstall_attempted",
@@ -199,6 +202,15 @@ public class RecoveryWorker extends Worker {
         attempt,
         false);
     return Result.failure();
+  }
+
+  private static void stopVendorHotspot(Context context) {
+    Intent intent = new Intent("com.xy.xsetting.action");
+    intent.setPackage("com.android.systemui");
+    intent.putExtra("cmd", "ap_start");
+    intent.putExtra("enable", false);
+    context.sendBroadcast(intent);
+    Log.w(RecoveryConstants.TAG, "Stopped vendor hotspot after failed ASG recovery");
   }
 
   private Result completeReinstallSuccess(

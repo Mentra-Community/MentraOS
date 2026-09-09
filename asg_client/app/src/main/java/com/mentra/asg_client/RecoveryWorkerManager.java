@@ -45,7 +45,7 @@ public class RecoveryWorkerManager {
     // recovery_worker/app/build.gradle versionCode (the asset is built from that project in
     // CI): if this lags, a device already on the previous worker skips the redeploy and every
     // pinned downgrade is refused by the MIN_RECOVERY_VERSION_FOR_DOWNGRADE gate.
-    private static final int ASSETS_RECOVERY_VERSION = 8;
+    private static final int ASSETS_RECOVERY_VERSION = 10;
     private static final String PREFS = "RecoveryWorkerManagerPrefs";
     private static final String KEY_PURGED_LEGACY = "legacy_updater_purged";
 

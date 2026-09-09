@@ -6,7 +6,12 @@ import android.hardware.camera2.CameraCharacteristics;
 import android.hardware.camera2.CameraManager;
 import android.os.SystemClock;
 import android.util.Log;
+import com.mentra.asg_client.io.hardware.core.HardwareManagerFactory;
+
 import com.mentra.asg_client.io.media.core.MediaCaptureService;
+import com.mentra.asg_client.io.network.interfaces.INetworkManager;
+import com.mentra.asg_client.io.network.utils.HotspotNetworkUtils;
+import com.mentra.asg_client.io.streaming.LivestreamEisPolicy;
 import com.mentra.asg_client.io.streaming.config.RtmpStreamConfig;
 import com.mentra.asg_client.io.streaming.config.WhipStreamConfig;
 import com.mentra.asg_client.io.streaming.services.RtmpStreamingService;
@@ -21,10 +26,13 @@ import com.mentra.asg_client.service.system.core.SystemControllerFactory;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
 import com.mentra.asg_client.service.utils.ServiceConstants;
 import com.mentra.asg_client.service.utils.ServiceUtils;
+
 import io.github.thibaultbee.streampack.internal.sources.camera.CameraController;
-import java.util.Set;
+
 import org.json.JSONException;
 import org.json.JSONObject;
+
+import java.util.Set;
 
 /**
  * Handler for streaming commands (RTMP, SRT, WHIP). Routes to the appropriate streaming service
@@ -33,29 +41,20 @@ import org.json.JSONObject;
 public class StreamCommandHandler implements ICommandHandler {
     private static final String TAG = "StreamCommandHandler";
 
-    /**
-     * Toggle Electronic Image Stabilization for livestreams. When true, livestreams enable EIS
-     * (Pixsmart vendor stack: system property + per-CaptureRequest SPORTS scene mode and vendor
-     * key). When false, EIS is disabled for the duration of the stream to reduce camera HAL thermal
-     * load.
-     */
-    private static final boolean EIS_IN_LIVESTREAMS = false;
-
-    /**
-     * EIS only kicks in below this pixel budget. Higher resolutions push the camera HAL into
-     * thermal/throughput regimes where EIS makes the stream worse.
-     */
-    private static final int EIS_MAX_PIXELS = 500_000;
-
     private final Context context;
     private final IStateManager stateManager;
     private final IMediaManager streamingManager;
+    private final HotspotStreamActivityTracker mHotspotActivityTracker;
 
     public StreamCommandHandler(
-            Context context, IStateManager stateManager, IMediaManager streamingManager) {
+            Context context,
+            IStateManager stateManager,
+            IMediaManager streamingManager,
+            INetworkManager networkManager) {
         this.context = context;
         this.stateManager = stateManager;
         this.streamingManager = streamingManager;
+        this.mHotspotActivityTracker = new HotspotStreamActivityTracker(networkManager);
     }
 
     @Override
@@ -141,7 +140,7 @@ public class StreamCommandHandler implements ICommandHandler {
             // BATTERY CHECK
             if (stateManager != null) {
                 int batteryLevel = stateManager.getBatteryLevel();
-                if (batteryLevel >= 0 && batteryLevel < BatteryConstants.MIN_BATTERY_LEVEL) {
+                if (BatteryConstants.isCameraBatteryLow(batteryLevel, HardwareManagerFactory.getInitializedInstance())) {
                     Log.w(TAG, "🚫 Stream rejected - battery too low (" + batteryLevel + "%)");
                     MediaCaptureService.playBatteryLowSound(context);
                     sendStreamErrorStatus(
@@ -157,9 +156,12 @@ public class StreamCommandHandler implements ICommandHandler {
                 Log.w(TAG, "⚠️ StateManager not available - skipping battery check");
             }
 
-            // WiFi check (WHIP streams may work on mobile data; skip only for WHIP if needed)
-            if (stateManager != null && !stateManager.isConnectedToWifi()) {
-                Log.e(TAG, "Cannot start stream - no WiFi connection");
+            // The hotspot is a directly connected local network, even though Android does not
+            // report it as a connected STA WiFi network.
+            boolean hasStaWifi = stateManager == null || stateManager.isConnectedToWifi();
+            boolean hasLocalHotspotRoute = HotspotNetworkUtils.isEndpointOnActiveHotspot(streamUrl);
+            if (!hasStaWifi && !hasLocalHotspotRoute) {
+                Log.e(TAG, "Cannot start stream - no WiFi or local hotspot route");
                 sendStreamErrorStatus(streamId, ServiceConstants.ERROR_NO_WIFI_CONNECTION);
                 return false;
             }
@@ -182,6 +184,12 @@ public class StreamCommandHandler implements ICommandHandler {
             if (videoJson == null) videoJson = data.optJSONObject("v");
             JSONObject audioJson = data.optJSONObject("audio");
             if (audioJson == null) audioJson = data.optJSONObject("a");
+            Boolean captureAudioOverride = null;
+            if (data.has("captureAudio")) {
+                captureAudioOverride = data.optBoolean("captureAudio", true);
+            } else if (data.has("ca")) {
+                captureAudioOverride = data.optBoolean("ca", true);
+            }
 
             switch (protocol) {
                 case RTMP:
@@ -191,7 +199,7 @@ public class StreamCommandHandler implements ICommandHandler {
                         if (!preflightCameraCaptureForPackStreaming(config, streamId)) {
                             return false;
                         }
-                        // Toggle EIS for the duration of the stream (see EIS_IN_LIVESTREAMS).
+                        // Toggle EIS for the duration of the stream (500k pixel gate).
                         // Gate on resolution so EIS only runs when the camera HAL can handle it.
                         applyEisForStreaming(config.getVideoWidth(), config.getVideoHeight());
                         eisChanged = true;
@@ -221,6 +229,9 @@ public class StreamCommandHandler implements ICommandHandler {
                 case WHIP:
                     {
                         WhipStreamConfig config = WhipStreamConfig.fromJson(videoJson, audioJson);
+                        if (captureAudioOverride != null) {
+                            config.setCaptureAudio(captureAudioOverride);
+                        }
                         Log.i(TAG, "[VideoQuality] parsed WHIP config " + config);
                         if (!preflightCameraCaptureForWhip(config, streamId)) {
                             return false;
@@ -248,6 +259,8 @@ public class StreamCommandHandler implements ICommandHandler {
                     }
             }
 
+            mHotspotActivityTracker.onStreamStarted(hasLocalHotspotRoute);
+
             return true;
         } catch (Exception e) {
             if (eisChanged && !streamStarted) {
@@ -260,21 +273,12 @@ public class StreamCommandHandler implements ICommandHandler {
     }
 
     /**
-     * Apply EIS configuration for an active livestream. Updates the Pixsmart system property used
-     * by the camera pipeline.
-     *
-     * <p>EIS is only enabled when the requested resolution is at or below {@link #EIS_MAX_PIXELS};
-     * above that, EIS is forced off because the camera HAL cannot sustain it without degrading the
-     * stream.
+     * Arm livestream EIS only under the 500k pixel gate. Mentra Call 540p/720p stay
+     * off. WHIP also applies {@code EisController} on its own repeating request.
      */
     private void applyEisForStreaming(int width, int height) {
-        boolean withinEisBudget = ((long) width * (long) height) < EIS_MAX_PIXELS;
-        boolean enable = EIS_IN_LIVESTREAMS && withinEisBudget;
-        if (EIS_IN_LIVESTREAMS && !withinEisBudget) {
-            Log.i(
-                    TAG,
-                    "EIS disabled for " + width + "x" + height + " (>= " + EIS_MAX_PIXELS + " px)");
-        }
+        boolean enable = LivestreamEisPolicy.logDecision(TAG, "stream-start", width, height);
+        CameraController.enablePixsmartEisOnRequest = enable;
         SystemControllerFactory.get(context).setEisEnabled(enable);
     }
 
@@ -283,6 +287,8 @@ public class StreamCommandHandler implements ICommandHandler {
      * AsgClientService boot-time configuration.
      */
     private void restoreEisAfterStreaming() {
+        Log.i(TAG, "EIS stage=stream-stop enable=false reason=restore-default-off");
+        CameraController.enablePixsmartEisOnRequest = false;
         SystemControllerFactory.get(context).setEisEnabled(false);
     }
 
@@ -371,20 +377,24 @@ public class StreamCommandHandler implements ICommandHandler {
             if (RtmpStreamingService.isStreaming() || RtmpStreamingService.isReconnecting()) {
                 sendStreamStoppingStatus(RtmpStreamingService.getCurrentStreamId());
                 RtmpStreamingService.stopStreaming(context);
+                mHotspotActivityTracker.onStreamStopped();
                 restoreEisAfterStreaming();
                 return true;
             } else if (SrtStreamingService.isStreaming() || SrtStreamingService.isReconnecting()) {
                 sendStreamStoppingStatus(SrtStreamingService.getCurrentStreamId());
                 SrtStreamingService.stopStreaming(context);
+                mHotspotActivityTracker.onStreamStopped();
                 restoreEisAfterStreaming();
                 return true;
             } else if (WhipStreamingService.isStreaming()
                     || WhipStreamingService.isReconnecting()) {
                 sendStreamStoppingStatus(WhipStreamingService.getCurrentStreamId());
                 WhipStreamingService.stopStreaming(context);
+                mHotspotActivityTracker.onStreamStopped();
                 restoreEisAfterStreaming();
                 return true;
             } else {
+                mHotspotActivityTracker.onStreamStopped();
                 streamingManager.sendStreamStatusResponse(
                         false, ServiceConstants.STATUS_ERROR, ServiceConstants.ERROR_NOT_STREAMING);
                 return false;
@@ -508,6 +518,9 @@ public class StreamCommandHandler implements ICommandHandler {
             if (RtmpStreamingService.isStreaming() || RtmpStreamingService.isReconnecting()) {
                 boolean valid = RtmpStreamingService.resetStreamTimeout(streamId);
                 if (valid || RtmpStreamingService.isStreaming()) {
+                    if (valid) {
+                        mHotspotActivityTracker.onKeepAlive();
+                    }
                     streamingManager.sendKeepAliveAck(streamId, ackId);
                     return true;
                 }
@@ -516,6 +529,9 @@ public class StreamCommandHandler implements ICommandHandler {
             if (SrtStreamingService.isStreaming() || SrtStreamingService.isReconnecting()) {
                 boolean valid = SrtStreamingService.resetStreamTimeout(streamId);
                 if (valid || SrtStreamingService.isStreaming()) {
+                    if (valid) {
+                        mHotspotActivityTracker.onKeepAlive();
+                    }
                     streamingManager.sendKeepAliveAck(streamId, ackId);
                     return true;
                 }
@@ -524,6 +540,16 @@ public class StreamCommandHandler implements ICommandHandler {
             if (WhipStreamingService.isStreaming() || WhipStreamingService.isReconnecting()) {
                 boolean valid = WhipStreamingService.resetStreamTimeout(streamId);
                 if (valid || WhipStreamingService.isStreaming()) {
+                    if (valid) {
+                        mHotspotActivityTracker.onKeepAlive();
+                    } else {
+                        // The ACK below keeps the phone's session alive, but the glasses
+                        // watchdog was NOT reset: this keep-alive names a stream that is not
+                        // the one running. Make the split visible so a 60 s "stream timed
+                        // out" that follows can be traced to the id mismatch.
+                        Log.w(TAG, "Keep-alive streamId mismatch: got " + streamId
+                                + ", active WHIP stream differs - ACKing without resetting watchdog");
+                    }
                     streamingManager.sendKeepAliveAck(streamId, ackId);
                     return true;
                 }
@@ -542,6 +568,7 @@ public class StreamCommandHandler implements ICommandHandler {
     // -------------------------------------------------------------------------
 
     private boolean stopAllServices() {
+        mHotspotActivityTracker.onStreamStopped();
         boolean stoppedExistingStream = false;
         if (RtmpStreamingService.isStreaming() || RtmpStreamingService.isReconnecting()) {
             RtmpStreamingService.stopStreaming(context);

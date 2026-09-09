@@ -11,13 +11,14 @@
 // surface, not the public entry. Relative path (the alias doesn't resolve in engine's
 // standalone build); jest moduleNameMapper + tsconfig both resolve it.
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
-import type {ButtonPressEvent, TouchEvent} from "@mentra/bluetooth-sdk/internal"
+import type {ButtonPressEvent, ConnectOptions, Device, TouchEvent} from "@mentra/bluetooth-sdk"
 import {useGlassesStore} from "../stores/glasses"
 import {useSettingsStore, SETTINGS} from "../stores/settings"
 import {hasDefaultDevice} from "../services/DeviceStoreHydration"
 import {projectPairingIdentity} from "../services/PairingIdentity"
 import {isGlassesConnected, isGlassesReady} from "../services/GlassesReadiness"
 import {pushAllBluetoothSettings} from "../services/GlassesSettingsSync"
+import {recordSupportProfileConnectionFailure} from "../services/SupportProfileSync"
 import {getModelCapabilities, type DeviceTypes} from "../types"
 import {glassesWifi} from "./glassesWifi"
 import {glassesSettings} from "./glassesSettings"
@@ -62,6 +63,7 @@ function projectInfo() {
     serialNumber: s.serialNumber,
     buildNumber: s.buildNumber,
     btMac: s.bluetoothMacAddress,
+    wifiMac: s.wifiMacAddress,
     leftMac: s.leftMacAddress,
     rightMac: s.rightMacAddress,
     // Copy: the snapshot must not hand callers a mutable reference into the store.
@@ -81,20 +83,30 @@ export const glasses = {
    * the glasses (this used to be a host-side step before `connectDefault`).
    */
   connectDefault: async (): Promise<void> => {
-    await pushAllBluetoothSettings()
-    return BluetoothSdk.connectDefault()
+    try {
+      await pushAllBluetoothSettings()
+      await BluetoothSdk.connectDefault()
+    } catch (error) {
+      recordSupportProfileConnectionFailure(error, "connect_default")
+      throw error
+    }
   },
   disconnect: (): Promise<void> => BluetoothSdk.disconnect(),
   forget: (): Promise<void> => BluetoothSdk.forget(),
   /** Connect to a specific (discovered) device. */
-  connect: async (...args: Parameters<typeof BluetoothSdk.connect>): Promise<void> => {
-    await pushAllBluetoothSettings()
-    return BluetoothSdk.connect(...args)
+  connect: async (device: Device, options?: ConnectOptions): Promise<void> => {
+    try {
+      await pushAllBluetoothSettings()
+      await BluetoothSdk.connect(device, options)
+    } catch (error) {
+      recordSupportProfileConnectionFailure(error, "connect")
+      throw error
+    }
   },
   /** Connect the built-in simulated glasses (dev/testing). */
   connectSimulated: (): Promise<void> => BluetoothSdk.connectSimulated(),
   /** Set a device as the `connectDefault()` target. */
-  setDefault: (...args: Parameters<typeof BluetoothSdk.setDefaultDevice>) => BluetoothSdk.setDefaultDevice(...args),
+  setDefault: (device: Device | null): Promise<void> => BluetoothSdk.setDefaultDevice(device),
   /**
    * Reconnect to the saved default glasses. Resolves `false` when there's nothing to
    * reconnect to (no default paired) or the connect attempt fails (e.g. BLE powered
@@ -110,6 +122,7 @@ export const glasses = {
       await pushAllBluetoothSettings()
       await BluetoothSdk.connectDefault()
     } catch (error) {
+      recordSupportProfileConnectionFailure(error, "reconnect")
       console.warn("engine.glasses.reconnect failed:", error)
       return false
     }

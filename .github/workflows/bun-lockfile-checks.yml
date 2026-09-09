@@ -9,6 +9,7 @@ on:
       - "mobile/package.json"
       - "mobile/bun.lock"
       - "mobile/modules/**/package.json"
+      - "cloud-v2/bun.lock"
       - "cloud-v2/packages/**/package.json"
       - "miniapps/**/package.json"
       - "sdk/bun.lock"
@@ -23,6 +24,7 @@ on:
       - "mobile/package.json"
       - "mobile/bun.lock"
       - "mobile/modules/**/package.json"
+      - "cloud-v2/bun.lock"
       - "cloud-v2/packages/**/package.json"
       - "miniapps/**/package.json"
       - "sdk/bun.lock"
@@ -52,7 +54,7 @@ jobs:
         uses: actions/cache@v4
         with:
           path: ~/.bun/install/cache
-          key: ${{ runner.os }}-bun-lockfiles-${{ hashFiles('bun.lock', 'mobile/bun.lock', 'sdk/bun.lock') }}
+          key: ${{ runner.os }}-bun-lockfiles-${{ hashFiles('bun.lock', 'mobile/bun.lock', 'cloud-v2/bun.lock', 'sdk/bun.lock') }}
           restore-keys: |
             ${{ runner.os }}-bun-lockfiles-
 
@@ -61,6 +63,10 @@ jobs:
 
       - name: Validate mobile Bun lockfile
         working-directory: mobile
+        run: bun install --frozen-lockfile --ignore-scripts
+
+      - name: Validate Cloud V2 Bun lockfile
+        working-directory: cloud-v2
         run: bun install --frozen-lockfile --ignore-scripts
 
       - name: Validate SDK Bun lockfile

@@ -2,7 +2,7 @@ name: OEM Host Boundary Gate
 
 # Proves the engine/host boundary from the CONSUMER side: the example OEM app
 # must typecheck against @mentra/engine's BUILT public types (build/*.d.ts via
-# the exports map) with zero access to the /internal migration surface. The
+# the exports map) with zero access to MentraOS's private migration surface. The
 # in-repo Mentra app enforces the boundary on itself with
 # scripts/check-mobile-runtime-boundary.sh; this gate is the half that check
 # can't cover — that the PUBLIC entry alone is sufficient and self-consistent
@@ -16,6 +16,7 @@ on:
   pull_request:
     paths:
       - "mobile/modules/engine/**"
+      - "mobile/modules/engine-host-internal/**"
       - "mobile/modules/bluetooth-sdk/**"
       - "mobile/modules/crust/**"
       - "mobile/modules/miniapp/**"
@@ -29,6 +30,7 @@ on:
       - dev
     paths:
       - "mobile/modules/engine/**"
+      - "mobile/modules/engine-host-internal/**"
       - "mobile/modules/bluetooth-sdk/**"
       - "mobile/modules/crust/**"
       - "mobile/modules/miniapp/**"
@@ -88,15 +90,17 @@ jobs:
         run: bunx tsc --noEmit
 
       - name: Forbid internal-surface imports in the OEM app
-        # The app must consume the public entry (plus /devtools for its debug
-        # panel) only. A hit here means someone taught the example host to
-        # reach into the migration-era internals — the exact dependency shape
-        # this gate exists to prevent.
+        # The app must consume only published Engine entry points. A hit here
+        # means someone taught the example host to reach into MentraOS-only or
+        # Bluetooth SDK internals — the exact dependency shape this gate exists
+        # to prevent.
         run: |
           set -euo pipefail
           violations=$(grep -RIn --include='*.ts' --include='*.tsx' \
             --exclude-dir=node_modules \
+            -e '@mentra/engine-host-internal' \
             -e '@mentra/engine/internal' \
+            -e '@mentra/engine/devtools' \
             -e '@mentra/bluetooth-sdk/internal' \
             -e '@mentra/bluetooth-sdk-internal' \
             sdk/example-oem-app || true)

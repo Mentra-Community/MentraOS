@@ -459,10 +459,10 @@ public class OtaService extends Service {
 
     private void resumeFromSession(OtaSessionManager sessionManager) {
         try {
+            int nextStep = sessionManager.getCurrentStepIndex() + 1;
             // Clear any recovery heartbeat pause that was set before the APK install.
             OtaHelper.notifyRecoveryInstallCompleted(this);
             sessionManager.clearRestartGuard();
-            int nextStep = sessionManager.getCurrentStepIndex() + 1;
 
             if (nextStep >= sessionManager.getTotalSteps()) {
                 Log.i(TAG, "📱 All OTA session steps complete after APK restart");
@@ -518,4 +518,5 @@ public class OtaService extends Service {
             sessionManager.setFailed("Resume error: " + e.getMessage());
         }
     }
+
 }

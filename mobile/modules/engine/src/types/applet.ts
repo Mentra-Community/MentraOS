@@ -1,5 +1,5 @@
 /**
- * @mentra/types - App/Applet types for client interfaces
+ * App and miniapp types owned by @mentra/engine.
  */
 
 import type {ReactNode} from "react"

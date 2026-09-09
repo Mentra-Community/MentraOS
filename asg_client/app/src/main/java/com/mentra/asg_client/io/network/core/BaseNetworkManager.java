@@ -14,12 +14,15 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.SystemClock;
 import android.util.Log;
+
 import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.NetworkUtils;
 import com.mentra.asg_client.io.network.interfaces.INetworkController;
 import com.mentra.asg_client.io.network.interfaces.IWifiScanCallback;
 import com.mentra.asg_client.io.network.interfaces.NetworkStateListener;
 import com.mentra.asg_client.io.network.models.NetworkInfo;
+import com.mentra.asg_client.io.network.utils.HotspotNetworkUtils;
+
 import java.util.ArrayList;
 import java.util.List;
 import java.util.concurrent.CountDownLatch;
@@ -180,6 +183,7 @@ public abstract class BaseNetworkManager implements INetworkController {
     protected void notifyHotspotStateChanged(boolean isEnabled) {
         Log.d(TAG, "Hotspot state changed: " + (isEnabled ? "enabled" : "disabled"));
         this.isHotspotEnabled = isEnabled;
+        HotspotNetworkUtils.notifyHotspotStateChanged(isEnabled);
         for (NetworkStateListener listener : listeners) {
             try {
                 listener.onHotspotStateChanged(isEnabled);

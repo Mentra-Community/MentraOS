@@ -104,10 +104,10 @@ public final class RecoveryConstants {
    * Oldest ASG versionCode a downgrade transaction may target. Mirrors ASG's
    * {@code OtaConstants.DOWNGRADE_FLOOR_VERSION_CODE} as defense in depth (this package updates
    * independently of ASG): builds below the floor predate the downgrade-safe contract (media
-   * storage layout, post-uninstall behavior). 0 leaves the floor open for RFC/bench testing only;
-   * raise both constants together before enabling downgrades in production.
+   * storage layout, post-uninstall behavior). Mentra 3.0 is the first release shipping that
+   * contract. A non-positive floor disables recovery-side downgrades entirely.
    */
-  public static final long DOWNGRADE_FLOOR_VERSION_CODE = 0L;
+  public static final long DOWNGRADE_FLOOR_VERSION_CODE = 51518114L;
 
   /** Uninstall broadcast dispatch until the factory /system revert is observed. */
   public static final long DOWNGRADE_REVERT_TIMEOUT_MS = 90_000L;

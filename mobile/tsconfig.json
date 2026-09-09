@@ -18,7 +18,6 @@
     "paths": {
       "@/*": ["./src/*"],
       "assets/*": ["./assets/*"],
-      "@cloud/*": ["../cloud/packages/types/*"],
       "@assets/*": ["./assets/*"],
       "@plugins/*": ["./plugins/*"],
       "@mentra/bluetooth-sdk-internal": ["./modules/bluetooth-sdk/src/_internal"],
@@ -26,7 +25,9 @@
       "@mentra/cloud-client/react-native": ["../cloud-v2/packages/cloud-client/react-native/index.ts"],
       "@mentra/cloud-runtime/protocol": ["../cloud-v2/packages/runtime/src/protocol/index.ts"],
       "@mentra/engine": ["./modules/engine/src/index.ts"],
-      "@mentra/engine/*": ["./modules/engine/src/*"]
+      "@mentra/engine/*": ["./modules/engine/src/*"],
+      "@mentra/engine-host-internal": ["./modules/engine-host-internal/src/index.ts"],
+      "@mentra/engine-host-internal/*": ["./modules/engine-host-internal/src/*"]
     },
     "types": ["node", "react", "jest", "bun-types"]
   },

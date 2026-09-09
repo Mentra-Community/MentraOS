@@ -4,6 +4,10 @@ description: "Persistent binary storage for files, images, and audio."
 icon: "box-archive"
 ---
 
+import BetaNote from '/snippets/beta-note.mdx'
+
+<BetaNote />
+
 `session.blob` stores arbitrary bytes (PDFs, EPUBs, audio, video, model files,
 caches) as files on the phone. It's scoped to the user and your miniapp, so your
 keys never collide with another miniapp's, and the files survive restarts. Where

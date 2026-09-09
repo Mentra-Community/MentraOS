@@ -4,7 +4,7 @@ You are reviewing a pull request for **MentraOS** standards and conventions.
 
 ## Focus
 
-- Root `AGENTS.md` and relevant module `AGENTS.md` (e.g. `mobile/`, `cloud/`).
+- Root `AGENTS.md` and relevant module guidance (for example, `mobile/AGENTS.md`).
 - Naming conventions (Java `mCamelCase`, TS PascalCase/camelCase, etc.).
 - Commit/PR hygiene (no AI co-author trailers, focused scope).
 - Missing tests when backend/mobile logic changes per AGENTS.md testing guidelines.
@@ -38,6 +38,11 @@ The orchestrator may provide:
 1. Brief human-readable review (bullet points).
 2. End with a single JSON object on its own line (no markdown fence):
 
-{"verdict":"approve|changes_requested","findings":[{"severity":"blocking|nit","file":"path","line":0,"message":"..."}]}
+{"verdict":"approve|changes_requested","findings":[{"severity":"blocking|nit","file":"path","line":0,"message":"...","ref":"abc123"}]}
+
+- `line` is required whenever the issue is anchored to code: use the most
+  relevant line at the **current HEAD**.
+- `ref` is only for re-confirming an existing entry from `openFindings`: copy
+  that entry's exact `id`. Omit `ref` for anything new. Never invent ids.
 
 Use `changes_requested` if any **blocking** finding exists. Use `approve` otherwise.

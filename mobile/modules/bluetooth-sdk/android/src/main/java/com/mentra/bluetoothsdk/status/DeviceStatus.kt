@@ -43,6 +43,7 @@ internal data class GlassesStatus(
     val besFirmwareVersion: String,
     val mtkFirmwareVersion: String,
     val bluetoothMacAddress: String,
+    val wifiMacAddress: String,
     val leftMacAddress: String,
     val rightMacAddress: String,
     val macAddress: String,
@@ -50,6 +51,13 @@ internal data class GlassesStatus(
     val systemTimeMs: Long?,
     val otaVersionUrl: String,
     val appVersion: String,
+    /**
+     * Package the glasses client actually runs as, from version_info_1. Empty on glasses whose
+     * client predates the field. "com.mentra.asg_client" is the stock client; anything else is a
+     * sideloaded build that OTA must not drive.
+     */
+    val packageName: String,
+    val hotspotOtaVersion: Int,
     val bluetoothName: String,
     val serialNumber: String,
     val style: String,
@@ -85,12 +93,15 @@ internal data class GlassesStatus(
             "besFirmwareVersion" to besFirmwareVersion,
             "mtkFirmwareVersion" to mtkFirmwareVersion,
             "bluetoothMacAddress" to bluetoothMacAddress,
+            "wifiMacAddress" to wifiMacAddress,
             "leftMacAddress" to leftMacAddress,
             "rightMacAddress" to rightMacAddress,
             "macAddress" to macAddress,
             "buildNumber" to buildNumber,
             "otaVersionUrl" to otaVersionUrl,
             "appVersion" to appVersion,
+            "packageName" to packageName,
+            "hotspotOtaVersion" to hotspotOtaVersion,
             "bluetoothName" to bluetoothName,
             "serialNumber" to serialNumber,
             "style" to style,
@@ -134,6 +145,7 @@ internal data class GlassesStatus(
                 besFirmwareVersion = stringValue(values, "besFirmwareVersion") ?: "",
                 mtkFirmwareVersion = stringValue(values, "mtkFirmwareVersion") ?: "",
                 bluetoothMacAddress = stringValue(values, "bluetoothMacAddress") ?: "",
+                wifiMacAddress = stringValue(values, "wifiMacAddress") ?: "",
                 leftMacAddress = stringValue(values, "leftMacAddress") ?: "",
                 rightMacAddress = stringValue(values, "rightMacAddress") ?: "",
                 macAddress = stringValue(values, "macAddress") ?: "",
@@ -141,6 +153,8 @@ internal data class GlassesStatus(
                 systemTimeMs = longValue(values, "systemTimeMs"),
                 otaVersionUrl = stringValue(values, "otaVersionUrl") ?: "",
                 appVersion = stringValue(values, "appVersion") ?: "",
+                packageName = stringValue(values, "packageName") ?: "",
+                hotspotOtaVersion = numberValue(values, "hotspotOtaVersion") ?: 0,
                 bluetoothName = stringValue(values, "bluetoothName") ?: "",
                 serialNumber = stringValue(values, "serialNumber") ?: "",
                 style = stringValue(values, "style") ?: "",
@@ -173,6 +187,8 @@ data class VersionInfoResult(
     val systemTimeMs: Long?,
     val otaVersionUrl: String,
     val appVersion: String,
+    val packageName: String,
+    val hotspotOtaVersion: Int,
 ) {
     internal fun toMap(): Map<String, Any> =
         buildMap {
@@ -184,6 +200,13 @@ data class VersionInfoResult(
             systemTimeMs?.let { put("systemTimeMs", it) }
             put("otaVersionUrl", otaVersionUrl)
             put("appVersion", appVersion)
+            // Only when known. requestVersionInfo() resolves from ANY version_info chunk, and
+            // only chunk 1 carries package_name — emitting "" from a chunk-3 resolution would
+            // overwrite a known identity with "absent", which the OTA guard reads as stock.
+            if (packageName.isNotEmpty()) {
+                put("packageName", packageName)
+            }
+            put("hotspotOtaVersion", hotspotOtaVersion)
         }
 
     companion object {
@@ -197,6 +220,8 @@ data class VersionInfoResult(
                 systemTimeMs = status.systemTimeMs,
                 otaVersionUrl = status.otaVersionUrl,
                 appVersion = status.appVersion,
+                packageName = status.packageName,
+                hotspotOtaVersion = status.hotspotOtaVersion,
             )
 
         internal fun fromMap(values: Map<String, Any>): VersionInfoResult =
@@ -209,6 +234,9 @@ data class VersionInfoResult(
                 systemTimeMs = longValue(values, "systemTimeMs", "system_time_ms"),
                 otaVersionUrl = stringValue(values, "otaVersionUrl", "ota_version_url") ?: "",
                 appVersion = stringValue(values, "appVersion", "app_version") ?: "",
+                packageName = stringValue(values, "packageName", "package_name") ?: "",
+                hotspotOtaVersion =
+                    numberValue(values, "hotspotOtaVersion", "hotspot_ota_version") ?: 0,
             )
     }
 }
@@ -373,12 +401,15 @@ internal data class GlassesStatusUpdate(
     val besFirmwareVersion: String? = null,
     val mtkFirmwareVersion: String? = null,
     val bluetoothMacAddress: String? = null,
+    val wifiMacAddress: String? = null,
     val leftMacAddress: String? = null,
     val rightMacAddress: String? = null,
     val macAddress: String? = null,
     val buildNumber: String? = null,
     val otaVersionUrl: String? = null,
     val appVersion: String? = null,
+    val packageName: String? = null,
+    val hotspotOtaVersion: Int? = null,
     val bluetoothName: String? = null,
     val serialNumber: String? = null,
     val style: String? = null,
@@ -422,12 +453,15 @@ internal data class GlassesStatusUpdate(
             putIfNotNull("besFirmwareVersion", besFirmwareVersion)
             putIfNotNull("mtkFirmwareVersion", mtkFirmwareVersion)
             putIfNotNull("bluetoothMacAddress", bluetoothMacAddress)
+            putIfNotNull("wifiMacAddress", wifiMacAddress)
             putIfNotNull("leftMacAddress", leftMacAddress)
             putIfNotNull("rightMacAddress", rightMacAddress)
             putIfNotNull("macAddress", macAddress)
             putIfNotNull("buildNumber", buildNumber)
             putIfNotNull("otaVersionUrl", otaVersionUrl)
             putIfNotNull("appVersion", appVersion)
+            putIfNotNull("packageName", packageName)
+            putIfNotNull("hotspotOtaVersion", hotspotOtaVersion)
             putIfNotNull("bluetoothName", bluetoothName)
             putIfNotNull("serialNumber", serialNumber)
             putIfNotNull("style", style)
@@ -470,12 +504,15 @@ internal data class GlassesStatusUpdate(
                 besFirmwareVersion = optionalStringValue(values, "besFirmwareVersion"),
                 mtkFirmwareVersion = optionalStringValue(values, "mtkFirmwareVersion"),
                 bluetoothMacAddress = optionalStringValue(values, "bluetoothMacAddress"),
+                wifiMacAddress = optionalStringValue(values, "wifiMacAddress"),
                 leftMacAddress = optionalStringValue(values, "leftMacAddress"),
                 rightMacAddress = optionalStringValue(values, "rightMacAddress"),
                 macAddress = optionalStringValue(values, "macAddress"),
                 buildNumber = optionalStringValue(values, "buildNumber"),
                 otaVersionUrl = optionalStringValue(values, "otaVersionUrl"),
                 appVersion = optionalStringValue(values, "appVersion"),
+                packageName = optionalStringValue(values, "packageName"),
+                hotspotOtaVersion = optionalNumberValue(values, "hotspotOtaVersion"),
                 bluetoothName = optionalStringValue(values, "bluetoothName"),
                 serialNumber = optionalStringValue(values, "serialNumber"),
                 style = optionalStringValue(values, "style"),

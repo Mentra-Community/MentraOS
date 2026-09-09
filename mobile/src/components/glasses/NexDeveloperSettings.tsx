@@ -1,4 +1,4 @@
-import {Capabilities, getModelCapabilities} from "@/../../cloud/packages/types/src"
+import {Capabilities, getModelCapabilities} from "@mentra/engine"
 import {engine} from "@mentra/engine"
 import {useEffect, useState} from "react"
 import {ScrollView, TextInput, TextStyle, TouchableOpacity, View, ViewStyle} from "react-native"

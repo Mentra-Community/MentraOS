@@ -1,6 +1,15 @@
 package com.mentra.asg_client;
 
 public class AsgConstants {
+    /** A charger never permits camera use at or below this known battery percentage. */
+    public static final int CAMERA_CHARGING_BATTERY_FLOOR = 3;
+
+    /** Expire the low-battery exception if fresh BES charger replies stop arriving. */
+    public static final long CAMERA_ACTIVE_CHARGE_MAX_AGE_MS = 30_000L;
+
+    /** Refresh charger evidence before expiry, without blocking camera or UART threads. */
+    public static final long CAMERA_BATTERY_REFRESH_MS = 5_000L;
+
     /** Mentra Live hotspot idle timeout after the last local HTTP activity. */
     public static final long HOTSPOT_INACTIVITY_TIMEOUT_MS = 120_000L;
 
@@ -22,11 +31,22 @@ public class AsgConstants {
     /** Current Mentra Live Android hotspot gateway when interface discovery is unavailable. */
     public static final String DEFAULT_HOTSPOT_GATEWAY_IP = "192.168.43.1";
 
+    /** Canonical network interface used by the Mentra Live WiFi hotspot. */
+    public static final String MENTRA_LIVE_HOTSPOT_INTERFACE = "ap0";
+
     /** SmartXY setting containing the Mentra Live hotspot SSID. */
     public static final String K900_VENDOR_HOTSPOT_SSID_SETTING = "xy_ssid";
 
     /** SmartXY setting containing the Mentra Live hotspot password. */
     public static final String K900_VENDOR_HOTSPOT_PASSWORD_SETTING = "xy_pwd";
+
+    /** Protocol version for phone-served OTA artifacts over the Mentra Live hotspot. */
+    public static final int HOTSPOT_OTA_VERSION = 1;
+
+    /** Bounded MTK ZIP download size, including full system OTAs (~611 MiB today). */
+    public static final long MTK_OTA_MAX_DOWNLOAD_BYTES = 1024L * 1024 * 1024;
+    /** Non-retryable until the user frees storage on the glasses. */
+    public static final String OTA_INSUFFICIENT_STORAGE = "insufficient_storage";
 
     /** Canonical camera crop defaults shared with the phone and Bluetooth SDK. */
     public static final int CAMERA_FOV_DEFAULT = 118;
@@ -35,6 +55,23 @@ public class AsgConstants {
 
     /** Cadence for live stream bitrate, frame-rate, duration, and thermal telemetry. */
     public static final long STREAM_METRICS_INTERVAL_MS = 1_000L;
+
+    /**
+     * Initial WHIP/WebRTC send bitrate before congestion control has measured the network. This
+     * avoids libwebrtc's low default startup estimate while preserving room to adapt.
+     */
+    public static final int WHIP_INITIAL_VIDEO_BITRATE_BPS = 1_500_000;
+
+    /**
+     * 1Hz encoder FPS/bitrate/dropped-frame telemetry ({@code [STREAM_QUALITY]} and BLE {@code
+     * stream_status.stats}). Lifecycle {@code stream_status} (started/stopped/error) is unaffected.
+     * Keep false in production; flip locally to debug the Mentra Call FPS ladder.
+     *
+     * <p>Double gate: reporters are not scheduled, and {@code onStreamMetrics} returns immediately
+     * so accidental emission cannot reach BLE. Manual acceptance with every layer false: join
+     * waterfall yes; STREAM_QUALITY / BLE stats / encoder-stats / watch-stats / debug ingest no.
+     */
+    public static final boolean ENABLE_PIPELINE_FPS_TELEMETRY = false;
 
     /**
      * Local-testing stopgap that disables the 60s keep-alive watchdog for RTMP/SRT/WHIP streams.
@@ -58,11 +95,48 @@ public class AsgConstants {
 
     public static final long CAMERA_WARM_UP_MAX_DURATION_MS = 60_000L;
 
+    /**
+     * Shortest gap between two camera-button photos. Presses inside this window are dropped.
+     *
+     * <p>Sized off camera_snap.wav (515ms) so two shutters can never overlap: every camera sound
+     * is played by ASG through the I2S bridge to BES, and starting overlapping MediaPlayers on
+     * that path is what makes rapid button mashing garble audio. One photo per second still does
+     * not feel like waiting on a cooldown.
+     */
+    public static final long BUTTON_PHOTO_MIN_INTERVAL_MS = 1_000L;
+
     /** Cadence for the short hold-still click while a cold photo spins up the camera. */
     public static final long CAMERA_PREP_CLICK_INTERVAL_MS = 900L;
 
+    /** The 186ms prep beep plus a tail margin; only stop the sequence in its silence. */
+    public static final long CAMERA_PREP_STOP_AFTER_MS = 240L;
+
+    /** Avoid stopping near the next beep when playback-position reporting is slightly behind. */
+    public static final long CAMERA_PREP_STOP_BEFORE_MS = 800L;
+
+    /** Minimum AE settling time after first convergence for a cold camera photo. */
+    public static final long COLD_CAMERA_EXPOSURE_SETTLE_DELAY_MS = 475L;
+
+    /** Baseline linear gain for Mentra Live audio prompts. */
+    public static final float AUDIO_PLAYBACK_VOLUME = 0.1f;
+
+    /** Silence between spoken pairing-code characters so adjacent sounds remain distinguishable. */
+    public static final int PAIRING_CODE_INTER_CHARACTER_PAUSE_MS = 140;
+
+    /** Pause between the pairing instruction and the first code character. */
+    public static final int PAIRING_INTRO_TO_CODE_PAUSE_MS = 300;
+
+    /** Subtle linear gain for the repeating cold-camera hold-still cue. */
+    public static final float CAMERA_PREP_CLICK_PLAYBACK_VOLUME = 0.09f;
+
+    /** Prominent linear gain for the photo shutter cue. */
+    public static final float CAMERA_SNAP_PLAYBACK_VOLUME = 0.3f;
+
     /** Target lead before the estimated end of sensor exposure for starting the camera snap. */
     public static final long CAMERA_SNAP_TARGET_LEAD_MS = 100L;
+
+    /** Duration of the user-visible RGB photo indicator, triggered at the capture boundary. */
+    public static final int PHOTO_LIGHT_DURATION_MS = 2200;
 
     /** Safety lease for a miniapp-owned transient FOV override. */
     public static final long CAMERA_FOV_OVERRIDE_DEFAULT_TTL_MS = 300_000L;
@@ -175,6 +249,16 @@ public class AsgConstants {
     /** Debug BES intent extra carrying a stable identifier for durable state. */
     public static final String DEBUG_BES_OTA_ARTIFACT_ID_EXTRA = "artifact_id";
 
+    /** ADB/local command that reboots BES before handing MTK to a factory USB flasher. */
+    public static final String COMMAND_REBOOT_BES_FOR_MTK_FLASH =
+            "reboot_bes_for_mtk_flash";
+
+    /** Correlation field used to prove that the requested BES reboot reached the UART worker. */
+    public static final String MTK_FLASH_REQUEST_ID_FIELD = "request_id";
+
+    /** BES command that resets the MCU without rebooting the running MTK Android system. */
+    public static final String BES_REBOOT_COMMAND = "cs_rebt";
+
     /**
      * Exclusive decompressed destination limit in the deployed ota_copy bootloader:
      * NEW_IMAGE_FLASH_OFFSET (0x200000) - OTA_CODE_OFFSET (0x20000). Images at or above this size
@@ -199,6 +283,13 @@ public class AsgConstants {
 
     /** Delay before probing the alternate UART baud after ASG starts at the rendezvous rate. */
     public static final long UART_BOOT_RECOVERY_INITIAL_DELAY_MS = 8000;
+
+    /**
+     * Grace after bounded UART recovery is exhausted before a BES OTA timeout becomes terminal.
+     * BES can finish rebooting after the transport scan, and an exact target-version reply from
+     * that later Linux boot is authoritative.
+     */
+    public static final long BES_OTA_RECOVERY_FAILURE_GRACE_MS = 30000;
 
     /** Number of spaced system-version probes used to tolerate short BES UART restart windows. */
     public static final int UART_RECOVERY_PROBES_PER_BURST = 5;

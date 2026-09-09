@@ -1,14 +1,18 @@
-import {DeviceTypes} from "@/../../cloud/packages/types/src"
+import {DeviceTypes} from "@mentra/engine"
 import {act, fireEvent, render} from "@testing-library/react-native"
 import type {ReactNode} from "react"
 
 import OnboardingWelcome from "@/app/onboarding/welcome"
 import en from "@/i18n/en"
+import {isGlassesModelAllowedByDeployment} from "@/services/deployment/glassesPolicy"
 import {useNavigationStore} from "@/stores/navigation"
 
 const mockSetOnboardingCompleted = jest.fn()
 
 jest.mock("@mentra/engine", () => ({
+  DeviceTypes: {
+    SIMULATED: "Simulated Glasses",
+  },
   SETTINGS: {
     onboarding_completed: {
       key: "onboarding_completed",
@@ -19,6 +23,10 @@ jest.mock("@mentra/engine", () => ({
 
 jest.mock("@/stores/navigation", () => ({
   useNavigationStore: {getState: jest.fn()},
+}))
+
+jest.mock("@/services/deployment/glassesPolicy", () => ({
+  isGlassesModelAllowedByDeployment: jest.fn(),
 }))
 
 jest.mock("@/components/brands/MentraLogoStandalone", () => {
@@ -59,6 +67,7 @@ describe("onboarding welcome", () => {
   beforeEach(() => {
     jest.clearAllMocks()
     ;(useNavigationStore.getState as jest.Mock).mockReturnValue({push})
+    ;(isGlassesModelAllowedByDeployment as jest.Mock).mockReturnValue(true)
   })
 
   it("uses the updated MentraOS welcome copy", () => {
@@ -91,5 +100,13 @@ describe("onboarding welcome", () => {
 
     expect(mockSetOnboardingCompleted).toHaveBeenCalledWith(true)
     expect(push).toHaveBeenCalledWith("/pairing/prep", {deviceModel: DeviceTypes.SIMULATED})
+  })
+
+  it("hides phone-only setup when the deployment disallows simulated glasses", () => {
+    ;(isGlassesModelAllowedByDeployment as jest.Mock).mockReturnValue(false)
+
+    const {queryByTestId} = render(<OnboardingWelcome />)
+
+    expect(queryByTestId("onboarding-setup-without-glasses")).toBeNull()
   })
 })

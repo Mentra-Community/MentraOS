@@ -204,8 +204,12 @@ version name after the fact.
 - **Hard reboot after apply** — Android filesystem persistence can expose the earlier authorization
   record even when apply was committed and acknowledged immediately before power loss. On a later
   Linux boot, ASG keeps that record quarantined while bounded raw-first recovery runs: raw `0x9a`
-  fails the update, an exact target `sr_syvr` completes it, and a mismatch or timeout fails it. A
-  process restart in the original Linux boot remains an immediate failure.
+  fails the update and an exact target `sr_syvr` completes it. Exhausting the transport scan starts
+  a short grace window because BES may still be rebooting. Even after that grace expires, a fresh
+  framed reply from the later boot may supersede only `recovery_timeout` or
+  `verification_timeout`, and only when it exactly matches the requested target. Authorization,
+  artifact, protocol, raw-mode, and version-mismatch failures remain terminal. A process restart in
+  the original Linux boot remains an immediate failure.
 
 ## Logcat tags
 

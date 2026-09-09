@@ -3,8 +3,9 @@
  * Refactored to use gallerySyncService for background sync capability
  */
 
-import {getModelCapabilities} from "@/../../cloud/packages/types/src"
+import {getModelCapabilities} from "@mentra/engine"
 import {MaterialCommunityIcons} from "@expo/vector-icons"
+import {FlashList} from "@shopify/flash-list"
 import LinearGradient from "expo-linear-gradient"
 import {useFocusEffect} from "expo-router"
 import {useCallback, useEffect, useMemo, useRef, useState} from "react"
@@ -15,6 +16,7 @@ import {
   Dimensions,
   FlatList,
   ImageStyle,
+  Platform,
   Pressable,
   TextStyle,
   TouchableOpacity,
@@ -25,15 +27,20 @@ import * as RNFS from "@dr.pogodin/react-native-fs"
 import {createShimmerPlaceholder} from "react-native-shimmer-placeholder"
 
 import {createMediaViewerSnapshot, MediaViewer} from "@/components/glasses/Gallery/MediaViewer"
+import {
+  createGalleryLoadCoordinator,
+  type GalleryLoadOptions,
+} from "@/components/glasses/Gallery/galleryLoadCoordinator"
 import {PhotoImage} from "@/components/glasses/Gallery/PhotoImage"
 import {ProgressRing} from "@/components/glasses/Gallery/ProgressRing"
+import {validateGalleryFiles} from "@/components/glasses/Gallery/validateGalleryFiles"
 import {Header, Icon, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {useNavigationStore} from "@/stores/navigation"
-import {translate} from "@/i18n"
+import {isRTL, translate} from "@/i18n"
 import {engine, MediaLibraryPermissions, SETTINGS, useSetting} from "@mentra/engine"
-import {cameraRollExportCoordinator, localStorageService} from "@mentra/engine/internal"
+import {cameraRollExportCoordinator, localStorageService} from "@mentra/engine-host-internal"
 import {spacing, ThemedStyle} from "@/theme"
 import {PhotoInfo} from "@/types/asg"
 import Share from "react-native-share"
@@ -51,6 +58,7 @@ const TIMING = {
   PROGRESS_RING_DISPLAY_MS: 3000, // How long to show completed/failed progress rings
   ALERT_DELAY_MS: 100, // Delay before showing alerts to allow UI to settle
 } as const
+const ITEM_SPACING = 2
 
 /** Format video duration in milliseconds to m:ss display string */
 function formatDuration(ms: number): string {
@@ -68,6 +76,9 @@ interface GalleryItem {
   isOnServer?: boolean
 }
 
+const getGalleryItemType = (item: GalleryItem) => item.type
+const getGalleryItemKey = (item: GalleryItem) => item.id
+
 export function GalleryScreen() {
   const {push} = useNavigationStore.getState()
   const {theme, themed} = useAppTheme()
@@ -75,7 +86,6 @@ export function GalleryScreen() {
 
   // Column calculation - 3 per row like Google Photos / Apple Photos
   const screenWidth = Dimensions.get("window").width
-  const ITEM_SPACING = 2 // Minimal spacing between items (1-2px hairline)
   const HORIZONTAL_PADDING = spacing.s3 * 2 // Padding on left and right edges (12px * 2 = 24px)
   const numColumns = screenWidth < 320 ? 2 : 3 // 2 columns for very small screens, otherwise 3
   const itemWidth = (screenWidth - HORIZONTAL_PADDING - ITEM_SPACING * (numColumns - 1)) / numColumns
@@ -105,6 +115,7 @@ export function GalleryScreen() {
   const [viewerPhotos, setViewerPhotos] = useState<PhotoInfo[]>([])
   const [viewerInitialIndex, setViewerInitialIndex] = useState(0)
   const galleryPhotosRef = useRef<GalleryItem[]>([])
+  const galleryLoadCoordinator = useMemo(() => createGalleryLoadCoordinator(), [])
 
   // Photo sync states for UI (progress rings on thumbnails)
   const [photoSyncStates, setPhotoSyncStates] = useState<
@@ -234,7 +245,7 @@ export function GalleryScreen() {
   }, [downloadedPhotos.length])
 
   // Load downloaded photos (validates files exist and cleans up stale entries)
-  const loadDownloadedPhotos = useCallback(async () => {
+  const performGalleryLoad = useCallback(async () => {
     const loadStartTime = Date.now()
     console.log("[GalleryScreen] ⏱️ LOAD START at", loadStartTime)
     try {
@@ -267,45 +278,14 @@ export function GalleryScreen() {
       const validPhotoInfos: PhotoInfo[] = []
       const staleFileNames: string[] = []
 
-      // Check all files exist on disk in parallel (50-100x faster than sequential).
+      // Check all files with bounded concurrency. Scheduling thousands of native
+      // exists/stat calls together overwhelms the Android bridge on large galleries.
       // Returns one of three states per entry:
       //   "ok"           — keep the metadata, file is present and non-empty
       //   "stale"        — drop the metadata (file missing OR zero-byte)
       //   "unknown"      — keep the metadata (transient stat error; don't lose entries)
       // Zero-byte files also flag for disk unlink so they don't accumulate.
-      const validationPromises = Object.entries(downloadedFiles).map(async ([name, file]) => {
-        let status: "ok" | "stale" | "unknown" = "unknown"
-        let shouldUnlink = false
-        try {
-          const fileExists = await RNFS.exists(file.filePath)
-          if (!fileExists) {
-            status = "stale"
-          } else {
-            try {
-              const stat = await RNFS.stat(file.filePath)
-              if (stat.size > 0) {
-                status = "ok"
-              } else {
-                console.warn(`[GalleryScreen] Removing zero-byte local file from gallery index: ${name}`)
-                status = "stale"
-                shouldUnlink = true
-              }
-            } catch (statError) {
-              // Transient stat failure — keep the metadata so we don't permanently
-              // drop a still-valid entry on a one-off filesystem hiccup.
-              console.warn(`[GalleryScreen] Could not stat local file ${name}:`, statError)
-              status = "unknown"
-            }
-          }
-        } catch (existsError) {
-          console.warn(`[GalleryScreen] Could not check existence of local file ${name}:`, existsError)
-          status = "unknown"
-        }
-        return {name, file, status, shouldUnlink}
-      })
-
-      // Wait for all validations to complete (happens in parallel)
-      const validationResults = await Promise.all(validationPromises)
+      const validationResults = await validateGalleryFiles(Object.entries(downloadedFiles))
 
       // Process results
       const filesToUnlink: string[] = []
@@ -348,9 +328,6 @@ export function GalleryScreen() {
         "ms",
       )
       console.log(`[GalleryScreen] ✅ Loaded ${validPhotoInfos.length} valid photos`)
-      validPhotoInfos.forEach((photo, idx) => {
-        console.log(`[GalleryScreen]   ${idx + 1}. ${photo.name}`)
-      })
 
       // Add test data in development mode
       if (ENABLE_TEST_GALLERY_DATA) {
@@ -374,6 +351,13 @@ export function GalleryScreen() {
       setValidatingCount(0)
     }
   }, [completedFiles])
+
+  // Mount and focus can share their lifecycle scan. Calls after a storage mutation
+  // (sync completion or deletion) queue one fresh pass if a scan is already active.
+  const loadDownloadedPhotos = useCallback(
+    (options?: GalleryLoadOptions) => galleryLoadCoordinator.run(performGalleryLoad, options),
+    [galleryLoadCoordinator, performGalleryLoad],
+  )
 
   // Initialize pending status for all files when sync starts
   useEffect(() => {
@@ -816,7 +800,7 @@ export function GalleryScreen() {
       setShowLoadingPlaceholders(true)
     }, 150) // Delay showing placeholders by 150ms
 
-    loadDownloadedPhotos().finally(() => {
+    loadDownloadedPhotos({refreshAfterCurrent: false}).finally(() => {
       const completeTime = Date.now()
       console.log(
         "[GalleryScreen] ⏱️ FINALLY BLOCK at",
@@ -855,7 +839,7 @@ export function GalleryScreen() {
   useFocusEffect(
     useCallback(() => {
       console.log("[GalleryScreen] Screen focused - refreshing downloaded photos")
-      loadDownloadedPhotos()
+      loadDownloadedPhotos({refreshAfterCurrent: false})
     }, []),
   )
 
@@ -1206,9 +1190,9 @@ export function GalleryScreen() {
     )
   }
 
-  // Memoize renderPhotoItem to prevent FlatList scroll interruptions
+  // Memoize renderPhotoItem so recycled cells only update when their UI state changes.
   // CRITICAL: Without useCallback, this function is recreated on every render,
-  // causing FlatList to lose scroll momentum
+  // causing the virtualized grid to lose scroll momentum.
   const renderPhotoItem = useCallback(
     ({item}: {item: GalleryItem}) => {
       if (!item.photo) {
@@ -1415,32 +1399,55 @@ export function GalleryScreen() {
             } else {
               return (
                 <Animated.View style={{flex: 1, opacity: fadeAnim}}>
-                  <FlatList
-                    data={displayItems}
-                    numColumns={numColumns}
-                    key={numColumns}
-                    renderItem={renderPhotoItem}
-                    keyExtractor={(item) => item.id}
-                    contentContainerStyle={[
-                      themed($photoGridContent),
-                      {
-                        paddingBottom: shouldShowSyncButton
-                          ? 100 + insets.bottom + spacing.s6
-                          : spacing.s6 + insets.bottom,
-                      },
-                    ]}
-                    columnWrapperStyle={numColumns > 1 ? themed($columnWrapper) : undefined}
-                    ItemSeparatorComponent={() => <View style={{height: ITEM_SPACING}} />}
-                    initialNumToRender={21}
-                    maxToRenderPerBatch={21}
-                    windowSize={7}
-                    removeClippedSubviews={false}
-                    updateCellsBatchingPeriod={50}
-                    scrollEventThrottle={16}
-                    bounces={false}
-                    overScrollMode="never"
-                    decelerationRate="fast"
-                  />
+                  {isRTL ? (
+                    <FlatList
+                      data={displayItems}
+                      numColumns={numColumns}
+                      key={numColumns}
+                      renderItem={renderPhotoItem}
+                      keyExtractor={getGalleryItemKey}
+                      contentContainerStyle={[
+                        themed($photoGridContent),
+                        {
+                          paddingBottom: shouldShowSyncButton
+                            ? 100 + insets.bottom + spacing.s6
+                            : spacing.s6 + insets.bottom,
+                        },
+                      ]}
+                      initialNumToRender={12}
+                      maxToRenderPerBatch={12}
+                      windowSize={5}
+                      removeClippedSubviews={Platform.OS === "android"}
+                      scrollEventThrottle={16}
+                      bounces={false}
+                      overScrollMode="never"
+                      decelerationRate="fast"
+                    />
+                  ) : (
+                    <FlashList
+                      data={displayItems}
+                      numColumns={numColumns}
+                      key={numColumns}
+                      renderItem={renderPhotoItem}
+                      keyExtractor={getGalleryItemKey}
+                      getItemType={getGalleryItemType}
+                      drawDistance={itemWidth * 2}
+                      maxItemsInRecyclePool={numColumns * 4}
+                      maintainVisibleContentPosition={{disabled: true}}
+                      contentContainerStyle={[
+                        themed($photoGridContent),
+                        {
+                          paddingBottom: shouldShowSyncButton
+                            ? 100 + insets.bottom + spacing.s6
+                            : spacing.s6 + insets.bottom,
+                        },
+                      ]}
+                      scrollEventThrottle={16}
+                      bounces={false}
+                      overScrollMode="never"
+                      decelerationRate="fast"
+                    />
+                  )}
                 </Animated.View>
               )
             }
@@ -1472,13 +1479,9 @@ const $screenContainer: ThemedStyle<ViewStyle> = ({spacing}) => ({
 })
 
 const $photoGridContent: ThemedStyle<ViewStyle> = ({spacing}) => ({
-  paddingHorizontal: spacing.s3, // Add padding on left and right edges
+  // Cell margins provide the inner half of the edge padding and both column gutters.
+  paddingHorizontal: spacing.s3 - ITEM_SPACING / 2,
   paddingTop: 0,
-})
-
-const $columnWrapper: ThemedStyle<ViewStyle> = () => ({
-  justifyContent: "flex-start",
-  gap: 2,
 })
 
 const $loadingSpinnerContainer: ThemedStyle<ViewStyle> = () => ({
@@ -1520,7 +1523,8 @@ const $photoItem: ThemedStyle<ViewStyle> = () => ({
   borderRadius: 0,
   overflow: "hidden",
   backgroundColor: "rgba(0,0,0,0.05)",
-  // No marginBottom needed - ItemSeparatorComponent handles vertical spacing to match horizontal gap
+  marginHorizontal: ITEM_SPACING / 2,
+  marginBottom: ITEM_SPACING,
 })
 
 const $photoImage: ThemedStyle<ImageStyle> = () => ({

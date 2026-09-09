@@ -1,8 +1,16 @@
 import {describe, expect, test} from "bun:test"
 
-import {getFlagEmoji, getLanguageName} from "./languages"
+import {TARGET_LANGUAGES, getFlagEmoji, getLanguageName} from "./languages"
 
 describe("language lookup", () => {
+  test("offers the complete Soniox translation language set", () => {
+    expect(TARGET_LANGUAGES).toHaveLength(60)
+    expect(TARGET_LANGUAGES.map(({code}) => code)).toEqual(
+      expect.arrayContaining(["af", "bn", "he", "ru", "sw", "th", "uk", "ur", "cy"]),
+    )
+    expect(TARGET_LANGUAGES.every(({flag}) => flag && flag !== "🏳️")).toBe(true)
+  })
+
   test("resolves bare codes", () => {
     expect(getLanguageName("es")).toBe("Spanish")
     expect(getFlagEmoji("es")).toBe("🇪🇸")

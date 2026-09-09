@@ -17,6 +17,7 @@
  * docs/issues/004-cloud-client/design.md ("Camera").
  */
 import type { HttpClient } from "../../http";
+import { systemTimers, type CloudClientTimers } from "../../timers";
 import type {
   CloudToClientMessage,
   PhotoOptions,
@@ -48,6 +49,7 @@ export interface PhotoResult {
 
 export interface CameraDeps {
   http: HttpClient;
+  timers?: CloudClientTimers;
 }
 
 /**
@@ -60,17 +62,19 @@ export interface CameraDeps {
 interface Pending<T> {
   resolve: (value: T) => void;
   reject: (err: Error) => void;
-  timer: ReturnType<typeof setTimeout>;
+  timer: unknown;
 }
 
 export class Camera {
   private readonly http: HttpClient;
+  private readonly timers: CloudClientTimers;
 
   /** In-flight photo requests, keyed by the `requestId` the cloud assigned. */
   private readonly pendingPhotos = new Map<string, Pending<PhotoResult>>();
 
   constructor(deps: CameraDeps) {
     this.http = deps.http;
+    this.timers = deps.timers ?? systemTimers;
   }
 
   /**
@@ -111,7 +115,7 @@ export class Camera {
   /** Step 2: resolve when the cloud pushes `photo.ready` for the request. */
   awaitPhotoReady(requestId: string): Promise<PhotoResult> {
     return new Promise<PhotoResult>((resolve, reject) => {
-      const timer = setTimeout(() => {
+      const timer = this.timers.setTimeout(() => {
         // Drop the entry first so the rejection cannot race a late push.
         this.pendingPhotos.delete(requestId);
         reject(new Error(`Managed photo ${requestId} timed out`));
@@ -185,7 +189,7 @@ export class Camera {
   private takePending(requestId: string): Pending<PhotoResult> | undefined {
     const pending = this.pendingPhotos.get(requestId);
     if (!pending) return undefined;
-    clearTimeout(pending.timer);
+    this.timers.clearTimeout(pending.timer);
     this.pendingPhotos.delete(requestId);
     return pending;
   }

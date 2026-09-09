@@ -2,6 +2,7 @@ import { describe, expect, test } from "bun:test";
 
 import { HttpError } from "./errors";
 import { createHttpClient } from "./http";
+import { systemTimers, type CloudClientTimers } from "./timers";
 
 const logger = {
   debug: () => undefined,
@@ -11,6 +12,36 @@ const logger = {
 };
 
 describe("createHttpClient", () => {
+  test("uses the injected scheduler for retry backoff", async () => {
+    const scheduledDelays: number[] = [];
+    const timers: CloudClientTimers = {
+      ...systemTimers,
+      setTimeout(callback, delayMs) {
+        scheduledDelays.push(delayMs);
+        callback();
+        return { kind: "http-retry" };
+      },
+    };
+    let calls = 0;
+    const http = createHttpClient({
+      baseUrl: "https://runtime.test",
+      logger,
+      timers,
+      fetch: async () => {
+        calls += 1;
+        if (calls === 1) throw new TypeError("connection reset");
+        return new Response(JSON.stringify({ ok: true }), {
+          status: 200,
+          headers: { "Content-Type": "application/json" },
+        });
+      },
+    });
+
+    await expect(http.get("/api/health")).resolves.toEqual({ ok: true });
+    expect(calls).toBe(2);
+    expect(scheduledDelays).toEqual([250]);
+  });
+
   test("maps RFC OAuth error bodies to HttpError code and detail", async () => {
     const originalFetch = globalThis.fetch;
     globalThis.fetch = (async () =>

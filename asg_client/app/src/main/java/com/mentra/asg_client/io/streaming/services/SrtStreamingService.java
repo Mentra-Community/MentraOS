@@ -329,6 +329,16 @@ public class SrtStreamingService extends Service {
         public void onSuccess() {
           Log.i(TAG, "SRT connection successful");
           synchronized (mStateLock) {
+            if (mStreamState == StreamState.STREAMING && mIsStreaming) {
+              startMetricsReporting();
+              return;
+            }
+            if (mStreamState != StreamState.STARTING) {
+              Log.w(TAG, "Ignoring SRT onSuccess in state " + mStreamState
+                  + " (stop already requested)");
+              stopMetricsReporting();
+              return;
+            }
             mStreamState = StreamState.STREAMING;
             mIsStreaming = true;
             mIsStreamingActive = true;
@@ -553,6 +563,13 @@ public class SrtStreamingService extends Service {
       }
 
       mStreamState = StreamState.STARTING;
+    }
+
+    if (mHardwareManager != null && BatteryConstants.isCameraBatteryLow(
+        mHardwareManager.getBatteryLevel(), mHardwareManager)) {
+      if (sStatusCallback != null) sStatusCallback.onStreamError("battery_low", mCurrentStreamId);
+      stopStreaming();
+      return;
     }
 
     try {
@@ -815,6 +832,9 @@ public class SrtStreamingService extends Service {
   }
 
   private void startMetricsReporting() {
+    if (!AsgConstants.ENABLE_PIPELINE_FPS_TELEMETRY) {
+      return;
+    }
     if (mMetricsReporter != null) {
       mMetricsReporter.start();
     }
@@ -895,7 +915,7 @@ public class SrtStreamingService extends Service {
               shouldReschedule = true;
             } else if (mStreamState == StreamState.STREAMING) {
               int batteryLevel = mHardwareManager.getBatteryLevel();
-              if (batteryLevel >= 0 && batteryLevel < BatteryConstants.MIN_BATTERY_LEVEL) {
+              if (BatteryConstants.isCameraBatteryLow(batteryLevel, mHardwareManager)) {
                 Log.w(TAG, "🔋⚠️ Battery too low (" + batteryLevel + "%) - stopping SRT stream");
                 shouldStop = true;
                 if (mHardwareManager.supportsAudioPlayback()) mHardwareManager.playAudioAsset(AudioAssets.BATTERY_LOW);

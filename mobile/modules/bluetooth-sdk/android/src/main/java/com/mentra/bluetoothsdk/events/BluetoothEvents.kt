@@ -39,6 +39,29 @@ data class SpeakingStatusEvent(
     val values: Map<String, Any>,
 )
 
+data class MicHealthEvent(
+    val reason: String,
+    val sequenceGapEvents: Long,
+    val decodeFailures: Long,
+    val lastLc3ReceivedAt: Long?,
+    val lastPcmProducedAt: Long?,
+    val timestamp: Long,
+    val values: Map<String, Any>,
+) {
+    companion object {
+        internal fun fromMap(values: Map<String, Any>): MicHealthEvent =
+            MicHealthEvent(
+                reason = stringValue(values, "reason") ?: "",
+                sequenceGapEvents = longValue(values, "sequenceGapEvents") ?: 0,
+                decodeFailures = longValue(values, "decodeFailures") ?: 0,
+                lastLc3ReceivedAt = longValue(values, "lastLc3ReceivedAt"),
+                lastPcmProducedAt = longValue(values, "lastPcmProducedAt"),
+                timestamp = longValue(values, "timestamp") ?: System.currentTimeMillis(),
+                values = values,
+            )
+    }
+}
+
 data class OtaStartAckEvent(
     val timestamp: Long?,
     val values: Map<String, Any>,
@@ -144,6 +167,7 @@ interface MentraBluetoothSdkListener {
     fun onVersionInfo(event: VersionInfoResult) {}
     fun onMicPcm(event: MicPcmEvent) {}
     fun onMicLc3(event: MicLc3Event) {}
+    fun onMicHealth(event: MicHealthEvent) {}
     fun onLocalTranscription(event: LocalTranscriptionEvent) {}
     fun onDefaultDeviceChanged(device: Device?) {}
     fun onLog(message: String) {}

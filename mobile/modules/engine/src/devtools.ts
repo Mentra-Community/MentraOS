@@ -1,5 +1,6 @@
 /**
- * `@mentra/engine/devtools` — the devtools-only surface.
+ * MentraOS-only devtools surface, re-exported by the private
+ * `@mentra/engine-host-internal/devtools` workspace entry.
  *
  * Debug/diagnostic singletons consumed by the Mentra app's internal dev
  * screens (stress test, miniapp dev-server tooling). Never import this from

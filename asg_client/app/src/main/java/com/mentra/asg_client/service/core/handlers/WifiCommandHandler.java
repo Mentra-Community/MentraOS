@@ -113,7 +113,6 @@ public class WifiCommandHandler implements ICommandHandler {
                 if (networkManager != null) {
                     Log.d(TAG, "📶 Initiating WiFi connection to: " + ssid);
                     networkManager.connectToWifi(ssid, password);
-                    serviceManager.initializeCameraWebServer();
 
                     // Schedule WiFi status check after connection attempt
                     // This ensures we send status even if broadcast receiver doesn't fire

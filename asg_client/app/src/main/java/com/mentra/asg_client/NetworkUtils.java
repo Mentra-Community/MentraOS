@@ -11,6 +11,7 @@ import java.net.InetAddress;
 import java.net.NetworkInterface;
 import java.net.SocketException;
 import java.util.Enumeration;
+import java.util.Locale;
 
 /**
  * Utility class for network-related operations.
@@ -18,6 +19,39 @@ import java.util.Enumeration;
 public class NetworkUtils {
     
     private static final String TAG = "NetworkUtils";
+
+    /**
+     * Get the Wi-Fi interface MAC exposed by the device Wi-Fi service.
+     *
+     * @return an uppercase colon-delimited MAC, or an empty string when unavailable
+     */
+    public static String getWifiMacAddress(Context context) {
+        try {
+            WifiManager wifiManager =
+                    (WifiManager)
+                            context.getApplicationContext()
+                                    .getSystemService(Context.WIFI_SERVICE);
+            if (wifiManager != null) {
+                return normalizeMacAddress(wifiManager.getConnectionInfo().getMacAddress());
+            }
+        } catch (Exception e) {
+            Log.e(TAG, "Error getting WiFi MAC address: " + e.getMessage(), e);
+        }
+        return "";
+    }
+
+    static String normalizeMacAddress(String macAddress) {
+        if (macAddress == null) {
+            return "";
+        }
+        String normalized = macAddress.trim().toUpperCase(Locale.US);
+        if (!normalized.matches("(?:[0-9A-F]{2}:){5}[0-9A-F]{2}")
+                || normalized.equals("02:00:00:00:00:00")
+                || normalized.equals("00:00:00:00:00:00")) {
+            return "";
+        }
+        return normalized;
+    }
 
     /**
      * Get the local IP address of the device.
@@ -159,4 +193,4 @@ public class NetworkUtils {
             return false;
         }
     }
-} 
+}

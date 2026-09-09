@@ -34,6 +34,7 @@ import type { Maps, DirectionsRequest, DirectionsResult, LatLng, ReverseGeocodeR
 import type { Tts, RuntimeTtsSpeakOptions, RuntimeTtsSpeechSource } from "./tts";
 import type { UdpAudio } from "./audio-udp";
 import type { RuntimeSnapshot } from "./status";
+import { systemTimers, type CloudClientTimers } from "../../timers";
 
 const UDP_PROBE_INTERVAL_MS = 1_000;
 const UDP_LIVENESS_TIMEOUT_MS = 3_000;
@@ -117,6 +118,7 @@ export interface RuntimeDeps {
   tts: Tts;
   maps: Maps;
   audio: UdpAudio;
+  timers?: CloudClientTimers;
   logger: Logger;
   /**
    * Force `cloud.auth` to drop its cached access token and refresh now.
@@ -142,13 +144,14 @@ export class Runtime implements RuntimeModule {
   public readonly maps: Maps;
   private readonly audio: UdpAudio;
   private readonly logger: Logger;
+  private readonly timers: CloudClientTimers;
   private readonly forceRefreshToken: () => Promise<string>;
   private status: RuntimeSnapshot = {
     status: "disconnected",
     audioTransport: "none",
   };
   private hostClosed = true;
-  private udpProbeTimer: ReturnType<typeof setInterval> | null = null;
+  private udpProbeTimer: unknown | null = null;
   private udpProbeStartedAt = 0;
   private lastUdpAckAt = 0;
 
@@ -179,6 +182,7 @@ export class Runtime implements RuntimeModule {
     this.tts = deps.tts;
     this.maps = deps.maps;
     this.audio = deps.audio;
+    this.timers = deps.timers ?? systemTimers;
     this.logger = deps.logger;
     this.forceRefreshToken = deps.forceRefreshToken;
   }
@@ -302,16 +306,25 @@ export class Runtime implements RuntimeModule {
         // current set (at the current version) to restore live transcription.
         void this.handleReopen();
       } else if (state === "closed") {
+        const superseded = this.connection.isReplacedByNewerSession;
+        const reason = superseded
+          ? "superseded by newer session"
+          : "socket closed";
+        this.logger.debug("ws-session-debug runtime closed", {
+          superseded,
+          hostClosed: this.hostClosed,
+          reason,
+        });
         this.stopUdpLiveness();
         this.updateStatus({
-          status: this.hostClosed
+          status: this.hostClosed || superseded
             ? "disconnected"
             : this.opened
               ? "reconnecting"
               : "connecting",
           audioTransport: "none",
         });
-        this.emitter.emit("disconnected", { reason: "socket closed" });
+        this.emitter.emit("disconnected", { reason });
       }
     });
   }
@@ -513,15 +526,15 @@ export class Runtime implements RuntimeModule {
     this.udpProbeStartedAt = Date.now();
     this.lastUdpAckAt = 0;
     this.sendUdpProbe();
-    this.udpProbeTimer = setInterval(() => {
+    this.udpProbeTimer = this.timers.setInterval(() => {
       this.sendUdpProbe();
       this.checkUdpLiveness();
     }, UDP_PROBE_INTERVAL_MS);
   }
 
   private stopUdpLiveness(): void {
-    if (this.udpProbeTimer) {
-      clearInterval(this.udpProbeTimer);
+    if (this.udpProbeTimer !== null) {
+      this.timers.clearInterval(this.udpProbeTimer);
       this.udpProbeTimer = null;
     }
     this.udpProbeStartedAt = 0;

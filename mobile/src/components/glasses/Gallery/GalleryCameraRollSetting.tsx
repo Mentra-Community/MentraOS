@@ -13,7 +13,7 @@ import {
   cameraRollExportCoordinator,
   gallerySettingsService,
   type CameraRollExportSummary,
-} from "@mentra/engine/internal"
+} from "@mentra/engine-host-internal"
 
 const EMPTY_SUMMARY: CameraRollExportSummary = {
   enabled: false,

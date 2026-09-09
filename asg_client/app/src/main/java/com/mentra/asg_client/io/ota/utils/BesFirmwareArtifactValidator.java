@@ -231,14 +231,17 @@ public final class BesFirmwareArtifactValidator {
     private static String artifactIdFromUrl(JSONObject metadata) throws Exception {
         String urlValue = metadata.optString("url", metadata.optString("firmwareUrl", "")).trim();
         URI uri = new URI(urlValue);
-        if (!"https".equalsIgnoreCase(uri.getScheme())
-                || uri.getHost() == null
+        String scheme = uri.getScheme();
+        if (!("http".equalsIgnoreCase(scheme) || "https".equalsIgnoreCase(scheme))) {
+            throw new ValidationException("BES OTA URL must use HTTP or HTTPS");
+        }
+        if (uri.getHost() == null
                 || uri.getRawQuery() != null
                 || uri.getRawFragment() != null
                 || uri.getPath() == null
                 || uri.getPath().endsWith("/")) {
             throw new ValidationException(
-                    "BES OTA URL must identify an HTTPS artifact without query or fragment");
+                    "BES OTA URL must identify an artifact without query or fragment");
         }
         String artifactId = uri.getPath().substring(uri.getPath().lastIndexOf('/') + 1);
         if (!artifactId.matches("[A-Za-z0-9._-]{1,128}")) {

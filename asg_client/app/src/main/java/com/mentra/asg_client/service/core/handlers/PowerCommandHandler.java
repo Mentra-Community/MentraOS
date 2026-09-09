@@ -3,12 +3,14 @@ package com.mentra.asg_client.service.core.handlers;
 import android.content.Context;
 import android.util.Log;
 import com.mentra.asg_client.AsgConstants;
+import com.mentra.asg_client.io.bluetooth.interfaces.IBluetoothManager;
 import com.mentra.asg_client.io.media.core.MediaCaptureService;
 import com.mentra.asg_client.service.legacy.interfaces.ICommandHandler;
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
 import com.mentra.asg_client.service.system.core.SystemControllerFactory;
 import com.mentra.asg_client.service.utils.ServiceConstants;
 import com.mentra.asg_client.settings.AsgSettings;
+import java.nio.charset.StandardCharsets;
 import java.util.Set;
 import org.json.JSONObject;
 
@@ -36,7 +38,11 @@ public class PowerCommandHandler implements ICommandHandler {
     @Override
     public Set<String> getSupportedCommandTypes() {
         return Set.of(
-                CMD_SHUTDOWN, CMD_REBOOT, CMD_SET_SYSTEM_TIME, AsgConstants.COMMAND_SET_WIFI_ADB_STATE);
+                CMD_SHUTDOWN,
+                CMD_REBOOT,
+                CMD_SET_SYSTEM_TIME,
+                AsgConstants.COMMAND_SET_WIFI_ADB_STATE,
+                AsgConstants.COMMAND_REBOOT_BES_FOR_MTK_FLASH);
     }
 
     @Override
@@ -51,6 +57,8 @@ public class PowerCommandHandler implements ICommandHandler {
                     return handleSetSystemTime(data);
                 case AsgConstants.COMMAND_SET_WIFI_ADB_STATE:
                     return handleSetWifiAdbState(data);
+                case AsgConstants.COMMAND_REBOOT_BES_FOR_MTK_FLASH:
+                    return handleBesRebootForMtkFlash(data);
                 default:
                     Log.e(TAG, "Unsupported power command: " + commandType);
                     return false;
@@ -91,6 +99,51 @@ public class PowerCommandHandler implements ICommandHandler {
             return true;
         } catch (Exception e) {
             Log.e(TAG, "❌ Error initiating reboot", e);
+            return false;
+        }
+    }
+
+    /**
+     * Queue a BES-only reboot and log the caller's request id when the UART write completes.
+     * Android must stay alive so the host can prove the same ADB identity before entering
+     * Preloader with a freshly reset BES MTK-start retry budget.
+     */
+    private boolean handleBesRebootForMtkFlash(JSONObject data) {
+        String requestId =
+                data == null
+                        ? ""
+                        : data.optString(AsgConstants.MTK_FLASH_REQUEST_ID_FIELD, "").trim();
+        if (!requestId.matches("[A-Za-z0-9_-]{8,64}")) {
+            Log.e(TAG, "MTK_FLASH_BES_RESET rejected invalid request_id");
+            return false;
+        }
+        if (serviceManager == null || serviceManager.getBluetoothManager() == null) {
+            Log.e(TAG, "MTK_FLASH_BES_RESET request_id=" + requestId + " transport unavailable");
+            return false;
+        }
+
+        try {
+            JSONObject command = new JSONObject();
+            command.put("C", AsgConstants.BES_REBOOT_COMMAND);
+            command.put("V", 1);
+            command.put("B", "");
+            IBluetoothManager transport = serviceManager.getBluetoothManager();
+            boolean queued =
+                    transport.sendMessage(
+                            command.toString().getBytes(StandardCharsets.UTF_8),
+                            success ->
+                                    Log.i(
+                                            TAG,
+                                            "MTK_FLASH_BES_RESET request_id="
+                                                    + requestId
+                                                    + " uart_write="
+                                                    + success));
+            Log.i(
+                    TAG,
+                    "MTK_FLASH_BES_RESET request_id=" + requestId + " queued=" + queued);
+            return queued;
+        } catch (Exception e) {
+            Log.e(TAG, "MTK_FLASH_BES_RESET request_id=" + requestId + " failed", e);
             return false;
         }
     }

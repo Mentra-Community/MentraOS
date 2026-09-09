@@ -5,9 +5,9 @@
  * These values are the contract between @mentra/miniapp (running in a WebView)
  * and LocalMiniappRuntime (running on the phone).
  *
- * IMPORTANT: This file has NO runtime dependency on @mentra/sdk. The cloud SDK's
- * wire protocol enums live in @mentra/sdk/types/message-types.ts and are used
- * for cloud↔app communication, not phone↔miniapp.
+ * IMPORTANT: This file has no runtime dependency on the retired cloud SDK.
+ * Its published wire-protocol enums are used only for compatibility with
+ * existing cloud-hosted miniapps, not for phone↔miniapp communication.
  */
 
 // ============================================================================
@@ -136,6 +136,11 @@ export enum MiniappRequestType {
   COPY_CLIPBOARD = "miniapp_copy_clipboard",
   /** Download a file (triggers OS share sheet for save location). */
   DOWNLOAD = "miniapp_download",
+  /**
+   * Open a phone-camera QR scanner overlay. Host must not unmount the miniapp
+   * (clearing foreground fires UI_CLOSE and can hang up live sessions).
+   */
+  SCAN_QR = "miniapp_scan_qr",
 
   /**
    * Phone-local persistent binary blob storage, scoped to (userId, packageName).
@@ -200,6 +205,16 @@ export enum MiniappRequestType {
   ACTION_INVOKE = "miniapp_action_invoke",
   /** Target → host: the result of a delivered ACTION_CALL, correlated by callId. */
   ACTION_RESULT = "miniapp_action_result",
+
+  /**
+   * Phone-native meeting (ACS Teams). Join/leave/mute live in the MentraOS
+   * host so the miniapp never holds the ACS Calling SDK.
+   */
+  MEETING_JOIN = "miniapp_meeting_join",
+  MEETING_LEAVE = "miniapp_meeting_leave",
+  MEETING_SET_MUTED = "miniapp_meeting_set_muted",
+  MEETING_UPDATE_VIDEO_SOURCE = "miniapp_meeting_update_video_source",
+  MEETING_GET_STATE = "miniapp_meeting_get_state",
 }
 
 // ============================================================================
@@ -255,6 +270,12 @@ export enum MiniappResponseType {
    * handler and replies with an ACTION_RESULT request keyed by callId.
    */
   ACTION_CALL = "miniapp_action_call",
+
+  /**
+   * Push: native meeting state changed. Carries {state, muted?, error?}.
+   * See MeetingModule.onState().
+   */
+  MEETING_STATE = "miniapp_meeting_state",
 
   /**
    * Push: phone is about to tear down the miniapp's session. Gives the SDK

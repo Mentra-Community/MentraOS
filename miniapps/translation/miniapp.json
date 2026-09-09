@@ -1,7 +1,7 @@
 {
   "$schema": "./node_modules/@mentra/miniapp-cli/schema/miniapp.schema.json",
   "packageName": "com.mentra.translation",
-  "version": "1.0.18",
+  "version": "1.0.19",
   "name": "Translation",
   "description": "Local cloud-v2 translation tester. Translates any detected source language into the selected target language and renders the result on the glasses display.",
   "type": "standard",

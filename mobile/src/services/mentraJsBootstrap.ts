@@ -15,7 +15,7 @@ import {engine} from "@mentra/engine"
 import {Platform} from "react-native"
 import * as Sentry from "@sentry/react-native"
 
-import {ensureMiniappEngine, getMiniappEngine} from "@mentra/engine/internal"
+import {ensureMiniappEngine, getMiniappEngine} from "@mentra/engine-host-internal"
 
 import showAlert from "@/utils/AlertUtils"
 

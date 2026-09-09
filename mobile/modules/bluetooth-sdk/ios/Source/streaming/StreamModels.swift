@@ -4,17 +4,23 @@ public struct StreamVideoConfig {
     public let width: Int?
     public let height: Int?
     public let bitrate: Int?
+    public let minBitrateBps: Int?
+    public let initialBitrateBps: Int?
     public let fps: Int?
 
     public init(
         width: Int? = nil,
         height: Int? = nil,
         bitrate: Int? = nil,
-        fps: Int? = nil
+        fps: Int? = nil,
+        minBitrateBps: Int? = nil,
+        initialBitrateBps: Int? = nil
     ) {
         self.width = width
         self.height = height
         self.bitrate = bitrate
+        self.minBitrateBps = minBitrateBps
+        self.initialBitrateBps = initialBitrateBps
         self.fps = fps
     }
 
@@ -23,6 +29,8 @@ public struct StreamVideoConfig {
         if let width { values["width"] = width }
         if let height { values["height"] = height }
         if let bitrate { values["bitrate"] = bitrate }
+        if let minBitrateBps { values["minBitrateBps"] = minBitrateBps }
+        if let initialBitrateBps { values["initialBitrateBps"] = initialBitrateBps }
         // ASG stream parsers shipped with the BLE key named "frameRate".
         if let fps { values["frameRate"] = fps }
         return values
@@ -34,7 +42,9 @@ public struct StreamVideoConfig {
             width: intValue(values["width"]),
             height: intValue(values["height"]),
             bitrate: intValue(values["bitrate"]),
-            fps: intValue(values["fps"])
+            fps: intValue(values["fps"]),
+            minBitrateBps: intValue(values["minBitrateBps"]),
+            initialBitrateBps: intValue(values["initialBitrateBps"])
         )
     }
 }
@@ -275,6 +285,7 @@ public struct StreamRequest {
     public let video: StreamVideoConfig?
     public let audio: StreamAudioConfig?
     public let authToken: String?
+    public let captureAudio: Bool
 
     public init(
         streamUrl: String,
@@ -282,7 +293,8 @@ public struct StreamRequest {
         sound: Bool = true,
         video: StreamVideoConfig? = nil,
         audio: StreamAudioConfig? = nil,
-        authToken: String? = nil
+        authToken: String? = nil,
+        captureAudio: Bool = true
     ) {
         self.streamUrl = streamUrl
         self.streamId = streamId
@@ -290,6 +302,7 @@ public struct StreamRequest {
         self.video = video
         self.audio = audio
         self.authToken = authToken
+        self.captureAudio = captureAudio
     }
 
     init(values: [String: Any]) {
@@ -303,7 +316,8 @@ public struct StreamRequest {
             sound: values["sound"] as? Bool ?? true,
             video: StreamVideoConfig(values: values["video"] as? [String: Any]),
             audio: StreamAudioConfig(values: values["audio"] as? [String: Any]),
-            authToken: values["authToken"] as? String ?? values["auth_token"] as? String
+            authToken: values["authToken"] as? String ?? values["auth_token"] as? String,
+            captureAudio: (values["captureAudio"] as? Bool) ?? (values["ca"] as? Bool) ?? true
         )
     }
 
@@ -321,6 +335,9 @@ public struct StreamRequest {
         }
         if let authToken, !authToken.isEmpty {
             values["authToken"] = authToken
+        }
+        if !captureAudio {
+            values["captureAudio"] = false
         }
         return values
     }

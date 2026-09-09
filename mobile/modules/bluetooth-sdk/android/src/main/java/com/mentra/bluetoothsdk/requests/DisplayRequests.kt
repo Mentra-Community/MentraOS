@@ -1,5 +1,12 @@
 package com.mentra.bluetoothsdk
 
+internal object DashboardContentFormatter {
+    const val STATUS_HEADER = "\$TIME12$ \$DATE$ \$GBATT$ \$CONNECTION_STATUS$"
+
+    fun template(content: String): String =
+        if (content.isEmpty()) STATUS_HEADER else "$STATUS_HEADER\n\n$content"
+}
+
 data class DisplayTextRequest(
     val text: String,
     val x: Int = 0,

@@ -27,6 +27,10 @@ export async function startEngineRuntime(log: EngineLogger): Promise<() => void>
     ui: {
       // Engine dispatches miniapp wifi-setup requests here; the OEM owns the screen.
       requestWifiSetup: (reason) => log(`wifi setup requested (${reason ?? "no reason"})`),
+      scanQr: async (options) => {
+        log(`scanQr requested (${options?.title ?? "no title"})`)
+        return {cancelled: true}
+      },
     },
   }
   engine.configure(options)

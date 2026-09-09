@@ -22,18 +22,21 @@ const ROOT_DIR = path.resolve(import.meta.dir, "..");
 // Directories to scan for JS/TS packages (must have package.json and node_modules)
 const JS_PACKAGE_DIRS = [
   "mobile",
-  "cloud",
-  "cloud/packages/sdk",
-  "cloud/packages/cloud",
-  "cloud/packages/utils",
-  "cloud/packages/types",
-  "cloud/packages/cli",
-  "cloud/packages/react-sdk",
-  "cloud/packages/display-utils",
-  "cloud/websites/console",
-  "cloud/websites/store",
-  "cloud/websites/account",
-  "cloud/websites/debugger",
+  "cloud-v2",
+  "cloud-v2/packages/auth",
+  "cloud-v2/packages/cli",
+  "cloud-v2/packages/cloud-client",
+  "cloud-v2/packages/core",
+  "cloud-v2/packages/protocol",
+  "cloud-v2/packages/proxy",
+  "cloud-v2/packages/runtime",
+  "cloud-v2/packages/shared",
+  "cloud-v2/test/test-client",
+  "cloud-v2/test/test-oem",
+  "cloud-v2/websites/admin",
+  "cloud-v2/websites/console",
+  "cloud-v2/websites/portal",
+  "sdk/miniapp-cli",
 ];
 
 // Android projects to scan

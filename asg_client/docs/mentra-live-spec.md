@@ -75,19 +75,26 @@ For some outbound commands, `B` is a JSON object serialized as a string inside t
 - `asg_client` exposes phone-facing commands and responses through the BLE command protocol.
 - The phone is the user's primary UI for setup, WiFi configuration, gallery sync, app routing, and settings.
 - Button/touch events are forwarded to the phone so apps can react even when the glasses also perform local actions.
+- Secure owner-exclusive pairing is release-gated on both the Mentra App and BES and defaults off for Mentra 3.1. When enabled, three power-button presses enter pairing mode. ASG speaks “Connect to your Mentra Live in the app. Your code is:” plus the four-character code as one WAV, repeated by BES every 30 seconds, and speaks “Pairing mode ended.” when BES reports the window closing.
 
 ### Camera capture
 
 Mentra Live supports photo capture and video recording from the glasses camera.
 
+After a photo completes, the camera normally stays warm for 8 seconds for successive shots.
+
 - **Short camera-button press**: takes a photo unless video is currently recording, in which case it stops the recording.
 - **Long camera-button press**: starts video recording unless video is already recording, in which case it stops.
 - Photo/video resolution, FPS, max recording duration, and privacy LED behavior are configurable by commands from the phone app.
+- Photo/video starts and ongoing video/streaming retain the normal 15% battery minimum. Known 4–14% requires fresh BES `hm_batv.B.active_charging: true` (SY5502 phases 3/4/5, not full or merely plugged in); known 0–3% is always blocked. Missing/false charge evidence grants no exception. Unknown SOC keeps its existing behavior and is not charge evidence.
+- Charge evidence is paired with the same reply's SOC, timestamped before event delivery using elapsed realtime, and invalidated by UART proof reset/recovery; older queued events cannot restore it. Low-battery use requests `mh_batv` after 5 seconds and expires evidence after 30 seconds. At the normal 10-second monitoring cadence, unplugging is queried on the next tick and acted on the following tick (about 20 seconds); silent UART failure stops use on the first check at expiry (at most about 40 seconds after the last receipt). These are polling bounds, not hard real-time deadlines. Normal cleanup is retained, and stream reconnect starts recheck the policy before opening the camera.
+- Queue admission is not lasting permission to capture: photos recheck before the shutter and videos recheck after teardown and camera preparation. All paths use the hardware battery cache when available; UART evidence also requires a ready transport under normal OTA policy.
 - Captured media is stored locally in package-namespaced storage and exposed to the phone through the camera web server for gallery sync.
-- **Warm photo capture** (camera already running): waits for Camera2's sensor-exposure-start callback, then times the snap near the end of exposure.
-- **Cold photo capture** (camera startup required): plays a short hold-still prep click immediately and every 900ms during camera/ISP startup, then stops the clicks when sensor exposure starts.
-- Single-frame captures use Camera2 `onCaptureStarted` as the hardware anchor. The snap targets 100ms before estimated exposure end (manual duration when fixed; latest preview-metered duration for auto exposure), which keeps it immediate in bright scenes and avoids an early cue during longer low-light exposures. If the completed JPEG reaches `ImageReader` first—as can happen when a HAL delivers `onCaptureStarted` late—the frame callback plays the snap immediately, before extraction or persistence. HDR bursts use the final bracket's exposure/frame callbacks so the user remains still for the whole burst. The final captured callback remains an idempotent last-resort fallback.
-- Prep clicks and snaps use isolated audio overlays so camera feedback does not cut off unrelated device prompts. A failed capture cancels only its own pending click.
+- **Warm photo capture** (camera already running): requests the shutter sound immediately at capture request time, without a warm-up cue or waiting for exposure/JPEG callbacks. Device testing reported warm photo capture under 20ms, so immediate audio feedback is preferred for responsiveness. Later capture callbacks do not play a second snap. An already-playing loading beep still finishes before the shutter to avoid overlap.
+- **Cold photo capture** (camera startup required): plays a short, intentionally subtle hold-still prep click immediately and every 900ms during camera/ISP startup, then requests the clicks to stop when sensor exposure starts. On Mentra Live, an in-progress beep finishes before the sequence stops in its silent portion; the shutter sound waits for that stop without delaying the photo. The cadence is baked into one lossless 45-second audio sequence, covering the feedback safety timeout without per-click timers or player restarts. Each beep occupies the first 186ms of its 900ms period; normal stop requests target the 240–800ms silent window using playback position and recheck it after timer delays. Service teardown still stops all audio immediately. After AE first converges, cold captures preserve a 475ms minimum exposure-settling window before submitting the still request; warm-session captures keep the adaptive stable-frame fast path.
+- Cold single-frame captures use Camera2 `onCaptureStarted` as the hardware anchor. The snap targets 100ms before estimated exposure end (manual duration when fixed; latest preview-metered duration for auto exposure), which keeps it immediate in bright scenes and avoids an early cue during longer low-light exposures. If the completed JPEG reaches `ImageReader` first—as can happen when a HAL delivers `onCaptureStarted` late—the frame callback plays the snap immediately, before extraction or persistence. HDR bursts use the final bracket's exposure/frame callbacks so the user remains still for the whole burst. The final captured callback remains an idempotent last-resort fallback.
+- Prep clicks and snaps use isolated audio overlays so camera feedback does not cut off unrelated device prompts. The shutter snap uses a deliberately prominent playback gain so it remains distinct from the quieter prep cue. A failed capture cancels only its own feedback; an already-playing prep beep is allowed to finish.
+- The user-visible BES RGB photo indicator starts at the same sensor-exposure boundary, with the JPEG frame and final completion callbacks as idempotent fallbacks. It does not start during cold camera warmup, so it remains on when the image is actually captured.
 
 ### Gallery-mode behavior
 
@@ -107,9 +114,13 @@ Every camera-button press should still be forwarded to the phone as a `button_pr
 
 Mentra Live supports camera/microphone live streaming paths from `asg_client`, including RTMP, SRT, and WHIP services. Streaming behavior must coordinate camera ownership, microphone foreground-service requirements, reconnect/keep-alive handling, and privacy LED state.
 
+WHIP streams seed WebRTC with an explicit initial send bitrate capped by the caller's configured maximum. Congestion control remains enabled so the sender can still reduce bitrate on constrained networks instead of treating the configured bitrate as a fixed rate.
+
+Streaming endpoints on the active Mentra Live hotspot subnet are reachable without a separate STA WiFi connection. `asg_client` derives that subnet from the live hotspot interface rather than assuming fixed client addresses. For WHIP, the WebRTC network inventory must also expose the hotspot interface so ICE can gather a directly reachable local candidate.
+
 ### Local media sync server
 
-`asg_client` runs an embedded HTTP server that lets the phone enumerate, download, ZIP, and delete captured media. This is used for gallery sync and avoids relying on cloud connectivity for local media transfer.
+While the Mentra Live hotspot is active, `asg_client` runs an embedded HTTP server that lets the phone enumerate, download, ZIP, and delete captured media. The server is stopped with the hotspot and binds only to the hotspot gateway address; it must never expose media through a WiFi network that the glasses join. This is used for gallery sync and avoids relying on cloud connectivity for local media transfer.
 
 ### Audio and microphone
 
@@ -135,7 +146,7 @@ Camera and streaming features must leave LEDs in a safe state on stop, error, se
 
 The phone can configure WiFi behavior through `asg_client`. Mentra Live-specific network managers should be used when platform APIs are required; generic Android fallbacks exist for non-K900 paths.
 
-When the phone requests the Mentra Live hotspot, `asg_client` starts the K900 firmware hotspot through the SmartXY `ap_start` intent. It waits for the AP gateway and firmware-configured SSID/password before returning them to the phone over BLE. Clients must use the latest BLE status rather than assume fixed credentials. The hotspot remains active while the local HTTP server is receiving requests or streaming response data and automatically stops after 120 seconds of genuine HTTP inactivity.
+When the phone requests the Mentra Live hotspot, `asg_client` starts the K900 firmware hotspot through the SmartXY `ap_start` intent. It waits for the AP gateway and firmware-configured SSID/password before returning them to the phone over BLE. Clients must use the latest BLE status rather than assume fixed credentials. The hotspot remains active while the local HTTP server is receiving requests or streaming response data, or while a hotspot-local stream receives its standard stream keep-alives. It automatically stops after 120 seconds without any of those activity signals.
 
 ### OTA and updates
 
@@ -145,7 +156,30 @@ Mentra Live has multiple update surfaces:
 - MTK/system firmware update flows.
 - BES MCU firmware OTA over UART.
 
+Phone-pinned `asg_client` APK downgrades are supported when the target version code is at least
+`51518114` (Mentra 3.0). Older targets predate the downgrade-safe media and recovery contract and
+must be refused.
+
 Update flows must preserve device recoverability, report progress where possible, and avoid interrupting active media operations without cleanup.
+
+MTK updates prefer an incremental patch whose start version matches the glasses.
+If no patch matches, a pinned `mtk_full_ota` can update a known older firmware
+directly. Full fallback requires a valid target version, URL, SHA-256, and size;
+unknown, equal, or newer installed versions do not qualify. A failed incremental
+does not silently switch to a full image. Both paths use the existing user-approved
+installation and Android compatibility checks; full OTAs do not enable rollback
+or request a userdata wipe. Release manifests pin the full artifact, including
+when the phone downloads and serves it over the glasses hotspot.
+Glasses reuse `asg/mtk_firmware.zip` rather than retaining one file per release.
+MTK downloads are capped at 1 GiB and reserve room for the ZIP plus payload
+before downloading when the artifact size is known. Historical development
+packages and post-install space reclamation are separate from this fallback.
+Download liveness uses actual received bytes, not just rounded percentages;
+repeated status replies do not count as transfer progress. A phone timeout does
+not release an active MTK system install: ASG retains ownership until the system
+updater reports a terminal result (or the process/device restarts), preventing a
+retry from replacing its staged ZIP. Release packaging checks declared full-OTA
+size against the same bytes whose SHA-256 is verified.
 
 The MTK↔BES UART always starts at 460800 baud. Firmware that supports the negotiated fast link may upgrade to 1152000 only after reporting a compatible current firmware version. At startup, `asg_client` retries discovery at 460800 before making one bounded probe at 1152000, then returns to 460800 if neither rate answers. The alternate probe does not depend on app-local cached state, so an APK reinstall can recover a BES that survived at the negotiated rate. Once traffic confirms a negotiated 1152000 link, BES keeps that baud across UART driver restarts and Android sleep; ordinary phone heartbeats and expected MTK sleep silence must not return one endpoint to 460800. If an older BES nevertheless falls back or reboots while ASG remains alive, several small unframed reads or an idle-link health probe cause `asg_client` to verify 1152000, probe 460800, and renegotiate the fast link after finding BES at the rendezvous rate. If neither rate answers, ASG remains at 460800 and retries the two-rate scan with capped exponential backoff so a later BES boot cannot leave the endpoints split indefinitely. Each scan is bounded and recovery is suppressed during BES OTA, file transfer, and active baud transitions. After a successful BES OTA, BES reboots at 460800, so `asg_client` explicitly reopens the rendezvous baud, rediscovers the new firmware version, and negotiates again when supported. Older firmware on either side remains at 460800.
 
@@ -158,6 +192,8 @@ the generic `0123456789ABCDEF` Android/ADB placeholder—regardless of which
 property exposes it—or a BES system-version field. The Bluetooth
 MAC is sourced from BES (`hs_syvr`/`sr_btaddr`), persisted in
 `persist.mentra.live.mac`, and republished to the phone as soon as it is learned.
+The MTK Wi-Fi interface MAC is read from Android's Wi-Fi service and forwarded
+separately as `wifi_mac_address` when available.
 
 `asg_client` includes logging, crash/error reporting, incident log buffering, and debug receivers for development and OTA testing. Production behavior should prioritize device stability and useful logs for support while avoiding secrets in logs.
 

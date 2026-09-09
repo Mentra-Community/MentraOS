@@ -2,13 +2,19 @@ import assert from "node:assert/strict"
 import {execFileSync} from "node:child_process"
 import test from "node:test"
 
-import {assertBundleEnvironment, xcodeBuildSettings, xcodeEnvironmentExports} from "./release-bundle-config.mjs"
+import {
+  RELEASE_BUNDLE_ENV_KEYS,
+  assertBundleEnvironment,
+  xcodeBuildSettings,
+  xcodeEnvironmentExports,
+} from "./release-bundle-config.mjs"
 
 test("xcodeEnvironmentExports exports public and pinned build values safely", () => {
   const lines = xcodeEnvironmentExports(
     {
       EXPO_PUBLIC_ASG_OTA_VERSION_URL: "https://example.test/it's-pinned.json",
       EXPO_PUBLIC_EMPTY: "",
+      MENTRAOS_NATIVE_MARKETING_VERSION: "3.1.0",
       MENTRAOS_PINNED_BUILD_NUMBER: "123",
       NODE_ENV: "production",
       PRIVATE_SECRET: "do-not-export",
@@ -18,6 +24,7 @@ test("xcodeEnvironmentExports exports public and pinned build values safely", ()
 
   assert.deepEqual(lines, [
     `export EXPO_PUBLIC_ASG_OTA_VERSION_URL='https://example.test/it'"'"'s-pinned.json'`,
+    "export MENTRAOS_NATIVE_MARKETING_VERSION='3.1.0'",
     "export MENTRAOS_PINNED_BUILD_NUMBER='123'",
     "export NODE_ENV='production'",
     "export NODE_BINARY='/opt/node with spaces/bin/node'",
@@ -38,6 +45,7 @@ test("xcodeBuildSettings exposes the same public values to every build phase", (
     {
       EXPO_PUBLIC_ASG_OTA_VERSION_URL: "https://example.test/pin.json?channel=staging build",
       EXPO_PUBLIC_EMPTY: "",
+      MENTRAOS_NATIVE_MARKETING_VERSION: "3.1.0",
       MENTRAOS_PINNED_BUILD_NUMBER: 123,
       NODE_ENV: "production",
       PRIVATE_SECRET: "do-not-export",
@@ -47,10 +55,27 @@ test("xcodeBuildSettings exposes the same public values to every build phase", (
 
   assert.deepEqual(settings, [
     "EXPO_PUBLIC_ASG_OTA_VERSION_URL=https://example.test/pin.json?channel=staging build",
+    "MENTRAOS_NATIVE_MARKETING_VERSION=3.1.0",
     "MENTRAOS_PINNED_BUILD_NUMBER=123",
     "NODE_ENV=production",
     "NODE_BINARY=/opt/node with spaces/bin/node",
   ])
+})
+
+test("release bundle gate does not require BUILD_TIME so Metro cache reuse cannot fail CI", () => {
+  assert.equal(RELEASE_BUNDLE_ENV_KEYS.includes("EXPO_PUBLIC_BUILD_TIME"), false)
+  assert.equal(RELEASE_BUNDLE_ENV_KEYS.includes("EXPO_PUBLIC_BUILD_COMMIT"), true)
+
+  assert.doesNotThrow(() =>
+    assertBundleEnvironment(
+      Buffer.from("prefix abc1234 suffix"),
+      {
+        EXPO_PUBLIC_BUILD_COMMIT: "abc1234",
+        EXPO_PUBLIC_BUILD_TIME: "2026-08-31_11-27AM",
+      },
+      "iOS",
+    ),
+  )
 })
 
 test("assertBundleEnvironment accepts expected nonempty runtime values", () => {

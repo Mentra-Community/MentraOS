@@ -1,7 +1,8 @@
 import {useEffect, useState, useRef, createContext} from "react"
 import {View, Modal, ActivityIndicator} from "react-native"
-import {usePathname} from "expo-router"
+import {useGlobalSearchParams, usePathname} from "expo-router"
 import {Text, Button} from "@/components/ignite"
+import {readReturnToMiniapp, stopTryingToReconnect} from "@/contexts/connectionOverlayActions"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {useNavigationStore} from "@/stores/navigation"
@@ -60,6 +61,7 @@ function GlobalConnectionOverlay() {
   const {theme} = useAppTheme()
   const {clearHistoryAndGoHome} = useNavigationStore.getState()
   const pathname = usePathname()
+  const returnToMiniapp = readReturnToMiniapp(useGlobalSearchParams().returnToMiniapp)
   const glassesConnected =
     useEngineSnapshot(engine.glasses.status, (onChange) => engine.glasses.onStatus(onChange)).state === "connected"
   const {customTitle, customMessage, hideStopButton, smallTitle, suppressOverlay} = useConnectionOverlayConfig()
@@ -101,7 +103,11 @@ function GlobalConnectionOverlay() {
     if (!cancelButtonEnabled) return
     setShowOverlay(false)
     setCancelButtonEnabled(false)
-    clearHistoryAndGoHome()
+    void stopTryingToReconnect({
+      returnToMiniapp,
+      clearHistoryAndGoHome,
+      setForeground: (packageName) => engine.miniapps.setForeground(packageName),
+    })
   }
 
   if (!showOverlay) return null

@@ -429,7 +429,7 @@ public class K900ProtocolUtils {
         String payloadStr;
         try {
             payloadStr = new String(payload, StandardCharsets.UTF_8);
-            android.util.Log.d("K900ProtocolUtils", "Extracted payload: " + payloadStr);
+            android.util.Log.d("K900ProtocolUtils", "Extracted JSON payload bytes: " + payloadLength);
         } catch (Exception e) {
             android.util.Log.e("K900ProtocolUtils", "Error converting payload to string", e);
             return null;
@@ -437,7 +437,7 @@ public class K900ProtocolUtils {
 
         // Check if it's valid JSON
         if (!payloadStr.startsWith("{") || !payloadStr.endsWith("}")) {
-            android.util.Log.d("K900ProtocolUtils", "Payload is not valid JSON: " + payloadStr);
+            android.util.Log.d("K900ProtocolUtils", "Payload is not valid JSON");
             return null;
         }
 
@@ -448,7 +448,7 @@ public class K900ProtocolUtils {
             // Check if this is C-wrapped format {"C": "..."}
             if (json.has(FIELD_C)) {
                 String innerContent = json.optString(FIELD_C, "");
-                android.util.Log.d("K900ProtocolUtils", "Detected C-wrapped format, inner content: " + innerContent);
+                android.util.Log.d("K900ProtocolUtils", "Detected C-wrapped format");
 
                 // Try to parse the inner content as JSON
                 try {

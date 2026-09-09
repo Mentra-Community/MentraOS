@@ -182,6 +182,10 @@ struct GlassesStatus: CustomStringConvertible {
         stringValue(values, "bluetoothMacAddress") ?? ""
     }
 
+    var wifiMacAddress: String {
+        stringValue(values, "wifiMacAddress") ?? ""
+    }
+
     var leftMacAddress: String {
         stringValue(values, "leftMacAddress") ?? ""
     }
@@ -204,6 +208,17 @@ struct GlassesStatus: CustomStringConvertible {
 
     var appVersion: String {
         stringValue(values, "appVersion") ?? ""
+    }
+
+    /// Package the glasses client actually runs as, from version_info_1. Empty on glasses whose
+    /// client predates the field. "com.mentra.asg_client" is the stock client; anything else is a
+    /// sideloaded build that OTA must not drive.
+    var packageName: String {
+        stringValue(values, "packageName") ?? ""
+    }
+
+    var hotspotOtaVersion: Int {
+        intValue(values["hotspotOtaVersion"]) ?? 0
     }
 
     var bluetoothName: String {
@@ -359,6 +374,8 @@ public struct VersionInfoResult: CustomStringConvertible {
     public let systemTimeMs: Int?
     public let otaVersionUrl: String
     public let appVersion: String
+    public let packageName: String
+    public let hotspotOtaVersion: Int
 
     init(status: GlassesStatus) {
         androidVersion = status.androidVersion
@@ -369,6 +386,8 @@ public struct VersionInfoResult: CustomStringConvertible {
         systemTimeMs = intValue(status.values["systemTimeMs"])
         otaVersionUrl = status.otaVersionUrl
         appVersion = status.appVersion
+        packageName = status.packageName
+        hotspotOtaVersion = status.hotspotOtaVersion
     }
 
     init(values: [String: Any]) {
@@ -380,6 +399,11 @@ public struct VersionInfoResult: CustomStringConvertible {
         systemTimeMs = intValue(values["systemTimeMs"]) ?? intValue(values["system_time_ms"])
         otaVersionUrl = stringValue(values, "otaVersionUrl", "ota_version_url") ?? ""
         appVersion = stringValue(values, "appVersion", "app_version") ?? ""
+        packageName = stringValue(values, "packageName", "package_name") ?? ""
+        hotspotOtaVersion =
+            intValue(values["hotspotOtaVersion"])
+                ?? intValue(values["hotspot_ota_version"])
+                ?? 0
     }
 
     public var dictionary: [String: Any] {
@@ -391,9 +415,16 @@ public struct VersionInfoResult: CustomStringConvertible {
             "buildNumber": buildNumber,
             "otaVersionUrl": otaVersionUrl,
             "appVersion": appVersion,
+            "hotspotOtaVersion": hotspotOtaVersion,
         ]
         if let systemTimeMs {
             values["systemTimeMs"] = systemTimeMs
+        }
+        // Only when known. requestVersionInfo() resolves from ANY version_info chunk, and only
+        // chunk 1 carries package_name — emitting "" from a chunk-3 resolution would overwrite a
+        // known identity with "absent", which the OTA guard reads as stock.
+        if !packageName.isEmpty {
+            values["packageName"] = packageName
         }
         return values
     }
@@ -661,6 +692,10 @@ struct GlassesStatusUpdate: CustomStringConvertible {
         optionalStringValue(values, "bluetoothMacAddress")
     }
 
+    var wifiMacAddress: String? {
+        optionalStringValue(values, "wifiMacAddress")
+    }
+
     var leftMacAddress: String? {
         optionalStringValue(values, "leftMacAddress")
     }
@@ -683,6 +718,14 @@ struct GlassesStatusUpdate: CustomStringConvertible {
 
     var appVersion: String? {
         optionalStringValue(values, "appVersion")
+    }
+
+    var packageName: String? {
+        optionalStringValue(values, "packageName")
+    }
+
+    var hotspotOtaVersion: Int? {
+        optionalIntValue(values, "hotspotOtaVersion")
     }
 
     var bluetoothName: String? {

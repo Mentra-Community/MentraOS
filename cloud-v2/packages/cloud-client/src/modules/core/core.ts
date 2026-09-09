@@ -26,6 +26,11 @@ import {
   type SubmitReportInput,
   type SubmitReportResult,
 } from "./reports";
+import {
+  SupportProfiles,
+  type SupportProfileUpdateResult,
+  type SupportStateInput,
+} from "./support-profile";
 
 export type {
   AddReportArtifactsResult,
@@ -40,6 +45,11 @@ export type {
   SubmitReportInput,
   SubmitReportResult,
 } from "./reports";
+export type {
+  SupportConnectionState,
+  SupportProfileUpdateResult,
+  SupportStateInput,
+} from "./support-profile";
 
 /**
  * A single miniapp entry as returned by the listing.
@@ -145,10 +155,14 @@ export class Core {
     ): Promise<AddReportArtifactsResult>;
     complete(reportId: string): Promise<{ status: ReportStatus }>;
   };
+  readonly supportProfile: {
+    update(input: SupportStateInput): Promise<SupportProfileUpdateResult>;
+  };
 
   constructor(deps: CoreDeps) {
     const { http } = deps;
     const reports = new Reports({ http });
+    const supportProfiles = new SupportProfiles(http);
 
     this.miniapps = {
       /**
@@ -197,6 +211,9 @@ export class Core {
       addLogs: reports.addLogs.bind(reports),
       addScreenshots: reports.addScreenshots.bind(reports),
       complete: reports.complete.bind(reports),
+    };
+    this.supportProfile = {
+      update: supportProfiles.update.bind(supportProfiles),
     };
   }
 }

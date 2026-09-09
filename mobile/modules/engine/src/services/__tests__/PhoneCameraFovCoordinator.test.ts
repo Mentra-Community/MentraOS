@@ -143,6 +143,60 @@ describe("PhoneCameraFovCoordinator", () => {
     await coordinator.releaseForApp("com.a")
   })
 
+  test("re-applies the effective override with its full geometry", async () => {
+    const coordinator = new PhoneCameraFovCoordinator()
+    await coordinator.setOverride("com.mentra.call", {fov: 102, roiPosition: "bottom"})
+    const leaseId = (setCameraFovOverride.mock.calls[0]![0] as {leaseId: string}).leaseId
+    setCameraFovOverride.mockClear()
+
+    await coordinator.reapplyEffectiveOverride()
+
+    // The scalar alone would leave the ROI wherever the on-connect push put it.
+    expect(setCameraFovOverride).toHaveBeenCalledTimes(1)
+    expect(setCameraFovOverride.mock.calls[0]![0]).toMatchObject({
+      leaseId,
+      fov: 102,
+      roiPosition: "bottom",
+    })
+    await coordinator.releaseForApp("com.mentra.call")
+  })
+
+  test("a re-apply queued behind a newer lease sends the newer lease", async () => {
+    const coordinator = new PhoneCameraFovCoordinator()
+    await coordinator.setOverride("com.a", {fov: 82, roiPosition: "center"})
+    setCameraFovOverride.mockClear()
+
+    // Both queued at once: the re-apply must recompute the effective lease
+    // inside the queue rather than use whatever was effective when it was called.
+    const reapply = coordinator.reapplyEffectiveOverride()
+    const newer = coordinator.setOverride("com.b", {fov: 102, roiPosition: "bottom"})
+    await Promise.all([reapply, newer])
+
+    expect(setCameraFovOverride.mock.calls.at(-1)![0]).toMatchObject({fov: 102, roiPosition: "bottom"})
+    setCameraFovOverride.mockClear()
+    await coordinator.reapplyEffectiveOverride()
+    expect(setCameraFovOverride.mock.calls[0]![0]).toMatchObject({fov: 102, roiPosition: "bottom"})
+    await coordinator.releaseForApp("com.b")
+    await coordinator.releaseForApp("com.a")
+  })
+
+  test("re-apply is a no-op with no lease and in legacy mode", async () => {
+    const coordinator = new PhoneCameraFovCoordinator(0)
+    await coordinator.reapplyEffectiveOverride()
+    expect(setCameraFovOverride).not.toHaveBeenCalled()
+
+    setCameraFovOverride.mockRejectedValueOnce(new Error("timed out waiting for glasses response"))
+    await coordinator.setOverride("com.a", {fov: 62})
+    setCameraFovOverride.mockClear()
+    setLegacyCameraFov.mockClear()
+
+    // Legacy commands restart the camera HAL; far too costly per reconnect.
+    await coordinator.reapplyEffectiveOverride()
+    expect(setCameraFovOverride).not.toHaveBeenCalled()
+    expect(setLegacyCameraFov).not.toHaveBeenCalled()
+    await coordinator.releaseForApp("com.a")
+  })
+
   test("does not treat a generic native rejection as legacy compatibility", async () => {
     setCameraFovOverride.mockRejectedValueOnce(new Error("native request has been rejected: camera busy"))
     const coordinator = new PhoneCameraFovCoordinator(0)

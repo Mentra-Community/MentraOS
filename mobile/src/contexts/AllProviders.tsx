@@ -1,8 +1,8 @@
 import {BottomSheetModalProvider} from "@gorhom/bottom-sheet"
 import * as Sentry from "@sentry/react-native"
 import {Stack} from "expo-router"
-import {PostHogProvider} from "posthog-react-native"
-import {Suspense, FunctionComponent, PropsWithChildren, useMemo} from "react"
+import {PostHogProvider, usePostHog} from "posthog-react-native"
+import {Suspense, FunctionComponent, PropsWithChildren, useEffect, useMemo, useRef} from "react"
 import {Platform, View} from "react-native"
 import ErrorBoundary from "react-native-error-boundary"
 import {GestureHandlerRootView} from "react-native-gesture-handler"
@@ -12,7 +12,7 @@ import Toast from "react-native-toast-message"
 
 // import {ErrorBoundary} from "@/components/error"
 import {Text} from "@/components/ignite"
-import {AuthProvider} from "@/contexts/AuthContext"
+import {AuthProvider, useAuth} from "@/contexts/AuthContext"
 import {DeeplinkProvider} from "@/contexts/DeeplinkContext"
 import {SplashLoaderProvider} from "@/contexts/SplashLoaderProvider"
 import {ThemeProvider} from "@/contexts/ThemeContext"
@@ -21,6 +21,7 @@ import {ModalProvider as LegacyModalProvider} from "@/utils/AlertUtils"
 import {ModalProvider} from "@/contexts/ModalContext"
 import {KonamiCodeProvider} from "@/utils/dev/konami"
 import ConnectionOverlayProvider from "@/contexts/ConnectionOverlayContext"
+import {DeploymentProvider, useDeployment} from "@/services/deployment"
 import {SaferAreaProvider, useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 import CoreStatusBar from "@/components/dev/CoreStatusBar"
 import {useShallow} from "zustand/shallow"
@@ -78,6 +79,7 @@ export const AllProviders = withWrappers(
   SafeAreaProvider,
   SaferAreaProvider,
   KeyboardProvider,
+  DeploymentProvider,
   AuthProvider,
   SplashLoaderProvider,
   DeeplinkProvider,
@@ -90,6 +92,7 @@ export const AllProviders = withWrappers(
   (props) => {
     const posthogApiKey = process.env.EXPO_PUBLIC_POSTHOG_API_KEY
     const isChina = engine.settings.get(SETTINGS.china_deployment.key)
+    const {activeDeployment, selectionResolved} = useDeployment()
 
     // If no API key is provided, disable PostHog to prevent errors
     if (!posthogApiKey) {
@@ -102,9 +105,14 @@ export const AllProviders = withWrappers(
       return <>{props.children}</>
     }
 
+    if (!selectionResolved || (activeDeployment.kind === "workspace" && !activeDeployment.manifest.telemetry)) {
+      console.log("PostHog is disabled by the active deployment")
+      return <>{props.children}</>
+    }
+
     return (
       <PostHogProvider apiKey={posthogApiKey} options={{disabled: false}}>
-        {props.children}
+        <PostHogIdentityBridge>{props.children}</PostHogIdentityBridge>
       </PostHogProvider>
     )
   },
@@ -213,6 +221,50 @@ export const AllProviders = withWrappers(
 )
 
 type WrapperComponent = FunctionComponent<{children: React.ReactNode}>
+
+/** Join phone analytics to the same stable Cloud V2 identity used by support profiles. */
+function PostHogIdentityBridge({children}: PropsWithChildren) {
+  const posthog = usePostHog()
+  const {user, loading} = useAuth()
+  const identifiedThisSession = useRef(false)
+
+  useEffect(() => {
+    if (loading) return
+    let cancelled = false
+    void (async () => {
+      // getDistinctId() returns "" until PostHog hydrates its persisted
+      // identity; deciding before then would mistake a stale identified
+      // session for an anonymous one on a signed-out cold boot.
+      await posthog.ready()
+      if (cancelled) return
+      if (user?.id) {
+        // Email is intentionally omitted here. Cloud V2 resolves the verified
+        // first-party address server-side and owns that PostHog person property.
+        posthog.identify(user.id)
+        identifiedThisSession.current = true
+      } else if (identifiedThisSession.current || !isAnonymousDistinctId(posthog.getDistinctId())) {
+        // Reset only a still-identified session (sign-out, or a boot that kept a
+        // prior identity from any auth provider). Resetting on every signed-out
+        // boot would mint a fresh anonymous PostHog person each time the app opens.
+        posthog.reset()
+        identifiedThisSession.current = false
+      }
+    })()
+    return () => {
+      cancelled = true
+    }
+  }, [loading, posthog, user?.id])
+
+  return <>{children}</>
+}
+
+/** PostHog's own anonymous distinct ids are UUIDs; every identity our auth
+ * providers pass to identify() (Cloud V2 `mu_<ULID>`, Authing hex id) is not.
+ * Callers await posthog.ready() first, so "" (not yet hydrated) is a dead
+ * path kept only as a safe default. */
+function isAnonymousDistinctId(distinctId: string): boolean {
+  return !distinctId || /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i.test(distinctId)
+}
 
 export function withWrappers(...wrappers: Array<WrapperComponent>) {
   return function (props: PropsWithChildren) {
