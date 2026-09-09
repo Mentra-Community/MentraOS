@@ -22,7 +22,8 @@ function getHostReleasePin(): string | null {
 }
 
 function hasDeploymentOtaPolicy(): boolean {
-  return getConfigValues().otaManifestUrl !== undefined
+  const config = getConfigValues()
+  return config.otaManifestUrl !== undefined && !config.allowLegacyOtaFallback
 }
 
 function getEmbeddedEngineReleasePin(): string | null {

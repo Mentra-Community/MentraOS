@@ -8,8 +8,8 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {useAuth} from "@/contexts/AuthContext"
 import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {translate} from "@/i18n"
-import {engine} from "@mentra/engine"
-import {SETTINGS, useSetting} from "@mentra/engine"
+import {resolvedEndpoints} from "@/services/cloudClient"
+import {engine, SETTINGS, useSetting} from "@mentra/engine"
 import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
 
@@ -18,7 +18,8 @@ export const VersionInfo = () => {
   const {user} = useAuth()
   const [debugMode, setDebugMode] = useSetting(SETTINGS.debug_mode.key)
   const [_superMode, setSuperMode] = useSetting(SETTINGS.super_mode.key)
-  const [coreUrl] = useSetting(SETTINGS.cloud_core_url.key)
+  useSetting(SETTINGS.cloud_core_url.key)
+  const coreUrl = resolvedEndpoints().core
   const audioTransport = useEngineSnapshot(engine.session.status, (onChange) =>
     engine.session.onStatus(onChange),
   ).audioTransport
@@ -71,7 +72,8 @@ export const VersionInfo = () => {
       `branch: ${process.env.EXPO_PUBLIC_BUILD_BRANCH}`,
       `time: ${process.env.EXPO_PUBLIC_BUILD_TIME}`,
       `commit: ${process.env.EXPO_PUBLIC_BUILD_COMMIT}`,
-      `cloud_core_url: ${coreUrl || "(default)"}`,
+      `cloud_core_url: ${resolvedEndpoints().core}`,
+      `cloud_runtime_url: ${resolvedEndpoints().runtime}`,
       `audio: ${audioTransport}`,
     ]
 

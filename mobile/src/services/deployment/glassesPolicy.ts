@@ -23,7 +23,6 @@ export function deploymentGlassesModelId(deviceModel: string, ar99ProjectName?: 
 
 export function isGlassesModelAllowedByDeployment(deviceModel: string, ar99ProjectName?: string): boolean {
   const deployment = deploymentStore.getActive()
-  if (deployment.kind === "consumer") return true
   const allowed = deployment.manifest.glasses.allowedModelsOverride
   if (allowed === null) return true
   const modelId = deploymentGlassesModelId(deviceModel, ar99ProjectName)

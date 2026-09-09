@@ -100,8 +100,9 @@ const statusListeners = new Set<(snapshot: CloudClientStatusSnapshot) => void>()
 const connectionListeners = new Set<(connected: boolean) => void>()
 
 function resolveEndpoints(): {core?: string; runtime: string} {
-  if (endpointsOverride) return endpointsOverride
   const cfg = getConfigValues()
+  if (cfg.resolveCloudEndpoints) return cfg.resolveCloudEndpoints()
+  if (endpointsOverride) return endpointsOverride
   const runtime = cfg.runtimeUrl === null ? "" : cfg.runtimeUrl?.trim() || FALLBACK_RUNTIME_URL
   if (!runtime) throw new Error("cloudClient: Runtime endpoint is not configured")
   const core = cfg.coreUrl === null ? undefined : cfg.coreUrl?.trim() || FALLBACK_CORE_URL

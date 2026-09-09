@@ -28,6 +28,11 @@ type CloudUrlOverrides = {core?: string; runtime?: string}
  * host's Metro/env URL resolution); both empty clears the live override.
  */
 function applyCloudUrlReconnect(urls: CloudUrlOverrides = currentCloudUrlOverrides()): void {
+  const hostResolver = getConfigValues().resolveCloudEndpoints
+  if (hostResolver) {
+    cloudClientService.reconnect(hostResolver())
+    return
+  }
   const resolved = resolveCloudUrlReconnectTarget(urls)
   if (resolved === undefined) {
     cloudClientService.reconnect(null)
@@ -91,6 +96,18 @@ export const dev = {
   },
   /** Override the cloud-v2 URLs and reconnect the live client onto them. */
   setCloudUrls: (urls: {core?: string; runtime?: string}) => {
+    const config = getConfigValues()
+    if (config.resolveCloudEndpoints) {
+      const values: Record<string, unknown> = {
+        [SETTINGS.cloud_url_deployment.key]: config.cloudDebugScope ?? "",
+        [SETTINGS.cached_required_version.key]: "",
+      }
+      if (urls.core !== undefined) values[SETTINGS.cloud_core_url.key] = urls.core
+      if (urls.runtime !== undefined) values[SETTINGS.cloud_runtime_url.key] = urls.runtime
+      useSettingsStore.getState().setManyLocally(values)
+      applyCloudUrlReconnect()
+      return
+    }
     const next = {...currentCloudUrlOverrides(), ...urls}
     const resolved = resolveCloudUrlReconnectTarget(next)
     if (resolved === null) {

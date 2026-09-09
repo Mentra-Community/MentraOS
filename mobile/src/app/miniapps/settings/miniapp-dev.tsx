@@ -14,15 +14,12 @@ import {translate} from "@/i18n"
 import {deploymentStore} from "@/services/deployment"
 import {showLeaveAppAlert} from "@/utils/AlertUtils"
 
-const CONSUMER_DOCS_URL = "https://docs.mentraglass.com"
-
 export default function MiniappDeveloperSettingsScreen() {
   const {theme} = useAppTheme()
   const {goBack, push} = useNavigationStore.getState()
   const [showOnHomeScreen, setShowOnHomeScreen] = useSetting(SETTINGS.miniapp_dev_mode.key)
   const deployment = deploymentStore.getActive()
-  const documentationUrl =
-    deployment.kind === "workspace" ? deployment.manifest.links.documentationUrl : CONSUMER_DOCS_URL
+  const documentationUrl = deployment.manifest.links.documentationUrl
 
   return (
     <Screen preset="fixed">

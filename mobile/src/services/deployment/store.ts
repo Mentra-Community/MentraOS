@@ -1,13 +1,13 @@
 import {storage} from "@/utils/storage/storage"
 
-import type {ActiveDeployment, ConsumerDeployment, DeploymentCandidate, WorkspaceDeployment} from "./types"
+import type {ActiveDeployment, DeploymentCandidate, WorkspaceDeployment} from "./types"
+import {clearDeploymentDebugOverrides} from "./debugOverrides"
+import {createConsumerDeployment} from "./officialManifest"
 import {deploymentManifestSchema} from "./schema"
 import {validateDeploymentManifest} from "./resolver"
 
 const ACTIVE_DEPLOYMENT_KEY = "mentra.deployment.active.v1"
-const CONSUMER_DEPLOYMENT: ConsumerDeployment = Object.freeze({kind: "consumer", source: "embedded"})
-
-type PersistedDeploymentSelection = ConsumerDeployment | WorkspaceDeployment
+type PersistedDeploymentSelection = ActiveDeployment
 
 export interface DeploymentStorage {
   load(): unknown | null
@@ -22,7 +22,11 @@ class MmkvDeploymentStorage implements DeploymentStorage {
   }
 
   save(value: PersistedDeploymentSelection): void {
-    const result = storage.save(ACTIVE_DEPLOYMENT_KEY, value)
+    // Consumer defaults belong to this build, never to a persisted snapshot.
+    const result = storage.save(
+      ACTIVE_DEPLOYMENT_KEY,
+      value.kind === "consumer" ? {kind: "consumer", source: "embedded"} : value,
+    )
     if (result.is_error()) throw result.error
   }
 
@@ -40,7 +44,7 @@ export class DeploymentStore {
 
   constructor(private readonly persistence: DeploymentStorage = new MmkvDeploymentStorage()) {
     const restored = restoreDeploymentSelection(persistence.load())
-    this.active = restored ?? CONSUMER_DEPLOYMENT
+    this.active = restored ?? createConsumerDeployment()
     this.resolved = restored !== null
   }
 
@@ -61,7 +65,7 @@ export class DeploymentStore {
   /** Whether Mentra-owned telemetry may initialize for the current selection. */
   isTelemetryAllowed(): boolean {
     if (!this.resolved) return false
-    return this.active.kind === "consumer" || this.active.manifest.telemetry
+    return this.active.manifest.telemetry
   }
 
   activate(candidate: DeploymentCandidate): WorkspaceDeployment {
@@ -80,23 +84,31 @@ export class DeploymentStore {
   }
 
   returnToMentra(): void {
-    this.persistence.save(CONSUMER_DEPLOYMENT)
+    const deployment = createConsumerDeployment()
+    this.persistence.save(deployment)
     this.selectingWorkspace = false
-    this.setActive(CONSUMER_DEPLOYMENT, true)
+    this.setActive(deployment, true)
+  }
+
+  /** Upgrade an existing consumer login without treating restoration as a switch. */
+  restoreConsumerSessionSelection(): void {
+    if (this.active.kind !== "consumer" || this.resolved || this.selectingWorkspace) return
+    this.persistence.save(this.active)
+    this.setActive(this.active, true, false)
   }
 
   /** Enter discovery without allowing cached consumer credentials to opt back in. */
   beginWorkspaceSelection(): void {
     this.persistence.remove()
     this.selectingWorkspace = true
-    this.setActive(CONSUMER_DEPLOYMENT, false)
+    this.setActive(createConsumerDeployment(), false)
   }
 
   /** Return to the neutral selector without opting into consumer telemetry. */
   clearSelection(): void {
     this.persistence.remove()
     this.selectingWorkspace = false
-    this.setActive(CONSUMER_DEPLOYMENT, false)
+    this.setActive(createConsumerDeployment(), false)
   }
 
   subscribe(listener: (deployment: ActiveDeployment, resolved: boolean) => void): () => void {
@@ -104,7 +116,8 @@ export class DeploymentStore {
     return () => this.listeners.delete(listener)
   }
 
-  private setActive(deployment: ActiveDeployment, resolved = true): void {
+  private setActive(deployment: ActiveDeployment, resolved = true, clearOverrides = true): void {
+    if (clearOverrides) clearDeploymentDebugOverrides()
     this.active = deployment
     this.resolved = resolved
     for (const listener of this.listeners) listener(deployment, resolved)
@@ -114,7 +127,7 @@ export class DeploymentStore {
 function restoreDeploymentSelection(value: unknown): PersistedDeploymentSelection | null {
   if (!value || typeof value !== "object") return null
   const persisted = value as Partial<PersistedDeploymentSelection>
-  if (persisted.kind === "consumer" && persisted.source === "embedded") return CONSUMER_DEPLOYMENT
+  if (persisted.kind === "consumer" && persisted.source === "embedded") return createConsumerDeployment()
 
   const candidate = value as Partial<WorkspaceDeployment>
   if (

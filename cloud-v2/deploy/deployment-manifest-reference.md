@@ -163,6 +163,9 @@ configuration strings are not interpreted as URLs by the manifest validator.
 The production enrollment flow does not allow HTTP. A resolver test option for
 loopback HTTP is not a manifest setting or a supported customer deployment
 mode. A failed workspace service never substitutes a Mentra consumer endpoint.
+Developer Core/Runtime overrides can explicitly replace these endpoints for the
+selected deployment. Reset restores the manifest values; logout or organization
+switching clears the overrides. The original downloaded manifest is unchanged.
 
 ## Identity and branding
 
@@ -219,7 +222,8 @@ to these values.
 
 The schema also recognizes `{"mode": "mentra-account"}` with no additional
 auth fields, but the workspace resolver rejects it. Normal consumer sign-in
-uses the embedded Mentra selection; a hosted customer manifest cannot enable
+uses an official embedded manifest with the existing build environment URLs;
+a hosted customer manifest cannot enable
 consumer authentication by setting this mode.
 
 ## Artifacts

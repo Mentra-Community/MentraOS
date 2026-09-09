@@ -435,7 +435,11 @@ describe("DeploymentStore", () => {
   it("starts unresolved and persists an explicit Mentra or workspace selection", () => {
     const persistence = new MemoryDeploymentStorage()
     const store = new DeploymentStore(persistence)
-    expect(store.getActive()).toEqual({kind: "consumer", source: "embedded"})
+    expect(store.getActive()).toMatchObject({
+      kind: "consumer",
+      source: "embedded",
+      manifest: {deploymentId: "mentra-official"},
+    })
     expect(store.isResolved()).toBe(false)
     expect(store.isTelemetryAllowed()).toBe(false)
 
@@ -451,7 +455,11 @@ describe("DeploymentStore", () => {
     expect(store.isTelemetryAllowed()).toBe(false)
 
     store.returnToMentra()
-    expect(store.getActive()).toEqual({kind: "consumer", source: "embedded"})
+    expect(store.getActive()).toMatchObject({
+      kind: "consumer",
+      source: "embedded",
+      manifest: {deploymentId: "mentra-official"},
+    })
     expect(store.isResolved()).toBe(true)
     expect(store.isTelemetryAllowed()).toBe(true)
     expect(new DeploymentStore(persistence).isResolved()).toBe(true)
@@ -464,7 +472,11 @@ describe("DeploymentStore", () => {
   it("fails closed to consumer for malformed persisted data", () => {
     const persistence = new MemoryDeploymentStorage()
     persistence.value = {kind: "workspace"} as WorkspaceDeployment
-    expect(new DeploymentStore(persistence).getActive()).toEqual({kind: "consumer", source: "embedded"})
+    expect(new DeploymentStore(persistence).getActive()).toMatchObject({
+      kind: "consumer",
+      source: "embedded",
+      manifest: {deploymentId: "mentra-official"},
+    })
     expect(new DeploymentStore(persistence).isResolved()).toBe(false)
   })
 
@@ -479,7 +491,11 @@ describe("DeploymentStore", () => {
       activatedAt: new Date().toISOString(),
     }
     const store = new DeploymentStore(persistence)
-    expect(store.getActive()).toEqual({kind: "consumer", source: "embedded"})
+    expect(store.getActive()).toMatchObject({
+      kind: "consumer",
+      source: "embedded",
+      manifest: {deploymentId: "mentra-official"},
+    })
     expect(store.isResolved()).toBe(false)
   })
 })

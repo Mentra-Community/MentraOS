@@ -48,6 +48,6 @@ export function resolveDeploymentAwareOtaManifestPolicy({
   // A selected deployment is authoritative for every glasses generation. An
   // explicit null is a deliberate OTA-off policy, not permission to inherit a
   // device-reported URL or Mentra's legacy public default.
-  if (hostPolicyConfigured) return trimmed(policy.hostReleasePin)
+  if (hostPolicyConfigured) return trimmed(policy.developerOverride) || trimmed(policy.hostReleasePin)
   return resolveOtaManifestPolicy(policy)
 }

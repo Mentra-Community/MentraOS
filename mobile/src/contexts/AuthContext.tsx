@@ -8,6 +8,7 @@ import {
   type DeploymentAuthSession,
   useDeployment,
 } from "@/services/deployment"
+import {clearDeploymentDebugOverrides} from "@/services/deployment/debugOverrides"
 import {LogoutUtils} from "@/utils/LogoutUtils"
 import {storage} from "@/utils/storage"
 import mentraAuth from "@/utils/auth/authClient"
@@ -101,7 +102,7 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
       const hasExistingConsumerSession =
         (access.is_ok() && Boolean(access.value)) || (refresh.is_ok() && Boolean(refresh.value))
       if (hasExistingConsumerSession && !store.isSelectingWorkspace()) {
-        store.returnToMentra()
+        store.restoreConsumerSessionSelection()
       } else {
         applySession(null, false)
       }
@@ -186,6 +187,7 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
     } catch (error) {
       console.error("AuthContext: Error during logout:", error)
     } finally {
+      clearDeploymentDebugOverrides()
       setSession(null)
       setUser(null)
     }

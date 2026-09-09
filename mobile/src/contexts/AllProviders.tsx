@@ -105,7 +105,7 @@ export const AllProviders = withWrappers(
       return <>{props.children}</>
     }
 
-    if (!selectionResolved || (activeDeployment.kind === "workspace" && !activeDeployment.manifest.telemetry)) {
+    if (!selectionResolved || !activeDeployment.manifest.telemetry) {
       console.log("PostHog is disabled by the active deployment")
       return <>{props.children}</>
     }
