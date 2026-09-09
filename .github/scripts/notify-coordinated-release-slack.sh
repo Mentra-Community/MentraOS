@@ -107,6 +107,13 @@ if [[ -n "${EXAMPLE_TESTFLIGHT_INSTALL_URL:-}" ]]; then
   example_testflight_detail+=" - <${EXAMPLE_TESTFLIGHT_INSTALL_URL}|Open TestFlight>"
 fi
 docs_detail="<${run_url}|View run logs>"
+example_play_detail="$(label "${EXAMPLE_GOOGLE_PLAY_RESULT:-unknown}") - ${EXAMPLE_GOOGLE_PLAY_TRACK:-unknown}"
+if [[ "${EXAMPLE_GOOGLE_PLAY_RESULT:-}" == success ]]; then
+  example_play_detail="submitted - ${EXAMPLE_GOOGLE_PLAY_TRACK:-unknown} (review and availability may be pending)"
+  if [[ -n "${EXAMPLE_GOOGLE_PLAY_INSTALL_URL:-}" ]]; then
+    example_play_detail+=" - <${EXAMPLE_GOOGLE_PLAY_INSTALL_URL}|Open Google Play>"
+  fi
+fi
 if [[ -n "${DOCS_URL:-}" ]]; then
   docs_detail="<${DOCS_URL}|Open docs>"
 fi
@@ -127,6 +134,7 @@ android_line="*$(icon "$android_result") Android* - $(label "$android_result") -
 ios_line="*$(icon "$ios_result") iOS* - $(label "$ios_result") - ${ios_detail}${newline}TestFlight: ${TESTFLIGHT_GROUP:-unknown}"
 asg_line="*$(icon "${OTA_RESULT:-unknown}") ASG + OTA* - $(label "${OTA_RESULT:-unknown}") - ${asg_detail}"
 starter_line="*$(icon "${STARTER_KIT_RESULT:-unknown}") Starter Kit* - $(label "${STARTER_KIT_RESULT:-unknown}") - ${starter_detail}${newline}React Native iOS TestFlight: ${example_testflight_icon} ${example_testflight_detail}"
+starter_line+="${newline}React Native Android Google Play: $(icon "${EXAMPLE_GOOGLE_PLAY_RESULT:-unknown}") ${example_play_detail}"
 docs_line="*$(icon "${DOCS_RESULT:-unknown}") Docs* - $(label "${DOCS_RESULT:-unknown}") - ${docs_detail}"
 checks_line="*Release checks*${newline}Plan: $(icon "${PLAN_RESULT:-unknown}") $(label "${PLAN_RESULT:-unknown}") | Cloud V2: $(icon "${CLOUD_V2_RESULT:-unknown}") $(label "${CLOUD_V2_RESULT:-unknown}") | Packages: $(icon "${NPM_RESULT:-unknown}") $(label "${NPM_RESULT:-unknown}") | Native SDK: $(icon "${SDK_NATIVE_RESULT:-unknown}") $(label "${SDK_NATIVE_RESULT:-unknown}") | Engine consumer: $(icon "${ENGINE_RESULT:-unknown}") $(label "${ENGINE_RESULT:-unknown}") | Examples: $(icon "${STARTER_KIT_RESULT:-unknown}") $(label "${STARTER_KIT_RESULT:-unknown}") | Example TestFlight: $(icon "${EXAMPLE_TESTFLIGHT_RESULT:-unknown}") $(label "${EXAMPLE_TESTFLIGHT_RESULT:-unknown}") | Finalize: $(icon "${FINALIZE_RESULT:-unknown}") $(label "${FINALIZE_RESULT:-unknown}")"
 

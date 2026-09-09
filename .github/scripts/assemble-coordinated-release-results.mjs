@@ -5,6 +5,7 @@ import path from "node:path"
 import {fileURLToPath} from "node:url"
 
 import {validateCloudV2DeploymentRecord} from "./coordinated-cloud-v2-records.mjs"
+import {validateExampleGooglePlay} from "./coordinated-example-google-play.mjs"
 import {serializeReleaseRecord} from "./release-family.mjs"
 import {createEnginePackageArtifact, mergeReleaseResultRecords} from "./release-result-records.mjs"
 
@@ -94,7 +95,7 @@ function verifyExampleTestflight(plan, starterKit, exampleTestflight) {
   return exampleTestflight
 }
 
-function verifyStarterKitResult(plan, starterKit, resultUrl, exampleTestflight) {
+function verifyStarterKitResult(plan, starterKit, resultUrl, exampleTestflight, exampleGooglePlay) {
   if (!starterKit) return undefined
   if (
     starterKit.schemaVersion !== 1 ||
@@ -147,7 +148,12 @@ function verifyStarterKitResult(plan, starterKit, resultUrl, exampleTestflight) 
     if (!keys.has(key)) throw new Error(`Starter Kit result is missing ${key}`)
   }
   return {
-    record: {...starterKit, resultUrl, testflight: verifyExampleTestflight(plan, starterKit, exampleTestflight)},
+    record: {
+      ...starterKit,
+      resultUrl,
+      testflight: verifyExampleTestflight(plan, starterKit, exampleTestflight),
+      googlePlay: validateExampleGooglePlay(plan, starterKit, exampleGooglePlay),
+    },
     artifacts,
   }
 }
@@ -162,6 +168,7 @@ export function assembleCoordinatedReleaseResults({
   starterKit,
   starterKitResultUrl,
   exampleTestflight,
+  exampleGooglePlay,
   asgSelectionFile,
   enginePackage,
   releaseAssetBaseUrl,
@@ -171,7 +178,7 @@ export function assembleCoordinatedReleaseResults({
   }
   const merged = mergeReleaseResultRecords({plan, records: [...npmRecords, native, mobile]})
   const selection = verifyAsgSelection(plan, ota, asgSelectionFile)
-  const verifiedStarterKit = verifyStarterKitResult(plan, starterKit, starterKitResultUrl, exampleTestflight)
+  const verifiedStarterKit = verifyStarterKitResult(plan, starterKit, starterKitResultUrl, exampleTestflight, exampleGooglePlay)
   const verifiedCloud = validateCloudV2DeploymentRecord({plan, record: cloud, allowValidated: true})
   const otaProvenanceUrl = provenanceUrl(ota)
   const artifacts = [
@@ -256,6 +263,7 @@ function main() {
     starterKit: args["starter-kit"] ? readJson(path.resolve(args["starter-kit"])) : undefined,
     starterKitResultUrl: args["starter-kit-result-url"],
     exampleTestflight: args["example-testflight"] ? readJson(path.resolve(args["example-testflight"])) : undefined,
+    exampleGooglePlay: args["example-google-play"] ? readJson(path.resolve(args["example-google-play"])) : undefined,
     asgSelectionFile: path.resolve(args["asg-selection"]),
     enginePackage: args["engine-package"] ? path.resolve(args["engine-package"]) : undefined,
     releaseAssetBaseUrl: args["release-asset-base-url"],
