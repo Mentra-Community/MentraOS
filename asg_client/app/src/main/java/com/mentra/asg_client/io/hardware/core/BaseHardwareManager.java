@@ -59,7 +59,14 @@ public class BaseHardwareManager implements IHardwareManager {
 
         synchronized (mRecordingLedOwnerLock) {
             if (mRecordingLedOwners.add(owner) && mRecordingLedOwners.size() == 1) {
-                setRecordingLedOn();
+                try {
+                    setRecordingLedOn();
+                } catch (RuntimeException e) {
+                    mRecordingLedOwners.remove(owner);
+                    // An ON that timed out may still be queued. Order OFF after it.
+                    setRecordingLedOff();
+                    throw e;
+                }
             }
         }
     }

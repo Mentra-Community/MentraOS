@@ -6,8 +6,12 @@ import android.os.Looper;
 import android.util.Log;
 
 import com.dev.api.DevApi;
+import com.mentra.asg_client.AsgConstants;
 
-import java.util.concurrent.CountDownLatch;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.FutureTask;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * Singleton controller for managing the K900 recording LED.
@@ -107,7 +111,9 @@ public class K900LedController {
                 () -> {
                     stopBlinkingInternal();
                     cancelPendingFlashOffInternal();
-                    setLedStateInternal(true);
+                    if (!setLedStateInternal(true)) {
+                        throw new IllegalStateException("Could not enable recording LED");
+                    }
                     Log.d(TAG, "LED turned ON");
                 });
     }
@@ -121,8 +127,7 @@ public class K900LedController {
             initializeLed();
         }
 
-        runLedCommandAndWait(
-                "turn OFF",
+        ledHandler.post(
                 () -> {
                     stopBlinkingInternal();
                     cancelPendingFlashOffInternal();
@@ -137,23 +142,17 @@ public class K900LedController {
             return;
         }
 
-        CountDownLatch completed = new CountDownLatch(1);
-        if (!ledHandler.post(
-                () -> {
-                    try {
-                        action.run();
-                    } finally {
-                        completed.countDown();
-                    }
-                })) {
-            Log.e(TAG, "Could not queue LED worker command to " + command);
-            return;
+        FutureTask<Void> task = new FutureTask<>(action, null);
+        if (!ledHandler.post(task)) {
+            throw new IllegalStateException("Could not queue LED worker command to " + command);
         }
         try {
-            completed.await();
+            task.get(AsgConstants.RECORDING_LED_COMMAND_TIMEOUT_MS, TimeUnit.MILLISECONDS);
         } catch (InterruptedException e) {
             Thread.currentThread().interrupt();
-            Log.e(TAG, "Interrupted while waiting for LED worker to " + command, e);
+            throw new IllegalStateException("Interrupted enabling recording LED", e);
+        } catch (ExecutionException | TimeoutException e) {
+            throw new IllegalStateException("Failed waiting for recording LED", e);
         }
     }
     
@@ -265,16 +264,18 @@ public class K900LedController {
     /**
      * Internal method to set LED state through DevApi
      */
-    private void setLedStateInternal(boolean on) {
+    private boolean setLedStateInternal(boolean on) {
         try {
             DevApi.setLedOn(on);
             isLedOn = on;
+            return true;
         } catch (UnsatisfiedLinkError e) {
             Log.e(TAG, "Failed to control LED - libxydev.so not loaded", e);
             isInitialized = false;
         } catch (Exception e) {
             Log.e(TAG, "Failed to set LED state: " + on, e);
         }
+        return false;
     }
     
     /**

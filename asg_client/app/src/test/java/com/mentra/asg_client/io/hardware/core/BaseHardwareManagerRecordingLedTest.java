@@ -1,6 +1,7 @@
 package com.mentra.asg_client.io.hardware.core;
 
 import static org.junit.Assert.assertEquals;
+import static org.junit.Assert.assertThrows;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -53,6 +54,7 @@ public class BaseHardwareManagerRecordingLedTest {
     private static final class TestHardwareManager extends BaseHardwareManager {
         private int onCalls;
         private int offCalls;
+        private boolean failOn;
 
         private TestHardwareManager(Context context) {
             super(context);
@@ -66,11 +68,30 @@ public class BaseHardwareManagerRecordingLedTest {
         @Override
         public void setRecordingLedOn() {
             onCalls++;
+            if (failOn) {
+                throw new IllegalStateException("LED unavailable");
+            }
         }
 
         @Override
         public void setRecordingLedOff() {
             offCalls++;
         }
+    }
+
+    @Test
+    public void failedAcquire_rollsBackOwnerAndOrdersOffBeforeNextAcquire() {
+        Object failed = new Object();
+        hardwareManager.failOn = true;
+        assertThrows(IllegalStateException.class, () -> hardwareManager.acquireRecordingLed(failed));
+        assertEquals(1, hardwareManager.offCalls);
+        hardwareManager.failOn = false;
+        Object next = new Object();
+        hardwareManager.acquireRecordingLed(next);
+        assertEquals(2, hardwareManager.onCalls);
+        hardwareManager.releaseRecordingLed(failed);
+        assertEquals(1, hardwareManager.offCalls);
+        hardwareManager.releaseRecordingLed(next);
+        assertEquals(2, hardwareManager.offCalls);
     }
 }

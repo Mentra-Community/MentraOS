@@ -28,6 +28,7 @@ import com.mentra.asg_client.camera.model.QueuedPhotoRequestQueue;
 import com.mentra.asg_client.camera.policy.AeStateMachine;
 import com.mentra.asg_client.camera.request.HdrBurstBuilder;
 import com.mentra.asg_client.camera.request.StillCaptureBuilder;
+import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
 import java.lang.reflect.Field;
 import java.lang.reflect.Method;
 import java.util.concurrent.CompletableFuture;
@@ -46,6 +47,100 @@ import org.robolectric.annotation.Config;
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 33)
 public class PhotoSessionTest {
+
+    @Test
+    public void privacyLight_onlyOwnsSubmittedCaptureUntilJpeg() throws Exception {
+        PhotoSession.Hooks hooks = mockConfiguredCameraHooks();
+        IHardwareManager hardware = mock(IHardwareManager.class);
+        when(hooks.hardwareManager()).thenReturn(hardware);
+        PhotoSession session = new PhotoSession(hooks);
+        activateQueuedRequest(session,
+                new QueuedPhotoRequest("/tmp/photo.jpg", "medium", true, false, null, null));
+
+        // Queueing and AE warmup must not turn the indicator on.
+        verify(hardware, never()).acquireRecordingLed(any());
+        session.beginStillCapture();
+        ArgumentCaptor<Object> owner = ArgumentCaptor.forClass(Object.class);
+        verify(hardware).acquireRecordingLed(owner.capture());
+        verify(hardware, never()).releaseRecordingLed(any());
+
+        Method jpeg = PhotoSession.class.getDeclaredMethod("notifyPhotoFrameAvailable", long.class);
+        jpeg.setAccessible(true);
+        jpeg.invoke(session, 123L);
+        // Release precedes persistence/final callback, and later teardown is idempotent.
+        verify(hardware).releaseRecordingLed(owner.getValue());
+        session.onCameraClosed();
+        clearActiveCapture(session);
+        verify(hardware).releaseRecordingLed(owner.getValue());
+    }
+
+    @Test
+    public void captureTimeout_stopsCameraEvenWhenLedDisabled() throws Exception {
+        PhotoSession.Hooks hooks = mockConfiguredCameraHooks();
+        IHardwareManager hardware = mock(IHardwareManager.class);
+        when(hooks.hardwareManager()).thenReturn(hardware);
+        CameraNeoService.PhotoCaptureCallback callback = mock(CameraNeoService.PhotoCaptureCallback.class);
+        PhotoSession session = new PhotoSession(hooks);
+        activateQueuedRequest(session,
+                new QueuedPhotoRequest("/tmp/photo.jpg", "medium", false, false, null, callback));
+        session.beginStillCapture();
+        ArgumentCaptor<Runnable> timeout = ArgumentCaptor.forClass(Runnable.class);
+        verify(hooks.backgroundHandler()).postDelayed(timeout.capture(), eq(AsgConstants.PHOTO_CAPTURE_TIMEOUT_MS));
+        timeout.getValue().run();
+
+        verify(callback).onPhotoError(any(CameraOperationError.class));
+        verify(hooks).closeCamera();
+        verify(hooks).stopService();
+        verify(hardware, never()).acquireRecordingLed(any());
+        verify(hardware, never()).releaseRecordingLed(any());
+    }
+
+    @Test
+    public void completedCaptureTimeout_cannotCancelNextPhoto() throws Exception {
+        PhotoSession.Hooks hooks = mockConfiguredCameraHooks();
+        PhotoSession session = new PhotoSession(hooks);
+        activateQueuedRequest(session,
+                new QueuedPhotoRequest("/tmp/first.jpg", "medium", true, false, null, null));
+        session.beginStillCapture();
+        ArgumentCaptor<Runnable> timeout = ArgumentCaptor.forClass(Runnable.class);
+        verify(hooks.backgroundHandler()).postDelayed(timeout.capture(), eq(AsgConstants.PHOTO_CAPTURE_TIMEOUT_MS));
+        clearActiveCapture(session);
+        activateQueuedRequest(session,
+                new QueuedPhotoRequest("/tmp/next.jpg", "medium", true, false, null, null));
+        session.beginStillCapture();
+        timeout.getValue().run();
+        verify(hooks, never()).closeCamera();
+        verify(hooks, never()).stopService();
+    }
+
+    @Test
+    public void captureError_releasesPrivacyOwnerOnce() throws Exception {
+        PhotoSession.Hooks hooks = mockConfiguredCameraHooks();
+        IHardwareManager hardware = mock(IHardwareManager.class);
+        when(hooks.hardwareManager()).thenReturn(hardware);
+        PhotoSession session = new PhotoSession(hooks);
+        activateQueuedRequest(session,
+                new QueuedPhotoRequest("/tmp/photo.jpg", "medium", true, false, null, null));
+        session.beginStillCapture();
+        session.notifyHostPhotoError("capture failed");
+        session.onCameraClosed();
+        verify(hardware).releaseRecordingLed(any());
+    }
+
+    @Test
+    public void cameraTeardown_releasesSubmittedCaptureWithoutJpeg() throws Exception {
+        PhotoSession.Hooks hooks = mockConfiguredCameraHooks();
+        IHardwareManager hardware = mock(IHardwareManager.class);
+        when(hooks.hardwareManager()).thenReturn(hardware);
+        PhotoSession session = new PhotoSession(hooks);
+        activateQueuedRequest(session,
+                new QueuedPhotoRequest("/tmp/photo.jpg", "medium", true, false, null, null));
+        session.beginStillCapture();
+        session.onCameraClosed();
+        session.onCameraClosed();
+        verify(hardware).releaseRecordingLed(any());
+        verify(hooks.backgroundHandler()).removeCallbacks(any());
+    }
 
     @Before
     @After
@@ -336,49 +431,6 @@ public class PhotoSessionTest {
 
         pendingError.get().run();
         verify(callback).onPhotoError(error);
-    }
-
-    @Test
-    public void cancelActiveCapture_matchingPath_cancelsOnlyThatCapture() throws Exception {
-        PhotoSession.Hooks hooks = mockConfiguredCameraHooks();
-        CameraNeoService.PhotoCaptureCallback callback =
-                mock(CameraNeoService.PhotoCaptureCallback.class);
-        PhotoSession session = new PhotoSession(hooks);
-        activateQueuedRequest(
-                session,
-                new QueuedPhotoRequest(
-                        "/tmp/timed-out.jpg", "large", false, true, null, callback));
-
-        boolean cancelled =
-                session.cancelActiveCapture("/tmp/timed-out.jpg", "capture timed out");
-
-        assertThat(cancelled).isTrue();
-        assertThat(activeCapture(session)).isNull();
-        assertThat(session.shotState()).isEqualTo(AeStateMachine.ShotState.IDLE);
-        verify(callback).onPhotoFailureDetected();
-        ArgumentCaptor<CameraOperationError> error =
-                ArgumentCaptor.forClass(CameraOperationError.class);
-        verify(callback).onPhotoError(error.capture());
-        assertThat(error.getValue().message()).isEqualTo("capture timed out");
-    }
-
-    @Test
-    public void cancelActiveCapture_nonMatchingPath_leavesCaptureRunning() throws Exception {
-        PhotoSession.Hooks hooks = mockConfiguredCameraHooks();
-        CameraNeoService.PhotoCaptureCallback callback =
-                mock(CameraNeoService.PhotoCaptureCallback.class);
-        PhotoSession session = new PhotoSession(hooks);
-        activateQueuedRequest(
-                session,
-                new QueuedPhotoRequest(
-                        "/tmp/current.jpg", "large", false, true, null, callback));
-
-        boolean cancelled = session.cancelActiveCapture("/tmp/other.jpg", "capture timed out");
-
-        assertThat(cancelled).isFalse();
-        assertThat(activeCapture(session)).isNotNull();
-        verify(callback, never()).onPhotoFailureDetected();
-        verify(callback, never()).onPhotoError(any(CameraOperationError.class));
     }
 
     @Test

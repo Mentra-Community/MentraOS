@@ -799,6 +799,9 @@ public class WhipStreamingService extends Service {
       }
       mWhipStreamingNotified = true;
       mStreamState = StreamState.STREAMING;
+      if (mLedEnabled && mHardwareManager != null && mHardwareManager.supportsRecordingLed()) {
+        mHardwareManager.acquireRecordingLed(mPrivacyLightOwner);
+      }
     }
     if (mMainHandler != null) {
       mMainHandler.removeCallbacks(mIceConnectTimeoutRunnable);
@@ -820,9 +823,6 @@ public class WhipStreamingService extends Service {
     startBatteryMonitoring();
     Log.i(TAG, "Streaming started via WHIP, negotiated video codec: "
         + firstVideoCodecFromSdp(answerSdp));
-    if (mLedEnabled && mHardwareManager != null && mHardwareManager.supportsRecordingLed()) {
-      mHardwareManager.acquireRecordingLed(mPrivacyLightOwner);
-    }
     if (mSoundEnabled && mHardwareManager != null && mHardwareManager.supportsAudioPlayback()) {
       mHardwareManager.playAudioAsset(AudioAssets.VIDEO_RECORDING_START);
     }
