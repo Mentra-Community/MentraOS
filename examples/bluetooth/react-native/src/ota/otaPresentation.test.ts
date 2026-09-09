@@ -1,9 +1,9 @@
 import {describe, expect, test} from 'bun:test';
-import type {OtaPresentationState} from './otaPresentation';
+import type {MentraLiveOtaState} from '@mentra/engine/ota';
 
 import {otaPresentation, otaRestartOverlayMessage} from './otaPresentation';
 
-const baseState: OtaPresentationState = {
+const baseState: MentraLiveOtaState = {
   batteryLevel: 80,
   canDiscard: false,
   canDismiss: false,
@@ -38,7 +38,7 @@ const baseState: OtaPresentationState = {
   wifiStatusKnown: true,
 };
 
-function otaState(overrides: Partial<OtaPresentationState>): OtaPresentationState {
+function otaState(overrides: Partial<MentraLiveOtaState>): MentraLiveOtaState {
   return {...baseState, ...overrides};
 }
 

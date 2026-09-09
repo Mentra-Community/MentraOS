@@ -3,15 +3,6 @@ import type {
   MentraLiveOtaState,
 } from '@mentra/engine/ota';
 
-// Older coordinated Engine releases omit per-file hotspot metadata.
-export type OtaPresentationState = MentraLiveOtaState & {
-  hotspotArtifact?: {
-    kind: 'apk' | 'mtk' | 'bes';
-    index: number;
-    totalCount: number;
-  } | null;
-};
-
 export type CustomOtaAction = Exclude<
   keyof MentraLiveOtaController,
   'state'
@@ -67,7 +58,7 @@ export function otaRestartOverlayMessage(
 }
 
 export function otaPresentation(
-  state: OtaPresentationState,
+  state: MentraLiveOtaState,
   deviceName = 'Mentra Live',
 ): CustomOtaPresentation {
   const {changelogs, releaseTransition} = state;
