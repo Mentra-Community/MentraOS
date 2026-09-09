@@ -3,6 +3,15 @@ import type {
   MentraLiveOtaState,
 } from '@mentra/engine/ota';
 
+// Older coordinated Engine releases omit per-file hotspot metadata.
+export type OtaPresentationState = MentraLiveOtaState & {
+  hotspotArtifact?: {
+    kind: 'apk' | 'mtk' | 'bes';
+    index: number;
+    totalCount: number;
+  } | null;
+};
+
 export type CustomOtaAction = Exclude<
   keyof MentraLiveOtaController,
   'state'
@@ -26,6 +35,7 @@ export type CustomOtaPresentation = {
   message?: string;
   primary?: CustomOtaButton;
   progress?: number;
+  progressLabel?: string;
   secondary?: CustomOtaButton;
   title: string;
   tone: 'active' | 'danger' | 'neutral' | 'success';
@@ -41,8 +51,23 @@ function completedVersionLabel(transition: MentraLiveOtaState['releaseTransition
   return transition ? `Updated to ${transition.toVersion}` : undefined;
 }
 
-export function otaPresentation(
+const componentLabels = {
+  apk: 'Glasses software',
+  mtk: 'System firmware',
+  bes: 'Bluetooth firmware',
+} as const;
+
+export function otaRestartOverlayMessage(
   state: MentraLiveOtaState,
+  deviceName = 'Mentra Live',
+): string | null {
+  return state.firmwareRestarting && !state.connected
+    ? `Please wait while ${deviceName} restarts and automatically reconnects...`
+    : null;
+}
+
+export function otaPresentation(
+  state: OtaPresentationState,
   deviceName = 'Mentra Live',
 ): CustomOtaPresentation {
   const {changelogs, releaseTransition} = state;
@@ -196,27 +221,59 @@ export function otaPresentation(
           title: 'Starting update...',
         },
       }[state.hotspotPhase];
+      const artifact = state.hotspotPhase === 'downloading' ? state.hotspotArtifact : null;
       return {
+        detail:
+          state.hotspotPhase === 'downloading'
+            ? 'Each file downloads separately. Progress is for the current file.'
+            : undefined,
         indeterminate: true,
         message: 'Do not disconnect your glasses',
-        progress: state.hotspotPhase === 'downloading'
-          ? (state.hotspotArtifactPercent ?? undefined)
+        progressLabel: artifact
+          ? `File ${artifact.index + 1} of ${artifact.totalCount} · ${componentLabels[artifact.kind]}`
           : undefined,
+        progress:
+          state.hotspotPhase === 'downloading'
+            ? (state.hotspotArtifactPercent ?? undefined)
+            : undefined,
         title: hotspotCopy.title,
         tone: 'active',
       };
     }
-    case 'updating':
+    case 'updating': {
+      const hotspot = state.transport === 'hotspot';
+      const component = state.step ? componentLabels[state.step] : undefined;
+      const hasStepCount =
+        state.currentStep !== null &&
+        state.totalSteps !== null &&
+        state.currentStep > 0 &&
+        state.currentStep <= state.totalSteps;
       return {
-        detail: state.versionChange && state.phase === 'install'
-          ? 'Your glasses will restart twice — this may take up to 2 minutes.'
-          : undefined,
+        detail:
+          state.versionChange && state.phase === 'install'
+            ? 'Your glasses will restart twice — this may take up to 2 minutes.'
+            : hotspot && state.phase === 'download'
+              ? 'Progress is for this file’s transfer from your phone.'
+              : undefined,
+        progressLabel:
+          hotspot && component
+            ? hasStepCount
+              ? `Update ${state.currentStep} of ${state.totalSteps} · ${component}`
+              : component
+            : undefined,
         indeterminate: state.installingApkOnly || state.progress === null,
         message: 'Do not disconnect your glasses',
         progress: state.installingApkOnly ? undefined : (state.progress ?? undefined),
-        title: state.phase === 'download' ? 'Downloading...' : 'Installing...',
+        title: hotspot
+          ? state.phase === 'download'
+            ? 'Transferring update to glasses...'
+            : 'Installing update on glasses...'
+          : state.phase === 'download'
+            ? 'Downloading...'
+            : 'Installing...',
         tone: 'active',
       };
+    }
     case 'restarting':
       return {
         detail: "We'll continue automatically when they're ready.",
