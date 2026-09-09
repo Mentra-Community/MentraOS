@@ -68,11 +68,9 @@ internal object OtaManifestChecker {
         currentMtkVersion: String,
         currentBesVersion: String,
         manifest: JSONObject,
-        // Downgrade floor: a non-positive value (the default) disables downgrades entirely,
-        // matching ASG's fail-closed DowngradeGate and the engine. OEM SDK consumers that do
-        // not set a floor therefore get upgrade-only behavior and are never told a downgrade is
-        // available that the glasses would refuse.
-        downgradeFloorVersionCode: Long = 0L,
+        // Mentra 3.0 is the oldest downgrade-safe target, matching Engine, ASG, and recovery.
+        // An explicit non-positive override still disables downgrades.
+        downgradeFloorVersionCode: Long = 51518114L,
     ): Boolean =
         hasApkUpdate(currentBuildNumber, manifest, downgradeFloorVersionCode) ||
             hasMtkUpdate(manifest.optJSONArray("mtk_patches"), currentMtkVersion) ||
