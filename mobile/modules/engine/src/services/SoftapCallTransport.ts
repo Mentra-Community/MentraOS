@@ -568,9 +568,19 @@ export function createSoftapCallDeps(args: {
     ingestUrl: () => string | null
     startPublishing: (
       packageName: string,
-      options: {streamUrl: string; ice: {stun: string}; traceId: string},
+      options: {streamUrl: string; ice: {stun: string}; traceId: string; captureAudio?: boolean},
     ) => Promise<unknown>
     stopPublishing: (packageName: string) => Promise<void>
+    /**
+     * Whether the host is taking the wearer's voice off the glasses over BLE LC3 for this call.
+     *
+     * Asked after the meeting join and before the publish, because that is the only moment the
+     * answer is both known (the host has seen the native's capabilities) and still actionable (the
+     * glasses have not been told what to capture). True means the WHIP publish is video-only;
+     * false means the glasses put their microphone on the WHIP track as they always have. Absent
+     * on hosts that only have the WHIP audio path.
+     */
+    glassesLc3Uplink?: () => boolean
     /**
      * Prove the phone can reach the glasses over the hotspot it just joined. Optional because
      * only Android hosts have the scoped network handle; when present its verdict is narrated
@@ -693,6 +703,16 @@ export function createSoftapCallDeps(args: {
           report?.(`Glasses reconnecting: ${event.reason ?? ""}`)
         }
       })
+      // Decided before the command goes out, never after: the glasses cannot drop an audio track
+      // they already negotiated, and two live copies of the wearer's voice in one call is worse
+      // than either one alone.
+      const lc3Uplink = subsystems.glassesLc3Uplink?.() ?? false
+      softapTrace("publish_audio_decision", {captureAudio: !lc3Uplink, micTransport: lc3Uplink ? "ble-lc3" : "whip"})
+      report?.(
+        lc3Uplink
+          ? "Publishing video only; the wearer's voice comes over Bluetooth LC3"
+          : "Publishing video and the glasses microphone",
+      )
       try {
         await subsystems.startPublishing(packageName, {
           streamUrl: ingestUrl,
@@ -700,6 +720,7 @@ export function createSoftapCallDeps(args: {
           // so a configured one would add doomed gathering to every call.
           ice: {stun: ""},
           traceId,
+          captureAudio: !lc3Uplink,
         })
       } finally {
         unsubscribe?.()
