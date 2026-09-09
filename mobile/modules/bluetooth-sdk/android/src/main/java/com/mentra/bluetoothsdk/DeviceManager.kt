@@ -28,6 +28,7 @@ import com.mentra.bluetoothsdk.sgcs.Simulated
 import com.mentra.bluetoothsdk.utils.ControllerTypes
 import com.mentra.bluetoothsdk.utils.DeviceTypes
 import com.mentra.bluetoothsdk.utils.MicMap
+import com.mentra.bluetoothsdk.utils.MicSourcePin
 import com.mentra.bluetoothsdk.utils.MicTypes
 import com.mentra.bluetoothsdk.utils.PhoneAudioMonitor
 import com.mentra.lc3Lib.Lc3Cpp
@@ -909,11 +910,13 @@ class DeviceManager {
 
         // allow the sgc to make changes to the micRanking:
         micRanking = sgc?.sortMicRanking(micRanking) ?: micRanking
-        Bridge.log("MAN: updateMicState() micRanking: $micRanking")
+        val pin = micSourcePin
+        val ranking: List<String> = MicSourcePin.selectionOrder(micRanking, pin)
+        Bridge.log("MAN: updateMicState() micRanking: $micRanking pin: $pin")
 
         if (micEnabled) {
 
-            for (micMode in micRanking) {
+            for (micMode in ranking) {
                 if (micMode == MicTypes.PHONE_INTERNAL ||
                     micMode == MicTypes.BLUETOOTH_CLASSIC ||
                     micMode == MicTypes.BLUETOOTH
@@ -961,9 +964,55 @@ class DeviceManager {
 
         if (micUsed == "" && micEnabled) {
             Bridge.log("MAN: No available mic found!")
+            if (pin == null) return
+            // A pin taken while another microphone was already recording must still close it:
+            // leaving it open would keep feeding PCM that the pinned consumer will reject, with
+            // the phone's indicator lit for audio nobody uses.
+            stopMicsExcept(micUsed)
+            reportPinnedSourceUnavailable(pin)
             return
         }
 
+        stopMicsExcept(micUsed)
+    }
+
+    /**
+     * Call-scoped microphone source lock, or null for the normal ranking.
+     *
+     * Only [MicTypes.GLASSES_CUSTOM] is supported today: it exists so an ACS call can promise that
+     * the wearer's own microphone — and nothing else — is what reaches the far end.
+     */
+    @Volatile private var micSourcePin: String? = null
+
+    /**
+     * Restrict microphone selection to one source for the duration of a call, or release it.
+     *
+     * Releasing re-runs selection so every other consumer (cloud LC3, miniapp `audio_chunk`,
+     * on-device STT) gets the source its own preference asks for back. A `preferred_mic` change
+     * made while the pin is held is stored but not applied until this releases.
+     */
+    fun setMicSourcePin(source: String?) {
+        val normalized = MicSourcePin.normalize(source)
+        if (micSourcePin == normalized) return
+        micSourcePin = normalized
+        Bridge.log("MAN: setMicSourcePin($normalized)")
+        updateMicState()
+    }
+
+    /** The microphone the SDK is currently recording from, for consumers that must verify it. */
+    fun activeMicSource(): String = currentMic
+
+    /**
+     * Report a pinned source that cannot be opened. Emitted rather than silently fixed, because the
+     * fix — opening a different microphone — is the thing the pin exists to forbid.
+     */
+    private fun reportPinnedSourceUnavailable(pin: String) {
+        Bridge.log("MAN: pinned mic source '$pin' is unavailable; no fallback will be started")
+        val health = synchronized(micHealthLock) { micHealthSnapshotLocked() }
+        Bridge.sendMicHealth(health, "pinned-source-unavailable")
+    }
+
+    private fun stopMicsExcept(micUsed: String) {
         // go through and disable all mics after the first used one:
         val allMics = micRanking
         // add any missing mics to the list:
