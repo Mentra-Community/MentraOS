@@ -24,7 +24,6 @@ class NotificationListener private constructor(private val context: Context) {
     private const val PREF_NOTIFICATIONS_BLOCKLIST = "notifications_blocklist"
 
     @Volatile private var instance: NotificationListener? = null
-    private var rebindRequestedThisProcess = false
 
     fun getInstance(context: Context): NotificationListener {
       return instance
@@ -95,7 +94,7 @@ class NotificationListener private constructor(private val context: Context) {
     ) {
       val shouldRun = listenerEnabled && permissionGranted
       val componentChanged = updateComponentState(context, enabled = listenerEnabled)
-      val shouldRebind = shouldRun && (forceRebind || componentChanged || !rebindRequestedThisProcess)
+      val shouldRebind = shouldRun && (forceRebind || componentChanged)
       if (permissionGranted) {
         // The explicit broadcast starts :notif if needed. Its receiver applies
         // the config before requesting the bind, avoiding duplicate requests
@@ -107,9 +106,6 @@ class NotificationListener private constructor(private val context: Context) {
           requestRebind = shouldRebind,
         )
       }
-      // A permission-grant refresh also satisfies startup recovery. Ordinary
-      // blocklist updates therefore do not request another bind afterward.
-      rebindRequestedThisProcess = shouldRun
     }
 
     fun openNotificationListenerSettings(context: Context) {
@@ -168,10 +164,11 @@ class NotificationListener private constructor(private val context: Context) {
       }
     }
 
-    internal fun requestListenerRebind(context: Context) {
+    internal fun requestListenerRebind(context: Context): Boolean {
       val component = ComponentName(context, NotificationListenerServiceImpl::class.java)
-      runCatching { NotificationListenerService.requestRebind(component) }
+      return runCatching { NotificationListenerService.requestRebind(component) }
         .onFailure { Log.w(TAG, "Could not request notification-listener rebind", it) }
+        .isSuccess
     }
 
     internal fun applyConfigToExisting(

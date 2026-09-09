@@ -2,6 +2,7 @@ package com.mentra.crust.services
 
 import android.app.Application
 import android.content.ComponentName
+import android.content.Intent
 import android.provider.Settings
 import android.service.notification.NotificationListenerService
 import org.junit.Assert.assertEquals
@@ -27,7 +28,12 @@ class NotificationListenerConfigTest {
     context = RuntimeEnvironment.getApplication()
     grantPermission(false)
     NotificationListener.setNotificationConfig(context, false, emptyList())
+    NotificationConfigReceiver().onReceive(
+      context,
+      Intent(context.packageName + ".crust.NOTIFICATION_CONFIG"),
+    )
     RebindRecorder.requests.clear()
+    RebindRecorder.failRequest = false
   }
 
   @Test
@@ -40,13 +46,42 @@ class NotificationListenerConfigTest {
     )
     NotificationListener.setNotificationConfig(context, true, emptyList())
     assertTrue(RebindRecorder.requests.isEmpty())
-    deliverLatestConfig(expectedRebind = true)
+    deliverLatestConfig(expectedRebind = false)
     assertEquals(1, RebindRecorder.requests.size)
 
     NotificationListener.setNotificationConfig(context, true, listOf("blocked.app"))
     deliverLatestConfig(expectedRebind = false)
     assertEquals(1, RebindRecorder.requests.size)
     assertEquals(setOf("blocked.app"), preferences().getStringSet("notifications_blocklist", emptySet()))
+  }
+
+  @Test
+  fun freshNotificationProcessRecoversOnConfigOnlyBroadcast() {
+    grantPermission(true)
+    NotificationListener.setNotificationConfig(context, true, emptyList())
+    // The app has already requested startup recovery, but the receiver starts
+    // fresh in :notif. This is also the state after only :notif was killed.
+    NotificationListener.setNotificationConfig(context, true, listOf("blocked.app"))
+    deliverLatestConfig(expectedRebind = false)
+    assertEquals(1, RebindRecorder.requests.size)
+
+    NotificationListener.setNotificationConfig(context, true, emptyList())
+    deliverLatestConfig(expectedRebind = false)
+    assertEquals(1, RebindRecorder.requests.size)
+  }
+
+  @Test
+  fun failedRequestCanRetryOnNextConfigWithoutRestartingProcess() {
+    grantPermission(true)
+    NotificationListener.setNotificationConfig(context, true, emptyList())
+    RebindRecorder.failRequest = true
+    deliverLatestConfig(expectedRebind = true)
+    assertTrue(RebindRecorder.requests.isEmpty())
+
+    RebindRecorder.failRequest = false
+    NotificationListener.setNotificationConfig(context, true, emptyList())
+    deliverLatestConfig(expectedRebind = false)
+    assertEquals(1, RebindRecorder.requests.size)
   }
 
   @Test
@@ -128,10 +163,12 @@ class NotificationListenerConfigTest {
 class RebindRecorder {
   companion object {
     val requests = mutableListOf<ComponentName>()
+    var failRequest = false
 
     @JvmStatic
     @Implementation
     fun requestRebind(component: ComponentName) {
+      if (failRequest) throw IllegalStateException("Binder unavailable")
       // Receiver must have applied config before binding the service.
       val context = RuntimeEnvironment.getApplication() as Application
       val prefs = context.getSharedPreferences("mentra_crust_notification_prefs", 0)
