@@ -7314,13 +7314,6 @@
       "source": "mobile"
     },
     {
-      "name": "posthog-react-native",
-      "version": "4.48.0",
-      "license": "MIT",
-      "repository": "https://github.com/PostHog/posthog-js",
-      "source": "mobile"
-    },
-    {
       "name": "prelude-ls",
       "version": "1.2.1",
       "license": "MIT",
