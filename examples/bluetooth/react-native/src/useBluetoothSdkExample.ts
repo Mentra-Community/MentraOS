@@ -392,6 +392,7 @@ export type BluetoothSdkExampleState = {
   cameraSettingsStatus: string;
   rawJsonExpanded: boolean;
   scanActive: boolean;
+  scanHint: string | null;
   selectedDiscoveredDevice: Device | null;
   selectedScanModel: ScanModel;
   directStreamReceiverRunning: boolean;
@@ -990,6 +991,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
 
   useEffect(() => {
     if (glassesConnected) {
+      if (bluetooth.scan.diagnostic) bluetooth.scan.clear();
       if (!wasConnectedRef.current && photoDestinationRef.current === 'glasses') {
         void prepareGlassesPhotoPreviewAction();
       }
@@ -1105,6 +1107,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       if (!(await ensureAndroidPermissions('connect'))) {
         throw new Error('Bluetooth permissions are required to connect.');
       }
+      await bluetooth.scan.stop();
       if (selectedDiscoveredDevice) {
         await bluetooth.connect(selectedDiscoveredDevice);
         return;
@@ -1126,6 +1129,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       if (!(await ensureAndroidPermissions('connect'))) {
         throw new Error('Bluetooth permissions are required to connect.');
       }
+      await bluetooth.scan.stop();
       await bluetooth.connect(device);
     });
   }
@@ -3718,6 +3722,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     rawJsonExpanded,
     requestWifiScan,
     scanActive,
+    scanHint: bluetooth.scan.diagnostic?.message ?? null,
     selectDiscoveredDevice,
     selectLedColor,
     selectLedMode,

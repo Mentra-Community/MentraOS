@@ -522,6 +522,10 @@ private fun TargetPicker(controller: MentraExampleController, connected: Boolean
                 enabled = false,
                 onClick = {},
             )
+            state.discoveredDevices.isEmpty() && state.scanHint != null -> Column(verticalArrangement = Arrangement.spacedBy(6.dp)) {
+                Text("Glasses may be in use", color = AppColor.inkAlt, fontSize = 14.sp, fontWeight = FontWeight.Bold)
+                Text(state.scanHint, color = AppColor.muted, fontSize = 13.sp)
+            }
             state.discoveredDevices.isEmpty() && hasSavedConnectionTarget(state.bluetoothStatus) -> TargetDeviceRow(
                 name = savedConnectionTargetName(state.bluetoothStatus),
                 detail = savedConnectionTargetDetail(state.bluetoothStatus),

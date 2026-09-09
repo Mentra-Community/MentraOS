@@ -346,6 +346,7 @@ enum ExampleStreamProtocol: String, CaseIterable {
 final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDelegate, AVAudioPlayerDelegate {
     @Published private(set) var glassesValues: GlassesRuntimeState?
     @Published private(set) var bluetoothValues: PhoneSdkRuntimeState?
+    @Published private(set) var scanHint: String?
     @Published private(set) var discoveredDevices: [Device] = []
     @Published private(set) var selectedDiscoveredDevice: Device?
     @Published private(set) var selectedScanModel: DeviceModel = .mentraLive
@@ -600,6 +601,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         let model = selectedScanModel
         runAction("Scan \(deviceModelLabel(model))") {
             scanSession?.stop()
+            scanHint = nil
             discoveredDevices.removeAll()
             selectedDiscoveredDevice = nil
             scanSession = try mentraBluetoothSdk.scan(
@@ -607,12 +609,19 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
                 timeout: 10,
                 onResults: { [weak self] devices in
                     self?.discoveredDevices = devices
+                    if !devices.isEmpty { self?.scanHint = nil }
+                },
+                onDiagnostic: { [weak self] diagnostic in
+                    self?.scanHint = diagnostic.message
+                    self?.append(tag: "BLE", text: diagnostic.message)
                 }
             )
         }
     }
 
     func connect() {
+        scanSession?.stop()
+        scanHint = nil
         runAction("Connect") {
             if let device = selectedDiscoveredDevice ?? discoveredDevices.first {
                 try mentraBluetoothSdk.connect(to: device)
@@ -636,10 +645,13 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
         discoveredDevices.removeAll()
         selectedDiscoveredDevice = nil
         selectedScanModel = model
+        scanHint = nil
         lastAction = "Selected scan model: \(deviceModelLabel(model))"
     }
 
     func connect(_ device: Device) {
+        scanSession?.stop()
+        scanHint = nil
         selectedDiscoveredDevice = device
         runAction("Connect \(device.name)") {
             try mentraBluetoothSdk.connect(to: device)
@@ -2182,6 +2194,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
     }
 
     func mentraBluetoothSDK(_: MentraBluetoothSDK, didUpdateGlasses glasses: GlassesRuntimeState) {
+        if isGlassesConnected(glasses) { scanHint = nil }
         let wasConnected = glassesConnected
         if !glasses.connected || !wasConnected {
             latestVersionInfo = nil
