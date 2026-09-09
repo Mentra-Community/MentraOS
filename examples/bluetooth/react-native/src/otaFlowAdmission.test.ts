@@ -8,7 +8,6 @@ describe('OTA flow admission', () => {
       completedConnectionGeneration: null,
       connectionGeneration: 0,
       waitingForWifi: false,
-      wifiConnected: false,
     })).toBe('open');
   });
 
@@ -17,7 +16,6 @@ describe('OTA flow admission', () => {
       completedConnectionGeneration: 4,
       connectionGeneration: 4,
       waitingForWifi: false,
-      wifiConnected: true,
     })).toBe('done');
   });
 
@@ -26,22 +24,32 @@ describe('OTA flow admission', () => {
       completedConnectionGeneration: 4,
       connectionGeneration: 5,
       waitingForWifi: false,
-      wifiConnected: true,
     })).toBe('open');
   });
 
-  test('waits in System until legacy Wi-Fi setup completes', () => {
+  test('keeps Wi-Fi setup open across status refreshes and BLE reconnects', () => {
+    for (const connectionGeneration of [0, 0, null, 1]) {
+      expect(otaFlowAdmission({
+        completedConnectionGeneration: null,
+        connectionGeneration,
+        waitingForWifi: true,
+      })).toBe('wait_for_wifi');
+    }
+  });
+
+  test('reopens OTA when the user continues from Wi-Fi setup', () => {
     expect(otaFlowAdmission({
       completedConnectionGeneration: null,
       connectionGeneration: 0,
-      waitingForWifi: true,
-      wifiConnected: false,
-    })).toBe('wait_for_wifi');
-    expect(otaFlowAdmission({
-      completedConnectionGeneration: null,
-      connectionGeneration: 0,
-      waitingForWifi: true,
-      wifiConnected: true,
+      waitingForWifi: false,
     })).toBe('open');
+  });
+
+  test('stays idle when disconnected outside Wi-Fi setup', () => {
+    expect(otaFlowAdmission({
+      completedConnectionGeneration: null,
+      connectionGeneration: null,
+      waitingForWifi: false,
+    })).toBe('idle');
   });
 });
