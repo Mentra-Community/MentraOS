@@ -807,6 +807,10 @@ class BluetoothSdkModule : Module() {
             )
         }
 
+        SdkAsyncFunction("setMicSourcePin") { source: String? ->
+            sdk?.setMicSourcePin(source)
+        }
+
         // Runs on Dispatchers.IO, not the shared Expo AsyncFunctionQueue: restart()
         // does a synchronous JNI model reload that would otherwise block every other
         // native call in the app until it completes.
@@ -829,8 +833,14 @@ class BluetoothSdkModule : Module() {
         // close blocks until the backlog drains — either would otherwise stall
         // every other native call queued behind them.
 
-        AsyncFunction("pcmStreamOpen") { streamId: String, sampleRate: Int, channels: Int, volume: Double ->
-            PcmStreamManager.open(streamId, sampleRate, channels, volume.toFloat())
+        AsyncFunction("pcmStreamOpen") {
+            streamId: String,
+            sampleRate: Int,
+            channels: Int,
+            volume: Double,
+            jitterMs: Int?,
+            ->
+            PcmStreamManager.open(streamId, sampleRate, channels, volume.toFloat(), jitterMs)
         }
 
         AsyncFunction("pcmStreamWrite") Coroutine { streamId: String, base64: String ->
