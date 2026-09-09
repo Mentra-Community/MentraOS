@@ -28,9 +28,12 @@ import java.util.concurrent.atomic.AtomicInteger
 import java.util.concurrent.atomic.AtomicReference
 
 /**
- * I420 to ACS: three independent direct planes (Y, U, V). No inter-arrival
- * pacer — [SendGate] is the only backpressure. Size mismatch drops; the sink
- * owns scaling to the negotiated size.
+ * I420 to ACS: three independent direct planes (Y, U, V).
+ *
+ * [SendGate] serializes in-flight sends. [FramePacer] is the time gate: ACS's
+ * software encoder holds ~8 fps, so extras have to be dropped here or the rate
+ * controller reserves budget for frames that encoder never produces. Size
+ * mismatch drops; the sink owns scaling to the negotiated size.
  */
 class AcsFrameSender(
   private val stats: PipelineStats = PipelineStats(),
@@ -42,6 +45,7 @@ class AcsFrameSender(
     Thread(runnable, "acs-i420-send").apply { isDaemon = true }
   }
   private val gate = SendGate()
+  private val pacer = FramePacer()
   private val pool = ConcurrentHashMap<Int, ConcurrentLinkedQueue<ByteBuffer>>()
   private val sendSeq = AtomicInteger(0)
   private val lastTicks = AtomicReference(0L)
@@ -57,6 +61,7 @@ class AcsFrameSender(
 
   fun attach(outgoing: VirtualOutgoingVideoStream, onFormat: ((TargetSize) -> Unit)? = null) {
     detach()
+    pacer.reset()
     this.onFormat = onFormat
     stream.set(outgoing)
     attachedStream = outgoing
@@ -111,6 +116,10 @@ class AcsFrameSender(
       )
       return
     }
+    if (!pacer.tryAdmit(FramePacer.intervalNs(negotiated.framesPerSecond))) {
+      stats.onDropPaced()
+      return
+    }
 
     val prepared = prepareSend(planes, negotiated)
     stats.setChroma(prepared.chroma)
@@ -123,6 +132,7 @@ class AcsFrameSender(
 
     val seq = sendSeq.incrementAndGet()
     stats.onQueued()
+    val enqueuedAt = System.nanoTime()
     if (seq <= TRACE_SENDS) {
       Log.i(
         TAG,
@@ -135,6 +145,7 @@ class AcsFrameSender(
 
     val submitted = try {
       sender.execute {
+        stats.queue.record(System.nanoTime() - enqueuedAt)
         var result = "ok"
         // A timed-out future is NOT cancelled: ACS still reads these direct buffers.
         var reclaimable = true
@@ -157,7 +168,11 @@ class AcsFrameSender(
           frame.timestampInTicks = ticks
           val sendStart = System.nanoTime()
           out.sendRawVideoFrame(frame).get(SEND_TIMEOUT_MS, TimeUnit.MILLISECONDS)
-          stats.send.record(System.nanoTime() - sendStart)
+          val sendDone = System.nanoTime()
+          stats.send.record(sendDone - sendStart)
+          if (planes.timestampNs > 0) {
+            stats.e2e.record(sendDone - planes.timestampNs)
+          }
           stats.onSub()
           if (seq <= TRACE_SENDS) {
             Log.i(
@@ -342,6 +357,7 @@ class AcsFrameSender(
     format.set(null)
     sendSeq.set(0)
     lastTicks.set(0L)
+    pacer.reset()
     pool.clear()
     onFormat = null
   }
