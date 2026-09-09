@@ -774,6 +774,18 @@ class MentraBluetoothSdk private constructor(
         DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "preferred_mic", preferredMic.value)
     }
 
+    /**
+     * Lock microphone selection to one source until it is released with `null`.
+     *
+     * Distinct from [setPreferredMic]: a preference is a ranking the SDK may fall through, while a
+     * pin forbids the fallback. It exists for consumers that told a remote party which microphone
+     * they are hearing — an ACS call — where quietly substituting the phone microphone is worse
+     * than no audio at all. Only `"glasses"` is supported.
+     */
+    fun setMicSourcePin(source: String?) {
+        deviceManager.setMicSourcePin(source)
+    }
+
     fun setOwnAppAudioPlaying(playing: Boolean) {
         PhoneAudioMonitor.getInstance(appContext).setOwnAppAudioPlaying(playing)
     }
