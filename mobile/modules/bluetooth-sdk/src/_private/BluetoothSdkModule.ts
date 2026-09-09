@@ -27,6 +27,8 @@ import {
   HotspotStatusChangeEvent,
   MicPreference,
   NativePhoneNotification,
+  NativeNotificationConfig,
+  NativeNotificationStatus,
   ObservableStoreCategory,
   OtaQueryResult,
   OtaStartAckEvent,
@@ -167,7 +169,13 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   startAr99OtaFromFile(path: string): Promise<boolean>
   cancelAr99Ota(): Promise<void>
   sendAr99FactoryReset(): Promise<void>
-  buildAr99OtaSignature(secret: string, appName: string, currentVersion: string, serialNumber: string, nonce: string): string
+  buildAr99OtaSignature(
+    secret: string,
+    appName: string,
+    currentVersion: string,
+    serialNumber: string,
+    nonce: string,
+  ): string
 
   // Version Info Commands
   requestVersionInfo(): Promise<VersionInfoResult>
@@ -256,12 +264,10 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
     speed: number,
   ): Promise<boolean>
 
-  /**
-   * Push a phone notification into the glasses' OWN notification centre - parallel to
-   * the normal flow (miniapp forwarding + a locally drawn card).
-   * Implemented only by Android G2 driver; every other driver inherits a no-op.
-   */
+  /** Android G2 content upload. iOS receives ANCS directly and rejects uploads. */
   sendPhoneNotification(notification: NativePhoneNotification): Promise<void>
+  configureNativeNotifications(config: NativeNotificationConfig): Promise<void>
+  getNativeNotificationStatus(): Promise<NativeNotificationStatus>
 
   // Helper methods for type-safe observable store access
   updateGlasses(values: Partial<GlassesStatus>): Promise<void>

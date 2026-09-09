@@ -257,16 +257,16 @@ abstract class SGCManager {
     // Notification Panel (default no-op — only G2 supports this)
     open suspend fun showNotificationsPanel() {}
 
-    /**
-     * Push a phone notification into the glasses' OWN notification centre (default no-op —
-     * only G2 supports this). Runs *alongside* the normal MentraOS flow.
-     *
-     * Fire-and-forget - enqueue and return; never block the Expo bridge thread on BLE.
-     *
-     * Keys: `notificationId`, `packageName`, `appName`, `title`, `subtitle`, `body`,
-     * `timestampMs`, `action` (0 = posted). JS numbers arrive as Double — read via `as? Number`.
-     */
-    open fun sendPhoneNotification(notification: Map<String, Any>) {}
+    /** Enqueue supported phone notification content; unsupported drivers fail explicitly. */
+    open fun sendPhoneNotification(notification: Map<String, Any>) {
+        throw UnsupportedOperationException("Phone notification upload is not supported")
+    }
+
+    open fun configureNativeNotifications(config: com.mentra.bluetoothsdk.NativeNotificationConfig) {
+        throw UnsupportedOperationException("Native notifications are not supported")
+    }
+
+    open fun getNativeNotificationStatus() = com.mentra.bluetoothsdk.NativeNotificationStatus()
 
     // Controller bridging (default no-op — only G2 supports pairing with a ring controller)
     open fun connectController() {}

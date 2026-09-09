@@ -1793,7 +1793,8 @@ class DeviceManager {
     fun sendPhoneNotification(notification: Map<String, Any>) {
         // Package only - never the notification text.
         Bridge.log("MAN: sendPhoneNotification from ${notification["packageName"]}")
-        sgc?.sendPhoneNotification(notification)
+        val driver = sgc ?: throw IllegalStateException("Glasses are not connected")
+        driver.sendPhoneNotification(notification)
     }
 
     fun sendWifiCredentials(ssid: String, password: String) {

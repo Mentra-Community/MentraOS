@@ -367,6 +367,8 @@ class BluetoothSdkModule : Module() {
             "audio_disconnected",
             "save_setting",
             "phone_notification",
+            "native_notification_status",
+            "native_notification_delivery",
             "phone_notification_dismissed",
             "ws_text",
             "ws_bin",
@@ -571,6 +573,12 @@ class BluetoothSdkModule : Module() {
 
         // Via deviceManager, not the MentraBluetoothSdk facade: internal surface (like
         // dbg1/ping), not public SDK API.
+        SdkAsyncFunction("configureNativeNotifications") { config: Map<String, Any> ->
+            requireSdk().configureNativeNotifications(NativeNotificationConfig.fromMap(config))
+        }
+        SdkAsyncFunction("getNativeNotificationStatus") { ->
+            requireSdk().getNativeNotificationStatus().toMap()
+        }
         AsyncFunction("sendPhoneNotification") { notification: Map<String, Any> ->
             deviceManager?.sendPhoneNotification(notification)
         }

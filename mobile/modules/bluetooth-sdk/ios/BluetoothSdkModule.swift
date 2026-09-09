@@ -55,6 +55,8 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             "save_setting",
             "local_transcription",
             "phone_notification",
+            "native_notification_status",
+            "native_notification_delivery",
             "phone_notification_dismissed",
             "ws_text",
             "ws_bin",
@@ -290,19 +292,25 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             }
         }
 
-        // MARK: - Native Notification Centre (internal, Android/G2 only)
-
-        // Parity stub: iOS drivers all inherit the protocol no-op (glasses read notifications
-        // over ANCS). The JS bridge is Android-gated, so a log line here means something
-        // bypassed that gate.
-        AsyncFunction("sendPhoneNotification") { (notification: [String: Any]) in
-            // Package only — never the notification text.
-            Bridge.log(
-                "MAN: sendPhoneNotification from \(notification["packageName"] ?? "unknown") — ignored, iOS uses ANCS"
-            )
-            await MainActor.run {
-                DeviceManager.shared.sgc?.sendPhoneNotification(notification)
+        AsyncFunction("configureNativeNotifications") { (values: [String: Any]) in
+            try await MainActor.run {
+                try self.bluetoothSdk().configureNativeNotifications(NativeNotificationConfig(
+                    enabled: values["enabled"] as? Bool ?? false,
+                    autoDisplay: values["autoDisplay"] as? Bool ?? true,
+                    durationSeconds: (values["durationSeconds"] as? NSNumber)?.intValue ?? 5,
+                    doNotDisturb: values["doNotDisturb"] as? Bool ?? false,
+                    blockedApps: values["blockedApps"] as? [String] ?? []
+                ))
             }
+        }
+        AsyncFunction("getNativeNotificationStatus") {
+            await MainActor.run { self.bluetoothSdk().getNativeNotificationStatus().dictionary }
+        }
+
+        // MARK: - Native Notification Centre
+
+        AsyncFunction("sendPhoneNotification") { (_: [String: Any]) in
+            throw NativeNotificationError.unsupported
         }
 
         // MARK: - WiFi Commands

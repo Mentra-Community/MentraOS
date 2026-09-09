@@ -924,6 +924,8 @@ export type BluetoothSdkModuleEvents = {
   speaking_status: (event: SpeakingStatusEvent) => void
   battery_status: (event: BatteryStatusEvent) => void
   local_transcription: (event: LocalTranscriptionEvent) => void
+  native_notification_status: (event: NativeNotificationStatus) => void
+  native_notification_delivery: (event: NativeNotificationDelivery) => void
   phone_notification: (event: PhoneNotificationEvent) => void
   phone_notification_dismissed: (event: PhoneNotificationDismissedEvent) => void
   wifi_status_change: (event: WifiStatusChangeEvent) => void
@@ -1010,6 +1012,31 @@ export interface PhoneNotificationDismissedEvent {
  * notifications the glasses relayed TO the phone (iOS/ANCS). Drivers map these keys onto
  * whatever their firmware expects.
  */
+export interface NativeNotificationConfig {
+  enabled: boolean
+  autoDisplay: boolean
+  durationSeconds: number
+  doNotDisturb: boolean
+  /** Android package names. iOS rejects nonempty lists; its ANCS filter is firmware-owned. */
+  blockedApps: string[]
+}
+
+export interface NativeNotificationStatus {
+  supported: boolean
+  source: "phone" | "ancs" | "unsupported"
+  authorization: "system" | "authorized" | "not_authorized" | "unknown"
+  /** `submitted` is not a firmware-confirmed acknowledgement. */
+  state: "unavailable" | "disabled" | "configuring" | "submitted" | "needs_reconnect" | "failed"
+  config: NativeNotificationConfig
+  error: string
+}
+
+export interface NativeNotificationDelivery {
+  notificationId: string
+  status: "delivered" | "failed" | "cancelled" | "dropped"
+  reason: string
+}
+
 export interface NativePhoneNotification {
   /** Stable id from the phone's notification listener; parsed to an int where firmware needs one. */
   notificationId: string
@@ -1023,8 +1050,8 @@ export interface NativePhoneNotification {
   body: string
   /** Unix ms post time. */
   timestampMs: number
-  /** 0 = posted. Non-zero is reserved for the removal path. */
-  action: number
+  /** Posted or updated. Removal is not supported by the verified protocol. */
+  action: 0
 }
 
 export type PublicGlassesStatus = Omit<
@@ -1047,6 +1074,8 @@ export type PublicBluetoothStatus = Pick<
 >
 
 export type BluetoothSdkEventMap = {
+  native_notification_status: NativeNotificationStatus
+  native_notification_delivery: NativeNotificationDelivery
   log: LogEvent
   device_discovered: Device
   default_device_changed: {device?: Device}
@@ -1110,6 +1139,8 @@ export type BluetoothSdkSubscription = {
 export type BluetoothSdkEvent = BluetoothSdkEventMap[BluetoothSdkEventName]
 
 export interface BluetoothSdkPublicModule {
+  configureNativeNotifications(config: NativeNotificationConfig): Promise<void>
+  getNativeNotificationStatus(): Promise<NativeNotificationStatus>
   addListener<EventName extends BluetoothSdkEventName>(
     eventName: EventName,
     listener: BluetoothSdkEventListener<EventName>,

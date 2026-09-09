@@ -10,6 +10,8 @@ import type {
 import {getReleaseChangelogs} from "./changelogs"
 
 const PUBLIC_EVENT_NAMES = new Set<BluetoothSdkEventName>([
+  "native_notification_status",
+  "native_notification_delivery",
   "log",
   "device_discovered",
   "default_device_changed",
@@ -85,6 +87,8 @@ const bindPublicMethod = <K extends keyof BluetoothSdkPublicModule>(name: K): Bl
 }
 
 export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
+  configureNativeNotifications: bindPublicMethod("configureNativeNotifications"),
+  getNativeNotificationStatus: bindPublicMethod("getNativeNotificationStatus"),
   addListener,
   getGlassesStatus: bindPublicMethod("getGlassesStatus"),
   getBluetoothStatus: bindPublicMethod("getBluetoothStatus"),
@@ -309,3 +313,5 @@ export type {
   WifiStatus,
   WifiStatusChangeEvent,
 } from "./BluetoothSdk.types"
+
+export type {NativeNotificationConfig, NativeNotificationStatus, NativeNotificationDelivery} from "./BluetoothSdk.types"

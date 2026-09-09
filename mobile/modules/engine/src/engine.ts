@@ -28,7 +28,6 @@ import {startAudioCloudUplink, stopAudioCloudUplink} from "./services/AudioCloud
 import {startSupportProfileSync, stopSupportProfileSync} from "./services/SupportProfileSync"
 import {startDeviceEventRouter, stopDeviceEventRouter} from "./services/DeviceEventRouter"
 import {startPhoneNotificationsSync, stopPhoneNotificationsSync} from "./services/PhoneNotificationsSync"
-import {startG2NotificationBridge, stopG2NotificationBridge} from "./services/G2NotificationBridge"
 import {startCaptionsTesterReportService, stopCaptionsTesterReportService} from "./services/CaptionsTesterReportService"
 import {
   startMentraJSCrashloopReportService,
@@ -124,10 +123,6 @@ export const engine = {
     startGlassesSettingsSync()
     // Same for phone-notification config -> the native listener (Android).
     startPhoneNotificationsSync()
-    // Optional parallel path: also push notifications into the G2's own notification centre.
-    // Inert unless the super-mode toggle is on and a G2 is connected; never affects the
-    // normal flow (miniapp forwarding + the locally drawn Notify card).
-    startG2NotificationBridge()
     // Android internal/e2e: laptop captions tester can broadcast a failure intent;
     // engine owns turning that into a Cloud V2 report.
     if (cloudClientService.hasCore()) startCaptionsTesterReportService()
@@ -164,7 +159,6 @@ export const engine = {
     await safely("audio cloud uplink", stopAudioCloudUplink)
     await safely("support profile sync", stopSupportProfileSync)
     await safely("phone notifications sync", stopPhoneNotificationsSync)
-    await safely("g2 notification bridge", stopG2NotificationBridge)
     await safely("captions tester report service", stopCaptionsTesterReportService)
     await safely("mentrajs crashloop report service", stopMentraJSCrashloopReportService)
     await safely("miniapp engine", stopMiniappEngine)
