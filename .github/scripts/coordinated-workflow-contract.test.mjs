@@ -293,7 +293,7 @@ test("coordinated docs publish only after finalization to the matching channel",
   const docs = jobBlock(coordinator, "docs")
   const notify = jobBlock(coordinator, "notify-slack")
 
-  assert.match(starterKit, /^    needs: \[plan, ota\]$/m)
+  assert.match(starterKit, /^    needs: \[plan, ota, npm, sdk-native\]$/m)
   assert.match(engineConsumer, /^    needs: \[plan, npm\]$/m)
   assert.match(starterKit, /coordinated-example-release\.yml/)
   assert.match(coordinator, /Freeze the Starter Kit channel source/)
