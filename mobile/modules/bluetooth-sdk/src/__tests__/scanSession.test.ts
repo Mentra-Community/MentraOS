@@ -1,4 +1,4 @@
-import {describe, expect, it} from "bun:test"
+import {describe, expect, it} from "@jest/globals"
 import {createScanSession} from "../_private/scanSession"
 import {DeviceModels, type Device, type ScanDiagnostic} from "../BluetoothSdk.types"
 
