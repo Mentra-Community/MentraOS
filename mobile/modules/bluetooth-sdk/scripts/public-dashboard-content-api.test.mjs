@@ -37,7 +37,7 @@ test("keeps displayEvent internal and defers dashboard scene cleanup until rende
   assert.doesNotMatch(publicRoot, /\bdisplayEvent\b/)
   assert.match(androidSdk, /internal fun displayEvent\(/)
   assert.doesNotMatch(androidSdk, /public fun displayEvent\(/)
-  assert.match(appleSdk, /\n    func displayEvent\(/)
+  assert.match(appleSdk, /\n\s+func displayEvent\(/)
   assert.doesNotMatch(appleSdk, /public func displayEvent\(/)
 
   const androidSetter = androidManager.slice(
@@ -60,14 +60,14 @@ test("keeps displayEvent internal and defers dashboard scene cleanup until rende
   assert.doesNotMatch(appleSetter, /showDashboard/)
 
   assert.match(androidManager, /clearPendingDashboardSceneElements\(currentStateIndex\)/)
-  assert.match(appleManager, /clearPendingDashboardSceneElements\(for: currentStateIndex\)/)
+  assert.match(appleManager, /await clearPendingDashboardSceneElements\(for:/)
   assert.match(
     androidManager,
     /private fun dispatchSceneFrame[\s\S]*?clearPendingDashboardSceneElements\(stateIndex\)/,
   )
   assert.match(
     appleManager,
-    /private func dispatchSceneFrame[\s\S]*?clearPendingDashboardSceneElements\(for: stateIndex\)/,
+    /private func dispatchSceneFrame[\s\S]*?await (?:self\.)?renderCurrentState\(\)/,
   )
   assert.match(androidManager, /cleanupDeferred = stateIndex == 1 && dashboardSceneCleanupPending/)
   assert.match(appleManager, /cleanupDeferred = stateIndex == 1 && dashboardSceneCleanupPending/)
