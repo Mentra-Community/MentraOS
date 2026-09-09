@@ -1,15 +1,13 @@
-import {SETTINGS, useSetting} from "@mentra/engine"
 import {useState} from "react"
 import {TextInput, TouchableOpacity, View} from "react-native"
 
 import {Button, Text} from "@/components/ignite"
 import GlassView from "@/components/ui/GlassView"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {translate} from "@/i18n"
+import {SETTINGS, useSetting} from "@mentra/engine"
 import {cloudClient, resolvedEndpoints} from "@/services/cloudClient"
-import {useDeployment} from "@/services/deployment"
-import showAlert from "@/utils/AlertUtils"
 import {devServerHost, METRO_AUTO} from "@/utils/cloudClient/devHost"
+import showAlert from "@/utils/AlertUtils"
 
 const CLOUD_DEV_CORE_URL = "https://core.dev.us-west-2.mentraglass.com"
 const CLOUD_DEV_RUNTIME_URL = "https://runtime.dev.us-west-2.mentraglass.com"
@@ -67,30 +65,6 @@ async function testEndpoint(url: string): Promise<{ok: boolean; status?: number;
 }
 
 export default function CloudUrl() {
-  const {activeDeployment} = useDeployment()
-  if (activeDeployment.kind === "workspace") {
-    const {displayName, services} = activeDeployment.manifest
-    return (
-      <GlassView className="bg-primary-foreground rounded-2xl px-6 py-4">
-        <Text className="text-base text-foreground" tx="workspace:cloudEndpointsTitle" />
-        <Text className="mt-1 text-xs text-muted-foreground">
-          {translate("workspace:cloudEndpointsDescription", {name: displayName})}
-        </Text>
-        <Text className="mt-3.5 text-[13px] font-semibold text-foreground" tx="workspace:coreUrlLabel" />
-        <Text className="mt-1 text-xs text-muted-foreground" selectable>
-          {services.coreUrl}
-        </Text>
-        <Text className="mt-3.5 text-[13px] font-semibold text-foreground" tx="workspace:runtimeUrlLabel" />
-        <Text className="mt-1 text-xs text-muted-foreground" selectable>
-          {services.runtimeUrl}
-        </Text>
-      </GlassView>
-    )
-  }
-  return <ConsumerCloudUrl />
-}
-
-function ConsumerCloudUrl() {
   const {theme} = useAppTheme()
   const [coreUrl, setCoreUrl] = useSetting(SETTINGS.cloud_core_url.key)
   const [runtimeUrl, setRuntimeUrl] = useSetting(SETTINGS.cloud_runtime_url.key)
