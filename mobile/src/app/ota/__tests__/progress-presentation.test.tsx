@@ -7,6 +7,7 @@ import * as otaHook from "../../../../modules/engine/src/react/useMentraLiveOta"
 const baseState: otaHook.MentraLiveOtaState = {
   screen: "preparing_hotspot",
   connected: true,
+  glassesPackageName: null,
   batteryLevel: 80,
   transport: "hotspot",
   updateRequired: true,
