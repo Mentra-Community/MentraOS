@@ -74,7 +74,7 @@ jobs:
               # promotion needs a follow-up design because signed mobile bytes
               # cannot have their embedded backend rewritten after this build.
               echo "backend_environment=staging" >> "$GITHUB_OUTPUT"
-              echo "play_track=internal" >> "$GITHUB_OUTPUT"
+              echo "play_track=beta" >> "$GITHUB_OUTPUT"
               echo "example_play_track=beta" >> "$GITHUB_OUTPUT"
               echo "testflight_group=Mentra Staging" >> "$GITHUB_OUTPUT"
               echo "example_testflight_group=Mentra Staging Public" >> "$GITHUB_OUTPUT"

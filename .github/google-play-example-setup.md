@@ -5,13 +5,12 @@ TestFlight. There is no separate release train for the example app.
 
 | Product | dev | staging |
 | --- | --- | --- |
-| MentraOS (`com.mentra.mentra`) | Internal testing | Internal testing |
+| MentraOS (`com.mentra.mentra`) | Internal testing | Open testing (`beta` API track) |
 | React Native example (`com.mentra.bluetoothsdkexample`) | Internal testing | Open testing (`beta` API track) |
 
-Google Play has one internal track per app. MentraOS dev and staging therefore
-replace the same internal release; this is not TestFlight's per-group build
-selection. Internal example testers must opt out of internal testing before
-joining the open test. Neither branch targets production.
+MentraOS retains its existing dev/internal and staging/beta routing. Internal
+testers must opt out of internal testing before joining the open test for the
+same app. Neither branch targets production.
 
 ## One-Time Console Setup
 

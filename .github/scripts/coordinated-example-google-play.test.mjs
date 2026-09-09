@@ -63,13 +63,17 @@ test("configures only Android store identity without changing iOS or dependencie
   assert.throws(() => configureExampleAndroid(plan, config, {dependencies: {}}), /must match/)
 })
 
-test("coordinator keeps MentraOS internal and separates example audiences", () => {
+test("coordinator preserves MentraOS tracks and separates example audiences", () => {
   const workflow = readFileSync(new URL("../workflows/coordinated-release.yml", import.meta.url), "utf8")
   const channelBlock = workflow.slice(workflow.indexOf('case "$BRANCH"'), workflow.indexOf("Restore the release plan"))
-  assert.equal((channelBlock.match(/echo "play_track=internal"/g) || []).length, 2)
+  const devBlock = channelBlock.slice(channelBlock.indexOf("dev)"), channelBlock.indexOf("staging)"))
+  const stagingBlock = channelBlock.slice(channelBlock.indexOf("staging)"))
+  assert.match(devBlock, /echo "play_track=internal"/)
+  assert.match(stagingBlock, /echo "play_track=beta"/)
+  assert.doesNotMatch(devBlock, /echo "play_track=beta"/)
+  assert.doesNotMatch(stagingBlock, /echo "play_track=internal"/)
   assert.match(channelBlock, /example_play_track=internal/)
   assert.match(channelBlock, /example_play_track=beta/)
-  assert.doesNotMatch(channelBlock, /echo "play_track=beta"/)
   assert.match(workflow, /needs\.example-google-play\.result == 'success'/)
   assert.match(workflow, /--example-google-play release-input\/example-google-play/)
   const reusable = readFileSync(new URL("../workflows/reusable-coordinated-example-google-play.yml", import.meta.url), "utf8")
