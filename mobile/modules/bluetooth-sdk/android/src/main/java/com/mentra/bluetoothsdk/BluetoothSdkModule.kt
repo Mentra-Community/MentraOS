@@ -541,6 +541,12 @@ class BluetoothSdkModule : Module() {
             sdk?.startScan(DeviceModel.fromDeviceType(model))
         }
 
+        SdkAsyncFunction("getScanDiagnostic") { model: String ->
+            sdk?.connectedDeviceScanDiagnostic(DeviceModel.fromDeviceType(model))?.let {
+                mapOf("code" to it.code, "message" to it.message)
+            }
+        }
+
         SdkAsyncFunction("stopScan") { -> sdk?.stopScan() }
 
         SdkAsyncFunction("cancelConnectionAttempt") { -> sdk?.cancelConnectionAttempt() }

@@ -106,6 +106,7 @@ export type ScanController = {
   active: boolean
   clear: () => void
   devices: Device[]
+  diagnostic: GlassesConnectionHookResult["scan"]["diagnostic"]
   error: unknown | null
   model: DeviceModel
   selectedDevice: Device | null
@@ -252,6 +253,7 @@ function scanController(connection: GlassesConnectionHookResult): ScanController
     active: connection.scan.scanning,
     clear: connection.scan.clearResults,
     devices: connection.scan.devices,
+    diagnostic: connection.scan.diagnostic,
     error: connection.scan.error,
     model: connection.scan.model,
     selectedDevice: connection.scan.selectedDevice,

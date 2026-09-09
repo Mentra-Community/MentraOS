@@ -1,3 +1,4 @@
+import {createScanSession} from "./scanSession"
 import {NativeModule, requireNativeModule} from "expo"
 
 import {
@@ -35,6 +36,7 @@ import {
   RgbLedAction,
   RgbLedColor,
   RgbLedControlSuccessResponseEvent,
+  ScanDiagnostic,
   ScanModelOptions,
   ScanOptions,
   SettingsAckSuccessEvent,
@@ -85,6 +87,7 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   connectDefaultWithOptions(options: Required<ConnectOptions>): Promise<void>
   setDefaultDevice(device: Device | null): Promise<void>
   clearDefaultDevice(): Promise<void>
+  getScanDiagnostic?: (model: DeviceModel) => Promise<ScanDiagnostic | null>
   startScan(model: DeviceModel): Promise<void>
   stopScan(): Promise<void>
   scan(options: ScanOptions): Promise<Device[]>
@@ -166,7 +169,13 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   startAr99OtaFromFile(path: string): Promise<boolean>
   cancelAr99Ota(): Promise<void>
   sendAr99FactoryReset(): Promise<void>
-  buildAr99OtaSignature(secret: string, appName: string, currentVersion: string, serialNumber: string, nonce: string): string
+  buildAr99OtaSignature(
+    secret: string,
+    appName: string,
+    currentVersion: string,
+    serialNumber: string,
+    nonce: string,
+  ): string
 
   // Version Info Commands
   requestVersionInfo(): Promise<VersionInfoResult>
@@ -581,65 +590,38 @@ NativeBluetoothSdkModule.connect = function (device: Device, options?: ConnectOp
   return this.connectWithOptions(device, {...DEFAULT_CONNECT_OPTIONS, ...options})
 }
 
+const nativeStopScan = NativeBluetoothSdkModule.stopScan.bind(NativeBluetoothSdkModule)
+const activeScanCancellations = new Set<() => Promise<void>>()
+NativeBluetoothSdkModule.stopScan = async function () {
+  if (activeScanCancellations.size === 0) return nativeStopScan()
+  await Promise.all([...activeScanCancellations].map(cancel => cancel()))
+}
+
 NativeBluetoothSdkModule.scan = async function (modelOrOptions: DeviceModel | ScanOptions, options?: ScanModelOptions) {
+  if (activeScanCancellations.size > 0) await this.stopScan()
   const scanOptions = normalizeScanArgs(modelOrOptions, options)
   const timeoutMs = normalizeTimeoutMs(scanOptions.timeoutMs ?? scanOptions.timeout, DEFAULT_SCAN_TIMEOUT_MS)
-  let latestResults: Device[] = []
-
-  return new Promise<Device[]>((resolve, reject) => {
-    let timeout: ReturnType<typeof setTimeout> | null = null
-    let removeBluetoothListener = () => {}
-    let settled = false
-    let scanStarted = false
-
-    const emitResults = (devices: Device[]) => {
-      latestResults = devices
-      scanOptions.onResults?.([...devices])
-    }
-
-    const cleanup = () => {
-      if (timeout) {
-        clearTimeout(timeout)
-      }
-      removeBluetoothListener()
-      if (scanStarted) {
-        void Promise.resolve(this.stopScan()).catch(() => undefined)
-      }
-    }
-
-    const settle = (error?: Error) => {
-      if (settled) {
-        return
-      }
-      settled = true
-      cleanup()
-      if (error) {
-        reject(error)
-      } else {
-        resolve([...latestResults])
-      }
-    }
-
-    const handleBluetoothStatus = (status: Partial<BluetoothStatus>) => {
-      if (!Array.isArray(status.searchResults)) {
-        return
-      }
-      emitResults(searchResultsForModel(status, scanOptions.model))
-    }
-
-    removeBluetoothListener = this.onBluetoothStatus(handleBluetoothStatus)
-    emitResults([])
-
-    timeout = setTimeout(() => settle(), timeoutMs)
-
-    Promise.resolve(this.startScan(scanOptions.model))
-      .then(() => {
-        scanStarted = true
-        return this.getBluetoothStatus()
-      })
-      .then(handleBluetoothStatus)
-      .catch((error) => settle(error instanceof Error ? error : new Error(String(error))))
-  })
+  const session = createScanSession(
+    {
+      start: (model) => this.startScan(model),
+      stop: nativeStopScan,
+      subscribe: (onResults) =>
+        this.onBluetoothStatus((status) => {
+          if (Array.isArray(status.searchResults)) onResults(searchResultsForModel(status, scanOptions.model))
+        }),
+      getResults: async () => searchResultsForModel(await this.getBluetoothStatus(), scanOptions.model),
+      // Older native binaries simply omit diagnostics until the host is rebuilt.
+      getDiagnostic:
+        typeof this.getScanDiagnostic === "function" ? () => this.getScanDiagnostic!(scanOptions.model) : undefined,
+    },
+    {...scanOptions, timeoutMs},
+  )
+  activeScanCancellations.add(session.cancel)
+  try {
+    return await session.result
+  } finally {
+    activeScanCancellations.delete(session.cancel)
+  }
 }
 
 const nativeRequestPhoto = NativeBluetoothSdkModule.requestPhoto.bind(NativeBluetoothSdkModule)

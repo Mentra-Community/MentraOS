@@ -169,6 +169,9 @@ const en = {
     liveChooseGlassesTitle: "Choose your glasses",
     scanAgain: "Scan Again",
     noGlassesFound: "No glasses found",
+    connectedOnPhoneTitle: "Glasses may be in use",
+    connectedOnPhoneHint:
+      "Matching glasses are already connected to this phone. If another app is using them, disconnect them there, then scan again.",
     noGlassesFoundHint: "Make sure you pressed the power button 3 times quickly, then try again.",
     nearbyNotInPairingModeHint:
       "Nearby Mentra Live glasses were found, but they are not in pairing mode. Press the power button 3 times quickly, then try again.",

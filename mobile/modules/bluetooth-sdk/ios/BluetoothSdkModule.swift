@@ -220,6 +220,13 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             }
         }
 
+        AsyncFunction("getScanDiagnostic") { (model: String) -> [String: String]? in
+            await MainActor.run {
+                guard let diagnostic = self.bluetoothSdk().scanDiagnostic(for: DeviceModel.fromDeviceType(model)) else { return nil }
+                return ["code": diagnostic.code, "message": diagnostic.message]
+            }
+        }
+
         AsyncFunction("stopScan") {
             await MainActor.run {
                 self.bluetoothSdk().stopScan()

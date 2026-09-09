@@ -159,6 +159,7 @@ describe("pairing scan screen", () => {
     process.env.EXPO_PUBLIC_ENABLE_MENTRA_LIVE_SECURE_PAIRING = "true"
     resetBluetoothSdkMock()
     jest.clearAllMocks()
+    ;(engine.pairing.diagnoseEmptyScan as jest.Mock).mockReset().mockResolvedValue(null)
     ;(engine.pairing.pair as jest.Mock).mockReset().mockResolvedValue(undefined)
     useCoreStore.getState().reset()
     useGlassesStore.getState().reset()
@@ -353,6 +354,45 @@ describe("pairing scan screen", () => {
     } finally {
       jest.useRealTimers()
     }
+  })
+
+  it("shows a connected-device advisory after an empty scan and clears it on retry", async () => {
+    jest.useFakeTimers()
+    setPlatformOS("android")
+    ;(engine.pairing.diagnoseEmptyScan as jest.Mock).mockResolvedValue({
+      code: "device_connected_on_phone",
+      message: "Matching glasses are connected",
+    })
+    const {getByText, queryByText} = render(<SelectGlassesBluetoothScreen />)
+    await act(async () => {
+      jest.advanceTimersByTime(15_000)
+    })
+    expect(getByText("pairing:connectedOnPhoneTitle")).toBeTruthy()
+    expect(getByText("pairing:connectedOnPhoneHint")).toBeTruthy()
+    await act(async () => {
+      fireEvent.press(getByText("pairing:tryAgain"))
+    })
+    expect(queryByText("pairing:connectedOnPhoneTitle")).toBeNull()
+  })
+
+  it("ignores an old advisory lookup after Scan Again starts a new scan", async () => {
+    jest.useFakeTimers()
+    setPlatformOS("android")
+    let resolveDiagnostic!: (value: unknown) => void
+    ;(engine.pairing.diagnoseEmptyScan as jest.Mock).mockReturnValue(
+      new Promise((resolve) => {
+        resolveDiagnostic = resolve
+      }),
+    )
+    const {getByText, queryByText} = render(<SelectGlassesBluetoothScreen />)
+    await act(async () => {
+      jest.advanceTimersByTime(15_000)
+    })
+    fireEvent.press(getByText("pairing:scanAgain"))
+    await act(async () => {
+      resolveDiagnostic({code: "device_connected_on_phone", message: "Old scan"})
+    })
+    expect(queryByText("pairing:connectedOnPhoneTitle")).toBeNull()
   })
 
   it("Scan Again restarts scan in place without navigating back", async () => {

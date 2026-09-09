@@ -235,6 +235,41 @@ fun stopConnection() {
 }
 ```
 
+
+For an explanation when a scan completes empty, use the callback overload:
+
+```kotlin
+sdk.scan(
+    model = DeviceModel.MENTRA_LIVE,
+    callback = object : MentraBluetoothScanCallback() {
+        override fun onResults(devices: List<Device>) {
+            renderDevicePicker(devices)
+        }
+
+        override fun onDiagnostic(diagnostic: ScanDiagnostic) {
+            showScanHint(diagnostic.message)
+        }
+
+        override fun onComplete(devices: List<Device>) {
+            finishDevicePicker(devices)
+        }
+    },
+)
+```
+
+`onDiagnostic` is advisory and runs before `onComplete`; it does not call
+`onError`. The `device_connected_on_phone` hint means a device
+matching the scanned model is already connected to this phone. Neither platform
+identifies the owning app, so another app is a possible explanation, not a
+confirmed cause. This check cannot see connections held by another phone.
+
+Diagnostics are skipped for cancelled or nonempty scans, simulated devices,
+known SDK connections or connection attempts, and unavailable Bluetooth access.
+Existing `ScanCallback` implementations keep their original completion behavior;
+implement `ScanDiagnosticCallback` or extend `MentraBluetoothScanCallback` to
+receive hints. iOS uses CoreBluetooth service-filtered connected peripherals;
+models without a supported service filter or a matching identity stay silent.
+
   </Tab>
   <Tab title="iOS">
 
@@ -273,6 +308,32 @@ func stopConnection() {
 </Tabs>
 
 Prefer connecting to a `Device` returned by SDK scan callbacks. If your app wants `connectDefault()` to work after restart, persist a small default-device record in app storage and restore it with `setDefaultDevice()` before calling `connectDefault()`.
+
+Optional empty-scan hints are also available on React Native and iOS:
+
+```ts
+await BluetoothSdk.scan(DeviceModels.MentraLive, {
+  onResults: renderDevicePicker,
+  onDiagnostic: hint => showScanHint(hint.message),
+})
+// React hooks expose the same advisory as useBluetoothScan().diagnostic
+// or useMentraBluetooth().scan.diagnostic.
+```
+
+```swift
+let session = try sdk.scan(
+    model: .mentraLive,
+    timeout: 10,
+    onResults: renderDevicePicker,
+    onDiagnostic: { hint in showScanHint(hint.message) }
+)
+```
+
+The React Native promise still resolves to an empty device list; hints do not
+reject the scan. Hosts using an older native binary simply omit the hint until
+rebuilt with this SDK. Clear the displayed hint when retrying, changing models,
+connecting, or receiving results. The Mentra App and Starter Kit examples show
+these hints alongside their retry controls.
 
 Use `scan()` for user-facing device pickers. The progressive result callback is for UI: render the nearby-device list every time it changes during scanning. The returned final result is for control flow: after the timeout/completion, choose a device from the last list and connect. In multi-device environments, do not auto-connect to the first nearby glasses; present an explicit picker.
 
