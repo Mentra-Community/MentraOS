@@ -52,6 +52,8 @@ import com.mentra.bluetoothsdk.PhotoSize
 import com.mentra.bluetoothsdk.RgbLedAction
 import com.mentra.bluetoothsdk.RgbLedColor
 import com.mentra.bluetoothsdk.RgbLedRequest
+import com.mentra.bluetoothsdk.MentraBluetoothScanCallback
+import com.mentra.bluetoothsdk.ScanDiagnostic
 import com.mentra.bluetoothsdk.ScanSession
 import com.mentra.bluetoothsdk.SettingsAckEvent
 import com.mentra.bluetoothsdk.SpeakingStatusEvent
@@ -234,6 +236,7 @@ data class MentraExampleState(
     val bluetoothStatus: PhoneSdkRuntimeState? = null,
     val cameraStatus: String = "Camera: phone receiver will start before capture",
     val discoveredDevices: List<Device> = emptyList(),
+    val scanHint: String? = null,
     val selectedDiscoveredDevice: Device? = null,
     val selectedScanModel: DeviceModel = DeviceModel.MENTRA_LIVE,
     val events: List<ExampleEvent> = listOf(exampleEvent("LIVE", "SDK ready. Scan to discover glasses.")),
@@ -484,12 +487,20 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         val model = state.selectedScanModel
         runAction("Scan ${deviceModelLabel(model)}") {
             scanSession?.stop()
-            state = state.copy(discoveredDevices = emptyList(), selectedDiscoveredDevice = null)
-            scanSession = mentraBluetoothSdk.scan(model, 10_000L) { devices ->
-                state = state.copy(
-                    discoveredDevices = devices,
-                )
-            }
+            state = state.copy(discoveredDevices = emptyList(), selectedDiscoveredDevice = null, scanHint = null)
+            scanSession = mentraBluetoothSdk.scan(
+                model = model,
+                timeoutMs = 10_000L,
+                callback = object : MentraBluetoothScanCallback() {
+                    override fun onResults(devices: List<Device>) {
+                        state = state.copy(discoveredDevices = devices, scanHint = if (devices.isEmpty()) state.scanHint else null)
+                    }
+                    override fun onDiagnostic(diagnostic: ScanDiagnostic) {
+                        state = state.copy(scanHint = diagnostic.message)
+                        addEvent("BLE", diagnostic.message)
+                    }
+                },
+            )
         }
     }
 
@@ -503,11 +514,14 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             discoveredDevices = emptyList(),
             selectedDiscoveredDevice = null,
             selectedScanModel = model,
+            scanHint = null,
             lastAction = "Selected scan model: ${deviceModelLabel(model)}",
         )
     }
 
     fun connect() = runAction("Connect") {
+        scanSession?.stop()
+        state = state.copy(scanHint = null)
         val target = state.selectedDiscoveredDevice
         when {
             target != null -> mentraBluetoothSdk.connect(target)
@@ -518,7 +532,8 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     }
 
     fun connect(device: Device) = runAction("Connect ${device.name}") {
-        state = state.copy(selectedDiscoveredDevice = device)
+        scanSession?.stop()
+        state = state.copy(selectedDiscoveredDevice = device, scanHint = null)
         mentraBluetoothSdk.connect(device)
     }
 
@@ -2173,6 +2188,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         }
         state = state.copy(
             glassesStatus = glasses,
+            scanHint = if (glasses.connected) null else state.scanHint,
             hotspotEnabled = enabledHotspotStatus(glasses) != null,
             mentraLiveVersions = resolveMentraLiveVersions(glasses, latestVersionInfo),
         )
@@ -2205,7 +2221,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     }
 
     override fun onScanChanged(scan: BluetoothScanState) {
-        state = state.copy(discoveredDevices = scan.devices)
+        state = state.copy(discoveredDevices = scan.devices, scanHint = if (scan.devices.isEmpty()) state.scanHint else null)
     }
 
     override fun onDeviceDiscovered(device: Device) {

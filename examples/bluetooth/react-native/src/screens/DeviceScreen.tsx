@@ -375,6 +375,11 @@ function TargetPicker({ sdk, connected }: { sdk: BluetoothSdkExampleModel; conne
           selected={false}
           enabled={false}
         />
+      ) : sdk.discoveredDevices.length === 0 && sdk.scanHint ? (
+        <View accessibilityRole="alert">
+          <Text style={styles.targetName}>Glasses may be in use</Text>
+          <Text style={styles.targetDetail}>{sdk.scanHint}</Text>
+        </View>
       ) : sdk.discoveredDevices.length === 0 && savedName ? (
         <TargetDeviceRow
           name={savedName}
