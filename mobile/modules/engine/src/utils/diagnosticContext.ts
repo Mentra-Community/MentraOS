@@ -30,6 +30,20 @@ function redactNestedCredentials(glasses: Record<string, unknown>): Record<strin
   return glasses
 }
 
+/**
+ * Calendar events are shaped objects carrying event titles and locations, so
+ * PII is in the value. Keep the count and drop the contents.
+ */
+function redactCalendarEvents(settings: Record<string, unknown>): Record<string, unknown> {
+  const key = SETTINGS.calendar_events.key
+  if (!(key in settings)) return settings
+  const events = settings[key]
+  return {
+    ...settings,
+    [key]: Array.isArray(events) ? `<${events.length} event(s)>` : "[REDACTED]",
+  }
+}
+
 export async function collectDiagnosticContext(extra?: Partial<ReportContext>): Promise<ReportContext> {
   const appletState = useAppStatusStore.getState()
   const settingsState = useSettingsStore.getState()
@@ -64,9 +78,11 @@ export async function collectDiagnosticContext(extra?: Partial<ReportContext>): 
       ),
     ),
   )
-  const filteredSettings = Object.fromEntries(
-    Object.entries(settingsState.settings || {}).filter(
-      ([key]) => !SENSITIVE_SETTINGS_KEYS.includes(key as (typeof SENSITIVE_SETTINGS_KEYS)[number]),
+  const filteredSettings = redactCalendarEvents(
+    Object.fromEntries(
+      Object.entries(settingsState.settings || {}).filter(
+        ([key]) => !SENSITIVE_SETTINGS_KEYS.includes(key as (typeof SENSITIVE_SETTINGS_KEYS)[number]),
+      ),
     ),
   )
 
