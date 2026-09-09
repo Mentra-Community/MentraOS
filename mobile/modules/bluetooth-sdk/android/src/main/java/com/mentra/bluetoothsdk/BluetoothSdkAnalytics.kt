@@ -5,7 +5,6 @@ import android.content.pm.PackageManager
 import android.os.Build
 import com.mentra.bluetoothsdk.utils.DeviceTypes
 import org.json.JSONObject
-import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
 import java.text.SimpleDateFormat
@@ -13,9 +12,6 @@ import java.util.Date
 import java.util.Locale
 import java.util.TimeZone
 import java.util.UUID
-import java.util.concurrent.ExecutorService
-import java.util.concurrent.Executors
-import java.util.concurrent.RejectedExecutionException
 
 class BluetoothSdkAnalyticsConfig private constructor(
     val enabled: Boolean,
@@ -46,20 +42,16 @@ internal class BluetoothSdkAnalytics(
     initialConfig: BluetoothSdkAnalyticsConfig,
 ) {
     private val appContext = context.applicationContext
-    private val executor: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
-        Thread(runnable, "MentraBluetoothSdkAnalytics").apply { isDaemon = true }
-    }
     private val config = initialConfig.toRuntimeConfig().resolvedForApp(appContext)
     // The tracker is touched from store listeners and SDK entry points, hence
     // @Synchronized on the methods that read or write it.
     private val tracker = BluetoothSdkAnalyticsTracker(DeviceTypes.SIMULATED)
     private var startedCaptured = false
-    // Resolved once, lazily, on the executor: PackageManager lookups and file I/O
+    // Resolved once, lazily, on the transport executor: PackageManager lookups
     // must not run on the caller (often main or the Bluetooth status) thread.
     private val hostProperties: Map<String, Any> by lazy { BluetoothSdkAnalyticsHost.resolve(appContext).toMap() }
-    private val queue: BluetoothSdkAnalyticsQueue by lazy {
-        BluetoothSdkAnalyticsQueue(File(appContext.filesDir, BluetoothSdkAnalyticsQueue.FILE_NAME))
-    }
+    // The retry queue and its executor are process-wide (see BluetoothSdkAnalyticsTransport).
+    private val queue: BluetoothSdkAnalyticsQueue get() = BluetoothSdkAnalyticsTransport.queue(appContext)
     private val isoFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply {
         timeZone = TimeZone.getTimeZone("UTC")
     }
@@ -85,9 +77,12 @@ internal class BluetoothSdkAnalytics(
         for (event in events) capture(event.name, event.properties)
     }
 
-    fun shutdown() {
-        executor.shutdown()
-    }
+    /**
+     * Delivery is owned by the process-wide transport, so nothing is torn down
+     * here: a retry in flight when this instance closes still completes, and a
+     * replacement instance cannot race it on the retry file.
+     */
+    fun shutdown() {}
 
     private fun capture(
         eventName: String,
@@ -120,17 +115,7 @@ internal class BluetoothSdkAnalytics(
     }
 
     private fun runOnExecutor(block: () -> Unit) {
-        try {
-            executor.execute {
-                try {
-                    block()
-                } catch (_: Exception) {
-                    // Analytics must never affect Bluetooth SDK behavior.
-                }
-            }
-        } catch (_: RejectedExecutionException) {
-            // The executor was shut down (SDK closed); dropping the event is fine.
-        }
+        BluetoothSdkAnalyticsTransport.submit(block)
     }
 
     /**

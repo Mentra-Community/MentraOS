@@ -35,14 +35,17 @@ final class BluetoothSdkAnalytics {
     private static let defaultPostHogApiKey = "phc_FCweXVAxVgU7wZK4Fk3okOx4RmyNqVHJf62YpZSfJt5"
     private static let defaultPostHogHost = "https://us.i.posthog.com"
     private let stateQueue = DispatchQueue(label: "com.mentra.bluetoothsdk.analytics.state")
-    private let transportQueue = DispatchQueue(label: "com.mentra.bluetoothsdk.analytics.transport")
+    // Delivery is process-wide (see BluetoothSdkAnalyticsTransport); this instance only tracks its connection.
+    private let transportQueue = BluetoothSdkAnalyticsTransport.queue
     private let configuration: BluetoothSdkAnalyticsConfiguration
     private var tracker = BluetoothSdkAnalyticsTracker(simulatedModel: DeviceTypes.SIMULATED)
     private var startedCaptured = false
     // Touched only on transportQueue, which serializes access.
     private var resolvedHostProperties: [String: Any]?
-    private lazy var retryQueue: BluetoothSdkAnalyticsQueue? =
-        BluetoothSdkAnalyticsQueue.defaultFileURL().map { BluetoothSdkAnalyticsQueue(fileURL: $0) }
+    private var retryQueue: BluetoothSdkAnalyticsQueue? {
+        BluetoothSdkAnalyticsTransport.retryQueue
+    }
+
     private let isoFormatter: ISO8601DateFormatter = {
         let formatter = ISO8601DateFormatter()
         formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
