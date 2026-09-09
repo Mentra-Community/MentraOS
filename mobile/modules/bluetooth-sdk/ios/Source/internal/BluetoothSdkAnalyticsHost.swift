@@ -28,8 +28,10 @@ enum BluetoothSdkAnalyticsHost {
 
     /// An embedded provisioning profile only exists in development, ad-hoc, and
     /// enterprise builds, so it is checked before the receipt: TestFlight and App
-    /// Store builds carry no profile, and TestFlight is the only one of those two
-    /// whose receipt file is named `sandboxReceipt`.
+    /// Store builds carry no profile, and the receipt file name then tells them
+    /// apart (`sandboxReceipt` vs `receipt`). Missing or unrecognized evidence is
+    /// reported as `unknown` rather than guessed, because this value decides
+    /// whether an install counts as production.
     static func installSource(
         isSimulator: Bool,
         hasEmbeddedProvisioningProfile: Bool,
@@ -37,8 +39,11 @@ enum BluetoothSdkAnalyticsHost {
     ) -> String {
         if isSimulator { return "simulator" }
         if hasEmbeddedProvisioningProfile { return "adhoc_or_dev" }
-        if receiptFileName == "sandboxReceipt" { return "testflight" }
-        return "app_store"
+        switch receiptFileName {
+        case "sandboxReceipt": return "testflight"
+        case "receipt": return "app_store"
+        default: return "unknown"
+        }
     }
 
     static func normalizedEnvironment(_ raw: String?) -> String? {

@@ -28,9 +28,16 @@ final class BluetoothSdkAnalyticsHostTests: XCTestCase {
             BluetoothSdkAnalyticsHost.installSource(isSimulator: false, hasEmbeddedProvisioningProfile: false, receiptFileName: "receipt"),
             "app_store"
         )
+    }
+
+    func testMissingOrUnrecognizedReceiptIsUnknownNotAppStore() {
         XCTAssertEqual(
             BluetoothSdkAnalyticsHost.installSource(isSimulator: false, hasEmbeddedProvisioningProfile: false, receiptFileName: nil),
-            "app_store"
+            "unknown"
+        )
+        XCTAssertEqual(
+            BluetoothSdkAnalyticsHost.installSource(isSimulator: false, hasEmbeddedProvisioningProfile: false, receiptFileName: "something-else"),
+            "unknown"
         )
     }
 
@@ -44,9 +51,13 @@ final class BluetoothSdkAnalyticsHostTests: XCTestCase {
         XCTAssertNil(BluetoothSdkAnalyticsHost.normalizedEnvironment(String(repeating: "a", count: 33)))
     }
 
-    func testResolveNeverThrowsForTheTestBundle() {
-        let host = BluetoothSdkAnalyticsHost.resolve(bundle: Bundle(for: BluetoothSdkAnalyticsHostTests.self))
-        XCTAssertTrue(["debug", "release"].contains(host.buildType))
-        XCTAssertTrue(["simulator", "adhoc_or_dev", "testflight", "app_store"].contains(host.installSource))
+    func testResolveReadsTheBundleItIsGiven() {
+        let bundle = Bundle(for: BluetoothSdkAnalyticsHostTests.self)
+        let host = BluetoothSdkAnalyticsHost.resolve(bundle: bundle)
+        // The test bundle declares no lane and no analytics keys of its own.
+        XCTAssertNil(host.environment)
+        XCTAssertEqual(host.appVersion, bundle.infoDictionary?["CFBundleShortVersionString"] as? String)
+        XCTAssertEqual(host.appBuild, bundle.infoDictionary?["CFBundleVersion"] as? String)
+        XCTAssertEqual(host.properties["app_install_source"] as? String, host.installSource)
     }
 }

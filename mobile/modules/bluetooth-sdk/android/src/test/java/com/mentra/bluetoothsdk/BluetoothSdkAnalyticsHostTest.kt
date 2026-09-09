@@ -15,6 +15,12 @@ class BluetoothSdkAnalyticsHostTest {
     }
 
     @Test
+    fun `a failed installer lookup is unknown, never a guess`() {
+        assertThat(BluetoothSdkAnalyticsHost.installSourceFor(null, lookupFailed = true)).isEqualTo("unknown")
+        assertThat(BluetoothSdkAnalyticsHost.installSourceFor("com.android.vending", lookupFailed = true)).isEqualTo("unknown")
+    }
+
+    @Test
     fun `normalizes the host environment and rejects values that cannot be filtered on`() {
         assertThat(BluetoothSdkAnalyticsHost.normalizedEnvironment(" Prod ")).isEqualTo("prod")
         assertThat(BluetoothSdkAnalyticsHost.normalizedEnvironment("staging-eu_1")).isEqualTo("staging-eu_1")

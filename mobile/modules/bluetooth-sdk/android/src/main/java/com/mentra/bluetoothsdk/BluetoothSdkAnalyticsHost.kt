@@ -40,18 +40,25 @@ internal object BluetoothSdkAnalyticsHost {
     /**
      * Android cannot tell a Play production install from a Play testing track: both
      * arrive through `com.android.vending`. `app_environment` is the host's way to
-     * add that distinction. A missing installer means adb, a file manager, or an
-     * IDE put the APK on the device.
+     * add that distinction. A missing installer is documented to mean adb, a file
+     * manager, or an IDE put the APK on the device; a failed lookup is reported as
+     * `unknown` rather than guessed, because this value decides whether an install
+     * counts as production.
      */
-    fun installSourceFor(installerPackage: String?): String =
-        when (installerPackage?.trim()?.takeIf { it.isNotEmpty() }) {
-            null -> "sideload"
-            "com.android.vending" -> "play_store"
-            "com.amazon.venezia" -> "amazon_appstore"
-            "com.sec.android.app.samsungapps" -> "galaxy_store"
-            "com.huawei.appmarket" -> "huawei_appgallery"
-            "com.xiaomi.market" -> "xiaomi_getapps"
-            else -> "other_store"
+    fun installSourceFor(installerPackage: String?, lookupFailed: Boolean = false): String =
+        when {
+            lookupFailed -> "unknown"
+            else -> installerPackage?.trim()?.takeIf { it.isNotEmpty() }.let { installer ->
+                when (installer) {
+                    null -> "sideload"
+                    "com.android.vending" -> "play_store"
+                    "com.amazon.venezia" -> "amazon_appstore"
+                    "com.sec.android.app.samsungapps" -> "galaxy_store"
+                    "com.huawei.appmarket" -> "huawei_appgallery"
+                    "com.xiaomi.market" -> "xiaomi_getapps"
+                    else -> "other_store"
+                }
+            }
         }
 
     fun normalizedEnvironment(raw: String?): String? =
@@ -72,6 +79,7 @@ internal object BluetoothSdkAnalyticsHost {
             } catch (_: Exception) {
                 null
             }
+        var installerLookupFailed = false
         val installer =
             try {
                 if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.R) {
@@ -81,6 +89,7 @@ internal object BluetoothSdkAnalyticsHost {
                     packageManager.getInstallerPackageName(packageName)
                 }
             } catch (_: Exception) {
+                installerLookupFailed = true
                 null
             }
         val debuggable = ((applicationInfo?.flags ?: 0) and ApplicationInfo.FLAG_DEBUGGABLE) != 0
@@ -89,7 +98,7 @@ internal object BluetoothSdkAnalyticsHost {
             appVersion = packageInfo?.versionName?.trim()?.takeIf { it.isNotEmpty() },
             appBuild = packageInfo?.longVersionCode?.toString(),
             buildType = if (debuggable) "debug" else "release",
-            installSource = installSourceFor(installer),
+            installSource = installSourceFor(installer, installerLookupFailed),
             installerPackage = installer?.trim()?.takeIf { it.isNotEmpty() },
             environment = normalizedEnvironment(applicationInfo?.metaData?.getString(META_ENVIRONMENT)),
         )
