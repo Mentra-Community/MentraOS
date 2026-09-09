@@ -61,6 +61,12 @@ export interface AudioStreamOpenRequest {
   volume?: number
   stopOtherAudio?: boolean
   /**
+   * Playout headroom in ms, which is also this stream's floor latency because the native track
+   * fills to its buffer and stays there. Omit it for clip playback; a realtime caller passes a
+   * small value and accepts the thinner cushion. Android only.
+   */
+  jitterMs?: number
+  /**
    * Called when the stream ends for any reason (drained after close, aborted,
    * interrupted by other audio, or native error).
    */
@@ -659,8 +665,11 @@ class AudioPlaybackService {
    * following the media route such as A2DP to connected glasses.
    */
   public async openStream(request: AudioStreamOpenRequest): Promise<void> {
-    const {streamId, appId, sampleRate, channels, volume = 1.0, stopOtherAudio = true} = request
-    console.log(`AUDIO: Stream open ${streamId} from ${appId}: rate=${sampleRate} ch=${channels}`)
+    const {streamId, appId, sampleRate, channels, volume = 1.0, stopOtherAudio = true, jitterMs} = request
+    console.log(
+      `AUDIO: Stream open ${streamId} from ${appId}: rate=${sampleRate} ch=${channels}` +
+        (jitterMs === undefined ? "" : ` jitterMs=${jitterMs}`),
+    )
 
     await this.ensureAudioModeConfigured()
     await this.prewarmAudioRouteIfCold()
@@ -673,7 +682,7 @@ class AudioPlaybackService {
       await this.abortAllStreams(streamId)
     }
 
-    await BluetoothSdk.pcmStreamOpen(streamId, sampleRate, channels, Math.max(0, Math.min(1, volume)))
+    await BluetoothSdk.pcmStreamOpen(streamId, sampleRate, channels, Math.max(0, Math.min(1, volume)), jitterMs)
     this.releaseTailUplinkSuppressions()
 
     const stream: StreamState = {
