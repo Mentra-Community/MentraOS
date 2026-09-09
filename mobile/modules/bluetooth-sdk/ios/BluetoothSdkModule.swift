@@ -614,8 +614,11 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
 
         // MARK: - Live PCM output stream (miniapp speaker.createStream)
 
+        // jitterMs is accepted for signature parity with Android and ignored: AVAudioEngine's
+        // scheduled-buffer playout has no equivalent fixed track buffer to size, so there is no
+        // knob here that would mean the same thing.
         AsyncFunction("pcmStreamOpen") {
-            (streamId: String, sampleRate: Int, channels: Int, volume: Double) async throws in
+            (streamId: String, sampleRate: Int, channels: Int, volume: Double, _: Int?) async throws in
             try PcmStreamManager.open(
                 streamId: streamId,
                 sampleRate: sampleRate,
@@ -682,6 +685,17 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
                     sendTranscript: sendTranscript ?? false,
                     sendLc3Data: sendLc3Data ?? false
                 )
+            }
+        }
+
+        /**
+         * Android-only today. Present so a host that pins the microphone for a call does not have
+         * to branch on platform, and so a caller cannot mistake a missing function for a pin that
+         * was taken: the ACS capability gate excludes iOS precisely because this cannot honour it.
+         */
+        AsyncFunction("setMicSourcePin") { (source: String?) in
+            if source != nil {
+                Bridge.log("BluetoothSdkModule: setMicSourcePin(\(source ?? "")) is not implemented on iOS; ignoring")
             }
         }
 
