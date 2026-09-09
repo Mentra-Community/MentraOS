@@ -7,15 +7,16 @@ class PipelineStatsTest {
   @Test
   fun conservationHoldsAcrossEveryDisposition() {
     val stats = PipelineStats()
-    repeat(4) { stats.onSink() }
+    repeat(5) { stats.onSink() }
     stats.onQueued(); stats.onSub()
     stats.onDropSize()
     stats.onDropBusy()
     stats.onDropNullI420()
+    stats.onDropPaced()
     assertThat(stats.conserved()).isTrue()
-    assertThat(stats.sinkCount()).isEqualTo(4)
+    assertThat(stats.sinkCount()).isEqualTo(5)
     assertThat(stats.subCount()).isEqualTo(1)
-    assertThat(stats.dropCount()).isEqualTo(3)
+    assertThat(stats.dropCount()).isEqualTo(4)
     assertThat(stats.inFlightCount()).isEqualTo(0)
   }
 
@@ -65,6 +66,7 @@ class PipelineStatsTest {
     assertThat(line).contains("dec=na")
     assertThat(line).contains("wire=0x0@na kbps=na codec=na")
     assertThat(line).contains("drop{")
+    assertThat(line).contains("pace=0")
     assertThat(line).contains("ms{")
     assertThat(line).contains("chroma{")
     assertThat(line).contains("cum{sink=0 sub=0 drop=0 inFlight=0}")
@@ -249,6 +251,70 @@ class PipelineStatsTest {
     val line = stats.tick()
     assertThat(line).contains("recv=14.8")
     assertThat(line).contains("dec=8.1")
+  }
+
+  @Test
+  fun ladderReportsFrameAgeAndEndToEndLatency() {
+    var clock = 0L
+    val stats = PipelineStats { clock }
+    stats.age.record(40_000_000)
+    stats.e2e.record(95_000_000)
+    clock += 1000
+    val line = stats.tick()
+    assertThat(line).contains("ageP50=40.0")
+    assertThat(line).contains("e2eP50=95.0")
+  }
+
+  /**
+   * A backed-up ACS send thread has no other symptom on this ladder: `sendP95` times the ACS call
+   * itself, so the wait in front of it has to be its own measurement.
+   */
+  @Test
+  fun ladderSeparatesSenderQueueWaitFromTheAcsCall() {
+    var clock = 0L
+    val stats = PipelineStats { clock }
+    stats.queue.record(30_000_000)
+    stats.send.record(2_000_000)
+    clock += 1000
+    val line = stats.tick()
+    assertThat(line).contains("queueP95=30.0")
+    assertThat(line).contains("sendP95=2.0")
+  }
+
+  @Test
+  fun slowestStageNamesTheWorstPhoneSideStage() {
+    val stats = PipelineStats { 0 }
+    stats.scale.record(2_000_000)
+    stats.toI420.record(9_000_000)
+    stats.copy.record(1_000_000)
+    stats.send.record(12_000_000)
+    assertThat(stats.slowestStage()).isEqualTo("send=12.0")
+  }
+
+  /** Ranking must compare numbers: as strings "9.0" sorts above "12.0". */
+  @Test
+  fun slowestStageRanksNumericallyNotLexically() {
+    val stats = PipelineStats { 0 }
+    stats.toI420.record(9_000_000)
+    stats.copy.record(12_000_000)
+    assertThat(stats.slowestStage()).isEqualTo("copy=12.0")
+  }
+
+  /**
+   * Frame age is dominated by capture, encode and the network, so blaming a phone-side stage for it
+   * would make every healthy call accuse a stage this device does not run.
+   */
+  @Test
+  fun slowestStageIgnoresUpstreamFrameAge() {
+    val stats = PipelineStats { 0 }
+    stats.age.record(400_000_000)
+    stats.copy.record(3_000_000)
+    assertThat(stats.slowestStage()).isEqualTo("copy=3.0")
+  }
+
+  @Test
+  fun slowestStageIsNotAvailableBeforeAnySamples() {
+    assertThat(PipelineStats { 0 }.slowestStage()).isEqualTo("na")
   }
 
   private fun extractCum(line: String): String =
