@@ -20,6 +20,8 @@ class PcmBridge(
   private val outgoing = ByteArrayOutputStream()
   private val resampler = PcmResampler(TARGET_RATE)
   private var lastRmsLogMs = 0L
+  @Volatile var lastMeanAbs: Int = -1
+    private set
 
   fun ingest(pcm16Le: ByteArray, sampleRate: Int, channels: Int): List<ByteArray> {
     if (dump != null && !dumped) {
@@ -47,6 +49,19 @@ class PcmBridge(
     return frames
   }
 
+  /**
+   * Drop the state that spans calls to [ingest]: the resampler's filter history and fractional
+   * phase, and the partial 20 ms frame not yet emitted.
+   *
+   * What makes this necessary is that both are, by design, audio the wearer already spoke. A mute
+   * that left them behind would emit them on the next unmute — a fraction of a word, from before
+   * the wearer asked not to be heard. Serialization is the caller's job; see [AudioUplinkChain].
+   */
+  fun reset() {
+    resampler.reset()
+    outgoing.reset()
+  }
+
   @Synchronized
   fun finishDump() {
     if (dumped) return
@@ -60,9 +75,6 @@ class PcmBridge(
   }
 
   private fun logLevel(pcm: ByteArray, sampleRate: Int, channels: Int) {
-    val now = System.currentTimeMillis()
-    if (now - lastRmsLogMs < 1000) return
-    lastRmsLogMs = now
     var acc = 0L
     var n = 0
     var i = 0
@@ -74,7 +86,12 @@ class PcmBridge(
       i += 2
     }
     val mean = if (n == 0) 0 else acc / n
-    Log.i(TAG, "P4 pcm rate=$sampleRate ch=$channels meanAbs=$mean bytes=${pcm.size}")
+    lastMeanAbs = mean.toInt()
+    val now = System.currentTimeMillis()
+    if (now - lastRmsLogMs < 1000) return
+    lastRmsLogMs = now
+    val verdict = if (mean < SILENCE_MEAN_ABS) "SILENCE" else "voice"
+    Log.i(TAG, "P4 pcm rate=$sampleRate ch=$channels meanAbs=$mean bytes=${pcm.size} $verdict")
   }
 
   companion object {
@@ -104,5 +121,11 @@ class PcmBridge(
     }
 
     fun encodeBase64(pcm: ByteArray): String = Base64.encodeToString(pcm, Base64.NO_WRAP)
+
+    /**
+     * 16-bit speech sits in the hundreds to thousands. Below this is the LC3/ADC noise floor
+     * Teams hears as mute even when ACS is unmuted and the pacer is RUNNING.
+     */
+    const val SILENCE_MEAN_ABS = 50
   }
 }
