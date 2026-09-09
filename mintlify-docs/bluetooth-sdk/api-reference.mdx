@@ -79,7 +79,7 @@ so Mentra can understand SDK adoption and successful glasses connections:
 | --- | --- |
 | `bluetooth_sdk_started` | Once per app runtime after the native SDK starts. |
 | `bluetooth_sdk_glasses_connected` | When SDK status transitions from not connected to connected. Failed scans and failed connection attempts are not counted. |
-| `bluetooth_sdk_glasses_identified` | Once per connection after the glasses report a valid manufacturing serial. Carries `glasses_device_id` (the hardware serial, not a user or phone id) and the glasses-side firmware versions of identified glasses. |
+| `bluetooth_sdk_glasses_identified` | Once per connection after the glasses report a valid manufacturing serial, and once per new reporting day (`America/Los_Angeles`) while that connection stays up (`event_kind=glasses_heartbeat`). Carries `glasses_device_id` (the hardware serial, not a user or phone id) and the glasses-side firmware versions of identified glasses. |
 
 Every event carries the host app's `app_version`, `app_build`, `app_build_type`
 (`debug` / `release`), and `app_install_source` (`play_store`, `app_store`,
@@ -95,8 +95,10 @@ characters). Mentra treats an install as production only when
 `release`, and, when the host declares a lane, `app_environment` is `prod`;
 store installs without a declared lane are reported as an unclassified cohort.
 
-Analytics delivery is fire-and-forget: events are submitted asynchronously, do
-not block Bluetooth SDK behavior, and are not retried if delivery fails.
+Analytics delivery never blocks Bluetooth SDK behavior: events are submitted
+asynchronously. A failed upload is kept in a small on-device queue (at most 100
+events, 7 days) and retried on the next successful send or SDK start; each event
+carries its own id and capture time, so retries never double count.
 
 Mentra's PostHog project API key is embedded in the SDK as a public analytics
 write token, not a private PostHog personal API key. Apps do not need to

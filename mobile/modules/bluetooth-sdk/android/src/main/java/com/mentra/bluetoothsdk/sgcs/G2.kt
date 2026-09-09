@@ -1804,6 +1804,10 @@ class G2 : SGCManager() {
         val serialNumber = peripheralName?.let { deviceNameToSerialNumber[it] }
         if (serialNumber != null) {
             DeviceStore.apply("bluetooth", "device_name", serialNumber)
+            // The advertisement serial is the manufacturing serial; expose it where
+            // the SDK status (and analytics identification) read it, not only in the
+            // reconnection name slot.
+            DeviceStore.apply("glasses", "serialNumber", serialNumber)
             Bridge.log("G2: Set device_name to $serialNumber")
         }
 

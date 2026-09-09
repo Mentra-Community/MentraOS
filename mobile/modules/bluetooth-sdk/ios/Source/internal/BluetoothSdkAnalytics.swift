@@ -37,9 +37,17 @@ final class BluetoothSdkAnalytics {
     private let stateQueue = DispatchQueue(label: "com.mentra.bluetoothsdk.analytics.state")
     private let transportQueue = DispatchQueue(label: "com.mentra.bluetoothsdk.analytics.transport")
     private let configuration: BluetoothSdkAnalyticsConfiguration
+    private var tracker = BluetoothSdkAnalyticsTracker(simulatedModel: DeviceTypes.SIMULATED)
     private var startedCaptured = false
-    private var lastConnected = false
-    private var identifiedCapturedForConnection = false
+    // Touched only on transportQueue, which serializes access.
+    private var resolvedHostProperties: [String: Any]?
+    private lazy var retryQueue: BluetoothSdkAnalyticsQueue? =
+        BluetoothSdkAnalyticsQueue.defaultFileURL().map { BluetoothSdkAnalyticsQueue(fileURL: $0) }
+    private let isoFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
 
     init(configuration: BluetoothSdkAnalyticsConfiguration) {
         self.configuration = configuration.resolvedForApp()
@@ -47,74 +55,27 @@ final class BluetoothSdkAnalytics {
 
     func initializeGlassesStatus(_ status: GlassesStatus) {
         stateQueue.sync {
-            lastConnected = status.analyticsConnected
-            // Only treat identification as already captured when a valid serial is
-            // present at init. If the glasses are connected but the serial has not
-            // arrived yet (Mentra Live fills it via version_info after connect), leave
-            // this false so the identify event still fires once the serial arrives.
-            identifiedCapturedForConnection =
-                status.analyticsConnected && status.serialNumber.validManufacturingSerial != nil
+            tracker.initialize(status.analyticsSnapshot, utcDay: BluetoothSdkAnalyticsTracker.utcDay())
         }
     }
 
     func captureStarted() {
         stateQueue.sync {
-            captureStartedLocked()
+            guard !startedCaptured, configuration.isReady else { return }
+            startedCaptured = true
+            capture(event: "bluetooth_sdk_started", properties: ["event_kind": "sdk_started"], configuration: configuration)
+            // A fresh runtime is the natural moment to retry what an earlier one could not deliver.
+            transportQueue.async { self.drainRetryQueue(now: Date()) }
         }
-    }
-
-    private func captureStartedLocked() {
-        guard !startedCaptured, configuration.isReady else { return }
-        startedCaptured = true
-        capture(
-            event: "bluetooth_sdk_started",
-            properties: ["event_kind": "sdk_started"],
-            configuration: configuration
-        )
     }
 
     func observeGlassesStatus(_ status: GlassesStatus) {
         stateQueue.sync {
-            let isConnected = status.analyticsConnected
-            let wasConnected = lastConnected
-            lastConnected = isConnected
+            let events = tracker.observe(status.analyticsSnapshot, utcDay: BluetoothSdkAnalyticsTracker.utcDay())
             guard configuration.isReady else { return }
-            guard isConnected else {
-                identifiedCapturedForConnection = false
-                return
+            for event in events {
+                capture(event: event.name, properties: event.properties, configuration: configuration)
             }
-            if isConnected, !wasConnected {
-                identifiedCapturedForConnection = false
-                var properties: [String: Any] = [
-                    "event_kind": "glasses_connected",
-                    "fully_booted": status.fullyBooted,
-                ]
-                if !status.deviceModel.isEmpty {
-                    properties["glasses_model"] = status.deviceModel
-                }
-                properties["glasses_is_simulated"] = status.deviceModel == DeviceTypes.SIMULATED
-                capture(event: "bluetooth_sdk_glasses_connected", properties: properties, configuration: configuration)
-                // Fall through: a serial already present at connect time (G1/Ar99
-                // report it in the advertisement) should be identified now rather than
-                // waiting for some later, unrelated glasses-store update to run.
-            }
-
-            guard !identifiedCapturedForConnection,
-                  let serialNumber = status.serialNumber.validManufacturingSerial
-            else { return }
-            identifiedCapturedForConnection = true
-            var properties: [String: Any] = [
-                "event_kind": "glasses_identified",
-                "fully_booted": status.fullyBooted,
-                "glasses_device_id": serialNumber,
-                "glasses_device_id_type": "manufacturing_serial",
-            ]
-            if !status.deviceModel.isEmpty {
-                properties["glasses_model"] = status.deviceModel
-            }
-            properties["glasses_is_simulated"] = status.deviceModel == DeviceTypes.SIMULATED
-            properties.merge(glassesSoftwareProperties(status)) { _, new in new }
-            capture(event: "bluetooth_sdk_glasses_identified", properties: properties, configuration: configuration)
         }
     }
 
@@ -124,6 +85,10 @@ final class BluetoothSdkAnalytics {
         configuration activeConfiguration: BluetoothSdkAnalyticsConfiguration
     ) {
         guard activeConfiguration.isReady else { return }
+        // Identity and time are fixed at capture, not at (re)send, so a retried
+        // event neither double counts nor drifts into a later week.
+        let uuid = UUID().uuidString.lowercased()
+        let capturedAt = Date()
 
         transportQueue.async {
             // Host facts are resolved once, on the transport queue: Bundle lookups
@@ -131,21 +96,50 @@ final class BluetoothSdkAnalytics {
             let host = self.transportQueueHostProperties()
             let payload: [String: Any] = [
                 "api_key": Self.defaultPostHogApiKey,
+                "uuid": uuid,
                 "event": event,
                 "distinct_id": self.distinctId(),
+                "timestamp": self.isoFormatter.string(from: capturedAt),
                 "properties": self.baseProperties(configuration: activeConfiguration)
                     .merging(host) { _, new in new }
                     .merging(properties) { _, new in new },
             ]
-            guard let body = try? JSONSerialization.data(withJSONObject: payload) else { return }
-            guard let captureURL = self.captureURL() else { return }
-            var request = URLRequest(url: captureURL)
-            request.httpMethod = "POST"
-            request.timeoutInterval = 4
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.httpBody = body
-            URLSession.shared.dataTask(with: request).resume()
+            if self.send(payload) {
+                self.drainRetryQueue(now: capturedAt)
+            } else {
+                self.retryQueue?.enqueue(payload, now: capturedAt)
+            }
         }
+    }
+
+    /// Only ever called from `transportQueue`.
+    private func drainRetryQueue(now: Date) {
+        retryQueue?.drain(now: now) { payload in self.send(payload) }
+    }
+
+    /// Synchronous on purpose: it runs on the transport queue, and a serialized
+    /// send keeps retry ordering trivial. Returns true only for a 2xx response.
+    private func send(_ payload: [String: Any]) -> Bool {
+        guard JSONSerialization.isValidJSONObject(payload),
+              let body = try? JSONSerialization.data(withJSONObject: payload),
+              let captureURL = captureURL()
+        else { return false }
+        var request = URLRequest(url: captureURL)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 4
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = body
+
+        let semaphore = DispatchSemaphore(value: 0)
+        var succeeded = false
+        URLSession.shared.dataTask(with: request) { _, response, error in
+            if error == nil, let http = response as? HTTPURLResponse, (200 ..< 300).contains(http.statusCode) {
+                succeeded = true
+            }
+            semaphore.signal()
+        }.resume()
+        _ = semaphore.wait(timeout: .now() + 6)
+        return succeeded
     }
 
     private func baseProperties(configuration: BluetoothSdkAnalyticsConfiguration) -> [String: Any] {
@@ -165,33 +159,12 @@ final class BluetoothSdkAnalytics {
         return properties
     }
 
-    private var resolvedHostProperties: [String: Any]?
-
     /// Only ever called from `transportQueue`, which serializes access.
     private func transportQueueHostProperties() -> [String: Any] {
         if let resolvedHostProperties { return resolvedHostProperties }
         let resolved = BluetoothSdkAnalyticsHost.resolve().properties
         resolvedHostProperties = resolved
         return resolved
-    }
-
-    /// Glasses-side software versions, attached to identification only, so identified
-    /// glasses can be grouped by firmware. Glasses that never report a serial produce
-    /// no identification event; that coverage gap is measured elsewhere.
-    private func glassesSoftwareProperties(_ status: GlassesStatus) -> [String: Any] {
-        var values: [String: Any] = [:]
-        let fields: [(String, String)] = [
-            ("glasses_firmware_version", status.firmwareVersion),
-            ("glasses_bes_firmware_version", status.besFirmwareVersion),
-            ("glasses_mtk_firmware_version", status.mtkFirmwareVersion),
-            ("glasses_android_version", status.androidVersion),
-            ("glasses_app_version", status.appVersion),
-            ("glasses_build_number", status.buildNumber),
-        ]
-        for (key, value) in fields where !value.trimmingCharacters(in: .whitespaces).isEmpty {
-            values[key] = value
-        }
-        return values
     }
 
     private func distinctId() -> String {
@@ -211,16 +184,19 @@ final class BluetoothSdkAnalytics {
 }
 
 private extension GlassesStatus {
-    var analyticsConnected: Bool {
-        connectionState.isConnected || connected || fullyBooted
-    }
-}
-
-private extension String {
-    var validManufacturingSerial: String? {
-        let normalized = trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalized.isEmpty, normalized.contains(where: { $0 != "0" }) else { return nil }
-        return normalized
+    var analyticsSnapshot: AnalyticsGlassesSnapshot {
+        AnalyticsGlassesSnapshot(
+            connected: connectionState.isConnected || connected || fullyBooted,
+            fullyBooted: fullyBooted,
+            model: deviceModel,
+            serialNumber: serialNumber,
+            firmwareVersion: firmwareVersion,
+            besFirmwareVersion: besFirmwareVersion,
+            mtkFirmwareVersion: mtkFirmwareVersion,
+            androidVersion: androidVersion,
+            appVersion: appVersion,
+            buildNumber: buildNumber
+        )
     }
 }
 

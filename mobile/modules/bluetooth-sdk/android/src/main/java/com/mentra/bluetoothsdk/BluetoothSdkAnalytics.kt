@@ -5,8 +5,13 @@ import android.content.pm.PackageManager
 import android.os.Build
 import com.mentra.bluetoothsdk.utils.DeviceTypes
 import org.json.JSONObject
+import java.io.File
 import java.net.HttpURLConnection
 import java.net.URL
+import java.text.SimpleDateFormat
+import java.util.Date
+import java.util.Locale
+import java.util.TimeZone
 import java.util.UUID
 import java.util.concurrent.ExecutorService
 import java.util.concurrent.Executors
@@ -44,24 +49,24 @@ internal class BluetoothSdkAnalytics(
     private val executor: ExecutorService = Executors.newSingleThreadExecutor { runnable ->
         Thread(runnable, "MentraBluetoothSdkAnalytics").apply { isDaemon = true }
     }
-    // startedCaptured/lastConnected are touched from store listeners and SDK
-    // entry points, hence @Synchronized on methods that read or write them.
     private val config = initialConfig.toRuntimeConfig().resolvedForApp(appContext)
-    // PackageManager lookups happen once, lazily, on the analytics executor.
-    private val hostProperties: Map<String, Any> by lazy { BluetoothSdkAnalyticsHost.resolve(appContext).toMap() }
+    // The tracker is touched from store listeners and SDK entry points, hence
+    // @Synchronized on the methods that read or write it.
+    private val tracker = BluetoothSdkAnalyticsTracker(DeviceTypes.SIMULATED)
     private var startedCaptured = false
-    private var lastConnected = false
-    private var identifiedCapturedForConnection = false
+    // Resolved once, lazily, on the executor: PackageManager lookups and file I/O
+    // must not run on the caller (often main or the Bluetooth status) thread.
+    private val hostProperties: Map<String, Any> by lazy { BluetoothSdkAnalyticsHost.resolve(appContext).toMap() }
+    private val queue: BluetoothSdkAnalyticsQueue by lazy {
+        BluetoothSdkAnalyticsQueue(File(appContext.filesDir, BluetoothSdkAnalyticsQueue.FILE_NAME))
+    }
+    private val isoFormat = SimpleDateFormat("yyyy-MM-dd'T'HH:mm:ss.SSS'Z'", Locale.US).apply {
+        timeZone = TimeZone.getTimeZone("UTC")
+    }
 
     @Synchronized
     fun initializeGlassesStatus(status: GlassesStatus) {
-        lastConnected = status.analyticsConnected
-        // Only treat identification as already captured when a valid serial is
-        // present at init. If the glasses are connected but the serial has not
-        // arrived yet (Mentra Live fills it via version_info after connect), leave
-        // this false so the identify event still fires once the serial arrives.
-        identifiedCapturedForConnection =
-            status.analyticsConnected && status.serialNumber.validManufacturingSerial() != null
+        tracker.initialize(status.toAnalyticsSnapshot(), BluetoothSdkAnalyticsTracker.utcDay(System.currentTimeMillis()))
     }
 
     @Synchronized
@@ -69,50 +74,15 @@ internal class BluetoothSdkAnalytics(
         if (startedCaptured || !config.isReady) return
         startedCaptured = true
         capture("bluetooth_sdk_started", mapOf("event_kind" to "sdk_started"))
+        // A fresh runtime is the natural moment to retry what an earlier one could not deliver.
+        runOnExecutor { queue.drain(System.currentTimeMillis()) { payload -> send(payload) } }
     }
 
     @Synchronized
     fun observeGlassesStatus(status: GlassesStatus) {
-        val isConnected = status.analyticsConnected
-        val wasConnected = lastConnected
-        lastConnected = isConnected
+        val events = tracker.observe(status.toAnalyticsSnapshot(), BluetoothSdkAnalyticsTracker.utcDay(System.currentTimeMillis()))
         if (!config.isReady) return
-        if (!isConnected) {
-            identifiedCapturedForConnection = false
-            return
-        }
-        if (isConnected && !wasConnected) {
-            identifiedCapturedForConnection = false
-            capture(
-                "bluetooth_sdk_glasses_connected",
-                buildMap {
-                    put("event_kind", "glasses_connected")
-                    put("fully_booted", status.fullyBooted)
-                    status.deviceModel.takeIf { it.isNotBlank() }?.let { put("glasses_model", it) }
-                    put("glasses_is_simulated", status.deviceModel == DeviceTypes.SIMULATED)
-                },
-            )
-            // Fall through: a serial already present at connect time (G1/Ar99 report
-            // it in the advertisement) should be identified now rather than waiting
-            // for some later, unrelated glasses-store update to run.
-        }
-
-        val serialNumber = status.serialNumber.validManufacturingSerial() ?: return
-        if (!identifiedCapturedForConnection) {
-            identifiedCapturedForConnection = true
-            capture(
-                "bluetooth_sdk_glasses_identified",
-                buildMap {
-                    put("event_kind", "glasses_identified")
-                    put("fully_booted", status.fullyBooted)
-                    put("glasses_device_id", serialNumber)
-                    put("glasses_device_id_type", "manufacturing_serial")
-                    status.deviceModel.takeIf { it.isNotBlank() }?.let { put("glasses_model", it) }
-                    put("glasses_is_simulated", status.deviceModel == DeviceTypes.SIMULATED)
-                    putGlassesSoftware(status)
-                },
-            )
-        }
+        for (event in events) capture(event.name, event.properties)
     }
 
     fun shutdown() {
@@ -125,32 +95,35 @@ internal class BluetoothSdkAnalytics(
     ) {
         val activeConfig = config
         if (!activeConfig.isReady) return
+        // Identity and time are fixed at capture, not at (re)send, so a retried
+        // event neither double counts nor drifts into a later week.
+        val uuid = UUID.randomUUID().toString()
+        val capturedAt = System.currentTimeMillis()
+        runOnExecutor {
+            val payload =
+                JSONObject(
+                    mapOf(
+                        "api_key" to DEFAULT_POSTHOG_API_KEY,
+                        "uuid" to uuid,
+                        "event" to eventName,
+                        "distinct_id" to distinctId(),
+                        "timestamp" to isoFormat.format(Date(capturedAt)),
+                        "properties" to baseProperties(activeConfig) + hostProperties + eventProperties,
+                    )
+                )
+            if (send(payload)) {
+                queue.drain(capturedAt) { queued -> send(queued) }
+            } else {
+                queue.enqueue(payload, capturedAt)
+            }
+        }
+    }
 
+    private fun runOnExecutor(block: () -> Unit) {
         try {
-            // Payload construction stays on the executor: distinctId() reads
-            // SharedPreferences, which must not run on the caller (often main) thread.
             executor.execute {
                 try {
-                    val payload =
-                        JSONObject(
-                            mapOf(
-                                "api_key" to DEFAULT_POSTHOG_API_KEY,
-                                "event" to eventName,
-                                "distinct_id" to distinctId(),
-                                "properties" to baseProperties(activeConfig) + hostProperties + eventProperties,
-                            )
-                        )
-                    val connection = URL(captureUrl()).openConnection() as HttpURLConnection
-                    connection.requestMethod = "POST"
-                    connection.connectTimeout = 4_000
-                    connection.readTimeout = 4_000
-                    connection.doOutput = true
-                    connection.setRequestProperty("Content-Type", "application/json")
-                    connection.outputStream.use { output ->
-                        output.write(payload.toString().toByteArray(Charsets.UTF_8))
-                    }
-                    connection.inputStream.close()
-                    connection.disconnect()
+                    block()
                 } catch (_: Exception) {
                     // Analytics must never affect Bluetooth SDK behavior.
                 }
@@ -159,6 +132,29 @@ internal class BluetoothSdkAnalytics(
             // The executor was shut down (SDK closed); dropping the event is fine.
         }
     }
+
+    /** Returns true only for a 2xx response; anything else is retried later. */
+    private fun send(payload: JSONObject): Boolean =
+        try {
+            val connection = URL(captureUrl()).openConnection() as HttpURLConnection
+            try {
+                connection.requestMethod = "POST"
+                connection.connectTimeout = 4_000
+                connection.readTimeout = 4_000
+                connection.doOutput = true
+                connection.setRequestProperty("Content-Type", "application/json")
+                connection.outputStream.use { output ->
+                    output.write(payload.toString().toByteArray(Charsets.UTF_8))
+                }
+                val code = connection.responseCode
+                if (code in 200..299) connection.inputStream.close() else connection.errorStream?.close()
+                code in 200..299
+            } finally {
+                connection.disconnect()
+            }
+        } catch (_: Exception) {
+            false
+        }
 
     private fun baseProperties(activeConfig: BluetoothSdkAnalyticsRuntimeConfig): Map<String, Any> =
         buildMap {
@@ -172,20 +168,6 @@ internal class BluetoothSdkAnalytics(
             put("os_platform", "android")
             put("os_version", Build.VERSION.SDK_INT)
         }
-
-    /**
-     * Glasses-side software versions, attached to identification only, so identified
-     * glasses can be grouped by firmware. Glasses that never report a serial produce
-     * no identification event; that coverage gap is measured elsewhere.
-     */
-    private fun MutableMap<String, Any>.putGlassesSoftware(status: GlassesStatus) {
-        status.firmwareVersion.takeIf { it.isNotBlank() }?.let { put("glasses_firmware_version", it) }
-        status.besFirmwareVersion.takeIf { it.isNotBlank() }?.let { put("glasses_bes_firmware_version", it) }
-        status.mtkFirmwareVersion.takeIf { it.isNotBlank() }?.let { put("glasses_mtk_firmware_version", it) }
-        status.androidVersion.takeIf { it.isNotBlank() }?.let { put("glasses_android_version", it) }
-        status.appVersion.takeIf { it.isNotBlank() }?.let { put("glasses_app_version", it) }
-        status.buildNumber.takeIf { it.isNotBlank() }?.let { put("glasses_build_number", it) }
-    }
 
     private fun distinctId(): String {
         val prefs = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
@@ -229,8 +211,16 @@ private fun BluetoothSdkAnalyticsRuntimeConfig.resolvedForApp(context: Context):
     )
 }
 
-private val GlassesStatus.analyticsConnected: Boolean
-    get() = connectionState.isConnected || connected || fullyBooted
-
-private fun String.validManufacturingSerial(): String? =
-    trim().takeIf { it.isNotEmpty() && !it.matches(Regex("0+")) }
+private fun GlassesStatus.toAnalyticsSnapshot(): AnalyticsGlassesSnapshot =
+    AnalyticsGlassesSnapshot(
+        connected = connectionState.isConnected || connected || fullyBooted,
+        fullyBooted = fullyBooted,
+        model = deviceModel,
+        serialNumber = serialNumber,
+        firmwareVersion = firmwareVersion,
+        besFirmwareVersion = besFirmwareVersion,
+        mtkFirmwareVersion = mtkFirmwareVersion,
+        androidVersion = androidVersion,
+        appVersion = appVersion,
+        buildNumber = buildNumber,
+    )
