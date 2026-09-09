@@ -1,7 +1,7 @@
 import {describe, expect, test} from 'bun:test';
 import type {MentraLiveOtaState} from '@mentra/engine/ota';
 
-import {otaPresentation} from './otaPresentation';
+import {otaPresentation, otaRestartOverlayMessage} from './otaPresentation';
 
 const baseState: MentraLiveOtaState = {
   batteryLevel: 80,
@@ -310,5 +310,105 @@ describe('custom OTA presentation', () => {
       message: 'This mobile app is a development build, so automatic glasses updates are disabled.',
       title: 'Development Build',
     });
+  });
+});
+
+
+describe('OTA transport labels and reconnect parity', () => {
+  test.each([
+    ['apk', 'Glasses software', 0],
+    ['mtk', 'System firmware', 1],
+    ['bes', 'Bluetooth firmware', 2],
+  ] as const)('labels the current %s download on the phone', (kind, label, index) => {
+    const p = otaPresentation(
+      otaState({
+        screen: 'preparing_hotspot',
+        hotspotPhase: 'downloading',
+        hotspotArtifact: {kind, index, totalCount: 3},
+        hotspotArtifactPercent: 42,
+      }),
+    );
+    expect(p.progressLabel).toBe(`File ${index + 1} of 3 · ${label}`);
+    expect(p.progress).toBe(42);
+    expect(p.detail).toBe('Each file downloads separately. Progress is for the current file.');
+  });
+
+  test('does not invent file metadata or a percentage while the phone prepares', () => {
+    const p = otaPresentation(otaState({screen: 'preparing_hotspot', hotspotPhase: 'downloading'}));
+    expect(p.progressLabel).toBeUndefined();
+    expect(p.progress).toBeUndefined();
+  });
+
+  test.each([
+    ['starting_hotspot', 'Starting glasses hotspot...'],
+    ['joining_hotspot', 'Connecting phone to glasses...'],
+    ['serving', 'Starting update...'],
+  ] as const)('clears the phone file label during %s', (hotspotPhase, title) => {
+    const p = otaPresentation(
+      otaState({
+        screen: 'preparing_hotspot',
+        hotspotPhase,
+        hotspotArtifact: {kind: 'apk', index: 0, totalCount: 3},
+        hotspotArtifactPercent: 100,
+      }),
+    );
+    expect(p.title).toBe(title);
+    expect(p.progressLabel).toBeUndefined();
+    expect(p.progress).toBeUndefined();
+  });
+
+  test.each(['download', 'install'] as const)(
+    'labels hotspot %s as work on the glasses',
+    (phase) => {
+      const p = otaPresentation(
+        otaState({
+          screen: 'updating',
+          phase,
+          transport: 'hotspot',
+          step: 'mtk',
+          currentStep: 2,
+          totalSteps: 3,
+          progress: 55,
+        }),
+      );
+      expect(p.title).toBe(
+        phase === 'download'
+          ? 'Transferring update to glasses...'
+          : 'Installing update on glasses...',
+      );
+      expect(p.progressLabel).toBe('Update 2 of 3 · System firmware');
+      expect(p.detail).toBe(
+        phase === 'download' ? 'Progress is for this file’s transfer from your phone.' : undefined,
+      );
+      expect(p.progress).toBe(55);
+    },
+  );
+
+  test('shows the component alone when the update count is unknown', () => {
+    expect(
+      otaPresentation(
+        otaState({screen: 'updating', transport: 'hotspot', phase: 'install', step: 'bes'}),
+      ).progressLabel,
+    ).toBe('Bluetooth firmware');
+  });
+
+  test('keeps a manual shutdown on the inline reconnecting page without a restart popup', () => {
+    const state = otaState({screen: 'disconnected', connected: false});
+    expect(otaRestartOverlayMessage(state)).toBeNull();
+    expect(otaPresentation(state)).toMatchObject({
+      title: 'Glasses disconnected',
+      message: 'Reconnecting...',
+      indeterminate: true,
+    });
+    expect(otaPresentation(state).primary).toBeUndefined();
+  });
+
+  test('shows the expected firmware restart popup and removes it when connected', () => {
+    const state = otaState({screen: 'restarting', connected: false, firmwareRestarting: true});
+    expect(otaRestartOverlayMessage(state)).toBe(
+      'Please wait while Mentra Live restarts and automatically reconnects...',
+    );
+    expect(otaRestartOverlayMessage({...state, connected: true})).toBeNull();
+    expect(otaRestartOverlayMessage({...state, firmwareRestarting: false})).toBeNull();
   });
 });
