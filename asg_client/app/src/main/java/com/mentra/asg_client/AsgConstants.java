@@ -74,6 +74,18 @@ public class AsgConstants {
     public static final boolean ENABLE_PIPELINE_FPS_TELEMETRY = false;
 
     /**
+     * 1Hz {@code [STREAM_PIPELINE]} send-side diagnosis: the encoder's own adaptation reason, the
+     * resolution it actually produced, per-frame encode cost, and link RTT/loss.
+     *
+     * <p>Separate from {@link #ENABLE_PIPELINE_FPS_TELEMETRY} because that flag gates BLE emission
+     * as well as logging, so leaving it off — which production must — also blinds us to why a call
+     * looks bad. This one is logcat-only and never reaches a callback, which is what makes it safe
+     * to leave on: the wearer's device says which stage is limiting the picture without sending
+     * anything anywhere.
+     */
+    public static final boolean ENABLE_CALL_PIPELINE_DIAGNOSTICS = true;
+
+    /**
      * Local-testing stopgap that disables the 60s keep-alive watchdog for RTMP/SRT/WHIP streams.
      * When true, {@code scheduleStreamTimeout()} early-returns and an orphaned stream (lost
      * phone/cloud keep-alives via BLE disconnect or killed app) never auto-stops, holding the
