@@ -97,7 +97,8 @@ test("assertNoAppAnalyticsToken accepts a bundle without a PostHog project token
 })
 
 test("assertNoAppAnalyticsToken rejects a bundle that embeds a PostHog project token", () => {
-  const token = "phc_FCweXVAxVgU7wZK4Fk3okOx4RmyNqVHJf62YpZSfJt5"
+  // Synthetic: shaped like a PostHog project token, not a real one.
+  const token = `phc_${"Ab3".repeat(15)}`
   const bundle = Buffer.concat([Buffer.from([0x00, 0xff]), Buffer.from(`apiKey:"${token}"`), Buffer.from([0x00])])
 
   assert.throws(
