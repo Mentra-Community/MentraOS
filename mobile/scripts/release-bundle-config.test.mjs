@@ -2,7 +2,12 @@ import assert from "node:assert/strict"
 import {execFileSync} from "node:child_process"
 import test from "node:test"
 
-import {assertBundleEnvironment, xcodeBuildSettings, xcodeEnvironmentExports} from "./release-bundle-config.mjs"
+import {
+  assertBundleEnvironment,
+  assertNoAppAnalyticsToken,
+  xcodeBuildSettings,
+  xcodeEnvironmentExports,
+} from "./release-bundle-config.mjs"
 
 test("xcodeEnvironmentExports exports public and pinned build values safely", () => {
   const lines = xcodeEnvironmentExports(
@@ -81,6 +86,26 @@ test("assertBundleEnvironment reports keys without leaking values", () => {
     (error) => {
       assert.match(error.message, /EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY/)
       assert.doesNotMatch(error.message, new RegExp(secretValue))
+      return true
+    },
+  )
+})
+
+test("assertNoAppAnalyticsToken accepts a bundle without a PostHog project token", () => {
+  assert.doesNotThrow(() => assertNoAppAnalyticsToken(Buffer.from("var phc=1; api_key: 'not-a-token'"), "iOS"))
+  assert.doesNotThrow(() => assertNoAppAnalyticsToken(Buffer.from([0x00, 0xff, 0x70, 0x68, 0x63, 0x5f]), "Android"))
+})
+
+test("assertNoAppAnalyticsToken rejects a bundle that embeds a PostHog project token", () => {
+  // Synthetic: shaped like a PostHog project token, not a real one.
+  const token = `phc_${"Ab3".repeat(15)}`
+  const bundle = Buffer.concat([Buffer.from([0x00, 0xff]), Buffer.from(`apiKey:"${token}"`), Buffer.from([0x00])])
+
+  assert.throws(
+    () => assertNoAppAnalyticsToken(bundle, "Android"),
+    (error) => {
+      assert.match(error.message, /Android release JS bundle embeds a PostHog project token/)
+      assert.doesNotMatch(error.message, new RegExp(token))
       return true
     },
   )
