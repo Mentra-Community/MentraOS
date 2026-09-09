@@ -1,7 +1,7 @@
 import {ScrollView, View} from "react-native"
 
 import {SETTINGS, useSetting} from "@mentra/engine"
-import {DeviceTypes} from "@/../../cloud/packages/types/src"
+import {DeviceTypes} from "@mentra/engine"
 import {MicrophoneGateSettings} from "@/components/glasses/settings/MicrophoneGateSettings"
 import {MicrophoneSelector} from "@/components/glasses/settings/MicrophoneSelector"
 import {Header, Screen, Text} from "@/components/ignite"

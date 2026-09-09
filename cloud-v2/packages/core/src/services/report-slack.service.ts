@@ -1,10 +1,9 @@
 /**
  * @fileoverview Slack notifications for Cloud V2 reports.
  *
- * Cloud V2 replacement for the Cloud V1 feedback Slack path
- * (cloud/packages/cloud/src/services/notifications/slack.service.ts): bug
- * reports and feedback submitted through /api/client/reports post a summary
- * to the team channel via a Slack Incoming Webhook. Automatic reports can be
+ * Cloud V2 replacement for the retired V1 feedback Slack path: bug reports
+ * and feedback submitted through /api/client/reports post a summary to the
+ * team channel via a Slack Incoming Webhook. Automatic reports can be
  * routed to their own channel via CLOUD_REPORTS_SLACK_WEBHOOK_AUTOMATIC_URL,
  * falling back to the main webhook when unset — the same routing V1 used for
  * SLACK_WEBHOOK_AUTOMATIC_INCIDENTS.

@@ -160,7 +160,7 @@ Retired. MentraOS must not send `wipe_media`, `pairing_finalize`, `pairing_abort
 | Adv | Mentra manufacturer `0xB822`: existing pairing flag byte + versioned trailer (capability + code) |
 | Vs transfer_id | Distinct; code for UX, transfer_id for transaction correlation |
 
-Legacy ads without the Mentra company/flag remain pairable during the compatibility window with clear labeling and mandatory OTA after pair.
+Advertisements without the secure-pairing capability represent existing customer firmware. They remain pairable without the five-tap gate or a compatibility label; normal post-pair OTA policy applies independently.
 
 ---
 
@@ -190,7 +190,7 @@ Capability: protocol version + capability bitmask for mixed-version rollout.
 ## 9. Mobile UX (engine.pairing)
 
 - Prep: five taps, flashing LED, spoken code, match code in app.
-- Scan: filter secure firmware by pairing mode; saved-device reconnect bypasses filter; legacy labeled and OTA-forced; auto-connect when exactly one eligible; multi-result list shows four-char codes; 15 s timeout only when zero eligible; Try Again restarts in place; generation-based stale-callback protection.
+- Scan: filter secure firmware by pairing mode; saved-device reconnect bypasses filter; existing customer firmware remains pairable under its current behavior and uses its normal device name; auto-connect when exactly one eligible; multi-result list shows four-char codes; 15 s timeout only when zero eligible; Try Again restarts in place; generation-based stale-callback protection.
 - Loading: `pairing_info` is a readiness signal only. Ignore `had_previous_bond` for UI gating. Do not confirm, wipe, finalize, or abort a pairing transfer. Secure-capable firmware does not use the legacy pairing_info timeout fallback.
 
 ---

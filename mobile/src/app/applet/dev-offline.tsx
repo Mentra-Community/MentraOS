@@ -5,7 +5,7 @@ import {View} from "react-native"
 
 import {Button, Screen, Text} from "@/components/ignite"
 import {useNavigationStore} from "@/stores/navigation"
-import {decideDevLaunchRoute, engine, useApps} from "@mentra/engine"
+import {decideDevOpenRoute, engine, useApps} from "@mentra/engine"
 import {registerDevApp, type DevAppRecord} from "@mentra/engine-host-internal"
 import {storage} from "@/utils/storage/storage"
 import {useRegisterCapsule} from "@/stores/capsule"
@@ -18,9 +18,9 @@ import CapsuleMenu from "@/effects/CapsuleMenu"
  * centered minimalism — so it reads as "the miniapp tried to load and
  * couldn't" rather than a settings screen with an error.
  *
- *   "Try again"  — re-launch the miniapp; if the dev server is now reachable,
- *                  the local route mounts live and silently snapshots the
- *                  bundle to disk so future offline launches can fall back.
+ *   "Try again"  — re-launch the miniapp. A reachable dev server mounts live
+ *                  and refreshes the on-disk snapshot. If the laptop is still
+ *                  down but a snapshot exists, open that local copy.
  *   "Re-scan QR" — open the scanner; new QR replaces the old dev URL.
  */
 export default function DevMiniappOfflineScreen() {
@@ -60,7 +60,11 @@ export default function DevMiniappOfflineScreen() {
     // Pre-flight reachability before deciding the route. If still down,
     // stay on the offline screen (no-op) so the user can try again or
     // re-scan. If up, replace into /applet/local.
-    const launchResult = await decideDevLaunchRoute(packageName, devUrlRes.value)
+    const launchResult = await decideDevOpenRoute(packageName, devUrlRes.value)
+    if (launchResult.decision === "cached") {
+      await engine.miniapps.setForeground(packageName)
+      return
+    }
     if (launchResult.decision === "live") {
       // A scan whose very first probe failed only stashed routing keys, so the
       // package may not be registered yet. Register from the manifest we just

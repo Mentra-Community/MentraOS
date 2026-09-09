@@ -35,6 +35,7 @@ const releasePlan = {
   otaInputs: {
     firmwareManifest: {path: "asg_client/ota_manifests/firmware_live.json", sha256: "d".repeat(64)},
     mtkPatches: [{start_firmware: "20260709", end_firmware: "20260730", url: "https://example.com/mtk.zip"}],
+    mtkFullOta: {end_firmware: "20260730", url: "https://example.com/full.zip", sha256: "f".repeat(64), size: 640341205},
     besFirmware: {version: "26.8.1", url: "https://example.com/bes.bin"},
   },
 }
@@ -60,6 +61,7 @@ function fixture() {
     manifestPath,
     `${JSON.stringify(
       {
+        releaseVersion: releasePlan.releaseIdentity,
         apps: {
           "com.mentra.asg_client": {
             versionCode: identity.versionCode,
@@ -70,6 +72,7 @@ function fixture() {
           },
         },
         mtk_patches: releasePlan.otaInputs.mtkPatches,
+        mtk_full_ota: releasePlan.otaInputs.mtkFullOta,
         bes_firmware: releasePlan.otaInputs.besFirmware,
       },
       null,
@@ -127,10 +130,10 @@ test("creates a release result only for an exact ASG, MTK, and BES selection", (
     selectionUrl: "https://example.com/asg-selection.json",
     selectionStatus: "published",
     manifestPath: fixtureData.manifestPath,
-    manifestUrl: `https://github.com/Mentra-Community/MentraOS/releases/download/mentra-v3.1.0-beta.57/${releasePlan.artifactNames.otaManifest}`,
+    manifestUrl: `https://github.com/Mentra-Community/MentraOS/releases/download/mentra-builds-v3.1.0/${releasePlan.artifactNames.otaManifest}`,
     bundlePath: fixtureData.bundlePath,
     bundleUrl:
-      "https://github.com/Mentra-Community/MentraOS/releases/download/mentra-v3.1.0-beta.57/mentra-live-ota-bundle-3.1.0-beta.57.zip",
+      "https://github.com/Mentra-Community/MentraOS/releases/download/mentra-builds-v3.1.0/mentra-live-ota-bundle-3.1.0-beta.57.zip",
     bundleStatus: "published",
     manifestStatus: "reused",
     reused: true,
@@ -150,6 +153,40 @@ test("creates a release result only for an exact ASG, MTK, and BES selection", (
   assert.equal(result.asg.originatingReleaseSetId, releasePlan.releaseSetId)
   assert.equal(result.firmwareManifestSha256, releasePlan.otaInputs.firmwareManifest.sha256)
   assert.match(result.manifest.sha256, /^[0-9a-f]{64}$/)
+})
+
+test("rejects a manifest attributed to a different coordinated release", () => {
+  const fixtureData = fixture()
+  const manifest = JSON.parse(readFileSync(fixtureData.manifestPath, "utf8"))
+  manifest.releaseVersion = "3.1.0-beta.56"
+  writeFileSync(fixtureData.manifestPath, JSON.stringify(manifest))
+
+  assert.throws(
+    () =>
+      createOtaReleaseResult({
+        releasePlan,
+        identity,
+        provenance: fixtureData.provenance,
+        selectionPath: fixtureData.selectionPath,
+        selectionUrl: "https://example.com/asg-selection.json",
+        selectionStatus: "published",
+        manifestPath: fixtureData.manifestPath,
+        manifestUrl: "https://example.com/version.json",
+        bundlePath: fixtureData.bundlePath,
+        bundleUrl: "https://example.com/bundle.zip",
+        bundleStatus: "published",
+        manifestStatus: "published",
+        reused: false,
+        workflow: {
+          apkPath: fixtureData.apkPath,
+          signingCertificateSha256,
+          repository: "Mentra-Community/MentraOS",
+          runId: "123",
+          runAttempt: 1,
+        },
+      }),
+    /does not identify the release/,
+  )
 })
 
 test("rejects a substituted ASG selection record", () => {
@@ -223,10 +260,11 @@ test("compares promoted firmware semantically instead of by object key order", (
   )
 })
 
-test("rejects a manifest whose promoted firmware differs from release intent", () => {
+for (const field of ["bes_firmware", "mtk_full_ota"]) {
+test(`rejects a manifest whose ${field} differs from release intent`, () => {
   const fixtureData = fixture()
   const manifest = JSON.parse(readFileSync(fixtureData.manifestPath, "utf8"))
-  manifest.bes_firmware.version = "unexpected"
+  manifest[field].url = "https://example.com/unexpected"
   writeFileSync(fixtureData.manifestPath, JSON.stringify(manifest))
 
   assert.throws(
@@ -253,6 +291,7 @@ test("rejects a manifest whose promoted firmware differs from release intent", (
           runAttempt: 1,
         },
       }),
-    /BES input differs/,
+    /(?:BES input|MTK full OTA) differs/,
   )
 })
+}

@@ -2,7 +2,12 @@ import assert from "node:assert/strict"
 import {execFileSync} from "node:child_process"
 import test from "node:test"
 
-import {assertBundleEnvironment, xcodeBuildSettings, xcodeEnvironmentExports} from "./release-bundle-config.mjs"
+import {
+  RELEASE_BUNDLE_ENV_KEYS,
+  assertBundleEnvironment,
+  xcodeBuildSettings,
+  xcodeEnvironmentExports,
+} from "./release-bundle-config.mjs"
 
 test("xcodeEnvironmentExports exports public and pinned build values safely", () => {
   const lines = xcodeEnvironmentExports(
@@ -55,6 +60,22 @@ test("xcodeBuildSettings exposes the same public values to every build phase", (
     "NODE_ENV=production",
     "NODE_BINARY=/opt/node with spaces/bin/node",
   ])
+})
+
+test("release bundle gate does not require BUILD_TIME so Metro cache reuse cannot fail CI", () => {
+  assert.equal(RELEASE_BUNDLE_ENV_KEYS.includes("EXPO_PUBLIC_BUILD_TIME"), false)
+  assert.equal(RELEASE_BUNDLE_ENV_KEYS.includes("EXPO_PUBLIC_BUILD_COMMIT"), true)
+
+  assert.doesNotThrow(() =>
+    assertBundleEnvironment(
+      Buffer.from("prefix abc1234 suffix"),
+      {
+        EXPO_PUBLIC_BUILD_COMMIT: "abc1234",
+        EXPO_PUBLIC_BUILD_TIME: "2026-08-31_11-27AM",
+      },
+      "iOS",
+    ),
+  )
 })
 
 test("assertBundleEnvironment accepts expected nonempty runtime values", () => {

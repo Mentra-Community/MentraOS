@@ -8,7 +8,7 @@ import {serializeReleaseRecord} from "./release-family.mjs"
 
 const SHA256_PATTERN = /^[0-9a-f]{64}$/
 const COMMIT_PATTERN = /^[0-9a-f]{40}$/
-const STATUSES = new Set(["built", "published", "reused"])
+const STATUSES = new Set(["built", "published", "reused", "submitted"])
 
 function readJson(file) {
   return JSON.parse(readFileSync(file, "utf8"))

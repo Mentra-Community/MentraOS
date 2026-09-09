@@ -3,8 +3,8 @@
 ## Problem this solves
 
 Branch protection requires a **fixed list of check names**. Our area builders are
-**path-filtered** (iOS/Android only run when `mobile/**` changes, cloud only when
-`cloud/**` changes, etc.). A path-filtered workflow that doesn't match **never
+**path-filtered** (iOS/Android only run when `mobile/**` changes, Cloud V2 only
+when `cloud-v2/**` changes, etc.). A path-filtered workflow that doesn't match **never
 reports a status**, so requiring it directly leaves the PR stuck forever in
 _"Expected — waiting for status to be reported."_ That is exactly what blocked
 every `dev` PR (#3204, #3205, #3206, …): the required contexts
@@ -26,26 +26,16 @@ posts a single `ci-gate-dev` commit status:
 | A gated workflow that ran is still in progress / queued                  | ⏳ pending          |
 | A gated workflow **did not run** (path filter didn't match this PR)      | not gated — ignored |
 
-Two kinds of gated workflow, with different "runs when" behavior:
-
-- **Path-filtered builders** — iOS/Android/ASG/jest, `Bun Lockfile Checks`, and
-  `Run Cloud Tests ☁️` only run when their area changes (`mobile/**`,
-  `asg_client/**`, lockfile/workspace package manifests, `cloud/**`). On a PR
-  that doesn't touch their area they **don't run at all**, so the gate never
-  waits on them. This is the heavy work (Mac builds, device tests) plus the
-  targeted dependency-integrity work we want scoped — a cloud-only PR never runs
-  iOS/Android, and vice-versa.
-- **Always-on cloud builds** — the four `🧪 Test * build` workflows have an
-  **unfiltered** `pull_request` trigger, so they run on **every** `dev` PR. They
-  self-skip internally (via `dorny/paths-filter`) when their package didn't
-  change, reporting `success` quickly. So the gate technically always includes
-  them, but on an unrelated PR they finish near-instantly and don't meaningfully
-  block.
-
-Net effect: each PR is gated on the **heavy** builders only for the areas it
-touches (the requirement — your cloud engineer never runs iOS/Android), plus the
-four lightweight cloud build checks that run-and-pass on everything. Nothing that
-doesn't run is ever waited on.
+All aggregated workflows are path-filtered. iOS/Android/ASG/jest,
+`Bun Lockfile Checks`, coordinated release-family checks, and
+`Cloud V2 Validation` run only when their area changes. A workflow that does not
+match the PR does not run, so the gate never waits on it. A Cloud V2-only PR does
+not run iOS/Android, and a mobile-only PR does not run Cloud V2 validation.
+If no gated workflow registers at all, the gate succeeds after the same
+90-second registration grace window instead of polling until its timeout. That
+empty-area success does not suppress the grace window if a gated workflow
+registers later, so one late completion cannot hide sibling builders that have
+not appeared yet.
 
 ### Why match by workflow name, not job/check-run name
 
@@ -58,19 +48,15 @@ below. `Recovery Worker Build` is deliberately excluded.
 
 ### Workflows aggregated (the allowlist)
 
-| Area        | Workflow name               | Runs when                                                 |
-| ----------- | --------------------------- | --------------------------------------------------------- |
-| iOS         | `Mobile App iOS Build`      | `mobile/**`                                               |
-| Android     | `Mobile App Android Build`  | `mobile/**`                                               |
-| ASG         | `MentraOS ASG Client Build` | `asg_client/**`                                           |
-| Mobile jest | `Mobile App Quality Checks` | `mobile/**`                                               |
-| Release     | `Coordinated Release Family Checks` | coordinated release definitions and workflows      |
-| Lockfiles   | `Bun Lockfile Checks`       | root/mobile/sdk lockfiles and workspace package manifests |
-| Cloud       | `🧪 Test Cloud build`       | all dev PRs (self-skips internally)                       |
-| SDK         | `🧪 Test SDK build`         | all dev PRs (self-skips internally)                       |
-| Console     | `🧪 Test Console build`     | all dev PRs (self-skips internally)                       |
-| Store       | `🧪 Test Store build`       | all dev PRs (self-skips internally)                       |
-| Cloud tests | `Run Cloud Tests ☁️`        | `cloud/**` (PR trigger added in this PR)                  |
+| Area        | Workflow name                       | Runs when                                                 |
+| ----------- | ----------------------------------- | --------------------------------------------------------- |
+| iOS         | `Mobile App iOS Build`              | `mobile/**`                                               |
+| Android     | `Mobile App Android Build`          | `mobile/**`                                               |
+| ASG         | `MentraOS ASG Client Build`         | `asg_client/**`                                           |
+| Mobile jest | `Mobile App Quality Checks`         | `mobile/**`                                               |
+| Release     | `Coordinated Release Family Checks` | coordinated release definitions and workflows             |
+| Lockfiles   | `Bun Lockfile Checks`               | root/mobile/sdk lockfiles and workspace package manifests |
+| Cloud V2    | `Cloud V2 Validation`               | `cloud-v2/**`, `sdk/miniapp-cli/**`, or its workflow      |
 
 If you add or remove a builder, update the `GATED` set **and** the `workflow_run`
 `workflows:` list in `ci-gate.yml` — both must list the same workflow names.
@@ -89,8 +75,8 @@ Then:
 
 1. Open a throwaway PR to `dev` touching `mobile/**`; confirm `ci-gate-dev` goes
    pending → success and that iOS/Android/jest are the builders it waited on.
-2. Open one touching only `cloud/**`; confirm `ci-gate-dev` waits on the cloud
-   builds + `Run Cloud Tests ☁️` and **not** on mobile.
+2. Open one touching only `cloud-v2/**`; confirm `ci-gate-dev` waits on
+   `Cloud V2 Validation` and **not** on mobile.
 3. Set branch protection on `dev` to require the single context **`ci-gate-dev`**
    (Settings → Branches → `dev`, or the API call below). Remove the old
    `Build Mobile App (*)`, `Build ASG Client`, `Upload to staging-builds release`,

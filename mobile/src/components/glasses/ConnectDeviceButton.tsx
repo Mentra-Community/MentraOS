@@ -1,4 +1,4 @@
-import {DeviceTypes} from "@/../../cloud/packages/types/src"
+import {DeviceTypes} from "@mentra/engine"
 import {decideConnectButtonAction, engine} from "@mentra/engine"
 import {ActivityIndicator, View} from "react-native"
 

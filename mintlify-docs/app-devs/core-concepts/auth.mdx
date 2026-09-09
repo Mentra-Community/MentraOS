@@ -4,6 +4,10 @@ description: "Call your miniapp's backend as the signed-in Mentra user."
 icon: "key"
 ---
 
+import BetaNote from '/snippets/beta-note.mdx'
+
+<BetaNote />
+
 If your miniapp has its own backend, `session.auth` lets you call it as the
 current Mentra user, with no login screen. The host hands your miniapp a signed
 token; your backend verifies it and gets the user's id. Two steps.

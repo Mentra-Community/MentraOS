@@ -8,7 +8,7 @@ on:
         required: true
         type: string
       lockfile:
-        description: "Path or glob to lockfile(s) used for cache key (e.g., cloud/websites/console/bun.lock, **/bun.lock*)"
+        description: "Path or glob to lockfile(s) used for cache key (e.g., mobile/bun.lock, **/bun.lock*)"
         required: false
         type: string
         default: "**/bun.lock*"

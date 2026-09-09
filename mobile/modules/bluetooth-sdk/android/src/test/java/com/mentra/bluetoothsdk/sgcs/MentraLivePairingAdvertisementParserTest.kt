@@ -8,6 +8,64 @@ import org.junit.Test
 
 class MentraLivePairingAdvertisementParserTest {
     @Test
+    fun connectedPairingRecoveryRequiresExplicitPendingTarget() {
+        assertFalse(
+                isPendingMentraLivePairingTarget(
+                        connectedName = "MENTRA_LIVE_BLE_OWNER",
+                        connectedAddress = "AA:BB:CC:DD:EE:FF",
+                        pendingName = "",
+                        pendingAddress = "",
+                )
+        )
+        assertTrue(
+                isPendingMentraLivePairingTarget(
+                        connectedName = "MENTRA_LIVE_BLE_TARGET",
+                        connectedAddress = "AA:BB:CC:DD:EE:FF",
+                        pendingName = "MENTRA_LIVE_BLE_TARGET",
+                        pendingAddress = "",
+                )
+        )
+        assertTrue(
+                isPendingMentraLivePairingTarget(
+                        connectedName = "MENTRA_LIVE_BLE_TARGET",
+                        connectedAddress = "AA:BB:CC:DD:EE:FF",
+                        pendingName = "OTHER",
+                        pendingAddress = "aa:bb:cc:dd:ee:ff",
+                )
+        )
+        assertFalse(
+                isPendingMentraLivePairingTarget(
+                        connectedName = "MENTRA_LIVE_BLE_TARGET",
+                        connectedAddress = "AA:BB:CC:DD:EE:FF",
+                        pendingName = "MENTRA_LIVE_BLE_TARGET",
+                        pendingAddress = "11:22:33:44:55:66",
+                )
+        )
+    }
+
+    @Test
+    fun connectedPairingRecoveryRequiresActiveGattConnection() {
+        assertFalse(
+                shouldRecoverConnectedMentraLivePairingTarget(
+                        isConnected = false,
+                        connectedName = "MENTRA_LIVE_BLE_TARGET",
+                        connectedAddress = "AA:BB:CC:DD:EE:FF",
+                        pendingName = "MENTRA_LIVE_BLE_TARGET",
+                        pendingAddress = "AA:BB:CC:DD:EE:FF",
+                )
+        )
+        assertTrue(
+                shouldRecoverConnectedMentraLivePairingTarget(
+                        isConnected = true,
+                        connectedName = "MENTRA_LIVE_BLE_TARGET",
+                        connectedAddress = "AA:BB:CC:DD:EE:FF",
+                        pendingName = "MENTRA_LIVE_BLE_TARGET",
+                        pendingAddress = "AA:BB:CC:DD:EE:FF",
+                )
+        )
+    }
+
+    @Test
     fun parsesMarkedSecurePairingAdvertisement() {
         val result = MentraLivePairingAdvertisementParser.parse(securePayload(pairingFlag = 1))
 

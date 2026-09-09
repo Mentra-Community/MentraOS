@@ -26,10 +26,8 @@ For the UDP NLB record we **must use DNS-only mode** (grey cloud). Proxied
 mode would just drop UDP packets entirely (Cloudflare returns its own IP,
 which isn't listening on 8000/udp).
 
-v1 used the same pattern — see the comment in v1's
-[`cloud/udp-service.yaml`](../../../../cloud/udp-service.yaml):
-
-> DNS: udp.debug.augmentos.cloud → LoadBalancer IP (Cloudflare DNS-only mode)
+V1 used the same DNS-only pattern. Cloud V2 preserves it because Cloudflare's
+HTTP proxy does not carry UDP traffic.
 
 ## Setting up a DNS record for a new NLB
 

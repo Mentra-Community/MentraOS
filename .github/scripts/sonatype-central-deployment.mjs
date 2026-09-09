@@ -37,14 +37,14 @@ function requireDeploymentRecord(record) {
   return record
 }
 
-export async function uploadManagedDeployment({bundle, token, deploymentName, expectedPurls, fetchImpl = fetch}) {
+export async function uploadAutomaticDeployment({bundle, token, deploymentName, expectedPurls, fetchImpl = fetch}) {
   if (!bundle || !token || !deploymentName || expectedPurls.length === 0) {
     throw new Error("Bundle, token, deployment name, and expected PURLs are required")
   }
   const bytes = readFileSync(bundle)
   const url = new URL("/api/v1/publisher/upload", BASE_URL)
   url.searchParams.set("name", deploymentName)
-  url.searchParams.set("publishingType", "USER_MANAGED")
+  url.searchParams.set("publishingType", "AUTOMATIC")
   const form = new FormData()
   form.append("bundle", new Blob([bytes], {type: "application/octet-stream"}), path.basename(bundle))
   const response = await fetchImpl(url, {
@@ -169,7 +169,7 @@ async function main() {
   const args = parseArgs(process.argv.slice(3))
   let result
   if (command === "upload") {
-    result = await uploadManagedDeployment({
+    result = await uploadAutomaticDeployment({
       bundle: path.resolve(args.bundle),
       token: process.env.MAVEN_CENTRAL_TOKEN_BASE64,
       deploymentName: args.name,

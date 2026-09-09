@@ -47,7 +47,7 @@ export default defineConfig([
       },
       "import/resolver": {
         typescript: {
-          project: ["./mobile/tsconfig.json", "./mobile/e2e-tests/ui/tsconfig.json", "./cloud/tsconfig.json"],
+          project: ["./mobile/tsconfig.json", "./mobile/e2e-tests/ui/tsconfig.json"],
         },
       },
     },

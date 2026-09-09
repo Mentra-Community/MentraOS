@@ -1,27 +1,27 @@
-import React, {useCallback, useEffect, useMemo, useRef, useState} from "react"
-import {ActivityIndicator, Pressable, StyleSheet, Text, View, type StyleProp, type ViewStyle} from "react-native"
+/* eslint-disable react-native/no-raw-text -- BodyText and PercentText are local Text wrappers. */
+import React, {useMemo} from "react"
+import {
+  ActivityIndicator,
+  Pressable,
+  ScrollView,
+  StyleSheet,
+  Text,
+  View,
+  type StyleProp,
+  type ViewStyle,
+} from "react-native"
+import {useMarkdown, type MarkedStyles, type useMarkdownHookOptions} from "react-native-marked"
 import {SafeAreaView} from "react-native-safe-area-context"
 import Svg, {Path, Rect} from "react-native-svg"
 
-import {ota} from "../facades/ota"
 import {
-  beginOtaAutoChain,
-  clearOtaAutoChainReconnectWait,
-  isOtaAutoChainActive,
-  otaAutoChainFingerprint,
-  otaAutoChainReconnectWaitRemaining,
-  stopOtaAutoChain,
-  tryAdvanceOtaAutoChain,
-} from "../services/OtaAutoChain"
-import {
-  BES_INSTALL_RESTART_MESSAGE,
-  getOtaErrorMessage,
-  shouldRequireGlassesRebootForBesFailure,
-  shouldShowChangeWifiForOtaDownloadFailure,
-} from "../services/OtaErrorMapping"
-import {useEngineSnapshot} from "./useEngineSnapshot"
+  MINIMUM_OTA_BATTERY_LEVEL,
+  useMentraLiveOta,
+  type MentraLiveOtaController,
+  type MentraLiveOtaFlowPage,
+} from "./useMentraLiveOta"
 
-export type MentraLiveOtaFlowPage = "check" | "progress"
+export type {MentraLiveOtaFlowPage} from "./useMentraLiveOta"
 
 export type MentraLiveOtaFlowTheme = {
   background: string
@@ -40,7 +40,7 @@ export type MentraLiveOtaFlowProps = {
   deviceName?: string
   /** Entry page. `progress` exists for recovery/deep-link compatibility. */
   initialPage?: MentraLiveOtaFlowPage
-  /** Start the OTA-only projections. Full engine hosts should pass false. */
+  /** Start the OTA-only projections. Full Engine hosts should pass false. */
   initializeRuntime?: boolean
   /** Called after the final check or when the user leaves an optional update. */
   onFinished: () => void
@@ -59,11 +59,6 @@ export type MentraLiveOtaFlowProps = {
   style?: StyleProp<ViewStyle>
 }
 
-type CheckState = "checking" | "update_available" | "no_update" | "dev_build" | "error"
-
-const AUTO_CHAIN_NETWORK_RETRY_DELAY_MS = 5000
-const AUTO_CHAIN_COMPLETE_DELAY_MS = 750
-
 const DEFAULT_THEME: MentraLiveOtaFlowTheme = {
   background: "#FFFFFF",
   border: "#D7DFDA",
@@ -76,23 +71,43 @@ const DEFAULT_THEME: MentraLiveOtaFlowTheme = {
 
 const ENGLISH_COPY: Record<string, string> = {
   "common:continue": "Continue",
+  "common:done": "Done",
   "ota:checkingForUpdates": "Checking for updates",
   "ota:checkingForUpdatesMessage":
     "Connected devices will perform automatic updates. Automatic updates can be disabled in Device Settings",
+  "ota:finishingUpdate": "Finishing your update",
+  "ota:checkingAdditionalUpdates": "Checking whether your glasses need any additional updates.",
   "ota:updateAvailable": "{{deviceName}} Update Available",
+  "ota:batteryRequiredTitle": "Charge {{deviceName}} to Update",
+  "ota:batteryRequiredMessage":
+    "{{deviceName}} is currently at {{batteryLevel}}%. Charge it to at least {{minimumBatteryLevel}}% before updating.",
+  "ota:batteryRequiredLiveUpdate": "This screen will update automatically as the battery charges.",
   "ota:updateConnectWifi": "Connect your {{deviceName}} to WiFi to install the update.",
+  "ota:wifiRequiredTitle": "WiFi Needed for Update",
   "ota:updateDescription":
     "A new update is available for your glasses. We recommend updating now for the best experience.",
+  "ota:updateSequenceMessage":
+    "Your glasses may install more than one update and restart several times. Keep them nearby until finished.",
+  "ota:releaseTransition": "{{fromVersion}} → {{toVersion}}",
+  "ota:releaseTransitionUnknown": "Current version unknown → {{toVersion}}",
+  "ota:updatedToVersion": "Updated to {{version}}",
   "ota:downgradeAvailable": "{{deviceName}} Version Change Required",
   "ota:downgradeDescription":
     "This app requires an earlier glasses software version. Your photos and videos will be preserved, but glasses settings will be reset and restored automatically after the change.",
   "ota:updateNow": "Update Now",
   "ota:setupWifi": "Setup WiFi",
   "ota:updateLater": "Later",
+  "ota:updateComplete": "Update complete",
+  "ota:whatsNew": "What's new",
   "ota:upToDate": "Up To Date",
   "ota:devBuild": "Development Build",
   "ota:devBuildNoOta":
     "This mobile app is a development build, so automatic glasses updates are disabled. Use the developer settings manifest override to update them manually.",
+  "ota:unofficialClient": "Updates Blocked",
+  "ota:unofficialClientNoOta":
+    "Your glasses are running a sideloaded client, so updates are blocked. Restore the stock client to update them.",
+  "ota:unofficialClientNoOtaNamed":
+    "Your glasses are running a sideloaded client ({{packageName}}), so updates are blocked. Restore the stock client to update them.",
   "ota:noUpdatesAvailable": "Your glasses are running the latest version.",
   "ota:checkFailed": "Check Failed",
   "ota:checkFailedMessage": "Couldn't check for updates. Please check your connection and try again.",
@@ -103,6 +118,10 @@ const ENGLISH_COPY: Record<string, string> = {
   "ota:versionChangeRestarting": "Installing a different version…",
   "ota:versionChangeVerifying": "Verifying your glasses…",
   "ota:versionChangeKeepNearby": "Keep your glasses nearby and connected. They will restart on their own.",
+  "ota:restartingGlasses": "Restarting {{deviceName}}…",
+  "ota:restartingGlassesMessage":
+    "The update is installed. Keep your glasses nearby and leave this screen open while they finish starting.",
+  "ota:restartingGlassesAutomatic": "We'll continue automatically when they're ready.",
   "ota:versionChangeComplete": "Version Change Complete",
   "ota:versionChangeCompleteMessage":
     "Your glasses are now on the required version. Their settings were reset and are being restored automatically.",
@@ -133,29 +152,13 @@ export function MentraLiveOtaFlow({
   translate = defaultTranslate,
 }: MentraLiveOtaFlowProps) {
   const colors = useMemo(() => ({...DEFAULT_THEME, ...theme}), [theme])
-  const [page, setPage] = useState<MentraLiveOtaFlowPage>(initialPage)
-  const [checkGeneration, setCheckGeneration] = useState(0)
-  const [runtimeReady, setRuntimeReady] = useState(!initializeRuntime)
-
-  useEffect(() => {
-    if (!initializeRuntime) {
-      setRuntimeReady(true)
-      return
-    }
-    let cancelled = false
-    setRuntimeReady(false)
-    void ota.initialize().finally(() => {
-      if (!cancelled) setRuntimeReady(true)
-    })
-    return () => {
-      cancelled = true
-    }
-  }, [initializeRuntime])
-
-  const showCheck = useCallback(() => {
-    setPage("check")
-    setCheckGeneration((generation) => generation + 1)
-  }, [])
+  const controller = useMentraLiveOta({
+    initialPage,
+    initializeRuntime,
+    onFinished,
+    onFirmwareRestartingChange,
+    onOpenWifiSetup,
+  })
 
   return (
     <SafeAreaView style={[styles.safeArea, {backgroundColor: colors.background}, style]}>
@@ -163,257 +166,44 @@ export function MentraLiveOtaFlow({
         <View />
         <MentraMark color={colors.primary} />
       </View>
-      {!runtimeReady ? (
-        <FlowPage colors={colors} icon="download" title={translate("ota:checkingForUpdates")}>
-          <ActivityIndicator size="large" color={colors.foreground} />
-        </FlowPage>
-      ) : page === "check" ? (
-        <OtaCheckPage
-          allowDevSkip={allowDevSkip}
-          colors={colors}
-          deviceName={deviceName}
-          generation={checkGeneration}
-          onFinished={onFinished}
-          onOpenWifiSetup={onOpenWifiSetup}
-          onStartProgress={() => setPage("progress")}
-          translate={translate}
-        />
-      ) : (
-        <OtaProgressPage
-          colors={colors}
-          onFirmwareRestartingChange={onFirmwareRestartingChange}
-          onOpenWifiSetup={onOpenWifiSetup}
-          onReturnToCheck={showCheck}
-          superMode={superMode}
-          translate={translate}
-        />
-      )}
+      <OtaFlowContent
+        allowDevSkip={allowDevSkip}
+        colors={colors}
+        controller={controller}
+        deviceName={deviceName}
+        superMode={superMode}
+        translate={translate}
+      />
     </SafeAreaView>
   )
 }
 
-type CheckPageProps = {
-  allowDevSkip: boolean
-  colors: MentraLiveOtaFlowTheme
-  deviceName: string
-  generation: number
-  onFinished: () => void
-  onOpenWifiSetup: () => void
-  onStartProgress: () => void
-  translate: MentraLiveOtaFlowTranslate
-}
-
-function OtaCheckPage({
+function OtaFlowContent({
   allowDevSkip,
   colors,
+  controller,
   deviceName,
-  generation,
-  onFinished,
-  onOpenWifiSetup,
-  onStartProgress,
+  superMode,
   translate,
-}: CheckPageProps) {
-  const otaSnapshot = useEngineSnapshot(ota.snapshot, ota.onSnapshot)
-  const [checkState, setCheckState] = useState<CheckState>("checking")
-  const [isUpdateRequired, setIsUpdateRequired] = useState(true)
-  const [isDowngradeUpdate, setIsDowngradeUpdate] = useState(false)
-  const [errorKind, setErrorKind] = useState<"network" | "pin_unavailable">("network")
-  const [updateFingerprint, setUpdateFingerprint] = useState<string | null>(null)
-  const [retryGeneration, setRetryGeneration] = useState(0)
-  const performCheckGenerationRef = useRef(0)
-  const activeCheckKeyRef = useRef<string | null>(null)
-  const checkStartedRef = useRef(false)
-  const checkCompletedRef = useRef(false)
-  const selectedCheckResultRef = useRef<Awaited<ReturnType<typeof ota.checkForUpdates>> | null>(null)
-  const onFinishedRef = useRef(onFinished)
-  const onStartProgressRef = useRef(onStartProgress)
-  onFinishedRef.current = onFinished
-  onStartProgressRef.current = onStartProgress
+}: {
+  allowDevSkip: boolean
+  colors: MentraLiveOtaFlowTheme
+  controller: MentraLiveOtaController
+  deviceName: string
+  superMode: boolean
+  translate: MentraLiveOtaFlowTranslate
+}) {
+  const {state} = controller
 
-  const glassesWifiConnected = otaSnapshot.wifiConnected
-  const glassesWifiStatusKnown = otaSnapshot.wifiStatusKnown
-  const hotspotOtaSupported = otaSnapshot.hotspotOtaVersion === 1
-  const canInstallUpdate = glassesWifiStatusKnown && (glassesWifiConnected || hotspotOtaSupported)
-  const checkKey = `${generation}:${retryGeneration}`
-
-  const navigateToProgress = useCallback(() => {
-    ota.clearProgress()
-    onStartProgressRef.current()
-  }, [])
-
-  useEffect(() => {
-    const MIN_DISPLAY_TIME_MS = 1100
-    const MAX_WAIT_FOR_VERSION_INFO_MS = 10_000
-    if (activeCheckKeyRef.current !== checkKey) {
-      activeCheckKeyRef.current = checkKey
-      checkStartedRef.current = false
-      checkCompletedRef.current = false
-      setCheckState("checking")
-    }
-
-    const myGeneration = ++performCheckGenerationRef.current
-    let cancelled = false
-    let reconnectTimeout: ReturnType<typeof setTimeout> | null = null
-
-    const performCheck = async () => {
-      if (checkCompletedRef.current) return
-      if (!otaSnapshot.connected) {
-        if (isOtaAutoChainActive()) {
-          const remainingMs = otaAutoChainReconnectWaitRemaining()
-          if (remainingMs === null) return
-          reconnectTimeout = setTimeout(() => {
-            if (cancelled || myGeneration !== performCheckGenerationRef.current || ota.snapshot().connected) return
-            stopOtaAutoChain()
-            checkCompletedRef.current = true
-            setCheckState("error")
-          }, remainingMs)
-          return
-        }
-        if (checkStartedRef.current) {
-          stopOtaAutoChain()
-          checkCompletedRef.current = true
-          setCheckState("error")
-          return
-        }
-        checkCompletedRef.current = true
-        onFinishedRef.current()
-        return
-      }
-
-      clearOtaAutoChainReconnectWait()
-      checkStartedRef.current = true
-      const startTime = Date.now()
-      try {
-        let result = await ota.checkForUpdates({
-          waitForBuildNumberMs: MAX_WAIT_FOR_VERSION_INFO_MS,
-          waitForBesVersionMs: 5000,
-          waitForMtkVersionMs: 2000,
-          refreshVersionInfo: true,
-          fixClockBeforeCheck: false,
-        })
-        if (cancelled || myGeneration !== performCheckGenerationRef.current) return
-        if (!result.hasCheckCompleted && result.checkFailureReason === "network" && isOtaAutoChainActive()) {
-          await new Promise((resolve) => setTimeout(resolve, AUTO_CHAIN_NETWORK_RETRY_DELAY_MS))
-          if (cancelled || myGeneration !== performCheckGenerationRef.current) return
-          result = await ota.checkForUpdates({
-            waitForBuildNumberMs: MAX_WAIT_FOR_VERSION_INFO_MS,
-            waitForBesVersionMs: 5000,
-            waitForMtkVersionMs: 2000,
-            refreshVersionInfo: true,
-            fixClockBeforeCheck: false,
-          })
-        }
-        if (cancelled || myGeneration !== performCheckGenerationRef.current) return
-        selectedCheckResultRef.current = result
-        await new Promise((resolve) => setTimeout(resolve, Math.max(0, MIN_DISPLAY_TIME_MS - (Date.now() - startTime))))
-        if (cancelled || myGeneration !== performCheckGenerationRef.current) return
-
-        if (result.skippedReason === "disconnected") {
-          stopOtaAutoChain()
-          checkCompletedRef.current = true
-          setCheckState("error")
-          return
-        }
-        if (result.skippedReason === "missing_build") {
-          checkCompletedRef.current = true
-          if (isOtaAutoChainActive()) {
-            stopOtaAutoChain()
-            setCheckState("error")
-          } else {
-            onFinishedRef.current()
-          }
-          return
-        }
-        if (result.skippedReason === "dev_build") {
-          stopOtaAutoChain()
-          checkCompletedRef.current = true
-          ota.clearUpdateAvailable()
-          setCheckState("dev_build")
-          return
-        }
-        if (!result.hasCheckCompleted) {
-          stopOtaAutoChain()
-          checkCompletedRef.current = true
-          setErrorKind(result.checkFailureReason === "pin_unavailable" ? "pin_unavailable" : "network")
-          setCheckState("error")
-          return
-        }
-        if (result.updateAvailable && result.updateInfo) {
-          setIsUpdateRequired(result.isRequired)
-          setIsDowngradeUpdate(result.updateInfo.isDowngrade === true)
-          const fingerprint = otaAutoChainFingerprint(result)
-          setUpdateFingerprint(fingerprint)
-          if (isOtaAutoChainActive()) {
-            const snapshot = ota.snapshot()
-            if (!snapshot.wifiStatusKnown) return
-            if (!snapshot.wifiConnected && snapshot.hotspotOtaVersion !== 1) {
-              stopOtaAutoChain()
-            } else {
-              const admission = tryAdvanceOtaAutoChain(fingerprint, result.updateInfo.isDowngrade === true)
-              if (admission.advance) {
-                checkCompletedRef.current = true
-                ota.installSession.prepare(result)
-                navigateToProgress()
-                return
-              }
-            }
-          }
-          checkCompletedRef.current = true
-          setCheckState("update_available")
-          return
-        }
-        stopOtaAutoChain()
-        checkCompletedRef.current = true
-        ota.clearUpdateAvailable()
-        setCheckState("no_update")
-      } catch (error) {
-        console.error("OTA check failed:", error)
-        await new Promise((resolve) => setTimeout(resolve, Math.max(0, MIN_DISPLAY_TIME_MS - (Date.now() - startTime))))
-        if (cancelled || myGeneration !== performCheckGenerationRef.current) return
-        stopOtaAutoChain()
-        checkCompletedRef.current = true
-        setCheckState("error")
-      }
-    }
-
-    void performCheck()
-    return () => {
-      cancelled = true
-      if (reconnectTimeout) clearTimeout(reconnectTimeout)
-    }
-  }, [
-    checkKey,
-    otaSnapshot.connected,
-    otaSnapshot.wifiStatusKnown,
-    navigateToProgress,
-  ])
-
-  const retry = () => {
-    setCheckState("checking")
-    setRetryGeneration((value) => value + 1)
+  if (state.screen === "initializing") {
+    return (
+      <FlowPage colors={colors} icon="download" title={translate("ota:checkingForUpdates")}>
+        <ActivityIndicator size="large" color={colors.foreground} />
+      </FlowPage>
+    )
   }
 
-  const updateNow = () => {
-    const result = selectedCheckResultRef.current
-    if (!result) {
-      setCheckState("error")
-      return
-    }
-    const snapshot = ota.snapshot()
-    if (!snapshot.wifiStatusKnown) {
-      retry()
-      return
-    }
-    if (!snapshot.wifiConnected && snapshot.hotspotOtaVersion !== 1) {
-      onOpenWifiSetup()
-      return
-    }
-    ota.installSession.prepare(result)
-    if (updateFingerprint) beginOtaAutoChain(updateFingerprint, isDowngradeUpdate)
-    navigateToProgress()
-  }
-
-  if (checkState === "checking") {
+  if (state.screen === "checking") {
     return (
       <FlowPage colors={colors} icon="download" title={translate("ota:checkingForUpdates")}>
         <BodyText colors={colors}>{translate("ota:checkingForUpdatesMessage")}</BodyText>
@@ -422,41 +212,93 @@ function OtaCheckPage({
     )
   }
 
-  if (checkState === "update_available") {
+  if (state.screen === "battery_required") {
     return (
       <FlowPage
-        colors={colors}
-        icon="download"
-        title={translate(isDowngradeUpdate ? "ota:downgradeAvailable" : "ota:updateAvailable", {deviceName})}
         actions={
           <>
-            <FlowButton
-              colors={colors}
-              disabled={!glassesWifiStatusKnown}
-              label={translate(!glassesWifiStatusKnown || canInstallUpdate ? "ota:updateNow" : "ota:setupWifi")}
-              onPress={updateNow}
-            />
-            {!isUpdateRequired ? (
-              <FlowButton colors={colors} label={translate("ota:updateLater")} onPress={onFinished} secondary />
-            ) : null}
-            {allowDevSkip && isUpdateRequired ? (
-              <FlowButton colors={colors} label="Skip (dev only)" onPress={onFinished} secondary />
+            <FlowButton colors={colors} disabled label={translate("ota:updateNow")} onPress={controller.install} />
+            {state.canDismiss ? (
+              <FlowButton colors={colors} label={translate("ota:updateLater")} onPress={controller.finish} secondary />
             ) : null}
           </>
-        }>
+        }
+        colors={colors}
+        icon="alert"
+        title={translate("ota:batteryRequiredTitle", {deviceName})}>
         <BodyText colors={colors}>
-          {canInstallUpdate
-            ? translate(isDowngradeUpdate ? "ota:downgradeDescription" : "ota:updateDescription")
-            : translate("ota:updateConnectWifi", {deviceName})}
+          {translate("ota:batteryRequiredMessage", {
+            batteryLevel: String(state.batteryLevel),
+            deviceName,
+            minimumBatteryLevel: String(MINIMUM_OTA_BATTERY_LEVEL),
+          })}
         </BodyText>
+        <BodyText colors={colors}>{translate("ota:batteryRequiredLiveUpdate")}</BodyText>
       </FlowPage>
     )
   }
 
-  if (checkState === "dev_build") {
+  if (state.screen === "finishing") {
+    return (
+      <FlowPage colors={colors} icon="download" title={translate("ota:finishingUpdate")}>
+        <BodyText colors={colors}>{translate("ota:checkingAdditionalUpdates")}</BodyText>
+        <ActivityIndicator size="large" color={colors.foreground} />
+      </FlowPage>
+    )
+  }
+
+  if (state.screen === "update_available" || state.screen === "wifi_required") {
+    const titleKey =
+      state.screen === "wifi_required"
+        ? "ota:wifiRequiredTitle"
+        : state.versionChange
+          ? "ota:downgradeAvailable"
+          : "ota:updateAvailable"
     return (
       <FlowPage
-        actions={<FlowButton colors={colors} label={translate("common:continue")} onPress={onFinished} />}
+        colors={colors}
+        icon="download"
+        title={translate(titleKey, {deviceName})}
+        actions={
+          <>
+            <FlowButton
+              colors={colors}
+              disabled={!state.wifiStatusKnown}
+              label={translate(state.screen === "wifi_required" ? "ota:setupWifi" : "ota:updateNow")}
+              onPress={state.screen === "wifi_required" ? controller.openWifiSetup : controller.install}
+            />
+            {state.canDismiss ? (
+              <FlowButton colors={colors} label={translate("ota:updateLater")} onPress={controller.finish} secondary />
+            ) : null}
+            {allowDevSkip && state.updateRequired ? (
+              <FlowButton colors={colors} label="Skip (dev only)" onPress={controller.finish} secondary />
+            ) : null}
+          </>
+        }>
+        {state.releaseTransition ? (
+          <BodyText colors={colors}>
+            {state.releaseTransition.fromVersion
+              ? translate("ota:releaseTransition", {
+                  fromVersion: state.releaseTransition.fromVersion,
+                  toVersion: state.releaseTransition.toVersion,
+                })
+              : translate("ota:releaseTransitionUnknown", {toVersion: state.releaseTransition.toVersion})}
+          </BodyText>
+        ) : null}
+        <BodyText colors={colors}>
+          {state.screen === "wifi_required"
+            ? translate("ota:updateConnectWifi", {deviceName})
+            : translate(state.versionChange ? "ota:downgradeDescription" : "ota:updateDescription")}
+        </BodyText>
+        <BodyText colors={colors}>{translate("ota:updateSequenceMessage")}</BodyText>
+      </FlowPage>
+    )
+  }
+
+  if (state.screen === "dev_build") {
+    return (
+      <FlowPage
+        actions={<FlowButton colors={colors} label={translate("common:continue")} onPress={controller.finish} />}
         colors={colors}
         icon="settings"
         title={translate("ota:devBuild")}>
@@ -465,22 +307,51 @@ function OtaCheckPage({
     )
   }
 
-  if (checkState === "no_update") {
+  if (state.screen === "unofficial_client") {
     return (
       <FlowPage
-        actions={<FlowButton colors={colors} label={translate("common:continue")} onPress={onFinished} />}
+        actions={<FlowButton colors={colors} label={translate("common:continue")} onPress={controller.finish} />}
         colors={colors}
-        icon="check"
-        title={translate("ota:upToDate")}>
-        <BodyText colors={colors}>{translate("ota:noUpdatesAvailable")}</BodyText>
+        icon="settings"
+        title={translate("ota:unofficialClient")}>
+        <BodyText colors={colors}>
+          {state.glassesPackageName
+            ? translate("ota:unofficialClientNoOtaNamed", {packageName: state.glassesPackageName})
+            : translate("ota:unofficialClientNoOta")}
+        </BodyText>
       </FlowPage>
     )
   }
 
-  if (errorKind === "pin_unavailable") {
+  if (state.screen === "up_to_date") {
     return (
       <FlowPage
-        actions={<FlowButton colors={colors} label={translate("common:continue")} onPress={onFinished} />}
+        actions={
+          <FlowButton
+            colors={colors}
+            label={translate(state.completedUpdate ? "common:done" : "common:continue")}
+            onPress={controller.finish}
+          />
+        }
+        colors={colors}
+        contentAlignment={state.changelogs.length > 0 ? "top" : "center"}
+        icon="check"
+        title={translate(state.completedUpdate ? "ota:updateComplete" : "ota:upToDate")}>
+        <BodyText colors={colors}>{translate("ota:noUpdatesAvailable")}</BodyText>
+        {state.releaseTransition ? (
+          <BodyText colors={colors}>
+            {translate("ota:updatedToVersion", {version: state.releaseTransition.toVersion})}
+          </BodyText>
+        ) : null}
+        <ChangelogList changelogs={state.changelogs} colors={colors} title={translate("ota:whatsNew")} />
+      </FlowPage>
+    )
+  }
+
+  if (state.screen === "update_info_unavailable") {
+    return (
+      <FlowPage
+        actions={<FlowButton colors={colors} label={translate("common:continue")} onPress={controller.finish} />}
         colors={colors}
         icon="alert"
         title={translate("ota:updateInfoUnavailable")}>
@@ -489,104 +360,32 @@ function OtaCheckPage({
     )
   }
 
-  return (
-    <FlowPage
-      actions={
-        <>
-          <FlowButton colors={colors} label="Retry" onPress={retry} />
-          {allowDevSkip ? <FlowButton colors={colors} label="Skip (dev only)" onPress={onFinished} secondary /> : null}
-        </>
-      }
-      colors={colors}
-      icon="alert"
-      title={translate("ota:checkFailed")}>
-      <BodyText colors={colors}>{translate("ota:checkFailedMessage")}</BodyText>
-    </FlowPage>
-  )
-}
-
-type ProgressPageProps = {
-  colors: MentraLiveOtaFlowTheme
-  onFirmwareRestartingChange?: (restarting: boolean, progressActive: boolean) => void
-  onOpenWifiSetup: () => void
-  onReturnToCheck: () => void
-  superMode: boolean
-  translate: MentraLiveOtaFlowTranslate
-}
-
-function OtaProgressPage({
-  colors,
-  onFirmwareRestartingChange,
-  onOpenWifiSetup,
-  onReturnToCheck,
-  superMode,
-  translate,
-}: ProgressPageProps) {
-  const install = useEngineSnapshot(ota.installSession.snapshot, ota.installSession.onSnapshot)
-  const autoChainAdvancedRef = useRef(false)
-  const {
-    connected,
-    continueButtonDisabled,
-    displayState,
-    errorMsg,
-    hotspotArtifactPercent,
-    hotspotPhase,
-    isVersionChange,
-    mtkInstallStallSimulatedPercent,
-    otaProgress,
-    otaStatus,
-    versionChangeConverged,
-    versionChangePhase,
-  } = install
-  const firmwareRestarting = (!connected && displayState === "restarting") || versionChangePhase === "restarting"
-
-  useEffect(() => {
-    onFirmwareRestartingChange?.(firmwareRestarting, true)
-  }, [firmwareRestarting, onFirmwareRestartingChange])
-
-  useEffect(
-    () => () => {
-      onFirmwareRestartingChange?.(false, false)
-    },
-    [onFirmwareRestartingChange],
-  )
-
-  useEffect(() => {
-    ota.installSession.attach()
-    return () => ota.installSession.detach()
-  }, [])
-
-  useEffect(() => {
-    if (displayState !== "complete" || !connected || !isOtaAutoChainActive() || autoChainAdvancedRef.current) return
-    const timeout = setTimeout(() => {
-      if (!isOtaAutoChainActive()) return
-      autoChainAdvancedRef.current = true
-      ota.installSession.finish()
-      onReturnToCheck()
-    }, AUTO_CHAIN_COMPLETE_DELAY_MS)
-    return () => clearTimeout(timeout)
-  }, [connected, displayState, onReturnToCheck])
-
-  const finishAndCheck = () => {
-    ota.installSession.finish()
-    onReturnToCheck()
-  }
-  const stopAndCheck = () => {
-    stopOtaAutoChain()
-    finishAndCheck()
-  }
-  const retryInstall = () => {
-    onFirmwareRestartingChange?.(false, true)
-    ota.installSession.retry()
+  if (state.screen === "check_failed") {
+    return (
+      <FlowPage
+        actions={
+          <>
+            <FlowButton colors={colors} label="Retry" onPress={controller.retryCheck} />
+            {allowDevSkip ? (
+              <FlowButton colors={colors} label="Skip (dev only)" onPress={controller.finish} secondary />
+            ) : null}
+          </>
+        }
+        colors={colors}
+        icon="alert"
+        title={translate("ota:checkFailed")}>
+        <BodyText colors={colors}>{translate("ota:checkFailedMessage")}</BodyText>
+      </FlowPage>
+    )
   }
 
-  if (versionChangePhase === "restarting" || versionChangePhase === "verifying") {
+  if (state.versionChangePhase === "restarting" || state.versionChangePhase === "verifying") {
     return (
       <FlowPage
         colors={colors}
         icon="download"
         title={translate(
-          versionChangePhase === "verifying" ? "ota:versionChangeVerifying" : "ota:versionChangeRestarting",
+          state.versionChangePhase === "verifying" ? "ota:versionChangeVerifying" : "ota:versionChangeRestarting",
         )}>
         <ActivityIndicator size="large" color={colors.foreground} />
         <BodyText colors={colors}>{translate("ota:versionChangeKeepNearby")}</BodyText>
@@ -595,19 +394,19 @@ function OtaProgressPage({
     )
   }
 
-  if (displayState === "starting") {
-    const hotspotTitle =
-      hotspotPhase === "downloading"
+  if (state.screen === "starting" || state.screen === "preparing_hotspot") {
+    const title =
+      state.hotspotPhase === "downloading"
         ? "Downloading update to phone..."
-        : hotspotPhase === "starting_hotspot"
-        ? "Starting glasses hotspot..."
-        : hotspotPhase === "joining_hotspot"
-        ? "Connecting phone to glasses..."
-        : "Starting update..."
+        : state.hotspotPhase === "starting_hotspot"
+          ? "Starting glasses hotspot..."
+          : state.hotspotPhase === "joining_hotspot"
+            ? "Connecting phone to glasses..."
+            : "Starting update..."
     return (
-      <FlowPage colors={colors} icon="download" title={hotspotTitle}>
-        {hotspotPhase === "downloading" && hotspotArtifactPercent !== null ? (
-          <PercentText colors={colors} percent={hotspotArtifactPercent} />
+      <FlowPage colors={colors} icon="download" title={title}>
+        {state.hotspotPhase === "downloading" && state.hotspotArtifactPercent !== null ? (
+          <PercentText colors={colors} percent={state.hotspotArtifactPercent} />
         ) : null}
         <ActivityIndicator size="large" color={colors.foreground} />
         <BodyText colors={colors}>Do not disconnect your glasses</BodyText>
@@ -615,109 +414,93 @@ function OtaProgressPage({
     )
   }
 
-  if (displayState === "updating") {
-    const isDownload = otaStatus?.phase === "download"
-    const totalSteps = otaStatus?.totalSteps ?? 1
-    const isApkOnlyInstalling = otaStatus?.stepType === "apk" && otaStatus.phase === "install" && totalSteps === 1
-    const rawPercent = isDownload
-      ? otaStatus?.stepPercent ?? 0
-      : totalSteps >= 2
-      ? otaStatus?.overallPercent ?? 0
-      : otaStatus?.stepPercent ?? 0
-    const percent = Math.min(Math.max(rawPercent, mtkInstallStallSimulatedPercent ?? 0, 0), 100)
+  if (state.screen === "updating") {
     return (
-      <FlowPage colors={colors} icon="download" title={isDownload ? "Downloading..." : "Installing..."}>
-        {isApkOnlyInstalling ? (
+      <FlowPage colors={colors} icon="download" title={state.phase === "download" ? "Downloading..." : "Installing..."}>
+        {state.installingApkOnly ? (
           <ActivityIndicator size="large" color={colors.foreground} />
         ) : (
           <>
-            <PercentText colors={colors} percent={percent} />
+            <PercentText colors={colors} percent={state.progress ?? 0} />
             <View style={[styles.progressTrack, {backgroundColor: colors.border}]}>
-              <View style={[styles.progressFill, {backgroundColor: colors.primary, width: `${percent}%`}]} />
+              <View
+                style={[styles.progressFill, {backgroundColor: colors.primary, width: `${state.progress ?? 0}%`}]}
+              />
             </View>
           </>
         )}
         <BodyText colors={colors}>Do not disconnect your glasses</BodyText>
-        {isVersionChange && otaStatus?.phase === "install" ? (
+        {state.versionChange && state.phase === "install" ? (
           <BodyText colors={colors}>{translate("ota:downgradeDuration")}</BodyText>
         ) : null}
       </FlowPage>
     )
   }
 
-  if (displayState === "restarting") {
+  if (state.screen === "restarting") {
     return (
-      <FlowPage
-        actions={
-          <FlowButton colors={colors} disabled={continueButtonDisabled} label="Continue" onPress={stopAndCheck} />
-        }
-        colors={colors}
-        icon="check"
-        title="Update Installed"
-      />
+      <FlowPage colors={colors} icon="download" title={translate("ota:restartingGlasses", {deviceName})}>
+        <ActivityIndicator size="large" color={colors.foreground} />
+        <BodyText colors={colors}>{translate("ota:restartingGlassesMessage")}</BodyText>
+        <BodyText colors={colors}>{translate("ota:restartingGlassesAutomatic")}</BodyText>
+      </FlowPage>
     )
   }
 
-  if (displayState === "complete") {
-    const title = versionChangeConverged
+  if (state.screen === "complete") {
+    const title = state.versionChangeConverged
       ? translate("ota:versionChangeComplete")
-      : isVersionChange
-      ? translate("ota:versionChangeFirmwarePassComplete")
-      : "Update complete!"
-    const message = versionChangeConverged
+      : state.versionChange
+        ? translate("ota:versionChangeFirmwarePassComplete")
+        : "Update complete!"
+    const message = state.versionChangeConverged
       ? translate("ota:versionChangeCompleteMessage")
-      : isVersionChange
-      ? translate("ota:versionChangeFirmwarePassCompleteMessage")
-      : "Your glasses are up to date."
+      : state.versionChange
+        ? translate("ota:versionChangeFirmwarePassCompleteMessage")
+        : "Your glasses are up to date."
     return (
       <FlowPage
         actions={
           <FlowButton
             colors={colors}
-            label={isVersionChange && !versionChangeConverged ? "Continue" : "Done"}
-            onPress={finishAndCheck}
+            label={state.versionChange && !state.versionChangeConverged ? "Continue" : "Done"}
+            onPress={controller.finish}
           />
         }
         colors={colors}
+        contentAlignment={state.changelogs.length > 0 ? "top" : "center"}
         icon="check"
         title={title}>
         <BodyText colors={colors}>{message}</BodyText>
+        {state.releaseTransition ? (
+          <BodyText colors={colors}>
+            {translate("ota:updatedToVersion", {version: state.releaseTransition.toVersion})}
+          </BodyText>
+        ) : null}
+        <ChangelogList changelogs={state.changelogs} colors={colors} title={translate("ota:whatsNew")} />
       </FlowPage>
     )
   }
 
-  if (displayState === "failed") {
-    const requiresGlassesReboot = shouldRequireGlassesRebootForBesFailure(otaStatus, otaProgress, errorMsg)
-    const displayedError = requiresGlassesReboot
-      ? BES_INSTALL_RESTART_MESSAGE
-      : errorMsg || getOtaErrorMessage(otaStatus?.error)
-    const showChangeWifi = shouldShowChangeWifiForOtaDownloadFailure(otaStatus, otaProgress, errorMsg)
+  if (state.screen === "failed") {
     return (
       <FlowPage
         actions={
           <>
             <FlowButton
               colors={colors}
-              label={requiresGlassesReboot ? "Done" : "Retry"}
-              onPress={requiresGlassesReboot ? stopAndCheck : retryInstall}
+              label={state.canRetry ? "Retry" : "Done"}
+              onPress={state.canRetry ? controller.retryInstall : controller.finish}
             />
-            {showChangeWifi ? (
-              <FlowButton
-                colors={colors}
-                label="Change WiFi"
-                onPress={() => {
-                  stopOtaAutoChain()
-                  onOpenWifiSetup()
-                }}
-                secondary
-              />
+            {state.canOpenWifiSetup ? (
+              <FlowButton colors={colors} label="Change WiFi" onPress={controller.openWifiSetup} secondary />
             ) : null}
           </>
         }
         colors={colors}
         icon="alert"
         title="Update Failed">
-        <BodyText colors={colors}>{displayedError}</BodyText>
+        <BodyText colors={colors}>{state.error?.message}</BodyText>
       </FlowPage>
     )
   }
@@ -726,16 +509,7 @@ function OtaProgressPage({
     <FlowPage
       actions={
         superMode ? (
-          <FlowButton
-            colors={colors}
-            label="Skip (super)"
-            onPress={() => {
-              stopOtaAutoChain()
-              ota.installSession.discard()
-              onReturnToCheck()
-            }}
-            secondary
-          />
+          <FlowButton colors={colors} label="Skip (super)" onPress={controller.discard} secondary />
         ) : undefined
       }
       colors={colors}
@@ -751,18 +525,23 @@ type FlowPageProps = {
   actions?: React.ReactNode
   children?: React.ReactNode
   colors: MentraLiveOtaFlowTheme
+  contentAlignment?: "center" | "top"
   icon: "alert" | "bluetooth" | "check" | "download" | "settings"
   title: string
 }
 
-function FlowPage({actions, children, colors, icon, title}: FlowPageProps) {
+function FlowPage({actions, children, colors, contentAlignment = "center", icon, title}: FlowPageProps) {
   return (
     <View style={styles.page} testID="mentra-live-ota-flow">
-      <View style={styles.centerContent}>
+      <ScrollView
+        contentContainerStyle={[styles.centerContent, contentAlignment === "top" && styles.topContent]}
+        nestedScrollEnabled
+        style={styles.contentScroll}
+        testID="ota-page-scroll">
         <FlowIcon colors={colors} name={icon} />
         <Text style={[styles.title, {color: colors.foreground}]}>{title}</Text>
         {children}
-      </View>
+      </ScrollView>
       {actions ? <View style={styles.actions}>{actions}</View> : <View style={styles.actionSpacer} />}
     </View>
   )
@@ -774,6 +553,134 @@ function BodyText({children, colors}: {children: React.ReactNode; colors: Mentra
 
 function PercentText({colors, percent}: {colors: MentraLiveOtaFlowTheme; percent: number}) {
   return <Text style={[styles.percent, {color: colors.primary}]}>{Math.round(percent)}%</Text>
+}
+
+function ChangelogMarkdown({colors, markdown}: {colors: MentraLiveOtaFlowTheme; markdown: string}) {
+  const markdownStyles = useMemo<MarkedStyles>(
+    () => ({
+      blockquote: {
+        borderLeftColor: colors.primary,
+        borderLeftWidth: 3,
+        marginVertical: 2,
+        opacity: 1,
+        paddingLeft: 12,
+      },
+      code: {
+        backgroundColor: colors.background,
+        borderColor: colors.border,
+        borderRadius: 8,
+        borderWidth: 1,
+        padding: 12,
+      },
+      codespan: {
+        backgroundColor: colors.border,
+        color: colors.foreground,
+        fontFamily: "monospace",
+        fontSize: 13,
+        fontStyle: "normal",
+        fontWeight: "400",
+      },
+      em: {color: colors.textDim, fontSize: 14, lineHeight: 20},
+      h1: {
+        borderBottomWidth: 0,
+        color: colors.foreground,
+        fontSize: 18,
+        fontWeight: "700",
+        lineHeight: 24,
+        marginVertical: 0,
+        paddingBottom: 0,
+      },
+      h2: {
+        borderBottomWidth: 0,
+        color: colors.foreground,
+        fontSize: 17,
+        fontWeight: "700",
+        lineHeight: 23,
+        marginVertical: 0,
+        paddingBottom: 0,
+      },
+      h3: {color: colors.foreground, fontSize: 16, fontWeight: "700", lineHeight: 22, marginVertical: 0},
+      h4: {color: colors.foreground, fontSize: 15, fontWeight: "700", lineHeight: 21, marginVertical: 0},
+      h5: {color: colors.foreground, fontSize: 14, fontWeight: "700", lineHeight: 20, marginVertical: 0},
+      h6: {color: colors.textDim, fontSize: 14, fontWeight: "600", lineHeight: 20, marginVertical: 0},
+      hr: {borderBottomColor: colors.border, marginVertical: 2},
+      image: {borderRadius: 8},
+      li: {color: colors.textDim, fontSize: 14, lineHeight: 20},
+      link: {
+        color: colors.primary,
+        fontSize: 14,
+        fontStyle: "normal",
+        lineHeight: 20,
+        textDecorationLine: "underline",
+      },
+      paragraph: {paddingVertical: 0},
+      strikethrough: {color: colors.textDim, fontSize: 14, lineHeight: 20},
+      strong: {color: colors.foreground, fontSize: 14, fontWeight: "700", lineHeight: 20},
+      table: {borderColor: colors.border, borderRadius: 8},
+      tableCell: {padding: 8},
+      text: {color: colors.textDim, fontSize: 14, lineHeight: 20},
+    }),
+    [colors],
+  )
+  const markdownTheme = useMemo<NonNullable<useMarkdownHookOptions["theme"]>>(
+    () => ({
+      colors: {
+        background: colors.background,
+        border: colors.border,
+        code: colors.border,
+        link: colors.primary,
+        text: colors.textDim,
+      },
+    }),
+    [colors],
+  )
+  const elements = useMarkdown(markdown, {colorScheme: "light", styles: markdownStyles, theme: markdownTheme})
+
+  return (
+    <View style={styles.changelogMarkdownContent} testID="ota-changelog-markdown">
+      {elements}
+    </View>
+  )
+}
+
+export function ChangelogList({
+  changelogs,
+  colors,
+  title,
+}: {
+  changelogs: MentraLiveOtaController["state"]["changelogs"]
+  colors: MentraLiveOtaFlowTheme
+  title: string
+}) {
+  if (changelogs.length === 0) return null
+
+  return (
+    <View style={[styles.changelogCard, {borderColor: colors.border}]} testID="ota-changelog-card">
+      <Text style={[styles.changelogTitle, {color: colors.foreground}]}>{title}</Text>
+      <ScrollView
+        contentContainerStyle={styles.changelogContent}
+        nestedScrollEnabled
+        persistentScrollbar
+        showsVerticalScrollIndicator
+        style={styles.changelogList}
+        testID="ota-changelog-scroll">
+        {changelogs.map((entry, index) => (
+          <View
+            key={entry.version}
+            style={[
+              styles.changelogEntry,
+              index > 0 && styles.changelogEntryDivider,
+              index > 0 && {borderTopColor: colors.border},
+            ]}>
+            <Text selectable style={[styles.changelogVersion, {color: colors.foreground}]}>
+              {entry.version}
+            </Text>
+            <ChangelogMarkdown colors={colors} markdown={entry.markdown} />
+          </View>
+        ))}
+      </ScrollView>
+    </View>
+  )
 }
 
 function FlowButton({
@@ -835,7 +742,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
   },
   page: {flex: 1, paddingBottom: 24, paddingHorizontal: 24},
-  centerContent: {alignItems: "center", flex: 1, gap: 16, justifyContent: "center"},
+  contentScroll: {flex: 1},
+  centerContent: {alignItems: "center", flexGrow: 1, gap: 16, justifyContent: "center"},
+  topContent: {justifyContent: "flex-start", paddingBottom: 16, paddingTop: 12},
   actionSpacer: {height: 48},
   actions: {gap: 12},
   icon: {fontSize: 64, fontWeight: "500", lineHeight: 72, textAlign: "center"},
@@ -844,6 +753,24 @@ const styles = StyleSheet.create({
   percent: {fontSize: 30, fontVariant: ["tabular-nums"], fontWeight: "700"},
   progressTrack: {borderRadius: 4, height: 8, maxWidth: 420, overflow: "hidden", width: "100%"},
   progressFill: {borderRadius: 4, height: 8},
+  changelogCard: {
+    borderRadius: 16,
+    borderWidth: 1,
+    flexGrow: 1,
+    gap: 12,
+    maxWidth: 420,
+    minHeight: 200,
+    padding: 16,
+    width: "100%",
+  },
+  changelogTitle: {fontSize: 16, fontWeight: "700"},
+  // Bound the notes themselves so the card can grow for its title, but not for all of the Markdown.
+  changelogList: {flexGrow: 1, height: 120, width: "100%"},
+  changelogContent: {gap: 20, paddingBottom: 4},
+  changelogEntry: {gap: 8},
+  changelogEntryDivider: {borderTopWidth: StyleSheet.hairlineWidth, paddingTop: 20},
+  changelogVersion: {fontSize: 14, fontWeight: "600"},
+  changelogMarkdownContent: {gap: 10},
   button: {
     alignItems: "center",
     borderRadius: 50,

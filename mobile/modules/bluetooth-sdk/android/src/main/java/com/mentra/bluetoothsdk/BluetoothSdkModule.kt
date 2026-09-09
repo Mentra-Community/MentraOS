@@ -499,6 +499,10 @@ class BluetoothSdkModule : Module() {
 
         SdkAsyncFunction("clearDisplay") { -> sdk?.clearDisplay() }
 
+        SdkAsyncFunction("setDashboardContent") { content: String ->
+            sdk?.setDashboardContent(content)
+        }
+
         // MARK: - Connection Commands
 
         SdkAsyncFunction("connectDefault") { -> sdk?.connectDefault() }

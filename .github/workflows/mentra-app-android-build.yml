@@ -10,6 +10,15 @@ on:
       - main
       - dev
   workflow_dispatch:
+    inputs:
+      build_number:
+        description: Optional Android versionCode for an installable test build
+        required: false
+        type: number
+      ota_manifest_url:
+        description: Optional OTA manifest URL embedded in the test app
+        required: false
+        type: string
 
 # Cancel a branch's in-flight build when a newer commit is pushed to it.
 # Scoped per-ref so branches never cancel each other; keeps the runner
@@ -33,11 +42,32 @@ jobs:
     env:
       EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID }}
       EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY }}
+      MENTRAOS_PINNED_BUILD_NUMBER: ${{ inputs.build_number || '' }}
+      EXPO_PUBLIC_ASG_OTA_VERSION_URL: ${{ inputs.ota_manifest_url || '' }}
       # Compile-check APKs are phone sideloads. Full ABI belongs on the
       # coordinated release workflow, not on this compile-check workflow.
       ORG_GRADLE_PROJECT_reactNativeArchitectures: arm64-v8a
 
     steps:
+      - name: Validate pinned build number
+        # A manual build_number becomes the Android versionCode. Reject decimals,
+        # signs, exponents, and anything outside 1..2100000000 (Play's ceiling)
+        # before prebuild instead of letting getBuildNumber() truncate it.
+        run: |
+          set -euo pipefail
+          if [[ -n "$MENTRAOS_PINNED_BUILD_NUMBER" ]]; then
+            if [[ ! "$MENTRAOS_PINNED_BUILD_NUMBER" =~ ^[1-9][0-9]{0,9}$ ]] \
+              || (( MENTRAOS_PINNED_BUILD_NUMBER > 2100000000 )); then
+              echo "::error::build_number must be an integer from 1 to 2100000000, got '$MENTRAOS_PINNED_BUILD_NUMBER'"
+              exit 1
+            fi
+          fi
+          if [[ -n "$EXPO_PUBLIC_ASG_OTA_VERSION_URL" ]] \
+            && ! [[ "$EXPO_PUBLIC_ASG_OTA_VERSION_URL" =~ ^https?://[^[:space:]\#]+$ ]]; then
+            echo "::error::ota_manifest_url must be an HTTP(S) URL without whitespace or a fragment"
+            exit 1
+          fi
+
       - name: Update PR comment - Build started
         if: github.event_name == 'pull_request'
         uses: actions/github-script@v7
@@ -92,7 +122,11 @@ jobs:
           distribution: "temurin"
 
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v2
+        uses: android-actions/setup-android@v3
+        with:
+          # The retired `tools` package download is no longer a valid ZIP.
+          # Install apksigner explicitly for the release signature check.
+          packages: platform-tools build-tools;36.0.0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -141,6 +175,7 @@ jobs:
         run: |
           # Create .env from example (Expo reads from mobile/.env, not android/.env)
           cp .env.example .env
+          printf '\nEXPO_PUBLIC_ASG_OTA_VERSION_URL=%s\n' "$EXPO_PUBLIC_ASG_OTA_VERSION_URL" >> .env
           # Pin which cloud this binary talks to (OS-1875).
           #
           # main is production-configured; dev, PRs and feature branches use dev
@@ -327,6 +362,20 @@ jobs:
             echo "Both build attempts failed"
             exit 1
           fi
+
+      - name: Verify embedded OTA manifest pin
+        if: inputs.ota_manifest_url != ''
+        run: |
+          python3 - <<'PY'
+          import os
+          import zipfile
+          with zipfile.ZipFile("mobile/android/app/build/outputs/apk/release/app-release.apk") as apk:
+              bundle = apk.read("assets/index.android.bundle")
+          expected = os.environ["EXPO_PUBLIC_ASG_OTA_VERSION_URL"].encode()
+          if expected not in bundle:
+              raise SystemExit("Requested OTA manifest URL is missing from the compiled app bundle")
+          print("Verified requested OTA manifest URL in compiled app bundle")
+          PY
 
       - name: Verify release signature (not debug)
         run: |

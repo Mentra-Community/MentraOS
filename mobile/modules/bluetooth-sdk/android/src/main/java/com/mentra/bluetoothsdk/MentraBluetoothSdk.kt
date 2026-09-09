@@ -284,6 +284,7 @@ class MentraBluetoothSdk private constructor(
             DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "project_name", device.projectName ?: "")
             DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_name", "")
             DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_address", "")
+            DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_secure_pairing_capable", "")
         } finally {
             suppressDefaultDeviceEvents = false
         }
@@ -299,6 +300,7 @@ class MentraBluetoothSdk private constructor(
             DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "project_name", "")
             DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_name", "")
             DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_address", "")
+            DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_secure_pairing_capable", "")
         } finally {
             suppressDefaultDeviceEvents = false
         }
@@ -428,6 +430,11 @@ class MentraBluetoothSdk private constructor(
                         "pending_device_address",
                         device.address ?: "",
                 )
+                DeviceStore.apply(
+                        ObservableStore.BLUETOOTH_CATEGORY,
+                        "pending_device_secure_pairing_capable",
+                        device.securePairingCapable ?: "",
+                )
             }
         }
         DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_wearable", device.model.deviceType)
@@ -454,6 +461,7 @@ class MentraBluetoothSdk private constructor(
     fun cancelConnectionAttempt() {
         DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_name", "")
         DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_address", "")
+        DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_secure_pairing_capable", "")
         deviceManager.disconnect()
     }
 
@@ -464,6 +472,7 @@ class MentraBluetoothSdk private constructor(
     fun disconnect() {
         DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_name", "")
         DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_address", "")
+        DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_secure_pairing_capable", "")
         deviceManager.disconnect()
     }
 
@@ -486,6 +495,11 @@ class MentraBluetoothSdk private constructor(
 
     fun clearDisplay() {
         deviceManager.clearDisplay()
+    }
+
+    /** Sets session-only content shown below the standard dashboard status header. */
+    fun setDashboardContent(content: String) {
+        deviceManager.setDashboardContent(content)
     }
 
     fun showDashboard() {
@@ -1204,6 +1218,17 @@ class MentraBluetoothSdk private constructor(
                 "Cannot check OTA update because glasses build number is unavailable.",
             )
         }
+        // A sideloaded client installs under its own package and coexists with the stock system
+        // app, so its build number is not comparable to the manifest pin and installing the
+        // manifest's APK would not replace it. Refuse rather than answer about the wrong client.
+        // Blank means the glasses predate the field: assume stock and keep existing behavior.
+        if (status.packageName.isNotBlank() && status.packageName != OtaManifestChecker.ASG_CLIENT_PACKAGE) {
+            throw BluetoothSdkException(
+                "unofficial_client",
+                "Cannot check OTA update because the glasses run an unofficial client " +
+                    "(${status.packageName}).",
+            )
+        }
 
         val manifestUrl = resolveOtaVersionUrl(status)
         val manifest = OtaManifestChecker.fetch(manifestUrl)
@@ -1215,6 +1240,12 @@ class MentraBluetoothSdk private constructor(
             manifest,
         )
     }
+
+    /** Return bundled release changelogs crossed between two coordinated product versions, newest first. */
+    fun getReleaseChangelogs(
+        fromVersion: String? = null,
+        toVersion: String? = null,
+    ): List<ReleaseChangelog> = ReleaseChangelogCatalog.select(fromVersion, toVersion)
 
     /** Ask connected Mentra Live glasses to report the current OTA install/session status. */
     private suspend fun queryOtaStatus(): OtaQueryResult =
@@ -1313,6 +1344,7 @@ class MentraBluetoothSdk private constructor(
                 systemTimeMs = versionInfo.systemTimeMs ?: status.systemTimeMs,
                 otaVersionUrl = versionInfo.otaVersionUrl.ifBlank { status.otaVersionUrl },
                 appVersion = versionInfo.appVersion.ifBlank { status.appVersion },
+                packageName = versionInfo.packageName.ifBlank { status.packageName },
                 hotspotOtaVersion =
                     if (versionInfo.hotspotOtaVersion > 0) {
                         versionInfo.hotspotOtaVersion

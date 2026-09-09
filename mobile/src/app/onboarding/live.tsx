@@ -10,6 +10,7 @@ import {translate} from "@/i18n"
 import {useNavigationStore} from "@/stores/navigation"
 import showAlert from "@/utils/AlertUtils"
 import {getNextOnboardingRoute} from "@/utils/onboarding/getNextOnboardingRoute"
+import {deploymentStore} from "@/services/deployment"
 
 const CDN_BASE = `${CDN_BASE_URL}/onboarding/mentra-live/light`
 
@@ -17,6 +18,7 @@ export default function MentraLiveOnboarding() {
   const {clearHistoryAndGoHome, replace} = useNavigationStore.getState()
   const [_onboardingLiveCompleted, setOnboardingLiveCompleted] = useSetting(SETTINGS.onboarding_live_completed.key)
   const [onboardingOsCompleted] = useSetting<boolean>(SETTINGS.onboarding_os_completed.key)
+  const useRemoteMedia = deploymentStore.getActive().kind === "consumer"
 
   // NOTE: you can't have 2 transition videos in a row or things will break:
   // Memoized so each step's `waitFn` keeps a stable identity across re-renders.
@@ -24,7 +26,7 @@ export default function MentraLiveOnboarding() {
   // every render the effect would re-subscribe and leak a BLE listener each time,
   // which broke photo/video detection during onboarding.
   const steps: OnboardingStep[] = useMemo(() => {
-    const built: OnboardingStep[] = [
+    let built: OnboardingStep[] = [
       {
         type: "video",
         source: `${CDN_BASE}/ONB0_start_onboarding.mp4`,
@@ -163,8 +165,16 @@ export default function MentraLiveOnboarding() {
       built.splice(4, 1)
     }
 
+    if (!useRemoteMedia) {
+      built = built.map((step) => {
+        if (step.type !== "video") return step
+        const {poster, playCount: _playCount, replayable: _replayable, ...base} = step
+        return {...base, type: "image", source: poster}
+      })
+    }
+
     return built
-  }, [])
+  }, [useRemoteMedia])
 
   // reduce down to 2 steps if __DEV__
   // if (__DEV__) {

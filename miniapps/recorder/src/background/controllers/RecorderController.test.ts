@@ -2,7 +2,12 @@ import {describe, expect, it, mock} from "bun:test"
 
 import {RecorderController} from "./RecorderController"
 
-function makeHarness(stopTailDrainMs = 0, hasMic = true, closeMs = 0) {
+function makeHarness(
+  stopTailDrainMs = 0,
+  hasMic = true,
+  closeMs = 0,
+  shareResult: {success: boolean; cancelled?: boolean} = {success: true},
+) {
   const writes: Uint8Array[] = []
   let committed = false
   let audioHandler: ((data: {data: string; sampleRate?: number}) => void) | null = null
@@ -45,6 +50,7 @@ function makeHarness(stopTailDrainMs = 0, hasMic = true, closeMs = 0) {
           : [],
       ),
       usage: mock(async () => ({bytes: 0, count: 0, quotaBytes: 1024})),
+      share: mock(async () => shareResult),
     },
     mic: {
       hasPermission: hasMic,
@@ -66,6 +72,7 @@ function makeHarness(stopTailDrainMs = 0, hasMic = true, closeMs = 0) {
       stopRecording(): Promise<void>
       startRecordingAction(): Promise<unknown>
       stopRecordingAction(): Promise<unknown>
+      exportRecording(id: string): Promise<void>
       playingId: string | null
     },
     getAudioHandler: () => audioHandler,
@@ -192,5 +199,21 @@ describe("RecorderController recording edges", () => {
 
     await expect(h.controller.startRecordingAction()).rejects.toThrow("Microphone permission is required")
     expect(h.writes).toEqual([])
+  })
+
+  it("surfaces a non-cancelled share failure", async () => {
+    const h = makeHarness(0, true, 0, {success: false})
+
+    await h.controller.exportRecording("rec-test")
+
+    expect(h.send).toHaveBeenCalledWith("rec:share-failed", {id: "rec-test"})
+  })
+
+  it("does not surface share-sheet cancellation as an error", async () => {
+    const h = makeHarness(0, true, 0, {success: false, cancelled: true})
+
+    await h.controller.exportRecording("rec-test")
+
+    expect(h.send).not.toHaveBeenCalledWith("rec:share-failed", {id: "rec-test"})
   })
 })

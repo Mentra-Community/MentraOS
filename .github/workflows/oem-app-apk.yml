@@ -125,6 +125,22 @@ jobs:
         working-directory: sdk/example-oem-app
         run: bun expo prebuild --platform android
 
+      - name: Raise the Gradle heap for dexing
+        working-directory: sdk/example-oem-app/android
+        # Expo's template leaves the daemon at -Xmx2048m, which was enough when
+        # this APK last built in July but now OOMs D8 while dexing the grown
+        # module set ("ERROR: D8: java.lang.OutOfMemoryError: Java heap space").
+        # The Mentra App raises its own host the same way, to -Xmx8192m, from
+        # mobile/plugins/android.ts. Rewrite only the size tokens so the
+        # generated -Dorg.gradle.project.nodePath argument survives.
+        run: |
+          set -euo pipefail
+          sed -i \
+            -e 's/-Xmx[0-9]*m/-Xmx6144m/' \
+            -e 's/-XX:MaxMetaspaceSize=[0-9]*m/-XX:MaxMetaspaceSize=1536m/' \
+            gradle.properties
+          grep '^org.gradle.jvmargs=' gradle.properties
+
       - name: Build release APK (debug-signed)
         working-directory: sdk/example-oem-app/android
         run: ./gradlew assembleRelease --build-cache --parallel

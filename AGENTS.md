@@ -6,29 +6,25 @@ Repository implementation guidelines for coding agents working with MentraOS.
 
 MentraOS is an open source operating system, app store, and development framework for smart glasses.
 
-- Architecture: Smart glasses connect to user's phone via BLE; phone connects to backend; backend connects to third-party app servers running the MentraOS SDK
+- Architecture: Smart glasses connect to the user's phone via BLE; the Mentra App runs miniapps locally and connects to Cloud V2 services
 - Mobile app: `mobile` (React Native with native modules)
 - Android logic: `android_core`
 - iOS native module: `mobile/ios`
-- Backend & web portals: `cloud` (includes developer portal & app store)
+- Backend & web portals: `cloud-v2` (Core, Runtime, Cloud Client, CLI, admin, console, and portal)
 - Android-based smart glasses client: `asg_client` (uses `android_core` as a library)
-- MentraOS Store: `cloud/websites/store/` (web app for app discovery)
-- Developer Console: `cloud/websites/console/` (web app for app management)
+- Mentra Miniapp Store and Developer Console: `cloud-v2/websites/`
 
 ## Monorepo Structure
 
 This is a monorepo with module-specific guidance:
 
 - `/mobile/AGENTS.md` - React Native mobile app guidelines
-- `/cloud/AGENTS.md` - Backend services guidelines
-- `/cloud/websites/console/AGENTS.md` - Developer portal guidelines
-- `/cloud/websites/store/AGENTS.md` - Store frontend guidelines
 
 Consult module-specific AGENTS.md when working within that module.
 
 ## Project Structure & Module Organization
 
-Core client app lives in `mobile/` (Expo React Native). Backend services and the TypeScript SDK sit in `cloud/packages/`, while the Developer Console and Store front ends live in `cloud/websites/`; cloud integration tests are in `cloud/tests/`. Platform SDKs are in `android_core/`, `android_library/`, `sdk_ios/`; hardware tooling lives in `mcu_client/`. Public Mintlify docs live in `mintlify-docs/`; notes and plans live in `agents/` and `notes/` — see [`notes/README.md`](notes/README.md) for the specs/plans convention.
+Core client app lives in `mobile/` (Expo React Native). Backend services, the Cloud Client, protocol package, CLI, web portals, and cloud tests live in `cloud-v2/`. The local Mentra Miniapp SDK is `mobile/modules/miniapp/`; developer tooling is in `sdk/`. Platform SDKs are in `mobile/modules/bluetooth-sdk/` and `sdk_ios/`; hardware tooling lives in `mcu_client/`. Public Mintlify docs live in `mintlify-docs/`; notes and plans live in `agents/` and `notes/` — see [`notes/README.md`](notes/README.md) for the specs/plans convention.
 
 ## Build Commands
 
@@ -55,15 +51,14 @@ directory; use the repo script so the Gradle wrapper and prebuild setup are
 consistent. The Bluetooth SDK check runs with `-PmentraPublicSdk=true` so it
 validates the public Maven artifact dependency shape.
 
-### Cloud Backend (cloud)
+### Cloud Backend (cloud-v2)
 
-- Install deps: `bun install`
-- Setup environment: `./scripts/docker-setup.sh` or `bun run setup-deps && bun run dev`
-- Dev: `bun run dev` (starts Docker dev environment)
-- Setup Docker network: `bun run dev:setup-network` (run once)
-- Build: `bun run build` (builds sdk, utils, and agents packages)
-- Test: `bun run test` (runs backend test suites)
-- Lint: `cd packages/cloud && bun run lint`
+- Install deps: `cd cloud-v2 && bun install`
+- Setup environment: `bun run setup` (or `bun run setup:test` for tests)
+- Dev: `bun run dev`
+- Type check: `bun run typecheck`
+- Test: `bun run test`
+- Web portals: `bun run dev:console`, `bun run dev:admin`, or `bun run dev:portal`
 
 ## Prerequisites
 
@@ -135,7 +130,7 @@ validates the public Maven artifact dependency shape.
 
 ## Testing Guidelines
 
-Cloud services use Jest via `bun run test`; add suites in `cloud/tests/` mirroring package names and mock external providers. Mobile UI logic uses Jest (`bun test`, `bun test:watch`) with files colocated in `mobile/test/` and snapshots beside components. Device flows rely on Maestro (`bun test:maestro`), so update scripts whenever navigation or pairing shifts. Features touching pairing, BLE, or transcription need unit coverage plus an end-to-end path.
+Cloud V2 services use Bun tests via `cd cloud-v2 && bun run test`; add suites in `cloud-v2/tests/` or beside the relevant package code and mock external providers. Mobile UI logic uses Jest (`bun test`, `bun test:watch`) with files colocated in `mobile/test/` and snapshots beside components. Device flows rely on Maestro (`bun test:maestro`), so update scripts whenever navigation or pairing shifts. Features touching pairing, BLE, or transcription need unit coverage plus an end-to-end path.
 
 ## Commit & Pull Request Guidelines
 
@@ -147,7 +142,7 @@ Do not add `Co-Authored-By:` trailers that name AI assistants (Claude, Codex, Co
 
 ## Environment & Security Notes
 
-Cloud services require `.env` files copied from `.env.example` that stay local. Mobile secrets belong in `mobile/app.config.ts` or the secure config service—avoid committing device-specific tokens. Rebuild native projects after modifying BLE or camera modules to keep generated code in sync, and install Java 17, Android Studio, Xcode, Docker, and Bun/Node before the first build.
+Cloud V2 services require local environment configuration; use `cloud-v2/scripts/setup.ts` and keep secrets out of the repository. Mobile secrets belong in `mobile/app.config.ts` or the secure config service—avoid committing device-specific tokens. Rebuild native projects after modifying BLE or camera modules to keep generated code in sync, and install Java 17, Android Studio, Xcode, Docker, and Bun/Node before the first build.
 
 ### Database Security
 
@@ -208,8 +203,6 @@ Example:
 export MENTRA_ADMIN_TOKEN=msk_your-admin-key
 ./scripts/fetch-incident-logs.sh rep_01JZWY3V8N0F2E9GQ4T6KXH5RD
 ```
-
-Note: the **mentra-console** MCP server (`cloud/packages/console-mcp`, tools `incident_get` / `incident_get_logs`) still targets the legacy V1 incidents API (`/api/agent/incidents`, `X-Agent-Key`) and has not been ported to the V2 reports API yet.
 
 ## Mentra Live BES firmware (sibling repo)
 

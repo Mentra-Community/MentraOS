@@ -155,6 +155,18 @@ export type VersionInfoResult = {
   systemTimeMs?: number
   otaVersionUrl: string
   appVersion: string
+  /**
+   * Package the glasses client actually runs as, from `version_info_1`.
+   * `"com.mentra.asg_client"` is the stock client; anything else is a sideloaded build (Android
+   * forces a distinct package on any build not signed with Mentra's release key) that coexists
+   * with the stock app and must not be driven by OTA.
+   *
+   * Omitted — not empty — whenever this result carries no identity: either the glasses predate
+   * the field, or the response resolved from a `version_info` chunk that does not carry it (only
+   * chunk 1 does). Omission is what keeps a response from overwriting an identity an earlier
+   * chunk established, so treat `undefined` as "unknown", never as "stock".
+   */
+  packageName?: string
   /** Phone-served hotspot OTA protocol version; 0 means unsupported/legacy glasses. */
   hotspotOtaVersion: number
 }
@@ -620,6 +632,10 @@ export type StreamVideoConfig = {
   width?: number
   height?: number
   bitrate?: number
+  /** WHIP minimum target in bps; omitted leaves it unset. Clamped to the maximum. */
+  minBitrateBps?: number
+  /** WHIP startup bitrate in bps, clamped to the requested bounds. */
+  initialBitrateBps?: number
   fps?: number
 }
 
@@ -637,6 +653,8 @@ export type StreamStartRequest = {
   sound?: boolean
   video?: StreamVideoConfig
   audio?: StreamAudioConfig
+  /** When false, glasses skip mic capture. Defaults to true. */
+  captureAudio?: boolean
 }
 
 export type StreamKeepAliveRequest = {
@@ -866,6 +884,8 @@ export type OtaStatusEvent = {
   step_type: "apk" | "mtk" | "bes"
   phase: "download" | "install"
   step_percent: number
+  /** Real bytes received in the current download; absent on older glasses. */
+  bytes_downloaded?: number
   overall_percent: number
   status: "in_progress" | "step_complete" | "complete" | "failed" | "idle"
   error_message?: string
@@ -1043,6 +1063,10 @@ export type BluetoothSdkEventMap = {
   mic_lc3: MicLc3Event
   mic_health: MicHealthEvent
   stream_status: StreamStatusEvent
+  /** Mentra Live MTK updater completed and the glasses are about to restart. */
+  mtk_update_complete: MtkUpdateCompleteEvent
+  /** The ASG process restarted while the BES kept the BLE connection alive. */
+  glasses_session_changed: GlassesSessionChangedEvent
   ota_start_ack: OtaStartAckEvent
   ota_status: OtaStatusEvent
   ar99_ota_status: Ar99OtaStatusEvent
@@ -1068,6 +1092,15 @@ export interface BluetoothSdkPublicModule {
     listener: BluetoothSdkEventListener<EventName>,
   ): BluetoothSdkSubscription
 
+  /** Read an immutable snapshot of the current glasses state. */
+  getGlassesStatus(): Promise<PublicGlassesStatus>
+  /** Read an immutable snapshot of the phone Bluetooth adapter state. */
+  getBluetoothStatus(): Promise<PublicBluetoothStatus>
+  /** Observe immutable glasses-state patches. Returns an unsubscribe function. */
+  subscribeGlassesStatus(listener: (changed: Partial<PublicGlassesStatus>) => void): () => void
+  /** Observe immutable Bluetooth-state patches. Returns an unsubscribe function. */
+  subscribeBluetoothStatus(listener: (changed: Partial<PublicBluetoothStatus>) => void): () => void
+
   getDefaultDevice(): Promise<Device | null>
   setDefaultDevice(device: Device | null): Promise<void>
   clearDefaultDevice(): Promise<void>
@@ -1084,16 +1117,22 @@ export interface BluetoothSdkPublicModule {
 
   displayText(text: string, x?: number, y?: number, size?: number): Promise<void>
   clearDisplay(): Promise<void>
+  /** Set session-only content below the dashboard status header. Pass an empty string to reset it. */
+  setDashboardContent(content: string): Promise<void>
   showDashboard(): Promise<void>
   setDashboardPosition(height: number, depth: number): Promise<void>
   setHeadUpAngle(angleDegrees: number): Promise<void>
   setImuEnabled(enabled: boolean): Promise<void>
   setScreenDisabled(disabled: boolean): Promise<void>
+  /** Keep legacy Mentra Live OTA sessions awake. Modern sessions normally do not require this. */
+  ping(): Promise<void>
 
   requestWifiScan(): Promise<WifiSearchResult[]>
   sendWifiCredentials(ssid: string, password: string): Promise<WifiStatusChangeEvent>
   forgetWifiNetwork(ssid: string): Promise<WifiStatusChangeEvent>
   setHotspotState(enabled: boolean): Promise<HotspotStatusChangeEvent>
+  /** Set the glasses clock from the phone after an OTA clock-skew failure. */
+  setSystemTime(timestampMs: number): Promise<void>
   /** Enable or disable Wi-Fi ADB on Mentra Live (no-op on other devices). */
   setWifiAdbState(enabled: boolean): Promise<void>
 
@@ -1182,8 +1221,12 @@ export interface BluetoothSdkPublicModule {
   getOtaVersionUrl(): string
   /** Fetch the configured OTA manifest and return whether any ASG/BES/MTK update is available. */
   checkForOtaUpdate(): Promise<boolean>
+  /** Return bundled release changelogs crossed between two coordinated product versions, newest first. */
+  getReleaseChangelogs(fromVersion?: string | null, toVersion?: string | null): ReleaseChangelog[]
   /** Start OTA from the configured or explicitly supplied manifest URL. */
   startOtaUpdate(otaVersionUrl?: string | null): Promise<OtaStartAckEvent>
+  /** Query the active OTA session and return the correlated status response. */
+  queryOtaStatus(): Promise<OtaQueryResult>
   startAr99OtaFromFile(path: string): Promise<boolean>
   cancelAr99Ota(): Promise<void>
   sendAr99FactoryReset(): Promise<void>
@@ -1244,6 +1287,8 @@ export interface OtaStatus {
   stepType: "apk" | "mtk" | "bes"
   phase: "download" | "install"
   stepPercent: number
+  /** Real bytes received in the current download; independent of rounded percent. */
+  bytesDownloaded?: number
   overallPercent: number
   status: "in_progress" | "step_complete" | "complete" | "failed" | "idle"
   error?: string
@@ -1260,6 +1305,13 @@ export interface OtaUpdateInfo {
   besVersion?: string
   /** True when the APK step installs an older build than the glasses currently run (exact-pin manifests only). */
   isDowngrade?: boolean
+}
+
+export interface ReleaseChangelog {
+  /** Base production version, for example `3.1.0`. */
+  version: string
+  /** Markdown body authored in `/changelogs/<version>.md`. */
+  markdown: string
 }
 
 export interface OtaProgress {
@@ -1296,6 +1348,13 @@ export interface GlassesStatus {
   systemTimeMs?: number
   otaVersionUrl: string
   appVersion: string
+  /**
+   * Package the glasses client actually runs as, from `version_info_1`. Empty string on glasses
+   * whose client predates the field. `"com.mentra.asg_client"` is the stock client; anything else
+   * is a sideloaded build (Android forces a distinct package on any build not signed with Mentra's
+   * release key) that coexists with the stock app and must not be driven by OTA.
+   */
+  packageName: string
   /** Phone-served hotspot OTA protocol version; 0 means unsupported/legacy glasses. */
   hotspotOtaVersion: number
   bluetoothName: string

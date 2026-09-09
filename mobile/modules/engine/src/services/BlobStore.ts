@@ -40,10 +40,16 @@ const LOG_TAG = "LocalMiniappRuntime"
 /** Per-app blob quota: 1 GB. */
 export const BLOB_QUOTA_BYTES = 1024 * 1024 * 1024
 const ROOT_DIR_NAME = "mentra_blobs"
-/** Cache dir root holding properly-named copies handed to the OS share sheet. */
+/** Cache dir root holding short-lived, properly-named copies handed to the OS share sheet (one subdir per stored blob). */
 const SHARE_DIR_NAME = "mentra_blob_share"
-/** Keep handed-off files available while recipient apps finish reading them. */
-const SHARE_RETENTION_MS = 60 * 60 * 1000
+/**
+ * Keep prepared share handoffs alive long enough for recipient apps to read
+ * them asynchronously (for example, an email composer attaching the file).
+ * Stale copies are collected before the next share; the OS may evict cache
+ * files sooner under storage pressure.
+ */
+const SHARE_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000
+const SHARE_LAST_USED_FILE = ".last-shared"
 const META_KEY_ROOT = "mentraos_blobmeta_"
 /** Cap md5 computation so we don't block the JS thread hashing a huge file. */
 const MD5_MAX_BYTES = 50 * 1024 * 1024
@@ -98,8 +104,8 @@ interface ActiveReader {
 
 export class BlobStore {
   private readonly uploads = new Map<string, ActiveUpload>() // key: `${pkg} ${key}`
+  private readonly activeShareDirs = new Map<string, number>()
   private readonly readers = new Map<string, ActiveReader>() // key: host handle id
-  private readonly activeShareIds = new Set<string>()
   /** user + package → committed usage bytes, cached; invalidated on commit/delete/clear. */
   private readonly usageCache = new Map<string, number>()
 
@@ -159,25 +165,6 @@ export class BlobStore {
 
   private fileFor(packageName: string, fileName: string): File {
     return new File(this.dirFor(packageName), fileName)
-  }
-
-  /** Remove expired share copies without touching files from an active handoff. */
-  private pruneShareExports(now = Date.now()): void {
-    const root = new Directory(Paths.cache, SHARE_DIR_NAME)
-    if (!root.exists) return
-
-    try {
-      for (const entry of root.list()) {
-        if (!(entry instanceof Directory)) continue
-        if (this.activeShareIds.has(entry.name)) continue
-        const createdAt = Number.parseInt(entry.name.split("-", 1)[0], 36)
-        if (Number.isFinite(createdAt) && now - createdAt >= SHARE_RETENTION_MS) {
-          entry.delete()
-        }
-      }
-    } catch (error) {
-      console.warn(`${LOG_TAG}: blob share pruning failed`, {root: root.uri, error})
-    }
   }
 
   /** Public API shape: stored meta + derived file:// uri. */
@@ -620,6 +607,35 @@ export class BlobStore {
 
   // ---- share ---------------------------------------------------------------
 
+  /** Best-effort GC for prepared share handoffs retained in the OS cache. */
+  private cleanupShareCache(now = Date.now()): void {
+    try {
+      const root = new Directory(Paths.cache, SHARE_DIR_NAME)
+      if (!root.exists) return
+      const cutoff = now - SHARE_CACHE_MAX_AGE_MS
+      for (const entry of root.list()) {
+        if (!(entry instanceof Directory) || this.activeShareDirs.has(entry.uri)) continue
+        try {
+          const lastUsed = new File(entry, SHARE_LAST_USED_FILE)
+          const info = entry.info()
+          // modificationTime is available on both platforms; creationTime can
+          // be absent on Android versions before API 26. The directory id
+          // begins with Date.now().toString(36), which is a final fallback.
+          const encoded = entry.name.split("-", 1)[0]
+          const encodedTime = /^[0-9a-z]+$/.test(encoded) ? Number.parseInt(encoded, 36) : Number.NaN
+          const timestamp = lastUsed.exists
+            ? Number(lastUsed.textSync())
+            : info.modificationTime ?? info.creationTime ?? encodedTime
+          if (Number.isFinite(timestamp) && timestamp < cutoff) entry.delete()
+        } catch {
+          // Keep scanning if one cache entry disappears or is unreadable.
+        }
+      }
+    } catch {
+      // Cache cleanup must never prevent a share.
+    }
+  }
+
   async handleShare(packageName: string, payload: Record<string, unknown>, requestId?: string): Promise<void> {
     const key = payload.key as string
     const meta = this.readMeta(packageName, key)
@@ -637,56 +653,69 @@ export class BlobStore {
     // applies to base64/data payloads, not file:// URLs), so sharing `file.uri`
     // directly would hand the recipient a machine-named file. Copy to a temp
     // file that carries the real display name + extension, share that, then
-    // retain it briefly for asynchronous recipient reads, then prune it.
+    // clean it up after the recipient has had time to consume it.
     const shareName = shareFileName(meta)
-    // Copy into a per-share unique subdir so two concurrent shares that resolve
-    // to the same display name can't clobber each other's temp file while
-    // Share.open still references it. The file keeps `shareName` as its basename
-    // so the OS share sheet shows the right name + extension.
+    // Key the cache directory by the immutable stored filename. Repeated or
+    // concurrent shares of the same blob can safely reference the same bytes,
+    // avoiding an extra full-sized cache copy for every share. Different blobs
+    // still get isolated directories even when they use the same display name.
+    // The file keeps `shareName` as its basename so the OS share sheet shows the
+    // right name + extension.
     let tempDir: Directory | null = null
-    let shareId: string | null = null
+    let cacheReady = false
     let handoffStarted = false
     try {
-      this.pruneShareExports()
-    } catch (error) {
-      console.warn(`${LOG_TAG}: blob share pruning failed`, error)
-    }
-    try {
-      shareId = this.makeId()
-      this.activeShareIds.add(shareId)
-      tempDir = new Directory(Paths.cache, SHARE_DIR_NAME, shareId)
-      tempDir.create({intermediates: true})
+      this.cleanupShareCache()
+      tempDir = new Directory(Paths.cache, SHARE_DIR_NAME, sanitizeSegment(meta.fileName))
+      if (!tempDir.exists) tempDir.create({intermediates: true})
       const temp = new File(tempDir, shareName)
-      file.copy(temp)
-      const shareOptions = {
+      if (!temp.exists || temp.size !== meta.bytes) {
+        if (temp.exists) temp.delete()
+        file.copy(temp)
+      }
+      cacheReady = true
+      // Persist each handoff's age, even when reusing old bytes. Directory
+      // modification time does not change when an existing file is shared.
+      new File(tempDir, SHARE_LAST_USED_FILE).write(String(Date.now()))
+      this.activeShareDirs.set(tempDir.uri, (this.activeShareDirs.get(tempDir.uri) ?? 0) + 1)
+      handoffStarted = true
+      await Share.open({
         url: temp.uri,
         type: meta.mimeType || OCTET,
         filename: shareName,
-      } as const
-      // Share.open may resolve after the chooser selection, before the
-      // recipient has finished reading the URI. From this point onward the
-      // handoff is ambiguous, including cancellation/rejection, so retain the
-      // file and let the retention policy remove it later.
-      handoffStarted = true
-      await Share.open(shareOptions)
+      })
+      // Share.open resolves once the OS accepts the handoff. Recipient apps may
+      // still read the URI asynchronously, so retain this cache copy for GC.
       this.hooks.sendResult(packageName, requestId, true, {success: true})
     } catch (error: any) {
-      const cancelled = error?.message?.includes("User did not share")
-      console.error(`${LOG_TAG}: blob share error:`, error)
-      if (cancelled) {
+      if (error?.message?.includes("User did not share")) {
         this.hooks.sendResult(packageName, requestId, true, {success: false, cancelled: true})
       } else {
+        console.error(`${LOG_TAG}: blob share error:`, error)
         this.hooks.sendResult(packageName, requestId, true, {success: false})
       }
     } finally {
-      if (shareId) this.activeShareIds.delete(shareId)
-      if (tempDir) {
+      if (tempDir && handoffStarted) {
+        // Give async readers a full window after the chooser returns, even
+        // if it stayed open longer than the retention period.
         try {
-          if (!handoffStarted && tempDir.exists) {
-            tempDir.delete()
-          }
+          new File(tempDir, SHARE_LAST_USED_FILE).write(String(Date.now()))
         } catch (error) {
-          console.warn(`${LOG_TAG}: blob share cleanup failed:`, error)
+          console.warn(`${LOG_TAG}: could not refresh share retention`, error)
+        }
+        const remaining = (this.activeShareDirs.get(tempDir.uri) ?? 1) - 1
+        if (remaining > 0) this.activeShareDirs.set(tempDir.uri, remaining)
+        else this.activeShareDirs.delete(tempDir.uri)
+      }
+      // Once a reusable cache entry is ready, retain it even if this particular
+      // sheet is cancelled or fails: another concurrent/recent share may still
+      // be reading the same file. Only remove an entry whose preparation did
+      // not finish; ready entries are collected after the retention window.
+      if (tempDir && !cacheReady) {
+        try {
+          if (tempDir.exists) tempDir.delete()
+        } catch {
+          /* ignore */
         }
       }
     }

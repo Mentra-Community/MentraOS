@@ -9,24 +9,6 @@ import PairingSuccessScreen from "@/app/pairing/success"
 import {usePushUnder} from "@/contexts/NavigationHistoryContext"
 import {useNavigationStore} from "@/stores/navigation"
 
-jest.mock("@/../../cloud/packages/types/src", () => ({
-  ControllerTypes: {
-    R1: "Mentra Mach1",
-  },
-  DeviceTypes: {
-    LIVE: "Mentra Live",
-    G1: "Even Realities G1",
-    G2: "Even Realities G2",
-    Z100: "Vuzix Z100",
-    MACH1: "Mach1",
-    NEX: "Mentra Nex",
-    AR99: "AR99",
-  },
-  getModelCapabilities: jest.fn((deviceModel: string) => ({
-    hasOta: deviceModel === "Mentra Live" || deviceModel === "AR99",
-  })),
-}))
-
 jest.mock("@react-navigation/native", () => ({
   useRoute: jest.fn(),
 }))

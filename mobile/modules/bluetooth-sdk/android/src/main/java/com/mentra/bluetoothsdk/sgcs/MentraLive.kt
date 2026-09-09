@@ -82,6 +82,33 @@ internal fun hasRequiredMentraLiveCoreCharacteristics(
         hasTxCharacteristic: Boolean,
 ): Boolean = hasRxCharacteristic && hasTxCharacteristic
 
+internal fun isPendingMentraLivePairingTarget(
+        connectedName: String,
+        connectedAddress: String,
+        pendingName: String,
+        pendingAddress: String,
+): Boolean {
+    if (pendingAddress.isNotEmpty()) {
+        return connectedAddress.equals(pendingAddress, ignoreCase = true)
+    }
+    return pendingName.isNotEmpty() && connectedName == pendingName
+}
+
+internal fun shouldRecoverConnectedMentraLivePairingTarget(
+        isConnected: Boolean,
+        connectedName: String,
+        connectedAddress: String,
+        pendingName: String,
+        pendingAddress: String,
+): Boolean =
+        isConnected &&
+                isPendingMentraLivePairingTarget(
+                        connectedName,
+                        connectedAddress,
+                        pendingName,
+                        pendingAddress,
+                )
+
 /**
  * Smart Glasses Communicator for Mentra Live (K900) glasses Uses BLE to communicate with the
  * glasses
@@ -1143,6 +1170,12 @@ class MentraLive : SGCManager() {
             // and the phone-side OTA manifest check will compare against the wrong build.
             DeviceStore.apply("glasses", "buildNumber", "")
             DeviceStore.apply("glasses", "appVersion", "")
+            // packageName must clear with buildNumber: the OTA guard treats an absent package as
+            // "stock, predates the field", so a retained .thirdparty value from a previous session
+            // would permanently block OTA for the next (possibly pre-field, possibly restored
+            // stock) glasses. Both arrive together in version_info_1, so clearing them together
+            // keeps "have a build ⇒ have this session's identity" true.
+            DeviceStore.apply("glasses", "packageName", "")
             DeviceStore.apply("glasses", "besFirmwareVersion", "")
             DeviceStore.apply("glasses", "mtkFirmwareVersion", "")
             // Modern ASG builds omit ota_version_url entirely (the phone owns manifest
@@ -1265,11 +1298,6 @@ class MentraLive : SGCManager() {
             val generation = ++scanGeneration
             isScanning = true
             bluetoothScanner!!.startScan(filters, settings, scanCallback)
-            // Connected glasses stop advertising (BLE_CONNECTION_MAX=1). Pairing scan
-            // would otherwise return empty even though GATT is already up.
-            if (!isReconnecting) {
-                handler.post { emitConnectedDeviceForPairingScan() }
-            }
 
             // Set a timeout to stop scanning
             handler.postDelayed(
@@ -1352,29 +1380,44 @@ class MentraLive : SGCManager() {
     }
 
     /**
-     * Pairing scan listens for advertisements. A unit that is already GATT-connected
-     * (typical after a CTKD retry / back-out on field firmware) has stopped ADV, so
-     * emit it as pairable or the scan list stays empty.
+     * A selected pairing target can stop advertising once its GATT link comes up, before
+     * readiness promotes it to the default device. Re-emit only that explicit pending target;
+     * an established owner's connected glasses have no pending name/address and stay hidden.
      */
-    private fun emitConnectedDeviceForPairingScan() {
-        if (!isConnected || isReconnecting || pairingYieldActive) {
-            return
-        }
+    private fun emitConnectedPendingDeviceForPairingScan() {
+        if (!manualDiscoveryActive || isReconnecting || pairingYieldActive) return
         val device = connectedDevice ?: bluetoothGatt?.device ?: return
         val name = safeBondedDeviceName(device)
-        if (!isMentraLiveBluetoothName(name)) {
+        if (!isMentraLiveBluetoothName(name)) return
+
+        val pendingName = DeviceStore.get("bluetooth", "pending_device_name") as? String ?: ""
+        val pendingAddress =
+                DeviceStore.get("bluetooth", "pending_device_address") as? String ?: ""
+        val pendingSecurePairingCapable =
+                DeviceStore.get("bluetooth", "pending_device_secure_pairing_capable") as? Boolean
+        val address = device.address ?: ""
+        if (
+                !shouldRecoverConnectedMentraLivePairingTarget(
+                        isConnected,
+                        name,
+                        address,
+                        pendingName,
+                        pendingAddress,
+                )
+        ) {
             return
         }
+
         Bridge.log(
-                "LIVE: Pairing scan: already GATT-connected to $name — emitting as pairable (ADV off while connected)"
+                "LIVE: Pairing scan: recovering connected pending target $name ($address)"
         )
         Bridge.sendDiscoveredDevice(
                 DeviceTypes.LIVE,
                 name,
-                device.address ?: "",
+                address,
                 pairingMode = true,
                 pairingCode = null,
-                securePairingCapable = false,
+                securePairingCapable = pendingSecurePairingCapable,
         )
     }
 
@@ -1441,10 +1484,11 @@ class MentraLive : SGCManager() {
                                         advertisesPairingFlag(result) &&
                                         !isPairingDiscoverable(result)
                         ) {
-                            // Tell RN a nearby unit is advertising but not pairable so the
-                            // empty-state hint can fire. The scan list never shows these.
+                            // Tell RN a nearby unit is advertising but not pairable. The scan
+                            // screen keeps it visible with pairing-mode guidance but blocks the
+                            // connection until a pairable advertisement arrives.
                             Bridge.log(
-                                    "LIVE: Nearby $deviceName is secure firmware not in pairing mode — hiding from scan list"
+                                    "LIVE: Nearby $deviceName is secure firmware not in pairing mode — exposing as non-pairable"
                             )
                             Bridge.sendDiscoveredDevice(
                                     DeviceTypes.LIVE,
@@ -2075,6 +2119,7 @@ class MentraLive : SGCManager() {
                             isConnecting = false
                             isConnected = true
                             connectedDevice = gatt.device
+                            emitConnectedPendingDeviceForPairingScan()
 
                             DeviceStore.apply("glasses", "bluetoothName", connectedDevice!!.name)
                             // Persist MAC so reconnection can use direct GATT instead of scanning
@@ -4002,7 +4047,8 @@ class MentraLive : SGCManager() {
                         osOverallPercent,
                         osStatus,
                         osErrorMessage,
-                        if (glassesTimeMs > 0) glassesTimeMs else null
+                        if (glassesTimeMs > 0) glassesTimeMs else null,
+                        if (json.has("bytes_downloaded")) json.optLong("bytes_downloaded", 0) else null
                 )
             }
             "ota_progress" -> {
@@ -4596,6 +4642,9 @@ class MentraLive : SGCManager() {
                     }
 
                     // Update DeviceStore for any fields we recognize
+                    (fields["package_name"] as? String)?.trim()?.takeIf { it.isNotEmpty() }?.let {
+                        DeviceStore.apply("glasses", "packageName", it)
+                    }
                     if (fields.containsKey("app_version")) {
                         DeviceStore.apply("glasses", "appVersion", fields["app_version"] as String)
                     }
@@ -5919,6 +5968,7 @@ class MentraLive : SGCManager() {
 
         // Start scanning for BLE devices
         startScan()
+        handler.post { emitConnectedPendingDeviceForPairingScan() }
     }
 
     private fun releaseStaleClassicForDiscovery() {
@@ -6815,12 +6865,21 @@ class MentraLive : SGCManager() {
                         ")"
         )
         markPairingTiming("ctkd_initiate", "bondState=${device.bondState}")
-        if (device.bondState == BluetoothDevice.BOND_BONDED) {
-            Bridge.log("LIVE: CTKD: Device is already bonded - connecting A2DP audio profile")
-            markPairingTiming("ctkd_already_bonded")
-            connectA2dpProfile(device)
-        } else {
-            createBond(device)
+        when (device.bondState) {
+            BluetoothDevice.BOND_BONDED -> {
+                Bridge.log(
+                        "LIVE: CTKD: Device is already bonded - connecting A2DP audio profile"
+                )
+                markPairingTiming("ctkd_already_bonded")
+                connectA2dpProfile(device)
+            }
+            BluetoothDevice.BOND_BONDING -> {
+                // Secure pairing firmware may request SMP as soon as GATT connects.
+                // Let that in-flight procedure finish instead of calling createBond twice.
+                Bridge.log("LIVE: CTKD: Bonding already in progress - waiting for completion")
+                markPairingTiming("ctkd_bonding_already_in_progress")
+            }
+            else -> createBond(device)
         }
     }
 

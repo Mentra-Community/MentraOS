@@ -9,7 +9,9 @@ import static org.mockito.Mockito.when;
 
 import android.app.Application;
 import androidx.test.core.app.ApplicationProvider;
+import com.mentra.asg_client.audio.AudioAssets;
 import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
+import com.mentra.asg_client.io.peripheral.events.PairingModeExitEvent;
 import com.mentra.asg_client.io.peripheral.events.ShutdownEvent;
 import com.mentra.asg_client.io.peripheral.events.SpeakPairingCodeEvent;
 import com.mentra.asg_client.utils.WakeLockManager;
@@ -62,5 +64,14 @@ public class PairingAudioEventSubscriberTest {
         assertThat(file.getValue().getName()).startsWith("pairing_code_");
         assertThat(file.getValue().getName()).endsWith(".wav");
         assertThat(file.getValue()).exists();
+    }
+
+    @Test
+    public void pairingExitEvent_playsEndedMessage() {
+        when(hardware.supportsAudioPlayback()).thenReturn(true);
+
+        subscriber.onMcuEvent(new PairingModeExitEvent("idle_timeout"));
+
+        verify(hardware).playAudioAsset(AudioAssets.PAIRING_EXITED);
     }
 }

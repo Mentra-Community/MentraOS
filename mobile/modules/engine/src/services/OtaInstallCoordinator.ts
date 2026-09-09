@@ -17,8 +17,7 @@
  * state written mid-pass queues a follow-up pass — the same way a setState
  * during React effects scheduled a re-render after the current effect batch.
  */
-import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
-import type {OtaProgress, OtaStatus} from "@mentra/bluetooth-sdk"
+import BluetoothSdk, {type OtaProgress, type OtaStatus} from "@mentra/bluetooth-sdk"
 import GlobalEventEmitter from "../utils/GlobalEventEmitter"
 import {isGlassesConnected, useGlassesStore} from "../stores/glasses"
 import {resolveOtaManifestUrl} from "./otaManifestUrl"
@@ -27,10 +26,12 @@ import type {OtaCheckCurrentGlassesResult} from "./OtaUpdateCheckService"
 import {deriveDisplayState, type DisplayState} from "./otaDisplayState"
 import {
   BES_CONTINUE_LOCKOUT_MS,
+  BES_RESTART_TIMEOUT_MS,
   DOWNLOAD_STUCK_TIMEOUT_MS,
   GLOBAL_OTA_TIMEOUT_MS,
   LEGACY_APK_COMPLETION_SETTLE_MS,
   LEGACY_BES_CONTINUE_LOCKOUT_MS,
+  LEGACY_BES_RESTART_TIMEOUT_MS,
   LEGACY_DOWNLOAD_STUCK_TIMEOUT_MS,
   LEGACY_GLOBAL_OTA_TIMEOUT_MS,
   LEGACY_MTK_INSTALL_TIMEOUT_MS,
@@ -170,6 +171,8 @@ export interface OtaInstallSnapshot {
   /** Pre-ota_start phone staging/join state for a hotspot attempt. */
   hotspotPhase: HotspotOtaPhase
   hotspotArtifactPercent: number | null
+  /** Transport selected from the checked glasses capabilities and Wi-Fi state. */
+  transport: "wifi" | "hotspot"
 }
 
 type OtaStartOutcome = "pending" | "acknowledged" | "rejected"
@@ -244,6 +247,7 @@ class OtaInstallCoordinator {
   private pingInterval: ReturnType<typeof setInterval> | null = null
   private queryReplyTimeout: ReturnType<typeof setTimeout> | null = null
   private continueLockoutTimer: ReturnType<typeof setTimeout> | null = null
+  private restartRecoveryTimeout: ReturnType<typeof setTimeout> | null = null
   private legacyApkSettleTimer: ReturnType<typeof setTimeout> | null = null
   private mtkStallDetectTimer: ReturnType<typeof setTimeout> | null = null
   private mtkSimTickTimer: ReturnType<typeof setInterval> | null = null
@@ -257,7 +261,7 @@ class OtaInstallCoordinator {
   // command as permission to start a second OTA transaction.
   private otaStartOwnership: OtaStartOwnership | null = null
   private hasFirstActivity = false
-  // Stuck-at-zero watchdog clears only on first NON-ZERO progress; "first activity"
+  // Stuck-at-zero watchdog clears only on real byte/percent progress; "first activity"
   // alone (e.g. ota_status with stepPercent=0) used to clear it too eagerly.
   private hasFirstNonZeroProgress = false
   private retryCount = 0
@@ -272,6 +276,8 @@ class OtaInstallCoordinator {
   private lastBuildNumber = ""
   private lastDisplayState: DisplayState | null = null
   private lastStallSig = ""
+  private downloadStepKey = ""
+  private downloadByteHighWater = 0
 
   // Reaction pass re-entrancy guard (mirrors React deferring a setState-during-
   // effects re-render until the current effect batch finished).
@@ -407,7 +413,7 @@ class OtaInstallCoordinator {
         if (this.otaStartOwnership?.outcome === "pending") {
           void this.sendOtaStartWithWatchdogs()
         } else {
-          void BluetoothSdk.sendOtaQueryStatus().catch(() => {})
+          void BluetoothSdk.queryOtaStatus().catch(() => {})
           this.armQueryReplyFallback("retry")
         }
       }
@@ -449,16 +455,17 @@ class OtaInstallCoordinator {
    * stays in the screen): clear the selected update, and after an APK step
    * clear the stale build number so the next check re-reads version_info.
    */
-  finish(): void {
+  async finish(): Promise<void> {
     if (this.otaStartOwnership?.outcome !== "pending") {
       this.otaStartOwnership = null
     }
     useGlassesStore.getState().setOtaUpdateAvailable(null)
     if (this.apkStepSeen) {
-      BluetoothSdk.updateGlasses({buildNumber: ""})
       useGlassesStore.getState().setGlassesInfo({buildNumber: ""})
     }
-    void this.teardownHotspotTransport()
+    // The post-install check needs internet again. Do not let callers leave the
+    // terminal screen while Android still owns the no-internet hotspot route.
+    await this.teardownHotspotTransport()
   }
 
   /**
@@ -467,8 +474,8 @@ class OtaInstallCoordinator {
    * deriveDisplayState doesn't resurrect the stale install when the host
    * navigates away and back through /ota routes.
    */
-  discard(): void {
-    this.finish()
+  async discard(): Promise<void> {
+    await this.finish()
     const store = useGlassesStore.getState()
     store.setOtaStatus(null)
     store.setOtaProgress(null)
@@ -505,6 +512,7 @@ class OtaInstallCoordinator {
       versionChangePhase: this.deriveVersionChangePhase(connected),
       hotspotPhase: this.hotspotPhase,
       hotspotArtifactPercent: this.hotspotArtifactPercent,
+      transport: this.selectedTransport,
     }
   }
 
@@ -580,6 +588,8 @@ class OtaInstallCoordinator {
     this.lastBuildNumber = ""
     this.lastDisplayState = null
     this.lastStallSig = ""
+    this.downloadStepKey = ""
+    this.downloadByteHighWater = 0
     this.reactQueued = false
   }
 
@@ -590,6 +600,8 @@ class OtaInstallCoordinator {
       return false
     }
     this.otaStartOwnership = null
+    this.downloadStepKey = ""
+    this.downloadByteHighWater = 0
     this.hasFirstActivity = false
     this.hasFirstNonZeroProgress = false
     this.setApkCompletedViaBuildIncrease(false)
@@ -746,6 +758,18 @@ class OtaInstallCoordinator {
       versionChangeSession: this.versionChangeSession,
     })
     const stallSig = buildProgressStalenessSignature(otaStatus, otaProgress, displayState)
+    // Percent is a UI projection, not transfer liveness. Repeated status replies (including
+    // older replies without bytes) must not keep a stalled download alive.
+    const downloadKey =
+      otaStatus?.phase === "download" ? `${otaStatus.sessionId}|${otaStatus.currentStep}|${otaStatus.stepType}` : ""
+    if (downloadKey !== this.downloadStepKey) {
+      this.downloadStepKey = downloadKey
+      this.downloadByteHighWater = 0
+    }
+    const receivedBytes = otaStatus?.bytesDownloaded ?? 0
+    const downloadAdvanced =
+      downloadKey !== "" && Number.isSafeInteger(receivedBytes) && receivedBytes > this.downloadByteHighWater
+    if (downloadAdvanced) this.downloadByteHighWater = receivedBytes
     const stallDuration = progressTimeoutDurationMs(otaStatus, otaProgress, legacySession)
 
     const displayStateChanged = isMount || displayState !== this.lastDisplayState
@@ -956,7 +980,7 @@ class OtaInstallCoordinator {
       this.onFirstActivity()
     }
 
-    // The stuck-at-zero watchdog clears only on the FIRST real (>0%) progress.
+    // The stuck-at-zero watchdog clears only on real byte or percent progress.
     // Without this distinction, an ota_status reply with stepPercent=0 would
     // disable the watchdog before any download had actually started, hiding
     // wedged downloads from the user.
@@ -964,7 +988,7 @@ class OtaInstallCoordinator {
       const stepPct = otaStatus?.stepPercent ?? 0
       const overallPct = otaStatus?.overallPercent ?? 0
       const legacyPct = otaProgress?.progress ?? 0
-      if (stepPct > 0 || overallPct > 0 || legacyPct > 0) {
+      if (downloadAdvanced || stepPct > 0 || overallPct > 0 || legacyPct > 0) {
         this.onFirstNonZeroProgress()
       }
     }
@@ -973,7 +997,7 @@ class OtaInstallCoordinator {
     // Keyed on the staleness SIGNATURE string (not the object refs) so a store
     // update that doesn't change the signature keeps the same timer running
     // instead of forever re-extending the deadline.
-    if (stallSigChanged || displayStateChanged) {
+    if (stallSigChanged || displayStateChanged || downloadAdvanced) {
       if (this.isInVersionChangeDetour()) {
         // Recovery worker owns the transaction; there are no progress events to stall on.
         this.clearProgressTimeout()
@@ -997,12 +1021,22 @@ class OtaInstallCoordinator {
     // (15s unified, 35s for legacy-shaped sessions — WP 8C-f).
     if (displayStateChanged && displayState === "restarting") {
       this.clearContinueLockoutTimer()
+      this.clearRestartRecoveryTimeout()
       const lockoutMs = legacySession ? LEGACY_BES_CONTINUE_LOCKOUT_MS : BES_CONTINUE_LOCKOUT_MS
+      const restartTimeoutMs = legacySession ? LEGACY_BES_RESTART_TIMEOUT_MS : BES_RESTART_TIMEOUT_MS
       this.setContinueButtonDisabled(true)
       this.continueLockoutTimer = setTimeout(() => {
         this.continueLockoutTimer = null
         this.setContinueButtonDisabled(false)
       }, lockoutMs)
+      this.restartRecoveryTimeout = setTimeout(() => {
+        this.restartRecoveryTimeout = null
+        if (this.computeDisplayStateNow() !== "restarting") return
+        console.log(`[OTA_PROGRESS] watchdog: glasses did not finish restarting in ${restartTimeoutMs}ms`)
+        this.setErrorMsg(OtaProgressMessages.restartTimeout)
+      }, restartTimeoutMs)
+    } else if (displayStateChanged) {
+      this.clearRestartRecoveryTimeout()
     }
 
     // Legacy MTK install stall simulation (WP 8C-e): display-only. The simulation
@@ -1065,7 +1099,7 @@ class OtaInstallCoordinator {
     if (this.otaStartOwnership?.outcome === "pending") {
       void this.sendOtaStartWithWatchdogs()
     }
-    void BluetoothSdk.sendOtaQueryStatus()
+    void BluetoothSdk.queryOtaStatus().catch(() => {})
     this.armQueryReplyFallback("reconnect")
     return true
   }
@@ -1109,7 +1143,7 @@ class OtaInstallCoordinator {
     if (noSessionYet) {
       if (!isIdleStatus && this.otaStartOwnership?.outcome === "acknowledged") {
         console.log("[OTA_PROGRESS] initial mount, acknowledged session has no cached status — reconciling")
-        void BluetoothSdk.sendOtaQueryStatus().catch(() => {})
+        void BluetoothSdk.queryOtaStatus().catch(() => {})
         this.armQueryReplyFallback("initial-mount")
         return
       }
@@ -1125,7 +1159,7 @@ class OtaInstallCoordinator {
       void this.sendOtaStartWithWatchdogs()
     } else {
       console.log("[OTA_PROGRESS] initial mount, session exists, sending ota_query_status")
-      void BluetoothSdk.sendOtaQueryStatus()
+      void BluetoothSdk.queryOtaStatus().catch(() => {})
       this.armQueryReplyFallback("initial-mount")
     }
   }
@@ -1154,7 +1188,7 @@ class OtaInstallCoordinator {
     this.clearProgressTimeout()
     this.onFirstActivity()
     this.onFirstNonZeroProgress()
-    void BluetoothSdk.sendOtaQueryStatus()
+    void BluetoothSdk.queryOtaStatus().catch(() => {})
     useGlassesStore.getState().setMtkUpdatedThisSession(true)
   }
 
@@ -1345,7 +1379,7 @@ class OtaInstallCoordinator {
     const s = useGlassesStore.getState().otaStatus
     if (s?.stepType === "apk" && s.phase === "install" && s.status === "in_progress") {
       this.apkInstallPollInFlight = true
-      void BluetoothSdk.sendOtaQueryStatus()
+      void BluetoothSdk.queryOtaStatus()
         .catch(() => {})
         .finally(() => {
           this.apkInstallPollInFlight = false
@@ -1356,7 +1390,7 @@ class OtaInstallCoordinator {
   /**
    * "Glasses are talking to us" — suppresses retry if the native request later rejects.
    * Important: this does NOT clear the stuck-at-zero watchdog; that one fires
-   * on real progress > 0% (see {@link onFirstNonZeroProgress}).
+   * on real byte/percent progress (see {@link onFirstNonZeroProgress}).
    */
   private onFirstActivity(): void {
     if (this.hasFirstActivity) return
@@ -1369,10 +1403,8 @@ class OtaInstallCoordinator {
 
   /**
    * "Real download progress arrived" — clears the stuck-at-zero watchdog. We
-   * deliberately wait for non-zero progress before clearing this so that an
-   * ota_status reply with stepPercent: 0 (which is "first activity" but not
-   * "real progress") doesn't disable the only watchdog that catches a wedged
-   * download.
+   * require advancing bytes or non-zero percent, so an ordinary status reply
+   * cannot disable the watchdog that catches a wedged download.
    */
   private onFirstNonZeroProgress(): void {
     if (this.hasFirstNonZeroProgress) return
@@ -1665,6 +1697,13 @@ class OtaInstallCoordinator {
     }
   }
 
+  private clearRestartRecoveryTimeout(): void {
+    if (this.restartRecoveryTimeout) {
+      clearTimeout(this.restartRecoveryTimeout)
+      this.restartRecoveryTimeout = null
+    }
+  }
+
   private clearLegacyApkSettleTimer(): void {
     if (this.legacyApkSettleTimer) {
       clearTimeout(this.legacyApkSettleTimer)
@@ -1703,6 +1742,7 @@ class OtaInstallCoordinator {
     this.clearPingInterval()
     this.clearLegacyApkSettleTimer()
     this.clearMtkSimulationTimers()
+    this.clearRestartRecoveryTimeout()
   }
 }
 

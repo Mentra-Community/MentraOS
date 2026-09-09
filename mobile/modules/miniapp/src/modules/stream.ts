@@ -15,6 +15,10 @@ export interface StreamVideoConfig {
   width?: number
   height?: number
   bitrate?: number
+  /** WHIP minimum target in bps; omitted leaves it unset. Clamped to the maximum. */
+  minBitrateBps?: number
+  /** WHIP startup bitrate in bps, clamped to the requested bounds. */
+  initialBitrateBps?: number
   fps?: number
 }
 
@@ -83,6 +87,11 @@ export interface StartStreamOptions {
   ingest?: "srt" | "whip" | "rtmp"
   /** Optional Bearer token for direct WHIP Authorization (custom authenticated endpoints). */
   authToken?: string
+  /**
+   * When false, glasses skip mic capture for this WHIP session. Fixed for the
+   * lifetime of the stream. Defaults to true. Older Mentra Apps ignore this.
+   */
+  captureAudio?: boolean
 }
 
 export interface StreamResult {
@@ -146,6 +155,7 @@ export class StreamModule {
         audio: options.audio,
         sound: options.sound ?? true,
         ...(options.authToken ? {authToken: options.authToken} : {}),
+        ...(typeof options.captureAudio === "boolean" ? {captureAudio: options.captureAudio} : {}),
       })
     }
     return this.session.sendRequest<StreamResult>({
@@ -155,6 +165,7 @@ export class StreamModule {
       audio: options.audio,
       sound: options.sound ?? true,
       ingest: options.ingest,
+      ...(typeof options.captureAudio === "boolean" ? {captureAudio: options.captureAudio} : {}),
     })
   }
 

@@ -26,8 +26,8 @@ public final class AudioAssets {
     /** Storage full notification sound */
     public static final String STORAGE_FULL = "storage_full.mp3";
 
-    /** Short hold-still cue repeated while a cold capture spins up the camera and ISP. */
-    public static final String CAMERA_PREP_CLICK = "camera_prep_click.wav";
+    /** 45-second hold-still sequence with one click every 900ms, cancelled on exposure. */
+    public static final String CAMERA_PREP_CLICK = "camera_prep_sequence.flac";
 
     /** Camera snap anchored to sensor exposure timing or the completed JPEG frame boundary. */
     public static final String CAMERA_SNAP = "camera_snap.wav";
@@ -64,6 +64,12 @@ public final class AudioAssets {
 
     /** Spoken pairing-code clip folder ({@code letter_a.wav}, {@code digit_0.wav}, ...). */
     public static final String PAIRING_PREFIX = "pairing/";
+
+    /** “Connect to your Mentra Live in the app. Your code is:” */
+    public static final String PAIRING_INTRO = PAIRING_PREFIX + "pairing_intro.wav";
+
+    /** Spoken confirmation after the glasses leave pairing mode. */
+    public static final String PAIRING_EXITED = PAIRING_PREFIX + "pairing_exited.wav";
 
     /** Battery level announcement audio folder prefix */
     public static final String BATTERY_LEVEL_PREFIX = "battery/";

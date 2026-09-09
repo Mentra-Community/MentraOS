@@ -18,7 +18,10 @@ export async function runFix(
   state: PrAgentState,
   ciLogExcerpt: string,
 ): Promise<FixResult> {
-  const config = loadConfig(repoRoot);
+  // Tooling (config + prompts) may be pinned to the PR base in a sibling
+  // checkout. Git operations stay on the PR working tree (`repoRoot`).
+  const toolRoot = process.env.PR_AGENT_TOOL_ROOT ?? repoRoot;
+  const config = loadConfig(toolRoot);
   const apiKey = process.env.CURSOR_API_KEY;
   if (!apiKey) throw new Error('CURSOR_API_KEY is required');
 
@@ -27,7 +30,7 @@ export async function runFix(
     return { ran: false, committed: false };
   }
 
-  const promptPath = join(repoRoot, '.github/pr-agent/prompts/pr-fix.md');
+  const promptPath = join(toolRoot, '.github/pr-agent/prompts/pr-fix.md');
   const basePrompt = readFileSync(promptPath, 'utf8');
 
   const blocking = openBlocking(state.openFindings);

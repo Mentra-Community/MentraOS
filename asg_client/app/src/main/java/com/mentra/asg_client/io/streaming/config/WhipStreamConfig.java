@@ -27,10 +27,13 @@ public class WhipStreamConfig {
   private int videoHeight = DEFAULT_VIDEO_HEIGHT;
   private int videoFps = DEFAULT_VIDEO_FPS;
   private int videoBitrate = DEFAULT_VIDEO_BITRATE;
+  private Integer videoMinBitrateBps;
+  private Integer videoInitialBitrateBps;
   private volatile double statusVideoFps = Double.NaN;
 
   private boolean echoCancellation = DEFAULT_ECHO_CANCELLATION;
   private boolean noiseSuppression = DEFAULT_NOISE_SUPPRESSION;
+  private boolean captureAudio = true;
 
   private String stunServer = DEFAULT_STUN_SERVER;
 
@@ -60,11 +63,18 @@ public class WhipStreamConfig {
       config.videoHeight = normalizeDimension(height, 240, 1080);
       config.videoBitrate = clamp(config.videoBitrate, 100000, 10000000);
       config.videoFps = clamp(config.videoFps, MIN_VIDEO_FPS, MAX_VIDEO_FPS);
+      int requestedInitial = videoJson.optInt("initialBitrateBps", 0);
+      if (requestedInitial > 0) config.videoInitialBitrateBps = requestedInitial;
+      int requestedMinimum = videoJson.optInt("minBitrateBps", 0);
+      if (requestedMinimum > 0) {
+        config.videoMinBitrateBps = Math.min(requestedMinimum, config.videoBitrate);
+      }
     }
 
     if (audioJson != null) {
       config.echoCancellation = optBoolWithFallback(audioJson, "echoCancellation", "ec", DEFAULT_ECHO_CANCELLATION);
       config.noiseSuppression = optBoolWithFallback(audioJson, "noiseSuppression", "ns", DEFAULT_NOISE_SUPPRESSION);
+      config.captureAudio = optBoolWithFallback(audioJson, "captureAudio", "ca", true);
     }
 
     return config;
@@ -155,8 +165,17 @@ public class WhipStreamConfig {
   public int getVideoHeight() { return videoHeight; }
   public int getVideoFps() { return videoFps; }
   public int getVideoBitrate() { return videoBitrate; }
+
+  /** Optional caller-supplied WHIP startup bitrate, bounded when applied. */
+  public Integer getVideoInitialBitrateBps() { return videoInitialBitrateBps; }
+
+  /** Optional WHIP video bitrate floor, bounded by the current maximum. */
+  public Integer getVideoMinBitrateBps() {
+    return videoMinBitrateBps == null ? null : Math.min(videoMinBitrateBps, videoBitrate);
+  }
   public boolean isEchoCancellation() { return echoCancellation; }
   public boolean isNoiseSuppression() { return noiseSuppression; }
+  public boolean isCaptureAudio() { return captureAudio; }
   public String getStunServer() { return stunServer; }
 
   // Setters with validation (fluent API)
@@ -227,6 +246,11 @@ public class WhipStreamConfig {
     return this;
   }
 
+  public WhipStreamConfig setCaptureAudio(boolean enabled) {
+    this.captureAudio = enabled;
+    return this;
+  }
+
   public WhipStreamConfig setStunServer(String stunServer) {
     this.stunServer = stunServer;
     return this;
@@ -239,6 +263,7 @@ public class WhipStreamConfig {
         + (videoBitrate / 1000) + "kbps"
         + ", echo=" + echoCancellation
         + ", noise=" + noiseSuppression
+        + ", captureAudio=" + captureAudio
         + ", stun=" + stunServer
         + '}';
   }

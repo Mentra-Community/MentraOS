@@ -107,6 +107,8 @@ export const bluetoothSdkMock = {
   updateGlasses: jest.fn(() => Promise.resolve()),
   onBluetoothStatus: jest.fn((listener: Listener) => addListener("bluetooth_status", listener).remove),
   onGlassesStatus: jest.fn((listener: Listener) => addListener("glasses_status", listener).remove),
+  subscribeBluetoothStatus: jest.fn((listener: Listener) => addListener("bluetooth_status", listener).remove),
+  subscribeGlassesStatus: jest.fn((listener: Listener) => addListener("glasses_status", listener).remove),
   displayEvent: jest.fn(() => Promise.resolve()),
   displayText: jest.fn(() => Promise.resolve()),
   clearDisplay: jest.fn(() => Promise.resolve()),
@@ -152,6 +154,19 @@ export const bluetoothSdkMock = {
   requestPhoto: jest.fn(() => Promise.resolve()),
   startOtaUpdate: jest.fn(() => Promise.resolve()),
   sendOtaQueryStatus: jest.fn(() =>
+    Promise.resolve({
+      type: "ota_status",
+      session_id: "",
+      total_steps: 0,
+      current_step: 0,
+      step_type: "apk",
+      phase: "download",
+      step_percent: 0,
+      overall_percent: 0,
+      status: "idle",
+    }),
+  ),
+  queryOtaStatus: jest.fn(() =>
     Promise.resolve({
       type: "ota_status",
       session_id: "",

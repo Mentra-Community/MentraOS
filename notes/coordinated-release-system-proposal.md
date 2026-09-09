@@ -1,7 +1,7 @@
 # Coordinated Release System
 
-> Status: implemented in the consolidated release PR; first release validation pending
-> Updated: 2026-08-25
+> Status: implemented; coordinated channel documentation added
+> Updated: 2026-08-27
 
 ## Goal
 
@@ -76,6 +76,12 @@ make Engine installation and native resolution ambiguous to consumers.
 12. Production validates the selected beta before protected approval. Stable
     packages and the external Engine consumer must succeed before either mobile
     store is changed.
+13. Dev and beta documentation is a post-finalization release output. The docs
+    show the exact coordinated release identity and are never published ahead
+    of the completed release manifest.
+14. Starter Kit examples are built and published by the Starter Kit repository,
+    but their validated result is a required consumer gate before coordinated
+    finalization. Documentation never guesses or constructs an example URL.
 
 ## Phase 0: Fix the Engine Boundary Now
 
@@ -468,6 +474,23 @@ Bug fixes may land on `staging` first and must be merged back into `dev`.
 Features land on `dev` and move to `staging` only when selected for the release
 candidate. Do not merge all of `dev` into `staging` merely to produce a build.
 
+A release-family cut promotes the selected heads in dependency order: Starter
+Kit `dev` to `staging` first, then MentraOS `dev` to `staging`. The coordinated
+release plan freezes the resulting Starter Kit `staging` SHA before publishing
+anything. Once that beta succeeds, Starter Kit `staging` is merged back into
+`dev` before MentraOS `dev` is prepared for the next family. This reconciliation
+preserves the beta-generated dependency and lockfile commit as shared ancestry;
+it is necessary because the Starter Kit coordinated workflow intentionally
+writes channel-specific release output to its branch.
+
+Before starting production, promote the completed beta's exact recorded Starter
+Kit merge commit from Starter Kit `staging` to `main`, then promote its exact
+MentraOS source commit from MentraOS `staging` to `main`. The branch cut refuses
+either promotion unless the selected source already contains that repository's
+current `main`; production-only history must be back-merged and validated in a
+new beta first. This keeps both source repositories aligned without adding
+Starter Kit artifacts or store publishing to the Mentra-App production flow.
+
 The coordinator has no path filters: every selected branch release gets an
 auditable identity. Every public product and package in that set is published
 under the shared version, even when its source is unchanged. Jobs may reuse
@@ -499,13 +522,20 @@ After the OTA bundle and version map exist:
    release-family dependency order, ending with Engine.
 2. Native Bluetooth SDK publication and MentraOS mobile builds run in parallel
    with that npm lane; they do not depend on registry packages to build.
-3. After npm and native publication, a clean external OEM fixture installs only
-   the exact public Engine package plus host-owned dependencies. It verifies the
-   registry graph, TypeScript, Metro, Expo autolinking, Android, and iOS.
-4. Finalization writes the completed release manifest only after every product
-   lane and the external consumer gate succeeds.
-5. Starter Kit artifacts and public documentation update only after all public
-   dependencies and example downloads are live.
+3. A clean external OEM fixture starts as soon as npm publication completes. It
+   installs only the exact public Engine package plus host-owned dependencies.
+   It verifies the registry graph, TypeScript, Metro, Expo autolinking, Android,
+   and iOS.
+4. The Starter Kit workflow is dispatched after the OTA release exists and
+   checks npm and SwiftPM readiness itself while those publication lanes are
+   still running. It synchronizes every maintained example only after the exact
+   dependencies are readable. Native Android is built when Maven Central
+   already exposes that identity; otherwise that optional artifact is skipped
+   without holding up the release.
+5. Finalization writes the completed release manifest only after every product
+   lane, the external consumer gate, and the Starter Kit gate succeed.
+6. Dev and beta documentation publishes after finalization from the exact
+   source commit, release plan, and validated Starter Kit result.
 
 Independent jobs may run in parallel when the dependency graph permits it. A
 consumer package cannot publish until its referenced versions are publicly
@@ -651,6 +681,52 @@ release name. Each release exposes the semantic
 `mentra-live-asg-selection-<derived-version>.json` record that resolves its ASG
 object and records the object's hash, version, signature, and provenance.
 
+## Documentation Channels
+
+Documentation has the same release-channel identity as the products it
+describes:
+
+| Source channel | Published docs                      | Cloudflare Pages project | Injected version              |
+| -------------- | ----------------------------------- | ------------------------ | ----------------------------- |
+| `dev`          | `https://docs-dev.mentraglass.com`  | `mentraos-docs-dev`      | Exact `X.Y.Z-dev.N` identity  |
+| `staging`      | `https://docs-beta.mentraglass.com` | `mentraos-docs-beta`     | Exact `X.Y.Z-beta.N` identity |
+| `main`         | `https://docs.mentraglass.com`      | Mintlify Git deployment  | Stable `X.Y.Z` family base    |
+
+`mintlify-docs/docs.json` uses Mintlify's native global variables. The checked-in
+`release-version` and production release-artifact URL use the stable family
+base, so the `main` branch remains directly buildable by Mintlify. Current
+release references throughout `mintlify-docs/bluetooth-sdk/` use those variables
+instead of copied literals.
+
+The coordinated `dev` and `staging` workflow does not edit the checkout. After
+release finalization succeeds, it:
+
+1. checks out the release plan's exact source commit;
+2. copies `mintlify-docs/` into a temporary directory;
+3. updates `release-version` and `release-artifacts-url` in that copy using a
+   structured JSON renderer;
+4. exports the copied tree with Mintlify;
+5. adds `X-Robots-Tag: noindex`, deploys it to the channel's Pages project, and
+   verifies the custom domain contains the exact release identity; and
+6. reports the documentation URL and pass/fail state in the channel's Slack
+   release notification.
+
+The previous independent push-triggered dev-docs workflow is removed. It could
+race a coordinated release and replace exact `dev.N` documentation with the
+checked-in stable base version. A docs deployment failure leaves the previously
+published site online, fails the docs job, and makes Slack report the otherwise
+finalized release as incomplete. It does not rewrite or roll back an immutable
+release manifest.
+
+Starter Kit example applications use `example-app-download-label` and
+`example-app-url` variables. Source-only docs link to the releases index with
+version-neutral copy. The dev/beta renderer supplies a label naming the exact
+SDK version and the APK URL from the validated Starter Kit result; it must not
+construct an example download from the MentraOS release identity.
+Production remains a Mintlify deployment
+from `main`; changing that external branch setting from `staging` to `main` is
+an operator action, not part of the dev/beta Pages workflow.
+
 ## Promotion
 
 Production selects one completed staging release set. Before requesting
@@ -685,18 +761,30 @@ manifest, IPA, and Android store artifact are not rebuilt.
 
 ## Starter Kit and Documentation
 
+The detailed ownership, cross-repository protocol, artifact contract,
+documentation rendering, Slack integration, and deferred TestFlight design are
+specified in
+[Coordinated Documentation and Example App Releases](./coordinated-release-docs-and-example-apps-design.md).
+
 Starter Kit examples are downstream release consumers, not sources of package
 truth.
 
-1. Wait until npm, Maven, and SwiftPM all expose the coordinated SDK version and
-   Engine's full dependency closure is readable.
-2. Update all three examples to the selected public versions.
-3. Build and publish example APK/IPA artifacts.
-4. Update docs to the new release version and immutable example URLs.
+1. Dispatch the Starter Kit repository with the exact release identity and its
+   expected channel-branch head as soon as the immutable OTA release exists.
+2. In that workflow, wait until npm and SwiftPM expose the coordinated SDK
+   version and Engine's full dependency closure is readable. Sonatype
+   publication proceeds automatically without blocking the Starter Kit gate.
+3. Update every maintained example and lockfile to the selected public versions
+   in an isolated candidate commit.
+4. Build and publish immutable example APK/IPA artifacts and a machine-readable
+   result containing their source commit, URLs, and hashes.
+5. Validate that result before coordinated finalization, then render the exact
+   example version and URL into dev or beta documentation.
 
-The public docs workflow fails closed if a referenced package or example
-artifact is unavailable. Documentation never advertises a release that cannot
-be installed.
+The Starter Kit publication fails closed if a referenced package is
+unavailable. Documentation never claims that an example matches a coordinated
+release unless its validated Starter Kit result is included in that release's
+final manifest.
 
 ## Verification Gates
 
@@ -719,7 +807,9 @@ Each release set must prove:
 - mobile artifacts use the expected local workspace source hashes;
 - the OTA manifest's ASG, MTK, and BES URLs, hashes, and versions are valid;
 - an external Engine fixture app resolves, type-checks, autolinks, and builds;
-- Starter Kit examples build only after real registry publication.
+- Starter Kit npm and SwiftPM dependencies build only after real registry
+  publication; native Android is built only when Maven Central already exposes
+  the exact version and is otherwise an optional artifact.
 
 Any missing, malformed, mutable, unreachable, or mismatched release input blocks
 publication. There is no fallback to another channel.
@@ -783,6 +873,8 @@ cutover that enables the coordinator, so two systems cannot publish the shared
   APK; a changed fingerprint produces one new immutable APK.
 - Dev and beta builds are immediately distinguishable in TestFlight metadata,
   artifact names, diagnostics, and the release manifest.
+- Dev and beta docs show the exact finalized release identity on their own
+  domains, remain non-indexable, and report their result in release Slack.
 - A workflow retry reconciles the same identity without overwriting bytes.
 - Each prerelease owns its OTA manifest, ASG selection, and portable bundle;
   the shared ASG release contains only reusable APK/provenance pairs.

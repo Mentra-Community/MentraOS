@@ -3,6 +3,7 @@ package com.mentra.asg_client.audio;
 import static org.assertj.core.api.Assertions.assertThat;
 import static org.assertj.core.api.Assertions.assertThatThrownBy;
 
+import com.mentra.asg_client.AsgConstants;
 import java.util.Arrays;
 import java.util.List;
 import org.junit.Test;
@@ -29,7 +30,7 @@ public class PairingCodePcmStitcherTest {
     }
 
     @Test
-    public void stitchWavs_crossfadesIntoOneShorterPhrase() throws Exception {
+    public void stitchWavs_insertsPauseBetweenTrimmedClips() throws Exception {
         int silence = PairingCodePcmStitcher.msToSamples(200, SAMPLE_RATE);
         int tone = PairingCodePcmStitcher.msToSamples(100, SAMPLE_RATE);
         byte[] left = toneWav(silence, tone, silence, (short) 8000);
@@ -39,17 +40,40 @@ public class PairingCodePcmStitcherTest {
                 PairingCodePcmStitcher.stitchWavs(List.of(left, right));
         PairingCodePcmStitcher.PcmClip clip = PairingCodePcmStitcher.decodePcmWav(stitched);
 
-        int overlap = PairingCodePcmStitcher.msToSamples(PairingCodePcmStitcher.CROSSFADE_MS, SAMPLE_RATE);
+        int pause =
+                PairingCodePcmStitcher.msToSamples(
+                        AsgConstants.PAIRING_CODE_INTER_CHARACTER_PAUSE_MS, SAMPLE_RATE);
         assertThat(clip.sampleRate).isEqualTo(SAMPLE_RATE);
-        assertThat(clip.samples.length).isEqualTo(tone * 2 - overlap);
-        assertThat(clip.samples.length)
-                .isLessThan(PairingCodePcmStitcher.decodePcmWav(left).samples.length);
+        assertThat(clip.samples.length).isEqualTo(tone * 2 + pause);
+        assertThat(Arrays.copyOfRange(clip.samples, tone, tone + pause))
+                .containsOnly((short) 0);
     }
 
     @Test
     public void stitchWavs_rejectsEmptyList() {
         assertThatThrownBy(() -> PairingCodePcmStitcher.stitchWavs(List.of()))
                 .isInstanceOf(java.io.IOException.class);
+    }
+
+    @Test
+    public void stitchPairingPhraseWavs_usesLongerPauseAfterIntro() throws Exception {
+        int tone = PairingCodePcmStitcher.msToSamples(100, SAMPLE_RATE);
+        byte[] intro = toneWav(0, tone, 0, (short) 8000);
+        byte[] firstCode = toneWav(0, tone, 0, (short) 6000);
+        byte[] secondCode = toneWav(0, tone, 0, (short) 4000);
+
+        byte[] stitched =
+                PairingCodePcmStitcher.stitchPairingPhraseWavs(
+                        List.of(intro, firstCode, secondCode));
+        PairingCodePcmStitcher.PcmClip clip = PairingCodePcmStitcher.decodePcmWav(stitched);
+
+        int introPause =
+                PairingCodePcmStitcher.msToSamples(
+                        AsgConstants.PAIRING_INTRO_TO_CODE_PAUSE_MS, SAMPLE_RATE);
+        int characterPause =
+                PairingCodePcmStitcher.msToSamples(
+                        AsgConstants.PAIRING_CODE_INTER_CHARACTER_PAUSE_MS, SAMPLE_RATE);
+        assertThat(clip.samples.length).isEqualTo(tone * 3 + introPause + characterPause);
     }
 
     private static byte[] toneWav(int lead, int tone, int trail, short amplitude) {

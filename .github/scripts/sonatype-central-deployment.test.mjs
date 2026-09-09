@@ -4,7 +4,7 @@ import {tmpdir} from "node:os"
 import path from "node:path"
 import test from "node:test"
 
-import {inspectDeployment, publishDeployment, uploadManagedDeployment} from "./sonatype-central-deployment.mjs"
+import {inspectDeployment, publishDeployment, uploadAutomaticDeployment} from "./sonatype-central-deployment.mjs"
 
 const deploymentId = "28570f16-da32-4c14-bd2e-c1acc0782365"
 const deploymentName = "mentra-3.1.0-beta.57-android-sdk"
@@ -33,9 +33,9 @@ function jsonResponse(value, status = 200) {
   return new Response(JSON.stringify(value), {status})
 }
 
-test("uploads a user-managed deployment and returns a durable recovery record", async () => {
+test("uploads an automatically published deployment and returns a durable recovery record", async () => {
   let request
-  const result = await uploadManagedDeployment({
+  const result = await uploadAutomaticDeployment({
     bundle: bundle(),
     token: "token",
     deploymentName,
@@ -46,7 +46,7 @@ test("uploads a user-managed deployment and returns a durable recovery record", 
     },
   })
 
-  assert.match(request.url, /publishingType=USER_MANAGED/)
+  assert.match(request.url, /publishingType=AUTOMATIC/)
   assert.match(request.url, /name=mentra-3.1.0-beta.57-android-sdk/)
   assert.equal(request.options.method, "POST")
   assert.equal(result.deploymentId, deploymentId)

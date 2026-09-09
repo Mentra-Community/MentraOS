@@ -136,16 +136,20 @@ export function createOtaReleaseResult({
   const manifest = readJson(manifestPath)
   const asg = manifest.apps?.["com.mentra.asg_client"]
   if (
+    manifest.releaseVersion !== releasePlan.releaseIdentity ||
     asg?.versionCode !== identity.versionCode ||
     asg?.versionName !== identity.versionName ||
     asg?.apkUrl !== provenance.apk.url ||
     asg?.sha256 !== provenance.apk.sha256 ||
     asg?.apkSize !== provenance.apk.size
   ) {
-    throw new Error("OTA manifest does not pin the selected ASG artifact exactly")
+    throw new Error("OTA manifest does not identify the release and selected ASG artifact exactly")
   }
   if (canonicalJson(manifest.mtk_patches) !== canonicalJson(releasePlan.otaInputs.mtkPatches)) {
     throw new Error("OTA manifest MTK inputs differ from the release plan")
+  }
+  if (canonicalJson(manifest.mtk_full_ota ?? null) !== canonicalJson(releasePlan.otaInputs.mtkFullOta ?? null)) {
+    throw new Error("OTA manifest MTK full OTA differs from the release plan")
   }
   if (canonicalJson(manifest.bes_firmware) !== canonicalJson(releasePlan.otaInputs.besFirmware)) {
     throw new Error("OTA manifest BES input differs from the release plan")

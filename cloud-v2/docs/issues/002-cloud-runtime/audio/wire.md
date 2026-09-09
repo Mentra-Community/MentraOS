@@ -101,8 +101,7 @@ codecs negotiated in `connection.init.audio.codec`.
 ## Encryption
 
 UDP audio is encrypted with **NaCl secretbox (XSalsa20-Poly1305)**, carried
-forward from v1 (`cloud/issues/027-udp-audio-encryption`,
-`mobile/src/services/UdpCrypto.ts`).
+forward from the retired V1 transport and its mobile crypto implementation.
 
 - The cloud generates a **per-session 32-byte symmetric key** and delivers it in
   `connection.ack.audio.encryption.key` (base64), over the TLS WebSocket, so the

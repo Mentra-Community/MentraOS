@@ -1,4 +1,5 @@
-import BluetoothSdk, {isEnabledHotspotStatus, MentraOtaServer} from "@mentra/bluetooth-sdk/internal"
+import BluetoothSdk, {isEnabledHotspotStatus} from "@mentra/bluetooth-sdk"
+import {otaServer} from "@mentra/bluetooth-sdk/ota-transport"
 // One coordinator selects the native Android or iOS staging implementation at runtime.
 // eslint-disable-next-line react-native/split-platform-components
 import {PermissionsAndroid, Platform} from "react-native"
@@ -83,7 +84,7 @@ class HotspotOtaTransport {
       let localAddress = scopedAddress
       if (Platform.OS === "ios") {
         try {
-          localAddress = await MentraOtaServer.waitForWifiAddress(hotspot.localIp, 15_000)
+          localAddress = await otaServer.waitForWifiAddress(hotspot.localIp, 15_000)
         } catch (error) {
           throw new HotspotOtaTransportError(
             "hotspot_join_failed",
@@ -94,10 +95,10 @@ class HotspotOtaTransport {
       const artifactPaths = Object.fromEntries(this.prepared.map((artifact) => [artifact.sha256, artifact.filePath]))
       // Start exactly one native listener to learn its selected port, then atomically replace
       // the placeholder with the immutable rewritten manifest before ota_start is sent.
-      const server = await MentraOtaServer.startOtaServer("{}", artifactPaths, localAddress)
+      const server = await otaServer.start("{}", artifactPaths, localAddress)
       this.serverStarted = true
       const manifest = rewriteManifestForLocalServer(checkResult.manifestBody, this.prepared, server.baseUrl)
-      const published = await MentraOtaServer.startOtaServer(manifest, artifactPaths, server.host)
+      const published = await otaServer.start(manifest, artifactPaths, server.host)
       if (published.manifestUrl !== server.manifestUrl) {
         throw new Error("Local OTA server endpoint changed while publishing the manifest")
       }
@@ -141,11 +142,11 @@ class HotspotOtaTransport {
     destination: string,
     onProgress?: (bytesWritten: number, contentLength: number) => void,
   ): Promise<{statusCode: number}> => {
-    const subscription = MentraOtaServer.addListener("artifactDownloadProgress", (event) => {
+    const subscription = otaServer.onArtifactDownloadProgress((event) => {
       if (event.destination === destination) onProgress?.(event.bytesWritten, event.contentLength)
     })
     try {
-      return await MentraOtaServer.downloadArtifact(entry.url, destination)
+      return await otaServer.downloadArtifact(entry.url, destination)
     } finally {
       subscription.remove()
     }
@@ -164,7 +165,7 @@ class HotspotOtaTransport {
           console.warn("[OTA_PROGRESS] glasses hotspot shutdown was not confirmed after bounded retries")
         }
       }
-      if (this.serverStarted) await MentraOtaServer.stopOtaServer().catch(() => {})
+      if (this.serverStarted) await otaServer.stop().catch(() => {})
       if (this.localNetworkConnected) await localNetworkTransport.disconnect().catch(() => {})
       await cleanupArtifacts().catch(() => {})
       this.prepared = []

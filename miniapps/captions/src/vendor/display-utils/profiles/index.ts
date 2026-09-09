@@ -18,6 +18,9 @@ export type {
 // G1 Profiles
 export {G1_PROFILE, G1_PROFILE_LEGACY, G1_HYPHEN_WIDTH_PX, G1_SPACE_WIDTH_PX} from "./g1"
 
+// G2 Profile
+export {G2_PROFILE} from "./g2"
+
 // Z100 Profile
 export {Z100_PROFILE, Z100_HYPHEN_WIDTH_PX, Z100_SPACE_WIDTH_PX} from "./z100"
 

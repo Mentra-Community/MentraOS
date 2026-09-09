@@ -6,8 +6,16 @@ export const OTA_AUTO_CHAIN_RECONNECT_TIMEOUT_MS = 120_000
 type OtaAutoChainSession = {
   approvedDowngrade: boolean
   passCount: number
+  releaseRange: OtaAutoChainReleaseRange
   reconnectDeadline: number | null
   seenFingerprints: Set<string>
+}
+
+export type OtaAutoChainReleaseRange = {
+  fromVersion: string | null
+  toVersion: string | null
+  /** Exact coordinated release identity for the OTA pin, absent for legacy manifests. */
+  releaseVersion?: string | null
 }
 
 export type OtaAutoChainAdvanceResult =
@@ -42,10 +50,15 @@ export function otaAutoChainFingerprint(result: OtaCheckCurrentGlassesResult): s
 }
 
 /** Start a chain after the user explicitly approves its first update pass. */
-export function beginOtaAutoChain(initialFingerprint: string, approvedDowngrade: boolean): void {
+export function beginOtaAutoChain(
+  initialFingerprint: string,
+  approvedDowngrade: boolean,
+  releaseRange: OtaAutoChainReleaseRange,
+): void {
   session = {
     approvedDowngrade,
     passCount: 1,
+    releaseRange: {...releaseRange},
     reconnectDeadline: null,
     seenFingerprints: new Set([initialFingerprint]),
   }
@@ -53,6 +66,10 @@ export function beginOtaAutoChain(initialFingerprint: string, approvedDowngrade:
 
 export function isOtaAutoChainActive(): boolean {
   return session !== null
+}
+
+export function otaAutoChainReleaseRange(): OtaAutoChainReleaseRange | null {
+  return session ? {...session.releaseRange} : null
 }
 
 /** End the current chain. Safe to call when no chain is active. */
@@ -80,7 +97,12 @@ export function clearOtaAutoChainReconnectWait(): void {
  * Admit the next pass of an active chain. Repeated offers, unexpectedly
  * destructive downgrades, and runaway chains fail closed and end automation.
  */
-export function tryAdvanceOtaAutoChain(fingerprint: string, isDowngrade: boolean): OtaAutoChainAdvanceResult {
+export function tryAdvanceOtaAutoChain(
+  fingerprint: string,
+  isDowngrade: boolean,
+  targetVersion: string | null,
+  releaseVersion: string | null = null,
+): OtaAutoChainAdvanceResult {
   if (!session) {
     return {advance: false, reason: "inactive"}
   }
@@ -102,5 +124,7 @@ export function tryAdvanceOtaAutoChain(fingerprint: string, isDowngrade: boolean
 
   session.seenFingerprints.add(fingerprint)
   session.passCount += 1
+  if (targetVersion) session.releaseRange.toVersion = targetVersion
+  if (releaseVersion) session.releaseRange.releaseVersion = releaseVersion
   return {advance: true, passCount: session.passCount}
 }

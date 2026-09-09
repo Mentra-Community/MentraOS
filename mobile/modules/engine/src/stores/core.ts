@@ -1,13 +1,13 @@
 import {create} from "zustand"
 import {subscribeWithSelector} from "zustand/middleware"
-import type {BluetoothStatus} from "@mentra/bluetooth-sdk/internal"
+import type {PublicBluetoothStatus} from "@mentra/bluetooth-sdk"
 
-export interface CoreState extends BluetoothStatus {
-  setCoreInfo: (info: Partial<BluetoothStatus>) => void
+export interface CoreState extends PublicBluetoothStatus {
+  setCoreInfo: (info: Partial<PublicBluetoothStatus>) => void
   reset: () => void
 }
 
-const initialState: BluetoothStatus = {
+const initialState: PublicBluetoothStatus = {
   // state:
   searching: false,
   searchingController: false,

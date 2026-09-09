@@ -45,10 +45,30 @@ mock.module("../cloudStreamApi", () => ({
 // isGlassesConnected. Mock both (the real store transitively drags react-native,
 // which bun can't parse) so the precheck passes deterministically.
 mock.module("../../stores/glasses", () => ({
-  useGlassesStore: {getState: () => ({connection: {state: "connected"}})},
+  useGlassesStore: {
+    getState: () => ({connection: {state: "connected"}}),
+    subscribe: () => () => {},
+  },
 }))
 mock.module("../GlassesReadiness", () => ({
   isGlassesConnected: () => true,
+}))
+
+mock.module("../utils/timers", () => ({
+  BgTimer: {
+    setInterval: (callback: () => void, delay: number) => setInterval(callback, delay) as unknown as number,
+    clearInterval: (intervalId: number) => clearInterval(intervalId),
+    setTimeout: (callback: () => void, delay: number) => setTimeout(callback, delay) as unknown as number,
+    clearTimeout: (timeoutId: number) => clearTimeout(timeoutId),
+  },
+}))
+mock.module("../../utils/timers", () => ({
+  BgTimer: {
+    setInterval: (callback: () => void, delay: number) => setInterval(callback, delay) as unknown as number,
+    clearInterval: (intervalId: number) => clearInterval(intervalId),
+    setTimeout: (callback: () => void, delay: number) => setTimeout(callback, delay) as unknown as number,
+    clearTimeout: (timeoutId: number) => clearTimeout(timeoutId),
+  },
 }))
 
 
@@ -79,9 +99,221 @@ afterEach(() => {
   ;(globalThis as {fetch: typeof fetch}).fetch = realFetch
 })
 
-const {PhoneStreamCoordinator, StreamConflictError} = await import("../PhoneStreamCoordinator")
+const {PhoneStreamCoordinator, StreamConflictError, LINK_STATUS} = await import("../PhoneStreamCoordinator")
+
+/** Drivable stand-in for the glasses store's BLE connection state. */
+function fakeLink(initial = true) {
+  let connected = initial
+  const listeners = new Set<(connected: boolean) => void>()
+  return {
+    source: {
+      isConnected: () => connected,
+      subscribe: (listener: (connected: boolean) => void) => {
+        listeners.add(listener)
+        return () => {
+          listeners.delete(listener)
+        }
+      },
+    },
+    listenerCount: () => listeners.size,
+    set(next: boolean) {
+      if (connected === next) return
+      connected = next
+      for (const listener of [...listeners]) listener(next)
+    },
+  }
+}
+
+const settle = (ms = 5) => new Promise((r) => setTimeout(r, ms))
 
 describe("PhoneStreamCoordinator", () => {
+  describe("BLE link suspension", () => {
+    const timings = {
+      hlsReadinessInitialDelayMs: 5,
+      hlsReadinessPollMs: 5,
+      cloudflareStatusPollMs: 1000,
+      keepAliveIntervalMs: 10_000,
+      glassesGraceMs: 60,
+    }
+
+    test("link drop suspends: keep-alives stop, `suspended` fans out, stream stays owned", async () => {
+      const link = fakeLink()
+      const coord = new PhoneStreamCoordinator({...timings, keepAliveIntervalMs: 10}, {linkSource: link.source})
+      const updates: Array<{status: string; data?: Record<string, unknown>}> = []
+      coord.setStatusSubscriber((_pkg, u) => updates.push({status: u.status, data: u.data}))
+      const {streamId} = await coord.startUnmanaged("com.a", {streamUrl: "rtmp://x"})
+      await settle(35)
+      expect(sendExternallyManagedStreamKeepAlive.mock.calls.length).toBeGreaterThan(0)
+
+      link.set(false)
+      const sentAtSuspend = sendExternallyManagedStreamKeepAlive.mock.calls.length
+      await settle(35)
+
+      expect(coord.isSuspended()).toBe(true)
+      expect(coord.owns(streamId)).toBe(true)
+      expect(sendExternallyManagedStreamKeepAlive.mock.calls.length).toBe(sentAtSuspend)
+      const suspended = updates.find((u) => u.status === LINK_STATUS.suspended)
+      expect(suspended?.data).toMatchObject({reason: "glasses_disconnected", graceMs: 60})
+      expect(coord.getDiagnosticSnapshot()).toMatchObject({active: true, suspended: true})
+      link.set(true)
+      await coord.stop("com.a")
+    })
+
+    test("link back within grace resumes the SAME stream with an immediate heartbeat", async () => {
+      const link = fakeLink()
+      const coord = new PhoneStreamCoordinator({...timings, glassesGraceMs: 10_000}, {linkSource: link.source})
+      const updates: string[] = []
+      coord.setStatusSubscriber((_pkg, u) => updates.push(u.status))
+      const {streamId} = await coord.startUnmanaged("com.a", {streamUrl: "rtmp://x"})
+      expect(sendExternallyManagedStreamKeepAlive).not.toHaveBeenCalled()
+
+      link.set(false)
+      await settle()
+      link.set(true)
+      await settle()
+
+      expect(coord.isSuspended()).toBe(false)
+      expect(coord.owns(streamId)).toBe(true)
+      expect(updates).toEqual([LINK_STATUS.suspended, LINK_STATUS.resumed])
+      // Resume heartbeat did not wait for the 10s interval.
+      expect(sendExternallyManagedStreamKeepAlive).toHaveBeenCalledTimes(1)
+      expect(stopStream).not.toHaveBeenCalled()
+      expect(startExternallyManagedStream).toHaveBeenCalledTimes(1)
+      await coord.stop("com.a")
+    })
+
+    test("grace expiry tears down with glasses_disconnected and defers the BLE stop to reconnect", async () => {
+      const link = fakeLink()
+      const coord = new PhoneStreamCoordinator(timings, {linkSource: link.source})
+      const errors: Array<Record<string, unknown> | undefined> = []
+      coord.setStatusSubscriber((_pkg, u) => {
+        if (u.status === "error") errors.push(u.data)
+      })
+      const {streamId} = await coord.startUnmanaged("com.a", {streamUrl: "rtmp://x"})
+
+      link.set(false)
+      await settle(90)
+
+      expect(coord.owns(streamId)).toBe(false)
+      expect(errors).toHaveLength(1)
+      expect(errors[0]).toMatchObject({
+        reason: "glasses_disconnected",
+        teardownReason: "glasses_disconnected",
+        publisherGone: false,
+      })
+      // No BLE write while the link is down…
+      expect(stopStream).not.toHaveBeenCalled()
+      expect(coord.getDiagnosticSnapshot()).toMatchObject({active: false, pendingBleStop: streamId})
+      // …but the glasses get their stop as soon as the link returns.
+      link.set(true)
+      await settle()
+      expect(stopStream).toHaveBeenCalledTimes(1)
+      expect(coord.getDiagnosticSnapshot()).toMatchObject({active: false, pendingBleStop: null})
+      // Nothing left listening once the deferred stop is flushed.
+      expect(link.listenerCount()).toBe(0)
+    })
+
+    test("two consecutive Cloudflare 'publisher gone' probes end the grace early", async () => {
+      const link = fakeLink()
+      getManagedStreamStatus.mockImplementation(async () => ({isConnected: true, viewerCount: 0}))
+      const coord = new PhoneStreamCoordinator(
+        {...timings, cloudflareStatusPollMs: 10, glassesGraceMs: 10_000, suspendedPublisherGoneProbes: 2},
+        {linkSource: link.source},
+      )
+      const errors: Array<Record<string, unknown> | undefined> = []
+      coord.setStatusSubscriber((_pkg, u) => {
+        if (u.status === "error") errors.push(u.data)
+      })
+      const {streamId} = await coord.startManaged("com.a", {ingest: "whip"})
+
+      link.set(false)
+      // Glasses powered off: Cloudflare stops seeing the publisher.
+      getManagedStreamStatus.mockImplementation(async () => ({isConnected: false, viewerCount: 0}))
+      await settle(60)
+
+      expect(coord.owns(streamId)).toBe(false)
+      expect(errors.at(-1)).toMatchObject({reason: "glasses_disconnected", publisherGone: true})
+      expect(teardownManagedStream).toHaveBeenCalledWith("cf-input-test")
+      link.set(true)
+      await settle()
+    })
+
+    test("a single 'publisher gone' probe between connected probes does not end the grace", async () => {
+      const link = fakeLink()
+      let probe = 0
+      getManagedStreamStatus.mockImplementation(async () => {
+        probe += 1
+        // Alternate: one miss, then seen again — a wobble, not a power-off.
+        return {isConnected: probe % 2 === 1, viewerCount: 0}
+      })
+      const coord = new PhoneStreamCoordinator(
+        {...timings, cloudflareStatusPollMs: 10, glassesGraceMs: 10_000, suspendedPublisherGoneProbes: 2},
+        {linkSource: link.source},
+      )
+      const {streamId} = await coord.startManaged("com.a", {ingest: "whip"})
+      link.set(false)
+      await settle(80)
+      expect(coord.owns(streamId)).toBe(true)
+      expect(coord.isSuspended()).toBe(true)
+      link.set(true)
+      await coord.stop("com.a")
+    })
+
+    test("explicit stop while the link is down skips the BLE write and defers it", async () => {
+      const link = fakeLink()
+      const coord = new PhoneStreamCoordinator({...timings, glassesGraceMs: 10_000}, {linkSource: link.source})
+      const {streamId} = await coord.startUnmanaged("com.a", {streamUrl: "rtmp://x"})
+      link.set(false)
+      await settle()
+      await coord.stop("com.a", streamId)
+      expect(coord.owns(streamId)).toBe(false)
+      expect(stopStream).not.toHaveBeenCalled()
+      link.set(true)
+      await settle()
+      expect(stopStream).toHaveBeenCalledTimes(1)
+    })
+
+    test("a new stream started after reconnect supersedes the deferred stop", async () => {
+      const link = fakeLink()
+      const coord = new PhoneStreamCoordinator(timings, {linkSource: link.source})
+      const first = await coord.startUnmanaged("com.a", {streamUrl: "rtmp://x"})
+      link.set(false)
+      await settle(90)
+      expect(coord.owns(first.streamId)).toBe(false)
+      // Deferred stop is flushed on reconnect, before any start can run.
+      link.set(true)
+      await settle()
+      expect(stopStream).toHaveBeenCalledTimes(1)
+      const second = await coord.startUnmanaged("com.a", {streamUrl: "rtmp://y"})
+      expect(coord.owns(second.streamId)).toBe(true)
+      expect(coord.getDiagnosticSnapshot()).toMatchObject({active: true, suspended: false})
+      await coord.stop("com.a")
+      expect(stopStream).toHaveBeenCalledTimes(2)
+    })
+
+    test("start is refused while the link is down, with the GLASSES_NOT_CONNECTED code", async () => {
+      const link = fakeLink(false)
+      const coord = new PhoneStreamCoordinator(timings, {linkSource: link.source})
+      const err = await coord.startUnmanaged("com.a", {streamUrl: "rtmp://x"}).catch((e) => e)
+      expect(err).toBeInstanceOf(StreamConflictError)
+      expect((err as InstanceType<typeof StreamConflictError>).code).toBe("GLASSES_NOT_CONNECTED")
+      expect(startExternallyManagedStream).not.toHaveBeenCalled()
+    })
+
+    test("link events while idle are ignored (no listener attached)", async () => {
+      const link = fakeLink()
+      const coord = new PhoneStreamCoordinator(timings, {linkSource: link.source})
+      expect(link.listenerCount()).toBe(0)
+      link.set(false)
+      link.set(true)
+      expect(coord.isSuspended()).toBe(false)
+      const {streamId} = await coord.startUnmanaged("com.a", {streamUrl: "rtmp://x"})
+      expect(link.listenerCount()).toBe(1)
+      await coord.stop("com.a", streamId)
+      expect(link.listenerCount()).toBe(0)
+    })
+  })
+
   describe("unmanaged", () => {
     test("startUnmanaged commands glasses and returns a phone-minted streamId", async () => {
       const coord = new PhoneStreamCoordinator({
@@ -276,6 +508,18 @@ describe("PhoneStreamCoordinator", () => {
       expect("keepAliveIntervalSeconds" in arg).toBe(false)
     })
 
+    test("startManaged forwards captureAudio=false onto the BLE start_stream payload", async () => {
+      const coord = new PhoneStreamCoordinator({
+        hlsReadinessInitialDelayMs: 5,
+        hlsReadinessPollMs: 5,
+        cloudflareStatusPollMs: 1000,
+        keepAliveIntervalMs: 10_000,
+      })
+      await coord.startManaged("com.a", {ingest: "whip", captureAudio: false})
+      const arg = startExternallyManagedStream.mock.calls[0]![0] as {captureAudio?: boolean}
+      expect(arg.captureAudio).toBe(false)
+    })
+
     test("RTMP preference publishes to the RTMP ingest URL", async () => {
       const coord = new PhoneStreamCoordinator({
         hlsReadinessInitialDelayMs: 5,
@@ -335,6 +579,51 @@ describe("PhoneStreamCoordinator", () => {
       await coord.stop("com.b", a.streamId)
       expect(teardownManagedStream).toHaveBeenCalledWith("cf-input-test")
       expect(stopStream).toHaveBeenCalled()
+    })
+
+    test("stops the publisher before asking Cloudflare to clean up", async () => {
+      const order: string[] = []
+      stopStream.mockImplementationOnce(async () => {
+        order.push("publisher-stop")
+      })
+      teardownManagedStream.mockImplementationOnce(async () => {
+        order.push("cloud-teardown")
+      })
+      const coord = new PhoneStreamCoordinator({
+        hlsReadinessInitialDelayMs: 5,
+        hlsReadinessPollMs: 5,
+        cloudflareStatusPollMs: 1000,
+        keepAliveIntervalMs: 10_000,
+      })
+
+      const stream = await coord.startManaged("com.a", {})
+      await coord.stop("com.a", stream.streamId)
+
+      expect(order).toEqual(["publisher-stop", "cloud-teardown"])
+    })
+
+    test("does not hold the stream lock while remote cleanup is pending", async () => {
+      let finishRemoteCleanup!: () => void
+      teardownManagedStream.mockImplementationOnce(
+        () =>
+          new Promise<void>((resolve) => {
+            finishRemoteCleanup = resolve
+          }),
+      )
+      const coord = new PhoneStreamCoordinator({
+        hlsReadinessInitialDelayMs: 5,
+        hlsReadinessPollMs: 5,
+        cloudflareStatusPollMs: 1000,
+        keepAliveIntervalMs: 10_000,
+      })
+
+      const first = await coord.startManaged("com.a", {})
+      await coord.stop("com.a", first.streamId)
+      const second = await coord.startManaged("com.b", {})
+
+      expect(second.streamId).not.toBe(first.streamId)
+      finishRemoteCleanup()
+      await coord.stop("com.b", second.streamId)
     })
 
     test("managed cannot start while unmanaged is active", async () => {

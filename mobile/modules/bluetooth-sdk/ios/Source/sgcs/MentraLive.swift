@@ -16,13 +16,41 @@ import Combine
 import CoreBluetooth
 import Foundation
 import ImageIO
-import UIKit
 
 // MARK: - Supporting Types
 
 struct MentraLiveDevice {
     let name: String
     let address: String
+}
+
+enum MentraLivePendingPairingTarget {
+    static func matches(
+        connectedName: String,
+        connectedIdentifier: String,
+        pendingName: String,
+        pendingIdentifier: String
+    ) -> Bool {
+        if !pendingIdentifier.isEmpty {
+            return connectedIdentifier.caseInsensitiveCompare(pendingIdentifier) == .orderedSame
+        }
+        return !pendingName.isEmpty && connectedName == pendingName
+    }
+
+    static func shouldRecover(
+        isConnected: Bool,
+        connectedName: String,
+        connectedIdentifier: String,
+        pendingName: String,
+        pendingIdentifier: String
+    ) -> Bool {
+        isConnected && matches(
+            connectedName: connectedName,
+            connectedIdentifier: connectedIdentifier,
+            pendingName: pendingName,
+            pendingIdentifier: pendingIdentifier
+        )
+    }
 }
 
 // MARK: - BlePhotoUploadService
@@ -326,11 +354,11 @@ class BlePhotoUploadService {
     }
 
     /**
-     * Decode image data (AVIF or JPEG) to UIImage.
+     * Decode image data (AVIF or JPEG).
      * AVIF arriving from glasses has a TIFF EXIF block appended to {@code mdat}; iOS ImageIO
      * rejects those bytes the same way Android does. Strip the Exif tail before decoding.
      */
-    private static func decodeImage(imageData: Data) -> UIImage? {
+    private static func decodeImage(imageData: Data) -> SdkImage? {
         let isAvif = isAvifData(imageData)
         var decodeData = imageData
         if isAvif && containsExifMarker(in: imageData) {
@@ -343,13 +371,13 @@ class BlePhotoUploadService {
             }
         }
 
-        if let image = UIImage(data: decodeData) {
+        if let image = SdkImage(data: decodeData) {
             return image
         }
 
         if isAvif {
-            if #available(iOS 16.0, *) {
-                return UIImage(data: decodeData)
+            if #available(iOS 16.0, macOS 13.0, *) {
+                return SdkImage(data: decodeData)
             } else {
                 Bridge.log("\(TAG): AVIF decoding not supported on iOS < 16")
                 return nil
@@ -873,9 +901,10 @@ extension MentraLive: CBCentralManagerDelegate {
             if !isReconnectTarget && advertisesPairingFlag(advertisementData)
                 && !isPairingDiscoverable(advertisementData)
             {
-                // Nearby but not pairable: RN uses this for the empty-state hint, not the list.
+                // Keep nearby secure units visible with pairing-mode guidance, while RN blocks
+                // the connection until a pairable advertisement arrives.
                 Bridge.log(
-                    "LIVE: Nearby \(name) is secure firmware not in pairing mode — hiding from scan list"
+                    "LIVE: Nearby \(name) is secure firmware not in pairing mode — exposing as non-pairable"
                 )
                 discoveredPeripherals[name] = peripheral
                 cacheAdvPairing(
@@ -967,6 +996,7 @@ extension MentraLive: CBCentralManagerDelegate {
             self.isConnecting = false
             self.connectingPeripheral = nil
             self.connectedPeripheral = peripheral
+            self.emitConnectedPendingDeviceForPairingScan()
 
             // Save device name and address for future reconnection
             if let name = peripheral.name {
@@ -991,6 +1021,7 @@ extension MentraLive: CBCentralManagerDelegate {
         }
     }
 
+    #if !os(macOS)
     nonisolated func centralManager(
         _: CBCentralManager, didUpdateANCSAuthorizationFor peripheral: CBPeripheral
     ) {
@@ -1002,6 +1033,7 @@ extension MentraLive: CBCentralManagerDelegate {
             self.enableAncsRelayIfAuthorized()
         }
     }
+    #endif
 
     nonisolated func centralManager(
         _: CBCentralManager, didDisconnectPeripheral peripheral: CBPeripheral, error: Error?
@@ -1618,6 +1650,7 @@ class MentraLive: NSObject, SGCManager {
 
     // State Tracking
     private var isScanning = false
+    private var manualDiscoveryActive = false
     private var isConnecting = false
     private var isKilled = false
     /// Glasses opened pairing window — stand down without forgetting identity/bonds.
@@ -1772,7 +1805,9 @@ class MentraLive: NSObject, SGCManager {
             // clear the saved device name:
             UserDefaults.standard.set("", forKey: PREFS_DEVICE_NAME)
 
+            manualDiscoveryActive = true
             startScan()
+            emitConnectedPendingDeviceForPairingScan()
         }
     }
 
@@ -2364,10 +2399,6 @@ class MentraLive: NSObject, SGCManager {
 
         centralManager?.scanForPeripherals(withServices: nil, options: scanOptions)
 
-        // Fresh advertisements refill pairing metadata. Re-emitting the last scan's
-        // cache would keep a unit pairable after it left pairing mode.
-        emitConnectedDeviceForPairingScan()
-
         // var dName = DeviceManager.shared.deviceName
         // if dName.isEmpty {
         //     dName = "MENTRA_LIVE"
@@ -2385,6 +2416,7 @@ class MentraLive: NSObject, SGCManager {
     }
 
     func stopScan() {
+        manualDiscoveryActive = false
         guard isScanning else { return }
 
         centralManager?.stopScan()
@@ -2412,6 +2444,9 @@ class MentraLive: NSObject, SGCManager {
         // Set connection timeout
         startConnectionTimeout()
 
+        #if os(macOS)
+        centralManager?.connect(peripheral, options: nil)
+        #else
         // ANCS is hosted by iOS and is only exposed to authorized accessories.
         // Requiring it at connect time lets the system complete that authorization
         // flow before the glasses subscribe to the ANCS characteristics.
@@ -2419,12 +2454,14 @@ class MentraLive: NSObject, SGCManager {
             peripheral,
             options: [CBConnectPeripheralOptionRequiresANCS: true]
         )
+        #endif
     }
 
     /// Opt the firmware into ANCS only after iOS has authorized this accessory.
     /// Old firmware safely ignores the command, while new firmware stays inert
     /// for old mobile clients that never send it.
     private func enableAncsRelayIfAuthorized() {
+        #if !os(macOS)
         guard !ancsRelayEnableRequested,
               let peripheral = connectedPeripheral,
               txCharacteristic != nil,
@@ -2442,6 +2479,7 @@ class MentraLive: NSObject, SGCManager {
             ancsRelayEnableRequested = true
             Bridge.log("LIVE: Requested ANCS relay from compatible firmware")
         }
+        #endif
     }
 
     private func handleReconnection() {
@@ -2988,7 +3026,8 @@ class MentraLive: NSObject, SGCManager {
                 overallPercent: osOverallPercent,
                 status: osStatus,
                 errorMessage: osErrorMessage,
-                glassesTimeMs: glassesTimeMs > 0 ? glassesTimeMs : nil
+                glassesTimeMs: glassesTimeMs > 0 ? glassesTimeMs : nil,
+                bytesDownloaded: (json["bytes_downloaded"] as? NSNumber)?.int64Value
             )
 
         case "ota_progress":
@@ -3037,6 +3076,9 @@ class MentraLive: NSObject, SGCManager {
                 }
 
                 // Update local fields for any we recognize
+                if let packageName = nonEmptyStringValue(fields, "package_name") {
+                    DeviceStore.shared.apply("glasses", "packageName", packageName)
+                }
                 if let appVersion = fields["app_version"] as? String {
                     DeviceStore.shared.apply("glasses", "appVersion", appVersion)
                 }
@@ -3687,6 +3729,12 @@ class MentraLive: NSObject, SGCManager {
         // cannot leave a stale build number in RN (ASG is source of truth for PackageInfo).
         DeviceStore.shared.apply("glasses", "buildNumber", "")
         DeviceStore.shared.apply("glasses", "appVersion", "")
+        // packageName must clear with buildNumber: the OTA guard treats an absent package as
+        // "stock, predates the field", so a retained .thirdparty value from a previous session
+        // would permanently block OTA for the next (possibly pre-field, possibly restored stock)
+        // glasses. Both arrive together in version_info_1, so clearing them together keeps
+        // "have a build ⇒ have this session's identity" true.
+        DeviceStore.shared.apply("glasses", "packageName", "")
         DeviceStore.shared.apply("glasses", "besFirmwareVersion", "")
         DeviceStore.shared.apply("glasses", "mtkFirmwareVersion", "")
         // Modern ASG builds omit ota_version_url entirely (the phone owns manifest selection),
@@ -5502,22 +5550,33 @@ class MentraLive: NSObject, SGCManager {
 
     // MARK: - Event Emission
 
-    /// Pairing scan listens for advertisements. A unit that is already GATT-connected
-    /// has stopped ADV, so emit it as pairable or the scan list stays empty.
-    private func emitConnectedDeviceForPairingScan() {
-        guard connected, let peripheral = connectedPeripheral, let name = peripheral.name,
-              name == "Xy_A" || name.hasPrefix("XyBLE_") || name.hasPrefix("MENTRA_LIVE_BLE")
-              || name.hasPrefix("MENTRA_LIVE_BT") || name.lowercased().hasPrefix("mentra_live")
+    /// A selected pairing target can stop advertising once GATT connects, before readiness
+    /// promotes it to the default device. Re-emit only that explicit pending target; an
+    /// established owner's connected glasses have no pending identity and remain hidden.
+    private func emitConnectedPendingDeviceForPairingScan() {
+        guard manualDiscoveryActive, !pairingYieldActive, let peripheral = connectedPeripheral,
+              let name = peripheral.name,
+              MentraLivePendingPairingTarget.shouldRecover(
+                  isConnected: peripheral.state == .connected,
+                  connectedName: name,
+                  connectedIdentifier: peripheral.identifier.uuidString,
+                  pendingName: DeviceStore.shared.get("bluetooth", "pending_device_name") as? String ?? "",
+                  pendingIdentifier: DeviceStore.shared.get("bluetooth", "pending_device_address") as? String ?? ""
+              )
         else {
             return
         }
-        Bridge.log("LIVE: Pairing scan: already GATT-connected to \(name) — emitting as pairable (ADV off while connected)")
+
+        Bridge.log("LIVE: Pairing scan: recovering connected pending target \(name) (\(peripheral.identifier))")
         emitDiscoveredDevice(
             name,
             identifier: peripheral.identifier.uuidString,
             pairingMode: true,
             pairingCode: nil,
-            securePairingCapable: discoveredAdvPairing[name]?.securePairingCapable ?? false
+            securePairingCapable: DeviceStore.shared.get(
+                "bluetooth",
+                "pending_device_secure_pairing_capable"
+            ) as? Bool
         )
     }
 
