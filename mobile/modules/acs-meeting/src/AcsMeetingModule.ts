@@ -4,6 +4,8 @@ import type {AcsMeetingJoinOptions, AcsMeetingModuleEvents, AcsMeetingState} fro
 
 declare class AcsMeetingNativeModule extends NativeModule<AcsMeetingModuleEvents> {
   join(options: AcsMeetingJoinOptions): Promise<AcsMeetingState>
+  /** Sign in to ACS before SoftAP so Teams is not resolved through glasses DNS. */
+  prepareAgent(options: {token: string; displayName?: string}): Promise<AcsMeetingState>
   leave(): Promise<void>
   setMuted(muted: boolean): Promise<AcsMeetingState>
   setAudioSource(source: "glasses" | "phone"): Promise<AcsMeetingState>
