@@ -193,6 +193,43 @@ class AcsMeetingModule : Module() {
       mapOf("reachable" to verdict.reachable, "detail" to verdict.detail)
     }
 
+    /**
+     * Sign in to ACS before the glasses hotspot is up. SoftAP DNS cannot resolve Teams hosts, so
+     * [join] after the scoped network is a media bind, not another `createCallAgent`.
+     *
+     * Pinned to cellular for the duration, because "before the hotspot" means "on whatever Wi-Fi
+     * the phone is already on", and a slow AP is enough to blow the sign-in deadline. The pin is
+     * dropped before [join] opens the WHIP listener — see [InternetHold.bindProcessToCellular].
+     */
+    AsyncFunction("prepareAgent") { options: Map<String, Any?> ->
+      val token = options["token"] as? String ?: throw IllegalArgumentException("token is required")
+      val displayName = options["displayName"] as? String
+      val context = appContext.reactContext ?: throw IllegalStateException("no react context")
+      val meeting = session ?: AcsMeetingSession(
+        context.applicationContext,
+        onState = { sendEvent("onState", it) },
+        onIncomingPcm = { base64, rate, channels ->
+          sendEvent(
+            "onIncomingPcm",
+            mapOf("base64" to base64, "sampleRate" to rate, "channels" to channels),
+          )
+        },
+        scopedNetwork = scopedNetwork,
+      ).also { session = it }
+      val hold = internetHold ?: InternetHold(context.applicationContext).also { internetHold = it }
+      // Request cellular rather than trusting it to be up: a phone sitting on Wi-Fi may have the
+      // radio asleep, and there is nothing to pin to until it is validated. An unvalidated result
+      // is not fatal here — the current default network may still sign in fine, and the scoped
+      // join is where a phone with no mobile data gets told so by name.
+      hold.awaitValidatedCellular()
+      hold.bindProcessToCellular()
+      // Deliberately still pinned on the way out. The pin has to survive the hotspot join that
+      // follows, because ACS re-binds its signalling when the network moves and keeps whatever
+      // route it got. Teardown's `leaveScopedNetwork` is what drops it.
+      meeting.prepareAgent(token, displayName)
+      meeting.snapshot()
+    }
+
     AsyncFunction("join") { options: Map<String, Any?> ->
       val token = options["token"] as? String ?: throw IllegalArgumentException("token is required")
       val meetingUrl = options["meetingUrl"] as? String ?: throw IllegalArgumentException("meetingUrl is required")
@@ -218,7 +255,31 @@ class AcsMeetingModule : Module() {
         },
         scopedNetwork = scopedNetwork,
       ).also { session = it }
-      val joined = meeting.join(token, meetingUrl, videoSource, displayName, dumpWav, audioSource, video)
+      // The process is already pinned to cellular by now (sign-in and the scoped join both pin, and
+      // ACS keeps the route its sockets were created with). Lift it only across the WHIP listener
+      // bind, which is the one socket that must stay on the hotspot.
+      val joined = meeting.join(
+        token,
+        meetingUrl,
+        videoSource,
+        displayName,
+        dumpWav,
+        audioSource,
+        video,
+        bindIngestUnpinned = { bind ->
+          val hold = internetHold
+          if (hold == null) {
+            bind()
+          } else {
+            hold.unbindProcess()
+            try {
+              bind()
+            } finally {
+              hold.bindProcessToCellular()
+            }
+          }
+        },
+      )
       // Prefer the join snapshot: getState() can race a leave from a respawned miniapp
       // restore and drop the URL the orchestrator needs to tell the glasses.
       joined + buildMap {
@@ -238,6 +299,17 @@ class AcsMeetingModule : Module() {
     AsyncFunction("endForEveryone") {
       val meeting = session ?: throw IllegalStateException("no_active_call")
       meeting.endForEveryone()
+    }
+
+    /**
+     * One buffer of glasses microphone PCM, decoded from BLE LC3 by the host.
+     *
+     * Synchronous by design. This runs at ~100 calls/s for the length of a call, and a promise per
+     * buffer would put more work on the JS thread than the audio itself costs. Returns whether the
+     * buffer entered the uplink so the host can count drops rather than guess at them.
+     */
+    Function("pushOutgoingPcm") { base64: String, sampleRate: Int, channels: Int ->
+      session?.pushOutgoingPcm(base64, sampleRate, channels) ?: false
     }
 
     AsyncFunction("setMuted") { muted: Boolean ->
