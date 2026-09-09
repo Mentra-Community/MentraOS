@@ -1512,7 +1512,7 @@ class MentraBluetoothSdk private constructor(
      * empty scan, but Android does not expose app ownership or exclusive use.
      * Skip known SDK connections/attempts and unavailable Bluetooth permissions.
      */
-    private fun connectedDeviceScanDiagnostic(model: DeviceModel): ScanDiagnostic? {
+    internal fun connectedDeviceScanDiagnostic(model: DeviceModel): ScanDiagnostic? {
         if (model == DeviceModel.SIMULATED) return null
         val glassesStatus = getRawGlassesStatus()
         if (glassesStatus.connected ||

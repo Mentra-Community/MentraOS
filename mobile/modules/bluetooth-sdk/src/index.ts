@@ -276,6 +276,7 @@ export type {
   RgbLedControlResponseEvent,
   RgbLedControlSuccessResponseEvent,
   ScanModelOptions,
+  ScanDiagnostic,
   ScanOptions,
   ScanResultsCallback,
   SpeakingStatusEvent,

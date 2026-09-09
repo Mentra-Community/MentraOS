@@ -1435,6 +1435,12 @@ export interface ConnectOptions {
 
 export type ScanResultsCallback = (devices: Device[]) => void
 
+/** Advisory for an empty scan. System connection state does not identify an owning app. */
+export interface ScanDiagnostic {
+  code: string
+  message: string
+}
+
 export interface ScanOptions {
   model: DeviceModel
   /** Defaults to 15000. */
@@ -1443,6 +1449,8 @@ export interface ScanOptions {
   timeout?: number
   /** Called every time the discovered device list changes during the scan. */
   onResults?: ScanResultsCallback
+  /** Optional non-fatal hint before an empty scan resolves, on Android and iOS. */
+  onDiagnostic?: (diagnostic: ScanDiagnostic) => void
 }
 
 export type ScanModelOptions = Omit<ScanOptions, "model">

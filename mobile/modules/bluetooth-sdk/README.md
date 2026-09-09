@@ -125,6 +125,7 @@ const devices = await BluetoothSdk.scan(DeviceModels.MentraLive, {
   onResults: (nextDevices) => {
     console.log('Nearby glasses:', nextDevices)
   },
+  onDiagnostic: (hint) => showScanHint(hint.message),
 })
 
 const device = await chooseDevice(devices)
@@ -136,6 +137,12 @@ await BluetoothSdk.connect(device)
 const versionInfo = await BluetoothSdk.requestVersionInfo()
 console.log(versionInfo.buildNumber)
 ```
+
+`onDiagnostic` optionally reports a matching phone connection after an empty scan
+on Android and iOS. It is advisory, does not identify another app, and leaves
+normal empty completion unchanged. React hooks expose it as `scan.diagnostic`
+on `useMentraBluetooth()`, or `diagnostic` on `useBluetoothScan()`. Clear the hint
+when retrying or connecting.
 
 In multi-device environments, present an explicit picker instead of
 auto-connecting to the first nearby device.
