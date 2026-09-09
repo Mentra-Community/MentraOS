@@ -205,6 +205,12 @@ internal data class NotificationConfigUpdate(
 
 /** Persists and applies config inside the isolated notification process. */
 class NotificationConfigReceiver : BroadcastReceiver() {
+  companion object {
+    // Owned by :notif, so process death resets recovery independently of the
+    // main app. BroadcastReceiver instances themselves are short-lived.
+    private var rebindRequestedThisProcess = false
+  }
+
   override fun onReceive(context: Context, intent: Intent) {
     if (!NotificationProcessBridge.isConfigAction(context, intent)) return
     val config = NotificationProcessBridge.readConfig(intent)
@@ -215,8 +221,12 @@ class NotificationConfigReceiver : BroadcastReceiver() {
     NotificationListener.persistConfig(context, config.listenerEnabled, config.blocklist)
     NotificationListener.applyConfigToExisting(config.listenerEnabled, config.blocklist)
 
-    if (config.listenerEnabled && config.requestRebind) {
-      NotificationListener.requestListenerRebind(context)
+    if (!config.listenerEnabled || !NotificationListener.hasNotificationListenerPermission(context)) {
+      rebindRequestedThisProcess = false
+      return
+    }
+    if (config.requestRebind || !rebindRequestedThisProcess) {
+      rebindRequestedThisProcess = NotificationListener.requestListenerRebind(context)
     }
   }
 }
