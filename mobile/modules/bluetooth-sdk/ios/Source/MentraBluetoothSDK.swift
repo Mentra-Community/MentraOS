@@ -472,6 +472,11 @@ public final class MentraBluetoothSDK {
         DeviceManager.shared.sgc?.clearDisplay()
     }
 
+    /// Sets session-only content shown below the standard dashboard status header.
+    public func setDashboardContent(_ content: String) async {
+        await DeviceManager.shared.setDashboardContent(content)
+    }
+
     public func showDashboard() {
         DeviceManager.shared.showDashboard()
     }

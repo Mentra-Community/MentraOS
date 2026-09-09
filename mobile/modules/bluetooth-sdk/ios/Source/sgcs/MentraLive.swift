@@ -3026,7 +3026,8 @@ class MentraLive: NSObject, SGCManager {
                 overallPercent: osOverallPercent,
                 status: osStatus,
                 errorMessage: osErrorMessage,
-                glassesTimeMs: glassesTimeMs > 0 ? glassesTimeMs : nil
+                glassesTimeMs: glassesTimeMs > 0 ? glassesTimeMs : nil,
+                bytesDownloaded: (json["bytes_downloaded"] as? NSNumber)?.int64Value
             )
 
         case "ota_progress":

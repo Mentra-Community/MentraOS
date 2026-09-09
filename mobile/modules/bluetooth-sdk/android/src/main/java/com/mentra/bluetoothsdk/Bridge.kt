@@ -717,6 +717,7 @@ public class Bridge private constructor() {
                 status: String,
                 errorMessage: String? = null,
                 glassesTimeMs: Long? = null,
+                bytesDownloaded: Long? = null,
         ) {
             val eventBody = HashMap<String, Any>()
             eventBody["session_id"] = sessionId
@@ -727,6 +728,7 @@ public class Bridge private constructor() {
             eventBody["step_percent"] = stepPercent
             eventBody["overall_percent"] = overallPercent
             eventBody["status"] = status
+            bytesDownloaded?.let { eventBody["bytes_downloaded"] = it }
             errorMessage?.let { eventBody["error_message"] = it }
             if (glassesTimeMs != null && glassesTimeMs > 0) {
                 eventBody["glasses_time_ms"] = glassesTimeMs

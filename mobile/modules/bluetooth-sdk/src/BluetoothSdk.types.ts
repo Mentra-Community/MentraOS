@@ -906,6 +906,8 @@ export type OtaStatusEvent = {
   step_type: "apk" | "mtk" | "bes"
   phase: "download" | "install"
   step_percent: number
+  /** Real bytes received in the current download; absent on older glasses. */
+  bytes_downloaded?: number
   overall_percent: number
   status: "in_progress" | "step_complete" | "complete" | "failed" | "idle"
   error_message?: string
@@ -1137,6 +1139,8 @@ export interface BluetoothSdkPublicModule {
 
   displayText(text: string, x?: number, y?: number, size?: number): Promise<void>
   clearDisplay(): Promise<void>
+  /** Set session-only content below the dashboard status header. Pass an empty string to reset it. */
+  setDashboardContent(content: string): Promise<void>
   showDashboard(): Promise<void>
   setDashboardPosition(height: number, depth: number): Promise<void>
   setHeadUpAngle(angleDegrees: number): Promise<void>
@@ -1305,6 +1309,8 @@ export interface OtaStatus {
   stepType: "apk" | "mtk" | "bes"
   phase: "download" | "install"
   stepPercent: number
+  /** Real bytes received in the current download; independent of rounded percent. */
+  bytesDownloaded?: number
   overallPercent: number
   status: "in_progress" | "step_complete" | "complete" | "failed" | "idle"
   error?: string

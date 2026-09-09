@@ -1,8 +1,43 @@
-import {checkCurrentGlassesForUpdate} from "../../modules/engine/src/services/OtaUpdateCheckService"
+import {checkCurrentGlassesForUpdate, selectMtkUpdate} from "../../modules/engine/src/services/OtaUpdateCheckService"
 import {useGlassesStore} from "../../modules/engine/src/stores/glasses"
 import {SETTINGS} from "@mentra/engine"
 import {useSettingsStore} from "@mentra/engine-host-internal"
 import {bluetoothSdkMock, resetBluetoothSdkMock} from "@/test-utils/mockBluetoothSdk"
+
+describe("MTK full fallback", () => {
+  const full = {
+    end_firmware: "MentraLive_20260908.10",
+    url: "https://cdn/full.zip",
+    sha256: "a".repeat(64),
+    size: 640341205,
+  }
+  const patch = {start_firmware: "20260709", end_firmware: "20260908.10", url: "https://cdn/delta.zip"}
+  const manifest = {mtk_patches: [patch], mtk_full_ota: full}
+
+  it("prefers the exact-base delta even when a full image exists", () => {
+    expect(selectMtkUpdate(manifest, "MentraLive_20260709")).toBe(patch)
+  })
+  it.each(["20260908.9", "MentraLive_20260907.20", "20260101"])("offers full to older %s", (current) => {
+    expect(selectMtkUpdate(manifest, current)).toBe(full)
+  })
+  it.each([undefined, "", "unknown", "20260908.10", "MentraLive_20260908.11", "20260909"])(
+    "does not offer full to %s",
+    (current) => {
+      expect(selectMtkUpdate(manifest, current)).toBeNull()
+    },
+  )
+  it("handles full-only, legacy-only, and date-only revision zero", () => {
+    expect(selectMtkUpdate({mtk_full_ota: full}, "20260709")).toBe(full)
+    expect(selectMtkUpdate({mtk_patches: [patch]}, "20260101")).toBeNull()
+    expect(selectMtkUpdate({mtk_full_ota: {...full, end_firmware: "20260908.0"}}, "20260908")).toBeNull()
+  })
+  it.each([{sha256: ""}, {size: 0}, {size: 2 ** 31}, {url: "file:///tmp/full.zip"}, {end_firmware: "unknown"}])(
+    "refuses malformed full metadata %j",
+    (invalid) => {
+      expect(selectMtkUpdate({mtk_full_ota: {...full, ...invalid}}, "20260101")).toBeNull()
+    },
+  )
+})
 
 describe("OtaUpdateCheckService", () => {
   const originalFetch = global.fetch
@@ -278,7 +313,9 @@ describe("OtaUpdateCheckService", () => {
         waitForMtkVersionMs: 0,
       })
 
-    global.fetch = jest.fn(() => Promise.resolve({ok: false, status: 404} as unknown as Response)) as unknown as typeof fetch
+    global.fetch = jest.fn(() =>
+      Promise.resolve({ok: false, status: 404} as unknown as Response),
+    ) as unknown as typeof fetch
     let result = await check()
     expect(result.hasCheckCompleted).toBe(false)
     expect(result.checkFailureReason).toBe("pin_unavailable")
@@ -288,7 +325,9 @@ describe("OtaUpdateCheckService", () => {
     expect(result.hasCheckCompleted).toBe(false)
     expect(result.checkFailureReason).toBe("network")
 
-    global.fetch = jest.fn(() => Promise.resolve({ok: false, status: 503} as unknown as Response)) as unknown as typeof fetch
+    global.fetch = jest.fn(() =>
+      Promise.resolve({ok: false, status: 503} as unknown as Response),
+    ) as unknown as typeof fetch
     result = await check()
     expect(result.checkFailureReason).toBe("network")
   })
@@ -369,7 +408,17 @@ describe("OtaUpdateCheckService", () => {
         floorVersionCode: 9,
       })
     const manifestWith = (extra: object) => ({
-      apps: {"com.mentra.asg_client": {versionCode: 9, versionName: "9", downloadUrl: "u", apkSize: 1, sha256: "s", releaseNotes: "", ...extra}},
+      apps: {
+        "com.mentra.asg_client": {
+          versionCode: 9,
+          versionName: "9",
+          downloadUrl: "u",
+          apkSize: 1,
+          sha256: "s",
+          releaseNotes: "",
+          ...extra,
+        },
+      },
     })
 
     // Glasses newer than the pin -> downgrade; absent isRequired -> skippable.
@@ -391,7 +440,19 @@ describe("OtaUpdateCheckService", () => {
     global.fetch = jest.fn(() =>
       Promise.resolve({
         ok: true,
-        json: () => Promise.resolve({apps: {"com.mentra.asg_client": {versionCode: 999999, versionName: "n", downloadUrl: "u", apkSize: 1, sha256: "s", releaseNotes: ""}}}),
+        json: () =>
+          Promise.resolve({
+            apps: {
+              "com.mentra.asg_client": {
+                versionCode: 999999,
+                versionName: "n",
+                downloadUrl: "u",
+                apkSize: 1,
+                sha256: "s",
+                releaseNotes: "",
+              },
+            },
+          }),
       } as unknown as Response),
     ) as unknown as typeof fetch
     result = await check()

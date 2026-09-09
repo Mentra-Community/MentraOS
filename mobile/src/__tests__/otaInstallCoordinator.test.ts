@@ -619,6 +619,24 @@ describe("OtaInstallCoordinator version-change detour retry gate", () => {
 })
 
 describe("OtaInstallCoordinator stuck-at-zero watchdog", () => {
+  it("uses advancing bytes at 0%, but repeated or missing byte counts cannot mask a stall", async () => {
+    setGlassesConnected()
+    otaInstallCoordinator.attach()
+    GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
+    const status = inProgressStatus({stepType: "mtk", stepPercent: 0, overallPercent: 0})
+    for (let bytes = 1; bytes <= 5; bytes++) {
+      useGlassesStore.getState().setOtaStatus({...status, bytesDownloaded: bytes * 8192})
+      await jest.advanceTimersByTimeAsync(60_000)
+      expect(otaInstallCoordinator.snapshot().errorMsg).toBe("")
+    }
+    // Ordinary queries need not carry bytes. Neither they nor a duplicate sample is progress.
+    useGlassesStore.getState().setOtaStatus(status)
+    await jest.advanceTimersByTimeAsync(30_000)
+    useGlassesStore.getState().setOtaStatus({...status, bytesDownloaded: 5 * 8192})
+    await jest.advanceTimersByTimeAsync(30_000)
+    expect(otaInstallCoordinator.snapshot().errorMsg).toBe(OtaProgressMessages.stalledOrStuck)
+  })
+
   it("fails after DOWNLOAD_STUCK_TIMEOUT_MS at 0%", async () => {
     setGlassesConnected()
     otaInstallCoordinator.attach()

@@ -552,13 +552,30 @@ jobs:
         env:
           RESULT_NAME: ${{ steps.request.outputs.result_name }}
           RESULT_URL: ${{ steps.request.outputs.result_url }}
+          RUN_URL: ${{ steps.request.outputs.run_url }}
+          # Public run metadata needs no cross-repository permissions. The job
+          # token remains valid through this wait; the request App token expires
+          # after one hour, before the full 105-minute wait can finish.
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           mkdir -p starter-kit-result
           for _ in {1..630}; do
-            if curl --fail --silent --show-error --location "$RESULT_URL" \
+            if curl --fail --silent --show-error --location --connect-timeout 10 --max-time 30 "$RESULT_URL" \
               --output "starter-kit-result/$RESULT_NAME" 2>/dev/null; then
               exit 0
+            fi
+            if [[ -n "$RUN_URL" ]]; then
+              # A transient API failure must not be mistaken for a failed build.
+              run_state=$(gh api "repos/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit/actions/runs/${RUN_URL##*/}" \
+                --jq '{status,conclusion}' 2>/dev/null || true)
+              if [[ "$(jq -r '.status // empty' <<< "${run_state:-null}")" == "completed" ]]; then
+                conclusion=$(jq -r '.conclusion // "unknown"' <<< "$run_state")
+                if [[ "$conclusion" != "success" ]]; then
+                  echo "Starter Kit run concluded $conclusion: $RUN_URL" >&2
+                  exit 1
+                fi
+              fi
             fi
             sleep 10
           done
@@ -1051,7 +1068,11 @@ jobs:
             --commit-message "Deploy MentraOS docs for $RELEASE_IDENTITY" \
             --commit-dirty=true
 
+      # Purging accelerates propagation; the required live-page check below
+      # determines whether the exact release is available to users.
       - name: Purge release-sensitive documentation routes
+        continue-on-error: true
+        timeout-minutes: 1
         env:
           CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_PAGES_API_TOKEN }}
           CLOUDFLARE_ZONE_ID: ${{ vars.CLOUDFLARE_ZONE_ID }}
