@@ -27,6 +27,7 @@ import com.mentra.asg_client.io.network.utils.HotspotAwareNetworkChangeDetector;
 import com.mentra.asg_client.io.streaming.config.IcePostPolicy;
 import com.mentra.asg_client.io.streaming.config.WhipStreamConfig;
 import com.mentra.asg_client.io.streaming.interfaces.StreamingStatusCallback;
+import com.mentra.asg_client.io.streaming.telemetry.WhipPipelineStats;
 import com.mentra.asg_client.io.streaming.trace.SoftApTrace;
 import com.mentra.asg_client.service.core.constants.BatteryConstants;
 import com.mentra.asg_client.service.system.core.SystemControllerFactory;
@@ -65,6 +66,7 @@ import org.webrtc.VideoTrack;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 import java.util.Timer;
 import java.util.TimerTask;
 
@@ -190,12 +192,22 @@ public class WhipStreamingService extends Service {
   private long mLastAudioBytesSent = 0;
   private long mLastStatsAtMs = 0;
   private long mStreamStartedAtMs = 0;
+  /** Previous sweep's cumulative WebRTC counters, so the diagnosis prints deltas not totals. */
+  private WhipPipelineStats.Sample mLastPipelineSample = null;
+  /** Last adaptation verdict, so a change is logged loudly instead of scrolling past at 1Hz. */
+  private String mLastPipelineVerdict = null;
+  private long mLastPipelineAtMs = 0;
   private final Runnable mStatsRunnable = new Runnable() {
     @Override
     public void run() {
-      if (!AsgConstants.ENABLE_PIPELINE_FPS_TELEMETRY) return;
+      if (!statsSweepEnabled()) return;
       if (mPeerConnection == null) return;
       mPeerConnection.getStats(report -> {
+        reportPipelineDiagnosis(report);
+        if (!AsgConstants.ENABLE_PIPELINE_FPS_TELEMETRY) {
+          rescheduleStatsSweep(this);
+          return;
+        }
         long videoBytesTotal = 0, audioBytesTotal = 0;
         long videoPackets = 0, audioPackets = 0;
         long droppedFrames = 0;
@@ -267,15 +279,91 @@ public class WhipStreamingService extends Service {
             elapsedMs > 0 ? videoDelta * 1000 / elapsedMs : 0, videoPackets,
             elapsedMs > 0 ? audioDelta * 1000 / elapsedMs : 0, audioPackets));
 
-        synchronized (mStateLock) {
-          if (mStreamState != StreamState.STREAMING || mPeerConnection == null) {
-            return;
-          }
-        }
-        mMainHandler.postDelayed(this, AsgConstants.STREAM_METRICS_INTERVAL_MS);
+        rescheduleStatsSweep(this);
       });
     }
   };
+
+  /**
+   * Whether the 1Hz {@code getStats} sweep should run at all.
+   *
+   * <p>Either consumer is reason enough: the diagnosis needs the report even when the BLE-facing
+   * metrics fanout is off, which is its normal state in production.
+   */
+  private static boolean statsSweepEnabled() {
+    return AsgConstants.ENABLE_PIPELINE_FPS_TELEMETRY
+        || AsgConstants.ENABLE_CALL_PIPELINE_DIAGNOSTICS;
+  }
+
+  /** Re-arms the sweep only while the stream is genuinely up, so teardown ends the loop. */
+  private void rescheduleStatsSweep(Runnable sweep) {
+    synchronized (mStateLock) {
+      if (mStreamState != StreamState.STREAMING || mPeerConnection == null) {
+        return;
+      }
+    }
+    mMainHandler.postDelayed(sweep, AsgConstants.STREAM_METRICS_INTERVAL_MS);
+  }
+
+  /**
+   * Emits the send-side bottleneck verdict for one sweep.
+   *
+   * <p>The configured size is passed in rather than read from the report because that comparison is
+   * the whole point: libwebrtc reports the resolution it settled on, and only the delta against
+   * what we asked for reveals that it silently adapted away most of the picture.
+   */
+  private void reportPipelineDiagnosis(RTCStatsReport report) {
+    if (!AsgConstants.ENABLE_CALL_PIPELINE_DIAGNOSTICS || report == null) {
+      return;
+    }
+    try {
+      List<WhipPipelineStats.Entry> entries = new ArrayList<>();
+      for (RTCStats stats : report.getStatsMap().values()) {
+        entries.add(new WhipPipelineStats.Entry() {
+          @Override
+          public String type() {
+            return stats.getType();
+          }
+
+          @Override
+          public Map<String, Object> members() {
+            return stats.getMembers();
+          }
+        });
+      }
+
+      WhipPipelineStats.Sample sample = WhipPipelineStats.parse(entries);
+      sample.configuredWidth = mStreamConfig.getVideoWidth();
+      sample.configuredHeight = mStreamConfig.getVideoHeight();
+      sample.configuredFps = mStreamConfig.getVideoFps();
+      long now = SystemClock.elapsedRealtime();
+      sample.elapsedMs = mLastPipelineAtMs > 0
+          ? now - mLastPipelineAtMs
+          : AsgConstants.STREAM_METRICS_INTERVAL_MS;
+      mLastPipelineAtMs = now;
+
+      WhipPipelineStats.Sample cumulative = WhipPipelineStats.copyCumulative(sample);
+      sample = WhipPipelineStats.delta(sample, mLastPipelineSample);
+      mLastPipelineSample = cumulative;
+
+      Log.i(TAG, WhipPipelineStats.format(mCurrentStreamId, sample));
+
+      String verdict = WhipPipelineStats.verdict(sample);
+      if (!verdict.equals(mLastPipelineVerdict)) {
+        mLastPipelineVerdict = verdict;
+        Log.w(
+            TAG,
+            "[STREAM_PIPELINE] verdict changed to " + verdict
+                + " streamId=" + mCurrentStreamId
+                + " encoded=" + sample.encodedWidth + "x" + sample.encodedHeight
+                + " configured=" + sample.configuredWidth + "x" + sample.configuredHeight
+                + " pixels=" + WhipPipelineStats.encodedPixelPercent(sample) + "%"
+                + " limit=" + sample.qualityLimitation);
+      }
+    } catch (Exception e) {
+      Log.w(TAG, "Pipeline diagnosis failed", e);
+    }
+  }
 
   // -----------------------------------------------------------------------
   // Android Service lifecycle
@@ -895,7 +983,12 @@ public class WhipStreamingService extends Service {
     if (!mIsReconnecting || mStreamStartedAtMs == 0) {
       mStreamStartedAtMs = mLastStatsAtMs;
     }
-    if (AsgConstants.ENABLE_PIPELINE_FPS_TELEMETRY) {
+    // A rebuilt peer connection restarts every cumulative counter, so carrying the previous
+    // sample across would print one sweep of negative deltas clamped to zero.
+    mLastPipelineSample = null;
+    mLastPipelineVerdict = null;
+    mLastPipelineAtMs = 0;
+    if (statsSweepEnabled()) {
       mMainHandler.postDelayed(mStatsRunnable, AsgConstants.STREAM_METRICS_INTERVAL_MS);
     }
     scheduleStreamTimeout(mCurrentStreamId);
@@ -1351,6 +1444,9 @@ public class WhipStreamingService extends Service {
     mReconnectAttempts = 0;
     mStreamStartedAtMs = 0;
     mLastStatsAtMs = 0;
+    mLastPipelineSample = null;
+    mLastPipelineVerdict = null;
+    mLastPipelineAtMs = 0;
     WakeLockManager.release(WakeLockManager.WakeOwner.STREAMING);
     resetState();
     updateNotification("Stream failed");
