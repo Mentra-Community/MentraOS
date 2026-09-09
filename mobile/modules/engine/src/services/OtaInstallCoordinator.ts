@@ -140,8 +140,10 @@ function latestPercentForStuck(otaStatus: OtaStatus | null, otaProgress: OtaProg
  * reply that cancels the fallback.
  */
 function hasRecoveringOtaReply(otaStatus: OtaStatus | null, otaProgress: OtaProgress | null): boolean {
-  if (otaProgress) return true
-  return !!otaStatus && otaStatus.status !== "idle"
+  // OtaService projects status into legacy progress too: idle becomes STARTED.
+  // Neither that projection nor progress retained across reboot proves activity.
+  if (otaStatus) return otaStatus.status !== "idle"
+  return !!otaProgress
 }
 
 /** Read model the host progress screen renders from. */

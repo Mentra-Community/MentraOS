@@ -504,6 +504,74 @@ describe("OtaInstallCoordinator ota_start request ownership", () => {
 })
 
 describe("OtaInstallCoordinator query-status arbitration with an existing session", () => {
+  it.each([false, true])(
+    "recovers an interrupted download after idle with mapped progress=%s",
+    async (mapIdleProgress) => {
+      setGlassesConnected()
+      otaInstallCoordinator.attach()
+      await flushNativeStartPromise()
+      emitLegacyOtaProgress({stage: "download", status: "PROGRESS", progress: 55, currentUpdate: "apk"})
+
+      useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
+      setGlassesConnected()
+      expect(bluetoothSdkMock.queryOtaStatus).toHaveBeenCalledTimes(1)
+
+      const idle = normalizeOtaStatusEvent({
+        session_id: "",
+        total_steps: 0,
+        current_step: 0,
+        step_type: "apk",
+        phase: "download",
+        status: "idle",
+        step_percent: 0,
+        overall_percent: 0,
+      })
+      useGlassesStore.getState().setOtaStatus(otaStatusFromNormalized(idle))
+      if (mapIdleProgress) {
+        useGlassesStore.getState().setOtaProgress(legacyOtaProgressFromOtaStatusEvent(idle))
+      }
+      expect(otaInstallCoordinator.snapshot().displayState).toBe("starting")
+      await jest.advanceTimersByTimeAsync(QUERY_REPLY_TIMEOUT_MS)
+      expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(2)
+
+      emitLegacyOtaProgress({stage: "download", status: "PROGRESS", progress: 10, currentUpdate: "apk"})
+      await jest.advanceTimersByTimeAsync(QUERY_REPLY_TIMEOUT_MS * 2)
+      expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(2)
+      expect(otaInstallCoordinator.snapshot().displayState).toBe("updating")
+    },
+  )
+
+  it("cancels idle recovery when fresh download activity arrives before the fallback", async () => {
+    setGlassesConnected()
+    otaInstallCoordinator.attach()
+    await flushNativeStartPromise()
+    emitLegacyOtaProgress({stage: "download", status: "PROGRESS", progress: 55, currentUpdate: "apk"})
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
+    setGlassesConnected()
+    useGlassesStore.getState().setOtaStatus(idleStatus())
+    emitLegacyOtaProgress({stage: "download", status: "PROGRESS", progress: 56, currentUpdate: "apk"})
+    await jest.advanceTimersByTimeAsync(QUERY_REPLY_TIMEOUT_MS * 2)
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+  })
+
+  it("keeps progress-only legacy replies able to cancel recovery", async () => {
+    setLegacyGlassesConnected()
+    otaInstallCoordinator.attach()
+    await flushNativeStartPromise()
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
+    setLegacyGlassesConnected()
+    useGlassesStore.getState().setOtaProgress({
+      stage: "download",
+      status: "PROGRESS",
+      progress: 10,
+      currentUpdate: "apk",
+      bytesDownloaded: 10,
+      totalBytes: 100,
+    })
+    await jest.advanceTimersByTimeAsync(QUERY_REPLY_TIMEOUT_MS * 2)
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+  })
+
   it("sends ota_query_status; an idle reply does NOT cancel the fallback, so ota_start fires after QUERY_REPLY_TIMEOUT_MS", async () => {
     setGlassesConnected()
     useGlassesStore.getState().setOtaStatus(inProgressStatus({stepPercent: 10, overallPercent: 10}))
