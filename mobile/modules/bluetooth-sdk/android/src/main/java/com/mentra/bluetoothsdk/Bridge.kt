@@ -208,6 +208,10 @@ public class Bridge private constructor() {
             body["channels"] = MIC_CHANNELS
             body["encoding"] = "pcm_s16le"
             body["voiceActivityDetectionEnabled"] = voiceActivityDetectionEnabled
+            // Stamped per frame so a consumer that pinned the source can verify it rather than
+            // assume it. Read from the store, not from a captured value: the whole point is to
+            // report the microphone that is selected right now.
+            body["source"] = DeviceStore.store.get("bluetooth", "currentMic") as? String ?: ""
             return body
         }
 
