@@ -296,6 +296,11 @@ public class CameraNeoService extends LifecycleService {
     private final PhotoSession.Hooks photoSessionHooks =
             new PhotoSession.Hooks() {
                 @Override
+                public IHardwareManager hardwareManager() {
+                    return hardwareManager;
+                }
+
+                @Override
                 public Object serviceLock() {
                     return SERVICE_LOCK;
                 }

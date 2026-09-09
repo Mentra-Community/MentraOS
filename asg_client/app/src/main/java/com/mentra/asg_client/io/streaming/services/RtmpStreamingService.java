@@ -137,6 +137,7 @@ public class RtmpStreamingService extends Service {
 
     // LED and sound control
     private IHardwareManager mHardwareManager;
+    private final Object mPrivacyLightOwner = new Object();
     private boolean mLedEnabled = false;
     private boolean mSoundEnabled = false;
 
@@ -516,7 +517,7 @@ public class RtmpStreamingService extends Service {
 
                         // Turn on LED if enabled for livestream
                         if (mLedEnabled && mHardwareManager != null && mHardwareManager.supportsRecordingLed()) {
-                            mHardwareManager.setRecordingLedOn();
+                            mHardwareManager.acquireRecordingLed(mPrivacyLightOwner);
                             Log.d(TAG, "📹 Recording LED turned ON for livestream");
                         }
 
@@ -1198,14 +1199,15 @@ public class RtmpStreamingService extends Service {
         // Notify listeners
         updateNotificationIfImportant();
 
-        // Turn off LED if it was on
-        if (mLedEnabled && mHardwareManager != null && mHardwareManager.supportsRecordingLed()) {
-            if (preserveSession) {
-                Log.d(TAG, "📹 Preserving recording LED state during reconnection");
-            } else {
-                mHardwareManager.setRecordingLedOff();
-                Log.d(TAG, "📹 Recording LED turned OFF (stream stopped)");
-            }
+        // A replacement request may already have overwritten mLedEnabled. Release by ownership,
+        // which is idempotent, rather than by the incoming request's configuration.
+        if (!preserveSession
+                && mHardwareManager != null
+                && mHardwareManager.supportsRecordingLed()) {
+            mHardwareManager.releaseRecordingLed(mPrivacyLightOwner);
+            Log.d(TAG, "📹 Recording LED turned OFF (stream stopped)");
+        } else if (preserveSession && mLedEnabled) {
+            Log.d(TAG, "📹 Preserving recording LED state during reconnection");
         }
 
         // Play stream stop sound (only on actual stop, not reconnection)
