@@ -24,7 +24,7 @@ class NotificationListener private constructor(private val context: Context) {
     private const val PREF_NOTIFICATIONS_BLOCKLIST = "notifications_blocklist"
 
     @Volatile private var instance: NotificationListener? = null
-    @Volatile private var reboundThisProcess = false
+    private var rebindRequestedThisProcess = false
 
     fun getInstance(context: Context): NotificationListener {
       return instance
@@ -41,6 +41,7 @@ class NotificationListener private constructor(private val context: Context) {
      * The component stays enabled so Android can show it in notification-access
      * Settings, but its service process only starts after access is granted.
      */
+    @Synchronized
     fun setNotificationConfig(
       context: Context,
       listenerEnabled: Boolean,
@@ -50,37 +51,12 @@ class NotificationListener private constructor(private val context: Context) {
       val blocklistSet = blocklist.toSet()
       persistConfig(applicationContext, listenerEnabled, blocklistSet)
 
-      val permissionGranted = hasNotificationListenerPermission(applicationContext)
-      val shouldRun = listenerEnabled && permissionGranted
-      val componentChanged = updateComponentState(applicationContext, enabled = listenerEnabled)
-
-      // Keep the isolated process's own SharedPreferences cache and live
-      // singleton in sync. Rebind once per process so OEM/Android 15 holes
-      // cannot leave an approved listener detached. Later blocklist updates
-      // must not restart a healthy listener.
-      val shouldRebind = shouldRun && (componentChanged || !reboundThisProcess)
-      if (shouldRun) {
-        reboundThisProcess = true
-      }
-      if (permissionGranted) {
-        NotificationProcessBridge.sendConfig(
-          applicationContext,
-          listenerEnabled,
-          blocklistSet,
-          requestRebind = shouldRebind,
-        )
-      }
-
-      // requestRebind is a static NMS call. Do it from this process too so a
-      // dead or slow :notif receiver cannot leave an approved listener unbound.
-      if (shouldRebind) {
-        requestListenerRebind(applicationContext)
-      }
-
-      if (!shouldRun) {
-        Log.d(TAG, "Notification listener prerequisites not met; service will not start")
-        return
-      }
+      reconcileNotificationConfig(
+        applicationContext,
+        listenerEnabled,
+        blocklistSet,
+        hasNotificationListenerPermission(applicationContext),
+      )
     }
 
     /**
@@ -90,6 +66,7 @@ class NotificationListener private constructor(private val context: Context) {
      * newly granted listener starts immediately. Without permission the service
      * is not rebound and the isolated process is never started.
      */
+    @Synchronized
     fun refreshComponentForPermission(context: Context): Boolean {
       val applicationContext = context.applicationContext
       val permissionGranted = hasNotificationListenerPermission(applicationContext)
@@ -98,22 +75,41 @@ class NotificationListener private constructor(private val context: Context) {
       val blocklist =
         preferences.getStringSet(PREF_NOTIFICATIONS_BLOCKLIST, emptySet())?.toSet() ?: emptySet()
 
+      reconcileNotificationConfig(
+        applicationContext,
+        listenerEnabled,
+        blocklist,
+        permissionGranted,
+        forceRebind = true,
+      )
+      return permissionGranted
+    }
+
+    /** Both app entrypoints use one rebind decision; the receiver owns the request. */
+    private fun reconcileNotificationConfig(
+      context: Context,
+      listenerEnabled: Boolean,
+      blocklist: Set<String>,
+      permissionGranted: Boolean,
+      forceRebind: Boolean = false,
+    ) {
       val shouldRun = listenerEnabled && permissionGranted
-      updateComponentState(applicationContext, enabled = listenerEnabled)
+      val componentChanged = updateComponentState(context, enabled = listenerEnabled)
+      val shouldRebind = shouldRun && (forceRebind || componentChanged || !rebindRequestedThisProcess)
       if (permissionGranted) {
+        // The explicit broadcast starts :notif if needed. Its receiver applies
+        // the config before requesting the bind, avoiding duplicate requests
+        // and a listener that starts with a stale per-process preferences cache.
         NotificationProcessBridge.sendConfig(
-          applicationContext,
+          context,
           listenerEnabled,
           blocklist,
-          // This method is reserved for the confirmed permission-grant path.
-          // The :notif receiver persists the config before requesting rebind.
-          requestRebind = shouldRun,
+          requestRebind = shouldRebind,
         )
       }
-      if (shouldRun) {
-        requestListenerRebind(applicationContext)
-      }
-      return permissionGranted
+      // A permission-grant refresh also satisfies startup recovery. Ordinary
+      // blocklist updates therefore do not request another bind afterward.
+      rebindRequestedThisProcess = shouldRun
     }
 
     fun openNotificationListenerSettings(context: Context) {
