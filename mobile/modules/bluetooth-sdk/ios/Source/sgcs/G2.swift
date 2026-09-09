@@ -3832,12 +3832,16 @@ class G2: NSObject, SGCManager {
     }
 
     func getNativeNotificationStatus() -> NativeNotificationStatus {
+        #if os(macOS)
+            return .unavailable
+        #else
         let ready = DeviceStore.shared.get("glasses", "fullyBooted") as? Bool ?? false
         return NativeNotificationStatus(
             supported: true, source: "ancs", authorization: notificationAuthorization,
             state: !ready ? "unavailable" : !notificationError.isEmpty ? "failed" : notificationConfig.enabled ? "submitted" : "disabled",
             config: notificationConfig, error: notificationError
         )
+        #endif
     }
 
     private func publishNotificationStatus() {
@@ -3845,12 +3849,20 @@ class G2: NSObject, SGCManager {
     }
 
     func configureNativeNotifications(_ config: NativeNotificationConfig) throws {
+        #if os(macOS)
+            throw NativeNotificationError.unsupported
+        #else
         try config.validateForAncs()
         notificationConfig = config
         applyNotificationControls()
+        #endif
     }
 
     private func applyNotificationControls() {
+        #if os(macOS)
+            publishNotificationStatus()
+            return
+        #endif
         notificationControlMagic = nil
         notificationEpoch += 1 // Discard unsent controls from the previous settings/connection.
         notificationError = ""

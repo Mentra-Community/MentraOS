@@ -894,7 +894,7 @@ class MantleManager {
         }
         // iOS Notify currently supports firmware presentation on G2. Metadata-only
         // relay must not be rendered as a pretend full-content notification.
-        if (Platform.OS === "ios" || !this.isNotifyRunning()) return
+        if (Platform.OS === "ios" && !title && !content) return
 
         // Cloud V1 used to relay this event to the Notify miniapp, which then
         // painted the glasses. Notify is now an offline built-in, so render the

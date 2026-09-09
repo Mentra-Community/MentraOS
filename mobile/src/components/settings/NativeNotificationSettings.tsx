@@ -30,9 +30,11 @@ export default function NativeNotificationSettings() {
   useEffect(() => {
     let active = true
     let revision = 0
+    let refreshRevision = 0
     setStatus(null)
     const refresh = async () => {
       const requestRevision = ++revision
+      const permissionRevision = ++refreshRevision
       try {
         const [native, granted] = await Promise.all([
           engine.phoneNotifications.nativeStatus(),
@@ -40,10 +42,10 @@ export default function NativeNotificationSettings() {
         ])
         if (active) {
           if (requestRevision === revision) setStatus(native)
-          setListenerPermission(granted)
+          if (permissionRevision === refreshRevision) setListenerPermission(granted)
         }
       } catch {
-        if (active) setStatus(null)
+        if (active && requestRevision === revision) setStatus(null)
       }
     }
     void refresh()

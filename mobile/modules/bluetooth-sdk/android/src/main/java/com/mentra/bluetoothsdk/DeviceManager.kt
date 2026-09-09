@@ -1789,7 +1789,7 @@ class DeviceManager {
         sgc?.sendIncidentId(incidentId, apiBaseUrl)
     }
 
-    /** Push a notification into the glasses' own notification centre; no-op outside G2. */
+    /** Push a notification into the glasses' own notification centre; rejects unsupported or disconnected devices. */
     fun sendPhoneNotification(notification: Map<String, Any>) {
         // Package only - never the notification text.
         Bridge.log("MAN: sendPhoneNotification from ${notification["packageName"]}")

@@ -569,10 +569,9 @@ class BluetoothSdkModule : Module() {
             sdk?.sendIncidentId(incidentId, apiBaseUrl)
         }
 
-        // MARK: - Native Notification Centre (internal, G2 only)
+        // MARK: - Native Notification Centre
 
-        // Via deviceManager, not the MentraBluetoothSdk facade: internal surface (like
-        // dbg1/ping), not public SDK API.
+        // Public controls use the SDK facade; phone payload delivery uses DeviceManager.
         SdkAsyncFunction("configureNativeNotifications") { config: Map<String, Any> ->
             requireSdk().configureNativeNotifications(NativeNotificationConfig.fromMap(config))
         }

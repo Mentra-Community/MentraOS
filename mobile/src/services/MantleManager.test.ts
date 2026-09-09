@@ -521,6 +521,28 @@ describe("MantleManager", () => {
     }
   })
 
+  it("preserves full-content iOS notification presentation", () => {
+    Object.defineProperty(Platform, "OS", {configurable: true, value: "ios"})
+    try {
+      useAppStatusStore.setState({
+        apps: [{packageName: "cloud.augmentos.notify", type: "background", running: true}] as any,
+      })
+      emitBluetoothSdkEvent("phone_notification", {
+        notificationId: "full-ios",
+        app: "Messages",
+        title: "Alice",
+        content: "Hello",
+        packageName: "com.apple.MobileSMS",
+      })
+      expect(localDisplayManager.request).toHaveBeenCalledWith(
+        "cloud.augmentos.notify",
+        expect.objectContaining({layout: expect.objectContaining({text: "Hello"})}),
+      )
+    } finally {
+      Object.defineProperty(Platform, "OS", {configurable: true, value: "android"})
+    }
+  })
+
   it("tracks OTA status without allowing backward progress or stale terminal update hints", async () => {
     useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
     useGlassesStore.getState().setOtaUpdateAvailable({

@@ -1,6 +1,6 @@
 import React from "react"
 import {act, fireEvent, render, waitFor} from "@testing-library/react-native"
-import {Platform} from "react-native"
+import {AppState, Platform, type AppStateStatus} from "react-native"
 import {engine, SETTINGS} from "@mentra/engine"
 import {useSettingsStore} from "@mentra/engine-host-internal"
 import NativeNotificationSettings from "@/components/settings/NativeNotificationSettings"
@@ -68,6 +68,34 @@ describe("native notification settings", () => {
     expect(ui.getByText("settings:nativeNotificationsAncs")).toBeTruthy()
     expect(ui.getByText("settings:nativeNotificationsIosContent")).toBeTruthy()
     expect(ui.queryByText("settings:nativeNotificationsGrantAccess")).toBeNull()
+  })
+
+  it("keeps the latest Android permission result when foreground refreshes overlap", async () => {
+    Object.defineProperty(Platform, "OS", {configurable: true, value: "android"})
+    let foreground: (state: AppStateStatus) => void = () => {}
+    const appState = jest.spyOn(AppState, "addEventListener").mockImplementation((_event, listener) => {
+      foreground = listener
+      return {remove: jest.fn()}
+    })
+    let resolveOld: (granted: boolean) => void = () => {}
+    ;(engine.phoneNotifications.hasListenerPermission as jest.Mock)
+      .mockReturnValueOnce(
+        new Promise<boolean>((resolve) => {
+          resolveOld = resolve
+        }),
+      )
+      .mockResolvedValueOnce(true)
+    const ui = render(<NativeNotificationSettings />)
+    await act(async () => {
+      foreground("active")
+    })
+    expect(ui.queryByText("settings:nativeNotificationsGrantAccess")).toBeNull()
+    await act(async () => {
+      resolveOld(false)
+    })
+    expect(ui.queryByText("settings:nativeNotificationsGrantAccess")).toBeNull()
+    ui.unmount()
+    appState.mockImplementation(() => ({remove: jest.fn()}))
   })
 
   it("updates the shared master setting and hides dependent controls", async () => {
