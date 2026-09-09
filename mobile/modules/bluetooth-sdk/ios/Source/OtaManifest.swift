@@ -87,11 +87,12 @@ enum OtaManifestChecker {
         currentMtkVersion: String,
         currentBesVersion: String,
         manifest: OtaManifest,
-        // Downgrade floor: a non-positive value (the default) disables downgrades entirely,
-        // matching ASG's fail-closed DowngradeGate and the engine. OEM SDK consumers that do not
-        // set a floor get upgrade-only behavior and are never told a downgrade is available that
-        // the glasses would refuse.
-        downgradeFloorVersionCode: Int = 0
+        // Mentra 3.0 is the oldest downgrade-safe target, matching Engine, ASG, and recovery.
+        // Coordinated releases guarantee higher supported ASG builds can downgrade; no source gate is needed.
+        // The shipped floor may increase, never decrease, and must stay aligned across all checkers.
+        // See asg_client/docs/mentra-live-spec.md#ota-and-updates.
+        // An explicit non-positive override still disables downgrades.
+        downgradeFloorVersionCode: Int = 51518114
     ) throws -> Bool {
         try hasApkUpdate(
             currentBuildNumber: currentBuildNumber,

@@ -32,6 +32,14 @@ class OtaManifestDowngradeTest {
         )
 
     @Test
+    fun shippedFloorAllowsMentra30ButRejectsOlderTargets() {
+        for ((target, expected) in listOf(51518113L to false, 51518114L to true, 51518115L to true, 100000095L to false)) {
+            assertEquals(expected, OtaManifestChecker.hasUpdate("100000095", "", "", manifest(target)))
+        }
+        assertFalse(OtaManifestChecker.hasUpdate("100000095", "", "", manifest(51518114L), downgradeFloorVersionCode = 0L))
+    }
+
+    @Test
     fun upgradeIsAlwaysAnUpdate() {
         assertTrue(hasUpdate("49000000", manifest(49076573L)))
     }

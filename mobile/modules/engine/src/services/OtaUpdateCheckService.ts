@@ -13,7 +13,11 @@ import {resolveOtaReleaseVersion} from "./otaReleaseVersion"
  * glasses reporting a bare "complete", which would otherwise present as false success. Keep this
  * in lockstep with the ASG/recovery constant at release time.
  */
-export const DOWNGRADE_FLOOR_VERSION_CODE = 0
+// Mentra 3.0: matches OtaConstants and RecoveryConstants on the glasses.
+// Coordinated releases guarantee higher supported ASG builds can downgrade; no source gate is needed.
+// The shipped floor may increase, never decrease, and must stay aligned across all checkers.
+// See asg_client/docs/mentra-live-spec.md#ota-and-updates.
+export const DOWNGRADE_FLOOR_VERSION_CODE = 51518114
 
 export interface VersionInfo {
   versionCode: number
