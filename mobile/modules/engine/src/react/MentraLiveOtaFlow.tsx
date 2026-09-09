@@ -70,6 +70,20 @@ const DEFAULT_THEME: MentraLiveOtaFlowTheme = {
 }
 
 const ENGLISH_COPY: Record<string, string> = {
+  "ota:downloadingToPhone": "Downloading update to phone...",
+  "ota:startingGlassesHotspot": "Starting glasses hotspot...",
+  "ota:connectingPhoneToGlasses": "Connecting phone to glasses...",
+  "ota:startingHotspotUpdate": "Starting update...",
+  "ota:transferringToGlasses": "Transferring update to glasses...",
+  "ota:installingOnGlasses": "Installing update on glasses...",
+  "ota:componentApk": "Glasses software",
+  "ota:componentMtk": "System firmware",
+  "ota:componentBes": "Bluetooth firmware",
+  "ota:updateFile": "File {{current}} of {{total}} · {{component}}",
+  "ota:updatePart": "Update {{current}} of {{total}} · {{component}}",
+  "ota:phoneFileProgress": "Each file downloads separately. Progress is for the current file.",
+  "ota:transferFileProgress": "Progress is for this file’s transfer from your phone.",
+
   "common:continue": "Continue",
   "common:done": "Done",
   "ota:checkingForUpdates": "Checking for updates",
@@ -129,6 +143,12 @@ const ENGLISH_COPY: Record<string, string> = {
   "ota:versionChangeFirmwarePassCompleteMessage":
     "Your glasses restarted with new firmware. One more step: they'll now continue to the required version.",
 }
+
+const componentCopyKey = {
+  apk: "ota:componentApk",
+  mtk: "ota:componentMtk",
+  bes: "ota:componentBes",
+} as const
 
 function defaultTranslate(key: string, options?: Record<string, string>): string {
   let value = ENGLISH_COPY[key] ?? key
@@ -395,28 +415,65 @@ function OtaFlowContent({
   }
 
   if (state.screen === "starting" || state.screen === "preparing_hotspot") {
-    const title =
+    const title = translate(
       state.hotspotPhase === "downloading"
-        ? "Downloading update to phone..."
+        ? "ota:downloadingToPhone"
         : state.hotspotPhase === "starting_hotspot"
-          ? "Starting glasses hotspot..."
+          ? "ota:startingGlassesHotspot"
           : state.hotspotPhase === "joining_hotspot"
-            ? "Connecting phone to glasses..."
-            : "Starting update..."
+            ? "ota:connectingPhoneToGlasses"
+            : "ota:startingHotspotUpdate",
+    )
+    const artifact = state.hotspotPhase === "downloading" ? state.hotspotArtifact : null
     return (
       <FlowPage colors={colors} icon="download" title={title}>
+        {artifact ? (
+          <BodyText colors={colors}>
+            {translate("ota:updateFile", {
+              current: String(artifact.index + 1),
+              total: String(artifact.totalCount),
+              component: translate(componentCopyKey[artifact.kind]),
+            })}
+          </BodyText>
+        ) : null}
         {state.hotspotPhase === "downloading" && state.hotspotArtifactPercent !== null ? (
           <PercentText colors={colors} percent={state.hotspotArtifactPercent} />
         ) : null}
         <ActivityIndicator size="large" color={colors.foreground} />
+        {state.hotspotPhase === "downloading" ? (
+          <BodyText colors={colors}>{translate("ota:phoneFileProgress")}</BodyText>
+        ) : null}
         <BodyText colors={colors}>Do not disconnect your glasses</BodyText>
       </FlowPage>
     )
   }
 
   if (state.screen === "updating") {
+    const hotspot = state.transport === "hotspot"
+    const title = hotspot
+      ? translate(state.phase === "download" ? "ota:transferringToGlasses" : "ota:installingOnGlasses")
+      : state.phase === "download"
+        ? "Downloading..."
+        : "Installing..."
+    const component = state.step ? translate(componentCopyKey[state.step]) : null
+    const hasStepCount =
+      state.currentStep !== null &&
+      state.totalSteps !== null &&
+      state.currentStep > 0 &&
+      state.currentStep <= state.totalSteps
     return (
-      <FlowPage colors={colors} icon="download" title={state.phase === "download" ? "Downloading..." : "Installing..."}>
+      <FlowPage colors={colors} icon="download" title={title}>
+        {hotspot && component ? (
+          <BodyText colors={colors}>
+            {hasStepCount
+              ? translate("ota:updatePart", {
+                  current: String(state.currentStep),
+                  total: String(state.totalSteps),
+                  component,
+                })
+              : component}
+          </BodyText>
+        ) : null}
         {state.installingApkOnly ? (
           <ActivityIndicator size="large" color={colors.foreground} />
         ) : (
@@ -430,6 +487,9 @@ function OtaFlowContent({
           </>
         )}
         <BodyText colors={colors}>Do not disconnect your glasses</BodyText>
+        {hotspot && state.phase === "download" ? (
+          <BodyText colors={colors}>{translate("ota:transferFileProgress")}</BodyText>
+        ) : null}
         {state.versionChange && state.phase === "install" ? (
           <BodyText colors={colors}>{translate("ota:downgradeDuration")}</BodyText>
         ) : null}

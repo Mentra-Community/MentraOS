@@ -128,8 +128,8 @@ describe("checkVersionUpdateAvailable", () => {
     expect(checkVersionUpdateAvailable("100", newFormatJson)).toBe(false)
   })
 
-  it("does not flag a downgrade when the floor is disabled (production default 0)", () => {
-    // Floor 0 disables downgrades: a newer installed build than the exact pin is not offered.
+  it("does not flag a downgrade below the shipped floor", () => {
+    // Synthetic build 100 predates the oldest supported downgrade target.
     expect(checkVersionUpdateAvailable("200", newFormatJson)).toBe(false)
   })
 

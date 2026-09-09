@@ -94,6 +94,7 @@ After a photo completes, the camera normally stays warm for 8 seconds for succes
 - **Cold photo capture** (camera startup required): plays a short, intentionally subtle hold-still prep click immediately and every 900ms during camera/ISP startup, then requests the clicks to stop when sensor exposure starts. On Mentra Live, an in-progress beep finishes before the sequence stops in its silent portion; the shutter sound waits for that stop without delaying the photo. The cadence is baked into one lossless 45-second audio sequence, covering the feedback safety timeout without per-click timers or player restarts. Each beep occupies the first 186ms of its 900ms period; normal stop requests target the 240–800ms silent window using playback position and recheck it after timer delays. Service teardown still stops all audio immediately. After AE first converges, cold captures preserve a 475ms minimum exposure-settling window before submitting the still request; warm-session captures keep the adaptive stable-frame fast path.
 - Cold single-frame captures use Camera2 `onCaptureStarted` as the hardware anchor. The snap targets 100ms before estimated exposure end (manual duration when fixed; latest preview-metered duration for auto exposure), which keeps it immediate in bright scenes and avoids an early cue during longer low-light exposures. If the completed JPEG reaches `ImageReader` first—as can happen when a HAL delivers `onCaptureStarted` late—the frame callback plays the snap immediately, before extraction or persistence. HDR bursts use the final bracket's exposure/frame callbacks so the user remains still for the whole burst. The final captured callback remains an idempotent last-resort fallback.
 - Prep clicks and snaps use isolated audio overlays so camera feedback does not cut off unrelated device prompts. The shutter snap uses a deliberately prominent playback gain so it remains distinct from the quieter prep cue. A failed capture cancels only its own feedback; an already-playing prep beep is allowed to finish.
+- The front-facing MTK privacy light turns on immediately before the still request (or HDR burst) is submitted to Camera2, after queueing and AE warmup. It stays on through exposure and the shutter snap, then releases when the final JPEG reaches `ImageReader`, before persistence or upload. The camera session owns this lifecycle and releases on failure or camera teardown as well. A single 45-second capture watchdog stops a submitted capture if no final JPEG arrives; it operates independently of the LED setting. K900 waits at most one second for LED-on before submission and fails the capture if the command fails. Photo, video, UVC, and network streaming share privacy-light ownership, so release turns it off only when no other owner remains. Shutter-sound and BES RGB timing are unchanged.
 - The user-visible BES RGB photo indicator starts at the same sensor-exposure boundary, with the JPEG frame and final completion callbacks as idempotent fallbacks. It does not start during cold camera warmup, so it remains on when the image is actually captured.
 
 ### Gallery-mode behavior
@@ -159,6 +160,18 @@ Mentra Live has multiple update surfaces:
 Phone-pinned `asg_client` APK downgrades are supported when the target version code is at least
 `51518114` (Mentra 3.0). Older targets predate the downgrade-safe media and recovery contract and
 must be refused.
+
+**Downgrade release invariant:** the MentraOS phone app and `asg_client` are kept aligned
+through coordinated releases. For supported releases, a higher installed ASG version from
+which the phone offers a downgrade already supports the downgrade/recovery contract and
+has the downgrade floor enabled. Phone-side availability checks therefore rely on this
+release invariant rather than a separate minimum-installed-version or capability gate.
+
+The shipped downgrade floor must never decrease. It may increase to retire older targets,
+but any increase must be coordinated across ASG, the recovery worker, Engine, and the Swift
+and Kotlin SDK defaults so the phone only offers targets accepted by the aligned glasses.
+The supported-source invariant must continue to hold when the floor increases. Explicit
+floor overrides used by tests do not change this release policy.
 
 Update flows must preserve device recoverability, report progress where possible, and avoid interrupting active media operations without cleanup.
 

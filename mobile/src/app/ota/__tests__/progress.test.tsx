@@ -7,6 +7,8 @@ import {useNavigationStore} from "@/stores/navigation"
 import {useConnectionOverlayConfig} from "@/contexts/ConnectionOverlayContext"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 
+import {initI18n} from "@/i18n"
+
 import OtaProgressScreen from "@/app/ota/progress"
 import {BES_RESTART_TIMEOUT_MS, MINIMUM_OTA_STATUS_BUILD, OtaProgressMessages} from "@mentra/engine"
 import {BES_INSTALL_RESTART_MESSAGE} from "@/utils/otaErrorMapping"
@@ -22,6 +24,7 @@ import {useSettingsStore} from "../../../../modules/engine/src/stores/settings"
 const setSuperMode = (enabled: boolean) => useSettingsStore.getState().setSetting("super_mode", enabled, false)
 
 jest.mock("@/contexts/NavigationHistoryContext", () => ({
+  focusEffectLockScreen: jest.fn(),
   focusEffectPreventBack: jest.fn(),
   useNavigationHistory: () => ({replace: mockReplace}),
 }))
@@ -80,6 +83,10 @@ function setGlassesConnected() {
 function setGlassesDisconnected() {
   useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
 }
+
+beforeAll(async () => {
+  await initI18n()
+})
 
 beforeEach(() => {
   jest.useFakeTimers()
@@ -215,13 +222,13 @@ describe("progress.tsx display states", () => {
         })
       })
 
-      expect(getByText("ota:finishingUpdate")).toBeDefined()
+      expect(getByText("Finishing your update")).toBeDefined()
       expect(queryByText("Update complete!")).toBeNull()
       expect(replaceSpy).not.toHaveBeenCalledWith("/ota/check-for-updates")
       await act(async () => {
         await jest.advanceTimersByTimeAsync(750)
       })
-      expect(getByText("ota:finishingUpdate")).toBeDefined()
+      expect(getByText("Finishing your update")).toBeDefined()
       expect(useConnectionOverlayConfig.getState().suppressOverlay).toBe(false)
       expect(replaceSpy).not.toHaveBeenCalledWith("/ota/check-for-updates")
     } finally {
@@ -257,7 +264,7 @@ describe("progress.tsx display states", () => {
       await act(async () => {
         await jest.advanceTimersByTimeAsync(750)
       })
-      expect(getByText("ota:finishingUpdate")).toBeDefined()
+      expect(getByText("Finishing your update")).toBeDefined()
       expect(replaceSpy).not.toHaveBeenCalledWith("/ota/check-for-updates")
     } finally {
       replaceSpy.mockRestore()
@@ -300,7 +307,7 @@ describe("progress.tsx display states", () => {
       await act(async () => {
         await jest.advanceTimersByTimeAsync(750)
       })
-      expect(getByText("ota:finishingUpdate")).toBeDefined()
+      expect(getByText("Finishing your update")).toBeDefined()
       expect(replaceSpy).not.toHaveBeenCalledWith("/ota/check-for-updates")
     } finally {
       replaceSpy.mockRestore()
@@ -325,9 +332,13 @@ describe("progress.tsx display states", () => {
       })
     })
 
-    expect(getByText("ota:restartingGlasses")).toBeDefined()
-    expect(getByText("ota:restartingGlassesMessage")).toBeDefined()
-    expect(getByText("ota:restartingGlassesAutomatic")).toBeDefined()
+    expect(getByText(/^Restarting .+…$/)).toBeDefined()
+    expect(
+      getByText(
+        "The update is installed. Keep your glasses nearby and leave this screen open while they finish starting.",
+      ),
+    ).toBeDefined()
+    expect(getByText("We'll continue automatically when they're ready.")).toBeDefined()
     expect(queryByTestId("button-Continue")).toBeNull()
 
     await act(async () => {

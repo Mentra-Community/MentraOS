@@ -83,6 +83,11 @@ export type MentraLiveOtaState = {
   hotspotSupported: boolean
   hotspotPhase: MentraLiveOtaHotspotPhase
   hotspotArtifactPercent: number | null
+  /**
+   * Current phone download context. Index is zero-based; percent applies to this file only.
+   * Optional for source compatibility; this hook returns null when no file is active.
+   */
+  hotspotArtifact?: {kind: MentraLiveOtaStep; index: number; totalCount: number} | null
   phase: MentraLiveOtaInstallPhase | null
   step: MentraLiveOtaStep | null
   currentStep: number | null
@@ -636,6 +641,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
         hotspotSupported,
         hotspotPhase: "idle",
         hotspotArtifactPercent: null,
+        hotspotArtifact: null,
         phase: null,
         step: null,
         currentStep: null,
@@ -692,6 +698,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
         hotspotSupported,
         hotspotPhase: "idle",
         hotspotArtifactPercent: null,
+        hotspotArtifact: null,
         phase: null,
         step: null,
         currentStep: null,
@@ -751,6 +758,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
           }
         : null
     const totalSteps = installSnapshot.otaStatus?.totalSteps ?? null
+    const artifact = installSnapshot.hotspotArtifact
     const changelogs = screen === "complete" ? releaseChangelogsForActiveChain() : []
     return {
       screen,
@@ -766,6 +774,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
       hotspotSupported,
       hotspotPhase: installSnapshot.hotspotPhase,
       hotspotArtifactPercent: installSnapshot.hotspotArtifactPercent,
+      hotspotArtifact: artifact ? {kind: artifact.kind, index: artifact.index, totalCount: artifact.totalCount} : null,
       phase: installSnapshot.otaStatus?.phase ?? installSnapshot.otaProgress?.stage ?? null,
       step: installSnapshot.otaStatus?.stepType ?? null,
       currentStep: installSnapshot.otaStatus?.currentStep ?? null,

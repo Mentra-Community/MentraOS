@@ -397,8 +397,34 @@ describe("OtaUpdateCheckService", () => {
     expect(useGlassesStore.getState().buildNumber).toBe("10")
   })
 
+  it.each([
+    [51518113, false],
+    [51518114, true],
+    [51518115, true],
+    [100000095, false],
+  ])("uses the shipped downgrade floor for target %i", async (versionCode, available) => {
+    useGlassesStore.getState().setGlassesInfo({buildNumber: "100000095"})
+    global.fetch = jest.fn(
+      async () =>
+        ({
+          ok: true,
+          json: async () => ({apps: {"com.mentra.asg_client": {versionCode}}}),
+        }) as Response,
+    ) as unknown as typeof fetch
+
+    const result = await checkCurrentGlassesForUpdate({
+      refreshVersionInfo: false,
+      fixClockBeforeCheck: false,
+      waitForBesVersionMs: 0,
+      waitForMtkVersionMs: 0,
+    })
+    expect(result.updateAvailable).toBe(available)
+    expect(result.isApkDowngrade).toBe(available)
+    expect(useGlassesStore.getState().otaUpdateAvailable?.isDowngrade ?? false).toBe(available)
+  })
+
   it("downgrades default to skippable; explicit isRequired forces them", async () => {
-    // Enable downgrades with a floor at/below the pin (production ships floor 0 = disabled).
+    // Use a small test-only floor for this synthetic manifest.
     const check = () =>
       checkCurrentGlassesForUpdate({
         refreshVersionInfo: false,
@@ -459,7 +485,7 @@ describe("OtaUpdateCheckService", () => {
     expect(result.isApkDowngrade).toBe(false)
     expect(result.isRequired).toBe(true)
 
-    // Floor 0 (production default) disables downgrades entirely: the same lower pin is not offered.
+    // An explicit floor 0 disables downgrades entirely: the same lower pin is not offered.
     global.fetch = jest.fn(() =>
       Promise.resolve({ok: true, json: () => Promise.resolve(manifestWith({}))} as unknown as Response),
     ) as unknown as typeof fetch
