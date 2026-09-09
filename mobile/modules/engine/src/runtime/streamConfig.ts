@@ -12,11 +12,15 @@ export const normalizeStreamVideoConfig = (value: unknown): StreamVideoConfig | 
   const width = finiteNumber(value.width)
   const height = finiteNumber(value.height)
   const bitrate = finiteNumber(value.bitrate)
+  const minBitrateBps = finiteNumber(value.minBitrateBps)
+  const initialBitrateBps = finiteNumber(value.initialBitrateBps)
   const frameRate = finiteNumber(value.frameRate)
   const fps = frameRate ?? finiteNumber(value.fps)
   if (width !== undefined) config.width = width
   if (height !== undefined) config.height = height
   if (bitrate !== undefined) config.bitrate = bitrate
+  if (minBitrateBps !== undefined) config.minBitrateBps = Math.max(0, Math.trunc(minBitrateBps))
+  if (initialBitrateBps !== undefined) config.initialBitrateBps = Math.max(0, Math.trunc(initialBitrateBps))
   if (fps !== undefined) config.fps = fps
   return Object.keys(config).length > 0 ? config : undefined
 }
@@ -32,3 +36,16 @@ export const normalizeStreamAudioConfig = (value: unknown): StreamAudioConfig | 
   if (typeof value.noiseSuppression === "boolean") config.noiseSuppression = value.noiseSuppression
   return Object.keys(config).length > 0 ? config : undefined
 }
+
+/** Absent or non-boolean values keep the caller-supplied fallback (default true). */
+export const normalizeCaptureAudio = (value: unknown, fallback = true): boolean =>
+  typeof value === "boolean" ? value : fallback
+
+/**
+ * Glasses capture is locked to the ACS source for the WHIP session.
+ * Phone/bluetooth never encode the glasses mic, even if a miniapp asks for it.
+ */
+export const resolveCaptureAudio = (
+  payload: unknown,
+  source: "glasses" | "phone",
+): boolean => source === "glasses" && normalizeCaptureAudio(payload, true)

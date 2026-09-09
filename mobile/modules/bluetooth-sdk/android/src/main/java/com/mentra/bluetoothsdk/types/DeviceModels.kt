@@ -43,6 +43,9 @@ data class Device(
     val rssi: Int? = null,
     /** Stable app-facing scan-result key. Do not parse; use typed fields instead. */
     val id: String = address?.takeIf { it.isNotBlank() } ?: "${model.deviceType}:$name",
+    val pairingMode: Boolean? = null,
+    val pairingCode: String? = null,
+    val securePairingCapable: Boolean? = null,
 ) {
     internal fun toMap(): Map<String, Any> =
         buildMap {
@@ -56,6 +59,9 @@ data class Device(
                 put("projectName", it)
             }
             rssi?.let { put("rssi", it) }
+            pairingMode?.let { put("pairingMode", it) }
+            pairingCode?.takeIf { it.isNotBlank() }?.let { put("pairingCode", it) }
+            securePairingCapable?.let { put("securePairingCapable", it) }
         }
 
     companion object {
@@ -66,6 +72,9 @@ data class Device(
             val projectName = stringValue(values, "projectName")?.takeIf { it.isNotBlank() }
             val rssi = numberValue(values, "rssi")
             val id = stringValue(values, "id")?.takeIf { it.isNotBlank() } ?: address ?: "${model}:$name"
+            val pairingMode = boolValue(values, "pairingMode")
+            val pairingCode = stringValue(values, "pairingCode")?.takeIf { it.isNotBlank() }
+            val securePairingCapable = boolValue(values, "securePairingCapable")
             return Device(
                 model = DeviceModel.fromDeviceType(model),
                 name = name,
@@ -73,6 +82,9 @@ data class Device(
                 projectName = projectName,
                 rssi = rssi,
                 id = id,
+                pairingMode = pairingMode,
+                pairingCode = pairingCode,
+                securePairingCapable = securePairingCapable,
             )
         }
     }

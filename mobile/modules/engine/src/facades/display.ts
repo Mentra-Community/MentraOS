@@ -4,7 +4,7 @@
  * glasses display for dev tools and escape-hatch use (normal rendering goes through
  * the engine DisplayProcessor / layout system, not these).
  */
-import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
+import BluetoothSdk from "@mentra/bluetooth-sdk"
 import {displayMirror} from "./displayMirror"
 
 export const display = {

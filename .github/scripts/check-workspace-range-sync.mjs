@@ -64,7 +64,7 @@ for (const [file, d] of parsed) {
       // rewrites them to real versions at publish time).
       if (String(range).startsWith("file:")) continue
       const local = localVersions.get(dep)
-      if (!local) continue // not a workspace package (e.g. @mentra/types from the registry)
+      if (!local) continue // not a workspace package (for example, zod from the registry)
       if (!semver.satisfies(local, range)) {
         console.error(
           `::error file=${file}::${d.name || file} ${section} wants ${dep}@${range}, but the workspace has ` +

@@ -1,6 +1,7 @@
 import {waitFor} from "@testing-library/react-native"
 import {router} from "expo-router"
 
+import {initI18n} from "@/i18n"
 import mantle from "@/services/MantleManager"
 import {
   audioPlaybackService,
@@ -10,7 +11,7 @@ import {
   useCoreStore,
   useDisplayStore,
   useSettingsStore,
-} from "@mentra/engine/internal"
+} from "@mentra/engine-host-internal"
 // This test resets the concrete glasses store; the package-level Jest mock does
 // not expose it through @mentra/engine.
 // eslint-disable-next-line no-restricted-imports
@@ -108,6 +109,9 @@ let syncGlassesPresentationState: (status: {state: string}) => void
 
 describe("MantleManager", () => {
   beforeAll(async () => {
+    // Alerts surface translated copy (e.g. the Wi-Fi-needs-glasses blocker), so
+    // initialize i18n before init(); otherwise translate() returns raw keys.
+    await initI18n()
     routerPushSpy = jest.spyOn(router, "push").mockImplementation(() => {})
     jest.useFakeTimers()
     resetBluetoothSdkMock()
@@ -513,7 +517,28 @@ describe("MantleManager", () => {
     expect(useGlassesStore.getState().otaInProgress).toBe(false)
   })
 
+  it("refuses Wi-Fi setup while the glasses are off Bluetooth and says why", async () => {
+    ;(engine.glasses.status as jest.Mock).mockReturnValue({state: "disconnected"})
+
+    const request = requestWifiSetup("Streaming needs Wi-Fi", "com.mentra.call")
+    const [title, message, buttons] = mockShowAlert.mock.calls.at(-1)!
+
+    expect(title).toBe("Reconnect your glasses")
+    expect(message).toBe(
+      "Wi-Fi setup needs your glasses connected over Bluetooth. Turn them on and wait for them to reconnect, then try again.",
+    )
+    expect(buttons).toHaveLength(1)
+    expect(buttons[0].text).toBe("OK")
+    buttons[0].onPress()
+    await request
+
+    // The miniapp stays in the foreground and no Wi-Fi route is pushed.
+    expect(engine.miniapps.clearForeground).not.toHaveBeenCalled()
+    expect(routerPushSpy).not.toHaveBeenCalled()
+  })
+
   it("prompts before opening Wi-Fi setup and backgrounds the requesting miniapp", async () => {
+    ;(engine.glasses.status as jest.Mock).mockReturnValue({state: "connected"})
     const cancelRequest = requestWifiSetup("Streaming needs Wi-Fi")
     const [, message, cancelButtons] = mockShowAlert.mock.calls.at(-1)!
 

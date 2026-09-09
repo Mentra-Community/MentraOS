@@ -7,6 +7,23 @@ public enum MicPreference: String {
     case bluetooth
 }
 
+struct MicHealth {
+    let sequenceGapEvents: Int64
+    let decodeFailures: Int64
+    let lastLc3ReceivedAt: Int64?
+    let lastPcmProducedAt: Int64?
+
+    var dictionary: [String: Any] {
+        var values: [String: Any] = [
+            "sequenceGapEvents": sequenceGapEvents,
+            "decodeFailures": decodeFailures,
+        ]
+        if let lastLc3ReceivedAt { values["lastLc3ReceivedAt"] = lastLc3ReceivedAt }
+        if let lastPcmProducedAt { values["lastPcmProducedAt"] = lastPcmProducedAt }
+        return values
+    }
+}
+
 public struct LocalTranscriptionEvent: CustomStringConvertible {
     public let text: String
     public let isFinal: Bool

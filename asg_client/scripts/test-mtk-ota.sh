@@ -13,11 +13,16 @@
 
 set -euo pipefail
 
+if [ -n "${ADB_SERIAL:-}" ] && [ -z "${ANDROID_SERIAL:-}" ]; then
+    export ANDROID_SERIAL="$ADB_SERIAL"
+fi
+
 PORT=${OTA_TEST_PORT:-9876}
 WAIT_SECONDS=20
 MAX_TRIGGER_ATTEMPTS=3
 TRIGGER_RETRY_DELAY_SECONDS=8
 TRIGGER_ACTIVITY_TIMEOUT_SECONDS=15
+MTK_UPDATE_TIMEOUT_SECONDS=900
 SERVE_DIR="$(mktemp -d)"
 PATCH_PATH=""
 START_FIRMWARE_OVERRIDE=""
@@ -90,9 +95,14 @@ monitor_update() {
     local raw_progress=0
     local idle_seconds=0
     local saw_activity=0
+    local update_deadline=$((SECONDS + MTK_UPDATE_TIMEOUT_SECONDS))
 
     exec 3< <(adb logcat -v time)
     while true; do
+        if [ "$SECONDS" -ge "$update_deadline" ]; then
+            exec 3<&-
+            fail "MTK OTA did not complete within $((MTK_UPDATE_TIMEOUT_SECONDS / 60)) minutes"
+        fi
         if IFS= read -r -t 1 line <&3; then
             idle_seconds=0
         else
@@ -167,7 +177,7 @@ monitor_update() {
            [[ "$line" == *"MTK OTA success:"* ]]; then
             exec 3<&-
             echo "✅ Complete. Rebooting glasses..."
-            if adb shell reboot >/dev/null 2>&1; then
+            if adb reboot >/dev/null 2>&1; then
                 echo "✅ Reboot command sent"
             else
                 echo "⚠️  ADB disconnected before reboot completed. This can be expected after the update."
@@ -285,6 +295,12 @@ if [ -n "$END_FIRMWARE_OVERRIDE" ]; then
     END_FIRMWARE="$END_FIRMWARE_OVERRIDE"
 else
     END_FIRMWARE="${START_FIRMWARE%$START_VERSION}$FILE_END_VERSION"
+fi
+if ! END_VERSION="$(extract_version_suffix "$END_FIRMWARE")"; then
+    fail "end_firmware does not end with YYYYMMDD or YYYYMMDD.N: $END_FIRMWARE"
+fi
+if [ "$FILE_END_VERSION" != "$END_VERSION" ]; then
+    fail "Patch end version ($FILE_END_VERSION) does not match end_firmware version ($END_VERSION)"
 fi
 
 if command -v shasum >/dev/null 2>&1; then

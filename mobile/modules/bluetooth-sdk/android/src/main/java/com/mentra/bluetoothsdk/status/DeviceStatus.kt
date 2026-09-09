@@ -51,6 +51,12 @@ internal data class GlassesStatus(
     val systemTimeMs: Long?,
     val otaVersionUrl: String,
     val appVersion: String,
+    /**
+     * Package the glasses client actually runs as, from version_info_1. Empty on glasses whose
+     * client predates the field. "com.mentra.asg_client" is the stock client; anything else is a
+     * sideloaded build that OTA must not drive.
+     */
+    val packageName: String,
     val hotspotOtaVersion: Int,
     val bluetoothName: String,
     val serialNumber: String,
@@ -94,6 +100,7 @@ internal data class GlassesStatus(
             "buildNumber" to buildNumber,
             "otaVersionUrl" to otaVersionUrl,
             "appVersion" to appVersion,
+            "packageName" to packageName,
             "hotspotOtaVersion" to hotspotOtaVersion,
             "bluetoothName" to bluetoothName,
             "serialNumber" to serialNumber,
@@ -146,6 +153,7 @@ internal data class GlassesStatus(
                 systemTimeMs = longValue(values, "systemTimeMs"),
                 otaVersionUrl = stringValue(values, "otaVersionUrl") ?: "",
                 appVersion = stringValue(values, "appVersion") ?: "",
+                packageName = stringValue(values, "packageName") ?: "",
                 hotspotOtaVersion = numberValue(values, "hotspotOtaVersion") ?: 0,
                 bluetoothName = stringValue(values, "bluetoothName") ?: "",
                 serialNumber = stringValue(values, "serialNumber") ?: "",
@@ -179,6 +187,7 @@ data class VersionInfoResult(
     val systemTimeMs: Long?,
     val otaVersionUrl: String,
     val appVersion: String,
+    val packageName: String,
     val hotspotOtaVersion: Int,
 ) {
     internal fun toMap(): Map<String, Any> =
@@ -191,6 +200,12 @@ data class VersionInfoResult(
             systemTimeMs?.let { put("systemTimeMs", it) }
             put("otaVersionUrl", otaVersionUrl)
             put("appVersion", appVersion)
+            // Only when known. requestVersionInfo() resolves from ANY version_info chunk, and
+            // only chunk 1 carries package_name — emitting "" from a chunk-3 resolution would
+            // overwrite a known identity with "absent", which the OTA guard reads as stock.
+            if (packageName.isNotEmpty()) {
+                put("packageName", packageName)
+            }
             put("hotspotOtaVersion", hotspotOtaVersion)
         }
 
@@ -205,6 +220,7 @@ data class VersionInfoResult(
                 systemTimeMs = status.systemTimeMs,
                 otaVersionUrl = status.otaVersionUrl,
                 appVersion = status.appVersion,
+                packageName = status.packageName,
                 hotspotOtaVersion = status.hotspotOtaVersion,
             )
 
@@ -218,6 +234,7 @@ data class VersionInfoResult(
                 systemTimeMs = longValue(values, "systemTimeMs", "system_time_ms"),
                 otaVersionUrl = stringValue(values, "otaVersionUrl", "ota_version_url") ?: "",
                 appVersion = stringValue(values, "appVersion", "app_version") ?: "",
+                packageName = stringValue(values, "packageName", "package_name") ?: "",
                 hotspotOtaVersion =
                     numberValue(values, "hotspotOtaVersion", "hotspot_ota_version") ?: 0,
             )
@@ -391,6 +408,7 @@ internal data class GlassesStatusUpdate(
     val buildNumber: String? = null,
     val otaVersionUrl: String? = null,
     val appVersion: String? = null,
+    val packageName: String? = null,
     val hotspotOtaVersion: Int? = null,
     val bluetoothName: String? = null,
     val serialNumber: String? = null,
@@ -442,6 +460,7 @@ internal data class GlassesStatusUpdate(
             putIfNotNull("buildNumber", buildNumber)
             putIfNotNull("otaVersionUrl", otaVersionUrl)
             putIfNotNull("appVersion", appVersion)
+            putIfNotNull("packageName", packageName)
             putIfNotNull("hotspotOtaVersion", hotspotOtaVersion)
             putIfNotNull("bluetoothName", bluetoothName)
             putIfNotNull("serialNumber", serialNumber)
@@ -492,6 +511,7 @@ internal data class GlassesStatusUpdate(
                 buildNumber = optionalStringValue(values, "buildNumber"),
                 otaVersionUrl = optionalStringValue(values, "otaVersionUrl"),
                 appVersion = optionalStringValue(values, "appVersion"),
+                packageName = optionalStringValue(values, "packageName"),
                 hotspotOtaVersion = optionalNumberValue(values, "hotspotOtaVersion"),
                 bluetoothName = optionalStringValue(values, "bluetoothName"),
                 serialNumber = optionalStringValue(values, "serialNumber"),

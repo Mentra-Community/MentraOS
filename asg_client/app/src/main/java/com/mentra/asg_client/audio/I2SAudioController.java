@@ -6,13 +6,20 @@ import android.content.res.AssetFileDescriptor;
 import android.media.AudioManager;
 import android.media.MediaPlayer;
 import android.os.Build;
+import android.os.SystemClock;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 
 import com.mentra.asg_client.service.core.AsgClientService;
+import com.mentra.asg_client.AsgConstants;
 
+import java.io.File;
 import java.io.IOException;
 import java.util.HashMap;
+import java.util.HashSet;
 import java.util.Map;
+import java.util.Set;
 
 /**
  * Handles I2S audio playback for devices that route speaker output through the MCU. This controller
@@ -22,10 +29,22 @@ public class I2SAudioController {
 
     private static final String TAG = "I2SAudioController";
 
+    /**
+     * BES {@code app_play_I2S_onoff(true)} force-closes I2S, waits 20 ms, then reopens and arms
+     * the PA. UART transit is extra. Starting MediaPlayer before that window dumps PCM into a
+     * dead bridge — silent attack, then a pop that reads as clipping.
+     */
+    static final long I2S_START_SETTLE_MS = 60L;
+
     private final Context context;
 
     private MediaPlayer mediaPlayer;
     private final Map<Long, MediaPlayer> overlayPlayers = new HashMap<>();
+    private final Handler cameraAudioHandler = new Handler(Looper.getMainLooper());
+    private final Set<Long> prepOverlays = new HashSet<>();
+    private final Set<Long> stoppingPrepOverlays = new HashSet<>();
+    private final Set<Long> snapOverlays = new HashSet<>();
+    private final Map<Long, Runnable> waitingCameraStarts = new HashMap<>();
     private long playbackGeneration;
     private long overlayPlaybackGeneration;
 
@@ -36,37 +55,40 @@ public class I2SAudioController {
         this.context = context.getApplicationContext();
     }
 
-    public synchronized void playAsset(String assetName) {
-        playAssetTracked(assetName);
+    public synchronized void playAsset(String assetName, float playbackVolume) {
+        playAssetTracked(assetName, playbackVolume);
     }
 
     /** Play a primary asset and return a token that owns that exact playback. */
-    public synchronized long playAssetTracked(String assetName) {
+    public synchronized long playAssetTracked(String assetName, float playbackVolume) {
         long playbackToken = ++playbackGeneration;
-        playPrimaryAsset(assetName);
+        playPrimaryAsset(assetName, playbackVolume);
         return playbackToken;
     }
 
     /** Replace the primary asset only if the supplied token still owns it. */
-    public synchronized boolean replaceAssetIfCurrent(long playbackToken, String assetName) {
+    public synchronized boolean replaceAssetIfCurrent(
+            long playbackToken, String assetName, float playbackVolume) {
         if (playbackToken <= 0L || playbackToken != playbackGeneration || mediaPlayer == null) {
             return false;
         }
-        playAssetTracked(assetName);
+        playAssetTracked(assetName, playbackVolume);
         return true;
     }
 
     /** Play a short overlay without interrupting the current primary asset. */
-    public synchronized void playOverlayAsset(String assetName) {
-        playOverlayAssetTracked(assetName);
+    public synchronized void playOverlayAsset(String assetName, float playbackVolume) {
+        playOverlayAssetTracked(assetName, playbackVolume);
     }
 
     /** Play an independently stoppable overlay without interrupting primary audio. */
-    public synchronized long playOverlayAssetTracked(String assetName) {
+    public synchronized long playOverlayAssetTracked(String assetName, float playbackVolume) {
         Log.i(TAG, "Playing I2S overlay asset: " + assetName);
         isControllingI2S = true;
 
-        if (!notifyI2SState(true)) {
+        long i2sRequestedAtMs = SystemClock.elapsedRealtime();
+        // Do not restart the bridge underneath a loading beep that is still finishing.
+        if (overlayPlayers.isEmpty() && mediaPlayer == null && !notifyI2SState(true, true)) {
             Log.w(TAG, "Failed to start I2S path; skipping overlay playback");
             refreshControlFlag();
             return 0L;
@@ -76,7 +98,9 @@ public class I2SAudioController {
         long overlayToken = ++overlayPlaybackGeneration;
         try (AssetFileDescriptor afd = context.getAssets().openFd(assetName)) {
             overlayPlayer = new MediaPlayer();
-            configurePlayer(overlayPlayer, afd);
+            configurePlayer(overlayPlayer, playbackVolume);
+            overlayPlayer.setDataSource(
+                    afd.getFileDescriptor(), afd.getStartOffset(), afd.getLength());
 
             final MediaPlayer trackedPlayer = overlayPlayer;
             overlayPlayers.put(overlayToken, trackedPlayer);
@@ -88,6 +112,7 @@ public class I2SAudioController {
                             }
                             Log.d(TAG, "I2S overlay playback completed");
                             mp.release();
+                            finishCameraOverlay(overlayToken);
                             closeI2SIfIdle();
                             refreshControlFlag();
                         }
@@ -105,6 +130,7 @@ public class I2SAudioController {
                                             + ", extra="
                                             + extra);
                             mp.release();
+                            finishCameraOverlay(overlayToken);
                             closeI2SIfIdle();
                             refreshControlFlag();
                             return true;
@@ -112,7 +138,25 @@ public class I2SAudioController {
                     });
 
             trackedPlayer.prepare();
-            trackedPlayer.start();
+            boolean prep = AudioAssets.CAMERA_PREP_CLICK.equals(assetName);
+            if (AudioAssets.CAMERA_SNAP.equals(assetName)) {
+                snapOverlays.add(overlayToken);
+            }
+            if (prep && !snapOverlays.isEmpty()) {
+                overlayPlayers.remove(overlayToken);
+                trackedPlayer.release();
+                return 0L;
+            }
+            if ((prep || AudioAssets.CAMERA_SNAP.equals(assetName))
+                    && !stoppingPrepOverlays.isEmpty()) {
+                waitingCameraStarts.put(overlayToken,
+                        () -> startCameraOverlay(overlayToken, trackedPlayer, prep, i2sRequestedAtMs));
+            } else {
+                startPlayerAfterI2sSettle(trackedPlayer, i2sRequestedAtMs);
+                if (prep) {
+                    prepOverlays.add(overlayToken);
+                }
+            }
             Log.d(TAG, "I2S overlay playback started");
             return overlayToken;
         } catch (Exception e) {
@@ -120,6 +164,7 @@ public class I2SAudioController {
             if (overlayPlayer != null) {
                 overlayPlayers.remove(overlayToken, overlayPlayer);
                 overlayPlayer.release();
+                finishCameraOverlay(overlayToken);
             }
             closeI2SIfIdle();
             refreshControlFlag();
@@ -129,35 +174,137 @@ public class I2SAudioController {
 
     /** Stop one overlay only when its token still identifies an active player. */
     public synchronized boolean stopOverlayPlayback(long overlayToken) {
-        MediaPlayer overlayPlayer = overlayPlayers.remove(overlayToken);
+        MediaPlayer overlayPlayer = overlayPlayers.get(overlayToken);
         if (overlayPlayer == null) {
             return false;
         }
+        if (stoppingPrepOverlays.contains(overlayToken)) {
+            return true;
+        }
+        if (prepOverlays.contains(overlayToken)) {
+            long delayMs = prepStopDelayMs(overlayPlayer.getCurrentPosition());
+            if (delayMs > 0L) {
+                stoppingPrepOverlays.add(overlayToken);
+                cameraAudioHandler.postDelayed(() -> {
+                    synchronized (I2SAudioController.this) {
+                        stoppingPrepOverlays.remove(overlayToken);
+                        // Re-read playback position: a late callback may land in the next beep.
+                        stopOverlayPlayback(overlayToken);
+                    }
+                }, delayMs);
+                return true;
+            }
+        }
+        overlayPlayers.remove(overlayToken);
         isControllingI2S = true;
         stopAndRelease(overlayPlayer);
+        finishCameraOverlay(overlayToken);
         closeI2SIfIdle();
         refreshControlFlag();
         return true;
     }
 
-    private void playPrimaryAsset(String assetName) {
-        Log.i(TAG, "Playing I2S asset: " + assetName);
+    static long prepStopDelayMs(long positionMs) {
+        long phase = positionMs % AsgConstants.CAMERA_PREP_CLICK_INTERVAL_MS;
+        if (phase < AsgConstants.CAMERA_PREP_STOP_AFTER_MS) {
+            return AsgConstants.CAMERA_PREP_STOP_AFTER_MS - phase;
+        }
+        return phase < AsgConstants.CAMERA_PREP_STOP_BEFORE_MS ? 0L
+                : AsgConstants.CAMERA_PREP_CLICK_INTERVAL_MS - phase
+                        + AsgConstants.CAMERA_PREP_STOP_AFTER_MS;
+    }
 
+    private void startCameraOverlay(
+            long token, MediaPlayer player, boolean prep, long i2sRequestedAtMs) {
+        if (overlayPlayers.get(token) != player) {
+            return;
+        }
+        if (prep && !snapOverlays.isEmpty()) {
+            overlayPlayers.remove(token);
+            player.release();
+            return;
+        }
+        try {
+            startPlayerAfterI2sSettle(player, i2sRequestedAtMs);
+            if (prep) {
+                prepOverlays.add(token);
+            }
+        } catch (IllegalStateException e) {
+            Log.e(TAG, "Unable to start deferred camera sound", e);
+            overlayPlayers.remove(token);
+            snapOverlays.remove(token);
+            player.release();
+        }
+    }
+
+    private void finishCameraOverlay(long token) {
+        prepOverlays.remove(token);
+        snapOverlays.remove(token);
+        stoppingPrepOverlays.remove(token);
+        waitingCameraStarts.remove(token);
+        if (stoppingPrepOverlays.isEmpty()) {
+            Map<Long, Runnable> ready = new HashMap<>(waitingCameraStarts);
+            waitingCameraStarts.clear();
+            for (Runnable start : ready.values()) {
+                start.run();
+            }
+        }
+    }
+
+    /** Play a local WAV/PCM file as a single primary I2S job. */
+    public synchronized void playFile(File file, float playbackVolume) {
+        if (file == null) {
+            Log.w(TAG, "playFile skipped: file is null");
+            return;
+        }
+        Log.i(TAG, "Playing I2S file: " + file.getAbsolutePath());
+        playPrimary(
+                file.getName(),
+                playbackVolume,
+                player -> player.setDataSource(file.getAbsolutePath()));
+    }
+
+    private void playPrimaryAsset(String assetName, float playbackVolume) {
+        Log.i(TAG, "Playing I2S asset: " + assetName);
+        try (AssetFileDescriptor afd = context.getAssets().openFd(assetName)) {
+            playPrimary(
+                    assetName,
+                    playbackVolume,
+                    player ->
+                            player.setDataSource(
+                                    afd.getFileDescriptor(),
+                                    afd.getStartOffset(),
+                                    afd.getLength()));
+        } catch (IOException e) {
+            Log.e(TAG, "Unable to open asset " + assetName, e);
+        }
+    }
+
+    private interface PlayerDataSource {
+        void apply(MediaPlayer player) throws IOException;
+    }
+
+    private void playPrimary(
+            String logName, float playbackVolume, PlayerDataSource source) {
         // Mark that WE are controlling I2S - prevents receiver from reacting to our broadcasts
         isControllingI2S = true;
 
         stopCurrentPlayer();
 
-        if (!notifyI2SState(true)) {
-            Log.w(TAG, "Failed to start I2S path; skipping playback");
+        long i2sRequestedAtMs = SystemClock.elapsedRealtime();
+        boolean i2sStarted = notifyI2SState(true, true);
+        Log.i(TAG, "I2S start for " + logName + " notifyI2SState=" + i2sStarted);
+        if (!i2sStarted) {
+            Log.w(TAG, "Failed to start I2S path; skipping playback of " + logName);
             refreshControlFlag();
             return;
         }
 
         MediaPlayer nextPlayer = null;
-        try (AssetFileDescriptor afd = context.getAssets().openFd(assetName)) {
+        try {
             nextPlayer = new MediaPlayer();
-            configurePlayer(nextPlayer, afd);
+            configurePlayer(nextPlayer, playbackVolume);
+            source.apply(nextPlayer);
 
             final MediaPlayer trackedPlayer = nextPlayer;
             mediaPlayer = trackedPlayer;
@@ -167,7 +314,7 @@ public class I2SAudioController {
                             if (mediaPlayer != mp) {
                                 return;
                             }
-                            Log.d(TAG, "I2S audio playback completed");
+                            Log.d(TAG, "I2S audio playback completed: " + logName);
                             mediaPlayer = null;
                             mp.release();
                             closeI2SIfIdle();
@@ -180,7 +327,14 @@ public class I2SAudioController {
                             if (mediaPlayer != mp) {
                                 return true;
                             }
-                            Log.e(TAG, "MediaPlayer error - what=" + what + ", extra=" + extra);
+                            Log.e(
+                                    TAG,
+                                    "MediaPlayer error for "
+                                            + logName
+                                            + " - what="
+                                            + what
+                                            + ", extra="
+                                            + extra);
                             mediaPlayer = null;
                             mp.release();
                             closeI2SIfIdle();
@@ -190,10 +344,10 @@ public class I2SAudioController {
                     });
 
             trackedPlayer.prepare();
-            trackedPlayer.start();
-            Log.d(TAG, "I2S audio playback started");
+            startPlayerAfterI2sSettle(trackedPlayer, i2sRequestedAtMs);
+            Log.d(TAG, "I2S audio playback started: " + logName);
         } catch (Exception e) {
-            Log.e(TAG, "Unable to play asset " + assetName, e);
+            Log.e(TAG, "Unable to play " + logName, e);
             if (nextPlayer != null) {
                 if (mediaPlayer == nextPlayer) {
                     mediaPlayer = null;
@@ -251,6 +405,11 @@ public class I2SAudioController {
     }
 
     private void stopOverlayPlayers() {
+        cameraAudioHandler.removeCallbacksAndMessages(null);
+        waitingCameraStarts.clear();
+        prepOverlays.clear();
+        snapOverlays.clear();
+        stoppingPrepOverlays.clear();
         for (MediaPlayer overlayPlayer : overlayPlayers.values()) {
             stopAndRelease(overlayPlayer);
         }
@@ -268,11 +427,23 @@ public class I2SAudioController {
         player.release();
     }
 
-    private void configurePlayer(MediaPlayer player, AssetFileDescriptor afd) throws IOException {
+    private void startPlayerAfterI2sSettle(MediaPlayer player, long i2sRequestedAtMs) {
+        long remaining = I2S_START_SETTLE_MS - (SystemClock.elapsedRealtime() - i2sRequestedAtMs);
+        if (remaining > 0L) {
+            try {
+                Thread.sleep(remaining);
+            } catch (InterruptedException e) {
+                Thread.currentThread().interrupt();
+            }
+            Log.i(TAG, "[I2S-RATE] settled " + remaining + "ms before MediaPlayer.start");
+        }
+        player.start();
+    }
+
+    private void configurePlayer(MediaPlayer player, float playbackVolume) {
         // STREAM_NOTIFICATION routes through system sounds which work with I2S.
         player.setAudioStreamType(AudioManager.STREAM_NOTIFICATION);
-        player.setVolume(0.1f, 0.1f);
-        player.setDataSource(afd.getFileDescriptor(), afd.getStartOffset(), afd.getLength());
+        player.setVolume(playbackVolume, playbackVolume);
     }
 
     private void closeI2SIfIdle() {
@@ -286,15 +457,20 @@ public class I2SAudioController {
     }
 
     private boolean notifyI2SState(boolean playing) {
+        return notifyI2SState(playing, false);
+    }
+
+    private boolean notifyI2SState(boolean playing, boolean forceRestart) {
         AsgClientService service = AsgClientService.getInstance();
         if (service != null) {
-            service.handleI2SAudioState(playing);
+            service.handleI2SAudioState(playing, forceRestart);
             return true;
         }
 
         Intent intent = new Intent(context, AsgClientService.class);
         intent.setAction(AsgClientService.ACTION_I2S_AUDIO_STATE);
         intent.putExtra(AsgClientService.EXTRA_I2S_AUDIO_PLAYING, playing);
+        intent.putExtra(AsgClientService.EXTRA_I2S_FORCE_RESTART, forceRestart);
         try {
             if (Build.VERSION.SDK_INT >= Build.VERSION_CODES.O) {
                 context.startForegroundService(intent);

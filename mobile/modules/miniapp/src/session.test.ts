@@ -525,4 +525,33 @@ describe("MiniappSession transport disconnect", () => {
     expect((caught as {code: string}).code).toBe("NOT_CONNECTED")
     expect((caught as Error).message).toContain("test disconnect")
   })
+
+  test("CONNECT_ACK hostFeatures.captureAudio is stored for stream capture policy", async () => {
+    const transport = new FakeTransport()
+    const session = new MiniappSession({transport})
+    const connectPromise = session.connect()
+    transport.deliverFromPhone({
+      type: MiniappResponseType.CONNECT_ACK,
+      userId: "u",
+      packageName: "com.test.hostfeatures",
+      capabilities: null,
+      hostFeatures: {captureAudio: true},
+    })
+    await connectPromise
+    expect(session.hostFeatures).toEqual({captureAudio: true})
+  })
+
+  test("CONNECT_ACK without hostFeatures leaves captureAudio unsupported", async () => {
+    const transport = new FakeTransport()
+    const session = new MiniappSession({transport})
+    const connectPromise = session.connect()
+    transport.deliverFromPhone({
+      type: MiniappResponseType.CONNECT_ACK,
+      userId: "u",
+      packageName: "com.test.nohostfeatures",
+      capabilities: null,
+    })
+    await connectPromise
+    expect(session.hostFeatures).toBeNull()
+  })
 })

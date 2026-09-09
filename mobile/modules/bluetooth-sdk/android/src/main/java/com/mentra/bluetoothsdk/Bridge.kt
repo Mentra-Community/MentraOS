@@ -145,6 +145,23 @@ public class Bridge private constructor() {
             sendTypedMessage("pair_failure", data as Map<String, Any>)
         }
 
+        @JvmStatic
+        fun sendPairingInfo(
+            hadPreviousBond: Boolean,
+            pairingCode: String? = null,
+            classicBondReady: Boolean = false,
+            securePairingCapable: Boolean = true,
+            protocolVersion: Int = 1,
+        ) {
+            val data = HashMap<String, Any>()
+            data["had_previous_bond"] = hadPreviousBond
+            if (pairingCode != null) data["pairing_code"] = pairingCode
+            data["classic_bond_ready"] = classicBondReady
+            data["secure_pairing_capable"] = securePairingCapable
+            data["protocol_version"] = protocolVersion
+            sendTypedMessage("pairing_info", data as Map<String, Any>)
+        }
+
         /** Send audio connected event - matches iOS implementation for platform parity */
         @JvmStatic
         fun sendAudioConnected(deviceName: String) {
@@ -170,6 +187,14 @@ public class Bridge private constructor() {
         fun sendMicLc3(data: ByteArray) {
             val body = micLc3EventBody(data)
             sendTypedMessage("mic_lc3", body as Map<String, Any>)
+        }
+
+        @JvmStatic
+        internal fun sendMicHealth(health: MicHealth, reason: String) {
+            val body = HashMap(health.toMap())
+            body["reason"] = reason
+            body["timestamp"] = System.currentTimeMillis()
+            sendTypedMessage("mic_health", body)
         }
 
         private fun micPcmEventBody(data: ByteArray): HashMap<String, Any> {
@@ -251,7 +276,10 @@ public class Bridge private constructor() {
                 deviceName: String,
                 deviceAddress: String = "",
                 rssi: Int? = null,
-                projectName: String? = null
+                projectName: String? = null,
+                pairingMode: Boolean? = null,
+                pairingCode: String? = null,
+                securePairingCapable: Boolean? = null,
         ) {
             val searchResults =
                     (DeviceStore.store.getCategory("bluetooth")["searchResults"] as? List<*>)
@@ -274,6 +302,9 @@ public class Bridge private constructor() {
                         }
                         projectName?.takeIf { it.isNotBlank() }?.let { put("projectName", it) }
                         rssi?.let { put("rssi", it) }
+                        pairingMode?.let { put("pairingMode", it) }
+                        pairingCode?.takeIf { it.isNotBlank() }?.let { put("pairingCode", it) }
+                        securePairingCapable?.let { put("securePairingCapable", it) }
                     }
             // Keep the public searchResults array stable as glasses are added or removed.
             // Duplicate discoveries refresh their existing row; only new glasses append.
@@ -457,6 +488,11 @@ public class Bridge private constructor() {
             body["besFirmwareVersion"] = stringField("besFirmwareVersion", "bes_fw_version")
             body["mtkFirmwareVersion"] = stringField("mtkFirmwareVersion", "mtk_fw_version")
             body["buildNumber"] = stringField("buildNumber", "build_number")
+            // Only when present: this event fires per version_info chunk and only chunk 1
+            // carries package_name, so an unconditional "" would clobber a known identity.
+            stringField("packageName", "package_name").takeIf { it.isNotEmpty() }?.let {
+                body["packageName"] = it
+            }
             (values["systemTimeMs"] as? Number ?: values["system_time_ms"] as? Number)?.let {
                 body["systemTimeMs"] = it.toLong()
             }
@@ -681,6 +717,7 @@ public class Bridge private constructor() {
                 status: String,
                 errorMessage: String? = null,
                 glassesTimeMs: Long? = null,
+                bytesDownloaded: Long? = null,
         ) {
             val eventBody = HashMap<String, Any>()
             eventBody["session_id"] = sessionId
@@ -691,6 +728,7 @@ public class Bridge private constructor() {
             eventBody["step_percent"] = stepPercent
             eventBody["overall_percent"] = overallPercent
             eventBody["status"] = status
+            bytesDownloaded?.let { eventBody["bytes_downloaded"] = it }
             errorMessage?.let { eventBody["error_message"] = it }
             if (glassesTimeMs != null && glassesTimeMs > 0) {
                 eventBody["glasses_time_ms"] = glassesTimeMs
@@ -877,4 +915,3 @@ public class Bridge private constructor() {
         }
     }
 }
-

@@ -16,6 +16,9 @@ function printUsage(): void {
   console.log('Commands:');
   console.log('  dev                              Start dev server with hot reload and QR code');
   console.log('                                   Options: --qr-output <path>  write PNG QR to path');
+  console.log('                                            --usb              reach the phone over USB');
+  console.log('                                                               (adb reverse, no shared Wi-Fi)');
+  console.log('                                            --device <serial>  target one adb device');
   console.log('  release                          Build, pack, and serve a QR to install on a phone');
   console.log('                                   Options: --no-cache  --qr-output <path>');
   console.log('  pack                             Production-build and package miniapp into build/<pkg>-<version>.zip (--no-build to skip build)');
@@ -43,7 +46,11 @@ function flagValue(flag: string): string | undefined {
 
 switch (subcommand) {
   case 'dev':
-    await dev({qrOutput: flagValue('--qr-output')});
+    await dev({
+      qrOutput: flagValue('--qr-output'),
+      usb: process.argv.includes('--usb'),
+      device: flagValue('--device'),
+    });
     break;
   case 'release':
     await release({

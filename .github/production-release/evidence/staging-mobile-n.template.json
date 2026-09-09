@@ -1,0 +1,33 @@
+{
+  "schemaVersion": 1,
+  "promotionId": "mentra-X.Y.Z-attempt-N",
+  "releaseIdentity": "X.Y.Z",
+  "check": "staging-mobile-n-compatibility",
+  "result": "pass",
+  "performedAt": "YYYY-MM-DDTHH:MM:SS.000Z",
+  "tester": {"githubLogin": "employee"},
+  "tests": [
+    {
+      "product": "mentra-app",
+      "platform": "ios",
+      "result": "pass",
+      "appVersion": "X.Y.Z",
+      "appBuild": "BUILD",
+      "deviceModel": "MODEL",
+      "osVersion": "VERSION",
+      "notes": "Compatibility lab marker and staging endpoints verified; auth, glasses, Core, Runtime, transcription, media, and restart passed."
+    },
+    {
+      "product": "mentra-app",
+      "platform": "android",
+      "result": "pass",
+      "appVersion": "X.Y.Z",
+      "appBuild": "BUILD",
+      "deviceModel": "MODEL",
+      "osVersion": "VERSION",
+      "notes": "Compatibility lab marker and staging endpoints verified; auth, glasses, Core, Runtime, transcription, media, and restart passed."
+    }
+  ],
+  "evidenceUrls": ["https://credential-free.example/evidence/index"],
+  "notes": "No production endpoints or sensitive customer content captured."
+}

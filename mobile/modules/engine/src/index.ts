@@ -6,8 +6,7 @@
  * renders with (decision functions, sort/order helpers, policy constants,
  * capability tables, timers). Judgment rule: read models, commands, pure
  * functions and types belong here; anything that mutates runtime state or
- * exposes a raw store/service lives on `@mentra/engine/internal`
- * (migration-era surface) or `@mentra/engine/devtools` (debug-only) instead.
+ * exposes a raw store/service remains private to the MentraOS host.
  * See cloud-v2/docs/issues/020-glasses-status-boundary/integration-review.md §D.
  */
 
@@ -35,6 +34,8 @@ export type {
   ScanQrOptions,
   ScanQrResult,
   SubjectTokenType,
+  LocalMiniappPolicy,
+  ManagedMiniappPolicyEntry,
 } from "./runtime/bootstrap"
 
 // Settings contract: the typed key registry (schema descriptors — the same
@@ -47,12 +48,7 @@ export {MENTRA_LIVE_SETTING_KEYS, getBluetoothSettingKeysForDevice} from "./stor
 
 // Runtime-shared constants and contract DTOs.
 export {ISLAND_SETTINGS_KEYS} from "./runtime/config"
-export type {
-  CloudClientStatusSnapshot,
-  MiniappAuthToken,
-  InteropAuditEvent,
-  TtsSynthesisResult,
-} from "./runtime/config"
+export type {CloudClientStatusSnapshot, MiniappAuthToken, InteropAuditEvent, TtsSynthesisResult} from "./runtime/config"
 
 // Pure readiness predicates over glasses connection state.
 export {
@@ -95,6 +91,7 @@ export {
   GLOBAL_OTA_TIMEOUT_MS,
   PING_INTERVAL_MS,
   QUERY_REPLY_TIMEOUT_MS,
+  BES_RESTART_TIMEOUT_MS,
   OtaProgressMessages,
 } from "./services/otaInstallPolicy"
 export {deriveDisplayState} from "./services/otaDisplayState"
@@ -104,9 +101,28 @@ export type {
   OtaProgressStatus,
   OtaStatus,
   OtaUpdateInfo,
+  ReleaseChangelog,
   OtaSnapshot,
   OtaInstallSnapshot,
 } from "./facades/ota"
+export {
+  beginOtaAutoChain,
+  clearOtaAutoChainReconnectWait,
+  isOtaAutoChainActive,
+  otaAutoChainFingerprint,
+  otaAutoChainReconnectWaitRemaining,
+  stopOtaAutoChain,
+  tryAdvanceOtaAutoChain,
+  MAX_OTA_AUTO_CHAIN_PASSES,
+  OTA_AUTO_CHAIN_RECONNECT_TIMEOUT_MS,
+} from "./services/OtaAutoChain"
+export type {OtaAutoChainAdvanceResult} from "./services/OtaAutoChain"
+export {
+  BES_INSTALL_RESTART_MESSAGE,
+  getOtaErrorMessage,
+  shouldRequireGlassesRebootForBesFailure,
+  shouldShowChangeWifiForOtaDownloadFailure,
+} from "./services/OtaErrorMapping"
 
 // Gallery read models: engine.gallery.onNotice payload types, the media
 // permission helper + display-name derivation host gallery UI uses, and the
@@ -114,11 +130,19 @@ export type {
 export type {GalleryNotice, GalleryNoticeCode} from "./services/asg/galleryNotices"
 export {MediaLibraryPermissions} from "./utils/permissions/MediaLibraryPermissions"
 export {deriveGalleryDisplayName} from "./utils/permissions/galleryDisplayName"
-export type {PhotoInfo, CaptureFile, CaptureGroup, GalleryResponse, ServerStatus, HealthResponse, GalleryEvent} from "./types/asg"
+export type {
+  PhotoInfo,
+  CaptureFile,
+  CaptureGroup,
+  GalleryResponse,
+  ServerStatus,
+  HealthResponse,
+  GalleryEvent,
+} from "./types/asg"
 
 // Bluetooth SDK event types host UI subscribes to via engine facades (the
 // BluetoothSdk singleton passthrough itself is internal).
-export type {PairFailureEvent, GlassesNotReadyEvent} from "@mentra/bluetooth-sdk/internal"
+export type {PairFailureEvent, GlassesNotReadyEvent} from "@mentra/bluetooth-sdk"
 
 // Cloud connection status enum (read model; the connection store is internal).
 export {WebSocketStatus} from "./stores/connection"
@@ -160,10 +184,14 @@ export {
   type DevLaunchResult,
   type DevManifest,
 } from "./utils/devMiniappLaunch"
+export {
+  decideDevOpenRoute,
+  type DevOpenDecision,
+} from "./utils/devMiniappSnapshot"
 export {HardwareCompatibility, type CompatibilityResult} from "./utils/hardware"
 export {BgTimer, throttle, debounce} from "./utils/timers"
 
-// Types (copied from @mentra/types — keep in sync with cloud/packages/types/src)
+// Hardware types and capability profiles.
 export {
   HardwareType,
   HardwareRequirementLevel,
@@ -175,6 +203,7 @@ export {
   evenRealitiesG1,
   evenRealitiesG2,
   mentraLive,
+  nimo,
   vuzixZ100,
   mentraDisplay,
 } from "./types"

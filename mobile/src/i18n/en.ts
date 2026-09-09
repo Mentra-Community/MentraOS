@@ -97,6 +97,9 @@ const en = {
       "Could not connect to the custom server. Please try using the default server or check your connection.",
     upToDateTitle: "Up to Date",
     upToDateDescription: "MentraOS is up to date. Returning to home...",
+    managedUpdateDescription:
+      "This version of the Mentra App is no longer supported by {{name}}. Updates are delivered by your organization's device management. Contact your IT administrator to update.",
+    contactSupport: "Contact support",
   },
   simulatedGlasses: {
     showDashboard: "Show Dashboard",
@@ -152,6 +155,30 @@ const en = {
       "Your glasses are connected to the app, but the bluetooth audio device is not connected.",
     powerOn: "Power on",
     poweredOn: "Continue",
+    livePairingModeTitle: "Ready to pair",
+    livePairingModeSubtitle: "Put your glasses into pairing mode before you scan.",
+    livePairingModeInfo:
+      "Press the power button 3 times quickly. The LED flashes and the glasses speak a 4-character code (0–9, A–F). Match that code on the scan list if more than one unit appears.",
+    liveScanTitle: "Turn on your glasses",
+    liveScanSubtitle: "We're looking for your Mentra Live.",
+    livePairingFoundTitle: "Glasses found",
+    livePairingFoundSubtitle: "Put them in pairing mode to continue.",
+    liveScanHelpTitle: "Not showing up?",
+    liveScanHelpInfo: "Make sure your glasses are charged and powered on.",
+    liveUpdatedGlassesHint: "Already updated your glasses?",
+    liveChooseGlassesTitle: "Choose your glasses",
+    scanAgain: "Scan Again",
+    noGlassesFound: "No glasses found",
+    noGlassesFoundHint: "Make sure you pressed the power button 3 times quickly, then try again.",
+    nearbyNotInPairingModeHint:
+      "Nearby Mentra Live glasses were found, but they are not in pairing mode. Press the power button 3 times quickly, then try again.",
+    notInPairingModeLabel: "Not in pairing mode",
+    notInPairingModeAlertTitle: "Enter pairing mode",
+    notInPairingModeAlertMessage:
+      "Press the power button 3 times quickly. The LED flashes and the glasses speak a 4-character code. Then select the glasses again.",
+    tryAgain: "Try Again",
+    pairingCodeLabel: "Code {{code}}",
+    legacyFirmwareLabel: "Legacy software",
     ar99Step1: "1. Confirm that the Bluetooth switch of the mobile phone is turned on.",
     ar99Step2: "2. Press and hold the power button for 3 to 5 seconds to turn on the glasses.",
   },
@@ -383,10 +410,22 @@ const en = {
     checkingForUpdates: "Checking for updates",
     checkingForUpdatesMessage:
       "Connected devices will perform automatic updates. Automatic updates can be disabled in Device Settings",
+    finishingUpdate: "Finishing your update",
+    checkingAdditionalUpdates: "Checking whether your glasses need any additional updates.",
     updateAvailable: "{{deviceName}} Update Available",
+    batteryRequiredTitle: "Charge {{deviceName}} to Update",
+    batteryRequiredMessage:
+      "{{deviceName}} is currently at {{batteryLevel}}%. Charge it to at least {{minimumBatteryLevel}}% before updating.",
+    batteryRequiredLiveUpdate: "This screen will update automatically as the battery charges.",
     updateReadyToInstall: "Version {{version}} for {{deviceName}} is ready to install.",
     updateConnectWifi: "Connect your {{deviceName}} to WiFi to install the update.",
+    wifiRequiredTitle: "WiFi Needed for Update",
     updateDescription: "A new update is available for your glasses. We recommend updating now for the best experience.",
+    updateSequenceMessage:
+      "Your glasses may install more than one update and restart several times. Keep them nearby until finished.",
+    releaseTransition: "{{fromVersion}} → {{toVersion}}",
+    releaseTransitionUnknown: "Current version unknown → {{toVersion}}",
+    updatedToVersion: "Updated to {{version}}",
     downgradeAvailable: "{{deviceName}} Version Change Required",
     downgradeDescriptionShort:
       "This app requires an earlier glasses software version. Photos and videos are kept; glasses settings will be reset and restored automatically.",
@@ -400,6 +439,11 @@ const en = {
     devBuild: "Development Build",
     devBuildNoOta:
       "This mobile app is a development build, so automatic glasses updates are disabled. Use the developer settings manifest override to update them manually.",
+    unofficialClient: "Updates Blocked",
+    unofficialClientNoOta:
+      "Your glasses are running a sideloaded client, so updates are blocked. Restore the stock client to update them.",
+    unofficialClientNoOtaNamed:
+      "Your glasses are running a sideloaded client ({{packageName}}), so updates are blocked. Restore the stock client to update them.",
     noUpdatesAvailable: "Your glasses are running the latest version.",
     checkFailed: "Check Failed",
     checkFailedMessage: "Couldn't check for updates. Please check your connection and try again.",
@@ -416,12 +460,19 @@ const en = {
     versionChangeRestarting: "Installing a different version\u2026",
     versionChangeVerifying: "Verifying your glasses\u2026",
     versionChangeKeepNearby: "Keep your glasses nearby and connected. They will restart on their own.",
+    restartingGlasses: "Restarting {{deviceName}}…",
+    restartingGlassesMessage:
+      "The update is installed. Keep your glasses nearby and leave this screen open while they finish starting.",
+    restartingGlassesAutomatic: "We'll continue automatically when they're ready.",
     versionChangeComplete: "Version Change Complete",
-    versionChangeCompleteMessage: "Your glasses are now on the required version. Their settings were reset and are being restored automatically.",
+    versionChangeCompleteMessage:
+      "Your glasses are now on the required version. Their settings were reset and are being restored automatically.",
     versionChangeFirmwarePassComplete: "Firmware updated",
-    versionChangeFirmwarePassCompleteMessage: "Your glasses restarted with new firmware. One more step: they'll now continue to the required version.",
+    versionChangeFirmwarePassCompleteMessage:
+      "Your glasses restarted with new firmware. One more step: they'll now continue to the required version.",
     updateComplete: "Update Complete",
     updateCompleteMessage: "Your glasses have been updated successfully.",
+    whatsNew: "What's new",
     updateFailed: "Update Failed",
     updateFailedMessage: "The update could not be completed. You can try again later from Settings.",
     glassesDisconnected: "Glasses Disconnected",
@@ -556,6 +607,9 @@ const en = {
     storageInfo: "Storage Info",
     glassesAreReconnecting: "Reconnecting...",
     glassesAreReconnectingMessage: "Make sure your glasses are turned on.",
+    wifiSetupNeedsGlassesTitle: "Reconnect your glasses",
+    wifiSetupNeedsGlassesMessage:
+      "Wi-Fi setup needs your glasses connected over Bluetooth. Turn them on and wait for them to reconnect, then try again.",
     // Gallery sync WiFi explanation
     connectToGlassesTitle: "Connect to Glasses",
     wifiJoinExplanationIos: 'When prompted, tap "Join" to connect to "{{ssid}}".',
@@ -638,6 +692,8 @@ const en = {
     forgetGlasses: "Unpair glasses",
     forgetGlassesConfirm:
       "To finish the process, make sure to remove your glasses from your phone's Bluetooth settings.",
+    forgetGlassesWhilePairing:
+      "Bluetooth pairing is in progress. Accept or dismiss the system pairing dialog first, then try unpairing again.",
     disconnectGlassesTitle: "Disconnect the glasses?",
     disconnectGlassesConfirm:
       "Are you sure you want to disconnect? If so, please remember to remove your glasses from your phone's Bluetooth settings.",
@@ -728,8 +784,7 @@ const en = {
     defaultHint: "Point the camera at a QR code",
     checkingPermission: "Checking camera permission\u2026",
     permissionTitle: "Camera access needed",
-    permissionBody:
-      "We need your camera to scan QR codes. The camera is only used while this screen is open.",
+    permissionBody: "We need your camera to scan QR codes. The camera is only used while this screen is open.",
     grantAccess: "Grant Camera Access",
     openSettings: "Open Settings",
     permissionDeniedTitle: "Permission Denied",
@@ -740,6 +795,9 @@ const en = {
     headline: "Build a miniapp",
     body: "Miniapps run on your glasses and are built with the Mentra Miniapp SDK. To learn how to get started, check out the documentation.",
     readDocs: "Read the docs",
+    preferencesTitle: "Home screen",
+    showOnHomeScreenLabel: "Show Miniapp Developer on Home Screen",
+    showOnHomeScreenSubtitle: "Add a shortcut to these developer tools on your Home Screen",
     toolsTitle: "Load a miniapp",
     scanLabel: "Scan Miniapp QR Code",
     scanSubtitle: "Scan the QR code your dev server prints",
@@ -751,6 +809,9 @@ const en = {
   },
   profileSettings: {
     title: "Profile Settings",
+    workspaceName: "Name",
+    workspaceUrl: "Workspace URL",
+    mentraWorkspace: "Mentra",
     noProfilePicture: "No profile picture available.",
     name: "Name",
     email: "Email",
@@ -943,6 +1004,38 @@ const en = {
       resending: "Resending...",
       resentSuccess: "Verification email sent!",
     },
+  },
+  workspace: {
+    or: "or",
+    title: "Organization sign-in",
+    heading: "Connect to your organization",
+    description: "Enter the address provided by your IT administrator.",
+    connectAction: "Sign in to your organization",
+    urlLabel: "Organization address",
+    urlPlaceholder: "company.example.com",
+    urlHelper: "Example: company.example.com",
+    unknownResolutionError: "We couldn't load this workspace. Try again.",
+    notFoundError:
+      "We couldn't find a Mentra workspace at that address. Check the address or ask your IT administrator.",
+    configurationError: "This workspace couldn't be verified. Ask your IT administrator to check its configuration.",
+    confirmTitle: "Confirm organization",
+    candidateExpired: "This confirmation expired. Enter your organization address again.",
+    enterAnotherUrl: "Enter organization address",
+    connectTo: "Connect to {{name}}",
+    continueTo: "Continue to {{name}}",
+    workspaceLabel: "Workspace",
+    signInLabel: "Sign-in",
+    microsoftOrganizationAccount: "Microsoft organization account",
+    mentraAccount: "Mentra account",
+    confirmDescription:
+      "Continuing makes this organization your active Mentra deployment. Its services and policies apply before sign-in.",
+    signInDescription: "Continue with the organization account configured for this workspace.",
+    continueWithMicrosoft: "Continue with Microsoft",
+    returnToMentra: "Return to Mentra",
+    change: "Change",
+    noActiveWorkspace: "No organization workspace is active.",
+    signInFailedTitle: "Sign-in failed",
+    signInFailedDescription: "Microsoft could not sign you in to this workspace. Try again or contact your IT team.",
   },
   warning: {
     nonProdBackend: "You are using a non-production backend.",

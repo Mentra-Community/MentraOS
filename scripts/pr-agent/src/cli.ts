@@ -13,11 +13,14 @@ import {
   requiredWorkflowsForPaths,
 } from './ci-gates.js';
 import { loadConfig } from './config.js';
+import { fetchExternalFindings, type ExternalFindings } from './external-reviews.js';
 import { runFix } from './fix.js';
+import { postInlineFindings } from './inline-comments.js';
 import { buildHandoffComment } from './handoff.js';
 import { runPlan, writePlanOutputs } from './plan.js';
 import { recheckHandoff } from './recheck-handoff.js';
 import { buildReviewComment } from './review-comment.js';
+import { runCodexReview } from './review-codex.js';
 import { runReview } from './review.js';
 import {
   createOctokit,
@@ -44,8 +47,12 @@ async function cmdPlan() {
 
 async function cmdReview(slot: string) {
   const { state } = await loadOrCreateState(createOctokit(), owner, repo, prNumber);
+  if (slot === 'codex') {
+    await runCodexReview(repoRoot, prNumber, baseRef, state);
+    return;
+  }
   if (slot !== 'standards' && slot !== 'depth') {
-    throw new Error('slot must be standards or depth');
+    throw new Error('slot must be standards, depth, or codex');
   }
   await runReview(repoRoot, slot, prNumber, baseRef, state);
 }
@@ -62,11 +69,13 @@ async function cmdBugbotPoll() {
     repo,
     headSha,
     config.limits.maxBugbotWaitMin,
+    config.limits.bugbotStartGraceMin,
   );
   const out = process.env.GITHUB_OUTPUT;
   if (out) {
     appendFileSync(out, `bugbot_completed=${result.completed}\n`);
     appendFileSync(out, `bugbot_success=${result.success}\n`);
+    appendFileSync(out, `bugbot_started=${result.started}\n`);
   }
   console.log(JSON.stringify(result));
 }
@@ -84,12 +93,39 @@ async function cmdAggregate() {
   const ref = (await getPrHeadSha(octokit, owner, repo, prNumber)) || headSha;
   const ciChecks = await fetchWorkflowStatuses(octokit, owner, repo, ref, required);
 
+  // Ingestion of external bot inline comments must never take down the cycle:
+  // on API failure we proceed without them and pick them up next cycle.
+  let external: ExternalFindings | undefined;
+  try {
+    external = await fetchExternalFindings(
+      octokit,
+      owner,
+      repo,
+      prNumber,
+      repoRoot,
+      state.cycle,
+    );
+  } catch (err) {
+    console.warn('external review ingestion failed; continuing without:', err);
+  }
+
+  // Absent/blank means "unknown" (e.g. the Bugbot job did not run), which must
+  // keep the conservative treatment. Only an explicit `false` drops the slot.
+  const bugbotStartedRaw = process.env.BUGBOT_STARTED;
+  const bugbotStarted =
+    bugbotStartedRaw === undefined || bugbotStartedRaw === ''
+      ? undefined
+      : bugbotStartedRaw === 'true';
+
   const reviews = {
     standards: loadReviewOutput(repoRoot, 'standards'),
     depth: loadReviewOutput(repoRoot, 'depth'),
+    codex: loadReviewOutput(repoRoot, 'codex'),
     bugbot: await loadBugbotVerdict(octokit, owner, repo, prNumber),
     bugbotCheckCompleted: process.env.BUGBOT_COMPLETED === 'true',
     bugbotCheckSuccess: process.env.BUGBOT_SUCCESS === 'true',
+    bugbotStarted,
+    external,
   };
 
   const result = aggregateCycle(repoRoot, state, reviews, ciChecks, activePair);
@@ -99,10 +135,25 @@ async function cmdAggregate() {
   // Always surface the human-readable review to the PR, regardless of verdict.
   const reviewComment = buildReviewComment(
     result.state,
-    { standards: reviews.standards, depth: reviews.depth, bugbot: reviews.bugbot },
+    {
+      standards: reviews.standards,
+      depth: reviews.depth,
+      codex: reviews.codex,
+      bugbot: reviews.bugbot,
+    },
     activePair,
+    { nativeReviewers: reviews.external?.reviewers, bugbotStarted },
   );
   await upsertMarkerComment(octokit, owner, repo, prNumber, MARKER_REVIEW, reviewComment);
+
+  // Inline comments are best-effort: an anchor rejection must not fail the cycle.
+  if (result.newBlockingFindings.length > 0) {
+    try {
+      await postInlineFindings(octokit, owner, repo, prNumber, ref, result.newBlockingFindings);
+    } catch (err) {
+      console.warn('posting inline finding comments failed; continuing:', err);
+    }
+  }
 
   const out = process.env.GITHUB_OUTPUT;
   if (out) {
@@ -111,6 +162,7 @@ async function cmdAggregate() {
     appendFileSync(out, `handoff_reason=${result.handoffReason ?? ''}\n`);
     appendFileSync(out, `ci_failed=${result.ciFailed}\n`);
     appendFileSync(out, `fix_round=${result.state.fixRound}\n`);
+    appendFileSync(out, `needs_continuation=${result.needsContinuation === true}\n`);
   }
 
   console.log(JSON.stringify(result, null, 2));
@@ -159,8 +211,42 @@ async function cmdRecheckHandoff() {
   if (out) {
     appendFileSync(out, `should_handoff=${result.shouldHandoff}\n`);
     appendFileSync(out, `handoff_reason=${result.handoffReason ?? ''}\n`);
+    appendFileSync(out, `needs_continuation=${result.needsContinuation === true}\n`);
   }
   console.log(JSON.stringify(result, null, 2));
+}
+
+/**
+ * Re-trigger the orchestrator for a PR whose diff matches no CI gate. Such a
+ * PR receives no `workflow_run` completion, so without this nudge the loop
+ * stops after one cycle and never banks enough clean cycles to hand off.
+ * Bounded by `limits.maxSelfDispatches`; the state write happens before the
+ * dispatch so a crash cannot double-spend the budget.
+ */
+async function cmdContinue() {
+  const config = loadConfig(repoRoot);
+  const octokit = createOctokit();
+  const { state, commentId } = await loadOrCreateState(octokit, owner, repo, prNumber);
+
+  const max = config.limits.maxSelfDispatches;
+  if (state.selfDispatches >= max) {
+    console.log(`Self-dispatch budget spent (${state.selfDispatches}/${max}); not continuing`);
+    return;
+  }
+
+  const next = { ...state, selfDispatches: state.selfDispatches + 1 };
+  await saveState(octokit, owner, repo, prNumber, next, commentId);
+
+  await octokit.actions.createWorkflowDispatch({
+    owner,
+    repo,
+    workflow_id: 'pr-agent-orchestrator.yml',
+    ref: process.env.TOOL_REF || baseRef,
+    inputs: { pr_number: String(prNumber) },
+  });
+  console.log(
+    `Self-dispatched next cycle (dispatch ${next.selfDispatches}/${max}) for PR #${prNumber}`,
+  );
 }
 
 async function cmdFinalize() {
@@ -221,14 +307,17 @@ async function main() {
     case 'recheck-handoff':
       await cmdRecheckHandoff();
       break;
+    case 'continue':
+      await cmdContinue();
+      break;
     case 'finalize':
       await cmdFinalize();
       break;
     case 'help':
     default:
       console.log(`Usage: cli.ts <command>
-  plan | review <standards|depth> | bugbot-trigger | bugbot-poll
-  aggregate | fix | wait-ci | recheck-handoff | finalize`);
+  plan | review <standards|depth|codex> | bugbot-trigger | bugbot-poll
+  aggregate | fix | wait-ci | recheck-handoff | continue | finalize`);
   }
 }
 

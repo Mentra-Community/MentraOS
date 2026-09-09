@@ -1,0 +1,274 @@
+name: Reusable Production Starter Kit Android Candidate
+
+on:
+  workflow_call:
+    inputs:
+      source_commit:
+        required: true
+        type: string
+      release_plan_artifact:
+        required: true
+        type: string
+      starter_kit_commit:
+        required: true
+        type: string
+      build_number:
+        required: true
+        type: number
+      candidate_release_id:
+        required: true
+        type: string
+      candidate_container_tag:
+        required: true
+        type: string
+    outputs:
+      result_artifact:
+        value: ${{ jobs.android.outputs.result_artifact }}
+
+permissions:
+  contents: write
+
+env:
+  CI: true
+  EXAMPLE_PACKAGE_ID: com.mentra.bluetoothsdkexample
+  STARTER_KIT_REPOSITORY: Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit
+
+jobs:
+  android:
+    name: Build and upload exact Starter Kit Android candidate
+    runs-on: blacksmith-8vcpu-ubuntu-2404
+    timeout-minutes: 60
+    outputs:
+      result_artifact: ${{ steps.result.outputs.artifact }}
+    steps:
+      - name: Checkout MentraOS release source
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_commit }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ inputs.release_plan_artifact }}
+          path: release-input/plan
+
+      - name: Create Starter Kit checkout token
+        id: starter-kit-app-token
+        if: vars.STARTER_KIT_COORDINATOR_APP_ID != ''
+        continue-on-error: true
+        uses: actions/create-github-app-token@v3
+        with:
+          app-id: ${{ vars.STARTER_KIT_COORDINATOR_APP_ID }}
+          private-key: ${{ secrets.STARTER_KIT_COORDINATOR_APP_PRIVATE_KEY }}
+          owner: Mentra-Community
+          repositories: Mentra-Bluetooth-SDK-Starter-Kit
+          permission-contents: read
+
+      - name: Checkout exact stable Starter Kit source
+        uses: actions/checkout@v4
+        with:
+          repository: ${{ env.STARTER_KIT_REPOSITORY }}
+          ref: ${{ inputs.starter_kit_commit }}
+          token: ${{ steps.starter-kit-app-token.outputs.token || secrets.STARTER_KIT_COORDINATOR_TOKEN || secrets.MENTRA_BLUETOOTH_SDK_IOS_PUSH_TOKEN }}
+          path: starter-kit
+
+      - uses: actions/setup-java@v4
+        with:
+          distribution: temurin
+          java-version: "17"
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.11"
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+
+      - name: Verify immutable store identity and stable dependencies
+        working-directory: starter-kit/examples/react-native
+        env:
+          EXPECTED_COMMIT: ${{ inputs.starter_kit_commit }}
+        run: |
+          set -euo pipefail
+          plan="$GITHUB_WORKSPACE/release-input/plan/release-plan.json"
+          [[ "$(jq -er .channel "$plan")" == "production" ]]
+          [[ "$(git rev-parse HEAD)" == "$EXPECTED_COMMIT" ]]
+          [[ "$(jq -er .expo.android.package app.json)" == "$EXAMPLE_PACKAGE_ID" ]]
+          [[ "$(jq -er .expo.ios.bundleIdentifier app.json)" == "$EXAMPLE_PACKAGE_ID" ]]
+          version=$(jq -er .familyBaseVersion "$plan")
+          [[ "$(jq -er '.dependencies["@mentra/bluetooth-sdk"]' package.json)" == "$version" ]]
+          [[ "$(jq -er '.dependencies["@mentra/engine"]' package.json)" == "$version" ]]
+
+      - name: Resolve the attempt-scoped immutable App Bundle
+        id: candidate
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          release_id="${{ inputs.candidate_release_id }}"
+          tag="${{ inputs.candidate_container_tag }}"
+          release=$(gh api "repos/${GITHUB_REPOSITORY}/releases/$release_id")
+          [[ "$(jq -r .tag_name <<< "$release")" == "$tag" ]]
+          [[ "$(jq -r .draft <<< "$release")" == true ]]
+          [[ "$(jq -r .target_commitish <<< "$release")" == "${{ inputs.source_commit }}" ]]
+          identity=$(jq -er .releaseIdentity release-input/plan/release-plan.json)
+          name="starter-kit-${identity}-android-${{ inputs.build_number }}.aab"
+          mkdir -p candidate-staging
+          path="$GITHUB_WORKSPACE/candidate-staging/$name"
+          assets=$(gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases/$release_id/assets?per_page=100" | jq 'add')
+          matches=$(jq --arg name "$name" '[.[] | select(.name == $name)]' <<< "$assets")
+          [[ "$(jq length <<< "$matches")" -le 1 ]]
+          if [[ "$(jq length <<< "$matches")" == 1 ]]; then
+            asset_id=$(jq -er '.[0].id' <<< "$matches")
+            gh api -H "Accept: application/octet-stream" "repos/${GITHUB_REPOSITORY}/releases/assets/$asset_id" > "$path"
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+          {
+            echo "name=$name"
+            echo "path=$path"
+            echo "url=https://github.com/${GITHUB_REPOSITORY}/releases/download/$tag/$name"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Install and generate exact Android project
+        if: steps.candidate.outputs.exists != 'true'
+        working-directory: starter-kit/examples/react-native
+        env:
+          BUILD_NUMBER: ${{ inputs.build_number }}
+        run: |
+          set -euo pipefail
+          bun install --frozen-lockfile
+          version=$(jq -er .familyBaseVersion "$GITHUB_WORKSPACE/release-input/plan/release-plan.json")
+          VERSION="$version" node --input-type=module <<'NODE'
+          import {readFileSync, writeFileSync} from "node:fs"
+          const file = "app.json"
+          const config = JSON.parse(readFileSync(file, "utf8"))
+          config.expo.version = process.env.VERSION
+          config.expo.android.versionCode = Number(process.env.BUILD_NUMBER)
+          writeFileSync(file, `${JSON.stringify(config, null, 2)}\n`)
+          NODE
+          bunx expo prebuild --platform android
+          [[ "$(sed -n 's/.*applicationId "\([^"]*\)".*/\1/p' android/app/build.gradle | head -1)" == "$EXAMPLE_PACKAGE_ID" ]]
+
+      - name: Inject upload and Google Play credentials
+        uses: ./.github/actions/inject-signing
+        with:
+          mobile: "true"
+          play: "true"
+          upload-keystore-b64: ${{ secrets.UPLOAD_KEYSTORE_B64 }}
+          upload-store-password: ${{ secrets.MENTRAOS_UPLOAD_STORE_PASSWORD }}
+          upload-key-password: ${{ secrets.MENTRAOS_UPLOAD_KEY_PASSWORD }}
+          upload-key-alias: ${{ secrets.MENTRAOS_UPLOAD_KEY_ALIAS }}
+          google-play-key-json: ${{ secrets.GOOGLE_PLAY_KEY_JSON }}
+
+      - name: Build and sign customer-eligible Android App Bundle
+        if: steps.candidate.outputs.exists != 'true'
+        working-directory: starter-kit/examples/react-native/android
+        run: |
+          set -euo pipefail
+          ./gradlew :app:bundleRelease
+          aab=app/build/outputs/bundle/release/app-release.aab
+          test -s "$aab"
+          zip -d "$aab" 'META-INF/*' >/dev/null 2>&1 || true
+          jarsigner \
+            -keystore "$GITHUB_WORKSPACE/mobile/credentials/upload-keystore.jks" \
+            -storepass "$ORG_GRADLE_PROJECT_MENTRAOS_UPLOAD_STORE_PASSWORD" \
+            -keypass "$ORG_GRADLE_PROJECT_MENTRAOS_UPLOAD_KEY_PASSWORD" \
+            "$aab" "$ORG_GRADLE_PROJECT_MENTRAOS_UPLOAD_KEY_ALIAS"
+          jarsigner -verify -strict "$aab"
+
+      - name: Persist and verify the exact App Bundle before Play upload
+        id: staged
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          staged="${{ steps.candidate.outputs.path }}"
+          if [[ "${{ steps.candidate.outputs.exists }}" != true ]]; then
+            built=starter-kit/examples/react-native/android/app/build/outputs/bundle/release/app-release.aab
+            cp "$built" "$staged"
+            node .github/scripts/publish-immutable-release-asset.mjs \
+              --file "$staged" \
+              --name "${{ steps.candidate.outputs.name }}" \
+              --release-id "${{ inputs.candidate_release_id }}" \
+              --repository "$GITHUB_REPOSITORY"
+          fi
+          test -s "$staged"
+          jarsigner -verify -strict "$staged"
+          certificate_sha256=$(keytool -printcert -jarfile "$staged" \
+            | sed -n 's/^[[:space:]]*SHA256: //p' | head -1 | tr -d ':')
+          [[ "$certificate_sha256" =~ ^[0-9A-Fa-f]{64}$ ]]
+          {
+            echo "aab=$staged"
+            echo "sha256=$(sha256sum "$staged" | cut -d' ' -f1)"
+            echo "signing_certificate_sha256=${certificate_sha256,,}"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Install pinned Google Play tooling
+        run: |
+          set -euo pipefail
+          mkdir -p starter-play/fastlane
+          cp mobile/ci/fastlane-android/Fastfile mobile/ci/fastlane-android/Appfile starter-play/fastlane/
+          cp mobile/Gemfile mobile/Gemfile.lock starter-play/
+          cd starter-play
+          bundle install
+
+      - name: Check exact internal-track version code
+        id: play
+        working-directory: starter-play
+        env:
+          APP_PACKAGE_NAME: com.mentra.bluetoothsdkexample
+          GOOGLE_PLAY_TRACK: internal
+          GOOGLE_PLAY_VERSION_CODES_OUTPUT: ${{ runner.temp }}/starter-play-version-codes.json
+        run: |
+          bundle exec fastlane track_version_codes
+          if jq -e --argjson expected "${{ inputs.build_number }}" 'map(tonumber) | index($expected) != null' "$GOOGLE_PLAY_VERSION_CODES_OUTPUT" >/dev/null; then
+            [[ "${{ steps.candidate.outputs.exists }}" == true ]] || {
+              echo "Google Play contains this version code without this attempt's previously persisted App Bundle." >&2
+              exit 1
+            }
+            echo "exists=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "exists=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Upload exact App Bundle to isolated internal testing track
+        if: steps.play.outputs.exists != 'true'
+        working-directory: starter-play
+        env:
+          APP_PACKAGE_NAME: com.mentra.bluetoothsdkexample
+          GOOGLE_PLAY_AAB: ${{ steps.staged.outputs.aab }}
+          GOOGLE_PLAY_RELEASE_NAME: PRODUCTION CANDIDATE ${{ inputs.build_number }}
+          GOOGLE_PLAY_TRACK: internal
+        run: bundle exec fastlane google_play
+
+      - name: Record exact Android candidate
+        id: result
+        env:
+          BUILD_NUMBER: ${{ inputs.build_number }}
+          STARTER_KIT_COMMIT: ${{ inputs.starter_kit_commit }}
+        run: |
+          set -euo pipefail
+          mkdir -p candidate-output
+          aab="${{ steps.staged.outputs.aab }}"
+          cp "$aab" candidate-output/starter-kit-production-candidate.aab
+          jq -n \
+            --arg packageId "$EXAMPLE_PACKAGE_ID" \
+            --argjson buildNumber "$BUILD_NUMBER" \
+            --arg sourceCommit "$STARTER_KIT_COMMIT" \
+            --arg sha256 "${{ steps.staged.outputs.sha256 }}" \
+            --arg signingCertificateSha256 "${{ steps.staged.outputs.signing_certificate_sha256 }}" \
+            --arg artifactUrl "${{ steps.candidate.outputs.url }}" \
+            --arg url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --arg uploadStatus "${{ steps.play.outputs.exists == 'true' && 'reused' || 'published' }}" \
+            '{schemaVersion: 1, product: "starter-kit", platform: "android", packageId: $packageId, buildNumber: $buildNumber, sourceCommit: $sourceCommit, playTrack: "internal", uploadStatus: $uploadStatus, artifactUrl: $artifactUrl, artifactSha256: $sha256, signingCertificateSha256: $signingCertificateSha256, provenanceUrl: $url}' \
+            > candidate-output/starter-kit-android-candidate.json
+          echo "artifact=production-starter-kit-android-${GITHUB_RUN_ID}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.result.outputs.artifact }}
+          path: candidate-output
+          if-no-files-found: error
+          retention-days: 90

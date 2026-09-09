@@ -287,5 +287,5 @@ await fetch("https://api.theirapp.com/...", {
 - [`concepts.md`](./concepts.md): the from-zero primer for every term used here.
 - [`oem-auth.md`](./oem-auth.md): the built OEM-exchange subsystem (verification,
   replay protection, data model, the miniapp identity handoff and trust policy).
-- [`cloud/.architecture/auth.md`](../../../../../cloud/.architecture/auth.md): the
-  full v1 webview auto-auth writeup.
+- The retired V1 webview auto-auth design was used as migration input; this
+  directory now contains the authoritative contracts.

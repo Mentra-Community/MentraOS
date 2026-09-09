@@ -1,5 +1,5 @@
 import {Platform, type ImageSourcePropType} from "react-native"
-import {DeviceTypes} from "@/../../cloud/packages/types/src"
+import {DeviceTypes} from "@mentra/engine"
 export const AR99_MODEL_OPTIONS = [
   {
     key: "xingyi_ar99",

@@ -10,12 +10,11 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import showAlert from "@/utils/AlertUtils"
-import {decideDevLaunchRoute, engine} from "@mentra/engine"
-import {registerDevApp, type DevAppRecord} from "@mentra/engine/internal"
+import {decideDevOpenRoute, engine} from "@mentra/engine"
+import {registerDevApp, type DevAppRecord} from "@mentra/engine-host-internal"
 import {askPermissionsUI, checkPermissionsUI, PERMISSION_CONFIG} from "@/utils/PermissionsUtils"
-import {markMiniappDevMode} from "@/utils/miniappDevMode"
 import {storage} from "@/utils/storage/storage"
-import type {AppletInterface, AppletPermission} from "@/../../cloud/packages/types/src"
+import type {AppletInterface, AppletPermission} from "@mentra/engine"
 
 const RECENT_KEY = "miniapp_dev_recent"
 const MAX_RECENT = 5
@@ -72,7 +71,7 @@ export default function MiniappDeveloperUrlScreen() {
   const launchDevMiniapp = async (entry: RecentDevApp) => {
     // One round trip: reachability + manifest. Avoids a second fetch
     // for the permission-gate input.
-    const launchResult = await decideDevLaunchRoute(entry.packageName, entry.url)
+    const launchResult = await decideDevOpenRoute(entry.packageName, entry.url)
 
     if (launchResult.decision === "offline") {
       push("/applet/dev-offline", {
@@ -82,11 +81,10 @@ export default function MiniappDeveloperUrlScreen() {
       return
     }
 
-    // Single chokepoint for both entry paths (typed URL + recent-list tap): a
-    // reachable dev server means a real dev app loaded, so latch the per-account
-    // "this user is a developer" signal here (idempotent). Marking after the
-    // offline check keeps a failed/unreachable launch from flipping the flag.
-    markMiniappDevMode()
+    if (launchResult.decision === "cached") {
+      await engine.miniapps.setForeground(entry.packageName)
+      return
+    }
 
     const packageName = launchResult.manifest.packageName || entry.packageName
     const appName = launchResult.manifest.name || entry.name
@@ -158,8 +156,8 @@ export default function MiniappDeveloperUrlScreen() {
     try {
       // Single fetch; serves as both validation that the URL points at a
       // real miniapp dev server AND the manifest source for the launch.
-      const launchResult = await decideDevLaunchRoute("", trimmed)
-      if (launchResult.decision === "offline") {
+      const launchResult = await decideDevOpenRoute("", trimmed)
+      if (launchResult.decision !== "live") {
         showAlert(
           translate("debugSettings:miniappUrlFetchErrorTitle"),
           translate("debugSettings:miniappUrlFetchErrorBody", {url: trimmed}),

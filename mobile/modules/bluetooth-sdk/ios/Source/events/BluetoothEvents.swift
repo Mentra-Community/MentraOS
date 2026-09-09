@@ -73,6 +73,30 @@ public struct SpeakingStatusEvent: CustomStringConvertible {
     }
 }
 
+public struct MicHealthEvent: CustomStringConvertible {
+    public let reason: String
+    public let sequenceGapEvents: Int
+    public let decodeFailures: Int
+    public let lastLc3ReceivedAt: Int?
+    public let lastPcmProducedAt: Int?
+    public let timestamp: Int
+    public let values: [String: Any]
+
+    public init(values: [String: Any]) {
+        reason = stringValue(values, "reason") ?? ""
+        sequenceGapEvents = intValue(values["sequenceGapEvents"]) ?? 0
+        decodeFailures = intValue(values["decodeFailures"]) ?? 0
+        lastLc3ReceivedAt = intValue(values["lastLc3ReceivedAt"])
+        lastPcmProducedAt = intValue(values["lastPcmProducedAt"])
+        timestamp = intValue(values["timestamp"]) ?? Int(Date().timeIntervalSince1970 * 1000)
+        self.values = values
+    }
+
+    public var description: String {
+        "MicHealthEvent(reason: \(reason), sequenceGapEvents: \(sequenceGapEvents), decodeFailures: \(decodeFailures))"
+    }
+}
+
 public struct OtaStartAckEvent: CustomStringConvertible {
     public let timestamp: Int?
     public let values: [String: Any]
@@ -216,6 +240,7 @@ public enum BluetoothEvent: CustomStringConvertible {
     case touch(TouchEvent)
     case voiceActivityDetectionStatus(VoiceActivityDetectionStatusEvent)
     case speakingStatus(SpeakingStatusEvent)
+    case micHealth(MicHealthEvent)
     case wifiStatus(WifiStatusEvent)
     case hotspotStatus(HotspotStatusEvent)
     case hotspotError(HotspotErrorEvent)
@@ -243,6 +268,8 @@ public enum BluetoothEvent: CustomStringConvertible {
         case let .voiceActivityDetectionStatus(event):
             event.description
         case let .speakingStatus(event):
+            event.description
+        case let .micHealth(event):
             event.description
         case let .wifiStatus(event):
             event.description

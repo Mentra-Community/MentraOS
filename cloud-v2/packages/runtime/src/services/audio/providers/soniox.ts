@@ -19,8 +19,7 @@
  * enough to produce real transcripts from real audio; refinements come from
  * observing actual usage.
  *
- * Spec: docs/issues/003-audio/design.md; v1 reference at
- * cloud/packages/cloud/src/services/session/transcription/providers/SonioxSdkStream.ts
+ * Spec: docs/issues/003-audio/design.md.
  */
 
 import {
@@ -508,8 +507,8 @@ export async function createSonioxProvider(
       // diarization. We instead finalize ONLY on the real utterance boundary:
       // the Soniox `endpoint` event (`handleEndpoint`) and on `close()`.
       //
-      // This mirrors v1's SonioxSdkStream (cloud/.../providers/SonioxSdkStream.ts),
-      // whose `handleResult` uses the LAST token's speaker for attribution and
+      // This mirrors the retired V1 Soniox stream behavior, whose `handleResult`
+      // used the LAST token's speaker for attribution and
       // documents: "Speaker changes within the window do NOT rotate the
       // utteranceId." Speaker is still tracked below for the "Speaker N" label;
       // it just doesn't trigger a finalize/restart.

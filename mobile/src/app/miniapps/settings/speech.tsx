@@ -14,7 +14,7 @@ import {
   sttModelManager as STTModelManager,
   ttsModelManager as TTSModelManager,
   type OfflineModelDownloadStatus as DownloadStatus,
-} from "@mentra/engine/internal"
+} from "@mentra/engine-host-internal"
 import {SETTINGS, useSetting} from "@mentra/engine"
 import showAlert from "@/utils/AlertUtils"
 

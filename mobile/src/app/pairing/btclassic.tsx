@@ -50,21 +50,21 @@ export default function BtClassicPairingScreen() {
 
   const handleSuccess = () => {
     if (device) {
-      engine.glasses.connect(device, {saveAsDefault: false}).catch((error) => {
-        console.error("Failed to connect glasses after Bluetooth Classic pairing:", error)
-        routePairingKickoffFailure(device.model)
-      })
-    } else {
-      // Paired contexts (success step stack / recovery alert): reconnect the
-      // saved default device.
-      engine.glasses.connectDefault().catch((error) => {
-        console.error("Failed to connect default glasses after Bluetooth Classic pairing:", error)
-        // Identity read-model, not raw keys: the failure copy names whatever
-        // identity model exists at rejection time (paired or pending).
-        const identity = engine.pairing.identity()
-        routePairingKickoffFailure(identity.kind === "none" ? undefined : identity.model)
-      })
+      // The loading screen owns the selected-device connect. Revealing it first
+      // keeps one cancellable kickoff path for Android, iOS, and controllers.
+      pushPrevious()
+      return
     }
+
+    // Paired contexts (success step stack / recovery alert): reconnect the
+    // saved default device.
+    engine.glasses.connectDefault().catch((error) => {
+      console.error("Failed to connect default glasses after Bluetooth Classic pairing:", error)
+      // Identity read-model, not raw keys: the failure copy names whatever
+      // identity model exists at rejection time (paired or pending).
+      const identity = engine.pairing.identity()
+      routePairingKickoffFailure(identity.kind === "none" ? undefined : identity.model)
+    })
     pushPrevious()
   }
 

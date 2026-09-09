@@ -38,6 +38,30 @@ test("cache version distinguishes missing and empty public values", () => {
   assert.notEqual(missing, empty)
 })
 
+test("build timestamp does not bust the Metro cache version", () => {
+  const first = withExpoPublicEnvCacheVersion("base", {
+    EXPO_PUBLIC_CLOUD_CORE_URL: "https://core.dev.example",
+    EXPO_PUBLIC_BUILD_TIME: "2026-08-30_8-17PM",
+  })
+  const second = withExpoPublicEnvCacheVersion("base", {
+    EXPO_PUBLIC_CLOUD_CORE_URL: "https://core.dev.example",
+    EXPO_PUBLIC_BUILD_TIME: "2026-08-31_11-27AM",
+  })
+
+  assert.equal(first, second)
+})
+
+test("real public config still busts the Metro cache version", () => {
+  const first = withExpoPublicEnvCacheVersion("base", {
+    EXPO_PUBLIC_CLOUD_CORE_URL: "https://core.dev.example",
+  })
+  const second = withExpoPublicEnvCacheVersion("base", {
+    EXPO_PUBLIC_CLOUD_CORE_URL: "https://core.prod.example",
+  })
+
+  assert.notEqual(first, second)
+})
+
 test("cache version ignores private environment and does not expose public values", () => {
   const publicValue = "public-value-that-must-not-appear"
   const first = withExpoPublicEnvCacheVersion("base", {

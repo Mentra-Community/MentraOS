@@ -108,25 +108,22 @@ public class OtaConstants {
      */
     public static final long DOWNGRADE_SUPERVISION_TIMEOUT_MS = 40 * 60 * 1000L;
     /**
-     * Oldest recovery worker versionCode that understands the downgrade handoff
+     * Oldest recovery worker versionCode eligible for a production downgrade handoff
      * ({@code ACTION_REQUEST_DOWNGRADE}). ASG deploys its bundled recovery worker asynchronously
-     * at startup, so a downgrade must not be staged until the installed recovery worker is at
-     * least this new — an older receiver would silently drop the handoff after ASG already
-     * reported the install as started.
+     * at startup, so a downgrade must not be staged until the installed recovery worker both
+     * supports the verdict protocol and enforces the production target floor.
      */
-    // v8 = first worker that answers every handoff with an accepted/refused verdict and claims
-    // the staged APK by rename. The verdict is load-bearing: the watchdog treats "no answer" as
-    // "no transaction exists", which is only true when the worker is verdict-capable — an older
-    // silent worker could accept without answering and the timeout would misreport refusal.
-    public static final long MIN_RECOVERY_VERSION_FOR_DOWNGRADE = 8L;
+    // v10 = first worker that enables the production downgrade floor. Requiring it here prevents
+    // a still-installed v8/v9 worker from accepting the handoff protocol but rejecting every
+    // production target while the bundled-worker upgrade is still landing asynchronously.
+    public static final long MIN_RECOVERY_VERSION_FOR_DOWNGRADE = 10L;
     /**
      * Oldest ASG versionCode a pinned downgrade may target. Builds below this floor predate the
      * downgrade-safe contract — most importantly the shared media root
      * ({@code MediaStorage.MEDIA_ROOT_PATH}): older builds capture into the app-owned
      * external-files tree, which the OEM uninstall deletes (hardware-verified 2026-07-21), and
-     * read media from the pre-relocation paths. Must be set to the versionCode of the first
-     * release shipping the media relocation before downgrades are enabled in production; 0 leaves
-     * the floor open for RFC/bench testing only.
+     * read media from the pre-relocation paths. Mentra 3.0 is the first release shipping the
+     * downgrade-safe contract, so production downgrades must never target an older build.
      */
-    public static final long DOWNGRADE_FLOOR_VERSION_CODE = 0L;
+    public static final long DOWNGRADE_FLOOR_VERSION_CODE = 51518114L;
 }

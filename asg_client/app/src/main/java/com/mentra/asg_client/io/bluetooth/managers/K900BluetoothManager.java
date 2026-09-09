@@ -1,6 +1,7 @@
 package com.mentra.asg_client.io.bluetooth.managers;
 
 import android.content.Context;
+import android.os.SystemClock;
 import android.util.Log;
 
 import com.mentra.asg_client.AsgConstants;
@@ -59,6 +60,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     private final String currentBootId;
     private volatile String liveBesOtaOwner = "";
     private volatile boolean framedPathProven;
+    private volatile long uartEvidenceInvalidatedAtElapsedMs = -1;
     private volatile BesOtaUartListener besOtaUartListener;
 
     public interface BesOtaAuthorizationCallback {
@@ -336,7 +338,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
         @Override
         public void invalidateLinkProof() {
-            framedPathProven = false;
+            invalidateFramedPathProof();
             linkState.streamDiscontinuity();
         }
 
@@ -1177,6 +1179,17 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         return framedPathProven;
     }
 
+    /** Evidence received before a UART reset/recovery cannot authorize the current link. */
+    public boolean isCurrentUartEvidence(long receivedAtElapsedMs) {
+        return framedPathProven && isConnected() && transportCoordinator.isReadyForNormalUse()
+                && receivedAtElapsedMs > uartEvidenceInvalidatedAtElapsedMs;
+    }
+
+    private void invalidateFramedPathProof() {
+        uartEvidenceInvalidatedAtElapsedMs = SystemClock.elapsedRealtime();
+        framedPathProven = false;
+    }
+
     private BesUartTransportCoordinator.SafetyPolicy currentBesOtaSafetyPolicy() {
         BesOtaStateStore.UartPolicy policy =
                 besOtaStateStore.uartPolicy(currentBootId, framedPathProven, liveBesOtaOwner);
@@ -1284,8 +1297,9 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     }
 
     /**
-     * Queue the phone guard and BES authorization as one outbound FIFO action. The guard is a
-     * normal framed write; only its actual UART success permits the exclusive OTA lease and mh_ota.
+     * Queue the phone guard and BES authorization as one outbound FIFO action. The authorization
+     * lease first waits for a proven rendezvous link, then carries both normal-framed writes. Only
+     * the guard's actual UART success permits durable authorization reservation and mh_ota.
      */
     public boolean queueBesOtaAuthorization(
             byte[] installGuard, byte[] data, BesOtaAuthorizationCallback callback) {
@@ -1299,23 +1313,26 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         byte[] payload = Arrays.copyOf(data, data.length);
         return queueOutboundAction(
                 () -> {
-                    if (guard != null) {
-                        publishOutboundMessage(guard, true);
-                        boolean guardSent =
-                                transportCoordinator.runNormalWrite(
-                                        () -> sendMessageInternalLocked(guard));
-                        if (!guardSent) {
-                            callback.onInstallGuardWriteFailed();
-                            return;
-                        }
-                    }
-
                     BesUartTransportCoordinator.OperationLease lease =
                             transportCoordinator.beginOtaAuthorization();
                     if (lease == null) {
                         callback.onWriteComplete(false, false);
                         return;
                     }
+
+                    if (guard != null) {
+                        publishOutboundMessage(guard, true);
+                        boolean guardSent =
+                                transportCoordinator.runOtaAuthorizationWrite(
+                                        lease,
+                                        () -> sendMessageInternalLocked(guard));
+                        if (!guardSent) {
+                            transportCoordinator.endOta(lease);
+                            callback.onInstallGuardWriteFailed();
+                            return;
+                        }
+                    }
+
                     if (!callback.onLeaseAcquired(lease)) {
                         transportCoordinator.endOta(lease);
                         callback.onWriteComplete(false, false);
@@ -1901,7 +1918,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
         // Close transport state before releasing the file lease so cleanup cannot resume a
         // deferred baud transition on a port that is already going down.
-        framedPathProven = false;
+        invalidateFramedPathProof();
         linkState.serialClosed();
         transportCoordinator.onSerialClosed();
         if (currentFileTransfer != null && currentFileTransfer.isActive) {
@@ -2124,7 +2141,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
         // A proof belongs to one exact SerialSession. Never let an sr_syvr from the
         // previous file descriptor authorize traffic on a newly adopted session.
-        framedPathProven = false;
+        invalidateFramedPathProof();
         linkState.serialReady();
         transportCoordinator.onSerialReady(session);
         Log.d(TAG, "🔌 ✅ Serial port marked as open");
@@ -2160,7 +2177,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         if (bSucc) {
             linkState.serialReady();
         } else {
-            framedPathProven = false;
+            invalidateFramedPathProof();
             linkState.serialClosed();
             transportCoordinator.onSerialClosed();
         }

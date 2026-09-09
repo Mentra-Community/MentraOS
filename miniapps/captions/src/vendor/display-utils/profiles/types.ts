@@ -18,6 +18,9 @@ export interface DisplayProfile {
   /** Maximum number of lines that can be displayed */
   maxLines: number
 
+  /** Calibrated text line height for positioned text containers. */
+  lineHeightPx?: number
+
   /** Maximum safe payload size in bytes (for BLE transmission) */
   maxPayloadBytes: number
 

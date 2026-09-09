@@ -1,7 +1,7 @@
 /// <reference types="bun-types" />
 
 import {describe, expect, test} from "bun:test"
-import {DeviceTypes} from "@/../../cloud/packages/types/src"
+import {DeviceTypes} from "@mentra/engine"
 
 import {getBluetoothSettingKeysForDevice, MENTRA_LIVE_SETTING_KEYS} from "../../modules/engine/src/stores/bluetoothSettingKeys"
 

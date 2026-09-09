@@ -2,28 +2,25 @@ import { mkdirSync, writeFileSync, readFileSync } from 'node:fs';
 import { join } from 'node:path';
 import { Agent, CursorAgentError } from '@cursor/sdk';
 import { loadConfig } from './config.js';
-import type { PrAgentState, ReviewSlot } from './types.js';
+import type { PrAgentState } from './types.js';
 import { execSync } from 'node:child_process';
 
-const SLOT_PROMPT: Record<Exclude<ReviewSlot, 'bugbot'>, string> = {
+const SLOT_PROMPT: Record<'standards' | 'depth', string> = {
   standards: 'standards-review.md',
   depth: 'depth-review.md',
 };
 
-export async function runReview(
+/**
+ * Shared review context (diff, changed files, orchestrator state, how-to)
+ * used by both the Cursor SDK reviewers and the Codex CLI reviewer so every
+ * slot judges the same evidence.
+ */
+export function buildReviewContext(
   repoRoot: string,
-  slot: Exclude<ReviewSlot, 'bugbot'>,
   prNumber: number,
   baseRef: string,
   state: PrAgentState,
-): Promise<void> {
-  const config = loadConfig(repoRoot);
-  const apiKey = process.env.CURSOR_API_KEY;
-  if (!apiKey) throw new Error('CURSOR_API_KEY is required');
-
-  const promptPath = join(repoRoot, '.github/pr-agent/prompts', SLOT_PROMPT[slot]);
-  const basePrompt = readFileSync(promptPath, 'utf8');
-
+): string {
   const diffStat = execSync(`git diff origin/${baseRef}...HEAD --stat`, {
     cwd: repoRoot,
     encoding: 'utf8',
@@ -51,7 +48,7 @@ export async function runReview(
     ? `${fullDiff.slice(0, MAX_DIFF_CHARS)}\n\n... [diff truncated at ${MAX_DIFF_CHARS} chars — open the changed files directly to review the rest] ...`
     : fullDiff || '(no diff)';
 
-  const context = `
+  return `
 PR #${prNumber}
 Base: ${baseRef}
 
@@ -87,7 +84,23 @@ ${diffStat || '(no diff)'}
 ${diffBody}
 \`\`\`
 `;
+}
 
+export async function runReview(
+  repoRoot: string,
+  slot: 'standards' | 'depth',
+  prNumber: number,
+  baseRef: string,
+  state: PrAgentState,
+): Promise<void> {
+  const config = loadConfig(repoRoot);
+  const apiKey = process.env.CURSOR_API_KEY;
+  if (!apiKey) throw new Error('CURSOR_API_KEY is required');
+
+  const promptPath = join(repoRoot, '.github/pr-agent/prompts', SLOT_PROMPT[slot]);
+  const basePrompt = readFileSync(promptPath, 'utf8');
+
+  const context = buildReviewContext(repoRoot, prNumber, baseRef, state);
   const fullPrompt = `${basePrompt}\n\n---\n\n${context}`;
 
   const reviewModel =

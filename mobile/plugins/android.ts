@@ -5,17 +5,27 @@ import path from "path"
 import {
   ConfigPlugin,
   withAppBuildGradle,
+  withProjectBuildGradle,
   withSettingsGradle,
   withGradleProperties,
   withAndroidManifest,
 } from "@expo/config-plugins"
 
+import {withDebugAbiFilters} from "../scripts/android-abi-filters.mjs"
+
 /**
  * Expo Config Plugin to apply android-working modifications
  * This ensures that after running expo prebuild, all custom Android configurations are preserved
  */
+const ANDROIDX_BROWSER_VERSION = "1.6.0"
+const ANDROIDX_ACTIVITY_VERSION = "1.9.3"
+const ANDROIDX_ANNOTATION_VERSION = "1.3.0"
+const ANDROIDX_BROWSER_PIN_MARKER = "androidXBrowserVersion = "
+const ANDROIDX_RESOLUTION_MARKER = "force 'androidx.browser:browser:"
+
 const withAndroidWorkingConfig: ConfigPlugin = (config) => {
   // Apply all modifications in sequence
+  config = withProjectBuildGradleModifications(config)
   config = withAppBuildGradleModifications(config)
   config = withAndroidManifestModifications(config)
   config = withXmlResourceFiles(config)
@@ -23,6 +33,116 @@ const withAndroidWorkingConfig: ConfigPlugin = (config) => {
   config = withSettingsGradleModifications(config)
 
   return config
+}
+
+/**
+ * MSAL's `common` dependency still references the Surface Duo display-mask
+ * artifact, which Microsoft publishes outside Maven Central. Restrict this
+ * repository to that one group so other dependencies continue resolving from
+ * the normal repositories. The same hook also pins AndroidX dependencies used
+ * by react-native-inappbrowser-reborn.
+ *
+ * react-native-inappbrowser-reborn requests androidx.browser:browser:1.4.+.
+ * That dynamic range requires maven-metadata.xml from Google Maven. When the
+ * listing is missing or unreachable, Gradle fails with "no versions of
+ * androidx.browser:browser are available". Pin a concrete cached version
+ * through the library's rootProject.ext hook and force it for every
+ * configuration. Browser 1.9.0 also pulls androidx.activity:activity:1.9.0,
+ * which is not in the local cache and 404s on Google Maven — keep activity
+ * on 1.9.3 when that exact version is requested.
+ */
+function withProjectBuildGradleModifications(config: any) {
+  return withProjectBuildGradle(config, (config) => {
+    if (config.modResults.language !== "groovy") {
+      return config
+    }
+
+    let gradle = config.modResults.contents
+    const msalRepositoryMarker = "entra-auth: Microsoft display-mask Maven repository"
+    if (!gradle.includes(msalRepositoryMarker)) {
+      const repository = `    maven {
+      // ${msalRepositoryMarker}
+      url 'https://pkgs.dev.azure.com/MicrosoftDeviceSDK/DuoSDK-Public/_packaging/Duo-SDK-Feed/maven/v1'
+      content {
+        includeGroup("com.microsoft.device.display")
+      }
+    }`
+      const repositories = gradle.match(/allprojects\s*\{[\s\S]*?repositories\s*\{/)
+
+      if (repositories) {
+        const insertionPoint = (repositories.index ?? 0) + repositories[0].length
+        gradle = gradle.slice(0, insertionPoint) + "\n" + repository + gradle.slice(insertionPoint)
+      } else {
+        gradle += `\nallprojects {\n  repositories {\n${repository}\n  }\n}\n`
+      }
+    }
+
+    const resolutionBlock = `
+allprojects {
+  configurations.all {
+    resolutionStrategy {
+      eachDependency { details ->
+        if (details.requested.group == 'androidx.browser' && details.requested.name == 'browser') {
+          details.useVersion '${ANDROIDX_BROWSER_VERSION}'
+        }
+        if (details.requested.group == 'androidx.activity' && details.requested.name == 'activity' && details.requested.version == '1.9.0') {
+          details.useVersion '${ANDROIDX_ACTIVITY_VERSION}'
+        }
+        if (details.requested.group == 'androidx.annotation' && details.requested.name == 'annotation' && details.requested.version.endsWith('+')) {
+          details.useVersion '${ANDROIDX_ANNOTATION_VERSION}'
+        }
+      }
+      force 'androidx.browser:browser:${ANDROIDX_BROWSER_VERSION}'
+    }
+  }
+}
+`
+
+    if (gradle.includes(ANDROIDX_BROWSER_PIN_MARKER)) {
+      gradle = gradle.replace(
+        /androidXBrowserVersion = "[^"]+"/,
+        `androidXBrowserVersion = "${ANDROIDX_BROWSER_VERSION}"`,
+      )
+      if (gradle.includes("androidXAnnotationVersion = ")) {
+        gradle = gradle.replace(
+          /androidXAnnotationVersion = "[^"]+"/,
+          `androidXAnnotationVersion = "${ANDROIDX_ANNOTATION_VERSION}"`,
+        )
+      } else {
+        gradle = gradle.replace(
+          /androidXBrowserVersion = "[^"]+"/,
+          `androidXBrowserVersion = "${ANDROIDX_BROWSER_VERSION}"\n  androidXAnnotationVersion = "${ANDROIDX_ANNOTATION_VERSION}"`,
+        )
+      }
+    } else {
+      const extBlock = `
+// Pin AndroidX Browser/Annotation for react-native-inappbrowser-reborn (avoids 1.4.+/1.5.+ metadata lookup).
+ext {
+  androidXBrowserVersion = "${ANDROIDX_BROWSER_VERSION}"
+  androidXAnnotationVersion = "${ANDROIDX_ANNOTATION_VERSION}"
+}
+`
+
+      const applyPluginIndex = gradle.indexOf("apply plugin")
+      if (applyPluginIndex !== -1) {
+        gradle = `${gradle.slice(0, applyPluginIndex)}${extBlock}\n${gradle.slice(applyPluginIndex)}`
+      } else {
+        gradle = `${gradle}\n${extBlock}`
+      }
+    }
+
+    if (gradle.includes(ANDROIDX_RESOLUTION_MARKER)) {
+      gradle = gradle.replace(
+        /\nallprojects \{\n  configurations.all \{\n    resolutionStrategy \{[\s\S]*?force 'androidx.browser:browser:[^']+'[\s\S]*?\n  \}\n\}\n?/,
+        resolutionBlock,
+      )
+    } else {
+      gradle += resolutionBlock
+    }
+
+    config.modResults.contents = gradle
+    return config
+  })
 }
 
 // Derive the active Android applicationId. Honors MENTRAOS_BUILD_NAME so that
@@ -108,10 +228,7 @@ if (project.hasProperty("sentryUploadEnabled") && project.property("sentryUpload
       )
     }
 
-    // 2. Update versionName to 3.0.0
-    buildGradle = buildGradle.replace(/versionName\s+["'][^"']*["']/, 'versionName "3.0.0"')
-
-    // 3. Add externalNativeBuild configuration in defaultConfig
+    // 2. Add externalNativeBuild configuration in defaultConfig
     if (!buildGradle.includes("externalNativeBuild")) {
       buildGradle = buildGradle.replace(
         /(buildConfigField\s+"String",\s+"REACT_NATIVE_RELEASE_LEVEL"[^}]+)/,
@@ -127,7 +244,7 @@ if (project.hasProperty("sentryUploadEnabled") && project.property("sentryUpload
       )
     }
 
-    // 4. Add additional packagingOptions
+    // 3. Add additional packagingOptions
     if (!buildGradle.includes("pickFirst '**/libjsc.so'")) {
       buildGradle = buildGradle.replace(
         /(packagingOptions\s*{[^}]*jniLibs\s*{[^}]*})/,
@@ -176,6 +293,9 @@ if (project.hasProperty("sentryUploadEnabled") && project.property("sentryUpload
         "release {\n            // signingConfigs.release has built-in fallback to debug keystore\n            signingConfig signingConfigs.release",
       )
     }
+
+    // 8. Filter debug APK native libs to reactNativeArchitectures. Release/AAB stay unfiltered.
+    buildGradle = withDebugAbiFilters(buildGradle)
 
     config.modResults.contents = buildGradle
     return config
@@ -327,6 +447,26 @@ function withAndroidManifestModifications(config: any) {
         app.$["android:enableOnBackInvokedCallback"] = "true"
       }
 
+      // API 36 ignores portrait and resizability restrictions on large screens.
+      // Preserve the Mentra App's existing phone layout until its tablet and
+      // foldable layouts have been validated. Android documents this as a
+      // temporary API 36 compatibility escape hatch; it stops applying at 37.
+      if (!app.property) {
+        app.property = []
+      }
+      const restrictedResizabilityProperty = "android.window.PROPERTY_COMPAT_ALLOW_RESTRICTED_RESIZABILITY"
+      const hasRestrictedResizabilityProperty = app.property.some(
+        (property: any) => property.$["android:name"] === restrictedResizabilityProperty,
+      )
+      if (!hasRestrictedResizabilityProperty) {
+        app.property.push({
+          $: {
+            "android:name": restrictedResizabilityProperty,
+            "android:value": "true",
+          },
+        })
+      }
+
       // Android navigation runs on the Mapbox Navigation SDK (migrated off
       // the Google Navigation SDK), so the Google geo API_KEY meta-data is
       // no longer injected here. iOS still uses the Google Nav SDK
@@ -336,6 +476,26 @@ function withAndroidManifestModifications(config: any) {
       const isChinaBuild = process.env.EXPO_PUBLIC_DEPLOYMENT_REGION === "china"
       if (!app["meta-data"]) {
         app["meta-data"] = []
+      }
+
+      // The official binary can be enrolled into a workspace that disables
+      // telemetry. Keep Firebase Analytics off during native startup; the
+      // JavaScript deployment gate enables collection only after the embedded
+      // consumer profile or an opted-in workspace has been resolved.
+      const analyticsCollection = app["meta-data"].find(
+        (m: any) => m.$["android:name"] === "firebase_analytics_collection_enabled",
+      )
+      if (analyticsCollection) {
+        analyticsCollection.$["android:value"] = "false"
+        analyticsCollection.$["tools:replace"] = "android:value"
+      } else {
+        app["meta-data"].push({
+          $: {
+            "android:name": "firebase_analytics_collection_enabled",
+            "android:value": "false",
+            "tools:replace": "android:value",
+          },
+        })
       }
 
       // Inject the Mapbox runtime token (pk....) as manifest meta-data

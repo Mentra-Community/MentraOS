@@ -1,4 +1,4 @@
-import {ControllerTypes, DeviceTypes} from "@/../../cloud/packages/types/src"
+import {ControllerTypes, DeviceTypes} from "@mentra/engine"
 import {useRoute} from "@react-navigation/native"
 import {Linking, PermissionsAndroid, Image, Platform, ScrollView, View} from "react-native"
 import type {Permission} from "react-native"

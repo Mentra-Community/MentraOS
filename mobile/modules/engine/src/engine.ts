@@ -5,14 +5,24 @@
  * name stays `engine` in code; the public API surface is `engine`.)
  *
  * It grows one facade at a time. The migration-era flat store/service exports
- * live on the `@mentra/engine/internal` entry (and the debug singletons on
- * `@mentra/engine/devtools`); they shrink as screens move onto `engine.*`.
+ * remain in a private MentraOS host package; they shrink as screens move onto
+ * `engine.*`.
  */
-import {configure, start as bootstrapStart, stop as bootstrapStop, updateUiSeams} from "./runtime/bootstrap"
+import {
+  configure,
+  getConfigValues,
+  start as bootstrapStart,
+  stop as bootstrapStop,
+  updateUiSeams,
+} from "./runtime/bootstrap"
 import {cloudClientService} from "./services/CloudClientService"
 import {hydrateDeviceStore, demoteOrphanedDefaultWearable} from "./services/DeviceStoreHydration"
 import {startGlassesSettingsSync, stopGlassesSettingsSync} from "./services/GlassesSettingsSync"
-import {startGlassesStatusProjection, stopGlassesStatusProjection} from "./services/GlassesStatusProjection"
+import {
+  startGlassesStatusProjection,
+  stopGlassesStatusProjection,
+  toMiniappConnectionData,
+} from "./services/GlassesStatusProjection"
 import {startOtaService, stopOtaService} from "./services/OtaService"
 import {startAudioCloudUplink, stopAudioCloudUplink} from "./services/AudioCloudUplink"
 import {startSupportProfileSync, stopSupportProfileSync} from "./services/SupportProfileSync"
@@ -62,7 +72,11 @@ export const engine = {
     // Project native device status -> the engine stores (the inbound feed the rest
     // of the runtime reads). Established first so the stores are live before the
     // syncs below react to them.
-    startGlassesStatusProjection()
+    startGlassesStatusProjection((changed) => {
+      const connection = toMiniappConnectionData(changed)
+      if (!connection) return
+      localMiniappRuntime.forwardEvent("glasses_connection_state", connection)
+    })
     // Route the rest of the inbound device events (wifi/hotspot/gallery -> stores+bus,
     // photo/stream -> coordinators, button/touch/accel/head -> miniapps, save_setting ->
     // store, miniapp_selected -> launcher) so a bare OEM gets device data, not just the
@@ -90,16 +104,20 @@ export const engine = {
     startOtaService()
     // Forward glasses mic_lc3 frames to the v2 cloud session so cloud transcription
     // works for any host (not just the Mentra app's host-side MantleManager fork).
-    startAudioCloudUplink()
-    try {
-      await cloudClientService.syncCoreTokenToBluetooth()
-    } catch (error) {
-      console.warn(
-        "engine.start: initial Cloud V2 core token sync failed:",
-        error instanceof Error ? error.message : error,
-      )
+    if (getConfigValues().runtimeRealtimeSession !== false && getConfigValues().features?.cloudSpeech !== false) {
+      startAudioCloudUplink()
     }
-    startSupportProfileSync()
+    if (cloudClientService.hasCore()) {
+      try {
+        await cloudClientService.syncCoreTokenToBluetooth()
+      } catch (error) {
+        console.warn(
+          "engine.start: initial Cloud V2 core token sync failed:",
+          error instanceof Error ? error.message : error,
+        )
+      }
+      startSupportProfileSync()
+    }
     // Push device-setting changes to the glasses for ANY host, so
     // engine.glasses.settings.set() reaches the device (not just the Mentra app).
     startGlassesSettingsSync()
@@ -107,10 +125,10 @@ export const engine = {
     startPhoneNotificationsSync()
     // Android internal/e2e: laptop captions tester can broadcast a failure intent;
     // engine owns turning that into a Cloud V2 report.
-    startCaptionsTesterReportService()
+    if (cloudClientService.hasCore()) startCaptionsTesterReportService()
     // MentraJS crashloop-disabled is runtime state; engine owns filing the
     // automatic report while hosts only render alert/telemetry side effects.
-    startMentraJSCrashloopReportService()
+    if (cloudClientService.hasCore()) startMentraJSCrashloopReportService()
     // Bring up the local-miniapp engine so a bare OEM can run MentraJS miniapps:
     // the LocalMiniappRuntime (registry + WebView bridge), the MentraJS router
     // (crust-bound spawn/dispatch pump + launcher wiring), the DisplayProcessor

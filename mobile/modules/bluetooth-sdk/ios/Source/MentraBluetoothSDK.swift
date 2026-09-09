@@ -309,6 +309,9 @@ public final class MentraBluetoothSDK {
         DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "device_name", device.name)
         DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "device_address", device.identifier ?? "")
         DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "project_name", device.projectName ?? "")
+        DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_device_name", "")
+        DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_device_address", "")
+        DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_device_secure_pairing_capable", "")
         finishDefaultDeviceApply(generation: generation)
     }
 
@@ -320,6 +323,9 @@ public final class MentraBluetoothSDK {
         DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "device_name", "")
         DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "device_address", "")
         DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "project_name", "")
+        DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_device_name", "")
+        DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_device_address", "")
+        DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_device_secure_pairing_capable", "")
         finishDefaultDeviceApply(generation: generation)
     }
 
@@ -394,6 +400,14 @@ public final class MentraBluetoothSDK {
         }
         if options.saveAsDefault && !isController {
             setDefaultDevice(device)
+        } else if !isController {
+            DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_device_name", device.name)
+            DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_device_address", device.identifier ?? "")
+            DeviceStore.shared.apply(
+                ObservableStore.bluetoothCategory,
+                "pending_device_secure_pairing_capable",
+                device.securePairingCapable ?? ""
+            )
         }
         DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_wearable", device.model.deviceType)
         DeviceManager.shared.connectByName(device.name)
@@ -418,6 +432,9 @@ public final class MentraBluetoothSDK {
 
     public func cancelConnectionAttempt() {
         clearBluetoothRestoreIntent()
+        DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_device_name", "")
+        DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_device_address", "")
+        DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_device_secure_pairing_capable", "")
         DeviceManager.shared.disconnect()
     }
 
@@ -428,6 +445,9 @@ public final class MentraBluetoothSDK {
 
     public func disconnect() {
         clearBluetoothRestoreIntent()
+        DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_device_name", "")
+        DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_device_address", "")
+        DeviceStore.shared.apply(ObservableStore.bluetoothCategory, "pending_device_secure_pairing_capable", "")
         DeviceManager.shared.disconnect()
     }
 
@@ -450,6 +470,11 @@ public final class MentraBluetoothSDK {
 
     public func clearDisplay() async throws {
         DeviceManager.shared.sgc?.clearDisplay()
+    }
+
+    /// Sets session-only content shown below the standard dashboard status header.
+    public func setDashboardContent(_ content: String) async {
+        await DeviceManager.shared.setDashboardContent(content)
     }
 
     public func showDashboard() {
@@ -1148,6 +1173,36 @@ public final class MentraBluetoothSDK {
         }
     }
 
+    public func queryVideoRecordingStatus(requestId: String) async throws -> VideoRecordingStatusEvent {
+        guard !requestId.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            throw BluetoothSdkError(
+                code: "missing_request_id",
+                message: "requestId is required to query video recording status."
+            )
+        }
+        try requireGlassesConnected(operation: "query video recording status")
+        let pending = PendingResponse<VideoRecordingStatusEvent>(operation: "query video recording status \(requestId)")
+        guard pendingVideoRecordingRequests[requestId] == nil else {
+            throw BluetoothSdkError(
+                code: "request_in_flight",
+                message: "A video recording command is already waiting for requestId \(requestId)."
+            )
+        }
+        pendingVideoRecordingRequests[requestId] = PendingVideoRecordingRequest(
+            expectedStatus: "recording_status",
+            pending: pending
+        )
+        DeviceManager.shared.queryVideoRecordingStatus(requestId)
+        do {
+            let event = try await pending.wait()
+            pendingVideoRecordingRequests.removeValue(forKey: requestId)
+            return event
+        } catch {
+            pendingVideoRecordingRequests.removeValue(forKey: requestId)
+            throw error
+        }
+    }
+
     public func requestVersionInfo() async throws -> VersionInfoResult {
         guard pendingVersionInfo == nil else {
             throw BluetoothSdkError(
@@ -1197,6 +1252,17 @@ public final class MentraBluetoothSDK {
                 message: "Cannot check OTA update because glasses build number is unavailable."
             )
         }
+        // A sideloaded client installs under its own package and coexists with the stock system
+        // app, so its build number is not comparable to the manifest pin and installing the
+        // manifest's APK would not replace it. Refuse rather than answer about the wrong client.
+        // Empty means the glasses predate the field: assume stock and keep existing behavior.
+        guard status.packageName.isEmpty || status.packageName == OtaManifestChecker.asgClientPackage else {
+            throw BluetoothSdkError(
+                code: "unofficial_client",
+                message: "Cannot check OTA update because the glasses run an unofficial client "
+                    + "(\(status.packageName))."
+            )
+        }
 
         let manifestUrl = try resolveOtaVersionUrl(status: status)
         let manifest = try await OtaManifestChecker.fetch(manifestUrl)
@@ -1207,6 +1273,14 @@ public final class MentraBluetoothSDK {
             currentBesVersion: otaStatus.besFirmwareVersion,
             manifest: manifest
         )
+    }
+
+    /// Return bundled release changelogs crossed between two coordinated product versions, newest first.
+    public func getReleaseChangelogs(
+        fromVersion: String? = nil,
+        toVersion: String? = nil
+    ) throws -> [ReleaseChangelog] {
+        try ReleaseChangelogCatalog.select(fromVersion: fromVersion, toVersion: toVersion)
     }
 
     /// Ask connected Mentra Live glasses to report the current OTA install/session status.
@@ -2066,6 +2140,8 @@ private func dispatchDiscoveredDevices(_ rawSearchResults: Any?) {
             if !event.lc3.isEmpty {
                 delegate?.mentraBluetoothSDK(self, didReceiveMicLc3: event)
             }
+        case "mic_health":
+            delegate?.mentraBluetoothSDK(self, didReceive: .micHealth(MicHealthEvent(values: data)))
         case "local_transcription":
             let event = LocalTranscriptionEvent(
                 text: data["text"] as? String ?? "",
@@ -2114,6 +2190,10 @@ private func dispatchDiscoveredDevices(_ rawSearchResults: Any?) {
             let event = GalleryStatusEvent(values: data)
             pendingGalleryStatus?.resolve(event)
             delegate?.mentraBluetoothSDK(self, didReceive: .raw(name: "gallery_status", values: event.values))
+        case "pairing_info":
+            delegate?.mentraBluetoothSDK(self, didReceive: .raw(name: "pairing_info", values: data))
+        case "entering_pairing_mode", "owner_replaced":
+            delegate?.mentraBluetoothSDK(self, didReceive: .raw(name: eventName, values: data))
         case "photo_response":
             let event = PhotoResponseEvent(values: data)
             handlePhotoResponseForRequests(event)
@@ -2156,7 +2236,13 @@ private func dispatchDiscoveredDevices(_ rawSearchResults: Any?) {
             var resultValues = data
             resultValues["type"] = "ota_status"
             pendingOtaQuery?.resolve(OtaQueryResult(values: resultValues))
-            delegate?.mentraBluetoothSDK(self, didReceive: .otaStatus(OtaStatusEvent(values: resultValues)))
+            let event = OtaStatusEvent(values: resultValues)
+            if let errorCode = otaStartRejectionErrorCode(event) {
+                pendingOtaStart?.reject(
+                    BluetoothSdkError(code: errorCode, message: "Glasses rejected OTA start: \(errorCode)")
+                )
+            }
+            delegate?.mentraBluetoothSDK(self, didReceive: .otaStatus(event))
         case "settings_ack":
             let event = SettingsAckEvent(values: data)
             handleSettingsAckForRequests(event)
@@ -2181,3 +2267,12 @@ private func dispatchDiscoveredDevices(_ rawSearchResults: Any?) {
     }
 }
 
+/// OTA status messages are not request-correlated, so only known pre-ack failures settle a start.
+private func otaStartRejectionErrorCode(_ event: OtaStatusEvent) -> String? {
+    guard event.status.lowercased() == "failed",
+          event.errorMessage?.lowercased() == "battery_low"
+    else {
+        return nil
+    }
+    return "battery_low"
+}

@@ -19,6 +19,8 @@ import android.view.Display;
 import android.view.Surface;
 import android.view.WindowManager;
 import androidx.annotation.NonNull;
+import com.mentra.asg_client.camera.policy.EisController;
+import com.mentra.asg_client.io.streaming.LivestreamEisPolicy;
 import com.mentra.asg_client.io.streaming.config.WhipStreamConfig;
 import com.mentra.asg_client.service.utils.DeviceProfile;
 import com.mentra.asg_client.service.utils.ServiceUtils;
@@ -375,10 +377,20 @@ public class WhipCameraCapturer implements VideoCapturer {
                     new Range<>(mCameraFps, mCameraFps));
             builder.set(CaptureRequest.CONTROL_MODE, CaptureRequest.CONTROL_MODE_AUTO);
 
-            // Power-saving: disable video stabilization
+            // Android's CONTROL_VIDEO_STABILIZATION is not Pixsmart EIS. Keep it off; Mentra
+            // Live EIS is the vendor key + SPORTS scene, armed only under the 500k pixel gate.
             builder.set(
                     CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE,
                     CaptureRequest.CONTROL_VIDEO_STABILIZATION_MODE_OFF);
+            boolean eis = LivestreamEisPolicy.logDecision(TAG, "whip-capture-request", mWidth, mHeight);
+            if (eis) {
+                EisController.configure(builder, true);
+                Log.i(TAG, "EIS stage=whip-capture-request applied=true vendorKey=com.pixsmart.eisfeature.eisEnable");
+            } else {
+                Log.i(
+                        TAG,
+                        "EIS stage=whip-capture-request applied=false skipped vendorKey and SPORTS scene");
+            }
 
             // Continuous video autofocus (less CPU than picture mode)
             builder.set(

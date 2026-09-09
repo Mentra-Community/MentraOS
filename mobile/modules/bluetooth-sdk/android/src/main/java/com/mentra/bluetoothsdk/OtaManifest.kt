@@ -3,30 +3,32 @@ package com.mentra.bluetoothsdk
 import java.net.HttpURLConnection
 import java.net.URI
 import java.net.URL
-import org.json.JSONArray
 import org.json.JSONObject
 
 internal object OtaManifestDefaults {
-    private const val SDK_OTA_RELEASE_BASE_URL =
-        "https://github.com/Mentra-Community/MentraOS/releases/download/bluetooth-sdk-ota"
     // ASG builds before 39 ignore ota_start.ota_version_url, so SDK checks must
     // use the same legacy production manifest those glasses will install from.
     const val LEGACY_PROD_OTA_VERSION_URL = "https://ota.mentraglass.com/prod_live_version.json"
 
     fun defaultOtaVersionUrl(): String {
-        val sdkVersion = BuildConfig.SDK_VERSION.trim()
-        if (sdkVersion.isBlank() || sdkVersion == "unspecified") {
+        val manifestUrl = GeneratedReleaseMetadata.OTA_MANIFEST_URL.trim()
+        if (manifestUrl.isBlank()) {
             throw BluetoothSdkException(
-                "missing_sdk_version",
-                "Cannot determine Bluetooth SDK version for the default OTA manifest URL.",
+                "ota_manifest_unconfigured",
+                "This source-built Bluetooth SDK has no embedded OTA manifest. Configure one with the debug API.",
             )
         }
-        return "$SDK_OTA_RELEASE_BASE_URL/bluetooth-sdk-$sdkVersion-version.json"
+        return manifestUrl
     }
 }
 
 internal object OtaManifestChecker {
-    private const val ASG_CLIENT_PACKAGE = "com.mentra.asg_client"
+    /**
+     * Package the stock Mentra glasses client installs as, and the key every apps-shaped manifest
+     * is pinned under. A client reporting any other package is a sideloaded build that this
+     * manifest cannot describe.
+     */
+    internal const val ASG_CLIENT_PACKAGE = "com.mentra.asg_client"
 
     fun normalizeHttpUrl(value: String): String {
         val trimmed = value.trim()
@@ -77,11 +79,11 @@ internal object OtaManifestChecker {
         downgradeFloorVersionCode: Long = 0L,
     ): Boolean =
         hasApkUpdate(currentBuildNumber, manifest, downgradeFloorVersionCode) ||
-            hasMtkUpdate(manifest.optJSONArray("mtk_patches"), currentMtkVersion) ||
+            hasMtkUpdate(manifest, currentMtkVersion) ||
             hasBesUpdate(manifest.optJSONObject("bes_firmware"), currentBesVersion)
 
     fun hasMtkPatches(manifest: JSONObject): Boolean =
-        (manifest.optJSONArray("mtk_patches")?.length() ?: 0) > 0
+        (manifest.optJSONArray("mtk_patches")?.length() ?: 0) > 0 || manifest.optJSONObject("mtk_full_ota") != null
 
     fun hasBesFirmware(manifest: JSONObject): Boolean =
         manifest.optJSONObject("bes_firmware") != null
@@ -146,18 +148,28 @@ internal object OtaManifestChecker {
         return downgradeFloorVersionCode > 0 && serverVersion >= downgradeFloorVersionCode
     }
 
-    private fun hasMtkUpdate(patches: JSONArray?, currentVersion: String): Boolean {
-        if (patches == null || patches.length() == 0) return false
+    private fun hasMtkUpdate(manifest: JSONObject, currentVersion: String): Boolean {
         if (currentVersion.isBlank()) return false
-
-        for (index in 0 until patches.length()) {
-            val patch = patches.optJSONObject(index) ?: continue
+        val current = currentVersion.trim().substringAfterLast('_')
+        val patches = manifest.optJSONArray("mtk_patches")
+        for (index in 0 until (patches?.length() ?: 0)) {
+            val patch = patches?.optJSONObject(index) ?: continue
             val startFirmware = patch.optString("start_firmware", "")
-            if (startFirmware == currentVersion) return true
-            val serverDate = if (startFirmware.contains("_")) startFirmware.substringAfterLast("_") else startFirmware
-            if (serverDate == currentVersion) return true
+            if (startFirmware.trim().substringAfterLast('_') == current) return true
         }
-        return false
+        val full = manifest.optJSONObject("mtk_full_ota") ?: return false
+        val target = (full.opt("end_firmware") as? String)?.trim()?.substringAfterLast('_') ?: return false
+        val pattern = Regex("[0-9]{8}(\\.[0-9]{1,9})?")
+        if (!pattern.matches(current) || !pattern.matches(target)) return false
+        val currentParts = current.split('.').map { it.toLong() }
+        val targetParts = target.split('.').map { it.toLong() }
+        val newer = targetParts[0] > currentParts[0] ||
+            (targetParts[0] == currentParts[0] && targetParts.getOrElse(1) { 0 } > currentParts.getOrElse(1) { 0 })
+        return newer && !full.has("start_firmware") &&
+            Regex("https?://[^/\\s]+/.*").matches(full.optString("url", "")) &&
+            Regex("[a-fA-F0-9]{64}").matches(full.optString("sha256", "")) &&
+            (full.opt("size") is Int || full.opt("size") is Long) &&
+            full.optLong("size", 0) in 1..(1024L * 1024 * 1024)
     }
 
     private fun hasBesUpdate(besFirmware: JSONObject?, currentVersion: String): Boolean {

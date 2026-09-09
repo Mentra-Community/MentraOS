@@ -56,14 +56,9 @@ enum class ScanStopReason {
 /**
  * Callbacks for `MentraBluetoothSdk.scan`.
  *
- * [onError] is not always terminal. A scan that fails to start reports the
- * failure through [onError] and [onComplete] never runs. A scan that runs to
- * completion always ends with [onComplete]; when it completes with zero
- * results while a compatible device is already GATT-connected by another app
- * on this phone, a non-terminal diagnostic error with code
- * `device_held_by_other_app` is delivered through [onError] immediately
- * before that [onComplete]. Discriminate on [BluetoothError.code], not on
- * [onError] having fired.
+ * Completed and cancelled scans report [onComplete]. A failure to start reports
+ * [onError] and is thrown to the caller. Optional empty-scan hints are delivered
+ * separately through [ScanDiagnosticCallback], never as errors.
  */
 interface ScanCallback {
     fun onResults(devices: List<Device>) {}
@@ -71,7 +66,37 @@ interface ScanCallback {
     fun onError(error: BluetoothError) {}
 }
 
-abstract class MentraBluetoothScanCallback : ScanCallback
+/** A non-fatal scan hint; it does not establish the cause of an empty result. */
+data class ScanDiagnostic(val code: String, val message: String)
+
+/**
+ * Optional scan diagnostics, delivered before [onComplete] for an empty completed
+ * scan. Kept separate so existing compiled [ScanCallback] implementations do not
+ * need a new method. Android's `device_connected_on_phone` hint identifies a
+ * model-compatible GATT connection on this phone, not which app owns it.
+ */
+interface ScanDiagnosticCallback : ScanCallback {
+    fun onDiagnostic(diagnostic: ScanDiagnostic)
+}
+
+abstract class MentraBluetoothScanCallback : ScanDiagnosticCallback {
+    override fun onDiagnostic(diagnostic: ScanDiagnostic) {}
+}
+
+/** Complete once, with an optional advisory that never replaces completion. */
+internal fun ScanCallback.completeScan(
+    reason: ScanStopReason,
+    devices: List<Device>,
+    diagnostic: () -> ScanDiagnostic?,
+) {
+    try {
+        if (this is ScanDiagnosticCallback && reason == ScanStopReason.COMPLETED && devices.isEmpty()) {
+            diagnostic()?.let { onDiagnostic(it) }
+        }
+    } finally {
+        onComplete(devices)
+    }
+}
 
 class ScanSession internal constructor(
     private val stopAction: () -> Unit,

@@ -4,6 +4,10 @@ description: "Head-position events from the glasses inertial measurement unit."
 icon: "person-walking"
 ---
 
+import BetaNote from '/snippets/beta-note.mdx'
+
+<BetaNote />
+
 `session.imu` reports which way the wearer is looking. The glasses' inertial
 measurement unit resolves head pose into two states, `"up"` and `"down"`, and
 fires an event each time that state changes. Use it to wake content when someone

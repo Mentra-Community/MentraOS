@@ -1,10 +1,9 @@
 /**
  * @fileoverview Slack notifications for Cloud V2 miniapp release submissions.
  *
- * Cloud V2 replacement for the Cloud V1 #mini-app-submissions Slack path
- * (cloud/packages/cloud/src/services/notifications/slack.service.ts,
- * notifyMiniAppSubmission): when a developer submits a release for review,
- * a summary is posted to the team channel via a Slack Incoming Webhook.
+ * Cloud V2 replacement for the retired V1 #mini-app-submissions Slack path:
+ * when a developer submits a release for review, a summary is posted to the
+ * team channel via a Slack Incoming Webhook.
  *
  * Best-effort by design: an unset CLOUD_MINIAPP_SLACK_WEBHOOK_URL (local dev,
  * tests) is a silent skip, and send failures are logged, never thrown, so a

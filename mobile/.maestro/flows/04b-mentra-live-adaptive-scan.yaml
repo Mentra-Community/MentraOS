@@ -1,0 +1,66 @@
+appId: ${MAESTRO_APP_ID}
+---
+# Test: Mentra Live adaptive pairing scan
+# Description: Verifies that Mentra Live skips the redundant prep screen and
+# that a no-result scan exposes pairing-mode help plus an in-place retry.
+
+- launchApp
+
+- tapOn: "Glasses"
+- tapOn: "Connect Glasses"
+
+- assertVisible: "Before you begin"
+- tapOn: "Continue"
+
+- assertVisible: "Select your glasses"
+- tapOn:
+    id: "pairing-model-mentra_live"
+
+# Accommodate clean Android/iOS devices while remaining a no-op when the suite
+# has already granted pairing permissions.
+- tapOn:
+    text: "Allow"
+    optional: true
+- tapOn:
+    text: "While using the app"
+    optional: true
+- tapOn:
+    text: "Only this time"
+    optional: true
+- tapOn:
+    text: "OK"
+    optional: true
+- tapOn:
+    text: "Allow"
+    optional: true
+- tapOn:
+    text: "While using the app"
+    optional: true
+- tapOn:
+    text: "Only this time"
+    optional: true
+- tapOn:
+    text: "OK"
+    optional: true
+
+# Mentra Live should navigate directly to the adaptive scanner, not the old
+# "Ready to pair" prep screen.
+- extendedWaitUntil:
+    visible: "Turn on your glasses"
+    timeout: 20000
+- assertVisible: "We're looking for your Mentra Live."
+- assertNotVisible: "Ready to pair"
+
+# With no physical glasses in the test environment, the same screen should
+# reveal the five-press instructions and restart discovery in place.
+- extendedWaitUntil:
+    visible: "Not showing up?"
+    timeout: 20000
+- assertVisible: "Already updated your glasses?"
+- assertVisible: "Scan Again"
+- tapOn: "Scan Again"
+
+- assertVisible: "Turn on your glasses"
+- assertVisible: "We're looking for your Mentra Live."
+- assertNotVisible: "Ready to pair"
+- takeScreenshot: "mentra-live-adaptive-scan"

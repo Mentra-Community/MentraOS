@@ -1,0 +1,7 @@
+ARG MENTRA_CLOUD_IMAGE
+FROM ${MENTRA_CLOUD_IMAGE}
+
+COPY cloud-v2/deploy/azure/enterprise-reference/privacy.html /app/cloud-v2/deploy/azure/enterprise-reference/privacy.html
+COPY cloud-v2/deploy/azure/enterprise-reference/terms.html /app/cloud-v2/deploy/azure/enterprise-reference/terms.html
+COPY cloud-v2/deploy/azure/enterprise-reference/assets/ /app/cloud-v2/deploy/azure/enterprise-reference/assets/
+COPY cloud-v2/deploy/azure/enterprise-reference/miniapps/ /app/cloud-v2/deploy/azure/enterprise-reference/miniapps/

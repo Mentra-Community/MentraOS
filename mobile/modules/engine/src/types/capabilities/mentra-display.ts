@@ -72,4 +72,7 @@ export const mentraDisplay: Capabilities = {
 
   // WiFi capabilities - Mentra Display does not support WiFi
   hasWifi: false,
+
+  // OTA capabilities - Mentra Display firmware updates are not driven by the ASG OTA flow
+  hasOta: false,
 };

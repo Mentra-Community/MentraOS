@@ -34,7 +34,7 @@ MentraOS is how developers and businesses build smart glasses apps.
 
 MentraOS handles pairing, connection, data streaming, hardware access, and cross-device compatibility, so you can focus on building amazing apps. Development goes from months to days.
 
-Every component is open source under the MIT license, giving you privacy, freedom, and control.
+Every component is open source under the Apache License 2.0, giving you privacy, freedom, and control.
 
 ## Supported Smart Glasses
 
@@ -86,7 +86,7 @@ MentraOS works across a growing ecosystem of smart glasses.
 - **Hardware Access:** Use displays, microphones, cameras, speakers, and everything else smart glasses expose from one API.
 - **App Distribution:** Publish to the Mentra MiniApp Store and reach users across the MentraOS ecosystem.
 - **Business Deployment:** Deploy smart glasses apps for field work, remote support, training, accessibility, and compliance-sensitive workflows. MentraOS is already being deployed by Fortune 500 companies.
-- **Open Source Control:** Own it, host it, modify it, and extend it. MentraOS is MIT-licensed infrastructure designed for privacy, transparency, and freedom from hardware or cloud lock-in.
+- **Open Source Control:** Own it, host it, modify it, and extend it. MentraOS is Apache-2.0-licensed infrastructure designed for privacy, transparency, and freedom from hardware or cloud lock-in.
 
 ## Apps on the Mentra MiniApp Store
 
@@ -144,7 +144,7 @@ Looking for ways to contribute? We mark issues we'd love the community to help w
 
 ## License
 
-MIT License
+Apache License 2.0
 
 Copyright 2026 Mentra Labs, Inc.
 

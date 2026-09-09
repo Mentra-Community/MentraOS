@@ -46,6 +46,9 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             "settings_ack",
             "version_info",
             "pair_failure",
+            "pairing_info",
+            "entering_pairing_mode",
+            "owner_replaced",
             "audio_pairing_needed",
             "audio_connected",
             "audio_disconnected",
@@ -57,6 +60,7 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             "ws_bin",
             "mic_pcm",
             "mic_lc3",
+            "mic_health",
             "stream_status",
             "keep_alive_ack",
             "mtk_update_complete",
@@ -129,6 +133,11 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
         AsyncFunction("displayText") { (text: String, x: Int?, y: Int?, size: Int?) in
             let sdk = await MainActor.run { self.bluetoothSdk() }
             try? await sdk.displayText(text, x: x ?? 0, y: y ?? 0, size: size ?? 24)
+        }
+
+        AsyncFunction("setDashboardContent") { (content: String) in
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            await sdk.setDashboardContent(content)
         }
 
         // MARK: - Connection Commands
@@ -567,6 +576,11 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             ).values
         }
 
+        AsyncFunction("queryVideoRecordingStatus") { (requestId: String) in
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            return try await sdk.queryVideoRecordingStatus(requestId: requestId).values
+        }
+
         // MARK: - Stream Commands
 
         AsyncFunction("startStream") { (params: [String: Any]) in
@@ -686,6 +700,7 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
 
         // MARK: - STT Model Management
 
+        #if !os(macOS)
         AsyncFunction("setSttModelDetails") { (path: String, languageCode: String) in
             STTTools.setSttModelDetails(path, languageCode)
         }
@@ -738,6 +753,7 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
                 speed: speed
             )
         }
+        #endif
     }
 
     @MainActor
@@ -817,6 +833,8 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             sendEvent("voice_activity_detection_status", status.values)
         case let .speakingStatus(status):
             sendEvent("speaking_status", status.values)
+        case let .micHealth(health):
+            sendEvent("mic_health", health.values)
         case let .wifiStatus(status):
             sendEvent("wifi_status_change", status.values)
         case let .hotspotStatus(status):
@@ -922,7 +940,5 @@ private extension ConnectOptions {
         )
     }
 }
-
-
 
 

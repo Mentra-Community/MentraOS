@@ -1,5 +1,4 @@
 import {engine, useApps, useStart, useStop} from "@mentra/engine"
-import {miniappRunningRegistry} from "@mentra/engine/devtools"
 import {StatusBar} from "expo-status-bar"
 import {useCallback, useEffect, useState} from "react"
 import {SafeAreaView, ScrollView, StyleSheet, Text, TextInput, View} from "react-native"
@@ -22,7 +21,7 @@ export default function App() {
   const apps = useApps()
   const start = useStart()
   const stop = useStop()
-  const [running, setRunning] = useState<string[]>(() => miniappRunningRegistry.getAll())
+  const running = apps.filter((app) => app.running).map((app) => app.packageName)
 
   const [glassesState, setGlassesState] = useState<string>(() => engine.glasses.status().state)
   const [scanning, setScanning] = useState(false)
@@ -47,14 +46,11 @@ export default function App() {
     // eslint-disable-next-line react-hooks/exhaustive-deps -- one-shot bootstrap
   }, [])
 
-  // Live read-models: glasses connection, scan progress, scan results, running set.
+  // Live read-models: glasses connection and scan progress/results. useApps()
+  // already projects each miniapp's running state.
   useEffect(() => engine.glasses.onStatus((s) => setGlassesState(s.state)), [])
   useEffect(() => engine.pairing.onScanning(setScanning), [])
   useEffect(() => engine.pairing.onFound(setDevices), [])
-  useEffect(() => {
-    setRunning(miniappRunningRegistry.getAll())
-    return miniappRunningRegistry.subscribe(() => setRunning(miniappRunningRegistry.getAll()))
-  }, [])
 
   const connected = glassesState === "connected"
   const firstApp = apps[0]

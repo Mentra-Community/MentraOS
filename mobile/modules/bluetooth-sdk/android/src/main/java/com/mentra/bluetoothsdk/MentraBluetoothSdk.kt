@@ -1,8 +1,11 @@
 package com.mentra.bluetoothsdk
 
+import android.app.Activity
+import android.app.Application
 import android.bluetooth.BluetoothManager
 import android.bluetooth.BluetoothProfile
 import android.content.Context
+import android.os.Bundle
 import android.os.Handler
 import android.os.Looper
 import com.mentra.bluetoothsdk.utils.ControllerTypes
@@ -31,6 +34,23 @@ class MentraBluetoothSdk private constructor(
     private val discoveredDeviceNames = mutableSetOf<String>()
     private val bridgeEventSinkId: String
     private val storeListenerId: String
+    private val activityLifecycleCallbacks =
+        object : Application.ActivityLifecycleCallbacks {
+            override fun onActivityResumed(activity: Activity) {
+                // Match the Mentra App's OnActivityEntersForeground hook. This runs after
+                // runtime permission dialogs in native host apps, allowing the service to
+                // replace its temporary dataSync type with connectedDevice/microphone/location.
+                deviceManager.refreshForegroundServiceTypes()
+            }
+
+            override fun onActivityCreated(activity: Activity, savedInstanceState: Bundle?) = Unit
+            override fun onActivityStarted(activity: Activity) = Unit
+            override fun onActivityPaused(activity: Activity) = Unit
+            override fun onActivityStopped(activity: Activity) = Unit
+            override fun onActivitySaveInstanceState(activity: Activity, outState: Bundle) = Unit
+            override fun onActivityDestroyed(activity: Activity) = Unit
+        }
+    private var activityLifecycleCallbacksRegistered = false
     private var suppressDefaultDeviceEvents = false
     private val streamKeepAliveLock = Any()
     private var activeStreamKeepAlive: ActiveStreamKeepAlive? = null
@@ -58,6 +78,10 @@ class MentraBluetoothSdk private constructor(
         listeners.add(listener)
         Bridge.initialize(appContext)
         deviceManager = DeviceManager.getInstance()
+        (appContext as? Application)?.let { application ->
+            application.registerActivityLifecycleCallbacks(activityLifecycleCallbacks)
+            activityLifecycleCallbacksRegistered = true
+        }
         bridgeEventSinkId = Bridge.addEventSink { eventName, data -> dispatchBridgeEvent(eventName, data) }
         // Baseline the analytics connection state before subscribing to the store:
         // store updates invoke listeners synchronously on the updating thread, so a
@@ -259,6 +283,9 @@ class MentraBluetoothSdk private constructor(
             DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "device_name", device.name)
             DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "device_address", device.address ?: "")
             DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "project_name", device.projectName ?: "")
+            DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_name", "")
+            DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_address", "")
+            DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_secure_pairing_capable", "")
         } finally {
             suppressDefaultDeviceEvents = false
         }
@@ -272,6 +299,9 @@ class MentraBluetoothSdk private constructor(
             DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "device_name", "")
             DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "device_address", "")
             DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "project_name", "")
+            DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_name", "")
+            DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_address", "")
+            DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_secure_pairing_capable", "")
         } finally {
             suppressDefaultDeviceEvents = false
         }
@@ -321,14 +351,12 @@ class MentraBluetoothSdk private constructor(
     /**
      * Scans for glasses of [model], reporting through [callback].
      *
-     * Callback ordering: a scan that fails to START reports through
-     * [ScanCallback.onError] and never calls [ScanCallback.onComplete]. A scan
-     * that runs to completion always calls [ScanCallback.onComplete]; when it
-     * completes EMPTY while a compatible device is already GATT-connected by
-     * another app on this phone, a non-terminal diagnostic [BluetoothError]
-     * with code `device_held_by_other_app` is delivered through
-     * [ScanCallback.onError] immediately before that [ScanCallback.onComplete].
-     * Discriminate on [BluetoothError.code], not on onError having fired.
+     * A completed or cancelled scan ends with [ScanCallback.onComplete].
+     * [ScanCallback.onError] remains reserved for failure to start scanning.
+     * Callbacks implementing [ScanDiagnosticCallback] may receive a best-effort
+     * hint before an empty completed scan. Android reports phone-wide connection
+     * state, so this hint cannot identify an owning app or prove why scanning
+     * found no devices. React Native's separate scan implementation is unaffected.
      */
     @JvmOverloads
     fun scan(
@@ -361,21 +389,9 @@ class MentraBluetoothSdk private constructor(
             mainHandler.removeCallbacks(timeoutRunnable)
             session.markStopped()
             stopScan(reason)
-            if (reason == ScanStopReason.COMPLETED && latestResults.isEmpty()) {
-                deviceHeldByOtherAppName(model)?.let { heldName ->
-                    // Same-phone detection only: another app on this phone holds the GATT
-                    // link, so the glasses never advertise and the scan comes back empty.
-                    callback.onError(
-                        BluetoothError(
-                            code = "device_held_by_other_app",
-                            message =
-                                "Scan found no glasses, but \"$heldName\" is already GATT-connected " +
-                                    "by another app on this phone. Disconnect it there and scan again.",
-                        ),
-                    )
-                }
+            callback.completeScan(reason, latestResults.toList()) {
+                connectedDeviceScanDiagnostic(model)
             }
-            callback.onComplete(latestResults.toList())
         }
 
         timeoutRunnable = Runnable { finish(ScanStopReason.COMPLETED) }
@@ -410,8 +426,29 @@ class MentraBluetoothSdk private constructor(
                 cancelConnectionAttempt()
             }
         }
-        if (options.saveAsDefault && !isController) {
-            setDefaultDevice(device)
+        if (!isController) {
+            if (options.saveAsDefault) {
+                setDefaultDevice(device)
+            } else {
+                // Pairing uses saveAsDefault=false so default identity stays on the
+                // previous owner until handleDeviceReady. Stash the GATT target separately
+                // so MentraLive can connect by MAC without promoting getDefaultDevice().
+                DeviceStore.apply(
+                        ObservableStore.BLUETOOTH_CATEGORY,
+                        "pending_device_name",
+                        device.name,
+                )
+                DeviceStore.apply(
+                        ObservableStore.BLUETOOTH_CATEGORY,
+                        "pending_device_address",
+                        device.address ?: "",
+                )
+                DeviceStore.apply(
+                        ObservableStore.BLUETOOTH_CATEGORY,
+                        "pending_device_secure_pairing_capable",
+                        device.securePairingCapable ?: "",
+                )
+            }
         }
         DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_wearable", device.model.deviceType)
         deviceManager.connectByName(device.name)
@@ -435,6 +472,9 @@ class MentraBluetoothSdk private constructor(
     }
 
     fun cancelConnectionAttempt() {
+        DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_name", "")
+        DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_address", "")
+        DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_secure_pairing_capable", "")
         deviceManager.disconnect()
     }
 
@@ -443,6 +483,9 @@ class MentraBluetoothSdk private constructor(
     }
 
     fun disconnect() {
+        DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_name", "")
+        DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_address", "")
+        DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "pending_device_secure_pairing_capable", "")
         deviceManager.disconnect()
     }
 
@@ -465,6 +508,11 @@ class MentraBluetoothSdk private constructor(
 
     fun clearDisplay() {
         deviceManager.clearDisplay()
+    }
+
+    /** Sets session-only content shown below the standard dashboard status header. */
+    fun setDashboardContent(content: String) {
+        deviceManager.setDashboardContent(content)
     }
 
     fun showDashboard() {
@@ -1118,6 +1166,25 @@ class MentraBluetoothSdk private constructor(
         }
     }
 
+    suspend fun queryVideoRecordingStatus(requestId: String): VideoRecordingStatusEvent {
+        require(requestId.isNotBlank()) { "requestId is required to query video recording status." }
+        requireGlassesConnected("query video recording status")
+        val pending = PendingResponse<VideoRecordingStatusEvent>("query video recording status")
+        val pendingRequest = PendingVideoRecordingRequest("recording_status", pending)
+        if (pendingVideoRecordingRequests.putIfAbsent(requestId, pendingRequest) != null) {
+            throw BluetoothSdkException(
+                "request_in_flight",
+                "A video recording command is already waiting for requestId $requestId.",
+            )
+        }
+        try {
+            deviceManager.queryVideoRecordingStatus(requestId)
+            return pending.await()
+        } finally {
+            pendingVideoRecordingRequests.remove(requestId, pendingRequest)
+        }
+    }
+
     suspend fun requestVersionInfo(): VersionInfoResult {
         val pending = PendingResponse<VersionInfoResult>("version info request")
         synchronized(oneShotLock) {
@@ -1164,6 +1231,17 @@ class MentraBluetoothSdk private constructor(
                 "Cannot check OTA update because glasses build number is unavailable.",
             )
         }
+        // A sideloaded client installs under its own package and coexists with the stock system
+        // app, so its build number is not comparable to the manifest pin and installing the
+        // manifest's APK would not replace it. Refuse rather than answer about the wrong client.
+        // Blank means the glasses predate the field: assume stock and keep existing behavior.
+        if (status.packageName.isNotBlank() && status.packageName != OtaManifestChecker.ASG_CLIENT_PACKAGE) {
+            throw BluetoothSdkException(
+                "unofficial_client",
+                "Cannot check OTA update because the glasses run an unofficial client " +
+                    "(${status.packageName}).",
+            )
+        }
 
         val manifestUrl = resolveOtaVersionUrl(status)
         val manifest = OtaManifestChecker.fetch(manifestUrl)
@@ -1175,6 +1253,12 @@ class MentraBluetoothSdk private constructor(
             manifest,
         )
     }
+
+    /** Return bundled release changelogs crossed between two coordinated product versions, newest first. */
+    fun getReleaseChangelogs(
+        fromVersion: String? = null,
+        toVersion: String? = null,
+    ): List<ReleaseChangelog> = ReleaseChangelogCatalog.select(fromVersion, toVersion)
 
     /** Ask connected Mentra Live glasses to report the current OTA install/session status. */
     private suspend fun queryOtaStatus(): OtaQueryResult =
@@ -1273,6 +1357,7 @@ class MentraBluetoothSdk private constructor(
                 systemTimeMs = versionInfo.systemTimeMs ?: status.systemTimeMs,
                 otaVersionUrl = versionInfo.otaVersionUrl.ifBlank { status.otaVersionUrl },
                 appVersion = versionInfo.appVersion.ifBlank { status.appVersion },
+                packageName = versionInfo.packageName.ifBlank { status.packageName },
                 hotspotOtaVersion =
                     if (versionInfo.hotspotOtaVersion > 0) {
                         versionInfo.hotspotOtaVersion
@@ -1362,6 +1447,12 @@ class MentraBluetoothSdk private constructor(
 
     override fun close() {
         stopStreamKeepAliveMonitor()
+        if (activityLifecycleCallbacksRegistered) {
+            (appContext as? Application)?.unregisterActivityLifecycleCallbacks(
+                activityLifecycleCallbacks,
+            )
+            activityLifecycleCallbacksRegistered = false
+        }
         Bridge.removeEventSink(bridgeEventSinkId)
         DeviceStore.store.removeListener(storeListenerId)
         analytics.shutdown()
@@ -1417,55 +1508,44 @@ class MentraBluetoothSdk private constructor(
     }
 
     /**
-     * Best-effort name of a glasses device compatible with the scanned [model] whose
-     * GATT connection is already held by another app on this phone (for example the
-     * MentraOS app), or null when no such device can be identified.
-     *
-     * Detection is limited to connections held on the SAME phone: it queries
-     * [BluetoothManager.getConnectedDevices] for [BluetoothProfile.GATT], which only sees
-     * this phone's own GATT connections. A connection held by a different phone is
-     * invisible here and cannot be detected.
-     *
-     * Results are intersected with Mentra device identity via [HeldDeviceMatcher]
-     * (the saved default device when its model matches [model], plus that model's
-     * known advertised-name prefixes) so an unrelated GATT peripheral is never
-     * reported. Returns null for [DeviceModel.SIMULATED], while this SDK itself is
-     * connected or connecting (its own GATT link also appears in the adapter-wide
-     * query and is not "another app"), and when Bluetooth is unsupported or off or
-     * the BLUETOOTH_CONNECT runtime permission (API 31+) is missing, so callers
-     * degrade to existing behavior instead of crashing.
+     * A model-compatible device already connected to this phone can explain an
+     * empty scan, but Android does not expose app ownership or exclusive use.
+     * Skip known SDK connections/attempts and unavailable Bluetooth permissions.
      */
-    private fun deviceHeldByOtherAppName(model: DeviceModel): String? {
+    private fun connectedDeviceScanDiagnostic(model: DeviceModel): ScanDiagnostic? {
         if (model == DeviceModel.SIMULATED) return null
-        // getConnectedDevices(GATT) is adapter-wide, not per-app: it also lists the
-        // GATT link held (or being brought up) by THIS process. Blaming "another
-        // app" for our own connection would misdirect the user, so skip the check
-        // while this SDK is connected or a connect attempt is in flight.
         val glassesStatus = getRawGlassesStatus()
         if (glassesStatus.connected ||
+            glassesStatus.connectionState == GlassesConnectionState.CONNECTED ||
             glassesStatus.connectionState == GlassesConnectionState.CONNECTING ||
             glassesStatus.connectionState == GlassesConnectionState.BONDING
         ) {
             return null
         }
-        val bluetoothManager =
-            appContext.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager ?: return null
-        val adapter = bluetoothManager.adapter ?: return null
         return try {
+            val bluetoothManager =
+                appContext.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager ?: return null
+            val adapter = bluetoothManager.adapter ?: return null
             if (!adapter.isEnabled) return null
             val defaultDevice = currentDefaultDevice()
-            bluetoothManager.getConnectedDevices(BluetoothProfile.GATT)
+            val device = bluetoothManager.getConnectedDevices(BluetoothProfile.GATT)
                 .firstOrNull { device ->
-                    HeldDeviceMatcher.matches(
+                    ConnectedDeviceMatcher.matches(
                         model = model,
                         defaultDevice = defaultDevice,
                         candidateName = device.name,
                         candidateAddress = device.address,
                     )
-                }
-                ?.let { it.name ?: it.address }
+                } ?: return null
+            val name = device.name?.takeIf { it.isNotBlank() } ?: device.address
+            ScanDiagnostic(
+                code = "device_connected_on_phone",
+                message =
+                    "Scan found no glasses, but a matching device \"$name\" is already connected to this phone. " +
+                        "If another app is using it, disconnect it there and scan again.",
+            )
         } catch (error: SecurityException) {
-            // BLUETOOTH_CONNECT not granted; skip the check rather than break scanning.
+            // BLUETOOTH_CONNECT can be absent or revoked while scanning.
             null
         }
     }
@@ -1613,6 +1693,9 @@ class MentraBluetoothSdk private constructor(
                 }
                 dispatchToListeners { it.onGalleryStatus(event) }
             }
+            "pairing_info" -> {
+                dispatchToListeners { it.onRawEvent(eventName, data) }
+            }
             "photo_response" -> {
                 val event = PhotoResponseEvent(data)
                 handlePhotoResponseForRequests(event)
@@ -1660,10 +1743,19 @@ class MentraBluetoothSdk private constructor(
             }
             "ota_status" -> {
                 val resultValues = data + mapOf("type" to "ota_status")
+                val event = OtaStatusEvent.fromMap(resultValues)
                 synchronized(oneShotLock) {
                     pendingOtaQuery?.resolve(OtaQueryResult(resultValues))
+                    otaStartRejectionErrorCode(event)?.let { errorCode ->
+                        pendingOtaStart?.reject(
+                            BluetoothSdkException(errorCode, "Glasses rejected OTA start: $errorCode")
+                        )
+                    }
                 }
-                dispatchToListeners { it.onOtaStatus(OtaStatusEvent.fromMap(resultValues)) }
+                dispatchToListeners { it.onOtaStatus(event) }
+            }
+            "mic_health" -> {
+                dispatchToListeners { it.onMicHealth(MicHealthEvent.fromMap(data)) }
             }
             "settings_ack" -> {
                 val event = SettingsAckEvent(data)
@@ -2253,3 +2345,14 @@ class MentraBluetoothSdk private constructor(
         }
     }
 }
+
+/** OTA status messages are not request-correlated, so only known pre-ack failures settle a start. */
+internal fun otaStartRejectionErrorCode(event: OtaStatusEvent): String? =
+    if (
+        event.status.equals("failed", ignoreCase = true) &&
+            event.errorMessage.equals("battery_low", ignoreCase = true)
+    ) {
+        "battery_low"
+    } else {
+        null
+    }

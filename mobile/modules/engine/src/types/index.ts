@@ -1,9 +1,5 @@
-/**
- * Engine shared types — copied verbatim from @mentra/types so the module is
- * self-contained. Keep these in sync with cloud/packages/types/src when the
- * canonical types change. The capability profiles also live here under
- * ./capabilities/.
- */
+/** Engine capability types and profiles. Miniapp manifest requirement types
+ * are re-exported from @mentra/miniapp, their canonical owner. */
 
 // Enums (runtime values)
 export {HardwareType, HardwareRequirementLevel, DeviceTypes, ControllerTypes} from "./enums"
@@ -29,6 +25,7 @@ export {
   evenRealitiesG1,
   evenRealitiesG2,
   mentraLive,
+  nimo,
   vuzixZ100,
   mentraDisplay,
 } from "./hardware"

@@ -11,8 +11,8 @@ They cover:
 - `feedback`: user-authored feature/general feedback.
 - `automatic`: runtime-detected failures.
 
-This is a clean Cloud V2 implementation under `cloud-v2/`; Cloud V1 under
-`cloud/` remains untouched.
+This is the Cloud V2 reporting implementation. The retired Cloud V1 source has
+been removed from the repository.
 
 ## Boundary
 

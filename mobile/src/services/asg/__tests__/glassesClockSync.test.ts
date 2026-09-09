@@ -1,4 +1,4 @@
-import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
+import BluetoothSdk from "@mentra/bluetooth-sdk"
 
 // glassesClockSync + gallerySyncClock moved into island; this jest test imports by path.
 import {detectClockSkew} from "../../../../modules/engine/src/services/gallerySyncClock"
@@ -9,7 +9,7 @@ import {
   resetOtaClockFixCooldownForTests,
 } from "../../../../modules/engine/src/services/glassesClockSync"
 
-jest.mock("@mentra/bluetooth-sdk-internal", () => ({
+jest.mock("@mentra/bluetooth-sdk", () => ({
   __esModule: true,
   default: {
     setSystemTime: jest.fn().mockResolvedValue(undefined),

@@ -61,4 +61,7 @@ export const vuzixZ100: Capabilities = {
 
   // WiFi capabilities - does not support WiFi
   hasWifi: false,
+
+  // OTA capabilities - Z100 firmware updates are not driven by the ASG OTA flow
+  hasOta: false,
 };

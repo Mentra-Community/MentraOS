@@ -6,6 +6,7 @@ import {AwesomeGalleryViewer, CustomOverlay} from "./AwesomeGalleryViewer"
 
 let mockGalleryProps: Record<string, unknown> = {}
 let mockImageProps: Record<string, unknown> = {}
+let mockVideoProps: Record<string, unknown> = {}
 
 jest.mock("@gorhom/bottom-sheet", () => ({
   __esModule: true,
@@ -15,6 +16,19 @@ jest.mock("@/components/ignite/Icon", () => {
   const React = require("react")
   const {Text} = require("react-native")
   return {Icon: ({name}: {name: string}) => React.createElement(Text, null, name)}
+})
+jest.mock("@/contexts/ThemeContext", () => {
+  const theme = {
+    colors: {background: "#f7f7f7", border: "#dddddd", foreground: "#111111"},
+    spacing: {s2: 8, s3: 12, s4: 16, s6: 24, s8: 32},
+  }
+
+  return {
+    useAppTheme: () => ({
+      theme,
+      themed: (style: unknown) => (typeof style === "function" ? style(theme) : style),
+    }),
+  }
 })
 jest.mock("expo-image", () => ({
   Image: (props: Record<string, unknown>) => {
@@ -50,7 +64,10 @@ jest.mock("react-native-vector-icons/MaterialCommunityIcons", () => {
     return React.createElement(Text, null, name)
   }
 })
-jest.mock("react-native-video", () => () => null)
+jest.mock("react-native-video", () => (props: Record<string, unknown>) => {
+  mockVideoProps = props
+  return null
+})
 
 describe("CustomOverlay", () => {
   it("exposes visible toolbar actions for closing, details, and sharing", () => {
@@ -119,5 +136,27 @@ describe("CustomOverlay", () => {
       source: {uri: "file:///gallery/photo.jpg"},
       transition: 0,
     })
+  })
+
+  it("uses the active theme background throughout video previews", () => {
+    const video = {
+      name: "video.mp4",
+      url: "file:///gallery/video.mp4",
+      thumbnailPath: "file:///gallery/video-thumbnail.jpg",
+      is_video: true,
+    } as PhotoInfo
+
+    render(<AwesomeGalleryViewer visible photos={[video]} initialIndex={0} onClose={jest.fn()} />)
+    const renderItem = mockGalleryProps.renderItem as (info: {
+      item: PhotoInfo
+      index: number
+      setImageDimensions: jest.Mock
+    }) => React.ReactElement
+
+    const videoView = render(renderItem({item: video, index: 0, setImageDimensions: jest.fn()}))
+
+    expect(videoView.getByTestId("video-player-container")).toHaveStyle({backgroundColor: "#f7f7f7"})
+    expect(videoView.getByTestId("video-thumbnail-overlay")).toHaveStyle({backgroundColor: "#f7f7f7"})
+    expect(mockVideoProps.style).toMatchObject({backgroundColor: "#f7f7f7"})
   })
 })

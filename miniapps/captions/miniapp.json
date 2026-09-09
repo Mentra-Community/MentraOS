@@ -1,7 +1,7 @@
 {
   "$schema": "./node_modules/@mentra/miniapp-cli/schema/miniapp.schema.json",
   "packageName": "com.mentra.captions",
-  "version": "1.0.15",
+  "version": "1.0.16",
   "name": "Captions",
   "description": "Local (island-runtime) port of the MentraOS Live Captions app. Subscribes to transcription, renders captions on the glasses display, and exposes a WebView for language + display settings.",
   "type": "standard",

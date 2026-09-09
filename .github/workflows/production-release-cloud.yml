@@ -1,0 +1,301 @@
+name: Production Release - Cloud V2
+
+on:
+  workflow_dispatch:
+    inputs:
+      release_identity:
+        required: true
+        type: string
+      attempt:
+        required: true
+        type: number
+      phase:
+        required: true
+        type: choice
+        options:
+          - preflight
+          - deploy
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: production-release-${{ inputs.release_identity }}-attempt-${{ inputs.attempt }}
+  cancel-in-progress: false
+
+jobs:
+  preflight:
+    name: Validate production Cloud configuration contract
+    if: inputs.phase == 'preflight'
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    environment:
+      name: production-cloud-status
+    env:
+      PORTER_CLUSTER: "5692"
+      PORTER_HOST: https://dashboard.porter.run
+      PORTER_PROJECT: "15081"
+      PORTER_TOKEN: ${{ secrets.PORTER_TOKEN }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Load current immutable promotion record
+        id: promotion
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          node .github/scripts/production-promotion-assets.mjs download-latest
+          --repository "$GITHUB_REPOSITORY"
+          --release "${{ inputs.release_identity }}"
+          --attempt "${{ inputs.attempt }}"
+          --output promotion-input/current.json
+          --github-output "$GITHUB_OUTPUT"
+
+      - name: Resolve the frozen Cloud source
+        id: source
+        run: echo "commit=$(jq -er .source.mentraosCommit promotion-input/current.json)" >> "$GITHUB_OUTPUT"
+
+      - name: Checkout the frozen Cloud source separately from workflow tooling
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.source.outputs.commit }}
+          path: promotion-source
+
+      - name: Require the staging-compatible state
+        run: |
+          [[ "$(jq -er .state promotion-input/current.json)" == "staging-compatible" ]]
+          node .github/scripts/validate-production-cloud-config.mjs \
+            --contract .github/production-release/cloud-config-contract.json \
+            --root promotion-source
+
+      - uses: porter-dev/setup-porter@v0.1.0
+
+      - name: Pull staging and production configuration without logging values
+        run: |
+          set -euo pipefail
+          umask 077
+          mkdir -p "$RUNNER_TEMP/production-config"
+          trap 'rm -f "$RUNNER_TEMP/production-config/staging.env" "$RUNNER_TEMP/production-config/prod.env"' EXIT
+          porter env pull --group cloud-v2-staging-doppler --file "$RUNNER_TEMP/production-config/staging.env"
+          porter env pull --group cloud-v2-prod-doppler-sync --file "$RUNNER_TEMP/production-config/prod.env"
+          test -s "$RUNNER_TEMP/production-config/staging.env"
+          test -s "$RUNNER_TEMP/production-config/prod.env"
+          mkdir -p promotion-output/config
+          node .github/scripts/validate-production-cloud-config.mjs \
+            --contract .github/production-release/cloud-config-contract.json \
+            --root promotion-source \
+            --environment staging \
+            --env-file "$RUNNER_TEMP/production-config/staging.env" \
+            --output promotion-output/config/staging.json
+          node .github/scripts/validate-production-cloud-config.mjs \
+            --contract .github/production-release/cloud-config-contract.json \
+            --root promotion-source \
+            --environment prod \
+            --env-file "$RUNNER_TEMP/production-config/prod.env" \
+            --output promotion-output/config/prod.json
+          jq -s \
+            '{schemaVersion: 1, kind: "production-cloud-config-preflight", contractVersion: .[0].contractVersion, environments: .}' \
+            promotion-output/config/staging.json promotion-output/config/prod.json \
+            > promotion-output/config-preflight.json
+          rm -f "$RUNNER_TEMP/production-config/staging.env" "$RUNNER_TEMP/production-config/prod.env"
+
+      - name: Append production-config-ready state
+        id: next
+        run: |
+          set -euo pipefail
+          node .github/scripts/production-promotion-assets.mjs prepare-evidence \
+            --file promotion-output/config-preflight.json \
+            --kind production-cloud-config-preflight \
+            --url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --output promotion-output/evidence.json \
+            --output-directory promotion-output/evidence-assets \
+            --github-output "$GITHUB_OUTPUT"
+          node .github/scripts/production-promotion-state.mjs transition \
+            --record promotion-input/current.json \
+            --to production-config-ready \
+            --actor "$GITHUB_ACTOR" \
+            --created-at "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" \
+            --provenance-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --evidence promotion-output/evidence.json \
+            --output promotion-output/next.json
+          name=$(node --input-type=module -e '
+            import {readFileSync} from "node:fs";
+            import {promotionAssetName} from "./.github/scripts/production-promotion-state.mjs";
+            process.stdout.write(promotionAssetName(JSON.parse(readFileSync("promotion-output/next.json", "utf8"))));
+          ')
+          mv promotion-output/next.json "promotion-output/$name"
+          echo "record=promotion-output/$name" >> "$GITHUB_OUTPUT"
+
+      - name: Publish sanitized preflight evidence and next state
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          node .github/scripts/publish-immutable-release-asset.mjs \
+            --file "${{ steps.next.outputs.asset_path }}" \
+            --name "${{ steps.next.outputs.asset_name }}" \
+            --release-id "${{ steps.promotion.outputs.release_id }}" \
+            --repository "$GITHUB_REPOSITORY"
+          node .github/scripts/production-promotion-assets.mjs publish-record \
+            --record "${{ steps.next.outputs.record }}" \
+            --release-id "${{ steps.promotion.outputs.release_id }}" \
+            --repository "$GITHUB_REPOSITORY"
+
+  load-deployment:
+    name: Load exact production deployment inputs
+    if: inputs.phase == 'deploy'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      plan_artifact: ${{ steps.plan.outputs.artifact }}
+      source_commit: ${{ steps.plan.outputs.source_commit }}
+      promotion_release_id: ${{ steps.promotion.outputs.release_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Load current immutable promotion record
+        id: promotion
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          node .github/scripts/production-promotion-assets.mjs download-latest
+          --repository "$GITHUB_REPOSITORY"
+          --release "${{ inputs.release_identity }}"
+          --attempt "${{ inputs.attempt }}"
+          --output promotion-input/current.json
+          --github-output "$GITHUB_OUTPUT"
+
+      - name: Download frozen production plan
+        id: plan
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$(jq -er .state promotion-input/current.json)" == "production-config-ready" ]]
+          name="production-release-plan-${{ inputs.release_identity }}.json"
+          assets=$(gh api --paginate --slurp \
+            "repos/${GITHUB_REPOSITORY}/releases/${{ steps.promotion.outputs.release_id }}/assets?per_page=100" | jq 'add')
+          matches=$(jq --arg name "$name" '[.[] | select(.name == $name)]' <<< "$assets")
+          [[ "$(jq 'length' <<< "$matches")" == "1" ]]
+          asset_id=$(jq -er '.[0].id' <<< "$matches")
+          mkdir -p deployment-input
+          gh api -H "Accept: application/octet-stream" \
+            "repos/${GITHUB_REPOSITORY}/releases/assets/$asset_id" > deployment-input/release-plan.json
+          source_commit=$(jq -er .sourceCommit deployment-input/release-plan.json)
+          [[ "$source_commit" == "$(jq -er .source.mentraosCommit promotion-input/current.json)" ]]
+          artifact="production-release-plan-${GITHUB_RUN_ID}"
+          {
+            echo "artifact=$artifact"
+            echo "source_commit=$source_commit"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.plan.outputs.artifact }}
+          path: deployment-input/release-plan.json
+          if-no-files-found: error
+          retention-days: 30
+
+  deploy:
+    name: Deploy exact Cloud V2 production source
+    if: inputs.phase == 'deploy'
+    needs: load-deployment
+    uses: ./.github/workflows/reusable-coordinated-cloud-v2.yml
+    with:
+      source_commit: ${{ needs.load-deployment.outputs.source_commit }}
+      release_plan_artifact: ${{ needs.load-deployment.outputs.plan_artifact }}
+      deployment_environment: prod
+      approval_environment: production-cloud
+    secrets: inherit
+
+  record-deployment:
+    name: Record protected approval and observed deployment
+    if: inputs.phase == 'deploy'
+    needs: [load-deployment, deploy]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Reload pre-deployment promotion state
+        id: promotion
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          node .github/scripts/production-promotion-assets.mjs download-latest
+          --repository "$GITHUB_REPOSITORY"
+          --release "${{ inputs.release_identity }}"
+          --attempt "${{ inputs.attempt }}"
+          --output promotion-input/current.json
+          --github-output "$GITHUB_OUTPUT"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.deploy.outputs.result_artifact }}
+          path: promotion-input/cloud
+
+      - name: Append the protected, observed Cloud deployment
+        id: records
+        run: |
+          set -euo pipefail
+          [[ "$(jq -er .state promotion-input/current.json)" == "production-config-ready" ]]
+          cloud=promotion-input/cloud/cloud-v2-deployment.json
+          [[ "$(jq -er .environment "$cloud")" == "prod" ]]
+          [[ "$(jq -er .sourceCommit "$cloud")" == "${{ needs.load-deployment.outputs.source_commit }}" ]]
+          mkdir -p promotion-output
+          node .github/scripts/production-promotion-assets.mjs prepare-evidence \
+            --file "$cloud" \
+            --kind production-cloud-v2-deployment \
+            --url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --output promotion-output/deployment-evidence.json \
+            --output-directory promotion-output/evidence-assets \
+            --github-output "$GITHUB_OUTPUT"
+          node .github/scripts/production-promotion-state.mjs transition \
+            --record promotion-input/current.json \
+            --to cloud-deployed \
+            --actor "$GITHUB_ACTOR" \
+            --created-at "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" \
+            --provenance-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --evidence promotion-output/deployment-evidence.json \
+            --output promotion-output/deployed.json
+          name=$(node --input-type=module -e '
+            import {readFileSync} from "node:fs";
+            import {promotionAssetName} from "./.github/scripts/production-promotion-state.mjs";
+            process.stdout.write(promotionAssetName(JSON.parse(readFileSync("promotion-output/deployed.json", "utf8"))));
+          ')
+          mv promotion-output/deployed.json "promotion-output/$name"
+          echo "deployed=promotion-output/$name" >> "$GITHUB_OUTPUT"
+
+      - name: Publish deployment evidence and state transition
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          node .github/scripts/publish-immutable-release-asset.mjs \
+            --file "${{ steps.records.outputs.asset_path }}" \
+            --name "${{ steps.records.outputs.asset_name }}" \
+            --release-id "${{ steps.promotion.outputs.release_id }}" \
+            --repository "$GITHUB_REPOSITORY"
+          node .github/scripts/production-promotion-assets.mjs publish-record \
+            --record "${{ steps.records.outputs.deployed }}" \
+            --release-id "${{ steps.promotion.outputs.release_id }}" \
+            --repository "$GITHUB_REPOSITORY"

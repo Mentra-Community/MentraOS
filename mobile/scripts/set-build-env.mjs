@@ -1,10 +1,11 @@
 #!/usr/bin/env zx
 import {config} from "dotenv"
+import {execFileSync} from "child_process"
 import {writeFile, readFile, chmod} from "fs/promises"
 import {homedir} from "os"
 import {join} from "path"
 import {generateBundledMiniapps} from "./generate-bundled-miniapps.mjs"
-import {clearAutolinkingCache} from "./clear-autolinking-cache.mjs"
+import {syncAutolinkingCache} from "./clear-autolinking-cache.mjs"
 
 /**
  * When the Mapbox Downloads:Read secret token (sk.…) is present in the
@@ -40,7 +41,26 @@ async function syncMapboxNetrc() {
   console.log("  ~/.netrc updated with Mapbox SPM credentials (from environment)")
 }
 
-export async function setBuildEnv() {
+export function resolveBuildUser({
+  githubActor = process.env.GITHUB_ACTOR,
+  readGitUsername = () =>
+    execFileSync("git", ["config", "user.name"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "ignore"],
+    }),
+} = {}) {
+  const actor = githubActor?.trim()
+  if (actor) return actor.replace(/\s+/g, "_")
+
+  try {
+    const username = readGitUsername().trim()
+    return username ? username.replace(/\s+/g, "_") : "unknown"
+  } catch {
+    return "unknown"
+  }
+}
+
+export async function setBuildEnv({syncAutolinking = true} = {}) {
   // Keep src/generated/bundledMiniapps.ts in sync with assets/miniapps/*.zip
   // before any prebuild/bundle so newly-dropped bundles get shipped.
   await generateBundledMiniapps()
@@ -49,13 +69,19 @@ export async function setBuildEnv() {
   // for iOS SPM. No-op otherwise (manual-setup developers untouched).
   await syncMapboxNetrc()
 
-  // Drop the Gradle autolinking cache — its invalidation doesn't track
-  // bun.lock, so a stale packageName breaks the build (see the module docs).
-  await clearAutolinkingCache()
+  // Wipe the Gradle autolinking cache only when the resolved graph drifted
+  // (see clear-autolinking-cache.mjs). MENTRA_FORCE_AUTOLINK_WIPE=1 restores
+  // the old unconditional wipe. Callers that run their own authoritative
+  // post-prebuild check (scripts/android.mjs) pass syncAutolinking: false so
+  // the ~1.3s graph resolution is not paid twice per build.
+  if (syncAutolinking) {
+    await syncAutolinkingCache()
+  }
 
   const gitCommit = (await $`git rev-parse --short HEAD`).stdout.trim()
-  const gitBranch = (await $`git rev-parse --abbrev-ref HEAD`).stdout.trim()
-  const gitUsername = (await $`git config user.name`).stdout.trim().replace(/ /g, "_")  // format: 2025-11-18_12-00
+  const gitBranch =
+    process.env.MENTRA_COORDINATED_RELEASE_CHANNEL || (await $`git rev-parse --abbrev-ref HEAD`).stdout.trim()
+  const gitUsername = resolveBuildUser()
   const buildTime = new Date()
     .toLocaleString("en-US", {
       timeZone: "America/Los_Angeles",

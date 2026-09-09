@@ -7,6 +7,8 @@ const ConfigSchema = z.object({
   dryRun: z.boolean().default(true),
   reviewModel: z.string().default('claude-opus-4-8'),
   fixModel: z.string().default('claude-opus-4-8'),
+  /** Model for the Codex CLI reviewer slot (only used when OPENAI_API_KEY exists). */
+  codexModel: z.string().default('o4-mini'),
   authors: z
     .object({
       mode: z.enum(['allowlist', 'all', 'label_only']).default('label_only'),
@@ -18,11 +20,21 @@ const ConfigSchema = z.object({
       maxFixRounds: z.number().default(5),
       maxOrchestratorCycles: z.number().default(8),
       maxBugbotWaitMin: z.number().default(12),
+      /**
+       * How long to wait for Bugbot's check run to *appear* before concluding
+       * it declined the PR. Bounds the wasted poll on diffs Bugbot ignores.
+       */
+      bugbotStartGraceMin: z.number().default(4),
       maxCiWaitMin: z.number().default(45),
       maxNewBlockingPerCycle: z.number().default(5),
       maxFixAgentTurns: z.number().default(80),
       consecutiveNoNewReviewsForHandoff: z.number().default(2),
-      discoveryCycles: z.number().default(1),
+      /**
+       * Cap on orchestrator-initiated `workflow_dispatch` continuations for a
+       * single PR. Only used when nothing external will re-trigger the loop
+       * (no CI gates match the diff); `maxOrchestratorCycles` still applies.
+       */
+      maxSelfDispatches: z.number().default(3),
     })
     .default({}),
   ciGates: z
@@ -33,6 +45,22 @@ const ConfigSchema = z.object({
       }),
     )
     .default([]),
+  /**
+   * External review-bot ingestion: native inline PR review comments from these
+   * bot logins are normalized into ledger findings so the fixer addresses them
+   * without a human copy/pasting them into the loop.
+   */
+  externalReviewers: z
+    .object({
+      enabled: z.boolean().default(true),
+      bots: z.array(z.string()).default(['cursor[bot]', 'cubic-dev-ai[bot]']),
+      /**
+       * Per-bot regex overrides (case-insensitive) that classify a comment as
+       * blocking. Bots without an entry use the built-in defaults.
+       */
+      blockingPatterns: z.record(z.array(z.string())).default({}),
+    })
+    .default({}),
 });
 
 export type PrAgentConfig = z.infer<typeof ConfigSchema>;
