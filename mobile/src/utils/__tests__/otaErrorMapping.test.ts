@@ -34,6 +34,10 @@ function baseOtaProgress(overrides: Partial<OtaProgress> = {}): OtaProgress {
 }
 
 describe("getOtaErrorMessage", () => {
+  it("reports insufficient storage without suggesting a WiFi change", () => {
+    expect(getOtaErrorMessage("insufficient_storage")).toContain("free up space")
+    expect(shouldShowChangeWifiForOtaDownloadFailure(baseOtaStatus({error: "insufficient_storage"}), null, "")).toBe(false)
+  })
   it("maps no_internet to WiFi message", () => {
     expect(getOtaErrorMessage("no_internet")).toBe("Glasses WiFi has no internet connection")
   })

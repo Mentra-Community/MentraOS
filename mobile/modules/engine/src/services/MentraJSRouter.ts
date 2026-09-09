@@ -469,7 +469,13 @@ export class MentraJSRouter {
     //    dead and let the host surface a "tap to retry" banner.
     if (iface === "__error") {
       const payload = this.tryParseArgs(msg.argsJson)
-      this.logger.error(`[${packageName}] ${method}`, payload)
+      // ready_nack is a liveness probe, not a crash. Logging it at error
+      // painted WHIP-start queue delay as a Mentra-Call exception.
+      if (method === "ready_nack") {
+        this.logger.warn(`[${packageName}] ${method}`, payload)
+      } else {
+        this.logger.error(`[${packageName}] ${method}`, payload)
+      }
       if (this.crashController) {
         // Only treat "exception" + "unhandledRejection" + "uncaught" as
         // crash signals. `console.error` calls also flow through the

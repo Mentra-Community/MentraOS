@@ -17,6 +17,7 @@ const plan = createReleasePlan({
   nativeBuildNumber: 310000057,
 })
 const expectedClosure = [
+  "@mentra/acs-meeting",
   "@mentra/bluetooth-sdk",
   "@mentra/cloud-client",
   "@mentra/cloud-protocol",

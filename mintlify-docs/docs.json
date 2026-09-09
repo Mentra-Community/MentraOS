@@ -5,8 +5,8 @@
   "variables": {
     "release-version": "3.2.0",
     "release-artifacts-url": "https://github.com/Mentra-Community/MentraOS/releases/tag/mentra-v3.2.0",
-    "example-app-version": "0.1.21-beta.5",
-    "example-app-url": "https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit/releases/download/sdk-0.1.21-beta.5/mentra-example-react-native.apk",
+    "example-app-download-label": "Browse React Native example APK releases",
+    "example-app-url": "https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit/releases",
     "example-app-ios-url": "https://appstoreconnect.apple.com/teams/52733bd2-726b-4742-b1e2-1cfc0174c696/apps/6792839366/testflight/groups/1b1daeae-9175-4020-9c1b-52fd6b14cc49"
   },
   "colors": {
@@ -138,7 +138,7 @@
           {
             "group": "Platform Setup",
             "icon": "gears",
-            "pages": ["bluetooth-sdk/react-native-expo", "bluetooth-sdk/android", "bluetooth-sdk/ios"]
+            "pages": ["bluetooth-sdk/react-native-expo", "bluetooth-sdk/android", "bluetooth-sdk/ios", "bluetooth-sdk/macos"]
           },
           {
             "group": "Core APIs",
@@ -154,7 +154,6 @@
             "group": "Release",
             "icon": "clipboard-check",
             "pages": [
-              "bluetooth-sdk/air-gapped-deployment",
               "bluetooth-sdk/troubleshooting",
               "bluetooth-sdk/production-checklist"
             ]
@@ -321,7 +320,6 @@
     {"source": "/mentra-live/quickstart", "destination": "/bluetooth-sdk/quickstart"},
     {"source": "/mentra-live/examples", "destination": "/bluetooth-sdk/quickstart"},
     {"source": "/bluetooth-sdk/examples", "destination": "/bluetooth-sdk/quickstart"},
-    {"source": "/mentra-live/air-gapped-deployment", "destination": "/bluetooth-sdk/air-gapped-deployment"},
     {"source": "/mentra-live/software-update", "destination": "/bluetooth-sdk/software-update"},
     {"source": "/mentra-live/ai-ide-integration", "destination": "/bluetooth-sdk/ai-ide-integration"},
     {"source": "/mentra-live/react-native-expo", "destination": "/bluetooth-sdk/react-native-expo"},

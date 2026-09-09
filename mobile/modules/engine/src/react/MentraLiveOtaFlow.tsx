@@ -103,6 +103,11 @@ const ENGLISH_COPY: Record<string, string> = {
   "ota:devBuild": "Development Build",
   "ota:devBuildNoOta":
     "This mobile app is a development build, so automatic glasses updates are disabled. Use the developer settings manifest override to update them manually.",
+  "ota:unofficialClient": "Updates Blocked",
+  "ota:unofficialClientNoOta":
+    "Your glasses are running a sideloaded client, so updates are blocked. Restore the stock client to update them.",
+  "ota:unofficialClientNoOtaNamed":
+    "Your glasses are running a sideloaded client ({{packageName}}), so updates are blocked. Restore the stock client to update them.",
   "ota:noUpdatesAvailable": "Your glasses are running the latest version.",
   "ota:checkFailed": "Check Failed",
   "ota:checkFailedMessage": "Couldn't check for updates. Please check your connection and try again.",
@@ -298,6 +303,22 @@ function OtaFlowContent({
         icon="settings"
         title={translate("ota:devBuild")}>
         <BodyText colors={colors}>{translate("ota:devBuildNoOta")}</BodyText>
+      </FlowPage>
+    )
+  }
+
+  if (state.screen === "unofficial_client") {
+    return (
+      <FlowPage
+        actions={<FlowButton colors={colors} label={translate("common:continue")} onPress={controller.finish} />}
+        colors={colors}
+        icon="settings"
+        title={translate("ota:unofficialClient")}>
+        <BodyText colors={colors}>
+          {state.glassesPackageName
+            ? translate("ota:unofficialClientNoOtaNamed", {packageName: state.glassesPackageName})
+            : translate("ota:unofficialClientNoOta")}
+        </BodyText>
       </FlowPage>
     )
   }
@@ -512,11 +533,15 @@ type FlowPageProps = {
 function FlowPage({actions, children, colors, contentAlignment = "center", icon, title}: FlowPageProps) {
   return (
     <View style={styles.page} testID="mentra-live-ota-flow">
-      <View style={[styles.centerContent, contentAlignment === "top" && styles.topContent]}>
+      <ScrollView
+        contentContainerStyle={[styles.centerContent, contentAlignment === "top" && styles.topContent]}
+        nestedScrollEnabled
+        style={styles.contentScroll}
+        testID="ota-page-scroll">
         <FlowIcon colors={colors} name={icon} />
         <Text style={[styles.title, {color: colors.foreground}]}>{title}</Text>
         {children}
-      </View>
+      </ScrollView>
       {actions ? <View style={styles.actions}>{actions}</View> : <View style={styles.actionSpacer} />}
     </View>
   )
@@ -628,12 +653,14 @@ export function ChangelogList({
   title: string
 }) {
   if (changelogs.length === 0) return null
+
   return (
     <View style={[styles.changelogCard, {borderColor: colors.border}]} testID="ota-changelog-card">
       <Text style={[styles.changelogTitle, {color: colors.foreground}]}>{title}</Text>
       <ScrollView
         contentContainerStyle={styles.changelogContent}
         nestedScrollEnabled
+        persistentScrollbar
         showsVerticalScrollIndicator
         style={styles.changelogList}
         testID="ota-changelog-scroll">
@@ -715,8 +742,9 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
   },
   page: {flex: 1, paddingBottom: 24, paddingHorizontal: 24},
-  centerContent: {alignItems: "center", flex: 1, gap: 16, justifyContent: "center"},
-  topContent: {justifyContent: "flex-start", paddingTop: 12},
+  contentScroll: {flex: 1},
+  centerContent: {alignItems: "center", flexGrow: 1, gap: 16, justifyContent: "center"},
+  topContent: {justifyContent: "flex-start", paddingBottom: 16, paddingTop: 12},
   actionSpacer: {height: 48},
   actions: {gap: 12},
   icon: {fontSize: 64, fontWeight: "500", lineHeight: 72, textAlign: "center"},
@@ -728,16 +756,17 @@ const styles = StyleSheet.create({
   changelogCard: {
     borderRadius: 16,
     borderWidth: 1,
-    flexShrink: 1,
+    flexGrow: 1,
     gap: 12,
-    maxHeight: 300,
     maxWidth: 420,
+    minHeight: 200,
     padding: 16,
     width: "100%",
   },
   changelogTitle: {fontSize: 16, fontWeight: "700"},
-  changelogList: {flexShrink: 1, maxHeight: 232, width: "100%"},
-  changelogContent: {gap: 20, paddingBottom: 2},
+  // Bound the notes themselves so the card can grow for its title, but not for all of the Markdown.
+  changelogList: {flexGrow: 1, height: 120, width: "100%"},
+  changelogContent: {gap: 20, paddingBottom: 4},
   changelogEntry: {gap: 8},
   changelogEntryDivider: {borderTopWidth: StyleSheet.hairlineWidth, paddingTop: 20},
   changelogVersion: {fontSize: 14, fontWeight: "600"},

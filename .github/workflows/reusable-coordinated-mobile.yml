@@ -101,6 +101,7 @@ permissions:
 concurrency:
   group: coordinated-mobile-publication
   cancel-in-progress: false
+  queue: max
 
 jobs:
   prepare:
@@ -354,7 +355,12 @@ jobs:
           MENTRA_COORDINATED_OUTPUT_DIR: ${{ github.workspace }}/mobile-release/android
           MENTRA_COORDINATED_RELEASE_IDENTITY: ${{ needs.prepare.outputs.release_identity }}
           RNMAPBOX_MAPS_DOWNLOAD_TOKEN: ${{ secrets.MAPBOX_DOWNLOADS_TOKEN }}
-          SENTRY_ALLOW_FAILURE: "false"
+          # A Sentry outage must not fail a release build. sentry-cli still
+          # logs the failure loudly, and debug files can be uploaded after
+          # the fact; losing a coordinated release to someone else's 503 is
+          # the more expensive outcome. Seen 2026-09-08: an archive failed
+          # on "sentry reported an error: unknown error (http status: 503)".
+          SENTRY_ALLOW_FAILURE: "true"
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
         run: bun run release:android
 
@@ -526,17 +532,15 @@ jobs:
   ios:
     name: Build and distribute coordinated iOS app
     needs: prepare
-    runs-on: [self-hosted, macOS, ARM64]
+    # Each hosted job owns its signing state and artifact transfer.
+    runs-on: macos-15
     timeout-minutes: 90
-    concurrency:
-      group: mentra-ios-signing-runner
-      cancel-in-progress: false
     env:
+      DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
       EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY }}
       EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID }}
     outputs:
       upload_artifact: coordinated-mobile-ios-upload-${{ github.run_id }}
-      upload_status: ${{ inputs.dry_run && 'built' || (steps.app-store.outputs.exists == 'true' && 'reused' || 'published') }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -547,13 +551,17 @@ jobs:
           name: ${{ inputs.release_plan_artifact }}
           path: release-intent
 
-      - name: Add runner-managed tools to PATH
-        run: |
-          {
-            echo "$HOME/.rbenv/shims"
-            echo "$HOME/.rbenv/bin"
-            echo "$HOME/.bun/bin"
-          } >> "$GITHUB_PATH"
+      - name: Set up Ruby signing tools
+        if: inputs.dry_run == true || needs.prepare.outputs.ios_asset_exists != 'true'
+        uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+          bundler-cache: true
+          working-directory: mobile
+
+      - name: Install CocoaPods for the selected Ruby
+        if: inputs.dry_run == true || needs.prepare.outputs.ios_asset_exists != 'true'
+        run: gem install cocoapods --version 1.16.2 --no-document
 
       - uses: actions/setup-node@v4
         with:
@@ -639,7 +647,6 @@ jobs:
           RAW_MATCH_GIT_BASIC_AUTHORIZATION: ${{ secrets.MATCH_GIT_BASIC_AUTHORIZATION }}
         run: |
           set -euo pipefail
-          export PATH="$HOME/.rbenv/shims:$HOME/.rbenv/bin:$PATH"
           previous_keychains="${RUNNER_TEMP}/mentra-previous-keychains-${GITHUB_RUN_ID}.txt"
           previous_default="${RUNNER_TEMP}/mentra-previous-default-keychain-${GITHUB_RUN_ID}.txt"
           security list-keychains -d user \
@@ -652,9 +659,9 @@ jobs:
           echo "MENTRA_PREVIOUS_DEFAULT_KEYCHAIN=$previous_default" >> "$GITHUB_ENV"
           MATCH_GIT_BASIC_AUTHORIZATION="$(printf '%s' "$RAW_MATCH_GIT_BASIC_AUTHORIZATION" | tr -d '\r\n')"
           export MATCH_GIT_BASIC_AUTHORIZATION
-          bundle install
           keychain="mentra-coordinated-${GITHUB_RUN_ID}.keychain-db"
           password="$(openssl rand -hex 32)"
+          echo "::add-mask::$password"
           security delete-keychain "$keychain" 2>/dev/null || true
           security create-keychain -p "$password" "$keychain"
           security set-keychain-settings -lut 21600 "$keychain"
@@ -674,6 +681,7 @@ jobs:
           security list-keychains -d user -s "${keychains[@]}"
           security default-keychain -s "$keychain"
           bundle exec fastlane match appstore --readonly --keychain_name "$keychain" --keychain_password "$password"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain"
           echo "MENTRA_CI_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
           echo "MENTRA_CI_KEYCHAIN_PASSWORD=$password" >> "$GITHUB_ENV"
 
@@ -691,11 +699,15 @@ jobs:
         env:
           MENTRA_COORDINATED_OUTPUT_DIR: ${{ github.workspace }}/mobile-release/ios
           MENTRA_COORDINATED_RELEASE_IDENTITY: ${{ needs.prepare.outputs.release_identity }}
-          SENTRY_ALLOW_FAILURE: "false"
+          # A Sentry outage must not fail a release build. sentry-cli still
+          # logs the failure loudly, and debug files can be uploaded after
+          # the fact; losing a coordinated release to someone else's 503 is
+          # the more expensive outcome. Seen 2026-09-08: an archive failed
+          # on "sentry reported an error: unknown error (http status: 503)".
+          SENTRY_ALLOW_FAILURE: "true"
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
           MENTRA_TESTFLIGHT_INTERNAL_ONLY: ${{ inputs.compatibility_lab }}
         run: |
-          export PATH="$HOME/.rbenv/shims:$HOME/.rbenv/bin:$PATH"
           security unlock-keychain -p "$MENTRA_CI_KEYCHAIN_PASSWORD" "$MENTRA_CI_KEYCHAIN"
           security set-keychain-settings "$MENTRA_CI_KEYCHAIN"
           if [[ "$MENTRA_TESTFLIGHT_INTERNAL_ONLY" == "true" ]]; then
@@ -725,7 +737,94 @@ jobs:
           [[ "$(plutil -extract CFBundleShortVersionString raw /tmp/mentra-mobile-info.plist)" == "$EXPECTED_VERSION" ]]
           [[ "$(plutil -extract CFBundleVersion raw /tmp/mentra-mobile-info.plist)" == "$EXPECTED_BUILD" ]]
 
+      # Keep retries in the workflow: the frozen source checkout may predate this policy.
+      - name: Upload IPA handoff (attempt 1 of 3)
+        id: ipa-upload-1
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: coordinated-mobile-ios-upload-${{ github.run_id }}
+          path: mobile-release
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Wait before IPA upload attempt 2
+        if: steps.ipa-upload-1.outcome == 'failure'
+        run: sleep 10
+
+      - name: Upload IPA handoff (attempt 2 of 3)
+        id: ipa-upload-2
+        if: steps.ipa-upload-1.outcome == 'failure'
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: coordinated-mobile-ios-upload-${{ github.run_id }}
+          path: mobile-release
+          if-no-files-found: error
+          retention-days: 90
+          # A failed response can leave an intermediate artifact behind.
+          overwrite: true
+
+      - name: Wait before IPA upload attempt 3
+        if: steps.ipa-upload-2.outcome == 'failure'
+        run: sleep 10
+
+      - name: Upload IPA handoff (attempt 3 of 3)
+        id: ipa-upload-3
+        if: steps.ipa-upload-2.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: coordinated-mobile-ios-upload-${{ github.run_id }}
+          path: mobile-release
+          if-no-files-found: error
+          retention-days: 90
+          # A failed response can leave an intermediate artifact behind.
+          overwrite: true
+
+      - name: Clean signing credentials
+        if: always()
+        run: |
+          if [[ -n "${MENTRA_CI_KEYCHAIN:-}" ]]; then
+            security delete-keychain "$MENTRA_CI_KEYCHAIN" 2>/dev/null || true
+          fi
+          if [[ -f "${MENTRA_PREVIOUS_KEYCHAINS:-}" ]]; then
+            previous_keychains=()
+            while IFS= read -r keychain; do
+              [[ -n "$keychain" ]] && previous_keychains+=("$keychain")
+            done < "$MENTRA_PREVIOUS_KEYCHAINS"
+            if (( ${#previous_keychains[@]} > 0 )); then
+              security list-keychains -d user -s "${previous_keychains[@]}" || true
+            fi
+          fi
+          if [[ -f "${MENTRA_PREVIOUS_DEFAULT_KEYCHAIN:-}" ]]; then
+            previous_default=$(head -1 "$MENTRA_PREVIOUS_DEFAULT_KEYCHAIN")
+            [[ -n "$previous_default" ]] && security default-keychain -d user -s "$previous_default" || true
+          fi
+          if [[ "${MENTRA_CONFIGURED_MAPBOX_NETRC:-}" == "true" && -f "$HOME/.netrc" ]]; then
+            sed -i '' '/machine api.mapbox.com/,+2d' "$HOME/.netrc" || true
+          fi
+
+  ios-publish:
+    name: Publish immutable iOS app from Ubuntu
+    needs: [prepare, ios]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_commit }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.ios.outputs.upload_artifact }}
+          path: mobile-release
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
       - name: Publish immutable iOS release asset
+        timeout-minutes: 5
         if: inputs.dry_run != true && inputs.compatibility_lab != true && needs.prepare.outputs.ios_asset_exists != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
@@ -735,6 +834,36 @@ jobs:
           --repository "${{ github.repository }}"
           --file "mobile-release/ios/${{ needs.prepare.outputs.ipa_name }}"
           --name "${{ needs.prepare.outputs.ipa_name }}"
+
+  ios-upload:
+    name: Upload the published iOS app to App Store Connect
+    needs: [prepare, ios, ios-publish]
+    runs-on: macos-15
+    timeout-minutes: 30
+    outputs:
+      upload_status: ${{ inputs.dry_run && 'built' || (steps.app-store.outputs.exists == 'true' && 'reused' || 'published') }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ inputs.source_commit }}
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.ios.outputs.upload_artifact }}
+          path: mobile-release
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Inject App Store Connect API credential
+        if: inputs.dry_run != true
+        uses: ./.github/actions/inject-signing
+        with:
+          ios: "true"
+          asc-api-key-p8-b64: ${{ secrets.ASC_API_KEY_P8_B64 }}
+          asc-api-key-id: ${{ secrets.ASC_API_KEY_ID }}
+          asc-api-issuer-id: ${{ secrets.ASC_API_ISSUER_ID }}
 
       - name: Resolve App Store Connect credential path
         if: inputs.dry_run != true
@@ -769,39 +898,9 @@ jobs:
           --build-number "${{ needs.prepare.outputs.build_number }}"
           --ipa "mobile-release/ios/${{ needs.prepare.outputs.ipa_name }}"
 
-      - uses: actions/upload-artifact@v4
-        with:
-          name: coordinated-mobile-ios-upload-${{ github.run_id }}
-          path: mobile-release
-          if-no-files-found: error
-          retention-days: 90
-
-      - name: Clean persistent-runner credentials
-        if: always()
-        run: |
-          if [[ -n "${MENTRA_CI_KEYCHAIN:-}" ]]; then
-            security delete-keychain "$MENTRA_CI_KEYCHAIN" 2>/dev/null || true
-          fi
-          if [[ -f "${MENTRA_PREVIOUS_KEYCHAINS:-}" ]]; then
-            previous_keychains=()
-            while IFS= read -r keychain; do
-              [[ -n "$keychain" ]] && previous_keychains+=("$keychain")
-            done < "$MENTRA_PREVIOUS_KEYCHAINS"
-            if (( ${#previous_keychains[@]} > 0 )); then
-              security list-keychains -d user -s "${previous_keychains[@]}" || true
-            fi
-          fi
-          if [[ -f "${MENTRA_PREVIOUS_DEFAULT_KEYCHAIN:-}" ]]; then
-            previous_default=$(head -1 "$MENTRA_PREVIOUS_DEFAULT_KEYCHAIN")
-            [[ -n "$previous_default" ]] && security default-keychain -d user -s "$previous_default" || true
-          fi
-          if [[ "${MENTRA_CONFIGURED_MAPBOX_NETRC:-}" == "true" && -f "$HOME/.netrc" ]]; then
-            sed -i '' '/machine api.mapbox.com/,+2d' "$HOME/.netrc" || true
-          fi
-
   ios-store:
     name: Process iOS upload and assign TestFlight group
-    needs: [prepare, ios]
+    needs: [prepare, ios, ios-upload]
     runs-on: ubuntu-latest
     timeout-minutes: 70
     steps:
@@ -854,7 +953,7 @@ jobs:
 
       - name: Write iOS release result
         env:
-          STATUS: ${{ needs.ios.outputs.upload_status }}
+          STATUS: ${{ needs.ios-upload.outputs.upload_status }}
         run: >-
           node .github/scripts/coordinated-mobile-records.mjs create-ios
           --plan release-intent/release-plan.json
@@ -919,7 +1018,7 @@ jobs:
 
   status:
     name: Export mobile build status
-    needs: [prepare, android, ios, ios-store]
+    needs: [prepare, android, ios, ios-publish, ios-upload, ios-store]
     if: always()
     runs-on: ubuntu-latest
     outputs:
@@ -934,13 +1033,20 @@ jobs:
         env:
           ANDROID_RESULT: ${{ needs.android.result }}
           IOS_BUILD_RESULT: ${{ needs.ios.result }}
+          IOS_PUBLISH_RESULT: ${{ needs.ios-publish.result }}
+          IOS_UPLOAD_RESULT: ${{ needs.ios-upload.result }}
           IOS_STORE_RESULT: ${{ needs.ios-store.result }}
           APK_NAME: ${{ needs.prepare.outputs.apk_name }}
           IPA_NAME: ${{ needs.prepare.outputs.ipa_name }}
           ASSET_BASE_URL: ${{ needs.prepare.outputs.asset_base_url }}
         run: |
-          ios_result="$IOS_STORE_RESULT"
-          if [[ "$IOS_BUILD_RESULT" != "success" ]]; then ios_result="$IOS_BUILD_RESULT"; fi
+          ios_result=success
+          for stage_result in "$IOS_BUILD_RESULT" "$IOS_PUBLISH_RESULT" "$IOS_UPLOAD_RESULT" "$IOS_STORE_RESULT"; do
+            if [[ "$stage_result" != "success" ]]; then
+              ios_result="$stage_result"
+              break
+            fi
+          done
           {
             echo "android_result=$ANDROID_RESULT"
             echo "ios_result=$ios_result"

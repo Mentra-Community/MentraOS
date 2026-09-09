@@ -135,6 +135,11 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             try? await sdk.displayText(text, x: x ?? 0, y: y ?? 0, size: size ?? 24)
         }
 
+        AsyncFunction("setDashboardContent") { (content: String) in
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            await sdk.setDashboardContent(content)
+        }
+
         // MARK: - Connection Commands
 
         AsyncFunction("connectDefault") {
@@ -695,6 +700,7 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
 
         // MARK: - STT Model Management
 
+        #if !os(macOS)
         AsyncFunction("setSttModelDetails") { (path: String, languageCode: String) in
             STTTools.setSttModelDetails(path, languageCode)
         }
@@ -747,6 +753,7 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
                 speed: speed
             )
         }
+        #endif
     }
 
     @MainActor
@@ -933,7 +940,5 @@ private extension ConnectOptions {
         )
     }
 }
-
-
 
 

@@ -210,6 +210,13 @@ struct GlassesStatus: CustomStringConvertible {
         stringValue(values, "appVersion") ?? ""
     }
 
+    /// Package the glasses client actually runs as, from version_info_1. Empty on glasses whose
+    /// client predates the field. "com.mentra.asg_client" is the stock client; anything else is a
+    /// sideloaded build that OTA must not drive.
+    var packageName: String {
+        stringValue(values, "packageName") ?? ""
+    }
+
     var hotspotOtaVersion: Int {
         intValue(values["hotspotOtaVersion"]) ?? 0
     }
@@ -367,6 +374,7 @@ public struct VersionInfoResult: CustomStringConvertible {
     public let systemTimeMs: Int?
     public let otaVersionUrl: String
     public let appVersion: String
+    public let packageName: String
     public let hotspotOtaVersion: Int
 
     init(status: GlassesStatus) {
@@ -378,6 +386,7 @@ public struct VersionInfoResult: CustomStringConvertible {
         systemTimeMs = intValue(status.values["systemTimeMs"])
         otaVersionUrl = status.otaVersionUrl
         appVersion = status.appVersion
+        packageName = status.packageName
         hotspotOtaVersion = status.hotspotOtaVersion
     }
 
@@ -390,6 +399,7 @@ public struct VersionInfoResult: CustomStringConvertible {
         systemTimeMs = intValue(values["systemTimeMs"]) ?? intValue(values["system_time_ms"])
         otaVersionUrl = stringValue(values, "otaVersionUrl", "ota_version_url") ?? ""
         appVersion = stringValue(values, "appVersion", "app_version") ?? ""
+        packageName = stringValue(values, "packageName", "package_name") ?? ""
         hotspotOtaVersion =
             intValue(values["hotspotOtaVersion"])
                 ?? intValue(values["hotspot_ota_version"])
@@ -409,6 +419,12 @@ public struct VersionInfoResult: CustomStringConvertible {
         ]
         if let systemTimeMs {
             values["systemTimeMs"] = systemTimeMs
+        }
+        // Only when known. requestVersionInfo() resolves from ANY version_info chunk, and only
+        // chunk 1 carries package_name — emitting "" from a chunk-3 resolution would overwrite a
+        // known identity with "absent", which the OTA guard reads as stock.
+        if !packageName.isEmpty {
+            values["packageName"] = packageName
         }
         return values
     }
@@ -702,6 +718,10 @@ struct GlassesStatusUpdate: CustomStringConvertible {
 
     var appVersion: String? {
         optionalStringValue(values, "appVersion")
+    }
+
+    var packageName: String? {
+        optionalStringValue(values, "packageName")
     }
 
     var hotspotOtaVersion: Int? {

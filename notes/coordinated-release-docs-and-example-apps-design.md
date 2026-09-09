@@ -229,12 +229,11 @@ to TestFlight.
 `coordinated-example-release.yml` is invoked by an authenticated dispatch from
 MentraOS. The coordinator uses GitHub's cross-repository `workflow_dispatch`
 endpoint and selects the Starter Kit branch that owns the release channel:
-`dev` for dev, `staging` for beta, and `main` for production. This makes the
-workflow implementation and checked-out source come from the same channel
-instead of running default-branch orchestration against another branch. The
-coordinator GitHub App therefore requires Actions write in addition to its
-existing grants. Operators can invoke the same workflow manually. Required
-inputs are:
+`dev` for dev and `staging` for beta. This makes the workflow implementation
+and checked-out source come from the same channel instead of running
+default-branch orchestration against another branch. The coordinator GitHub
+App therefore requires Actions write in addition to its existing grants.
+Operators can invoke the same workflow manually. Required inputs are:
 
 - `releaseSetId`;
 - `releaseIdentity`;
@@ -323,7 +322,7 @@ uses one token for the bounded request phase, waits for the immutable public
 result without credentials, and mints a fresh read-only token for final
 provenance verification. The App is
 installed only on `MentraOS` and `Mentra-Bluetooth-SDK-Starter-Kit` with
-Actions read, Checks read, Contents read/write, and Pull requests read/write
+Actions read/write, Checks read, Contents read/write, and Pull requests read/write
 permissions. Each job requests only the subset it uses when minting its token.
 
 During bootstrap, the implementation may fall back to the existing scoped SDK
@@ -456,8 +455,8 @@ The checked-in Mintlify config retains these structured variables:
 
 - `release-version`;
 - `release-artifacts-url`;
-- `example-app-version`; and
-- `example-app-url`; and
+- `example-app-download-label`;
+- `example-app-url`;
 - `example-app-ios-url`.
 
 For dev and beta, the renderer receives both the immutable Mentra release plan
@@ -465,7 +464,7 @@ and the validated Starter Kit result. It sets:
 
 - `release-version` to the exact coordinated identity;
 - `release-artifacts-url` to the coordinated Mentra release container;
-- `example-app-version` to that same exact identity; and
+- `example-app-download-label` to download copy naming that exact SDK identity;
 - `example-app-url` to the published React Native APK URL from the Starter Kit
   result, never to a constructed or guessed URL; and
 - `example-app-ios-url` to the verified App Store Connect group URL for dev or
@@ -517,7 +516,12 @@ release set.
 ### Production docs
 
 Production remains a Mintlify Git deployment from `main`. The checked-in
-variables use the stable family base and stable URLs. Before production starts,
+variables use the stable family base and stable URLs. Example-app copy is
+version-neutral and the Android link is labelled as browsing the releases
+index. Only the dev/beta renderer promises a direct APK for an exact SDK
+identity, using the validated Starter Kit result. Source-only and stable docs
+must not expose placeholder versions or claim that the releases index is a
+direct APK download. Before production starts,
 an operator promotes the exact Starter Kit merge commit recorded by the selected
 completed beta from Starter Kit `staging` to `main`, then promotes the exact
 MentraOS beta source from MentraOS `staging` to `main`. Both selected sources

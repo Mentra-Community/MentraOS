@@ -16,6 +16,7 @@ import {cloudClientService} from "@mentra/engine-host-internal"
 
 import {SETTINGS, engine} from "@mentra/engine"
 import {devServerHost, METRO_AUTO} from "@/utils/cloudClient/devHost"
+import {deploymentStore, type ActiveDeployment} from "@/services/deployment"
 
 type Lc3FrameSizeBytes = 20 | 40 | 60
 
@@ -81,6 +82,18 @@ export function resolvedEndpoints(): {core: string; runtime: string} {
   return {core: coreUrl(), runtime: runtimeUrl()}
 }
 
+/**
+ * Endpoints for the active deployment. A workspace pins Core and Runtime to
+ * its manifest; the developer Cloud URL switcher only applies to consumer.
+ */
+export function activeDeploymentEndpoints(): {core: string | null; runtime: string} {
+  const deployment = deploymentStore.getActive()
+  if (deployment.kind === "workspace") {
+    return {core: deployment.manifest.services.coreUrl, runtime: deployment.manifest.services.runtimeUrl!}
+  }
+  return resolvedEndpoints()
+}
+
 /** The LC3 frame size (bytes) the phone's encoder currently emits. */
 export function lc3FrameSizeBytes(): Lc3FrameSizeBytes {
   const frameSize = engine.settings.get(SETTINGS.lc3_frame_size.key)
@@ -92,10 +105,32 @@ export function lc3FrameSizeBytes(): Lc3FrameSizeBytes {
  * resolved endpoints + the live LC3 frame size.
  */
 export function cloudConfigValues(): {
-  coreUrl: string
-  runtimeUrl: string
+  coreUrl: string | null
+  runtimeUrl: string | null
   audioFrameSizeBytes: number
   devServerHost: () => string | undefined
+  runtimeRealtimeSession?: boolean
+  localMiniappAllowlist?: string[] | null
+  localMiniappPolicy?: {
+    systemPackageNames: string[] | null
+    managed: Array<{
+      packageName: string
+      version: string
+      sha256: string
+      deploymentId: string
+      deploymentOrigin: string
+    }>
+  }
+  miniappConfiguration?: Readonly<Record<string, Readonly<Record<string, string>>>>
+  cloudAuthStorageKey?: string
+  otaManifestUrl?: string | null
+  features?: {
+    managedStreams: boolean
+    nativeMeetings: boolean
+    cloudSpeech: boolean
+    onDeviceSpeech: boolean
+    navigation: boolean
+  }
 } {
   const endpoints = resolvedEndpoints()
   return {
@@ -106,15 +141,61 @@ export function cloudConfigValues(): {
   }
 }
 
+export function deploymentCloudConfigValues(deployment: ActiveDeployment): ReturnType<typeof cloudConfigValues> {
+  if (deployment.kind === "consumer") return cloudConfigValues()
+  const systemAllowlist = deployment.manifest.systemMiniapps.approvedPackageNamesOverride
+  return {
+    coreUrl: deployment.manifest.services.coreUrl,
+    runtimeUrl: deployment.manifest.services.runtimeUrl,
+    runtimeRealtimeSession: deployment.manifest.features.runtimeRealtimeSession,
+    // Island's local registry contains both embedded SYSTEM miniapps and
+    // manifest-managed userland miniapps. Keep the manifest concepts separate,
+    // then combine them only at this internal registry boundary.
+    localMiniappAllowlist:
+      systemAllowlist === null
+        ? null
+        : [...new Set([...systemAllowlist, ...deployment.manifest.miniapps.managed.map((entry) => entry.packageName)])],
+    localMiniappPolicy: {
+      systemPackageNames: systemAllowlist,
+      managed: deployment.manifest.miniapps.managed.map((entry) => ({
+        packageName: entry.packageName,
+        version: entry.version,
+        sha256: entry.sha256.toLowerCase(),
+        deploymentId: deployment.manifest.deploymentId,
+        deploymentOrigin: deployment.workspaceOrigin,
+      })),
+    },
+    miniappConfiguration: deployment.manifest.miniapps.configuration,
+    cloudAuthStorageKey: `mentra.cloud-client.${deployment.manifest.deploymentId}.${encodeURIComponent(
+      deployment.workspaceOrigin,
+    )}.refreshToken`,
+    otaManifestUrl: deployment.manifest.artifacts.mentraLiveOtaManifestUrl,
+    features: {
+      managedStreams: deployment.manifest.features.managedStreams,
+      nativeMeetings: deployment.manifest.features.nativeMeetings,
+      cloudSpeech: deployment.manifest.features.cloudSpeech,
+      onDeviceSpeech: deployment.manifest.features.onDeviceSpeech,
+      navigation: deployment.manifest.features.navigation,
+    },
+    audioFrameSizeBytes: lc3FrameSizeBytes(),
+    devServerHost,
+  }
+}
+
 /**
  * Host-facing handle to island's cloud client. Construction and live runtime
  * methods live in island (`cloudClientService`); this delegates so existing consumers
  * (PhonePhotoCoordinator, cloudStreamApi, the dev Cloud-URL switcher) are
- * untouched. `reconnect()` re-resolves the host endpoints before rebuilding.
+ * untouched. `reconnect()` re-resolves the active deployment's endpoints before
+ * rebuilding, so a workspace never falls back to consumer URLs.
  */
 export const cloudClient = {
+  clearAuthSession: (): Promise<void> => cloudClientService.clearAuthSession(),
   init: (): void => cloudClientService.init(),
-  reconnect: (): void => cloudClientService.reconnect(resolvedEndpoints()),
+  reconnect: (): void => {
+    const {core, runtime} = activeDeploymentEndpoints()
+    cloudClientService.reconnect(core ? {core, runtime} : {runtime})
+  },
   getPreinstalledMiniappRegistry: () => cloudClientService.getPreinstalledMiniappRegistry(),
   getMiniappAuthToken: (packageName: string, opts?: {minTtlMs?: number; devAttestation?: string}) =>
     cloudClientService.getMiniappAuthToken(packageName, opts),

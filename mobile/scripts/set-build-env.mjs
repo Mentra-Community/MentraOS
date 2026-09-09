@@ -5,7 +5,7 @@ import {writeFile, readFile, chmod} from "fs/promises"
 import {homedir} from "os"
 import {join} from "path"
 import {generateBundledMiniapps} from "./generate-bundled-miniapps.mjs"
-import {clearAutolinkingCache} from "./clear-autolinking-cache.mjs"
+import {syncAutolinkingCache} from "./clear-autolinking-cache.mjs"
 
 /**
  * When the Mapbox Downloads:Read secret token (sk.…) is present in the
@@ -60,7 +60,7 @@ export function resolveBuildUser({
   }
 }
 
-export async function setBuildEnv() {
+export async function setBuildEnv({syncAutolinking = true} = {}) {
   // Keep src/generated/bundledMiniapps.ts in sync with assets/miniapps/*.zip
   // before any prebuild/bundle so newly-dropped bundles get shipped.
   await generateBundledMiniapps()
@@ -69,9 +69,14 @@ export async function setBuildEnv() {
   // for iOS SPM. No-op otherwise (manual-setup developers untouched).
   await syncMapboxNetrc()
 
-  // Drop the Gradle autolinking cache — its invalidation doesn't track
-  // bun.lock, so a stale packageName breaks the build (see the module docs).
-  await clearAutolinkingCache()
+  // Wipe the Gradle autolinking cache only when the resolved graph drifted
+  // (see clear-autolinking-cache.mjs). MENTRA_FORCE_AUTOLINK_WIPE=1 restores
+  // the old unconditional wipe. Callers that run their own authoritative
+  // post-prebuild check (scripts/android.mjs) pass syncAutolinking: false so
+  // the ~1.3s graph resolution is not paid twice per build.
+  if (syncAutolinking) {
+    await syncAutolinkingCache()
+  }
 
   const gitCommit = (await $`git rev-parse --short HEAD`).stdout.trim()
   const gitBranch =

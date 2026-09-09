@@ -488,6 +488,11 @@ public class Bridge private constructor() {
             body["besFirmwareVersion"] = stringField("besFirmwareVersion", "bes_fw_version")
             body["mtkFirmwareVersion"] = stringField("mtkFirmwareVersion", "mtk_fw_version")
             body["buildNumber"] = stringField("buildNumber", "build_number")
+            // Only when present: this event fires per version_info chunk and only chunk 1
+            // carries package_name, so an unconditional "" would clobber a known identity.
+            stringField("packageName", "package_name").takeIf { it.isNotEmpty() }?.let {
+                body["packageName"] = it
+            }
             (values["systemTimeMs"] as? Number ?: values["system_time_ms"] as? Number)?.let {
                 body["systemTimeMs"] = it.toLong()
             }
@@ -712,6 +717,7 @@ public class Bridge private constructor() {
                 status: String,
                 errorMessage: String? = null,
                 glassesTimeMs: Long? = null,
+                bytesDownloaded: Long? = null,
         ) {
             val eventBody = HashMap<String, Any>()
             eventBody["session_id"] = sessionId
@@ -722,6 +728,7 @@ public class Bridge private constructor() {
             eventBody["step_percent"] = stepPercent
             eventBody["overall_percent"] = overallPercent
             eventBody["status"] = status
+            bytesDownloaded?.let { eventBody["bytes_downloaded"] = it }
             errorMessage?.let { eventBody["error_message"] = it }
             if (glassesTimeMs != null && glassesTimeMs > 0) {
                 eventBody["glasses_time_ms"] = glassesTimeMs

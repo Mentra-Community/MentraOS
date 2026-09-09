@@ -26,6 +26,7 @@ import {type NavLocation, type NavRoute, type NavUpdate} from "../runtime/config
 import {cloudClientService} from "./CloudClientService"
 import navigationService from "./NavigationService"
 import {MiniappErrorCode, MiniappResponseType, MiniappStreamType} from "@mentra/miniapp"
+import {isFeatureEnabled} from "../runtime/bootstrap"
 
 const LOG_TAG = "LocalMiniappRuntime"
 
@@ -81,6 +82,13 @@ export class NavigationHandlers {
   }
 
   async handleStart(packageName: string, payload: Record<string, unknown>, requestId?: string): Promise<void> {
+    if (!isFeatureEnabled("navigation")) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.NOT_IMPLEMENTED,
+        message: "Navigation is disabled by this deployment",
+      })
+      return
+    }
     console.log(`${LOG_TAG}: handleNavigationStart from ${packageName}`, JSON.stringify(payload))
 
     // v2 wire shape sends `stops`; v1 shape sends bare lat/lng. Accept both.

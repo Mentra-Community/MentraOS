@@ -365,6 +365,7 @@ These are the supported React Native app developer entrypoints:
 | Status and subscriptions | `useMentraBluetooth`, `useBluetoothScan`, and `useBluetoothEvent` for React components; `addListener` is available as the lower-level non-React subscription API |
 | Default device | `getDefaultDevice`, `setDefaultDevice`, `clearDefaultDevice` |
 | Connection | `scan`, `startScan`, `stopScan`, `connect`, `connectDefault`, `cancelConnectionAttempt`, `disconnect`, `forget` |
+| Display | `displayText`, `clearDisplay`, `setDashboardContent`, `showDashboard`, `setDashboardPosition`, `setHeadUpAngle`, `setScreenDisabled` |
 | Wi-Fi and hotspot | `requestWifiScan`, `sendWifiCredentials`, `forgetWifiNetwork`, `setHotspotState` |
 | Camera and gallery | `requestPhoto`, `warmUpCamera`, `stopCameraWarmUp`, `queryGalleryStatus`, `setGalleryModeEnabled`, `setPhotoCaptureDefaults` (deprecated), `setVideoRecordingDefaults`, `setMaxVideoRecordingDuration`, `setCameraFov`, `setCameraFovOverride`, `releaseCameraFovOverride`, `startVideoRecording`, `stopVideoRecording`, `queryVideoRecordingStatus` |
 | Streaming | `startStream`, `stopStream` |
@@ -379,6 +380,7 @@ Important defaults:
 
 - `scan(model, options)` reports progressive results through `options.onResults`, resolves with the final matching `Device[]`, and times out after 15 seconds unless `options.timeoutMs` is set.
 - `connect` and `connectDefault` default `saveAsDefault` and `cancelExistingConnectionAttempt` to `true`.
+- `setDashboardContent(content)` keeps the standard time, date, battery, and connection status header. It stores content for the current SDK session and renders it immediately only when the contextual dashboard is visible; otherwise it appears on the next head-up. Pass the exact empty string to restore the status-only dashboard.
 - `setMicState(enabled)` defaults to glasses microphone on, transcript events off, and LC3 events off. Microphone audio events are continuous while capture is enabled. Use `setVoiceActivityDetectionEnabled(...)` for glasses-side Voice Activity Detection and `setLoudnessGateEnabled(...)` for Mentra Live's center-microphone loudness gate ("Barrier"). With VAD disabled and Barrier enabled, quiet input is represented as silence while audio frames continue. The standalone public Bluetooth SDK defaults are VAD disabled and Barrier enabled, and both settings are reapplied after reconnect. The Mentra App manages separate persisted OS-level microphone preferences. `voice_activity_detection_status` reports whether VAD is enabled, and `speaking_status` reports speaking/not-speaking when supported. Microphone audio events include the latest `voiceActivityDetectionEnabled` value.
 - `requestPhoto({authToken, ...})` omits the `Authorization` header when `authToken` is `null` or empty.
 - `requestPhoto(...)` and `warmUpCamera(...)` generate unique request IDs when `requestId` is omitted or blank. Pass an explicit `requestId` only when your app needs to know it before the response, for example to poll a predictable upload-status URL.
@@ -391,6 +393,47 @@ Important defaults:
 - `startStream` optional `video` and `audio` configs are omitted unless supplied, so the connected glasses use their model defaults. Stream video input fields are `width`, `height`, `bitrate`, and `fps`; stream status reports the resolved effective frame rate as `resolvedConfig.video.fps`. The SDK sends stream keep-alives automatically and reports timeout/error state through `stream_status`.
 - Photo capture, video recording, and streaming always enable the camera light as a privacy indicator.
 - The SDK sends `set_system_time` once shortly after each glasses connection becomes ready, after the initial command burst has drained. The guard resets on disconnect, so reconnecting synchronizes again. There is no periodic clock correction during a long-lived connection; compare `requestVersionInfo().systemTimeMs` with the phone clock if your app needs to monitor later skew.
+
+## Head-Up Dashboard Content
+
+Use `setDashboardContent` to place persistent, glanceable text below the standard
+dashboard status header. The SDK keeps the raw status placeholders and expands
+them every time the dashboard renders, so time, date, battery, and connection
+remain current. The call does not force the dashboard open. If the contextual
+dashboard is hidden, the content appears on the next head-up.
+
+<Tabs>
+  <Tab title="React Native">
+
+```ts
+await BluetoothSdk.setDashboardContent('Next meeting at 2 PM');
+await BluetoothSdk.setDashboardContent('');
+```
+
+  </Tab>
+  <Tab title="Android">
+
+```kotlin
+sdk.setDashboardContent("Next meeting at 2 PM")
+sdk.setDashboardContent("")
+```
+
+  </Tab>
+  <Tab title="iOS">
+
+```swift
+await sdk.setDashboardContent("Next meeting at 2 PM")
+await sdk.setDashboardContent("")
+```
+
+  </Tab>
+</Tabs>
+
+Only the exact empty string resets the custom content; whitespace and newlines
+are otherwise preserved. Dashboard content lasts for the current SDK process.
+Persist it in the host app and reapply it after launch when it must survive an
+app restart. Gate this API by display capability because Mentra Live does not
+have a display.
 
 ## Promise Results And Errors
 
@@ -443,6 +486,7 @@ Use `setGalleryModeEnabled(true)` to enable local button capture, and `setGaller
 | Area | Commands |
 | --- | --- |
 | Connection | `scan`, `startScan`, `stopScan`, `connect`, `connectDefault`, `disconnect`, `forget` |
+| Display | `displayText`, `clearDisplay`, `setDashboardContent`, `showDashboard`, dashboard position, and head-up angle |
 | Wi-Fi and hotspot | `requestWifiScan`, `sendWifiCredentials`, `forgetWifiNetwork`, `setHotspotState` |
 | Camera | `requestPhoto`, gallery mode, photo capture defaults, video recording defaults, camera field of view |
 | Streaming | `startStream`, `stopStream` |

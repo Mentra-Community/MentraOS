@@ -17,6 +17,7 @@ import {
   serializeReleaseRecord,
 } from "./release-family.mjs"
 import {cloudRecordForPlan} from "./coordinated-cloud-v2-test-helpers.mjs"
+import {runtimeImageRecordForPlan} from "./coordinated-runtime-image-test-helpers.mjs"
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
 
@@ -50,7 +51,7 @@ test("loads the repository release family and derives dependency-first publicati
   assert.equal(family.changelog.path, `changelogs/${repositoryVersion}.md`)
   assert.match(family.changelog.sha256, /^[0-9a-f]{64}$/)
   assert.deepEqual(family.products, ["mentraos", "@mentra/engine", "@mentra/bluetooth-sdk"])
-  assert.equal(family.members.length, 8)
+  assert.equal(family.members.length, 9)
   assert.ok(family.publicationOrder.indexOf("@mentra/jspolyfill") < family.publicationOrder.indexOf("@mentra/crust"))
   assert.ok(
     family.publicationOrder.indexOf("@mentra/bluetooth-sdk") < family.publicationOrder.indexOf("@mentra/engine"),
@@ -236,6 +237,7 @@ test("serializes records canonically and finalizes only complete release results
   const results = {
     releaseSetId: plan.releaseSetId,
     cloud: cloudRecordForPlan(plan),
+    runtimeImage: runtimeImageRecordForPlan(plan),
     publications,
     otaManifest: publication(plan.artifactNames.otaManifest),
     artifacts: [
@@ -254,6 +256,7 @@ test("serializes records canonically and finalizes only complete release results
   assert.deepEqual(manifest.native, plan.native)
   assert.deepEqual(manifest.changelog, plan.changelog)
   assert.equal(manifest.cloud.environment, "staging")
+  assert.equal(manifest.runtimeImage.reference, `ghcr.io/mentra-community/mentra-cloud@sha256:${"8".repeat(64)}`)
   assert.equal(serializeReleaseRecord({z: 1, a: 2}), '{\n  "a": 2,\n  "z": 1\n}\n')
 
   const incompletePlan = structuredClone(plan)

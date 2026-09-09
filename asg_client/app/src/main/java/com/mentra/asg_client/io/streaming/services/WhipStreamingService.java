@@ -27,8 +27,11 @@ import com.mentra.asg_client.io.network.utils.HotspotAwareNetworkChangeDetector;
 import com.mentra.asg_client.io.streaming.config.WhipStreamConfig;
 import com.mentra.asg_client.io.streaming.interfaces.StreamingStatusCallback;
 import com.mentra.asg_client.service.core.constants.BatteryConstants;
+import com.mentra.asg_client.service.system.core.SystemControllerFactory;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
 import com.mentra.asg_client.utils.WakeLockManager;
+
+import org.json.JSONObject;
 
 import org.webrtc.RTCStats;
 import org.webrtc.RTCStatsCollectorCallback;
@@ -68,6 +71,7 @@ import okhttp3.Callback;
 import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
+import io.github.thibaultbee.streampack.internal.sources.camera.CameraController;
 import okhttp3.RequestBody;
 import okhttp3.Response;
 import org.json.JSONObject;
@@ -360,6 +364,12 @@ public class WhipStreamingService extends Service {
       }
       mStreamState = StreamState.STARTING;
     }
+    // Recheck here too: a reconnect can outlive the command's battery evidence.
+    if (mHardwareManager != null && BatteryConstants.isCameraBatteryLow(
+        mHardwareManager.getBatteryLevel(), mHardwareManager)) {
+      handleStartupFailure("battery_low", "Battery too low to start streaming");
+      return;
+    }
     if (!mIsReconnecting && mStartupStartedAtMs == 0) {
       mStartupStartedAtMs = SystemClock.elapsedRealtime();
     }
@@ -382,8 +392,13 @@ public class WhipStreamingService extends Service {
       logStartupStage("peer_connection_factory_ready");
       setupCamera();
       logStartupStage("camera_started");
-      setupAudio();
-      logStartupStage("audio_started");
+      if (mStreamConfig.isCaptureAudio()) {
+        setupAudio();
+        logStartupStage("audio_started");
+      } else {
+        Log.i(TAG, "Skipping glasses mic capture (captureAudio=false)");
+        logStartupStage("audio_skipped");
+      }
       createPeerConnectionAndOffer();
       logStartupStage("offer_requested");
     } catch (Exception e) {
@@ -435,11 +450,30 @@ public class WhipStreamingService extends Service {
       mIsReconnecting = false;
       mReconnectAttempts = 0;
       WakeLockManager.release(WakeLockManager.WakeOwner.STREAMING);
+      restoreEisDefault();
       resetState();
       notifyStopped();
       updateNotification("Stream stopped");
     }
     Log.d(TAG, "WHIP streaming stopped");
+  }
+
+  /**
+   * Livestream EIS is armed by StreamCommandHandler at start and restored there only on an
+   * explicit stop command. Stops that originate inside this service (keep-alive timeout,
+   * battery cutoff, reconnect give-up) never passed through the handler, so the vendor EIS
+   * property and the capture-request flag stayed armed for the next photo/video. Every
+   * terminal stop now restores the boot default (off); the handler's own restore is idempotent.
+   */
+  private void restoreEisDefault() {
+    if (!CameraController.enablePixsmartEisOnRequest) return;
+    Log.i(TAG, "EIS stage=stream-stop enable=false reason=service-terminal-stop");
+    CameraController.enablePixsmartEisOnRequest = false;
+    try {
+      SystemControllerFactory.get(getApplicationContext()).setEisEnabled(false);
+    } catch (Exception e) {
+      Log.w(TAG, "Failed to restore EIS default after stream stop", e);
+    }
   }
 
   /** Attempt to reconnect after a connection failure. */
@@ -574,7 +608,9 @@ public class WhipStreamingService extends Service {
     }
 
     mPeerConnection.addTrack(mVideoTrack);
-    mPeerConnection.addTrack(mAudioTrack);
+    if (mAudioTrack != null) {
+      mPeerConnection.addTrack(mAudioTrack);
+    }
 
     for (RtpTransceiver transceiver : mPeerConnection.getTransceivers()) {
       transceiver.setDirection(RtpTransceiver.RtpTransceiverDirection.SEND_ONLY);
@@ -671,7 +707,10 @@ public class WhipStreamingService extends Service {
    */
   private void applyBitrateConstraints() {
     int maximumBitrateBps = mStreamConfig.getVideoBitrate();
-    int initialBitrateBps = WhipBitratePolicy.initialBitrateBps(maximumBitrateBps);
+    int initialBitrateBps = WhipBitratePolicy.initialBitrateBps(
+        mStreamConfig.getVideoInitialBitrateBps(), mStreamConfig.getVideoMinBitrateBps(), maximumBitrateBps);
+    Integer minimumBitrateBps = WhipBitratePolicy.minimumBitrateBps(
+        mStreamConfig.getVideoMinBitrateBps(), maximumBitrateBps);
 
     for (RtpSender sender : mPeerConnection.getSenders()) {
       if (sender.track() == null) continue;
@@ -683,6 +722,7 @@ public class WhipStreamingService extends Service {
       params.degradationPreference = RtpParameters.DegradationPreference.MAINTAIN_FRAMERATE;
 
       for (RtpParameters.Encoding encoding : params.encodings) {
+        encoding.minBitrateBps = minimumBitrateBps;
         encoding.maxBitrateBps = maximumBitrateBps;
       }
 
@@ -690,11 +730,14 @@ public class WhipStreamingService extends Service {
     }
 
     boolean bitratePreferencesApplied =
-        WhipBitratePolicy.applyTo(mPeerConnection, maximumBitrateBps);
+        WhipBitratePolicy.applyTo(mPeerConnection, mStreamConfig.getVideoMinBitrateBps(),
+            mStreamConfig.getVideoInitialBitrateBps(), maximumBitrateBps);
     if (!bitratePreferencesApplied) {
-      Log.w(TAG, "Failed to apply WHIP initial/max bitrate preferences");
+      Log.w(TAG, "Failed to apply WHIP min/initial/max bitrate preferences");
     }
-    Log.i(TAG, "Applied video bitrate constraints: start=" + (initialBitrateBps / 1000)
+    Log.i(TAG, "Applied video bitrate constraints: min="
+        + (minimumBitrateBps == null ? "unset" : minimumBitrateBps / 1000)
+        + " kbps, start=" + (initialBitrateBps / 1000)
         + " kbps, max=" + (maximumBitrateBps / 1000)
         + " kbps, degradation=MAINTAIN_FRAMERATE");
   }
@@ -1401,6 +1444,7 @@ public class WhipStreamingService extends Service {
       public void run() {
         boolean shouldStop = false;
         boolean shouldReschedule = false;
+        int stopBatteryLevel = -1;
 
         synchronized (mStateLock) {
           if (mStreamState == StreamState.IDLE || mStreamState == StreamState.STOPPING) {
@@ -1413,10 +1457,11 @@ public class WhipStreamingService extends Service {
           } else if (mStreamState == StreamState.STREAMING) {
             int batteryLevel = mHardwareManager.getBatteryLevel();
 
-            if (batteryLevel >= 0 && batteryLevel < BatteryConstants.MIN_BATTERY_LEVEL) {
+            if (BatteryConstants.isCameraBatteryLow(batteryLevel, mHardwareManager)) {
               Log.w(TAG, "Battery dropped to " + batteryLevel
                   + "% during WHIP streaming - stopping");
               shouldStop = true;
+              stopBatteryLevel = batteryLevel;
 
               if (mHardwareManager.supportsAudioPlayback()) {
                 mHardwareManager.playAudioAsset(AudioAssets.BATTERY_LOW);
@@ -1436,6 +1481,11 @@ public class WhipStreamingService extends Service {
         }
 
         if (shouldStop) {
+          // Name the reason before the stop. A bare `stopped` looks like a clean end to the
+          // phone, so Mentra Call kept trying to restart a stream the glasses would only
+          // reject again and the wearer never learned the battery was the problem.
+          notifyError("Battery too low (" + stopBatteryLevel + "%) - streaming stopped; minimum "
+              + BatteryConstants.MIN_BATTERY_LEVEL + "% required");
           stopStreaming();
         }
       }

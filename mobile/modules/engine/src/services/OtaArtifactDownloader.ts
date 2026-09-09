@@ -89,9 +89,10 @@ export function planArtifacts(result: OtaCheckCurrentGlassesResult): OtaArtifact
   }
 
   if (result.updates.includes("mtk") && result.mtkPatch) {
-    const raw = (manifest.mtk_patches ?? []).find(
-      (patch) => firmwareUrl(patch) === firmwareUrl(result.mtkPatch!),
-    ) as unknown as Record<string, unknown> | undefined
+    const candidates = [...(manifest.mtk_patches ?? []), ...(manifest.mtk_full_ota ? [manifest.mtk_full_ota] : [])]
+    const raw = candidates.find((entry) => firmwareUrl(entry) === firmwareUrl(result.mtkPatch!)) as unknown as
+      | Record<string, unknown>
+      | undefined
     const url = firmwareUrl(raw) ?? firmwareUrl(result.mtkPatch)
     if (!url) {
       throw new OtaArtifactError("manifest_invalid", "Manifest has no URL for the pending MTK patch")
@@ -238,6 +239,9 @@ export function rewriteManifestForLocalServer(
 
   for (const patch of manifest.mtk_patches ?? []) {
     rewriteFirmwareEntry(patch as unknown as Record<string, unknown>, byUrl, localUrl)
+  }
+  if (manifest.mtk_full_ota) {
+    rewriteFirmwareEntry(manifest.mtk_full_ota as unknown as Record<string, unknown>, byUrl, localUrl)
   }
   if (manifest.bes_firmware) {
     rewriteFirmwareEntry(manifest.bes_firmware as unknown as Record<string, unknown>, byUrl, localUrl)

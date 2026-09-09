@@ -9,7 +9,7 @@
 import Combine
 import CoreBluetooth
 import Foundation
-import UIKit
+import CoreGraphics
 
 /// Keep a low-rate, non-audio EvenHub sensor stream active so iOS continues receiving BLE
 /// notifications while the Mentra App is backgrounded. The samples stay internal unless IMU was
@@ -2565,7 +2565,7 @@ class G2: NSObject, SGCManager {
     /// (aspect-fit, centered on black) — the front half of `convertToG2Bmp`,
     /// exposed for the tiler which encodes per-tile BMPs from one render.
     private func renderG2Grayscale(_ data: Data, targetWidth: Int, targetHeight: Int) -> Data? {
-        guard let image = UIImage(data: data), let cgImage = image.cgImage else { return nil }
+        guard let image = SdkImage(data: data), let cgImage = image.cgImage else { return nil }
         let scale = min(
             Double(targetWidth) / Double(cgImage.width), Double(targetHeight) / Double(cgImage.height)
         )
@@ -3101,7 +3101,7 @@ class G2: NSObject, SGCManager {
     /// Scale source image to fit within containerWidth x containerHeight (maintaining aspect ratio),
     /// centered on a black background. Output BMP always matches container dimensions exactly.
     private func convertToG2Bmp(_ data: Data, containerWidth: Int, containerHeight: Int) -> Data? {
-        guard let image = UIImage(data: data), let cgImage = image.cgImage else {
+        guard let image = SdkImage(data: data), let cgImage = image.cgImage else {
             Bridge.log("G2: convertToG2Bmp - could not decode image")
             return nil
         }

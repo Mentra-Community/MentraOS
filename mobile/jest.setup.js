@@ -770,6 +770,7 @@ const mockIslandEntries = () => {
     useStop: jest.fn(() => appStatusState.stop),
     sortAppsByLastOpenTime: jest.fn((apps) => apps),
     decideDevLaunchRoute: jest.fn(),
+    decideDevOpenRoute: jest.fn(),
     HardwareCompatibility: {
       checkCompatibility: jest.fn(() => ({
         isCompatible: true,

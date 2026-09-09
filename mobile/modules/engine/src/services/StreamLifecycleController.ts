@@ -1,11 +1,15 @@
 /**
- * Drives RTMP stream liveliness checks via a keep-alive heartbeat:
+ * Drives stream liveliness checks via a keep-alive heartbeat:
  * `setActive(true)` starts the timer; each tick sends a keep-alive with a
  * fresh ackId; `maxMissedAcks` consecutive timeouts fire `onTimeout`.
  *
  * Phone-owned successor to the retired cloud stream lifecycle controller.
  * It uses the local `LifecycleLogger` interface because pino is not a phone
  * dependency.
+ *
+ * Timers MUST go through BgTimer. React Native pauses plain `setInterval`
+ * while MentraOS is backgrounded; glasses WHIP then auto-stops after 60s
+ * without `keep_stream_alive`, and Mentra Call recovers by restarting ingest.
  */
 
 export interface LifecycleLogger {
@@ -23,6 +27,13 @@ interface StreamLifecycleCallbacks {
   onKeepAliveMissed?: (ackId: string, ageMs: number, missedCount: number) => void
 }
 
+export interface StreamLifecycleTimerApi {
+  setInterval: (callback: () => void, delay: number) => number
+  clearInterval: (intervalId: number) => void
+  setTimeout: (callback: () => void, delay: number) => number
+  clearTimeout: (timeoutId: number) => void
+}
+
 export interface StreamLifecycleOptions {
   logger: LifecycleLogger
   streamId: string
@@ -31,21 +42,27 @@ export interface StreamLifecycleOptions {
   maxMissedAcks: number
   shouldSendKeepAlive?: () => boolean
   now?: () => number
+  timers?: StreamLifecycleTimerApi
 }
 
 interface PendingAckInfo {
   sentAt: number
-  timeout: ReturnType<typeof setTimeout>
+  timeout: number
+}
+
+function productionTimers(): StreamLifecycleTimerApi {
+  // Lazy so unit tests that inject timers never parse react-native.
+  const {BgTimer} = require("../utils/timers") as {BgTimer: StreamLifecycleTimerApi}
+  return BgTimer
 }
 
 /**
- * Drives RTMP stream liveliness checks. Activate to start the heartbeat;
- * each tick sends a keep-alive with a fresh ackId and arms a timeout. When
- * `maxMissedAcks` consecutive timeouts fire, `onTimeout` is invoked and the
- * caller is expected to tear the stream down.
+ * Keep-alive heartbeat. Activate to start ticks; each tick sends keep-alive
+ * with a fresh ackId and arms a timeout. `maxMissedAcks` consecutive misses
+ * fire `onTimeout`, and the caller is expected to tear the stream down.
  */
 export class StreamLifecycleController {
-  private keepAliveTimer?: ReturnType<typeof setInterval>
+  private keepAliveTimer?: number
   private pendingAcks: Map<string, PendingAckInfo> = new Map()
   private missedAcks = 0
   private lastActivityMs: number
@@ -59,6 +76,7 @@ export class StreamLifecycleController {
   private readonly maxMissedAcks: number
   private readonly shouldSendKeepAlive?: () => boolean
   private readonly now: () => number
+  private readonly timers: StreamLifecycleTimerApi
 
   constructor(
     options: StreamLifecycleOptions,
@@ -71,6 +89,7 @@ export class StreamLifecycleController {
     this.maxMissedAcks = options.maxMissedAcks
     this.shouldSendKeepAlive = options.shouldSendKeepAlive
     this.now = options.now ?? (() => Date.now())
+    this.timers = options.timers ?? productionTimers()
     this.lastActivityMs = this.now()
   }
 
@@ -94,6 +113,17 @@ export class StreamLifecycleController {
     this.missedAcks = 0
   }
 
+  /**
+   * Send one keep-alive immediately instead of waiting for the next interval.
+   * Used when the BLE link comes back after a suspension: the glasses
+   * publisher's 60s watchdog has been running the whole time, so the first
+   * heartbeat after resume must not wait up to another full interval.
+   */
+  tickNow(): void {
+    if (this.disposed || !this.active) return
+    void this.tick()
+  }
+
   handleAck(ackId: string): void {
     if (this.disposed) return
 
@@ -103,7 +133,7 @@ export class StreamLifecycleController {
       return
     }
 
-    clearTimeout(ackInfo.timeout)
+    this.timers.clearTimeout(ackInfo.timeout)
     this.pendingAcks.delete(ackId)
     this.recordActivity()
 
@@ -125,7 +155,7 @@ export class StreamLifecycleController {
 
   private startTimer(): void {
     if (this.keepAliveTimer) return
-    this.keepAliveTimer = setInterval(() => {
+    this.keepAliveTimer = this.timers.setInterval(() => {
       void this.tick()
     }, this.keepAliveIntervalMs)
     this.logger.debug({streamId: this.streamId}, "Keep-alive timer started")
@@ -133,7 +163,7 @@ export class StreamLifecycleController {
 
   private stopTimer(): void {
     if (this.keepAliveTimer) {
-      clearInterval(this.keepAliveTimer)
+      this.timers.clearInterval(this.keepAliveTimer)
       this.keepAliveTimer = undefined
       this.logger.debug({streamId: this.streamId}, "Keep-alive timer stopped")
     }
@@ -153,7 +183,7 @@ export class StreamLifecycleController {
     const ackId = this.createAckId()
     const sentAt = this.now()
 
-    const timeout = setTimeout(() => {
+    const timeout = this.timers.setTimeout(() => {
       this.onAckTimeout(ackId, sentAt)
     }, this.ackTimeoutMs)
 
@@ -202,7 +232,7 @@ export class StreamLifecycleController {
 
   private clearPendingAcks(): void {
     for (const {timeout} of this.pendingAcks.values()) {
-      clearTimeout(timeout)
+      this.timers.clearTimeout(timeout)
     }
     this.pendingAcks.clear()
   }

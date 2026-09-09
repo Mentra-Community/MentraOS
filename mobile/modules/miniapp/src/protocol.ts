@@ -205,6 +205,16 @@ export enum MiniappRequestType {
   ACTION_INVOKE = "miniapp_action_invoke",
   /** Target → host: the result of a delivered ACTION_CALL, correlated by callId. */
   ACTION_RESULT = "miniapp_action_result",
+
+  /**
+   * Phone-native meeting (ACS Teams). Join/leave/mute live in the MentraOS
+   * host so the miniapp never holds the ACS Calling SDK.
+   */
+  MEETING_JOIN = "miniapp_meeting_join",
+  MEETING_LEAVE = "miniapp_meeting_leave",
+  MEETING_SET_MUTED = "miniapp_meeting_set_muted",
+  MEETING_UPDATE_VIDEO_SOURCE = "miniapp_meeting_update_video_source",
+  MEETING_GET_STATE = "miniapp_meeting_get_state",
 }
 
 // ============================================================================
@@ -260,6 +270,12 @@ export enum MiniappResponseType {
    * handler and replies with an ACTION_RESULT request keyed by callId.
    */
   ACTION_CALL = "miniapp_action_call",
+
+  /**
+   * Push: native meeting state changed. Carries {state, muted?, error?}.
+   * See MeetingModule.onState().
+   */
+  MEETING_STATE = "miniapp_meeting_state",
 
   /**
    * Push: phone is about to tear down the miniapp's session. Gives the SDK

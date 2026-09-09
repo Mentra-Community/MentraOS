@@ -101,6 +101,7 @@ pnpm-lock.yaml
 .env.local
 
 .model-cache/
+.benchmarks/
 scripts/stress-test/runs/
 
 # Device photos from pull-glasses-photos.sh (default OUTPUT_DIR)

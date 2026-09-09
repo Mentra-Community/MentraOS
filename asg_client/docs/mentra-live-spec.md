@@ -81,14 +81,19 @@ For some outbound commands, `B` is a JSON object serialized as a string inside t
 
 Mentra Live supports photo capture and video recording from the glasses camera.
 
+After a photo completes, the camera normally stays warm for 8 seconds for successive shots.
+
 - **Short camera-button press**: takes a photo unless video is currently recording, in which case it stops the recording.
 - **Long camera-button press**: starts video recording unless video is already recording, in which case it stops.
 - Photo/video resolution, FPS, max recording duration, and privacy LED behavior are configurable by commands from the phone app.
+- Photo/video starts and ongoing video/streaming retain the normal 15% battery minimum. Known 4–14% requires fresh BES `hm_batv.B.active_charging: true` (SY5502 phases 3/4/5, not full or merely plugged in); known 0–3% is always blocked. Missing/false charge evidence grants no exception. Unknown SOC keeps its existing behavior and is not charge evidence.
+- Charge evidence is paired with the same reply's SOC, timestamped before event delivery using elapsed realtime, and invalidated by UART proof reset/recovery; older queued events cannot restore it. Low-battery use requests `mh_batv` after 5 seconds and expires evidence after 30 seconds. At the normal 10-second monitoring cadence, unplugging is queried on the next tick and acted on the following tick (about 20 seconds); silent UART failure stops use on the first check at expiry (at most about 40 seconds after the last receipt). These are polling bounds, not hard real-time deadlines. Normal cleanup is retained, and stream reconnect starts recheck the policy before opening the camera.
+- Queue admission is not lasting permission to capture: photos recheck before the shutter and videos recheck after teardown and camera preparation. All paths use the hardware battery cache when available; UART evidence also requires a ready transport under normal OTA policy.
 - Captured media is stored locally in package-namespaced storage and exposed to the phone through the camera web server for gallery sync.
-- **Warm photo capture** (camera already running): waits for Camera2's sensor-exposure-start callback, then times the snap near the end of exposure.
-- **Cold photo capture** (camera startup required): plays a short, intentionally subtle hold-still prep click immediately and every 900ms during camera/ISP startup, then stops the clicks when sensor exposure starts. After AE first converges, cold captures preserve a 475ms minimum exposure-settling window before submitting the still request; warm-session captures keep the adaptive stable-frame fast path.
-- Single-frame captures use Camera2 `onCaptureStarted` as the hardware anchor. The snap targets 100ms before estimated exposure end (manual duration when fixed; latest preview-metered duration for auto exposure), which keeps it immediate in bright scenes and avoids an early cue during longer low-light exposures. If the completed JPEG reaches `ImageReader` first—as can happen when a HAL delivers `onCaptureStarted` late—the frame callback plays the snap immediately, before extraction or persistence. HDR bursts use the final bracket's exposure/frame callbacks so the user remains still for the whole burst. The final captured callback remains an idempotent last-resort fallback.
-- Prep clicks and snaps use isolated audio overlays so camera feedback does not cut off unrelated device prompts. The shutter snap uses a deliberately prominent playback gain so it remains distinct from the quieter prep cue. A failed capture cancels only its own pending click.
+- **Warm photo capture** (camera already running): requests the shutter sound immediately at capture request time, without a warm-up cue or waiting for exposure/JPEG callbacks. Device testing reported warm photo capture under 20ms, so immediate audio feedback is preferred for responsiveness. Later capture callbacks do not play a second snap. An already-playing loading beep still finishes before the shutter to avoid overlap.
+- **Cold photo capture** (camera startup required): plays a short, intentionally subtle hold-still prep click immediately and every 900ms during camera/ISP startup, then requests the clicks to stop when sensor exposure starts. On Mentra Live, an in-progress beep finishes before the sequence stops in its silent portion; the shutter sound waits for that stop without delaying the photo. The cadence is baked into one lossless 45-second audio sequence, covering the feedback safety timeout without per-click timers or player restarts. Each beep occupies the first 186ms of its 900ms period; normal stop requests target the 240–800ms silent window using playback position and recheck it after timer delays. Service teardown still stops all audio immediately. After AE first converges, cold captures preserve a 475ms minimum exposure-settling window before submitting the still request; warm-session captures keep the adaptive stable-frame fast path.
+- Cold single-frame captures use Camera2 `onCaptureStarted` as the hardware anchor. The snap targets 100ms before estimated exposure end (manual duration when fixed; latest preview-metered duration for auto exposure), which keeps it immediate in bright scenes and avoids an early cue during longer low-light exposures. If the completed JPEG reaches `ImageReader` first—as can happen when a HAL delivers `onCaptureStarted` late—the frame callback plays the snap immediately, before extraction or persistence. HDR bursts use the final bracket's exposure/frame callbacks so the user remains still for the whole burst. The final captured callback remains an idempotent last-resort fallback.
+- Prep clicks and snaps use isolated audio overlays so camera feedback does not cut off unrelated device prompts. The shutter snap uses a deliberately prominent playback gain so it remains distinct from the quieter prep cue. A failed capture cancels only its own feedback; an already-playing prep beep is allowed to finish.
 - The user-visible BES RGB photo indicator starts at the same sensor-exposure boundary, with the JPEG frame and final completion callbacks as idempotent fallbacks. It does not start during cold camera warmup, so it remains on when the image is actually captured.
 
 ### Gallery-mode behavior
@@ -156,6 +161,25 @@ Phone-pinned `asg_client` APK downgrades are supported when the target version c
 must be refused.
 
 Update flows must preserve device recoverability, report progress where possible, and avoid interrupting active media operations without cleanup.
+
+MTK updates prefer an incremental patch whose start version matches the glasses.
+If no patch matches, a pinned `mtk_full_ota` can update a known older firmware
+directly. Full fallback requires a valid target version, URL, SHA-256, and size;
+unknown, equal, or newer installed versions do not qualify. A failed incremental
+does not silently switch to a full image. Both paths use the existing user-approved
+installation and Android compatibility checks; full OTAs do not enable rollback
+or request a userdata wipe. Release manifests pin the full artifact, including
+when the phone downloads and serves it over the glasses hotspot.
+Glasses reuse `asg/mtk_firmware.zip` rather than retaining one file per release.
+MTK downloads are capped at 1 GiB and reserve room for the ZIP plus payload
+before downloading when the artifact size is known. Historical development
+packages and post-install space reclamation are separate from this fallback.
+Download liveness uses actual received bytes, not just rounded percentages;
+repeated status replies do not count as transfer progress. A phone timeout does
+not release an active MTK system install: ASG retains ownership until the system
+updater reports a terminal result (or the process/device restarts), preventing a
+retry from replacing its staged ZIP. Release packaging checks declared full-OTA
+size against the same bytes whose SHA-256 is verified.
 
 The MTK↔BES UART always starts at 460800 baud. Firmware that supports the negotiated fast link may upgrade to 1152000 only after reporting a compatible current firmware version. At startup, `asg_client` retries discovery at 460800 before making one bounded probe at 1152000, then returns to 460800 if neither rate answers. The alternate probe does not depend on app-local cached state, so an APK reinstall can recover a BES that survived at the negotiated rate. Once traffic confirms a negotiated 1152000 link, BES keeps that baud across UART driver restarts and Android sleep; ordinary phone heartbeats and expected MTK sleep silence must not return one endpoint to 460800. If an older BES nevertheless falls back or reboots while ASG remains alive, several small unframed reads or an idle-link health probe cause `asg_client` to verify 1152000, probe 460800, and renegotiate the fast link after finding BES at the rendezvous rate. If neither rate answers, ASG remains at 460800 and retries the two-rate scan with capped exponential backoff so a later BES boot cannot leave the endpoints split indefinitely. Each scan is bounded and recovery is suppressed during BES OTA, file transfer, and active baud transitions. After a successful BES OTA, BES reboots at 460800, so `asg_client` explicitly reopens the rendezvous baud, rediscovers the new firmware version, and negotiates again when supported. Older firmware on either side remains at 460800.
 

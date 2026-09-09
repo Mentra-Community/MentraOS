@@ -130,6 +130,10 @@ jobs:
           rm -rf node_modules
           bun install --no-frozen-lockfile
 
+      - name: Validate CocoaPods post-install project integrity
+        working-directory: ./mobile
+        run: bun ./scripts/check-mapbox-pods-project.ts
+
       - name: Setup environment
         working-directory: ./mobile
         # Copy the dummy .env, then overwrite the Mapbox runtime token line with
@@ -389,7 +393,8 @@ jobs:
           }
           trap record_duration EXIT
 
-          xcodebuild -workspace Mentra.xcworkspace \
+          xcodebuild -quiet \
+                     -workspace Mentra.xcworkspace \
                      -scheme Mentra \
                      -configuration Release \
                      -destination 'generic/platform=iOS' \
@@ -449,7 +454,8 @@ jobs:
           # Retry serially. The fallback only runs after a failed cached build,
           # and limiting concurrency avoids the observed CocoaPods VFS overlay
           # disappearing while parallel compile and XCFramework copy jobs run.
-          xcodebuild -workspace Mentra.xcworkspace \
+          xcodebuild -quiet \
+                     -workspace Mentra.xcworkspace \
                      -scheme Mentra \
                      -jobs 1 \
                      -configuration Release \

@@ -26,6 +26,8 @@ Run with no args to print the same usage table.
 
 ```bash
 mentra-miniapp dev
+mentra-miniapp dev --usb                    # reach the phone over USB, no shared Wi-Fi
+mentra-miniapp dev --usb --device <serial>  # pick one of several attached devices
 ```
 
 What it does:
@@ -35,12 +37,12 @@ What it does:
 3. Picks the first free adjacent port pair starting at `port`: one for static files and the next for the dev sidecar.
 4. Starts a static server that serves `miniapp.json`, `icon.png`, and project files.
 5. Starts a **dev sidecar** on `port + 1` — a WebSocket the phone connects to for live reload + console-log forwarding back to your terminal. Failure here is non-fatal; the miniapp still runs without live reload.
-6. Detects the LAN IP, builds a `miniapp://dev?url=…&name=…&package=…&dev=<sidecarPort>` URL, and prints a terminal QR + the raw URL.
-7. Watches for LAN-IP changes (Wi-Fi switch) every 10s and reprints the QR.
+6. Detects the LAN IP (or sets up USB tunnels with `--usb`), builds a `miniapp://dev?url=…&name=…&package=…&dev=<sidecarPort>` URL, and prints a terminal QR + the raw URL.
+7. Watches for LAN-IP changes (Wi-Fi switch) every 2s and reprints the QR. Skipped under `--usb`, where the QR host is a fixed loopback address.
 
 Default `port` is `3000`; override the starting point with a `"port": <n>` field in `miniapp.json`. If that port or its sidecar neighbor is busy, `dev` scans upward until it finds a free adjacent pair.
 
-**On the phone:** open the Mentra App → **Settings → Developer settings → Mini App Development → Scan Mini App QR Code**. Phone and laptop must be on the same Wi-Fi.
+**On the phone:** open the Mentra App → **Settings → Developer settings → Mini App Development → Scan Mini App QR Code**. Phone and laptop must be on the same Wi-Fi, unless you use `--usb` (below).
 
 `dev` is live and temporary. Keep the CLI and computer running because the
 Mentra App loads the runtime bundle from that LAN server. Dev miniapps are keyed
@@ -49,7 +51,33 @@ rescanning the same package updates only that entry. The Mentra App caches each
 entry's name and icon. Use `bun run release` when you need an installed miniapp
 that works without the computer.
 
-`Ctrl+C` stops the server, the sidecar, and the IP watcher.
+`Ctrl+C` stops the server, the sidecar, the IP watcher, and any USB tunnels.
+
+### `--usb` — no shared Wi-Fi required
+
+`--usb` runs `adb reverse` for the static port and the sidecar port, which
+publishes them on the phone's own loopback address over the USB cable. The QR
+then advertises `http://127.0.0.1:<port>` instead of a LAN IP, so the phone and
+the laptop no longer need to share a network. This is the fix when you're on
+guest Wi-Fi, on a network with AP client isolation, or on no Wi-Fi at all.
+
+Everything else behaves the same: live reload and console forwarding ride the
+same tunnel, and the QR still carries the mDNS hint as a fallback.
+
+Notes:
+
+- **Android only.** iOS has no `adb`, so `--usb` can't work there.
+- Requires `adb` on `PATH` (Android platform-tools) and USB debugging accepted
+  on the device.
+- With several devices attached, `dev` refuses to guess and lists the serials —
+  pass `--device <serial>`. Mentra Live glasses (`0123456789ABCDEF`) are skipped
+  automatically so a phone + glasses pair does not need `--device`.
+- If the tunnel can't be established, `dev` falls back to the LAN address and
+  says so. With no LAN address either, it exits.
+- Reverse mappings die on unplug, on `adb kill-server`, and on device reboot.
+  `dev` re-checks every 5s and re-asserts them, logging only the transitions.
+- Teardown removes only the ports it opened, so a Metro `tcp:8081` mapping you
+  set up separately survives.
 
 ---
 

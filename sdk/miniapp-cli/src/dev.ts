@@ -3,13 +3,22 @@ import { readFileSync, existsSync, statSync, unlinkSync } from 'fs';
 import { join, resolve } from 'path';
 import { printQR, writeQRPng } from './qr.js';
 import { validateManifest } from './manifest.js';
-import { startDevSidecar } from './dev-server.js';
+import { buildProjectZip, startDevSidecar } from './dev-server.js';
 import { getLanIp, getMdnsHostname } from './lan.js';
+import { adbReverse, closeUsbTunnel, missingReversePorts, openUsbTunnel } from './adb.js';
 
 const DEFAULT_DEV_PORT = 3000;
 const DEV_PORT_SCAN_LIMIT = 50;
 /** How often to re-check Wi-Fi / LAN IP while `mentra-miniapp dev` is running. */
 const LAN_IP_POLL_MS = 2_000;
+/**
+ * How often to confirm the `adb reverse` mappings are still live. Slower than
+ * the LAN poll because each check spawns an adb subprocess, and a dropped
+ * tunnel only matters on the phone's next fetch.
+ */
+const USB_TUNNEL_POLL_MS = 5_000;
+/** Where `adb reverse` publishes the laptop from the phone's point of view. */
+const USB_LOOPBACK_HOST = '127.0.0.1';
 
 export interface DevAttestationInput {
   packageName: string;
@@ -19,6 +28,14 @@ export interface DevAttestationInput {
 export interface DevOptions {
   cwd?: string;
   qrOutput?: string;
+  /**
+   * Reach the phone over USB via `adb reverse` instead of the LAN. The QR
+   * advertises loopback, so the phone does not need to share this computer's
+   * Wi-Fi. Android only.
+   */
+  usb?: boolean;
+  /** Target a specific `adb` device serial. Only meaningful with `usb`. */
+  device?: string;
   signDevAttestation?: (
     input: DevAttestationInput,
   ) => string | Promise<string | null | undefined> | null | undefined;
@@ -151,15 +168,26 @@ export async function dev(options: DevOptions = {}): Promise<void> {
   }
 
   // Static HTTP server on `port` serving the project root. The phone hits
-  // `${devUrl}/miniapp.json` (reachability + manifest) and `${devUrl}/icon.png`
-  // (icon preview) before falling through to the sidecar's `bundle.zip`
-  // for the actual install. Range requests aren't supported — files are
-  // small and short-lived.
+  // `${devUrl}/miniapp.json` (reachability + manifest), `${devUrl}/icon.png`
+  // (icon preview), and `${devUrl}/bundle.zip` (local snapshot install).
+  // Range requests aren't supported — files are small and short-lived.
   const userServer = Bun.serve({
     hostname: '0.0.0.0',
     port,
     fetch(req) {
       const url = new URL(req.url);
+      if (url.pathname === '/bundle.zip' || url.pathname === '/__mentra_dev/bundle.zip') {
+        return buildProjectZip(cwd).then((buf) => {
+          const body = buf.buffer.slice(buf.byteOffset, buf.byteOffset + buf.byteLength) as ArrayBuffer;
+          return new Response(body, {
+            headers: {
+              'content-type': 'application/zip',
+              'content-length': String(buf.byteLength),
+              'cache-control': 'no-store',
+            },
+          });
+        });
+      }
       // Strip leading slash and prevent ../ traversal. Path joining
       // against cwd already canonicalises, but we double-check by
       // refusing absolute paths and any segment starting with `..`.
@@ -187,8 +215,11 @@ export async function dev(options: DevOptions = {}): Promise<void> {
     },
   });
 
+  // In USB mode the QR advertises loopback, so a missing LAN IP is the expected
+  // case (laptop off Wi-Fi entirely) rather than a fatal one. It's still kept
+  // when present, as the fallback if the ADB tunnel can't be established.
   let lanIp = getLanIp();
-  if (!lanIp) {
+  if (!lanIp && !options.usb) {
     console.error('Warning: Could not detect LAN IP address');
     userServer.stop(true);
     process.exit(1);
@@ -221,6 +252,36 @@ export async function dev(options: DevOptions = {}): Promise<void> {
     );
   }
 
+  // USB mode: publish this machine's ports on the phone's loopback so the QR
+  // can point at 127.0.0.1. Done after the sidecar starts so we only tunnel a
+  // port that something is actually listening on.
+  const usbPorts: number[] = options.usb ? (sidecarPort ? [port, sidecarPort] : [port]) : [];
+  let usbSerial: string | undefined;
+  let usbActive = false;
+  if (options.device && !options.usb) {
+    console.warn('Warning: --device applies only with --usb. Ignoring it; the QR will use the LAN address.');
+  }
+  if (options.usb) {
+    const tunnel = openUsbTunnel(usbPorts, { device: options.device });
+    if (tunnel.ok) {
+      usbActive = true;
+      usbSerial = tunnel.serial;
+      const portList = usbPorts.map((p) => `tcp:${p}`).join(', ');
+      console.log(`USB: adb reverse active on ${portList}${usbSerial ? ` (${usbSerial})` : ''}`);
+      if (!sidecarPort) {
+        console.warn('Warning: dev sidecar is down, so live reload is unavailable over USB too.');
+      }
+    } else {
+      console.error(`Error: --usb could not establish an ADB tunnel.\n  ${tunnel.reason}`);
+      if (!lanIp) {
+        sidecar?.stop();
+        userServer.stop(true);
+        process.exit(1);
+      }
+      console.warn(`Falling back to the LAN address ${lanIp} — the phone must share this computer's Wi-Fi.`);
+    }
+  }
+
   const mdnsHost = getMdnsHostname();
 
   const buildDevUrl = async (ip: string): Promise<string> => {
@@ -251,7 +312,12 @@ export async function dev(options: DevOptions = {}): Promise<void> {
     console.log('║    3. Under "Mini App Development", tap                      ║');
     console.log('║       "Scan Mini App QR Code" and scan the QR below          ║');
     console.log('║                                                              ║');
-    console.log('║  Your phone must be on the same Wi-Fi as this computer.      ║');
+    if (usbActive) {
+      console.log('║  Your phone is reached over USB (adb reverse), not Wi-Fi.    ║');
+      console.log('║  Keep the cable plugged in.                                  ║');
+    } else {
+      console.log('║  Your phone must be on the same Wi-Fi as this computer.      ║');
+    }
     console.log('║                                                              ║');
     console.log('║  Dev mode is live and temporary:                             ║');
     console.log('║    • Keep this process and computer running.                 ║');
@@ -282,14 +348,42 @@ export async function dev(options: DevOptions = {}): Promise<void> {
   if (mdnsHost) {
     console.log(`mDNS: ${mdnsHost} (phone can keep using this name across Wi-Fi IP changes)\n`);
   }
-  const devUrl = await buildDevUrl(lanIp);
+  // Loopback when the USB tunnel is up, otherwise the LAN IP. `lanIp` is
+  // non-null here: the only path that leaves it null exits above unless the
+  // tunnel came up.
+  const devHost = usbActive ? USB_LOOPBACK_HOST : lanIp!;
+  const devUrl = await buildDevUrl(devHost);
   await emitQR(devUrl);
+
+  // Confirm the reverse mappings survive. They are dropped on unplug, on
+  // `adb kill-server`, and on device reboot, and nothing notifies us — the
+  // phone just silently stops reaching the laptop. Log the transitions only,
+  // so a long unplug doesn't spam a line every tick.
+  let usbTunnelHealthy = true;
+  const usbTunnelInterval = usbActive
+    ? setInterval(() => {
+        const missing = missingReversePorts(usbPorts, { device: usbSerial });
+        if (missing.length === 0) {
+          if (!usbTunnelHealthy) {
+            usbTunnelHealthy = true;
+            console.log('USB: tunnel restored.');
+          }
+          return;
+        }
+        if (usbTunnelHealthy) {
+          usbTunnelHealthy = false;
+          const portList = missing.map((p) => `tcp:${p}`).join(', ');
+          console.warn(`USB: tunnel lost (${portList}) — device unplugged or adb restarted. Retrying…`);
+        }
+        for (const p of missing) adbReverse(p, { device: usbSerial });
+      }, USB_TUNNEL_POLL_MS)
+    : null;
 
   // Monitor for LAN IP changes (e.g., Wi-Fi switch / DHCP renew).
   // Re-score interfaces — a VPN coming up must not steal the QR off Wi-Fi,
   // and a Wi-Fi roam must mint a new QR within a couple seconds.
   let ipCheckInFlight = false;
-  const ipCheckInterval = setInterval(() => {
+  const checkLanIpChange = (): void => {
     if (ipCheckInFlight) return;
     const newIp = getLanIp();
     if (!newIp || newIp === lanIp) return;
@@ -320,10 +414,15 @@ export async function dev(options: DevOptions = {}): Promise<void> {
         ipCheckInFlight = false;
       }
     })();
-  }, LAN_IP_POLL_MS);
+  };
+  // Skipped under USB: the QR host is a fixed loopback address, and there are
+  // no baked-in LAN URLs to keep current.
+  const ipCheckInterval = usbActive ? null : setInterval(checkLanIpChange, LAN_IP_POLL_MS);
 
   const shutdown = () => {
-    clearInterval(ipCheckInterval);
+    if (ipCheckInterval) clearInterval(ipCheckInterval);
+    if (usbTunnelInterval) clearInterval(usbTunnelInterval);
+    if (usbActive) closeUsbTunnel(usbPorts, { device: usbSerial });
     // Only remove the auto temp path — keep an explicit --qr-output artifact.
     if (cleanupQrOnExit) {
       try {

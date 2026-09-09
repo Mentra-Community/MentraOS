@@ -97,7 +97,15 @@ jobs:
     if: inputs.dry_run != true
     runs-on: macos-15
     timeout-minutes: 60
+    env:
+      # Expo SDK 55 requires Xcode 26; macos-15 defaults to Xcode 16.4.
+      DEVELOPER_DIR: /Applications/Xcode_26.2.app/Contents/Developer
     steps:
+      - name: Verify the Expo iOS toolchain
+        run: |
+          xcodebuild -version
+          xcrun swift --version
+
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.source_commit }}
@@ -151,12 +159,9 @@ jobs:
         working-directory: ${{ runner.temp }}/engine-consumer/ios
         run: |
           set -euo pipefail
-          workspace=$(find . -maxdepth 1 -name '*.xcworkspace' -print -quit)
-          test -n "$workspace"
-          scheme=$(xcodebuild -list -json -workspace "$workspace" | jq -er '.workspace.schemes[0]')
           xcodebuild \
-            -workspace "$workspace" \
-            -scheme "$scheme" \
+            -workspace ExampleOEMApp.xcworkspace \
+            -scheme ExampleOEMApp \
             -configuration Debug \
             -destination 'generic/platform=iOS Simulator' \
             CODE_SIGNING_ALLOWED=NO \

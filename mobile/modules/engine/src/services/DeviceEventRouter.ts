@@ -50,14 +50,23 @@ export function startDeviceEventRouter(): void {
   // single source of truth — so every path converges here: wifi_status_change,
   // onGlassesStatus, and BLE disconnect. Effective connectivity requires the glasses
   // to be connected AND on Wi-Fi, so a disconnect correctly flips `connected` false.
+  // `linkConnected` carries the BLE leg on its own so a miniapp can tell "glasses
+  // out of Bluetooth range" from "glasses on Bluetooth but off Wi-Fi" — the two
+  // need opposite recoveries (wait vs. open Wi-Fi setup).
   subs.push({
     remove: useGlassesStore.subscribe(
       (s) => {
-        const connected = isGlassesConnected(s.connection) && s.wifi.state === "connected"
+        const linkConnected = isGlassesConnected(s.connection)
+        const connected = linkConnected && s.wifi.state === "connected"
+        // ssid/localIp describe how to reach the glasses over Wi-Fi, so they are
+        // only meaningful under effective connectivity. Gate them on `connected`
+        // (not raw wifi.state) so a BLE drop with a stale "connected" Wi-Fi leg
+        // never hands miniapps an unreachable address.
         return {
           connected,
-          ssid: s.wifi.state === "connected" ? s.wifi.ssid : undefined,
-          localIp: s.wifi.state === "connected" ? s.wifi.localIp : undefined,
+          linkConnected,
+          ssid: linkConnected && s.wifi.state === "connected" ? s.wifi.ssid : undefined,
+          localIp: linkConnected && s.wifi.state === "connected" ? s.wifi.localIp : undefined,
         }
       },
       (wifi) => localMiniappRuntime.forwardEvent("glasses_wifi", wifi),

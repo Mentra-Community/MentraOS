@@ -17,6 +17,7 @@
 // The top-level object. Implemented in ./client by the client agent; re-exported
 // here so the public import is `@mentra/cloud-client`, not a deep path.
 export { CloudClient } from "./client";
+export { DEFAULT_REFRESH_TOKEN_KEY } from "./modules/auth/token-store";
 
 // Construction contract.
 export type {
@@ -35,7 +36,12 @@ export type {
 export type { CloudClientTimers } from "./timers";
 
 // Local error types a host can branch on with `instanceof`.
-export { CloudClientError, HttpError, AuthExpiredError } from "./errors";
+export {
+  CloudClientError,
+  HttpError,
+  AuthExpiredError,
+  SessionRevocationError,
+} from "./errors";
 
 // The logging hook a host can implement to route library logs.
 export { noopLogger } from "./logger";

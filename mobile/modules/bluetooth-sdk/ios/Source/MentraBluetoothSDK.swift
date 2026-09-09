@@ -472,6 +472,11 @@ public final class MentraBluetoothSDK {
         DeviceManager.shared.sgc?.clearDisplay()
     }
 
+    /// Sets session-only content shown below the standard dashboard status header.
+    public func setDashboardContent(_ content: String) async {
+        await DeviceManager.shared.setDashboardContent(content)
+    }
+
     public func showDashboard() {
         DeviceManager.shared.showDashboard()
     }
@@ -1245,6 +1250,17 @@ public final class MentraBluetoothSDK {
             throw BluetoothSdkError(
                 code: "missing_glasses_version",
                 message: "Cannot check OTA update because glasses build number is unavailable."
+            )
+        }
+        // A sideloaded client installs under its own package and coexists with the stock system
+        // app, so its build number is not comparable to the manifest pin and installing the
+        // manifest's APK would not replace it. Refuse rather than answer about the wrong client.
+        // Empty means the glasses predate the field: assume stock and keep existing behavior.
+        guard status.packageName.isEmpty || status.packageName == OtaManifestChecker.asgClientPackage else {
+            throw BluetoothSdkError(
+                code: "unofficial_client",
+                message: "Cannot check OTA update because the glasses run an unofficial client "
+                    + "(\(status.packageName))."
             )
         }
 

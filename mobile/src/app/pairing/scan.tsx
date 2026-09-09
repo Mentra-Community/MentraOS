@@ -1,10 +1,9 @@
 import BluetoothSdk, {type Device, type DeviceModel} from "@mentra/bluetooth-sdk"
-import {engine} from "@mentra/engine"
+import {engine, DeviceTypes} from "@mentra/engine"
 import {useLocalSearchParams} from "expo-router"
 import {useCallback, useEffect, useMemo, useRef, useState} from "react"
 import {ActivityIndicator, Image, Platform, ScrollView, TouchableOpacity, View} from "react-native"
 
-import {DeviceTypes} from "@mentra/engine"
 import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
 import {Icon, Button, Header, Screen, Text} from "@/components/ignite"
 import GlassesTroubleshootingModal from "@/components/glasses/GlassesTroubleshootingModal"
@@ -20,6 +19,7 @@ import showAlert from "@/utils/AlertUtils"
 import {PermissionFeatures, requestFeaturePermissions} from "@/utils/PermissionsUtils"
 import {AR99_MODEL_OPTIONS, getAr99DisplayName, getAr99ImageSource, getGlassesOpenImage} from "@/utils/getGlassesImage"
 import {isMentraLiveSecurePairingEnabled} from "@/utils/pairing/securePairingFeature"
+import {isGlassesModelAllowedByDeployment} from "@/services/deployment/glassesPolicy"
 
 const normalizeProjectName = (value?: string | null) => value?.trim().toUpperCase() ?? ""
 const SUPPORTED_AR99_PROJECT_NAMES = new Set<string>(AR99_MODEL_OPTIONS.map((option) => option.projectName))
@@ -43,6 +43,7 @@ export default function SelectGlassesBluetoothScreen() {
   const [scanGeneration, setScanGeneration] = useState(0)
   const isMentraLivePairingScan = deviceModel === DeviceTypes.LIVE
   const securePairingEnabled = isMentraLiveSecurePairingEnabled()
+  const allowedByDeployment = isGlassesModelAllowedByDeployment(deviceModel, ar99ProjectName)
 
   const selectedDisplayName = useMemo(() => {
     return deviceModel === DeviceTypes.AR99 ? getAr99DisplayName(ar99ProjectName) : deviceModel
@@ -70,11 +71,15 @@ export default function SelectGlassesBluetoothScreen() {
   )
 
   useEffect(() => {
+    if (!allowedByDeployment) {
+      replace("/pairing/select-glasses-model")
+      return
+    }
     // Two-phase identity: reaching the scan screen marks the chosen model as the
     // PENDING selection. Promotion to `paired` only happens natively when pairing
     // succeeds; until then the home card renders a finish-pairing affordance.
     engine.pairing.markPendingSelection(deviceModel)
-  }, [deviceModel])
+  }, [allowedByDeployment, deviceModel, replace])
 
   const backOutRanRef = useRef(false)
   const runBackOutCleanup = () => {
@@ -107,6 +112,7 @@ export default function SelectGlassesBluetoothScreen() {
   }
 
   const startScanAttempt = useCallback(async () => {
+    if (!allowedByDeployment) return
     const generation = scanGenerationRef.current + 1
     scanGenerationRef.current = generation
     setScanGeneration(generation)
@@ -120,7 +126,7 @@ export default function SelectGlassesBluetoothScreen() {
         console.error("Failed to start glasses scan:", error)
       }
     }
-  }, [deviceModel])
+  }, [allowedByDeployment, deviceModel])
 
   const visibleResults = useMemo(
     () => rememberedSearchResults.filter((r) => r.name !== "NOTREQUIREDSKIP" && matchesSelectedModel(r)),
@@ -140,13 +146,14 @@ export default function SelectGlassesBluetoothScreen() {
   }, [startScanAttempt])
 
   useEffect(() => {
+    if (!allowedByDeployment) return
     const skipDevice = searchResults.find((result) => result.name === "NOTREQUIREDSKIP")
     if (skipDevice) {
       void triggerGlassesPairingGuide(skipDevice)
     }
     // triggerGlassesPairingGuide is intentionally not memoized; run only when results change.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [searchResults])
+  }, [allowedByDeployment, searchResults])
 
   // Pairability controls whether tapping a Mentra Live can connect, not whether it is shown.
   // Keep every discovered unit visible so users can put the correct glasses into pairing mode
@@ -194,6 +201,7 @@ export default function SelectGlassesBluetoothScreen() {
   }, [isMentraLivePairingScan, pairableResults.length, scanGeneration, scanTimedOut])
 
   const triggerGlassesPairingGuide = async (device: Device) => {
+    if (!allowedByDeployment) return
     if (isMentraLivePairingScan && !isLivePairable(device)) {
       showAlert(translate("pairing:notInPairingModeAlertTitle"), translate("pairing:notInPairingModeAlertMessage"), [
         {text: "OK"},

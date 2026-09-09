@@ -36,6 +36,7 @@ config.watchFolders = [
   path.resolve(__dirname, "./modules/engine"),
   path.resolve(__dirname, "./modules/engine-host-internal"),
   path.resolve(__dirname, "./modules/crust"),
+  path.resolve(__dirname, "./modules/acs-meeting"),
   path.resolve(__dirname, "./modules/miniapp"),
   // The aliased cloud-v2 sources must be watched or Metro can't hash them.
   path.resolve(__dirname, "../cloud-v2/packages/protocol/src"),
@@ -83,6 +84,7 @@ const CLOUD_V2_ALIASES = {
 // only local dev bundling is redirected here.)
 const ENGINE_SRC = path.resolve(__dirname, "./modules/engine/src")
 const CRUST_SRC = path.resolve(__dirname, "./modules/crust/src")
+const ACS_MEETING_SRC = path.resolve(__dirname, "./modules/acs-meeting/src")
 const MINIAPP_SRC = path.resolve(__dirname, "./modules/miniapp/src")
 const MINIAPP_ALIASES = {
   "@mentra/miniapp": path.join(MINIAPP_SRC, "index"),
@@ -153,6 +155,9 @@ config.resolver.resolveRequest = (context, moduleName, platform) => {
   if (miniappAlias) return (baseResolveRequest ?? context.resolveRequest)(context, miniappAlias, platform)
   if (moduleName === "@mentra/crust") {
     return (baseResolveRequest ?? context.resolveRequest)(context, path.join(CRUST_SRC, "index"), platform)
+  }
+  if (moduleName === "@mentra/acs-meeting") {
+    return (baseResolveRequest ?? context.resolveRequest)(context, path.join(ACS_MEETING_SRC, "index"), platform)
   }
   return (baseResolveRequest ?? context.resolveRequest)(context, moduleName, platform)
 }

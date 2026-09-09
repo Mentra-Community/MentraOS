@@ -6,12 +6,12 @@ usage() {
 Usage:
   scripts/export-bluetooth-sdk-ios-spm.sh [target-dir] [--verify]
 
-Exports the SwiftPM-ready iOS Bluetooth SDK from the MentraOS monorepo into a
+Exports the SwiftPM-ready iOS and macOS Bluetooth SDK from the MentraOS monorepo into a
 standalone package repository. The target defaults to ../mentra-bluetooth-sdk-ios.
 
 Options:
   --target DIR   Export into DIR.
-  --verify       Run SwiftPM describe and a generic iOS xcodebuild after export.
+  --verify       Build the exported package for native macOS and generic iOS.
   -h, --help     Show this help.
 EOF
 }
@@ -97,7 +97,8 @@ import PackageDescription
 let package = Package(
   name: "MentraBluetoothSDK",
   platforms: [
-    .iOS("15.1")
+    .iOS("15.1"),
+    .macOS(.v13)
   ],
   products: [
     .library(
@@ -138,9 +139,9 @@ DerivedData/
 EOF
 
 cat > "$target_root/README.md" <<'EOF'
-# Mentra Bluetooth SDK for iOS
+# Mentra Bluetooth SDK for iOS and macOS
 
-Native Swift package for building iOS apps that connect directly to Mentra smart glasses over Bluetooth.
+Native Swift package for building iOS, iPadOS, and macOS apps that connect directly to Mentra smart glasses over Bluetooth. Native macOS apps can use AppKit or SwiftUI on Apple silicon and Intel Macs.
 
 ## Installation
 
@@ -168,8 +169,9 @@ For `Package.swift` consumers:
 ## Requirements
 
 - iOS 15.1 or newer
+- macOS 13 or newer for native Mac apps
 - Xcode 15 or newer
-- A physical iPhone for Bluetooth testing
+- A physical iPhone, iPad, or Mac for Bluetooth testing
 
 ## Usage
 
@@ -219,7 +221,14 @@ If your app uses microphone features, also add:
 <string>This app uses the microphone when you enable audio features.</string>
 ```
 
-To keep the BLE link alive while the app is backgrounded, enable Core Bluetooth background mode:
+For local photo receivers, LAN webhooks, or local OTA servers, also add:
+
+```xml
+<key>NSLocalNetworkUsageDescription</key>
+<string>This app accesses photo and OTA servers on your local network.</string>
+```
+
+On iOS, to keep the BLE link alive while the app is backgrounded, enable Core Bluetooth background mode:
 
 ```xml
 <key>UIBackgroundModes</key>
@@ -230,7 +239,9 @@ To keep the BLE link alive while the app is backgrounded, enable Core Bluetooth 
 
 ## Scope
 
-This Swift package contains the core iOS Bluetooth SDK. It intentionally excludes optional MentraOS-internal code paths for local STT, offline TTS, Nex/SwiftProtobuf, Vuzix/Ultralite, and tar.bz2 extraction.
+Sandboxed macOS apps need the `com.apple.security.device.bluetooth` entitlement. Enable `com.apple.security.network.client` for uploads/OTA and `com.apple.security.device.audio-input` when capturing the Mac microphone. macOS does not use `UIBackgroundModes` or `AVAudioSession`; audio follows the Mac's selected output. ANCS notification relay is iOS-only.
+
+This Swift package contains the core Apple-platform Bluetooth SDK. It intentionally excludes optional MentraOS-internal code paths for local STT, offline TTS, Nex/SwiftProtobuf, Vuzix/Ultralite, and tar.bz2 extraction.
 EOF
 perl -0pi -e "s/__SDK_VERSION__/${sdk_version}/g" "$target_root/README.md"
 
@@ -278,6 +289,7 @@ if [[ "$verify" -eq 1 ]]; then
   (
     cd "$target_root"
     xcrun swift package describe >/dev/null
+    xcrun swift build >/dev/null
     xcodebuild \
       -scheme MentraBluetoothSDK \
       -destination 'generic/platform=iOS' \

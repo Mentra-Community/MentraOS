@@ -32,6 +32,16 @@ export interface MtkPatch {
   sha256?: string
 }
 
+export interface MtkFullOta {
+  start_firmware?: never
+  end_firmware: string
+  url: string
+  sha256: string
+  size: number
+}
+
+export type MtkUpdate = MtkPatch | MtkFullOta
+
 export interface BesFirmware {
   version: string
   url: string
@@ -44,6 +54,7 @@ export interface VersionJson {
     [packageName: string]: VersionInfo
   }
   mtk_patches?: MtkPatch[]
+  mtk_full_ota?: MtkFullOta
   bes_firmware?: BesFirmware
   versionCode?: number
   versionName?: string
@@ -58,7 +69,8 @@ export interface OtaCheckResult {
   updateAvailable: boolean
   latestVersionInfo: VersionInfo | null
   updates: string[]
-  mtkPatch: MtkPatch | null
+  /** Selected MTK artifact: exact-base incremental, otherwise a newer full OTA. */
+  mtkPatch: MtkUpdate | null
   besVersion: string | null
   /** True when the pending APK step installs an OLDER build than the glasses currently run. */
   isApkDowngrade: boolean
@@ -78,7 +90,15 @@ export interface OtaCheckResult {
   checkFailureReason?: "network" | "pin_unavailable"
 }
 
-export type OtaCheckSkippedReason = "disconnected" | "missing_build" | "dev_build"
+/**
+ * Package the stock glasses client installs as, and the key every apps-shaped manifest pins the
+ * ASG APK under. Android forces a distinct package (`.thirdparty` suffix) on any build not signed
+ * with Mentra's release key, so a client reporting anything else is a sideloaded build that
+ * coexists with the stock system app.
+ */
+export const STOCK_ASG_PACKAGE = "com.mentra.asg_client"
+
+export type OtaCheckSkippedReason = "disconnected" | "missing_build" | "dev_build" | "unofficial_client"
 
 export interface OtaCheckCurrentGlassesResult extends OtaCheckResult {
   updateInfo: OtaUpdateInfo | null
@@ -86,6 +106,8 @@ export interface OtaCheckCurrentGlassesResult extends OtaCheckResult {
   skippedReason?: OtaCheckSkippedReason
   manifestUrl?: string
   buildNumber?: string
+  /** Glasses client package, when it reported one. Set on an `unofficial_client` skip. */
+  packageName?: string
   mtkFirmwareVersion?: string
   besFirmwareVersion?: string
 }
@@ -100,7 +122,10 @@ export interface OtaCheckCurrentGlassesOptions {
   floorVersionCode?: number
 }
 
-function emptyCheckResult(skippedReason?: OtaCheckSkippedReason): OtaCheckCurrentGlassesResult {
+function emptyCheckResult(
+  skippedReason?: OtaCheckSkippedReason,
+  extra?: Partial<OtaCheckCurrentGlassesResult>,
+): OtaCheckCurrentGlassesResult {
   return {
     hasCheckCompleted: false,
     updateAvailable: false,
@@ -114,6 +139,7 @@ function emptyCheckResult(skippedReason?: OtaCheckSkippedReason): OtaCheckCurren
     updateInfo: null,
     isRequired: true,
     skippedReason,
+    ...extra,
   }
 }
 
@@ -183,7 +209,7 @@ export function getApkUpdateDirection(
   let serverVersion: number | undefined
   let exactPin = false
 
-  const appEntry = versionJson.apps?.["com.mentra.asg_client"]
+  const appEntry = versionJson.apps?.[STOCK_ASG_PACKAGE]
   if (appEntry) {
     serverVersion = appEntry.versionCode
     exactPin = true
@@ -212,8 +238,8 @@ export function getLatestVersionInfo(versionJson: VersionJson | null): VersionIn
     return null
   }
 
-  if (versionJson.apps?.["com.mentra.asg_client"]) {
-    return versionJson.apps["com.mentra.asg_client"]
+  if (versionJson.apps?.[STOCK_ASG_PACKAGE]) {
+    return versionJson.apps[STOCK_ASG_PACKAGE]
   }
 
   if (versionJson.versionCode) {
@@ -240,15 +266,43 @@ export function findMatchingMtkPatch(
 
   return (
     patches.find((patch) => {
-      if (patch.start_firmware === currentVersion) {
-        return true
-      }
-      const serverDate = patch.start_firmware.includes("_")
-        ? patch.start_firmware.split("_").pop()
-        : patch.start_firmware
-      return serverDate === currentVersion
+      return normalizeMtkVersion(patch.start_firmware) === normalizeMtkVersion(currentVersion)
     }) || null
   )
+}
+
+function normalizeMtkVersion(version: string): string {
+  return version.trim().split("_").pop() ?? ""
+}
+
+/** Full OTAs are not rollback packages. Unknown versions must not grant eligibility. */
+export function selectMtkUpdate(
+  manifest: VersionJson | undefined,
+  currentVersion: string | undefined,
+): MtkUpdate | null {
+  const patch = findMatchingMtkPatch(manifest?.mtk_patches, currentVersion)
+  if (patch) return patch
+  const full = manifest?.mtk_full_ota
+  if (!full || !currentVersion || typeof full.end_firmware !== "string") return null
+  const current = normalizeMtkVersion(currentVersion)
+  const target = normalizeMtkVersion(full.end_firmware)
+  const versionPattern = /^\d{8}(?:\.\d{1,9})?$/
+  if (!versionPattern.test(current) || !versionPattern.test(target)) return null
+  const [currentDate, currentRevision = 0] = current.split(".").map(Number)
+  const [targetDate, targetRevision = 0] = target.split(".").map(Number)
+  if (targetDate < currentDate || (targetDate === currentDate && targetRevision <= currentRevision)) return null
+  if (
+    full.start_firmware !== undefined ||
+    typeof full.url !== "string" ||
+    !/^https?:\/\/[^/\s]+\//.test(full.url) ||
+    typeof full.sha256 !== "string" ||
+    !/^[a-fA-F0-9]{64}$/.test(full.sha256) ||
+    !Number.isSafeInteger(full.size) ||
+    full.size <= 0 ||
+    full.size > 1024 * 1024 * 1024
+  )
+    return null
+  return full
 }
 
 export function checkBesUpdate(besFirmware: BesFirmware | undefined, currentVersion: string | undefined): boolean {
@@ -315,7 +369,7 @@ export async function checkForOtaUpdate(
     // than silently completing as "up to date" — an unverifiable state must never
     // present as a verified one.
     const currentVersionNumber = parseInt(currentBuildNumber, 10)
-    const pinnedEntry = versionJson?.apps?.["com.mentra.asg_client"]
+    const pinnedEntry = versionJson?.apps?.[STOCK_ASG_PACKAGE]
     const pinnedVersion = pinnedEntry?.versionCode ?? versionJson?.versionCode
     if (
       versionJson &&
@@ -346,7 +400,7 @@ export async function checkForOtaUpdate(
       `OTA: APK update available: ${apkUpdateAvailable} (current: ${currentBuildNumber}, direction: ${apkDirection ?? "none"})`,
     )
 
-    const mtkPatch = findMatchingMtkPatch(versionJson?.mtk_patches, currentMtkVersion)
+    const mtkPatch = selectMtkUpdate(versionJson, currentMtkVersion)
     const mtkUpdateAvailable = mtkPatch !== null
     if (!currentMtkVersion && versionJson?.mtk_patches?.length) {
       console.log(`OTA: MTK current version unknown - skipping MTK patch check`)
@@ -440,6 +494,18 @@ export async function checkCurrentGlassesForUpdate(
     // cannot parse means nothing is verifiable, so skip rather than ghost an
     // "up to date" result from a comparison that never really ran.
     return emptyCheckResult("missing_build")
+  }
+
+  // A sideloaded ASG client installs under its own package (Android forces the `.thirdparty`
+  // suffix on any build not signed with Mentra's release key) and coexists with the stock system
+  // app. Its build number is therefore not comparable to the manifest's pin, and installing the
+  // manifest APK would replace the stock package while the sideloaded client keeps holding the
+  // link and reporting its own unchanged version — an update prompt that can never be satisfied.
+  // Absent means the glasses predate the field: assume stock, preserving existing behavior.
+  const packageName = useGlassesStore.getState().packageName
+  if (packageName && packageName !== STOCK_ASG_PACKAGE) {
+    console.log(`OTA: check skipped - glasses run an unofficial client (${packageName})`)
+    return emptyCheckResult("unofficial_client", {buildNumber, packageName})
   }
 
   if (!glassesConnectedNow()) {

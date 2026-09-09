@@ -1,6 +1,7 @@
 import {
   startGlassesStatusProjection,
   stopGlassesStatusProjection,
+  toMiniappConnectionData,
 } from "../../modules/engine/src/services/GlassesStatusProjection"
 import {useCoreStore} from "../../modules/engine/src/stores/core"
 import {useGlassesStore} from "../../modules/engine/src/stores/glasses"
@@ -105,5 +106,37 @@ describe("GlassesStatusProjection", () => {
     emitBluetoothSdkEvent("glasses_status", changed)
 
     expect(forward).toHaveBeenCalledWith(changed)
+  })
+})
+
+describe("toMiniappConnectionData", () => {
+  it("maps nested connection.state to the miniapp connected boolean", () => {
+    expect(
+      toMiniappConnectionData({
+        connection: {state: "connected", fullyBooted: true},
+        deviceModel: "Mentra Live",
+        batteryLevel: 80,
+      }),
+    ).toEqual({connected: true, modelName: "Mentra Live"})
+  })
+
+  it("maps a disconnect delta without inventing a model name", () => {
+    expect(toMiniappConnectionData({connection: {state: "disconnected"}})).toEqual({connected: false})
+  })
+
+  it("returns null for battery-only deltas so they cannot flip the link", () => {
+    expect(toMiniappConnectionData({batteryLevel: 80})).toBeNull()
+  })
+
+  it("passes through an already-shaped ConnectionData payload", () => {
+    expect(toMiniappConnectionData({connected: true, modelName: "Mentra Live"})).toEqual({
+      connected: true,
+      modelName: "Mentra Live",
+    })
+  })
+
+  it("returns null for empty or non-object payloads", () => {
+    expect(toMiniappConnectionData(null)).toBeNull()
+    expect(toMiniappConnectionData(undefined)).toBeNull()
   })
 })

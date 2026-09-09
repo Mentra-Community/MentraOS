@@ -8,7 +8,8 @@ The package includes:
 - React hooks under `@mentra/bluetooth-sdk/react` for common scan,
   connection, status, and event lifecycles.
 - Native Android code published as `com.mentraglass:bluetooth-sdk`.
-- Native iOS code available as the `MentraBluetoothSDK` Swift package.
+- Native iOS and macOS code available as the `MentraBluetoothSDK` Swift package.
+- Native macOS Expo Modules adapter for `react-native-macos` hosts.
 - An Expo config plugin that wires the native dependencies into generated Android and iOS projects.
 
 Use a development build or production native build. Expo Go cannot load this package because the SDK contains native code.
@@ -19,6 +20,9 @@ Use a development build or production native build. Expo Go cannot load this pac
 - Expo `49+` when using Expo.
 - Android min SDK `28+`.
 - iOS deployment target `15.1+`.
+- Native macOS deployment target `13+`. The Starter Kit's separate
+  `react-native-macos` host requires macOS `14+` and a matching React Native / Expo
+  Modules toolchain; the iOS/Android config plugin does not generate a Mac host.
 - A physical phone for real Bluetooth testing.
 - Bluetooth permissions, plus Android location permission where BLE scanning requires it.
 
@@ -325,6 +329,38 @@ const ledAck = await BluetoothSdk.rgbLedControl(
 console.log(ledAck.state)
 ```
 
+## Dashboard Content
+
+`setDashboardContent(content)` keeps the standard `$TIME12$ $DATE$ $GBATT$
+$CONNECTION_STATUS$` status header and places non-empty content below it after a
+blank line. Pass the exact empty string to reset the dashboard to the status
+header only. The template is held in memory for the SDK process/session, and its
+status placeholders are refreshed each time the dashboard renders. Calling this
+method does not open the dashboard; it updates an active contextual dashboard
+immediately or appears on the next head-up. Repeating the same content is a
+no-op.
+
+React Native / Expo:
+
+```ts
+await BluetoothSdk.setDashboardContent('Next meeting at 2 PM')
+await BluetoothSdk.setDashboardContent('')
+```
+
+Kotlin:
+
+```kotlin
+sdk.setDashboardContent("Next meeting at 2 PM")
+sdk.setDashboardContent("")
+```
+
+Swift (iOS and macOS):
+
+```swift
+await sdk.setDashboardContent("Next meeting at 2 PM")
+await sdk.setDashboardContent("")
+```
+
 Settings commands that return `SettingsAckSuccessEvent` reject when the ASG reports an error ack. The SDK updates its local settings store only after that ASG ack resolves successfully, so observed SDK state reflects the acknowledged glasses state rather than a queued request. Raw `settings_ack` listener events still use `SettingsAckEvent` because they can include both success and failure statuses. `rgbLedControl(...)` resolves from a successful ASG `rgb_led_control_response` and rejects when the ASG reports `state: "error"`; raw `settings_ack` and `rgb_led_control_response` events remain available through listeners.
 
 WiFi, hotspot, and version-info commands resolve from the ASG response path, not local dispatch:
@@ -341,7 +377,7 @@ React Native narrows returned values to success shapes where the raw listener ev
 | `stopVideoRecording(...)` | `VideoRecordingStoppedStatusEvent` with `success: true` and `status: "recording_stopped"`. When a webhook URL is supplied, resolves after the video upload succeeds. | Rejects on `success: false` statuses such as `not_recording`, webhook upload failure, send failure, or timeout. |
 | `queryVideoRecordingStatus(requestId)` | `VideoRecordingStatusEvent` with the current `recording` state and elapsed `duration_ms` when available. | Rejects when disconnected, another video command uses the same request ID, or the response times out. |
 | `rgbLedControl(...)` | `RgbLedControlSuccessResponseEvent` with `state: "success"`. | Rejects when raw `rgb_led_control_response.state === "error"` or the response times out. |
-| `checkForOtaUpdate()` | `boolean`, true when the configured OTA manifest has an ASG APK, MTK, or BES update for the connected glasses; false only when the manifest was checked successfully and no update is available. | Rejects when the glasses are disconnected, version info is unavailable, the manifest cannot be fetched, or the manifest response is invalid/missing required ASG app version fields. |
+| `checkForOtaUpdate()` | `boolean`, true when the configured OTA manifest has an ASG APK, MTK, or BES update for the connected glasses; false only when the manifest was checked successfully and no update is available. | Rejects when the glasses are disconnected, version info is unavailable, the glasses report an unofficial client package (`unofficial_client`), the manifest cannot be fetched, or the manifest response is invalid/missing required ASG app version fields. |
 
 Android and iOS async APIs use `BluetoothSdkException` / `BluetoothSdkError` for the same error paths. Their returned event structs are the successful response in normal `try`/`await` code, while raw listener/delegate events still include both success and error payloads.
 
@@ -406,10 +442,6 @@ its legacy or factory-supported path. OTA remains host-driven: the SDK does not 
 automatically.
 
 OTA requires Mentra Live glasses firmware that supports the ASG OTA protocol and network access from the glasses. During install, normal BLE traffic can be interrupted and the glasses may restart; keep the app connected and avoid sending unrelated commands until `ota_status.status` is `complete` or `failed`.
-
-For release selection, bundle verification, analytics opt-out, internal server
-requirements, and disconnected validation, see the
-[air-gapped deployment guide](https://docs.mentraglass.com/bluetooth-sdk/air-gapped-deployment).
 
 Mentra Live also rejects `ota_start` before acknowledgement when its known battery level is below 5%, emitting a failed `ota_status` with `error_message: "battery_low"`. Unknown battery state remains fail-open, so apps should keep their own (typically stricter) user-facing battery policy.
 
@@ -526,13 +558,15 @@ project, not the local Gradle entrypoint. The check script prepares
 `mobile/android` and uses its Gradle wrapper with `-PmentraPublicSdk=true`,
 matching the CI release workflow's public SDK dependency mode.
 
-For bare native iOS apps, use the public SwiftPM repository:
+For bare native iOS or macOS apps, use the public SwiftPM repository:
 
 ```text
 https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios.git
 ```
 
-Select version `0.1.20`, then add the `MentraBluetoothSDK` product to your app target.
+Select a coordinated SDK version that includes your target platform, then add
+the `MentraBluetoothSDK` product to your app target. Native macOS support is new
+on `dev`; use the local source override until a supporting release is published.
 
 For local SDK development, add this package folder directly in Xcode:
 
@@ -541,6 +575,14 @@ For local SDK development, add this package folder directly in Xcode:
 ```
 
 The core Swift package intentionally excludes optional local STT, Nex/SwiftProtobuf, Vuzix/Ultralite, and tar.bz2 extraction code paths.
+
+Native Mac hosts need Bluetooth and local-network usage descriptions, and
+sandbox entitlements for Bluetooth and outbound networking. Add microphone
+permission/audio-input capability for host microphone capture and network-server
+capability for local SDK servers. macOS uses CoreAudio instead of
+`AVAudioSession`; it does not provide iOS background modes or ANCS relay. See
+[the macOS integration guide](../../../mintlify-docs/bluetooth-sdk/macos.mdx)
+and the Starter Kit's `examples/macos` and `examples/react-native-macos` hosts.
 
 Maintainers publishing the public SwiftPM mirror should follow
 [RELEASING_IOS_SPM.md](./RELEASING_IOS_SPM.md).

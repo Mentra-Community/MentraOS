@@ -155,6 +155,18 @@ export type VersionInfoResult = {
   systemTimeMs?: number
   otaVersionUrl: string
   appVersion: string
+  /**
+   * Package the glasses client actually runs as, from `version_info_1`.
+   * `"com.mentra.asg_client"` is the stock client; anything else is a sideloaded build (Android
+   * forces a distinct package on any build not signed with Mentra's release key) that coexists
+   * with the stock app and must not be driven by OTA.
+   *
+   * Omitted — not empty — whenever this result carries no identity: either the glasses predate
+   * the field, or the response resolved from a `version_info` chunk that does not carry it (only
+   * chunk 1 does). Omission is what keeps a response from overwriting an identity an earlier
+   * chunk established, so treat `undefined` as "unknown", never as "stock".
+   */
+  packageName?: string
   /** Phone-served hotspot OTA protocol version; 0 means unsupported/legacy glasses. */
   hotspotOtaVersion: number
 }
@@ -620,6 +632,10 @@ export type StreamVideoConfig = {
   width?: number
   height?: number
   bitrate?: number
+  /** WHIP minimum target in bps; omitted leaves it unset. Clamped to the maximum. */
+  minBitrateBps?: number
+  /** WHIP startup bitrate in bps, clamped to the requested bounds. */
+  initialBitrateBps?: number
   fps?: number
 }
 
@@ -637,6 +653,8 @@ export type StreamStartRequest = {
   sound?: boolean
   video?: StreamVideoConfig
   audio?: StreamAudioConfig
+  /** When false, glasses skip mic capture. Defaults to true. */
+  captureAudio?: boolean
 }
 
 export type StreamKeepAliveRequest = {
@@ -866,6 +884,8 @@ export type OtaStatusEvent = {
   step_type: "apk" | "mtk" | "bes"
   phase: "download" | "install"
   step_percent: number
+  /** Real bytes received in the current download; absent on older glasses. */
+  bytes_downloaded?: number
   overall_percent: number
   status: "in_progress" | "step_complete" | "complete" | "failed" | "idle"
   error_message?: string
@@ -1097,6 +1117,8 @@ export interface BluetoothSdkPublicModule {
 
   displayText(text: string, x?: number, y?: number, size?: number): Promise<void>
   clearDisplay(): Promise<void>
+  /** Set session-only content below the dashboard status header. Pass an empty string to reset it. */
+  setDashboardContent(content: string): Promise<void>
   showDashboard(): Promise<void>
   setDashboardPosition(height: number, depth: number): Promise<void>
   setHeadUpAngle(angleDegrees: number): Promise<void>
@@ -1265,6 +1287,8 @@ export interface OtaStatus {
   stepType: "apk" | "mtk" | "bes"
   phase: "download" | "install"
   stepPercent: number
+  /** Real bytes received in the current download; independent of rounded percent. */
+  bytesDownloaded?: number
   overallPercent: number
   status: "in_progress" | "step_complete" | "complete" | "failed" | "idle"
   error?: string
@@ -1324,6 +1348,13 @@ export interface GlassesStatus {
   systemTimeMs?: number
   otaVersionUrl: string
   appVersion: string
+  /**
+   * Package the glasses client actually runs as, from `version_info_1`. Empty string on glasses
+   * whose client predates the field. `"com.mentra.asg_client"` is the stock client; anything else
+   * is a sideloaded build (Android forces a distinct package on any build not signed with Mentra's
+   * release key) that coexists with the stock app and must not be driven by OTA.
+   */
+  packageName: string
   /** Phone-served hotspot OTA protocol version; 0 means unsupported/legacy glasses. */
   hotspotOtaVersion: number
   bluetoothName: string
