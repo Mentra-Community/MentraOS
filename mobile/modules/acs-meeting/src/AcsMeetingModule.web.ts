@@ -8,6 +8,9 @@ export default {
   async join(_options: AcsMeetingJoinOptions): Promise<AcsMeetingState> {
     unavailable()
   },
+  async prepareAgent(_options: {token: string; displayName?: string}): Promise<AcsMeetingState> {
+    unavailable()
+  },
   async leave(): Promise<void> {
     unavailable()
   },
