@@ -407,10 +407,6 @@ automatically.
 
 OTA requires Mentra Live glasses firmware that supports the ASG OTA protocol and network access from the glasses. During install, normal BLE traffic can be interrupted and the glasses may restart; keep the app connected and avoid sending unrelated commands until `ota_status.status` is `complete` or `failed`.
 
-For release selection, bundle verification, analytics opt-out, internal server
-requirements, and disconnected validation, see the
-[air-gapped deployment guide](https://docs.mentraglass.com/bluetooth-sdk/air-gapped-deployment).
-
 Mentra Live also rejects `ota_start` before acknowledgement when its known battery level is below 5%, emitting a failed `ota_status` with `error_message: "battery_low"`. Unknown battery state remains fail-open, so apps should keep their own (typically stricter) user-facing battery policy.
 
 ## Photo Upload

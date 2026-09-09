@@ -1,5 +1,8 @@
 import assert from "node:assert/strict"
-import {existsSync, readFileSync} from "node:fs"
+import {existsSync, readFileSync, mkdtempSync, rmSync} from "node:fs"
+import {spawnSync} from "node:child_process"
+import {tmpdir} from "node:os"
+import path from "node:path"
 import test from "node:test"
 
 function workflow(name) {
@@ -201,7 +204,8 @@ test("mobile destinations use real TestFlight groups without changing the releas
   assert.match(example, /PlistBuddy -c 'Print :com\.apple\.developer\.networking\.HotspotConfiguration'/)
   assert.equal([...example.matchAll(/--app-id "\$EXAMPLE_APP_ID"/g)].length, 5)
   assert.match(example, /starterKit\.releaseCommit/)
-  assert.match(example, /runs-on: \[self-hosted, macOS, ARM64\]/)
+  assert.match(jobBlock(example, "ios"), /runs-on: macos-15/)
+  assert.match(jobBlock(example, "ios"), /DEVELOPER_DIR: \/Applications\/Xcode_26\.2\.app\/Contents\/Developer/)
   assert.match(example, /app-store-connect-build\.mjs upload/)
   assert.match(mobile, /app-store-connect-build\.mjs upload/)
   assert.match(example, /app-store-connect-build\.mjs assign/)
@@ -330,7 +334,7 @@ test("coordinated docs publish only after finalization to the matching channel",
   assert.match(example, /continue-on-error: true/)
   assert.doesNotMatch(example, /STARTER_KIT_APP_PRIVATE_KEY:/)
   assert.match(example, /permission-contents: read/)
-  assert.match(example, /^      group: mentra-ios-signing-runner$/m)
+  assert.doesNotMatch(example, /group: mentra-ios-signing-runner/)
   assert.match(
     example,
     /token: \$\{\{ steps\.starter-kit-app-token\.outputs\.token \|\| secrets\.STARTER_KIT_COORDINATOR_TOKEN/,
@@ -419,4 +423,48 @@ test("Android release keeps the GitHub APK arm64-only and the Play AAB multi-ABI
   )
   assert.match(mobileAndroid, /GitHub APK ABIs '\$\{apk_abis:-<none>\}' do not match required arm64-v8a/)
   assert.match(mobileAndroid, /Google Play AAB ABIs '\$\{aab_abis:-<none>\}' do not match required \$expected_aab_abis/)
+})
+
+test("iOS publishes the signed artifact before submitting those same bytes to Apple", () => {
+  const source = workflow("reusable-coordinated-mobile.yml")
+  const build = jobBlock(source, "ios")
+  const publish = jobBlock(source, "ios-publish")
+  const upload = jobBlock(source, "ios-upload")
+  const store = jobBlock(source, "ios-store")
+  assert.doesNotMatch(build, /publish-immutable-release-asset\.mjs|app-store-connect-build\.mjs upload/)
+  assert.match(build, /actions\/upload-artifact@v4/)
+  assert.match(publish, /needs: \[prepare, ios\]/)
+  assert.match(publish, /runs-on: ubuntu-latest/)
+  assert.match(publish, /timeout-minutes: 5/)
+  assert.match(publish, /needs\.ios\.outputs\.upload_artifact/)
+  assert.match(publish, /publish-immutable-release-asset\.mjs/)
+  assert.match(publish, /inputs\.dry_run != true && inputs\.compatibility_lab != true && needs\.prepare\.outputs\.ios_asset_exists != 'true'/)
+  assert.match(upload, /needs: \[prepare, ios, ios-publish\]/)
+  assert.match(upload, /needs\.ios\.outputs\.upload_artifact/)
+  assert.match(upload, /app-store-connect-build\.mjs upload/)
+  assert.match(store, /needs: \[prepare, ios, ios-upload\]/)
+  assert.match(store, /needs\.ios-upload\.outputs\.upload_status/)
+})
+
+test("iOS status reports the failed phase instead of downstream skips", t => {
+  const dir = mkdtempSync(path.join(tmpdir(), "ios-status-"))
+  t.after(() => rmSync(dir, {recursive: true, force: true}))
+  const status = jobBlock(workflow("reusable-coordinated-mobile.yml"), "status")
+  const script = status.split("        run: |\n")[1].replace(/^          /gm, "")
+  for (const [build, publish, upload, store, expected] of [
+    ["success", "success", "success", "success", "success"],
+    ["failure", "skipped", "skipped", "skipped", "failure"],
+    ["success", "failure", "skipped", "skipped", "failure"],
+    ["success", "success", "cancelled", "skipped", "cancelled"],
+    ["success", "success", "success", "failure", "failure"],
+  ]) {
+    const output = path.join(dir, `${build}-${publish}-${upload}-${store}`)
+    const result = spawnSync("bash", ["-eu", "-c", script], {encoding: "utf8", env: {
+      ...process.env, GITHUB_OUTPUT: output, ANDROID_RESULT: "success", IOS_BUILD_RESULT: build,
+      IOS_PUBLISH_RESULT: publish, IOS_UPLOAD_RESULT: upload, IOS_STORE_RESULT: store,
+      APK_NAME: "app.apk", IPA_NAME: "app.ipa", ASSET_BASE_URL: "https://example.com",
+    }})
+    assert.equal(result.status, 0, result.stderr)
+    assert.match(readFileSync(output, "utf8"), new RegExp(`^ios_result=${expected}$`, "m"))
+  }
 })

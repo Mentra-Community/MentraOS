@@ -1,5 +1,5 @@
 /* eslint-disable react-native/no-raw-text -- BodyText and PercentText are local Text wrappers. */
-import React, {useMemo, useState} from "react"
+import React, {useMemo} from "react"
 import {
   ActivityIndicator,
   Pressable,
@@ -70,6 +70,20 @@ const DEFAULT_THEME: MentraLiveOtaFlowTheme = {
 }
 
 const ENGLISH_COPY: Record<string, string> = {
+  "ota:downloadingToPhone": "Downloading update to phone...",
+  "ota:startingGlassesHotspot": "Starting glasses hotspot...",
+  "ota:connectingPhoneToGlasses": "Connecting phone to glasses...",
+  "ota:startingHotspotUpdate": "Starting update...",
+  "ota:transferringToGlasses": "Transferring update to glasses...",
+  "ota:installingOnGlasses": "Installing update on glasses...",
+  "ota:componentApk": "Glasses software",
+  "ota:componentMtk": "System firmware",
+  "ota:componentBes": "Bluetooth firmware",
+  "ota:updateFile": "File {{current}} of {{total}} · {{component}}",
+  "ota:updatePart": "Update {{current}} of {{total}} · {{component}}",
+  "ota:phoneFileProgress": "Each file downloads separately. Progress is for the current file.",
+  "ota:transferFileProgress": "Progress is for this file’s transfer from your phone.",
+
   "common:continue": "Continue",
   "common:done": "Done",
   "ota:checkingForUpdates": "Checking for updates",
@@ -99,7 +113,6 @@ const ENGLISH_COPY: Record<string, string> = {
   "ota:updateLater": "Later",
   "ota:updateComplete": "Update complete",
   "ota:whatsNew": "What's new",
-  "ota:scrollForMore": "Scroll for more",
   "ota:upToDate": "Up To Date",
   "ota:devBuild": "Development Build",
   "ota:devBuildNoOta":
@@ -125,6 +138,12 @@ const ENGLISH_COPY: Record<string, string> = {
   "ota:versionChangeFirmwarePassCompleteMessage":
     "Your glasses restarted with new firmware. One more step: they'll now continue to the required version.",
 }
+
+const componentCopyKey = {
+  apk: "ota:componentApk",
+  mtk: "ota:componentMtk",
+  bes: "ota:componentBes",
+} as const
 
 function defaultTranslate(key: string, options?: Record<string, string>): string {
   let value = ENGLISH_COPY[key] ?? key
@@ -323,12 +342,7 @@ function OtaFlowContent({
             {translate("ota:updatedToVersion", {version: state.releaseTransition.toVersion})}
           </BodyText>
         ) : null}
-        <ChangelogList
-          changelogs={state.changelogs}
-          colors={colors}
-          scrollHint={translate("ota:scrollForMore")}
-          title={translate("ota:whatsNew")}
-        />
+        <ChangelogList changelogs={state.changelogs} colors={colors} title={translate("ota:whatsNew")} />
       </FlowPage>
     )
   }
@@ -380,28 +394,65 @@ function OtaFlowContent({
   }
 
   if (state.screen === "starting" || state.screen === "preparing_hotspot") {
-    const title =
+    const title = translate(
       state.hotspotPhase === "downloading"
-        ? "Downloading update to phone..."
+        ? "ota:downloadingToPhone"
         : state.hotspotPhase === "starting_hotspot"
-          ? "Starting glasses hotspot..."
+          ? "ota:startingGlassesHotspot"
           : state.hotspotPhase === "joining_hotspot"
-            ? "Connecting phone to glasses..."
-            : "Starting update..."
+            ? "ota:connectingPhoneToGlasses"
+            : "ota:startingHotspotUpdate",
+    )
+    const artifact = state.hotspotPhase === "downloading" ? state.hotspotArtifact : null
     return (
       <FlowPage colors={colors} icon="download" title={title}>
+        {artifact ? (
+          <BodyText colors={colors}>
+            {translate("ota:updateFile", {
+              current: String(artifact.index + 1),
+              total: String(artifact.totalCount),
+              component: translate(componentCopyKey[artifact.kind]),
+            })}
+          </BodyText>
+        ) : null}
         {state.hotspotPhase === "downloading" && state.hotspotArtifactPercent !== null ? (
           <PercentText colors={colors} percent={state.hotspotArtifactPercent} />
         ) : null}
         <ActivityIndicator size="large" color={colors.foreground} />
+        {state.hotspotPhase === "downloading" ? (
+          <BodyText colors={colors}>{translate("ota:phoneFileProgress")}</BodyText>
+        ) : null}
         <BodyText colors={colors}>Do not disconnect your glasses</BodyText>
       </FlowPage>
     )
   }
 
   if (state.screen === "updating") {
+    const hotspot = state.transport === "hotspot"
+    const title = hotspot
+      ? translate(state.phase === "download" ? "ota:transferringToGlasses" : "ota:installingOnGlasses")
+      : state.phase === "download"
+        ? "Downloading..."
+        : "Installing..."
+    const component = state.step ? translate(componentCopyKey[state.step]) : null
+    const hasStepCount =
+      state.currentStep !== null &&
+      state.totalSteps !== null &&
+      state.currentStep > 0 &&
+      state.currentStep <= state.totalSteps
     return (
-      <FlowPage colors={colors} icon="download" title={state.phase === "download" ? "Downloading..." : "Installing..."}>
+      <FlowPage colors={colors} icon="download" title={title}>
+        {hotspot && component ? (
+          <BodyText colors={colors}>
+            {hasStepCount
+              ? translate("ota:updatePart", {
+                  current: String(state.currentStep),
+                  total: String(state.totalSteps),
+                  component,
+                })
+              : component}
+          </BodyText>
+        ) : null}
         {state.installingApkOnly ? (
           <ActivityIndicator size="large" color={colors.foreground} />
         ) : (
@@ -415,6 +466,9 @@ function OtaFlowContent({
           </>
         )}
         <BodyText colors={colors}>Do not disconnect your glasses</BodyText>
+        {hotspot && state.phase === "download" ? (
+          <BodyText colors={colors}>{translate("ota:transferFileProgress")}</BodyText>
+        ) : null}
         {state.versionChange && state.phase === "install" ? (
           <BodyText colors={colors}>{translate("ota:downgradeDuration")}</BodyText>
         ) : null}
@@ -462,12 +516,7 @@ function OtaFlowContent({
             {translate("ota:updatedToVersion", {version: state.releaseTransition.toVersion})}
           </BodyText>
         ) : null}
-        <ChangelogList
-          changelogs={state.changelogs}
-          colors={colors}
-          scrollHint={translate("ota:scrollForMore")}
-          title={translate("ota:whatsNew")}
-        />
+        <ChangelogList changelogs={state.changelogs} colors={colors} title={translate("ota:whatsNew")} />
       </FlowPage>
     )
   }
@@ -523,11 +572,15 @@ type FlowPageProps = {
 function FlowPage({actions, children, colors, contentAlignment = "center", icon, title}: FlowPageProps) {
   return (
     <View style={styles.page} testID="mentra-live-ota-flow">
-      <View style={[styles.centerContent, contentAlignment === "top" && styles.topContent]}>
+      <ScrollView
+        contentContainerStyle={[styles.centerContent, contentAlignment === "top" && styles.topContent]}
+        nestedScrollEnabled
+        style={styles.contentScroll}
+        testID="ota-page-scroll">
         <FlowIcon colors={colors} name={icon} />
         <Text style={[styles.title, {color: colors.foreground}]}>{title}</Text>
         {children}
-      </View>
+      </ScrollView>
       {actions ? <View style={styles.actions}>{actions}</View> : <View style={styles.actionSpacer} />}
     </View>
   )
@@ -632,21 +685,13 @@ function ChangelogMarkdown({colors, markdown}: {colors: MentraLiveOtaFlowTheme; 
 export function ChangelogList({
   changelogs,
   colors,
-  scrollHint,
   title,
 }: {
   changelogs: MentraLiveOtaController["state"]["changelogs"]
   colors: MentraLiveOtaFlowTheme
-  scrollHint: string
   title: string
 }) {
-  const [contentHeight, setContentHeight] = useState(0)
-  const [viewportHeight, setViewportHeight] = useState(0)
-  const [isAtEnd, setIsAtEnd] = useState(false)
-
   if (changelogs.length === 0) return null
-
-  const showScrollHint = viewportHeight > 0 && contentHeight > viewportHeight + 1 && !isAtEnd
 
   return (
     <View style={[styles.changelogCard, {borderColor: colors.border}]} testID="ota-changelog-card">
@@ -654,17 +699,7 @@ export function ChangelogList({
       <ScrollView
         contentContainerStyle={styles.changelogContent}
         nestedScrollEnabled
-        onContentSizeChange={(_width, height) => {
-          setContentHeight(height)
-          setIsAtEnd(false)
-        }}
-        onLayout={({nativeEvent}) => setViewportHeight(nativeEvent.layout.height)}
-        onScroll={({nativeEvent}) => {
-          const distanceFromEnd =
-            nativeEvent.contentSize.height - (nativeEvent.contentOffset.y + nativeEvent.layoutMeasurement.height)
-          setIsAtEnd(distanceFromEnd <= 8)
-        }}
-        scrollEventThrottle={16}
+        persistentScrollbar
         showsVerticalScrollIndicator
         style={styles.changelogList}
         testID="ota-changelog-scroll">
@@ -683,13 +718,6 @@ export function ChangelogList({
           </View>
         ))}
       </ScrollView>
-      <View style={styles.changelogScrollHintSlot}>
-        {showScrollHint ? (
-          <Text style={[styles.changelogScrollHint, {color: colors.textDim}]} testID="ota-changelog-scroll-hint">
-            {scrollHint} ↓
-          </Text>
-        ) : null}
-      </View>
     </View>
   )
 }
@@ -753,7 +781,8 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
   },
   page: {flex: 1, paddingBottom: 24, paddingHorizontal: 24},
-  centerContent: {alignItems: "center", flex: 1, gap: 16, justifyContent: "center"},
+  contentScroll: {flex: 1},
+  centerContent: {alignItems: "center", flexGrow: 1, gap: 16, justifyContent: "center"},
   topContent: {justifyContent: "flex-start", paddingBottom: 16, paddingTop: 12},
   actionSpacer: {height: 48},
   actions: {gap: 12},
@@ -766,21 +795,21 @@ const styles = StyleSheet.create({
   changelogCard: {
     borderRadius: 16,
     borderWidth: 1,
-    flex: 1,
+    flexGrow: 1,
     gap: 12,
     maxWidth: 420,
+    minHeight: 200,
     padding: 16,
     width: "100%",
   },
   changelogTitle: {fontSize: 16, fontWeight: "700"},
-  changelogList: {flex: 1, width: "100%"},
+  // Bound the notes themselves so the card can grow for its title, but not for all of the Markdown.
+  changelogList: {flexGrow: 1, height: 120, width: "100%"},
   changelogContent: {gap: 20, paddingBottom: 4},
   changelogEntry: {gap: 8},
   changelogEntryDivider: {borderTopWidth: StyleSheet.hairlineWidth, paddingTop: 20},
   changelogVersion: {fontSize: 14, fontWeight: "600"},
   changelogMarkdownContent: {gap: 10},
-  changelogScrollHintSlot: {alignItems: "center", height: 18, justifyContent: "center"},
-  changelogScrollHint: {fontSize: 12, fontWeight: "500", lineHeight: 16},
   button: {
     alignItems: "center",
     borderRadius: 50,

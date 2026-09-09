@@ -519,13 +519,30 @@ jobs:
         env:
           RESULT_NAME: ${{ steps.request.outputs.result_name }}
           RESULT_URL: ${{ steps.request.outputs.result_url }}
+          RUN_URL: ${{ steps.request.outputs.run_url }}
+          # Public run metadata needs no cross-repository permissions. The job
+          # token remains valid through this wait; the request App token expires
+          # after one hour, before the full 105-minute wait can finish.
+          GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           mkdir -p starter-kit-result
           for _ in {1..630}; do
-            if curl --fail --silent --show-error --location "$RESULT_URL" \
+            if curl --fail --silent --show-error --location --connect-timeout 10 --max-time 30 "$RESULT_URL" \
               --output "starter-kit-result/$RESULT_NAME" 2>/dev/null; then
               exit 0
+            fi
+            if [[ -n "$RUN_URL" ]]; then
+              # A transient API failure must not be mistaken for a failed build.
+              run_state=$(gh api "repos/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit/actions/runs/${RUN_URL##*/}" \
+                --jq '{status,conclusion}' 2>/dev/null || true)
+              if [[ "$(jq -r '.status // empty' <<< "${run_state:-null}")" == "completed" ]]; then
+                conclusion=$(jq -r '.conclusion // "unknown"' <<< "$run_state")
+                if [[ "$conclusion" != "success" ]]; then
+                  echo "Starter Kit run concluded $conclusion: $RUN_URL" >&2
+                  exit 1
+                fi
+              fi
             fi
             sleep 10
           done
@@ -938,6 +955,8 @@ jobs:
       - name: Prepare and verify the Cloudflare Pages artifact
         env:
           RELEASE_IDENTITY: ${{ needs.plan.outputs.release_identity }}
+          EXAMPLE_APK_URL: ${{ needs.starter-kit.outputs.react_native_apk_url }}
+          EXAMPLE_IOS_URL: ${{ needs.example-testflight.outputs.install_url }}
         run: |
           set -euo pipefail
           export_dir="$RUNNER_TEMP/mentraos-docs"
@@ -948,13 +967,17 @@ jobs:
           /*
             X-Robots-Tag: noindex
           HEADERS
-          grep -R --fixed-strings --quiet "$RELEASE_IDENTITY" "$export_dir/bluetooth-sdk"
           if grep -R --extended-regexp --ignore-case --quiet '\{\{[a-z0-9_-]+\}\}|%7b%7b[a-z0-9_-]+%7d%7d' "$export_dir/bluetooth-sdk"; then
             echo "Mintlify export contains an unresolved documentation variable." >&2
             exit 1
           fi
-          grep -R --fixed-strings --quiet "${{ needs.starter-kit.outputs.react_native_apk_url }}" "$export_dir/bluetooth-sdk"
-          grep -R --fixed-strings --quiet "${{ needs.example-testflight.outputs.install_url }}" "$export_dir/bluetooth-sdk"
+          node .github/scripts/verify-coordinated-docs.mjs \
+            "$export_dir/bluetooth-sdk/software-update/index.html"
+          # Mintlify's static export does not emit docs.json redirects.
+          cat >> "$export_dir/_redirects" <<'REDIRECTS'
+          /mentra-live/software-update /bluetooth-sdk/software-update/ 301
+          /mentra-live/software-update/ /bluetooth-sdk/software-update/ 301
+          REDIRECTS
 
       - name: Deploy to Cloudflare Pages
         env:

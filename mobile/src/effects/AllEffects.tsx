@@ -1,4 +1,3 @@
-import {ButtonActions} from "@/effects/ButtonActions"
 import {GalleryModeSync} from "@/effects/GalleryModeSync"
 import {MemoryWarningMonitor} from "@/effects/MemoryWarningMonitor"
 import {MtkUpdateAlert} from "@/effects/MtkUpdateAlert"
@@ -28,7 +27,6 @@ export const AllEffects = () => {
       {/* <TranscriptionsListener /> */}
       <MtkUpdateAlert />
       <OtaUpdateChecker />
-      <ButtonActions />
       <GalleryModeSync />
       <ConsoleLogger />
       <FirebaseAnalyticsSetup />

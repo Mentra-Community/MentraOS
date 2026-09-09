@@ -85,10 +85,12 @@ mentra-miniapp pack
 mentra-miniapp pack --no-build   # zip the existing dist/ as-is
 ```
 
-Produces the distributable artifact only (`release` calls this internally). It
+Produces the release artifact only (`release` calls this internally). It
 builds with `NODE_ENV=production`, verifies `dist/`, validates the manifest,
 copies `miniapp.json` + `icon.png` into `dist/`, and zips to
-`build/<pkg>-<version>.zip`. This ZIP is what you submit to the Mentra Miniapp Store.
+`build/<pkg>-<version>.zip`. In a future release, this ZIP will be uploaded
+through the Mentra Developer Console for distribution in the Mentra Miniapp
+Store. That distribution workflow is not available in MentraOS 3.0.
 
 <Note>
 `pack` requires the `zip` binary on `PATH` (preinstalled on macOS and most Linux;
