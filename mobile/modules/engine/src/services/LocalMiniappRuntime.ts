@@ -177,23 +177,6 @@ function locationRateRank(rate: string | null | undefined): number {
   return i >= 0 ? i : LOCATION_RATE_PRIORITY.indexOf("passive")
 }
 
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | null> {
-  return new Promise((resolve) => {
-    let settled = false
-    const done = (value: T | null) => {
-      if (settled) return
-      settled = true
-      BgTimer.clearTimeout(timer)
-      resolve(value)
-    }
-    const timer = BgTimer.setTimeout(() => done(null), timeoutMs)
-    promise.then(
-      (value) => done(value),
-      () => done(null),
-    )
-  })
-}
-
 const LOG_TAG = "LOCAL_MINIAPP"
 const DIAGNOSTIC_MAX_LIST_ITEMS = 100
 const DIAGNOSTIC_MAX_STRING_LENGTH = 512
@@ -1433,7 +1416,9 @@ class LocalMiniappRuntime {
     // Register if not already
     const existing = this.connectedApps.get(packageName)
     if (!existing) {
-      console.warn(`${LOG_TAG}: CONNECT from unregistered app ${packageName}, ignoring`)
+      console.warn(
+        `${LOG_TAG}: CONNECT from unregistered app ${packageName}, dropping — isolate already torn down`,
+      )
       return
     }
 
@@ -1459,37 +1444,25 @@ class LocalMiniappRuntime {
     existing.authDelivered = false
     this.clearMiniappAuthDeliveryRetry(packageName)
     const authPromise = this.requestMiniappAuth(packageName)
-    const initialAuth = await withTimeout(authPromise, 1_500)
-    const userId = initialAuth?.mentraUserId ?? ""
-    if (initialAuth) {
-      existing.authDelivered = true
-      this.scheduleMiniappAuthRefresh(packageName, initialAuth)
-    }
 
+    // Send CONNECT_ACK in this turn, before any await. A 1.5s auth wait let a
+    // concurrent unregister (dev respawn, tray stop, glasses-not-ready teardown)
+    // drop the ACK; Mentra Call then dies with CONNECT_ACK timeout even though
+    // CONNECT landed. Auth still arrives on AUTH_UPDATE.
     this.sendToMiniapp(
       packageName,
       {
         type: MiniappResponseType.CONNECT_ACK,
-        userId,
+        userId: "",
         packageName,
         capabilities,
         permissions: declaredPermissions,
         configuration: getMiniappConfiguration(packageName),
         hostFeatures: {captureAudio: true},
-        ...(initialAuth ? {auth: initialAuth} : {}),
       },
       requestId,
     )
-    if (!initialAuth) {
-      // The mint timed out or (more importantly) REJECTED — the latter happens
-      // when the cloud client hasn't finished its first-boot Core token exchange
-      // yet, which is exactly the case when a dev miniapp is scanned/launched
-      // right after app start. CONNECT_ACK already went out without auth; keep
-      // trying to mint (and re-drive on cloud-connect) so the app authenticates
-      // to its backend on its own, instead of staying dead until a full manual
-      // Cloud V2 reconnect re-runs the whole handshake.
-      this.deliverInitialMiniappAuth(packageName, authPromise, 0)
-    }
+    this.deliverInitialMiniappAuth(packageName, authPromise, 0)
     this.sendCloudStatusToMiniapp(packageName)
 
     // Handshake complete — unblock any launcher.waitForConnect() callers.
@@ -3787,6 +3760,7 @@ class LocalMiniappRuntime {
             await acsMeetingService.endForEveryone(pkg)
           },
           ingestUrl: () => acsMeetingService.softApIngestUrl(),
+          glassesLc3Uplink: () => acsMeetingService.glassesLc3UplinkActive(),
           startPublishing: (pkg, options) => phoneStreamCoordinator.startUnmanaged(pkg, options),
           stopPublishing: (pkg) => phoneStreamCoordinator.stop(pkg),
         },
@@ -3817,6 +3791,10 @@ class LocalMiniappRuntime {
       })
     })
     try {
+      // Sign in on the phone's current internet *before* the glasses hotspot takes DNS.
+      // On device, createCallAgent after the scoped join timed out at 20s and only
+      // finished once SoftAP was released.
+      await acsMeetingService.prepareAgent({token: args.token, displayName: args.displayName})
       await transport.start({
         // Every transition reaches the miniapp as a meeting-state event carrying the checklist.
         // Before the ACS join there is no native state yet, so the phase reads `connecting`: the
