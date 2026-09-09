@@ -53,6 +53,11 @@ class DecodedTrackRelay(
     onPromotableFrame()
     stats.onSink()
     stats.recordGap()
+    // Guarded because a synthetic or malformed frame can carry 0, and an "age" measured from the
+    // epoch would swamp the percentile ring with one absurd sample.
+    if (frame.timestampNs > 0) {
+      stats.age.record(sinkStart - frame.timestampNs)
+    }
     val buffer = frame.buffer
     stats.onFrameBuffer(classifyBuffer(buffer))
     val geometry = FrameGeometry.packSize(buffer.width, buffer.height, frame.rotation)
