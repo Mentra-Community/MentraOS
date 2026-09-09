@@ -1,6 +1,8 @@
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo } from "react";
 import {
   ActivityIndicator,
+  BackHandler,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
@@ -23,6 +25,7 @@ import { Header } from "../components/Header";
 import { colors } from "../components/theme";
 import {
   otaPresentation,
+  otaRestartOverlayMessage,
   type CustomOtaAction,
   type CustomOtaButton,
   type CustomOtaChangelog,
@@ -50,6 +53,13 @@ export function CustomMentraLiveOtaFlow({
   onFinished,
   onOpenWifiSetup,
 }: CustomMentraLiveOtaFlowProps) {
+  useEffect(() => {
+    // Only the flow's buttons may leave OTA. This app has no navigation stack;
+    // without a handler, Android Back invokes the system's default exit action.
+    const subscription = BackHandler.addEventListener("hardwareBackPress", () => true);
+    return () => subscription.remove();
+  }, []);
+
   const controller = useMentraLiveOta({
     initialPage,
     initializeRuntime,
@@ -60,6 +70,7 @@ export function CustomMentraLiveOtaFlow({
     () => otaPresentation(controller.state, deviceName),
     [controller.state, deviceName],
   );
+  const restartMessage = otaRestartOverlayMessage(controller.state, deviceName);
   const palette = toneColors[presentation.tone];
   const hasChangelogs = (presentation.changelogs?.length ?? 0) > 0;
 
@@ -85,6 +96,10 @@ export function CustomMentraLiveOtaFlow({
             {presentation.versionLabel}
           </Text>
         </View>
+      ) : null}
+
+      {presentation.progressLabel ? (
+        <Text style={styles.detail}>{presentation.progressLabel}</Text>
       ) : null}
 
       {presentation.progress !== undefined ? (
@@ -120,6 +135,21 @@ export function CustomMentraLiveOtaFlow({
 
   return (
     <SafeAreaView style={styles.safeArea}>
+      <Modal
+        animationType="fade"
+        transparent
+        visible={restartMessage !== null}
+        onRequestClose={() => {}}
+      >
+        <View style={styles.restartBackdrop}>
+          <View accessibilityViewIsModal style={styles.restartCard} testID="ota-restart-overlay">
+            <ActivityIndicator color={colors.greenPrimary} size="large" />
+            <Text accessibilityRole="header" style={styles.message}>
+              {restartMessage}
+            </Text>
+          </View>
+        </View>
+      </Modal>
       <Header title="Software Update" />
       <View style={styles.page} testID="custom-mentra-live-ota-flow">
         <ScrollView
@@ -391,6 +421,22 @@ function ActionButton({
 }
 
 const styles = StyleSheet.create({
+  restartBackdrop: {
+    alignItems: "center",
+    backgroundColor: "rgba(0,0,0,0.4)",
+    flex: 1,
+    justifyContent: "center",
+    padding: 24,
+  },
+  restartCard: {
+    alignItems: "center",
+    backgroundColor: colors.bg,
+    borderRadius: 20,
+    gap: 20,
+    maxWidth: 420,
+    padding: 28,
+    width: "100%",
+  },
   safeArea: { backgroundColor: colors.bg, flex: 1 },
   page: { flex: 1, paddingBottom: 18, paddingHorizontal: 24 },
   contentScroll: { flex: 1 },

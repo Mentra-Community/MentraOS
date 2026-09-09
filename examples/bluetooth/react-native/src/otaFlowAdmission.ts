@@ -4,14 +4,14 @@ export function otaFlowAdmission({
   completedConnectionGeneration,
   connectionGeneration,
   waitingForWifi,
-  wifiConnected,
 }: {
   completedConnectionGeneration: number | null;
   connectionGeneration: number | null;
   waitingForWifi: boolean;
-  wifiConnected: boolean;
 }): OtaFlowAdmission {
+  // Setup is a user-controlled detour: an existing connection (or a reconnect)
+  // must not dismiss it before the user has finished changing networks.
+  if (waitingForWifi) return 'wait_for_wifi';
   if (connectionGeneration === null) return 'idle';
-  if (waitingForWifi) return wifiConnected ? 'open' : 'wait_for_wifi';
   return completedConnectionGeneration === connectionGeneration ? 'done' : 'open';
 }

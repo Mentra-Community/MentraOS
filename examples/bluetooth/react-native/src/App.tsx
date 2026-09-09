@@ -1,5 +1,5 @@
 import React, { useEffect, useRef, useState } from 'react';
-import { Keyboard, Platform, View, StyleSheet, StatusBar } from 'react-native';
+import { Keyboard, Platform, Pressable, Text, View, StyleSheet, StatusBar } from 'react-native';
 import { SafeAreaProvider, SafeAreaView } from 'react-native-safe-area-context';
 import { KeyboardVisibleContext } from './components/keyboardLayout';
 import { TabBar, TabKey } from './components/TabBar';
@@ -10,7 +10,8 @@ import { StreamScreen } from './screens/StreamScreen';
 import { SystemScreen } from './screens/SystemScreen';
 import { ConsoleScreen } from './screens/ConsoleScreen';
 import { otaFlowAdmission } from './otaFlowAdmission';
-import { isGlassesWifiConnected } from './sdkFormat';
+import { connectedWifiStatus } from './sdkFormat';
+import { colors } from './components/theme';
 import { isMentraLiveRuntime, useBluetoothSdkExample } from './useBluetoothSdkExample';
 
 export default function App() {
@@ -20,6 +21,9 @@ export default function App() {
   const [waitingForWifi, setWaitingForWifi] = useState(false);
   const otaCompletedGenerationRef = useRef<number | null>(null);
   const sdk = useBluetoothSdkExample({activeTab: tab});
+  const currentWifi = connectedWifiStatus(sdk.glasses);
+  // A failed attempt to join another network must not block the current one.
+  const otaWifiSetupComplete = currentWifi !== null && sdk.wifiConnectingSsid === null;
   const mentraLiveConnected = isMentraLiveRuntime(sdk.glasses);
   const connectionGeneration = mentraLiveConnected && sdk.glasses.connected
     ? sdk.glassesConnectionGeneration
@@ -30,7 +34,6 @@ export default function App() {
       completedConnectionGeneration: otaCompletedGenerationRef.current,
       connectionGeneration,
       waitingForWifi,
-      wifiConnected: isGlassesWifiConnected(sdk.glasses),
     });
 
     if (admission === 'idle') {
@@ -89,6 +92,23 @@ export default function App() {
           />
         ) : (
           <SafeAreaView style={styles.root} edges={['top']}>
+            {waitingForWifi && tab === 'system' && (
+              <View style={styles.otaResume}>
+                <Text style={styles.otaResumeText}>
+                  {otaWifiSetupComplete
+                    ? `Connected to ${currentWifi?.ssid}`
+                    : 'Connect to a Wi-Fi network to continue the update.'}
+                </Text>
+                {otaWifiSetupComplete && (
+                  <Pressable
+                    accessibilityRole="button"
+                    onPress={openOta}
+                    style={styles.otaResumeButton}>
+                    <Text style={styles.otaResumeLabel}>Continue update</Text>
+                  </Pressable>
+                )}
+              </View>
+            )}
             <View style={styles.screen}>
               {tab === 'device' && <DeviceScreen sdk={sdk} onOpenOta={openOta} />}
               {tab === 'camera' && <CameraScreen sdk={sdk} />}
@@ -107,4 +127,8 @@ export default function App() {
 const styles = StyleSheet.create({
   root: { flex: 1, backgroundColor: '#fff' },
   screen: { flex: 1 },
+  otaResume: { padding: 16, gap: 12, borderBottomWidth: StyleSheet.hairlineWidth, borderBottomColor: colors.hairline },
+  otaResumeText: { color: colors.ink, fontSize: 14 },
+  otaResumeButton: { backgroundColor: colors.greenInk, borderRadius: 14, minHeight: 48, alignItems: 'center', justifyContent: 'center' },
+  otaResumeLabel: { color: colors.bg, fontSize: 14, fontWeight: '700' },
 });
