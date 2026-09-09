@@ -82,6 +82,30 @@ object CapturePolicy {
   fun captureGlassesMic(source: AudioSourceKind): Boolean = source == AudioSourceKind.GLASSES
 }
 
+/**
+ * Which of the two possible sources of the wearer's voice this call listens to.
+ *
+ * SoftAP used to take BLE LC3 from the host and ignore the WHIP track so the same room could not
+ * arrive twice. Mentra Live's camera-up WHIP session leaves that LC3 analog-silent, so both
+ * transports now take the decoded relay track. Exactly one source is ever on.
+ */
+data class GlassesPcmRouting(val relayPcm: Boolean, val externalPcm: Boolean) {
+  companion object {
+    /**
+     * SoftAP used to mean "the host pushes BLE PCM; ignore the WHIP track". That pairing is only
+     * safe when BES LC3 actually has analog voice. On Mentra Live the camera-up WHIP session
+     * leaves custom-audio TX running but analog-silent (`meanAbs` ~15), so taking the relay
+     * instead is what lets ACS hear the wearer — same path as a Cloudflare WHEP call.
+     *
+     * [softap] is kept so a later LC3-restored soak can switch the gates without rewriting
+     * callers; until then both transports use the decoded track.
+     */
+    @Suppress("UNUSED_PARAMETER")
+    fun decide(softap: Boolean, enabled: Boolean): GlassesPcmRouting =
+      GlassesPcmRouting(relayPcm = enabled, externalPcm = false)
+  }
+}
+
 /** Null ACS call handles must fail, never report success via `call?.mute(); Unit`. */
 object CallGuard {
   fun <T : Any> require(value: T?): Result<T> =
