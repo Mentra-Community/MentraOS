@@ -2,7 +2,7 @@
 import Foundation
 import PackageDescription
 
-let sdkVersion = "3.2.0-dev.177"
+let sdkVersion = "3.2.0-dev.180"
 let sdk: Package.Dependency
 let sdkIdentity: String
 if let localPath = ProcessInfo.processInfo.environment["MENTRA_BLUETOOTH_SDK_PACKAGE_PATH"] {
