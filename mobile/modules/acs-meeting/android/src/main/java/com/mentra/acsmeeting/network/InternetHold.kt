@@ -32,6 +32,9 @@ import java.util.concurrent.TimeUnit
  *  - [awaitValidatedDefault] asks what the app's actual default network is now, and whether it is
  *    validated. Run *after* the hotspot join, because that is when the default can change.
  *
+ * Holding is not the same as *using*, which is what [bindProcessToCellular] is for, and why that one
+ * has a deliberately short leash.
+ *
  * Bounded, released on every exit, and idempotent: teardown calls [release] without checking.
  */
 class InternetHold(private val context: Context) {
@@ -51,6 +54,7 @@ class InternetHold(private val context: Context) {
 
     private val lock = Any()
     private var callback: ConnectivityManager.NetworkCallback? = null
+    private var processPinned = false
 
     /**
      * Request cellular and wait until it validates, bounded by [timeoutMs].
@@ -107,7 +111,60 @@ class InternetHold(private val context: Context) {
             "viaCallback" to ok,
             "waitedMs" to waitedMs,
         )
+        // Re-pin: releaseLocked above dropped any existing pin, and the caller is about to leave
+        // Wi-Fi. The one join that ever reached CONNECTED was pinned from here onwards, i.e. across
+        // the hotspot join itself, not from just before the Teams join.
+        if (resolved) bindProcessToCellular()
         return CellularHold(true, resolved, waitedMs)
+    }
+
+    /**
+     * Pin this process's unbound sockets onto validated cellular. Returns whether it took.
+     *
+     * Being *on* an internet-less hotspot is not the same as Android routing around it. With the
+     * scoped SoftAP joined, `getActiveNetwork` reports validated cellular and unbound sockets still
+     * fail: ACS sat in CONNECTING for 91 s and gave up with code 408, and the app's own cloud
+     * websocket dropped mid-call. The one join that reached CONNECTED — in under four seconds — was
+     * pinned continuously from before the hotspot join.
+     *
+     * Pinning does not make ACS *fast*: a cold `createCallAgent` measured 30 s pinned to cellular,
+     * about the same as unpinned. It decides whether the call connects at all, not how quickly.
+     *
+     * ## Hold it continuously; open one hole
+     *
+     * This marks *every* socket the process opens while it is in effect, and `Network.bindSocket`
+     * has no `ServerSocket` overload to undo it. A WHIP listener opened while pinned accepted on
+     * `192.168.43.79` but answered out the radio, so the glasses' SYN drew no reply at all and
+     * publish died on a 10 s connect timeout.
+     *
+     * Pinning late — after the hotspot join, just before the Teams join — does not work either:
+     * sockets keep the mark they were created with, so ACS re-binds its signalling on the broken
+     * route in the unpinned window and never recovers. So the pin is held from sign-in through
+     * teardown, and [unbindProcess] opens a hole only for the moment the WHIP `ServerSocket` is
+     * created. ICE is unaffected throughout: libwebrtc re-marks its own sockets onto the scoped
+     * network handle that `ScopedNetworkChangeDetector.toNetworkInformation` publishes.
+     *
+     * Anything that pins must unpin — via [unbindProcess], or via [release] on teardown.
+     */
+    fun bindProcessToCellular(): Boolean {
+        val manager = connectivityManager() ?: return false
+        val network = findValidatedCellular(manager)
+        if (network == null) {
+            SoftApTrace.failure("process_pinned_to_cellular", "ok" to false, "reason" to "no validated cellular")
+            return false
+        }
+        val ok = runCatching { manager.bindProcessToNetwork(network) }.getOrDefault(false)
+        if (ok) synchronized(lock) { processPinned = true }
+        SoftApTrace.stage("process_pinned_to_cellular", "ok" to ok)
+        return ok
+    }
+
+    /** Undo [bindProcessToCellular]. Safe to call when nothing is pinned, and safe to call twice. */
+    fun unbindProcess() {
+        val pinned = synchronized(lock) { processPinned.also { processPinned = false } }
+        if (!pinned) return
+        val ok = runCatching { connectivityManager()?.bindProcessToNetwork(null) }.isSuccess
+        SoftApTrace.stage("process_unpinned", "ok" to ok)
     }
 
     /**
@@ -158,15 +215,27 @@ class InternetHold(private val context: Context) {
     }
 
     private fun releaseLocked() {
-        val active = callback ?: return
-        runCatching { connectivityManager()?.unregisterNetworkCallback(active) }
+        // Backstop only: [bindProcessToCellular]'s caller unpins in a `finally`. Leaving the process
+        // pinned across a teardown would break the *next* call's WHIP listener, not this one's, which
+        // is exactly the kind of failure that is impossible to read from a log.
+        if (processPinned) {
+            runCatching { connectivityManager()?.bindProcessToNetwork(null) }
+            processPinned = false
+        }
+        val active = callback
+        if (active != null) {
+            runCatching { connectivityManager()?.unregisterNetworkCallback(active) }
+        }
         callback = null
-        SoftApTrace.stage("cellular_hold_released")
+        if (active != null) SoftApTrace.stage("cellular_hold_released")
     }
 
     private fun cellularIsValidated(manager: ConnectivityManager): Boolean =
-        manager.allNetworks.any { network ->
-            val capabilities = manager.getNetworkCapabilities(network) ?: return@any false
+        findValidatedCellular(manager) != null
+
+    private fun findValidatedCellular(manager: ConnectivityManager): Network? =
+        manager.allNetworks.firstOrNull { network ->
+            val capabilities = manager.getNetworkCapabilities(network) ?: return@firstOrNull false
             capabilities.hasTransport(NetworkCapabilities.TRANSPORT_CELLULAR) &&
                 isValidatedInternet(capabilities)
         }
