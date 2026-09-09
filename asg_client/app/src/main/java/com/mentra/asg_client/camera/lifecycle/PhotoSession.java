@@ -467,8 +467,9 @@ public final class PhotoSession {
             final ActivePhotoCapture capture = activeCapture;
             submittedCapture = capture;
             IHardwareManager hardware = hooks.hardwareManager();
-            if (capture.ledEnabled && hardware != null) {
-                hardware.acquireRecordingLed(capture);
+            if (capture.ledEnabled && hardware != null && hardware.supportsRecordingLed()
+                    && !hardware.acquireRecordingLed(capture)) {
+                throw new IllegalStateException("Could not enable photo privacy LED");
             }
             // One camera watchdog, independent of whether the user enabled the indicator.
             // It stops a stalled capture; the LED has no cancellation policy of its own.

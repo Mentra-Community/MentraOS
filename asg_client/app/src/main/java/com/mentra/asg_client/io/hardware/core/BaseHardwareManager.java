@@ -51,10 +51,10 @@ public class BaseHardwareManager implements IHardwareManager {
     }
 
     @Override
-    public void acquireRecordingLed(Object owner) {
+    public boolean acquireRecordingLed(Object owner) {
         Objects.requireNonNull(owner, "owner");
         if (!supportsRecordingLed()) {
-            return;
+            return false;
         }
 
         synchronized (mRecordingLedOwnerLock) {
@@ -65,9 +65,11 @@ public class BaseHardwareManager implements IHardwareManager {
                     mRecordingLedOwners.remove(owner);
                     // An ON that timed out may still be queued. Order OFF after it.
                     setRecordingLedOff();
-                    throw e;
+                    Log.e(TAG, "Could not acquire recording LED", e);
+                    return false;
                 }
             }
+            return true;
         }
     }
 

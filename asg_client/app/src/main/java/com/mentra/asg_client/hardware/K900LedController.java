@@ -356,12 +356,11 @@ public class K900LedController {
     }
     
     /**
-     * Clean up resources when no longer needed
+     * Reset the LED when a hardware manager is released. The single worker lives for the process
+     * lifetime: a replacement manager uses the same FIFO, so this OFF cannot overtake its ON.
      */
     public void shutdown() {
         Log.d(TAG, "Shutting down LED controller");
         turnOff();
-        ledHandlerThread.quitSafely();
-        instance = null;
     }
 }

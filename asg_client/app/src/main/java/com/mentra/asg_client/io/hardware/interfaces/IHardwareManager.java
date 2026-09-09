@@ -38,8 +38,9 @@ public interface IHardwareManager {
      * releases it.
      *
      * @param owner identity token for one camera user
+     * @return false if the LED is unsupported or enabling it failed; no owner is retained on failure
      */
-    void acquireRecordingLed(Object owner);
+    boolean acquireRecordingLed(Object owner);
 
     /**
      * Release shared ownership of the recording/privacy LED.

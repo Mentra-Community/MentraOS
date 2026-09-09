@@ -1,7 +1,8 @@
 package com.mentra.asg_client.io.hardware.core;
 
 import static org.junit.Assert.assertEquals;
-import static org.junit.Assert.assertThrows;
+import static org.junit.Assert.assertFalse;
+import static org.junit.Assert.assertTrue;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.when;
 
@@ -9,7 +10,12 @@ import android.content.Context;
 
 import org.junit.Before;
 import org.junit.Test;
+import org.junit.runner.RunWith;
+import org.robolectric.RobolectricTestRunner;
+import org.robolectric.annotation.Config;
 
+@RunWith(RobolectricTestRunner.class)
+@Config(sdk = 33)
 public class BaseHardwareManagerRecordingLedTest {
     private TestHardwareManager hardwareManager;
 
@@ -83,11 +89,11 @@ public class BaseHardwareManagerRecordingLedTest {
     public void failedAcquire_rollsBackOwnerAndOrdersOffBeforeNextAcquire() {
         Object failed = new Object();
         hardwareManager.failOn = true;
-        assertThrows(IllegalStateException.class, () -> hardwareManager.acquireRecordingLed(failed));
+        assertFalse(hardwareManager.acquireRecordingLed(failed));
         assertEquals(1, hardwareManager.offCalls);
         hardwareManager.failOn = false;
         Object next = new Object();
-        hardwareManager.acquireRecordingLed(next);
+        assertTrue(hardwareManager.acquireRecordingLed(next));
         assertEquals(2, hardwareManager.onCalls);
         hardwareManager.releaseRecordingLed(failed);
         assertEquals(1, hardwareManager.offCalls);
