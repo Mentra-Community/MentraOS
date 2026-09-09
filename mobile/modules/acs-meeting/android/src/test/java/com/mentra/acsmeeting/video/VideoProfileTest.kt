@@ -53,9 +53,36 @@ class VideoProfileTest {
   fun parseAcceptsDocumentedVirtualCameraSizesAndRejectsPortraitAnd480p() {
     assertThat(VideoProfile.parse(1280, 720, 15, 2_500_000)).isEqualTo(VideoProfile.HD)
     assertThat(VideoProfile.parse(960, 540, 30, 1_500_000)).isEqualTo(VideoProfile.P540)
-    assertThat(VideoProfile.parse(960, 540, 15, 1_500_000)).isEqualTo(VideoProfile.P540_15)
+    assertThat(VideoProfile.parse(960, 540, 15, 2_200_000)).isEqualTo(VideoProfile.P540_15)
     assertThat(VideoProfile.parse(540, 960, 30, 1_500_000)).isNull()
     assertThat(VideoProfile.parse(854, 480, 15, 1_500_000)).isNull()
+  }
+
+  @Test
+  fun softwareEncoderClampDropsOnlyTheRate() {
+    val requested = VideoProfile.P540_15
+    val clamped = requested.forSoftwareEncoder()
+    assertThat(clamped.width).isEqualTo(requested.width)
+    assertThat(clamped.height).isEqualTo(requested.height)
+    assertThat(clamped.maxBitrateBps).isEqualTo(requested.maxBitrateBps)
+    assertThat(clamped.fps).isEqualTo(VideoProfile.SOFTWARE_ENCODER_FPS)
+    assertThat(clamped.spec().withinAcsBounds()).isTrue()
+    assertThat(clamped.bitsPerFrame()).isEqualTo(requested.maxBitrateBps / VideoProfile.SOFTWARE_ENCODER_FPS)
+  }
+
+  @Test
+  fun softwareEncoderClampIsIdempotentAtOrBelowTheSustainRate() {
+    val alreadyHeld = VideoProfile.P540_15.copy(fps = VideoProfile.SOFTWARE_ENCODER_FPS)
+    assertThat(alreadyHeld.forSoftwareEncoder()).isSameAs(alreadyHeld)
+    val slower = VideoProfile.P540_15.copy(fps = 5)
+    assertThat(slower.forSoftwareEncoder()).isSameAs(slower)
+  }
+
+  @Test
+  fun softwareEncoderClampHitsEveryShippedProfile() {
+    for (profile in listOf(VideoProfile.HD, VideoProfile.SD, VideoProfile.P540, VideoProfile.P540_15)) {
+      assertThat(profile.forSoftwareEncoder().fps).isEqualTo(VideoProfile.SOFTWARE_ENCODER_FPS)
+    }
   }
 
   /** The fallback only earns its place if it is a real cut in encoder work. */
