@@ -29,6 +29,7 @@ class PcmStreamPlayer(
         private val sampleRate: Int,
         channels: Int,
         volume: Float,
+        jitterMs: Int = TRACK_BUFFER_MS,
 ) {
     companion object {
         private const val TAG = "PcmStreamPlayer"
@@ -41,7 +42,27 @@ class PcmStreamPlayer(
 
         /** AudioTrack buffer: max(4x minimum, 500ms) of jitter headroom. */
         private const val TRACK_BUFFER_MS = 500
+
+        /**
+         * Floor on the requested headroom.
+         *
+         * A MODE_STREAM track fills to its buffer size and stays there, so this value is also the
+         * steady-state output latency, not just a jitter cushion. Callers that want a conversation
+         * to feel live ask for a small number; below this the feeder cannot outrun playback and the
+         * track underruns into audible chop, which is worse than the delay it buys back.
+         */
+        private const val MIN_TRACK_BUFFER_MS = 80
     }
+
+    /**
+     * Playout headroom, and therefore this stream's floor latency.
+     *
+     * [TRACK_BUFFER_MS] suits one-way media (a miniapp `speaker.createStream()` clip), where half a
+     * second of cushion costs nothing audible. A realtime call is the opposite trade: that same
+     * cushion is half a second of delay before the far end's voice reaches the wearer, so the ACS
+     * meeting path asks for a much smaller one.
+     */
+    private val jitterBufferMs = jitterMs.coerceIn(MIN_TRACK_BUFFER_MS, TRACK_BUFFER_MS)
 
     private val bytesPerFrame = 2 * channels
     private val channelMask =
@@ -70,7 +91,7 @@ class PcmStreamPlayer(
     init {
         val minBuf =
                 AudioTrack.getMinBufferSize(sampleRate, channelMask, AudioFormat.ENCODING_PCM_16BIT)
-        val jitterBuf = sampleRate * bytesPerFrame * TRACK_BUFFER_MS / 1000
+        val jitterBuf = sampleRate * bytesPerFrame * jitterBufferMs / 1000
         audioTrack =
                 AudioTrack.Builder()
                         .setAudioAttributes(
@@ -86,7 +107,11 @@ class PcmStreamPlayer(
                                         .setChannelMask(channelMask)
                                         .build()
                         )
-                        .setBufferSizeInBytes(max(minBuf * 4, jitterBuf))
+                        // minBuf is AudioTrack's own floor, so it wins over a smaller request; the
+                        // requested headroom is otherwise authoritative. Any fixed multiple of
+                        // minBuf here would silently override a caller asking for low latency,
+                        // since minBuf scales with the rate while the request does not.
+                        .setBufferSizeInBytes(max(minBuf, jitterBuf))
                         .setTransferMode(AudioTrack.MODE_STREAM)
                         .build()
         if (audioTrack.state != AudioTrack.STATE_INITIALIZED) {
@@ -101,7 +126,11 @@ class PcmStreamPlayer(
                     isDaemon = true
                     start()
                 }
-        Log.d(TAG, "[$streamId] opened: rate=$sampleRate ch=$channels vol=$volume")
+        Log.d(
+                TAG,
+                "[$streamId] opened: rate=$sampleRate ch=$channels vol=$volume " +
+                        "jitterMs=$jitterBufferMs trackBytes=${max(minBuf, jitterBuf)}",
+        )
     }
 
     /** Milliseconds of audio accepted but not yet played out. */
@@ -285,7 +314,7 @@ class PcmStreamPlayer(
 object PcmStreamManager {
     private val players = java.util.concurrent.ConcurrentHashMap<String, PcmStreamPlayer>()
 
-    fun open(streamId: String, sampleRate: Int, channels: Int, volume: Float) {
+    fun open(streamId: String, sampleRate: Int, channels: Int, volume: Float, jitterMs: Int? = null) {
         require(streamId.isNotBlank()) { "streamId is required" }
         require(sampleRate == 16000 || sampleRate == 24000 || sampleRate == 48000) {
             "unsupported PCM sample rate $sampleRate"
@@ -293,7 +322,12 @@ object PcmStreamManager {
         require(channels == 1) { "only mono PCM is supported" }
         // Replacing an id is a caller bug, but never leak the old track.
         players.remove(streamId)?.abort()
-        players[streamId] = PcmStreamPlayer(streamId, sampleRate, channels, volume)
+        players[streamId] =
+                if (jitterMs == null) {
+                    PcmStreamPlayer(streamId, sampleRate, channels, volume)
+                } else {
+                    PcmStreamPlayer(streamId, sampleRate, channels, volume, jitterMs)
+                }
     }
 
     fun write(streamId: String, base64: String): Long {
