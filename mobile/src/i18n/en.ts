@@ -1019,6 +1019,11 @@ const en = {
     connectTo: "Connect to {{name}}",
     continueTo: "Continue to {{name}}",
     workspaceLabel: "Workspace",
+    cloudEndpointsTitle: "Workspace cloud services",
+    cloudEndpointsDescription:
+      "These URLs come from {{name}}'s deployment manifest. To change them, update the manifest and select the organization again.",
+    coreUrlLabel: "Core URL",
+    runtimeUrlLabel: "Runtime URL",
     signInLabel: "Sign-in",
     microsoftOrganizationAccount: "Microsoft organization account",
     mentraAccount: "Mentra account",
