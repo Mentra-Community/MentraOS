@@ -4,9 +4,14 @@
  * incoming PCM into AudioPlaybackService (A2DP / PcmStreamPlayer).
  */
 
+import {Platform} from "react-native"
+
+import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
+
 import audioPlaybackService from "./AudioPlaybackService"
+import micStateCoordinator from "./MicStateCoordinator"
 import {SETTINGS, useSettingsStore} from "../stores/settings"
-import {ACS_CALL_MIC, type ResolvedAudioSource, type SourceReason} from "./acsAudioSource"
+import {ACS_CALL_MIC, type AcsAudioSource, type ResolvedAudioSource, type SourceReason} from "./acsAudioSource"
 import type {SoftapProgress} from "./SoftapCallTransport"
 
 export {ACS_CALL_MIC}
@@ -22,6 +27,19 @@ export type ActiveStream = "none" | "virtual" | "local"
  * networks); the ACS call itself may still be `connected` with a frozen last frame.
  */
 export type MediaSourceState = "idle" | "connecting" | "live" | "failed"
+
+/**
+ * How the wearer's voice is reaching ACS.
+ *
+ * `ble-lc3` is the glasses microphone over Bluetooth, decoded on the phone and pushed into the ACS
+ * raw outgoing stream. `whip` is the glasses microphone on the WebRTC track they publish (SoftAP or
+ * Cloudflare). `phone` is the phone's own microphone. `none` means the source we committed to went
+ * away mid-call, which is a reportable failure rather than a reason to open a different microphone.
+ */
+export type MicTransport = "ble-lc3" | "whip" | "phone" | "none"
+
+/** Error surfaced when the pinned glasses microphone stops producing audio during a call. */
+export const GLASSES_MIC_UNAVAILABLE = "GLASSES_MIC_UNAVAILABLE"
 
 export type MeetingParticipantState = "idle" | "connecting" | "connected" | "lobby" | "hold" | "disconnected"
 
@@ -77,6 +95,8 @@ export interface MeetingState {
   participants?: MeetingParticipant[]
   /** Runtime capabilities. Omitted by natives that predate them; read that as unknown. */
   capabilities?: MeetingCapabilities
+  /** Which microphone path is carrying the wearer's voice, decided at join time. */
+  micTransport?: MicTransport
   /**
    * SoftAP join checklist, attached only to the state events the SoftAP orchestrator emits while
    * it walks hotspot → scoped join → ACS join → publish → live. Native ACS events never carry it,
@@ -86,14 +106,52 @@ export interface MeetingState {
 }
 
 /**
- * The call microphone is [ACS_CALL_MIC]. Flip that constant to `"glasses"`
- * to restore glasses WHIP → Cloudflare → WHEP PCM. Do not use ACS
- * LocalOutgoingAudioStream for phone: that path makes ACS own the route
+ * The call microphone is [ACS_CALL_MIC], and `preferred_mic` governs MentraOS STT capture rather
+ * than this call.
+ *
+ * `"glasses"` selects the wearer's own microphone. Which *transport* carries it is a separate
+ * decision made per call by [glassesLc3UplinkSupported]: BLE LC3 into the ACS raw outgoing stream
+ * where the host and native both support it, otherwise the glasses' published WebRTC audio track.
+ * `"phone"` selects the phone's microphone via `PhoneMicCapturer`; do not route it through ACS
+ * `LocalOutgoingAudioStream`, because that hands ACS the audio route
  * (MODE_IN_COMMUNICATION + forced speaker) and opens an echo loop.
- * preferred_mic governs MentraOS STT capture, not this call.
  */
 export function resolveAcsAudioSource(): ResolvedAudioSource {
   return {source: ACS_CALL_MIC, reason: "explicit"}
+}
+
+/**
+ * Whether this call can take the wearer's voice off the glasses over BLE LC3.
+ *
+ * Every term is a hard requirement, and the answer has to be known *before* the glasses are told
+ * what to publish — deciding afterwards is how a call ends up with either two copies of the wearer
+ * or none. A host whose native module has no `pushOutgoingPcm` keeps the WHIP audio track it has
+ * always used rather than silently joining a meeting nobody can be heard in.
+ *
+ * SoftAP used to take BLE LC3 and publish WHIP video only. That pairing ships off: a live Mentra
+ * Live call kept BES custom-audio TX at 20 Hz, ACS accepted 50 fps of 48 kHz frames, and Teams
+ * still heard mute because `P4 pcm meanAbs` stayed 8–39 (digital silence, not a mute flag). The
+ * glasses SoC AudioRecord (WHIP `captureAudio=true`) is the capture that actually has analog voice
+ * while the camera is up. Flip [SOFTAP_BLE_LC3_UPLINK] only after a soak shows LC3 `meanAbs` in
+ * the hundreds during WHIP video.
+ */
+const SOFTAP_BLE_LC3_UPLINK = false
+let softapBleLc3UplinkForTests: boolean | null = null
+
+export function glassesLc3UplinkSupported(args: {
+  videoSource: AcsVideoSource
+  audioSource: AcsAudioSource
+  hasPushOutgoingPcm: boolean
+  platform: string
+}): boolean {
+  if (!(softapBleLc3UplinkForTests ?? SOFTAP_BLE_LC3_UPLINK)) return false
+  // iOS has no `setMicSourcePin` yet, so it cannot promise the phone microphone stays shut.
+  if (args.platform !== "android") return false
+  // WHEP audio comes back from Cloudflare already mixed into the subscribed track; there is no
+  // captureAudio flag on that path to turn off.
+  if (args.videoSource.type !== "softap") return false
+  if (args.audioSource !== "glasses") return false
+  return args.hasPushOutgoingPcm
 }
 
 const PARTICIPANT_STATES = new Set<MeetingParticipantState>([
@@ -213,6 +271,7 @@ export interface DefaultNetworkStatus {
 }
 
 type NativeModule = {
+  prepareAgent?(options: {token: string; displayName?: string}): Promise<MeetingState>
   join(options: {
     meetingUrl: string
     token: string
@@ -254,6 +313,14 @@ type NativeModule = {
    */
   awaitValidatedDefaultNetwork?(): Promise<DefaultNetworkStatus>
   getState(): Promise<MeetingState>
+  /**
+   * Hand one chunk of already-decoded microphone PCM to the ACS uplink. Synchronous on purpose:
+   * this runs ~100×/s and a promise per chunk would cost more than the copy does.
+   *
+   * Absent on natives that predate the BLE LC3 uplink, which is exactly what
+   * [glassesLc3UplinkSupported] tests for.
+   */
+  pushOutgoingPcm?(base64: string, sampleRate: number, channels: number): void
   addListener(event: string, listener: (event: Record<string, unknown>) => void): {remove: () => void}
 }
 
@@ -273,6 +340,11 @@ function getNative(): NativeModule | null {
 /** Test seam: skip the native require and inject a fake ACS module. */
 export function setAcsMeetingNativeForTests(mod: NativeModule | null | undefined): void {
   nativeModule = mod
+}
+
+/** Test seam: exercise the BLE LC3 path without flipping the production kill switch. */
+export function setSoftapBleLc3UplinkForTests(enabled: boolean | null): void {
+  softapBleLc3UplinkForTests = enabled
 }
 
 /**
@@ -327,7 +399,55 @@ const MEDIA_RESTART_MIN_INTERVAL_MS = 3000
 
 /** Formats the native PcmStreamPlayer accepts (mono only). */
 const PCM_SAMPLE_RATES = new Set([16000, 24000, 48000])
-const PCM_BACKLOG_WARN_MS = 600
+
+/**
+ * Playout headroom for the far end's voice.
+ *
+ * The native player defaults to half a second, which is right for a miniapp clip and wrong here:
+ * a streaming track sits at its buffer size, so that default is 500ms of delay before the wearer
+ * hears anyone, enough that both sides talk over each other. This trades cushion for immediacy —
+ * still several BLE playout beats, but a conversation instead of a broadcast.
+ */
+const PCM_JITTER_MS = 120
+/**
+ * Above this the backlog is real congestion rather than the configured cushion.
+ *
+ * Has to stay clear of [PCM_JITTER_MS], because the reported backlog *includes* the track's own
+ * buffer and so never falls below it. A threshold at or under the cushion logs once per interval
+ * for the whole call and says nothing.
+ */
+const PCM_BACKLOG_WARN_MS = PCM_JITTER_MS + 400
+
+/** The Bluetooth SDK mic identifier the call pins itself to. */
+const GLASSES_MIC_SOURCE = "glasses"
+/**
+ * How long the glasses may produce no PCM before the call reports its microphone gone.
+ *
+ * The pin makes a phone-mic fallback impossible, so the only honest response to a source that
+ * stopped is to say so. One second is several BLE mic-beats: long enough that a reconnect blip
+ * does not raise an error, short enough that the wearer is not talking into nothing for long.
+ */
+const GLASSES_MIC_GRACE_MS = 1000
+/** Cadence of the uplink health line, matching the native P8 ladder. */
+const MIC_UPLINK_LOG_INTERVAL_MS = 5000
+
+/**
+ * Encode one microphone buffer for `pushOutgoingPcm`.
+ *
+ * Hermes has no Node `Buffer`. Using it here is how a live SoftAP call selected `ble-lc3`,
+ * pinned the glasses, and still sent Teams a minute of silence: every `mic_pcm` event threw
+ * `Property 'Buffer' doesn't exist` before native saw a byte. `btoa` is what React Native
+ * actually has.
+ */
+export function pcmToBase64(pcm: ArrayBuffer): string {
+  const bytes = new Uint8Array(pcm)
+  let binary = ""
+  const step = 0x8000
+  for (let i = 0; i < bytes.length; i += step) {
+    binary += String.fromCharCode(...bytes.subarray(i, i + step))
+  }
+  return btoa(binary)
+}
 
 class AcsMeetingService {
   private owner: string | null = null
@@ -361,6 +481,28 @@ class AcsMeetingService {
    * turns every successful Leave and End into a mid-call network error.
    */
   private scopedTerminating = false
+  /**
+   * Bumped by every join and every release, and captured by everything that can outlive a call:
+   * the `mic_pcm` listener and the in-flight `native.join`.
+   *
+   * A leave during a slow join is the case this exists for. Without it the join resolves into a
+   * torn-down host, subscribes a microphone listener nobody will ever unsubscribe, and pushes the
+   * wearer's voice at a native session that has already left the meeting.
+   */
+  private callGeneration = 0
+  private micTransport: MicTransport = "whip"
+  private micSub: {remove: () => void} | null = null
+  /** True between the pin/requirement being taken and released, so release is exactly once. */
+  private micUplinkActive = false
+  private micFramesForwarded = 0
+  /** Frames since the last health line, so the rate and the call total stay separate facts. */
+  private micFramesWindow = 0
+  private micDropsStale = 0
+  private micDropsNonGlasses = 0
+  private lastGlassesFrameAt = 0
+  private lastMicUplinkLogAt = 0
+  /** Guards [releaseHostState] so a remote hang-up followed by an explicit leave releases once. */
+  private hostStateReleased = true
 
   setStateHandler(handler: (packageName: string, state: MeetingState) => void): void {
     this.onState = handler
@@ -381,6 +523,14 @@ class AcsMeetingService {
    */
   softApIngestUrl(): string | null {
     return this.ingestUrl
+  }
+
+  /**
+   * Whether this call is taking the wearer's voice over BLE LC3, which means the glasses must
+   * publish video only. Read by the SoftAP orchestrator between the meeting join and the publish.
+   */
+  glassesLc3UplinkActive(): boolean {
+    return this.micTransport === "ble-lc3"
   }
 
   /**
@@ -519,6 +669,20 @@ class AcsMeetingService {
     for (const settle of [...this.firstFrameWaiters]) settle(error)
   }
 
+  /**
+   * Sign in to ACS before the glasses hotspot exists.
+   *
+   * SoftAP DNS cannot resolve Teams hosts. Doing this on the phone's existing internet is what
+   * stops `createCallAgent` from hanging until the hotspot is torn down.
+   */
+  async prepareAgent(args: {token: string; displayName?: string}): Promise<void> {
+    const native = getNative()
+    if (!native?.prepareAgent) return
+    console.log("[AcsMeeting] phase=prepare-agent")
+    await native.prepareAgent({token: args.token, displayName: args.displayName})
+    console.log("[AcsMeeting] phase=prepare-agent-ok")
+  }
+
   async join(
     packageName: string,
     args: {
@@ -540,10 +704,21 @@ class AcsMeetingService {
     // Validate before claiming ownership so a bad request cannot leave the slot taken.
     const video = args.video ? parseAcsOutgoingVideo(args.video) : undefined
     const resolved = resolveAcsAudioSource()
+    const generation = ++this.callGeneration
+    this.hostStateReleased = false
     this.owner = packageName
     // Only a whep source has a URL to re-feed on recovery; softap rebuilds instead.
     this.whepUrl = args.videoSource.type === "whep" ? args.videoSource.url : null
     this.videoSource = args.videoSource
+    // Decided here, before the join, so the SoftAP orchestrator can read it between the join and
+    // telling the glasses what to capture.
+    const lc3Uplink = glassesLc3UplinkSupported({
+      videoSource: args.videoSource,
+      audioSource: resolved.source,
+      hasPushOutgoingPcm: typeof native.pushOutgoingPcm === "function",
+      platform: Platform.OS,
+    })
+    this.micTransport = lc3Uplink ? "ble-lc3" : resolved.source === "phone" ? "phone" : "whip"
     this.bindNative(native, packageName)
     console.log("[AcsMeeting] phase=join-native", {
       packageName,
@@ -552,6 +727,7 @@ class AcsMeetingService {
       transport: args.videoSource.type,
       audioSource: resolved.source,
       audioSourceReason: resolved.reason,
+      micTransport: this.micTransport,
       preferredMic: useSettingsStore.getState().getSetting(SETTINGS.preferred_mic.key),
     })
     try {
@@ -564,14 +740,25 @@ class AcsMeetingService {
         audioSource: resolved.source,
         ...(video ? {video} : {}),
       })
+      if (generation !== this.callGeneration) {
+        // The wearer left while ACS was still joining. Nothing above knows about this call, so
+        // hanging it up here is the only thing that takes the device out of the Teams roster.
+        console.warn("[AcsMeeting] phase=join-cancelled", {packageName, generation})
+        await native.leave().catch((leaveError) => {
+          console.warn("[AcsMeeting] native leave after a cancelled join failed", leaveError)
+        })
+        throw new Error("The meeting was cancelled before it finished joining")
+      }
       this.ingestUrl = typeof state.ingestUrl === "string" ? state.ingestUrl : null
       const {ingestUrl: _ingestUrl, ...meetingState} = state
       this.lastState = {
         ...meetingState,
         audioSource: resolved.source,
         audioSourceReason: resolved.reason,
+        micTransport: this.micTransport,
       }
       console.log("[AcsMeeting] phase=join-native-ok", {state: state.state, muted: state.muted})
+      this.startGlassesMicUplink(generation)
     } catch (error) {
       // Native never joined (or is unwinding). Release the slot so the same or another
       // miniapp can retry, and make sure nothing half-joined lingers in Teams.
@@ -641,15 +828,24 @@ class AcsMeetingService {
   }
 
   /**
-   * Drop everything the host set up around a session: the network watcher, return
-   * audio, native listeners, ownership. Runs after native has been told to leave
-   * (or after a join that never produced a native call).
+   * Drop everything the host set up around a session: the microphone uplink, the network watcher,
+   * return audio, native listeners, ownership.
+   *
+   * Idempotent, because there are now several terminal paths into it and they overlap. A remote
+   * hang-up arrives as a native `disconnected`, and the miniapp usually calls `leave` right after
+   * seeing it; releasing the microphone pin twice would clear a pin the *next* call had already
+   * taken. Every release also bumps the call generation, which is what stops a `mic_pcm` event
+   * already queued on the JS thread from reaching a native session that is gone.
    */
   private async releaseHostState(): Promise<void> {
+    if (this.hostStateReleased) return
+    this.hostStateReleased = true
+    this.callGeneration++
     // Before anything else: a caller parked on a frame that will now never arrive has to be
     // rejected, or a leave mid-join leaves the orchestrator waiting out its whole timeout.
     for (const settle of [...this.firstFrameWaiters]) settle(new Error("The meeting ended"))
     this.firstFrameWaiters.clear()
+    this.stopGlassesMicUplink()
     this.unwatchPhoneNetwork()
     await this.stopPcm()
     this.unbindNative()
@@ -663,6 +859,127 @@ class AcsMeetingService {
     this.lastState = {state: "idle", muted: false}
   }
 
+  /**
+   * Start forwarding the glasses microphone into ACS for this call.
+   *
+   * Order matters and is the whole point: pin the Bluetooth SDK to the glasses *before* asking it
+   * for PCM, so the first frame the mic requirement produces is already from the right source and
+   * the phone microphone is never opened even for one buffer. `generation` is captured by the
+   * listener so a frame that lands after this call ended is dropped rather than pushed at a native
+   * session that has left the meeting.
+   */
+  private startGlassesMicUplink(generation: number): void {
+    if (this.micTransport !== "ble-lc3") return
+    const native = getNative()
+    const push = native?.pushOutgoingPcm
+    if (!native || !push) return
+    this.micFramesForwarded = 0
+    this.micFramesWindow = 0
+    this.micDropsStale = 0
+    this.micDropsNonGlasses = 0
+    this.lastGlassesFrameAt = Date.now()
+    this.lastMicUplinkLogAt = Date.now()
+    try {
+      void Promise.resolve(BluetoothSdk.setMicSourcePin?.(GLASSES_MIC_SOURCE)).catch((error) => {
+        console.warn("[AcsMeeting] pinning the glasses microphone failed", error)
+      })
+      this.micUplinkActive = true
+      micStateCoordinator.setCallRequirement(true)
+      this.micSub = BluetoothSdk.addListener("mic_pcm", (event: {pcm?: ArrayBuffer; sampleRate?: number; source?: string}) => {
+        if (generation !== this.callGeneration) {
+          this.micDropsStale += 1
+          return
+        }
+        // The pin makes this unreachable in normal operation, which is exactly why it is checked:
+        // a mic the SDK moved under us would otherwise put the phone's room into a Teams call
+        // that reports the glasses.
+        if (event.source !== GLASSES_MIC_SOURCE) {
+          this.micDropsNonGlasses += 1
+          this.reportGlassesMicUnavailable(event.source)
+          return
+        }
+        const pcm = event.pcm
+        if (!pcm) return
+        this.lastGlassesFrameAt = Date.now()
+        this.micFramesForwarded += 1
+        this.micFramesWindow += 1
+        try {
+          push.call(native, pcmToBase64(pcm), event.sampleRate ?? 16000, 1)
+        } catch (error) {
+          console.warn("[AcsMeeting] pushing glasses PCM to ACS failed", error)
+        }
+        this.logMicUplink()
+      })
+      console.log("[AcsMeeting] phase=glasses-mic-uplink-start", {generation, micTransport: this.micTransport})
+    } catch (error) {
+      // A host that cannot subscribe has no wearer audio at all, and that is worth saying loudly,
+      // but it is not worth failing a call the wearer can still see and hear.
+      console.error("[AcsMeeting] phase=glasses-mic-uplink-unavailable", error)
+      this.stopGlassesMicUplink()
+      this.markMicTransportNone()
+    }
+  }
+
+  /** Release the microphone claims this call took. Safe to call when it never took them. */
+  private stopGlassesMicUplink(): void {
+    this.micSub?.remove()
+    this.micSub = null
+    if (this.micUplinkActive) {
+      this.micUplinkActive = false
+      micStateCoordinator.setCallRequirement(false)
+      // Last, and unconditionally: while the pin is set no other consumer can pick a microphone,
+      // so leaving it behind would leave captions and the cloud uplink stuck on the glasses.
+      void Promise.resolve(BluetoothSdk.setMicSourcePin?.(null)).catch((error) => {
+        console.warn("[AcsMeeting] releasing the glasses microphone pin failed", error)
+      })
+      console.log("[AcsMeeting] phase=glasses-mic-uplink-stop", {
+        frames: this.micFramesForwarded,
+        dropsStale: this.micDropsStale,
+        dropsNonGlasses: this.micDropsNonGlasses,
+      })
+    }
+    this.micTransport = "whip"
+  }
+
+  /**
+   * Report a call whose pinned microphone stopped delivering. There is deliberately no fallback:
+   * the wearer agreed to be heard from the glasses, and quietly switching to the phone in the
+   * middle of a meeting puts the room they are standing in on the call.
+   */
+  private reportGlassesMicUnavailable(source: string | undefined): void {
+    if (Date.now() - this.lastGlassesFrameAt < GLASSES_MIC_GRACE_MS) return
+    if (this.micTransport === "none") return
+    console.error("[AcsMeeting] phase=glasses-mic-unavailable", {source, dropsNonGlasses: this.micDropsNonGlasses})
+    this.markMicTransportNone()
+  }
+
+  /**
+   * Record that this call has no wearer audio path.
+   *
+   * The state has to carry it, not just the field: a call that reported `ble-lc3` and then failed
+   * to start the uplink looks identical from the miniapp's side to one that is working, and the
+   * wearer finds out by being asked to repeat themselves.
+   */
+  private markMicTransportNone(): void {
+    this.micTransport = "none"
+    this.lastState = {...this.lastState, micTransport: "none", error: GLASSES_MIC_UNAVAILABLE}
+    if (this.owner) this.onState?.(this.owner, this.lastState)
+  }
+
+  private logMicUplink(): void {
+    const now = Date.now()
+    const elapsed = now - this.lastMicUplinkLogAt
+    if (elapsed < MIC_UPLINK_LOG_INTERVAL_MS) return
+    this.lastMicUplinkLogAt = now
+    console.log("[AcsMeeting] phase=glasses-mic-uplink", {
+      framesPerSecond: Math.round((this.micFramesWindow * 1000) / elapsed),
+      frames: this.micFramesForwarded,
+      dropsStale: this.micDropsStale,
+      dropsNonGlasses: this.micDropsNonGlasses,
+    })
+    this.micFramesWindow = 0
+  }
+
   async setMuted(packageName: string, muted: boolean): Promise<MeetingState> {
     this.assertOwner(packageName)
     const native = getNative()
@@ -672,6 +989,9 @@ class AcsMeetingService {
       ...this.lastState,
       ...state,
       audioSourceReason: this.lastState.audioSourceReason,
+      // Mute is an ACS-side gate. It does not change which microphone the call is using, and it
+      // deliberately does not turn the glasses microphone off — see the mute chain in native.
+      micTransport: this.micTransport,
     }
     return this.lastState
   }
@@ -696,8 +1016,8 @@ class AcsMeetingService {
     const native = getNative()
     if (!native) return {state: "idle", muted: false}
     const state = await native.getState()
-    this.lastState = state
-    return state
+    this.lastState = {...state, micTransport: this.micTransport}
+    return this.lastState
   }
 
   async leaveIfOwner(packageName: string): Promise<void> {
@@ -741,6 +1061,7 @@ class AcsMeetingService {
           audioSourceReason: this.lastState.audioSourceReason,
           activeStream: parseActiveStream(event.activeStream),
           audioSafety,
+          micTransport: this.micTransport,
           ...(mediaSource ? {mediaSource} : {}),
           ...(participants ? {participants} : {}),
           // Absent means unknown, so keep the last known verdict rather than clearing it.
@@ -755,10 +1076,19 @@ class AcsMeetingService {
           activeStream: state.activeStream,
           audioSafety: state.audioSafety,
           mediaSource: state.mediaSource,
+          micTransport: state.micTransport,
           participants: participants?.length,
         })
         this.settleFirstFrameWaiters(mediaSource)
         this.onState?.(packageName, state)
+        // A remote hang-up, an ACS error or a dropped call never goes through `leave`, so without
+        // this the microphone pin, the PCM requirement and the `mic_pcm` listener would outlive the
+        // meeting — and the next miniapp to start a call would inherit them.
+        if (state.state === "disconnected" || state.state === "error") {
+          void this.releaseHostState().catch((error) => {
+            console.warn("[AcsMeeting] releasing host state after a terminal native state failed", error)
+          })
+        }
       }),
       native.addListener("onIncomingPcm", (event) => {
         const base64 = event.base64 as string | undefined
@@ -893,6 +1223,7 @@ class AcsMeetingService {
       sampleRate,
       channels,
       stopOtherAudio: true,
+      jitterMs: PCM_JITTER_MS,
       onEnded: () => {
         if (this.pcmStreamId === streamId) {
           this.pcmStreamId = null
