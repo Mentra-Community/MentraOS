@@ -43,6 +43,19 @@ bunx expo run:ios
 
 Run on a physical iPhone for Bluetooth testing. Simulators are useful only for UI and compile checks.
 
+### Signing With Your Own Apple Developer Team
+
+The committed bundle identifier, `com.mentra.bluetoothsdk.example.reactnative`, is registered to Mentra's Apple Developer team. Apple App IDs are globally unique, so automatic signing for a physical-device build fails for any other team with errors such as `Provisioning Profile "iOS Team Provisioning Profile: *" does not support the Access Wi-Fi Information capability`, and the Apple Developer portal refuses to register the identifier. Simulator builds are not affected because they are not signed.
+
+Set `MENTRA_IOS_BUNDLE_ID` to your own reverse-DNS identifier before generating the native project. `app.config.js` applies it on top of `app.json`:
+
+```bash
+MENTRA_IOS_BUNDLE_ID=com.yourname.mentrasdkrn bunx expo prebuild --clean --platform ios
+bunx expo run:ios --device
+```
+
+Xcode then registers the new App ID under your team with the Wi-Fi entitlements the example needs. Leave the variable unset to keep Mentra's identifier for Mentra-owned builds.
+
 The React Native example uses the SDK photo receiver plus local native modules for direct phone receiving:
 
 - `@mentra/react-native-barcode-scanner` scans the latest photo preview for barcodes.
@@ -187,6 +200,7 @@ Do not use `localhost` in the app. The glasses, phone, and computer must be on a
 - `src/screens/`: Device, Camera, Stream, System, and Console screens.
 - `src/sdkFormat.ts`: shared status/event formatting.
 - `app.json`: permissions, SDK plugin, and Android native-library packaging rules.
+- `app.config.js`: applies `MENTRA_IOS_BUNDLE_ID` on top of `app.json` so third-party teams can sign device builds.
 - `metro.config.js`: package resolution for published installs and local SDK overrides.
 - `modules/mentra-barcode-scanner`: local native module used by this example to scan received photo previews for barcodes.
 - `modules/mentra-video-stream-receiver`: local native module used by this example for Android/iOS direct phone WebRTC preview demos.

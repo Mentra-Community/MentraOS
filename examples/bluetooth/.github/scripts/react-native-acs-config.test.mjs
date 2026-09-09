@@ -37,3 +37,36 @@ test('an Engine release declaring ACS fails clearly if its plugin is missing', (
   const {configure} = fixture(t, {'@mentra/acs-meeting': '3.2.0-dev.136'})
   assert.throws(() => configure({config: {plugins: []}}), /@mentra\/acs-meeting\/app.plugin.js/)
 })
+
+for (const withAcs of [false, true]) {
+  test(`bundle identifier override preserves host configuration with ACS=${withAcs}`, (t) => {
+    const previous = process.env.MENTRA_IOS_BUNDLE_ID
+    t.after(() => {
+      if (previous === undefined) delete process.env.MENTRA_IOS_BUNDLE_ID
+      else process.env.MENTRA_IOS_BUNDLE_ID = previous
+    })
+    const {engine, configure} = fixture(t, withAcs ? {'@mentra/acs-meeting': '3.2.0-dev.136'} : {})
+    let plugin
+    if (withAcs) {
+      const acs = path.join(engine, 'node_modules/@mentra/acs-meeting')
+      mkdirSync(acs, {recursive: true})
+      plugin = path.join(acs, 'app.plugin.js')
+      writeFileSync(plugin, 'module.exports = config => config\n')
+    }
+    const config = {
+      ios: {bundleIdentifier: 'com.mentra.example', entitlements: {'com.apple.developer.networking.wifi-info': true}},
+      android: {package: 'com.mentra.example'},
+      plugins: ['expo-audio'],
+    }
+    for (const value of ['', '   ', ' com.yourname.mentrasdkrn ']) {
+      process.env.MENTRA_IOS_BUNDLE_ID = value
+      assert.deepEqual(configure({config}), {
+        ...config,
+        ios: {...config.ios, bundleIdentifier: value.trim() || config.ios.bundleIdentifier},
+        plugins: withAcs ? [...config.plugins, realpathSync(plugin)] : config.plugins,
+      })
+      assert.equal(config.ios.bundleIdentifier, 'com.mentra.example')
+      assert.deepEqual(config.plugins, ['expo-audio'])
+    }
+  })
+}

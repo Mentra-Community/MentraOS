@@ -43,6 +43,8 @@ open MentraExample.xcodeproj
 
 In Xcode, select the `MentraExample` scheme and run on a physical iPhone. Simulators are useful for UI and compile checks only.
 
+The committed bundle identifier, `com.mentra.bluetoothsdk.example.ios`, is registered to Mentra's Apple Developer team, and Apple App IDs are globally unique. Before selecting your own team under **Signing & Capabilities**, change the Bundle Identifier to your own reverse-DNS string. Otherwise automatic signing fails with provisioning profile errors about the Wi-Fi entitlements, and the Apple Developer portal refuses to register the App ID. See [Troubleshooting](../../docs/troubleshooting.md#ios-device-build-fails-with-provisioning-profile-or-app-id-errors).
+
 The first build downloads the official GStreamer iOS SDK if it is not already present under `~/Library/Developer/GStreamer/iPhone.sdk`. The package is checksum-verified and not committed. To use an existing install:
 
 ```bash

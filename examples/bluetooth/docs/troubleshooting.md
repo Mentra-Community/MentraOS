@@ -20,6 +20,32 @@ Check that your iOS deployment target is at least `15.1`, that the package URL i
 
 If your app also uses Firebase with static frameworks, Firebase modular header configuration belongs in your app, not in the Bluetooth SDK.
 
+## iOS Device Build Fails With Provisioning Profile Or App ID Errors
+
+Symptoms when building an example app to a physical iPhone with automatic signing:
+
+- `Provisioning Profile "iOS Team Provisioning Profile: *" does not support the Access Wi-Fi Information capability` (and the same for Hotspot).
+- `Provisioning profile "iOS Team Provisioning Profile: *" doesn't include the com.apple.developer.networking.HotspotConfiguration, and com.apple.developer.networking.wifi-info entitlements`.
+- Registering the App ID manually in the Apple Developer portal fails with `An App ID with Identifier '...' is not available`.
+
+Cause:
+
+The committed bundle identifiers (`com.mentra.bluetoothsdk.example.reactnative` and `com.mentra.bluetoothsdk.example.ios`) are registered to Mentra's Apple Developer team. Apple App IDs are globally unique, so no other team can register them. The example needs Wi-Fi entitlements that a wildcard profile cannot carry, so Xcode must register an explicit App ID under your team, and that step fails. This is not a local provisioning problem, and a fully enrolled paid membership does not change it. Simulator builds are unaffected because they are not signed.
+
+Fix:
+
+- React Native / Expo example: set `MENTRA_IOS_BUNDLE_ID` to your own reverse-DNS identifier and regenerate the native project:
+
+  ```bash
+  cd examples/react-native
+  MENTRA_IOS_BUNDLE_ID=com.yourname.mentrasdkrn bunx expo prebuild --clean --platform ios
+  bunx expo run:ios --device
+  ```
+
+- Native iOS example: open `examples/ios/MentraExample.xcodeproj` in Xcode, select the `MentraExample` target, and change the Bundle Identifier under **Signing & Capabilities** before selecting your team.
+
+If the error also lists a Push Notifications capability, that entitlement is not part of the examples. Remove the capability from the target in Xcode or regenerate the native project.
+
 ## React Native Native Module Is Missing
 
 - Confirm you are running a development build or production native build. Expo Go cannot load `@mentra/bluetooth-sdk`.
