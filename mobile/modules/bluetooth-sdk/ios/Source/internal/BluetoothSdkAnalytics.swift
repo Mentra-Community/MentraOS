@@ -175,8 +175,9 @@ final class BluetoothSdkAnalytics {
         return resolved
     }
 
-    /// Glasses-side software versions, attached to identification only, so a
-    /// missing or malformed serial can be correlated with the firmware that produced it.
+    /// Glasses-side software versions, attached to identification only, so identified
+    /// glasses can be grouped by firmware. Glasses that never report a serial produce
+    /// no identification event; that coverage gap is measured elsewhere.
     private func glassesSoftwareProperties(_ status: GlassesStatus) -> [String: Any] {
         var values: [String: Any] = [:]
         let fields: [(String, String)] = [

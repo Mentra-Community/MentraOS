@@ -16,18 +16,18 @@ import {
 
 const expected = {sdkVersion: "3.1.0", environment: "staging"}
 
-test("expectedSdkAnalyticsMetadata reads the SDK package version and normalizes the lane", () => {
+test("expectedSdkAnalyticsMetadata reads the SDK package version and requires a normalized lane", () => {
   const value = expectedSdkAnalyticsMetadata({EXPO_PUBLIC_BUILD_ENV: " Prod "})
   assert.match(value.sdkVersion, /^\d+\.\d+\.\d+/)
   assert.equal(value.environment, "prod")
-  assert.equal(expectedSdkAnalyticsMetadata({}).environment, undefined)
+  assert.throws(() => expectedSdkAnalyticsMetadata({}), /EXPO_PUBLIC_BUILD_ENV is not set/)
 })
 
 test("assertSdkAnalyticsMetadata accepts a correctly stamped Info.plist", () => {
   assert.doesNotThrow(() =>
     assertSdkAnalyticsMetadata({[INFO_SDK_VERSION]: "3.1.0", [INFO_ANALYTICS_ENVIRONMENT]: "staging"}, expected),
   )
-  assert.doesNotThrow(() => assertSdkAnalyticsMetadata({[INFO_SDK_VERSION]: "3.1.0"}, {sdkVersion: "3.1.0"}))
+  assert.throws(() => assertSdkAnalyticsMetadata({[INFO_SDK_VERSION]: "3.1.0"}, expected), /MentraBluetoothSdkAnalyticsEnvironment=null/)
 })
 
 test("assertSdkAnalyticsMetadata names every missing or wrong key", () => {

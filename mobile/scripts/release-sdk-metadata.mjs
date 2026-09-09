@@ -16,7 +16,12 @@ export const INFO_ANALYTICS_DISABLED = "MentraBluetoothSdkAnalyticsDisabled"
  */
 export function expectedSdkAnalyticsMetadata(env = process.env) {
   const sdkVersion = require("../modules/bluetooth-sdk/package.json").version
-  const environment = env.EXPO_PUBLIC_BUILD_ENV?.trim().toLowerCase() || undefined
+  const environment = env.EXPO_PUBLIC_BUILD_ENV?.trim().toLowerCase()
+  if (!environment) {
+    throw new Error(
+      "EXPO_PUBLIC_BUILD_ENV is not set; a Mentra App release must declare its lane (dev | staging | prod) so glasses analytics can separate store builds from the other lanes",
+    )
+  }
   return {sdkVersion, environment}
 }
 
@@ -27,7 +32,7 @@ export function assertSdkAnalyticsMetadata(infoPlist, expected, platform = "iOS"
       `${INFO_SDK_VERSION}=${JSON.stringify(infoPlist[INFO_SDK_VERSION] ?? null)} (expected ${expected.sdkVersion})`,
     )
   }
-  if (expected.environment && infoPlist[INFO_ANALYTICS_ENVIRONMENT] !== expected.environment) {
+  if (infoPlist[INFO_ANALYTICS_ENVIRONMENT] !== expected.environment) {
     problems.push(
       `${INFO_ANALYTICS_ENVIRONMENT}=${JSON.stringify(infoPlist[INFO_ANALYTICS_ENVIRONMENT] ?? null)} (expected ${
         expected.environment

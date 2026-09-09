@@ -174,8 +174,9 @@ internal class BluetoothSdkAnalytics(
         }
 
     /**
-     * Glasses-side software versions, attached to identification only, so a missing
-     * or malformed serial can be correlated with the firmware that produced it.
+     * Glasses-side software versions, attached to identification only, so identified
+     * glasses can be grouped by firmware. Glasses that never report a serial produce
+     * no identification event; that coverage gap is measured elsewhere.
      */
     private fun MutableMap<String, Any>.putGlassesSoftware(status: GlassesStatus) {
         status.firmwareVersion.takeIf { it.isNotBlank() }?.let { put("glasses_firmware_version", it) }

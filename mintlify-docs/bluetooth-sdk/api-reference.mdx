@@ -90,8 +90,10 @@ through the `analytics.environment` plugin option, the
 `com.mentra.bluetoothsdk.analytics.environment` Android metadata, or the
 `MentraBluetoothSdkAnalyticsEnvironment` `Info.plist` key (trimmed and
 lowercased; must start with a letter or digit, then `[a-z0-9_-]`, at most 32
-characters). Mentra treats an install as production only when the install
-source is a store, the build type is `release`, and any declared lane is `prod`.
+characters). Mentra treats an install as production only when
+`app_install_source` is `app_store` or `play_store`, `app_build_type` is
+`release`, and, when the host declares a lane, `app_environment` is `prod`;
+store installs without a declared lane are reported as an unclassified cohort.
 
 Analytics delivery is fire-and-forget: events are submitted asynchronously, do
 not block Bluetooth SDK behavior, and are not retried if delivery fails.
