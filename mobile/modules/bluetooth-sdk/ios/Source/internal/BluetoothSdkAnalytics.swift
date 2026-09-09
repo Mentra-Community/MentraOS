@@ -92,6 +92,7 @@ final class BluetoothSdkAnalytics {
                 if !status.deviceModel.isEmpty {
                     properties["glasses_model"] = status.deviceModel
                 }
+                properties["glasses_is_simulated"] = status.deviceModel == DeviceTypes.SIMULATED
                 capture(event: "bluetooth_sdk_glasses_connected", properties: properties, configuration: configuration)
                 // Fall through: a serial already present at connect time (G1/Ar99
                 // report it in the advertisement) should be identified now rather than
@@ -111,6 +112,8 @@ final class BluetoothSdkAnalytics {
             if !status.deviceModel.isEmpty {
                 properties["glasses_model"] = status.deviceModel
             }
+            properties["glasses_is_simulated"] = status.deviceModel == DeviceTypes.SIMULATED
+            properties.merge(glassesSoftwareProperties(status)) { _, new in new }
             capture(event: "bluetooth_sdk_glasses_identified", properties: properties, configuration: configuration)
         }
     }
@@ -123,11 +126,16 @@ final class BluetoothSdkAnalytics {
         guard activeConfiguration.isReady else { return }
 
         transportQueue.async {
+            // Host facts are resolved once, on the transport queue: Bundle lookups
+            // must not run on the caller (often the Bluetooth status thread).
+            let host = self.transportQueueHostProperties()
             let payload: [String: Any] = [
                 "api_key": Self.defaultPostHogApiKey,
                 "event": event,
                 "distinct_id": self.distinctId(),
-                "properties": self.baseProperties(configuration: activeConfiguration).merging(properties) { _, new in new },
+                "properties": self.baseProperties(configuration: activeConfiguration)
+                    .merging(host) { _, new in new }
+                    .merging(properties) { _, new in new },
             ]
             guard let body = try? JSONSerialization.data(withJSONObject: payload) else { return }
             guard let captureURL = self.captureURL() else { return }
@@ -151,10 +159,38 @@ final class BluetoothSdkAnalytics {
             "os_platform": "ios",
             "os_version": ProcessInfo.processInfo.operatingSystemVersionString,
         ]
-        if let sdkVersion = BluetoothSdkDefaults.sdkVersion {
-            properties["sdk_version"] = sdkVersion
-        }
+        // Always present so version cohorts never collapse into a null bucket. The
+        // placeholder shows up only for unstamped source builds (plain SwiftPM checkout).
+        properties["sdk_version"] = BluetoothSdkDefaults.sdkVersion ?? "unknown"
         return properties
+    }
+
+    private var resolvedHostProperties: [String: Any]?
+
+    /// Only ever called from `transportQueue`, which serializes access.
+    private func transportQueueHostProperties() -> [String: Any] {
+        if let resolvedHostProperties { return resolvedHostProperties }
+        let resolved = BluetoothSdkAnalyticsHost.resolve().properties
+        resolvedHostProperties = resolved
+        return resolved
+    }
+
+    /// Glasses-side software versions, attached to identification only, so a
+    /// missing or malformed serial can be correlated with the firmware that produced it.
+    private func glassesSoftwareProperties(_ status: GlassesStatus) -> [String: Any] {
+        var values: [String: Any] = [:]
+        let fields: [(String, String)] = [
+            ("glasses_firmware_version", status.firmwareVersion),
+            ("glasses_bes_firmware_version", status.besFirmwareVersion),
+            ("glasses_mtk_firmware_version", status.mtkFirmwareVersion),
+            ("glasses_android_version", status.androidVersion),
+            ("glasses_app_version", status.appVersion),
+            ("glasses_build_number", status.buildNumber),
+        ]
+        for (key, value) in fields where !value.trimmingCharacters(in: .whitespaces).isEmpty {
+            values[key] = value
+        }
+        return values
     }
 
     private func distinctId() -> String {

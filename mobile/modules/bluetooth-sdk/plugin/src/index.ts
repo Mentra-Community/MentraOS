@@ -10,6 +10,13 @@ export interface BluetoothSdkPluginProps {
 
 export interface BluetoothSdkAnalyticsPluginProps {
   enabled?: boolean
+  /**
+   * Host-declared build lane (`dev`, `staging`, `prod`, ...), reported as
+   * `app_environment` on every SDK analytics event. Lowercase letters, digits,
+   * `_` and `-`, at most 32 characters. Store/TestFlight/sideload detection is
+   * automatic; this only adds the lane the host itself knows about.
+   */
+  environment?: string
 }
 
 const withBluetoothSdk: ConfigPlugin<BluetoothSdkPluginProps> = (config, props) => {
