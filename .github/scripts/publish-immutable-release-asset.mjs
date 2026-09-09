@@ -29,6 +29,23 @@ export function releaseAssetUploadUrl(repository, releaseId, name) {
   return `https://uploads.github.com/repos/${repository}/releases/${releaseId}/assets?name=${encodeURIComponent(name)}`
 }
 
+export function findReleaseAsset(repository, releaseId, name, run = gh) {
+  // Filter inside gh so a growing release cannot overflow Node's output buffer.
+  // Keep all matching assets across pages so duplicate detection still fails closed.
+  const output = run(
+    [
+      "api",
+      "--paginate",
+      `repos/${repository}/releases/${releaseId}/assets?per_page=100`,
+      "--jq",
+      `.[] | select(.name == ${JSON.stringify(name)}) | {id, name} | tojson`,
+    ],
+    {encoding: "utf8"},
+  )
+  const assets = output.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line))
+  return matchingAsset(assets, name)
+}
+
 function main() {
   const args = parseArgs(process.argv.slice(2))
   const file = path.resolve(args.file)
@@ -39,13 +56,7 @@ function main() {
     throw new Error("--file, --name, --release-id, and --repository are required")
   }
   if (path.basename(file) !== name) throw new Error("Immutable asset name must equal the source file basename")
-  const pages = JSON.parse(
-    gh(["api", "--paginate", "--slurp", `repos/${repository}/releases/${releaseId}/assets?per_page=100`], {
-      encoding: "utf8",
-    }),
-  )
-  const assets = pages.flat()
-  const existing = matchingAsset(assets, name)
+  const existing = findReleaseAsset(repository, releaseId, name)
   if (!existing) {
     gh(
       [
