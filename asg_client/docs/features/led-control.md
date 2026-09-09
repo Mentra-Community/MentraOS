@@ -175,15 +175,18 @@ Each command responds with `<command>_response` on success or `rgb_led_control_e
 
 The current camera paths use the two LED systems as follows:
 
+The local privacy LED uses shared ownership across photo capture, video recording, UVC, and network
+streaming. Releasing one camera user does not turn the LED off while another owner remains active.
+
 | Event | Local MTK recording/privacy LED | RGB status LED |
 | --- | --- | --- |
-| Photo capture | Brief flash | White for approximately 2.2 seconds |
+| Photo capture | On immediately before still/burst submission, after AE warmup; releases at final JPEG arrival | White for approximately 2.2 seconds |
 | Video recording start | Solid on | Solid white, with a 30-minute command duration |
-| Video recording stop or error | Off | Off |
+| Video recording stop or error | Off when the last owner releases | Off |
 | RTMP, SRT, or WHIP stream start | Solid on | Unchanged |
-| RTMP, SRT, or WHIP stream stop | Off | Unchanged |
+| RTMP, SRT, or WHIP stream stop | Off when the last owner releases | Unchanged |
 | USB UVC stream start | Solid on | Solid white, with a 30-minute command duration |
-| USB UVC stream stop | Off | Off |
+| USB UVC stream stop | Off when the last owner releases | Off |
 
 Current phone-command handlers require the local MTK capture LED for photo,
 video, and network stream capture.

@@ -302,6 +302,11 @@ public class CameraNeoService extends LifecycleService {
                 }
 
                 @Override
+                public IHardwareManager hardwareManager() {
+                    return hardwareManager;
+                }
+
+                @Override
                 public Object serviceLock() {
                     return SERVICE_LOCK;
                 }

@@ -2,9 +2,16 @@ package com.mentra.asg_client.hardware;
 
 import android.os.Handler;
 import android.os.HandlerThread;
+import android.os.Looper;
 import android.util.Log;
 
 import com.dev.api.DevApi;
+import com.mentra.asg_client.AsgConstants;
+
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.FutureTask;
+import java.util.concurrent.TimeUnit;
+import java.util.concurrent.TimeoutException;
 
 /**
  * Singleton controller for managing the K900 recording LED.
@@ -47,6 +54,8 @@ public class K900LedController {
             ledHandler.postDelayed(this, delay);
         }
     };
+    private Runnable customBlinkRunnable;
+    private Runnable flashOffRunnable;
     
     private K900LedController() {
         // Create a dedicated thread for LED control to avoid blocking main thread
@@ -96,12 +105,17 @@ public class K900LedController {
             Log.w(TAG, "LED controller not initialized, attempting to initialize...");
             initializeLed();
         }
-        
-        ledHandler.post(() -> {
-            stopBlinking();
-            setLedStateInternal(true);
-            Log.d(TAG, "LED turned ON");
-        });
+
+        runLedCommandAndWait(
+                "turn ON",
+                () -> {
+                    stopBlinkingInternal();
+                    cancelPendingFlashOffInternal();
+                    if (!setLedStateInternal(true)) {
+                        throw new IllegalStateException("Could not enable recording LED");
+                    }
+                    Log.d(TAG, "LED turned ON");
+                });
     }
     
     /**
@@ -109,15 +123,37 @@ public class K900LedController {
      */
     public void turnOff() {
         if (!isInitialized) {
-            Log.w(TAG, "LED controller not initialized");
+            Log.w(TAG, "LED controller not initialized, queuing initialization before OFF");
+            initializeLed();
+        }
+
+        ledHandler.post(
+                () -> {
+                    stopBlinkingInternal();
+                    cancelPendingFlashOffInternal();
+                    setLedStateInternal(false);
+                    Log.d(TAG, "LED turned OFF");
+                });
+    }
+
+    private void runLedCommandAndWait(String command, Runnable action) {
+        if (Looper.myLooper() == ledHandler.getLooper()) {
+            action.run();
             return;
         }
-        
-        ledHandler.post(() -> {
-            stopBlinking();
-            setLedStateInternal(false);
-            Log.d(TAG, "LED turned OFF");
-        });
+
+        FutureTask<Void> task = new FutureTask<>(action, null);
+        if (!ledHandler.post(task)) {
+            throw new IllegalStateException("Could not queue LED worker command to " + command);
+        }
+        try {
+            task.get(AsgConstants.RECORDING_LED_COMMAND_TIMEOUT_MS, TimeUnit.MILLISECONDS);
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            throw new IllegalStateException("Interrupted enabling recording LED", e);
+        } catch (ExecutionException | TimeoutException e) {
+            throw new IllegalStateException("Failed waiting for recording LED", e);
+        }
     }
     
     /**
@@ -134,7 +170,8 @@ public class K900LedController {
                 Log.d(TAG, "LED already blinking");
                 return;
             }
-            
+
+            cancelPendingFlashOffInternal();
             isBlinking = true;
             Log.d(TAG, "LED blinking started");
             ledHandler.post(blinkRunnable);
@@ -153,16 +190,14 @@ public class K900LedController {
         }
         
         ledHandler.post(() -> {
-            if (isBlinking) {
-                stopBlinking();
-            }
-            
+            stopBlinkingInternal();
+            cancelPendingFlashOffInternal();
             isBlinking = true;
             Log.d(TAG, String.format("LED custom blinking started (on=%dms, off=%dms)", 
                                      onDurationMs, offDurationMs));
-            
+
             // Custom blink runnable with specified durations
-            Runnable customBlinkRunnable = new Runnable() {
+            customBlinkRunnable = new Runnable() {
                 @Override
                 public void run() {
                     if (!isBlinking) {
@@ -176,7 +211,6 @@ public class K900LedController {
                     ledHandler.postDelayed(this, delay);
                 }
             };
-            
             ledHandler.post(customBlinkRunnable);
         });
     }
@@ -185,10 +219,30 @@ public class K900LedController {
      * Stop blinking (turns LED off)
      */
     public void stopBlinking() {
+        ledHandler.post(() -> {
+            stopBlinkingInternal();
+            cancelPendingFlashOffInternal();
+            setLedStateInternal(false);
+            Log.d(TAG, "LED blinking stopped");
+        });
+    }
+
+    /** Cancels only blink callbacks, preserving later LED state commands in the worker queue. */
+    private void stopBlinkingInternal() {
         isBlinking = false;
-        ledHandler.removeCallbacksAndMessages(null);
-        setLedStateInternal(false);
-        Log.d(TAG, "LED blinking stopped");
+        ledHandler.removeCallbacks(blinkRunnable);
+        if (customBlinkRunnable != null) {
+            ledHandler.removeCallbacks(customBlinkRunnable);
+            customBlinkRunnable = null;
+        }
+    }
+
+    /** Cancels only the delayed OFF belonging to an earlier flash operation. */
+    private void cancelPendingFlashOffInternal() {
+        if (flashOffRunnable != null) {
+            ledHandler.removeCallbacks(flashOffRunnable);
+            flashOffRunnable = null;
+        }
     }
     
     /**
@@ -210,16 +264,18 @@ public class K900LedController {
     /**
      * Internal method to set LED state through DevApi
      */
-    private void setLedStateInternal(boolean on) {
+    private boolean setLedStateInternal(boolean on) {
         try {
             DevApi.setLedOn(on);
             isLedOn = on;
+            return true;
         } catch (UnsatisfiedLinkError e) {
             Log.e(TAG, "Failed to control LED - libxydev.so not loaded", e);
             isInitialized = false;
         } catch (Exception e) {
             Log.e(TAG, "Failed to set LED state: " + on, e);
         }
+        return false;
     }
     
     /**
@@ -233,14 +289,18 @@ public class K900LedController {
         }
         
         ledHandler.post(() -> {
-            stopBlinking();
+            stopBlinkingInternal();
+            cancelPendingFlashOffInternal();
             setLedStateInternal(true);
             Log.d(TAG, "LED flash for " + durationMs + "ms");
-            
-            ledHandler.postDelayed(() -> {
-                setLedStateInternal(false);
-                Log.d(TAG, "LED flash completed");
-            }, durationMs);
+
+            flashOffRunnable =
+                    () -> {
+                        flashOffRunnable = null;
+                        setLedStateInternal(false);
+                        Log.d(TAG, "LED flash completed");
+                    };
+            ledHandler.postDelayed(flashOffRunnable, durationMs);
         });
     }
     
@@ -261,7 +321,8 @@ public class K900LedController {
         
         ledHandler.post(() -> {
             try {
-                stopBlinking();
+                stopBlinkingInternal();
+                cancelPendingFlashOffInternal();
                 DevApi.setLedCustomBright(clampedPercent, clampedShowTime);
                 currentBrightness = clampedPercent;
                 isLedOn = (clampedPercent > 0);
@@ -295,13 +356,11 @@ public class K900LedController {
     }
     
     /**
-     * Clean up resources when no longer needed
+     * Reset the LED when a hardware manager is released. The single worker lives for the process
+     * lifetime: a replacement manager uses the same FIFO, so this OFF cannot overtake its ON.
      */
     public void shutdown() {
         Log.d(TAG, "Shutting down LED controller");
-        stopBlinking();
         turnOff();
-        ledHandlerThread.quitSafely();
-        instance = null;
     }
 }
