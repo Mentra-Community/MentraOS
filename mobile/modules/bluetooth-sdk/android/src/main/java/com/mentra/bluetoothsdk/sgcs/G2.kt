@@ -1801,12 +1801,18 @@ class G2 : SGCManager() {
 
         // Set device_name so DeviceManager can save it for reconnection
         val peripheralName = rightGatt?.device?.name ?: leftGatt?.device?.name
-        val serialNumber = peripheralName?.let { deviceNameToSerialNumber[it] }
+        val serialNumber =
+            G2SerialResolution.resolve(
+                scannedSerial = peripheralName?.let { deviceNameToSerialNumber[it] },
+                requestedId = DEVICE_SEARCH_ID,
+                persistedDeviceName = DeviceStore.get("bluetooth", "device_name") as? String ?: "",
+            )
         if (serialNumber != null) {
             DeviceStore.apply("bluetooth", "device_name", serialNumber)
             // The advertisement serial is the manufacturing serial; expose it where
             // the SDK status (and analytics identification) read it, not only in the
-            // reconnection name slot.
+            // reconnection name slot. Cached reconnects skip the scan, so the
+            // persisted name is the serial source there (see G2SerialResolution).
             DeviceStore.apply("glasses", "serialNumber", serialNumber)
             Bridge.log("G2: Set device_name to $serialNumber")
         }

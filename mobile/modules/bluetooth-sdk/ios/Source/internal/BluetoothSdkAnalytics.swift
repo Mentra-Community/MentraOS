@@ -55,7 +55,7 @@ final class BluetoothSdkAnalytics {
 
     func initializeGlassesStatus(_ status: GlassesStatus) {
         stateQueue.sync {
-            tracker.initialize(status.analyticsSnapshot, utcDay: BluetoothSdkAnalyticsTracker.utcDay())
+            tracker.initialize(status.analyticsSnapshot, reportingDay: BluetoothSdkAnalyticsTracker.reportingDay())
         }
     }
 
@@ -71,7 +71,7 @@ final class BluetoothSdkAnalytics {
 
     func observeGlassesStatus(_ status: GlassesStatus) {
         stateQueue.sync {
-            let events = tracker.observe(status.analyticsSnapshot, utcDay: BluetoothSdkAnalyticsTracker.utcDay())
+            let events = tracker.observe(status.analyticsSnapshot, reportingDay: BluetoothSdkAnalyticsTracker.reportingDay())
             guard configuration.isReady else { return }
             for event in events {
                 capture(event: event.name, properties: event.properties, configuration: configuration)
@@ -104,10 +104,10 @@ final class BluetoothSdkAnalytics {
                     .merging(host) { _, new in new }
                     .merging(properties) { _, new in new },
             ]
-            if self.send(payload) {
-                self.drainRetryQueue(now: capturedAt)
-            } else {
-                self.retryQueue?.enqueue(payload, now: capturedAt)
+            switch self.send(payload) {
+            case .delivered: self.drainRetryQueue(now: capturedAt)
+            case .retry: self.retryQueue?.enqueue(payload, now: capturedAt)
+            case .discard: break
             }
         }
     }
@@ -117,29 +117,38 @@ final class BluetoothSdkAnalytics {
         retryQueue?.drain(now: now) { payload in self.send(payload) }
     }
 
-    /// Synchronous on purpose: it runs on the transport queue, and a serialized
-    /// send keeps retry ordering trivial. Returns true only for a 2xx response.
-    private func send(_ payload: [String: Any]) -> Bool {
+    /// Synchronous on purpose: it runs on the transport queue, and one request in
+    /// flight at a time keeps retry ordering trivial. The completion handler owns the
+    /// outcome; if it has not fired by the deadline the task is cancelled and the
+    /// payload is treated as retryable (its uuid makes a late duplicate harmless).
+    private func send(_ payload: [String: Any]) -> SendOutcome {
         guard JSONSerialization.isValidJSONObject(payload),
               let body = try? JSONSerialization.data(withJSONObject: payload),
               let captureURL = captureURL()
-        else { return false }
+        else { return .discard }
         var request = URLRequest(url: captureURL)
         request.httpMethod = "POST"
         request.timeoutInterval = 4
         request.setValue("application/json", forHTTPHeaderField: "Content-Type")
         request.httpBody = body
 
-        let semaphore = DispatchSemaphore(value: 0)
-        var succeeded = false
-        URLSession.shared.dataTask(with: request) { _, response, error in
-            if error == nil, let http = response as? HTTPURLResponse, (200 ..< 300).contains(http.statusCode) {
-                succeeded = true
+        let result = SendResult()
+        let task = URLSession.shared.dataTask(with: request) { _, response, error in
+            let outcome: SendOutcome
+            if error != nil {
+                outcome = .retry
+            } else if let http = response as? HTTPURLResponse {
+                outcome = SendOutcome.fromHTTPStatus(http.statusCode)
+            } else {
+                outcome = .retry
             }
-            semaphore.signal()
-        }.resume()
-        _ = semaphore.wait(timeout: .now() + 6)
-        return succeeded
+            result.complete(outcome)
+        }
+        task.resume()
+        if result.wait(timeout: .now() + 6) == .timedOut {
+            task.cancel()
+        }
+        return result.outcome
     }
 
     private func baseProperties(configuration: BluetoothSdkAnalyticsConfiguration) -> [String: Any] {
@@ -180,6 +189,32 @@ final class BluetoothSdkAnalytics {
     private func captureURL() -> URL? {
         let normalized = Self.defaultPostHogHost.trimmingCharacters(in: .whitespacesAndNewlines).trimmingCharacters(in: CharacterSet(charactersIn: "/"))
         return URL(string: "\(normalized)/i/v0/e/")
+    }
+}
+
+/// Completion-owned send result: the outcome is written once, under a lock, and
+/// read only after the semaphore says it is settled (or after a timeout, in which
+/// case it stays `.retry`).
+private final class SendResult {
+    private let lock = NSLock()
+    private let semaphore = DispatchSemaphore(value: 0)
+    private var settled: SendOutcome = .retry
+
+    var outcome: SendOutcome {
+        lock.lock()
+        defer { lock.unlock() }
+        return settled
+    }
+
+    func complete(_ outcome: SendOutcome) {
+        lock.lock()
+        settled = outcome
+        lock.unlock()
+        semaphore.signal()
+    }
+
+    func wait(timeout: DispatchTime) -> DispatchTimeoutResult {
+        semaphore.wait(timeout: timeout)
     }
 }
 

@@ -27,9 +27,9 @@ final class BluetoothSdkAnalyticsQueueTests: XCTestCase {
         var sent: [String] = []
         queue.drain(now: Date(timeIntervalSince1970: 4)) { p in
             let id = p["uuid"] as? String ?? ""
-            if id == "b" { return false }
+            if id == "b" { return .retry }
             sent.append(id)
-            return true
+            return .delivered
         }
         XCTAssertEqual(sent, ["a"])
         XCTAssertEqual(queue.count, 2)
@@ -37,7 +37,7 @@ final class BluetoothSdkAnalyticsQueueTests: XCTestCase {
         var second: [String] = []
         queue.drain(now: Date(timeIntervalSince1970: 5)) { p in
             second.append(p["uuid"] as? String ?? "")
-            return true
+            return .delivered
         }
         XCTAssertEqual(second, ["b", "c"])
         XCTAssertEqual(queue.count, 0)
@@ -54,7 +54,7 @@ final class BluetoothSdkAnalyticsQueueTests: XCTestCase {
         var sent: [String] = []
         queue.drain(now: Date(timeIntervalSince1970: 16)) { p in
             sent.append(p["uuid"] as? String ?? "")
-            return true
+            return .delivered
         }
         XCTAssertEqual(sent, ["new"])
     }
@@ -68,5 +68,30 @@ final class BluetoothSdkAnalyticsQueueTests: XCTestCase {
         try handle.close()
         queue.enqueue(payload("b"), now: Date(timeIntervalSince1970: 2))
         XCTAssertEqual(queue.count, 2)
+    }
+
+    func testPermanentlyRejectedPayloadIsDroppedWithoutBlockingTheRest() {
+        let queue = BluetoothSdkAnalyticsQueue(fileURL: fileURL)
+        queue.enqueue(payload("bad"), now: Date(timeIntervalSince1970: 1))
+        queue.enqueue(payload("good"), now: Date(timeIntervalSince1970: 2))
+
+        var sent: [String] = []
+        queue.drain(now: Date(timeIntervalSince1970: 3)) { p in
+            let id = p["uuid"] as? String ?? ""
+            if id == "bad" { return .discard }
+            sent.append(id)
+            return .delivered
+        }
+        XCTAssertEqual(sent, ["good"])
+        XCTAssertEqual(queue.count, 0)
+    }
+
+    func testHttpStatusMapsToOutcome() {
+        XCTAssertEqual(SendOutcome.fromHTTPStatus(200), .delivered)
+        XCTAssertEqual(SendOutcome.fromHTTPStatus(400), .discard)
+        XCTAssertEqual(SendOutcome.fromHTTPStatus(401), .discard)
+        XCTAssertEqual(SendOutcome.fromHTTPStatus(408), .retry)
+        XCTAssertEqual(SendOutcome.fromHTTPStatus(429), .retry)
+        XCTAssertEqual(SendOutcome.fromHTTPStatus(503), .retry)
     }
 }

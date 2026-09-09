@@ -1,5 +1,23 @@
 import Foundation
 
+enum SendOutcome {
+    case delivered
+    case retry
+    case discard
+
+    /// 2xx is delivered. A 4xx other than 408/429 means PostHog rejected this payload
+    /// for good (bad key, malformed body) and retrying it would only block the queue.
+    /// Everything else (5xx, 408, 429) is worth retrying later.
+    static func fromHTTPStatus(_ code: Int) -> SendOutcome {
+        switch code {
+        case 200 ..< 300: return .delivered
+        case 408, 429: return .retry
+        case 400 ..< 500: return .discard
+        default: return .retry
+        }
+    }
+}
+
 /// Bounded on-disk retry queue for analytics payloads whose upload failed.
 /// One JSON object per line. Oldest entries are dropped past `maxEntries`; entries
 /// older than `maxAge` are discarded on drain. Every payload carries its own
@@ -39,10 +57,10 @@ final class BluetoothSdkAnalyticsQueue {
         read().count
     }
 
-    /// Sends queued payloads oldest-first through `send` and keeps the ones that still
-    /// fail. Stops at the first failure so ordering is preserved and a dead network does
-    /// not burn through every entry.
-    func drain(now: Date, send: ([String: Any]) -> Bool) {
+    /// Sends queued payloads oldest-first through `send`. Delivered and permanently
+    /// rejected entries are dropped; the first retryable failure stops the drain so
+    /// ordering is preserved and a dead network does not burn through every entry.
+    func drain(now: Date, send: ([String: Any]) -> SendOutcome) {
         let entries = read()
         guard !entries.isEmpty else { return }
         var remaining: [[String: Any]] = []
@@ -55,7 +73,7 @@ final class BluetoothSdkAnalyticsQueue {
                 remaining.append(entry)
                 continue
             }
-            if !send(payload) {
+            if send(payload) == .retry {
                 blocked = true
                 remaining.append(entry)
             }

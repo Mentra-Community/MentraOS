@@ -97,8 +97,9 @@ store installs without a declared lane are reported as an unclassified cohort.
 
 Analytics delivery never blocks Bluetooth SDK behavior: events are submitted
 asynchronously. A failed upload is kept in a small on-device queue (at most 100
-events, 7 days) and retried on the next successful send or SDK start; each event
-carries its own id and capture time, so retries never double count.
+events, 7 days) and retried on the next successful send or SDK start (payloads
+PostHog rejects outright are dropped); each event carries its own id and
+capture time, so retries never double count.
 
 Mentra's PostHog project API key is embedded in the SDK as a public analytics
 write token, not a private PostHog personal API key. Apps do not need to

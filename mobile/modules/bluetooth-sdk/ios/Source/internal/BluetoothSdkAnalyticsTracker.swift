@@ -27,32 +27,38 @@ struct AnalyticsEvent {
 ///   known yet at connect time the event waits for it, and is emitted without a
 ///   model only if the connection ends first.
 /// - `bluetooth_sdk_glasses_identified` once per connection per serial, plus a
-///   `glasses_heartbeat` re-emission on the first status update of each new UTC day
-///   while still connected, so a connection spanning a week boundary is visible in
-///   both weeks.
+///   `glasses_heartbeat` re-emission on the first status update of each new
+///   reporting day while still connected, so a connection spanning a week boundary
+///   is visible in both weeks. Reporting days follow `America/Los_Angeles`, the
+///   calendar the WAU weeks are cut on; a UTC day would miss the Sunday-evening to
+///   Monday-morning Pacific boundary, which is one UTC day.
 struct BluetoothSdkAnalyticsTracker {
-    static let millisPerUtcDay: Int64 = 86_400_000
+    static let millisPerDay: Int64 = 86_400_000
+    static let reportingZone = TimeZone(identifier: "America/Los_Angeles")!
 
-    static func utcDay(epochMillis: Int64) -> Int64 {
-        let day = epochMillis / millisPerUtcDay
-        return epochMillis < 0 && epochMillis % millisPerUtcDay != 0 ? day - 1 : day
+    /// Calendar day in the reporting zone, as days since the epoch of that zone's midnight.
+    static func reportingDay(epochMillis: Int64) -> Int64 {
+        let offsetMillis = Int64(reportingZone.secondsFromGMT(for: Date(timeIntervalSince1970: Double(epochMillis) / 1000))) * 1000
+        let local = epochMillis + offsetMillis
+        let day = local / millisPerDay
+        return local < 0 && local % millisPerDay != 0 ? day - 1 : day
     }
 
-    static func utcDay(date: Date = Date()) -> Int64 {
-        utcDay(epochMillis: Int64((date.timeIntervalSince1970 * 1000).rounded(.down)))
+    static func reportingDay(date: Date = Date()) -> Int64 {
+        reportingDay(epochMillis: Int64((date.timeIntervalSince1970 * 1000).rounded(.down)))
     }
 
     private let simulatedModel: String
     private var lastConnected = false
     private var connectedPendingModel = false
     private var identifiedSerial: String?
-    private var identifiedUtcDay: Int64?
+    private var identifiedReportingDay: Int64?
 
     init(simulatedModel: String) {
         self.simulatedModel = simulatedModel
     }
 
-    mutating func initialize(_ snapshot: AnalyticsGlassesSnapshot, utcDay: Int64) {
+    mutating func initialize(_ snapshot: AnalyticsGlassesSnapshot, reportingDay: Int64) {
         lastConnected = snapshot.connected
         connectedPendingModel = false
         // Only treat identification as already captured when a valid serial is present
@@ -60,10 +66,10 @@ struct BluetoothSdkAnalyticsTracker {
         // (Mentra Live fills it via version_info after connect), leave this nil so the
         // identify event still fires once the serial arrives.
         identifiedSerial = snapshot.connected ? snapshot.serialNumber.validManufacturingSerial : nil
-        identifiedUtcDay = identifiedSerial == nil ? nil : utcDay
+        identifiedReportingDay = identifiedSerial == nil ? nil : reportingDay
     }
 
-    mutating func observe(_ snapshot: AnalyticsGlassesSnapshot, utcDay: Int64) -> [AnalyticsEvent] {
+    mutating func observe(_ snapshot: AnalyticsGlassesSnapshot, reportingDay: Int64) -> [AnalyticsEvent] {
         var events: [AnalyticsEvent] = []
         let wasConnected = lastConnected
         lastConnected = snapshot.connected
@@ -74,13 +80,13 @@ struct BluetoothSdkAnalyticsTracker {
                 events.append(connectedEvent(snapshot, modelUnresolved: true))
             }
             identifiedSerial = nil
-            identifiedUtcDay = nil
+            identifiedReportingDay = nil
             return events
         }
 
         if !wasConnected {
             identifiedSerial = nil
-            identifiedUtcDay = nil
+            identifiedReportingDay = nil
             if snapshot.model.isBlank {
                 connectedPendingModel = true
             } else {
@@ -94,10 +100,10 @@ struct BluetoothSdkAnalyticsTracker {
         guard let serial = snapshot.serialNumber.validManufacturingSerial else { return events }
         if identifiedSerial != serial {
             identifiedSerial = serial
-            identifiedUtcDay = utcDay
+            identifiedReportingDay = reportingDay
             events.append(identifiedEvent(snapshot, serial: serial, kind: "glasses_identified"))
-        } else if identifiedUtcDay != utcDay {
-            identifiedUtcDay = utcDay
+        } else if identifiedReportingDay != reportingDay {
+            identifiedReportingDay = reportingDay
             events.append(identifiedEvent(snapshot, serial: serial, kind: "glasses_heartbeat"))
         }
         return events

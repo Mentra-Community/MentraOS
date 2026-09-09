@@ -2018,14 +2018,17 @@ class G2: NSObject, SGCManager {
         Bridge.log("G2: Auth sequence complete, glasses ready")
 
         // Set device_name so DeviceManager can save it for reconnection
-        if let peripheralName = rightPeripheral?.name
-            ?? leftPeripheral?.name,
-            let serialNumber = deviceNameToSerialNumber[peripheralName]
-        {
+        let peripheralName = rightPeripheral?.name ?? leftPeripheral?.name
+        if let serialNumber = G2SerialResolution.resolve(
+            scannedSerial: peripheralName.flatMap { deviceNameToSerialNumber[$0] },
+            requestedId: DEVICE_SEARCH_ID,
+            persistedDeviceName: DeviceStore.shared.get("bluetooth", "device_name") as? String ?? ""
+        ) {
             DeviceStore.shared.apply("bluetooth", "device_name", serialNumber)
             // The advertisement serial is the manufacturing serial; expose it where
             // the SDK status (and analytics identification) read it, not only in the
-            // reconnection name slot.
+            // reconnection name slot. Cached reconnects skip the scan, so the
+            // persisted name is the serial source there (see G2SerialResolution).
             DeviceStore.shared.apply("glasses", "serialNumber", serialNumber)
             Bridge.log("G2: Set device_name to \(serialNumber)")
         }

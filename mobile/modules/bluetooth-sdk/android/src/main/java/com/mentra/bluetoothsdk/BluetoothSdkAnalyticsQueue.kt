@@ -3,6 +3,23 @@ package com.mentra.bluetoothsdk
 import org.json.JSONObject
 import java.io.File
 
+internal enum class SendOutcome {
+    DELIVERED,
+    RETRY,
+    DISCARD,
+    ;
+
+    companion object {
+        fun fromHttpStatus(code: Int): SendOutcome =
+            when {
+                code in 200..299 -> DELIVERED
+                code == 408 || code == 429 -> RETRY
+                code in 400..499 -> DISCARD
+                else -> RETRY
+            }
+    }
+}
+
 /**
  * Bounded on-disk retry queue for analytics payloads whose upload failed.
  * One JSON object per line. Oldest entries are dropped past [maxEntries]; entries
@@ -26,11 +43,11 @@ internal class BluetoothSdkAnalyticsQueue(
     fun size(): Int = read().size
 
     /**
-     * Sends queued payloads oldest-first through [send] and keeps the ones that still
-     * fail. Stops at the first failure so ordering is preserved and a dead network does
-     * not burn through every entry.
+     * Sends queued payloads oldest-first through [send]. Delivered and permanently
+     * rejected entries are dropped; the first retryable failure stops the drain so
+     * ordering is preserved and a dead network does not burn through every entry.
      */
-    fun drain(nowMillis: Long, send: (JSONObject) -> Boolean) {
+    fun drain(nowMillis: Long, send: (JSONObject) -> SendOutcome) {
         val entries = read()
         if (entries.isEmpty()) return
         val remaining = mutableListOf<JSONObject>()
@@ -43,13 +60,13 @@ internal class BluetoothSdkAnalyticsQueue(
                 remaining += entry
                 continue
             }
-            val sent =
+            val outcome =
                 try {
                     send(payload)
                 } catch (_: Exception) {
-                    false
+                    SendOutcome.RETRY
                 }
-            if (!sent) {
+            if (outcome == SendOutcome.RETRY) {
                 blocked = true
                 remaining += entry
             }

@@ -66,7 +66,7 @@ internal class BluetoothSdkAnalytics(
 
     @Synchronized
     fun initializeGlassesStatus(status: GlassesStatus) {
-        tracker.initialize(status.toAnalyticsSnapshot(), BluetoothSdkAnalyticsTracker.utcDay(System.currentTimeMillis()))
+        tracker.initialize(status.toAnalyticsSnapshot(), BluetoothSdkAnalyticsTracker.reportingDay(System.currentTimeMillis()))
     }
 
     @Synchronized
@@ -80,7 +80,7 @@ internal class BluetoothSdkAnalytics(
 
     @Synchronized
     fun observeGlassesStatus(status: GlassesStatus) {
-        val events = tracker.observe(status.toAnalyticsSnapshot(), BluetoothSdkAnalyticsTracker.utcDay(System.currentTimeMillis()))
+        val events = tracker.observe(status.toAnalyticsSnapshot(), BluetoothSdkAnalyticsTracker.reportingDay(System.currentTimeMillis()))
         if (!config.isReady) return
         for (event in events) capture(event.name, event.properties)
     }
@@ -111,10 +111,10 @@ internal class BluetoothSdkAnalytics(
                         "properties" to baseProperties(activeConfig) + hostProperties + eventProperties,
                     )
                 )
-            if (send(payload)) {
-                queue.drain(capturedAt) { queued -> send(queued) }
-            } else {
-                queue.enqueue(payload, capturedAt)
+            when (send(payload)) {
+                SendOutcome.DELIVERED -> queue.drain(capturedAt) { queued -> send(queued) }
+                SendOutcome.RETRY -> queue.enqueue(payload, capturedAt)
+                SendOutcome.DISCARD -> Unit
             }
         }
     }
@@ -133,8 +133,12 @@ internal class BluetoothSdkAnalytics(
         }
     }
 
-    /** Returns true only for a 2xx response; anything else is retried later. */
-    private fun send(payload: JSONObject): Boolean =
+    /**
+     * 2xx is delivered. A 4xx other than 408/429 means PostHog rejected this payload
+     * for good (bad key, malformed body) and retrying it would only block the queue.
+     * Everything else (network errors, 5xx, 408, 429) is worth retrying later.
+     */
+    private fun send(payload: JSONObject): SendOutcome =
         try {
             val connection = URL(captureUrl()).openConnection() as HttpURLConnection
             try {
@@ -148,12 +152,12 @@ internal class BluetoothSdkAnalytics(
                 }
                 val code = connection.responseCode
                 if (code in 200..299) connection.inputStream.close() else connection.errorStream?.close()
-                code in 200..299
+                SendOutcome.fromHttpStatus(code)
             } finally {
                 connection.disconnect()
             }
         } catch (_: Exception) {
-            false
+            SendOutcome.RETRY
         }
 
     private fun baseProperties(activeConfig: BluetoothSdkAnalyticsRuntimeConfig): Map<String, Any> =

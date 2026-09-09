@@ -22,13 +22,13 @@ class BluetoothSdkAnalyticsQueueTest {
         val sent = mutableListOf<String>()
         queue.drain(nowMillis = 4_000) { p ->
             val id = p.getString("uuid")
-            if (id == "b") false else sent.add(id)
+            if (id == "b") SendOutcome.RETRY else SendOutcome.DELIVERED.also { sent.add(id) }
         }
         assertThat(sent).containsExactly("a")
         assertThat(queue.size()).isEqualTo(2)
 
         val second = mutableListOf<String>()
-        queue.drain(nowMillis = 5_000) { second.add(it.getString("uuid")) }
+        queue.drain(nowMillis = 5_000) { SendOutcome.DELIVERED.also { _ -> second.add(it.getString("uuid")) } }
         assertThat(second).containsExactly("b", "c")
         assertThat(queue.size()).isZero()
     }
@@ -42,7 +42,7 @@ class BluetoothSdkAnalyticsQueueTest {
         assertThat(queue.size()).isEqualTo(2)
 
         val sent = mutableListOf<String>()
-        queue.drain(nowMillis = 16_000) { sent.add(it.getString("uuid")) }
+        queue.drain(nowMillis = 16_000) { SendOutcome.DELIVERED.also { _ -> sent.add(it.getString("uuid")) } }
         assertThat(sent).containsExactly("new")
     }
 
@@ -57,5 +57,30 @@ class BluetoothSdkAnalyticsQueueTest {
 
         queue.drain(nowMillis = 3_000) { throw IllegalStateException("network") }
         assertThat(queue.size()).isEqualTo(2)
+    }
+
+    @Test
+    fun `a permanently rejected payload is dropped without blocking the rest`() {
+        val queue = BluetoothSdkAnalyticsQueue(folder.newFile("queue.jsonl"))
+        queue.enqueue(payload("bad"), nowMillis = 1_000)
+        queue.enqueue(payload("good"), nowMillis = 2_000)
+
+        val sent = mutableListOf<String>()
+        queue.drain(nowMillis = 3_000) { p ->
+            val id = p.getString("uuid")
+            if (id == "bad") SendOutcome.DISCARD else SendOutcome.DELIVERED.also { sent.add(id) }
+        }
+        assertThat(sent).containsExactly("good")
+        assertThat(queue.size()).isZero()
+    }
+
+    @Test
+    fun `http status maps to an outcome`() {
+        assertThat(SendOutcome.fromHttpStatus(200)).isEqualTo(SendOutcome.DELIVERED)
+        assertThat(SendOutcome.fromHttpStatus(400)).isEqualTo(SendOutcome.DISCARD)
+        assertThat(SendOutcome.fromHttpStatus(401)).isEqualTo(SendOutcome.DISCARD)
+        assertThat(SendOutcome.fromHttpStatus(408)).isEqualTo(SendOutcome.RETRY)
+        assertThat(SendOutcome.fromHttpStatus(429)).isEqualTo(SendOutcome.RETRY)
+        assertThat(SendOutcome.fromHttpStatus(503)).isEqualTo(SendOutcome.RETRY)
     }
 }
