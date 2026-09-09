@@ -956,6 +956,90 @@ describe("createSoftapCallDeps", () => {
           streamUrl: "http://192.168.43.20:8790/whip",
           ice: {stun: ""},
           traceId: "abc123",
+          captureAudio: true,
+        },
+      },
+    ])
+  })
+
+  /**
+   * Which side carries the wearer's voice has to be settled before the BLE start command goes out.
+   *
+   * The glasses cannot drop an audio track they already negotiated, so deciding afterwards leaves a
+   * call with two live copies of the wearer — the LC3 uplink and the published WHIP track, tens of
+   * milliseconds apart, which is worse than either one alone.
+   */
+  test("an LC3 uplink makes the glasses publish video only", async () => {
+    const harness = subsystems()
+    const details: string[] = []
+    const real = createSoftapCallDeps({
+      packageName: "com.mentra.call",
+      meetingUrl: "https://teams.microsoft.com/l/meetup-join/x",
+      token: "tok",
+      awaitFirstFrame: async () => {},
+      subsystems: {...harness.subsystems, glassesLc3Uplink: () => true},
+    })
+
+    await real.startPublishing({ingestUrl: "http://192.168.43.20:8790/whip", traceId: "abc123"}, (d) =>
+      details.push(d),
+    )
+
+    expect(harness.calls).toContainEqual([
+      "startPublishing",
+      {
+        pkg: "com.mentra.call",
+        options: {
+          streamUrl: "http://192.168.43.20:8790/whip",
+          ice: {stun: ""},
+          traceId: "abc123",
+          captureAudio: false,
+        },
+      },
+    ])
+    expect(details.some((d) => d.includes("Bluetooth LC3"))).toBe(true)
+  })
+
+  test("without an LC3 uplink the glasses keep putting their microphone on the WHIP track", async () => {
+    const harness = subsystems()
+    const real = createSoftapCallDeps({
+      packageName: "com.mentra.call",
+      meetingUrl: "https://teams.microsoft.com/l/meetup-join/x",
+      token: "tok",
+      awaitFirstFrame: async () => {},
+      subsystems: {...harness.subsystems, glassesLc3Uplink: () => false},
+    })
+
+    await real.startPublishing({ingestUrl: "http://192.168.43.20:8790/whip", traceId: "abc123"})
+
+    expect(harness.calls).toContainEqual([
+      "startPublishing",
+      {
+        pkg: "com.mentra.call",
+        options: {
+          streamUrl: "http://192.168.43.20:8790/whip",
+          ice: {stun: ""},
+          traceId: "abc123",
+          captureAudio: true,
+        },
+      },
+    ])
+  })
+
+  /** A host that predates the uplink must keep the audio track it has always published. */
+  test("a host with no LC3 uplink getter publishes audio", async () => {
+    const harness = deps()
+
+    await harness.deps.startPublishing({ingestUrl: "http://192.168.43.20:8790/whip", traceId: "abc123"})
+
+    expect(harness.calls).toContainEqual([
+      "startPublishing",
+      {
+        pkg: "com.mentra.call",
+        options: {
+          streamUrl: "http://192.168.43.20:8790/whip",
+          ice: {stun: ""},
+          traceId: "abc123",
+          captureAudio: true,
         },
       },
     ])
