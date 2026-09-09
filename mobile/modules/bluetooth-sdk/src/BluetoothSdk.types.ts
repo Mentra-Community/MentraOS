@@ -745,6 +745,12 @@ export type MicPcmEvent = {
   channels: 1
   encoding: "pcm_s16le"
   voiceActivityDetectionEnabled: boolean
+  /**
+   * The microphone this buffer came from (`"glasses"`, `"phone"`, `"bluetooth"`, or `""` when none
+   * is selected). Stamped per frame because the SDK can move the source mid-stream, so a consumer
+   * that told a remote party which microphone it is sending can check rather than assume.
+   */
+  source: string
 }
 
 export type MicLc3Event = {
