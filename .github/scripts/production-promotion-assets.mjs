@@ -16,7 +16,27 @@ const SHA256_PATTERN = /^[0-9a-f]{64}$/
 
 function gh(args, options = {}) {
   const stdin = options.input === undefined ? "ignore" : "pipe"
-  return execFileSync("gh", args, {stdio: [stdin, "pipe", "inherit"], encoding: "utf8", ...options})
+  return execFileSync("gh", args, {
+    stdio: [stdin, "pipe", "inherit"],
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+    ...options,
+  })
+}
+
+// The releases endpoint inlines every asset of every release; with hundreds of
+// coordinated build assets per family that exceeds Node's default 1 MiB
+// subprocess buffer. Keep only the fields the promotion logic reads.
+export const RELEASE_LIST_FIELDS = "{id, tag_name, name, body, draft, prerelease, target_commitish}"
+export const ASSET_LIST_FIELDS = "{id, name, url, size}"
+
+// gh cannot combine --slurp with --jq, so paginated listings are streamed as
+// one JSON object per line and reassembled here.
+export function parseJsonLines(output) {
+  return output
+    .split("\n")
+    .filter((line) => line.trim() !== "")
+    .map((line) => JSON.parse(line))
 }
 
 function parseArgs(args) {
@@ -30,15 +50,20 @@ function parseArgs(args) {
   return values
 }
 
-function output(values, githubOutput) {
+export function writeOutputs(values, githubOutput) {
   for (const [key, value] of Object.entries(values)) console.log(`${key}=${value}`)
   if (githubOutput) {
     const lines = Object.entries(values)
       .map(([key, value]) => `${key}=${value}`)
       .join("\n")
+    // The output file may sit in a directory nothing else has created yet, for
+    // example when download-latest-attempt finds no promotion at all.
+    mkdirSync(path.dirname(path.resolve(githubOutput)), {recursive: true})
     appendFileSync(path.resolve(githubOutput), `${lines}\n`)
   }
 }
+
+const output = writeOutputs
 
 export function promotionContainerTag(releaseIdentity, attempt) {
   if (!VERSION_PATTERN.test(releaseIdentity || "")) throw new Error("release identity must be X.Y.Z")
@@ -214,13 +239,27 @@ export function validateStateRecordChain(entries, releaseIdentity, attempt) {
 }
 
 function listReleases(repository) {
-  return JSON.parse(gh(["api", "--paginate", "--slurp", `repos/${repository}/releases?per_page=100`])).flat()
+  return parseJsonLines(
+    gh([
+      "api",
+      "--paginate",
+      `repos/${repository}/releases?per_page=100`,
+      "--jq",
+      `.[] | ${RELEASE_LIST_FIELDS} | tojson`,
+    ]),
+  )
 }
 
 function listAssets(repository, releaseId) {
-  return JSON.parse(
-    gh(["api", "--paginate", "--slurp", `repos/${repository}/releases/${releaseId}/assets?per_page=100`]),
-  ).flat()
+  return parseJsonLines(
+    gh([
+      "api",
+      "--paginate",
+      `repos/${repository}/releases/${releaseId}/assets?per_page=100`,
+      "--jq",
+      `.[] | ${ASSET_LIST_FIELDS} | tojson`,
+    ]),
+  )
 }
 
 function resolveContainer(repository, releaseIdentity, attempt) {

@@ -17,6 +17,7 @@ import {fileURLToPath} from "node:url"
 import {isDeepStrictEqual} from "node:util"
 
 import {validateSelectedBeta} from "./prepare-production-promotion.mjs"
+import {RELEASE_LIST_FIELDS, parseJsonLines} from "./production-promotion-assets.mjs"
 import {createReleasePlan, loadReleaseFamily, serializeReleaseRecord} from "./release-family.mjs"
 
 const VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/
@@ -104,11 +105,24 @@ export function planStableContainer(releases, plan) {
 
 function gh(args, options = {}) {
   const stdin = options.input === undefined ? "ignore" : "pipe"
-  return execFileSync("gh", args, {stdio: [stdin, "pipe", "inherit"], encoding: "utf8", ...options})
+  return execFileSync("gh", args, {
+    stdio: [stdin, "pipe", "inherit"],
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+    ...options,
+  })
 }
 
 function listReleases(repository) {
-  return JSON.parse(gh(["api", "--paginate", "--slurp", `repos/${repository}/releases?per_page=100`])).flat()
+  return parseJsonLines(
+    gh([
+      "api",
+      "--paginate",
+      `repos/${repository}/releases?per_page=100`,
+      "--jq",
+      `.[] | ${RELEASE_LIST_FIELDS} | tojson`,
+    ]),
+  )
 }
 
 function ensureStableContainer({repository, plan}) {

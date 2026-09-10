@@ -281,3 +281,16 @@ test("resolves the newest promotion attempt for stable package evidence", () => 
   assert.equal(latest.releaseIdentity, "3.1.0")
   assert.equal(latestPromotionContainer(releases, "3.2.0"), null)
 })
+
+test("writes step outputs into a directory that does not exist yet", () => {
+  const {writeOutputs} = assetsModule
+  const file = path.join(mkdtempSync(path.join(tmpdir(), "promotion-outputs-")), "promotion-input", "outputs.env")
+  writeOutputs({found: false}, file)
+  assert.equal(readFileSync(file, "utf8"), "found=false\n")
+})
+
+test("reassembles paginated gh listings streamed as JSON lines", () => {
+  const {parseJsonLines} = assetsModule
+  assert.deepEqual(parseJsonLines('{"id":1}\n{"id":2}\n\n'), [{id: 1}, {id: 2}])
+  assert.deepEqual(parseJsonLines(""), [])
+})

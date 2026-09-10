@@ -92,7 +92,9 @@ jobs:
     name: Build SDK and submit Maven Central publication
     needs: prepare
     runs-on: ubuntu-latest
-    timeout-minutes: 30
+    # Prebuild, NDK, and two Gradle publishes take up to ~20 minutes; a
+    # production run then waits up to 30 minutes for Sonatype validation.
+    timeout-minutes: 60
     steps:
       - uses: actions/checkout@v4
         with:
