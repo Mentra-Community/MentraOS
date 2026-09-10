@@ -41,6 +41,7 @@ jobs:
     concurrency:
       group: coordinated-example-google-play
       cancel-in-progress: false
+      queue: max
     outputs:
       result_artifact: ${{ steps.coordinates.outputs.result_artifact }}
       install_url: ${{ steps.coordinates.outputs.install_url }}
@@ -212,12 +213,22 @@ jobs:
             "$aab" "$ORG_GRADLE_PROJECT_MENTRAOS_UPLOAD_KEY_ALIAS"
           cp "$aab" "$GITHUB_WORKSPACE/release-output/${{ steps.coordinates.outputs.aab_name }}"
 
+      - name: Install pinned bundle identity verifier
+        run: |
+          set -euo pipefail
+          curl --fail --silent --show-error --location --retry 3 \
+            https://github.com/google/bundletool/releases/download/1.18.3/bundletool-all-1.18.3.jar \
+            --output "$RUNNER_TEMP/bundletool.jar"
+          echo "a099cfa1543f55593bc2ed16a70a7c67fe54b1747bb7301f37fdfd6d91028e29  $RUNNER_TEMP/bundletool.jar" | sha256sum --check
+
       - name: Verify and persist exact signed bytes before Play upload
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           aab="release-output/${{ steps.coordinates.outputs.aab_name }}"
+          node .github/scripts/coordinated-example-google-play.mjs verify-aab \
+            --plan release-input/plan/release-plan.json --aab "$aab" --bundletool "$RUNNER_TEMP/bundletool.jar"
           jarsigner -verify "$aab"
           keytool -printcert -jarfile "$aab" > "$RUNNER_TEMP/example-certificate.txt"
           if grep -qi 'CN=Android Debug' "$RUNNER_TEMP/example-certificate.txt"; then

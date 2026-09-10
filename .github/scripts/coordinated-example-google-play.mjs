@@ -1,11 +1,27 @@
 #!/usr/bin/env node
 import {createHash} from "node:crypto"
+import {execFileSync} from "node:child_process"
 import {appendFileSync, readFileSync, writeFileSync} from "node:fs"
 import {pathToFileURL} from "node:url"
 
 export const EXAMPLE_PACKAGE_ID = "com.mentra.bluetoothsdkexample"
 const installUrl = `https://play.google.com/apps/testing/${EXAMPLE_PACKAGE_ID}`
 const readJson = (file) => JSON.parse(readFileSync(file, "utf8"))
+
+export function verifyExampleAabIdentity(plan, aab, bundletool, run = execFileSync) {
+  const expected = {
+    package: EXAMPLE_PACKAGE_ID,
+    "android:versionCode": String(plan.native.buildNumber),
+    "android:versionName": plan.native.marketingVersion,
+  }
+  for (const [attribute, value] of Object.entries(expected)) {
+    const actual = run("java", [
+      "-jar", bundletool, "dump", "manifest", `--bundle=${aab}`, "--module=base",
+      `--xpath=/manifest/@${attribute}`,
+    ], {encoding: "utf8"}).trim()
+    if (actual !== value) throw new Error(`AAB ${attribute} ${JSON.stringify(actual)} does not match ${JSON.stringify(value)}`)
+  }
+}
 
 export function examplePlayCoordinates(plan, starterKit, track) {
   const expectedTrack = {dev: "internal", beta: "beta"}[plan.channel]
@@ -105,6 +121,10 @@ function main() {
     options[args[index].slice(2)] = args[index + 1]
   }
   const plan = readJson(options.plan)
+  if (command === "verify-aab") {
+    verifyExampleAabIdentity(plan, options.aab, options.bundletool)
+    return
+  }
   if (command === "configure") {
     const result = configureExampleAndroid(plan, readJson(options.app), readJson(options.package))
     writeFileSync(options.app, `${JSON.stringify(result, null, 2)}\n`)

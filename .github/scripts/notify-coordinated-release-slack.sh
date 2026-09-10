@@ -138,6 +138,8 @@ starter_line+="${newline}React Native Android Google Play: $(icon "${EXAMPLE_GOO
 docs_line="*$(icon "${DOCS_RESULT:-unknown}") Docs* - $(label "${DOCS_RESULT:-unknown}") - ${docs_detail}"
 checks_line="*Release checks*${newline}Plan: $(icon "${PLAN_RESULT:-unknown}") $(label "${PLAN_RESULT:-unknown}") | Cloud V2: $(icon "${CLOUD_V2_RESULT:-unknown}") $(label "${CLOUD_V2_RESULT:-unknown}") | Packages: $(icon "${NPM_RESULT:-unknown}") $(label "${NPM_RESULT:-unknown}") | Native SDK: $(icon "${SDK_NATIVE_RESULT:-unknown}") $(label "${SDK_NATIVE_RESULT:-unknown}") | Engine consumer: $(icon "${ENGINE_RESULT:-unknown}") $(label "${ENGINE_RESULT:-unknown}") | Examples: $(icon "${STARTER_KIT_RESULT:-unknown}") $(label "${STARTER_KIT_RESULT:-unknown}") | Example TestFlight: $(icon "${EXAMPLE_TESTFLIGHT_RESULT:-unknown}") $(label "${EXAMPLE_TESTFLIGHT_RESULT:-unknown}") | Finalize: $(icon "${FINALIZE_RESULT:-unknown}") $(label "${FINALIZE_RESULT:-unknown}")"
 
+checks_line+=" | Example Google Play: $(icon "${EXAMPLE_GOOGLE_PLAY_RESULT:-unknown}") $(label "${EXAMPLE_GOOGLE_PLAY_RESULT:-unknown}")"
+
 payload=$(jq -n \
   --arg header "$header_icon $header_text" \
   --arg commit "$commit_subject" \

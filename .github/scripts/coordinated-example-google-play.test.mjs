@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import {readFileSync} from "node:fs"
 import test from "node:test"
-import {configureExampleAndroid, createExampleGooglePlayRecord, examplePlayCoordinates, validateExampleGooglePlay} from "./coordinated-example-google-play.mjs"
+import {configureExampleAndroid, createExampleGooglePlayRecord, examplePlayCoordinates, validateExampleGooglePlay, verifyExampleAabIdentity} from "./coordinated-example-google-play.mjs"
 
 function fixture(channel = "beta") {
   const plan = {
@@ -63,6 +63,30 @@ test("configures only Android store identity without changing iOS or dependencie
   assert.throws(() => configureExampleAndroid(plan, config, {dependencies: {}}), /must match/)
 })
 
+test("verifies package and both native versions from the actual bundle", () => {
+  const {plan} = fixture()
+  const attributes = {
+    package: "com.mentra.bluetoothsdkexample",
+    "android:versionCode": String(plan.native.buildNumber),
+    "android:versionName": plan.native.marketingVersion,
+  }
+  const readAttribute = (values) => (command, args, options) => {
+    assert.equal(command, "java")
+    assert.deepEqual(args.slice(0, 6), ["-jar", "/tools/bundletool.jar", "dump", "manifest", "--bundle=/release/example.aab", "--module=base"])
+    assert.equal(options.encoding, "utf8")
+    return `${values[args[6].replace("--xpath=/manifest/@", "")]}\n`
+  }
+  const verify = (values) => verifyExampleAabIdentity(plan, "/release/example.aab", "/tools/bundletool.jar", readAttribute(values))
+  assert.doesNotThrow(() => verify(attributes))
+  for (const attribute of Object.keys(attributes)) {
+    assert.throws(() => verify({...attributes, [attribute]: "wrong"}), /does not match/)
+    assert.throws(() => verify({...attributes, [attribute]: ""}), /does not match/)
+  }
+  assert.throws(() => verifyExampleAabIdentity(plan, "bundle.aab", "bundletool.jar", () => {
+    throw new Error("Cannot decode bundle")
+  }), /Cannot decode bundle/)
+})
+
 test("coordinator preserves MentraOS tracks and separates example audiences", () => {
   const workflow = readFileSync(new URL("../workflows/coordinated-release.yml", import.meta.url), "utf8")
   const channelBlock = workflow.slice(workflow.indexOf('case "$BRANCH"'), workflow.indexOf("Restore the release plan"))
@@ -80,7 +104,13 @@ test("coordinator preserves MentraOS tracks and separates example audiences", ()
   assert.ok(reusable.indexOf("persist exact signed bytes") < reusable.indexOf("Upload exact App Bundle"))
   assert.match(reusable, /starter_release_commit/)
   assert.match(reusable, /cancel-in-progress: false/)
+  assert.match(reusable, /queue: max/)
+  assert.ok(reusable.indexOf(".mjs verify-aab") < reusable.indexOf("node .github/scripts/publish-immutable-release-asset.mjs"))
+  const verificationStep = reusable.slice(reusable.indexOf("- name: Verify and persist"), reusable.indexOf("- name: Require Play access"))
+  assert.doesNotMatch(verificationStep, /if:.*existing/)
   assert.doesNotMatch(reusable, /-PreactNativeArchitectures=/)
   assert.match(reusable, /arm64-v8a,x86_64/)
   assert.doesNotMatch(reusable, /track_promote|GOOGLE_PLAY_TRACK: production/)
+  const notification = readFileSync(new URL("notify-coordinated-release-slack.sh", import.meta.url), "utf8")
+  assert.match(notification, /checks_line\+=" \| Example Google Play:/)
 })
