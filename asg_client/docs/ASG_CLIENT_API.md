@@ -502,13 +502,26 @@ The glasses also emit `battery_status` outbound:
 #### `request_version` / `cs_syvr`
 
 ```json
-{"type": "request_version"}
+{"type": "request_version", "request_id": "version-request-123"}
 ```
 
 Returns version information in chunks to fit the BLE MTU:
 
 - `version_info_1`: `app_version`, `build_number`, `device_model`, `android_version`, `system_time_ms`, `sid`
 - `version_info_3`: `bes_fw_version`, `mtk_fw_version`, `bt_mac_address`, `wifi_mac_address`, `serial_number`
+
+Modern responses echo `request_id` and carry the same process `sid` on every chunk.
+They declare `chunkCount: 2`, `chunkIndex: 1` / `2`, and `final: false` / `true`.
+The numeric index describes response order, not the historical message-name suffix.
+All declared chunks are required before a request completes, even if the final chunk
+arrives first. Unsolicited boot/status pushes have the same completion metadata but
+no request ID, so they cannot satisfy a correlated request.
+
+Legacy uncorrelated replies use `version_info_1` to begin and `version_info_3` to
+complete immediately. A legacy single `version_info` response is complete by itself.
+Without request IDs, legacy responses cannot be distinguished from an unsolicited
+sequence; this is a legacy protocol limitation, not exact correlation. Silence after
+chunk 1 is never completion: a missing final chunk reaches the normal request timeout.
 
 `serial_number` is the Android firmware product serial from `ro.serialno`; the
 generic `0123456789ABCDEF` Android/ADB placeholder is omitted.

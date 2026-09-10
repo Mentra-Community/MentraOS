@@ -1,86 +1,101 @@
+import CoreFoundation
 import Foundation
 
 enum VersionInfoAccumulatorOutcome {
     case ignored
-    case waiting(allowQuietPeriod: Bool)
+    case waiting
     case complete(VersionInfoResult)
 }
 
-/// Collects one version-info response without combining adjacent unsolicited or stale responses.
-///
-/// Current Mentra Live firmware sends `version_info_1` followed by `version_info_3`. A new chunk 1
-/// always starts a fresh response, while later chunks are ignored until that boundary is observed.
-/// New firmware also echoes the request id, which gives exact correlation; the chunk boundary keeps
-/// the same request compatible with older firmware that does not echo it.
+/// One request, explicit modern completion, or the deployed legacy chunk-3 terminal boundary.
 final class VersionInfoResponseAccumulator {
     static let responseChunkKey = "_responseChunk"
     static let responseRequestIdKey = "_responseRequestId"
-
-    private static let legacyChunk = "version_info"
-    private static let chunkPrefix = "version_info_"
-    private static let firstChunk = "version_info_1"
-    private static let finalChunk = "version_info_3"
+    static let responseIndexKey = "_responseChunkIndex"
+    static let responseCountKey = "_responseChunkCount"
+    static let responseFinalKey = "_responseFinal"
+    static let responseSidKey = "_responseSid"
+    private static let modernKeys = [responseRequestIdKey, responseIndexKey, responseCountKey, responseFinalKey]
 
     private let expectedRequestId: String
     private var values: [String: Any] = [:]
-    private var started = false
-    private var startedRequestId: String?
+    private var chunks: [Int: [String: Any]] = [:]
+    private var count: Int?
+    private var sid: String?
+    private var legacyStarted = false
+    private var completed = false
 
     init(expectedRequestId: String) {
         self.expectedRequestId = expectedRequestId
     }
 
     func accept(_ event: [String: Any]) -> VersionInfoAccumulatorOutcome {
-        if let responseRequestId = event[Self.responseRequestIdKey] as? String,
-           !responseRequestId.isEmpty,
-           responseRequestId != expectedRequestId
-        {
-            return .ignored
+        guard !completed else { return .ignored }
+        if Self.modernKeys.contains(where: { event[$0] != nil }) {
+            guard event[Self.responseRequestIdKey] as? String == expectedRequestId,
+                  let index = integer(event[Self.responseIndexKey]),
+                  let total = integer(event[Self.responseCountKey]),
+                  let final = event[Self.responseFinalKey] as? NSNumber,
+                  CFGetTypeID(final) == CFBooleanGetTypeID(),
+                  let process = event[Self.responseSidKey] as? String, !process.isEmpty,
+                  (1 ... 16).contains(total), (1 ... total).contains(index),
+                  final.boolValue == (index == total)
+            else { return .ignored }
+            if let count, count != total || sid != process { return .ignored }
+            if count == nil {
+                values.removeAll()
+                count = total
+                sid = process
+            }
+            chunks[index] = event
+            guard chunks.count == total else { return .waiting }
+            for index in 1 ... total {
+                merge(chunks[index]!)
+            }
+            return finish()
         }
-        let isCorrelated = event[Self.responseRequestIdKey] as? String == expectedRequestId
-        if started, startedRequestId == expectedRequestId, !isCorrelated {
-            // Once current firmware identifies this response, stale legacy traffic cannot replace it.
-            return .ignored
-        }
-
-        let chunk = event[Self.responseChunkKey] as? String ?? Self.legacyChunk
-        if chunk == Self.legacyChunk {
-            return .complete(VersionInfoResult(values: event))
-        }
-        guard chunk.hasPrefix(Self.chunkPrefix) else { return .ignored }
-
-        if chunk == Self.firstChunk {
+        guard count == nil else { return .ignored }
+        switch event[Self.responseChunkKey] as? String ?? "version_info" {
+        case "version_info":
             values.removeAll()
-            started = true
-            startedRequestId = event[Self.responseRequestIdKey] as? String
-        } else if !started {
-            // A trailing chunk can be left in the BLE queue from a boot-time or timed-out response.
-            return .ignored
-        } else if event[Self.responseRequestIdKey] as? String != startedRequestId {
-            // Never combine an uncorrelated fallback sequence with a request-id-bearing sequence.
-            return .ignored
+            merge(event)
+            return finish()
+        case "version_info_1":
+            values.removeAll()
+            legacyStarted = true
+            merge(event)
+        case "version_info_2":
+            guard legacyStarted else { return .ignored }
+            merge(event)
+        case "version_info_3":
+            guard legacyStarted else { return .ignored }
+            merge(event)
+            return finish()
+        default: return .ignored
         }
-
-        mergeNonEmptyFields(event)
-        let result = VersionInfoResult(values: values)
-        return chunk == Self.finalChunk && isCorrelated
-            ? .complete(result)
-            : .waiting(allowQuietPeriod: !isCorrelated)
+        // Silence is never evidence of completion. The request's normal deadline handles loss.
+        return .waiting
     }
 
-    func finishAfterQuietPeriod() -> VersionInfoResult? {
-        started && startedRequestId == nil ? VersionInfoResult(values: values) : nil
+    private func finish() -> VersionInfoAccumulatorOutcome {
+        completed = true
+        return .complete(VersionInfoResult(values: values))
     }
 
-    private func mergeNonEmptyFields(_ event: [String: Any]) {
-        for (key, value) in event {
-            if key == Self.responseChunkKey || key == Self.responseRequestIdKey || key == "type" {
-                continue
-            }
-            if let string = value as? String, string.isEmpty {
-                continue
-            }
+    private func merge(_ event: [String: Any]) {
+        for (key, value) in event where !key.hasPrefix("_response") && key != "type" {
+            if let string = value as? String, string.isEmpty { continue }
             values[key] = value
         }
+    }
+
+    private func integer(_ value: Any?) -> Int? {
+        guard let number = value as? NSNumber,
+              CFGetTypeID(number) != CFBooleanGetTypeID(),
+              number.doubleValue.isFinite,
+              number.doubleValue >= 1, number.doubleValue <= 16,
+              number.doubleValue == Double(number.intValue)
+        else { return nil }
+        return number.intValue
     }
 }

@@ -107,7 +107,6 @@ class MentraBluetoothSdk private constructor(
         private const val OTA_BES_VERSION_WAIT_MS = 5_000L
         private const val OTA_MTK_VERSION_WAIT_MS = 2_000L
         private const val OTA_VERSION_POLL_MS = 100L
-        private const val VERSION_INFO_SETTLE_MS = 500L
         private const val DEFAULT_STREAM_KEEP_ALIVE_INTERVAL_SECONDS = 5
         private const val MAX_MISSED_STREAM_KEEP_ALIVE_ACKS = 3
 
@@ -183,7 +182,6 @@ class MentraBluetoothSdk private constructor(
         val pending: PendingResponse<VersionInfoResult>,
         val accumulator: VersionInfoResponseAccumulator,
     ) {
-        var settleRunnable: Runnable? = null
     }
 
     private data class PendingWifiScan(
@@ -1224,7 +1222,6 @@ class MentraBluetoothSdk private constructor(
             return pending.await()
         } finally {
             synchronized(oneShotLock) {
-                request.settleRunnable?.let(mainHandler::removeCallbacks)
                 if (pendingVersionInfo === request) {
                     pendingVersionInfo = null
                 }
@@ -1627,25 +1624,8 @@ class MentraBluetoothSdk private constructor(
             val request = pendingVersionInfo ?: return
             when (val outcome = request.accumulator.accept(data)) {
                 VersionInfoAccumulatorOutcome.Ignored -> Unit
-                is VersionInfoAccumulatorOutcome.Waiting -> {
-                    request.settleRunnable?.let(mainHandler::removeCallbacks)
-                    request.settleRunnable = null
-                    if (!outcome.allowQuietPeriod) return@synchronized
-                    val settle =
-                        Runnable {
-                            synchronized(oneShotLock) {
-                                if (pendingVersionInfo !== request) return@synchronized
-                                val partial = request.accumulator.finishAfterQuietPeriod()
-                                    ?: return@synchronized
-                                pendingVersionInfo = null
-                                request.pending.resolve(partial)
-                            }
-                        }
-                    request.settleRunnable = settle
-                    mainHandler.postDelayed(settle, VERSION_INFO_SETTLE_MS)
-                }
+                VersionInfoAccumulatorOutcome.Waiting -> Unit
                 is VersionInfoAccumulatorOutcome.Complete -> {
-                    request.settleRunnable?.let(mainHandler::removeCallbacks)
                     if (pendingVersionInfo === request) {
                         pendingVersionInfo = null
                         request.pending.resolve(outcome.result)

@@ -483,6 +483,12 @@ public class Bridge private constructor() {
             val body = HashMap<String, Any>()
             body["type"] = "version_info"
             body[VersionInfoResponseAccumulator.RESPONSE_CHUNK_KEY] = responseChunk
+            mapOf(
+                "chunkIndex" to VersionInfoResponseAccumulator.RESPONSE_INDEX_KEY,
+                "chunkCount" to VersionInfoResponseAccumulator.RESPONSE_COUNT_KEY,
+                "final" to VersionInfoResponseAccumulator.RESPONSE_FINAL_KEY,
+                "sid" to VersionInfoResponseAccumulator.RESPONSE_SID_KEY,
+            ).forEach { (wireKey, internalKey) -> values[wireKey]?.let { body[internalKey] = it } }
             (values["requestId"] as? String ?: values["request_id"] as? String)
                     ?.takeIf { it.isNotEmpty() }
                     ?.let {

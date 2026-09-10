@@ -1279,6 +1279,9 @@ public class AsgClientService extends Service implements NetworkStateListener, T
                 // Chunk 1: Basic device info (smaller payload)
                 JSONObject chunk1 = new JSONObject();
                 chunk1.put("type", "version_info_1");
+                chunk1.put("chunkIndex", 1);
+                chunk1.put("chunkCount", 2);
+                chunk1.put("final", false);
                 // Runtime package identity. A build made without Mentra's release keystore
                 // installs as "com.mentra.asg_client.thirdparty" and coexists with the stock
                 // system app, so build_number alone cannot tell the phone which client it is
@@ -1319,6 +1322,10 @@ public class AsgClientService extends Service implements NetworkStateListener, T
                 // Chunk 3: Firmware info (BES version, MTK version, BT MAC)
                 JSONObject chunk3 = new JSONObject();
                 chunk3.put("type", "version_info_3");
+                chunk3.put("chunkIndex", 2);
+                chunk3.put("chunkCount", 2);
+                chunk3.put("final", true);
+                chunk3.put("sid", ProcessSessionId.SID);
                 if (requestId != null && !requestId.isEmpty()) {
                     chunk3.put("request_id", requestId);
                 }

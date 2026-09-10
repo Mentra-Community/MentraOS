@@ -378,6 +378,14 @@ class Bridge {
             "otaVersionUrl": stringValue(values, "otaVersionUrl", "ota_version_url") ?? "",
             "appVersion": stringValue(values, "appVersion", "app_version") ?? "",
         ]
+        for (wireKey, internalKey) in [
+            "chunkIndex": VersionInfoResponseAccumulator.responseIndexKey,
+            "chunkCount": VersionInfoResponseAccumulator.responseCountKey,
+            "final": VersionInfoResponseAccumulator.responseFinalKey,
+            "sid": VersionInfoResponseAccumulator.responseSidKey,
+        ] {
+            body[internalKey] = values[wireKey]
+        }
         if let responseRequestId = stringValue(values, "requestId", "request_id"),
            !responseRequestId.isEmpty
         {

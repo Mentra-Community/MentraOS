@@ -105,7 +105,6 @@ private final class PendingVideoRecordingRequest {
 private final class PendingVersionInfoRequest {
     let pending: PendingResponse<VersionInfoResult>
     let accumulator: VersionInfoResponseAccumulator
-    var settleTask: Task<Void, Never>?
 
     init(pending: PendingResponse<VersionInfoResult>, requestId: String) {
         self.pending = pending
@@ -194,7 +193,6 @@ public final class MentraBluetoothSDK {
     private static let otaBesVersionWaitMs = 5_000
     private static let otaMtkVersionWaitMs = 2_000
     private static let otaVersionPollMs = 100
-    private static let versionInfoSettleMs = 500
     private static let defaultStreamKeepAliveIntervalSeconds = 5
 
     public weak var delegate: MentraBluetoothSDKDelegate?
@@ -1262,13 +1260,11 @@ public final class MentraBluetoothSDK {
         DeviceManager.shared.requestVersionInfo(requestId: requestId)
         do {
             let status = try await pending.wait()
-            request.settleTask?.cancel()
             if pendingVersionInfo === request {
                 pendingVersionInfo = nil
             }
             return status
         } catch {
-            request.settleTask?.cancel()
             if pendingVersionInfo === request {
                 pendingVersionInfo = nil
             }
@@ -2197,28 +2193,9 @@ private func dispatchDiscoveredDevices(_ rawSearchResults: Any?) {
         switch request.accumulator.accept(data) {
         case .ignored:
             break
-        case let .waiting(allowQuietPeriod):
-            request.settleTask?.cancel()
-            request.settleTask = nil
-            guard allowQuietPeriod else { return }
-            request.settleTask = Task { @MainActor [weak self, weak request] in
-                do {
-                    try await Task.sleep(
-                        nanoseconds: UInt64(Self.versionInfoSettleMs) * 1_000_000
-                    )
-                } catch {
-                    return
-                }
-                guard let self, let request, pendingVersionInfo === request,
-                      let partial = request.accumulator.finishAfterQuietPeriod()
-                else {
-                    return
-                }
-                pendingVersionInfo = nil
-                request.pending.resolve(partial)
-            }
+        case .waiting:
+            break
         case let .complete(result):
-            request.settleTask?.cancel()
             pendingVersionInfo = nil
             request.pending.resolve(result)
         }
