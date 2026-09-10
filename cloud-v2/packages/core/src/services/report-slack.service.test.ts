@@ -125,13 +125,14 @@ describe("notifyReportSlack", () => {
     expect(blocksJson).toContain("*Env:*\\ntest-env");
   });
 
-  test("keeps the signed confirmation URL until Slack interactivity is enabled", async () => {
+  test.each(["bug", "feature"] as const)("keeps the signed confirmation URL for %s until Slack interactivity is enabled", async (kind) => {
     process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL = WEBHOOK_URL;
     process.env.CLOUD_CORE_ENVIRONMENT = "dev";
     process.env.CLOUD_REPORT_AGENT_URL = AGENT_URL;
     process.env.CLOUD_REPORT_AGENT_SIGNING_SECRET = AGENT_SIGNING_SECRET;
 
-    await notifyReportSlack(bugNotification());
+    const notification = kind === "bug" ? bugNotification() : featureNotification();
+    await notifyReportSlack(notification);
 
     const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     const payload = JSON.parse(String(init.body)) as {
@@ -141,19 +142,25 @@ describe("notifyReportSlack", () => {
       }>;
     };
     const action = payload.blocks.find((block) => block.type === "actions")?.elements?.[0];
-    expect(action?.text.text).toBe("Run Fix Agent");
+    expect(action?.text.text).toBe(kind === "bug" ? "Run Fix Agent" : "Run Dev Agent");
     expect(action?.value).toBeUndefined();
-    expect(new URL(action?.url ?? "").pathname).toBe("/actions/report");
+    const url = new URL(action?.url ?? "");
+    expect(url.pathname).toBe("/actions/report");
+    const expires = url.searchParams.get("expires");
+    expect(url.searchParams.get("reportId")).toBe(notification.reportId);
+    expect(url.searchParams.get("signature")).toBe(createHmac("sha256", AGENT_SIGNING_SECRET)
+      .update(`${notification.reportId}|dev|${expires}`).digest("hex"));
   });
 
-  test("adds a signed one-click fix-agent button when Slack interactivity is enabled", async () => {
+  test.each(["bug", "feature"] as const)("adds a signed one-click agent button for %s when Slack interactivity is enabled", async (kind) => {
     process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL = WEBHOOK_URL;
     process.env.CLOUD_CORE_ENVIRONMENT = "dev";
     process.env.CLOUD_REPORT_AGENT_URL = AGENT_URL;
     process.env.CLOUD_REPORT_AGENT_SIGNING_SECRET = AGENT_SIGNING_SECRET;
     process.env.CLOUD_REPORT_AGENT_SLACK_INTERACTIVITY_ENABLED = "true";
 
-    await notifyReportSlack(bugNotification());
+    const notification = kind === "bug" ? bugNotification() : featureNotification();
+    await notifyReportSlack(notification);
 
     const [, init] = fetchMock.mock.calls[0] as unknown as [string, RequestInit];
     const payload = JSON.parse(String(init.body)) as {
@@ -163,27 +170,30 @@ describe("notifyReportSlack", () => {
       }>;
     };
     const action = payload.blocks.find((block) => block.type === "actions")?.elements?.[0];
-    expect(action?.text.text).toBe("Run Fix Agent");
+    expect(action?.text.text).toBe(kind === "bug" ? "Run Fix Agent" : "Run Dev Agent");
     expect(action?.action_id).toBe("run_fix_agent");
     const url = new URL(action?.value ?? "");
     expect(`${url.origin}${url.pathname}`).toBe(`${AGENT_URL}/actions/report`);
-    expect(url.searchParams.get("reportId")).toBe("rep_TEST123");
+    expect(url.searchParams.get("reportId")).toBe(notification.reportId);
     expect(url.searchParams.get("environment")).toBe("dev");
     const expires = url.searchParams.get("expires");
     const expectedSignature = createHmac("sha256", AGENT_SIGNING_SECRET)
-      .update(`rep_TEST123|dev|${expires}`)
+      .update(`${notification.reportId}|dev|${expires}`)
       .digest("hex");
     expect(url.searchParams.get("signature")).toBe(expectedSignature);
   });
 
-  test("does not add the fix-agent action to feedback or automatic reports", async () => {
+  test("does not add the agent action to other feedback or automatic reports", async () => {
     process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL = WEBHOOK_URL;
     process.env.CLOUD_CORE_ENVIRONMENT = "prod";
     process.env.CLOUD_REPORT_AGENT_URL = AGENT_URL;
     process.env.CLOUD_REPORT_AGENT_SIGNING_SECRET = AGENT_SIGNING_SECRET;
 
     await notifyReportSlack(bugNotification({ kind: "feedback", feedback: { message: "hi" } }));
+    await notifyReportSlack(bugNotification({ kind: "feedback", feedback: { type: "general", message: "hi" } }));
+    await notifyReportSlack(bugNotification({ kind: "feedback", feedback: null }));
     await notifyReportSlack(bugNotification({ kind: "automatic" }));
+    await notifyReportSlack(bugNotification({ kind: "automatic", feedback: { type: "feature" } }));
 
     for (const call of fetchMock.mock.calls) {
       const [, init] = call as unknown as [string, RequestInit];
@@ -418,6 +428,15 @@ function bugNotification(overrides: Partial<ReportSlackNotification> = {}): Repo
     trigger: { type: "manual", source: "feedback_screen", reason: "ota_update_failed" },
     report: { actualBehavior: "glasses stuck on boot screen", userSeverity: 4 },
     ...overrides,
+  };
+}
+
+function featureNotification(): ReportSlackNotification {
+  return {
+    reportId: "rep_FEATURE123",
+    mentraUserId: "user-2",
+    kind: "feedback",
+    feedback: { type: "feature", message: "Add a setting to customize notification duration." },
   };
 }
 

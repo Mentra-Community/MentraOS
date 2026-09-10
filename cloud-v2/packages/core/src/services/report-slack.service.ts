@@ -218,18 +218,19 @@ function buildSlackMessage(notification: ReportSlackNotification): {
 
   const agentActionUrl = reportAgentActionUrl(notification);
   if (agentActionUrl) {
+    const agentButtonText = kind === "feedback" ? "Run Dev Agent" : "Run Fix Agent";
     const agentButton: SlackButton =
       process.env.CLOUD_REPORT_AGENT_SLACK_INTERACTIVITY_ENABLED === "true"
         ? {
             type: "button",
-            text: { type: "plain_text", text: "Run Fix Agent", emoji: true },
+            text: { type: "plain_text", text: agentButtonText, emoji: true },
             action_id: "run_fix_agent",
             style: "primary",
             value: agentActionUrl,
           }
         : {
             type: "button",
-            text: { type: "plain_text", text: "Run Fix Agent", emoji: true },
+            text: { type: "plain_text", text: agentButtonText, emoji: true },
             style: "primary",
             url: agentActionUrl,
           };
@@ -263,11 +264,12 @@ function buildSlackMessage(notification: ReportSlackNotification): {
  * confirmation-page fallback working. Explicitly setting
  * CLOUD_REPORT_AGENT_SLACK_INTERACTIVITY_ENABLED=true switches to a one-click
  * action value, which Slack sends only when a human presses the button. Bug
- * reports are the deliberately narrow MVP scope; feedback and automatic
- * diagnostics never receive it.
+ * reports and feature requests receive it; other feedback and automatic
+ * diagnostics do not.
  */
 function reportAgentActionUrl(notification: ReportSlackNotification): string | null {
-  if (notification.kind !== "bug") return null;
+  const isFeatureRequest = notification.kind === "feedback" && notification.feedback?.type === "feature";
+  if (notification.kind !== "bug" && !isFeatureRequest) return null;
   const configuredBase = process.env.CLOUD_REPORT_AGENT_URL?.trim();
   const signingSecret = process.env.CLOUD_REPORT_AGENT_SIGNING_SECRET;
   const environment = reportAgentEnvironment();
