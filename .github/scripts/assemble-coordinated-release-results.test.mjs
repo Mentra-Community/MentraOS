@@ -196,6 +196,17 @@ test("assembles every product target and finalizes one complete release manifest
     ipa: {size: 123, sha256: "9".repeat(64)},
   }
 
+  const exampleGooglePlay = {
+    schemaVersion: 1, releaseSetId: plan.releaseSetId, releaseIdentity: plan.releaseIdentity,
+    channel: plan.channel, mentraosSourceCommit: plan.sourceCommit,
+    starterKitReleaseCommit: starterKit.starterKit.releaseCommit,
+    packageId: "com.mentra.bluetoothsdkexample",
+    version: {marketingVersion: plan.native.marketingVersion, buildNumber: plan.native.buildNumber},
+    track: "beta", uploadStatus: "published",
+    distribution: {status: "submitted", audience: "external", installUrl: "https://play.google.com/apps/testing/com.mentra.bluetoothsdkexample"},
+    aab: {url: `https://github.com/Mentra-Community/MentraOS/releases/download/${plan.artifactContainerTag}/mentra-example-react-native-${plan.releaseIdentity}.aab`, sha256: "8".repeat(64), size: 123},
+    provenanceUrl: "https://github.com/Mentra-Community/MentraOS/actions/runs/123",
+  }
   const assemble = (starterKitRecord) =>
     assembleCoordinatedReleaseResults({
       plan,
@@ -207,6 +218,7 @@ test("assembles every product target and finalizes one complete release manifest
       starterKit: starterKitRecord,
       starterKitResultUrl: "https://example.com/starter-kit-result.json",
       exampleTestflight,
+      exampleGooglePlay,
       asgSelectionFile,
       enginePackage,
       releaseAssetBaseUrl: "https://github.com/Mentra-Community/MentraOS/releases/download/mentra-builds-v3.1.0",
@@ -220,6 +232,7 @@ test("assembles every product target and finalizes one complete release manifest
   assert.ok(manifest.artifacts.some((artifact) => artifact.coordinate === plan.artifactNames.asgSelection))
   assert.equal(manifest.starterKit.resultUrl, "https://example.com/starter-kit-result.json")
   assert.equal(manifest.starterKit.testflight.build.id, "build-1")
+  assert.equal(manifest.starterKit.googlePlay.track, "beta")
   assert.equal(manifest.cloud.environment, "staging")
   assert.equal(manifest.artifacts.at(-1).coordinate, starterKit.artifacts.at(-1).name)
 

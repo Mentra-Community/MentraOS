@@ -3,6 +3,7 @@ import {createHash} from "node:crypto"
 import path from "node:path"
 
 import {validateCloudV2DeploymentRecord} from "./coordinated-cloud-v2-records.mjs"
+import {validateExampleGooglePlay} from "./coordinated-example-google-play.mjs"
 
 const STABLE_VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/
 const COMMIT_PATTERN = /^[0-9a-f]{40}$/
@@ -485,6 +486,8 @@ function validateStarterKitEvidence(plan, starterKit, artifacts) {
     throw new Error("Starter Kit TestFlight IPA evidence is invalid")
   }
   requirePublicHttpsUrl(testflight.provenanceUrl, "starterKit.testflight.provenanceUrl")
+  // Older immutable manifests predate Play distribution; new assembly requires it.
+  if (starterKit.googlePlay !== undefined) validateExampleGooglePlay(plan, starterKit, starterKit.googlePlay)
   return starterKit
 }
 
