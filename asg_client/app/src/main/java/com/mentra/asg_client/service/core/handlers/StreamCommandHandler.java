@@ -373,7 +373,11 @@ public class StreamCommandHandler implements ICommandHandler {
     private void restoreEisAfterStreaming() {
         Log.i(TAG, "EIS stage=stream-stop enable=false reason=restore-default-off");
         CameraController.enablePixsmartEisOnRequest = false;
-        SystemControllerFactory.get(context).setEisEnabled(false);
+        try {
+            SystemControllerFactory.get(context).setEisEnabled(false);
+        } catch (Exception error) {
+            Log.w(TAG, "Unable to restore vendor EIS after stream teardown", error);
+        }
     }
 
     /**
@@ -612,6 +616,7 @@ public class StreamCommandHandler implements ICommandHandler {
     }
 
     private void releaseStreamOwnership() {
+        if (mOwnedStreamId != null) restoreEisAfterStreaming();
         mControllerLease.stop();
         if (mControllerProbeTick != null) mLifecycleHandler.removeCallbacks(mControllerProbeTick);
         mControllerProbeTick = null;
