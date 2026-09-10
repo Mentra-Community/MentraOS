@@ -2127,7 +2127,7 @@ class MentraLive : SGCManager() {
                             isConnected = true
                             connectedDevice = gatt.device
                             classicAudioConnectionTracker.setTarget(gatt.device.address)
-                            refreshHeadsetConnectionState(gatt.device)
+                            refreshClassicAudioConnectionState(gatt.device)
                             emitConnectedPendingDeviceForPairingScan()
 
                             DeviceStore.apply("glasses", "bluetoothName", connectedDevice!!.name)
@@ -6864,21 +6864,10 @@ class MentraLive : SGCManager() {
         classicAudioReceiver =
                 object : BroadcastReceiver() {
                     override fun onReceive(context: Context?, intent: Intent?) {
-                        val profile =
-                                when (intent?.action) {
-                                    BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED ->
-                                            ClassicAudioProfile.A2DP
-                                    BluetoothHeadset.ACTION_CONNECTION_STATE_CHANGED ->
-                                            ClassicAudioProfile.HEADSET
-                                    else -> return
-                                }
+                        if (intent?.action != BluetoothA2dp.ACTION_CONNECTION_STATE_CHANGED &&
+                                intent?.action != BluetoothHeadset.ACTION_CONNECTION_STATE_CHANGED) return
                         val device = intent.bluetoothDeviceExtra() ?: return
-                        val state =
-                                intent.getIntExtra(
-                                        BluetoothProfile.EXTRA_STATE,
-                                        BluetoothProfile.STATE_DISCONNECTED
-                                )
-                        handleClassicAudioProfileState(profile, device, state, "broadcast")
+                        refreshClassicAudioConnectionState(device)
                     }
                 }
     }
@@ -6918,94 +6907,57 @@ class MentraLive : SGCManager() {
         }
     }
 
-    private fun handleClassicAudioProfileState(
-            profile: ClassicAudioProfile,
-            device: BluetoothDevice,
-            state: Int,
-            source: String
-    ) {
+    /**
+     * Broadcast payloads are hints, never current truth (even when the MAC matches). Query both
+     * profiles and publish one combined snapshot. A newer refresh or teardown invalidates all
+     * outstanding results, including a previous connection to the same physical glasses.
+     */
+    private fun refreshClassicAudioConnectionState(device: BluetoothDevice) {
+        if (Looper.myLooper() != handler.looper) {
+            handler.post { refreshClassicAudioConnectionState(device) }
+            return
+        }
         if (isKilled) return
-
-        val connected = classicProfileConnectedState(state)
-        if (connected == null) {
-            Bridge.log(
-                    "LIVE: Classic: ignoring transitional " +
-                            profile.name +
-                            " state=" +
-                            state +
-                            " (" +
-                            source +
-                            ")"
-            )
-            return
-        }
-        if (!classicAudioConnectionTracker.update(profile, device.address, connected)) {
-            Bridge.log(
-                    "LIVE: Classic: ignoring stale " +
-                            profile.name +
-                            " state=" +
-                            state +
-                            " for " +
-                            device.address +
-                            " (" +
-                            source +
-                            ")"
-            )
-            return
-        }
-
-        Bridge.log(
-                "LIVE: Classic: " +
-                        profile.name +
-                        " state=" +
-                        state +
-                        " connected=" +
-                        classicAudioConnectionTracker.connected +
-                        " (" +
-                        source +
-                        ")"
-        )
-        if (profile != ClassicAudioProfile.A2DP) return
-
-        if (connected) {
-            markAudioConnected(device)
-        } else if (audioConnected) {
-            audioConnected = false
-            Bridge.sendAudioDisconnected()
-        }
-    }
-
-    /** Snapshot HFP because it may already be connected before this SGC registers its receiver. */
-    private fun refreshHeadsetConnectionState(device: BluetoothDevice) {
         val adapter = bluetoothAdapter ?: return
         val ctx = context ?: return
-        try {
-            adapter.getProfileProxy(
-                    ctx,
-                    object : BluetoothProfile.ServiceListener {
-                        override fun onServiceConnected(profile: Int, proxy: BluetoothProfile) {
-                            if (profile != BluetoothProfile.HEADSET) return
+        val ticket = classicAudioConnectionTracker.beginSnapshot(device.address) ?: return
+        val states = mutableMapOf<ClassicAudioProfile, Boolean>()
+        for ((profileId, audioProfile) in listOf(
+            BluetoothProfile.A2DP to ClassicAudioProfile.A2DP,
+            BluetoothProfile.HEADSET to ClassicAudioProfile.HEADSET,
+        )) {
+            try {
+                adapter.getProfileProxy(ctx, object : BluetoothProfile.ServiceListener {
+                    override fun onServiceConnected(profile: Int, proxy: BluetoothProfile) {
+                        handler.post {
                             try {
-                                handleClassicAudioProfileState(
-                                        ClassicAudioProfile.HEADSET,
-                                        device,
-                                        proxy.getConnectionState(device),
-                                        "snapshot"
-                                )
-                            } finally {
-                                try {
-                                    adapter.closeProfileProxy(BluetoothProfile.HEADSET, proxy)
-                                } catch (_: Exception) {
+                                if (isKilled || profile != profileId) return@post
+                                states[audioProfile] =
+                                    proxy.getConnectionState(device) == BluetoothProfile.STATE_CONNECTED
+                                if (states.size != 2) return@post
+                                val connected = states.filterValues { it }.keys
+                                classicAudioConnectionTracker.applySnapshot(
+                                        ticket, device.address, connected) {
+                                    if (ClassicAudioProfile.A2DP in connected) {
+                                        markAudioConnected(device)
+                                    } else if (audioConnected) {
+                                        audioConnected = false
+                                        Bridge.sendAudioDisconnected()
+                                    }
                                 }
+                            } catch (e: Exception) {
+                                Bridge.log("LIVE: Classic: snapshot unavailable: " + e.message)
+                            } finally {
+                                try { adapter.closeProfileProxy(profileId, proxy) }
+                                catch (_: Exception) {}
                             }
                         }
-
-                        override fun onServiceDisconnected(profile: Int) {}
-                    },
-                    BluetoothProfile.HEADSET
-            )
-        } catch (e: Exception) {
-            Bridge.log("LIVE: Classic: failed to snapshot HFP state: " + e.message)
+                    }
+                    override fun onServiceDisconnected(profile: Int) {}
+                }, profileId)
+            } catch (e: Exception) {
+                Bridge.log("LIVE: Classic: profile query unavailable: " + e.message)
+            }
         }
     }
 
@@ -7162,12 +7114,7 @@ class MentraLive : SGCManager() {
         try {
             val state = a2dpProfile!!.getConnectionState(device)
             Bridge.log("LIVE: A2DP: Current connection state: " + state)
-            handleClassicAudioProfileState(
-                    ClassicAudioProfile.A2DP,
-                    device,
-                    state,
-                    "snapshot"
-            )
+            refreshClassicAudioConnectionState(device)
 
             if (state == BluetoothProfile.STATE_CONNECTED) {
                 Bridge.log("LIVE: A2DP: Already connected to " + device.name)
@@ -7231,12 +7178,6 @@ class MentraLive : SGCManager() {
             )
             return
         }
-        classicAudioConnectionTracker.setTarget(device.address)
-        classicAudioConnectionTracker.update(
-                ClassicAudioProfile.A2DP,
-                device.address,
-                connected = true
-        )
         val wasAudioConnected = audioConnected
         audioConnected = true
         if (!wasAudioConnected) {

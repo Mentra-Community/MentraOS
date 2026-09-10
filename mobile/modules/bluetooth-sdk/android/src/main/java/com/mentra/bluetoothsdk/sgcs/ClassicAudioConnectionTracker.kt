@@ -1,7 +1,5 @@
 package com.mentra.bluetoothsdk.sgcs
 
-import android.bluetooth.BluetoothProfile
-
 internal enum class ClassicAudioProfile {
     A2DP,
     HEADSET,
@@ -11,13 +9,14 @@ internal enum class ClassicAudioProfile {
  * Tracks the Android Classic audio profiles for one dual-mode glasses device.
  *
  * Android reports A2DP and HFP independently. Keeping both states prevents an A2DP disconnect from
- * publishing a false negative while HFP is still connected, and scoping every update to the target
- * address prevents late broadcasts from a previous glasses session from corrupting current state.
+ * publishing a false negative while HFP is still connected. Snapshot tickets reject obsolete
+ * queries, including a previous session with the same MAC address. Broadcast payloads are not truth.
  */
 internal class ClassicAudioConnectionTracker(
     private val onConnectedChanged: (Boolean) -> Unit,
 ) {
     private var targetAddress: String? = null
+    private var revision = 0L
     private val connectedProfiles = mutableSetOf<ClassicAudioProfile>()
 
     @get:Synchronized
@@ -27,6 +26,7 @@ internal class ClassicAudioConnectionTracker(
     @Synchronized
     fun setTarget(address: String) {
         val normalizedAddress = address.normalizedBluetoothAddress()
+        revision++
         if (targetAddress == normalizedAddress) return
 
         targetAddress = normalizedAddress
@@ -34,27 +34,33 @@ internal class ClassicAudioConnectionTracker(
     }
 
     @Synchronized
-    fun update(
-        profile: ClassicAudioProfile,
-        address: String,
-        connected: Boolean,
-    ): Boolean {
-        if (targetAddress != address.normalizedBluetoothAddress()) return false
+    fun beginSnapshot(address: String): Long? {
+        if (targetAddress != address.normalizedBluetoothAddress()) return null
+        return ++revision
+    }
 
+    /** Both profile queries must belong to the newest request for this session. */
+    @Synchronized
+    fun applySnapshot(
+        ticket: Long,
+        address: String,
+        profiles: Set<ClassicAudioProfile>,
+        onAccepted: () -> Unit = {},
+    ): Boolean {
+        if (ticket != revision || targetAddress != address.normalizedBluetoothAddress()) return false
         val wasConnected = this.connected
-        if (connected) {
-            connectedProfiles.add(profile)
-        } else {
-            connectedProfiles.remove(profile)
-        }
+        connectedProfiles.clear()
+        connectedProfiles.addAll(profiles)
         publishIfChanged(wasConnected)
+        // Audio routing notifications must not race a target invalidation after validation.
+        onAccepted()
         return true
     }
 
     @Synchronized
     fun clear(address: String): Boolean {
         if (targetAddress != address.normalizedBluetoothAddress()) return false
-
+        revision++
         clearConnectedProfiles()
         return true
     }
@@ -64,6 +70,7 @@ internal class ClassicAudioConnectionTracker(
         if (targetAddress != address.normalizedBluetoothAddress()) return false
 
         targetAddress = null
+        revision++
         clearConnectedProfiles()
         return true
     }
@@ -71,6 +78,7 @@ internal class ClassicAudioConnectionTracker(
     @Synchronized
     fun reset() {
         targetAddress = null
+        revision++
         clearConnectedProfiles()
     }
 
@@ -86,12 +94,5 @@ internal class ClassicAudioConnectionTracker(
         }
     }
 }
-
-internal fun classicProfileConnectedState(state: Int): Boolean? =
-        when (state) {
-            BluetoothProfile.STATE_CONNECTED -> true
-            BluetoothProfile.STATE_DISCONNECTED -> false
-            else -> null
-        }
 
 private fun String.normalizedBluetoothAddress(): String = trim().uppercase()

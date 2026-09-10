@@ -1,157 +1,116 @@
 package com.mentra.bluetoothsdk.sgcs
 
-import android.bluetooth.BluetoothProfile
-import java.lang.reflect.Modifier
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.Test
 
 class ClassicAudioConnectionTrackerTest {
-    @Test
-    fun `maps only terminal Android profile states`() {
-        assertThat(classicProfileConnectedState(BluetoothProfile.STATE_CONNECTED)).isTrue()
-        assertThat(classicProfileConnectedState(BluetoothProfile.STATE_DISCONNECTED)).isFalse()
-        assertThat(classicProfileConnectedState(BluetoothProfile.STATE_CONNECTING)).isNull()
-        assertThat(classicProfileConnectedState(BluetoothProfile.STATE_DISCONNECTING)).isNull()
+    private val address = "AA:BB:CC:DD:EE:FF"
+
+    private fun snapshot(tracker: ClassicAudioConnectionTracker, vararg profiles: ClassicAudioProfile) {
+        val ticket = tracker.beginSnapshot(address)!!
+        assertThat(tracker.applySnapshot(ticket, address, profiles.toSet())).isTrue()
     }
 
     @Test
-    fun `serializes every public state access`() {
-        val synchronizedMethods =
-                setOf("getConnected", "setTarget", "update", "clear", "invalidate", "reset")
-
-        val methods =
-                ClassicAudioConnectionTracker::class.java.declaredMethods.associateBy { it.name }
-
-        synchronizedMethods.forEach { name ->
-            assertThat(Modifier.isSynchronized(methods.getValue(name).modifiers))
-                    .describedAs("%s must synchronize tracker state", name)
-                    .isTrue()
-        }
-    }
-
-    @Test
-    fun `publishes A2DP connect and disconnect transitions`() {
+    fun `publishes complete A2DP and HFP snapshots without intermediate false negative`() {
         val changes = mutableListOf<Boolean>()
         val tracker = ClassicAudioConnectionTracker(changes::add)
-        tracker.setTarget("AA:BB:CC:DD:EE:FF")
-
-        assertThat(
-                tracker.update(
-                        ClassicAudioProfile.A2DP,
-                        "aa:bb:cc:dd:ee:ff",
-                        connected = true
-                )
-        ).isTrue()
-        tracker.update(
-                ClassicAudioProfile.A2DP,
-                "AA:BB:CC:DD:EE:FF",
-                connected = false
-        )
-
+        tracker.setTarget(address)
+        snapshot(tracker, ClassicAudioProfile.A2DP)
+        snapshot(tracker, ClassicAudioProfile.HEADSET)
+        snapshot(tracker)
         assertThat(changes).containsExactly(true, false)
-        assertThat(tracker.connected).isFalse()
     }
 
     @Test
-    fun `stays connected while either A2DP or HFP is connected`() {
-        val changes = mutableListOf<Boolean>()
-        val tracker = ClassicAudioConnectionTracker(changes::add)
-        tracker.setTarget("AA:BB:CC:DD:EE:FF")
-
-        tracker.update(ClassicAudioProfile.A2DP, "AA:BB:CC:DD:EE:FF", connected = true)
-        tracker.update(ClassicAudioProfile.HEADSET, "AA:BB:CC:DD:EE:FF", connected = true)
-        tracker.update(ClassicAudioProfile.A2DP, "AA:BB:CC:DD:EE:FF", connected = false)
-
-        assertThat(changes).containsExactly(true)
+    fun `address comparison is case insensitive`() {
+        val tracker = ClassicAudioConnectionTracker {}
+        tracker.setTarget(address.lowercase())
+        snapshot(tracker, ClassicAudioProfile.A2DP)
         assertThat(tracker.connected).isTrue()
-
-        tracker.update(ClassicAudioProfile.HEADSET, "AA:BB:CC:DD:EE:FF", connected = false)
-        assertThat(changes).containsExactly(true, false)
     }
 
     @Test
-    fun `ignores late callbacks from a previous device`() {
-        val changes = mutableListOf<Boolean>()
-        val tracker = ClassicAudioConnectionTracker(changes::add)
-        tracker.setTarget("AA:BB:CC:DD:EE:FF")
-        tracker.update(ClassicAudioProfile.A2DP, "AA:BB:CC:DD:EE:FF", connected = true)
+    fun `another device cannot request a snapshot`() {
+        val tracker = ClassicAudioConnectionTracker {}
+        tracker.setTarget(address)
+        assertThat(tracker.beginSnapshot("11:22:33:44:55:66")).isNull()
+    }
 
+    @Test
+    fun `late result for previous device cannot replace current profiles`() {
+        val tracker = ClassicAudioConnectionTracker {}
+        tracker.setTarget(address)
+        val ticket = tracker.beginSnapshot(address)!!
         tracker.setTarget("11:22:33:44:55:66")
-        val accepted =
-                tracker.update(
-                        ClassicAudioProfile.A2DP,
-                        "AA:BB:CC:DD:EE:FF",
-                        connected = true
-                )
-
-        assertThat(accepted).isFalse()
-        assertThat(changes).containsExactly(true, false)
+        assertThat(tracker.applySnapshot(ticket, address, setOf(ClassicAudioProfile.A2DP))).isFalse()
         assertThat(tracker.connected).isFalse()
     }
 
     @Test
-    fun `reset clears a connected profile`() {
-        val changes = mutableListOf<Boolean>()
-        val tracker = ClassicAudioConnectionTracker(changes::add)
-        tracker.setTarget("AA:BB:CC:DD:EE:FF")
-        tracker.update(ClassicAudioProfile.HEADSET, "AA:BB:CC:DD:EE:FF", connected = true)
-
-        tracker.reset()
-
-        assertThat(changes).containsExactly(true, false)
+    fun `old response cannot resurrect reconnected session with same MAC`() {
+        val tracker = ClassicAudioConnectionTracker {}
+        tracker.setTarget(address)
+        val ticket = tracker.beginSnapshot(address)!!
+        tracker.invalidate(address)
+        tracker.setTarget(address)
+        snapshot(tracker)
+        assertThat(tracker.applySnapshot(ticket, address, setOf(ClassicAudioProfile.A2DP))).isFalse()
         assertThat(tracker.connected).isFalse()
     }
 
     @Test
-    fun `target teardown clears profiles without an external device reference`() {
-        val changes = mutableListOf<Boolean>()
-        val tracker = ClassicAudioConnectionTracker(changes::add)
-        tracker.setTarget("AA:BB:CC:DD:EE:FF")
-        tracker.update(ClassicAudioProfile.A2DP, "AA:BB:CC:DD:EE:FF", connected = true)
-
-        assertThat(tracker.clear("AA:BB:CC:DD:EE:FF")).isTrue()
-        assertThat(changes).containsExactly(true, false)
-        assertThat(tracker.connected).isFalse()
+    fun `newer query invalidates in flight snapshot even before its response arrives`() {
+        val tracker = ClassicAudioConnectionTracker {}
+        tracker.setTarget(address)
+        val first = tracker.beginSnapshot(address)!!
+        val second = tracker.beginSnapshot(address)!!
+        assertThat(tracker.applySnapshot(first, address, setOf(ClassicAudioProfile.A2DP))).isFalse()
+        assertThat(tracker.applySnapshot(second, address, emptySet())).isTrue()
     }
 
     @Test
-    fun `profile reset retains target for a reconnect`() {
-        val changes = mutableListOf<Boolean>()
-        val tracker = ClassicAudioConnectionTracker(changes::add)
-        tracker.setTarget("AA:BB:CC:DD:EE:FF")
-        tracker.update(ClassicAudioProfile.A2DP, "AA:BB:CC:DD:EE:FF", connected = true)
-
-        assertThat(tracker.clear("AA:BB:CC:DD:EE:FF")).isTrue()
-        assertThat(
-                        tracker.update(
-                                ClassicAudioProfile.HEADSET,
-                                "AA:BB:CC:DD:EE:FF",
-                                connected = true
-                        )
-                )
-                .isTrue()
-
-        assertThat(changes).containsExactly(true, false, true)
+    fun `late disconnect snapshot cannot overwrite newer connected snapshot`() {
+        val tracker = ClassicAudioConnectionTracker {}
+        tracker.setTarget(address)
+        val old = tracker.beginSnapshot(address)!!
+        snapshot(tracker, ClassicAudioProfile.HEADSET)
+        assertThat(tracker.applySnapshot(old, address, emptySet())).isFalse()
         assertThat(tracker.connected).isTrue()
     }
 
     @Test
-    fun `target teardown rejects delayed callbacks from the invalidated session`() {
+    fun `clear invalidates queries but retains target for retry`() {
+        val tracker = ClassicAudioConnectionTracker {}
+        tracker.setTarget(address)
+        val old = tracker.beginSnapshot(address)!!
+        assertThat(tracker.clear(address)).isTrue()
+        assertThat(tracker.applySnapshot(old, address, setOf(ClassicAudioProfile.A2DP))).isFalse()
+        snapshot(tracker, ClassicAudioProfile.A2DP)
+        assertThat(tracker.connected).isTrue()
+    }
+
+    @Test
+    fun `reset clears truth and prevents pending results from applying`() {
         val changes = mutableListOf<Boolean>()
         val tracker = ClassicAudioConnectionTracker(changes::add)
-        tracker.setTarget("AA:BB:CC:DD:EE:FF")
-        tracker.update(ClassicAudioProfile.A2DP, "AA:BB:CC:DD:EE:FF", connected = true)
-
-        assertThat(tracker.invalidate("AA:BB:CC:DD:EE:FF")).isTrue()
-        val accepted =
-                tracker.update(
-                        ClassicAudioProfile.HEADSET,
-                        "AA:BB:CC:DD:EE:FF",
-                        connected = true
-                )
-
-        assertThat(accepted).isFalse()
+        tracker.setTarget(address)
+        snapshot(tracker, ClassicAudioProfile.A2DP)
+        val ticket = tracker.beginSnapshot(address)!!
+        tracker.reset()
+        assertThat(tracker.applySnapshot(ticket, address, setOf(ClassicAudioProfile.A2DP))).isFalse()
+        assertThat(tracker.beginSnapshot(address)).isNull()
         assertThat(changes).containsExactly(true, false)
-        assertThat(tracker.connected).isFalse()
+    }
+
+    @Test
+    fun `stale snapshot cannot emit audio routing notifications`() {
+        val tracker = ClassicAudioConnectionTracker {}
+        tracker.setTarget(address)
+        val old = tracker.beginSnapshot(address)!!
+        tracker.setTarget(address)
+        var notifications = 0
+        tracker.applySnapshot(old, address, setOf(ClassicAudioProfile.A2DP)) { notifications++ }
+        assertThat(notifications).isZero()
     }
 }
