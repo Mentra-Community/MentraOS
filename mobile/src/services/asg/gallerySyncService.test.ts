@@ -14,7 +14,7 @@ import {onGalleryNotice} from "../../../modules/engine/src/services/asg/galleryN
 import {localNetworkTransport} from "../../../modules/engine/src/services/asg/localNetworkTransport"
 import {localStorageService} from "../../../modules/engine/src/services/asg/localStorageService"
 import {mediaProcessingQueue} from "../../../modules/engine/src/services/asg/mediaProcessingQueue"
-import {gallerySyncService} from "../../../modules/engine/src/services/asg/gallerySyncService"
+import {gallerySyncService, verifyIosHotspotSsid} from "../../../modules/engine/src/services/asg/gallerySyncService"
 import {MediaLibraryPermissions} from "../../../modules/engine/src/utils/permissions/MediaLibraryPermissions"
 import {useGallerySyncStore} from "../../../modules/engine/src/stores/gallerySync"
 import {useGlassesStore} from "../../../modules/engine/src/stores/glasses"
@@ -178,6 +178,46 @@ const CAPTURE_SYNC_RESPONSE = {
 
 const HOTSPOT_INFO = {ssid: "MentraLive_test", password: "00001111", ip: "192.168.43.1"}
 
+describe("verifyIosHotspotSsid", () => {
+  it("returns matched when the target SSID becomes visible", async () => {
+    const readCurrentSsid = jest.fn().mockResolvedValueOnce("home").mockResolvedValue(HOTSPOT_INFO.ssid)
+    const sleep = jest.fn().mockResolvedValue(undefined)
+
+    await expect(verifyIosHotspotSsid(HOTSPOT_INFO.ssid, readCurrentSsid, sleep, 3)).resolves.toEqual({
+      status: "matched",
+      lastSeenSsid: HOTSPOT_INFO.ssid,
+    })
+    expect(readCurrentSsid).toHaveBeenCalledTimes(2)
+    expect(sleep).toHaveBeenCalledTimes(1)
+  })
+
+  it("returns unavailable immediately when location permission blocks SSID inspection", async () => {
+    const readCurrentSsid = jest
+      .fn()
+      .mockRejectedValue(new Error("Cannot detect SSID because LocationPermission is Denied"))
+    const sleep = jest.fn().mockResolvedValue(undefined)
+
+    await expect(verifyIosHotspotSsid(HOTSPOT_INFO.ssid, readCurrentSsid, sleep, 30)).resolves.toEqual({
+      status: "unavailable",
+      lastSeenSsid: "error",
+    })
+    expect(readCurrentSsid).toHaveBeenCalledTimes(1)
+    expect(sleep).not.toHaveBeenCalled()
+  })
+
+  it("returns mismatched when a different readable SSID remains connected", async () => {
+    const readCurrentSsid = jest.fn().mockResolvedValue("home")
+    const sleep = jest.fn().mockResolvedValue(undefined)
+
+    await expect(verifyIosHotspotSsid(HOTSPOT_INFO.ssid, readCurrentSsid, sleep, 3)).resolves.toEqual({
+      status: "mismatched",
+      lastSeenSsid: "home",
+    })
+    expect(readCurrentSsid).toHaveBeenCalledTimes(3)
+    expect(sleep).toHaveBeenCalledTimes(2)
+  })
+})
+
 async function startFileDownload(): Promise<void> {
   await (
     gallerySyncService as unknown as {startFileDownload: (info: typeof HOTSPOT_INFO) => Promise<void>}
@@ -205,6 +245,25 @@ describe("GallerySyncService", () => {
     Object.defineProperty(Platform, "OS", {value: originalPlatformOS, configurable: true, writable: true})
     jest.clearAllTimers()
     jest.useRealTimers()
+  })
+
+  it("uses the glasses connectivity probe when iOS denies SSID inspection", async () => {
+    Object.defineProperty(Platform, "OS", {value: "ios", configurable: true, writable: true})
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
+    mockGetCurrentWifiSSID.mockRejectedValue(new Error("Cannot detect SSID because LocationPermission is Denied"))
+    jest.spyOn(gallerySyncService as any, "showWifiJoinExplanation").mockResolvedValue(true)
+    const connectSpy = jest.spyOn(localNetworkTransport, "connect").mockResolvedValue(undefined)
+    const fetchSpy = jest.spyOn(localNetworkTransport, "fetch").mockResolvedValue({status: 200} as Response)
+    const startDownloadSpy = jest.spyOn(gallerySyncService as any, "startFileDownload").mockResolvedValue(undefined)
+
+    await (gallerySyncService as any).connectToHotspotWifi(HOTSPOT_INFO)
+
+    expect(connectSpy).toHaveBeenCalledWith(HOTSPOT_INFO.ssid, HOTSPOT_INFO.password)
+    expect(fetchSpy).toHaveBeenCalledWith(
+      `http://${HOTSPOT_INFO.ip}:8089/api/health`,
+      expect.objectContaining({method: "GET"}),
+    )
+    expect(startDownloadSpy).toHaveBeenCalledWith(HOTSPOT_INFO)
   })
 
   it("updates gallery status from glasses events", () => {

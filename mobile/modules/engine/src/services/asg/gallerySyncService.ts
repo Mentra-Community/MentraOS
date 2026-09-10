@@ -34,6 +34,47 @@ import {emitGalleryNotice} from "./galleryNotices"
 import {galleryTransferLedger} from "./galleryTransferLedger"
 import {cameraRollExportCoordinator} from "./cameraRollExportCoordinator"
 
+export type IosHotspotSsidVerification = {
+  status: "matched" | "mismatched" | "unavailable"
+  lastSeenSsid: string
+}
+
+function isSsidPermissionDenied(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return /location\s*permission/i.test(message) && /(denied|not granted)/i.test(message)
+}
+
+export async function verifyIosHotspotSsid(
+  targetSsid: string,
+  readCurrentSsid: () => Promise<string>,
+  sleep: () => Promise<void>,
+  maxAttempts = 30,
+): Promise<IosHotspotSsidVerification> {
+  let lastSeenSsid = "unknown"
+  let observedSsid = false
+
+  for (let attempt = 0; attempt < maxAttempts; attempt++) {
+    try {
+      const currentSsid = await readCurrentSsid()
+      observedSsid = true
+      lastSeenSsid = currentSsid || "null"
+
+      if (currentSsid === targetSsid) {
+        return {status: "matched", lastSeenSsid}
+      }
+    } catch (error) {
+      lastSeenSsid = "error"
+      if (isSsidPermissionDenied(error)) {
+        return {status: "unavailable", lastSeenSsid}
+      }
+    }
+
+    if (attempt < maxAttempts - 1) await sleep()
+  }
+
+  return {status: observedSsid ? "mismatched" : "unavailable", lastSeenSsid}
+}
+
 // Timing constants
 const TIMING = {
   HOTSPOT_CONNECT_DELAY_MS: 3000, // Increased from 1000ms - hotspot needs time to broadcast and become discoverable
@@ -986,62 +1027,52 @@ class GallerySyncService {
           }
           console.log(`[GallerySyncService] 📝 Note: On iOS, this does NOT guarantee actual connection!`)
 
-          // iOS-specific: Verify actual WiFi connection by polling SSID
-          // The library promise resolves when iOS ACCEPTS the request, not when connection completes
           if (Platform.OS === "ios") {
             console.log(`[GallerySyncService] 🍎 iOS: Starting connection verification...`)
             console.log(`[GallerySyncService] 🍎 Will poll getCurrentWifiSSID() for up to 15 seconds`)
 
             const maxVerifyAttempts = 30 // 30 × 500ms = 15 seconds
-            let connected = false
-            let lastSeenSSID = "unknown"
-
-            for (let i = 0; i < maxVerifyAttempts; i++) {
-              try {
-                const currentSSID = await WifiManager.getCurrentWifiSSID()
-                lastSeenSSID = currentSSID || "null"
-
-                console.log(
-                  `[GallerySyncService] 🍎 Verify poll ${
-                    i + 1
-                  }/${maxVerifyAttempts}: Current="${currentSSID}", Target="${hotspotInfo.ssid}"`,
-                )
-
-                if (currentSSID === hotspotInfo.ssid) {
+            let verifyAttempt = 0
+            const verification = await verifyIosHotspotSsid(
+              hotspotInfo.ssid,
+              async () => {
+                verifyAttempt += 1
+                try {
+                  const currentSsid = await WifiManager.getCurrentWifiSSID()
                   console.log(
-                    `[GallerySyncService] 🍎 ✅ VERIFICATION SUCCESS! Connected to target network after ${
-                      (i + 1) * 500
-                    }ms`,
+                    `[GallerySyncService] 🍎 Verify poll ${verifyAttempt}/${maxVerifyAttempts}: Current="${currentSsid}", Target="${hotspotInfo.ssid}"`,
                   )
-                  connected = true
-                  break
-                } else if (i === 0 && currentSSID === lastSeenSSID) {
+                  return currentSsid
+                } catch (error: any) {
                   console.log(
-                    `[GallerySyncService] 🍎 ⚠️ Still on original network - iOS dialog may not have appeared yet`,
+                    `[GallerySyncService] 🍎 ⚠️ Poll ${verifyAttempt}: Could not check SSID: ${error?.message}`,
                   )
+                  throw error
                 }
-              } catch (ssidError: any) {
-                console.log(`[GallerySyncService] 🍎 ⚠️ Poll ${i + 1}: Could not check SSID: ${ssidError?.message}`)
-                lastSeenSSID = "error"
-              }
+              },
+              () => new Promise<void>((resolve) => BgTimer.setTimeout(() => resolve(), 500)),
+              maxVerifyAttempts,
+            )
 
-              // Don't wait after last attempt
-              if (i < maxVerifyAttempts - 1) {
-                await new Promise<void>((resolve) => BgTimer.setTimeout(() => resolve(), 500))
-              }
-            }
-
-            if (!connected) {
+            if (verification.status === "mismatched") {
               console.error(`[GallerySyncService] 🍎 ❌ VERIFICATION FAILED after 15 seconds`)
-              console.error(`[GallerySyncService] 🍎 Last seen SSID: "${lastSeenSSID}"`)
+              console.error(`[GallerySyncService] 🍎 Last seen SSID: "${verification.lastSeenSsid}"`)
               console.error(`[GallerySyncService] 🍎 Expected SSID: "${hotspotInfo.ssid}"`)
               console.error(`[GallerySyncService] 🍎 Possible causes:`)
               console.error(`[GallerySyncService] 🍎   1. User did not tap "Join" on iOS WiFi dialog`)
-              console.error(`[GallerySyncService] 🍎   2. iOS dialog did not appear (permission issue?)`)
+              console.error(`[GallerySyncService] 🍎   2. iOS dialog did not appear`)
               console.error(`[GallerySyncService] 🍎   3. iOS refused to switch networks`)
               throw new Error(
-                `iOS WiFi verification failed - still on "${lastSeenSSID}", expected "${hotspotInfo.ssid}"`,
+                `iOS WiFi verification failed - still on "${verification.lastSeenSsid}", expected "${hotspotInfo.ssid}"`,
               )
+            }
+
+            if (verification.status === "unavailable") {
+              console.warn(
+                `[GallerySyncService] 🍎 SSID inspection unavailable; using glasses connectivity probe instead`,
+              )
+            } else {
+              console.log(`[GallerySyncService] 🍎 ✅ SSID verification succeeded`)
             }
           }
 
