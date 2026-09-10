@@ -1629,11 +1629,21 @@ class MentraLive : SGCManager() {
             return
         }
         bluetoothGatt = null
+        releaseGattSessionMedia()
         try {
             gatt.close()
         } catch (e: Exception) {
             Log.w(TAG, "🔌 closeGattQuietly: close threw " + e)
         }
+    }
+
+    /** Release side channels on every teardown, including missing disconnect callbacks. */
+    private fun releaseGattSessionMedia() {
+        closeL2capFileChannel()
+        fileProcessingHandler.removeCallbacksAndMessages(null)
+        clearFilePacketBuffer()
+        closeLc3Logging()
+        lc3AudioPlayer?.stopPlay()
     }
 
     private fun beginGattTeardown(gatt: BluetoothGatt) {
@@ -1668,6 +1678,7 @@ class MentraLive : SGCManager() {
         stopHeartbeat()
         stopSignalStrengthPolling()
         stopMicBeat()
+        releaseGattSessionMedia()
         updateConnectionState(ConnTypes.DISCONNECTED)
         val timeout =
                 Runnable {
@@ -2351,11 +2362,6 @@ class MentraLive : SGCManager() {
                             // Stop micbeat mechanism
                             stopMicBeat()
 
-                            // Close the L2CAP file channel (if the fast path was open)
-                            closeL2capFileChannel()
-                            fileProcessingHandler.removeCallbacksAndMessages(null)
-                            clearFilePacketBuffer()
-
                             // Clean up GATT resources
                             closeGattQuietly(false)
 
@@ -2365,13 +2371,6 @@ class MentraLive : SGCManager() {
                                 handleReconnection()
                             }
 
-                            // Close LC3 audio logging
-                            closeLc3Logging()
-
-                            // stop LC3 player
-                            if (lc3AudioPlayer != null) {
-                                lc3AudioPlayer!!.stopPlay()
-                            }
                         }
                     } else {
                         // Connection error
