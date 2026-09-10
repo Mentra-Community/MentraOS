@@ -162,19 +162,15 @@ export function startDeviceEventRouter(): void {
     }),
   )
 
-  // Phone-owned stream status / keep-alive → the stream coordinator. The Cloud V1 relay
+  // Phone-owned stream status → the stream coordinator. The Cloud V1 relay
   // for non-owned streams was removed with Cloud V1 app end-of-life.
   subs.push(
     BluetoothSdk.addListener("stream_status", (event) => {
-      if (event.streamId && phoneStreamCoordinator.owns(event.streamId)) {
+      if (
+        (event.streamId && phoneStreamCoordinator.owns(event.streamId)) ||
+        (!event.streamId && event.kind === "snapshot" && event.terminal === true)
+      ) {
         phoneStreamCoordinator.handleGlassesStatus(event)
-      }
-    }),
-  )
-  subs.push(
-    BluetoothSdk.addListener("keep_alive_ack", (event) => {
-      if (event.streamId && phoneStreamCoordinator.owns(event.streamId)) {
-        phoneStreamCoordinator.handleKeepAliveAck(event)
       }
     }),
   )

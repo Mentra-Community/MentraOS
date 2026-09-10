@@ -5,7 +5,6 @@
  *   miniapp → SDK → LocalMiniappRuntime → coordinator
  *           coordinator → BluetoothSdk (BLE → glasses publisher)
  *           coordinator ↔ cloudStreamApi (managed only, cloud-v2 runtime provisioning)
- *           coordinator ↔ StreamLifecycleController (keep-alive heartbeat)
  *           coordinator → status listeners → routed back to miniapp(s)
  *
  * Single-stream constraint:
@@ -28,29 +27,17 @@
  * the legacy path.
  *
  * BLE link loss is a SUSPENDED state, not a failure:
- *   The glasses publisher keeps pushing over Wi-Fi when the phone's Bluetooth
- *   link drops; only our keep-alives stop reaching it. While the store says
- *   the glasses are disconnected we pause the heartbeat (so we don't count
- *   misses we caused ourselves), fan out `suspended`, and give the link
- *   `glassesGraceMs` to come back. On reconnect we resume, heartbeat at once,
- *   and fan out `resumed` with the SAME streamId — no re-provision. The grace
- *   ends early when Cloudflare reports the publisher gone for two probes in
- *   a row (glasses powered off, not a BLE hiccup). If the grace expires the
- *   stream is torn down with reason `glasses_disconnected`, and the BLE stop
- *   the glasses never received is sent on the next reconnect.
+ *   ASG owns the ten-second phone/controller liveness deadline. The coordinator
+ *   observes link suspension, retains cloud resources briefly for reconciliation,
+ *   and never uses missing JavaScript heartbeats as evidence of publisher failure.
+ *   An explicit stop that could not reach BLE is sent on the next reconnect.
  */
 
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
-import type {
-  KeepAliveAckEvent,
-  StreamResolvedConfig,
-  StreamStartRequest,
-  StreamStatusEvent,
-} from "@mentra/bluetooth-sdk/internal"
+import type {StreamResolvedConfig, StreamStartRequest, StreamStatusEvent} from "@mentra/bluetooth-sdk/internal"
 import {isGlassesConnected} from "./GlassesReadiness"
 import {useGlassesStore} from "../stores/glasses"
 
-import {StreamLifecycleController, type LifecycleLogger} from "./StreamLifecycleController"
 import {slimStreamStatusEvent, streamStatusSignature} from "./slimStreamStatus"
 import {
   getManagedStreamStatus,
@@ -66,9 +53,6 @@ import {
  * can shorten them; production code should never override these.
  */
 const DEFAULT_TIMINGS = {
-  keepAliveIntervalMs: 15_000,
-  ackTimeoutMs: 10_000,
-  maxMissedAcks: 3,
   cloudflareStatusPollMs: 5_000,
   // During WHIP startup, probe quickly so readiness is not quantized to the
   // steady-state 5s monitoring cadence. The delay backs off on each miss.
@@ -77,10 +61,8 @@ const DEFAULT_TIMINGS = {
   hlsReadinessInitialDelayMs: 5_000,
   hlsReadinessPollMs: 2_000,
   hlsReadinessMaxAttempts: 30,
-  // How long a stream survives a BLE link drop before we give up on it. Must
-  // stay under the glasses publisher's own 60s no-keep-alive watchdog with
-  // margin for the resume heartbeat's round trip.
-  glassesGraceMs: 45_000,
+  // Allow ASG's ten-second stop plus a short delivery/reconciliation margin.
+  glassesGraceMs: 15_000,
   // Consecutive Cloudflare "publisher disconnected" probes while suspended
   // before we conclude the glasses are off (not just out of BLE range).
   suspendedPublisherGoneProbes: 2,
@@ -110,19 +92,6 @@ export const LINK_STATUS = {
   resumed: "resumed",
   reason: "glasses_disconnected",
 } as const
-
-// Console-backed minimal logger; replaces pino on the phone.
-const consoleLogger: LifecycleLogger = {
-  child: (bindings) => ({
-    ...consoleLogger,
-    debug: (...args) => console.debug("[STREAM]", bindings, ...args),
-    warn: (...args) => console.warn("[STREAM]", bindings, ...args),
-    error: (...args) => console.error("[STREAM]", bindings, ...args),
-  }),
-  debug: (...args) => console.debug("[STREAM]", ...args),
-  warn: (...args) => console.warn("[STREAM]", ...args),
-  error: (...args) => console.error("[STREAM]", ...args),
-}
 
 export interface StartUnmanagedOptions {
   streamUrl: string
@@ -237,7 +206,6 @@ interface SuspendedState {
 
 export class PhoneStreamCoordinator {
   private current: Entry | null = null
-  private lifecycle: StreamLifecycleController | null = null
   private statusSubscriber: StatusSubscriber | null = null
   private idCounter = 0
   private readonly timings: TimingConfig
@@ -277,12 +245,7 @@ export class PhoneStreamCoordinator {
    */
   private assertGlassesConnected(): void {
     if (!this.linkSource.isConnected()) {
-      throw new StreamConflictError(
-        "GLASSES_NOT_CONNECTED",
-        "Glasses are not connected",
-        "command",
-        "ble",
-      )
+      throw new StreamConflictError("GLASSES_NOT_CONNECTED", "Glasses are not connected", "command", "ble")
     }
   }
 
@@ -352,10 +315,7 @@ export class PhoneStreamCoordinator {
         }
   }
 
-  async startUnmanaged(
-    packageName: string,
-    opts: StartUnmanagedOptions,
-  ): Promise<StreamPublisherStartResult> {
+  async startUnmanaged(packageName: string, opts: StartUnmanagedOptions): Promise<StreamPublisherStartResult> {
     // Pre-check the obvious-bad input before queueing — the lock is for
     // serializing state transitions, not for validating arguments.
     if (!opts.streamUrl || typeof opts.streamUrl !== "string") {
@@ -382,7 +342,7 @@ export class PhoneStreamCoordinator {
       this.current = entry
 
       try {
-        const event = await BluetoothSdk.startExternallyManagedStream({
+        const event = await BluetoothSdk.startStream({
           type: "start_stream",
           streamUrl: opts.streamUrl,
           streamId,
@@ -404,10 +364,7 @@ export class PhoneStreamCoordinator {
     })
   }
 
-  async startManaged(
-    packageName: string,
-    opts: StartManagedOptions,
-  ): Promise<ManagedStartResult> {
+  async startManaged(packageName: string, opts: StartManagedOptions): Promise<ManagedStartResult> {
     const startupStartedAtMs = Date.now()
     // streamId doesn't exist yet — it's minted a few lines below, once we
     // know this is a fresh provision rather than a join onto an existing one.
@@ -446,9 +403,7 @@ export class PhoneStreamCoordinator {
           )
         }
         existing.subscribers.add(packageName)
-        const immediate: ManagedStartResult | null = existing.hlsReady
-          ? managedStartResult(existing)
-          : null
+        const immediate: ManagedStartResult | null = existing.hlsReady ? managedStartResult(existing) : null
         return {kind: "join", entry: existing, immediate}
       }
 
@@ -458,8 +413,7 @@ export class PhoneStreamCoordinator {
       const provision = await provisionManagedStream(opts.restreamDestinations)
       const streamId = this.mintId("m")
       const ingestUrl = pickIngestUrl(provision, opts.ingest)
-      const mode: ManagedEntry["mode"] =
-        ingestUrl === provision.webrtcPublishUrl ? "webrtc" : "hls"
+      const mode: ManagedEntry["mode"] = ingestUrl === provision.webrtcPublishUrl ? "webrtc" : "hls"
 
       const entry: ManagedEntry = {
         kind: "managed",
@@ -488,7 +442,7 @@ export class PhoneStreamCoordinator {
       })
 
       try {
-        const event = await BluetoothSdk.startExternallyManagedStream({
+        const event = await BluetoothSdk.startStream({
           type: "start_stream",
           streamUrl: ingestUrl,
           streamId,
@@ -573,7 +527,6 @@ export class PhoneStreamCoordinator {
     if (!this.current) return
     if (event.streamId && event.streamId !== this.current.streamId) return
 
-    this.lifecycle?.recordActivity()
     const includeResolvedConfig = !this.resolvedConfigForwarded && !!event.resolvedConfig
     if (includeResolvedConfig) this.resolvedConfigForwarded = true
     const slimData = slimStreamStatusEvent(event, {includeResolvedConfig})
@@ -593,15 +546,14 @@ export class PhoneStreamCoordinator {
     // glasses publisher auto-recovers (error → reconnecting → reconnected),
     // and tearing down on the first hiccup deletes the live input out from
     // under a publisher that comes right back (it then retries into a dead
-    // input forever). A publisher that errors and never recovers is reaped by
-    // the keep-alive ack timeout. Queue the teardown through the transition
-    // lock so it serializes with any start/stop currently in flight.
+    // input forever). ASG explicitly marks terminal failures; serialize teardown
+    // with any start/stop currently in flight.
     const isStopped =
       (event.kind === "lifecycle" && event.status === "stopped") ||
       (event.kind === "snapshot" && event.status === "stopped")
     const isGiveUp = event.kind === "reconnect" && event.status === "reconnect_failed"
-    if (isGiveUp || isStopped) {
-      const reason = isGiveUp ? "glasses_gave_up" : "glasses_stopped"
+    if (event.terminal === true || isGiveUp || isStopped) {
+      const reason = isGiveUp ? "glasses_gave_up" : event.status === "error" ? "glasses_error" : "glasses_stopped"
       const targetStreamId = this.current.streamId
       void this.runExclusive(async () => {
         // The stream we wanted to tear down may already be gone (e.g. another
@@ -610,12 +562,6 @@ export class PhoneStreamCoordinator {
         await this.teardownLocked(reason, {sendBleStop: false})
       })
     }
-  }
-
-  /** Called by MantleManager when a phone-owned keep_alive_ack arrives. */
-  handleKeepAliveAck(event: KeepAliveAckEvent): void {
-    if (!event.ackId) return
-    this.lifecycle?.handleAck(event.ackId)
   }
 
   // ===========================================================================
@@ -649,9 +595,6 @@ export class PhoneStreamCoordinator {
     const entry = this.current
     if (!entry) return
     const since = Date.now()
-    // Pause the heartbeat: misses now would be our own fault, not the
-    // publisher's, and counting them would reap a stream that is still live.
-    this.lifecycle?.setActive(false)
     const graceTimer = setTimeout(() => this.onGraceExpired(entry.streamId), this.timings.glassesGraceMs)
     this.suspended = {since, graceTimer, publisherGoneProbes: 0}
     console.warn("[STREAM] BLE link lost; stream suspended", {
@@ -674,10 +617,6 @@ export class PhoneStreamCoordinator {
     this.suspended = null
     const suspendedMs = Date.now() - suspended.since
     console.info("[STREAM] BLE link back; stream resumed", {streamId: entry.streamId, suspendedMs})
-    // Resume and heartbeat immediately: the glasses watchdog has been running
-    // the whole time, so the first keep-alive must not wait another interval.
-    this.lifecycle?.setActive(true)
-    this.lifecycle?.tickNow()
     // A resumed session is a fresh status baseline for subscribers.
     this.lastFanoutSignature = null
     this.fanout({
@@ -730,45 +669,10 @@ export class PhoneStreamCoordinator {
     return `phone-${prefix}-${Date.now().toString(36)}-${this.idCounter}`
   }
 
-  /** BLE keep-alives. StreamLifecycleController uses BgTimer so they survive MentraOS backgrounding. */
-  private startLifecycle(streamId: string): void {
-    // A new stream supersedes any deferred stop for the previous one.
+  /** Observe link/status; native SDK and ASG own controller liveness. */
+  private startLifecycle(_streamId: string): void {
     this.pendingBleStop = null
     this.attachLink()
-    this.lifecycle?.dispose()
-    const ctrl = new StreamLifecycleController(
-      {
-        logger: consoleLogger,
-        streamId,
-        keepAliveIntervalMs: this.timings.keepAliveIntervalMs,
-        ackTimeoutMs: this.timings.ackTimeoutMs,
-        maxMissedAcks: this.timings.maxMissedAcks,
-      },
-      {
-        sendKeepAlive: async (ackId) => {
-          await BluetoothSdk.sendExternallyManagedStreamKeepAlive({
-            type: "keep_stream_alive",
-            streamId,
-            ackId,
-          })
-        },
-        onTimeout: async () => {
-          this.fanout({
-            streamId,
-            source: "coordinator",
-            status: "error",
-            data: {reason: "keep_alive_timeout"},
-          })
-          await this.runExclusive(async () => {
-            // The stream this timeout was bound to may already be gone.
-            if (this.current?.streamId !== streamId) return
-            await this.teardownLocked("keep_alive_timeout")
-          })
-        },
-      },
-    )
-    ctrl.setActive(true)
-    this.lifecycle = ctrl
   }
 
   private startCloudflareStatusPoll(entry: ManagedEntry): void {
@@ -967,10 +871,7 @@ export class PhoneStreamCoordinator {
 
   private fanout(update: StreamStatusUpdate): void {
     if (!this.current || !this.statusSubscriber) return
-    const targets =
-      this.current.kind === "managed"
-        ? Array.from(this.current.subscribers)
-        : [this.current.packageName]
+    const targets = this.current.kind === "managed" ? Array.from(this.current.subscribers) : [this.current.packageName]
     for (const pkg of targets) {
       try {
         this.statusSubscriber(pkg, update)
@@ -999,12 +900,6 @@ export class PhoneStreamCoordinator {
       clearTimeout(this.suspended.graceTimer)
       this.suspended = null
     }
-
-    // Dispose the lifecycle controller immediately so it doesn't fire one
-    // more keep-alive against a stream we're tearing down. The transition
-    // lock guarantees no new lifecycle is started concurrently.
-    this.lifecycle?.dispose()
-    this.lifecycle = null
 
     // With the link down a BLE write can only fail (and hold the transition
     // lock for the native timeout). Defer it to the next reconnect instead.
@@ -1075,8 +970,8 @@ function pickIngestUrl(p: ProvisionResult, preference?: "srt" | "whip" | "rtmp")
     preference === "whip"
       ? p.webrtcPublishUrl || p.srtUrl || p.rtmpUrl
       : preference === "rtmp"
-        ? p.rtmpUrl || p.srtUrl || p.webrtcPublishUrl
-        : p.srtUrl || p.rtmpUrl || p.webrtcPublishUrl
+      ? p.rtmpUrl || p.srtUrl || p.webrtcPublishUrl
+      : p.srtUrl || p.rtmpUrl || p.webrtcPublishUrl
   if (!url) {
     throw new Error("Cloudflare provision returned no usable ingest URL")
   }
