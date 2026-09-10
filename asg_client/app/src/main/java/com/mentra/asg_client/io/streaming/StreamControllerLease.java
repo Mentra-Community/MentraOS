@@ -34,6 +34,9 @@ public final class StreamControllerLease {
     /** Returns whether the active challenge's response deadline has elapsed. */
     public boolean expired(long nowMs) { return mProbeId != null && nowMs >= mDeadlineMs; }
 
+    /** Schedule the final check at the deadline, not a later retransmission interval. */
+    public long remainingMs(long nowMs) { return Math.max(0, mDeadlineMs - nowMs); }
+
     /** Invalidates all responses and stops enforcement after stream teardown. */
     public void stop() { mProbeId = null; }
 }

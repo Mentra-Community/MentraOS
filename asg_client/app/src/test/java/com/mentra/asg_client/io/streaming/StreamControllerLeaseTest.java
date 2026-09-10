@@ -17,6 +17,7 @@ public class StreamControllerLeaseTest {
         assertFalse(lease.expired(7_000));
         assertTrue(lease.acknowledge(first, 7_000));
         assertFalse(lease.acknowledge(first, 16_000));
+        assertEquals(1_000, lease.remainingMs(16_000));
         assertTrue(lease.expired(17_000));
     }
 
