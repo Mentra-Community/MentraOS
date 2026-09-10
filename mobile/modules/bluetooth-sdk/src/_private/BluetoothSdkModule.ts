@@ -295,6 +295,7 @@ installNativeLogConsole(NativeBluetoothSdkModule, Platform.OS)
 const DEFAULT_CONNECT_OPTIONS: Required<ConnectOptions> = {
   saveAsDefault: true,
   cancelExistingConnectionAttempt: true,
+  requiresAncs: true,
 }
 
 const DEFAULT_SCAN_TIMEOUT_MS = 15_000
