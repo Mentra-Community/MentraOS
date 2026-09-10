@@ -597,7 +597,9 @@ public class StreamCommandHandler implements ICommandHandler {
                 } catch (Exception error) {
                     Log.w(TAG, "Unable to send native stream controller probe", error);
                 }
-                mLifecycleHandler.postDelayed(this, AsgConstants.STREAM_CONTROLLER_PROBE_INTERVAL_MS);
+                mLifecycleHandler.postDelayed(this, Math.min(
+                        AsgConstants.STREAM_CONTROLLER_PROBE_INTERVAL_MS,
+                        mControllerLease.remainingMs(SystemClock.elapsedRealtime())));
             }
         };
         mControllerProbeTick.run();
