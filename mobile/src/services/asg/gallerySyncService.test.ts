@@ -14,7 +14,11 @@ import {onGalleryNotice} from "../../../modules/engine/src/services/asg/galleryN
 import {localNetworkTransport} from "../../../modules/engine/src/services/asg/localNetworkTransport"
 import {localStorageService} from "../../../modules/engine/src/services/asg/localStorageService"
 import {mediaProcessingQueue} from "../../../modules/engine/src/services/asg/mediaProcessingQueue"
-import {gallerySyncService, verifyIosHotspotSsid} from "../../../modules/engine/src/services/asg/gallerySyncService"
+import {
+  gallerySyncService,
+  isSsidPermissionError,
+  verifyIosHotspotSsid,
+} from "../../../modules/engine/src/services/asg/gallerySyncService"
 import {MediaLibraryPermissions} from "../../../modules/engine/src/utils/permissions/MediaLibraryPermissions"
 import {useGallerySyncStore} from "../../../modules/engine/src/stores/gallerySync"
 import {useGlassesStore} from "../../../modules/engine/src/stores/glasses"
@@ -178,6 +182,34 @@ const CAPTURE_SYNC_RESPONSE = {
 
 const HOTSPOT_INFO = {ssid: "MentraLive_test", password: "00001111", ip: "192.168.43.1"}
 
+/** Mirrors how react-native-wifi-reborn rejects: a bridged `code` plus prose. */
+function wifiError(code: string, message: string): Error & {code: string} {
+  return Object.assign(new Error(message), {code})
+}
+
+describe("isSsidPermissionError", () => {
+  // All three permission rejections react-native-wifi-reborn can emit from
+  // getCurrentWifiSSID. Matching on the message alone misses the last two.
+  it.each([
+    ["locationPermissionDenied", "Cannot detect SSID because LocationPermission is Denied"],
+    ["locationPermissionRestricted", "Cannot detect SSID because LocationPermission is Restricted"],
+    ["locationPermissionDenied", "Permission not granted"],
+    ["locationPermissionMissing", "Location permission missing"],
+  ])("treats %s as a permission wall", (code, message) => {
+    expect(isSsidPermissionError(wifiError(code, message))).toBe(true)
+  })
+
+  it("does not treat a transient couldNotDetectSSID as a permission wall", () => {
+    expect(isSsidPermissionError(wifiError("couldNotDetectSSID", "Cannot detect SSID"))).toBe(false)
+  })
+
+  it("falls back to the message when no code is bridged", () => {
+    expect(isSsidPermissionError(new Error("Cannot detect SSID because LocationPermission is Restricted"))).toBe(true)
+    expect(isSsidPermissionError(new Error("Permission not granted"))).toBe(true)
+    expect(isSsidPermissionError(new Error("Cannot detect SSID"))).toBe(false)
+  })
+})
+
 describe("verifyIosHotspotSsid", () => {
   it("returns matched when the target SSID becomes visible", async () => {
     const readCurrentSsid = jest.fn().mockResolvedValueOnce("home").mockResolvedValue(HOTSPOT_INFO.ssid)
@@ -189,12 +221,16 @@ describe("verifyIosHotspotSsid", () => {
     })
     expect(readCurrentSsid).toHaveBeenCalledTimes(2)
     expect(sleep).toHaveBeenCalledTimes(1)
+    // The helper owns the poll numbering; the caller no longer shadows it.
+    expect(readCurrentSsid.mock.calls).toEqual([[1], [2]])
   })
 
-  it("returns unavailable immediately when location permission blocks SSID inspection", async () => {
-    const readCurrentSsid = jest
-      .fn()
-      .mockRejectedValue(new Error("Cannot detect SSID because LocationPermission is Denied"))
+  it.each([
+    ["locationPermissionDenied", "Cannot detect SSID because LocationPermission is Denied"],
+    ["locationPermissionRestricted", "Cannot detect SSID because LocationPermission is Restricted"],
+    ["locationPermissionDenied", "Permission not granted"],
+  ])("returns unavailable immediately for %s", async (code, message) => {
+    const readCurrentSsid = jest.fn().mockRejectedValue(wifiError(code, message))
     const sleep = jest.fn().mockResolvedValue(undefined)
 
     await expect(verifyIosHotspotSsid(HOTSPOT_INFO.ssid, readCurrentSsid, sleep, 30)).resolves.toEqual({
@@ -203,6 +239,20 @@ describe("verifyIosHotspotSsid", () => {
     })
     expect(readCurrentSsid).toHaveBeenCalledTimes(1)
     expect(sleep).not.toHaveBeenCalled()
+  })
+
+  it("keeps polling a transient read failure instead of short-circuiting", async () => {
+    const readCurrentSsid = jest
+      .fn()
+      .mockRejectedValueOnce(wifiError("couldNotDetectSSID", "Cannot detect SSID"))
+      .mockResolvedValue(HOTSPOT_INFO.ssid)
+    const sleep = jest.fn().mockResolvedValue(undefined)
+
+    await expect(verifyIosHotspotSsid(HOTSPOT_INFO.ssid, readCurrentSsid, sleep, 3)).resolves.toEqual({
+      status: "matched",
+      lastSeenSsid: HOTSPOT_INFO.ssid,
+    })
+    expect(readCurrentSsid).toHaveBeenCalledTimes(2)
   })
 
   it("returns mismatched when a different readable SSID remains connected", async () => {
@@ -215,6 +265,18 @@ describe("verifyIosHotspotSsid", () => {
     })
     expect(readCurrentSsid).toHaveBeenCalledTimes(3)
     expect(sleep).toHaveBeenCalledTimes(2)
+  })
+
+  it("treats an empty SSID as unknown, not as a mismatch", async () => {
+    // An empty read means "we cannot see the network", which must fall back to the
+    // connectivity probe. Calling it a mismatch would hard-fail the sync.
+    const readCurrentSsid = jest.fn().mockResolvedValue("")
+    const sleep = jest.fn().mockResolvedValue(undefined)
+
+    await expect(verifyIosHotspotSsid(HOTSPOT_INFO.ssid, readCurrentSsid, sleep, 3)).resolves.toEqual({
+      status: "unavailable",
+      lastSeenSsid: "null",
+    })
   })
 })
 
@@ -247,10 +309,13 @@ describe("GallerySyncService", () => {
     jest.useRealTimers()
   })
 
-  it("uses the glasses connectivity probe when iOS denies SSID inspection", async () => {
+  it.each([
+    ["locationPermissionDenied", "Cannot detect SSID because LocationPermission is Denied"],
+    ["locationPermissionRestricted", "Cannot detect SSID because LocationPermission is Restricted"],
+  ])("uses the glasses connectivity probe when iOS blocks SSID inspection (%s)", async (code, message) => {
     Object.defineProperty(Platform, "OS", {value: "ios", configurable: true, writable: true})
     useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
-    mockGetCurrentWifiSSID.mockRejectedValue(new Error("Cannot detect SSID because LocationPermission is Denied"))
+    mockGetCurrentWifiSSID.mockRejectedValue(wifiError(code, message))
     jest.spyOn(gallerySyncService as any, "showWifiJoinExplanation").mockResolvedValue(true)
     const connectSpy = jest.spyOn(localNetworkTransport, "connect").mockResolvedValue(undefined)
     const fetchSpy = jest.spyOn(localNetworkTransport, "fetch").mockResolvedValue({status: 200} as Response)
@@ -264,6 +329,29 @@ describe("GallerySyncService", () => {
       expect.objectContaining({method: "GET"}),
     )
     expect(startDownloadSpy).toHaveBeenCalledWith(HOTSPOT_INFO)
+    // The whole point of the fix: a permission wall must not cost 30 polls per attempt.
+    expect(mockGetCurrentWifiSSID.mock.calls.length).toBeLessThanOrEqual(2)
+  })
+
+  it("still refuses to download when a readable SSID is not the glasses hotspot", async () => {
+    Object.defineProperty(Platform, "OS", {value: "ios", configurable: true, writable: true})
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
+    // Readable, and definitely not the glasses network - the mismatch protection this
+    // fallback must NOT weaken.
+    mockGetCurrentWifiSSID.mockResolvedValue("someone-elses-wifi")
+    jest.spyOn(gallerySyncService as any, "showWifiJoinExplanation").mockResolvedValue(true)
+    jest.spyOn(localNetworkTransport, "connect").mockResolvedValue(undefined)
+    const fetchSpy = jest.spyOn(localNetworkTransport, "fetch").mockResolvedValue({status: 200} as Response)
+    const startDownloadSpy = jest.spyOn(gallerySyncService as any, "startFileDownload").mockResolvedValue(undefined)
+
+    const pending = (gallerySyncService as any).connectToHotspotWifi(HOTSPOT_INFO)
+    // 5 attempts x (30 verify polls x 500ms + a 3s retry delay)
+    await jest.advanceTimersByTimeAsync(120_000)
+    await pending
+
+    expect(startDownloadSpy).not.toHaveBeenCalled()
+    expect(fetchSpy).not.toHaveBeenCalled()
+    expect(useGallerySyncStore.getState().syncState).toBe("error")
   })
 
   it("updates gallery status from glasses events", () => {
