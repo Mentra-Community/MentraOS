@@ -16,14 +16,13 @@ COPY cloud-v2/packages/auth/package.json ./cloud-v2/packages/auth/package.json
 COPY cloud-v2/packages/cli/package.json ./cloud-v2/packages/cli/package.json
 COPY cloud-v2/packages/cloud-client/package.json ./cloud-v2/packages/cloud-client/package.json
 COPY cloud-v2/packages/core/package.json ./cloud-v2/packages/core/package.json
+COPY cloud-v2/packages/protocol/package.json ./cloud-v2/packages/protocol/package.json
 COPY cloud-v2/packages/proxy/package.json ./cloud-v2/packages/proxy/package.json
 COPY cloud-v2/packages/runtime/package.json ./cloud-v2/packages/runtime/package.json
 COPY miniapps/captions/package.json ./miniapps/captions/package.json
 COPY miniapps/codex-kawaii-e2e/package.json ./miniapps/codex-kawaii-e2e/package.json
-COPY miniapps/everything/package.json ./miniapps/everything/package.json
 COPY miniapps/example-miniapp/package.json ./miniapps/example-miniapp/package.json
 COPY miniapps/kawaii/package.json ./miniapps/kawaii/package.json
-COPY miniapps/mentra-ai/package.json ./miniapps/mentra-ai/package.json
 COPY miniapps/merge/package.json ./miniapps/merge/package.json
 COPY miniapps/navigation/package.json ./miniapps/navigation/package.json
 COPY miniapps/recorder/package.json ./miniapps/recorder/package.json

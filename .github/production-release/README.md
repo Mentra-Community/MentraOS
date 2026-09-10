@@ -70,6 +70,21 @@ Required secrets are the existing Porter, App Store Connect, Google Play,
 Android upload-signing, Apple Match, Doppler, Mapbox, and Sentry credentials
 used by the reusable release workflows. Operators do not download them locally.
 
+The coordinated Cloud V2 job also deploys companion Porter apps from the same
+source commit, in the same job, under the same approvals. Today that is the
+Local Merge server (`miniapps/merge`), as `merge-dev`, `merge-staging`, and
+`merge-prod`. The job fails closed, so before the first coordinated release
+that includes a companion app, make sure for each environment that:
+
+- the Porter environment group named in its `miniapps/merge/porter.<env>.yaml`
+  exists on the companion cluster listed in
+  `.github/scripts/coordinated-cloud-v2-records.mjs`; and
+- DNS for its public host resolves to that cluster's ingress, because the job
+  probes `/healthz` on every companion host before it records evidence.
+
+The production Cloud configuration preflight covers Core and Runtime only; the
+companion environment groups are not part of the versioned contract.
+
 Before launch week, verify the Mentra App record in App Store Connect and Play
 Console:
 
@@ -206,10 +221,15 @@ pass/fail results. It never compares or publishes raw values or secret hashes.
 Before approving `production-cloud`, compare the frozen source, target, previous
 revision, migration notes, and rollback coordinates in the workflow summary.
 The deploy records the observed Cloud V2 deployment result, not merely the
-request. GitHub's protected-environment history records the approval; after the
-approved job succeeds, the promotion advances once from
-`production-config-ready` to `cloud-deployed`. Stop if readiness, running
-revision, digest, or migration evidence is missing.
+request. The same approved job then applies each companion Porter app (the
+Local Merge server) from the same frozen source and records its observed image
+digests under `companions` in the Cloud evidence. GitHub's
+protected-environment history records the approval; after the approved job
+succeeds, the promotion advances once from `production-config-ready` to
+`cloud-deployed`. Stop if readiness, running revision, digest, or migration
+evidence is missing. If only a companion app failed, Core and Runtime are
+already running the new revision; fix the companion cause and retry the same
+phase rather than rolling Cloud back.
 
 ## Phase 5 - actual Mobile N against production Cloud N+1
 

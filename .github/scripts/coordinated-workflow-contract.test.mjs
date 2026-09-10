@@ -168,6 +168,26 @@ test("Cloud V2 deploys once per coordinated environment before mobile publicatio
   }
 })
 
+test("companion apps deploy inside the Cloud V2 job from the same source and evidence", () => {
+  const cloud = workflow("reusable-coordinated-cloud-v2.yml")
+  const deploy = cloud.slice(cloud.indexOf("- name: Deploy exact Cloud V2 source through Porter"))
+  const companions = deploy.slice(deploy.indexOf("- name: Deploy companion apps"))
+
+  // Companions apply after Core/Runtime, in the same job, from the resolved target table.
+  assert.match(companions, /\.companions \| to_entries\[\]/)
+  assert.match(companions, /porter apply -w -f "\$config" --cluster "\$cluster" --project "\$project"/)
+  assert.match(companions, /PORTER_TAG: \$\{\{ steps\.source\.outputs\.tag \}\}/)
+  assert.doesNotMatch(companions, /miniapps\/merge/)
+  // Every companion host and probe is checked with the same fail-closed curl, then read back.
+  assert.match(companions, /companions\/\$name\.checks\.ndjson/)
+  assert.match(companions, /companions\/\$name\.pods\.json/)
+  assert.match(companions, /--companions-dir companions/)
+  // No unguarded branch-push deploys remain for the Merge server.
+  for (const retired of ["merge-dev.yml", "merge-prod.yml"]) {
+    assert.equal(existsSync(new URL(`../workflows/${retired}`, import.meta.url)), false)
+  }
+})
+
 test("mobile destinations use real TestFlight groups without changing the release channel", () => {
   const coordinator = workflow("coordinated-release.yml")
   const mobile = workflow("reusable-coordinated-mobile.yml")
@@ -441,7 +461,10 @@ test("iOS publishes the signed artifact before submitting those same bytes to Ap
   assert.match(publish, /timeout-minutes: 5/)
   assert.match(publish, /needs\.ios\.outputs\.upload_artifact/)
   assert.match(publish, /publish-immutable-release-asset\.mjs/)
-  assert.match(publish, /inputs\.dry_run != true && inputs\.compatibility_lab != true && needs\.prepare\.outputs\.ios_asset_exists != 'true'/)
+  assert.match(
+    publish,
+    /inputs\.dry_run != true && inputs\.compatibility_lab != true && needs\.prepare\.outputs\.ios_asset_exists != 'true'/,
+  )
   assert.match(upload, /needs: \[prepare, ios, ios-publish\]/)
   assert.match(upload, /needs\.ios\.outputs\.upload_artifact/)
   assert.match(upload, /app-store-connect-build\.mjs upload/)
@@ -449,7 +472,7 @@ test("iOS publishes the signed artifact before submitting those same bytes to Ap
   assert.match(store, /needs\.ios-upload\.outputs\.upload_status/)
 })
 
-test("iOS status reports the failed phase instead of downstream skips", t => {
+test("iOS status reports the failed phase instead of downstream skips", (t) => {
   const dir = mkdtempSync(path.join(tmpdir(), "ios-status-"))
   t.after(() => rmSync(dir, {recursive: true, force: true}))
   const status = jobBlock(workflow("reusable-coordinated-mobile.yml"), "status")
@@ -462,11 +485,21 @@ test("iOS status reports the failed phase instead of downstream skips", t => {
     ["success", "success", "success", "failure", "failure"],
   ]) {
     const output = path.join(dir, `${build}-${publish}-${upload}-${store}`)
-    const result = spawnSync("bash", ["-eu", "-c", script], {encoding: "utf8", env: {
-      ...process.env, GITHUB_OUTPUT: output, ANDROID_RESULT: "success", IOS_BUILD_RESULT: build,
-      IOS_PUBLISH_RESULT: publish, IOS_UPLOAD_RESULT: upload, IOS_STORE_RESULT: store,
-      APK_NAME: "app.apk", IPA_NAME: "app.ipa", ASSET_BASE_URL: "https://example.com",
-    }})
+    const result = spawnSync("bash", ["-eu", "-c", script], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        GITHUB_OUTPUT: output,
+        ANDROID_RESULT: "success",
+        IOS_BUILD_RESULT: build,
+        IOS_PUBLISH_RESULT: publish,
+        IOS_UPLOAD_RESULT: upload,
+        IOS_STORE_RESULT: store,
+        APK_NAME: "app.apk",
+        IPA_NAME: "app.ipa",
+        ASSET_BASE_URL: "https://example.com",
+      },
+    })
     assert.equal(result.status, 0, result.stderr)
     assert.match(readFileSync(output, "utf8"), new RegExp(`^ios_result=${expected}$`, "m"))
   }

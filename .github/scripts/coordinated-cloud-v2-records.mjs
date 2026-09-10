@@ -6,6 +6,41 @@ import {fileURLToPath} from "node:url"
 
 const COMMIT_PATTERN = /^[0-9a-f]{40}$/
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/
+const CORE_RUNTIME_PROBES = Object.freeze(["healthz", "ready"])
+
+// Companion Porter apps ship in the same coordinated Cloud V2 job as Core and
+// Runtime: same source commit, same image tag, same protected approval in
+// production, and their observed digests land in the same deployment record.
+// They are separate Porter apps because each builds its own image from its own
+// Dockerfile and reads its own environment group. The Local Merge server
+// (miniapps/merge) is the first one; it only serves /healthz, so its probe list
+// is narrower than the Core/Runtime readiness contract.
+const MERGE_COMPANION = Object.freeze({
+  dev: Object.freeze({
+    porterApp: "merge-dev",
+    porterConfig: "miniapps/merge/porter.dev.yaml",
+    porterCluster: "5783",
+    porterProject: "15081",
+    probes: Object.freeze(["healthz"]),
+    services: Object.freeze({backend: Object.freeze(["merge3.dev.mentraglass.com"])}),
+  }),
+  staging: Object.freeze({
+    porterApp: "merge-staging",
+    porterConfig: "miniapps/merge/porter.staging.yaml",
+    porterCluster: "5783",
+    porterProject: "15081",
+    probes: Object.freeze(["healthz"]),
+    services: Object.freeze({backend: Object.freeze(["merge3.staging.mentraglass.com"])}),
+  }),
+  prod: Object.freeze({
+    porterApp: "merge-prod",
+    porterConfig: "miniapps/merge/porter.prod.yaml",
+    porterCluster: "5783",
+    porterProject: "15081",
+    probes: Object.freeze(["healthz"]),
+    services: Object.freeze({backend: Object.freeze(["merge3.mentraglass.com"])}),
+  }),
+})
 
 export const CLOUD_V2_TARGETS = Object.freeze({
   dev: Object.freeze({
@@ -20,6 +55,7 @@ export const CLOUD_V2_TARGETS = Object.freeze({
       core: Object.freeze(["core.dev.us-west-2.mentraglass.com"]),
       runtime: Object.freeze(["runtime.dev.us-west-2.mentraglass.com"]),
     }),
+    companions: Object.freeze({merge: MERGE_COMPANION.dev}),
   }),
   staging: Object.freeze({
     channel: "beta",
@@ -33,6 +69,7 @@ export const CLOUD_V2_TARGETS = Object.freeze({
       core: Object.freeze(["core.staging.us-west-2.mentraglass.com"]),
       runtime: Object.freeze(["runtime.staging.us-west-2.mentraglass.com"]),
     }),
+    companions: Object.freeze({merge: MERGE_COMPANION.staging}),
   }),
   prod: Object.freeze({
     channel: "production",
@@ -46,6 +83,7 @@ export const CLOUD_V2_TARGETS = Object.freeze({
       core: Object.freeze(["core.us-west-2.mentraglass.com", "core.mentraglass.com"]),
       runtime: Object.freeze(["runtime.us-west-2.mentraglass.com", "runtime.mentraglass.com"]),
     }),
+    companions: Object.freeze({merge: MERGE_COMPANION.prod}),
   }),
 })
 
@@ -71,13 +109,34 @@ function requireIsoUtc(value, label) {
 }
 
 function expectedChecks(target) {
+  const probes = target.probes || CORE_RUNTIME_PROBES
   return Object.entries(target.services)
     .flatMap(([service, definition]) =>
       (Array.isArray(definition) ? definition : definition.hosts).flatMap((host) =>
-        ["healthz", "ready"].map((probe) => ({service, url: `https://${host}/${probe}`})),
+        probes.map((probe) => ({service, url: `https://${host}/${probe}`})),
       ),
     )
     .sort((left, right) => left.url.localeCompare(right.url))
+}
+
+function resolvedServices(services) {
+  return Object.fromEntries(Object.entries(services).map(([service, hosts]) => [service, {hosts: [...hosts]}]))
+}
+
+function resolvedCompanions(companions) {
+  return Object.fromEntries(
+    Object.entries(companions || {}).map(([name, companion]) => [
+      name,
+      {
+        porterApp: companion.porterApp,
+        porterConfig: companion.porterConfig,
+        porterCluster: companion.porterCluster,
+        porterProject: companion.porterProject,
+        probes: [...companion.probes],
+        services: resolvedServices(companion.services),
+      },
+    ]),
+  )
 }
 
 export function resolveCloudV2Target({plan, environment, sourceCommit}) {
@@ -103,9 +162,8 @@ export function resolveCloudV2Target({plan, environment, sourceCommit}) {
     porterProject: target.porterProject,
     porterDeploymentTargetId: target.porterDeploymentTargetId,
     porterTarget: target.porterTarget,
-    services: Object.fromEntries(
-      Object.entries(target.services).map(([service, hosts]) => [service, {hosts: [...hosts]}]),
-    ),
+    services: resolvedServices(target.services),
+    companions: resolvedCompanions(target.companions),
   }
 }
 
@@ -128,13 +186,13 @@ function observedPodRevision(pod) {
   return undefined
 }
 
-function observeServices(pods) {
+function observeServices(pods, serviceNames) {
   if (!Array.isArray(pods?.items)) throw new Error("Observed Kubernetes pods must be a PodList")
   const active = pods.items.filter(
     (pod) => !pod.metadata?.deletionTimestamp && !["Failed", "Succeeded"].includes(pod.status?.phase),
   )
   const observed = []
-  for (const service of ["core", "runtime"]) {
+  for (const service of serviceNames) {
     const servicePods = active.filter((pod) => pod.metadata?.labels?.["porter.run/service-name"] === service)
     if (servicePods.length === 0) throw new Error(`No active ${service} pods were observed`)
     const digests = new Set()
@@ -219,6 +277,20 @@ function validateChecks(target, checks) {
     .sort((left, right) => left.url.localeCompare(right.url))
 }
 
+function observeDeployment({label, target, pods, checks, requestedTag}) {
+  const observedServices = observeServices(pods, Object.keys(target.services))
+  for (const observed of observedServices) {
+    if (!observed.images.some((image) => image.endsWith(`:${requestedTag}`))) {
+      throw new Error(`Observed ${label}${observed.service} image does not use requested source tag ${requestedTag}`)
+    }
+  }
+  return {
+    deploymentId: deploymentId(observedServices),
+    observedServices,
+    checks: validateChecks(target, checks),
+  }
+}
+
 export function createCloudV2DeploymentRecord({
   plan,
   environment,
@@ -227,6 +299,7 @@ export function createCloudV2DeploymentRecord({
   status,
   pods,
   checks,
+  companions,
   completedAt,
   provenanceUrl,
 }) {
@@ -255,21 +328,105 @@ export function createCloudV2DeploymentRecord({
       target: target.porterTarget,
       requestedTag,
     },
+    companions: Object.fromEntries(
+      Object.entries(target.companions).map(([name, companion]) => [
+        name,
+        {
+          porter: {
+            app: companion.porterApp,
+            config: companion.porterConfig,
+            cluster: companion.porterCluster,
+            project: companion.porterProject,
+            requestedTag,
+          },
+        },
+      ]),
+    ),
     completedAt: requireIsoUtc(completedAt, "completedAt"),
     provenanceUrl: requirePublicHttps(provenanceUrl, "provenanceUrl"),
   }
   if (status === "deployed") {
-    const observedServices = observeServices(pods)
-    for (const observed of observedServices) {
-      if (!observed.images.some((image) => image.endsWith(`:${requestedTag}`))) {
-        throw new Error(`Observed ${observed.service} image does not use requested source tag ${requestedTag}`)
+    Object.assign(record, observeDeployment({label: "", target, pods, checks, requestedTag}))
+    for (const [name, companion] of Object.entries(target.companions)) {
+      const observation = companions?.[name]
+      if (!observation?.pods || !observation?.checks) {
+        throw new Error(`Companion app ${name} has no observed pods and public checks`)
       }
+      Object.assign(
+        record.companions[name],
+        observeDeployment({
+          label: `companion ${name} `,
+          target: companion,
+          pods: observation.pods,
+          checks: observation.checks,
+          requestedTag,
+        }),
+      )
     }
-    record.deploymentId = deploymentId(observedServices)
-    record.observedServices = observedServices
-    record.checks = validateChecks(target, checks)
   }
   return record
+}
+
+function validateObservedServices({label, target, record, requestedTag}) {
+  const expected = Object.keys(target.services)
+  if (!Array.isArray(record.observedServices) || record.observedServices.length !== expected.length) {
+    throw new Error(`${label} deployment record must observe ${expected.join(" and ")}`)
+  }
+  const services = new Set()
+  for (const observed of record.observedServices) {
+    if (!expected.includes(observed.service) || services.has(observed.service)) {
+      throw new Error(`${label} deployment record contains invalid observed services`)
+    }
+    services.add(observed.service)
+    if (!DIGEST_PATTERN.test(observed.digest || "")) {
+      throw new Error(`${label} ${observed.service} is missing an immutable image digest`)
+    }
+    if (!Array.isArray(observed.images) || !observed.images.some((image) => image.endsWith(`:${requestedTag}`))) {
+      throw new Error(`${label} ${observed.service} does not identify the requested source tag`)
+    }
+  }
+  validateChecks(target, record.checks)
+}
+
+function validateCompanionRecords({target, record, requestedTag}) {
+  const expectedNames = Object.keys(target.companions)
+  const recordedNames = Object.keys(record.companions || {})
+  if (
+    !record.companions ||
+    recordedNames.length !== expectedNames.length ||
+    expectedNames.some((name) => !recordedNames.includes(name))
+  ) {
+    throw new Error(`Cloud V2 deployment record must describe companion apps ${expectedNames.join(", ")}`)
+  }
+  for (const name of expectedNames) {
+    const companion = target.companions[name]
+    const recorded = record.companions[name]
+    if (
+      recorded.porter?.app !== companion.porterApp ||
+      recorded.porter?.config !== companion.porterConfig ||
+      recorded.porter?.cluster !== companion.porterCluster ||
+      recorded.porter?.project !== companion.porterProject ||
+      recorded.porter?.requestedTag !== requestedTag
+    ) {
+      throw new Error(`Companion app ${name} record does not match the release plan and target`)
+    }
+    if (record.status === "validated") {
+      if (
+        recorded.deploymentId !== undefined ||
+        recorded.observedServices !== undefined ||
+        recorded.checks !== undefined
+      ) {
+        throw new Error(`Validation-only companion app ${name} evidence must not claim a deployed environment`)
+      }
+      // Whether validation-only evidence is acceptable at all is the caller's
+      // decision; a validated record never carries companion observations.
+      continue
+    }
+    if (typeof recorded.deploymentId !== "string" || recorded.deploymentId.length === 0) {
+      throw new Error(`Companion app ${name} record is missing its observed deployment identity`)
+    }
+    validateObservedServices({label: `Companion app ${name}`, target: companion, record: recorded, requestedTag})
+  }
 }
 
 export function validateCloudV2DeploymentRecord({plan, record, allowValidated = false}) {
@@ -298,32 +455,15 @@ export function validateCloudV2DeploymentRecord({plan, record, allowValidated = 
     if (record.deploymentId !== undefined || record.observedServices !== undefined || record.checks !== undefined) {
       throw new Error("Validation-only Cloud V2 evidence must not claim a deployed or ready environment")
     }
+    validateCompanionRecords({target, record, requestedTag: record.porter.requestedTag})
     if (allowValidated) return record
   }
   if (record.status !== "deployed") throw new Error("Cloud V2 deployment record is not a completed deployment")
   if (typeof record.deploymentId !== "string" || record.deploymentId.length === 0) {
     throw new Error("Cloud V2 deployment record is missing its observed deployment identity")
   }
-  if (!Array.isArray(record.observedServices) || record.observedServices.length !== 2) {
-    throw new Error("Cloud V2 deployment record must observe Core and Runtime")
-  }
-  const services = new Set()
-  for (const observed of record.observedServices) {
-    if (!new Set(["core", "runtime"]).has(observed.service) || services.has(observed.service)) {
-      throw new Error("Cloud V2 deployment record contains invalid observed services")
-    }
-    services.add(observed.service)
-    if (!DIGEST_PATTERN.test(observed.digest || "")) {
-      throw new Error(`Cloud V2 ${observed.service} is missing an immutable image digest`)
-    }
-    if (
-      !Array.isArray(observed.images) ||
-      !observed.images.some((image) => image.endsWith(`:${record.porter.requestedTag}`))
-    ) {
-      throw new Error(`Cloud V2 ${observed.service} does not identify the requested source tag`)
-    }
-  }
-  validateChecks(target, record.checks)
+  validateObservedServices({label: "Cloud V2", target, record, requestedTag: record.porter.requestedTag})
+  validateCompanionRecords({target, record, requestedTag: record.porter.requestedTag})
   return record
 }
 
@@ -340,6 +480,23 @@ function parseArgs(args) {
 
 function readJson(file) {
   return JSON.parse(readFileSync(path.resolve(file), "utf8"))
+}
+
+// The workflow writes `<name>.pods.json` and `<name>.checks.json` per companion
+// app into one directory; a companion without both files fails closed in create.
+function readCompanionObservations(plan, args) {
+  const directory = args["companions-dir"]
+  if (!directory) throw new Error("create --status deployed requires --companions-dir")
+  const target = resolveCloudV2Target({plan, environment: args.environment, sourceCommit: args["source-commit"]})
+  return Object.fromEntries(
+    Object.keys(target.companions).map((name) => [
+      name,
+      {
+        pods: readJson(path.join(directory, `${name}.pods.json`)),
+        checks: readJson(path.join(directory, `${name}.checks.json`)),
+      },
+    ]),
+  )
 }
 
 function writeGithubOutputs(file, target) {
@@ -386,6 +543,7 @@ function main() {
       status,
       pods: status === "deployed" ? readJson(args.pods) : undefined,
       checks: status === "deployed" ? readJson(args.checks) : undefined,
+      companions: status === "deployed" ? readCompanionObservations(plan, args) : undefined,
       completedAt: args["completed-at"],
       provenanceUrl: args["provenance-url"],
     })

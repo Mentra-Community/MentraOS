@@ -103,6 +103,16 @@ jobs:
           [[ -s "$config" ]]
           grep --fixed-strings --line-regexp "version: v2" "$config"
           grep --fixed-strings --line-regexp "name: $PORTER_APP_NAME" "$config"
+          while IFS=$'\t' read -r name app companion_config; do
+            echo "Validating companion app $name ($app) configuration $companion_config"
+            [[ -s "$GITHUB_WORKSPACE/$companion_config" ]]
+            grep --fixed-strings --line-regexp "version: v2" "$GITHUB_WORKSPACE/$companion_config"
+            grep --fixed-strings --line-regexp "name: $app" "$GITHUB_WORKSPACE/$companion_config"
+          done < <(
+            jq -r \
+              '.companions | to_entries[] | [.key, .value.porterApp, .value.porterConfig] | @tsv' \
+              "$GITHUB_WORKSPACE/cloud-v2-target.json"
+          )
 
       - name: Deploy exact Cloud V2 source through Porter
         if: inputs.dry_run != true
@@ -127,32 +137,68 @@ jobs:
             --cluster "$PORTER_CLUSTER" \
             --project "$PORTER_PROJECT"
 
+      # Companion apps (see CLOUD_V2_TARGETS in coordinated-cloud-v2-records.mjs)
+      # deploy from the same checkout and image tag, in this same job, so
+      # production gets them under the same protected approval as Core/Runtime.
+      # Their Porter configs build from the repository root.
+      - name: Deploy companion apps from the exact same source through Porter
+        if: inputs.dry_run != true
+        timeout-minutes: 30
+        env:
+          COMPANION_PORTER_TOKEN: ${{ secrets.PORTER_APP_15081_5783 }}
+          PORTER_HOST: https://dashboard.porter.run
+          PORTER_REPO_NAME: ${{ github.event.repository.name }}
+          PORTER_TAG: ${{ steps.source.outputs.tag }}
+          PORTER_TOKEN: ${{ secrets.PORTER_TOKEN }}
+        run: |
+          set -euo pipefail
+          while IFS=$'\t' read -r name app config cluster project; do
+            echo "Deploying companion app $name ($app) from $config"
+            env -u PORTER_DEPLOYMENT_TARGET_ID \
+              PORTER_APP_NAME="$app" \
+              PORTER_CLUSTER="$cluster" \
+              PORTER_PROJECT="$project" \
+              PORTER_TOKEN="${COMPANION_PORTER_TOKEN:-$PORTER_TOKEN}" \
+              porter apply -w -f "$config" --cluster "$cluster" --project "$project"
+          done < <(
+            jq -r \
+              '.companions | to_entries[] | [.key, .value.porterApp, .value.porterConfig, .value.porterCluster, .value.porterProject] | @tsv' \
+              cloud-v2-target.json
+          )
+
       - name: Require public liveness and readiness
         if: inputs.dry_run != true
         run: |
           set -euo pipefail
+          shopt -s nullglob
+          probe_status() {
+            curl \
+              --fail \
+              --silent \
+              --show-error \
+              --location \
+              --retry 12 \
+              --retry-delay 10 \
+              --retry-all-errors \
+              --output /dev/null \
+              --write-out '%{http_code}' \
+              "$1"
+          }
+          record_check() {
+            jq -nc \
+              --arg service "$1" \
+              --arg url "$2" \
+              --argjson statusCode "$3" \
+              '{service: $service, url: $url, ready: true, statusCode: $statusCode}' \
+              >> "$4"
+          }
           : > cloud-v2-checks.ndjson
           while IFS=$'\t' read -r service host; do
             getent hosts "$host" >/dev/null
             for probe in healthz ready; do
               url="https://$host/$probe"
-              status=$(curl \
-                --fail \
-                --silent \
-                --show-error \
-                --location \
-                --retry 12 \
-                --retry-delay 10 \
-                --retry-all-errors \
-                --output /dev/null \
-                --write-out '%{http_code}' \
-                "$url")
-              jq -nc \
-                --arg service "$service" \
-                --arg url "$url" \
-                --argjson statusCode "$status" \
-                '{service: $service, url: $url, ready: true, statusCode: $statusCode}' \
-                >> cloud-v2-checks.ndjson
+              status=$(probe_status "$url")
+              record_check "$service" "$url" "$status" cloud-v2-checks.ndjson
             done
           done < <(
             jq -r \
@@ -161,20 +207,53 @@ jobs:
           )
           jq -s . cloud-v2-checks.ndjson > cloud-v2-checks.json
 
+          mkdir -p companions
+          while IFS=$'\t' read -r name service host probe; do
+            getent hosts "$host" >/dev/null
+            url="https://$host/$probe"
+            status=$(probe_status "$url")
+            record_check "$service" "$url" "$status" "companions/$name.checks.ndjson"
+          done < <(
+            jq -r \
+              '.companions | to_entries[] | .key as $name | .value.probes as $probes
+                | .value.services | to_entries[] | .key as $service | .value.hosts[] | . as $host
+                | $probes[] | [$name, $service, $host, .] | @tsv' \
+              cloud-v2-target.json
+          )
+          for checks in companions/*.checks.ndjson; do
+            jq -s . "$checks" > "${checks%.ndjson}.json"
+          done
+
       - name: Read back the running deployment
         if: inputs.dry_run != true
         env:
+          COMPANION_PORTER_TOKEN: ${{ secrets.PORTER_APP_15081_5783 }}
           PORTER_APP_NAME: ${{ steps.target.outputs.porter_app }}
           PORTER_CLUSTER: ${{ steps.target.outputs.porter_cluster }}
           PORTER_DEPLOYMENT_TARGET_ID: ${{ steps.target.outputs.porter_deployment_target_id }}
           PORTER_HOST: https://dashboard.porter.run
           PORTER_PROJECT: ${{ steps.target.outputs.porter_project }}
           PORTER_TOKEN: ${{ secrets.PORTER_TOKEN }}
-        run: >-
-          porter kubectl -- get pods
-          -l "porter.run/app-name=$PORTER_APP_NAME"
-          -o json
-          > cloud-v2-pods.json
+        run: |
+          set -euo pipefail
+          porter kubectl -- get pods \
+            -l "porter.run/app-name=$PORTER_APP_NAME" \
+            -o json \
+            > cloud-v2-pods.json
+          mkdir -p companions
+          while IFS=$'\t' read -r name app cluster project; do
+            env -u PORTER_DEPLOYMENT_TARGET_ID \
+              PORTER_APP_NAME="$app" \
+              PORTER_CLUSTER="$cluster" \
+              PORTER_PROJECT="$project" \
+              PORTER_TOKEN="${COMPANION_PORTER_TOKEN:-$PORTER_TOKEN}" \
+              porter kubectl -- get pods -l "porter.run/app-name=$app" -o json \
+              > "companions/$name.pods.json"
+          done < <(
+            jq -r \
+              '.companions | to_entries[] | [.key, .value.porterApp, .value.porterCluster, .value.porterProject] | @tsv' \
+              cloud-v2-target.json
+          )
 
       - name: Record validation-only evidence
         if: inputs.dry_run
@@ -200,6 +279,7 @@ jobs:
           --status deployed
           --pods cloud-v2-pods.json
           --checks cloud-v2-checks.json
+          --companions-dir companions
           --completed-at "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)"
           --provenance-url "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           --output cloud-v2-deployment.json
@@ -230,5 +310,9 @@ jobs:
             if [[ "$(jq -er .status cloud-v2-deployment.json)" == "deployed" ]]; then
               echo "- Deployment: \`$(jq -er .deploymentId cloud-v2-deployment.json)\`"
               jq -r '.observedServices[] | "- \(.service) image: `\(.digest)`"' cloud-v2-deployment.json
+              jq -r \
+                '.companions | to_entries[] | .key as $name | .value.porter.app as $app
+                  | .value.observedServices[] | "- companion \($name) (`\($app)`) \(.service) image: `\(.digest)`"' \
+                cloud-v2-deployment.json
             fi
           } >> "$GITHUB_STEP_SUMMARY"

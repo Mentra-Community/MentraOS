@@ -31,6 +31,8 @@ on:
       - "mobile/modules/miniapp/package.json"
       - "cloud-v2/packages/cloud-client/package.json"
       - "cloud-v2/packages/protocol/package.json"
+      - "miniapps/merge/**"
+      - "bun.lock"
 
 permissions:
   contents: read
