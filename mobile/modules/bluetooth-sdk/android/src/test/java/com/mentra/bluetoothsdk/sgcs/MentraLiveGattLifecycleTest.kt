@@ -12,7 +12,7 @@ class MentraLiveGattLifecycleTest {
         val events = mutableListOf<String>()
         val teardown = barrier.beginTeardown()
 
-        assertTrue(barrier.deferUntilIdle { events.add("connect") })
+        barrier.runWhenIdle { events.add("connect") }
         assertEquals(emptyList<String>(), events)
 
         events.add("disconnect")
@@ -28,7 +28,7 @@ class MentraLiveGattLifecycleTest {
         val first = barrier.beginTeardown()
         val second = barrier.beginTeardown()
 
-        assertTrue(barrier.deferUntilIdle { events.add("connect") })
+        barrier.runWhenIdle { events.add("connect") }
         barrier.completeTeardown(first)
         assertTrue(events.isEmpty())
 
@@ -42,8 +42,8 @@ class MentraLiveGattLifecycleTest {
         val events = mutableListOf<String>()
         val teardown = barrier.beginTeardown()
 
-        assertTrue(barrier.deferUntilIdle { events.add("stale reconnect") })
-        assertTrue(barrier.deferUntilIdle { events.add("current user retry") })
+        barrier.runWhenIdle { events.add("stale reconnect") }
+        barrier.runWhenIdle { events.add("current user retry") }
         barrier.completeTeardown(teardown)
 
         assertEquals(listOf("current user retry"), events)
@@ -55,15 +55,40 @@ class MentraLiveGattLifecycleTest {
         var connections = 0
         val teardown = barrier.beginTeardown()
 
-        barrier.deferUntilIdle { connections++ }
+        barrier.runWhenIdle { connections++ }
         barrier.completeTeardown(teardown)
         barrier.completeTeardown(teardown)
 
         assertEquals(1, connections)
         val connectImmediately: () -> Unit = { connections += 1 }
-        assertFalse(barrier.deferUntilIdle(connectImmediately))
-        connectImmediately()
+        barrier.runWhenIdle(connectImmediately)
         assertEquals(2, connections)
+    }
+
+    @Test
+    fun `admitted connection runs inline before another teardown can begin`() {
+        val barrier = MentraLiveGattTeardownBarrier()
+        val events = mutableListOf<String>()
+        barrier.runWhenIdle { events.add("connect") }
+        barrier.beginTeardown()
+        events.add("teardown")
+        assertEquals(listOf("connect", "teardown"), events)
+    }
+
+    @Test
+    fun `resumed connection can open another teardown without losing newer work`() {
+        val barrier = MentraLiveGattTeardownBarrier()
+        val first = barrier.beginTeardown()
+        var next = 0L
+        val events = mutableListOf<String>()
+        barrier.runWhenIdle {
+            next = barrier.beginTeardown()
+            barrier.runWhenIdle { events.add("next") }
+        }
+        barrier.completeTeardown(first)
+        assertTrue(events.isEmpty())
+        barrier.completeTeardown(next)
+        assertEquals(listOf("next"), events)
     }
 
     @Test

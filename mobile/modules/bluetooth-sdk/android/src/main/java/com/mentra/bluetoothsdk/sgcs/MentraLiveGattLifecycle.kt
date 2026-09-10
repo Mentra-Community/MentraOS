@@ -21,24 +21,16 @@ internal class MentraLiveGattTeardownBarrier {
         return token
     }
 
-    /** Returns true when [work] was deferred behind an active teardown. */
+    /** Admission and execution are one operation; production callers all use the main looper. */
     @Synchronized
-    fun deferUntilIdle(work: () -> Unit): Boolean {
-        if (activeTeardowns.isEmpty()) {
-            return false
-        }
-        waitingConnection = work
-        return true
+    fun runWhenIdle(work: () -> Unit) {
+        if (activeTeardowns.isEmpty()) work() else waitingConnection = work
     }
 
+    @Synchronized
     fun completeTeardown(token: Long) {
-        val ready =
-            synchronized(this) {
-                if (!activeTeardowns.remove(token) || activeTeardowns.isNotEmpty()) {
-                    return
-                }
-                waitingConnection.also { waitingConnection = null }
-            }
+        if (!activeTeardowns.remove(token) || activeTeardowns.isNotEmpty()) return
+        val ready = waitingConnection.also { waitingConnection = null }
         ready?.invoke()
     }
 }

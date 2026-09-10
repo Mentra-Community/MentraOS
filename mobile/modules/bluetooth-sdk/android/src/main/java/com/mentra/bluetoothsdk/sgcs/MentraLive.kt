@@ -568,6 +568,9 @@ class MentraLive : SGCManager() {
     private var bluetoothScanner: BluetoothLeScanner? = null
     @Volatile private var bluetoothGatt: BluetoothGatt? = null
     private val gattLifecycleHandler = Handler(Looper.getMainLooper())
+    // Owned exclusively by the main looper, including callback validation and mutation.
+    private var gattEpoch = 0L
+    private var connectionRequestEpoch = 0L
     @Volatile private var gattTeardownToken: Long? = null
     @Volatile private var gattTeardownTimeoutRunnable: Runnable? = null
     private var connectedDevice: BluetoothDevice? = null
@@ -1242,6 +1245,7 @@ class MentraLive : SGCManager() {
 
     /** Starts BLE scanning for Mentra Live glasses */
     private fun startScan() {
+        if (postGattLifecycle { startScan() }) return
         if (pairingYieldActive) {
             Bridge.log("LIVE: startScan blocked — pairing yield active")
             return
@@ -1306,6 +1310,7 @@ class MentraLive : SGCManager() {
 
             val generation = ++scanGeneration
             isScanning = true
+            scanCallback = createScanCallback(generation)
             bluetoothScanner!!.startScan(filters, settings, scanCallback)
 
             // Set a timeout to stop scanning
@@ -1358,6 +1363,7 @@ class MentraLive : SGCManager() {
 
     /** Stops BLE scanning */
     override fun stopScan() {
+        if (postGattLifecycle { stopScan() }) return
         manualDiscoveryActive = false
         if (bluetoothAdapter == null || bluetoothScanner == null || !isScanning) {
             return
@@ -1433,9 +1439,13 @@ class MentraLive : SGCManager() {
     var seenDevices: MutableSet<String> = HashSet()
 
     /** BLE Scan callback */
-    private val scanCallback: ScanCallback =
+    private var scanCallback: ScanCallback? = null
+
+    private fun createScanCallback(generation: Int): ScanCallback =
             object : ScanCallback() {
                 override fun onScanResult(callbackType: Int, result: ScanResult) {
+                    if (postGattLifecycle { onScanResult(callbackType, result) }) return
+                    if (!isScanning || generation != scanGeneration) return
                     // Check if the object has been destroyed to prevent NPE
                     if (context == null || isKilled) {
                         Bridge.log("LIVE: Ignoring scan result - object destroyed or killed")
@@ -1568,6 +1578,8 @@ class MentraLive : SGCManager() {
                 }
 
                 override fun onScanFailed(errorCode: Int) {
+                    if (postGattLifecycle { onScanFailed(errorCode) }) return
+                    if (generation != scanGeneration || !isScanning) return
                     Log.e(TAG, "BLE scan failed with error: " + errorCode)
                     isScanning = false
                     if (isReconnecting && !isKilled) {
@@ -1597,9 +1609,16 @@ class MentraLive : SGCManager() {
         }
     }
 
+    /** Return true when work was handed to the single process-wide lifecycle queue. */
+    private fun postGattLifecycle(work: () -> Unit): Boolean {
+        if (Looper.myLooper() == gattLifecycleHandler.looper) return false
+        gattLifecycleHandler.post { work() }
+        return true
+    }
+
     /** Safely close GATT, waiting for Android to finish a requested disconnect when possible. */
-    @Synchronized
     private fun closeGattQuietly(disconnect: Boolean) {
+        check(Looper.myLooper() == gattLifecycleHandler.looper)
         val gatt = bluetoothGatt
         if (gatt == null) {
             return
@@ -1617,13 +1636,39 @@ class MentraLive : SGCManager() {
         }
     }
 
-    @Synchronized
     private fun beginGattTeardown(gatt: BluetoothGatt) {
+        check(Looper.myLooper() == gattLifecycleHandler.looper)
         if (gatt !== bluetoothGatt || gattTeardownToken != null) {
             return
         }
         val token = gattTeardownBarrier.beginTeardown()
         gattTeardownToken = token
+        // Teardown owns session invalidation, including the timeout/replacement paths that do
+        // not receive the normal remote-disconnect cleanup callback.
+        cancelMtuWatchdog()
+        isConnected = false
+        isConnecting = false
+        connectedDevice = null
+        glassesReady = false
+        glassesSessionId = null
+        readinessCompletedThisBleSession = false
+        glassesReadyReceived = false
+        ctkdInitiatedThisGattSession = false
+        audioConnected = false
+        notificationsEnabled = false
+        currentMtu = 23
+        pendingDescriptorWrites.clear()
+        isDescriptorWriteInProgress = false
+        txCharacteristic = null
+        rxCharacteristic = null
+        lc3ReadCharacteristic = null
+        lc3WriteCharacteristic = null
+        handler.removeCallbacks(processSendQueueRunnable!!)
+        stopReadinessCheckLoop()
+        stopHeartbeat()
+        stopSignalStrengthPolling()
+        stopMicBeat()
+        updateConnectionState(ConnTypes.DISCONNECTED)
         val timeout =
                 Runnable {
                     Bridge.log(
@@ -1642,8 +1687,8 @@ class MentraLive : SGCManager() {
         }
     }
 
-    @Synchronized
     private fun completeGattTeardown(gatt: BluetoothGatt, token: Long, reason: String) {
+        check(Looper.myLooper() == gattLifecycleHandler.looper)
         if (gattTeardownToken != token) {
             return
         }
@@ -1722,28 +1767,32 @@ class MentraLive : SGCManager() {
 
     /** Connect to a specific BLE device */
     private fun connectToDevice(device: BluetoothDevice?) {
+        if (postGattLifecycle { connectToDevice(device) }) return
         if (device == null) {
             return
         }
-        if (pairingYieldActive) {
+        if (isKilled || pairingYieldActive) {
             Bridge.log("LIVE: connectToDevice blocked — pairing yield active")
             isConnecting = false
             isReconnecting = false
             return
         }
-        if (
-                gattTeardownBarrier.deferUntilIdle {
-                    handler.post {
-                        if (!isKilled && !pairingYieldActive) {
-                            Bridge.log("LIVE: 🔌 Prior GATT teardown complete; resuming connection")
-                            connectToDevice(device)
-                        }
-                    }
-                }
-        ) {
-            Bridge.log("LIVE: 🔌 Deferring connection until prior GATT teardown completes")
-            return
+        val requestEpoch = ++connectionRequestEpoch
+        // Never replace a still-open GATT. Its disconnect/close must finish first.
+        bluetoothGatt?.let { beginGattTeardown(it) }
+        gattTeardownBarrier.runWhenIdle {
+            if (requestEpoch == connectionRequestEpoch && !isKilled && !pairingYieldActive) {
+                connectToDeviceWhenIdle(device)
+            }
         }
+    }
+
+    private fun connectToDeviceWhenIdle(device: BluetoothDevice) {
+        check(Looper.myLooper() == gattLifecycleHandler.looper)
+        check(bluetoothGatt == null)
+        val epoch = ++gattEpoch
+        currentMtu = 23
+        val gattCallback = createGattCallback(epoch)
 
         beginPairingTiming(
                 "connectToDevice addr=${device.address} name=${safeDeviceName(device)} attempt=$reconnectAttempts"
@@ -1756,7 +1805,7 @@ class MentraLive : SGCManager() {
 
         // Set connection timeout
         connectionTimeoutRunnable = Runnable {
-            if (isConnecting && !isConnected) {
+            if (epoch == gattEpoch && isConnecting && !isConnected) {
                 Log.w(
                         TAG,
                         "🔌 ⏰ CONNECTION TIMEOUT after " +
@@ -1848,6 +1897,8 @@ class MentraLive : SGCManager() {
     // }
 
     private fun enterPairingYield(windowMs: Long) {
+        if (postGattLifecycle { enterPairingYield(windowMs) }) return
+        connectionRequestEpoch++
         pairingYieldActive = true
         pairingYieldAwaitingReclaim = false
         isReconnecting = false
@@ -1928,6 +1979,7 @@ class MentraLive : SGCManager() {
 
     /** Handle reconnection with exponential backoff */
     private fun handleReconnection() {
+        if (postGattLifecycle { handleReconnection() }) return
         // Don't attempt reconnection if we've been killed/forgotten
         if (isKilled) {
             Bridge.log("LIVE: 🔌 RECONNECT ABORTED - device has been killed/forgotten")
@@ -2166,9 +2218,13 @@ class MentraLive : SGCManager() {
     }
 
     /** GATT callback for BLE operations */
-    private val gattCallback: BluetoothGattCallback =
-            object : BluetoothGattCallback() {
-                override fun onConnectionStateChange(
+    private fun createGattCallback(epoch: Long): BluetoothGattCallback =
+            object : SerializedGattCallback({ work ->
+                // Always enqueue, even for an inline platform callback during connectGatt().
+                // This lets connectGatt return and install the identity before validation.
+                gattLifecycleHandler.post { work() }
+            }, { gatt -> epoch == gattEpoch && isCurrentGattCallback(gatt) }) {
+                override fun handleConnectionStateChange(
                         gatt: BluetoothGatt,
                         status: Int,
                         newState: Int
@@ -2388,7 +2444,7 @@ class MentraLive : SGCManager() {
                     }
                 }
 
-                override fun onPhyUpdate(
+                override fun handlePhyUpdate(
                         gatt: BluetoothGatt,
                         txPhy: Int,
                         rxPhy: Int,
@@ -2404,7 +2460,7 @@ class MentraLive : SGCManager() {
                     )
                 }
 
-                override fun onPhyRead(
+                override fun handlePhyRead(
                         gatt: BluetoothGatt,
                         txPhy: Int,
                         rxPhy: Int,
@@ -2420,7 +2476,7 @@ class MentraLive : SGCManager() {
                     )
                 }
 
-                override fun onServicesDiscovered(gatt: BluetoothGatt, status: Int) {
+                override fun handleServicesDiscovered(gatt: BluetoothGatt, status: Int) {
                     if (!isActiveGattCallback(gatt)) {
                         return
                     }
@@ -2542,7 +2598,7 @@ class MentraLive : SGCManager() {
                     }
                 }
 
-                override fun onCharacteristicRead(
+                override fun handleCharacteristicRead(
                         gatt: BluetoothGatt,
                         characteristic: BluetoothGattCharacteristic,
                         status: Int
@@ -2558,7 +2614,7 @@ class MentraLive : SGCManager() {
                     }
                 }
 
-                override fun onReadRemoteRssi(gatt: BluetoothGatt, rssi: Int, status: Int) {
+                override fun handleReadRemoteRssi(gatt: BluetoothGatt, rssi: Int, status: Int) {
                     if (!isActiveGattCallback(gatt)) {
                         return
                     }
@@ -2572,7 +2628,7 @@ class MentraLive : SGCManager() {
                     }
                 }
 
-                override fun onCharacteristicWrite(
+                override fun handleCharacteristicWrite(
                         gatt: BluetoothGatt,
                         characteristic: BluetoothGattCharacteristic,
                         status: Int
@@ -2641,9 +2697,10 @@ class MentraLive : SGCManager() {
                     }
                 }
 
-                override fun onCharacteristicChanged(
+                override fun handleCharacteristicChanged(
                         gatt: BluetoothGatt,
-                        characteristic: BluetoothGattCharacteristic
+                        characteristic: BluetoothGattCharacteristic,
+                        data: ByteArray
                 ) {
                     if (!isActiveGattCallback(gatt)) {
                         return
@@ -2653,8 +2710,7 @@ class MentraLive : SGCManager() {
                     val threadId = Thread.currentThread().id
                     val uuid = characteristic.uuid
 
-                    val data = characteristic.value
-                    if (data == null || data.isEmpty()) {
+                    if (data.isEmpty()) {
                         return
                     }
 
@@ -2698,7 +2754,7 @@ class MentraLive : SGCManager() {
                     processReceivedData(data, data.size)
                 }
 
-                override fun onDescriptorWrite(
+                override fun handleDescriptorWrite(
                         gatt: BluetoothGatt,
                         descriptor: BluetoothGattDescriptor,
                         status: Int
@@ -2733,7 +2789,7 @@ class MentraLive : SGCManager() {
                     writeNextDescriptor()
                 }
 
-                override fun onMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
+                override fun handleMtuChanged(gatt: BluetoothGatt, mtu: Int, status: Int) {
                     handler.post {
                         if (!isActiveGattCallback(gatt)) {
                             return@post
@@ -2825,6 +2881,12 @@ class MentraLive : SGCManager() {
      * subsequent writes to silently fail.
      */
     private fun writeNextDescriptor() {
+        val gatt = bluetoothGatt ?: return
+        if (!isActiveGattCallback(gatt)) return
+        val epoch = gattEpoch
+        val continueSetup = Runnable {
+            if (epoch == gattEpoch && isActiveGattCallback(gatt)) writeNextDescriptor()
+        }
         val next = pendingDescriptorWrites.poll()
         if (next == null) {
             isDescriptorWriteInProgress = false
@@ -2868,12 +2930,12 @@ class MentraLive : SGCManager() {
                                 uuid +
                                 ", continuing queue"
                 )
-                handler.postDelayed(this::writeNextDescriptor, 50L)
+                handler.postDelayed(continueSetup, 50L)
             }
         } catch (e: Exception) {
             val threadId = Thread.currentThread().id
             Log.e(TAG, "Thread-" + threadId + ": ⚠️ Error writing descriptor: " + e.message)
-            handler.postDelayed(this::writeNextDescriptor, 50L)
+            handler.postDelayed(continueSetup, 50L)
         }
     }
 
@@ -6103,6 +6165,8 @@ class MentraLive : SGCManager() {
     // SmartGlassesCommunicator interface implementation
 
     override fun findCompatibleDevices() {
+        if (postGattLifecycle { findCompatibleDevices() }) return
+        connectionRequestEpoch++
         Bridge.log("LIVE: Finding compatible Mentra Live glasses")
 
         // A fresh user scan owns the radio. Invalidate delayed reconnect callbacks
@@ -6167,6 +6231,7 @@ class MentraLive : SGCManager() {
     }
 
     override fun connectById(id: String) {
+        if (postGattLifecycle { connectById(id) }) return
         if (pairingYieldActive) {
             Bridge.log("LIVE: connectById blocked — pairing yield active")
             return
@@ -6196,6 +6261,7 @@ class MentraLive : SGCManager() {
     }
 
     override fun forget() {
+        if (postGattLifecycle { forget() }) return
         Bridge.log("LIVE: Forgetting Mentra Live glasses")
 
         // Clear saved device name so a leftover name can't bypass the pairing-mode
@@ -6240,6 +6306,7 @@ class MentraLive : SGCManager() {
     }
 
     override fun disconnect() {
+        if (postGattLifecycle { disconnect() }) return
         if (unpairFlushPending) {
             Bridge.log("LIVE: disconnect deferred — waiting for unpair write")
             return
@@ -6281,6 +6348,7 @@ class MentraLive : SGCManager() {
     }
 
     fun connectToSmartGlasses() {
+        if (postGattLifecycle { connectToSmartGlasses() }) return
         if (pairingYieldActive) {
             Bridge.log("LIVE: connectToSmartGlasses blocked — pairing yield active")
             return
@@ -7412,6 +7480,8 @@ class MentraLive : SGCManager() {
     }
 
     fun destroy() {
+        if (postGattLifecycle { destroy() }) return
+        connectionRequestEpoch++
         Bridge.log("LIVE: Destroying MentraLiveSGC")
 
         // Mark as killed to prevent reconnection attempts
