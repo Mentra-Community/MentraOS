@@ -87,6 +87,13 @@ export interface InsightResponse {
   profiling?: InsightProfiling
 }
 
+export interface InsightsServiceOptions {
+  apiKey?: string
+  fetch?: typeof fetch
+  primaryModel?: string
+  fallbackModels?: string[]
+}
+
 export class InsightServiceError extends Error {
   constructor(
     message: string,
@@ -97,8 +104,19 @@ export class InsightServiceError extends Error {
   }
 }
 
-class InsightsService {
-  readonly model = process.env.GEMINI_MODEL ?? process.env.LLM_MODEL ?? "gemini-3.5-flash"
+export class InsightsService {
+  readonly model: string
+
+  private readonly configuredApiKey?: string
+  private readonly fetcher: typeof fetch
+  private readonly fallbackModels: string[]
+
+  constructor(options: InsightsServiceOptions = {}) {
+    this.model = options.primaryModel ?? process.env.GEMINI_MODEL ?? process.env.LLM_MODEL ?? "gemini-3.5-flash"
+    this.configuredApiKey = options.apiKey
+    this.fetcher = options.fetch ?? fetch
+    this.fallbackModels = options.fallbackModels ?? configuredFallbackModels(process.env.GEMINI_FALLBACK_MODELS)
+  }
 
   private get allowMock(): boolean {
     return process.env.MERGE_ALLOW_MOCK_INSIGHTS === "true"
@@ -110,6 +128,7 @@ class InsightsService {
 
   private get apiKey(): string | undefined {
     return (
+      this.configuredApiKey ??
       process.env.GEMINI_API_KEY ??
       process.env.GOOGLE_GENERATIVE_AI_API_KEY ??
       process.env.GOOGLE_API_KEY ??
@@ -154,49 +173,34 @@ class InsightsService {
     }
 
     const geminiStartedAt = nowMs()
-    const response = await fetch(
-      `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(this.model)}:generateContent`,
-      {
-        method: "POST",
-        headers: {
-          "x-goog-api-key": apiKey,
-          "Content-Type": "application/json",
-        },
-        body: JSON.stringify({
-          systemInstruction: {
-            parts: [
-              {
-                text: mergeInstructions(body.frequency ?? "medium", body.settings?.answerLanguage, isExpansion),
-              },
-            ],
+    const requestBody = {
+      systemInstruction: {
+        parts: [
+          {
+            text: mergeInstructions(body.frequency ?? "medium", body.settings?.answerLanguage, isExpansion),
           },
-          contents: [
-            {
-              role: "user",
-              parts: [{text: buildPrompt(body)}],
-            },
-          ],
-          generationConfig: {
-            maxOutputTokens: isExpansion ? 768 : 512,
-            temperature: 0.3,
-            responseMimeType: "application/json",
-            thinkingConfig: {
-              thinkingBudget: 0,
-            },
-          },
-          ...(this.webSearchEnabled ? {tools: [{google_search: {}}]} : {}),
-        }),
+        ],
       },
-    )
+      contents: [
+        {
+          role: "user",
+          parts: [{text: buildPrompt(body)}],
+        },
+      ],
+      generationConfig: {
+        maxOutputTokens: isExpansion ? 768 : 512,
+        temperature: 0.3,
+        responseMimeType: "application/json",
+        thinkingConfig: {
+          thinkingBudget: 0,
+        },
+      },
+      ...(this.webSearchEnabled ? {tools: [{google_search: {}}]} : {}),
+    }
+    const {data, model} = await this.generateContent(apiKey, requestBody)
     const geminiMs = elapsedMs(geminiStartedAt)
 
-    if (!response.ok) {
-      const errorText = await response.text().catch(() => "")
-      throw new InsightServiceError(`Gemini ${response.status}: ${errorText.slice(0, 240)}`, 500)
-    }
-
     const parseStartedAt = nowMs()
-    const data = (await response.json()) as Record<string, unknown>
     const output = extractOutputText(data)
     const parsed = parseInsightOutput(output)
     const grounding = extractGrounding(data)
@@ -207,7 +211,7 @@ class InsightsService {
       startedAt,
       geminiMs,
       parseMs,
-      model: this.model,
+      model,
       webSearchEnabled: this.webSearchEnabled,
       grounded: grounding.sources.length > 0,
       sourceCount: grounding.sources.length,
@@ -227,6 +231,59 @@ class InsightsService {
       parsed.displayAction = isExpansion ? "replace" : (parsed.displayAction ?? "show")
     }
     return parsed
+  }
+
+  private async generateContent(
+    apiKey: string,
+    requestBody: Record<string, unknown>,
+  ): Promise<{data: Record<string, unknown>; model: string}> {
+    const models = uniqueModels(this.model, this.fallbackModels)
+    let lastFailure = "Gemini request failed"
+
+    for (const [index, model] of models.entries()) {
+      let response: Response
+      try {
+        response = await this.fetcher(
+          `https://generativelanguage.googleapis.com/v1beta/models/${encodeURIComponent(model)}:generateContent`,
+          {
+            method: "POST",
+            headers: {
+              "x-goog-api-key": apiKey,
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify(requestBody),
+          },
+        )
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "network error"
+        lastFailure = `Gemini network error: ${message}`
+        console.warn("[LocalMerge] Gemini request failed", {model, error: message})
+        continue
+      }
+
+      if (!response.ok) {
+        const errorText = await response.text().catch(() => "")
+        lastFailure = `Gemini ${response.status}: ${errorText.slice(0, 240)}`
+        const hasFallback = index < models.length - 1
+        console.warn("[LocalMerge] Gemini model request rejected", {
+          model,
+          status: response.status,
+          willFallback: hasFallback && shouldTryFallback(response.status),
+        })
+        if (hasFallback && shouldTryFallback(response.status)) continue
+        throw new InsightServiceError(lastFailure, 503)
+      }
+
+      try {
+        return {data: (await response.json()) as Record<string, unknown>, model}
+      } catch (error) {
+        const message = error instanceof Error ? error.message : "invalid JSON"
+        lastFailure = `Gemini returned an invalid response: ${message}`
+        console.warn("[LocalMerge] Gemini response parsing failed", {model, error: message})
+      }
+    }
+
+    throw new InsightServiceError(lastFailure, 503)
   }
 }
 
@@ -294,7 +351,7 @@ export function buildPrompt(body: InsightRequest): string {
   const utterance = (body.analysis?.chunkText ?? body.utterance?.text ?? "").trim()
   const fullUtterance = (body.utterance?.fullText ?? body.utterance?.text ?? utterance).trim()
   const language = body.utterance?.language ?? "auto"
-  const isFinal = body.analysis?.isFinal ?? body.utterance?.isFinal ?? (body.analysis?.trigger === "final")
+  const isFinal = body.analysis?.isFinal ?? body.utterance?.isFinal ?? body.analysis?.trigger === "final"
   const isInterim = body.analysis?.isInterim ?? !isFinal
 
   return JSON.stringify(
@@ -390,7 +447,8 @@ function extractGrounding(data: Record<string, unknown>): {sources: InsightSourc
     const uri = typeof web?.uri === "string" ? web.uri : ""
     if (!uri || seen.has(uri)) continue
     seen.add(uri)
-    const title = typeof web?.title === "string" && web.title.trim() ? web.title.trim() : domainFromUrl(uri) ?? "Source"
+    const title =
+      typeof web?.title === "string" && web.title.trim() ? web.title.trim() : (domainFromUrl(uri) ?? "Source")
     sources.push({
       title,
       uri,
@@ -421,11 +479,30 @@ function parseInsightOutput(output: string): InsightResponse {
 }
 
 function stripCodeFence(value: string): string {
-  return value.replace(/^```(?:json)?\s*/i, "").replace(/\s*```$/i, "").trim()
+  return value
+    .replace(/^```(?:json)?\s*/i, "")
+    .replace(/\s*```$/i, "")
+    .trim()
 }
 
 function canDefer(body: InsightRequest): boolean {
   return body.analysis?.canDefer === true || body.analysis?.isInterim === true || body.utterance?.isFinal === false
+}
+
+function configuredFallbackModels(value: string | undefined): string[] {
+  if (value === undefined) return ["gemini-2.5-flash"]
+  return value
+    .split(",")
+    .map((model) => model.trim())
+    .filter(Boolean)
+}
+
+function uniqueModels(primaryModel: string, fallbackModels: string[]): string[] {
+  return [...new Set([primaryModel, ...fallbackModels])]
+}
+
+function shouldTryFallback(status: number): boolean {
+  return status === 400 || status === 404 || status === 408 || status === 409 || status === 429 || status >= 500
 }
 
 function nowMs(): number {

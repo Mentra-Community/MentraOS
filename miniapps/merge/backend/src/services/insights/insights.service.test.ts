@@ -1,6 +1,6 @@
 import {describe, expect, test} from "bun:test"
 
-import {buildPrompt, mergeInstructions, type InsightRequest} from "./insights.service"
+import {buildPrompt, InsightsService, mergeInstructions, type InsightRequest} from "./insights.service"
 
 describe("insight expansion prompts", () => {
   const request: InsightRequest = {
@@ -55,3 +55,93 @@ describe("insight expansion prompts", () => {
     expect(instructions).not.toContain("explicitly swiped for more detail")
   })
 })
+
+describe("Gemini model failover", () => {
+  const request: InsightRequest = {
+    analysis: {
+      chunkText: "Where is Copenhagen located?",
+      isFinal: true,
+    },
+  }
+
+  test("uses a fallback model after a retryable primary failure", async () => {
+    const requestedModels: string[] = []
+    const fetcher = (async (input: string | URL | Request) => {
+      requestedModels.push(String(input))
+      if (requestedModels.length === 1) {
+        return new Response("primary unavailable", {status: 503})
+      }
+      return geminiResponse({
+        type: "insight",
+        text: "Copenhagen is the capital of Denmark.",
+      })
+    }) as typeof fetch
+    const service = new InsightsService({
+      apiKey: "test-key",
+      fetch: fetcher,
+      primaryModel: "gemini-primary",
+      fallbackModels: ["gemini-fallback"],
+    })
+
+    const result = await service.createInsight(request)
+
+    expect(requestedModels).toHaveLength(2)
+    expect(requestedModels[0]).toContain("models/gemini-primary:generateContent")
+    expect(requestedModels[1]).toContain("models/gemini-fallback:generateContent")
+    expect(result.type).toBe("insight")
+    expect(result.profiling?.model).toBe("gemini-fallback")
+  })
+
+  test("does not retry credential failures with another model", async () => {
+    let requestCount = 0
+    const fetcher = (async () => {
+      requestCount += 1
+      return new Response("invalid API key", {status: 403})
+    }) as typeof fetch
+    const service = new InsightsService({
+      apiKey: "test-key",
+      fetch: fetcher,
+      primaryModel: "gemini-primary",
+      fallbackModels: ["gemini-fallback"],
+    })
+
+    await expect(service.createInsight(request)).rejects.toMatchObject({
+      name: "InsightServiceError",
+      status: 503,
+    })
+    expect(requestCount).toBe(1)
+  })
+
+  test("falls back when the primary returns invalid JSON", async () => {
+    let requestCount = 0
+    const fetcher = (async () => {
+      requestCount += 1
+      if (requestCount === 1) return new Response("not json")
+      return geminiResponse({type: "silent", reasoning: "No useful addition"})
+    }) as typeof fetch
+    const service = new InsightsService({
+      apiKey: "test-key",
+      fetch: fetcher,
+      primaryModel: "gemini-primary",
+      fallbackModels: ["gemini-fallback"],
+    })
+
+    const result = await service.createInsight(request)
+
+    expect(requestCount).toBe(2)
+    expect(result.type).toBe("silent")
+    expect(result.profiling?.model).toBe("gemini-fallback")
+  })
+})
+
+function geminiResponse(output: Record<string, unknown>): Response {
+  return Response.json({
+    candidates: [
+      {
+        content: {
+          parts: [{text: JSON.stringify(output)}],
+        },
+      },
+    ],
+  })
+}
