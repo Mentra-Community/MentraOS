@@ -1,5 +1,7 @@
 import {execFileSync} from "node:child_process"
+import {existsSync, readdirSync} from "node:fs"
 import {createRequire} from "node:module"
+import path from "node:path"
 
 const require = createRequire(import.meta.url)
 
@@ -7,6 +9,9 @@ const require = createRequire(import.meta.url)
 export const INFO_SDK_VERSION = "MentraBluetoothSdkVersion"
 export const INFO_ANALYTICS_ENVIRONMENT = "MentraBluetoothSdkAnalyticsEnvironment"
 export const INFO_ANALYTICS_DISABLED = "MentraBluetoothSdkAnalyticsDisabled"
+// Keys the same plugin stamps into AndroidManifest.xml.
+export const META_ANALYTICS_ENVIRONMENT = "com.mentra.bluetoothsdk.analytics.environment"
+export const META_ANALYTICS_DISABLED = "com.mentra.bluetoothsdk.analytics.disabled"
 
 /**
  * What a Mentra App release archive must carry for the Bluetooth SDK's usage
@@ -61,4 +66,97 @@ export function readIpaInfoPlist(ipaPath) {
 
 export function validateIosSdkAnalyticsMetadata(ipaPath, env = process.env) {
   assertSdkAnalyticsMetadata(readIpaInfoPlist(ipaPath), expectedSdkAnalyticsMetadata(env), "iOS")
+}
+
+// ---- Android -----------------------------------------------------------------
+
+/**
+ * Parses `aapt2 dump xmltree` output into {metaDataName: value} for the
+ * application's meta-data entries. aapt2 prints a value in one of these forms:
+ *   ="staging" (Raw: "staging")        string
+ *   =true / =false                     boolean (build-tools 36 prints it bare)
+ *   =(type 0x12)0xffffffff             boolean, older build-tools
+ *   =@0x7f... (Raw: "...")             resource reference with its raw text
+ * Anything else is kept verbatim so a validator can reject it instead of
+ * mistaking it for "unset".
+ */
+export function parseManifestMetaData(xmltree) {
+  const meta = {}
+  const lines = xmltree.split("\n")
+  const attr = /android:(name|value)\([^)]*\)=(.*)$/
+  const decode = (rest) => {
+    const trimmed = rest.trim()
+    const quoted = trimmed.match(/^"([^"]*)"/)
+    if (quoted) return quoted[1]
+    const typed = trimmed.match(/^\(type 0x12\)0x([0-9a-f]+)/i)
+    if (typed) return /^0+$/.test(typed[1]) ? "false" : "true"
+    const bare = trimmed.match(/^(true|false)\b/i)
+    if (bare) return bare[1].toLowerCase()
+    const raw = trimmed.match(/\(Raw: "([^"]*)"\)/)
+    if (raw) return raw[1]
+    return trimmed
+  }
+  for (let i = 0; i < lines.length; i++) {
+    if (!/E: meta-data/.test(lines[i])) continue
+    let name
+    let value
+    for (let j = i + 1; j < lines.length && !/^\s*E: /.test(lines[j]); j++) {
+      const m = lines[j].match(attr)
+      if (!m) continue
+      if (m[1] === "name") name = decode(m[2])
+      else value = decode(m[2])
+    }
+    if (name) meta[name] = value ?? ""
+  }
+  return meta
+}
+
+export function assertAndroidSdkAnalyticsMetadata(meta, expected, platform = "Android") {
+  const problems = []
+  if (META_ANALYTICS_DISABLED in meta && meta[META_ANALYTICS_DISABLED] !== "false") {
+    // Anything other than an explicit "false" fails: "true", an empty value, or a
+    // form this parser did not recognize must never read as "enabled".
+    problems.push(
+      `${META_ANALYTICS_DISABLED}=${JSON.stringify(
+        meta[META_ANALYTICS_DISABLED],
+      )} (Bluetooth SDK analytics must ship enabled; they are the glasses WAU source)`,
+    )
+  }
+  if (meta[META_ANALYTICS_ENVIRONMENT] !== expected.environment) {
+    problems.push(
+      `${META_ANALYTICS_ENVIRONMENT}=${JSON.stringify(meta[META_ANALYTICS_ENVIRONMENT] ?? null)} (expected ${
+        expected.environment
+      })`,
+    )
+  }
+  if (problems.length > 0) {
+    throw new Error(`${platform} release manifest has wrong Bluetooth SDK analytics metadata: ${problems.join("; ")}`)
+  }
+}
+
+export function findAapt2(env = process.env) {
+  const home = env.ANDROID_HOME || env.ANDROID_SDK_ROOT || path.join(env.HOME || "", "Library/Android/sdk")
+  const buildTools = path.join(home, "build-tools")
+  if (!existsSync(buildTools)) return null
+  const versions = readdirSync(buildTools).sort((a, b) => a.localeCompare(b, undefined, {numeric: true}))
+  for (const v of versions.reverse()) {
+    const candidate = path.join(buildTools, v, "aapt2")
+    if (existsSync(candidate)) return candidate
+  }
+  return null
+}
+
+export function readApkManifestMetaData(apkPath, env = process.env) {
+  const aapt2 = findAapt2(env)
+  if (!aapt2)
+    throw new Error("aapt2 not found under ANDROID_HOME/build-tools; cannot verify the Android release manifest")
+  const xmltree = execFileSync(aapt2, ["dump", "xmltree", "--file", "AndroidManifest.xml", apkPath], {
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+  })
+  return parseManifestMetaData(xmltree)
+}
+
+export function validateAndroidSdkAnalyticsMetadata(apkPath, env = process.env) {
+  assertAndroidSdkAnalyticsMetadata(readApkManifestMetaData(apkPath, env), expectedSdkAnalyticsMetadata(env), "Android")
 }
