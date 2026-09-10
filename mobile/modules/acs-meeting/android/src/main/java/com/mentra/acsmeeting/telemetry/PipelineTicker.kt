@@ -7,6 +7,7 @@ import android.os.Process
 /** Timer-driven 1 Hz emit so a stall prints sink=0 instead of going silent. */
 class PipelineTicker(
   private val stats: PipelineStats,
+  private val avSync: AvSyncProbe? = null,
   looper: Looper = Looper.getMainLooper(),
   private val elapsedCpuMs: () -> Long = { Process.getElapsedCpuTime() },
   private val cores: Int = Runtime.getRuntime().availableProcessors(),
@@ -45,6 +46,7 @@ class PipelineTicker(
           sendQuality = stats.sendQuality,
         ),
       )
+      avSync?.let { emit(it.tick(stats.e2e.p50(), stats.age.p50())) }
       handler.postDelayed(this, INTERVAL_MS)
     }
   }

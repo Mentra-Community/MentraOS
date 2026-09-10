@@ -11,6 +11,7 @@ import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import audioPlaybackService from "./AudioPlaybackService"
 import micStateCoordinator from "./MicStateCoordinator"
 import {SETTINGS, useSettingsStore} from "../stores/settings"
+import {Pcm16LevelMeter} from "../utils/pcm16"
 import {ACS_CALL_MIC, type AcsAudioSource, type ResolvedAudioSource, type SourceReason} from "./acsAudioSource"
 import type {SoftapProgress} from "./SoftapCallTransport"
 
@@ -128,14 +129,24 @@ export function resolveAcsAudioSource(): ResolvedAudioSource {
  * or none. A host whose native module has no `pushOutgoingPcm` keeps the WHIP audio track it has
  * always used rather than silently joining a meeting nobody can be heard in.
  *
- * SoftAP used to take BLE LC3 and publish WHIP video only. That pairing ships off: a live Mentra
- * Live call kept BES custom-audio TX at 20 Hz, ACS accepted 50 fps of 48 kHz frames, and Teams
- * still heard mute because `P4 pcm meanAbs` stayed 8–39 (digital silence, not a mute flag). The
- * glasses SoC AudioRecord (WHIP `captureAudio=true`) is the capture that actually has analog voice
- * while the camera is up. Flip [SOFTAP_BLE_LC3_UPLINK] only after a soak shows LC3 `meanAbs` in
- * the hundreds during WHIP video.
+ * SoftAP takes BLE LC3 and publishes WHIP video only (`captureAudio=false`), so the glasses SoC
+ * microphone is never opened for a call.
+ *
+ * This was switched off once on a misread: a soak logged `P4 pcm meanAbs` 8–39 and called it
+ * digital silence. It was the room. The same LC3 path measured on the bench sits at `meanAbs`
+ * ≈30–60 / `peak` ≈80–100 in a quiet room with nobody talking, and that soak had already
+ * published with `captureAudio=false`, so the SoC mic was not the thief either. The uplink now
+ * logs its own `meanAbs`/`peak` every window ([logMicUplink]) so the next soak reads the level,
+ * not the frame rate. Disable only with a level log showing the floor *while the wearer talks*.
  */
-const SOFTAP_BLE_LC3_UPLINK = false
+const SOFTAP_BLE_LC3_UPLINK = true
+/**
+ * SoftAP video (camera → H.264 → WHIP → WHEP → ACS) is slower than BLE LC3.
+ * Hold glasses PCM this long so the talk track does not lead the picture.
+ * Set from SoftAP+LC3 clap correlator (2026-09-10): leads 70/201/173/300/142 ms,
+ * median 173, rounded to 170. `AVSYNC clap audioLeadMs` is still the re-cal.
+ */
+export const SOFTAP_LC3_AUDIO_DELAY_MS = 170
 let softapBleLc3UplinkForTests: boolean | null = null
 
 export function glassesLc3UplinkSupported(args: {
@@ -281,6 +292,7 @@ type NativeModule = {
     displayName?: string
     dumpPcmWav?: boolean
     audioSource?: "glasses" | "phone"
+    audioDelayMs?: number
     video?: AcsOutgoingVideo
   }): Promise<MeetingState & {ingestUrl?: string}>
   leave(): Promise<void>
@@ -430,6 +442,8 @@ const GLASSES_MIC_SOURCE = "glasses"
 const GLASSES_MIC_GRACE_MS = 1000
 /** Cadence of the uplink health line, matching the native P8 ladder. */
 const MIC_UPLINK_LOG_INTERVAL_MS = 5000
+/** A 50 ms LC3 frame arriving more than this late is a missed beat, not jitter. */
+const MIC_GAP_WARN_MS = 90
 
 /**
  * Encode one microphone buffer for `pushOutgoingPcm`.
@@ -499,8 +513,14 @@ class AcsMeetingService {
   private micFramesWindow = 0
   private micDropsStale = 0
   private micDropsNonGlasses = 0
+  private micGaps = 0
+  private micGapMsMax = 0
   private lastGlassesFrameAt = 0
   private lastMicUplinkLogAt = 0
+  private lastMicDropLogAt = 0
+  /** PCM level over the current health window; read and reset by [logMicUplink]. */
+  private micLevel = new Pcm16LevelMeter()
+  private lastMicLevel: {meanAbs: number; peak: number} | null = null
   /** Guards [releaseHostState] so a remote hang-up followed by an explicit leave releases once. */
   private hostStateReleased = true
 
@@ -738,6 +758,7 @@ class AcsMeetingService {
         videoSource: args.videoSource,
         displayName: args.displayName,
         audioSource: resolved.source,
+        ...(lc3Uplink ? {audioDelayMs: SOFTAP_LC3_AUDIO_DELAY_MS} : {}),
         ...(video ? {video} : {}),
       })
       if (generation !== this.callGeneration) {
@@ -877,8 +898,13 @@ class AcsMeetingService {
     this.micFramesWindow = 0
     this.micDropsStale = 0
     this.micDropsNonGlasses = 0
+    this.micGaps = 0
+    this.micGapMsMax = 0
     this.lastGlassesFrameAt = Date.now()
+    this.lastMicDropLogAt = 0
     this.lastMicUplinkLogAt = Date.now()
+    this.micLevel.take()
+    this.lastMicLevel = null
     try {
       void Promise.resolve(BluetoothSdk.setMicSourcePin?.(GLASSES_MIC_SOURCE)).catch((error) => {
         console.warn("[AcsMeeting] pinning the glasses microphone failed", error)
@@ -888,6 +914,7 @@ class AcsMeetingService {
       this.micSub = BluetoothSdk.addListener("mic_pcm", (event: {pcm?: ArrayBuffer; sampleRate?: number; source?: string}) => {
         if (generation !== this.callGeneration) {
           this.micDropsStale += 1
+          this.logMicDrop("stale", {generation, active: this.callGeneration})
           return
         }
         // The pin makes this unreachable in normal operation, which is exactly why it is checked:
@@ -895,14 +922,25 @@ class AcsMeetingService {
         // that reports the glasses.
         if (event.source !== GLASSES_MIC_SOURCE) {
           this.micDropsNonGlasses += 1
+          this.logMicDrop("non-glasses", {source: event.source})
           this.reportGlassesMicUnavailable(event.source)
           return
         }
         const pcm = event.pcm
         if (!pcm) return
-        this.lastGlassesFrameAt = Date.now()
+        const now = Date.now()
+        if (this.micFramesForwarded > 0) {
+          const gapMs = now - this.lastGlassesFrameAt
+          if (gapMs > MIC_GAP_WARN_MS) {
+            this.micGaps += 1
+            this.micGapMsMax = Math.max(this.micGapMsMax, gapMs)
+            this.logMicDrop("gap", {gapMs})
+          }
+        }
+        this.lastGlassesFrameAt = now
         this.micFramesForwarded += 1
         this.micFramesWindow += 1
+        this.micLevel.add(pcm)
         try {
           push.call(native, pcmToBase64(pcm), event.sampleRate ?? 16000, 1)
         } catch (error) {
@@ -936,6 +974,8 @@ class AcsMeetingService {
         frames: this.micFramesForwarded,
         dropsStale: this.micDropsStale,
         dropsNonGlasses: this.micDropsNonGlasses,
+        gaps: this.micGaps,
+        gapMsMax: this.micGapMsMax,
       })
     }
     this.micTransport = "whip"
@@ -971,13 +1011,59 @@ class AcsMeetingService {
     const elapsed = now - this.lastMicUplinkLogAt
     if (elapsed < MIC_UPLINK_LOG_INTERVAL_MS) return
     this.lastMicUplinkLogAt = now
+    // Level, not just cadence: a 20 Hz stream of the noise floor and a 20 Hz stream of speech
+    // have the same framesPerSecond. Quiet room on Mentra Live LC3 is meanAbs ≈30–60.
+    const level = this.micLevel.take()
+    this.lastMicLevel = {meanAbs: level.meanAbs, peak: level.peak}
     console.log("[AcsMeeting] phase=glasses-mic-uplink", {
       framesPerSecond: Math.round((this.micFramesWindow * 1000) / elapsed),
       frames: this.micFramesForwarded,
+      meanAbs: level.meanAbs,
+      peak: level.peak,
       dropsStale: this.micDropsStale,
       dropsNonGlasses: this.micDropsNonGlasses,
+      gaps: this.micGaps,
+      gapMsMax: this.micGapMsMax,
     })
+    // #region agent log
+    fetch("http://127.0.0.1:7905/ingest/5a9713c9-45ff-4d09-9435-2adc5db5e91d", {
+      method: "POST",
+      headers: {"Content-Type": "application/json", "X-Debug-Session-Id": "828181"},
+      body: JSON.stringify({
+        sessionId: "828181",
+        runId: "run1",
+        hypothesisId: "E",
+        location: "AcsMeetingService.ts:logMicUplink",
+        message: "phone decoded glasses PCM window",
+        data: {
+          fps: Math.round((this.micFramesWindow * 1000) / elapsed),
+          meanAbs: level.meanAbs,
+          peak: level.peak,
+          frames: this.micFramesForwarded,
+        },
+        timestamp: Date.now(),
+      }),
+    }).catch(() => {})
+    // #endregion
     this.micFramesWindow = 0
+  }
+
+  /** Level of the last uplink window, for tests and dev screens. `null` until a window closed. */
+  lastGlassesMicLevel(): {meanAbs: number; peak: number} | null {
+    return this.lastMicLevel
+  }
+
+  private logMicDrop(reason: string, extra: Record<string, unknown>): void {
+    const now = Date.now()
+    if (now - this.lastMicDropLogAt < 1000) return
+    this.lastMicDropLogAt = now
+    console.warn("[AcsMeeting] phase=glasses-mic-drop", {
+      reason,
+      dropsStale: this.micDropsStale,
+      dropsNonGlasses: this.micDropsNonGlasses,
+      gaps: this.micGaps,
+      ...extra,
+    })
   }
 
   async setMuted(packageName: string, muted: boolean): Promise<MeetingState> {
@@ -1206,7 +1292,7 @@ class AcsMeetingService {
         const now = Date.now()
         if (now - this.lastBacklogWarnAt > 5000) {
           this.lastBacklogWarnAt = now
-          console.warn("[AcsMeeting] incoming PCM backlog high", {bufferedMs})
+          console.warn("[AcsMeeting] incoming PCM backlog high (downlink playback, not glasses mic)", {bufferedMs})
         }
       }
     } catch (error) {

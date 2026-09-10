@@ -137,6 +137,8 @@ class UplinkSender(
   @Volatile private var mutedFrames = 0L
   @Volatile private var mutedSinceNanos: Long? = null
   @Volatile private var muteTailNanos: Long? = null
+  private var lastLoggedOverflowMs = 0L
+  private var lastLoggedSilence = 0L
 
   /** Idempotent: a second call is a no-op so a session can only ever pace once. */
   @Synchronized
@@ -147,6 +149,8 @@ class UplinkSender(
     }
     nextDeadlineNanos = null
     lastLogNanos = null
+    lastLoggedOverflowMs = 0
+    lastLoggedSilence = 0
     running.set(true)
     // Audio cadence: a late frame is an artifact, so outrank the RN and
     // decoder threads this competes with.
@@ -295,10 +299,15 @@ class UplinkSender(
     lastLogNanos = nowNanos
     if (last == null) return
     val pace = pacer.snapshot(nowNanos)
+    val overflowDelta = pace.overflowDroppedMs - lastLoggedOverflowMs
+    val silenceDelta = pace.silenceFrames - lastLoggedSilence
+    lastLoggedOverflowMs = pace.overflowDroppedMs
+    lastLoggedSilence = pace.silenceFrames
     log(
       "P8 audio-up state=${pace.state} depthMs=${pace.depthMs} targetMs=${pace.targetMs} " +
         "sentFps=${"%.1f".format(pace.sentFps)} silenceFrames=${pace.silenceFrames} " +
-        "overflowDroppedMs=${pace.overflowDroppedMs} driftCorrections=${pace.driftCorrections} " +
+        "overflowDroppedMs=${pace.overflowDroppedMs} dropMs=$overflowDelta silenceDelta=$silenceDelta " +
+        "driftCorrections=${pace.driftCorrections} " +
         "driftDroppedMs=${pace.driftDroppedMs} driftInsertedMs=${pace.driftInsertedMs} " +
         "tickLateP95Ms=${lateness.p95()} tickLateMaxMs=${maxLateNanos / 1_000_000L} " +
         "skippedTicks=$skippedTicks inFlight=${inFlight.get()} " +

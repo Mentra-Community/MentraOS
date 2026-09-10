@@ -242,6 +242,7 @@ class AcsMeetingModule : Module() {
       val displayName = options["displayName"] as? String
       val dumpWav = options["dumpPcmWav"] as? Boolean ?: false
       val audioSource = options["audioSource"] as? String ?: "glasses"
+      val audioDelayMs = (options["audioDelayMs"] as? Number)?.toInt()
       val video = parseVideo(options["video"])
       val context = appContext.reactContext ?: throw IllegalStateException("no react context")
       val meeting = session ?: AcsMeetingSession(
@@ -266,6 +267,7 @@ class AcsMeetingModule : Module() {
         dumpWav,
         audioSource,
         video,
+        audioDelayMs,
         bindIngestUnpinned = { bind ->
           val hold = internetHold
           if (hold == null) {

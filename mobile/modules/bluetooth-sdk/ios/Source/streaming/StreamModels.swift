@@ -87,6 +87,34 @@ public struct StreamAudioConfig {
     }
 }
 
+/// ICE overrides for a WHIP stream. Ignored by the RTMP and SRT paths.
+public struct StreamIceConfig {
+    /// STUN server the glasses use while gathering candidates.
+    ///
+    /// `nil` and empty are different answers, and both have to survive the BLE round trip. `nil`
+    /// leaves the glasses on their default Cloudflare STUN server; an empty string is an explicit
+    /// request for host-only gathering, which is what a WHIP server on the glasses' own hotspot
+    /// needs, since a reflexive candidate there is meaningless and unreachable.
+    public let stun: String?
+
+    public init(stun: String? = nil) {
+        self.stun = stun
+    }
+
+    var dictionary: [String: Any] {
+        var values: [String: Any] = [:]
+        // Not filtered on emptiness, unlike the other optional string fields here: "" is the
+        // host-only signal, so dropping it would silently restore the default STUN server.
+        if let stun { values["stun"] = stun }
+        return values
+    }
+
+    init?(values: [String: Any]?) {
+        guard let values else { return nil }
+        self.init(stun: values["stun"] as? String ?? values["s"] as? String)
+    }
+}
+
 /// Effective video settings reported by the glasses after defaults and clamps.
 public struct StreamResolvedVideoConfig: Equatable {
     /// Encoded output width sent to the stream endpoint.
@@ -286,6 +314,10 @@ public struct StreamRequest {
     public let audio: StreamAudioConfig?
     public let authToken: String?
     public let captureAudio: Bool
+    public let ice: StreamIceConfig?
+    /// Correlation id the glasses echo in every SOFTAP_TRACE line, so phone and glasses logs can
+    /// be joined despite unsynchronised clocks.
+    public let traceId: String?
 
     public init(
         streamUrl: String,
@@ -294,7 +326,9 @@ public struct StreamRequest {
         video: StreamVideoConfig? = nil,
         audio: StreamAudioConfig? = nil,
         authToken: String? = nil,
-        captureAudio: Bool = true
+        captureAudio: Bool = true,
+        ice: StreamIceConfig? = nil,
+        traceId: String? = nil
     ) {
         self.streamUrl = streamUrl
         self.streamId = streamId
@@ -303,6 +337,8 @@ public struct StreamRequest {
         self.audio = audio
         self.authToken = authToken
         self.captureAudio = captureAudio
+        self.ice = ice
+        self.traceId = traceId
     }
 
     init(values: [String: Any]) {
@@ -317,7 +353,11 @@ public struct StreamRequest {
             video: StreamVideoConfig(values: values["video"] as? [String: Any]),
             audio: StreamAudioConfig(values: values["audio"] as? [String: Any]),
             authToken: values["authToken"] as? String ?? values["auth_token"] as? String,
-            captureAudio: (values["captureAudio"] as? Bool) ?? (values["ca"] as? Bool) ?? true
+            captureAudio: (values["captureAudio"] as? Bool) ?? (values["ca"] as? Bool) ?? true,
+            ice: StreamIceConfig(
+                values: (values["ice"] as? [String: Any]) ?? (values["i"] as? [String: Any])
+            ),
+            traceId: values["traceId"] as? String
         )
     }
 
@@ -338,6 +378,12 @@ public struct StreamRequest {
         }
         if !captureAudio {
             values["captureAudio"] = false
+        }
+        if let iceValues = ice?.dictionary, !iceValues.isEmpty {
+            values["ice"] = iceValues
+        }
+        if let traceId, !traceId.isEmpty {
+            values["traceId"] = traceId
         }
         return values
     }

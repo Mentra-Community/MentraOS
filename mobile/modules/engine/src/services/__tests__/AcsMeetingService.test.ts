@@ -52,6 +52,7 @@ import {bluetoothSdk} from "./bluetoothSdkTestMock"
 const {
   default: acsMeetingService,
   glassesLc3UplinkSupported,
+  SOFTAP_LC3_AUDIO_DELAY_MS,
   pcmToBase64,
   parseAcsOutgoingVideo,
   parseAcsVideoSource,
@@ -679,12 +680,16 @@ describe("glasses LC3 microphone uplink", () => {
   })
 
   test("a SoftAP join pins the glasses mic and reports the BLE transport", async () => {
-    const state = await joinedOnSoftap(lc3Native())
+    const native = lc3Native()
+    const state = await joinedOnSoftap(native)
 
     expect(setMicSourcePin).toHaveBeenCalledWith("glasses")
     expect(state.micTransport).toBe("ble-lc3")
     expect(acsMeetingService.glassesLc3UplinkActive()).toBe(true)
     expect(micListeners.has("mic_pcm")).toBe(true)
+    expect(native.join).toHaveBeenCalledWith(
+      expect.objectContaining({audioDelayMs: SOFTAP_LC3_AUDIO_DELAY_MS}),
+    )
   })
 
   test("a host that cannot take PCM keeps the published audio track and never pins", async () => {
@@ -701,6 +706,7 @@ describe("glasses LC3 microphone uplink", () => {
     expect(acsMeetingService.glassesLc3UplinkActive()).toBe(false)
     expect(setMicSourcePin).not.toHaveBeenCalled()
     expect(micListeners.has("mic_pcm")).toBe(false)
+    expect(native.join.mock.calls[0]?.[0]).not.toHaveProperty("audioDelayMs")
   })
 
   /**
@@ -731,6 +737,53 @@ describe("glasses LC3 microphone uplink", () => {
     expect(pushOutgoingPcm).toHaveBeenCalledTimes(2)
     expect(pushOutgoingPcm.mock.calls[0]).toEqual([Buffer.from([1, 1, 1, 1]).toString("base64"), 16000, 1])
     expect(pushOutgoingPcm.mock.calls[1]?.[0]).toBe(Buffer.from([2, 2, 2, 2]).toString("base64"))
+  })
+
+  /**
+   * The bridge hands `mic_pcm.pcm` over as a Uint8Array on Hermes, not an ArrayBuffer. The
+   * encoder has to take both or a live call pushes garbage while the unit tests (which build
+   * ArrayBuffers) stay green.
+   */
+  test("a Uint8Array frame is forwarded byte-for-byte", async () => {
+    await joinedOnSoftap(lc3Native())
+
+    emitMic({pcm: new Uint8Array([9, 9, 9, 9]) as unknown as ArrayBuffer, sampleRate: 16000, source: "glasses"})
+
+    expect(pushOutgoingPcm).toHaveBeenCalledTimes(1)
+    expect(pushOutgoingPcm.mock.calls[0]?.[0]).toBe(Buffer.from([9, 9, 9, 9]).toString("base64"))
+  })
+
+  /**
+   * Frame rate alone was what fooled the last soak: 20 Hz of the noise floor and 20 Hz of speech
+   * log identically. The health line has to carry level. This drives the log window by faking
+   * the clock, since the interval is 5 s.
+   */
+  test("the uplink health line reports the PCM level of the window", async () => {
+    await joinedOnSoftap(lc3Native())
+    const loud = new Uint8Array(4)
+    new DataView(loud.buffer).setInt16(0, 3000, true)
+    new DataView(loud.buffer).setInt16(2, -1000, true)
+    const realNow = Date.now
+    const logs: unknown[] = []
+    const realLog = console.log
+    console.log = (...args: unknown[]) => {
+      if (args[0] === "[AcsMeeting] phase=glasses-mic-uplink") logs.push(args[1])
+    }
+    try {
+      emitMic({pcm: loud.buffer, sampleRate: 16000, source: "glasses"})
+      // Cross the 5 s log interval on the next frame.
+      const t0 = realNow()
+      Date.now = () => t0 + 6000
+      emitMic({pcm: pcm(0x00), sampleRate: 16000, source: "glasses"})
+    } finally {
+      Date.now = realNow
+      console.log = realLog
+    }
+
+    expect(logs).toHaveLength(1)
+    // (3000 + 1000 + 0 + 0) / 4 samples
+    expect(logs[0]).toMatchObject({meanAbs: 1000, peak: 3000, frames: 2})
+    expect(acsMeetingService.lastGlassesMicLevel()).toEqual({meanAbs: 1000, peak: 3000})
   })
 
   /**
@@ -968,26 +1021,37 @@ describe("glasses LC3 microphone uplink", () => {
 })
 
 /**
- * Production SoftAP takes the glasses SoC AudioRecord over WHIP. BLE LC3 is still in the code
- * (and covered above when the test seam is on) but ships off because camera-up custom-audio TX
- * is analog-silent on Mentra Live.
+ * Production SoftAP ships BLE LC3 — with the *default* gate, not the test seam. The suite above
+ * turns the seam on explicitly; this one proves nobody has to. A build that quietly flips the
+ * constant back is a build whose SoftAP calls open the glasses SoC microphone again.
  */
-describe("SoftAP microphone transport", () => {
+describe("SoftAP microphone transport (production default)", () => {
+  let previousSdk: {addListener: unknown; setMicSourcePin: unknown}
+
+  beforeEach(() => {
+    previousSdk = {addListener: bluetoothSdk.addListener, setMicSourcePin: bluetoothSdk.setMicSourcePin}
+    bluetoothSdk.setMicSourcePin = mock(async (_source: string | null) => {})
+    bluetoothSdk.addListener = () => ({remove: () => {}})
+  })
+
   afterEach(async () => {
     await acsMeetingService.leave("com.mentra.call")
     setAcsMeetingNativeForTests(undefined)
     setSoftapBleLc3UplinkForTests(null)
     micStateCoordinator.setCallRequirement(false)
+    bluetoothSdk.addListener = previousSdk.addListener
+    bluetoothSdk.setMicSourcePin = previousSdk.setMicSourcePin
   })
 
-  test("ships WHIP audio, not BLE LC3, while glasses custom-audio TX is analog-silent", async () => {
+  test("ships BLE LC3 on SoftAP without any test seam", async () => {
+    setSoftapBleLc3UplinkForTests(null)
     const supported = {
       videoSource: {type: "softap"} as const,
       audioSource: "glasses" as const,
       hasPushOutgoingPcm: true,
       platform: "android",
     }
-    expect(glassesLc3UplinkSupported(supported)).toBe(false)
+    expect(glassesLc3UplinkSupported(supported)).toBe(true)
 
     const native = {...fakeNative(), pushOutgoingPcm: mock(() => {})}
     setAcsMeetingNativeForTests(native)
@@ -997,8 +1061,20 @@ describe("SoftAP microphone transport", () => {
       videoSource: {type: "softap"},
     })
 
-    expect(state.micTransport).toBe("whip")
-    expect(acsMeetingService.glassesLc3UplinkActive()).toBe(false)
+    expect(state.micTransport).toBe("ble-lc3")
+    expect(acsMeetingService.glassesLc3UplinkActive()).toBe(true)
+  })
+
+  test("the seam can still turn it off for a soak comparison", () => {
+    setSoftapBleLc3UplinkForTests(false)
+    expect(
+      glassesLc3UplinkSupported({
+        videoSource: {type: "softap"},
+        audioSource: "glasses",
+        hasPushOutgoingPcm: true,
+        platform: "android",
+      }),
+    ).toBe(false)
   })
 })
 

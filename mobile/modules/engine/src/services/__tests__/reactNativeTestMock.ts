@@ -18,6 +18,7 @@ export const reactNativeAppState = {
 export const reactNative: Record<string, unknown> = {
   AppState: reactNativeAppState,
   Platform: {OS: "android", Version: 30},
+  Alert: {alert: mock(() => {})},
   Linking: {openSettings: mock(async () => {})},
   PermissionsAndroid: {
     PERMISSIONS: {},

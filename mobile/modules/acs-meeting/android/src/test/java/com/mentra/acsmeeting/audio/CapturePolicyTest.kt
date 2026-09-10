@@ -26,10 +26,14 @@ class GlassesPcmRoutingTest {
     }
   }
 
+  /**
+   * SoftAP publishes video only, so the wearer's voice can come from exactly one place: the BLE
+   * LC3 PCM the host pushes. Taking the relay here would be taking a track that carries no audio.
+   */
   @Test
-  fun aSoftApCallTakesTheWearerFromTheRelayTrackUntilLc3HasAnalogVoice() {
+  fun aSoftApCallTakesTheWearerFromTheHostsBleLc3Pcm() {
     assertThat(GlassesPcmRouting.decide(softap = true, enabled = true))
-      .isEqualTo(GlassesPcmRouting(relayPcm = true, externalPcm = false))
+      .isEqualTo(GlassesPcmRouting(relayPcm = false, externalPcm = true))
   }
 
   @Test

@@ -94,6 +94,7 @@ android/src/main/java/com/mentra/acsmeeting/
 └── telemetry/               The measurement ladder
     ├── PipelineStats.kt         Every counter, and the 1 Hz "P6 ladder" line
     ├── PipelineTicker.kt        Emits that line on a timer
+    ├── AvSyncProbe.kt           Clap correlator: audio lead vs video luma at ingest
     ├── RingPercentile.kt        p50/p95 over a fixed ring of samples
     └── ChromaProbe.kt           Plane averages, to catch a mis-packed frame
 ```

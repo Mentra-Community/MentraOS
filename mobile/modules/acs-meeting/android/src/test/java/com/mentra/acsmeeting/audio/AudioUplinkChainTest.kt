@@ -227,4 +227,24 @@ class AudioUplinkChainTest {
 
     assertThat(chain.delayedBytes()).isLessThanOrEqualTo(100 * AudioUplinkChain.MAX_BYTES_PER_MS)
   }
+
+  @Test
+  fun ingestNotifiesBeforeTheDelayLineHolds() {
+    val clock = FakeClock(nanos = 40_000_000L)
+    val pacer = UplinkPacer()
+    val seen = mutableListOf<Pair<Int, Long>>()
+    val input = nativeVoice(20)
+    val chain = AudioUplinkChain(
+      bridge(),
+      pacer,
+      delayMs = 120,
+      clock = clock,
+      onIngest = { pcm, nowNs -> seen.add(pcm.size to nowNs) },
+    )
+
+    chain.ingest(input, nativeRate, 1)
+
+    assertThat(pacer.depthMs()).isEqualTo(0)
+    assertThat(seen).containsExactly(input.size to 40_000_000L)
+  }
 }

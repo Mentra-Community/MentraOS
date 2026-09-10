@@ -76,6 +76,7 @@ import com.mentra.acsmeeting.source.SourceState
 import com.mentra.acsmeeting.source.SyntheticI420Source
 import com.mentra.acsmeeting.source.TargetSize
 import com.mentra.acsmeeting.source.VideoSourceArm
+import com.mentra.acsmeeting.telemetry.AvSyncProbe
 import com.mentra.acsmeeting.telemetry.PipelineStats
 import com.mentra.acsmeeting.telemetry.PipelineTicker
 import com.mentra.acsmeeting.video.AcsFrameSender
@@ -104,14 +105,15 @@ class AcsMeetingSession(
   private val scopedNetwork: ScopedSoftApNetwork? = null,
 ) {
   internal val stats = PipelineStats()
-  private val ticker = PipelineTicker(stats) {
+  private val avSync = AvSyncProbe()
+  private val ticker = PipelineTicker(stats, avSync) {
     Log.i(TAG, it)
   }
   private val executor: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor()
   private val scheduler = ExecutorPolicyScheduler(executor)
   private val outgoingReady = AtomicBoolean(false)
   private val muted = AtomicBoolean(false)
-  private val frameSender = AcsFrameSender(stats)
+  private val frameSender = AcsFrameSender(stats, avSync)
   private var profile = VideoProfile.DEFAULT
   private val resolvedFactory = mediaSourceFactory ?: GlassesMediaSourceFactory { video, pcm, config ->
     // The synthetic diagnostic arm overrides everything; otherwise the requested kind decides.
@@ -144,7 +146,7 @@ class AcsMeetingSession(
   private val incomingProbe = IncomingRateProbe()
   // Clock-domain adapter: the WebRTC audio thread only ever fills the pacer,
   // and a dedicated monotonic-deadline thread drains it into ACS.
-  private val pacer = UplinkPacer()
+  private val pacer = UplinkPacer(log = { Log.i(TAG, it) })
   @Volatile private var uplinkSender: UplinkSender? = null
   private val phoneMic = PhoneMicCapturer { pcm, rate, channels -> feedOutgoingPcm(pcm, rate, channels) }
   // Emits already-normalized 16 kHz mono; the host opens its PCM player with
@@ -192,6 +194,7 @@ class AcsMeetingSession(
   @Volatile private var phase = "idle"
   @Volatile private var lastError: String? = null
   @Volatile private var audioSource = "glasses"
+  @Volatile private var configuredAudioDelayMs = AcsInvestigation.acsAudioDelayMs
   @Volatile private var lastSafety = AudioSafety.DEGRADED
   // Health of the glasses WHEP feed, reported alongside the ACS phase so the host
   // can tell "call is up, glasses video is dead" from a healthy call.
@@ -307,6 +310,7 @@ class AcsMeetingSession(
     dumpWav: Boolean,
     audioSource: String = "glasses",
     video: VideoProfile = VideoProfile.DEFAULT,
+    audioDelayMs: Int? = null,
     /**
      * Runs the WHIP listener bind, and exists so the caller can lift a process-wide network pin
      * across exactly that call. Takes the block rather than being a pair of before/after hooks so
@@ -374,7 +378,16 @@ class AcsMeetingSession(
         emit("connecting")
         val bridge = PcmBridge(context.cacheDir, dumpWav)
         pcmBridge = bridge
-        uplinkChain = AudioUplinkChain(bridge, pacer, AcsInvestigation.acsAudioDelayMs)
+        val delayMs = (audioDelayMs ?: AcsInvestigation.acsAudioDelayMs)
+          .coerceIn(0, AudioUplinkChain.MAX_DELAY_MS)
+        configuredAudioDelayMs = delayMs
+        avSync.reset()
+        uplinkChain = AudioUplinkChain(
+          bridge,
+          pacer,
+          delayMs,
+          onIngest = { pcm, nowNs -> avSync.onAudio(pcm, nowNs) },
+        )
         if (reuseAgent) {
           Log.i(TAG, "reusing call agent prepared before SoftAP")
           agentPrepared = false
@@ -873,11 +886,12 @@ class AcsMeetingSession(
     uplinkSender = sender
     sender.start()
     // The A/V configuration this call ran with, stated once at the top so a receiver recording can
-    // be attributed to it. Never printed next to a measured offset: a delay that is configured is
-    // not an offset that was observed, and conflating the two is how a calibration gets believed.
+    // be attributed to it. The measured ingest offset is a separate `AVSYNC clap audioLeadMs`
+    // line. Never print the two as one number: a delay that is configured is not an offset that
+    // was observed, and conflating them is how a calibration gets believed.
     Log.i(
       TAG,
-      "P8 audio-up config configuredDelayMs=${AcsInvestigation.acsAudioDelayMs} " +
+      "P8 audio-up config configuredDelayMs=$configuredAudioDelayMs " +
         "audioTimestamps=${AcsInvestigation.acsAudioTimestamps}",
     )
   }

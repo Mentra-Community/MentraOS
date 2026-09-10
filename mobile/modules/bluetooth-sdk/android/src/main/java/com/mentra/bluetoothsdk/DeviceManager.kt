@@ -851,6 +851,9 @@ class DeviceManager {
             }
         }
         if (pcmData != null && pcmData.isNotEmpty()) {
+            // #region agent log — per-second RX window: LC3 bytes in, fingerprint, decoded PCM level (H-E)
+            micDbgLc3Window(rawLC3Data, sequenceNumber, pcmData)
+            // #endregion
             // Re-encode to canonical LC3 via handlePcm (outside lock to avoid deadlock)
             recordMicPcmProduced()
             handlePcm(pcmData)
@@ -859,6 +862,72 @@ class DeviceManager {
             recordMicDecodeFailure()
         }
     }
+
+    // #region agent log — glasses LC3 RX diagnostics (debug session 828181)
+    private var micDbgWindowStart = 0L
+    private var micDbgPkts = 0
+    private var micDbgLc3Bytes = 0L
+    private var micDbgPcmBytes = 0L
+    private var micDbgSumAbs = 0L
+    private var micDbgSamples = 0L
+    private var micDbgPeak = 0
+    private var micDbgDcSum = 0L
+    private var micDbgDistinctFrames = HashSet<Int>()
+    private var micDbgFirstSeq = -1
+    private var micDbgLastSeq = -1
+    private var micDbgSeqGaps = 0
+
+    private fun micDbgLc3Window(lc3: ByteArray, seq: Int?, pcm: ByteArray) {
+        val now = System.currentTimeMillis()
+        if (micDbgWindowStart == 0L) micDbgWindowStart = now
+        micDbgPkts++
+        micDbgLc3Bytes += lc3.size
+        micDbgPcmBytes += pcm.size
+        var i = 0
+        while (i + 1 < pcm.size) {
+            val v = ((pcm[i + 1].toInt() shl 8) or (pcm[i].toInt() and 0xff)).toShort().toInt()
+            val a = if (v < 0) -v else v
+            micDbgSumAbs += a
+            micDbgDcSum += v
+            if (a > micDbgPeak) micDbgPeak = a
+            micDbgSamples++
+            i += 2
+        }
+        var off = 0
+        while (off + 40 <= lc3.size) {
+            var h = 17
+            for (k in off until off + 40) h = h * 31 + lc3[k]
+            micDbgDistinctFrames.add(h)
+            off += 40
+        }
+        if (seq != null) {
+            if (micDbgFirstSeq < 0) micDbgFirstSeq = seq
+            if (micDbgLastSeq >= 0 && ((micDbgLastSeq + 1) and 0xff) != seq) micDbgSeqGaps++
+            micDbgLastSeq = seq
+        }
+        if (now - micDbgWindowStart >= 1000) {
+            val meanAbs = if (micDbgSamples > 0) micDbgSumAbs / micDbgSamples else 0
+            val dc = if (micDbgSamples > 0) micDbgDcSum / micDbgSamples else 0
+            val head = lc3.take(8).joinToString("") { String.format("%02x", it.toInt() and 0xff) }
+            Bridge.log(
+                "MICDBG-RX pkts=$micDbgPkts lc3B=$micDbgLc3Bytes pcmB=$micDbgPcmBytes samples=$micDbgSamples " +
+                    "meanAbs=$meanAbs peak=$micDbgPeak dc=$dc distinctLc3Frames=${micDbgDistinctFrames.size} " +
+                    "seq=$micDbgFirstSeq..$micDbgLastSeq gaps=$micDbgSeqGaps frameSizeArg=40 lastLen=${lc3.size} head=$head"
+            )
+            micDbgWindowStart = now
+            micDbgPkts = 0
+            micDbgLc3Bytes = 0
+            micDbgPcmBytes = 0
+            micDbgSumAbs = 0
+            micDbgSamples = 0
+            micDbgPeak = 0
+            micDbgDcSum = 0
+            micDbgDistinctFrames = HashSet()
+            micDbgFirstSeq = -1
+            micDbgSeqGaps = 0
+        }
+    }
+    // #endregion
 
     fun handlePcm(pcmData: ByteArray) {
         // Audio always flows. The previous phone-side Silero VAD gate was a

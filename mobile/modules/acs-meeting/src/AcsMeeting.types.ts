@@ -48,6 +48,11 @@ export type AcsMeetingJoinOptions = {
   displayName?: string
   /** "glasses" sends WHEP PCM. "phone" uses the ACS local mic (handset or BT). */
   audioSource?: AcsAudioSource
+  /**
+   * Hold outgoing PCM this many ms before ACS. SoftAP+LC3 sets this in the host
+   * because BLE audio reaches the phone before SoftAP video.
+   */
+  audioDelayMs?: number
   /** Dump WHEP PCM to a WAV in cache for P4 verification. */
   dumpPcmWav?: boolean
   /** When omitted, native keeps 1280×720@15 / 2.5 Mbps. */

@@ -15,12 +15,14 @@ package com.mentra.acsmeeting.audio
  * @param bridge downmix/resample to the 48 kHz mono 20 ms frames ACS wants
  * @param pacer the clock-domain adapter the sender drains
  * @param delayMs how long to hold input before the bridge, for A/V alignment (0 = passthrough)
+ * @param onIngest raw input plus arrival time, before the delay line, for A/V clap measurement
  */
 class AudioUplinkChain(
   private val bridge: PcmBridge,
   private val pacer: UplinkPacer,
   private val delayMs: Int = 0,
   private val clock: () -> Long = System::nanoTime,
+  private val onIngest: ((pcm: ByteArray, nowNs: Long) -> Unit)? = null,
 ) {
   private val lock = Any()
   private val delay = DelayLine(delayMs.coerceIn(0, MAX_DELAY_MS))
@@ -33,7 +35,9 @@ class AudioUplinkChain(
   fun ingest(pcm: ByteArray, sampleRate: Int, channels: Int) {
     synchronized(lock) {
       if (muted) return
-      for (chunk in delay.push(pcm, clock())) {
+      val now = clock()
+      onIngest?.invoke(pcm, now)
+      for (chunk in delay.push(pcm, now)) {
         for (frame in bridge.ingest(chunk, sampleRate, channels)) pacer.push(frame)
       }
     }

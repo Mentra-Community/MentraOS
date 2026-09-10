@@ -107,7 +107,7 @@ class UplinkPacerTest {
   }
 
   @Test
-  fun depthAboveEmergencyCapDropsOldestDownToTarget() {
+  fun depthAboveEmergencyCapShearsOnlyThePeak() {
     val pacer = UplinkPacer()
     var now = 0L
     pacer.push(tone(UplinkPacer.TARGET_MS))
@@ -116,10 +116,25 @@ class UplinkPacerTest {
 
     pacer.push(tone(500))
     assertThat(pacer.tick(now).silence).isFalse()
-    assertThat(pacer.controlDepthMs()).isEqualTo(UplinkPacer.TARGET_MS)
+    // Shears to the cap, not back to the 60 ms target — that hole is what the wearer heard.
+    assertThat(pacer.controlDepthMs()).isBetween(UplinkPacer.EMERGENCY_CAP_MS - 20, UplinkPacer.EMERGENCY_CAP_MS)
+    assertThat(pacer.controlDepthMs()).isGreaterThan(UplinkPacer.TARGET_MS)
     val stats = pacer.snapshot(now)
-    assertThat(stats.overflowDroppedMs).isEqualTo(480L)
-    assertThat(stats.driftCorrections).isEqualTo(0L)
+    assertThat(stats.overflowDroppedMs).isBetween(130L, 160L)
+  }
+
+  @Test
+  fun aDelaySizedBurstStaysInTheRing() {
+    val pacer = UplinkPacer()
+    var now = 0L
+    pacer.push(tone(UplinkPacer.TARGET_MS))
+    pacer.tick(now)
+    now += tickNanos
+
+    pacer.push(tone(170))
+    assertThat(pacer.tick(now).silence).isFalse()
+    assertThat(pacer.controlDepthMs()).isGreaterThan(150)
+    assertThat(pacer.snapshot(now).overflowDroppedMs).isEqualTo(0L)
   }
 
   @Test

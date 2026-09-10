@@ -14,6 +14,7 @@ import com.mentra.acsmeeting.source.AcsInvestigation
 import com.mentra.acsmeeting.source.I420Planes
 import com.mentra.acsmeeting.source.PixelFormatArm
 import com.mentra.acsmeeting.source.TargetSize
+import com.mentra.acsmeeting.telemetry.AvSyncProbe
 import com.mentra.acsmeeting.telemetry.ChromaProbe
 import com.mentra.acsmeeting.telemetry.PipelineStats
 import java.nio.ByteBuffer
@@ -37,6 +38,7 @@ import java.util.concurrent.atomic.AtomicReference
  */
 class AcsFrameSender(
   private val stats: PipelineStats = PipelineStats(),
+  private val avSync: AvSyncProbe? = null,
 ) {
   private val running = AtomicBoolean(false)
   private val stream = AtomicReference<RawOutgoingVideoStream?>(null)
@@ -123,6 +125,7 @@ class AcsFrameSender(
 
     val prepared = prepareSend(planes, negotiated)
     stats.setChroma(prepared.chroma)
+    avSync?.onVideoLuma(prepared.chroma.y)
 
     if (!gate.tryAcquire()) {
       stats.onDropBusy()

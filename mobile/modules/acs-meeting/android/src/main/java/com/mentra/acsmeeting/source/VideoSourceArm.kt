@@ -83,9 +83,10 @@ object AcsInvestigation {
    * receiver-side measurement, not something either side can infer. Deriving it from first-frame
    * arrival times measures startup skew and would be wrong by however long the camera took to boot.
    *
-   * Calibrate it the only way that answers the question: clap and flash in front of the camera,
-   * record the Teams receiver, measure the offset in that recording, then set this. It is logged as
-   * `configuredDelayMs` and deliberately never reported as a measured offset.
+   * Calibrate the ingest path with a clap in frame and read `AVSYNC clap audioLeadMs`. That is
+   * the offset the delay line can cancel. ACS/Teams jitter after ingest still needs a Teams
+   * recording. It is logged as `configuredDelayMs` and deliberately never reported as a measured
+   * offset.
    */
   const val acsAudioDelayMs = 0
 
