@@ -294,6 +294,16 @@ class MergeController {
     this.upsertTranscript(entry)
     this.ui.send("merge:transcript", entry)
 
+    if (isMockTranscript(data, entry.text)) {
+      this.recordDecision({
+        action: "silent",
+        trigger: entry.isFinal ? "final" : "interval",
+        chunkText: entry.text,
+        reasoning: "Skipped deterministic cloud-v2 mock transcript",
+      })
+      return
+    }
+
     if (entry.isFinal) this.enqueueFinalAnalysis(entry)
     else this.enqueueInterimAnalysis(entry)
   }
@@ -891,6 +901,12 @@ function normalizeInsight(text: string): string {
     .toLowerCase()
     .replace(/[^a-z0-9]+/g, " ")
     .trim()
+}
+
+function isMockTranscript(data: TranscriptionData, text: string): boolean {
+  const source = (data as {source?: unknown; provider?: unknown}).source ?? (data as {provider?: unknown}).provider
+  if (source === "mock") return true
+  return /^mock [a-z0-9_.:-]+ \d+$/i.test(text.trim())
 }
 
 function completedSentencePrefix(text: string): string {
