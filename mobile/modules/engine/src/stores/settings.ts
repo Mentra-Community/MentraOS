@@ -691,7 +691,6 @@ export const SETTINGS: Record<string, Setting> = {
     writable: true,
     saveOnServer: false,
     persist: true,
-    resetOnBuildEnvChange: true,
   },
   // OTA update dismissal - stores the version code user dismissed (not persisted so resets on app restart)
   dismissed_ota_version: {

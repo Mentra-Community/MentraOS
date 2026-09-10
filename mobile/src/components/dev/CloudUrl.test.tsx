@@ -45,16 +45,18 @@ jest.mock("@/components/ignite", () => {
   }
 })
 
-beforeEach(() => {
+beforeEach(async () => {
   jest.clearAllMocks()
   jest.mocked(devServerHost).mockReturnValue(undefined)
-  engine.settings.setManyLocal({
+  await engine.settings.setManyLocal({
     [SETTINGS.cloud_core_url.key]: "",
     [SETTINGS.cloud_runtime_url.key]: "",
     [SETTINGS.saved_cloud_url_pairs.key]: [],
   })
   delete process.env.EXPO_PUBLIC_CLOUD_CORE_URL
   delete process.env.EXPO_PUBLIC_CLOUD_RUNTIME_URL
+  await deploymentStore.clearSelection()
+  await deploymentStore.returnToMentra()
   jest.spyOn(global, "fetch").mockResolvedValue({ok: true, status: 200} as Response)
 })
 
@@ -94,6 +96,7 @@ it.each(["consumer", "workspace"])("saves, tests, and resets %s overrides to the
 })
 
 it("does not apply an in-flight health check to another deployment", async () => {
+  expect(deploymentStore.getActive().kind).toBe("consumer")
   let finishProbe!: (value: Response) => void
   jest.spyOn(global, "fetch").mockImplementationOnce(
     () =>

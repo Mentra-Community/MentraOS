@@ -5,6 +5,7 @@ import {result as Res} from "typesafe-ts"
 import InitScreen from "@/app/index"
 import {createConsumerDeployment} from "@/services/deployment/officialManifest"
 import {saveDeploymentCloudOverrides} from "@/services/deployment/debugOverrides"
+import {deploymentStore} from "@/services/deployment/store"
 import {fetchMinimumClientVersion} from "@/utils/cloudVersion"
 
 const mockDeployment = createConsumerDeployment()
@@ -15,15 +16,13 @@ jest.mock("@/contexts/AuthContext", () => ({useAuth: () => ({user: null, session
 jest.mock("@/contexts/DeeplinkContext", () => ({useDeeplink: () => ({processUrl: jest.fn()})}))
 jest.mock("@/contexts/ThemeContext", () => ({useAppTheme: () => ({theme: {colors: {}}})}))
 jest.mock("@/services/deployment", () => ({
+  ...jest.requireActual("@/services/deployment/store"),
   useDeployment: () => ({activeDeployment: mockDeployment, selectionResolved: true}),
 }))
 jest.mock("@/stores/navigation", () => ({
   useNavigationStore: {getState: () => ({replaceAll: mockReplaceAll, setAnimation: jest.fn()})},
 }))
 jest.mock("@/services/MantleManager", () => ({__esModule: true, default: {init: jest.fn()}}))
-jest.mock("@/services/cloudClient", () => ({
-  resolvedEndpoints: () => ({runtime: "https://runtime.example"}),
-}))
 jest.mock("@/utils/cloudVersion", () => ({fetchMinimumClientVersion: jest.fn()}))
 jest.mock("@/i18n", () => ({translate: (key: string) => key}))
 jest.mock("@/components/brands/MentraLogoStandalone", () => ({MentraLogoStandalone: () => null}))
@@ -47,6 +46,8 @@ const originalVersion = process.env.EXPO_PUBLIC_MENTRAOS_VERSION
 beforeEach(async () => {
   jest.clearAllMocks()
   process.env.EXPO_PUBLIC_MENTRAOS_VERSION = "3.0.0"
+  await deploymentStore.clearSelection()
+  await deploymentStore.returnToMentra()
   await saveDeploymentCloudOverrides(mockDeployment, {core: "", runtime: "https://debug.example"})
   await engine.settings.setManyLocal({cached_required_version: "runtime:99.0.0"})
   jest.mocked(fetchMinimumClientVersion).mockResolvedValue(Res.error(new Error("Offline")))
@@ -62,10 +63,13 @@ it("removes the old backend's update block when Reset retries offline", async ()
   await act(async () => {})
   expect(screen.getByText("versionCheck:updateRequiredButton")).toBeTruthy()
   expect(screen.queryByText("versionCheck:continueAnyway")).toBeNull()
+  expect(fetchMinimumClientVersion).toHaveBeenLastCalledWith("https://debug.example", 3, 1000)
 
   await act(async () => fireEvent.press(screen.getByText("versionCheck:resetUrl")))
 
   expect(engine.settings.get(SETTINGS.cached_required_version.key)).toBe("")
+  expect(engine.settings.get(SETTINGS.cloud_runtime_url.key)).toBe("")
+  expect(fetchMinimumClientVersion).toHaveBeenLastCalledWith(mockDeployment.manifest.services.runtimeUrl, 3, 1000)
   expect(screen.queryByText("versionCheck:updateRequiredButton")).toBeNull()
   expect(screen.getByText("versionCheck:retryConnection")).toBeTruthy()
   expect(screen.getByText("versionCheck:continueAnyway")).toBeTruthy()

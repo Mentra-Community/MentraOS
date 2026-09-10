@@ -41,7 +41,9 @@ Debug Settings shows baseline and effective URLs for both deployment types:
 - **Logout or organization selection** clears active Core, Runtime, and OTA
   overrides. Credential expiry alone does not change deployment configuration.
   Reconfirming consumer login keeps its overrides. Deployment changes wait for
-  the clear to persist; a failed write leaves the selection unchanged for retry.
+  the clear to persist. A failed write leaves the selection unchanged and
+  restores the previous overrides for retry; storage failure during restoration
+  is reported too.
 
 `engine.dev` uses the host resolver when present; other engine hosts retain their
 existing explicit URL behavior. A partial URL update preserves the other override

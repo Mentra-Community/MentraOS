@@ -236,3 +236,53 @@ it("does not enable navigation in the China official manifest", () => {
     else process.env.EXPO_PUBLIC_DEPLOYMENT_REGION = previousRegion
   }
 })
+
+it.each(["activate", "returnToMentra", "beginWorkspaceSelection", "clearSelection"] as const)(
+  "restores overrides when %s cannot persist the selection",
+  async (action) => {
+    const persistence: DeploymentStorage = {load: () => null, save: jest.fn(), remove: jest.fn()}
+    const store = new DeploymentStore(persistence)
+    await store.activate(workspace)
+    const previous = store.getActive()
+    await saveDeploymentCloudOverrides(previous, {
+      core: "https://debug-core.example",
+      runtime: "https://debug-runtime.example",
+    })
+    await engine.settings.setManyLocal({
+      ota_version_url: "https://debug-ota.example/version.json",
+      cached_required_version: "runtime:99.0.0",
+    })
+    const keys = [
+      "cloud_core_url",
+      "cloud_runtime_url",
+      "cloud_url_deployment",
+      "ota_version_url",
+      "cached_required_version",
+    ]
+    const oldValues = Object.fromEntries(keys.map((key) => [key, engine.settings.get(key)]))
+    const write = action === "activate" || action === "returnToMentra" ? persistence.save : persistence.remove
+    jest.mocked(write).mockImplementationOnce(() => {
+      throw new Error("Cannot persist deployment")
+    })
+
+    await expect(action === "activate" ? store.activate(workspace) : store[action]()).rejects.toThrow(
+      "Cannot persist deployment",
+    )
+    expect(store.getActive()).toBe(previous)
+    expect(store.isResolved()).toBe(true)
+    expect(store.isSelectingWorkspace()).toBe(false)
+    const {storage: settingsStorage} = jest.requireActual<
+      typeof import("../../../modules/engine/src/utils/storage/storage")
+    >("../../../modules/engine/src/utils/storage/storage")
+    for (const key of keys) {
+      expect(engine.settings.get(key)).toBe(oldValues[key])
+      const persisted = settingsStorage.load(key)
+      if (persisted.is_error()) throw persisted.error
+      expect(persisted.value).toBe(oldValues[key])
+    }
+
+    if (action === "activate") await store.activate(workspace)
+    else await store[action]()
+    for (const key of keys) expect(engine.settings.get(key)).toBe("")
+  },
+)

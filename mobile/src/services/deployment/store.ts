@@ -1,7 +1,7 @@
 import {storage} from "@/utils/storage/storage"
 
 import type {ActiveDeployment, DeploymentCandidate, WorkspaceDeployment} from "./types"
-import {clearDeploymentDebugOverrides} from "./debugOverrides"
+import {withClearedDeploymentDebugOverrides} from "./debugOverrides"
 import {createConsumerDeployment} from "./officialManifest"
 import {deploymentManifestSchema} from "./schema"
 import {validateDeploymentManifest} from "./resolver"
@@ -77,8 +77,7 @@ export class DeploymentStore {
       manifest: candidate.manifest,
       activatedAt: new Date().toISOString(),
     }
-    await clearDeploymentDebugOverrides()
-    this.persistence.save(deployment)
+    await withClearedDeploymentDebugOverrides(() => this.persistence.save(deployment))
     this.selectingWorkspace = false
     this.setActive(deployment)
     return deployment
@@ -87,9 +86,12 @@ export class DeploymentStore {
   async returnToMentra(): Promise<void> {
     // Login buttons also reconfirm an existing consumer after token expiry.
     // Only an actual deployment switch should discard its debug configuration.
-    if (this.active.kind === "workspace" || this.selectingWorkspace) await clearDeploymentDebugOverrides()
     const deployment = createConsumerDeployment()
-    this.persistence.save(deployment)
+    if (this.active.kind === "workspace" || this.selectingWorkspace) {
+      await withClearedDeploymentDebugOverrides(() => this.persistence.save(deployment))
+    } else {
+      this.persistence.save(deployment)
+    }
     this.selectingWorkspace = false
     this.setActive(deployment, true)
   }
@@ -103,16 +105,14 @@ export class DeploymentStore {
 
   /** Enter discovery without allowing cached consumer credentials to opt back in. */
   async beginWorkspaceSelection(): Promise<void> {
-    await clearDeploymentDebugOverrides()
-    this.persistence.remove()
+    await withClearedDeploymentDebugOverrides(() => this.persistence.remove())
     this.selectingWorkspace = true
     this.setActive(createConsumerDeployment(), false)
   }
 
   /** Return to the neutral selector without opting into consumer telemetry. */
   async clearSelection(): Promise<void> {
-    await clearDeploymentDebugOverrides()
-    this.persistence.remove()
+    await withClearedDeploymentDebugOverrides(() => this.persistence.remove())
     this.selectingWorkspace = false
     this.setActive(createConsumerDeployment(), false)
   }
