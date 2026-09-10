@@ -2796,7 +2796,11 @@ class MentraLive: NSObject, SGCManager {
             // Record the session id BEFORE marking ready: an unsolicited glasses_ready
             // already runs this full remote-reset flow, so recording (not re-triggering)
             // is correct here; version_info detection covers the restart case.
-            if let sid = json["sid"] as? String, !sid.isEmpty { glassesSessionId = sid }
+            glassesSessionId = (json["sid"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            Bridge.sendTypedMessage(
+                "wifi_protocol_session_ready",
+                body: ["sid": glassesSessionId ?? ""]
+            )
             readinessCompletedThisBleSession = true
             handleGlassesReady()
 
@@ -2833,6 +2837,33 @@ class MentraLive: NSObject, SGCManager {
                 DeviceStore.shared.apply("glasses", "wifiError", "")
             }
             updateWifiStatus(connected: connected, ssid: ssid, ip: ip, error: wifiError.isEmpty ? nil : wifiError)
+
+        case "wifi_forget_result":
+            guard wifiResponseEnvelopeIsValid(json, allowLegacy: true) else { return }
+            Bridge.sendWifiForgetResult(
+                requestId: json["requestId"] as? String ?? "",
+                sid: json["sid"] as? String ?? "",
+                ssid: json["ssid"] as? String ?? "",
+                protocolVersion: (json["protocol_version"] as? NSNumber)?.intValue ?? 0,
+                outcome: json["outcome"] as? String ?? "",
+                legacyDispatched: json["dispatched"] as? Bool,
+                connected: json["connected"] as? Bool,
+                currentSsid: json["current_ssid"] as? String ?? "",
+                localIp: json["local_ip"] as? String ?? "",
+                error: (json["error"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            )
+
+        case "saved_wifi_networks":
+            guard wifiResponseEnvelopeIsValid(json, allowLegacy: false) else { return }
+            guard let networks = json["networks"] as? [String] else { return }
+            Bridge.sendSavedWifiNetworks(
+                requestId: json["requestId"] as? String ?? "",
+                sid: json["sid"] as? String ?? "",
+                protocolVersion: (json["protocol_version"] as? NSNumber)?.intValue ?? 0,
+                outcome: json["outcome"] as? String ?? "",
+                networks: networks,
+                error: (json["error"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            )
 
         case "hotspot_status_update":
             let enabled = json["hotspot_enabled"] as? Bool ?? false
@@ -2942,7 +2973,7 @@ class MentraLive: NSObject, SGCManager {
             Bridge.log("LIVE: Received pong response - connection healthy")
 
         case "entering_pairing_mode":
-            let windowMs = max(5_000, min(180_000, json["window_ms"] as? Int ?? 120_000))
+            let windowMs = max(5000, min(180_000, json["window_ms"] as? Int ?? 120_000))
             Bridge.log("LIVE: Glasses entering pairing mode — yield \(windowMs)ms (no forget)")
             enterPairingYield(windowMs: windowMs)
             let body: [String: Any] = [
@@ -3086,6 +3117,7 @@ class MentraLive: NSObject, SGCManager {
 
                 // Extract all fields from JSON (except "type")
                 var fields: [String: Any] = [:]
+                fields["version_info_type"] = type
                 for (key, value) in json {
                     if key != "type" {
                         fields[key] = value
@@ -3647,19 +3679,67 @@ class MentraLive: NSObject, SGCManager {
     }
 
     func forgetWifiNetwork(_ ssid: String) {
-        Bridge.log("LIVE: 📶 Sending WiFi forget command for SSID: \(ssid)")
+        forgetWifiNetwork(ssid, requestId: nil, sid: nil)
+    }
 
-        guard !ssid.isEmpty else {
-            Bridge.log("LIVE: Cannot forget WiFi network - SSID is empty")
-            return
+    @discardableResult func forgetWifiNetwork(_ ssid: String, requestId: String?, sid: String?) -> Bool {
+        guard let peripheral = connectedPeripheral, peripheral.state == .connected, txCharacteristic != nil,
+              (requestId == nil) == (sid == nil)
+        else { return false }
+        if let requestId, let sid, requestId.isEmpty || sid.isEmpty { return false }
+        transportLog("LIVE: 📶 Sending WiFi forget command for SSID: \(ssid)", bridgeLogging: false)
+
+        guard !ssid.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty else {
+            transportLog("LIVE: Cannot forget WiFi network - SSID is empty", bridgeLogging: false)
+            if let requestId {
+                Bridge.sendWifiForgetResult(
+                    requestId: requestId,
+                    sid: sid ?? "",
+                    ssid: ssid,
+                    protocolVersion: 1,
+                    outcome: "failed",
+                    legacyDispatched: nil,
+                    connected: nil,
+                    currentSsid: "",
+                    localIp: "",
+                    error: "invalid_ssid"
+                )
+            }
+            return false
         }
 
-        let json: [String: Any] = [
+        var json: [String: Any] = [
             "type": "forget_wifi",
             "ssid": ssid,
         ]
+        if let requestId, !requestId.isEmpty {
+            json["requestId"] = requestId
+        }
+        if let sid, !sid.isEmpty {
+            json["sid"] = sid
+            json["protocolVersion"] = 1
+        }
 
-        sendJson(json, wakeUp: true)
+        // The coordinator dispatches while isolated on MainActor. Keep this path native-only so a
+        // public log delegate cannot synchronously reset the session before the payload is queued.
+        return sendJson(json, wakeUp: true, requireAck: true, bridgeLogging: false)
+    }
+
+    @discardableResult func requestSavedWifiNetworks(requestId: String, sid: String) -> Bool {
+        guard let peripheral = connectedPeripheral, peripheral.state == .connected, txCharacteristic != nil,
+              !requestId.isEmpty, !sid.isEmpty
+        else { return false }
+        var command: [String: Any] = ["type": "request_saved_wifi_networks", "requestId": requestId]
+        command["protocolVersion"] = 1
+        if !sid.isEmpty {
+            command["sid"] = sid
+        }
+        return sendJson(
+            command,
+            wakeUp: true,
+            requireAck: true,
+            bridgeLogging: false
+        )
     }
 
     func queryGalleryStatus() {
@@ -4822,20 +4902,31 @@ class MentraLive: NSObject, SGCManager {
         wireBytes: Int,
         packetCount: Int,
         protocolVersion: Int,
-        direction: String
+        direction: String,
+        bridgeLogging: Bool = true
     ) {
-        Bridge.log(
-            "BLE_TRACE direction=\(direction) proto=v\(protocolVersion) payload=\(payloadBytes) wire=\(wireBytes) packets=\(packetCount)"
+        transportLog(
+            "BLE_TRACE direction=\(direction) proto=v\(protocolVersion) payload=\(payloadBytes) wire=\(wireBytes) packets=\(packetCount)",
+            bridgeLogging: bridgeLogging
         )
     }
 
-    private func sendJsonBinary(
+    private func transportLog(_ message: String, bridgeLogging: Bool) {
+        if bridgeLogging {
+            Bridge.log(message)
+        } else {
+            NSLog("%@", message)
+        }
+    }
+
+    @discardableResult private func sendJsonBinary(
         jsonString: String,
         messageId: Int64,
         trackingId: String,
         wakeUp: Bool,
-        requireAck: Bool
-    ) {
+        requireAck: Bool,
+        bridgeLogging: Bool
+    ) -> Bool {
         let payload = Data(jsonString.utf8)
         let msgId = UInt16(truncatingIfNeeded: messageId)
         let fragments = MessageChunker.createBinaryFragments(
@@ -4845,8 +4936,8 @@ class MentraLive: NSObject, SGCManager {
             ackRequested: requireAck && messageId >= 0
         )
         guard !fragments.isEmpty else {
-            Bridge.log("LIVE: Failed to create binary wire fragments")
-            return
+            transportLog("LIVE: Failed to create binary wire fragments", bridgeLogging: bridgeLogging)
+            return false
         }
 
         var totalWireBytes = 0
@@ -4858,7 +4949,7 @@ class MentraLive: NSObject, SGCManager {
                 fragCount: fragment.fragCount,
                 payload: fragment.payload
             ) else {
-                continue
+                return false
             }
             totalWireBytes += packed.count
             let isFinalChunk = index == fragments.count - 1
@@ -4875,12 +4966,30 @@ class MentraLive: NSObject, SGCManager {
             wireBytes: totalWireBytes,
             packetCount: fragments.count,
             protocolVersion: BleWireProtocol.protocolV2,
-            direction: "phone_to_glasses"
+            direction: "phone_to_glasses",
+            bridgeLogging: bridgeLogging
         )
-        Bridge.log("LIVE: Binary v2 queued \(fragments.count) fragments, wireBytes=\(totalWireBytes)")
+        transportLog(
+            "LIVE: Binary v2 queued \(fragments.count) fragments, wireBytes=\(totalWireBytes)",
+            bridgeLogging: bridgeLogging
+        )
+        return true
     }
 
-    func sendJson(_ jsonOriginal: [String: Any], wakeUp: Bool = false, requireAck: Bool = true) {
+    func sendJson(
+        _ jsonOriginal: [String: Any],
+        wakeUp: Bool = false,
+        requireAck: Bool = true
+    ) {
+        sendJson(jsonOriginal, wakeUp: wakeUp, requireAck: requireAck, bridgeLogging: true)
+    }
+
+    @discardableResult private func sendJson(
+        _ jsonOriginal: [String: Any],
+        wakeUp: Bool,
+        requireAck: Bool,
+        bridgeLogging: Bool
+    ) -> Bool {
         do {
             var json = jsonOriginal
             var messageId: Int64 = -1
@@ -4904,14 +5013,14 @@ class MentraLive: NSObject, SGCManager {
                 )
 
                 if useBinaryWireProtocol, isNewVersion {
-                    sendJsonBinary(
+                    return sendJsonBinary(
                         jsonString: jsonString,
                         messageId: messageId,
                         trackingId: trackingId,
                         wakeUp: wakeUp,
-                        requireAck: requireAck
+                        requireAck: requireAck,
+                        bridgeLogging: bridgeLogging
                     )
-                    return
                 }
 
                 // First check if the message needs chunking
@@ -4925,17 +5034,20 @@ class MentraLive: NSObject, SGCManager {
 
                 // Check if chunking is needed
                 if MessageChunker.needsChunking(testWrappedJson) {
-                    Bridge.log("LIVE: Message exceeds threshold, chunking required")
+                    transportLog("LIVE: Message exceeds threshold, chunking required", bridgeLogging: bridgeLogging)
 
                     // Create chunks
                     let chunks = MessageChunker.createChunks(
                         originalJson: jsonString, messageId: messageId, wakeUp: wakeUp
                     )
                     guard !chunks.isEmpty else {
-                        Bridge.log("LIVE: Failed to create BLE chunks within K900 packet limit")
-                        return
+                        transportLog(
+                            "LIVE: Failed to create BLE chunks within K900 packet limit",
+                            bridgeLogging: bridgeLogging
+                        )
+                        return false
                     }
-                    Bridge.log("LIVE: Sending \(chunks.count) chunks")
+                    transportLog("LIVE: Sending \(chunks.count) chunks", bridgeLogging: bridgeLogging)
 
                     // Send each chunk
                     for (index, chunk) in chunks.enumerated() {
@@ -4943,7 +5055,11 @@ class MentraLive: NSObject, SGCManager {
                         if let chunkStr = String(data: chunkData, encoding: .utf8) {
                             // Pack each chunk using the normal K900 protocol
                             let packedData =
-                                packJson(chunkStr, wakeUp: wakeUp && index == 0) ?? Data() // Only wakeup on first chunk
+                                packJson(
+                                    chunkStr,
+                                    wakeUp: wakeUp && index == 0,
+                                    bridgeLogging: bridgeLogging
+                                ) ?? Data() // Only wakeup on first chunk
 
                             // Queue the chunk for sending
                             // Only track ACK for the final chunk (which has the mId)
@@ -4964,6 +5080,7 @@ class MentraLive: NSObject, SGCManager {
                                 "chunkJsonBytes": chunkStr.data(using: .utf8)?.count,
                                 "messageBytes": jsonData.count,
                             ])
+                            guard !packedData.isEmpty else { return false }
                             queueSend(packedData, id: chunkTrackingId, trace: trace)
 
                             // Add small delay between chunks to avoid overwhelming the connection
@@ -4973,14 +5090,22 @@ class MentraLive: NSObject, SGCManager {
                         }
                     }
 
-                    Bridge.log("LIVE: All chunks queued for transmission")
+                    transportLog("LIVE: All chunks queued for transmission", bridgeLogging: bridgeLogging)
                 } else {
                     // Normal single message transmission
                     if (json["type"] as? String) == "take_photo" {
-                        Bridge.log("LIVE: PHOTO PIPELINE BLE handoff — sendJson -> queueSend take_photo")
+                        transportLog(
+                            "LIVE: PHOTO PIPELINE BLE handoff — sendJson -> queueSend take_photo",
+                            bridgeLogging: bridgeLogging
+                        )
                     }
-                    Bridge.log("LIVE: Sending data to glasses: \(jsonString)")
-                    let packedData = packJson(jsonString, wakeUp: wakeUp) ?? Data()
+                    transportLog("LIVE: Sending data to glasses: \(jsonString)", bridgeLogging: bridgeLogging)
+                    let packedData =
+                        packJson(
+                            jsonString,
+                            wakeUp: wakeUp,
+                            bridgeLogging: bridgeLogging
+                        ) ?? Data()
                     let trace = createBleWriteTrace(
                         commandInfo: commandInfo,
                         chunkId: nil,
@@ -4994,12 +5119,15 @@ class MentraLive: NSObject, SGCManager {
                     logBleChunkTrace("created", trace, extra: [
                         "messageBytes": jsonData.count,
                     ])
+                    guard !packedData.isEmpty else { return false }
                     queueSend(packedData, id: trackingId, trace: trace)
                 }
+                return true
             }
         } catch {
-            Bridge.log("LIVE: Error creating JSON: \(error)")
+            transportLog("LIVE: Error creating JSON: \(error)", bridgeLogging: bridgeLogging)
         }
+        return false
     }
 
     // MARK: - Status Requests
@@ -5990,7 +6118,11 @@ extension MentraLive {
      * 1. Wrap with C-field: {"C": jsonData}
      * 2. Then pack with BES2700 protocol using little-endian: ## + type + length + {"C": jsonData} + $$
      */
-    private func packJson(_ jsonData: String?, wakeUp: Bool = false) -> Data? {
+    private func packJson(
+        _ jsonData: String?,
+        wakeUp: Bool = false,
+        bridgeLogging: Bool = true
+    ) -> Data? {
         guard let jsonData else { return nil }
 
         do {
@@ -6013,7 +6145,10 @@ extension MentraLive {
             )
 
         } catch {
-            Bridge.log("Error creating JSON wrapper for K900: \(error)")
+            transportLog(
+                "Error creating JSON wrapper for K900: \(error)",
+                bridgeLogging: bridgeLogging
+            )
             return nil
         }
     }

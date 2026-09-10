@@ -47,6 +47,11 @@ public class AsgConstants {
     public static final long MTK_OTA_MAX_DOWNLOAD_BYTES = 1024L * 1024 * 1024;
     /** Non-retryable until the user frees storage on the glasses. */
     public static final String OTA_INSUFFICIENT_STORAGE = "insufficient_storage";
+    /** Protocol version for session-correlated {@code wifi_forget_result} responses. */
+    public static final int WIFI_FORGET_RESULT_VERSION = 1;
+
+    /** Protocol version for session-correlated saved WiFi network responses. */
+    public static final int SAVED_WIFI_NETWORKS_VERSION = 1;
 
     /** Canonical camera crop defaults shared with the phone and Bluetooth SDK. */
     public static final int CAMERA_FOV_DEFAULT = 118;
@@ -291,9 +296,9 @@ public class AsgConstants {
     public static final long UART_BOOT_RECOVERY_INITIAL_DELAY_MS = 8000;
 
     /**
-     * Grace after bounded UART recovery is exhausted before a BES OTA timeout becomes terminal.
-     * BES can finish rebooting after the transport scan, and an exact target-version reply from
-     * that later Linux boot is authoritative.
+     * Grace after bounded UART recovery is exhausted before a BES OTA timeout becomes terminal. BES
+     * can finish rebooting after the transport scan, and an exact target-version reply from that
+     * later Linux boot is authoritative.
      */
     public static final long BES_OTA_RECOVERY_FAILURE_GRACE_MS = 30000;
 
@@ -512,8 +517,8 @@ public class AsgConstants {
     public static final int BLE_PHOTO_MAX_TARGET_PX = 1920;
 
     /**
-     * Phone → glasses JSON command type to enable or disable Wi-Fi ADB (Mentra Live).
-     * Persisted via AsgSettings and applied at boot (default off).
+     * Phone → glasses JSON command type to enable or disable Wi-Fi ADB (Mentra Live). Persisted via
+     * AsgSettings and applied at boot (default off).
      */
     public static final String COMMAND_SET_WIFI_ADB_STATE = "set_wifi_adb_state";
 }

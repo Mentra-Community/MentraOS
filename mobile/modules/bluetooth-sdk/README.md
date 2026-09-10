@@ -134,21 +134,19 @@ iOS apps should include usage descriptions:
 Use `scan()` when your app needs to show a picker. It calls `onResults` every time the discovered list changes, then resolves with the final list after the timeout.
 
 ```ts
-import BluetoothSdk, {
-  DeviceModels,
-} from '@mentra/bluetooth-sdk'
+import BluetoothSdk, {DeviceModels} from "@mentra/bluetooth-sdk"
 
 const devices = await BluetoothSdk.scan(DeviceModels.MentraLive, {
   timeoutMs: 10_000,
   onResults: (nextDevices) => {
-    console.log('Nearby glasses:', nextDevices)
+    console.log("Nearby glasses:", nextDevices)
   },
   onDiagnostic: (hint) => showScanHint(hint.message),
 })
 
 const device = await chooseDevice(devices)
 if (!device) {
-  throw new Error('No Mentra Live glasses selected')
+  throw new Error("No Mentra Live glasses selected")
 }
 
 await BluetoothSdk.connect(device)
@@ -257,9 +255,9 @@ subpath for common lifecycle plumbing. Use the root `BluetoothSdk` object for
 commands such as `requestPhoto()`, `startStream()`, and `setMicState()`.
 
 ```tsx
-import {Button, Text, View} from 'react-native'
-import {DeviceModels} from '@mentra/bluetooth-sdk'
-import {useBluetoothEvent, useMentraBluetooth} from '@mentra/bluetooth-sdk/react'
+import {Button, Text, View} from "react-native"
+import {DeviceModels} from "@mentra/bluetooth-sdk"
+import {useBluetoothEvent, useMentraBluetooth} from "@mentra/bluetooth-sdk/react"
 
 export function DeviceScreen() {
   const mentra = useMentraBluetooth({
@@ -267,13 +265,13 @@ export function DeviceScreen() {
     scanTimeoutMs: 10_000,
   })
 
-  useBluetoothEvent('button_press', (event) => {
-    console.log('Glasses button:', event.buttonId, event.pressType)
+  useBluetoothEvent("button_press", (event) => {
+    console.log("Glasses button:", event.buttonId, event.pressType)
   })
 
   return (
     <View>
-      <Text>{mentra.glasses.connected ? 'Connected' : 'Disconnected'}</Text>
+      <Text>{mentra.glasses.connected ? "Connected" : "Disconnected"}</Text>
       <Button disabled={mentra.busy} title="Scan" onPress={() => mentra.scan.start()} />
       {mentra.scan.devices.map((device) => (
         <Button key={device.id} title={device.name} onPress={() => mentra.connect(device)} />
@@ -296,11 +294,11 @@ The React hook exposes `glasses.connection` as a discriminated union:
 
 ```ts
 type GlassesConnectionStatus =
-  | {state: 'disconnected'}
-  | {state: 'scanning'}
-  | {state: 'connecting'}
-  | {state: 'bonding'}
-  | {state: 'connected'; fullyBooted: boolean}
+  | {state: "disconnected"}
+  | {state: "scanning"}
+  | {state: "connecting"}
+  | {state: "bonding"}
+  | {state: "connected"; fullyBooted: boolean}
 ```
 
 Use `connection.state` for link progress. `fullyBooted` only exists when `state === 'connected'`. Android and iOS native APIs also keep `connectionState`, `connected`, and `fullyBooted` as native status properties for Kotlin and Swift callers.
@@ -356,11 +354,14 @@ await BluetoothSdk.setDashboardPosition(4, 2)
 const networks = await BluetoothSdk.requestWifiScan()
 console.log(networks.map((network) => network.ssid))
 
-const wifiStatus = await BluetoothSdk.sendWifiCredentials('Office WiFi', 'secret')
+const savedResult = await BluetoothSdk.getSavedWifiNetworks()
+if (savedResult.outcome === "confirmed") console.log(savedResult.networks)
+
+const wifiStatus = await BluetoothSdk.sendWifiCredentials("Office WiFi", "secret")
 console.log(wifiStatus.state)
 
-const forgetStatus = await BluetoothSdk.forgetWifiNetwork('Office WiFi')
-console.log(forgetStatus.state)
+const forgetResult = await BluetoothSdk.forgetWifiNetwork("Office WiFi")
+console.log(forgetResult.outcome)
 
 const hotspotStatus = await BluetoothSdk.setHotspotState(true)
 console.log(hotspotStatus.state)
@@ -371,19 +372,11 @@ const galleryAck = await BluetoothSdk.setGalleryModeEnabled(true)
 console.log(galleryAck.status)
 await BluetoothSdk.setGalleryModeEnabled(false)
 
-await BluetoothSdk.setPreferredMic('auto')
+await BluetoothSdk.setPreferredMic("auto")
 await BluetoothSdk.setMicState(true)
 await BluetoothSdk.setOwnAppAudioPlaying(false)
 
-const ledAck = await BluetoothSdk.rgbLedControl(
-  `led-${Date.now()}`,
-  'com.example.app',
-  'on',
-  'green',
-  500,
-  500,
-  3,
-)
+const ledAck = await BluetoothSdk.rgbLedControl(`led-${Date.now()}`, "com.example.app", "on", "green", 500, 500, 3)
 console.log(ledAck.state)
 ```
 
@@ -422,7 +415,15 @@ await sdk.setDashboardContent("")
 Settings commands that return `SettingsAckSuccessEvent` reject when the ASG reports an error ack. The SDK updates its local settings store only after that ASG ack resolves successfully, so observed SDK state reflects the acknowledged glasses state rather than a queued request. Raw `settings_ack` listener events still use `SettingsAckEvent` because they can include both success and failure statuses. `rgbLedControl(...)` resolves from a successful ASG `rgb_led_control_response` and rejects when the ASG reports `state: "error"`; raw `settings_ack` and `rgb_led_control_response` events remain available through listeners.
 
 WiFi, hotspot, and version-info commands resolve from the ASG response path, not local dispatch:
-`requestWifiScan()` resolves from the ASG `wifi_scan_result` completion response with the updated scan list, including `[]` when no networks are found. Intermediate `wifi_scan_result` events can arrive with `scanComplete: false` while the glasses stream discovered networks; the final event uses `scanComplete: true`. If older glasses stream non-empty scan results but never send the completion event, the request resolves with the accumulated scan list when the request times out. `sendWifiCredentials()` resolves when the requested SSID is connected, `forgetWifiNetwork()` resolves when that SSID is no longer connected, and `setHotspotState()` resolves when the requested hotspot state is reported. `requestVersionInfo()` waits for all chunks declared by the correlated response's `chunkCount`, `chunkIndex`, and `final` metadata. Legacy single-message responses complete immediately; legacy chunked responses complete on `version_info_3` after `version_info_1`. Missing final chunks time out rather than returning partial data after a quiet period.
+`requestWifiScan()` resolves from the ASG `wifi_scan_result` completion response with the updated scan list, including `[]` when no networks are found. Intermediate `wifi_scan_result` events can arrive with `scanComplete: false` while the glasses stream discovered networks; the final event uses `scanComplete: true`. If older glasses stream non-empty scan results but never send the completion event, the request resolves with the accumulated scan list when the request times out. `sendWifiCredentials()` resolves when the requested SSID is connected, `forgetWifiNetwork()` returns a semantic `WifiForgetResult`, `getSavedWifiNetworks()` returns a semantic `SavedWifiNetworksResult`, `setHotspotState()` resolves when the requested hotspot state is reported, and `requestVersionInfo()` waits for all chunks declared by the correlated response's `chunkCount`, `chunkIndex`, and `final` metadata. Legacy single-message responses complete immediately; legacy chunked responses complete on `version_info_3` after `version_info_1`. Missing final chunks time out rather than returning partial data after a quiet period.
+
+Current Mentra Live builds advertise `wifiForgetResultVersion` and `savedWifiNetworksVersion` in `version_info_1`. Native queues calls while those capabilities are unknown, sharing one 15-second deadline for negotiation and response. A discovery timeout rejects and never guesses that the glasses are legacy. Only version 1 is supported: modern commands carry `protocolVersion: 1`, a nonempty request ID, and the glasses process session ID; legacy forget commands omit all three fields. Unknown or malformed versions fail closed. Correlated results must match the complete tuple and (for forget) exact SSID; unrelated `wifi_status` events never settle a modern request. Session changes and disconnects reject pending WiFi work instead of allowing stale responses to cross sessions.
+
+`WifiForgetResult.outcome` is `confirmed`, `dispatched`, `not_found`, `unsupported`, `failed`, or `legacy_unverified`. K900 returns `dispatched`: ASG queued its asynchronous SystemUI broadcast, but the vendor API provides no completion callback and credential removal is not verified. `connected`, `currentSsid`, and `localIp` are best-effort diagnostic snapshot fields; `connected` is omitted when ASG cannot read the link state and must not be interpreted as `false`. Older firmware without the capability advertisement uses the isolated legacy path; accepted native dispatch immediately returns `legacy_unverified`, with no invented link-state snapshot. `getSavedWifiNetworks()` preserves exact SSID identity. It returns `confirmed` only for a backend with reliable enumeration, while K900 and legacy firmware return a typed `unsupported` result because the vendor credential store has no reliable list response.
+
+Promise results expose semantic outcomes and optional link snapshots, not `mode`, `capabilityVersion`, `requestId`, or `sid`. A legacy result returns `legacy_unverified` immediately after actual native transport acceptance; no active or compatible glasses transport rejects with `dispatch_failed`.
+
+Raw `wifi_forget_result` listeners receive a discriminated event union. `mode: "modern"` carries `requestId`, `sid`, `protocolVersion`, and semantic `outcome`; `mode: "legacy"` preserves the older uncorrelated wire frame's `dispatched` boolean. Partial tuples are rejected. Terminal Wi-Fi events use at-least-once BLE delivery, so raw listeners can observe retries; deduplicate modern events by `(requestId, sid)`. Promise coordinators accept only the first matching terminal frame.
 
 The SDK automatically sends the phone wall clock once shortly after a glasses connection becomes ready. It waits for the initial command burst to drain before timestamping the command so startup queue delay does not become clock skew. The once-per-connection guard resets after disconnect, so every successful reconnect synchronizes again. The SDK does not periodically verify or correct clock skew during a long-lived connection; apps that require periodic reconciliation can compare `requestVersionInfo().systemTimeMs` with the phone clock.
 
@@ -507,15 +508,15 @@ Mentra Live also rejects `ota_start` before acknowledgement when its known batte
 
 ```ts
 const photo = await BluetoothSdk.requestPhoto({
-  size: 'medium',
-  webhookUrl: 'https://api.example.com/mentra/photo',
-  authToken: 'optional-token',
-  compress: 'medium',
+  size: "medium",
+  webhookUrl: "https://api.example.com/mentra/photo",
+  authToken: "optional-token",
+  compress: "medium",
   sound: true,
   exposureTimeNs: null, // auto exposure; pass a positive nanosecond value for manual exposure
   iso: null, // auto ISO; pass a positive ISO only with manual exposureTimeNs
 })
-console.log('photo delivered', photo.photoUrl ?? photo.uploadUrl, photo.fileSizeBytes)
+console.log("photo delivered", photo.photoUrl ?? photo.uploadUrl, photo.fileSizeBytes)
 ```
 
 `requestPhoto(...)` resolves only after the full photo action reaches terminal success: capture completed and the photo was delivered to the webhook, either directly from the glasses over Wi-Fi or through the phone's Bluetooth fallback relay. If you omit `requestId`, the SDK generates one and the terminal response includes it. It rejects if the ASG reports `state: "error"`, if phone-side fallback upload fails, if the SDK cannot send the command, or if no terminal `photo_response` arrives within 30 seconds. Photo requests use this longer operation-specific deadline because max-quality BLE fallback can legitimately exceed the 15-second deadline used by ordinary commands. Use `photo_status` for intermediate stages such as `accepted`, `configuring`, `capturing`, `captured`, `uploading`, `ble_fallback_compression`, `ready_for_transfer`, and `transferring`; `photo_status` is progress, while `photo_response` is terminal success/error. The raw `photo_response` event stream still includes both success and error events for subscribers. The webhook should accept multipart form data with a `photo` file and `requestId`. If `authToken` is provided, the uploader adds `Authorization: Bearer <token>`. The camera light is always enabled for photo capture.
@@ -536,8 +537,8 @@ The missing/factory persistent FOV base is 102 degrees with centered ROI; existi
 const streamId = `stream-${Date.now()}`
 
 await BluetoothSdk.startStream({
-  type: 'start_stream',
-  streamUrl: 'http://192.168.1.42:8889/mentra-live/whip',
+  type: "start_stream",
+  streamUrl: "http://192.168.1.42:8889/mentra-live/whip",
   streamId,
   video: {fps: 15},
 })
@@ -553,19 +554,19 @@ Use `rtmp://` or `rtmps://` for RTMP, `srt://` for SRT, and `http://` or `https:
 React Native components should use `useBluetoothEvent()` for hardware events:
 
 ```tsx
-import {useBluetoothEvent} from '@mentra/bluetooth-sdk/react'
+import {useBluetoothEvent} from "@mentra/bluetooth-sdk/react"
 
 export function HardwareEventLogger() {
-  useBluetoothEvent('button_press', (event) => console.log(event))
-  useBluetoothEvent('touch_event', (event) => console.log(event))
-  useBluetoothEvent('photo_status', (event) => console.log(event.status, event.resolvedConfig, event.captureMetadata))
-  useBluetoothEvent('stream_status', (event) => console.log(event))
-  useBluetoothEvent('speaking_status', (event) => console.log(event.speaking))
-  useBluetoothEvent('mic_pcm', (event) => {
+  useBluetoothEvent("button_press", (event) => console.log(event))
+  useBluetoothEvent("touch_event", (event) => console.log(event))
+  useBluetoothEvent("photo_status", (event) => console.log(event.status, event.resolvedConfig, event.captureMetadata))
+  useBluetoothEvent("stream_status", (event) => console.log(event))
+  useBluetoothEvent("speaking_status", (event) => console.log(event.speaking))
+  useBluetoothEvent("mic_pcm", (event) => {
     console.log(event.sampleRate, event.bitsPerSample, event.channels, event.encoding)
     console.log(event.pcm)
   })
-  useBluetoothEvent('mic_health', (event) => {
+  useBluetoothEvent("mic_health", (event) => {
     console.log(event.reason, event.sequenceGapEvents, event.decodeFailures)
   })
 
