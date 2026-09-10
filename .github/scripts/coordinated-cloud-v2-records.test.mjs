@@ -173,6 +173,8 @@ test("records companion app evidence from the same source tag alongside Core and
     config: "miniapps/merge/porter.prod.yaml",
     cluster: "5783",
     project: "15081",
+    deploymentTargetId: "95380467-4a76-458d-b12a-df66cf0c362b",
+    target: "miniapps-us-west-2-default",
     requestedTag: sourceCommit,
   })
   assert.equal(merge.deploymentId, "porter:revision-7")

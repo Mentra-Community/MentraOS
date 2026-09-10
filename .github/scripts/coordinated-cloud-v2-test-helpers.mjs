@@ -56,6 +56,8 @@ export function cloudRecordForPlan(plan) {
             config: companion.porterConfig,
             cluster: companion.porterCluster,
             project: companion.porterProject,
+            deploymentTargetId: companion.porterDeploymentTargetId,
+            target: companion.porterTarget,
             requestedTag: plan.sourceCommit,
           },
           deploymentId: "porter:revision-7",

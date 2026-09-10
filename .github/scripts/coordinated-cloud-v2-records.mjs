@@ -21,6 +21,8 @@ const MERGE_COMPANION = Object.freeze({
     porterConfig: "miniapps/merge/porter.dev.yaml",
     porterCluster: "5783",
     porterProject: "15081",
+    porterDeploymentTargetId: "95380467-4a76-458d-b12a-df66cf0c362b",
+    porterTarget: "miniapps-us-west-2-default",
     probes: Object.freeze(["healthz"]),
     services: Object.freeze({backend: Object.freeze(["merge3.dev.mentraglass.com"])}),
   }),
@@ -29,6 +31,8 @@ const MERGE_COMPANION = Object.freeze({
     porterConfig: "miniapps/merge/porter.staging.yaml",
     porterCluster: "5783",
     porterProject: "15081",
+    porterDeploymentTargetId: "95380467-4a76-458d-b12a-df66cf0c362b",
+    porterTarget: "miniapps-us-west-2-default",
     probes: Object.freeze(["healthz"]),
     services: Object.freeze({backend: Object.freeze(["merge3.staging.mentraglass.com"])}),
   }),
@@ -37,6 +41,8 @@ const MERGE_COMPANION = Object.freeze({
     porterConfig: "miniapps/merge/porter.prod.yaml",
     porterCluster: "5783",
     porterProject: "15081",
+    porterDeploymentTargetId: "95380467-4a76-458d-b12a-df66cf0c362b",
+    porterTarget: "miniapps-us-west-2-default",
     probes: Object.freeze(["healthz"]),
     services: Object.freeze({backend: Object.freeze(["merge3.mentraglass.com"])}),
   }),
@@ -132,6 +138,8 @@ function resolvedCompanions(companions) {
         porterConfig: companion.porterConfig,
         porterCluster: companion.porterCluster,
         porterProject: companion.porterProject,
+        porterDeploymentTargetId: companion.porterDeploymentTargetId,
+        porterTarget: companion.porterTarget,
         probes: [...companion.probes],
         services: resolvedServices(companion.services),
       },
@@ -337,6 +345,8 @@ export function createCloudV2DeploymentRecord({
             config: companion.porterConfig,
             cluster: companion.porterCluster,
             project: companion.porterProject,
+            deploymentTargetId: companion.porterDeploymentTargetId,
+            target: companion.porterTarget,
             requestedTag,
           },
         },
@@ -406,6 +416,8 @@ function validateCompanionRecords({target, record, requestedTag}) {
       recorded.porter?.config !== companion.porterConfig ||
       recorded.porter?.cluster !== companion.porterCluster ||
       recorded.porter?.project !== companion.porterProject ||
+      recorded.porter?.deploymentTargetId !== companion.porterDeploymentTargetId ||
+      recorded.porter?.target !== companion.porterTarget ||
       recorded.porter?.requestedTag !== requestedTag
     ) {
       throw new Error(`Companion app ${name} record does not match the release plan and target`)

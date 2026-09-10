@@ -175,7 +175,8 @@ test("companion apps deploy inside the Cloud V2 job from the same source and evi
 
   // Companions apply after Core/Runtime, in the same job, from the resolved target table.
   assert.match(companions, /\.companions \| to_entries\[\]/)
-  assert.match(companions, /porter apply -w -f "\$config" --cluster "\$cluster" --project "\$project"/)
+  assert.match(companions, /porter apply -w -f "\$config" -x "\$target" --cluster "\$cluster" --project "\$project"/)
+  assert.match(companions, /PORTER_DEPLOYMENT_TARGET_ID="\$target_id"/)
   assert.match(companions, /PORTER_TAG: \$\{\{ steps\.source\.outputs\.tag \}\}/)
   assert.doesNotMatch(companions, /miniapps\/merge/)
   // Every companion host and probe is checked with the same fail-closed curl, then read back.

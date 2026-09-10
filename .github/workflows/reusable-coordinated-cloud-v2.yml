@@ -152,17 +152,17 @@ jobs:
           PORTER_TOKEN: ${{ secrets.PORTER_TOKEN }}
         run: |
           set -euo pipefail
-          while IFS=$'\t' read -r name app config cluster project; do
+          while IFS=$'\t' read -r name app config cluster project target_id target; do
             echo "Deploying companion app $name ($app) from $config"
-            env -u PORTER_DEPLOYMENT_TARGET_ID \
-              PORTER_APP_NAME="$app" \
+            PORTER_APP_NAME="$app" \
               PORTER_CLUSTER="$cluster" \
               PORTER_PROJECT="$project" \
+              PORTER_DEPLOYMENT_TARGET_ID="$target_id" \
               PORTER_TOKEN="${COMPANION_PORTER_TOKEN:-$PORTER_TOKEN}" \
-              porter apply -w -f "$config" --cluster "$cluster" --project "$project"
+              porter apply -w -f "$config" -x "$target" --cluster "$cluster" --project "$project"
           done < <(
             jq -r \
-              '.companions | to_entries[] | [.key, .value.porterApp, .value.porterConfig, .value.porterCluster, .value.porterProject] | @tsv' \
+              '.companions | to_entries[] | [.key, .value.porterApp, .value.porterConfig, .value.porterCluster, .value.porterProject, .value.porterDeploymentTargetId, .value.porterTarget] | @tsv' \
               cloud-v2-target.json
           )
 
@@ -241,17 +241,17 @@ jobs:
             -o json \
             > cloud-v2-pods.json
           mkdir -p companions
-          while IFS=$'\t' read -r name app cluster project; do
-            env -u PORTER_DEPLOYMENT_TARGET_ID \
-              PORTER_APP_NAME="$app" \
+          while IFS=$'\t' read -r name app cluster project target_id; do
+            PORTER_APP_NAME="$app" \
               PORTER_CLUSTER="$cluster" \
               PORTER_PROJECT="$project" \
+              PORTER_DEPLOYMENT_TARGET_ID="$target_id" \
               PORTER_TOKEN="${COMPANION_PORTER_TOKEN:-$PORTER_TOKEN}" \
               porter kubectl -- get pods -l "porter.run/app-name=$app" -o json \
               > "companions/$name.pods.json"
           done < <(
             jq -r \
-              '.companions | to_entries[] | [.key, .value.porterApp, .value.porterCluster, .value.porterProject] | @tsv' \
+              '.companions | to_entries[] | [.key, .value.porterApp, .value.porterCluster, .value.porterProject, .value.porterDeploymentTargetId] | @tsv' \
               cloud-v2-target.json
           )
 
