@@ -8,8 +8,8 @@
 
 import Combine
 import CoreBluetooth
-import Foundation
 import CoreGraphics
+import Foundation
 
 /// Keep a low-rate, non-audio EvenHub sensor stream active so iOS continues receiving BLE
 /// notifications while the Mentra App is backgrounded. The samples stay internal unless IMU was
@@ -890,7 +890,7 @@ private enum EvenAIProto {
 
 // MARK: - Notification Protobuf Builders (notification.proto, service ID 4)
 
-private enum NotificationProto {
+enum G2NotificationProto {
     /// NotificationDataPackage with commandId=NOTIFICATION_IOS (2), carrying
     /// `NotificationIOS { appID, displayName }`. We saw the glasses emit this
     /// inbound after "Hey Even, show notifications" with appID="com.burbn.instagram";
@@ -1714,8 +1714,13 @@ class G2: NSObject, SGCManager {
     // The pace replaces the gate's overflow protection (the original reason for gating). Any packet
     // CoreBluetooth still drops self-heals: text is re-sent (TextContainer.pendingSends) and image
     // fragments retry on their ACK (`awaitImageAck`).
-    private var leftWriteQueue: [Data] = []
-    private var rightWriteQueue: [Data] = []
+    private struct PendingWrite {
+        let data: Data
+        let notificationEpoch: Int?
+    }
+
+    private var leftWriteQueue: [PendingWrite] = []
+    private var rightWriteQueue: [PendingWrite] = []
     private var leftDraining = false
     private var rightDraining = false
     // Pace between consecutive packets (~G1's chunk pacing). Off any external callback, so the drain
@@ -1725,13 +1730,14 @@ class G2: NSObject, SGCManager {
     // making progress). Rate-limited. Prefixed "BGCAP:" so it's easy to grep/strip after validation.
     private var bgcapDepthLogAt: Double = 0
 
-    private func sendToGlasses(_ packets: [Data], left: Bool = false, right: Bool = true) {
+    private func sendToGlasses(_ packets: [Data], left: Bool = false, right: Bool = true, notificationEpoch: Int? = nil) {
+        let writes = packets.map { PendingWrite(data: $0, notificationEpoch: notificationEpoch) }
         if right {
-            rightWriteQueue.append(contentsOf: packets)
+            rightWriteQueue.append(contentsOf: writes)
             startDrain(right: true)
         }
         if left {
-            leftWriteQueue.append(contentsOf: packets)
+            leftWriteQueue.append(contentsOf: writes)
             startDrain(right: false)
         }
     }
@@ -1777,7 +1783,8 @@ class G2: NSObject, SGCManager {
                 }
             }
             let packet = right ? rightWriteQueue.removeFirst() : leftWriteQueue.removeFirst()
-            peripheral.writeValue(packet, for: char, type: .withoutResponse)
+            if let epoch = packet.notificationEpoch, epoch != notificationEpoch { continue }
+            peripheral.writeValue(packet.data, for: char, type: .withoutResponse)
             try? await Task.sleep(nanoseconds: writePaceNanos)
         }
     }
@@ -2659,7 +2666,7 @@ class G2: NSObject, SGCManager {
         //     "G2: sendImageData(\(containerName)) - \(fragmentCount) fragments, \(bmpData.count) bytes"
         // )
 
-        for attempt in 1...IMG_MAX_ATTEMPTS {
+        for _ in 1 ... IMG_MAX_ATTEMPTS {
             // One session id per WHOLE image transfer (per attempt). The glasses key their
             // reassembly buffer on MapSessionId, so every fragment of this image must reuse the
             // same session id with an incrementing MapFragmentIndex; the per-fragment ACK is
@@ -3659,6 +3666,8 @@ class G2: NSObject, SGCManager {
     func disconnect() {
         Bridge.log("G2: disconnect()")
         isDisconnecting = true
+        notificationEpoch += 1
+        notificationControlMagic = nil
         clearDisplay()
         cancelPairingTimeout()
         stopHeartbeats()
@@ -3805,6 +3814,88 @@ class G2: NSObject, SGCManager {
             fTextEnd: fTextEnd
         )
         sendEvenAICommand(payload)
+    }
+
+    private var notificationConfig = NativeNotificationConfig()
+    private var notificationEpoch = 0
+    private var notificationControlMagic: Int32?
+    private var notificationError = ""
+
+    private var notificationAuthorization: String {
+        #if os(macOS)
+            return "unknown"
+        #else
+            let connected = [leftPeripheral, rightPeripheral].compactMap { $0 }.filter { $0.state == .connected }
+            guard !connected.isEmpty else { return "unknown" }
+            return connected.contains { $0.ancsAuthorized } ? "authorized" : "not_authorized"
+        #endif
+    }
+
+    func getNativeNotificationStatus() -> NativeNotificationStatus {
+        #if os(macOS)
+            return .unavailable
+        #else
+        let ready = DeviceStore.shared.get("glasses", "fullyBooted") as? Bool ?? false
+        return NativeNotificationStatus(
+            supported: true, source: "ancs", authorization: notificationAuthorization,
+            state: !ready ? "unavailable" : !notificationError.isEmpty ? "failed" : notificationConfig.enabled ? "submitted" : "disabled",
+            config: notificationConfig, error: notificationError
+        )
+        #endif
+    }
+
+    private func publishNotificationStatus() {
+        Bridge.sendTypedMessage("native_notification_status", body: getNativeNotificationStatus().dictionary)
+    }
+
+    func configureNativeNotifications(_ config: NativeNotificationConfig) throws {
+        #if os(macOS)
+            throw NativeNotificationError.unsupported
+        #else
+        try config.validateForAncs()
+        notificationConfig = config
+        applyNotificationControls()
+        #endif
+    }
+
+    private func applyNotificationControls() {
+        #if os(macOS)
+            publishNotificationStatus()
+            return
+        #endif
+        notificationControlMagic = nil
+        notificationEpoch += 1 // Discard unsent controls from the previous settings/connection.
+        notificationError = ""
+        guard DeviceStore.shared.get("glasses", "fullyBooted") as? Bool == true else {
+            publishNotificationStatus()
+            return
+        }
+        let config = notificationConfig
+        // Never enable ANCS presentation before the accessory is authorized. Disabling
+        // still reaches firmware after permission revocation.
+        let enabled = config.enabled && notificationAuthorization == "authorized"
+        let magic = sendManager.nextMagicRandom()
+        notificationControlMagic = magic
+        let payload = G2NotificationProto.notificationCtrl(
+            magicRandom: magic, notifEnable: enabled ? 1 : 0,
+            autoDispEnable: config.autoDisplay ? 1 : 0,
+            dispTime: Int32(config.durationSeconds), avoidDisturbEnable: config.doNotDisturb ? 1 : 0
+        )
+        sendToGlasses(sendManager.buildPackets(serviceId: ServiceID.notification.rawValue, payload: payload, reserveFlag: true), notificationEpoch: notificationEpoch)
+        // Preserve the firmware's existing iOS app whitelist. Android package filters
+        // cannot safely be applied to the ANCS stream or translated to bundle IDs.
+        publishNotificationStatus()
+    }
+
+    private var notificationConnectionOptions: [String: Any] {
+        var options: [String: Any] = [
+            CBConnectPeripheralOptionNotifyOnConnectionKey: true,
+            CBConnectPeripheralOptionNotifyOnDisconnectionKey: true,
+        ]
+        #if !os(macOS)
+            options[CBConnectPeripheralOptionRequiresANCS] = true
+        #endif
+        return options
     }
 
     /// Open the on-glasses notification panel — same effect as the user saying
@@ -4102,10 +4193,7 @@ class G2: NSObject, SGCManager {
                     device.discoverServices([G2BLE.SERVICE_UUID])
                     centralManager!.connect(
                         leftPeripheral!,
-                        options: [
-                            CBConnectPeripheralOptionNotifyOnConnectionKey: true,
-                            CBConnectPeripheralOptionNotifyOnDisconnectionKey: true,
-                        ]
+                        options: notificationConnectionOptions
                     )
                 } else if name.contains("_R_") && serialNumber.contains(DEVICE_SEARCH_ID) {
                     rightPeripheral = device
@@ -4113,10 +4201,7 @@ class G2: NSObject, SGCManager {
                     device.discoverServices([G2BLE.SERVICE_UUID])
                     centralManager!.connect(
                         rightPeripheral!,
-                        options: [
-                            CBConnectPeripheralOptionNotifyOnConnectionKey: true,
-                            CBConnectPeripheralOptionNotifyOnDisconnectionKey: true,
-                        ]
+                        options: notificationConnectionOptions
                     )
                 }
                 // we can't emit the serial number here unfortunately:
@@ -4180,8 +4265,8 @@ class G2: NSObject, SGCManager {
         rightPeripheral = right
         left.delegate = self
         right.delegate = self
-        centralManager?.connect(left, options: nil)
-        centralManager?.connect(right, options: nil)
+        centralManager?.connect(left, options: notificationConnectionOptions)
+        centralManager?.connect(right, options: notificationConnectionOptions)
         return true
     }
 
@@ -4231,6 +4316,7 @@ class G2: NSObject, SGCManager {
     // MARK: - Incoming Data Handling
 
     private func handleNotifyData(_ data: Data, from peripheral: CBPeripheral) async {
+        guard peripheral === leftPeripheral || peripheral === rightPeripheral else { return }
         // Distinguish left vs right peripheral so multi-packet reassembly doesn't collide
         let sourceKey = peripheral === leftPeripheral ? "L" : "R"
         guard let result = receiveManager.handlePacket(data, sourceKey: sourceKey) else { return }
@@ -4286,6 +4372,16 @@ class G2: NSObject, SGCManager {
         let fields = reader.parseFields()
         let cmd = fields[1] as? Int32 ?? 0
 
+        if cmd == 161, let response = fields[5] as? Data {
+            var responseReader = ProtobufReader(response)
+            let values = responseReader.parseFields()
+            if fields[2] as? Int32 == notificationControlMagic,
+               values[1] as? Int32 == 1, let code = values[2] as? Int32, code != 0
+            {
+                notificationError = "configuration_rejected_\(values[2] as? Int32 ?? -1)"
+                publishNotificationStatus()
+            }
+        }
         var detail = ""
         if let iosData = fields[4] as? Data {
             var ios = ProtobufReader(iosData)
@@ -4525,6 +4621,7 @@ class G2: NSObject, SGCManager {
         }
         if !isFullyBooted {
             DeviceStore.shared.apply("glasses", "fullyBooted", true)
+            applyNotificationControls()
         }
     }
 
@@ -5157,14 +5254,14 @@ extension G2: CBCentralManagerDelegate {
                 if self.leftPeripheral == nil {
                     self.leftPeripheral = peripheral
                     peripheral.delegate = self
-                    central.connect(peripheral, options: nil)
+                    central.connect(peripheral, options: self.notificationConnectionOptions)
                     // Bridge.log("G2: Connecting to LEFT: \(name)")
                 }
             } else if name.contains("_R_") {
                 if self.rightPeripheral == nil {
                     self.rightPeripheral = peripheral
                     peripheral.delegate = self
-                    central.connect(peripheral, options: nil)
+                    central.connect(peripheral, options: self.notificationConnectionOptions)
                     // Bridge.log("G2: Connecting to RIGHT: \(name)")
                 }
             }
@@ -5176,6 +5273,15 @@ extension G2: CBCentralManagerDelegate {
             }
         }
     }
+
+    #if !os(macOS)
+        nonisolated func centralManager(_: CBCentralManager, didUpdateANCSAuthorizationFor peripheral: CBPeripheral) {
+            DispatchQueue.main.async { [weak self] in
+                guard let self, peripheral === self.leftPeripheral || peripheral === self.rightPeripheral else { return }
+                self.applyNotificationControls()
+            }
+        }
+    #endif
 
     nonisolated func centralManager(_: CBCentralManager, didConnect peripheral: CBPeripheral) {
         DispatchQueue.main.async { [weak self] in
@@ -5209,6 +5315,9 @@ extension G2: CBCentralManagerDelegate {
             let side = peripheral === self.leftPeripheral ? "LEFT" : "RIGHT"
             Bridge.log("G2: Disconnected \(side): \(error?.localizedDescription ?? "clean")")
 
+            guard peripheral === self.leftPeripheral || peripheral === self.rightPeripheral else { return }
+            self.notificationEpoch += 1
+            self.notificationControlMagic = nil
             // Only reconnect if not intentionally disconnecting
             if self.isDisconnecting { return }
 
@@ -5233,6 +5342,7 @@ extension G2: CBCentralManagerDelegate {
             self.dashboardOpening = false
             DeviceStore.shared.apply("glasses", "connected", false)
             DeviceStore.shared.apply("glasses", "fullyBooted", false)
+            self.publishNotificationStatus()
 
             // Start persistent reconnection loop (every 30s, unlimited attempts)
             self.startReconnectionTimer()

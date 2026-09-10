@@ -166,6 +166,36 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: false,
     persist: true,
   },
+  // Select firmware-owned presentation instead of the Mentra card. Notify still
+  // controls whether presentation is running on either phone platform.
+  native_notifications_enabled: {
+    key: "native_notifications_enabled",
+    defaultValue: () => false,
+    writable: true,
+    saveOnServer: false,
+    persist: true,
+  },
+  native_notifications_auto_display: {
+    key: "native_notifications_auto_display",
+    defaultValue: () => true,
+    writable: true,
+    saveOnServer: false,
+    persist: true,
+  },
+  native_notifications_duration: {
+    key: "native_notifications_duration",
+    defaultValue: () => 5,
+    writable: true,
+    saveOnServer: false,
+    persist: true,
+  },
+  native_notifications_do_not_disturb: {
+    key: "native_notifications_do_not_disturb",
+    defaultValue: () => false,
+    writable: true,
+    saveOnServer: false,
+    persist: true,
+  },
   china_deployment: {
     key: "china_deployment",
     defaultValue: () => (process.env.EXPO_PUBLIC_DEPLOYMENT_REGION === "china" ? true : false),
@@ -793,13 +823,10 @@ export interface SettingsState {
 }
 
 const getDefaultSettings = () =>
-  Object.keys(SETTINGS).reduce(
-    (acc, key) => {
-      acc[key] = SETTINGS[key].defaultValue()
-      return acc
-    },
-    {} as Record<string, any>,
-  )
+  Object.keys(SETTINGS).reduce((acc, key) => {
+    acc[key] = SETTINGS[key].defaultValue()
+    return acc
+  }, {} as Record<string, any>)
 
 // Single-flight for loadAllSettings: the host fires it at module load and
 // engine.start()'s device-store hydration awaits it — without the memo the

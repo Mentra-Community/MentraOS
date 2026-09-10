@@ -55,6 +55,8 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             "save_setting",
             "local_transcription",
             "phone_notification",
+            "native_notification_status",
+            "native_notification_delivery",
             "phone_notification_dismissed",
             "ws_text",
             "ws_bin",
@@ -295,6 +297,27 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             await MainActor.run {
                 self.bluetoothSdk().sendIncidentId(incidentId, apiBaseUrl: apiBaseUrl)
             }
+        }
+
+        AsyncFunction("configureNativeNotifications") { (values: [String: Any]) in
+            try await MainActor.run {
+                try self.bluetoothSdk().configureNativeNotifications(NativeNotificationConfig(
+                    enabled: values["enabled"] as? Bool ?? false,
+                    autoDisplay: values["autoDisplay"] as? Bool ?? true,
+                    durationSeconds: (values["durationSeconds"] as? NSNumber)?.intValue ?? 5,
+                    doNotDisturb: values["doNotDisturb"] as? Bool ?? false,
+                    blockedApps: values["blockedApps"] as? [String] ?? []
+                ))
+            }
+        }
+        AsyncFunction("getNativeNotificationStatus") {
+            await MainActor.run { self.bluetoothSdk().getNativeNotificationStatus().dictionary }
+        }
+
+        // MARK: - Native Notification Centre
+
+        AsyncFunction("sendPhoneNotification") { (_: [String: Any]) in
+            throw NativeNotificationError.unsupported
         }
 
         // MARK: - WiFi Commands

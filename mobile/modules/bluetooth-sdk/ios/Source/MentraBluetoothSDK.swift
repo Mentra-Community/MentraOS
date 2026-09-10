@@ -498,6 +498,16 @@ public final class MentraBluetoothSDK {
         DeviceManager.shared.showDashboard()
     }
 
+    public func configureNativeNotifications(_ config: NativeNotificationConfig) throws {
+        try config.validate()
+        guard let driver = DeviceManager.shared.sgc else { throw NativeNotificationError.notConnected }
+        try driver.configureNativeNotifications(config)
+    }
+
+    public func getNativeNotificationStatus() -> NativeNotificationStatus {
+        DeviceManager.shared.sgc?.getNativeNotificationStatus() ?? .unavailable
+    }
+
     public func showNotificationsPanel() {
         DeviceManager.shared.showNotificationsPanel()
     }

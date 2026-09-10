@@ -27,6 +27,9 @@ import {
   GalleryStatusEvent,
   HotspotStatusChangeEvent,
   MicPreference,
+  NativePhoneNotification,
+  NativeNotificationConfig,
+  NativeNotificationStatus,
   ObservableStoreCategory,
   OtaQueryResult,
   OtaStartAckEvent,
@@ -263,6 +266,11 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
     speakerId: number,
     speed: number,
   ): Promise<boolean>
+
+  /** Android G2 content upload. iOS receives ANCS directly and rejects uploads. */
+  sendPhoneNotification(notification: NativePhoneNotification): Promise<void>
+  configureNativeNotifications(config: NativeNotificationConfig): Promise<void>
+  getNativeNotificationStatus(): Promise<NativeNotificationStatus>
 
   // Helper methods for type-safe observable store access
   updateGlasses(values: Partial<GlassesStatus>): Promise<void>

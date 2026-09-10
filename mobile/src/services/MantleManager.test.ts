@@ -1,3 +1,4 @@
+import {Platform} from "react-native"
 import {waitFor} from "@testing-library/react-native"
 import {router} from "expo-router"
 
@@ -108,6 +109,13 @@ let syncCoreDisplayOwner: () => void
 let syncGlassesPresentationState: (status: {state: string}) => void
 
 describe("MantleManager", () => {
+  const originalPlatform = Platform.OS
+  beforeAll(() => {
+    Object.defineProperty(Platform, "OS", {configurable: true, value: "android"})
+  })
+  afterAll(() => {
+    Object.defineProperty(Platform, "OS", {configurable: true, value: originalPlatform})
+  })
   beforeAll(async () => {
     // Alerts surface translated copy (e.g. the Wi-Fi-needs-glasses blocker), so
     // initialize i18n before init(); otherwise translate() returns raw keys.
@@ -469,6 +477,70 @@ describe("MantleManager", () => {
     expect(localDisplayManager.dismiss).toHaveBeenCalledWith("cloud.augmentos.notify")
     expect(audioPlaybackService.stopForApp).toHaveBeenCalledWith("cloud.augmentos.notify")
     await Promise.resolve()
+  })
+
+  it("uses native presentation without duplicating the Mentra card or miniapp event", async () => {
+    useAppStatusStore.setState({
+      apps: [{packageName: "cloud.augmentos.notify", type: "background", running: true}] as any,
+    })
+    syncCoreDisplayOwner()
+    expect(engine.phoneNotifications.setPresentationActive).toHaveBeenLastCalledWith(true)
+    ;(engine.phoneNotifications.usesNativePresentation as jest.Mock).mockReturnValueOnce(true)
+    ;(engine.phoneNotifications.presentNative as jest.Mock).mockResolvedValueOnce(true)
+    const forward = jest.spyOn(localMiniappRuntime, "forwardEvent")
+    emitCrustEvent("phone_notification", {
+      notificationId: "native-1",
+      app: "Calendar",
+      title: "Meeting",
+      content: "Soon",
+      packageName: "com.calendar",
+    })
+    await Promise.resolve()
+    expect(engine.phoneNotifications.presentNative).toHaveBeenCalledTimes(1)
+    expect(forward).toHaveBeenCalledWith("phone_notification", expect.objectContaining({notificationId: "native-1"}))
+    expect(localDisplayManager.request).not.toHaveBeenCalled()
+    expect(audioPlaybackService.play).not.toHaveBeenCalled()
+  })
+
+  it("does not fabricate an iOS card from G2's app-only relay", () => {
+    Object.defineProperty(Platform, "OS", {configurable: true, value: "ios"})
+    try {
+      useAppStatusStore.setState({
+        apps: [{packageName: "cloud.augmentos.notify", type: "background", running: true}] as any,
+      })
+      emitBluetoothSdkEvent("phone_notification", {
+        notificationId: "ancs-metadata",
+        app: "Messages",
+        title: "",
+        content: "",
+        packageName: "com.apple.MobileSMS",
+      })
+      expect(localDisplayManager.request).not.toHaveBeenCalled()
+    } finally {
+      Object.defineProperty(Platform, "OS", {configurable: true, value: "android"})
+    }
+  })
+
+  it("preserves full-content iOS notification presentation", () => {
+    Object.defineProperty(Platform, "OS", {configurable: true, value: "ios"})
+    try {
+      useAppStatusStore.setState({
+        apps: [{packageName: "cloud.augmentos.notify", type: "background", running: true}] as any,
+      })
+      emitBluetoothSdkEvent("phone_notification", {
+        notificationId: "full-ios",
+        app: "Messages",
+        title: "Alice",
+        content: "Hello",
+        packageName: "com.apple.MobileSMS",
+      })
+      expect(localDisplayManager.request).toHaveBeenCalledWith(
+        "cloud.augmentos.notify",
+        expect.objectContaining({layout: expect.objectContaining({text: "Hello"})}),
+      )
+    } finally {
+      Object.defineProperty(Platform, "OS", {configurable: true, value: "android"})
+    }
   })
 
   it("tracks OTA status without allowing backward progress or stale terminal update hints", async () => {

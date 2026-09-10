@@ -22,6 +22,8 @@ import android.os.Looper
 import android.util.Base64
 import com.mentra.bluetoothsdk.Bridge
 import com.mentra.bluetoothsdk.DeviceManager
+import com.mentra.bluetoothsdk.NativeNotificationConfig
+import com.mentra.bluetoothsdk.NativeNotificationStatus
 import com.mentra.bluetoothsdk.DeviceStore
 import com.mentra.bluetoothsdk.utils.DeviceTypes
 import java.io.ByteArrayOutputStream
@@ -29,6 +31,9 @@ import java.util.TimeZone
 import java.util.UUID
 import java.util.regex.Pattern
 import kotlinx.coroutines.CompletableDeferred
+import kotlinx.coroutines.CancellationException
+import kotlinx.coroutines.asCoroutineDispatcher
+import kotlinx.coroutines.ensureActive
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -36,7 +41,10 @@ import kotlinx.coroutines.SupervisorJob
 import kotlinx.coroutines.channels.Channel
 import kotlinx.coroutines.delay
 import kotlinx.coroutines.isActive
+import kotlinx.coroutines.cancelAndJoin
 import kotlinx.coroutines.launch
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 
 // ---------- G2 Protocol Constants ----------
@@ -45,6 +53,8 @@ private object G2BLE {
     // EvenHub BLE characteristic UUIDs (NOT the G1 UART UUIDs!)
     val CHAR_WRITE: UUID = UUID.fromString("00002760-08C2-11E1-9073-0E8AC72E5401")
     val CHAR_NOTIFY: UUID = UUID.fromString("00002760-08C2-11E1-9073-0E8AC72E5402")
+    val FILE_WRITE: UUID = UUID.fromString("00002760-08C2-11E1-9073-0E8AC72E7401")
+    val FILE_NOTIFY: UUID = UUID.fromString("00002760-08C2-11E1-9073-0E8AC72E7402")
     val AUDIO_NOTIFY: UUID = UUID.fromString("00002760-08C2-11E1-9073-0E8AC72E6402")
     val SERVICE_UUID: UUID = UUID.fromString("00002760-08C2-11E1-9073-0E8AC72E0000")
     val CLIENT_CHARACTERISTIC_CONFIG: UUID = UUID.fromString("00002902-0000-1000-8000-00805f9b34fb")
@@ -59,6 +69,9 @@ private object G2BLE {
 private enum class ServiceID(val value: Byte) {
     DASHBOARD(0x01), // UI_BACKGROUND_DASHBOARD_APP_ID
     MENU(0x03), // UI_FOREGROUND_MEUN_ID (typo is intentional — matches Even's proto)
+    NOTIFICATION(0x04), // UI_FOREGROUND_NOTIFICATION_ID (the on-glasses notification centre)
+    FILE_CMD(0xC4.toByte()), // Even File Service — command channel (START/DATA/RESULT_CHECK)
+    FILE_DATA(0xC5.toByte()), // Even File Service — raw file bytes
     EVEN_AI(0x07), // UI_FOREGROUND_EVEN_AI_ID
     NAVIGATION(0x08), // UI_BACKGROUND_NAVIGATION_ID (compass/heading lives here)
     G2_SETTING(0x09), // UI_SETTING_APP_ID
@@ -140,7 +153,7 @@ private enum class DevCfgCommandId(val value: Int) {
 
 // ---------- CRC16 ----------
 
-private fun calcCRC16(data: ByteArray): Int {
+internal fun g2Crc16(data: ByteArray): Int {
     var crc = 0xFFFF
     for (byte in data) {
         val b = byte.toInt() and 0xFF
@@ -834,6 +847,75 @@ private object EvenAIProto {
     }
 }
 
+// ---------- Notification Service (notification.proto, service ID 4) ----------
+
+/**
+ * Control plane for the on-glasses notification centre. Content does not travel here — it goes
+ * over the file service below. Wire formats: `notes/g2-notification-service.md`.
+ */
+internal object NotificationProto {
+    const val CMD_CTRL = 1
+    const val CMD_NOTIFICATION_IOS = 2
+    const val CMD_WHITELIST_CTRL = 3
+    const val CMD_WHITELIST_CHK = 4
+    const val CMD_COMM_RSP = 161
+
+    /** Disabling presentation must not change the firmware's app-filter policy. */
+    fun controls(config: NativeNotificationConfig, controlMagic: Int, filterMagic: Int): List<Pair<Int, ByteArray>> = buildList {
+        add(controlMagic to notificationCtrl(
+            controlMagic, if (config.enabled) 1 else 0,
+            if (config.autoDisplay) 1 else 0, config.durationSeconds,
+            if (config.doNotDisturb) 1 else 0,
+        ))
+        if (config.enabled) add(filterMagic to whitelistCtrl(filterMagic, whitelistDisable = 1))
+    }
+
+    fun notificationCtrl(
+        magicRandom: Int,
+        notifEnable: Int = 1,
+        autoDispEnable: Int = 1,
+        dispTime: Int = 5,
+        avoidDisturbEnable: Int = 0
+    ): ByteArray {
+        val ctrlW = ProtobufWriter()
+        ctrlW.writeInt32Field(1, notifEnable)
+        ctrlW.writeInt32Field(2, autoDispEnable)
+        ctrlW.writeInt32Field(3, dispTime)
+        ctrlW.writeInt32Field(5, avoidDisturbEnable)
+
+        val w = ProtobufWriter()
+        w.writeInt32Field(1, CMD_CTRL)
+        w.writeInt32Field(2, magicRandom)
+        w.writeMessageField(3, ctrlW.toByteArray())
+        return w.toByteArray()
+    }
+
+    /**
+     * `whitelistDisable = 1` stops the glasses filtering incoming notifications against the
+     * whitelist file they hold, so we can filter phone-side instead of maintaining that file.
+     */
+    fun whitelistCtrl(magicRandom: Int, whitelistDisable: Int): ByteArray {
+        val wlW = ProtobufWriter()
+        wlW.writeInt32Field(1, whitelistDisable)
+
+        val w = ProtobufWriter()
+        w.writeInt32Field(1, CMD_WHITELIST_CTRL)
+        w.writeInt32Field(2, magicRandom)
+        w.writeMessageField(6, wlW.toByteArray())
+        return w.toByteArray()
+    }
+
+    fun cmdName(cmd: Int): String =
+        when (cmd) {
+            CMD_CTRL -> "CTRL"
+            CMD_NOTIFICATION_IOS -> "NOTIFICATION_IOS"
+            CMD_WHITELIST_CTRL -> "WHITELIST_CTRL"
+            CMD_WHITELIST_CHK -> "WHITELIST_CHK"
+            CMD_COMM_RSP -> "COMM_RSP"
+            else -> "cmd_$cmd"
+        }
+}
+
 // ---------- Menu Protobuf Builders (menu.proto, service ID 3) ----------
 
 private object MenuProto {
@@ -1061,7 +1143,7 @@ private object EvenBLETransport {
         }
 
         val totalPackets = chunks.size.toByte()
-        val crc = calcCRC16(payload)
+        val crc = g2Crc16(payload)
 
         val packets = mutableListOf<ByteArray>()
         for ((i, chunk) in chunks.withIndex()) {
@@ -1147,7 +1229,14 @@ private class G2ReceiveManager {
         val status = rawData[7].toInt() and 0xFF
         val resultCode = (status shr 1) and 0x0F
 
-        if (resultCode != 0) return null
+        if (resultCode != 0) {
+            // Silent drops here look identical to an ack timeout at the file layer, so say so.
+            val sid = serviceId.toInt() and 0xFF
+            if (sid == 0xC4 || sid == 0xC5) {
+                Bridge.log("G2/FILE: inbound dropped before dispatch — resultCode=$resultCode")
+            }
+            return null
+        }
 
         val isLast = serialNum == totalPackets
         val hasCrc = isLast
@@ -1256,6 +1345,9 @@ class G2 : SGCManager() {
     private var rightGatt: BluetoothGatt? = null
     private var leftWriteChar: BluetoothGattCharacteristic? = null
     private var rightWriteChar: BluetoothGattCharacteristic? = null
+    // The file service has its own characteristic group (…7401/…7402), separate from the UI one,
+    // and is driven over the right leg only — see [writeFilePackets].
+    private var rightFileWriteChar: BluetoothGattCharacteristic? = null
     private var leftNotifyChar: BluetoothGattCharacteristic? = null
     private var rightNotifyChar: BluetoothGattCharacteristic? = null
     private var leftAudioChar: BluetoothGattCharacteristic? = null
@@ -1557,25 +1649,31 @@ class G2 : SGCManager() {
         }
     }
 
+    /**
+     * One characteristic write. Shared by the UI path ([writeOnePacket]) and the file path
+     * ([writeFilePackets]), which differ only in the characteristic pair they target. No-ops if
+     * the leg isn't bound. [leg] non-null also logs the write — file transfers only; the UI path
+     * is far too hot for that.
+     */
+    private fun writeTo(
+        char: BluetoothGattCharacteristic?,
+        gatt: BluetoothGatt?,
+        packet: ByteArray,
+        leg: String?
+    ) {
+        if (char == null || gatt == null) return
+        char.value = packet
+        char.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+        val ok = gatt.writeCharacteristic(char)
+        bgcapNoteWriteResult(ok) // BGCAP
+        if (leg != null) {
+            Bridge.log("G2/FILE: write $leg ${packet.size}B -> ${if (ok) "queued" else "DROPPED (stack busy)"}")
+        }
+    }
+
     private fun writeOnePacket(packet: ByteArray, left: Boolean, right: Boolean) {
-        if (right) {
-            rightWriteChar?.let { char ->
-                rightGatt?.let { gatt ->
-                    char.value = packet
-                    char.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
-                    bgcapNoteWriteResult(gatt.writeCharacteristic(char)) // BGCAP
-                }
-            }
-        }
-        if (left) {
-            leftWriteChar?.let { char ->
-                leftGatt?.let { gatt ->
-                    char.value = packet
-                    char.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
-                    bgcapNoteWriteResult(gatt.writeCharacteristic(char)) // BGCAP
-                }
-            }
-        }
+        if (right) writeTo(rightWriteChar, rightGatt, packet, null)
+        if (left) writeTo(leftWriteChar, leftGatt, packet, null)
     }
 
     private fun sendToGlasses(
@@ -1585,9 +1683,12 @@ class G2 : SGCManager() {
     ) {
         // Bridge.log("G2: sendToGlasses() - sending ${packets.size} packets first byte: ${packets[0][0]}")
         if (packets.isEmpty()) return
+        val expectedLeft = leftGatt
+        val expectedRight = rightGatt
+        fun connectionIsCurrent() = (!left || leftGatt === expectedLeft) && (!right || rightGatt === expectedRight)
         // Single-packet sends (the common case for text/settings) go straight through.
         if (packets.size == 1) {
-            writeOnePacket(packets[0], left, right)
+            bleWriteExecutor.execute { if (connectionIsCurrent()) writeOnePacket(packets[0], left, right) }
             return
         }
         // Multi-packet bursts (bitmaps, large protobufs): pace the whole burst on a dedicated
@@ -1596,6 +1697,7 @@ class G2 : SGCManager() {
         // image ACK and would otherwise starve it under load — see [bleWriteExecutor]).
         bleWriteExecutor.execute {
             for (i in packets.indices) {
+                if (!connectionIsCurrent()) return@execute
                 writeOnePacket(packets[i], left, right)
                 if (i < packets.size - 1) {
                     try {
@@ -1670,6 +1772,24 @@ class G2 : SGCManager() {
                 reserveFlag = true
             )
         sendToGlasses(packets)
+    }
+
+    // File and display writes share the same BLE executor. File ACKs are scoped to
+    // the current GATT connection; a cancelled/ambiguous transfer requires reconnect.
+    private val notificationFiles = EvenFileService { serviceId, payload ->
+        val packets = sendManager.buildPackets(serviceId, payload, reserveFlag = false)
+        val targetGatt = rightGatt ?: throw java.io.IOException("not_connected")
+        val targetChar = rightFileWriteChar ?: throw java.io.IOException("file_service_unavailable")
+        kotlinx.coroutines.withContext(bleWriteExecutor.asCoroutineDispatcher()) {
+            for (packet in packets) {
+                kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                if (rightGatt !== targetGatt) throw java.io.IOException("connection_changed")
+                targetChar.value = packet
+                targetChar.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+                if (!targetGatt.writeCharacteristic(targetChar)) throw java.io.IOException("ble_write_rejected")
+                Thread.sleep(BLE_PACKET_GAP_MS)
+            }
+        }
     }
 
     private fun sendMenuCommand(payload: ByteArray) {
@@ -3557,6 +3677,8 @@ class G2 : SGCManager() {
         activeMenuAppId = null
         lastClickTimestamp = null
         lastMenuSelectTimestamp = null
+        stopNotificationSession(connectionChanged = true)
+        notificationError = ""
         DeviceStore.apply("glasses", "connected", false)
         DeviceStore.apply("glasses", "fullyBooted", false)
     }
@@ -3574,6 +3696,7 @@ class G2 : SGCManager() {
         rightWriteChar = null
         leftNotifyChar = null
         rightNotifyChar = null
+        rightFileWriteChar = null
         leftAudioChar = null
         rightAudioChar = null
         DEVICE_SEARCH_ID = "NOT_SET"
@@ -3721,6 +3844,170 @@ class G2 : SGCManager() {
         DeviceStore.apply("glasses", "controllerFullyBooted", false)
         Bridge.log("G2: Sent RING_DISCONNECT_INFO for MAC $mac")
     }
+
+    // ---------- Native Notification Centre ----------
+
+    @Volatile private var notificationConfig = NativeNotificationConfig()
+    private var notificationJob: Job? = null
+    private var notificationQueue: Channel<Map<String, Any>>? = null
+    private var notificationEpoch = 0L
+    private var notificationError = ""
+    private var notificationControlMagics = emptySet<Int>()
+    private var notificationSubmitted = false
+
+    override fun getNativeNotificationStatus() = NativeNotificationStatus(
+        supported = true,
+        source = "phone",
+        authorization = "system", // Android listener permission is owned by the host.
+        state = when {
+            DeviceStore.get("glasses", "fullyBooted") != true -> "unavailable"
+            notificationFiles.needsReconnect -> "needs_reconnect"
+            notificationError.isNotEmpty() -> "failed"
+            !notificationConfig.enabled -> "disabled"
+            !notificationSubmitted -> "configuring"
+            else -> "submitted"
+        },
+        config = notificationConfig,
+        error = notificationError,
+    )
+
+    private fun publishNotificationStatus() {
+        Bridge.sendTypedMessage("native_notification_status", getNativeNotificationStatus().toMap())
+    }
+
+    override fun configureNativeNotifications(config: NativeNotificationConfig) {
+        mainHandler.post {
+            if (notificationConfig == config && notificationJob?.isActive == true) return@post
+            notificationConfig = config.copy(blockedApps = config.blockedApps.toList())
+            restartNotificationSession()
+        }
+    }
+
+    private fun stopNotificationSession(connectionChanged: Boolean) {
+        notificationEpoch++
+        notificationSubmitted = false
+        notificationControlMagics = emptySet()
+        notificationJob?.cancel()
+        notificationQueue?.let { queue ->
+            while (true) {
+                val value = queue.tryReceive().getOrNull() ?: break
+                reportNotification(value, "cancelled", "session_changed")
+            }
+            queue.close()
+        }
+        notificationQueue = null
+        if (connectionChanged) notificationFiles.resetConnection()
+    }
+
+    private fun restartNotificationSession() {
+        val oldJob = notificationJob
+        stopNotificationSession(connectionChanged = false)
+        val epoch = notificationEpoch
+        val config = notificationConfig
+        notificationError = ""
+        val queue = Channel<Map<String, Any>>(8)
+        notificationQueue = if (config.enabled) queue else null
+        notificationJob = displayScope.launch {
+            oldJob?.cancelAndJoin()
+            if (epoch != notificationEpoch || DeviceStore.get("glasses", "fullyBooted") != true) return@launch
+            try {
+                sendNotificationControls(config, epoch)
+                notificationSubmitted = true
+                publishNotificationStatus()
+                if (!config.enabled) return@launch
+                for (notification in queue) {
+                    try {
+                        if (epoch != notificationEpoch) throw CancellationException("session_changed")
+                        pushNotificationToCentre(notification)
+                    } catch (cancelled: CancellationException) {
+                        reportNotification(notification, "cancelled", "session_changed")
+                        throw cancelled
+                    } catch (error: Exception) {
+                        notificationError = error.message ?: "transfer_failed"
+                        reportNotification(notification, "failed", notificationError)
+                        publishNotificationStatus()
+                    }
+                }
+            } catch (cancelled: CancellationException) {
+                throw cancelled
+            } catch (error: Exception) {
+                notificationError = error.message ?: "configuration_failed"
+                publishNotificationStatus()
+            } finally {
+                queue.close()
+                while (true) {
+                    val value = queue.tryReceive().getOrNull() ?: break
+                    reportNotification(value, "cancelled", "session_changed")
+                }
+            }
+        }
+    }
+
+    private suspend fun sendNotificationControls(config: NativeNotificationConfig, epoch: Long) {
+        val targetGatt = rightGatt ?: throw java.io.IOException("not_connected")
+        val targetChar = rightWriteChar ?: throw java.io.IOException("not_connected")
+        val controlMagic = sendManager.nextMagicRandom()
+        val filterMagic = sendManager.nextMagicRandom()
+        val commands = NotificationProto.controls(config, controlMagic, filterMagic)
+        notificationControlMagics = commands.map { it.first }.toSet()
+        for ((index, command) in commands.withIndex()) {
+            val payload = command.second
+            if (index > 0) delay(400) // Verified device requirement between control commands.
+            val packets = sendManager.buildPackets(ServiceID.NOTIFICATION.value, payload, reserveFlag = true)
+            kotlinx.coroutines.withContext(bleWriteExecutor.asCoroutineDispatcher()) {
+                for (packet in packets) {
+                    kotlinx.coroutines.currentCoroutineContext().ensureActive()
+                    if (epoch != notificationEpoch || targetGatt !== rightGatt) throw CancellationException("session_changed")
+                    targetChar.value = packet
+                    targetChar.writeType = BluetoothGattCharacteristic.WRITE_TYPE_NO_RESPONSE
+                    if (!targetGatt.writeCharacteristic(targetChar)) throw java.io.IOException("ble_write_rejected")
+                    Thread.sleep(BLE_PACKET_GAP_MS)
+                }
+            }
+        }
+    }
+
+    override fun sendPhoneNotification(notification: Map<String, Any>) {
+        require(((notification["action"] as? Number)?.toInt() ?: 0) == 0) { "Notification removal is not supported" }
+        mainHandler.post {
+            if ((notification["packageName"] as? String) in notificationConfig.blockedApps) {
+                reportNotification(notification, "dropped", "blocked_app")
+            } else if (!notificationConfig.enabled || DeviceStore.get("glasses", "fullyBooted") != true) {
+                reportNotification(notification, "dropped", "disabled_or_disconnected")
+            } else if (notificationQueue?.trySend(notification)?.isSuccess != true) {
+                reportNotification(notification, "dropped", "queue_full_or_unavailable")
+            }
+        }
+    }
+
+    private fun reportNotification(notification: Map<String, Any>, status: String, reason: String) {
+        Bridge.sendTypedMessage("native_notification_delivery", mapOf(
+            "notificationId" to (notification["notificationId"] as? String ?: ""),
+            "status" to status, "reason" to reason,
+        ))
+    }
+
+    private suspend fun pushNotificationToCentre(notification: Map<String, Any>) {
+        check(!notificationFiles.needsReconnect) { "needs_reconnect" }
+        val bytes = NotificationJson.androidNotification(
+            msgId = msgIdFor(notification["notificationId"] as? String ?: ""),
+            action = 0, // Only posted/updated notifications have a verified wire operation.
+            appIdentifier = notification["packageName"] as? String ?: "",
+            title = notification["title"] as? String ?: "",
+            subtitle = notification["subtitle"] as? String ?: "",
+            message = notification["body"] as? String ?: "",
+            postTimeMs = (notification["timestampMs"] as? Number)?.toLong() ?: System.currentTimeMillis(),
+            displayName = notification["appName"] as? String ?: "",
+        )
+        val status = notificationFiles.transfer(FileService.TYPE_ANDROID_MSG_JSON_NOTIFICATION, FileService.PATH_NOTIFY, bytes)
+        if (status != 0) throw java.io.IOException(FileService.statusName(status))
+        notificationError = ""
+        reportNotification(notification, "delivered", "")
+        publishNotificationStatus()
+    }
+
+    private val notificationIds = NotificationIds()
+    private fun msgIdFor(notificationId: String): Int = notificationIds.forPhoneId(notificationId)
 
     // ---------- SGCManager: Device Control ----------
 
@@ -4041,6 +4328,7 @@ class G2 : SGCManager() {
         return object : BluetoothGattCallback() {
             override fun onConnectionStateChange(gatt: BluetoothGatt, status: Int, newState: Int) {
                 mainHandler.post {
+                    if (gatt !== (if (side == "LEFT") leftGatt else rightGatt)) return@post
                     if (newState == BluetoothProfile.STATE_CONNECTED) {
                         Bridge.log("G2: Connected to $side: ${gatt.device?.name ?: "unknown"}")
 
@@ -4099,6 +4387,7 @@ class G2 : SGCManager() {
                         rightWriteChar = null
                         leftNotifyChar = null
                         rightNotifyChar = null
+                        rightFileWriteChar = null
                         leftAudioChar = null
                         rightAudioChar = null
                         authStarted = false
@@ -4109,8 +4398,11 @@ class G2 : SGCManager() {
                         pageCreated = false
                         dashboardShowing = 0
                         dashboardOpening = false
+                        stopNotificationSession(connectionChanged = true)
+                        notificationError = ""
                         DeviceStore.apply("glasses", "connected", false)
                         DeviceStore.apply("glasses", "fullyBooted", false)
+                        publishNotificationStatus()
 
                         startReconnectionTimer()
                     }
@@ -4170,6 +4462,16 @@ class G2 : SGCManager() {
                                     enqueueGattOp { enableNotifications(gatt, char) }
                                 }
 
+                                G2BLE.FILE_WRITE -> {
+                                    Bridge.log("G2: Found FILE WRITE char on $side")
+                                    if (side != "LEFT") rightFileWriteChar = char
+                                }
+
+                                G2BLE.FILE_NOTIFY -> {
+                                    Bridge.log("G2: Found FILE NOTIFY char on $side")
+                                    enqueueGattOp { enableNotifications(gatt, char) }
+                                }
+
                                 G2BLE.AUDIO_NOTIFY -> {
                                     Bridge.log("G2: Found AUDIO char on $side")
                                     if (side == "LEFT") leftAudioChar = char
@@ -4206,10 +4508,17 @@ class G2 : SGCManager() {
                 gatt: BluetoothGatt,
                 characteristic: BluetoothGattCharacteristic
             ) {
-                val data = characteristic.value ?: return
+                if (gatt !== (if (side == "LEFT") leftGatt else rightGatt)) return
+                val data = characteristic.value?.copyOf() ?: return
 
                 val sourceKey = if (side == "LEFT") "L" else "R"
                 when (characteristic.uuid) {
+                    // File-service acks arrive on their own characteristic and share the standard
+                    // transport framing, so they need no demux — just the usual decode.
+                    G2BLE.FILE_NOTIFY -> mainHandler.post {
+                        if (gatt === rightGatt && side == "RIGHT") handleNotifyData(data, sourceKey)
+                    }
+
                     G2BLE.AUDIO_NOTIFY -> handleAudioData(data, sourceKey)
                     G2BLE.CHAR_NOTIFY -> {
                         // Correlate an in-flight image ACK INLINE on the BLE callback thread, before
@@ -4218,7 +4527,9 @@ class G2 : SGCManager() {
                         // promptly even while the main looper is busy draining a packet burst /
                         // heartbeats — the cause of the intermittent "glasses stopped responding".
                         correlateImageAck(data, sourceKey)
-                        mainHandler.post { handleNotifyData(data, sourceKey) }
+                        mainHandler.post {
+                            if (gatt === (if (side == "LEFT") leftGatt else rightGatt)) handleNotifyData(data, sourceKey)
+                        }
                     }
                 }
             }
@@ -4322,6 +4633,10 @@ class G2 : SGCManager() {
     }
 
     private fun handleNotifyData(data: ByteArray, sourceKey: String) {
+        if (data.size > 6 && (data[6] == ServiceID.FILE_CMD.value || data[6] == ServiceID.FILE_DATA.value)) {
+            if (sourceKey == "R") notificationFiles.acceptFrame(data)
+            return
+        }
         val result = receiveManager.handlePacket(data, sourceKey) ?: return
 
         val serviceId = result.first
@@ -4341,6 +4656,7 @@ class G2 : SGCManager() {
             ServiceID.NAVIGATION.value -> handleNavigationResponse(payload)
             ServiceID.EVEN_AI.value -> handleEvenAIResponse(payload)
             ServiceID.EVEN_HUB_CTRL.value -> handleEvenHubCtrlResponse(payload)
+            ServiceID.NOTIFICATION.value -> handleNotificationResponse(payload)
             else -> {
                 Bridge.log(
                     "G2: Unhandled service ${serviceId.toInt() and 0xFF} (${payload.size} bytes): ${
@@ -4349,6 +4665,43 @@ class G2 : SGCManager() {
                 )
             }
         }
+    }
+
+    /**
+     * Notification service (0x04). Reports control refusals and the
+     * glasses' own notification activity; content never travels here. Field map in
+     * `notes/g2-notification-service.md`.
+     */
+    private fun handleNotificationResponse(payload: ByteArray) {
+        val fields = ProtobufReader(payload).parseFields()
+        val cmd = fields[1] as? Int ?: -1
+        val magic = fields[2] as? Int
+
+        // COMM_RSP carries field 5 = {f1=commandId that failed, f2=errorCode}.
+        var verdict = ""
+        if (cmd == NotificationProto.CMD_COMM_RSP) {
+            val rsp = (fields[5] as? ByteArray)?.let { ProtobufReader(it).parseFields() }
+            val failedCmd = rsp?.get(1) as? Int
+            val errorCode = rsp?.get(2) as? Int
+            verdict =
+                " REJECTED cmd=${failedCmd?.let { NotificationProto.cmdName(it) } ?: "?"}" +
+                    " errorCode=$errorCode" +
+                    (if (errorCode == 8) " (NOT_SUPPORT)" else "")
+            // Only a response correlated to the current controls can invalidate this session.
+            if (magic in notificationControlMagics && errorCode != null && errorCode != 0 &&
+                (failedCmd == NotificationProto.CMD_CTRL || failedCmd == NotificationProto.CMD_WHITELIST_CTRL)
+            ) {
+                notificationError = "configuration_rejected_$errorCode"
+                stopNotificationSession(connectionChanged = false)
+                publishNotificationStatus()
+            }
+        }
+
+        Bridge.log(
+            "G2/NOTIF: RX ${NotificationProto.cmdName(cmd)}" +
+                (magic?.let { " magic=$it" } ?: "") +
+                verdict
+        )
     }
 
     /**
@@ -4544,6 +4897,7 @@ class G2 : SGCManager() {
         }
         if (!isFullyBooted) {
             DeviceStore.apply("glasses", "fullyBooted", true)
+            restartNotificationSession()
         }
     }
 

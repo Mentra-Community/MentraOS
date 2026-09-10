@@ -506,6 +506,15 @@ class MentraBluetoothSdk private constructor(
         deviceManager.displayEvent(request.toMap())
     }
 
+    /** Configure native notification presentation on a supported connected driver. */
+    fun configureNativeNotifications(config: NativeNotificationConfig) {
+        val driver = deviceManager.sgc ?: throw IllegalStateException("Glasses are not connected")
+        driver.configureNativeNotifications(config)
+    }
+
+    fun getNativeNotificationStatus(): NativeNotificationStatus =
+        deviceManager.sgc?.getNativeNotificationStatus() ?: NativeNotificationStatus()
+
     fun clearDisplay() {
         deviceManager.clearDisplay()
     }
