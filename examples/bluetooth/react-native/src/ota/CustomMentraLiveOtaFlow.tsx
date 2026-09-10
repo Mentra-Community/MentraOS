@@ -1,12 +1,19 @@
-import React, { useMemo } from "react";
+import React, { useEffect, useMemo } from "react";
 import {
   ActivityIndicator,
+  BackHandler,
+  Modal,
   Pressable,
   ScrollView,
   StyleSheet,
   Text,
   View,
 } from "react-native";
+import {
+  useMarkdown,
+  type MarkedStyles,
+  type useMarkdownHookOptions,
+} from "react-native-marked";
 import { SafeAreaView } from "react-native-safe-area-context";
 import Svg, { Circle, Line, Path, Polyline } from "react-native-svg";
 import {
@@ -18,8 +25,10 @@ import { Header } from "../components/Header";
 import { colors } from "../components/theme";
 import {
   otaPresentation,
+  otaRestartOverlayMessage,
   type CustomOtaAction,
   type CustomOtaButton,
+  type CustomOtaChangelog,
 } from "./otaPresentation";
 
 export type CustomMentraLiveOtaFlowProps = {
@@ -44,6 +53,13 @@ export function CustomMentraLiveOtaFlow({
   onFinished,
   onOpenWifiSetup,
 }: CustomMentraLiveOtaFlowProps) {
+  useEffect(() => {
+    // Only the flow's buttons may leave OTA. This app has no navigation stack;
+    // without a handler, Android Back invokes the system's default exit action.
+    const subscription = BackHandler.addEventListener("hardwareBackPress", () => true);
+    return () => subscription.remove();
+  }, []);
+
   const controller = useMentraLiveOta({
     initialPage,
     initializeRuntime,
@@ -54,76 +70,98 @@ export function CustomMentraLiveOtaFlow({
     () => otaPresentation(controller.state, deviceName),
     [controller.state, deviceName],
   );
+  const restartMessage = otaRestartOverlayMessage(controller.state, deviceName);
   const palette = toneColors[presentation.tone];
+  const hasChangelogs = (presentation.changelogs?.length ?? 0) > 0;
 
   const runAction = (action: CustomOtaAction) => {
     controller[action]();
   };
 
+  const content = (
+    <>
+      <StatusIcon
+        accent={palette.accent}
+        tone={presentation.tone}
+        wash={palette.wash}
+      />
+      <Text style={styles.title}>{presentation.title}</Text>
+      {presentation.message ? (
+        <Text style={styles.message}>{presentation.message}</Text>
+      ) : null}
+
+      {presentation.versionLabel ? (
+        <View style={styles.versionBadge}>
+          <Text selectable style={styles.versionLabel}>
+            {presentation.versionLabel}
+          </Text>
+        </View>
+      ) : null}
+
+      {presentation.progressLabel ? (
+        <Text style={styles.detail}>{presentation.progressLabel}</Text>
+      ) : null}
+
+      {presentation.progress !== undefined ? (
+        <View style={styles.progressBlock}>
+          <Text style={[styles.progressValue, { color: palette.accent }]}>
+            {Math.round(presentation.progress)}%
+          </Text>
+          <View style={styles.progressTrack}>
+            <View
+              style={[
+                styles.progressFill,
+                {
+                  backgroundColor: palette.accent,
+                  width: `${Math.min(Math.max(presentation.progress, 0), 100)}%`,
+                },
+              ]}
+            />
+          </View>
+        </View>
+      ) : null}
+
+      {presentation.indeterminate ? (
+        <ActivityIndicator color={palette.accent} size="large" />
+      ) : null}
+
+      {presentation.detail ? (
+        <Text style={styles.detail}>{presentation.detail}</Text>
+      ) : null}
+
+      <ChangelogList changelogs={presentation.changelogs} />
+    </>
+  );
+
   return (
     <SafeAreaView style={styles.safeArea}>
+      <Modal
+        animationType="fade"
+        transparent
+        visible={restartMessage !== null}
+        onRequestClose={() => {}}
+      >
+        <View style={styles.restartBackdrop}>
+          <View accessibilityViewIsModal style={styles.restartCard} testID="ota-restart-overlay">
+            <ActivityIndicator color={colors.greenPrimary} size="large" />
+            <Text accessibilityRole="header" style={styles.message}>
+              {restartMessage}
+            </Text>
+          </View>
+        </View>
+      </Modal>
       <Header title="Software Update" />
       <View style={styles.page} testID="custom-mentra-live-ota-flow">
         <ScrollView
-          contentContainerStyle={styles.centerContent}
-          showsVerticalScrollIndicator={false}
+          contentContainerStyle={[
+            styles.centerContent,
+            hasChangelogs && styles.topContent,
+          ]}
+          nestedScrollEnabled
           style={styles.contentScroll}
+          testID="custom-ota-page-scroll"
         >
-          <StatusIcon
-            accent={palette.accent}
-            tone={presentation.tone}
-            wash={palette.wash}
-          />
-          <Text style={styles.title}>{presentation.title}</Text>
-          {presentation.message ? (
-            <Text style={styles.message}>{presentation.message}</Text>
-          ) : null}
-
-          {presentation.versionLabel ? (
-            <View style={styles.versionBadge}>
-              <Text selectable style={styles.versionLabel}>
-                {presentation.versionLabel}
-              </Text>
-            </View>
-          ) : null}
-
-          {presentation.progress !== undefined ? (
-            <View style={styles.progressBlock}>
-              <Text style={[styles.progressValue, { color: palette.accent }]}>
-                {Math.round(presentation.progress)}%
-              </Text>
-              <View style={styles.progressTrack}>
-                <View
-                  style={[
-                    styles.progressFill,
-                    {
-                      backgroundColor: palette.accent,
-                      width: `${Math.min(Math.max(presentation.progress, 0), 100)}%`,
-                    },
-                  ]}
-                />
-              </View>
-            </View>
-          ) : null}
-
-          {presentation.indeterminate ? (
-            <ActivityIndicator color={palette.accent} size="large" />
-          ) : null}
-
-          {presentation.detail ? (
-            <Text style={styles.detail}>{presentation.detail}</Text>
-          ) : null}
-
-          {presentation.changelogs?.map((entry) => (
-            <View key={entry.version} style={styles.changelogEntry}>
-              <Text selectable style={styles.changelogVersion}>
-                {entry.version}
-              </Text>
-              <Text selectable style={styles.changelogBody}>
-                {entry.markdown}
-              </Text>
-            </View>
-          ))}
+          {content}
         </ScrollView>
 
         {presentation.primary || presentation.secondary ? (
@@ -147,6 +185,163 @@ export function CustomMentraLiveOtaFlow({
         )}
       </View>
     </SafeAreaView>
+  );
+}
+
+function ChangelogMarkdown({ markdown }: { markdown: string }) {
+  const markdownStyles = useMemo<MarkedStyles>(
+    () => ({
+      blockquote: {
+        borderLeftColor: colors.greenPrimary,
+        borderLeftWidth: 3,
+        marginVertical: 2,
+        opacity: 1,
+        paddingLeft: 12,
+      },
+      code: {
+        backgroundColor: colors.bg,
+        borderColor: colors.hairline,
+        borderRadius: 8,
+        borderWidth: 1,
+        padding: 12,
+      },
+      codespan: {
+        backgroundColor: colors.hairline,
+        color: colors.ink,
+        fontFamily: "monospace",
+        fontSize: 13,
+        fontStyle: "normal",
+        fontWeight: "400",
+      },
+      em: { color: colors.muted, fontSize: 14, lineHeight: 20 },
+      h1: {
+        borderBottomWidth: 0,
+        color: colors.ink,
+        fontSize: 18,
+        fontWeight: "700",
+        lineHeight: 24,
+        marginVertical: 0,
+        paddingBottom: 0,
+      },
+      h2: {
+        borderBottomWidth: 0,
+        color: colors.ink,
+        fontSize: 17,
+        fontWeight: "700",
+        lineHeight: 23,
+        marginVertical: 0,
+        paddingBottom: 0,
+      },
+      h3: {
+        color: colors.ink,
+        fontSize: 16,
+        fontWeight: "700",
+        lineHeight: 22,
+        marginVertical: 0,
+      },
+      h4: {
+        color: colors.ink,
+        fontSize: 15,
+        fontWeight: "700",
+        lineHeight: 21,
+        marginVertical: 0,
+      },
+      h5: {
+        color: colors.ink,
+        fontSize: 14,
+        fontWeight: "700",
+        lineHeight: 20,
+        marginVertical: 0,
+      },
+      h6: {
+        color: colors.muted,
+        fontSize: 14,
+        fontWeight: "600",
+        lineHeight: 20,
+        marginVertical: 0,
+      },
+      hr: { borderBottomColor: colors.hairline, marginVertical: 2 },
+      image: { borderRadius: 8 },
+      li: { color: colors.muted, fontSize: 14, lineHeight: 20 },
+      link: {
+        color: colors.greenPrimary,
+        fontSize: 14,
+        fontStyle: "normal",
+        lineHeight: 20,
+        textDecorationLine: "underline",
+      },
+      paragraph: { paddingVertical: 0 },
+      strikethrough: { color: colors.muted, fontSize: 14, lineHeight: 20 },
+      strong: {
+        color: colors.ink,
+        fontSize: 14,
+        fontWeight: "700",
+        lineHeight: 20,
+      },
+      table: { borderColor: colors.hairline, borderRadius: 8 },
+      tableCell: { padding: 8 },
+      text: { color: colors.muted, fontSize: 14, lineHeight: 20 },
+    }),
+    [],
+  );
+  const markdownTheme = useMemo<NonNullable<useMarkdownHookOptions["theme"]>>(
+    () => ({
+      colors: {
+        background: colors.bg,
+        border: colors.hairline,
+        code: colors.hairline,
+        link: colors.greenPrimary,
+        text: colors.muted,
+      },
+    }),
+    [],
+  );
+  const elements = useMarkdown(markdown, {
+    colorScheme: "light",
+    styles: markdownStyles,
+    theme: markdownTheme,
+  });
+
+  return (
+    <View
+      style={styles.changelogMarkdownContent}
+      testID="custom-ota-changelog-markdown"
+    >
+      {elements}
+    </View>
+  );
+}
+
+function ChangelogList({ changelogs }: { changelogs?: CustomOtaChangelog[] }) {
+  if (!changelogs?.length) return null;
+
+  return (
+    <View style={styles.changelogCard} testID="custom-ota-changelog-card">
+      <Text style={styles.changelogTitle}>What&apos;s new</Text>
+      <ScrollView
+        contentContainerStyle={styles.changelogContent}
+        nestedScrollEnabled
+        persistentScrollbar
+        showsVerticalScrollIndicator
+        style={styles.changelogList}
+        testID="custom-ota-changelog-scroll"
+      >
+        {changelogs.map((entry, index) => (
+          <View
+            key={entry.version}
+            style={[
+              styles.changelogEntry,
+              index > 0 && styles.changelogEntryDivider,
+            ]}
+          >
+            <Text selectable style={styles.changelogVersion}>
+              {entry.version}
+            </Text>
+            <ChangelogMarkdown markdown={entry.markdown} />
+          </View>
+        ))}
+      </ScrollView>
+    </View>
   );
 }
 
@@ -226,6 +421,22 @@ function ActionButton({
 }
 
 const styles = StyleSheet.create({
+  restartBackdrop: {
+    alignItems: "center",
+    backgroundColor: "rgba(0,0,0,0.4)",
+    flex: 1,
+    justifyContent: "center",
+    padding: 24,
+  },
+  restartCard: {
+    alignItems: "center",
+    backgroundColor: colors.bg,
+    borderRadius: 20,
+    gap: 20,
+    maxWidth: 420,
+    padding: 28,
+    width: "100%",
+  },
   safeArea: { backgroundColor: colors.bg, flex: 1 },
   page: { flex: 1, paddingBottom: 18, paddingHorizontal: 24 },
   contentScroll: { flex: 1 },
@@ -235,6 +446,11 @@ const styles = StyleSheet.create({
     gap: 16,
     justifyContent: "center",
     paddingVertical: 24,
+  },
+  topContent: {
+    justifyContent: "flex-start",
+    paddingBottom: 16,
+    paddingTop: 12,
   },
   iconTile: {
     alignItems: "center",
@@ -299,21 +515,33 @@ const styles = StyleSheet.create({
     maxWidth: 420,
     textAlign: "center",
   },
-  changelogEntry: {
-    gap: 8,
+  changelogCard: {
+    borderColor: colors.hairline,
+    borderRadius: 16,
+    borderWidth: 1,
+    flexGrow: 1,
+    gap: 12,
     maxWidth: 420,
+    minHeight: 200,
+    padding: 16,
     width: "100%",
+  },
+  changelogTitle: { color: colors.ink, fontSize: 16, fontWeight: "700" },
+  // Bound the notes themselves so the card can grow for its title, but not for all of the Markdown.
+  changelogList: { flexGrow: 1, height: 120, width: "100%" },
+  changelogContent: { gap: 20, paddingBottom: 4 },
+  changelogEntry: { gap: 8 },
+  changelogEntryDivider: {
+    borderTopColor: colors.hairline,
+    borderTopWidth: StyleSheet.hairlineWidth,
+    paddingTop: 20,
   },
   changelogVersion: {
     color: colors.ink,
-    fontSize: 16,
-    fontWeight: "700",
-  },
-  changelogBody: {
-    color: colors.muted,
     fontSize: 14,
-    lineHeight: 20,
+    fontWeight: "600",
   },
+  changelogMarkdownContent: { gap: 10 },
   actions: { gap: 10 },
   actionSpacer: { height: 48 },
   button: {

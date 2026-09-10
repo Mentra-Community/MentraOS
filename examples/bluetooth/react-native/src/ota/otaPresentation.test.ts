@@ -1,10 +1,10 @@
 import {describe, expect, test} from 'bun:test';
 import type {MentraLiveOtaState} from '@mentra/engine/ota';
 
-import {otaPresentation} from './otaPresentation';
+import {otaPresentation, otaRestartOverlayMessage} from './otaPresentation';
 
 const baseState: MentraLiveOtaState = {
-  batteryLevel: null,
+  batteryLevel: 80,
   canDiscard: false,
   canDismiss: false,
   canFinish: false,
@@ -155,6 +155,17 @@ describe('custom OTA presentation', () => {
     expect(presentation.progress).toBe(68);
   });
 
+  test('keeps update progress indeterminate until Engine reports a percentage', () => {
+    const presentation = otaPresentation(otaState({
+      phase: 'install',
+      progress: null,
+      screen: 'updating',
+    }));
+
+    expect(presentation.indeterminate).toBe(true);
+    expect(presentation.progress).toBeUndefined();
+  });
+
   test('uses only retry and Wi-Fi controller actions after a recoverable failure', () => {
     const presentation = otaPresentation(otaState({
       canOpenWifiSetup: true,
@@ -166,6 +177,17 @@ describe('custom OTA presentation', () => {
     expect(presentation.primary?.action).toBe('retryInstall');
     expect(presentation.secondary?.action).toBe('openWifiSetup');
     expect(presentation.message).toBe('Download failed');
+  });
+
+  test('does not expose Finish when Engine has no valid failure action', () => {
+    const presentation = otaPresentation(otaState({
+      canFinish: false,
+      canRetry: false,
+      error: {code: 'install_failed', message: 'Update unavailable'},
+      screen: 'failed',
+    }));
+
+    expect(presentation.primary).toBeUndefined();
   });
 
   test('keeps a failed update check on the stock retry-only action', () => {
@@ -195,6 +217,42 @@ describe('custom OTA presentation', () => {
     });
     expect(presentation.primary).toBeUndefined();
     expect(presentation.changelogs).toBeUndefined();
+  });
+
+  test('matches the Mentra App reboot copy and exposes no completion action', () => {
+    const presentation = otaPresentation(otaState({
+      canFinish: false,
+      connected: false,
+      continueDisabled: false,
+      screen: 'restarting',
+    }));
+
+    expect(presentation).toMatchObject({
+      detail: "We'll continue automatically when they're ready.",
+      indeterminate: true,
+      message: 'The update is installed. Keep your glasses nearby and leave this screen open while they finish starting.',
+      title: 'Restarting Mentra Live…',
+      tone: 'active',
+    });
+    expect(presentation.primary).toBeUndefined();
+    expect(presentation.secondary).toBeUndefined();
+  });
+
+  test('blocks installation until the glasses battery reaches the OTA minimum', () => {
+    const presentation = otaPresentation(otaState({
+      batteryLevel: 18,
+      canDismiss: true,
+      screen: 'battery_required',
+    }));
+
+    expect(presentation).toMatchObject({
+      detail: 'This screen will update automatically as the battery charges.',
+      message: 'Mentra Live is currently at 18%. Charge it to at least 25% before updating.',
+      primary: {action: 'install', disabled: true, label: 'Update Now'},
+      secondary: {action: 'finish', label: 'Later'},
+      title: 'Charge Mentra Live to Update',
+      tone: 'neutral',
+    });
   });
 
   test('finishes only after Engine reports the final up-to-date state', () => {
@@ -287,5 +345,105 @@ describe('custom OTA presentation', () => {
     expect(presentation.message).toBe(
       'Your glasses are running a sideloaded client (com.example.asg), so updates are blocked. Restore the stock client to update them.',
     );
+  });
+});
+
+
+describe('OTA transport labels and reconnect parity', () => {
+  test.each([
+    ['apk', 'Glasses software', 0],
+    ['mtk', 'System firmware', 1],
+    ['bes', 'Bluetooth firmware', 2],
+  ] as const)('labels the current %s download on the phone', (kind, label, index) => {
+    const p = otaPresentation(
+      otaState({
+        screen: 'preparing_hotspot',
+        hotspotPhase: 'downloading',
+        hotspotArtifact: {kind, index, totalCount: 3},
+        hotspotArtifactPercent: 42,
+      }),
+    );
+    expect(p.progressLabel).toBe(`File ${index + 1} of 3 · ${label}`);
+    expect(p.progress).toBe(42);
+    expect(p.detail).toBe('Each file downloads separately. Progress is for the current file.');
+  });
+
+  test('does not invent file metadata or a percentage while the phone prepares', () => {
+    const p = otaPresentation(otaState({screen: 'preparing_hotspot', hotspotPhase: 'downloading'}));
+    expect(p.progressLabel).toBeUndefined();
+    expect(p.progress).toBeUndefined();
+  });
+
+  test.each([
+    ['starting_hotspot', 'Starting glasses hotspot...'],
+    ['joining_hotspot', 'Connecting phone to glasses...'],
+    ['serving', 'Starting update...'],
+  ] as const)('clears the phone file label during %s', (hotspotPhase, title) => {
+    const p = otaPresentation(
+      otaState({
+        screen: 'preparing_hotspot',
+        hotspotPhase,
+        hotspotArtifact: {kind: 'apk', index: 0, totalCount: 3},
+        hotspotArtifactPercent: 100,
+      }),
+    );
+    expect(p.title).toBe(title);
+    expect(p.progressLabel).toBeUndefined();
+    expect(p.progress).toBeUndefined();
+  });
+
+  test.each(['download', 'install'] as const)(
+    'labels hotspot %s as work on the glasses',
+    (phase) => {
+      const p = otaPresentation(
+        otaState({
+          screen: 'updating',
+          phase,
+          transport: 'hotspot',
+          step: 'mtk',
+          currentStep: 2,
+          totalSteps: 3,
+          progress: 55,
+        }),
+      );
+      expect(p.title).toBe(
+        phase === 'download'
+          ? 'Transferring update to glasses...'
+          : 'Installing update on glasses...',
+      );
+      expect(p.progressLabel).toBe('Update 2 of 3 · System firmware');
+      expect(p.detail).toBe(
+        phase === 'download' ? 'Progress is for this file’s transfer from your phone.' : undefined,
+      );
+      expect(p.progress).toBe(55);
+    },
+  );
+
+  test('shows the component alone when the update count is unknown', () => {
+    expect(
+      otaPresentation(
+        otaState({screen: 'updating', transport: 'hotspot', phase: 'install', step: 'bes'}),
+      ).progressLabel,
+    ).toBe('Bluetooth firmware');
+  });
+
+  test('keeps a manual shutdown on the inline reconnecting page without a restart popup', () => {
+    const state = otaState({screen: 'disconnected', connected: false});
+    expect(otaRestartOverlayMessage(state)).toBeNull();
+    expect(otaPresentation(state)).toMatchObject({
+      title: 'Glasses disconnected',
+      message: 'Reconnecting...',
+      indeterminate: true,
+    });
+    expect(otaPresentation(state).primary).toBeUndefined();
+  });
+
+  test('shows the expected firmware restart popup and removes it when connected', () => {
+    const state = otaState({screen: 'restarting', connected: false, firmwareRestarting: true});
+    expect(otaRestartOverlayMessage(state)).toBe(
+      'Please wait while Mentra Live restarts and automatically reconnects...',
+    );
+    expect(otaRestartOverlayMessage({...state, connected: true})).toBeNull();
+    expect(otaRestartOverlayMessage({...state, firmwareRestarting: false})).toBeNull();
   });
 });

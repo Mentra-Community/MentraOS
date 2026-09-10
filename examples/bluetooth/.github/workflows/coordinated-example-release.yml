@@ -98,7 +98,9 @@ jobs:
             [[ "$(gh api "repos/$STARTER_KIT_REPOSITORY/git/ref/tags/sdk-$RELEASE_IDENTITY" --jq .object.sha)" == "$release_commit" ]]
             [[ "$(jq -er '.artifacts | length' "$result")" =~ ^(3|4)$ ]]
             while IFS= read -r url; do
-              curl --fail --silent --show-error --location --head "$url" >/dev/null
+              curl --fail --silent --show-error --location --head \
+                --retry 5 --retry-all-errors --retry-delay 10 --retry-max-time 180 --max-time 30 \
+                "$url" >/dev/null
             done < <(jq -r '.artifacts[].url' "$result")
             echo "already_published=true" >> "$GITHUB_OUTPUT"
             echo "result_url=https://github.com/$STARTER_KIT_REPOSITORY/releases/download/$ARTIFACT_CONTAINER_TAG/$result_name" >> "$GITHUB_OUTPUT"
@@ -177,14 +179,22 @@ jobs:
             node .github/scripts/coordinated-example-release.mjs sync \
               --root . \
               --identity "$RELEASE_IDENTITY"
-            (
-              cd examples/react-native
-              bun install --lockfile-only
-            )
-            (
-              cd examples/react-native-elevenlabs-audio
-              bun install --lockfile-only
-            )
+            update_lockfile() {
+              local directory="$1"
+              for attempt in {1..12}; do
+                # Each retry must see newly published versions, not Bun's cached manifest.
+                if (cd "$directory" && bun install --lockfile-only --no-cache); then
+                  return 0
+                fi
+                if (( attempt == 12 )); then
+                  return 1
+                fi
+                echo "Package metadata has not propagated to Bun yet; retrying $directory ($attempt/12)."
+                sleep 10
+              done
+            }
+            update_lockfile examples/react-native
+            update_lockfile examples/react-native-elevenlabs-audio
             cp "$canonical_payload" .github/coordinated-example-release.json
             git config user.name "mentra-release-bot"
             git config user.email "actions@users.noreply.github.com"
@@ -284,7 +294,7 @@ jobs:
             sleep 10
           done
           [[ -n "$run_id" ]]
-          gh run watch "$run_id" --exit-status
+          bash .github/scripts/wait-for-example-validation.sh "$run_id"
           echo "run_id=$run_id" >> "$GITHUB_OUTPUT"
           echo "url=https://github.com/$STARTER_KIT_REPOSITORY/actions/runs/$run_id" >> "$GITHUB_OUTPUT"
 
@@ -327,7 +337,7 @@ jobs:
 
       - name: Download validated artifacts
         if: steps.existing.outputs.already_published != 'true'
-        run: gh run download "${{ steps.validation.outputs.run_id }}" --dir validated-artifacts
+        run: bash .github/scripts/download-example-artifacts.sh "${{ steps.validation.outputs.run_id }}"
 
       - name: Create source tag and deterministic result
         if: steps.existing.outputs.already_published != 'true'
@@ -396,7 +406,10 @@ jobs:
           # Publish the result last. Its presence is the cross-repository completion signal.
           upload_immutable "$RESULT_NAME"
           result_url="https://github.com/$STARTER_KIT_REPOSITORY/releases/download/$ARTIFACT_CONTAINER_TAG/$RESULT_NAME"
-          curl --fail --silent --show-error --location --head "$result_url" >/dev/null
+          # GitHub can briefly return 404 on the public URL after a successful upload.
+          curl --fail --silent --show-error --location --head \
+            --retry 5 --retry-all-errors --retry-delay 10 --retry-max-time 180 --max-time 30 \
+            "$result_url" >/dev/null
           echo "result_url=$result_url" >> "$GITHUB_OUTPUT"
 
       - name: Summarize the coordinated example release

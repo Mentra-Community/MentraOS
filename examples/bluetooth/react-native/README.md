@@ -21,12 +21,8 @@ cd examples/react-native
 bun install
 ```
 
-The example depends on the SDK version pinned in `package.json`, for example:
-
-```json
-"@mentra/bluetooth-sdk": "3.1.0-dev.27",
-"@mentra/engine": "3.1.0-dev.27"
-```
+The example depends on the exact SDK and Engine versions pinned in
+[`package.json`](./package.json). Those two package versions must match.
 
 Use compatible SDK and Engine versions published by Mentra. When validating
 unreleased SDK changes, use the local source override below so JavaScript,
@@ -156,7 +152,7 @@ the published package, remove the symlink and run `bun install`.
 
 The example has five tabs:
 
-- **Device**: scan for Mentra Live glasses, connect, disconnect, reconnect to the saved/default device, inspect battery, firmware, Wi-Fi, RSSI, and discovered-device state. Connecting Mentra Live opens the custom full-page OTA presentation in `src/ota` automatically; the Software Update action opens the same flow manually. The presentation mirrors the Mentra App's page content and controller actions in the example app's own visual style, keeps intermediate passes on the controller's `finishing` page, and renders the release transition and accumulated changelogs only on final success. Hotspot/Wi-Fi transport, APK/MTK/BES sequencing, retries, restarts, and verification remain in Engine. Legacy glasses without hotspot OTA support can return to the System tab for Wi-Fi setup and resume the flow afterward.
+- **Device**: scan for Mentra Live glasses, connect, disconnect, reconnect to the saved/default device, inspect battery, firmware, Wi-Fi, RSSI, and discovered-device state. Connecting Mentra Live opens the custom full-page OTA presentation in `src/ota` automatically; the Software Update action opens the same flow manually. The presentation mirrors the Mentra App's page content and controller actions in the example app's own visual style, keeps intermediate passes on the controller's `finishing` page, and renders the release transition and accumulated changelogs as styled Markdown in a bounded “What’s new” card only on final success. Hotspot/Wi-Fi transport, APK/MTK/BES sequencing, retries, restarts, and verification remain in Engine. Legacy glasses without hotspot OTA support can return to the System tab for Wi-Fi setup and resume the flow afterward.
 - **Camera**: request photo upload to the local demo cloud or directly to this phone, choose automatic or BLE-only photo transfer, record and upload videos to the media webhook, tune manual exposure and ISO, enable **Text Capture Mode** for glasses-side max-resolution capture and text-region cropping, preview received media, or separately scan standard photo previews for barcodes. Text capture and barcode scanning are mutually exclusive; enabling either turns the other off. Direct phone photo is provided by the SDK, while barcode scanning is implemented in a companion local native module.
 - **Stream**: start RTMP, SRT, or WebRTC streams with SDK-managed keep-alives and preview HLS/WebRTC output. Android and iOS can receive WebRTC directly on the phone through the app-hosted GStreamer WHIP receiver.
 - **System**: scan/connect/forget Wi-Fi, toggle hotspot, change gallery mode, receive microphone PCM, and send RGB LED controls.
