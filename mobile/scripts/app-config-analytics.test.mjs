@@ -9,12 +9,28 @@ import test from "node:test"
 // `expo config`, the same path prebuild uses, so what is asserted is what ships.
 
 function bluetoothSdkPluginProps() {
-  const json = execFileSync("npx", ["expo", "config", "--json", "--type", "prebuild"], {
-    encoding: "utf8",
-    stdio: ["ignore", "pipe", "ignore"],
-    env: {...process.env, EXPO_NO_TELEMETRY: "1", CI: "1"},
-    maxBuffer: 16 * 1024 * 1024,
-  })
+  let json
+  try {
+    json = execFileSync("npx", ["expo", "config", "--json", "--type", "prebuild"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      env: {
+        ...process.env,
+        EXPO_NO_TELEMETRY: "1",
+        // app.config.ts refuses to build without a Mapbox token in CI. The token
+        // has nothing to do with this check, so supply the same placeholder
+        // .env.example ships when the environment has none.
+        EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN: process.env.EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN || "ci-dummy-not-a-real-token",
+      },
+      maxBuffer: 16 * 1024 * 1024,
+    })
+  } catch (error) {
+    throw new Error(
+      `expo config failed: ${String(error.stderr || error.message)
+        .trim()
+        .slice(0, 2000)}`,
+    )
+  }
   const config = JSON.parse(json)
   const entry = (config.plugins ?? []).find(
     (p) => Array.isArray(p) && String(p[0]).includes("modules/bluetooth-sdk/app.plugin"),
