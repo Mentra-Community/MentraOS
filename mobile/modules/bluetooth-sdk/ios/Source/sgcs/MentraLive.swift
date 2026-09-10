@@ -2154,6 +2154,8 @@ class MentraLive: NSObject, SGCManager {
         Bridge.log("Starting stream")
         var json = message
         json.removeValue(forKey: "timestamp")
+        json["controllerProbeVersion"] = 1
+        json["controllerId"] = StreamControllerProbe.controllerId
         sendJson(json, wakeUp: true)
     }
 
@@ -2972,6 +2974,11 @@ class MentraLive: NSObject, SGCManager {
             let success = state == "success" || json["success"] as? Bool == true
             let error = json["errorCode"] as? String ?? json["error"] as? String
             Bridge.sendRgbLedControlResponse(requestId: requestId, success: success, error: error)
+
+        case "stream_controller_probe":
+            if let response = StreamControllerProbe.response(json) {
+                sendJson(response)
+            }
 
         case "pong":
             Bridge.log("LIVE: Received pong response - connection healthy")
