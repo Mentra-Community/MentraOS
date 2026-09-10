@@ -22,8 +22,6 @@ import android.util.Log;
 import android.util.Size;
 import android.view.Surface;
 
-import java.util.Timer;
-import java.util.TimerTask;
 
 import androidx.annotation.Nullable;
 import androidx.annotation.RequiresPermission;
@@ -39,6 +37,7 @@ import com.mentra.asg_client.io.streaming.config.RtmpStreamConfig;
 import com.mentra.asg_client.io.streaming.events.StreamingCommand;
 import com.mentra.asg_client.io.streaming.events.StreamingEvent;
 import com.mentra.asg_client.io.streaming.interfaces.StreamingStatusCallback;
+import com.mentra.asg_client.io.streaming.StreamCallbackScope;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
 import com.mentra.asg_client.service.core.constants.BatteryConstants;
 import com.mentra.asg_client.audio.AudioAssets;
@@ -69,6 +68,11 @@ public class SrtStreamingService extends Service {
   private static final Object sConfigLock = new Object();
   private static volatile SrtStreamingService sInstance;
   private static StreamingStatusCallback sStatusCallback;
+  private static long sStartRequestGeneration;
+  private static boolean sStartRequested;
+  private final Handler mLifecycleHandler = new Handler(Looper.getMainLooper());
+  private final StreamCallbackScope mPublisherCallbacks = new StreamCallbackScope(mLifecycleHandler::post);
+  private boolean mAwaitingPublisherRecovery;
 
   private final IBinder mBinder = new LocalBinder();
   private CameraSrtLiveStreamer mSrtStreamer;
@@ -94,11 +98,8 @@ public class SrtStreamingService extends Service {
   private long mLastFailureTime = 0;
   private int mTotalFailures = 0;
 
-  private Timer mStreamTimeoutTimer;
   private String mCurrentStreamId;
   private boolean mIsStreamingActive = false;
-  private static final long STREAM_TIMEOUT_MS = 60000;
-  private Handler mTimeoutHandler;
 
   private boolean mHasShownReconnectingNotification = false;
 
@@ -163,16 +164,19 @@ public class SrtStreamingService extends Service {
 
     mReconnectHandler = new Handler(Looper.getMainLooper());
     mMetricsReporter = createMetricsReporter();
-    mTimeoutHandler = new Handler(Looper.getMainLooper());
     mHardwareManager = HardwareManagerFactory.getInstance(this);
 
-    initStreamer();
+    // Allocate capture only after a still-current start command is delivered.
   }
 
   @SuppressLint("MissingPermission")
   @Override
   public int onStartCommand(Intent intent, int flags, int startId) {
     startForeground(NOTIFICATION_ID, createNotification());
+    if (intent == null || intent.getLongExtra("stream_request_generation", -1) != sStartRequestGeneration) {
+      if (!sStartRequested) stopSelf(startId);
+      return START_NOT_STICKY;
+    }
 
     if (intent != null) {
       String srtUrl = intent.getStringExtra("srt_url");
@@ -191,14 +195,16 @@ public class SrtStreamingService extends Service {
         mReconnectAttempts = 0;
         mReconnecting = false;
 
-        new Handler(Looper.getMainLooper()).postDelayed(() -> {
+        final long pendingStart = mPublisherCallbacks.current();
+        mLifecycleHandler.postDelayed(() -> {
+          if (!mPublisherCallbacks.isCurrent(pendingStart)) return;
           Log.d(TAG, "Auto-starting SRT streaming");
           startStreaming();
         }, 1000);
       }
     }
 
-    return START_STICKY;
+    return START_NOT_STICKY;
   }
 
   @Nullable
@@ -214,8 +220,7 @@ public class SrtStreamingService extends Service {
     }
 
     if (mReconnectHandler != null) mReconnectHandler.removeCallbacksAndMessages(null);
-    cancelStreamTimeout();
-    if (mTimeoutHandler != null) mTimeoutHandler.removeCallbacksAndMessages(null);
+    clearStreamingSession();
 
     stopStreaming();
     releaseStreamer();
@@ -294,6 +299,15 @@ public class SrtStreamingService extends Service {
     if (mSurfaceTexture != null) { mSurfaceTexture.release(); mSurfaceTexture = null; }
   }
 
+  private boolean markPublisherDisconnected(String reason) {
+    if (mAwaitingPublisherRecovery || mStreamState == StreamState.IDLE || mStreamState == StreamState.STOPPING) return false;
+    mAwaitingPublisherRecovery = true;
+    mIsStreaming = false;
+    mStreamState = StreamState.STARTING;
+    if (sStatusCallback != null) sStatusCallback.onReconnecting(mReconnectAttempts, MAX_RECONNECT_ATTEMPTS, reason, mCurrentStreamId);
+    return true;
+  }
+
   @SuppressLint("MissingPermission")
   private void initStreamer() {
     synchronized (mStateLock) {
@@ -304,6 +318,7 @@ public class SrtStreamingService extends Service {
       }
     }
 
+    final long publisherGeneration = mPublisherCallbacks.advance();
     try {
       Log.d(TAG, "Initializing SRT streamer");
       wakeUpScreen();
@@ -344,7 +359,8 @@ public class SrtStreamingService extends Service {
             mIsStreaming = true;
             mIsStreamingActive = true;
             mReconnectAttempts = 0;
-            boolean wasReconnecting = mReconnecting;
+            boolean wasReconnecting = mReconnecting || mAwaitingPublisherRecovery;
+            mAwaitingPublisherRecovery = false;
             mReconnecting = false;
 
             long currentTime = System.currentTimeMillis();
@@ -358,7 +374,7 @@ public class SrtStreamingService extends Service {
             }
 
             if (mCurrentStreamId != null && !mCurrentStreamId.isEmpty()) {
-              scheduleStreamTimeout(mCurrentStreamId);
+              markStreamingSession(mCurrentStreamId);
             }
 
             updateNotificationIfImportant();
@@ -397,6 +413,7 @@ public class SrtStreamingService extends Service {
           }
 
           final int currentSequence = mReconnectionSequence;
+          if (!markPublisherDisconnected("connection_failed")) return;
           mReconnectHandler.postDelayed(() -> {
             if (currentSequence != mReconnectionSequence) return;
             synchronized (mStateLock) {
@@ -430,6 +447,7 @@ public class SrtStreamingService extends Service {
           StreamingReporting.reportRtmpConnectionLost(SrtStreamingService.this, mSrtUrl, streamDuration, message);
 
           final int currentSequence = mReconnectionSequence;
+          if (!markPublisherDisconnected("connection_lost")) return;
           mReconnectHandler.postDelayed(() -> {
             if (currentSequence != mReconnectionSequence) return;
             synchronized (mStateLock) {
@@ -437,8 +455,6 @@ public class SrtStreamingService extends Service {
                 Log.d(TAG, "SRT library recovered internally");
               } else if (mStreamState == StreamState.IDLE || mStreamState == StreamState.STOPPING) {
                 Log.d(TAG, "SRT stream stopped, not reconnecting");
-              } else if (mReconnecting) {
-                Log.d(TAG, "SRT reconnection already scheduled");
               } else {
                 scheduleReconnect("connection_lost");
               }
@@ -454,7 +470,19 @@ public class SrtStreamingService extends Service {
           "Mentra"
       );
       mSrtStreamer = new CameraSrtLiveStreamer(
-          this, true, tsServiceInfo, null, null, errorListener, connectionListener);
+          this, true, tsServiceInfo, null, null,
+          error -> mPublisherCallbacks.dispatch(publisherGeneration, () -> errorListener.onError(error)),
+          new OnConnectionListener() {
+            @Override public void onSuccess() {
+              mPublisherCallbacks.dispatch(publisherGeneration, connectionListener::onSuccess);
+            }
+            @Override public void onFailed(String message) {
+              mPublisherCallbacks.dispatch(publisherGeneration, () -> connectionListener.onFailed(message));
+            }
+            @Override public void onLost(String message) {
+              mPublisherCallbacks.dispatch(publisherGeneration, () -> connectionListener.onLost(message));
+            }
+          });
 
       int videoWidth = mStreamConfig.getVideoWidth();
       int videoHeight = mStreamConfig.getVideoHeight();
@@ -523,6 +551,10 @@ public class SrtStreamingService extends Service {
 
   @RequiresPermission(Manifest.permission.CAMERA)
   public void startStreaming() {
+    if (Looper.myLooper() != Looper.getMainLooper()) {
+      mLifecycleHandler.post(this::startStreaming);
+      return;
+    }
     synchronized (mStateLock) {
       if (mStreamState != StreamState.IDLE) {
         Log.i(TAG, "SRT stream request while in state: " + mStreamState + " - forcing clean restart");
@@ -606,20 +638,24 @@ public class SrtStreamingService extends Service {
         throw new Exception("Failed to create valid surface for streaming");
       }
 
+      final long startGeneration = mPublisherCallbacks.current();
+      mAwaitingPublisherRecovery = false;
       final Continuation<Unit> streamContinuation = new Continuation<Unit>() {
         @Override
         public CoroutineContext getContext() { return EmptyCoroutineContext.INSTANCE; }
 
         @Override
         public void resumeWith(Object o) {
+            mPublisherCallbacks.dispatch(startGeneration, () -> {
           synchronized (mStateLock) {
-            if (o instanceof Throwable) {
-              String errorMsg = "Failed to start SRT streaming: " + ((Throwable) o).getMessage();
-              Log.e(TAG, "Error starting SRT stream", (Throwable) o);
+            Throwable failure = StreamCallbackScope.failure(o);
+                        if (failure != null) {
+              String errorMsg = "Failed to start SRT streaming: " + failure.getMessage();
+              Log.e(TAG, "Error starting SRT stream", failure);
               mStreamState = StreamState.IDLE;
               mIsStreaming = false;
               if (sStatusCallback != null) sStatusCallback.onStreamError(errorMsg, mCurrentStreamId, true);
-              StreamingReporting.reportStreamStartFailure(SrtStreamingService.this, mSrtUrl, ((Throwable) o).getMessage(), (Throwable) o);
+              StreamingReporting.reportStreamStartFailure(SrtStreamingService.this, mSrtUrl, failure.getMessage(), failure);
               scheduleReconnect("start_error");
             } else {
               if (mStreamState == StreamState.STREAMING) return;
@@ -629,6 +665,7 @@ public class SrtStreamingService extends Service {
               if (mStreamState == StreamState.STARTING) EventBus.getDefault().post(new StreamingEvent.Initializing());
             }
           }
+            });
         }
       };
 
@@ -645,6 +682,11 @@ public class SrtStreamingService extends Service {
   }
 
   public void stopStreaming() {
+    if (Looper.myLooper() != Looper.getMainLooper()) {
+      mLifecycleHandler.post(this::stopStreaming);
+      return;
+    }
+    mPublisherCallbacks.advance();
     synchronized (mStateLock) {
       if (mStreamState == StreamState.STOPPING) { Log.w(TAG, "Already stopping SRT stream"); return; }
       mStreamState = StreamState.STOPPING;
@@ -654,9 +696,11 @@ public class SrtStreamingService extends Service {
   }
 
   private void forceStopStreamingInternal(boolean preserveSession) {
+    final long stopGeneration = mPublisherCallbacks.advance();
+    mAwaitingPublisherRecovery = false;
     Log.d(TAG, "Force stopping SRT stream (preserveSession=" + preserveSession + ")");
 
-    // Capture the id up front - cancelStreamTimeout() and the state reset below
+    // Capture the id up front - clearStreamingSession() and the state reset below
     // both clear it, and the stopped callback must identify the stream being
     // stopped.
     final String stoppedStreamId;
@@ -670,7 +714,7 @@ public class SrtStreamingService extends Service {
     mReconnectionSequence++;
     if (mReconnectHandler != null) mReconnectHandler.removeCallbacksAndMessages(null);
 
-    if (!preserveSession) cancelStreamTimeout();
+    if (!preserveSession) clearStreamingSession();
 
     mReconnecting = preserveSession;
     if (!preserveSession) { mReconnectAttempts = 0; }
@@ -680,16 +724,19 @@ public class SrtStreamingService extends Service {
       public CoroutineContext getContext() { return EmptyCoroutineContext.INSTANCE; }
       @Override
       public void resumeWith(Object o) {
-        if (o instanceof Throwable) {
-          Log.e(TAG, "Error during SRT stream stop", (Throwable) o);
-          StreamingReporting.reportStreamStopFailure(SrtStreamingService.this, "stream_stop_error", (Throwable) o);
+            mPublisherCallbacks.dispatch(stopGeneration, () -> {
+        Throwable failure = StreamCallbackScope.failure(o);
+                        if (failure != null) {
+          Log.e(TAG, "Error during SRT stream stop", failure);
+          StreamingReporting.reportStreamStopFailure(SrtStreamingService.this, "stream_stop_error", failure);
           // Use the id captured before cleanup: this continuation can resume after
           // the state reset cleared mCurrentStreamId or a replacement stream
           // overwrote it, and the failure belongs to the stream being stopped.
-          if (sStatusCallback != null) sStatusCallback.onStreamError("Failed to stop SRT stream: " + ((Throwable) o).getMessage(), stoppedStreamId);
+          if (sStatusCallback != null) sStatusCallback.onStreamError("Failed to stop SRT stream: " + failure.getMessage(), stoppedStreamId);
         }
         Log.d(TAG, "SRT stream stop completed");
-      }
+          });
+        }
     };
 
     CameraSrtLiveStreamer srtStreamerToCleanup = mSrtStreamer != null ? mSrtStreamer : mLastSrtStreamerForCleanup;
@@ -741,6 +788,7 @@ public class SrtStreamingService extends Service {
   }
 
   private void scheduleReconnect(String reason) {
+    mAwaitingPublisherRecovery = true;
     if (mReconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
       Log.w(TAG, "Max SRT reconnection attempts reached");
       if (sStatusCallback != null) sStatusCallback.onReconnectFailed(MAX_RECONNECT_ATTEMPTS, mCurrentStreamId);
@@ -854,39 +902,14 @@ public class SrtStreamingService extends Service {
     Log.d(TAG, "SRT streaming status callback " + (callback != null ? "registered" : "unregistered"));
   }
 
-  private void scheduleStreamTimeout(String streamId) {
-    cancelStreamTimeout();
+  private void markStreamingSession(String streamId) {
+    clearStreamingSession();
     mCurrentStreamId = streamId;
     mIsStreamingActive = true;
-
-    if (AsgConstants.DISABLE_STREAM_KEEP_ALIVE_TIMEOUT) {
-      Log.i(TAG, "Keep-alive timeout disabled; stream will not auto-stop: " + streamId);
-      return;
-    }
-
-    mStreamTimeoutTimer = new Timer("SrtStreamTimeout-" + streamId);
-    mStreamTimeoutTimer.schedule(new TimerTask() {
-      @Override
-      public void run() {
-        Log.w(TAG, "SRT stream timeout for streamId: " + streamId);
-        mTimeoutHandler.post(() -> handleStreamTimeout(streamId));
-      }
-    }, STREAM_TIMEOUT_MS);
+    // BES phone presence, not cloud-era stream keep-alives, owns the stop deadline.
   }
 
-  private void handleStreamTimeout(String streamId) {
-    synchronized (mStateLock) {
-      if (mCurrentStreamId != null && mCurrentStreamId.equals(streamId) && mIsStreamingActive) {
-        Log.w(TAG, "SRT stream timed out (no keep-alive): " + streamId);
-        StreamingReporting.reportTimeoutError(SrtStreamingService.this, streamId, STREAM_TIMEOUT_MS);
-        if (sStatusCallback != null) sStatusCallback.onStreamError("SRT stream timed out - no keep-alive", mCurrentStreamId);
-        forceStopStreamingInternal(false);
-      }
-    }
-  }
-
-  private void cancelStreamTimeout() {
-    if (mStreamTimeoutTimer != null) { mStreamTimeoutTimer.cancel(); mStreamTimeoutTimer = null; }
+  private void clearStreamingSession() {
     mIsStreamingActive = false;
     mCurrentStreamId = null;
   }
@@ -980,9 +1003,16 @@ public class SrtStreamingService extends Service {
 
   public static void startStreaming(Context context, String srtUrl, String streamId,
       boolean enableLed, boolean enableSound, RtmpStreamConfig config) {
+    if (Looper.myLooper() != Looper.getMainLooper()) {
+      new Handler(Looper.getMainLooper()).post(() -> startStreaming(context, srtUrl, streamId, enableLed, enableSound, config));
+      return;
+    }
+    final long requestGeneration = ++sStartRequestGeneration;
+    sStartRequested = true;
     setStreamConfig(config);
 
     if (sInstance != null) {
+      if (sInstance.mCurrentStreamId != null) sInstance.forceStopStreamingInternal(false);
       if (sInstance.mReconnectHandler != null) sInstance.mReconnectHandler.removeCallbacksAndMessages(null);
       sInstance.mReconnectAttempts = 0;
       sInstance.mReconnecting = false;
@@ -993,6 +1023,7 @@ public class SrtStreamingService extends Service {
       sInstance.startStreaming();
     } else {
       Intent intent = new Intent(context, SrtStreamingService.class);
+      intent.putExtra("stream_request_generation", requestGeneration);
       intent.putExtra("srt_url", srtUrl);
       if (streamId != null && !streamId.isEmpty()) intent.putExtra("stream_id", streamId);
       intent.putExtra("enable_led", enableLed);
@@ -1011,10 +1042,16 @@ public class SrtStreamingService extends Service {
   }
 
   public static void stopStreaming(Context context) {
+    if (Looper.myLooper() != Looper.getMainLooper()) {
+      new Handler(Looper.getMainLooper()).post(() -> stopStreaming(context));
+      return;
+    }
+    sStartRequestGeneration++;
+    sStartRequested = false;
     if (sInstance != null) {
       sInstance.stopStreaming();
     } else {
-      EventBus.getDefault().post(new StreamingCommand.Stop());
+      context.stopService(new Intent(context, SrtStreamingService.class));
     }
   }
 
@@ -1056,15 +1093,10 @@ public class SrtStreamingService extends Service {
     return sInstance != null ? sInstance.mReconnectAttempts : 0;
   }
 
-  public static boolean resetStreamTimeout(String streamId) {
-    if (sInstance != null) {
-      if (sInstance.mCurrentStreamId != null && sInstance.mCurrentStreamId.equals(streamId) && sInstance.mIsStreamingActive) {
-        WakeLockManager.acquireFullWakeLockAndBringToForeground(sInstance.getApplicationContext(), WakeLockManager.WakeOwner.STREAMING, 2180000, 5000);
-        sInstance.scheduleStreamTimeout(streamId);
-        return true;
-      }
-    }
-    return false;
+  public static boolean isCurrentStream(String streamId) {
+    SrtStreamingService instance = sInstance;
+    return instance != null && streamId != null && streamId.equals(instance.mCurrentStreamId)
+        && (isStreaming() || isReconnecting());
   }
 
   public static String getCurrentStreamId() {

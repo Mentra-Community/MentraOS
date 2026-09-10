@@ -323,6 +323,13 @@ See [features/rtmp-streaming.md](features/rtmp-streaming.md) for stream lifecycl
 
 **Constraints:** battery ≥ 10%, and either STA WiFi is connected or the stream endpoint is on the active glasses-hosted hotspot subnet. WHIP streams whose requested resolution exceeds the camera's supported output are rejected (`WhipCameraFormatSelector`).
 
+`glasses_ready.streamControlVersion: 1` advertises glasses-owned stream lifetime. The SDK
+requires this capability rather than silently starting a legacy keep-alive-dependent stream.
+Starting also requires confirmed BES phone BLE presence; update BES firmware if this signal is
+unavailable. The glasses continue until explicit stop, terminal publisher/device failure, or
+10 seconds of sustained phone absence/unknown presence. Brief BLE outages do not end the stream.
+Stream wake-lock and local-hotspot activity are maintained on the glasses, not by heartbeats.
+
 **Response wire type:** `stream_status` (new universal type from `MediaManager.sendStreamStatusResponse`). Legacy `rtmp_stream_status` is still produced by `ResponseBuilder` in some paths.
 
 ```json
@@ -343,7 +350,8 @@ While a stream is active, supported firmware also emits this status periodically
 {"type": "stop_stream"}
 ```
 
-Stops whichever stream service is active. Status: `stopping`; if no stream is active, `status` is `error` with `errorDetails: "not_streaming"`.
+Stops the current or pending stream. The operation is idempotent: an already stopped stream
+returns a stopped snapshot. Cleanup releases capture and cancels phone-loss/resource work.
 
 #### `get_stream_status`
 
@@ -359,7 +367,16 @@ Response includes a `streaming` boolean and a `reconnecting` flag. When reconnec
 
 #### `keep_stream_alive`
 
-Heartbeat to extend the stream timeout. Both `streamId` and `ackId` are required; missing either is silently ignored.
+Stream-control version 1 adds `sid` (ASG process identity), monotonically increasing `revision`,
+and `terminal` to stream lifecycle events and snapshots. Snapshots retain the last stream id
+and terminal failure reason even while disconnected. A snapshot is sent after every
+`phone_ready`, including after an ASG restart; a fresh process reports stopped. The SDK rejects
+old-process or lower-revision status. Publisher retries use `reconnecting`, not terminal
+`error`; `errorDetails` remains available on terminal snapshots.
+
+Legacy receipt acknowledgment only. This does not extend stream lifetime, refresh resource
+leases, or cancel the BES phone-disconnect deadline. Both `streamId` and `ackId` are required;
+missing either or naming a non-current stream is ignored. New SDKs do not send this command.
 
 ```json
 {"type": "keep_stream_alive", "streamId": "stream_123", "ackId": "ack_456"}

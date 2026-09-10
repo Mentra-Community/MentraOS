@@ -24,6 +24,10 @@ final class HotspotStreamActivityTracker {
         refreshHotspotActivity();
     }
 
+    void onSessionActive() {
+        refreshHotspotActivity();
+    }
+
     void onStreamStopped() {
         mUsesLocalHotspotRoute = false;
     }

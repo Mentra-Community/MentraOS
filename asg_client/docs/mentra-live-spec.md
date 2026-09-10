@@ -115,6 +115,21 @@ Every camera-button press should still be forwarded to the phone as a `button_pr
 
 Mentra Live supports camera/microphone live streaming paths from `asg_client`, including RTMP, SRT, and WHIP services. Streaming behavior must coordinate camera ownership, microphone foreground-service requirements, reconnect/keep-alive handling, and privacy LED state.
 
+The OS-1937 streaming lifecycle is owned by the phone's explicit start/stop commands, not by
+cloud-era per-stream keep-alives. A stream may otherwise end on terminal publisher or device
+failure, or after sustained loss of the controlling phone. BES phone BLE presence is authoritative;
+the MTK-to-BES UART connection is not evidence that the phone is connected. A 10-second phone-loss
+grace tolerates brief BLE outages. Reconnection cancels that deadline, while repeated absence or
+unknown-presence reports never extend it. Deadline work is scoped to a stream generation so an
+old callback cannot stop a replacement stream, even if its public id is reused.
+
+Starting a stream requires confirmed phone presence. BES builds that do not expose that signal
+must be updated before starting phone-owned streaming; unknown presence must not authorize an
+indefinitely running camera. If presence becomes unknown during a stream (for example, during
+BES transport recovery), the same bounded grace applies. Physical qualification must include
+killing the Mentra App on both phone platforms: a surviving OS-managed BLE connection must not
+be assumed to prove the controlling app is alive.
+
 WHIP streams seed WebRTC with an explicit initial send bitrate capped by the caller's configured maximum. Congestion control remains enabled so the sender can still reduce bitrate on constrained networks instead of treating the configured bitrate as a fixed rate.
 
 Streaming endpoints on the active Mentra Live hotspot subnet are reachable without a separate STA WiFi connection. `asg_client` derives that subnet from the live hotspot interface rather than assuming fixed client addresses. For WHIP, the WebRTC network inventory must also expose the hotspot interface so ICE can gather a directly reachable local candidate.
@@ -149,7 +164,7 @@ The phone can configure WiFi behavior through `asg_client`. Mentra Live-specific
 
 The phone can request saved SSIDs with a correlated request/response and can ask the glasses to forget a network. Modern commands require the complete `protocolVersion: 1`, nonempty `requestId`, and current process `sid` tuple. Partial, malformed, and future versions are rejected before a backend read or mutation. Legacy forget commands omit all three fields. Native SDKs negotiate from `version_info_1` under one bounded request deadline; modern operations never fall back to `wifi_status`. Legacy requests resolve immediately as `legacy_unverified` once an active native transport accepts dispatch, without waiting for a link-state change. K900's current vendor API only dispatches an asynchronous SystemUI broadcast: its correlated forget outcome is `dispatched`, not verified credential removal. The current WiFi link snapshot is included separately because Android may propagate disconnection later. K900 saved-network enumeration is explicitly unsupported until the vendor API exposes a response path; do not substitute the potentially empty/stale framework configured-network list.
 
-When the phone requests the Mentra Live hotspot, `asg_client` starts the K900 firmware hotspot through the SmartXY `ap_start` intent. It waits for the AP gateway and firmware-configured SSID/password before returning them to the phone over BLE. Clients must use the latest BLE status rather than assume fixed credentials. The hotspot remains active while the local HTTP server is receiving requests or streaming response data, or while a hotspot-local stream receives its standard stream keep-alives. It automatically stops after 120 seconds without any of those activity signals.
+When the phone requests the Mentra Live hotspot, `asg_client` starts the K900 firmware hotspot through the SmartXY `ap_start` intent. It waits for the AP gateway and firmware-configured SSID/password before returning them to the phone over BLE. Clients must use the latest BLE status rather than assume fixed credentials. The hotspot remains active while the local HTTP server is receiving requests or streaming response data, or while a hotspot-local stream owns an active session. Stream activity is refreshed locally, independently of phone/cloud heartbeats. It automatically stops after 120 seconds without any of those activity signals.
 
 ### OTA and updates
 
@@ -271,7 +286,7 @@ upgrade OTA completing).
 1. Phone or another authorized command source sends a stream-start command with destination/protocol configuration.
 2. `asg_client` starts the appropriate streaming foreground service.
 3. The service acquires camera/microphone resources, sets privacy indicators, and connects to the streaming endpoint.
-4. Keep-alive/reconnect logic maintains the stream where supported.
+4. The glasses maintain resource leases locally and report publisher reconnect/failure state. Sustained phone BLE loss ends the session after its disconnect grace.
 5. Stop, error, or disconnect paths release camera/microphone resources and reset LEDs.
 
 ### Media sync flow

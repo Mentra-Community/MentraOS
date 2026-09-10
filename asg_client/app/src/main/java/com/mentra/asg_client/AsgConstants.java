@@ -78,13 +78,20 @@ public class AsgConstants {
      */
     public static final boolean ENABLE_PIPELINE_FPS_TELEMETRY = false;
 
-    /**
-     * Local-testing stopgap that disables the 60s keep-alive watchdog for RTMP/SRT/WHIP streams.
-     * When true, {@code scheduleStreamTimeout()} early-returns and an orphaned stream (lost
-     * phone/cloud keep-alives via BLE disconnect or killed app) never auto-stops, holding the
-     * camera and draining battery/thermals. MUST stay false for production; flip locally only.
-     */
-    public static final boolean DISABLE_STREAM_KEEP_ALIVE_TIMEOUT = false;
+    /** Tolerate brief phone BLE outages before releasing a remotely owned camera stream. */
+    public static final long STREAM_PHONE_DISCONNECT_GRACE_MS = 10_000L;
+
+    /** Glasses-owned start/stop control with process-scoped, revisioned status snapshots. */
+    public static final int STREAM_CONTROL_VERSION = 1;
+
+    /** Refresh local stream resource leases without relying on phone or cloud keep-alives. */
+    public static final long STREAM_RESOURCE_REFRESH_MS = 30_000L;
+
+    /** Bounded CPU lease renewed only while a stream session owns capture. */
+    public static final long STREAM_CPU_LEASE_MS = 90_000L;
+
+    /** Allow WebRTC to recover a brief publisher disconnect before rebuilding the connection. */
+    public static final long WHIP_PUBLISHER_DISCONNECT_GRACE_MS = 2_000L;
 
     /** Linux thermal sysfs root used to discover the Mentra Live CPU sensor. */
     public static final String THERMAL_SYSFS_ROOT = "/sys/class/thermal";

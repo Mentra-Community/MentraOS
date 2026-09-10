@@ -807,15 +807,7 @@ class BluetoothSdkModule : Module() {
             requireSdk().startStream(StreamRequest.fromMap(params)).values
         }
 
-        SdkCoroutineFunction("startExternallyManagedStream") { params: Map<String, Any> ->
-            requireSdk().startExternallyManagedStream(StreamRequest.fromMap(params)).values
-        }
-
         SdkCoroutineFunction("stopStream") { -> requireSdk().stopStream().values }
-
-        SdkAsyncFunction("sendExternallyManagedStreamKeepAlive") { params: Map<String, Any> ->
-            sdk?.sendExternallyManagedStreamKeepAlive(StreamKeepAliveRequest.fromMap(params))
-        }
 
         // MARK: - Microphone Commands
 
