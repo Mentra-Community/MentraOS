@@ -501,12 +501,15 @@ public class Bridge private constructor() {
             (values["hotspotOtaVersion"] as? Number
                             ?: values["hotspot_ota_version"] as? Number)
                     ?.let { body["hotspotOtaVersion"] = it.toInt() }
-            (values["wifiForgetResultVersion"] as? Number
-                            ?: values["wifi_forget_result_version"] as? Number)
-                    ?.let { body["wifiForgetResultVersion"] = it.toInt() }
-            (values["savedWifiNetworksVersion"] as? Number
-                            ?: values["saved_wifi_networks_version"] as? Number)
-                    ?.let { body["savedWifiNetworksVersion"] = it.toInt() }
+            for ((key, wireKey) in listOf(
+                "wifiForgetResultVersion" to "wifi_forget_result_version",
+                "savedWifiNetworksVersion" to "saved_wifi_networks_version",
+            )) {
+                if (values.containsKey(key) || values.containsKey(wireKey)) {
+                    // Preserve malformed presence: it must not become legacy or be rounded to v1.
+                    body[key] = values[key] ?: values[wireKey] ?: -1
+                }
+            }
             sendTypedMessage("version_info", body)
         }
 

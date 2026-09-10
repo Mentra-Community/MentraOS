@@ -9,15 +9,14 @@ import java.util.Set;
 public class MessageReliability {
 
     // Messages that need ACK/retry - keep it simple
-    private static final Set<String> RELIABLE_TYPES =
-            Set.of(
-                    // Critical operations
-                    "photo_captured",
-                    "photo_failed",
-                    "video_started",
-                    "video_stopped",
-                    "video_failed",
-                    "auth_token_status",
+    private static final Set<String> RELIABLE_TYPES = Set.of(
+        // Critical operations
+        "photo_captured",
+        "photo_failed",
+        "video_started",
+        "video_stopped",
+        "video_failed",
+        "auth_token_status",
 
                     // Important status changes
                     "error",
@@ -31,7 +30,10 @@ public class MessageReliability {
                     "ota_status");
 
     // Messages that NEVER get retry (prevent loops)
-    private static final Set<String> NEVER_RETRY = Set.of("msg_ack", "keep_alive_ack");
+    private static final Set<String> NEVER_RETRY = Set.of(
+        "msg_ack",
+        "keep_alive_ack"
+    );
 
     /**
      * Simple boolean check - does this message need reliability?

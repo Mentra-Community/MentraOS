@@ -97,19 +97,19 @@ Capture a still photo. The handler routes through `transferMethod` to one of thr
 - Uses a dedicated 2880 px long-edge cap after a successful text crop; the configured BLE codec and quality apply afterward (currently JPEG quality 80).
 - If detection finds no usable text region or fails, the pipeline preserves the full frame and retains the smaller 1920 px fallback cap.
 - Best results on documents, signs, and windshield VIN stickers; plain scenes may look similar to `photo` when the full-frame fallback is used.
-  | `compress` | string | `"none"` | Compression preset passed to capture pipeline |
-  | `flash` | boolean | `true` | Fire the privacy LED during capture |
-  | `sound` | boolean | `true` | Play shutter sound |
-  | `exposureTimeNs` | number | absent | Optional one-shot manual sensor exposure time in ns |
-  | `iso` | number | absent | Optional one-shot manual sensor ISO; ignored without manual exposure |
-  | `aeExposureDivisor` | number | absent | After AE convergence, divide metered exposure by this factor (scan tuning) |
-  | `isoCap` | number | absent | Cap ISO after AE metering (scan tuning) |
-  | `noiseReduction` | boolean | absent | Parsed; warn-only if unsupported (`not_implemented` in metadata) |
-  | `edgeEnhancement` | boolean | absent | `false` disables edge enhancement on still capture |
-  | `zsl` | boolean | absent | ZSL preview/capture buffering. Enabled by default; pass `false` to disable. Manual and scan exposure force it off on the still request because buffered capture conflicts with fixed sensor controls. |
-  | `mfnr` | boolean | absent | Vendor multi-frame noise reduction on still capture. Enabled by default; pass `false` for the single-frame pipeline. Manual and scan exposure force it off because the vendor pipeline can override fixed sensor controls. MFNR arms ZSL buffering in preview even when `zsl` is false. |
-  | `ispDigitalGain` | number | absent | Parsed; warn-only if unsupported |
-  | `ispAnalogGain` | string | absent | Parsed; warn-only if unsupported |
+| `compress`           | string  | `"none"`            | Compression preset passed to capture pipeline               |
+| `flash`              | boolean | `true`              | Fire the privacy LED during capture                         |
+| `sound`              | boolean | `true`              | Play shutter sound                                          |
+| `exposureTimeNs`     | number  | absent              | Optional one-shot manual sensor exposure time in ns         |
+| `iso`                | number  | absent              | Optional one-shot manual sensor ISO; ignored without manual exposure |
+| `aeExposureDivisor`  | number  | absent              | After AE convergence, divide metered exposure by this factor (scan tuning) |
+| `isoCap`             | number  | absent              | Cap ISO after AE metering (scan tuning)                     |
+| `noiseReduction`     | boolean | absent              | Parsed; warn-only if unsupported (`not_implemented` in metadata) |
+| `edgeEnhancement`    | boolean | absent              | `false` disables edge enhancement on still capture          |
+| `zsl`                | boolean | absent              | ZSL preview/capture buffering. Enabled by default; pass `false` to disable. Manual and scan exposure force it off on the still request because buffered capture conflicts with fixed sensor controls. |
+| `mfnr`               | boolean | absent              | Vendor multi-frame noise reduction on still capture. Enabled by default; pass `false` for the single-frame pipeline. Manual and scan exposure force it off because the vendor pipeline can override fixed sensor controls. MFNR arms ZSL buffering in preview even when `zsl` is false. |
+| `ispDigitalGain`     | number  | absent              | Parsed; warn-only if unsupported                            |
+| `ispAnalogGain`      | string  | absent              | Parsed; warn-only if unsupported                            |
 
 In `text` mode, Mentra Live captures the source JPEG using ASG text-mode sensor constants
 (`TEXT_MODE_SENSOR_CAPTURE_WIDTH` × `TEXT_MODE_SENSOR_CAPTURE_HEIGHT`, currently 3840×2160),
@@ -332,12 +332,7 @@ See [features/rtmp-streaming.md](features/rtmp-streaming.md) for stream lifecycl
 While a stream is active, supported firmware also emits this status periodically with live encoder and device telemetry:
 
 ```json
-{
-  "type": "stream_status",
-  "status": "streaming",
-  "streamId": "stream-123",
-  "stats": {"bitrate": 2450000, "fps": 29.8, "droppedFrames": 3, "duration": 42, "temperatureC": 54.6}
-}
+{"type": "stream_status", "status": "streaming", "streamId": "stream-123", "stats": {"bitrate": 2450000, "fps": 29.8, "droppedFrames": 3, "duration": 42, "temperatureC": 54.6}}
 ```
 
 `bitrate` is in bits per second, `duration` is in seconds, and `temperatureC` is omitted when the CPU thermal sensor is unavailable.
@@ -359,14 +354,7 @@ Stops whichever stream service is active. Status: `stopping`; if no stream is ac
 Response includes a `streaming` boolean and a `reconnecting` flag. When reconnecting, RTMP/SRT include an `attempt` counter:
 
 ```json
-{
-  "type": "stream_status",
-  "kind": "snapshot",
-  "status": "streaming",
-  "streaming": true,
-  "reconnecting": false,
-  "timestamp": 1708963201234
-}
+{"type": "stream_status", "kind": "snapshot", "status": "streaming", "streaming": true, "reconnecting": false, "timestamp": 1708963201234}
 ```
 
 #### `keep_stream_alive`
@@ -478,11 +466,12 @@ No response is required (fire-and-forget).
 #### `forget_wifi`
 
 ```json
-{"type": "forget_wifi", "ssid": "OldNetwork", "requestId": "forget-123", "sid": "asg-session-id"}
+{"type": "forget_wifi", "ssid": "OldNetwork", "protocolVersion": 1, "requestId": "forget-123", "sid": "asg-session-id"}
 ```
 
-`ssid` is required. A modern request also carries the `requestId` and expected process-session
-`sid` advertised by `version_info_1`. ASG rejects a mismatched session before invoking the network
+`ssid` is required. A modern request carries exactly `protocolVersion: 1`, a nonempty `requestId`, and the expected process-session
+`sid` advertised by `version_info_1`. Legacy requests omit all three fields. ASG rejects partial tuples,
+malformed or unknown versions, and a mismatched session before invoking the network
 backend. `connected`, `current_ssid`, and `local_ip` are a best-effort current link snapshot, not a
 claim that disconnection has already propagated. If ASG cannot read link state, it omits
 `connected` and the dependent snapshot fields instead of reporting a fabricated disconnection.
@@ -508,18 +497,17 @@ Terminal `wifi_forget_result` and `saved_wifi_networks` frames use at-least-once
 the platform API synchronously reported removal; `dispatched` means only that an asynchronous
 platform command was queued. K900 always uses `dispatched` on successful broadcast dispatch because
 its vendor SystemUI API has no completion callback. Failures can include a stable `error` such as
-`forget_failed`, `invalid_ssid`, `stale_session`, or `network_manager_unavailable`. Older glasses
-ignore the extra correlation fields and do not send this result; phone SDKs isolate that legacy path.
-Preview builds of the result protocol emitted `requestId`, `ssid`, and `dispatched` without
-`sid`, `protocol_version`, or `outcome`; current phone SDKs preserve that wire shape as a raw
-`mode: legacy` event and do not treat it as a modern correlated result.
+`forget_failed`, `invalid_ssid`, `stale_session`, or `network_manager_unavailable`. Phone SDKs send
+legacy commands without correlation fields only when the capability advertisement is absent.
+An uncorrelated legacy result uses `ssid` and `dispatched`, with no `requestId`, `sid`, protocol
+version, or `outcome`. Partial preview tuples are rejected, never downgraded to legacy.
 
 #### `request_saved_wifi_networks`
 
 List SSIDs configured on the glasses. The response echoes the required correlation id.
 
 ```json
-{"type": "request_saved_wifi_networks", "requestId": "saved-123", "sid": "asg-session-id"}
+{"type": "request_saved_wifi_networks", "protocolVersion": 1, "requestId": "saved-123", "sid": "asg-session-id"}
 ```
 
 ```json
@@ -837,11 +825,7 @@ The missing/factory base is the full sensor at `fov: 118`, `roi_position: 0`; ex
 #### `camera_fov_override` / `camera_fov_override_release`
 
 ```json
-{
-  "type": "camera_fov_override",
-  "request_id": "settings-1",
-  "params": {"lease_id": "fov-1", "fov": 82, "roi_position": 1, "ttl_ms": 300000}
-}
+{"type":"camera_fov_override","request_id":"settings-1","params":{"lease_id":"fov-1","fov":82,"roi_position":1,"ttl_ms":300000}}
 ```
 
 Applies a memory-only FOV/ROI lease without changing the persistent base. Re-sending the same lease and configuration refreshes its TTL without restarting the HAL. `camera_fov_override_release` takes the same `lease_id` and restores the base; releasing a stale lease is a no-op. Expiry is capped at ten minutes.

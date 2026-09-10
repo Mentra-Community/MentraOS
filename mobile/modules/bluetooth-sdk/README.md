@@ -69,7 +69,11 @@ For Expo apps, add the plugin to `app.json` or `app.config.ts`:
           "android": {
             "minSdkVersion": 28,
             "packagingOptions": {
-              "pickFirst": ["**/libc++_shared.so", "**/libonnxruntime.so", "**/libonnxruntime4j_jni.so"]
+              "pickFirst": [
+                "**/libc++_shared.so",
+                "**/libonnxruntime.so",
+                "**/libonnxruntime4j_jni.so"
+              ]
             }
           }
         }
@@ -413,11 +417,13 @@ Settings commands that return `SettingsAckSuccessEvent` reject when the ASG repo
 WiFi, hotspot, and version-info commands resolve from the ASG response path, not local dispatch:
 `requestWifiScan()` resolves from the ASG `wifi_scan_result` completion response with the updated scan list, including `[]` when no networks are found. Intermediate `wifi_scan_result` events can arrive with `scanComplete: false` while the glasses stream discovered networks; the final event uses `scanComplete: true`. If older glasses stream non-empty scan results but never send the completion event, the request resolves with the accumulated scan list when the request times out. `sendWifiCredentials()` resolves when the requested SSID is connected, `forgetWifiNetwork()` returns a semantic `WifiForgetResult`, `getSavedWifiNetworks()` returns a semantic `SavedWifiNetworksResult`, `setHotspotState()` resolves when the requested hotspot state is reported, and `requestVersionInfo()` resolves from the ASG `version_info` response instead of local store changes.
 
-Current Mentra Live builds advertise `wifiForgetResultVersion` and `savedWifiNetworksVersion` in `version_info_1`. Native queues calls while those capabilities are unknown under a bounded capability-negotiation deadline, then dispatches through either the correlated or legacy path after the advertisement arrives; a separate response deadline starts only when that command is dispatched. A discovery timeout rejects and never guesses that the glasses are legacy. Correlated results must match the request ID, glasses process session ID, protocol version, and (for forget) exact SSID; unrelated `wifi_status` events never settle a modern request. Session changes and disconnects reject pending WiFi work instead of allowing stale responses to cross sessions.
+Current Mentra Live builds advertise `wifiForgetResultVersion` and `savedWifiNetworksVersion` in `version_info_1`. Native queues calls while those capabilities are unknown, sharing one 15-second deadline for negotiation and response. A discovery timeout rejects and never guesses that the glasses are legacy. Only version 1 is supported: modern commands carry `protocolVersion: 1`, a nonempty request ID, and the glasses process session ID; legacy forget commands omit all three fields. Unknown or malformed versions fail closed. Correlated results must match the complete tuple and (for forget) exact SSID; unrelated `wifi_status` events never settle a modern request. Session changes and disconnects reject pending WiFi work instead of allowing stale responses to cross sessions.
 
-`WifiForgetResult.outcome` is `confirmed`, `dispatched`, `not_found`, `unsupported`, `failed`, or `legacy_unverified`. K900 returns `dispatched`: ASG queued its asynchronous SystemUI broadcast, but the vendor API provides no completion callback and credential removal is not verified. `connected`, `currentSsid`, and `localIp` are best-effort diagnostic snapshot fields; `connected` is omitted when ASG cannot read the link state and must not be interpreted as `false`. Older firmware without the capability advertisement uses the isolated legacy path; a matching status returns `legacy_unverified`, otherwise the request times out. `getSavedWifiNetworks()` preserves exact SSID identity. It returns `confirmed` only for a backend with reliable enumeration, while K900 and legacy firmware return a typed `unsupported` result because the vendor credential store has no reliable list response.
+`WifiForgetResult.outcome` is `confirmed`, `dispatched`, `not_found`, `unsupported`, `failed`, or `legacy_unverified`. K900 returns `dispatched`: ASG queued its asynchronous SystemUI broadcast, but the vendor API provides no completion callback and credential removal is not verified. `connected`, `currentSsid`, and `localIp` are best-effort diagnostic snapshot fields; `connected` is omitted when ASG cannot read the link state and must not be interpreted as `false`. Older firmware without the capability advertisement uses the isolated legacy path; accepted native dispatch immediately returns `legacy_unverified`, with no invented link-state snapshot. `getSavedWifiNetworks()` preserves exact SSID identity. It returns `confirmed` only for a backend with reliable enumeration, while K900 and legacy firmware return a typed `unsupported` result because the vendor credential store has no reliable list response.
 
-Raw `wifi_forget_result` listeners receive a discriminated event union. `mode: "modern"` carries `sid`, `protocolVersion`, and semantic `outcome`; `mode: "legacy"` preserves the older wire frame's `dispatched` boolean without pretending it is a modern correlated result. Terminal Wi-Fi events use at-least-once BLE delivery, so raw listeners can observe a retry after a dropped ACK and should deduplicate by `requestId` (and `sid` for modern events). Promise coordinators clear the matching request after the first terminal frame and ignore later duplicates.
+Promise results expose semantic outcomes and optional link snapshots, not `mode`, `capabilityVersion`, `requestId`, or `sid`. A legacy result returns `legacy_unverified` immediately after actual native transport acceptance; no active or compatible glasses transport rejects with `dispatch_failed`.
+
+Raw `wifi_forget_result` listeners receive a discriminated event union. `mode: "modern"` carries `requestId`, `sid`, `protocolVersion`, and semantic `outcome`; `mode: "legacy"` preserves the older uncorrelated wire frame's `dispatched` boolean. Partial tuples are rejected. Terminal Wi-Fi events use at-least-once BLE delivery, so raw listeners can observe retries; deduplicate modern events by `(requestId, sid)`. Promise coordinators accept only the first matching terminal frame.
 
 The SDK automatically sends the phone wall clock once shortly after a glasses connection becomes ready. It waits for the initial command burst to drain before timestamping the command so startup queue delay does not become clock skew. The once-per-connection guard resets after disconnect, so every successful reconnect synchronizes again. The SDK does not periodically verify or correct clock skew during a long-lived connection; apps that require periodic reconciliation can compare `requestVersionInfo().systemTimeMs` with the phone clock.
 
@@ -578,11 +584,11 @@ React Native event payload fields usually use camelCase. OTA events intentionall
 
 Photo status metadata is tied to the capture stage where the glasses know it:
 
-| Status        | Optional metadata                          | Meaning                                                                                                                              |
-| ------------- | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------ |
-| `configuring` | `resolvedConfig`                           | Effective JPEG size, quality, requested size, source, transfer method, compression, and manual capture settings when present.        |
-| `capturing`   | `requestedCaptureConfig`, `meteredPreview` | Camera2 still request about to be submitted, plus the latest auto-exposure preview estimate before capture.                          |
-| `captured`    | `captureMetadata`                          | HAL-applied still capture result, including actual exposure, ISO, frame duration, AE state, and related camera modes when available. |
+| Status | Optional metadata | Meaning |
+| --- | --- | --- |
+| `configuring` | `resolvedConfig` | Effective JPEG size, quality, requested size, source, transfer method, compression, and manual capture settings when present. |
+| `capturing` | `requestedCaptureConfig`, `meteredPreview` | Camera2 still request about to be submitted, plus the latest auto-exposure preview estimate before capture. |
+| `captured` | `captureMetadata` | HAL-applied still capture result, including actual exposure, ISO, frame duration, AE state, and related camera modes when available. |
 
 Upload and transfer statuses such as `uploading`, `compressing`, `ble_fallback_compression`, `ready_for_transfer`, and `transferring` describe transport progress only and do not carry capture metadata. `ble_fallback_compression` means the direct Wi-Fi/webhook upload failed and the glasses are compressing the already-captured photo for Bluetooth fallback delivery. Local action-button photos emitted by the glasses use the same `photo_status` event shape when the phone SDK is connected; those events use `resolvedConfig.source: "button"` and `resolvedConfig.transferMethod: "local"`.
 

@@ -3,6 +3,66 @@ import XCTest
 
 final class WifiRequestResolutionTests: XCTestCase {
     @MainActor
+    func testUnsupportedControllerDoesNotClaimWifiDispatch() {
+        let keys = ["fullyBooted", "connected", "connectionState", "micEnabled", "voiceActivityDetectionEnabled", "bluetoothClassicConnected"]
+        let snapshot = keys.compactMap { key in DeviceStore.shared.get("glasses", key).map { (key, $0) } }
+        defer { for (key, value) in snapshot {
+            DeviceStore.shared.apply("glasses", key, value)
+        } }
+        let controller: SGCManager = Simulated()
+        XCTAssertFalse(controller.forgetWifiNetwork("AP", requestId: nil, sid: nil))
+        XCTAssertFalse(controller.forgetWifiNetwork("AP", requestId: "request", sid: "sid"))
+        XCTAssertFalse(controller.requestSavedWifiNetworks(requestId: "request", sid: "sid"))
+    }
+
+    func testFutureFractionalAndMalformedCapabilitiesAreUnsupportedNotLegacy() {
+        for version in [0, 2, -1, 1.5, "1", true, NSNull()] as [Any] {
+            let capabilities = WifiSessionCapabilities()
+            capabilities.reset(sessionId: "sid")
+            capabilities.applyVersionInfo1(["wifiForgetResultVersion": version, "savedWifiNetworksVersion": version])
+            XCTAssertEqual(capabilities.forgetMode(), .unsupported)
+            XCTAssertEqual(capabilities.savedNetworksMode(), .unsupported)
+        }
+        let missingSession = WifiSessionCapabilities()
+        missingSession.applyVersionInfo1(["wifiForgetResultVersion": 1])
+        XCTAssertEqual(missingSession.forgetMode(), .unsupported)
+    }
+
+    func testRawResponseRejectsPartialTuplesAndCoercionBeforeNormalization() {
+        let tuple: [String: Any] = ["protocol_version": 1, "requestId": "request", "sid": "sid"]
+        XCTAssertTrue(wifiResponseEnvelopeIsValid(tuple, allowLegacy: false))
+        for key in tuple.keys {
+            XCTAssertFalse(wifiResponseEnvelopeIsValid(tuple.filter { $0.key != key }, allowLegacy: true))
+        }
+        for version in [0, 2, 1.5, "1", true, NSNull()] as [Any] {
+            var malformed = tuple
+            malformed["protocol_version"] = version
+            XCTAssertFalse(wifiResponseEnvelopeIsValid(malformed, allowLegacy: true))
+        }
+        XCTAssertFalse(wifiResponseEnvelopeIsValid(tuple.merging(["connected": 0]) { _, new in new }, allowLegacy: true))
+        XCTAssertFalse(wifiResponseEnvelopeIsValid(tuple.merging(["dispatched": true]) { _, new in new }, allowLegacy: true))
+        XCTAssertTrue(wifiResponseEnvelopeIsValid(["dispatched": true], allowLegacy: true))
+        XCTAssertFalse(wifiResponseEnvelopeIsValid(["requestId": "", "dispatched": true], allowLegacy: true))
+        XCTAssertFalse(wifiResponseEnvelopeIsValid([:], allowLegacy: false))
+    }
+
+    func testSemanticResultsOmitTransportMetadata() throws {
+        let data: [String: Any] = ["requestId": "request", "sid": "sid", "protocolVersion": 1,
+                                   "ssid": "AP", "outcome": "confirmed", "networks": ["AP"]]
+        let forbidden: Set = ["mode", "capabilityVersion", "requestId", "sid", "protocolVersion"]
+        let forget = try XCTUnwrap(parseWifiForgetResult(expectedRequestId: "request", expectedSid: "sid", expectedSsid: "AP", capabilityVersion: 1, data: data))
+        let saved = try XCTUnwrap(parseSavedWifiNetworks(expectedRequestId: "request", expectedSid: "sid", capabilityVersion: 1, data: data))
+        XCTAssertTrue(Set(forget.values.keys).isDisjoint(with: forbidden))
+        XCTAssertTrue(Set(saved.values.keys).isDisjoint(with: forbidden))
+        for version in [1.5, true] as [Any] {
+            var malformed = data
+            malformed["protocolVersion"] = version
+            XCTAssertNil(parseWifiForgetResult(expectedRequestId: "request", expectedSid: "sid", expectedSsid: "AP", capabilityVersion: 1, data: malformed))
+            XCTAssertNil(parseSavedWifiNetworks(expectedRequestId: "request", expectedSid: "sid", capabilityVersion: 1, data: malformed))
+        }
+    }
+
+    @MainActor
     func testPendingResponseCancellationResumesExactlyOnceWithoutTimeout() async {
         let pending = PendingResponse<Int>(operation: "WiFi capability negotiation")
         let waiter = Task { @MainActor in
@@ -40,7 +100,7 @@ final class WifiRequestResolutionTests: XCTestCase {
         capabilities.applyVersionInfo1(["sid": "sid-1", "wifiForgetResultVersion": 1])
 
         XCTAssertEqual(capabilities.forgetResult, .supported(version: 1))
-        XCTAssertEqual(capabilities.savedNetworks, .unsupported)
+        XCTAssertEqual(capabilities.savedNetworks, .legacy)
         XCTAssertEqual(capabilities.forgetMode(), .modern)
         XCTAssertEqual(capabilities.savedNetworksMode(), .legacy)
     }
@@ -146,14 +206,14 @@ final class WifiRequestResolutionTests: XCTestCase {
 
     func testLegacyForgetIsExplicitlyUnverified() {
         let result = legacyWifiForgetResult(
-            requestId: "forget-1",
-            sid: "sid-legacy",
-            ssid: "AP",
-            event: WifiStatusEvent(connected: false, ssid: nil, localIp: nil)
+            ssid: "AP"
         )
 
-        XCTAssertEqual(result.mode, "legacy")
+        XCTAssertTrue(Set(result.values.keys).isDisjoint(with: ["mode", "capabilityVersion", "requestId", "sid"]))
         XCTAssertEqual(result.outcome, .legacyUnverified)
+        XCTAssertNil(result.connected)
+        XCTAssertNil(result.currentSsid)
+        XCTAssertNil(result.localIp)
     }
 
     func testSavedListPreservesIdentityAndRequiresCorrelationTuple() {
@@ -188,6 +248,7 @@ final class WifiRequestResolutionTests: XCTestCase {
         var failure = exact
         failure["outcome"] = "failed"
         failure["error"] = "backend_failed"
+        failure["networks"] = [String]()
         let parsedFailure = parseSavedWifiNetworks(
             expectedRequestId: "saved-1",
             expectedSid: "sid-1",
@@ -198,24 +259,6 @@ final class WifiRequestResolutionTests: XCTestCase {
         XCTAssertEqual(parsedFailure?.error, "backend_failed")
     }
 
-    func testDelayedCallbacksRequireSameRequestAndSessionEpoch() {
-        XCTAssertTrue(wifiDelayedCallbackApplies(
-            expectedEpoch: 7, currentEpoch: 7, isCurrentRequest: true
-        ))
-        XCTAssertFalse(wifiDelayedCallbackApplies(
-            expectedEpoch: 7, currentEpoch: 8, isCurrentRequest: true
-        ))
-        XCTAssertFalse(wifiDelayedCallbackApplies(
-            expectedEpoch: 7, currentEpoch: 7, isCurrentRequest: false
-        ))
-    }
-
-    func testUnknownCapabilityHasBoundedDiscoveryDeadlineWithoutSelectingLegacy() {
-        XCTAssertTrue(wifiCapabilityDiscoveryDeadlineRequired(.discovering))
-        XCTAssertFalse(wifiCapabilityDiscoveryDeadlineRequired(.modern))
-        XCTAssertFalse(wifiCapabilityDiscoveryDeadlineRequired(.legacy))
-        XCTAssertEqual(wifiCapabilityNegotiationTimeoutCode, "capability_negotiation_timeout")
-    }
 
     func testRawForgetEventPreservesModernAndLegacyWireTruth() {
         let modern = normalizeWifiForgetResultEvent(
@@ -231,7 +274,7 @@ final class WifiRequestResolutionTests: XCTestCase {
             error: nil
         )
         let legacy = normalizeWifiForgetResultEvent(
-            requestId: "forget-old",
+            requestId: "",
             sid: "",
             ssid: "AP",
             protocolVersion: 0,

@@ -42,11 +42,43 @@ public class WifiCommandHandlerSavedNetworksTest {
     }
 
     @Test
+    public void partialOrUnknownTuplesNeverReachBackend() throws Exception {
+        for (String type : Arrays.asList("forget_wifi", "request_saved_wifi_networks")) {
+            for (int mask = 1; mask < 7; mask++) {
+                JSONObject command = new JSONObject().put("ssid", "AP");
+                if ((mask & 1) != 0) command.put("protocolVersion", 1);
+                if ((mask & 2) != 0) command.put("requestId", "request");
+                if ((mask & 4) != 0) command.put("sid", ProcessSessionId.SID);
+                assertThat(handler.handleCommand(type, command)).isFalse();
+            }
+            for (Object version : Arrays.asList(0, 2, -1, 1.5, "1", true, JSONObject.NULL)) {
+                JSONObject command = new JSONObject().put("ssid", "AP")
+                        .put("protocolVersion", version).put("requestId", "request")
+                        .put("sid", ProcessSessionId.SID);
+                assertThat(handler.handleCommand(type, command)).isFalse();
+            }
+        }
+        verify(networkManager, never()).forgetWifiNetwork("AP");
+        verify(networkManager, never()).getSavedWifiNetworksResult();
+    }
+
+    @Test
+    public void legacyForgetRequiresNoModernFields() throws Exception {
+        when(networkManager.forgetWifiNetwork("AP")).thenReturn(WifiForgetOutcome.DISPATCHED);
+        JSONObject command = new JSONObject().put("ssid", "AP");
+        assertThat(handler.handleCommand("forget_wifi", command)).isTrue();
+        verify(networkManager).forgetWifiNetwork("AP");
+        assertThat(handler.handleCommand("request_saved_wifi_networks", command)).isFalse();
+    }
+
+    @Test
     public void forgetWifi_sendsDispatchAcceptanceWithCorrelationId() throws Exception {
         when(networkManager.forgetWifiNetwork("Field AP")).thenReturn(WifiForgetOutcome.DISPATCHED);
         JSONObject command =
                 new JSONObject()
                         .put("type", "forget_wifi")
+                        .put("protocolVersion", 1)
+                        .put("sid", ProcessSessionId.SID)
                         .put("requestId", "forget-7")
                         .put("ssid", "Field AP");
 
@@ -63,6 +95,8 @@ public class WifiCommandHandlerSavedNetworksTest {
         JSONObject command =
                 new JSONObject()
                         .put("type", "forget_wifi")
+                        .put("protocolVersion", 1)
+                        .put("sid", ProcessSessionId.SID)
                         .put("requestId", "forget-8")
                         .put("ssid", "Field AP");
 
@@ -81,6 +115,7 @@ public class WifiCommandHandlerSavedNetworksTest {
         JSONObject command =
                 new JSONObject()
                         .put("type", "forget_wifi")
+                        .put("protocolVersion", 1)
                         .put("requestId", "forget-unsupported")
                         .put("sid", ProcessSessionId.SID)
                         .put("ssid", "Field AP");
@@ -100,6 +135,7 @@ public class WifiCommandHandlerSavedNetworksTest {
         JSONObject command =
                 new JSONObject()
                         .put("type", "forget_wifi")
+                        .put("protocolVersion", 1)
                         .put("requestId", "forget-stale")
                         .put("sid", ProcessSessionId.SID + "-stale")
                         .put("ssid", " Field AP ");
@@ -119,6 +155,7 @@ public class WifiCommandHandlerSavedNetworksTest {
         JSONObject command =
                 new JSONObject()
                         .put("type", "forget_wifi")
+                        .put("protocolVersion", 1)
                         .put("requestId", "forget-exact")
                         .put("sid", ProcessSessionId.SID)
                         .put("ssid", " Field AP ");
@@ -141,6 +178,8 @@ public class WifiCommandHandlerSavedNetworksTest {
         JSONObject command =
                 new JSONObject()
                         .put("type", "request_saved_wifi_networks")
+                        .put("protocolVersion", 1)
+                        .put("sid", ProcessSessionId.SID)
                         .put("requestId", "saved-3");
 
         assertThat(handler.handleCommand("request_saved_wifi_networks", command)).isTrue();
@@ -159,6 +198,8 @@ public class WifiCommandHandlerSavedNetworksTest {
         JSONObject command =
                 new JSONObject()
                         .put("type", "request_saved_wifi_networks")
+                        .put("protocolVersion", 1)
+                        .put("sid", ProcessSessionId.SID)
                         .put("requestId", "saved-4");
 
         assertThat(handler.handleCommand("request_saved_wifi_networks", command)).isFalse();
@@ -180,6 +221,8 @@ public class WifiCommandHandlerSavedNetworksTest {
         JSONObject command =
                 new JSONObject()
                         .put("type", "request_saved_wifi_networks")
+                        .put("protocolVersion", 1)
+                        .put("sid", ProcessSessionId.SID)
                         .put("requestId", "saved-failed");
 
         assertThat(handler.handleCommand("request_saved_wifi_networks", command)).isFalse();
@@ -197,6 +240,7 @@ public class WifiCommandHandlerSavedNetworksTest {
         JSONObject command =
                 new JSONObject()
                         .put("type", "request_saved_wifi_networks")
+                        .put("protocolVersion", 1)
                         .put("requestId", "saved-stale")
                         .put("sid", ProcessSessionId.SID + "-stale");
 

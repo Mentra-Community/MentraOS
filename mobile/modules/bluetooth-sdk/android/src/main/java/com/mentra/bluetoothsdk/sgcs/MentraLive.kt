@@ -40,6 +40,7 @@ import com.mentra.bluetoothsdk.PhotoMode
 import com.mentra.bluetoothsdk.DeviceStore
 import com.mentra.bluetoothsdk.ObservableStore
 import com.mentra.bluetoothsdk.incomingGlassesMessageAckId
+import com.mentra.bluetoothsdk.wifiResponseEnvelopeIsValid
 import com.mentra.bluetoothsdk.debug.BleTraceLogger
 import com.mentra.bluetoothsdk.utils.BlePhotoUploadService
 import com.mentra.bluetoothsdk.utils.ConnTypes
@@ -3085,7 +3086,7 @@ class MentraLive : SGCManager() {
         sendJson(json, wakeup, true)
     }
 
-    private fun sendJson(json: JSONObject?, wakeup: Boolean, bridgeLogging: Boolean) {
+    private fun sendJson(json: JSONObject?, wakeup: Boolean, bridgeLogging: Boolean): Boolean {
         if (json != null) {
             try {
                 val sessionGeneration = bleSessionGeneration.get()
@@ -3104,7 +3105,7 @@ class MentraLive : SGCManager() {
                             json,
                             jsonStr.length
                     )
-                    sendDataToGlasses(jsonStr, wakeup, sessionGeneration, bridgeLogging)
+                    return sendDataToGlasses(jsonStr, wakeup, sessionGeneration, bridgeLogging)
                 } else {
                     // Add esoteric message ID to the JSON
                     val messageId = generateEsotericMessageId()
@@ -3172,7 +3173,9 @@ class MentraLive : SGCManager() {
                             json,
                             jsonStr.length
                     )
-                    sendDataToGlasses(jsonStr, wakeup, sessionGeneration, bridgeLogging)
+                    val accepted = sendDataToGlasses(jsonStr, wakeup, sessionGeneration, bridgeLogging)
+                    if (!accepted) pendingMessages.remove(messageId)
+                    return accepted
                 }
             } catch (e: JSONException) {
                 Log.e(TAG, "Error adding message ID to JSON", e)
@@ -3180,6 +3183,7 @@ class MentraLive : SGCManager() {
         } else {
             Bridge.log("LIVE: Cannot send JSON to ASG, JSON is null")
         }
+        return false
     }
 
     private fun sendJson(json: JSONObject?) {
@@ -3902,6 +3906,7 @@ class MentraLive : SGCManager() {
                 )
             }
             "wifi_forget_result" -> {
+                if (!wifiResponseEnvelopeIsValid(json.keys().asSequence().associateWith { json.get(it) }, allowLegacy = true)) return
                 Bridge.sendWifiForgetResult(
                         requestId = json.optString("requestId", ""),
                         sid = json.optString("sid", ""),
@@ -3918,11 +3923,13 @@ class MentraLive : SGCManager() {
                 )
             }
             "saved_wifi_networks" -> {
+                if (!wifiResponseEnvelopeIsValid(json.keys().asSequence().associateWith { json.get(it) }, allowLegacy = false)) return
                 val networks = mutableListOf<String>()
-                val networkArray = json.optJSONArray("networks")
+                val networkArray = json.optJSONArray("networks") ?: return
                 if (networkArray != null) {
                     for (i in 0 until networkArray.length()) {
-                        networkArray.optString(i, "").takeIf { it.trim().isNotEmpty() }?.let {
+                        val network = networkArray.opt(i) as? String ?: return
+                        network.takeIf { it.trim().isNotEmpty() }?.let {
                             networks.add(it)
                         }
                     }
@@ -4515,6 +4522,7 @@ class MentraLive : SGCManager() {
                 }
 
                 val versionInfoLegacy = HashMap<String, Any>()
+                versionInfoLegacy["version_info_type"] = "version_info"
                 versionInfoLegacy["appVersion"] = appVersionLegacy
                 versionInfoLegacy["buildNumber"] = buildNumberLegacy
                 versionInfoLegacy["deviceModel"] = deviceModelLegacy
@@ -8731,17 +8739,17 @@ class MentraLive : SGCManager() {
             wakeup: Boolean,
             sessionGeneration: Long,
             bridgeLogging: Boolean = true,
-    ) {
+    ): Boolean {
         if (data == null || data.isEmpty()) {
             Log.e(TAG, "Cannot send empty data to glasses")
-            return
+            return false
         }
         if (sessionGeneration != bleSessionGeneration.get()) {
             transportLog(
                     "LIVE: Dropping send request from stale BLE session $sessionGeneration",
                     bridgeLogging,
             )
-            return
+            return false
         }
 
         val wireData =
@@ -8769,7 +8777,7 @@ class MentraLive : SGCManager() {
             }
 
             if (useBinaryWireProtocol && buildNumberInt >= 5) {
-                sendDataToGlassesBinary(
+                return sendDataToGlassesBinary(
                         wireData,
                         wakeup,
                         commandTraceInfo,
@@ -8777,7 +8785,6 @@ class MentraLive : SGCManager() {
                         sessionGeneration,
                         bridgeLogging,
                 )
-                return
             }
 
             // First check if the message needs chunking
@@ -8809,6 +8816,7 @@ class MentraLive : SGCManager() {
 
                 // Create chunks
                 val chunks = MessageChunker.createChunks(wireData, messageId, wakeup)
+                if (chunks.isEmpty()) return false
                 transportLog("LIVE: Sending " + chunks.size + " chunks", bridgeLogging)
                 if (isPhotoRequest) {
                     Bridge.log(
@@ -8907,7 +8915,9 @@ class MentraLive : SGCManager() {
             }
         } catch (e: Exception) {
             Log.e(TAG, "Error creating data JSON", e)
+            return false
         }
+        return sessionGeneration == bleSessionGeneration.get()
     }
 
     private fun sendDataToGlassesBinary(
@@ -8917,7 +8927,7 @@ class MentraLive : SGCManager() {
             isPhotoRequest: Boolean,
             sessionGeneration: Long,
             bridgeLogging: Boolean,
-    ) {
+    ): Boolean {
         val payloadBytes = data.toByteArray(StandardCharsets.UTF_8)
         var messageId = 0
         var ackRequested = false
@@ -8936,6 +8946,7 @@ class MentraLive : SGCManager() {
                         wakeup,
                         ackRequested
                 )
+        if (fragments.isEmpty()) return false
         var totalWireBytes = 0
         for (i in fragments.indices) {
             val fragment = fragments[i]
@@ -8996,6 +9007,7 @@ class MentraLive : SGCManager() {
                             totalWireBytes
             )
         }
+        return sessionGeneration == bleSessionGeneration.get()
     }
 
     private fun parseOutgoingBleCommandTraceInfo(payload: String): OutgoingBleCommandTraceInfo {
@@ -9277,14 +9289,13 @@ class MentraLive : SGCManager() {
      * K900 SystemUI can properly clear the cached credentials
      */
     override fun forgetWifiNetwork(ssid: String) {
-        forgetWifiNetwork(ssid, null)
+        forgetWifiNetwork(ssid, null, null)
     }
 
-    override fun forgetWifiNetwork(ssid: String, requestId: String?) {
-        forgetWifiNetwork(ssid, requestId, null)
-    }
-
-    override fun forgetWifiNetwork(ssid: String, requestId: String?, sid: String?) {
+    override fun forgetWifiNetwork(ssid: String, requestId: String?, sid: String?): Boolean {
+        if (!isConnected || bluetoothGatt == null || txCharacteristic == null || ssid.isBlank()) return false
+        if ((requestId == null) != (sid == null)) return false
+        if (requestId != null && (requestId.isBlank() || sid.isNullOrBlank())) return false
         Log.d(TAG, "LIVE: 📶 Sending WiFi forget command for SSID: " + ssid)
 
         try {
@@ -9296,27 +9307,27 @@ class MentraLive : SGCManager() {
             }
             if (!sid.isNullOrEmpty()) {
                 wifiCommand.put("sid", sid)
+                wifiCommand.put("protocolVersion", 1)
             }
             // This dispatch runs under the WiFi lifecycle lock. Keep its transport logs
             // native-only so a public log listener cannot re-enter reset before it is queued.
-            sendJson(wifiCommand, true, bridgeLogging = false)
+            return sendJson(wifiCommand, true, bridgeLogging = false)
         } catch (e: JSONException) {
             Log.e(TAG, "Error creating WiFi forget JSON", e)
         }
+        return false
     }
 
-    override fun requestSavedWifiNetworks(requestId: String) {
-        requestSavedWifiNetworks(requestId, "")
-    }
-
-    override fun requestSavedWifiNetworks(requestId: String, sid: String) {
+    override fun requestSavedWifiNetworks(requestId: String, sid: String): Boolean {
+        if (!isConnected || bluetoothGatt == null || txCharacteristic == null || requestId.isBlank() || sid.isBlank()) return false
         val command = JSONObject()
         command.put("type", "request_saved_wifi_networks")
         command.put("requestId", requestId)
+        command.put("protocolVersion", 1)
         if (sid.isNotEmpty()) {
             command.put("sid", sid)
         }
-        sendJson(command, true, bridgeLogging = false)
+        return sendJson(command, true, bridgeLogging = false)
     }
 
     override fun sendHotspotState(enabled: Boolean) {

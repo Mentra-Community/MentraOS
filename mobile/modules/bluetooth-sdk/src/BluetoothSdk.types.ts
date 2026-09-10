@@ -137,10 +137,6 @@ export type WifiForgetOutcome =
   | "legacy_unverified"
 
 export type WifiForgetResult = {
-  mode: "correlated" | "legacy"
-  capabilityVersion?: number
-  requestId: string
-  sid: string
   ssid: string
   outcome: WifiForgetOutcome
   connected?: boolean
@@ -166,7 +162,6 @@ export type ModernWifiForgetResultEvent = {
 export type LegacyWifiForgetResultEvent = {
   type: "wifi_forget_result"
   mode: "legacy"
-  requestId: string
   ssid: string
   dispatched: boolean
   connected?: boolean
@@ -180,10 +175,6 @@ export type WifiForgetResultEvent = ModernWifiForgetResultEvent | LegacyWifiForg
 export type SavedWifiNetworksOutcome = "confirmed" | "unsupported" | "failed"
 
 export type SavedWifiNetworksResult = {
-  mode: "correlated" | "unsupported"
-  capabilityVersion?: number
-  requestId: string
-  sid: string
   outcome: SavedWifiNetworksOutcome
   networks: string[]
   error?: string

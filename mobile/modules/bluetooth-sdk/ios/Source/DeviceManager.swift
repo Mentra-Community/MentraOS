@@ -1510,8 +1510,8 @@ struct ViewState {
         sgc?.requestWifiScan(scanId: scanId)
     }
 
-    func requestSavedWifiNetworks(requestId: String, sid: String) {
-        sgc?.requestSavedWifiNetworks(requestId: requestId, sid: sid)
+    @discardableResult func requestSavedWifiNetworks(requestId: String, sid: String) -> Bool {
+        sgc?.requestSavedWifiNetworks(requestId: requestId, sid: sid) ?? false
     }
 
     func sendIncidentId(_ incidentId: String, apiBaseUrl: String? = nil) {
@@ -1524,8 +1524,8 @@ struct ViewState {
         sgc?.sendWifiCredentials(ssid, password)
     }
 
-    func forgetWifiNetwork(_ ssid: String, requestId: String? = nil, sid: String? = nil) {
-        sgc?.forgetWifiNetwork(ssid, requestId: requestId, sid: sid)
+    @discardableResult func forgetWifiNetwork(_ ssid: String, requestId: String? = nil, sid: String? = nil) -> Bool {
+        sgc?.forgetWifiNetwork(ssid, requestId: requestId, sid: sid) ?? false
     }
 
     func setHotspotState(_ enabled: Bool) {

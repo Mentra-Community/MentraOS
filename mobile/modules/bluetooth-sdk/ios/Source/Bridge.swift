@@ -392,13 +392,13 @@ class Bridge {
         if let packageName = stringValue(values, "packageName", "package_name"), !packageName.isEmpty {
             body["packageName"] = packageName
         }
-        if let version = intValue(values["wifiForgetResultVersion"])
-            ?? intValue(values["wifi_forget_result_version"])
+        if let version = values["wifiForgetResultVersion"]
+            ?? values["wifi_forget_result_version"]
         {
             body["wifiForgetResultVersion"] = version
         }
-        if let version = intValue(values["savedWifiNetworksVersion"])
-            ?? intValue(values["saved_wifi_networks_version"])
+        if let version = values["savedWifiNetworksVersion"]
+            ?? values["saved_wifi_networks_version"]
         {
             body["savedWifiNetworksVersion"] = version
         }

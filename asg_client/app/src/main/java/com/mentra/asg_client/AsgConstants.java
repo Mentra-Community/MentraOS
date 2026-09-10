@@ -248,7 +248,8 @@ public class AsgConstants {
     public static final String BES_OTA_PRODUCT = "best1502x_ibrt_bpone";
 
     /** Prefix for hash-addressed ADB-only artifacts, separate from phone-owned BES OTA data. */
-    public static final String DEBUG_BES_OTA_ARTIFACT_PREFIX = "/storage/emulated/0/asg/debug_bes_";
+    public static final String DEBUG_BES_OTA_ARTIFACT_PREFIX =
+            "/storage/emulated/0/asg/debug_bes_";
 
     /** Debug BES intent extra carrying the exact post-reboot firmware version. */
     public static final String DEBUG_BES_OTA_TARGET_VERSION_EXTRA = "target_version";
@@ -260,7 +261,8 @@ public class AsgConstants {
     public static final String DEBUG_BES_OTA_ARTIFACT_ID_EXTRA = "artifact_id";
 
     /** ADB/local command that reboots BES before handing MTK to a factory USB flasher. */
-    public static final String COMMAND_REBOOT_BES_FOR_MTK_FLASH = "reboot_bes_for_mtk_flash";
+    public static final String COMMAND_REBOOT_BES_FOR_MTK_FLASH =
+            "reboot_bes_for_mtk_flash";
 
     /** Correlation field used to prove that the requested BES reboot reached the UART worker. */
     public static final String MTK_FLASH_REQUEST_ID_FIELD = "request_id";

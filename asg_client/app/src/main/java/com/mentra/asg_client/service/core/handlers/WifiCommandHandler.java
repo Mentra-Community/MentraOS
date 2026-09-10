@@ -63,10 +63,9 @@ public class WifiCommandHandler implements ICommandHandler {
     private final Object scanLock = new Object();
     private ScanRun activeScanRun; // guarded by scanLock
 
-    public WifiCommandHandler(
-            AsgClientServiceManager serviceManager,
-            ICommunicationManager communicationManager,
-            IStateManager stateManager) {
+    public WifiCommandHandler(AsgClientServiceManager serviceManager,
+                              ICommunicationManager communicationManager,
+                              IStateManager stateManager) {
         this.serviceManager = serviceManager;
         this.communicationManager = communicationManager;
         this.stateManager = stateManager;
@@ -265,24 +264,20 @@ public class WifiCommandHandler implements ICommandHandler {
         if (context == null) {
             return null;
         }
-        BroadcastReceiver receiver =
-                new BroadcastReceiver() {
-                    @Override
-                    public void onReceive(Context ctx, Intent intent) {
-                        int supplicantError =
-                                intent.getIntExtra(WifiManager.EXTRA_SUPPLICANT_ERROR, -1);
-                        if (supplicantError == WifiManager.ERROR_AUTHENTICATING
-                                && verdictSent.compareAndSet(false, true)) {
-                            Log.i(
-                                    TAG,
-                                    "📶 ❌ Supplicant authentication failure - sending wrong_password verdict");
-                            communicationManager.sendWifiStatusOverBle(false, "wrong_password");
-                        }
-                    }
-                };
+        BroadcastReceiver receiver = new BroadcastReceiver() {
+            @Override
+            public void onReceive(Context ctx, Intent intent) {
+                int supplicantError = intent.getIntExtra(WifiManager.EXTRA_SUPPLICANT_ERROR, -1);
+                if (supplicantError == WifiManager.ERROR_AUTHENTICATING
+                        && verdictSent.compareAndSet(false, true)) {
+                    Log.i(TAG, "📶 ❌ Supplicant authentication failure - sending wrong_password verdict");
+                    communicationManager.sendWifiStatusOverBle(false, "wrong_password");
+                }
+            }
+        };
         try {
-            context.registerReceiver(
-                    receiver, new IntentFilter(WifiManager.SUPPLICANT_STATE_CHANGED_ACTION));
+            context.registerReceiver(receiver,
+                    new IntentFilter(WifiManager.SUPPLICANT_STATE_CHANGED_ACTION));
             return receiver;
         } catch (Exception e) {
             Log.w(TAG, "📶 ⚠️ Could not register supplicant auth-failure listener", e);
@@ -332,8 +327,7 @@ public class WifiCommandHandler implements ICommandHandler {
                 Log.e(TAG, "Network manager not available for WiFi scan");
                 // Terminal empty result so the phone fails fast instead of waiting
                 // out its scan timeout.
-                communicationManager.sendWifiScanResultsOverBleEnhanced(
-                        new ArrayList<>(), true, scanId);
+                communicationManager.sendWifiScanResultsOverBleEnhanced(new ArrayList<>(), true, scanId);
                 return false;
             }
             final ScanRun run;
@@ -455,11 +449,9 @@ public class WifiCommandHandler implements ICommandHandler {
 
             // Check if already in requested state
             if (currentState == requestedState) {
-                Log.d(
-                        TAG,
-                        "🔥 Hotspot already in requested state ("
-                                + (requestedState ? "ENABLED" : "DISABLED")
-                                + "), sending current status");
+                Log.d(TAG, "🔥 Hotspot already in requested state (" +
+                        (requestedState ? "ENABLED" : "DISABLED") +
+                        "), sending current status");
 
                 // Send current status immediately since there won't be a state change broadcast
                 sendHotspotStatusToPhone(networkManager);
@@ -467,14 +459,10 @@ public class WifiCommandHandler implements ICommandHandler {
                 // State needs to change
                 if (requestedState) {
                     networkManager.startHotspot();
-                    Log.d(
-                            TAG,
-                            "🔥 Hotspot start requested - status will be sent via broadcast receiver");
+                    Log.d(TAG, "🔥 Hotspot start requested - status will be sent via broadcast receiver");
                 } else {
                     networkManager.stopHotspot();
-                    Log.d(
-                            TAG,
-                            "🔥 Hotspot stop requested - status will be sent via broadcast receiver");
+                    Log.d(TAG, "🔥 Hotspot stop requested - status will be sent via broadcast receiver");
                 }
                 // Broadcast receiver will handle sending the status when state actually changes
             }
@@ -504,8 +492,24 @@ public class WifiCommandHandler implements ICommandHandler {
         }
     }
 
+    /** Reject partial or unknown protocol tuples before reading or mutating saved networks. */
+    private boolean validWifiRequestEnvelope(JSONObject data, boolean allowLegacy) {
+        if (!data.has("protocolVersion") && !data.has("requestId") && !data.has("sid")) {
+            return allowLegacy;
+        }
+        Object version = data.opt("protocolVersion");
+        Object requestId = data.opt("requestId");
+        Object sid = data.opt("sid");
+        boolean valid = version instanceof Number && ((Number) version).doubleValue() == 1.0
+                && requestId instanceof String && !((String) requestId).trim().isEmpty()
+                && sid instanceof String && !((String) sid).trim().isEmpty();
+        if (!valid) Log.w(TAG, "Rejecting malformed or unsupported WiFi protocol envelope");
+        return valid;
+    }
+
     /** Handle forget WiFi command - removes a saved network from the device */
     private boolean handleForgetWifi(JSONObject data) {
+        if (!validWifiRequestEnvelope(data, true)) return false;
         String requestId = data.optString("requestId", "");
         String sid = data.optString("sid", "");
         String ssid = data.optString("ssid", "");
@@ -556,6 +560,7 @@ public class WifiCommandHandler implements ICommandHandler {
 
     /** Return the WiFi SSIDs configured on the glasses. */
     private boolean handleRequestSavedWifiNetworks(JSONObject data) {
+        if (!validWifiRequestEnvelope(data, false)) return false;
         String requestId = data.optString("requestId", "");
         String sid = data.optString("sid", "");
         if (requestId.isEmpty()) {
@@ -584,7 +589,7 @@ public class WifiCommandHandler implements ICommandHandler {
                 return false;
             }
 
-            if (networkManager.getSavedWifiNetworksVersion() <= 0) {
+            if (networkManager.getSavedWifiNetworksVersion() != 1) {
                 communicationManager.sendSavedWifiNetworksOverBle(
                         requestId,
                         java.util.Collections.emptyList(),
@@ -629,14 +634,7 @@ public class WifiCommandHandler implements ICommandHandler {
             }
 
             boolean sent = communicationManager.sendBluetoothResponse(hotspotStatus);
-            Log.d(
-                    TAG,
-                    "🔥 "
-                            + (sent
-                                    ? "✅ Hotspot status sent successfully"
-                                    : "❌ Failed to send hotspot status")
-                            + ", enabled="
-                            + networkManager.isHotspotEnabled());
+            Log.d(TAG, "🔥 " + (sent ? "✅ Hotspot status sent successfully" : "❌ Failed to send hotspot status") + ", enabled=" + networkManager.isHotspotEnabled());
         } catch (Exception e) {
             Log.e(TAG, "Error sending hotspot status to phone", e);
         }

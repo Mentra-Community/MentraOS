@@ -135,7 +135,10 @@ public class K900NetworkManager extends BaseNetworkManager {
             notificationManager.showHotspotStateNotification(true);
             Log.i(
                     TAG,
-                    "🔥 Adopted existing K900 vendor hotspot: " + ssid + " gateway=" + gatewayIp);
+                    "🔥 Adopted existing K900 vendor hotspot: "
+                            + ssid
+                            + " gateway="
+                            + gatewayIp);
         }
     }
 
@@ -227,7 +230,8 @@ public class K900NetworkManager extends BaseNetworkManager {
             mHotspotStarting = true;
             generation = ++mHotspotGeneration;
             mHotspotReadinessDeadlineMs =
-                    SystemClock.elapsedRealtime() + AsgConstants.LOCAL_HOTSPOT_READINESS_TIMEOUT_MS;
+                    SystemClock.elapsedRealtime()
+                            + AsgConstants.LOCAL_HOTSPOT_READINESS_TIMEOUT_MS;
         }
 
         requestVendorHotspot(generation);
@@ -318,7 +322,8 @@ public class K900NetworkManager extends BaseNetworkManager {
 
     private void checkVendorHotspotReadiness(int generation) {
         String gatewayIp = findLocalHotspotGatewayIp();
-        String ssid = readVendorHotspotSetting(AsgConstants.K900_VENDOR_HOTSPOT_SSID_SETTING);
+        String ssid =
+                readVendorHotspotSetting(AsgConstants.K900_VENDOR_HOTSPOT_SSID_SETTING);
         String password =
                 readVendorHotspotSetting(AsgConstants.K900_VENDOR_HOTSPOT_PASSWORD_SETTING);
         synchronized (mHotspotLock) {
@@ -330,7 +335,8 @@ public class K900NetworkManager extends BaseNetworkManager {
                 mHotspotStarting = false;
                 onHotspotStarted(ssid, password, gatewayIp);
                 notificationManager.showHotspotStateNotification(true);
-                notificationManager.showDebugNotification("Mentra Live Hotspot Active", ssid);
+                notificationManager.showDebugNotification(
+                        "Mentra Live Hotspot Active", ssid);
                 Log.i(TAG, "🔥 K900 vendor hotspot ready: " + ssid + " gateway=" + gatewayIp);
                 return;
             }
@@ -340,7 +346,8 @@ public class K900NetworkManager extends BaseNetworkManager {
             }
             mPendingHotspotReadiness = () -> checkVendorHotspotReadiness(generation);
             mHotspotHandler.postDelayed(
-                    mPendingHotspotReadiness, AsgConstants.LOCAL_HOTSPOT_READINESS_POLL_MS);
+                    mPendingHotspotReadiness,
+                    AsgConstants.LOCAL_HOTSPOT_READINESS_POLL_MS);
         }
     }
 

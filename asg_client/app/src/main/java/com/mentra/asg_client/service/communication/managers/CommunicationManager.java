@@ -143,11 +143,14 @@ public class CommunicationManager
             response.put("type", "wifi_forget_result");
             if (requestId != null && !requestId.isEmpty()) {
                 response.put("requestId", requestId);
+                response.put("outcome", outcome.getWireValue());
+                response.put("sid", ProcessSessionId.SID);
+                response.put("protocol_version", AsgConstants.WIFI_FORGET_RESULT_VERSION);
+            } else {
+                response.put("dispatched", outcome != WifiForgetOutcome.FAILED
+                        && outcome != WifiForgetOutcome.UNSUPPORTED);
             }
             response.put("ssid", ssid);
-            response.put("outcome", outcome.getWireValue());
-            response.put("sid", ProcessSessionId.SID);
-            response.put("protocol_version", AsgConstants.WIFI_FORGET_RESULT_VERSION);
             if (error != null && !error.isEmpty()) {
                 response.put("error", error);
             }

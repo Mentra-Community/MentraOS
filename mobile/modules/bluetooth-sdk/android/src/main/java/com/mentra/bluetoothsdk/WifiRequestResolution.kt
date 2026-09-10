@@ -2,16 +2,19 @@ package com.mentra.bluetoothsdk
 
 internal fun wifiSsidIsValid(ssid: String): Boolean = ssid.trim().isNotEmpty()
 
-internal fun wifiDelayedCallbackApplies(
-    expectedEpoch: Long,
-    currentEpoch: Long,
-    isCurrentRequest: Boolean,
-): Boolean = isCurrentRequest && expectedEpoch == currentEpoch
+/** Validate raw fields before JSON convenience getters can coerce numbers or erase presence. */
+internal fun wifiResponseEnvelopeIsValid(values: Map<String, Any>, allowLegacy: Boolean): Boolean {
+    if (values.containsKey("connected") && values["connected"] !is Boolean) return false
+    if (values.containsKey("dispatched") && values["dispatched"] !is Boolean) return false
+    val hasTuple = listOf("protocol_version", "requestId", "sid").any(values::containsKey)
+    if (!hasTuple) return allowLegacy && !values.containsKey("outcome")
+    return (values["protocol_version"] as? Number)?.toDouble() == 1.0 &&
+        (values["requestId"] as? String)?.isNotBlank() == true &&
+        (values["sid"] as? String)?.isNotBlank() == true &&
+        !values.containsKey("dispatched")
+}
 
 internal const val WIFI_CAPABILITY_NEGOTIATION_TIMEOUT_CODE = "capability_negotiation_timeout"
-
-internal fun wifiCapabilityDiscoveryDeadlineRequired(mode: WifiRequestMode): Boolean =
-    mode == WifiRequestMode.DISCOVERING
 
 internal sealed class WifiProtocolCapability {
     data object Unknown : WifiProtocolCapability()
@@ -19,12 +22,15 @@ internal sealed class WifiProtocolCapability {
     data class Supported(val version: Int) : WifiProtocolCapability()
 
     data object Unsupported : WifiProtocolCapability()
+
+    data object Legacy : WifiProtocolCapability()
 }
 
 internal enum class WifiRequestMode {
     DISCOVERING,
     MODERN,
     LEGACY,
+    UNSUPPORTED,
 }
 
 internal data class WifiSessionRequestSnapshot(
@@ -64,19 +70,18 @@ internal class WifiSessionCapabilities {
         WifiSessionRequestSnapshot(savedNetworksMode(), sessionId, epoch)
 
     private fun capability(raw: Any?): WifiProtocolCapability {
-        val version = (raw as? Number)?.toInt() ?: 0
-        return if (version > 0) {
-            WifiProtocolCapability.Supported(version)
-        } else {
-            WifiProtocolCapability.Unsupported
-        }
+        if (raw == null) return WifiProtocolCapability.Legacy
+        return if (raw is Number && raw.toDouble() == 1.0 && sessionId.isNotEmpty()) {
+            WifiProtocolCapability.Supported(1)
+        } else WifiProtocolCapability.Unsupported
     }
 
     private fun requestMode(capability: WifiProtocolCapability): WifiRequestMode =
         when (capability) {
             WifiProtocolCapability.Unknown -> WifiRequestMode.DISCOVERING
             is WifiProtocolCapability.Supported -> WifiRequestMode.MODERN
-            WifiProtocolCapability.Unsupported -> WifiRequestMode.LEGACY
+            WifiProtocolCapability.Legacy -> WifiRequestMode.LEGACY
+            WifiProtocolCapability.Unsupported -> WifiRequestMode.UNSUPPORTED
         }
 }
 
@@ -106,8 +111,9 @@ internal fun normalizeWifiForgetResultEvent(
     localIp: String,
     error: String?,
 ): Map<String, Any>? {
+    if (!wifiSsidIsValid(ssid)) return null
     val modernOutcome = WifiForgetOutcome.fromWire(outcome)
-    if (sid.isNotEmpty() && protocolVersion > 0 &&
+    if (requestId.isNotEmpty() && sid.isNotEmpty() && protocolVersion == 1 &&
         modernOutcome != null && modernOutcome != WifiForgetOutcome.LEGACY_UNVERIFIED
     ) {
         return buildMap {
@@ -123,10 +129,9 @@ internal fun normalizeWifiForgetResultEvent(
             error?.let { put("error", it) }
         }
     }
-    if (legacyDispatched != null) {
+    if (requestId.isEmpty() && sid.isEmpty() && protocolVersion == 0 && outcome.isEmpty() && legacyDispatched != null) {
         return buildMap {
             put("mode", "legacy")
-            put("requestId", requestId)
             put("ssid", ssid)
             put("dispatched", legacyDispatched)
             connected?.let { put("connected", it) }
@@ -139,10 +144,6 @@ internal fun normalizeWifiForgetResultEvent(
 }
 
 data class WifiForgetResult(
-    val mode: String,
-    val capabilityVersion: Int?,
-    val requestId: String,
-    val sid: String,
     val ssid: String,
     val outcome: WifiForgetOutcome,
     val connected: Boolean?,
@@ -152,10 +153,6 @@ data class WifiForgetResult(
 ) {
     internal fun toMap(): Map<String, Any> =
         buildMap {
-            put("mode", mode)
-            capabilityVersion?.let { put("capabilityVersion", it) }
-            put("requestId", requestId)
-            put("sid", sid)
             put("ssid", ssid)
             put("outcome", outcome.wireValue)
             connected?.let { put("connected", it) }
@@ -177,20 +174,12 @@ enum class SavedWifiNetworksOutcome(val wireValue: String) {
 }
 
 data class SavedWifiNetworksResult(
-    val mode: String,
-    val capabilityVersion: Int?,
-    val requestId: String,
-    val sid: String,
     val outcome: SavedWifiNetworksOutcome,
     val networks: List<String>,
     val error: String? = null,
 ) {
     internal fun toMap(): Map<String, Any> =
         buildMap {
-            put("mode", mode)
-            capabilityVersion?.let { put("capabilityVersion", it) }
-            put("requestId", requestId)
-            put("sid", sid)
             put("outcome", outcome.wireValue)
             put("networks", networks)
             error?.let { put("error", it) }
@@ -204,17 +193,14 @@ internal fun parseWifiForgetResult(
     capabilityVersion: Int,
     data: Map<String, Any>,
 ): WifiForgetResult? {
+    if (capabilityVersion != 1 || expectedRequestId.isEmpty() || expectedSid.isEmpty()) return null
     if (data["requestId"] as? String != expectedRequestId) return null
     if (data["sid"] as? String != expectedSid) return null
     if (data["ssid"] as? String != expectedSsid) return null
-    if ((data["protocolVersion"] as? Number)?.toInt() != capabilityVersion) return null
+    if ((data["protocolVersion"] as? Number)?.toDouble() != 1.0) return null
     val outcome = WifiForgetOutcome.fromWire(data["outcome"] as? String ?: return null) ?: return null
     if (outcome == WifiForgetOutcome.LEGACY_UNVERIFIED) return null
     return WifiForgetResult(
-        mode = "correlated",
-        capabilityVersion = capabilityVersion,
-        requestId = expectedRequestId,
-        sid = expectedSid,
         ssid = expectedSsid,
         outcome = outcome,
         connected = data["connected"] as? Boolean,
@@ -230,22 +216,17 @@ internal fun parseSavedWifiNetworks(
     capabilityVersion: Int,
     data: Map<String, Any>,
 ): SavedWifiNetworksResult? {
+    if (capabilityVersion != 1 || expectedRequestId.isEmpty() || expectedSid.isEmpty()) return null
     if (data["requestId"] as? String != expectedRequestId) return null
     if (data["sid"] as? String != expectedSid) return null
-    if ((data["protocolVersion"] as? Number)?.toInt() != capabilityVersion) return null
+    if ((data["protocolVersion"] as? Number)?.toDouble() != 1.0) return null
     val outcome =
         SavedWifiNetworksOutcome.fromWire(data["outcome"] as? String ?: return null) ?: return null
-    val networks =
-        (data["networks"] as? List<*>)
-            ?.mapNotNull { it as? String }
-            ?.filter { it.trim().isNotEmpty() }
-            ?.distinct()
-            ?: emptyList()
+    val rawNetworks = data["networks"] as? List<*> ?: return null
+    if (rawNetworks.any { it !is String }) return null
+    if (outcome != SavedWifiNetworksOutcome.CONFIRMED && rawNetworks.isNotEmpty()) return null
+    val networks = rawNetworks.map { it as String }.filter { it.trim().isNotEmpty() }.distinct()
     return SavedWifiNetworksResult(
-        mode = "correlated",
-        capabilityVersion = capabilityVersion,
-        requestId = expectedRequestId,
-        sid = expectedSid,
         outcome = outcome,
         networks = networks,
         error = (data["error"] as? String)?.takeIf { it.isNotEmpty() },
@@ -253,21 +234,13 @@ internal fun parseSavedWifiNetworks(
 }
 
 internal fun legacyWifiForgetResult(
-    requestId: String,
-    sid: String,
     ssid: String,
-    event: WifiStatusEvent,
 ): WifiForgetResult {
-    val connected = event.status as? WifiStatus.Connected
     return WifiForgetResult(
-        mode = "legacy",
-        capabilityVersion = null,
-        requestId = requestId,
-        sid = sid,
         ssid = ssid,
         outcome = WifiForgetOutcome.LEGACY_UNVERIFIED,
-        connected = connected != null,
-        currentSsid = connected?.ssid,
-        localIp = connected?.localIp,
+        connected = null,
+        currentSsid = null,
+        localIp = null,
     )
 }

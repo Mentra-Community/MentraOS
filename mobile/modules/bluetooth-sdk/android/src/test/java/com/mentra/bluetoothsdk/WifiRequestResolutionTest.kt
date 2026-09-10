@@ -8,6 +8,46 @@ import org.junit.Test
 
 class WifiRequestResolutionTest {
     @Test
+    fun `future fractional and malformed capabilities are unsupported not legacy`() {
+        for (version in listOf(0, 2, -1, 1.5, "1", true)) {
+            val capabilities = WifiSessionCapabilities()
+            capabilities.reset("sid")
+            capabilities.applyVersionInfo1(mapOf("wifiForgetResultVersion" to version, "savedWifiNetworksVersion" to version))
+            assertEquals(WifiRequestMode.UNSUPPORTED, capabilities.forgetMode())
+            assertEquals(WifiRequestMode.UNSUPPORTED, capabilities.savedNetworksMode())
+        }
+        val missingSession = WifiSessionCapabilities()
+        missingSession.applyVersionInfo1(mapOf("wifiForgetResultVersion" to 1))
+        assertEquals(WifiRequestMode.UNSUPPORTED, missingSession.forgetMode())
+    }
+
+    @Test
+    fun `raw response rejects partial tuples and coercion before normalization`() {
+        val tuple = mapOf<String, Any>("protocol_version" to 1, "requestId" to "request", "sid" to "sid")
+        assertTrue(wifiResponseEnvelopeIsValid(tuple, false))
+        for (key in tuple.keys) assertFalse(wifiResponseEnvelopeIsValid(tuple - key, true))
+        for (version in listOf(0, 2, 1.5, "1", true)) {
+            assertFalse(wifiResponseEnvelopeIsValid(tuple + ("protocol_version" to version), true))
+        }
+        assertFalse(wifiResponseEnvelopeIsValid(tuple + ("connected" to 0), true))
+        assertFalse(wifiResponseEnvelopeIsValid(tuple + ("dispatched" to true), true))
+        assertTrue(wifiResponseEnvelopeIsValid(mapOf("dispatched" to true), true))
+        assertFalse(wifiResponseEnvelopeIsValid(mapOf("requestId" to "", "dispatched" to true), true))
+        assertFalse(wifiResponseEnvelopeIsValid(emptyMap(), false))
+    }
+
+    @Test
+    fun `semantic results omit transport metadata`() {
+        val data = mapOf<String, Any>("requestId" to "request", "sid" to "sid", "protocolVersion" to 1,
+            "ssid" to "AP", "outcome" to "confirmed", "networks" to listOf("AP"))
+        val forbidden = setOf("mode", "capabilityVersion", "requestId", "sid", "protocolVersion")
+        assertTrue(parseWifiForgetResult("request", "sid", "AP", 1, data)!!.toMap().keys.intersect(forbidden).isEmpty())
+        assertTrue(parseSavedWifiNetworks("request", "sid", 1, data)!!.toMap().keys.intersect(forbidden).isEmpty())
+        assertNull(parseWifiForgetResult("request", "sid", "AP", 1, data + ("protocolVersion" to 1.5)))
+        assertNull(parseSavedWifiNetworks("request", "sid", 1, data + ("protocolVersion" to 1.5)))
+    }
+
+    @Test
     fun `capabilities are unknown per session until version info finalizes them`() {
         val capabilities = WifiSessionCapabilities()
         capabilities.reset("sid-1")
@@ -17,7 +57,7 @@ class WifiRequestResolutionTest {
         capabilities.applyVersionInfo1(mapOf("sid" to "sid-1", "wifiForgetResultVersion" to 1))
 
         assertEquals(WifiProtocolCapability.Supported(1), capabilities.forgetResult)
-        assertEquals(WifiProtocolCapability.Unsupported, capabilities.savedNetworks)
+        assertEquals(WifiProtocolCapability.Legacy, capabilities.savedNetworks)
         assertEquals(WifiRequestMode.MODERN, capabilities.forgetMode())
         assertEquals(WifiRequestMode.LEGACY, capabilities.savedNetworksMode())
     }
@@ -131,14 +171,14 @@ class WifiRequestResolutionTest {
     fun `legacy forget is explicitly unverified`() {
         val result =
             legacyWifiForgetResult(
-                "forget-1",
-                "sid-legacy",
                 "AP",
-                WifiStatusEvent(connected = false, ssid = null, localIp = null),
             )
 
-        assertEquals("legacy", result.mode)
+        assertFalse(result.toMap().keys.any { it in setOf("mode", "capabilityVersion", "requestId", "sid") })
         assertEquals(WifiForgetOutcome.LEGACY_UNVERIFIED, result.outcome)
+        assertNull(result.connected)
+        assertNull(result.currentSsid)
+        assertNull(result.localIp)
     }
 
     @Test
@@ -166,26 +206,12 @@ class WifiRequestResolutionTest {
                 "saved-1",
                 "sid-1",
                 1,
-                exact + ("outcome" to "failed") + ("error" to "backend_failed"),
+                exact + ("outcome" to "failed") + ("error" to "backend_failed") + ("networks" to emptyList<String>()),
             )
         assertEquals(SavedWifiNetworksOutcome.FAILED, failure?.outcome)
         assertEquals("backend_failed", failure?.error)
     }
 
-    @Test
-    fun `delayed callbacks require the same request and session epoch`() {
-        assertTrue(wifiDelayedCallbackApplies(7, 7, true))
-        assertFalse(wifiDelayedCallbackApplies(7, 8, true))
-        assertFalse(wifiDelayedCallbackApplies(7, 7, false))
-    }
-
-    @Test
-    fun `unknown capability has a bounded discovery deadline without selecting legacy`() {
-        assertTrue(wifiCapabilityDiscoveryDeadlineRequired(WifiRequestMode.DISCOVERING))
-        assertFalse(wifiCapabilityDiscoveryDeadlineRequired(WifiRequestMode.MODERN))
-        assertFalse(wifiCapabilityDiscoveryDeadlineRequired(WifiRequestMode.LEGACY))
-        assertEquals("capability_negotiation_timeout", WIFI_CAPABILITY_NEGOTIATION_TIMEOUT_CODE)
-    }
 
     @Test
     fun `raw forget event preserves modern and legacy wire truth`() {
@@ -204,7 +230,7 @@ class WifiRequestResolutionTest {
             )
         val legacy =
             normalizeWifiForgetResultEvent(
-                "forget-old",
+                "",
                 "",
                 "AP",
                 0,
