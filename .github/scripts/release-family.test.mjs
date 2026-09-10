@@ -237,6 +237,16 @@ test("serializes records canonically and finalizes only complete release results
   assert.equal(publicManifest.publications.mentraos["app-store-connect"].testflight.status, "submitted")
   ios.testflight.status = "available"
   assert.throws(() => finalizeReleaseManifest({plan: publicPlan, results: publicResults, completedAt: "2026-08-24T20:00:00.000Z"}), /approved review/)
+  ios.testflight.reviewState = "APPROVED"
+  const approvedManifest = finalizeReleaseManifest({plan: publicPlan, results: publicResults, completedAt: "2026-08-24T20:00:00.000Z"})
+  assert.equal(approvedManifest.publications.mentraos["app-store-connect"].testflight.status, "available")
+  ios.testflight.status = "skipped"
+  ios.testflight.reviewState = "IN_REVIEW"
+  assert.throws(() => finalizeReleaseManifest({plan: publicPlan, results: publicResults, completedAt: "2026-08-24T20:00:00.000Z"}), /identify its reason/)
+  ios.testflight.skipReason = "external_review_pending"
+  const skippedManifest = finalizeReleaseManifest({plan: publicPlan, results: publicResults, completedAt: "2026-08-24T20:00:00.000Z"})
+  assert.equal(skippedManifest.publications.mentraos["app-store-connect"].testflight.status, "skipped")
+  assert.equal(skippedManifest.publications.mentraos["app-store-connect"].testflight.skipReason, "external_review_pending")
   assert.equal(createReleasePlan({family, channel: "dev", sequence: 57, sourceCommit: "a".repeat(40), nativeBuildNumber: 3100057, publicBetaTestflight: true}).native.testflight, undefined)
   assert.equal(serializeReleaseRecord({z: 1, a: 2}), '{\n  "a": 2,\n  "z": 1\n}\n')
 
