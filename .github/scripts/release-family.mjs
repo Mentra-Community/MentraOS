@@ -4,6 +4,7 @@ import path from "node:path"
 
 import {validateCloudV2DeploymentRecord} from "./coordinated-cloud-v2-records.mjs"
 import {validateExampleGooglePlay} from "./coordinated-example-google-play.mjs"
+import {validateMentraosTestflightDistribution} from "./mentraos-testflight-distribution.mjs"
 
 const STABLE_VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/
 const COMMIT_PATTERN = /^[0-9a-f]{40}$/
@@ -252,6 +253,7 @@ export function createReleasePlan({
   nativeBuildNumber,
   otaInputs = {},
   starterKitSource,
+  publicBetaTestflight = false,
 }) {
   if (!family?.members || !family?.familyBaseVersion) throw new Error("A validated release family is required")
   const changelog = validateChangelog(family.changelog, family.familyBaseVersion)
@@ -304,6 +306,7 @@ export function createReleasePlan({
     native: {
       marketingVersion: family.familyBaseVersion,
       buildNumber: nativeBuildNumber,
+      ...(channel === "beta" && publicBetaTestflight ? {testflight: {group: "Mentra Staging Public", audience: "external"}} : {}),
     },
     products: Object.fromEntries(family.products.map((product) => [product, releaseIdentity])),
     members,
@@ -387,7 +390,11 @@ function expectedPublicationCoordinate(plan, memberName, target) {
   if (!selected) throw new Error(`Unknown release channel ${JSON.stringify(plan.channel)}`)
   if (target === "google-play") return `com.mentra.mentra:${plan.native.buildNumber}:${selected.play}`
   if (target === "app-store-connect") {
-    return `com.mentra.mentra:${plan.native.marketingVersion}:${plan.native.buildNumber}:${selected.appStore}`
+    const group = plan.native.testflight?.group || selected.appStore
+    if (plan.native.testflight && (plan.channel !== "beta" || group !== "Mentra Staging Public" || plan.native.testflight.audience !== "external")) {
+      throw new Error("Invalid MentraOS public TestFlight policy")
+    }
+    return `com.mentra.mentra:${plan.native.marketingVersion}:${plan.native.buildNumber}:${group}`
   }
   throw new Error(`Unknown publication target ${JSON.stringify(target)}`)
 }
@@ -554,6 +561,9 @@ export function finalizeReleaseManifest({plan, results, completedAt}) {
       const expected = expectedPublicationCoordinate(plan, memberName, target)
       if (publication.coordinate !== expected) {
         throw new Error(`${label}.coordinate must be ${expected}`)
+      }
+      if (memberName === "mentraos" && target === "app-store-connect" && plan.native.testflight) {
+        validateMentraosTestflightDistribution(plan, plan.native.testflight.group, publication.testflight)
       }
       publications[memberName][target] = publication
     }

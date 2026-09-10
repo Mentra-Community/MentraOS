@@ -132,6 +132,15 @@ fi
 newline=$'\n'
 android_line="*$(icon "$android_result") Android* - $(label "$android_result") - ${android_detail}${newline}Google Play: ${PLAY_TRACK:-unknown}"
 ios_line="*$(icon "$ios_result") iOS* - $(label "$ios_result") - ${ios_detail}${newline}TestFlight: ${TESTFLIGHT_GROUP:-unknown}"
+if [[ -n "${TESTFLIGHT_DISTRIBUTION_STATUS:-}" ]]; then
+  ios_line+=" - ${TESTFLIGHT_DISTRIBUTION_STATUS}"
+fi
+if [[ -n "${TESTFLIGHT_REVIEW_STATE:-}" ]]; then
+  ios_line+=" (${TESTFLIGHT_REVIEW_STATE})"
+fi
+if [[ -n "${TESTFLIGHT_INSTALL_URL:-}" ]]; then
+  ios_line+=" - <${TESTFLIGHT_INSTALL_URL}|Join TestFlight>"
+fi
 asg_line="*$(icon "${OTA_RESULT:-unknown}") ASG + OTA* - $(label "${OTA_RESULT:-unknown}") - ${asg_detail}"
 starter_line="*$(icon "${STARTER_KIT_RESULT:-unknown}") Starter Kit* - $(label "${STARTER_KIT_RESULT:-unknown}") - ${starter_detail}${newline}React Native iOS TestFlight: ${example_testflight_icon} ${example_testflight_detail}"
 starter_line+="${newline}React Native Android Google Play: $(icon "${EXAMPLE_GOOGLE_PLAY_RESULT:-unknown}") ${example_play_detail}"

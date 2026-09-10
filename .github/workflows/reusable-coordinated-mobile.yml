@@ -35,6 +35,10 @@ on:
       testflight_group:
         required: true
         type: string
+      testflight_audience:
+        required: false
+        default: internal
+        type: string
       dry_run:
         required: false
         default: false
@@ -94,6 +98,12 @@ on:
         value: ${{ jobs.status.outputs.ipa_name }}
       asset_base_url:
         value: ${{ jobs.status.outputs.asset_base_url }}
+      testflight_install_url:
+        value: ${{ jobs.ios-store.outputs.install_url }}
+      testflight_distribution_status:
+        value: ${{ jobs.ios-store.outputs.distribution_status }}
+      testflight_review_state:
+        value: ${{ jobs.ios-store.outputs.review_state }}
 
 permissions:
   contents: write
@@ -903,6 +913,10 @@ jobs:
     needs: [prepare, ios, ios-upload]
     runs-on: ubuntu-latest
     timeout-minutes: 70
+    outputs:
+      install_url: ${{ steps.distribution.outputs.install_url }}
+      distribution_status: ${{ steps.distribution.outputs.distribution_status }}
+      review_state: ${{ steps.distribution.outputs.review_state }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -940,16 +954,76 @@ jobs:
           test -f "$key_path"
           echo "key_path=$key_path" >> "$GITHUB_OUTPUT"
 
+      - name: Check the planned TestFlight audience
+        env:
+          GROUP: ${{ inputs.testflight_group }}
+          AUDIENCE: ${{ inputs.testflight_audience }}
+        run: |
+          set -euo pipefail
+          plan=release-intent/release-plan.json
+          if [[ "$AUDIENCE" == external ]]; then
+            [[ "$(jq -er .channel "$plan")" == beta ]]
+            [[ "$(jq -er .native.testflight.audience "$plan")" == external ]]
+            [[ "$(jq -er .native.testflight.group "$plan")" == "$GROUP" ]]
+          else
+            [[ "$AUDIENCE" == internal ]]
+            [[ "$(jq -r '.native.testflight.audience // "internal"' "$plan")" == internal ]]
+          fi
+
+      - name: Check external review readiness
+        id: preflight
+        if: inputs.dry_run != true && inputs.testflight_audience == 'external'
+        run: >-
+          node mobile/scripts/app-store-connect-build.mjs testflight-preflight
+          --issuer-id "${{ secrets.ASC_API_ISSUER_ID }}"
+          --key-id "${{ secrets.ASC_API_KEY_ID }}"
+          --key-path "${{ steps.asc.outputs.key_path }}"
+          --bundle-id com.mentra.mentra
+          --group-name "${{ inputs.testflight_group }}"
+          --audience external
+          --allow-rejected-override false
+
+      - name: Verify processing even when an earlier review blocks distribution
+        id: processed
+        if: inputs.dry_run != true && steps.preflight.outputs.skip == 'true'
+        run: >-
+          node mobile/scripts/app-store-connect-build.mjs wait
+          --issuer-id "${{ secrets.ASC_API_ISSUER_ID }}"
+          --key-id "${{ secrets.ASC_API_KEY_ID }}"
+          --key-path "${{ steps.asc.outputs.key_path }}"
+          --bundle-id com.mentra.mentra
+          --marketing-version "${{ needs.prepare.outputs.marketing_version }}"
+          --build-number "${{ needs.prepare.outputs.build_number }}"
+
       - name: Wait for processing and assign the channel TestFlight group
-        if: inputs.dry_run != true
+        id: assignment
+        if: inputs.dry_run != true && steps.preflight.outputs.skip != 'true'
         run: >-
           node mobile/scripts/app-store-connect-build.mjs assign
           --issuer-id "${{ secrets.ASC_API_ISSUER_ID }}"
           --key-id "${{ secrets.ASC_API_KEY_ID }}"
           --key-path "${{ steps.asc.outputs.key_path }}"
           --bundle-id com.mentra.mentra
+          --marketing-version "${{ needs.prepare.outputs.marketing_version }}"
           --build-number "${{ needs.prepare.outputs.build_number }}"
           --group-name "${{ inputs.testflight_group }}"
+          --audience "${{ inputs.testflight_audience }}"
+          --allow-rejected-override false
+          --whats-new "Coordinated MentraOS release ${{ needs.prepare.outputs.release_identity }}."
+
+      - name: Export TestFlight distribution result
+        id: distribution
+        if: inputs.dry_run != true
+        env:
+          INSTALL_URL: ${{ inputs.testflight_audience == 'external' && (steps.assignment.outputs.install_url || steps.preflight.outputs.install_url) || '' }}
+          DISTRIBUTION_STATUS: ${{ steps.preflight.outputs.skip == 'true' && 'skipped' || steps.assignment.outputs.distribution_status }}
+          REVIEW_STATE: ${{ steps.assignment.outputs.review_state || steps.preflight.outputs.review_state }}
+        run: |
+          {
+            echo "install_url=$INSTALL_URL"
+            echo "distribution_status=$DISTRIBUTION_STATUS"
+            echo "review_state=$REVIEW_STATE"
+          } >> "$GITHUB_OUTPUT"
 
       - name: Write iOS release result
         env:
@@ -960,6 +1034,12 @@ jobs:
           --ipa "mobile-release/ios/${{ needs.prepare.outputs.ipa_name }}"
           --ipa-url "${{ needs.prepare.outputs.asset_base_url }}/${{ needs.prepare.outputs.ipa_name }}"
           --testflight-group "${{ inputs.testflight_group }}"
+          --audience "${{ inputs.testflight_audience }}"
+          --distribution-status "${{ inputs.testflight_audience == 'external' && steps.distribution.outputs.distribution_status || '' }}"
+          --install-url "${{ steps.distribution.outputs.install_url }}"
+          --review-state "${{ steps.distribution.outputs.review_state }}"
+          --skip-reason "${{ steps.preflight.outputs.skip_reason }}"
+          --build-id "${{ steps.assignment.outputs.build_id || steps.processed.outputs.build_id }}"
           --status "$STATUS"
           --provenance-url "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           --output mobile-release/ios-publication.json
