@@ -70,22 +70,41 @@ export function validateIosSdkAnalyticsMetadata(ipaPath, env = process.env) {
 
 // ---- Android -----------------------------------------------------------------
 
-/** Parses `aapt2 dump xmltree` output into {metaDataName: value} for the application's meta-data entries. */
+/**
+ * Parses `aapt2 dump xmltree` output into {metaDataName: value} for the
+ * application's meta-data entries. aapt2 prints a value in one of these forms:
+ *   ="staging" (Raw: "staging")        string
+ *   =true / =false                     boolean (build-tools 36 prints it bare)
+ *   =(type 0x12)0xffffffff             boolean, older build-tools
+ *   =@0x7f... (Raw: "...")             resource reference with its raw text
+ * Anything else is kept verbatim so a validator can reject it instead of
+ * mistaking it for "unset".
+ */
 export function parseManifestMetaData(xmltree) {
   const meta = {}
   const lines = xmltree.split("\n")
+  const attr = /android:(name|value)\([^)]*\)=(.*)$/
+  const decode = (rest) => {
+    const trimmed = rest.trim()
+    const quoted = trimmed.match(/^"([^"]*)"/)
+    if (quoted) return quoted[1]
+    const typed = trimmed.match(/^\(type 0x12\)0x([0-9a-f]+)/i)
+    if (typed) return /^0+$/.test(typed[1]) ? "false" : "true"
+    const bare = trimmed.match(/^(true|false)\b/i)
+    if (bare) return bare[1].toLowerCase()
+    const raw = trimmed.match(/\(Raw: "([^"]*)"\)/)
+    if (raw) return raw[1]
+    return trimmed
+  }
   for (let i = 0; i < lines.length; i++) {
     if (!/E: meta-data/.test(lines[i])) continue
     let name
     let value
     for (let j = i + 1; j < lines.length && !/^\s*E: /.test(lines[j]); j++) {
-      const m = lines[j].match(
-        /android:(name|value)\([^)]*\)=(?:"([^"]*)"|\(type 0x12\)0x([0-9a-f]+)|\S+ \(Raw: "([^"]*)"\)|\S+)/,
-      )
+      const m = lines[j].match(attr)
       if (!m) continue
-      const raw = m[2] ?? m[4] ?? (m[3] !== undefined ? (m[3] === "0" ? "false" : "true") : undefined)
-      if (m[1] === "name") name = raw
-      else value = raw
+      if (m[1] === "name") name = decode(m[2])
+      else value = decode(m[2])
     }
     if (name) meta[name] = value ?? ""
   }
@@ -94,9 +113,13 @@ export function parseManifestMetaData(xmltree) {
 
 export function assertAndroidSdkAnalyticsMetadata(meta, expected, platform = "Android") {
   const problems = []
-  if (String(meta[META_ANALYTICS_DISABLED]).toLowerCase() === "true") {
+  if (META_ANALYTICS_DISABLED in meta && meta[META_ANALYTICS_DISABLED] !== "false") {
+    // Anything other than an explicit "false" fails: "true", an empty value, or a
+    // form this parser did not recognize must never read as "enabled".
     problems.push(
-      `${META_ANALYTICS_DISABLED}=true (Bluetooth SDK analytics must ship enabled; they are the glasses WAU source)`,
+      `${META_ANALYTICS_DISABLED}=${JSON.stringify(
+        meta[META_ANALYTICS_DISABLED],
+      )} (Bluetooth SDK analytics must ship enabled; they are the glasses WAU source)`,
     )
   }
   if (meta[META_ANALYTICS_ENVIRONMENT] !== expected.environment) {

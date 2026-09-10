@@ -105,7 +105,7 @@ test("assertAndroidSdkAnalyticsMetadata rejects disabled analytics or a wrong la
         environment: "prod",
       }),
     (error) => {
-      assert.match(error.message, /analytics\.disabled=true/)
+      assert.match(error.message, /analytics\.disabled="true"/)
       assert.match(error.message, /analytics\.environment="staging" \(expected prod\)/)
       return true
     },
@@ -136,3 +136,45 @@ test(
     assert.ok(META_ANALYTICS_ENVIRONMENT in meta, "the Mentra App manifest carries the analytics lane")
   },
 )
+
+const BARE_BOOLEAN_SAMPLE = `N: android=http://schemas.android.com/apk/res/android
+  E: manifest (line=2)
+    E: application (line=10)
+      E: meta-data (line=24)
+        A: http://schemas.android.com/apk/res/android:name(0x01010003)="${META_ANALYTICS_ENVIRONMENT}" (Raw: "${META_ANALYTICS_ENVIRONMENT}")
+        A: http://schemas.android.com/apk/res/android:value(0x01010024)="prod" (Raw: "prod")
+      E: meta-data (line=28)
+        A: http://schemas.android.com/apk/res/android:name(0x01010003)="${META_ANALYTICS_DISABLED}" (Raw: "${META_ANALYTICS_DISABLED}")
+        A: http://schemas.android.com/apk/res/android:value(0x01010024)=true
+      E: meta-data (line=32)
+        A: http://schemas.android.com/apk/res/android:name(0x01010003)="legacy.typed" (Raw: "legacy.typed")
+        A: http://schemas.android.com/apk/res/android:value(0x01010024)=(type 0x12)0xffffffff
+      E: meta-data (line=36)
+        A: http://schemas.android.com/apk/res/android:name(0x01010003)="legacy.typed.false" (Raw: "legacy.typed.false")
+        A: http://schemas.android.com/apk/res/android:value(0x01010024)=(type 0x12)0x0
+`
+
+test("a bare aapt2 boolean, the build-tools 36 form, is parsed and rejects disabled analytics even with a correct lane", () => {
+  const meta = parseManifestMetaData(BARE_BOOLEAN_SAMPLE)
+  assert.equal(meta[META_ANALYTICS_DISABLED], "true")
+  assert.equal(meta[META_ANALYTICS_ENVIRONMENT], "prod")
+  assert.equal(meta["legacy.typed"], "true")
+  assert.equal(meta["legacy.typed.false"], "false")
+  assert.throws(
+    () => assertAndroidSdkAnalyticsMetadata(meta, {sdkVersion: "3.1.0", environment: "prod"}),
+    /analytics\.disabled="true"/,
+  )
+})
+
+test("an unrecognized value on the disabled key fails rather than reading as enabled", () => {
+  for (const bad of ["", "@0x7f010000", "yes"]) {
+    assert.throws(
+      () =>
+        assertAndroidSdkAnalyticsMetadata(
+          {[META_ANALYTICS_ENVIRONMENT]: "prod", [META_ANALYTICS_DISABLED]: bad},
+          {sdkVersion: "3.1.0", environment: "prod"},
+        ),
+      /analytics\.disabled=/,
+    )
+  }
+})
