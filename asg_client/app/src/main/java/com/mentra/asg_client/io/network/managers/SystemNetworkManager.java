@@ -315,6 +315,7 @@ public class SystemNetworkManager extends BaseNetworkManager {
         try {
             if (wifiManager != null) {
                 List<WifiConfiguration> configs = wifiManager.getConfiguredNetworks();
+                if (configs == null) return WifiForgetOutcome.FAILED;
                 if (configs != null) {
                     for (WifiConfiguration config : configs) {
                         if (config.SSID != null && config.SSID.equals("\"" + ssid + "\"")) {
@@ -765,6 +766,9 @@ public class SystemNetworkManager extends BaseNetworkManager {
     private List<String> readConfiguredWifiNetworks() {
         List<String> networks = new ArrayList<>();
         List<WifiConfiguration> configurations = wifiManager.getConfiguredNetworks();
+        if (configurations == null) {
+            throw new IllegalStateException("Unable to enumerate configured networks");
+        }
         if (configurations != null) {
             for (WifiConfiguration config : configurations) {
                 if (config.SSID != null) {
