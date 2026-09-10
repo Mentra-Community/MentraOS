@@ -11,12 +11,18 @@ final class MentraLiveConnectionOptionsTests: XCTestCase {
         XCTAssertFalse(ConnectOptions(requiresAncs: false).requiresAncs)
     }
 
-    func testCoreBluetoothOptionsRequireAncsWhenEnabled() {
-        let options = MentraLiveConnectionOptions.coreBluetoothOptions(requiresAncs: true)
+    #if os(macOS)
+        func testCoreBluetoothOptionsOmitAncsOnMacOS() {
+            XCTAssertNil(MentraLiveConnectionOptions.coreBluetoothOptions(requiresAncs: true))
+        }
+    #else
+        func testCoreBluetoothOptionsRequireAncsWhenEnabled() {
+            let options = MentraLiveConnectionOptions.coreBluetoothOptions(requiresAncs: true)
 
-        XCTAssertEqual(options?.count, 1)
-        XCTAssertEqual(options?[CBConnectPeripheralOptionRequiresANCS] as? Bool, true)
-    }
+            XCTAssertEqual(options?.count, 1)
+            XCTAssertEqual(options?[CBConnectPeripheralOptionRequiresANCS] as? Bool, true)
+        }
+    #endif
 
     func testCoreBluetoothOptionsAreOmittedWhenAncsIsDisabled() {
         XCTAssertNil(MentraLiveConnectionOptions.coreBluetoothOptions(requiresAncs: false))

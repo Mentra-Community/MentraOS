@@ -1386,8 +1386,12 @@ enum MentraLiveConnectionState {
 
 enum MentraLiveConnectionOptions {
     static func coreBluetoothOptions(requiresAncs: Bool) -> [String: Any]? {
-        guard requiresAncs else { return nil }
-        return [CBConnectPeripheralOptionRequiresANCS: true]
+        #if os(macOS)
+            return nil
+        #else
+            guard requiresAncs else { return nil }
+            return [CBConnectPeripheralOptionRequiresANCS: true]
+        #endif
     }
 }
 
