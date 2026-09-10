@@ -12,7 +12,7 @@ import {useGlassesStore} from "../stores/glasses"
 import {isGlassesConnected} from "../services/GlassesReadiness"
 import {cloudClientService} from "../services/CloudClientService"
 import {collectDiagnosticContext} from "../utils/diagnosticContext"
-import {logBuffer, type LogEntry} from "../utils/devLogging"
+import {logBuffer} from "../utils/devLogging"
 
 export type {
   ReportAttachmentInput,
@@ -82,27 +82,6 @@ function notifyGlasses(reportId: string, apiBaseUrl?: string | null): void {
   })()
 }
 
-async function collectPhoneLogs(): Promise<LogEntry[]> {
-  const reactNativeLogs = logBuffer.getRecentLogs()
-  const getNativeLogs = BluetoothSdk.getNativeLogs
-  if (typeof getNativeLogs !== "function") return reactNativeLogs
-
-  try {
-    const nativeLogs = await getNativeLogs.call(BluetoothSdk)
-    return [...reactNativeLogs, ...nativeLogs].sort((left, right) => left.timestamp - right.timestamp)
-  } catch (error) {
-    return [
-      ...reactNativeLogs,
-      {
-        timestamp: Date.now(),
-        level: "warn",
-        message: `Native log collection failed: ${error instanceof Error ? error.message : String(error)}`,
-        source: "report-collector",
-      },
-    ]
-  }
-}
-
 async function submitReportInternal(input: InternalSubmitReportInput): Promise<ReportSubmitResult> {
   if (!cloudClientService.hasCore()) {
     return {status: "failed", error: "Reports are unavailable in this deployment"}
@@ -156,7 +135,7 @@ async function submitReportInternal(input: InternalSubmitReportInput): Promise<R
   }
 
   if (input.kind !== "feedback") {
-    const logs = await collectPhoneLogs()
+    const logs = logBuffer.getRecentLogs()
     if (logs.length > 0) {
       try {
         await cloudClientService.core.reports.addLogs(reportId, "phone", logs)

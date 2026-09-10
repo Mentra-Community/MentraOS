@@ -88,17 +88,7 @@ describe("Core reports client", () => {
     const calls: Array<{ method: string; path: string; body?: unknown }> = [];
     const reports = new Reports({ http: fakeHttp(calls) });
 
-    const entries = [
-      {
-        timestamp: 1,
-        level: "warn",
-        message: "native warning",
-        source: "android-logcat",
-        metadata: { tag: "MentraLive", pid: 12, tid: 34, priority: "W" },
-      },
-    ];
-
-    await reports.addLogs("rep_123", "phone", entries);
+    await reports.addLogs("rep_123", "phone", [{ timestamp: 1, level: "info", message: "hello" }]);
 
     expect(calls).toEqual([
       {
@@ -107,7 +97,7 @@ describe("Core reports client", () => {
         body: {
           type: "logs",
           source: "phone",
-          entries,
+          entries: [{ timestamp: 1, level: "info", message: "hello" }],
         },
       },
     ]);

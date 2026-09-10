@@ -114,9 +114,7 @@ public class Bridge private constructor() {
         /** Log a message and send it to JavaScript */
         @JvmStatic
         fun log(message: String) {
-            val data = HashMap<String, Any>()
-            data["message"] = message
-            sendTypedMessage("log", data as Map<String, Any>)
+            com.mentra.bluetoothsdk.utils.NativeLog.i(TAG, message)
         }
 
         /** Report tar.bz2 extraction progress to JavaScript. */

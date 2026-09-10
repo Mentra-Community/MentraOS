@@ -29,7 +29,6 @@ const logEntrySchema = z.object({
   level: z.string(),
   message: z.string(),
   source: z.string().optional(),
-  metadata: recordSchema.optional(),
 });
 const reportTriggerFields = {
   source: nonEmptyStringSchema,

@@ -5,7 +5,6 @@ package com.mentra.bluetoothsdk
 import androidx.lifecycle.Lifecycle
 import androidx.lifecycle.LifecycleOwner
 import com.mentra.bluetoothsdk.debug.BleTraceLogger
-import com.mentra.bluetoothsdk.utils.AndroidLogcatCollector
 import com.mentra.bluetoothsdk.utils.DeviceTypes
 import com.mentra.bluetoothsdk.utils.audio.PcmStreamManager
 import expo.modules.kotlin.exception.CodedException
@@ -587,12 +586,6 @@ class BluetoothSdkModule : Module() {
         }
         AsyncFunction("sendPhoneNotification") { notification: Map<String, Any> ->
             deviceManager?.sendPhoneNotification(notification)
-        }
-
-        // Keep native Log.* diagnostics in the same report artifact as React Native logs.
-        // Reading is bounded to this app process and runs off the Expo function queue.
-        AsyncFunction("getNativeLogs") Coroutine { ->
-            withContext(Dispatchers.IO) { AndroidLogcatCollector.collectCurrentProcess() }
         }
 
         // MARK: - WiFi Commands

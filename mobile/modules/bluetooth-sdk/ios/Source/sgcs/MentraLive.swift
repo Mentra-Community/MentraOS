@@ -497,7 +497,7 @@ class BlePhotoUploadService {
 
         request.httpBody = body
 
-        print("LIVE: Uploading photo to webhook: \(webhookUrl)")
+        Bridge.log("LIVE: Uploading photo to webhook: \(webhookUrl)")
 
         do {
             let (data, response) = try await URLSession.shared.data(for: request)
@@ -513,7 +513,7 @@ class BlePhotoUploadService {
                 )
             }
 
-            print("LIVE: Upload successful. Response code: \(httpResponse.statusCode)")
+            Bridge.log("LIVE: Upload successful. Response code: \(httpResponse.statusCode)")
             return String(data: data, encoding: .utf8) ?? ""
 
         } catch {
@@ -627,7 +627,7 @@ enum K900ProtocolUtils {
         // Verify packet has enough data
         let requiredLength = pos + Int(info.packSize) + LENGTH_FILE_VERIFY + LENGTH_FILE_END
         if protocolData.count < requiredLength {
-            print(
+            Bridge.log(
                 "K900ProtocolUtils: File packet too short for data. Need: \(requiredLength), Have: \(protocolData.count), packSize=\(info.packSize), pos=\(pos)"
             )
             return nil
@@ -656,11 +656,11 @@ enum K900ProtocolUtils {
         info.isValid = (calculatedVerify == info.verifyCode)
 
         if !info.isValid {
-            print(
+            Bridge.log(
                 "K900ProtocolUtils: File packet checksum failed. Expected: \(String(format: "%02X", info.verifyCode)), Calculated: \(String(format: "%02X", calculatedVerify))"
             )
         } else if shouldLogFilePacket(info) {
-            print(
+            Bridge.log(
                 "K900ProtocolUtils: File packet extracted successfully: index=\(info.packIndex), size=\(info.packSize), fileName=\(info.fileName)"
             )
         }
@@ -732,7 +732,7 @@ private struct FileTransferSession {
         if isBesLie {
             // BES lie detected: totalPackets = fileSize / 400
             newTotalPackets = fileSize / Self.BES_HARDCODED_PACK_SIZE
-            print(
+            Bridge.log(
                 "📦 BES Lie detected! fakeFileSize=\(fileSize), totalPackets=\(newTotalPackets), actualPackSize=\(actualPackSize)"
             )
         } else {
@@ -741,7 +741,7 @@ private struct FileTransferSession {
         }
 
         if newTotalPackets != totalPackets {
-            print(
+            Bridge.log(
                 "📦 Recalculating totalPackets: \(totalPackets) -> \(newTotalPackets) (packSize=\(actualPackSize), fileSize=\(fileSize))"
             )
             totalPackets = newTotalPackets
@@ -793,7 +793,7 @@ private struct FileTransferSession {
         // Calculate actual file size by summing all received packet sizes
         let actualFileSize = receivedPackets.values.reduce(0) { $0 + $1.count }
 
-        print(
+        Bridge.log(
             "📦 Assembling file: headerFileSize=\(fileSize), actualFileSize=\(actualFileSize), totalPackets=\(totalPackets)"
         )
 

@@ -29,7 +29,7 @@ import android.os.Handler
 import android.os.HandlerThread
 import android.os.Looper
 import android.os.SystemClock
-import android.util.Log
+import com.mentra.bluetoothsdk.utils.NativeLog as Log
 import androidx.core.app.ActivityCompat
 import com.mentra.bluetoothsdk.BluetoothSdkDefaults
 import com.mentra.bluetoothsdk.Bridge

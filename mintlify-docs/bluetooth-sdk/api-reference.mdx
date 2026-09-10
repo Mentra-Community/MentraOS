@@ -735,6 +735,23 @@ Android and iOS expose typed callbacks/delegate methods instead of the React Nat
 | Audio | Microphone PCM, LC3, local transcription, audio route state |
 | Diagnostics | SDK log events |
 
+### Combined JavaScript and Native Logs
+
+The React Native SDK automatically forwards Android and iOS SDK diagnostics to
+the JavaScript console after import. Native entries are prefixed with
+`[native:android]` or `[native:ios]` and appear alongside your app's JS logs.
+The `log` event remains available for custom consumers; an additional listener
+that calls `console.log` will duplicate the SDK's automatic output.
+
+Credential-bearing messages are redacted before console output, and each native
+message is capped at 16,384 characters. The Mentra App attaches this combined
+console stream to incident reports using its existing phone log buffer and
+retention limits. Native console output remains available too.
+
+This covers SDK-owned diagnostics while the JavaScript runtime is active. It does
+not collect arbitrary OS or third-party native logs or replay logs from before
+the subscription. Rebuild the native app to pick up the routing changes.
+
 ## Version Fields
 
 Call `requestVersionInfo()` after connection when your app wants the glasses to refresh version metadata. Updated values arrive through the normal glasses-status callback and are also available in the next status snapshot.

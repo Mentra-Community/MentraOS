@@ -363,7 +363,7 @@ class PhoneMic private constructor(private val context: Context) {
             return success
         } catch (e: Exception) {
             Bridge.log("MIC: Phone internal recording failed: ${e.message}")
-            e.printStackTrace()
+            com.mentra.bluetoothsdk.utils.NativeLog.e("PhoneMic", "Native exception", e)
             return false
         }
     }

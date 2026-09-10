@@ -74,6 +74,9 @@ class Bridge {
     }
 
     static func log(_ message: String) {
+        // Native diagnostics and the JS console share this event. Do not capture
+        // stdout: React Native can write the forwarded message back to stdout.
+        NSLog("%@", message)
         let data = ["message": message]
         Bridge.sendTypedMessage("log", body: data)
     }
@@ -664,5 +667,3 @@ class Bridge {
         return payload
     }
 }
-
-

@@ -780,12 +780,8 @@ class MantleManager {
 
     // Subscribe to individual Bluetooth SDK events.
     {
-      this.subs.push(
-        BluetoothSdk.addListener("log", (event) => {
-          if (event.message?.startsWith("MAN: displayEvent ")) return
-          console.log("CORE:", event.message)
-        }),
-      )
+      // The Bluetooth SDK forwards native diagnostics to the JS console itself,
+      // including for external hosts. A second listener here would duplicate them.
 
       // wifi_status_change / glasses_wifi / hotspot_status_change:
       // moved to island DeviceEventRouter (started by engine.start())

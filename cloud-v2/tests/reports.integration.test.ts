@@ -165,13 +165,7 @@ describe("reports artifact asset store", () => {
     const reportId = await submitBugReport();
     const entries = [
       { timestamp: 1700000000001, level: "info", message: "glasses connected" },
-      {
-        timestamp: 1700000000002,
-        level: "error",
-        message: "native failure",
-        source: "android-logcat",
-        metadata: { tag: "MentraLive", pid: 12, tid: 34, priority: "E" },
-      },
+      { timestamp: 1700000000002, level: "error", message: "ota failed", source: "asg" },
     ];
 
     const res = await coreApp.fetch(

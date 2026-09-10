@@ -1,7 +1,7 @@
 package com.mentra.bluetoothsdk.stt
 
 import android.content.Context
-import android.util.Log
+import com.mentra.bluetoothsdk.utils.NativeLog as Log
 import com.konovalov.vad.silero.Vad
 import com.konovalov.vad.silero.VadSilero
 import com.konovalov.vad.silero.config.FrameSize

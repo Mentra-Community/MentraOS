@@ -1,5 +1,3 @@
-import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
-
 import {submitAutomaticReport} from "../../../modules/engine/src/facades/reports"
 import {cloudClientService} from "../../../modules/engine/src/services/CloudClientService"
 import {logBuffer} from "../../../modules/engine/src/utils/devLogging"
@@ -35,7 +33,6 @@ const addLogsMock = cloudClientService.core.reports.addLogs as jest.Mock
 const completeMock = cloudClientService.core.reports.complete as jest.Mock
 const hasCoreMock = cloudClientService.hasCore as jest.Mock
 const getRecentLogsMock = logBuffer.getRecentLogs as jest.Mock
-const getNativeLogsMock = BluetoothSdk.getNativeLogs as jest.Mock
 
 const automaticInput = (throttleKey: string) => ({
   kind: "automatic" as const,
@@ -55,60 +52,9 @@ describe("reports facade automatic throttling", () => {
     completeMock.mockReset()
     hasCoreMock.mockReset().mockReturnValue(true)
     getRecentLogsMock.mockReset()
-    getNativeLogsMock.mockReset()
     addLogsMock.mockResolvedValue({stored: 1})
     completeMock.mockResolvedValue({status: "complete"})
     getRecentLogsMock.mockReturnValue([])
-    getNativeLogsMock.mockResolvedValue([])
-  })
-
-  it("merges React Native and native Android logs into the phone artifact", async () => {
-    getRecentLogsMock.mockReturnValue([
-      {timestamp: 200, level: "info", message: "CORE: bridge event", source: "console"},
-    ])
-    getNativeLogsMock.mockResolvedValue([
-      {
-        timestamp: 100,
-        level: "warn",
-        message: "Requested MTU size",
-        source: "android-logcat",
-        metadata: {tag: "MentraLive", pid: 12, tid: 34, priority: "W"},
-      },
-    ])
-    submitMock.mockResolvedValueOnce({reportId: "report-native-logs", status: "open"})
-
-    await expect(submitAutomaticReport(automaticInput("native-logs"))).resolves.toMatchObject({
-      status: "submitted",
-      reportId: "report-native-logs",
-    })
-
-    expect(addLogsMock).toHaveBeenCalledWith("report-native-logs", "phone", [
-      expect.objectContaining({timestamp: 100, source: "android-logcat", message: "Requested MTU size"}),
-      expect.objectContaining({timestamp: 200, source: "console", message: "CORE: bridge event"}),
-    ])
-  })
-
-  it("still uploads React Native logs when native collection fails", async () => {
-    getRecentLogsMock.mockReturnValue([{timestamp: 100, level: "info", message: "JS survived", source: "console"}])
-    getNativeLogsMock.mockRejectedValue(new Error("logcat unavailable"))
-    submitMock.mockResolvedValueOnce({reportId: "report-native-failure", status: "open"})
-
-    await expect(submitAutomaticReport(automaticInput("native-failure"))).resolves.toMatchObject({
-      status: "submitted",
-      reportId: "report-native-failure",
-    })
-
-    expect(addLogsMock).toHaveBeenCalledWith(
-      "report-native-failure",
-      "phone",
-      expect.arrayContaining([
-        expect.objectContaining({message: "JS survived", source: "console"}),
-        expect.objectContaining({
-          message: "Native log collection failed: logcat unavailable",
-          source: "report-collector",
-        }),
-      ]),
-    )
   })
 
   it("does not collect or submit reports when Core is unavailable", async () => {

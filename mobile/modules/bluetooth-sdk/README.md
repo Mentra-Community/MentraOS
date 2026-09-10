@@ -14,6 +14,24 @@ The package includes:
 
 Use a development build or production native build. Expo Go cannot load this package because the SDK contains native code.
 
+## Diagnostics
+
+After importing the SDK, native Android and iOS SDK diagnostics are forwarded
+automatically to the JavaScript console, alongside your app's JS logs. Entries
+are prefixed with `[native:android]` or `[native:ios]`. You do not need to add a
+`log` listener just to print them; doing so would print them twice. The existing
+`log` event remains available for custom consumers.
+
+Credential-bearing messages are redacted before console output, and individual
+messages are capped at 16,384 characters. The Mentra App's incident reports
+capture this same combined console stream in the phone log attachment, subject
+to its existing retention limits. Native diagnostics are also kept in the native
+console. Forwarding covers SDK-owned diagnostics while the JS runtime is active,
+not arbitrary OS or third-party native logs or logs from before subscription.
+
+Rebuild the native app after updating the SDK to pick up both platforms' logging
+changes. Adding this JS package alone cannot reroute logs in an older binary.
+
 ## Requirements
 
 - React Native `0.72+`.

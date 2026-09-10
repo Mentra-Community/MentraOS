@@ -84,7 +84,6 @@ export interface ReportLogEntry {
   level: string;
   message: string;
   source?: string;
-  metadata?: Record<string, unknown>;
 }
 
 export interface ReportAttachmentInput {
