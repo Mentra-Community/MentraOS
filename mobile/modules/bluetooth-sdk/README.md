@@ -187,6 +187,21 @@ Native Android apps can pass `BluetoothSdkAnalyticsConfig.disabled()` in
 Native iOS apps can pass `.disabled` in `MentraBluetoothSDKConfiguration` or set
 `MentraBluetoothSdkAnalyticsDisabled` to `true` in `Info.plist`.
 
+Hosts that ship the same package id through several lanes (dev, staging, store)
+can label the lane so Mentra can separate them. Pass
+`{"analytics": {"environment": "prod"}}` to the config plugin, or set the
+`com.mentra.bluetoothsdk.analytics.environment` Android metadata /
+`MentraBluetoothSdkAnalyticsEnvironment` `Info.plist` key directly. Values are
+trimmed and lowercased, must start with a letter or digit, may then contain
+`[a-z0-9_-]`, are at most 32 characters, and are reported as `app_environment`.
+
+Mentra counts an install as production only when `app_install_source` is
+`app_store` or `play_store`, `app_build_type` is `release`, and, for hosts that
+declare a lane, `app_environment` is `prod`. Play cannot distinguish its testing
+tracks from production (both report `play_store`), so the lane is what separates
+them for the Mentra App; hosts without a lane are reported as an unclassified
+store cohort rather than assumed production.
+
 Mentra's PostHog project API key is embedded in the SDK as a public analytics
 write token, not a private PostHog personal API key. Apps do not configure the
 analytics destination; these SDK usage events are always sent to Mentra's
@@ -195,11 +210,24 @@ PostHog project unless analytics are disabled.
 Captured properties include `event_source`, `sdk_platform`, `sdk_surface`,
 `sdk_version`, `app_identifier` (the Android package or iOS bundle identifier),
 the platform-specific `app_package` or `app_bundle_identifier`, OS
-platform/version, and `event_kind`. Connection events also include
-`fully_booted` and a glasses model value when known. The identification event
-intentionally includes the glasses manufacturing serial as `glasses_device_id`,
-with `glasses_device_id_type=manufacturing_serial`, so Mentra can correlate
-fleet deployments across supported models. This serial identifies the glasses
+platform/version, and `event_kind`. Every event also carries host build facts:
+`app_version`, `app_build`, `app_build_type` (`debug` / `release`),
+`app_install_source` (`play_store`, `app_store`, `testflight`, `adhoc_or_dev`,
+`simulator`, `sideload`, a named third-party store, `other_store`, or `unknown`
+when the platform gave no usable evidence), the raw Android
+`app_installer_package` when present, and `app_environment` when the host
+declares one. Connection and identification events include `fully_booted`,
+a glasses model value when known, and `glasses_is_simulated`. The identification
+event intentionally includes the glasses manufacturing serial as
+`glasses_device_id`, with `glasses_device_id_type=manufacturing_serial`, so
+Mentra can correlate fleet deployments across supported models, plus the
+glasses-side software versions the SDK already holds (`glasses_firmware_version`,
+`glasses_bes_firmware_version`, `glasses_mtk_firmware_version`,
+`glasses_android_version`, `glasses_app_version`, `glasses_build_number`) so
+identified glasses can be grouped by firmware. Glasses that never report a
+serial produce no identification event; that coverage gap is measured as
+connections without identification per model and SDK version, not from these
+fields. This serial identifies the glasses
 hardware, not the user or the host phone. Its source depends on the model:
 Mentra Live reports the serial provisioned in BES NV storage, while G1 and Ar99
 decode it from the glasses' BLE advertisement / manufacturer data.

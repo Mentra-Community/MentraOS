@@ -3,6 +3,7 @@ package com.mentra.bluetoothsdk
 import android.content.Context
 import android.content.pm.PackageManager
 import android.os.Build
+import com.mentra.bluetoothsdk.utils.DeviceTypes
 import org.json.JSONObject
 import java.net.HttpURLConnection
 import java.net.URL
@@ -46,6 +47,8 @@ internal class BluetoothSdkAnalytics(
     // startedCaptured/lastConnected are touched from store listeners and SDK
     // entry points, hence @Synchronized on methods that read or write them.
     private val config = initialConfig.toRuntimeConfig().resolvedForApp(appContext)
+    // PackageManager lookups happen once, lazily, on the analytics executor.
+    private val hostProperties: Map<String, Any> by lazy { BluetoothSdkAnalyticsHost.resolve(appContext).toMap() }
     private var startedCaptured = false
     private var lastConnected = false
     private var identifiedCapturedForConnection = false
@@ -86,6 +89,7 @@ internal class BluetoothSdkAnalytics(
                     put("event_kind", "glasses_connected")
                     put("fully_booted", status.fullyBooted)
                     status.deviceModel.takeIf { it.isNotBlank() }?.let { put("glasses_model", it) }
+                    put("glasses_is_simulated", status.deviceModel == DeviceTypes.SIMULATED)
                 },
             )
             // Fall through: a serial already present at connect time (G1/Ar99 report
@@ -104,6 +108,8 @@ internal class BluetoothSdkAnalytics(
                     put("glasses_device_id", serialNumber)
                     put("glasses_device_id_type", "manufacturing_serial")
                     status.deviceModel.takeIf { it.isNotBlank() }?.let { put("glasses_model", it) }
+                    put("glasses_is_simulated", status.deviceModel == DeviceTypes.SIMULATED)
+                    putGlassesSoftware(status)
                 },
             )
         }
@@ -131,7 +137,7 @@ internal class BluetoothSdkAnalytics(
                                 "api_key" to DEFAULT_POSTHOG_API_KEY,
                                 "event" to eventName,
                                 "distinct_id" to distinctId(),
-                                "properties" to baseProperties(activeConfig) + eventProperties,
+                                "properties" to baseProperties(activeConfig) + hostProperties + eventProperties,
                             )
                         )
                     val connection = URL(captureUrl()).openConnection() as HttpURLConnection
@@ -166,6 +172,20 @@ internal class BluetoothSdkAnalytics(
             put("os_platform", "android")
             put("os_version", Build.VERSION.SDK_INT)
         }
+
+    /**
+     * Glasses-side software versions, attached to identification only, so identified
+     * glasses can be grouped by firmware. Glasses that never report a serial produce
+     * no identification event; that coverage gap is measured elsewhere.
+     */
+    private fun MutableMap<String, Any>.putGlassesSoftware(status: GlassesStatus) {
+        status.firmwareVersion.takeIf { it.isNotBlank() }?.let { put("glasses_firmware_version", it) }
+        status.besFirmwareVersion.takeIf { it.isNotBlank() }?.let { put("glasses_bes_firmware_version", it) }
+        status.mtkFirmwareVersion.takeIf { it.isNotBlank() }?.let { put("glasses_mtk_firmware_version", it) }
+        status.androidVersion.takeIf { it.isNotBlank() }?.let { put("glasses_android_version", it) }
+        status.appVersion.takeIf { it.isNotBlank() }?.let { put("glasses_app_version", it) }
+        status.buildNumber.takeIf { it.isNotBlank() }?.let { put("glasses_build_number", it) }
+    }
 
     private fun distinctId(): String {
         val prefs = appContext.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)

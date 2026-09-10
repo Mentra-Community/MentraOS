@@ -79,6 +79,21 @@ so Mentra can understand SDK adoption and successful glasses connections:
 | --- | --- |
 | `bluetooth_sdk_started` | Once per app runtime after the native SDK starts. |
 | `bluetooth_sdk_glasses_connected` | When SDK status transitions from not connected to connected. Failed scans and failed connection attempts are not counted. |
+| `bluetooth_sdk_glasses_identified` | Once per connection after the glasses report a valid manufacturing serial. Carries `glasses_device_id` (the hardware serial, not a user or phone id) and the glasses-side firmware versions of identified glasses. |
+
+Every event carries the host app's `app_version`, `app_build`, `app_build_type`
+(`debug` / `release`), and `app_install_source` (`play_store`, `app_store`,
+`testflight`, `adhoc_or_dev`, `simulator`, `sideload`, a named third-party
+store, `other_store`, or `unknown` when the platform gave no usable evidence).
+Apps that ship one package id through several lanes can add `app_environment`
+through the `analytics.environment` plugin option, the
+`com.mentra.bluetoothsdk.analytics.environment` Android metadata, or the
+`MentraBluetoothSdkAnalyticsEnvironment` `Info.plist` key (trimmed and
+lowercased; must start with a letter or digit, then `[a-z0-9_-]`, at most 32
+characters). Mentra treats an install as production only when
+`app_install_source` is `app_store` or `play_store`, `app_build_type` is
+`release`, and, when the host declares a lane, `app_environment` is `prod`;
+store installs without a declared lane are reported as an unclassified cohort.
 
 Analytics delivery is fire-and-forget: events are submitted asynchronously, do
 not block Bluetooth SDK behavior, and are not retried if delivery fails.
@@ -158,12 +173,16 @@ Captured properties are intentionally narrow:
 | `sdk_version` | Bluetooth SDK version. |
 | `app_package` / `app_bundle_identifier` | Consuming app identifier. |
 | `os_platform`, `os_version` | Phone OS metadata. |
-| `event_kind` | `sdk_started` or `glasses_connected`. |
-| `fully_booted` | Connection event only; whether the connected status already reports fully booted. |
-| `glasses_model` | Connection event only; included only when the SDK has a non-empty model value. |
+| `event_kind` | `sdk_started`, `glasses_connected`, or `glasses_identified`. |
+| `app_version`, `app_build`, `app_build_type`, `app_install_source`, `app_environment` | Host build facts described above (`app_installer_package` on Android carries the raw installer package). |
+| `fully_booted` | Connection and identification events; whether the connected status already reports fully booted. |
+| `glasses_model`, `glasses_is_simulated` | Connection and identification events; the model is included only when the SDK has a non-empty value. |
+| `glasses_device_id`, `glasses_device_id_type` | Identification event only; the glasses manufacturing serial (`manufacturing_serial`). |
+| `glasses_firmware_version`, `glasses_bes_firmware_version`, `glasses_mtk_firmware_version`, `glasses_android_version`, `glasses_app_version`, `glasses_build_number` | Identification event only; included when known. |
 
-The SDK does not upload BLE MAC addresses, CoreBluetooth identifiers, serial
-numbers, Bluetooth device names, user ids, tokens, Wi-Fi credentials,
+Apart from the glasses manufacturing serial on the identification event, the
+SDK does not upload BLE MAC addresses, CoreBluetooth identifiers, Bluetooth
+device names, user ids, tokens, Wi-Fi credentials,
 microphone data, photos, or transcripts. It stores a locally generated
 anonymous SDK install id and sends it as PostHog `distinct_id`; events include
 `$process_person_profile: false` so PostHog does not create person profiles for
