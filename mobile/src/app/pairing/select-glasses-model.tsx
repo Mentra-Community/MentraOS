@@ -86,7 +86,7 @@ export default function SelectGlassesModelScreen() {
   ]
 
   const deployment = deploymentStore.getActive()
-  const allowedModels = deployment.kind === "workspace" ? deployment.manifest.glasses.allowedModelsOverride : null
+  const allowedModels = deployment.manifest.glasses.allowedModelsOverride
   const glassesOptions = (Platform.OS === "ios" ? sharedOptions : sharedOptions).filter(
     (option) => allowedModels === null || allowedModels.includes(option.modelId),
   )

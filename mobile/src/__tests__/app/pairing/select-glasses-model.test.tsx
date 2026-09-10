@@ -82,7 +82,11 @@ describe("glasses model selection", () => {
     jest.clearAllMocks()
     ;(useNavigationStore.getState as jest.Mock).mockReturnValue({push, goBack})
     ;(preparePairingScan as jest.Mock).mockResolvedValue(true)
-    ;(deploymentStore.getActive as jest.Mock).mockReturnValue({kind: "consumer", source: "embedded"})
+    ;(deploymentStore.getActive as jest.Mock).mockReturnValue({
+      kind: "consumer",
+      source: "embedded",
+      manifest: {glasses: {allowedModelsOverride: null}},
+    })
   })
 
   it("prepares permissions and opens the scan directly for Mentra Live", async () => {

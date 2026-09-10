@@ -32,7 +32,12 @@ const mockDeployment = {
   store: {activate: jest.fn()},
 }
 const mockLogout = jest.fn()
+const mockShowAlert = jest.fn()
 
+jest.mock("@/utils/AlertUtils", () => ({
+  __esModule: true,
+  default: (...args: unknown[]) => mockShowAlert(...args),
+}))
 jest.mock("expo-router", () => ({
   useNavigation: () => mockNavigation,
   useFocusEffect: (effect: () => void) => require("react").useEffect(effect, [effect]),
@@ -70,6 +75,20 @@ beforeEach(() => {
   jest.clearAllMocks()
   mockListeners.clear()
   mockLogout.mockResolvedValue(undefined)
+  mockDeployment.store.activate.mockReset().mockResolvedValue(undefined)
+})
+
+it("stays on confirmation after a persistence failure and allows retry", async () => {
+  mockDeployment.store.activate.mockRejectedValueOnce(new Error("Cannot persist settings"))
+  const screen = render(<WorkspaceConfirmScreen />)
+  await act(async () => fireEvent.press(screen.getByText("common:continue")))
+  expect(mockShowAlert).toHaveBeenCalledWith("common:error", "Cannot persist settings", [{text: "common:ok"}])
+  expect(mockNavigationState.replace).not.toHaveBeenCalled()
+  expect(mockDeployment.clearCandidate).not.toHaveBeenCalled()
+
+  await act(async () => fireEvent.press(screen.getByText("common:continue")))
+  expect(mockDeployment.store.activate).toHaveBeenCalledTimes(2)
+  expect(mockNavigationState.replace).toHaveBeenCalledWith("/auth/workspace-signin")
 })
 
 it.each(["immediate", "deferred"])("does not cancel the %s iOS replacement after confirmation", async (timing) => {

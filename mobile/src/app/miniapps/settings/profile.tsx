@@ -48,10 +48,7 @@ export default function ProfileSettingsPage() {
       }
     : null
 
-  const workspaceName =
-    activeDeployment.kind === "workspace"
-      ? activeDeployment.manifest.displayName
-      : translate("profileSettings:mentraWorkspace")
+  const workspaceName = activeDeployment.manifest.displayName
 
   const handleRequestDataExport = () => {
     console.log("Profile: Navigating to data export screen")

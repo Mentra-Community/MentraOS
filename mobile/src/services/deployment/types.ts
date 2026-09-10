@@ -94,6 +94,7 @@ export interface WorkspaceDeployment {
 export interface ConsumerDeployment {
   kind: "consumer"
   source: "embedded"
+  manifest: DeploymentManifest
 }
 
 export type ActiveDeployment = ConsumerDeployment | WorkspaceDeployment

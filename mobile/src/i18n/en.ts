@@ -1058,6 +1058,10 @@ const en = {
     connectTo: "Connect to {{name}}",
     continueTo: "Continue to {{name}}",
     workspaceLabel: "Workspace",
+    cloudOverridesDescription:
+      "Override cloud URLs for {{name}}. Reset restores its defaults. Overrides are cleared when you log out or switch organizations.",
+    cloudDefault: "Default: {{url}}",
+    cloudReset: "Restored the selected deployment's cloud URLs.",
     signInLabel: "Sign-in",
     microsoftOrganizationAccount: "Microsoft organization account",
     mentraAccount: "Mentra account",

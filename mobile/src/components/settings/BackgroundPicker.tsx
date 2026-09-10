@@ -10,15 +10,6 @@ import {SETTINGS, useSetting} from "@mentra/engine"
 import {translate} from "@/i18n"
 import {deploymentStore} from "@/services/deployment"
 
-const CONSUMER_PRESET_BACKGROUNDS = [
-  "https://mentra-wallpapers.mentraglass.com/landscape1.jpeg",
-  "https://mentra-wallpapers.mentraglass.com/landscape2.jpeg",
-  "https://mentra-wallpapers.mentraglass.com/landscape3.jpeg",
-  "https://mentra-wallpapers.mentraglass.com/trees.jpg",
-  "https://mentra-wallpapers.mentraglass.com/clouds.jpeg",
-  "https://mentra-wallpapers.mentraglass.com/firewatch.jpg",
-]
-
 async function saveBackgroundImage(uri: string): Promise<string> {
   const bgDir = new Directory(Paths.document, "backgrounds")
   if (!bgDir.exists) {
@@ -34,8 +25,7 @@ export default function BackgroundPicker() {
   const {theme} = useAppTheme()
   const [background, setBackground] = useSetting<string>(SETTINGS.home_background.key)
   const deployment = deploymentStore.getActive()
-  const presetBackgrounds =
-    deployment.kind === "workspace" ? deployment.manifest.content.wallpaperUrls : CONSUMER_PRESET_BACKGROUNDS
+  const presetBackgrounds = deployment.manifest.content.wallpaperUrls
 
   const pickImage = async () => {
     const result = await ImagePicker.launchImageLibraryAsync({

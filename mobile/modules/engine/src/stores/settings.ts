@@ -226,6 +226,14 @@ export const SETTINGS: Record<string, Setting> = {
     persist: true,
     resetOnBuildEnvChange: true,
   },
+  cloud_url_deployment: {
+    key: "cloud_url_deployment",
+    defaultValue: () => "",
+    writable: true,
+    saveOnServer: false,
+    persist: true,
+    resetOnBuildEnvChange: true,
+  },
   // Bookmarked Cloud V2 endpoint pairs. Each entry is {label, coreUrl,
   // runtimeUrl} — core + runtime are saved together because they are always
   // applied as a matched set (presets fill both; Save & Test verifies both).
@@ -928,12 +936,13 @@ export const useSettingsStore = create<SettingsState>()(
         }
         // console.log("SETTINGS: SET MANY LOCALLY: ", settingsToLoad)
 
-        set((state) => ({
-          settings: {...state.settings, ...settingsToLoad},
-        }))
-
-        // save to storage:
-        await Promise.all(Object.entries(settingsToLoad).map(([key, value]) => storage.save(key, value)))
+        // MMKV writes are synchronous Results, not rejecting Promises. Check
+        // each result before publishing the new in-memory settings.
+        for (const [key, value] of Object.entries(settingsToLoad)) {
+          const saved = storage.save(key, value)
+          if (saved.is_error()) throw saved.error
+        }
+        set((state) => ({settings: {...state.settings, ...settingsToLoad}}))
       })
     },
     // loads any preferences that have been changed from the default and saved to DISK!

@@ -8,6 +8,7 @@ import {
   type DeploymentAuthSession,
   useDeployment,
 } from "@/services/deployment"
+import {clearDeploymentDebugOverrides} from "@/services/deployment/debugOverrides"
 import {LogoutUtils} from "@/utils/LogoutUtils"
 import {storage} from "@/utils/storage"
 import mentraAuth from "@/utils/auth/authClient"
@@ -101,7 +102,7 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
       const hasExistingConsumerSession =
         (access.is_ok() && Boolean(access.value)) || (refresh.is_ok() && Boolean(refresh.value))
       if (hasExistingConsumerSession && !store.isSelectingWorkspace()) {
-        store.returnToMentra()
+        store.restoreConsumerSessionSelection()
       } else {
         applySession(null, false)
       }
@@ -176,7 +177,7 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
         } finally {
           // Log out means leaving the workspace, including its cached manifest.
           // A future same-workspace account switch must be a separate action.
-          store.clearSelection()
+          await store.clearSelection()
         }
       } else {
         await LogoutUtils.performCompleteLogout()
@@ -185,9 +186,14 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
       }
     } catch (error) {
       console.error("AuthContext: Error during logout:", error)
+      throw error
     } finally {
-      setSession(null)
-      setUser(null)
+      try {
+        await clearDeploymentDebugOverrides()
+      } finally {
+        setSession(null)
+        setUser(null)
+      }
     }
   }
 
@@ -200,13 +206,13 @@ export const AuthProvider: FC<{children: React.ReactNode}> = ({children}) => {
     // a possibly cached provider account and changes the deployment selection.
     // Switch immediately so a rejected or slow MSAL sign-out cannot trap the
     // user inside a workspace they have not signed in to.
-    if (destination === "consumer") store.returnToMentra()
-    else store.clearSelection()
+    if (destination === "consumer") await store.returnToMentra()
+    else await store.clearSelection()
     setSession(null)
     setUser(null)
     Sentry.setUser(null)
 
-    if (workspaceAuthToClear) await queueProviderCleanup(workspaceAuthToClear)
+    if (workspaceAuthToClear) void queueProviderCleanup(workspaceAuthToClear)
   }
 
   return (
