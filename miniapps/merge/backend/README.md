@@ -59,3 +59,8 @@ exposed to the miniapp.
 Set `MERGE_ENABLE_WEB_SEARCH=true` to allow Gemini Google Search grounding for
 public, current facts. Leave it off for private/project context unless that
 context is explicitly provided to the backend.
+
+The backend fails over from `GEMINI_MODEL` to the comma-separated models in
+`GEMINI_FALLBACK_MODELS` when Gemini reports a retryable model, quota, or
+service failure. The default fallback is `gemini-2.5-flash`; set the variable
+to an empty value to disable failover.
