@@ -336,6 +336,23 @@ export function abortPromotionRecord({record, actor, createdAt, provenanceUrl, r
   return validatePromotionChain(record, next)
 }
 
+// Stable package publication (production-release-packages.yml) never writes to
+// this chain: its evidence lives in the stable draft release, so it cannot race
+// a mobile or Cloud transition. It only reads the newest attempt to make sure a
+// live promotion did not freeze a different beta or source under the identity
+// it is about to publish.
+export function requirePromotionMatchesPackages(record, {betaIdentity, sourceCommit}) {
+  validatePromotionRecord(record)
+  if (record.state === "aborted") return {state: record.state, attempt: record.attempt}
+  if (record.selectedBeta.identity !== betaIdentity) {
+    fail(`promotion attempt ${record.attempt} selected ${record.selectedBeta.identity}, not ${betaIdentity}`)
+  }
+  if (record.source.mentraosCommit !== sourceCommit) {
+    fail(`promotion attempt ${record.attempt} froze source ${record.source.mentraosCommit}, not ${sourceCommit}`)
+  }
+  return {state: record.state, attempt: record.attempt}
+}
+
 function secretLike(value) {
   return (
     /-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(value) ||
@@ -482,6 +499,14 @@ function main() {
       evidence: readJson(args.evidence),
     })
     writeFileSync(path.resolve(args.output), serializeReleaseRecord(record))
+    return
+  }
+  if (command === "packages-guard") {
+    const result = requirePromotionMatchesPackages(readJson(args.record), {
+      betaIdentity: args.beta,
+      sourceCommit: args["source-commit"],
+    })
+    console.log(`promotion attempt ${result.attempt} (${result.state}) matches ${args.beta}`)
     return
   }
   if (command === "abort") {

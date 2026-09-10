@@ -63,6 +63,7 @@ Commands:
   release  --release X.Y.Z [--attempt N] [--yes]
   advance  --release X.Y.Z [--attempt N] [--android-percent N | --complete] [--yes]
   abort    --release X.Y.Z [--attempt N] --reason TEXT [--yes]
+  packages --beta X.Y.Z-beta.N --phase publish|release [--yes]
   watch    --run RUN_ID
 
 This CLI dispatches protected GitHub workflows. It never reads production
@@ -448,6 +449,24 @@ export function validateAdvanceOptions(record, options) {
   return {action: options.complete ? "complete" : "advance", androidPercent: percent || "100"}
 }
 
+// Stable packages (npm latest, Maven Central, SwiftPM) are keyed on the
+// promoted beta, not on a promotion attempt, so they can ship before, during,
+// or after store review.
+export const PACKAGE_PHASES = Object.freeze(["publish", "release"])
+
+export function validatePackagesOptions(options) {
+  if (!BETA_PATTERN.test(options.beta || "")) throw commandError("packages requires --beta X.Y.Z-beta.N")
+  if (!PACKAGE_PHASES.includes(options.phase))
+    throw commandError("packages requires --phase publish or --phase release")
+  return {beta_identity: options.beta, phase: options.phase}
+}
+
+export function packagesConfirmationMessage(request) {
+  return request.phase === "publish"
+    ? `This publishes the plain ${request.beta_identity.replace(/-beta\.\d+$/, "")} package versions under a candidate npm dist-tag and stages Maven Central and SwiftPM. GitHub will still require production-packages approval.`
+    : `This moves npm latest, publishes Maven Central, and pushes the public SwiftPM tag for ${request.beta_identity.replace(/-beta\.\d+$/, "")}. GitHub will still require production-packages-release approval.`
+}
+
 export function advanceConfirmationMessage(request) {
   return request.action === "complete"
     ? "This requests final verification and completion of the public release."
@@ -498,6 +517,16 @@ async function main(argv = process.argv.slice(2)) {
     if (!BETA_PATTERN.test(options.beta || "")) throw commandError("start requires --beta X.Y.Z-beta.N")
     verifyCheckoutForStart()
     dispatch("production-release-prepare.yml", {beta_identity: options.beta})
+    return
+  }
+
+  if (command === "packages") {
+    const request = validatePackagesOptions(options)
+    await confirmEffect(packagesConfirmationMessage(request), {
+      ...options,
+      release: request.beta_identity.replace(/-beta\.\d+$/, ""),
+    })
+    dispatch("production-release-packages.yml", request)
     return
   }
 

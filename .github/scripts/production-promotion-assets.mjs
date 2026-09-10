@@ -16,7 +16,27 @@ const SHA256_PATTERN = /^[0-9a-f]{64}$/
 
 function gh(args, options = {}) {
   const stdin = options.input === undefined ? "ignore" : "pipe"
-  return execFileSync("gh", args, {stdio: [stdin, "pipe", "inherit"], encoding: "utf8", ...options})
+  return execFileSync("gh", args, {
+    stdio: [stdin, "pipe", "inherit"],
+    encoding: "utf8",
+    maxBuffer: 64 * 1024 * 1024,
+    ...options,
+  })
+}
+
+// The releases endpoint inlines every asset of every release; with hundreds of
+// coordinated build assets per family that exceeds Node's default 1 MiB
+// subprocess buffer. Keep only the fields the promotion logic reads.
+export const RELEASE_LIST_FIELDS = "{id, tag_name, name, body, draft, prerelease, target_commitish}"
+export const ASSET_LIST_FIELDS = "{id, name, url, size}"
+
+// gh cannot combine --slurp with --jq, so paginated listings are streamed as
+// one JSON object per line and reassembled here.
+export function parseJsonLines(output) {
+  return output
+    .split("\n")
+    .filter((line) => line.trim() !== "")
+    .map((line) => JSON.parse(line))
 }
 
 function parseArgs(args) {
@@ -30,15 +50,20 @@ function parseArgs(args) {
   return values
 }
 
-function output(values, githubOutput) {
+export function writeOutputs(values, githubOutput) {
   for (const [key, value] of Object.entries(values)) console.log(`${key}=${value}`)
   if (githubOutput) {
     const lines = Object.entries(values)
       .map(([key, value]) => `${key}=${value}`)
       .join("\n")
+    // The output file may sit in a directory nothing else has created yet, for
+    // example when download-latest-attempt finds no promotion at all.
+    mkdirSync(path.dirname(path.resolve(githubOutput)), {recursive: true})
     appendFileSync(path.resolve(githubOutput), `${lines}\n`)
   }
 }
+
+const output = writeOutputs
 
 export function promotionContainerTag(releaseIdentity, attempt) {
   if (!VERSION_PATTERN.test(releaseIdentity || "")) throw new Error("release identity must be X.Y.Z")
@@ -168,6 +193,14 @@ export function planPromotionContainerAllocation(
   return {action: "create", attempt: containers.length === 0 ? 1 : containers.at(-1).attempt + 1}
 }
 
+// The newest promotion attempt for a release identity, or null when none was
+// ever allocated. Stable package publication reads it to refuse publishing an
+// identity that a live promotion froze from a different beta.
+export function latestPromotionContainer(releases, releaseIdentity) {
+  const matches = matchingPromotionContainers(releases, releaseIdentity)
+  return matches.length === 0 ? null : matches.at(-1)
+}
+
 export function stateAssets(assets, releaseIdentity, attempt) {
   const pattern = new RegExp(
     `^production-promotion-${releaseIdentity.replaceAll(".", "\\.")}-attempt-${attempt}-(\\d{2,})-([a-z-]+)\\.json$`,
@@ -206,13 +239,27 @@ export function validateStateRecordChain(entries, releaseIdentity, attempt) {
 }
 
 function listReleases(repository) {
-  return JSON.parse(gh(["api", "--paginate", "--slurp", `repos/${repository}/releases?per_page=100`])).flat()
+  return parseJsonLines(
+    gh([
+      "api",
+      "--paginate",
+      `repos/${repository}/releases?per_page=100`,
+      "--jq",
+      `.[] | ${RELEASE_LIST_FIELDS} | tojson`,
+    ]),
+  )
 }
 
 function listAssets(repository, releaseId) {
-  return JSON.parse(
-    gh(["api", "--paginate", "--slurp", `repos/${repository}/releases/${releaseId}/assets?per_page=100`]),
-  ).flat()
+  return parseJsonLines(
+    gh([
+      "api",
+      "--paginate",
+      `repos/${repository}/releases/${releaseId}/assets?per_page=100`,
+      "--jq",
+      `.[] | ${ASSET_LIST_FIELDS} | tojson`,
+    ]),
+  )
 }
 
 function resolveContainer(repository, releaseIdentity, attempt) {
@@ -280,9 +327,52 @@ function downloadLatest({repository, releaseIdentity, attempt, outputFile}) {
   return {release, latest, record}
 }
 
+function downloadLatestAttempt({repository, releaseIdentity, outputFile}) {
+  const releases = listReleases(repository)
+  const latest = latestPromotionContainer(releases, releaseIdentity)
+  if (!latest) return null
+  const release = requirePromotionContainer(releases, releaseIdentity, latest.attempt)
+  const loaded = loadPromotionState({repository, releaseIdentity, attempt: latest.attempt, release})
+  // An allocated container already reserves a frozen selection in its body;
+  // treating it as absent would skip the conflicting-beta guard.
+  if (!loaded) {
+    throw new Error(
+      `Promotion ${releaseIdentity} attempt ${latest.attempt} was allocated but has no state record; rerun or abort it first`,
+    )
+  }
+  mkdirSync(path.dirname(outputFile), {recursive: true})
+  writeFileSync(outputFile, loaded.latest.bytes)
+  return {attempt: latest.attempt, ...loaded}
+}
+
 function main() {
   const command = process.argv[2]
   const args = parseArgs(process.argv.slice(3))
+  if (command === "download-latest-attempt") {
+    const result = downloadLatestAttempt({
+      repository: args.repository,
+      releaseIdentity: args.release,
+      outputFile: path.resolve(args.output),
+    })
+    if (!result) {
+      output({found: false}, args["github-output"])
+      return
+    }
+    output(
+      {
+        found: true,
+        attempt: result.attempt,
+        release_id: result.release.id,
+        tag: result.release.tag_name,
+        asset_id: result.latest.asset.id,
+        asset_name: result.latest.asset.name,
+        state: result.record.state,
+        sequence: result.record.sequence,
+      },
+      args["github-output"],
+    )
+    return
+  }
   if (command === "selection-digest") {
     const readJson = (name) => JSON.parse(readFileSync(path.resolve(args[name]), "utf8"))
     const fileSha256 = (name) =>

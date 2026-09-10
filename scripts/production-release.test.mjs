@@ -4,11 +4,13 @@ import test from "node:test"
 import {
   advanceConfirmationMessage,
   branchPromotionState,
+  packagesConfirmationMessage,
   parseCliArgs,
   releaseBranchSources,
   requireCommandState,
   statusSummary,
   validateAdvanceOptions,
+  validatePackagesOptions,
 } from "./production-release.mjs"
 
 const baseRecord = {
@@ -155,4 +157,25 @@ test("prevents commands from skipping promotion states", () => {
   assert.throws(() => requireCommandState("release", baseRecord), /requires stores-approved/)
   assert.equal(requireCommandState("attest", labReadyRecord, {check: "staging-mobile-n-compatibility"}).kind, "attest")
   assert.equal(requireCommandState("advance", {...baseRecord, state: "finalizing"}).command, "advance")
+})
+
+test("dispatches stable package phases from the promoted beta without a promotion state", () => {
+  assert.deepEqual(validatePackagesOptions({beta: "3.1.0-beta.192", phase: "publish"}), {
+    beta_identity: "3.1.0-beta.192",
+    phase: "publish",
+  })
+  assert.deepEqual(validatePackagesOptions({beta: "3.1.0-beta.192", phase: "release"}).phase, "release")
+  assert.throws(() => validatePackagesOptions({beta: "3.1.0", phase: "publish"}), /--beta X\.Y\.Z-beta\.N/)
+  assert.throws(
+    () => validatePackagesOptions({beta: "3.1.0-beta.192", phase: "latest"}),
+    /--phase publish or --phase release/,
+  )
+  assert.match(
+    packagesConfirmationMessage({beta_identity: "3.1.0-beta.192", phase: "publish"}),
+    /candidate npm dist-tag/,
+  )
+  assert.match(
+    packagesConfirmationMessage({beta_identity: "3.1.0-beta.192", phase: "release"}),
+    /moves npm latest.*3\.1\.0/,
+  )
 })

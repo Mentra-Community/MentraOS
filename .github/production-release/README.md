@@ -65,6 +65,8 @@ Configure these GitHub environments:
 | `production-mobile-candidates` | Production-signed candidate uploads | Required reviewer; no public release       |
 | `production-store-submission`  | App review submission               | Required reviewer                          |
 | `production-store-release`     | Public release and rollout evidence | Required reviewer different from initiator |
+| `production-packages`          | Stage plain package versions        | Required reviewer                          |
+| `production-packages-release`  | npm latest, Maven Central, SwiftPM  | Required reviewer different from initiator |
 
 Required secrets are the existing Porter, App Store Connect, Google Play,
 Android upload-signing, Apple Match, Doppler, Mapbox, and Sentry credentials
@@ -113,6 +115,7 @@ git pull --ff-only origin main
 `status` is the source of truth for the current state and next action. Use
 `--json` for machine-readable output. Use `--attempt N` when inspecting an older
 attempt. Use `status --refresh` to dispatch the read-only store status workflow.
+Stable package publication is not part of `next`; see "Stable packages" below.
 
 Mutating commands require typing the release identity, or `--yes` in an already
 reviewed non-interactive procedure. The CLI never reads production credentials
@@ -370,6 +373,73 @@ window.
 After completion, inspect the two canonical assets and perform the final public
 availability checks. Publish the already-staged GitHub release manually; no
 workflow in this system publishes it automatically.
+
+## Stable packages - independent of the mobile path
+
+The plain `X.Y.Z` package versions (npm `latest`, the stable Maven Central
+coordinates, and the SwiftPM tag) are published by
+`production-release-packages.yml`. This is a separate step from the Cloud
+deployment and the Mentra App promotion. It is keyed on the promoted beta, not
+on a promotion state, so it can run at any point after `promote` has merged the
+beta source into `main`: before the promotion is prepared, while store review
+is pending, or after rollout. No mobile phase waits on it and it never
+transitions the promotion state machine.
+
+Both phases build from the exact `sourceCommit` recorded in the selected
+beta's `release-plan.json`, verified to be contained in `main`, and reuse the
+beta's frozen OTA manifest pin. The release identity is the beta's base
+version (`3.1.0-beta.192` publishes `3.1.0`).
+
+Phase 1 stages everything without moving any default pointer:
+
+```bash
+./scripts/production-release.mjs packages --beta X.Y.Z-beta.N --phase publish
+```
+
+After `production-packages` approval it runs the same reusable npm and native
+SDK jobs as the coordinated beta on the production channel:
+
+- npm publishes every family member at `X.Y.Z` under the dist-tag
+  `candidate-X.Y.Z`; `latest` is untouched. Publication uses provenance, so if
+  npm trusted publishing is scoped per workflow file, register
+  `production-release-packages.yml` for each package or keep `NPM_TOKEN` set.
+- Maven Central receives a `USER_MANAGED` Sonatype deployment. The phase only
+  succeeds once Sonatype reports it validated; nothing is public until phase 2.
+- The SwiftPM export is committed and pushed to the mirror branch
+  `release/X.Y.Z` of `mentra-bluetooth-sdk-ios`; no tag is created.
+
+Phase 2 makes them public after `production-packages-release` approval:
+
+```bash
+./scripts/production-release.mjs packages --beta X.Y.Z-beta.N --phase release
+```
+
+It first checks all three targets without changing anything: every npm
+member is published and its `latest` is not already newer, the Sonatype
+deployment is validated, and the staged SwiftPM commit is the one recorded in
+the archived export. Only then does it move npm `latest` to `X.Y.Z` for every
+member and retire the candidate dist-tag, request the Sonatype publication and
+wait for `PUBLISHED`, and push the SwiftPM tag `X.Y.Z`. Moving a dist-tag
+requires the `NPM_TOKEN` automation secret; trusted-publisher OIDC only covers
+`npm publish`.
+
+Both phases are idempotent: a rerun reuses versions, deployments, and mirror
+commits that already exist and refuses anything that exists with different
+bytes. Evidence is stored as content-addressed assets in the stable release
+`mentra-vX.Y.Z` (the same draft the rollout finalization stages the canonical
+records into; it is also accepted after that release has been published by
+hand). The promotion chain is never written by these phases, so they cannot
+race a Cloud or mobile transition. It is read once: a live attempt for `X.Y.Z`
+that froze a different beta or source is a hard stop, and an allocated attempt
+without a state record must be resumed or aborted first.
+
+Stop conditions specific to packages:
+
+- Once phase 1 has published `X.Y.Z` on npm, that identity is spent. An aborted
+  promotion cannot be replaced by a different source under the same version;
+  bump the family base version on `dev` and cut a new beta.
+- Do not run phase 2 until the Cloud side of the release is at least deployed
+  or you have explicitly decided that the stable packages may lead it.
 
 ## Abort, retry, and incident handling
 

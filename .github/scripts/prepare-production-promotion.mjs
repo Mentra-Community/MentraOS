@@ -50,19 +50,10 @@ function validateCurrentMentraApp(previousManifest, inventory) {
   }
 }
 
-export function prepareProductionPromotion({
-  family,
-  betaPlan,
-  betaManifest,
-  betaManifestUrl,
-  betaManifestSha256,
-  previousManifest,
-  mentraInventory,
-  attempt,
-  actor,
-  createdAt,
-  provenanceUrl,
-}) {
+// Shared by promotion preparation and stable package publication: the selected
+// beta must be complete, internally consistent, pinned to an immutable OTA
+// manifest, and belong to the checked-out release family.
+export function validateSelectedBeta({family, betaPlan, betaManifest}) {
   if (
     betaPlan.channel !== "beta" ||
     betaManifest.channel !== "beta" ||
@@ -83,6 +74,23 @@ export function prepareProductionPromotion({
   ) {
     throw new Error("Selected beta has no immutable OTA manifest pin")
   }
+  return betaPlan
+}
+
+export function prepareProductionPromotion({
+  family,
+  betaPlan,
+  betaManifest,
+  betaManifestUrl,
+  betaManifestSha256,
+  previousManifest,
+  mentraInventory,
+  attempt,
+  actor,
+  createdAt,
+  provenanceUrl,
+}) {
+  validateSelectedBeta({family, betaPlan, betaManifest})
   validateInventory(mentraInventory, {bundleId: "com.mentra.mentra", allowNoCurrent: false})
   const currentMentraApp = validateCurrentMentraApp(previousManifest, mentraInventory)
   const lastMentraBuildNumber = Math.max(
