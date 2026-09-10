@@ -4,6 +4,21 @@ import org.assertj.core.api.Assertions.assertThat
 import org.junit.Test
 
 class ClassicAudioConnectionTrackerTest {
+    @Test
+    fun `available connected profile is sufficient even if the other query fails or never answers`() {
+        assertThat(readyClassicAudioSnapshot(mapOf(ClassicAudioProfile.A2DP to true)))
+            .containsExactly(ClassicAudioProfile.A2DP)
+        assertThat(readyClassicAudioSnapshot(mapOf(ClassicAudioProfile.HEADSET to true)))
+            .containsExactly(ClassicAudioProfile.HEADSET)
+    }
+
+    @Test
+    fun `missing profile never fabricates a disconnect during a profile switch`() {
+        assertThat(readyClassicAudioSnapshot(mapOf(ClassicAudioProfile.A2DP to false))).isNull()
+        assertThat(readyClassicAudioSnapshot(mapOf(ClassicAudioProfile.A2DP to false,
+            ClassicAudioProfile.HEADSET to false))).isEmpty()
+    }
+
     private val address = "AA:BB:CC:DD:EE:FF"
 
     private fun snapshot(tracker: ClassicAudioConnectionTracker, vararg profiles: ClassicAudioProfile) {

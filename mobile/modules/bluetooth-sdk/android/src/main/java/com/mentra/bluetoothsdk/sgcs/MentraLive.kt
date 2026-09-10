@@ -7245,34 +7245,42 @@ class MentraLive : SGCManager() {
             BluetoothProfile.HEADSET to ClassicAudioProfile.HEADSET,
         )) {
             try {
-                adapter.getProfileProxy(ctx, object : BluetoothProfile.ServiceListener {
+                val requested = adapter.getProfileProxy(ctx, object : BluetoothProfile.ServiceListener {
                     override fun onServiceConnected(profile: Int, proxy: BluetoothProfile) {
+                        // Close before dispatch: destroy() may discard queued handler work.
+                        val connectedState = try {
+                            if (profile != profileId) null
+                            else proxy.getConnectionState(device) == BluetoothProfile.STATE_CONNECTED
+                        } catch (e: Exception) {
+                            Bridge.log("LIVE: Classic: snapshot unavailable: " + e.message)
+                            null
+                        } finally {
+                            try { adapter.closeProfileProxy(profileId, proxy) }
+                            catch (_: Exception) {}
+                        }
+                        if (connectedState == null) return
                         handler.post {
-                            try {
                                 if (isKilled || profile != profileId) return@post
-                                states[audioProfile] =
-                                    proxy.getConnectionState(device) == BluetoothProfile.STATE_CONNECTED
-                                if (states.size != 2) return@post
-                                val connected = states.filterValues { it }.keys
+                                states[audioProfile] = connectedState
+                                val connected = readyClassicAudioSnapshot(states) ?: return@post
                                 classicAudioConnectionTracker.applySnapshot(
                                         ticket, device.address, connected) {
                                     if (ClassicAudioProfile.A2DP in connected) {
                                         markAudioConnected(device)
-                                    } else if (audioConnected) {
+                                    } else if (states[ClassicAudioProfile.A2DP] == false && audioConnected) {
                                         audioConnected = false
                                         Bridge.sendAudioDisconnected()
                                     }
                                 }
-                            } catch (e: Exception) {
-                                Bridge.log("LIVE: Classic: snapshot unavailable: " + e.message)
-                            } finally {
-                                try { adapter.closeProfileProxy(profileId, proxy) }
-                                catch (_: Exception) {}
-                            }
                         }
                     }
                     override fun onServiceDisconnected(profile: Int) {}
                 }, profileId)
+                if (!requested) {
+                    // Unknown is not disconnected. A successful other-profile read can still
+                    // publish connected without waiting for this unavailable service.
+                    Bridge.log("LIVE: Classic: profile service unavailable: $profileId")
+                }
             } catch (e: Exception) {
                 Bridge.log("LIVE: Classic: profile query unavailable: " + e.message)
             }
