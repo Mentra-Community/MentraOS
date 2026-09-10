@@ -3,7 +3,7 @@ import {MentraLiveOtaFlow, type MentraLiveOtaFlowPage} from "@mentra/engine/ota"
 import {useCallback, useEffect} from "react"
 
 import {useConnectionOverlayConfig} from "@/contexts/ConnectionOverlayContext"
-import {focusEffectPreventBack} from "@/contexts/NavigationHistoryContext"
+import {focusEffectLockScreen} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n/translate"
 import {useNavigationStore} from "@/stores/navigation"
@@ -18,7 +18,11 @@ export function MentraLiveOtaFlowHost({initialPage = "check"}: {initialPage?: Me
   const [onboardingOsCompleted] = useSetting(SETTINGS.onboarding_os_completed.key)
   const [superMode] = useSetting(SETTINGS.super_mode.key)
 
-  focusEffectPreventBack()
+  // Every page of this flow — download, install, "Restarting Mentra Live" —
+  // is one-way and renders no back affordance. Leaving mid-update strands the
+  // glasses half-installed with no route back to the progress UI, so lock the
+  // screen instead of merely asking the navigator not to go back.
+  focusEffectLockScreen()
   useEffect(() => clearConfig, [clearConfig])
 
   const handleFinished = useCallback(() => {

@@ -367,6 +367,8 @@ class BluetoothSdkModule : Module() {
             "audio_disconnected",
             "save_setting",
             "phone_notification",
+            "native_notification_status",
+            "native_notification_delivery",
             "phone_notification_dismissed",
             "ws_text",
             "ws_bin",
@@ -541,6 +543,12 @@ class BluetoothSdkModule : Module() {
             sdk?.startScan(DeviceModel.fromDeviceType(model))
         }
 
+        SdkAsyncFunction("getScanDiagnostic") { model: String ->
+            sdk?.connectedDeviceScanDiagnostic(DeviceModel.fromDeviceType(model))?.let {
+                mapOf("code" to it.code, "message" to it.message)
+            }
+        }
+
         SdkAsyncFunction("stopScan") { -> sdk?.stopScan() }
 
         SdkAsyncFunction("cancelConnectionAttempt") { -> sdk?.cancelConnectionAttempt() }
@@ -565,6 +573,19 @@ class BluetoothSdkModule : Module() {
 
         SdkAsyncFunction("sendIncidentId") { incidentId: String, apiBaseUrl: String? ->
             sdk?.sendIncidentId(incidentId, apiBaseUrl)
+        }
+
+        // MARK: - Native Notification Centre
+
+        // Public controls use the SDK facade; phone payload delivery uses DeviceManager.
+        SdkAsyncFunction("configureNativeNotifications") { config: Map<String, Any> ->
+            requireSdk().configureNativeNotifications(NativeNotificationConfig.fromMap(config))
+        }
+        SdkAsyncFunction("getNativeNotificationStatus") { ->
+            requireSdk().getNativeNotificationStatus().toMap()
+        }
+        AsyncFunction("sendPhoneNotification") { notification: Map<String, Any> ->
+            deviceManager?.sendPhoneNotification(notification)
         }
 
         // MARK: - WiFi Commands

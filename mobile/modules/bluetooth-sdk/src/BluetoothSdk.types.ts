@@ -952,6 +952,8 @@ export type BluetoothSdkModuleEvents = {
   speaking_status: (event: SpeakingStatusEvent) => void
   battery_status: (event: BatteryStatusEvent) => void
   local_transcription: (event: LocalTranscriptionEvent) => void
+  native_notification_status: (event: NativeNotificationStatus) => void
+  native_notification_delivery: (event: NativeNotificationDelivery) => void
   phone_notification: (event: PhoneNotificationEvent) => void
   phone_notification_dismissed: (event: PhoneNotificationDismissedEvent) => void
   wifi_status_change: (event: WifiStatusChangeEvent) => void
@@ -1032,6 +1034,54 @@ export interface PhoneNotificationDismissedEvent {
   timestamp: number
 }
 
+/**
+ * Outbound payload for `sendPhoneNotification` — a notification pushed INTO the glasses' own
+ * notification centre. The inverse of {@link PhoneNotificationEvent}, which reports
+ * notifications the glasses relayed TO the phone (iOS/ANCS). Drivers map these keys onto
+ * whatever their firmware expects.
+ */
+export interface NativeNotificationConfig {
+  enabled: boolean
+  autoDisplay: boolean
+  durationSeconds: number
+  doNotDisturb: boolean
+  /** Android package names. iOS rejects nonempty lists; its ANCS filter is firmware-owned. */
+  blockedApps: string[]
+}
+
+export interface NativeNotificationStatus {
+  supported: boolean
+  source: "phone" | "ancs" | "unsupported"
+  authorization: "system" | "authorized" | "not_authorized" | "unknown"
+  /** `submitted` is not a firmware-confirmed acknowledgement. */
+  state: "unavailable" | "disabled" | "configuring" | "submitted" | "needs_reconnect" | "failed"
+  config: NativeNotificationConfig
+  error: string
+}
+
+export interface NativeNotificationDelivery {
+  notificationId: string
+  status: "delivered" | "failed" | "cancelled" | "dropped"
+  reason: string
+}
+
+export interface NativePhoneNotification {
+  /** Stable id from the phone's notification listener; parsed to an int where firmware needs one. */
+  notificationId: string
+  /** Reverse-DNS package id of the originating app. */
+  packageName: string
+  /** Human app name (e.g. "Messages"). */
+  appName: string
+  title: string
+  /** Android `android.subText`. Empty when the listener didn't capture one. */
+  subtitle: string
+  body: string
+  /** Unix ms post time. */
+  timestampMs: number
+  /** Posted or updated. Removal is not supported by the verified protocol. */
+  action: 0
+}
+
 export type PublicGlassesStatus = Omit<
   GlassesStatus,
   "otaUpdateAvailable" | "otaProgress" | "otaInProgress" | "otaVersionUrl"
@@ -1052,6 +1102,8 @@ export type PublicBluetoothStatus = Pick<
 >
 
 export type BluetoothSdkEventMap = {
+  native_notification_status: NativeNotificationStatus
+  native_notification_delivery: NativeNotificationDelivery
   log: LogEvent
   device_discovered: Device
   default_device_changed: {device?: Device}
@@ -1115,6 +1167,8 @@ export type BluetoothSdkSubscription = {
 export type BluetoothSdkEvent = BluetoothSdkEventMap[BluetoothSdkEventName]
 
 export interface BluetoothSdkPublicModule {
+  configureNativeNotifications(config: NativeNotificationConfig): Promise<void>
+  getNativeNotificationStatus(): Promise<NativeNotificationStatus>
   addListener<EventName extends BluetoothSdkEventName>(
     eventName: EventName,
     listener: BluetoothSdkEventListener<EventName>,
@@ -1463,6 +1517,12 @@ export interface ConnectOptions {
 
 export type ScanResultsCallback = (devices: Device[]) => void
 
+/** Advisory for an empty scan. System connection state does not identify an owning app. */
+export interface ScanDiagnostic {
+  code: string
+  message: string
+}
+
 export interface ScanOptions {
   model: DeviceModel
   /** Defaults to 15000. */
@@ -1471,6 +1531,8 @@ export interface ScanOptions {
   timeout?: number
   /** Called every time the discovered device list changes during the scan. */
   onResults?: ScanResultsCallback
+  /** Optional non-fatal hint before an empty scan resolves, on Android and iOS. */
+  onDiagnostic?: (diagnostic: ScanDiagnostic) => void
 }
 
 export type ScanModelOptions = Omit<ScanOptions, "model">

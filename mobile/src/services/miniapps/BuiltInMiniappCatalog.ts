@@ -250,7 +250,7 @@ class BuiltInMiniappCatalog {
       },
     ]
 
-    if (Platform.OS !== "ios") {
+    {
       apps.push({
         packageName: notifyPackageName,
         name: translate("miniApps:notify"),
@@ -265,7 +265,7 @@ class BuiltInMiniappCatalog {
         hidden: false,
         // The home-screen launcher uses manifest permissions to request the
         // Android NotificationListenerService grant before opening this UI.
-        permissions: [{type: "READ_NOTIFICATIONS", required: true}],
+        permissions: Platform.OS === "android" ? [{type: "READ_NOTIFICATIONS", required: true}] : [],
         offlineRoute: "/miniapps/settings/notifications",
         running: false,
         loading: false,

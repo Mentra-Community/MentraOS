@@ -122,6 +122,8 @@ export interface PowerCapabilities {
  * Complete information about what hardware a device has
  */
 export interface Capabilities {
+  /** Firmware-owned notification history and popups; content relay is separate. */
+  hasNativeNotifications?: boolean;
   modelName: string;
 
   // Camera capabilities

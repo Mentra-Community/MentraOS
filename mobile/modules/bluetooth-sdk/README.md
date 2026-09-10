@@ -125,6 +125,7 @@ const devices = await BluetoothSdk.scan(DeviceModels.MentraLive, {
   onResults: (nextDevices) => {
     console.log('Nearby glasses:', nextDevices)
   },
+  onDiagnostic: (hint) => showScanHint(hint.message),
 })
 
 const device = await chooseDevice(devices)
@@ -136,6 +137,12 @@ await BluetoothSdk.connect(device)
 const versionInfo = await BluetoothSdk.requestVersionInfo()
 console.log(versionInfo.buildNumber)
 ```
+
+`onDiagnostic` optionally reports a matching phone connection after an empty scan
+on Android and iOS. It is advisory, does not identify another app, and leaves
+normal empty completion unchanged. React hooks expose it as `scan.diagnostic`
+on `useMentraBluetooth()`, or `diagnostic` on `useBluetoothScan()`. Clear the hint
+when retrying or connecting.
 
 In multi-device environments, present an explicit picker instead of
 auto-connecting to the first nearby device.
@@ -287,6 +294,28 @@ await saveDeviceToYourAppStorage(discoveredDevice)
 await BluetoothSdk.clearDefaultDevice()
 await saveDeviceToYourAppStorage(null)
 ```
+
+## Native notification controls
+
+G2 exposes firmware-owned notification history and popups. `getNativeNotificationStatus()` reports support, source (`phone` on Android or `ancs` on iOS), authorization, the desired controls, and submission/failure state. `submitted` means the controls were queued for the glasses, not that firmware acknowledged them. Unsupported drivers reject configuration instead of silently succeeding.
+
+```ts
+await BluetoothSdk.configureNativeNotifications({
+  enabled: true,
+  autoDisplay: true,       // false keeps history without automatic popups
+  durationSeconds: 5,     // 1–30
+  doNotDisturb: false,
+  blockedApps: [],        // Android package names; iOS requires an empty list
+})
+const status = await BluetoothSdk.getNativeNotificationStatus()
+const subscription = BluetoothSdk.addListener('native_notification_status', handleStatus)
+```
+
+The native SDKs expose the same configuration/status methods and `NativeNotificationConfig` type. Engine hosts should use the shared `engine.phoneNotifications` presentation policy and settings rather than competing with it through direct SDK configuration.
+
+Android content uploads use the existing phone listener and a bounded G2 file-transfer queue. `native_notification_delivery` reports delivered, failed, cancelled, or dropped notifications by id without their content. Delivered means all three file phases acknowledged success. Disable, settings changes, and disconnect invalidate pending work. An interrupted or timed-out upload requires reconnect before another upload because the verified ACK format has no transaction id.
+
+iOS G2 receives notifications directly through ANCS. Authorization is reported from the connected accessory and controls are reapplied after reconnect or authorization changes. No iOS content upload or full title/body relay is exposed. iOS keeps the firmware's existing app filter and rejects a nonempty `blockedApps` list. Phone dismissals are not yet synchronized to G2 history; the verified protocol does not establish a removal command.
 
 ## Common Commands
 

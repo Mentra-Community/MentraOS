@@ -3,6 +3,7 @@ package com.mentra.bluetoothsdk
 import android.app.Activity
 import android.app.Application
 import android.bluetooth.BluetoothManager
+import android.bluetooth.BluetoothProfile
 import android.content.Context
 import android.os.Bundle
 import android.os.Handler
@@ -347,6 +348,16 @@ class MentraBluetoothSdk private constructor(
             timeoutMs = timeoutMs,
         )
 
+    /**
+     * Scans for glasses of [model], reporting through [callback].
+     *
+     * A completed or cancelled scan ends with [ScanCallback.onComplete].
+     * [ScanCallback.onError] remains reserved for failure to start scanning.
+     * Callbacks implementing [ScanDiagnosticCallback] may receive a best-effort
+     * hint before an empty completed scan. Android reports phone-wide connection
+     * state, so this hint cannot identify an owning app or prove why scanning
+     * found no devices. React Native's separate scan implementation is unaffected.
+     */
     @JvmOverloads
     fun scan(
         model: DeviceModel,
@@ -378,7 +389,9 @@ class MentraBluetoothSdk private constructor(
             mainHandler.removeCallbacks(timeoutRunnable)
             session.markStopped()
             stopScan(reason)
-            callback.onComplete(latestResults.toList())
+            callback.completeScan(reason, latestResults.toList()) {
+                connectedDeviceScanDiagnostic(model)
+            }
         }
 
         timeoutRunnable = Runnable { finish(ScanStopReason.COMPLETED) }
@@ -492,6 +505,15 @@ class MentraBluetoothSdk private constructor(
     internal fun displayEvent(request: DisplayEventRequest) {
         deviceManager.displayEvent(request.toMap())
     }
+
+    /** Configure native notification presentation on a supported connected driver. */
+    fun configureNativeNotifications(config: NativeNotificationConfig) {
+        val driver = deviceManager.sgc ?: throw IllegalStateException("Glasses are not connected")
+        driver.configureNativeNotifications(config)
+    }
+
+    fun getNativeNotificationStatus(): NativeNotificationStatus =
+        deviceManager.sgc?.getNativeNotificationStatus() ?: NativeNotificationStatus()
 
     fun clearDisplay() {
         deviceManager.clearDisplay()
@@ -1504,6 +1526,49 @@ class MentraBluetoothSdk private constructor(
             address = address,
             projectName = projectName,
         )
+    }
+
+    /**
+     * A model-compatible device already connected to this phone can explain an
+     * empty scan, but Android does not expose app ownership or exclusive use.
+     * Skip known SDK connections/attempts and unavailable Bluetooth permissions.
+     */
+    internal fun connectedDeviceScanDiagnostic(model: DeviceModel): ScanDiagnostic? {
+        if (model == DeviceModel.SIMULATED) return null
+        val glassesStatus = getRawGlassesStatus()
+        if (glassesStatus.connected ||
+            glassesStatus.connectionState == GlassesConnectionState.CONNECTED ||
+            glassesStatus.connectionState == GlassesConnectionState.CONNECTING ||
+            glassesStatus.connectionState == GlassesConnectionState.BONDING
+        ) {
+            return null
+        }
+        return try {
+            val bluetoothManager =
+                appContext.getSystemService(Context.BLUETOOTH_SERVICE) as? BluetoothManager ?: return null
+            val adapter = bluetoothManager.adapter ?: return null
+            if (!adapter.isEnabled) return null
+            val defaultDevice = currentDefaultDevice()
+            val device = bluetoothManager.getConnectedDevices(BluetoothProfile.GATT)
+                .firstOrNull { device ->
+                    ConnectedDeviceMatcher.matches(
+                        model = model,
+                        defaultDevice = defaultDevice,
+                        candidateName = device.name,
+                        candidateAddress = device.address,
+                    )
+                } ?: return null
+            val name = device.name?.takeIf { it.isNotBlank() } ?: device.address
+            ScanDiagnostic(
+                code = "device_connected_on_phone",
+                message =
+                    "Scan found no glasses, but a matching device \"$name\" is already connected to this phone. " +
+                        "If another app is using it, disconnect it there and scan again.",
+            )
+        } catch (error: SecurityException) {
+            // BLUETOOTH_CONNECT can be absent or revoked while scanning.
+            null
+        }
     }
 
     private fun requireBluetoothReady(operation: String) {

@@ -68,6 +68,7 @@ let installSnapshot: OtaInstallSnapshot = {
   versionChangePhase: null,
   hotspotPhase: "downloading" as const,
   hotspotArtifactPercent: 45,
+  hotspotArtifact: {kind: "mtk", index: 1, totalCount: 3, artifactPercent: 45, bytesWritten: 45, contentLength: 100},
   transport: "hotspot" as const,
 }
 
@@ -208,8 +209,31 @@ describe("useMentraLiveOta", () => {
       versionChangePhase: null,
       hotspotPhase: "downloading",
       hotspotArtifactPercent: 45,
+      hotspotArtifact: {
+        kind: "mtk",
+        index: 1,
+        totalCount: 3,
+        artifactPercent: 45,
+        bytesWritten: 45,
+        contentLength: 100,
+      },
       transport: "hotspot",
     }
+  })
+
+  test("reports no artifact while runtime initialization is pending", async () => {
+    fakeOta.initialize.mockImplementationOnce(() => new Promise<void>(() => {}))
+    function InitializingProbe() {
+      latestController = useMentraLiveOta({initializeRuntime: true})
+      return null
+    }
+    let renderer: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(<InitializingProbe />)
+    })
+    expect(latestController.state.screen).toBe("initializing")
+    expect(latestController.state.hotspotArtifact).toBeNull()
+    await act(async () => renderer!.unmount())
   })
 
   test("projects hotspot staging and unified install progress without exposing stores", async () => {
@@ -221,6 +245,7 @@ describe("useMentraLiveOta", () => {
       hotspotPhase: "downloading",
       hotspotArtifactPercent: 45,
     })
+    expect(latestController.state.hotspotArtifact).toEqual({kind: "mtk", index: 1, totalCount: 3})
 
     installSnapshot = {
       ...installSnapshot,
@@ -292,6 +317,7 @@ describe("useMentraLiveOta", () => {
 
   test("treats an active pass completion as a continuation check", async () => {
     const renderer = await renderProbe("check")
+    expect(latestController.state.hotspotArtifact).toBeNull()
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 1_150))
     })

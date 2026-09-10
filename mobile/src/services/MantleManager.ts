@@ -1,3 +1,4 @@
+import {Platform} from "react-native"
 import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
 import CrustModule from "@mentra/crust"
 import {Asset} from "expo-asset"
@@ -687,12 +688,9 @@ class MantleManager {
   private async setupPeriodicTasks() {
     this.sendCalendarEvents()
     // Calendar sync every hour
-    this.calendarSyncTimer = BgTimer.setInterval(
-      () => {
-        this.sendCalendarEvents()
-      },
-      60 * 60 * 1000,
-    ) // 1 hour
+    this.calendarSyncTimer = BgTimer.setInterval(() => {
+      this.sendCalendarEvents()
+    }, 60 * 60 * 1000) // 1 hour
 
     try {
       // only start location updates if we have the location permission (host UI gate);
@@ -747,6 +745,7 @@ class MantleManager {
       localDisplayManager.onCoreAppChange(coreApp?.packageName ?? null)
 
       const notifyIsRunning = apps.some((app) => app.packageName === notifyPackageName && app.running)
+      engine.phoneNotifications.setPresentationActive(notifyIsRunning)
       if (notifyWasRunning && !notifyIsRunning) {
         this.stopPhoneNotificationPresentation()
       }
@@ -755,6 +754,11 @@ class MantleManager {
     syncAppPresentationState()
     const unsubscribeAppPresentationState = useAppStatusStore.subscribe(syncAppPresentationState)
     this.subs.push({remove: unsubscribeAppPresentationState})
+    this.subs.push({
+      remove: engine.settings.onChanged(SETTINGS.native_notifications_enabled.key, () => {
+        this.stopPhoneNotificationPresentation()
+      }),
+    })
 
     // A remembered speaker-capable model survives disconnects, but its audio
     // route does not. Tear down queued and active Notify speech on the
@@ -875,10 +879,22 @@ class MantleManager {
 
         // Capture/forwarding is independent from presentation. Notify is the
         // user-controlled presentation surface: if it is not running, no card
-        // and no speech may interrupt the wearer. This also keeps presentation
-        // intentionally unavailable on iOS while Notify is omitted from the
-        // built-in catalog there.
+        // and no speech may interrupt the wearer on either platform.
         if (!this.isNotifyRunning()) return
+        // One presentation owner: firmware history/popups replace the Mentra card.
+        // Miniapp forwarding above stays independent. A failed native upload must
+        // not fall back to a second overlay whose delivery cannot be correlated.
+        if (engine.phoneNotifications.usesNativePresentation()) {
+          try {
+            await engine.phoneNotifications.presentNative(event)
+          } catch (error) {
+            console.warn("MANTLE: native notification delivery failed", error)
+          }
+          return
+        }
+        // iOS Notify currently supports firmware presentation on G2. Metadata-only
+        // relay must not be rendered as a pretend full-content notification.
+        if (Platform.OS === "ios" && !title && !content) return
 
         // Cloud V1 used to relay this event to the Notify miniapp, which then
         // painted the glasses. Notify is now an offline built-in, so render the

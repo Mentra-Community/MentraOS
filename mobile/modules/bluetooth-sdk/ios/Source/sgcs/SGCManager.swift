@@ -145,6 +145,14 @@ protocol SGCManager {
 
     func showNotificationsPanel() async
 
+    /// Push a phone notification into the glasses' own notification centre.
+    ///
+    /// Android/G2 only in practice — iOS glasses read notifications over ANCS. Declared for
+    /// parity so the shared TypeScript module type is callable on both platforms.
+    func sendPhoneNotification(_ notification: [String: Any]) throws
+    func configureNativeNotifications(_ config: NativeNotificationConfig) throws
+    func getNativeNotificationStatus() -> NativeNotificationStatus
+
     // MARK: - Calendar Events
 
     func sendCalendarEvents(_ events: [[String: Any]])
@@ -356,6 +364,20 @@ extension SGCManager {
     // MARK: - Notification Panel (default no-op — only G2 supports this)
 
     func showNotificationsPanel() async {}
+
+    // MARK: - Native notification centre (default no-op — Android/G2 only; iOS uses ANCS)
+
+    func sendPhoneNotification(_: [String: Any]) throws {
+        throw NativeNotificationError.unsupported
+    }
+
+    func configureNativeNotifications(_: NativeNotificationConfig) throws {
+        throw NativeNotificationError.unsupported
+    }
+
+    func getNativeNotificationStatus() -> NativeNotificationStatus {
+        .unavailable
+    }
 
     // MARK: - IMU (default no-op — only G2 streams accelerometer data)
 
