@@ -77,7 +77,7 @@ jobs:
           [[ "$(jq -r .name <<< "$release")" == "$(jq -er .artifactContainerName release-intent/release-plan.json)" ]]
           channel=$(jq -er .channel release-intent/release-plan.json)
           if [[ "$channel" == "production" ]]; then
-            [[ "$(jq -r .draft <<< "$release")" == "true" ]]
+            # Stable packages may follow the manual publication of mentra-vX.Y.Z.
             [[ "$(jq -r .prerelease <<< "$release")" == "false" ]]
           else
             [[ "$(jq -r .draft <<< "$release")" == "false" ]]
@@ -102,6 +102,18 @@ jobs:
         with:
           name: ${{ inputs.release_plan_artifact }}
           path: release-intent
+
+      # Registry tooling comes from the workflow revision, not from the frozen
+      # package source: a promoted beta may predate the tooling this workflow
+      # relies on (for example the USER_MANAGED upload). On dev and staging the
+      # two revisions are the same commit.
+      - name: Checkout registry tooling from the workflow revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: release-tooling
+          sparse-checkout: .github/scripts
+          sparse-checkout-cone-mode: false
 
       - name: Resolve exact Maven coordinates
         id: release
@@ -288,7 +300,7 @@ jobs:
               --arg lc3 "${{ steps.release.outputs.lc3_purl }}" \
               '.expectedPurls | sort == ([$sdk, $lc3] | sort)' \
               native-result/maven/sonatype-deployment.json >/dev/null
-            node .github/scripts/sonatype-central-deployment.mjs inspect \
+            node release-tooling/.github/scripts/sonatype-central-deployment.mjs inspect \
               --record native-result/maven/sonatype-deployment.json \
               --output native-result/maven/sonatype-inspection.json
             if [[ "$(jq -er .disposition native-result/maven/sonatype-inspection.json)" == "replace" ]]; then
@@ -347,12 +359,13 @@ jobs:
           PUBLISHING_TYPE: ${{ steps.release.outputs.publishing_type }}
         run: |
           set -euo pipefail
-          node .github/scripts/sonatype-central-deployment.mjs upload \
+          node release-tooling/.github/scripts/sonatype-central-deployment.mjs upload \
             --bundle native-result/maven/central-bundle.zip \
             --name "${{ steps.release.outputs.deployment_name }}" \
             --expected-purls "${{ steps.release.outputs.sdk_purl }},${{ steps.release.outputs.lc3_purl }}" \
             --publishing-type "$PUBLISHING_TYPE" \
             --output native-result/maven/sonatype-deployment.json
+          [[ "$(jq -er .publishingType native-result/maven/sonatype-deployment.json)" == "$PUBLISHING_TYPE" ]]
           encoded_name=$(jq -rn --arg value "$ASSET_NAME" '$value | @uri')
           persisted=false
           for attempt in {1..6}; do
@@ -378,6 +391,17 @@ jobs:
               "repos/${GITHUB_REPOSITORY}/releases/assets/$asset_id" > persisted-deployment.json
             cmp --silent native-result/maven/sonatype-deployment.json persisted-deployment.json
           fi
+
+      - name: Require the production deployment to be validated before staging succeeds
+        if: inputs.dry_run != true && steps.existing.outputs.exists != 'true' && steps.release.outputs.channel == 'production'
+        env:
+          MAVEN_CENTRAL_TOKEN_BASE64: ${{ secrets.MAVEN_CENTRAL_TOKEN_BASE64 }}
+        run: |
+          set -euo pipefail
+          [[ "$(jq -er .publishingType native-result/maven/sonatype-deployment.json)" == "USER_MANAGED" ]]
+          node release-tooling/.github/scripts/sonatype-central-deployment.mjs wait-validated \
+            --record native-result/maven/sonatype-deployment.json \
+            --output native-result/maven/sonatype-validation.json
 
       - name: Stage locally verified Maven artifacts
         run: |

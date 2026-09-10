@@ -138,3 +138,41 @@ test("refuses unpublished versions and does nothing in a dry run", () => {
   )
   assert.throws(() => promoteNpmLatest({plan, npmTag: undefined, view: fake.view}), /explicit candidate dist-tag/)
 })
+
+test("moves nothing when any member would be unpublished or downgraded", () => {
+  const members = npmMembersFromPlan(plan)
+  const ahead = registry(
+    Object.fromEntries(
+      members.map((name, index) => [
+        name,
+        index === members.length - 1
+          ? [["latest", "3.2.0"]]
+          : [
+              [candidateTag, version],
+              ["latest", "3.0.0"],
+            ],
+      ]),
+    ),
+  )
+  assert.throws(
+    () => promoteNpmLatest({plan, npmTag: candidateTag, view: ahead.view, exec: ahead.exec, log: () => {}}),
+    /run the publish phase first|refusing to move it back/,
+  )
+  assert.deepEqual(ahead.commands, [])
+
+  const missing = registry(Object.fromEntries(members.map((name) => [name, [[candidateTag, version]]])))
+  const last = members.at(-1)
+  assert.throws(
+    () =>
+      promoteNpmLatest({
+        plan,
+        npmTag: candidateTag,
+        view: (spec, field) =>
+          field === "dist.integrity" && spec.startsWith(`${last}@`) ? null : missing.view(spec, field),
+        exec: missing.exec,
+        log: () => {},
+      }),
+    /is not published on npm/,
+  )
+  assert.deepEqual(missing.commands, [])
+})

@@ -403,8 +403,8 @@ SDK jobs as the coordinated beta on the production channel:
   `candidate-X.Y.Z`; `latest` is untouched. Publication uses provenance, so if
   npm trusted publishing is scoped per workflow file, register
   `production-release-packages.yml` for each package or keep `NPM_TOKEN` set.
-- Maven Central receives a `USER_MANAGED` Sonatype deployment. It is validated
-  but nothing is public until phase 2.
+- Maven Central receives a `USER_MANAGED` Sonatype deployment. The phase only
+  succeeds once Sonatype reports it validated; nothing is public until phase 2.
 - The SwiftPM export is committed and pushed to the mirror branch
   `release/X.Y.Z` of `mentra-bluetooth-sdk-ios`; no tag is created.
 
@@ -414,23 +414,24 @@ Phase 2 makes them public after `production-packages-release` approval:
 ./scripts/production-release.mjs packages --beta X.Y.Z-beta.N --phase release
 ```
 
-It moves npm `latest` to `X.Y.Z` for every member (refusing if `latest`
-already points at a newer version), retires the candidate dist-tag, requests
-the Sonatype publication and waits for `PUBLISHED`, and pushes the SwiftPM tag
-`X.Y.Z` at the staged commit after verifying it matches the archived export.
-Moving a dist-tag requires the `NPM_TOKEN` automation secret; trusted-publisher
-OIDC only covers `npm publish`.
+It first checks all three targets without changing anything: every npm
+member is published and its `latest` is not already newer, the Sonatype
+deployment is validated, and the staged SwiftPM commit is the one recorded in
+the archived export. Only then does it move npm `latest` to `X.Y.Z` for every
+member and retire the candidate dist-tag, request the Sonatype publication and
+wait for `PUBLISHED`, and push the SwiftPM tag `X.Y.Z`. Moving a dist-tag
+requires the `NPM_TOKEN` automation secret; trusted-publisher OIDC only covers
+`npm publish`.
 
 Both phases are idempotent: a rerun reuses versions, deployments, and mirror
 commits that already exist and refuses anything that exists with different
-bytes. Evidence is stored as content-addressed assets in the stable draft
-release `mentra-vX.Y.Z` (the same draft the rollout finalization stages the
-canonical records into). When a live promotion attempt for `X.Y.Z` exists and
-selected the same beta, the evidence is also appended to its chain as an
-additive `production-packages-publication` or `production-packages-release`
-record without changing its state. A promotion at the `finalizing` checkpoint,
-or one that is completed or aborted, keeps the evidence in the stable draft
-only. A live attempt that froze a different beta or source is a hard stop.
+bytes. Evidence is stored as content-addressed assets in the stable release
+`mentra-vX.Y.Z` (the same draft the rollout finalization stages the canonical
+records into; it is also accepted after that release has been published by
+hand). The promotion chain is never written by these phases, so they cannot
+race a Cloud or mobile transition. It is read once: a live attempt for `X.Y.Z`
+that froze a different beta or source is a hard stop, and an allocated attempt
+without a state record must be resumed or aborted first.
 
 Stop conditions specific to packages:
 

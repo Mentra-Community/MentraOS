@@ -169,8 +169,8 @@ export function planPromotionContainerAllocation(
 }
 
 // The newest promotion attempt for a release identity, or null when none was
-// ever allocated. Stable package publication uses this to link its evidence to
-// a live promotion without requiring the operator to name the attempt.
+// ever allocated. Stable package publication reads it to refuse publishing an
+// identity that a live promotion froze from a different beta.
 export function latestPromotionContainer(releases, releaseIdentity) {
   const matches = matchingPromotionContainers(releases, releaseIdentity)
   return matches.length === 0 ? null : matches.at(-1)
@@ -294,7 +294,13 @@ function downloadLatestAttempt({repository, releaseIdentity, outputFile}) {
   if (!latest) return null
   const release = requirePromotionContainer(releases, releaseIdentity, latest.attempt)
   const loaded = loadPromotionState({repository, releaseIdentity, attempt: latest.attempt, release})
-  if (!loaded) return null
+  // An allocated container already reserves a frozen selection in its body;
+  // treating it as absent would skip the conflicting-beta guard.
+  if (!loaded) {
+    throw new Error(
+      `Promotion ${releaseIdentity} attempt ${latest.attempt} was allocated but has no state record; rerun or abort it first`,
+    )
+  }
   mkdirSync(path.dirname(outputFile), {recursive: true})
   writeFileSync(outputFile, loaded.latest.bytes)
   return {attempt: latest.attempt, ...loaded}

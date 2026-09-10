@@ -98,7 +98,9 @@ test("allocates or reuses the stable draft container the rollout finalization al
   const release = {id: 7, ...payload}
   assert.deepEqual(planStableContainer([{id: 1, tag_name: "other"}, release], plan), {action: "reuse", release})
   assert.throws(() => planStableContainer([release, {...release, id: 8}], plan), /Multiple releases/)
-  assert.throws(() => requireStableContainer({...release, draft: false}, plan), /does not match/)
+  assert.deepEqual(requireStableContainer({...release, draft: false}, plan), {...release, draft: false})
+  assert.throws(() => requireStableContainer({...release, draft: false, prerelease: true}, plan), /does not match/)
+  assert.throws(() => requireStableContainer({...release, name: "Mentra nightly"}, plan), /does not match/)
   assert.throws(() => requireStableContainer({...release, target_commitish: "b".repeat(40)}, plan), /does not match/)
   assert.throws(() => stableContainerPayload(betaPlan), /production plan is required/)
 })

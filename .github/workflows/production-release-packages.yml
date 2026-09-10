@@ -6,9 +6,9 @@ name: Production Release - Stable Packages
 # This is deliberately separate from the Cloud deployment and the Mentra App
 # promotion. It is keyed on the frozen beta release plan, builds from that
 # plan's exact sourceCommit once it is contained in main, and may run before,
-# during, or after store review. When a live promotion attempt exists for the
-# release identity, the package evidence is appended to it as an additive
-# record; the promotion state never changes and no mobile step waits on it.
+# during, or after store review. Its evidence lives only in the stable release
+# container mentra-vX.Y.Z; the promotion state machine is read solely to refuse
+# an identity that a live attempt froze from a different beta, never written.
 #
 # publish  - stage: npm X.Y.Z under `candidate-X.Y.Z`, a validated but
 #            unpublished USER_MANAGED Sonatype deployment, and the exported
@@ -37,7 +37,9 @@ permissions:
   id-token: write
 
 concurrency:
-  group: production-release-packages-${{ inputs.beta_identity }}
+  # One package run at a time: two betas of the same base version share the
+  # stable X.Y.Z coordinates and container.
+  group: production-release-packages
   cancel-in-progress: false
 
 jobs:
@@ -54,11 +56,7 @@ jobs:
       npm_tag: ${{ steps.plan.outputs.npm_tag }}
       plan_artifact: ${{ steps.artifact.outputs.name }}
       stable_release_id: ${{ steps.container.outputs.release_id }}
-      promotion_found: ${{ steps.promotion.outputs.found }}
-      promotion_attempt: ${{ steps.promotion.outputs.attempt }}
-      promotion_state: ${{ steps.promotion.outputs.state }}
-      promotion_append: ${{ steps.link.outputs.append }}
-      promotion_reason: ${{ steps.link.outputs.reason }}
+      promotion_note: ${{ steps.guard.outputs.note }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -132,35 +130,28 @@ jobs:
           [[ "$(jq -er .releaseIdentity release-intent/release-plan.json)" == "${{ steps.identity.outputs.release_identity }}" ]]
           [[ "$(jq -er .sourceCommit release-intent/release-plan.json)" == "${{ steps.beta.outputs.source_commit }}" ]]
 
-      - name: Resolve a live promotion attempt for additive package evidence
-        id: promotion
+      - name: Refuse an identity that a live promotion froze from another beta
+        id: guard
         env:
           GH_TOKEN: ${{ github.token }}
-        run: >-
-          node .github/scripts/production-promotion-assets.mjs download-latest-attempt
-          --repository "$GITHUB_REPOSITORY"
-          --release "${{ steps.identity.outputs.release_identity }}"
-          --output promotion-input/current.json
-          --github-output "$GITHUB_OUTPUT"
-
-      - name: Decide whether the promotion chain accepts package evidence
-        id: link
         run: |
           set -euo pipefail
-          if [[ "${{ steps.promotion.outputs.found }}" != "true" ]]; then
-            {
-              echo "append=false"
-              echo "reason=no promotion attempt exists for ${{ steps.identity.outputs.release_identity }}"
-            } >> "$GITHUB_OUTPUT"
+          node .github/scripts/production-promotion-assets.mjs download-latest-attempt \
+            --repository "$GITHUB_REPOSITORY" \
+            --release "${{ steps.identity.outputs.release_identity }}" \
+            --output promotion-input/current.json \
+            --github-output promotion-input/outputs.env
+          if ! grep -qx 'found=true' promotion-input/outputs.env; then
+            echo "note=no promotion attempt exists for ${{ steps.identity.outputs.release_identity }}" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          node .github/scripts/production-promotion-state.mjs packages-link \
+          node .github/scripts/production-promotion-state.mjs packages-guard \
             --record promotion-input/current.json \
             --beta "${{ inputs.beta_identity }}" \
-            --source-commit "${{ steps.beta.outputs.source_commit }}" \
-            --github-output "$GITHUB_OUTPUT"
+            --source-commit "${{ steps.beta.outputs.source_commit }}"
+          echo "note=promotion attempt $(sed -n 's/^attempt=//p' promotion-input/outputs.env) ($(sed -n 's/^state=//p' promotion-input/outputs.env)) selected the same beta" >> "$GITHUB_OUTPUT"
 
-      - name: Allocate or reuse the stable draft release container
+      - name: Allocate or reuse the stable release container
         id: container
         env:
           GH_TOKEN: ${{ github.token }}
@@ -191,7 +182,7 @@ jobs:
             echo "- Source: \`${{ steps.plan.outputs.source_commit }}\`"
             echo "- Stable container: \`${{ steps.plan.outputs.stable_tag }}\`"
             echo "- npm candidate dist-tag: \`${{ steps.plan.outputs.npm_tag }}\`"
-            echo "- Promotion chain: ${{ steps.link.outputs.reason }} (append: \`${{ steps.link.outputs.append }}\`)"
+            echo "- Promotion: ${{ steps.guard.outputs.note }}"
             echo
             echo "This phase does not deploy Cloud, upload a mobile app, or change any store."
           } >> "$GITHUB_STEP_SUMMARY"
@@ -309,7 +300,7 @@ jobs:
             --output-directory packages-output/evidence-assets \
             --github-output "$GITHUB_OUTPUT"
 
-      - name: Publish the evidence into the stable draft container
+      - name: Publish the evidence into the stable release container
         env:
           GH_TOKEN: ${{ github.token }}
         run: >-
@@ -318,51 +309,6 @@ jobs:
           --name "${{ steps.evidence.outputs.asset_name }}"
           --release-id "${{ needs.load.outputs.stable_release_id }}"
           --repository "$GITHUB_REPOSITORY"
-
-      - name: Append the evidence to the live promotion attempt
-        if: needs.load.outputs.promotion_append == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          node .github/scripts/production-promotion-assets.mjs download-latest \
-            --repository "$GITHUB_REPOSITORY" \
-            --release "${{ needs.load.outputs.release_identity }}" \
-            --attempt "${{ needs.load.outputs.promotion_attempt }}" \
-            --output promotion-input/current.json \
-            --github-output promotion-input/outputs.env
-          promotion_release_id=$(sed -n 's/^release_id=//p' promotion-input/outputs.env)
-          link=$(node .github/scripts/production-promotion-state.mjs packages-link \
-            --record promotion-input/current.json \
-            --beta "${{ inputs.beta_identity }}" \
-            --source-commit "${{ needs.load.outputs.source_commit }}")
-          if ! grep -qx 'append=true' <<< "$link"; then
-            echo "::notice::Promotion chain moved since the run started; evidence stays in the stable container only. $link"
-            exit 0
-          fi
-          node .github/scripts/publish-immutable-release-asset.mjs \
-            --file "${{ steps.evidence.outputs.asset_path }}" \
-            --name "${{ steps.evidence.outputs.asset_name }}" \
-            --release-id "$promotion_release_id" \
-            --repository "$GITHUB_REPOSITORY"
-          mkdir -p promotion-output
-          node .github/scripts/production-promotion-state.mjs append \
-            --record promotion-input/current.json \
-            --actor "$GITHUB_ACTOR" \
-            --created-at "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" \
-            --provenance-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
-            --evidence packages-output/evidence.json \
-            --output promotion-output/next.json
-          name=$(node --input-type=module -e '
-            import {readFileSync} from "node:fs";
-            import {promotionAssetName} from "./.github/scripts/production-promotion-state.mjs";
-            process.stdout.write(promotionAssetName(JSON.parse(readFileSync("promotion-output/next.json", "utf8"))));
-          ')
-          mv promotion-output/next.json "promotion-output/$name"
-          node .github/scripts/production-promotion-assets.mjs publish-record \
-            --record "promotion-output/$name" \
-            --release-id "$promotion_release_id" \
-            --repository "$GITHUB_REPOSITORY"
 
       - name: Summarize the staged publication
         run: |
@@ -374,7 +320,7 @@ jobs:
             echo "- Maven Central: USER_MANAGED deployment validated, not published"
             echo "- SwiftPM: export staged on \`release/${{ needs.load.outputs.release_identity }}\`; no public tag"
             echo "- Evidence: \`${{ steps.evidence.outputs.asset_name }}\` in \`${{ needs.load.outputs.stable_tag }}\`"
-            echo "- Promotion chain: ${{ needs.load.outputs.promotion_reason }} (append: \`${{ needs.load.outputs.promotion_append }}\`)"
+            echo "- Promotion: ${{ needs.load.outputs.promotion_note }}"
             echo
             echo "Run the release phase to move npm latest, publish Maven Central, and push the SwiftPM tag."
           } >> "$GITHUB_STEP_SUMMARY"
@@ -413,16 +359,19 @@ jobs:
           test -n "$MAVEN_CENTRAL_TOKEN_BASE64"
           test -n "$PUSH_TOKEN"
 
-      - name: Move npm latest to the staged plain versions
+      # Every public mutation below is irreversible, so all three targets are
+      # checked first and nothing moves until each one is ready.
+      - name: Preflight npm without moving any dist-tag
         env:
           NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
         run: >-
           node .github/scripts/promote-npm-latest.mjs
           --plan release-intent/release-plan.json
           --npm-tag "${{ needs.load.outputs.npm_tag }}"
-          --output-dir packages-output/npm
+          --output-dir packages-output/npm-preflight
+          --dry-run true
 
-      - name: Publish the validated Sonatype deployment to Maven Central
+      - name: Preflight the validated Sonatype deployment
         env:
           GH_TOKEN: ${{ github.token }}
           MAVEN_CENTRAL_TOKEN_BASE64: ${{ secrets.MAVEN_CENTRAL_TOKEN_BASE64 }}
@@ -437,10 +386,12 @@ jobs:
           gh api -H "Accept: application/octet-stream" \
             "repos/${GITHUB_REPOSITORY}/releases/assets/$asset_id" > packages-output/maven/sonatype-deployment.json
           [[ "$(jq -er .deploymentName packages-output/maven/sonatype-deployment.json)" == "mentra-$VERSION-android-sdk" ]]
-          node .github/scripts/sonatype-central-deployment.mjs publish \
+          [[ "$(jq -er .publishingType packages-output/maven/sonatype-deployment.json)" == "USER_MANAGED" ]]
+          node .github/scripts/sonatype-central-deployment.mjs inspect \
             --record packages-output/maven/sonatype-deployment.json \
-            --output packages-output/maven/sonatype-publication.json
-          [[ "$(jq -er .deploymentState packages-output/maven/sonatype-publication.json)" == "PUBLISHED" ]]
+            --output packages-output/maven/sonatype-inspection.json
+          state=$(jq -er .deploymentState packages-output/maven/sonatype-inspection.json)
+          [[ "$state" == VALIDATED || "$state" == PUBLISHED || "$state" == PUBLISHING ]]
 
       - name: Checkout the SwiftPM mirror
         uses: actions/checkout@v4
@@ -450,7 +401,7 @@ jobs:
           token: ${{ secrets.MENTRA_BLUETOOTH_SDK_IOS_PUSH_TOKEN }}
           fetch-depth: 0
 
-      - name: Push the public SwiftPM tag at the staged, archived commit
+      - name: Preflight the staged SwiftPM commit against its archived export
         id: swiftpm
         env:
           GH_TOKEN: ${{ github.token }}
@@ -476,22 +427,50 @@ jobs:
             echo "The mirror has neither tag $VERSION nor branch release/$VERSION; run the publish phase first." >&2
             exit 1
           fi
-          git archive --format=tar "$mirror_sha" > "$RUNNER_TEMP/staged-swiftpm.tar"
-          cmp "$RUNNER_TEMP/staged-swiftpm.tar" "$GITHUB_WORKSPACE/packages-output/swiftpm/$archive_name"
-          if [[ "$status" == published ]]; then
-            git tag "$VERSION" "$mirror_sha"
-            git push origin "refs/tags/$VERSION"
-            if git merge-base --is-ancestor "refs/remotes/origin/main" "$mirror_sha"; then
-              git push origin "$mirror_sha:refs/heads/main"
-            else
-              echo "::notice::Mirror main has moved past the staged $VERSION commit; the tag is public and main is left unchanged."
-            fi
-          fi
+          # git archive stamps the archived commit into the tar's pax header, so the
+          # archive identifies its commit without re-archiving on a different runner.
+          archived_sha=$(git get-tar-commit-id < "$GITHUB_WORKSPACE/packages-output/swiftpm/$archive_name")
+          [[ "$archived_sha" == "$mirror_sha" ]]
           {
             echo "mirror_sha=$mirror_sha"
             echo "status=$status"
             echo "tag_url=https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios/tree/$VERSION"
           } >> "$GITHUB_OUTPUT"
+
+      - name: Move npm latest to the staged plain versions
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: >-
+          node .github/scripts/promote-npm-latest.mjs
+          --plan release-intent/release-plan.json
+          --npm-tag "${{ needs.load.outputs.npm_tag }}"
+          --output-dir packages-output/npm
+
+      - name: Publish the validated Sonatype deployment to Maven Central
+        env:
+          MAVEN_CENTRAL_TOKEN_BASE64: ${{ secrets.MAVEN_CENTRAL_TOKEN_BASE64 }}
+        run: |
+          set -euo pipefail
+          node .github/scripts/sonatype-central-deployment.mjs publish \
+            --record packages-output/maven/sonatype-deployment.json \
+            --output packages-output/maven/sonatype-publication.json
+          [[ "$(jq -er .deploymentState packages-output/maven/sonatype-publication.json)" == "PUBLISHED" ]]
+
+      - name: Push the public SwiftPM tag at the staged commit
+        if: steps.swiftpm.outputs.status == 'published'
+        working-directory: mentra-bluetooth-sdk-ios
+        env:
+          VERSION: ${{ needs.load.outputs.release_identity }}
+          MIRROR_SHA: ${{ steps.swiftpm.outputs.mirror_sha }}
+        run: |
+          set -euo pipefail
+          git tag "$VERSION" "$MIRROR_SHA"
+          git push origin "refs/tags/$VERSION"
+          if git merge-base --is-ancestor "refs/remotes/origin/main" "$MIRROR_SHA"; then
+            git push origin "$MIRROR_SHA:refs/heads/main"
+          else
+            echo "::notice::Mirror main has moved past the staged $VERSION commit; the tag is public and main is left unchanged."
+          fi
 
       - name: Assemble immutable release evidence
         id: evidence
@@ -539,7 +518,7 @@ jobs:
             --output-directory packages-output/evidence-assets \
             --github-output "$GITHUB_OUTPUT"
 
-      - name: Publish the evidence into the stable draft container
+      - name: Publish the evidence into the stable release container
         env:
           GH_TOKEN: ${{ github.token }}
         run: >-
@@ -548,51 +527,6 @@ jobs:
           --name "${{ steps.evidence.outputs.asset_name }}"
           --release-id "${{ needs.load.outputs.stable_release_id }}"
           --repository "$GITHUB_REPOSITORY"
-
-      - name: Append the evidence to the live promotion attempt
-        if: needs.load.outputs.promotion_append == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          node .github/scripts/production-promotion-assets.mjs download-latest \
-            --repository "$GITHUB_REPOSITORY" \
-            --release "${{ needs.load.outputs.release_identity }}" \
-            --attempt "${{ needs.load.outputs.promotion_attempt }}" \
-            --output promotion-input/current.json \
-            --github-output promotion-input/outputs.env
-          promotion_release_id=$(sed -n 's/^release_id=//p' promotion-input/outputs.env)
-          link=$(node .github/scripts/production-promotion-state.mjs packages-link \
-            --record promotion-input/current.json \
-            --beta "${{ inputs.beta_identity }}" \
-            --source-commit "${{ needs.load.outputs.source_commit }}")
-          if ! grep -qx 'append=true' <<< "$link"; then
-            echo "::notice::Promotion chain moved since the run started; evidence stays in the stable container only. $link"
-            exit 0
-          fi
-          node .github/scripts/publish-immutable-release-asset.mjs \
-            --file "${{ steps.evidence.outputs.asset_path }}" \
-            --name "${{ steps.evidence.outputs.asset_name }}" \
-            --release-id "$promotion_release_id" \
-            --repository "$GITHUB_REPOSITORY"
-          mkdir -p promotion-output
-          node .github/scripts/production-promotion-state.mjs append \
-            --record promotion-input/current.json \
-            --actor "$GITHUB_ACTOR" \
-            --created-at "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" \
-            --provenance-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
-            --evidence packages-output/evidence.json \
-            --output promotion-output/next.json
-          name=$(node --input-type=module -e '
-            import {readFileSync} from "node:fs";
-            import {promotionAssetName} from "./.github/scripts/production-promotion-state.mjs";
-            process.stdout.write(promotionAssetName(JSON.parse(readFileSync("promotion-output/next.json", "utf8"))));
-          ')
-          mv promotion-output/next.json "promotion-output/$name"
-          node .github/scripts/production-promotion-assets.mjs publish-record \
-            --record "promotion-output/$name" \
-            --release-id "$promotion_release_id" \
-            --repository "$GITHUB_REPOSITORY"
 
       - name: Summarize the public package release
         run: |
@@ -604,7 +538,7 @@ jobs:
             echo "- Maven Central: deployment \`$(jq -er .deploymentState packages-output/maven/sonatype-publication.json)\` (sync to search can lag)"
             echo "- SwiftPM: ${{ steps.swiftpm.outputs.tag_url }} (\`${{ steps.swiftpm.outputs.status }}\`)"
             echo "- Evidence: \`${{ steps.evidence.outputs.asset_name }}\` in \`${{ needs.load.outputs.stable_tag }}\`"
-            echo "- Promotion chain: ${{ needs.load.outputs.promotion_reason }} (append: \`${{ needs.load.outputs.promotion_append }}\`)"
+            echo "- Promotion: ${{ needs.load.outputs.promotion_note }}"
             echo
             echo "This workflow did not deploy Cloud or change an app store."
           } >> "$GITHUB_STEP_SUMMARY"

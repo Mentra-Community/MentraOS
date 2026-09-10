@@ -139,6 +139,44 @@ export async function inspectDeployment({record, token, fetchImpl = fetch}) {
   return {...record, disposition: "resume", deploymentState: status.deploymentState, purls}
 }
 
+// Wait until Sonatype has validated a USER_MANAGED deployment (or already
+// published it). The production publish phase requires this before it succeeds
+// so the later release phase never moves npm latest ahead of a Maven bundle
+// that would then fail to publish.
+export async function waitForValidatedDeployment({
+  record,
+  token,
+  fetchImpl = fetch,
+  sleepImpl = sleep,
+  statusAttempts = 180,
+  pollIntervalMs = 10_000,
+}) {
+  requireDeploymentRecord(record)
+  if (!token) throw new Error("Sonatype token is required")
+  const headers = {Authorization: `Bearer ${token}`}
+  for (let attempt = 1; attempt <= statusAttempts; attempt += 1) {
+    const status = requireMatchingStatus(
+      record,
+      await deploymentStatus({fetchImpl, headers, deploymentId: record.deploymentId}),
+    )
+    if (status.deploymentState === "FAILED") {
+      throw new Error(`Sonatype deployment ${record.deploymentName} failed: ${JSON.stringify(status.errors || [])}`)
+    }
+    if (status.deploymentState === "VALIDATED" || status.deploymentState === "PUBLISHED") {
+      return {...record, deploymentState: status.deploymentState, purls: status.purls || []}
+    }
+    if (!WAITING_STATES.has(status.deploymentState)) {
+      throw new Error(
+        `Sonatype deployment ${record.deploymentName} has unknown state ${JSON.stringify(status.deploymentState)}`,
+      )
+    }
+    if (attempt < statusAttempts) await sleepImpl(pollIntervalMs)
+  }
+  throw new Error(
+    `Sonatype deployment ${record.deploymentName} was not validated after ${statusAttempts} status checks`,
+  )
+}
+
 export async function publishDeployment({
   record,
   token,
@@ -203,6 +241,11 @@ async function main() {
     })
   } else if (command === "inspect") {
     result = await inspectDeployment({
+      record: JSON.parse(readFileSync(path.resolve(args.record), "utf8")),
+      token: process.env.MAVEN_CENTRAL_TOKEN_BASE64,
+    })
+  } else if (command === "wait-validated") {
+    result = await waitForValidatedDeployment({
       record: JSON.parse(readFileSync(path.resolve(args.record), "utf8")),
       token: process.env.MAVEN_CENTRAL_TOKEN_BASE64,
     })

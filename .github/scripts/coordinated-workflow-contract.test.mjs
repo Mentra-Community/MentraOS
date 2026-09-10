@@ -146,13 +146,28 @@ test("stable packages publish from the frozen beta source independently of the m
   assert.match(packages, /ref: \$\{\{ steps\.beta\.outputs\.source_commit \}\}/)
   assert.match(packages, /production-packages\.mjs plan \\\n\s+--root release-source/)
   assert.match(packages, /source_commit: \$\{\{ needs\.load\.outputs\.source_commit \}\}/)
-  // The promotion state machine is read, never transitioned; evidence is additive.
+  // The promotion state machine is read only, to refuse a conflicting frozen beta.
   assert.match(packages, /download-latest-attempt/)
-  assert.match(packages, /production-promotion-state\.mjs packages-link/)
-  assert.match(packages, /production-promotion-state\.mjs append/)
-  assert.doesNotMatch(packages, /production-promotion-state\.mjs transition/)
-  assert.doesNotMatch(packages, /attest-transition|--to [a-z-]+/)
+  assert.match(packages, /production-promotion-state\.mjs packages-guard/)
+  assert.doesNotMatch(packages, /production-promotion-state\.mjs (transition|append|attest-transition)/)
+  assert.doesNotMatch(packages, /publish-record|--to [a-z-]+/)
   assert.doesNotMatch(packages, /stores-approved|store-review-approved|production-store-release|production-cloud|reusable-coordinated-cloud-v2|reusable-coordinated-mobile/)
+  assert.match(packages, /group: production-release-packages\n/)
+  // Every target is checked before the first irreversible mutation.
+  const releaseJob = jobBlock(packages, "release")
+  const firstMutation = releaseJob.indexOf("Move npm latest to the staged plain versions")
+  for (const preflight of [
+    "Preflight npm without moving any dist-tag",
+    "Preflight the validated Sonatype deployment",
+    "Preflight the staged SwiftPM commit against its archived export",
+  ]) {
+    const index = releaseJob.indexOf(preflight)
+    assert.notEqual(index, -1, preflight)
+    assert.ok(index < firstMutation, `${preflight} must precede the npm latest flip`)
+  }
+  assert.match(releaseJob, /--dry-run true/)
+  assert.match(releaseJob, /git get-tar-commit-id/)
+  assert.doesNotMatch(releaseJob, /cmp /)
   // Staging and public release are separate protected approvals.
   assert.match(packages, /name: production-packages\n/)
   assert.match(packages, /name: production-packages-release\n/)
@@ -164,9 +179,16 @@ test("stable packages publish from the frozen beta source independently of the m
   // Both workflows must recognize the same stable draft container.
   assert.match(rollout, /body: "Canonical production release records\. Publish manually only after the completed promotion and final public-availability checks\."/)
   assert.match(packages, /production-packages\.mjs ensure-container/)
-  // The reusable native job stages production without publishing.
+  // The reusable native job stages production without publishing, using
+  // registry tooling from the workflow revision rather than the frozen source.
   assert.match(sdkNative, /publishing_type=USER_MANAGED/)
+  assert.match(sdkNative, /ref: \$\{\{ github\.sha \}\}\n\s+path: release-tooling/)
+  assert.match(sdkNative, /release-tooling\/\.github\/scripts\/sonatype-central-deployment\.mjs upload/)
+  assert.match(sdkNative, /release-tooling\/\.github\/scripts\/sonatype-central-deployment\.mjs inspect/)
+  assert.doesNotMatch(sdkNative, /node \.github\/scripts\/sonatype-central-deployment\.mjs/)
   assert.match(sdkNative, /--publishing-type "\$PUBLISHING_TYPE"/)
+  assert.match(sdkNative, /\.publishingType native-result\/maven\/sonatype-deployment\.json\)" == "\$PUBLISHING_TYPE"/)
+  assert.match(sdkNative, /sonatype-central-deployment\.mjs wait-validated/)
   assert.match(sdkNative, /staging_ref="release\/\$version"/)
   assert.match(sdkNative, /steps\.release\.outputs\.channel != 'production' && steps\.existing\.outputs\.exists != 'true'/)
   assert.match(sdkNative, /git push origin "\$\{\{ steps\.selected\.outputs\.mirror_sha \}\}:refs\/heads\/\$STAGING_REF"/)

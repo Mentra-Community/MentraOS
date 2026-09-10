@@ -89,15 +89,21 @@ export function promoteNpmLatest({
   if (plan?.channel !== "production") throw new Error("Only a production plan can move npm latest")
   const version = plan.releaseIdentity
   const candidateTag = resolveNpmReleaseTag(plan.channel, npmTag)
-  const publications = {}
-  for (const name of npmMembersFromPlan(plan)) {
+
+  // Decide for the whole family before touching any dist-tag, so a member that
+  // is unpublished or already ahead stops the run with nothing moved.
+  const planned = npmMembersFromPlan(plan).map((name) => {
     const coordinate = `${name}@${version}`
     const integrity = parseViewValue(view(coordinate, "dist.integrity"))
     if (typeof integrity !== "string" || !integrity.startsWith("sha512-")) {
       throw new Error(`${coordinate} is not published on npm; run the publish phase first`)
     }
     const distTags = parseViewValue(view(name, "dist-tags")) || {}
-    const decision = latestFlipDecision({version, candidateTag, distTags})
+    return {name, coordinate, integrity, decision: latestFlipDecision({version, candidateTag, distTags})}
+  })
+
+  const publications = {}
+  for (const {name, coordinate, integrity, decision} of planned) {
     let status = decision.action
     if (decision.action === "published" && dryRun) {
       status = "built"
@@ -109,7 +115,7 @@ export function promoteNpmLatest({
         throw new Error(`${name} latest reads back as ${JSON.stringify(observed.latest ?? null)}, expected ${version}`)
       }
     }
-    if (!dryRun && status !== "built") {
+    if (!dryRun) {
       const current = parseViewValue(view(name, "dist-tags")) || {}
       if (current[candidateTag] === version) exec("npm", ["dist-tag", "rm", name, candidateTag])
     }

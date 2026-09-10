@@ -4,11 +4,11 @@
 // production-release-packages.yml republishes the exact source of a completed
 // coordinated beta as plain X.Y.Z package versions (npm latest, Maven Central,
 // SwiftPM) after that source reached main. This module freezes the production
-// plan those reusable jobs consume and manages the stable draft release
-// container `mentra-vX.Y.Z` that holds their immutable records. It never
-// touches the mobile or Cloud promotion state machine; package evidence is an
-// additive record on a live promotion attempt, appended by
-// production-promotion-state.mjs `append`.
+// plan those reusable jobs consume and manages the stable release container
+// `mentra-vX.Y.Z` that holds their immutable records. It never touches the
+// mobile or Cloud promotion state machine: package evidence lives only in that
+// container, and a live promotion attempt is read solely to refuse a
+// conflicting frozen beta.
 import {createHash} from "node:crypto"
 import {execFileSync} from "node:child_process"
 import {appendFileSync, readFileSync, writeFileSync} from "node:fs"
@@ -75,13 +75,17 @@ export function stableContainerPayload(plan) {
   }
 }
 
+// The container starts as a draft and is published by hand after the mobile
+// rollout completes. Packages may still be published after that, so a
+// published (non-draft, non-prerelease) release with the same identity is
+// accepted; only a prerelease or a different source is rejected.
 export function requireStableContainer(release, plan) {
   const expected = stableContainerPayload(plan)
   if (
     !release ||
     release.tag_name !== expected.tag_name ||
     release.name !== expected.name ||
-    release.draft !== true ||
+    typeof release.draft !== "boolean" ||
     release.prerelease !== false ||
     release.target_commitish !== expected.target_commitish
   ) {
@@ -110,12 +114,20 @@ function listReleases(repository) {
 function ensureStableContainer({repository, plan}) {
   const allocation = planStableContainer(listReleases(repository), plan)
   if (allocation.action === "reuse") return allocation.release
-  const created = JSON.parse(
-    gh(["api", "--method", "POST", `repos/${repository}/releases`, "--input", "-"], {
-      input: JSON.stringify(allocation.payload),
-    }),
-  )
-  return requireStableContainer(created, plan)
+  try {
+    const created = JSON.parse(
+      gh(["api", "--method", "POST", `repos/${repository}/releases`, "--input", "-"], {
+        input: JSON.stringify(allocation.payload),
+      }),
+    )
+    return requireStableContainer(created, plan)
+  } catch (error) {
+    // Another workflow (the rollout finalization) may have created the same
+    // tag between our listing and this POST; accept it if it matches.
+    const retry = planStableContainer(listReleases(repository), plan)
+    if (retry.action === "reuse") return retry.release
+    throw error
+  }
 }
 
 function parseArgs(args) {

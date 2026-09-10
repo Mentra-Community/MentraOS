@@ -10,6 +10,7 @@ import {
   requirePublishingType,
   uploadAutomaticDeployment,
   uploadDeployment,
+  waitForValidatedDeployment,
 } from "./sonatype-central-deployment.mjs"
 
 const deploymentId = "28570f16-da32-4c14-bd2e-c1acc0782365"
@@ -195,4 +196,37 @@ test("preserves partial published PURLs for observability", async () => {
   })
 
   assert.deepEqual(result.purls, [expectedPurls[0]])
+})
+
+test("waits for a user-managed deployment to validate without requesting publication", async () => {
+  const states = ["PENDING", "VALIDATING", "VALIDATED"]
+  let publicationRequests = 0
+  const result = await waitForValidatedDeployment({
+    record: {...record(), publishingType: "USER_MANAGED"},
+    token: "token",
+    sleepImpl: async () => {},
+    fetchImpl: async (url, options) => {
+      const target = String(url)
+      if (target.includes("/api/v1/publisher/status")) {
+        return jsonResponse({deploymentId, deploymentName, deploymentState: states.shift()})
+      }
+      if (target.includes(`/api/v1/publisher/deployment/${deploymentId}`) && options.method === "POST") {
+        publicationRequests += 1
+        return new Response("", {status: 204})
+      }
+      throw new Error(`Unexpected request ${target}`)
+    },
+  })
+  assert.equal(result.deploymentState, "VALIDATED")
+  assert.equal(publicationRequests, 0)
+  await assert.rejects(
+    () =>
+      waitForValidatedDeployment({
+        record: record(),
+        token: "token",
+        sleepImpl: async () => {},
+        fetchImpl: async () => jsonResponse({deploymentId, deploymentName, deploymentState: "FAILED", errors: {a: 1}}),
+      }),
+    /failed/,
+  )
 })
