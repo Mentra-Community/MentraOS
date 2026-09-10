@@ -101,6 +101,8 @@ public class WhipStreamingService extends Service {
   // Static instance so static helper methods can reach the running service
   private static final Object sConfigLock = new Object();
   private static volatile WhipStreamingService sInstance;
+  private static long sStartRequestGeneration;
+  private static boolean sStartRequested;
   private static StreamingStatusCallback sStatusCallback;
   private static WhipStreamConfig sPendingStreamConfig = null;
 
@@ -302,6 +304,10 @@ public class WhipStreamingService extends Service {
   @Override
   public int onStartCommand(Intent intent, int flags, int startId) {
     startForeground(NOTIFICATION_ID, createNotification("Ready to stream"));
+    if (intent == null || intent.getLongExtra("stream_request_generation", -1) != sStartRequestGeneration) {
+      if (!sStartRequested) stopSelf(startId);
+      return START_NOT_STICKY;
+    }
 
     if (intent != null) {
       String whipUrl = intent.getStringExtra("whip_url");
@@ -325,7 +331,7 @@ public class WhipStreamingService extends Service {
       }
     }
 
-    return START_STICKY;
+    return START_NOT_STICKY;
   }
 
   @Nullable
@@ -495,7 +501,9 @@ public class WhipStreamingService extends Service {
 
     stopStreaming(true);
 
+    final long session = mSessionGeneration;
     mMainHandler.postDelayed(() -> {
+      if (session != mSessionGeneration || !mIsReconnecting) return;
       Log.d(TAG, "WHIP executing reconnect attempt " + mReconnectAttempts);
       startStreaming();
     }, RECONNECT_DELAY_MS);
@@ -627,10 +635,12 @@ public class WhipStreamingService extends Service {
     mPeerConnection.createOffer(new SdpObserver() {
       @Override
       public void onCreateSuccess(SessionDescription offer) {
+        mMainHandler.post(() -> {
         if (generation != mNegotiationGeneration || mPeerConnection == null) return;
         mPeerConnection.setLocalDescription(new SdpObserver() {
           @Override
           public void onSetSuccess() {
+            mMainHandler.post(() -> {
             if (generation != mNegotiationGeneration) return;
             Log.d(TAG, "Local description set, posting WHIP offer after first srflx or "
                 + ICE_GATHER_POST_TIMEOUT_MS + "ms");
@@ -639,23 +649,29 @@ public class WhipStreamingService extends Service {
               postOfferIfReady("timeout", generation);
             };
             mMainHandler.postDelayed(mPostOfferTimeoutRunnable, ICE_GATHER_POST_TIMEOUT_MS);
+            });
           }
 
           @Override
           public void onSetFailure(String error) {
-            if (generation != mNegotiationGeneration) return;
-            handleStartupFailure("set_local_description_failed", "setLocalDescription failed: " + error);
+            mMainHandler.post(() -> {
+              if (generation != mNegotiationGeneration) return;
+              handleStartupFailure("set_local_description_failed", "setLocalDescription failed: " + error);
+            });
           }
 
           @Override public void onCreateSuccess(SessionDescription sdp) {}
           @Override public void onCreateFailure(String error) {}
         }, offer);
+        });
       }
 
       @Override
       public void onCreateFailure(String error) {
-        if (generation != mNegotiationGeneration) return;
-        handleStartupFailure("create_offer_failed", "createOffer failed: " + error);
+        mMainHandler.post(() -> {
+          if (generation != mNegotiationGeneration) return;
+          handleStartupFailure("create_offer_failed", "createOffer failed: " + error);
+        });
       }
 
       @Override public void onSetSuccess() {}
@@ -795,6 +811,10 @@ public class WhipStreamingService extends Service {
    * GATHERING COMPLETE — whichever wins. Later triggers are no-ops.
    */
   private void postOfferIfReady(String reason, int generation) {
+    if (Looper.myLooper() != Looper.getMainLooper()) {
+      mMainHandler.post(() -> postOfferIfReady(reason, generation));
+      return;
+    }
     PeerConnection peerConnection;
     synchronized (mStateLock) {
       if (generation != mNegotiationGeneration) {
@@ -904,6 +924,7 @@ public class WhipStreamingService extends Service {
   }
 
   private void postOfferToWhip(SessionDescription offer, int generation) {
+    final String requestUrl = mWhipUrl;
     logStartupStage("whip_request_started");
     Log.d(TAG, "POSTing SDP offer to WHIP URL: " + mWhipUrl);
     logSdpVideoSection("Offer", offer.description);
@@ -921,15 +942,24 @@ public class WhipStreamingService extends Service {
     mHttpClient.newCall(request).enqueue(new Callback() {
       @Override
       public void onResponse(Call call, Response response) throws IOException {
+        final String answerSdp;
+        try {
+          answerSdp = response.body() != null ? response.body().string() : "";
+        } catch (IOException error) {
+          onFailure(call, error);
+          return;
+        } finally {
+          response.close();
+        }
+        mMainHandler.post(() -> {
         if (generation != mNegotiationGeneration) {
           String location = response.header("Location");
           if (location != null) {
             String staleUrl = location.startsWith("http")
                 ? location
-                : buildAbsoluteUrl(mWhipUrl, location);
+                : buildAbsoluteUrl(requestUrl, location);
             deleteWhipResource(staleUrl);
           }
-          response.close();
           return;
         }
         if (response.code() != 201) {
@@ -943,10 +973,9 @@ public class WhipStreamingService extends Service {
         if (location != null) {
           resourceUrl = location.startsWith("http")
               ? location
-              : buildAbsoluteUrl(mWhipUrl, location);
+              : buildAbsoluteUrl(requestUrl, location);
         }
 
-        String answerSdp = response.body() != null ? response.body().string() : "";
         if (answerSdp.isEmpty()) {
           handleStartupFailure("empty_answer_sdp", "WHIP server returned empty SDP answer");
           return;
@@ -1010,20 +1039,25 @@ public class WhipStreamingService extends Service {
 
           @Override
           public void onSetFailure(String error) {
-            if (generation != mNegotiationGeneration) return;
-            handleStartupFailure("set_remote_description_failed", "setRemoteDescription failed: " + error);
+            mMainHandler.post(() -> {
+              if (generation != mNegotiationGeneration) return;
+              handleStartupFailure("set_remote_description_failed", "setRemoteDescription failed: " + error);
+            });
           }
 
           @Override public void onCreateSuccess(SessionDescription sdp) {}
           @Override public void onCreateFailure(String error) {}
         }, answer);
+        });
       }
 
       @Override
       public void onFailure(Call call, IOException e) {
-        if (generation != mNegotiationGeneration) return;
-        Log.e(TAG, "WHIP request failed", e);
-        handleStartupFailure("whip_request_failed", "WHIP request failed: " + e.getMessage());
+        mMainHandler.post(() -> {
+          if (generation != mNegotiationGeneration) return;
+          Log.e(TAG, "WHIP request failed", e);
+          handleStartupFailure("whip_request_failed", "WHIP request failed: " + e.getMessage());
+        });
       }
     });
   }
@@ -1501,9 +1535,16 @@ public class WhipStreamingService extends Service {
    */
   public static void startStreaming(Context context, String whipUrl, String streamId,
       boolean enableLed, boolean enableSound, WhipStreamConfig config, String authToken) {
+    if (Looper.myLooper() != Looper.getMainLooper()) {
+      new Handler(Looper.getMainLooper()).post(() -> startStreaming(context, whipUrl, streamId, enableLed, enableSound, config, authToken));
+      return;
+    }
+    final long requestGeneration = ++sStartRequestGeneration;
+    sStartRequested = true;
     setStreamConfig(config);
 
     if (sInstance != null) {
+      if (sInstance.mCurrentStreamId != null) sInstance.stopStreaming();
       sInstance.mSessionGeneration++;
       sInstance.mWhipUrl = whipUrl;
       sInstance.mAuthToken = authToken;
@@ -1515,6 +1556,7 @@ public class WhipStreamingService extends Service {
       sInstance.startStreaming();
     } else {
       Intent intent = new Intent(context, WhipStreamingService.class);
+      intent.putExtra("stream_request_generation", requestGeneration);
       intent.putExtra("whip_url", whipUrl);
       if (streamId != null) intent.putExtra("stream_id", streamId);
       intent.putExtra("enable_led", enableLed);
@@ -1539,6 +1581,12 @@ public class WhipStreamingService extends Service {
    * Stop the active WHIP stream.
    */
   public static void stopStreaming(Context context) {
+    if (Looper.myLooper() != Looper.getMainLooper()) {
+      new Handler(Looper.getMainLooper()).post(() -> stopStreaming(context));
+      return;
+    }
+    sStartRequestGeneration++;
+    sStartRequested = false;
     if (sInstance != null) {
       sInstance.stopStreaming();
     } else {

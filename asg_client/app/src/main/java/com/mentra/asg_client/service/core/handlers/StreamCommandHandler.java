@@ -61,6 +61,7 @@ public class StreamCommandHandler implements ICommandHandler {
     private boolean mDisposed;
     private Runnable mPhoneLossDeadline;
     private String mOwnedStreamId;
+    private long mOwnedStartRevision = -1;
     private Runnable mResourceRefresh;
     private final LinkStateMachine.Listener mPresenceListener = (state, caps, presence) ->
             mLifecycleHandler.post(() -> {
@@ -91,6 +92,7 @@ public class StreamCommandHandler implements ICommandHandler {
         this.mServiceManager = serviceManager;
         streamingManager.setStreamStatusListener(status -> mLifecycleHandler.post(() -> {
             if (status.optBoolean("terminal", false)
+                    && status.optLong("revision", -1) >= mOwnedStartRevision
                     && mOwnedStreamId != null
                     && mOwnedStreamId.equals(status.optString("streamId", ""))) {
                 releaseStreamOwnership();
@@ -544,6 +546,7 @@ public class StreamCommandHandler implements ICommandHandler {
         mOwnedStreamId = streamId;
         long generation = mPhonePolicy.start();
         streamingManager.beginStreamSession(streamId);
+        mOwnedStartRevision = streamingManager.getStreamSnapshot().optLong("revision", -1);
         mResourceRefresh = new Runnable() {
             @Override
             public void run() {
@@ -564,6 +567,7 @@ public class StreamCommandHandler implements ICommandHandler {
         if (mResourceRefresh != null) mLifecycleHandler.removeCallbacks(mResourceRefresh);
         mResourceRefresh = null;
         mOwnedStreamId = null;
+        mOwnedStartRevision = -1;
         mHotspotActivityTracker.onStreamStopped();
     }
 

@@ -37,6 +37,7 @@ import com.mentra.asg_client.io.streaming.config.RtmpStreamConfig;
 import com.mentra.asg_client.io.streaming.events.StreamingCommand;
 import com.mentra.asg_client.io.streaming.events.StreamingEvent;
 import com.mentra.asg_client.io.streaming.interfaces.StreamingStatusCallback;
+import com.mentra.asg_client.io.streaming.StreamCallbackScope;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
 import com.mentra.asg_client.service.core.constants.BatteryConstants;
 import com.mentra.asg_client.audio.AudioAssets;
@@ -71,6 +72,11 @@ public class RtmpStreamingService extends Service {
 
     // Static callback for streaming status
     private static StreamingStatusCallback sStatusCallback;
+    private static long sStartRequestGeneration;
+    private static boolean sStartRequested;
+    private final Handler mLifecycleHandler = new Handler(Looper.getMainLooper());
+    private final StreamCallbackScope mPublisherCallbacks = new StreamCallbackScope(mLifecycleHandler::post);
+    private boolean mAwaitingPublisherRecovery;
 
     private final IBinder mBinder = new LocalBinder();
     private CameraRtmpLiveStreamer mStreamer;
@@ -196,15 +202,18 @@ public class RtmpStreamingService extends Service {
         // Initialize hardware manager for LED control
         mHardwareManager = HardwareManagerFactory.getInstance(this);
 
-        // Initialize the streamer
-        initStreamer();
+        // Allocate capture only after a still-current start command is delivered.
     }
 
     @SuppressLint("MissingPermission")
     @Override
     public int onStartCommand(Intent intent, int flags, int startId) {
-        // Start as a foreground service with notification
         startForeground(NOTIFICATION_ID, createNotification());
+        if (intent == null || intent.getLongExtra("stream_request_generation", -1) != sStartRequestGeneration) {
+            if (!sStartRequested) stopSelf(startId);
+            return START_NOT_STICKY;
+        }
+        // Start as a foreground service with notification
 
         // Get RTMP URL, stream ID, and LED setting from intent if provided
         if (intent != null) {
@@ -228,14 +237,16 @@ public class RtmpStreamingService extends Service {
                 mReconnecting = false;
 
                 // Auto-start streaming after a short delay
-                new Handler(Looper.getMainLooper()).postDelayed(() -> {
+                final long pendingStart = mPublisherCallbacks.current();
+                mLifecycleHandler.postDelayed(() -> {
+                    if (!mPublisherCallbacks.isCurrent(pendingStart)) return;
                     Log.d(TAG, "Auto-starting streaming");
                     startStreaming();
                 }, 1000);
             }
         }
 
-        return START_STICKY;
+        return START_NOT_STICKY;
     }
 
     @Nullable
@@ -383,6 +394,15 @@ public class RtmpStreamingService extends Service {
         }
     }
 
+    private boolean markPublisherDisconnected(String reason) {
+        if (mAwaitingPublisherRecovery || mStreamState == StreamState.IDLE || mStreamState == StreamState.STOPPING) return false;
+        mAwaitingPublisherRecovery = true;
+        mIsStreaming = false;
+        mStreamState = StreamState.STARTING;
+        if (sStatusCallback != null) sStatusCallback.onReconnecting(mReconnectAttempts, MAX_RECONNECT_ATTEMPTS, reason, mCurrentStreamId);
+        return true;
+    }
+
     @SuppressLint("MissingPermission")
     private void initStreamer() {
         synchronized (mStateLock) {
@@ -399,6 +419,7 @@ public class RtmpStreamingService extends Service {
             }
         }
 
+        final long publisherGeneration = mPublisherCallbacks.advance();
         try {
             Log.d(TAG, "Initializing streamer");
 
@@ -477,7 +498,8 @@ public class RtmpStreamingService extends Service {
 
                         // Reset reconnect attempts when we get a successful connection
                         mReconnectAttempts = 0;
-                        boolean wasReconnecting = mReconnecting;
+                        boolean wasReconnecting = mReconnecting || mAwaitingPublisherRecovery;
+                        mAwaitingPublisherRecovery = false;
                         mReconnecting = false;
 
                         // Track stream timing
@@ -556,6 +578,7 @@ public class RtmpStreamingService extends Service {
                     }
 
                     // Give the StreamPack library time to recover internally before we take over
+                    if (!markPublisherDisconnected("connection_failed")) return;
                     // The library often recovers from brief network hiccups in 17-100ms
                     Log.d(TAG, "Waiting 1 second for library internal recovery before external reconnection");
 
@@ -608,6 +631,7 @@ public class RtmpStreamingService extends Service {
                         mRtmpUrl, streamDuration, message);
 
                     // Give the StreamPack library time to recover internally before we take over
+                    if (!markPublisherDisconnected("connection_lost")) return;
                     Log.d(TAG, "Waiting 1 second for library internal recovery before external reconnection");
 
                     // Capture current sequence for this delayed handler
@@ -639,7 +663,19 @@ public class RtmpStreamingService extends Service {
             };
 
             // Create the RTMP streamer
-            mStreamer = new CameraRtmpLiveStreamer(this, true, sharedErrorListener, sharedConnectionListener);
+            mStreamer = new CameraRtmpLiveStreamer(this, true,
+                    error -> mPublisherCallbacks.dispatch(publisherGeneration, () -> sharedErrorListener.onError(error)),
+                    new OnConnectionListener() {
+                        @Override public void onSuccess() {
+                            mPublisherCallbacks.dispatch(publisherGeneration, sharedConnectionListener::onSuccess);
+                        }
+                        @Override public void onFailed(String message) {
+                            mPublisherCallbacks.dispatch(publisherGeneration, () -> sharedConnectionListener.onFailed(message));
+                        }
+                        @Override public void onLost(String message) {
+                            mPublisherCallbacks.dispatch(publisherGeneration, () -> sharedConnectionListener.onLost(message));
+                        }
+                    });
 
             // For MIME type, use the actual mime type instead of null
             String audioMimeType = MediaFormat.MIMETYPE_AUDIO_AAC; // Default to AAC
@@ -785,6 +821,10 @@ public class RtmpStreamingService extends Service {
      */
     @RequiresPermission(Manifest.permission.CAMERA)
     public void startStreaming() {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            mLifecycleHandler.post(this::startStreaming);
+            return;
+        }
         synchronized (mStateLock) {
             // Always force a clean stop/start cycle for new stream requests
             if (mStreamState != StreamState.IDLE) {
@@ -941,6 +981,8 @@ public class RtmpStreamingService extends Service {
             }
 
             // For Kotlin's suspend functions, we need to provide a Continuation
+            final long startGeneration = mPublisherCallbacks.current();
+            mAwaitingPublisherRecovery = false;
             final Continuation<Unit> streamContinuation = new Continuation<Unit>() {
                 @Override
                 public CoroutineContext getContext() {
@@ -949,10 +991,12 @@ public class RtmpStreamingService extends Service {
 
                 @Override
                 public void resumeWith(Object o) {
+                    mPublisherCallbacks.dispatch(startGeneration, () -> {
                     synchronized (mStateLock) {
-                        if (o instanceof Throwable) {
-                            String errorMsg = "Failed to start streaming: " + ((Throwable) o).getMessage();
-                            Log.e(TAG, "Error starting stream", (Throwable)o);
+                        Throwable failure = StreamCallbackScope.failure(o);
+                        if (failure != null) {
+                            String errorMsg = "Failed to start streaming: " + failure.getMessage();
+                            Log.e(TAG, "Error starting stream", failure);
                             mStreamState = StreamState.IDLE;
                             mIsStreaming = false;
                             EventBus.getDefault().post(new StreamingEvent.Error(errorMsg));
@@ -962,7 +1006,7 @@ public class RtmpStreamingService extends Service {
 
                             // Report stream start failure
                             StreamingReporting.reportStreamStartFailure(RtmpStreamingService.this,
-                                mRtmpUrl, ((Throwable) o).getMessage(), (Throwable) o);
+                                mRtmpUrl, failure.getMessage(), failure);
 
                             // Schedule reconnect if we couldn't start the stream
                             scheduleReconnect("start_error");
@@ -997,6 +1041,7 @@ public class RtmpStreamingService extends Service {
                             }
                         }
                     }
+                    });
                 }
             };
 
@@ -1035,6 +1080,11 @@ public class RtmpStreamingService extends Service {
      * Stop the current streaming session
      */
     public void stopStreaming() {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            mLifecycleHandler.post(this::stopStreaming);
+            return;
+        }
+        mPublisherCallbacks.advance();
         synchronized (mStateLock) {
             if (mStreamState == StreamState.STOPPING) {
                 Log.w(TAG, "Already stopping stream");
@@ -1054,6 +1104,8 @@ public class RtmpStreamingService extends Service {
      * This method performs a complete cleanup regardless of current state
      */
     private void forceStopStreamingInternal(boolean preserveSession) {
+        final long stopGeneration = mPublisherCallbacks.advance();
+        mAwaitingPublisherRecovery = false;
         Log.d(TAG, "Force stopping stream and cleaning up resources (preserveSession=" + preserveSession + ")");
 
         // Capture the id up front - clearStreamingSession() and the state reset below
@@ -1102,12 +1154,14 @@ public class RtmpStreamingService extends Service {
 
             @Override
             public void resumeWith(Object o) {
-                if (o instanceof Throwable) {
-                    Log.e(TAG, "Error during stream stop", (Throwable)o);
+                    mPublisherCallbacks.dispatch(stopGeneration, () -> {
+                Throwable failure = StreamCallbackScope.failure(o);
+                        if (failure != null) {
+                    Log.e(TAG, "Error during stream stop", failure);
 
                     // Report stream stop failure
                     StreamingReporting.reportStreamStopFailure(RtmpStreamingService.this,
-                        "stream_stop_error", (Throwable) o);
+                        "stream_stop_error", failure);
 
                     // Notify TPA developer of cleanup failure. Use the id captured
                     // before cleanup: this continuation can resume after the state
@@ -1115,11 +1169,12 @@ public class RtmpStreamingService extends Service {
                     // overwrote it, and the failure belongs to the stream being
                     // stopped.
                     if (sStatusCallback != null) {
-                        sStatusCallback.onStreamError("Failed to stop stream: " + ((Throwable) o).getMessage(), stoppedStreamId);
+                        sStatusCallback.onStreamError("Failed to stop stream: " + failure.getMessage(), stoppedStreamId);
                     }
                 }
                 Log.d(TAG, "Stream stop completed");
-            }
+                });
+                }
         };
 
         CameraRtmpLiveStreamer streamerToCleanup = mStreamer != null ? mStreamer : mLastStreamerForCleanup;
@@ -1230,6 +1285,7 @@ public class RtmpStreamingService extends Service {
      * @param reason The reason for the reconnection
      */
     private void scheduleReconnect(String reason) {
+        mAwaitingPublisherRecovery = true;
         // Don't reconnect if we've reached the max attempts
         if (mReconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
             Log.w(TAG, "Maximum reconnection attempts reached, giving up.");
@@ -1576,11 +1632,18 @@ public class RtmpStreamingService extends Service {
      * @param config Stream configuration (video/audio settings). Pass null for defaults.
      */
     public static void startStreaming(Context context, String rtmpUrl, String streamId, boolean enableLed, boolean enableSound, RtmpStreamConfig config) {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            new Handler(Looper.getMainLooper()).post(() -> startStreaming(context, rtmpUrl, streamId, enableLed, enableSound, config));
+            return;
+        }
+        final long requestGeneration = ++sStartRequestGeneration;
+        sStartRequested = true;
         // Set config first (before service starts or before streaming begins)
         setStreamConfig(config);
 
         // If service is running, send direct command
         if (sInstance != null) {
+            if (sInstance.mCurrentStreamId != null) sInstance.forceStopStreamingInternal(false);
             // Cancel any pending reconnections first
             if (sInstance.mReconnectHandler != null) {
                 sInstance.mReconnectHandler.removeCallbacksAndMessages(null);
@@ -1598,6 +1661,7 @@ public class RtmpStreamingService extends Service {
         } else {
             // Start the service with the provided URL, stream ID, and LED/sound settings
             Intent intent = new Intent(context, RtmpStreamingService.class);
+            intent.putExtra("stream_request_generation", requestGeneration);
             intent.putExtra("rtmp_url", rtmpUrl);
             if (streamId != null && !streamId.isEmpty()) {
                 intent.putExtra("stream_id", streamId);
@@ -1644,6 +1708,12 @@ public class RtmpStreamingService extends Service {
      * @param context Context to use for accessing the service
      */
     public static void stopStreaming(Context context) {
+        if (Looper.myLooper() != Looper.getMainLooper()) {
+            new Handler(Looper.getMainLooper()).post(() -> stopStreaming(context));
+            return;
+        }
+        sStartRequestGeneration++;
+        sStartRequested = false;
         // If service is running, send direct command
         if (sInstance != null) {
             sInstance.stopStreaming();
