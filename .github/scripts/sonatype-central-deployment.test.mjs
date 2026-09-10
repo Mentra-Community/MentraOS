@@ -4,7 +4,13 @@ import {tmpdir} from "node:os"
 import path from "node:path"
 import test from "node:test"
 
-import {inspectDeployment, publishDeployment, uploadAutomaticDeployment} from "./sonatype-central-deployment.mjs"
+import {
+  inspectDeployment,
+  publishDeployment,
+  requirePublishingType,
+  uploadAutomaticDeployment,
+  uploadDeployment,
+} from "./sonatype-central-deployment.mjs"
 
 const deploymentId = "28570f16-da32-4c14-bd2e-c1acc0782365"
 const deploymentName = "mentra-3.1.0-beta.57-android-sdk"
@@ -52,6 +58,38 @@ test("uploads an automatically published deployment and returns a durable recove
   assert.equal(result.deploymentId, deploymentId)
   assert.equal(result.bundleSha256.length, 64)
   assert.deepEqual(result.expectedPurls, expectedPurls)
+})
+
+test("uploads a user-managed deployment for the production channel without publishing it", async () => {
+  let request
+  const result = await uploadDeployment({
+    bundle: bundle(),
+    token: "token",
+    deploymentName: "mentra-3.1.0-android-sdk",
+    expectedPurls: ["pkg:maven/com.mentraglass/bluetooth-sdk@3.1.0", "pkg:maven/com.mentraglass/lc3Lib@3.1.0"],
+    publishingType: "USER_MANAGED",
+    fetchImpl: async (url, options) => {
+      request = {url: String(url), options}
+      return new Response(deploymentId, {status: 201})
+    },
+  })
+
+  assert.match(request.url, /publishingType=USER_MANAGED/)
+  assert.equal(result.publishingType, "USER_MANAGED")
+  assert.equal(requirePublishingType(undefined), "AUTOMATIC")
+  assert.throws(() => requirePublishingType("MANUAL"), /Unsupported Sonatype publishing type/)
+  await assert.rejects(
+    () =>
+      uploadDeployment({
+        bundle: bundle(),
+        token: "token",
+        deploymentName,
+        expectedPurls,
+        publishingType: "manual",
+        fetchImpl: async () => new Response(deploymentId, {status: 201}),
+      }),
+    /Unsupported Sonatype publishing type/,
+  )
 })
 
 test("publishes a persisted deployment only after validation", async () => {

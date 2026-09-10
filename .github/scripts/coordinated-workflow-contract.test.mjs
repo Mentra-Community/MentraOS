@@ -131,6 +131,47 @@ test("production promotion is resumable and keeps irreversible actions behind se
   assert.equal(existsSync(new URL("../workflows/reusable-coordinated-mobile-promotion.yml", import.meta.url)), false)
 })
 
+test("stable packages publish from the frozen beta source independently of the mobile path", () => {
+  const packages = workflow("production-release-packages.yml")
+  const rollout = workflow("production-release-rollout.yml")
+  const sdkNative = workflow("reusable-coordinated-sdk-native.yml")
+
+  assert.match(packages, /workflow_dispatch:/)
+  assert.doesNotMatch(packages, /pull_request:/)
+  assert.match(packages, /ref: main/)
+  assert.match(packages, /beta_identity:/)
+  assert.match(packages, /options:\n\s+- publish\n\s+- release/)
+  // Keyed on the beta plan, built from its exact source, only once main contains it.
+  assert.match(packages, /git merge-base --is-ancestor "\$source_commit" origin\/main/)
+  assert.match(packages, /ref: \$\{\{ steps\.beta\.outputs\.source_commit \}\}/)
+  assert.match(packages, /production-packages\.mjs plan \\\n\s+--root release-source/)
+  assert.match(packages, /source_commit: \$\{\{ needs\.load\.outputs\.source_commit \}\}/)
+  // The promotion state machine is read, never transitioned; evidence is additive.
+  assert.match(packages, /download-latest-attempt/)
+  assert.match(packages, /production-promotion-state\.mjs packages-link/)
+  assert.match(packages, /production-promotion-state\.mjs append/)
+  assert.doesNotMatch(packages, /production-promotion-state\.mjs transition/)
+  assert.doesNotMatch(packages, /attest-transition|--to [a-z-]+/)
+  assert.doesNotMatch(packages, /stores-approved|store-review-approved|production-store-release|production-cloud|reusable-coordinated-cloud-v2|reusable-coordinated-mobile/)
+  // Staging and public release are separate protected approvals.
+  assert.match(packages, /name: production-packages\n/)
+  assert.match(packages, /name: production-packages-release\n/)
+  assert.match(packages, /npm_tag: \$\{\{ needs\.load\.outputs\.npm_tag \}\}/)
+  assert.match(packages, /promote-npm-latest\.mjs/)
+  assert.match(packages, /sonatype-central-deployment\.mjs publish/)
+  assert.match(packages, /git push origin "refs\/tags\/\$VERSION"/)
+  assert.match(packages, /release_id: \$\{\{ needs\.load\.outputs\.stable_release_id \}\}/)
+  // Both workflows must recognize the same stable draft container.
+  assert.match(rollout, /body: "Canonical production release records\. Publish manually only after the completed promotion and final public-availability checks\."/)
+  assert.match(packages, /production-packages\.mjs ensure-container/)
+  // The reusable native job stages production without publishing.
+  assert.match(sdkNative, /publishing_type=USER_MANAGED/)
+  assert.match(sdkNative, /--publishing-type "\$PUBLISHING_TYPE"/)
+  assert.match(sdkNative, /staging_ref="release\/\$version"/)
+  assert.match(sdkNative, /steps\.release\.outputs\.channel != 'production' && steps\.existing\.outputs\.exists != 'true'/)
+  assert.match(sdkNative, /git push origin "\$\{\{ steps\.selected\.outputs\.mirror_sha \}\}:refs\/heads\/\$STAGING_REF"/)
+})
+
 test("Cloud V2 deploys once per coordinated environment before mobile publication", () => {
   const coordinator = workflow("coordinated-release.yml")
   const cloud = workflow("reusable-coordinated-cloud-v2.yml")

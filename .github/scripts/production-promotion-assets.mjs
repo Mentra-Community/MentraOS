@@ -168,6 +168,14 @@ export function planPromotionContainerAllocation(
   return {action: "create", attempt: containers.length === 0 ? 1 : containers.at(-1).attempt + 1}
 }
 
+// The newest promotion attempt for a release identity, or null when none was
+// ever allocated. Stable package publication uses this to link its evidence to
+// a live promotion without requiring the operator to name the attempt.
+export function latestPromotionContainer(releases, releaseIdentity) {
+  const matches = matchingPromotionContainers(releases, releaseIdentity)
+  return matches.length === 0 ? null : matches.at(-1)
+}
+
 export function stateAssets(assets, releaseIdentity, attempt) {
   const pattern = new RegExp(
     `^production-promotion-${releaseIdentity.replaceAll(".", "\\.")}-attempt-${attempt}-(\\d{2,})-([a-z-]+)\\.json$`,
@@ -280,9 +288,46 @@ function downloadLatest({repository, releaseIdentity, attempt, outputFile}) {
   return {release, latest, record}
 }
 
+function downloadLatestAttempt({repository, releaseIdentity, outputFile}) {
+  const releases = listReleases(repository)
+  const latest = latestPromotionContainer(releases, releaseIdentity)
+  if (!latest) return null
+  const release = requirePromotionContainer(releases, releaseIdentity, latest.attempt)
+  const loaded = loadPromotionState({repository, releaseIdentity, attempt: latest.attempt, release})
+  if (!loaded) return null
+  mkdirSync(path.dirname(outputFile), {recursive: true})
+  writeFileSync(outputFile, loaded.latest.bytes)
+  return {attempt: latest.attempt, ...loaded}
+}
+
 function main() {
   const command = process.argv[2]
   const args = parseArgs(process.argv.slice(3))
+  if (command === "download-latest-attempt") {
+    const result = downloadLatestAttempt({
+      repository: args.repository,
+      releaseIdentity: args.release,
+      outputFile: path.resolve(args.output),
+    })
+    if (!result) {
+      output({found: false}, args["github-output"])
+      return
+    }
+    output(
+      {
+        found: true,
+        attempt: result.attempt,
+        release_id: result.release.id,
+        tag: result.release.tag_name,
+        asset_id: result.latest.asset.id,
+        asset_name: result.latest.asset.name,
+        state: result.record.state,
+        sequence: result.record.sequence,
+      },
+      args["github-output"],
+    )
+    return
+  }
   if (command === "selection-digest") {
     const readJson = (name) => JSON.parse(readFileSync(path.resolve(args[name]), "utf8"))
     const fileSha256 = (name) =>

@@ -15,6 +15,7 @@ import {
   validatePromotionChain,
   validatePromotionRecord,
 } from "./production-promotion-state.mjs"
+import * as stateModule from "./production-promotion-state.mjs"
 
 const now = "2026-08-28T20:00:00.000Z"
 const runUrl = "https://github.com/Mentra-Community/MentraOS/actions/runs/123"
@@ -409,4 +410,114 @@ test("allows append-only rollout observations before completion", () => {
   })
   assert.equal(completed.state, "completed")
   assert.equal(completed.previous.assetName, promotionAssetName(finalizing))
+})
+
+test("appends stable package evidence without moving the mobile path", () => {
+  const {PACKAGE_EVIDENCE_KINDS, appendPromotionEvidence, packagesEvidenceLink} = stateModule
+  const link = {betaIdentity: "3.1.0-beta.57", sourceCommit: "a".repeat(40)}
+  for (const state of PROMOTION_STATES.filter((candidate) => !["finalizing", "completed"].includes(candidate))) {
+    const record = atState(state)
+    assert.deepEqual(packagesEvidenceLink(record, link).append, true, state)
+    let next = record
+    for (const kind of PACKAGE_EVIDENCE_KINDS) {
+      next = appendPromotionEvidence({
+        record: next,
+        actor: "release-owner",
+        createdAt: now,
+        provenanceUrl: runUrl,
+        evidence: evidence(kind),
+      })
+      assert.equal(next.state, state)
+      assert.equal(next.evidence.at(-1).kind, kind)
+    }
+    assert.equal(next.sequence, record.sequence + PACKAGE_EVIDENCE_KINDS.length)
+    assert.deepEqual(nextAction(next), nextAction(record))
+  }
+
+  const selected = appendPromotionEvidence({
+    record: initial(),
+    actor: "release-owner",
+    createdAt: now,
+    provenanceUrl: runUrl,
+    evidence: evidence("production-packages-publication"),
+  })
+  const labReady = withCompatibilityLab(selected)
+  assert.equal(nextAction(labReady).check, "staging-mobile-n-compatibility")
+  const compatible = transitionPromotionRecord({
+    record: labReady,
+    to: "staging-compatible",
+    actor: "operator",
+    createdAt: now,
+    provenanceUrl: runUrl,
+    evidence: evidence("staging-mobile-n-compatibility"),
+  })
+  assert.equal(compatible.state, "staging-compatible")
+
+  assert.throws(
+    () =>
+      appendPromotionEvidence({
+        record: initial(),
+        actor: "release-owner",
+        createdAt: now,
+        provenanceUrl: runUrl,
+        evidence: evidence("production-cloud-v2-deployment"),
+      }),
+    /only package evidence/,
+  )
+  assert.throws(
+    () =>
+      transitionPromotionRecord({
+        record: initial(),
+        to: "selected",
+        actor: "release-owner",
+        createdAt: now,
+        provenanceUrl: runUrl,
+        evidence: evidence("production-cloud-v2-deployment"),
+      }),
+    /not contiguous/,
+  )
+})
+
+test("refuses package evidence at the finalizing checkpoint and after terminal states", () => {
+  const {appendPromotionEvidence, packagesEvidenceLink} = stateModule
+  const link = {betaIdentity: "3.1.0-beta.57", sourceCommit: "a".repeat(40)}
+  const finalizing = atState("finalizing")
+  assert.match(packagesEvidenceLink(finalizing, link).reason, /finalizing checkpoint/)
+  assert.throws(
+    () =>
+      appendPromotionEvidence({
+        record: finalizing,
+        actor: "release-owner",
+        createdAt: now,
+        provenanceUrl: runUrl,
+        evidence: evidence("production-packages-release"),
+      }),
+    /not contiguous/,
+  )
+  const completed = atState("completed")
+  assert.equal(packagesEvidenceLink(completed, link).append, false)
+  const aborted = abortPromotionRecord({
+    record: initial(),
+    actor: "release-owner",
+    createdAt: now,
+    provenanceUrl: runUrl,
+    reason: "withdrawn",
+  })
+  assert.equal(packagesEvidenceLink(aborted, link).append, false)
+  assert.throws(
+    () =>
+      appendPromotionEvidence({
+        record: aborted,
+        actor: "release-owner",
+        createdAt: now,
+        provenanceUrl: runUrl,
+        evidence: evidence("production-packages-release"),
+      }),
+    /terminal state/,
+  )
+  assert.throws(
+    () => packagesEvidenceLink(initial(), {...link, betaIdentity: "3.1.0-beta.58"}),
+    /selected 3\.1\.0-beta\.57/,
+  )
+  assert.throws(() => packagesEvidenceLink(initial(), {...link, sourceCommit: "e".repeat(40)}), /froze source/)
 })

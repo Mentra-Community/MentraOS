@@ -37,14 +37,38 @@ function requireDeploymentRecord(record) {
   return record
 }
 
-export async function uploadAutomaticDeployment({bundle, token, deploymentName, expectedPurls, fetchImpl = fetch}) {
+// AUTOMATIC deployments publish to Maven Central as soon as validation passes
+// (dev and beta). USER_MANAGED deployments stop at VALIDATED and stay private
+// until publishDeployment requests publication; the production channel uses
+// that so stable coordinates only go public in the separate release phase.
+export const PUBLISHING_TYPES = Object.freeze(["AUTOMATIC", "USER_MANAGED"])
+
+export function requirePublishingType(value = "AUTOMATIC") {
+  if (!PUBLISHING_TYPES.includes(value))
+    throw new Error(`Unsupported Sonatype publishing type ${JSON.stringify(value)}`)
+  return value
+}
+
+export function uploadAutomaticDeployment(options) {
+  return uploadDeployment({...options, publishingType: "AUTOMATIC"})
+}
+
+export async function uploadDeployment({
+  bundle,
+  token,
+  deploymentName,
+  expectedPurls,
+  publishingType = "AUTOMATIC",
+  fetchImpl = fetch,
+}) {
   if (!bundle || !token || !deploymentName || expectedPurls.length === 0) {
     throw new Error("Bundle, token, deployment name, and expected PURLs are required")
   }
+  requirePublishingType(publishingType)
   const bytes = readFileSync(bundle)
   const url = new URL("/api/v1/publisher/upload", BASE_URL)
   url.searchParams.set("name", deploymentName)
-  url.searchParams.set("publishingType", "AUTOMATIC")
+  url.searchParams.set("publishingType", publishingType)
   const form = new FormData()
   form.append("bundle", new Blob([bytes], {type: "application/octet-stream"}), path.basename(bundle))
   const response = await fetchImpl(url, {
@@ -63,6 +87,7 @@ export async function uploadAutomaticDeployment({bundle, token, deploymentName, 
     deploymentName,
     bundleSha256: createHash("sha256").update(bytes).digest("hex"),
     expectedPurls,
+    publishingType,
   }
 }
 
@@ -169,11 +194,12 @@ async function main() {
   const args = parseArgs(process.argv.slice(3))
   let result
   if (command === "upload") {
-    result = await uploadAutomaticDeployment({
+    result = await uploadDeployment({
       bundle: path.resolve(args.bundle),
       token: process.env.MAVEN_CENTRAL_TOKEN_BASE64,
       deploymentName: args.name,
       expectedPurls: args["expected-purls"].split(","),
+      publishingType: args["publishing-type"] || "AUTOMATIC",
     })
   } else if (command === "inspect") {
     result = await inspectDeployment({

@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import {readFileSync, writeFileSync} from "node:fs"
+import {appendFileSync, readFileSync, writeFileSync} from "node:fs"
 import path from "node:path"
 import {fileURLToPath} from "node:url"
 import {isDeepStrictEqual} from "node:util"
@@ -78,6 +78,16 @@ export const NEXT_ACTIONS = Object.freeze({
   "completed": {kind: "none"},
   "aborted": {kind: "none"},
 })
+
+// Stable package publication (npm latest, Maven Central, SwiftPM) runs from
+// production-release-packages.yml independently of the mobile path. Its
+// evidence is appended to the chain without changing the promotion state, so
+// it can land before, during, or after store review. It is refused at the
+// finalizing checkpoint, whose last evidence entry must stay the 100 percent
+// rollout observation, and after a terminal state.
+export const PACKAGE_EVIDENCE_KINDS = Object.freeze(["production-packages-publication", "production-packages-release"])
+
+const PACKAGE_EVIDENCE_KIND_SET = new Set(PACKAGE_EVIDENCE_KINDS)
 
 function fail(message) {
   throw new Error(`Invalid production promotion: ${message}`)
@@ -247,6 +257,10 @@ export function validatePromotionChain(previous, next) {
     const previousIndex = STATE_INDEX.get(previous.state)
     const nextIndex = STATE_INDEX.get(next.state)
     const rolloutUpdate = previous.state === "rolling-out" && next.state === "rolling-out"
+    const packagesUpdate =
+      previous.state === next.state &&
+      previous.state !== "finalizing" &&
+      PACKAGE_EVIDENCE_KIND_SET.has(next.evidence.at(-1)?.kind)
     const compatibilityLabUpdate =
       previous.state === "selected" &&
       next.state === "selected" &&
@@ -262,7 +276,7 @@ export function validatePromotionChain(previous, next) {
     ) {
       fail("staging-compatible requires lab build evidence followed by Mobile N acceptance")
     }
-    if (!rolloutUpdate && !compatibilityLabUpdate && nextIndex !== previousIndex + 1) {
+    if (!rolloutUpdate && !compatibilityLabUpdate && !packagesUpdate && nextIndex !== previousIndex + 1) {
       fail(`transition ${previous.state} -> ${next.state} is not contiguous`)
     }
   }
@@ -334,6 +348,34 @@ export function abortPromotionRecord({record, actor, createdAt, provenanceUrl, r
     abort: {reason: requireString(reason, "abort.reason", 1000)},
   }
   return validatePromotionChain(record, next)
+}
+
+export function appendPromotionEvidence({record, actor, createdAt, provenanceUrl, evidence}) {
+  validatePromotionRecord(record)
+  if (TERMINAL_PROMOTION_STATES.includes(record.state)) fail(`cannot append after terminal state ${record.state}`)
+  if (!PACKAGE_EVIDENCE_KIND_SET.has(evidence?.kind)) {
+    fail(`only package evidence can be appended without a state transition, not ${JSON.stringify(evidence?.kind)}`)
+  }
+  return transitionPromotionRecord({record, to: record.state, actor, createdAt, provenanceUrl, evidence})
+}
+
+// Decide whether a stable package run for the selected beta may append its
+// evidence to this promotion attempt. A live attempt that froze a different
+// beta or source is a hard stop: two sources cannot share one release identity.
+export function packagesEvidenceLink(record, {betaIdentity, sourceCommit}) {
+  validatePromotionRecord(record)
+  if (record.selectedBeta.identity !== betaIdentity) {
+    fail(`promotion attempt ${record.attempt} selected ${record.selectedBeta.identity}, not ${betaIdentity}`)
+  }
+  if (record.source.mentraosCommit !== sourceCommit) {
+    fail(`promotion attempt ${record.attempt} froze source ${record.source.mentraosCommit}, not ${sourceCommit}`)
+  }
+  if (record.state === "aborted") return {append: false, reason: `attempt ${record.attempt} is aborted`}
+  if (record.state === "completed") return {append: false, reason: `attempt ${record.attempt} is completed`}
+  if (record.state === "finalizing") {
+    return {append: false, reason: `attempt ${record.attempt} is at the finalizing checkpoint; resume it first`}
+  }
+  return {append: true, reason: `attempt ${record.attempt} is ${record.state}`}
 }
 
 function secretLike(value) {
@@ -482,6 +524,27 @@ function main() {
       evidence: readJson(args.evidence),
     })
     writeFileSync(path.resolve(args.output), serializeReleaseRecord(record))
+    return
+  }
+  if (command === "append") {
+    const record = appendPromotionEvidence({
+      record: readJson(args.record),
+      actor: args.actor,
+      createdAt: args["created-at"],
+      provenanceUrl: args["provenance-url"],
+      evidence: readJson(args.evidence),
+    })
+    writeFileSync(path.resolve(args.output), serializeReleaseRecord(record))
+    return
+  }
+  if (command === "packages-link") {
+    const link = packagesEvidenceLink(readJson(args.record), {
+      betaIdentity: args.beta,
+      sourceCommit: args["source-commit"],
+    })
+    const lines = [`append=${link.append}`, `reason=${link.reason}`]
+    for (const line of lines) console.log(line)
+    if (args["github-output"]) appendFileSync(path.resolve(args["github-output"]), `${lines.join("\n")}\n`)
     return
   }
   if (command === "abort") {
