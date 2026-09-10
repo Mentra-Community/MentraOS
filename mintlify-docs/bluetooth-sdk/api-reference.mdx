@@ -468,7 +468,9 @@ Use `setDashboardContent` to place persistent, glanceable text below the standar
 dashboard status header. The SDK keeps the raw status placeholders and expands
 them every time the dashboard renders, so time, date, battery, and connection
 remain current. The call does not force the dashboard open. If the contextual
-dashboard is hidden, the content appears on the next head-up.
+dashboard is hidden, the content appears on the next head-up. Content starts on
+the line immediately below the header; begin it with a newline when a blank row
+is desired.
 
 <Tabs>
   <Tab title="React Native">

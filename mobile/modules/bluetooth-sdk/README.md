@@ -390,13 +390,13 @@ console.log(ledAck.state)
 ## Dashboard Content
 
 `setDashboardContent(content)` keeps the standard `$TIME12$ $DATE$ $GBATT$
-$CONNECTION_STATUS$` status header and places non-empty content below it after a
-blank line. Pass the exact empty string to reset the dashboard to the status
-header only. The template is held in memory for the SDK process/session, and its
-status placeholders are refreshed each time the dashboard renders. Calling this
-method does not open the dashboard; it updates an active contextual dashboard
-immediately or appears on the next head-up. Repeating the same content is a
-no-op.
+$CONNECTION_STATUS$` status header and places non-empty content on the next line.
+Start content with a newline when a blank row is desired. Pass the exact empty
+string to reset the dashboard to the status header only. The template is held in
+memory for the SDK process/session, and its status placeholders are refreshed
+each time the dashboard renders. Calling this method does not open the dashboard;
+it updates an active contextual dashboard immediately or appears on the next
+head-up. Repeating the same content is a no-op.
 
 React Native / Expo:
 
