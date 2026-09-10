@@ -158,10 +158,19 @@ enterprise device deployments:
 
 - `bluetooth_sdk_started`: sent once per app runtime after the native SDK starts.
 - `bluetooth_sdk_glasses_connected`: sent when SDK status transitions from not connected to connected.
-- `bluetooth_sdk_glasses_identified`: sent once per connection after the SDK receives a valid manufacturing serial from the glasses. This fires for every supported model that reports a serial. G1 and Ar99 decode the serial from the glasses' BLE advertisement. Mentra Live reports the product serial provisioned by its Android firmware through `asg_client`.
+- `bluetooth_sdk_glasses_identified`: sent once per connection after the SDK receives a valid manufacturing serial from the glasses, and again as a `glasses_heartbeat` on the first status update of each new reporting day (`America/Los_Angeles` calendar day, the calendar Mentra's weekly reporting is cut on) while that connection is still up, so a connection that spans a week boundary is visible in both weeks. Heartbeats ride on glasses status updates; a connection whose status never changes for a whole day produces none. This fires for every supported model that reports a serial. G1, G2, and Ar99 decode the serial from the glasses' BLE advertisement. Mentra Live reports the product serial provisioned by its Android firmware through `asg_client`.
 
-Analytics delivery is fire-and-forget: events are submitted asynchronously, do
-not block Bluetooth SDK behavior, and are not retried if delivery fails.
+The connected event waits for the glasses model when the model is not known at
+the moment the connection flag flips; if the connection ends first it is sent
+without a model and with `glasses_model_unresolved=true`.
+
+Analytics delivery never blocks Bluetooth SDK behavior: events are submitted
+asynchronously off the caller thread. An upload that fails (no network, non-2xx)
+is kept in a small on-device queue (at most 100 events, 7 days) and retried on
+the next successful send or the next SDK start; a payload PostHog rejects
+outright (4xx other than 408/429) is dropped rather than retried. Each event
+carries its own `uuid` and capture `timestamp`, so a retry neither double counts
+nor moves the event to a later week.
 
 React Native / Expo apps can disable these events before SDK startup through
 the config plugin:
