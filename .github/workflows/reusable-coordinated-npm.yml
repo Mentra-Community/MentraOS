@@ -41,7 +41,13 @@ jobs:
   publish:
     name: Publish exact npm family closure
     runs-on: ubuntu-latest
-    timeout-minutes: 45
+    # Every npm member reads its published metadata back before the next one
+    # publishes, and publish-release-npm.mjs waits at least 30 minutes (2
+    # minutes per MiB for large tarballs) for npm to finish processing each
+    # one. Budget the ~6 minutes of install/build/publish work, a slow
+    # Bluetooth SDK (~36 minutes), a full floor for Engine, and a few minutes
+    # for each small package, with margin.
+    timeout-minutes: 120
     steps:
       - name: Checkout exact package source
         uses: actions/checkout@v4
