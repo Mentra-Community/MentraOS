@@ -14,7 +14,7 @@ import android.os.AsyncTask;
 import android.os.Environment;
 import android.os.Handler;
 import android.os.Looper;
-import android.util.Log;
+import com.mentra.bluetoothsdk.utils.NativeLog;
 import android.widget.Toast;
 
 import com.mentra.lc3Lib.Lc3Cpp;
@@ -74,13 +74,13 @@ public class Lc3Player extends Thread{
         if(mTrack != null)
             return;
         bufferSize = AudioTrack.getMinBufferSize(mSampleRate, mChannelConfig, mEncoding)*4;
-        Log.e("_test_", "lc3 bufferSize="+bufferSize);
+        NativeLog.e("_test_", "lc3 bufferSize="+bufferSize);
         mTrack = new AudioTrack(AudioManager.STREAM_MUSIC, mSampleRate, mChannelConfig, mEncoding, bufferSize, AudioTrack.MODE_STREAM);
 //        mTrack.setStereoVolume(0.8f,0.8f);
         mTrack.setVolume(1.0f);
         mTrack.setPlaybackRate(mSampleRate);
         mDecorderHandle = Lc3Cpp.initDecoder();
-        Log.e("_test_", "lc3 decoder handle="+mDecorderHandle);
+        NativeLog.e("_test_", "lc3 decoder handle="+mDecorderHandle);
     }
 
     public void startPlay()
@@ -103,7 +103,7 @@ public class Lc3Player extends Thread{
         //     return;
         if(!mQueue.offer(data))
         {
-            Log.e("_test_","+++++++++ addFrame fail");
+            NativeLog.e("_test_","+++++++++ addFrame fail");
         }
     }
     public void write1(byte[] data, int offset, int size)
@@ -126,10 +126,10 @@ public class Lc3Player extends Thread{
         byte []decData = Lc3Cpp.decodeLC3(mDecorderHandle, mBuffer, mFrameSize);
         if(decData == null)
         {
-            Log.e("_test_", "lc3 decoder data null");
+            NativeLog.e("_test_", "lc3 decoder data null");
             return;
         }
-        Log.e("_test_", "lc3 decoder data seq="+ ByteUtilAudioPlayer.bytetoHexString(data[1])+",size="+decData.length+",ori size="+size);
+        NativeLog.e("_test_", "lc3 decoder data seq="+ ByteUtilAudioPlayer.bytetoHexString(data[1])+",size="+decData.length+",ori size="+size);
         mTrack.write(decData, 0, decData.length);
     }
     public void stopPlay()
@@ -151,7 +151,7 @@ public class Lc3Player extends Thread{
                     mTrack.stop();
                     mTrack.release();
                 } catch (Exception e) {
-                    Log.e("_test_", "Error stopping AudioTrack", e);
+                    NativeLog.e("_test_", "Error stopping AudioTrack", e);
                 } finally {
                     mTrack = null;
                 }
@@ -187,7 +187,7 @@ public class Lc3Player extends Thread{
                                         try {
                                             mTrack.write(decData, 0, decData.length);
                                         } catch (IllegalStateException e) {
-                                            Log.e("_test_", "AudioTrack write failed - track released", e);
+                                            NativeLog.e("_test_", "AudioTrack write failed - track released", e);
                                             break;
                                         }
                                     }
@@ -201,7 +201,7 @@ public class Lc3Player extends Thread{
                         System.arraycopy(data, 2, mBuffer, 0, 200);  // Copy 200 bytes (5 × 40)
                         if(ByteUtilAudioPlayer.byte2Int(data[1]) != mLastSeq)
                         {
-                            Log.e("_test_", "seq error,should be=0x"+ ByteUtilAudioPlayer.intToHexString(mLastSeq, 2)+",but seq="+ByteUtilAudioPlayer.bytetoHexString(data[1]));
+                            NativeLog.e("_test_", "seq error,should be=0x"+ ByteUtilAudioPlayer.intToHexString(mLastSeq, 2)+",but seq="+ByteUtilAudioPlayer.bytetoHexString(data[1]));
                         }
                         else
                         {
@@ -222,7 +222,7 @@ public class Lc3Player extends Thread{
                                         //Log.e("_test_", "dec="+ByteUtilAudioPlayer.outputHexString(decData, 1440, 160));
                                         //writeRecData(decData, 0, decData.length);
                                     } catch (IllegalStateException e) {
-                                        Log.e("_test_", "AudioTrack write failed - track released", e);
+                                        NativeLog.e("_test_", "AudioTrack write failed - track released", e);
                                         break;
                                     }
                                 }
@@ -233,12 +233,12 @@ public class Lc3Player extends Thread{
                 }
             }
         } catch (InterruptedException e) {
-            Log.d("_test_", "LC3Player thread interrupted - shutting down gracefully");
+            NativeLog.d("_test_", "LC3Player thread interrupted - shutting down gracefully");
             Thread.currentThread().interrupt(); // Preserve interrupt status
         }
         finally {
             mQueue.clear();
-            Log.d("_test_", "LC3Player thread finished");
+            NativeLog.d("_test_", "LC3Player thread finished");
         }
     }
     
@@ -248,10 +248,10 @@ public class Lc3Player extends Thread{
     public void enableRollingRecording(boolean enable) {
         rollingRecordingEnabled = enable;
         if (enable) {
-            Log.d("_test_", "Rolling audio recording ENABLED - will save 20-second files");
+            NativeLog.d("_test_", "Rolling audio recording ENABLED - will save 20-second files");
             lastRollingSaveTime = System.currentTimeMillis();
         } else {
-            Log.d("_test_", "Rolling audio recording DISABLED");
+            NativeLog.d("_test_", "Rolling audio recording DISABLED");
             rollingHandler.removeCallbacks(rollingSaveRunnable);
         }
     }
@@ -295,10 +295,10 @@ public class Lc3Player extends Thread{
                 encodePcmToM4a(rollingBuffer, outputFile.getAbsolutePath());
                 
                 rollingFileCounter++;
-                Log.d("_test_", "Saved rolling audio #" + rollingFileCounter + ": " + outputFile.getAbsolutePath());
+                NativeLog.d("_test_", "Saved rolling audio #" + rollingFileCounter + ": " + outputFile.getAbsolutePath());
                 
             } catch (Exception e) {
-                Log.e("_test_", "Error saving rolling audio", e);
+                NativeLog.e("_test_", "Error saving rolling audio", e);
             }
         }).start();
     }

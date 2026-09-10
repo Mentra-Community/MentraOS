@@ -84,6 +84,9 @@ enum BleTraceLogger {
 
     private static func emit(_ line: String) {
         os_log("%{public}@", log: log, type: .info, line)
+        // Log events are excluded from tracing in Bridge, so forwarding a trace
+        // cannot recursively generate another trace.
+        Bridge.sendTypedMessage("log", body: ["message": line])
     }
 
     private static func format(

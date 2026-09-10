@@ -1,6 +1,6 @@
 package com.mentra.bluetoothsdk.utils.audio;
 
-import android.util.Log;
+import com.mentra.bluetoothsdk.utils.NativeLog;
 
 import java.io.ByteArrayInputStream;
 import java.io.ByteArrayOutputStream;
@@ -132,7 +132,7 @@ public class ByteUtilAudioPlayer {
 
     	if(str.length() + destoffset >  dest.length)
     	{
-    		Log.v("ByteUtilAudioPlayer","error string2Bytes src.length="+str.length()+",dest.length="+dest.length+",destoffset="+destoffset);
+            NativeLog.v("ByteUtilAudioPlayer","error string2Bytes src.length="+str.length()+",dest.length="+dest.length+",destoffset="+destoffset);
     		return false;
     	}
 
@@ -189,7 +189,7 @@ public class ByteUtilAudioPlayer {
 			body = new String(bytes,offset, len,encode);
 			body = body.trim();
 		} catch (UnsupportedEncodingException e) {
-			e.printStackTrace();
+			com.mentra.bluetoothsdk.utils.NativeLog.e("ByteUtilAudioPlayer", "Native exception", e);
 		}
 		return body;
     }
@@ -204,7 +204,7 @@ public class ByteUtilAudioPlayer {
 
     	if(src.length < offset + len || dest.length < destoffset +len)
     	{
-    		Log.v("ByteUtilAudioPlayer","error copyBytes src.length="+src.length+",dest.length="+dest.length);
+            NativeLog.v("ByteUtilAudioPlayer","error copyBytes src.length="+src.length+",dest.length="+dest.length);
     		return false;
     	}
     	for(int i = 0; i<len; i++)
@@ -251,17 +251,17 @@ public class ByteUtilAudioPlayer {
 		//BLog.v(CTConst.TAG,"copyBytes src="+src+",dest="+dest+",offset="+offset+",len="+len+",destoffset="+destoffset);
     	if(src == null || dest == null)
     	{
-			Log.v("ByteUtilAudioPlayer","compareBytes error");
+			NativeLog.v("ByteUtilAudioPlayer","compareBytes error");
     		return false;
     	}
     	if(len != destlen)
     	{
-    		Log.v("ByteUtilAudioPlayer","error compareBytes len="+len+",destlen="+destlen);
+            NativeLog.v("ByteUtilAudioPlayer","error compareBytes len="+len+",destlen="+destlen);
     		return false;
     	}
     	if(src.length < offset + len || dest.length < destoffset +destlen)
     	{
-    		Log.v("ByteUtilAudioPlayer","error compareBytes src.length="+src.length+",dest.length="+dest.length);
+            NativeLog.v("ByteUtilAudioPlayer","error compareBytes src.length="+src.length+",dest.length="+dest.length);
     		return false;
     	}
     	for(int i = 0; i<len; i++)

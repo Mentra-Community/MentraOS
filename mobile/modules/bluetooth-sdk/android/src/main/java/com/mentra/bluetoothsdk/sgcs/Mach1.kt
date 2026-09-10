@@ -7,7 +7,7 @@ import android.graphics.BitmapFactory
 import android.graphics.drawable.Drawable
 import android.os.Handler
 import android.os.Looper
-import android.util.Log
+import com.mentra.bluetoothsdk.utils.NativeLog as Log
 
 import androidx.lifecycle.LiveData
 import androidx.lifecycle.Observer
@@ -1128,7 +1128,7 @@ class Mach1 : SGCManager() {
                     override fun onBitmapFailed(e: Exception?, errorDrawable: Drawable?) {
                         // Handle the error
                         Log.d(TAG, "Bitmap failed")
-                        e!!.printStackTrace()
+                        com.mentra.bluetoothsdk.utils.NativeLog.e("Mach1", "Native exception", e!!)
                     }
 
                     override fun onPrepareLoad(placeHolderDrawable: Drawable?) {
