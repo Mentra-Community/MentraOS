@@ -4,7 +4,7 @@ Pod::Spec.new do |s|
   s.summary        = 'Mentra local video stream receiver'
   s.description    = 'Local WebRTC/GStreamer receiver used by Mentra Bluetooth SDK React Native apps for direct camera streaming to the phone.'
   s.author         = 'Mentra'
-  s.license        = { :type => 'MIT' }
+  s.license        = { :type => 'Apache-2.0' }
   s.homepage       = 'https://mentra.glass'
   s.platforms      = {
     :ios => '15.1'

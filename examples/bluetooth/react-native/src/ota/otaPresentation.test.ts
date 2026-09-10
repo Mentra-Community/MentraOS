@@ -17,6 +17,7 @@ const baseState: MentraLiveOtaState = {
   currentStep: null,
   error: null,
   firmwareRestarting: false,
+  glassesPackageName: null,
   hotspotArtifactPercent: null,
   hotspotPhase: 'idle',
   hotspotSupported: true,
@@ -310,6 +311,40 @@ describe('custom OTA presentation', () => {
       message: 'This mobile app is a development build, so automatic glasses updates are disabled.',
       title: 'Development Build',
     });
+  });
+
+  test('explains that a sideloaded glasses client blocks updates', () => {
+    const presentation = otaPresentation(otaState({screen: 'unofficial_client'}));
+
+    expect(presentation).toMatchObject({
+      message:
+        'Your glasses are running a sideloaded client, so updates are blocked. Restore the stock client to update them.',
+      primary: {action: 'finish', label: 'Continue'},
+      title: 'Updates Blocked',
+    });
+  });
+
+  test('asks the wearer to charge the glasses before updating', () => {
+    const presentation = otaPresentation(
+      otaState({batteryLevel: 12, canDismiss: true, screen: 'battery_required'}),
+    );
+
+    expect(presentation).toMatchObject({
+      message: 'Mentra Live is currently at 12%. Charge it before updating.',
+      primary: {action: 'install', disabled: true, label: 'Update Now'},
+      secondary: {action: 'finish', label: 'Later'},
+      title: 'Charge Mentra Live to Update',
+    });
+  });
+
+  test('names the sideloaded glasses client package when the controller reports one', () => {
+    const presentation = otaPresentation(
+      otaState({glassesPackageName: 'com.example.asg', screen: 'unofficial_client'}),
+    );
+
+    expect(presentation.message).toBe(
+      'Your glasses are running a sideloaded client (com.example.asg), so updates are blocked. Restore the stock client to update them.',
+    );
   });
 });
 
