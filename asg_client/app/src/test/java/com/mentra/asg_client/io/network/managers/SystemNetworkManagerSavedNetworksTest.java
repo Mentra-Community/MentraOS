@@ -20,6 +20,25 @@ import org.robolectric.annotation.Config;
 @Config(sdk = 28)
 public class SystemNetworkManagerSavedNetworksTest {
     @Test
+    public void nullEnumerationIsFailureForBothListAndForget() {
+        WifiManager wifiManager = mock(WifiManager.class);
+        when(wifiManager.getConfiguredNetworks()).thenReturn(null);
+        SystemNetworkManager manager = newManager(wifiManager);
+        assertThat(manager.getSavedWifiNetworksResult().getOutcome())
+                .isEqualTo(SavedWifiNetworksOutcome.FAILED);
+        assertThat(manager.forgetWifiNetwork("Home"))
+                .isEqualTo(com.mentra.asg_client.io.network.interfaces.WifiForgetOutcome.FAILED);
+    }
+
+    @Test
+    public void emptySuccessfulEnumerationReportsNotFoundForForget() {
+        WifiManager wifiManager = mock(WifiManager.class);
+        when(wifiManager.getConfiguredNetworks()).thenReturn(Collections.emptyList());
+        assertThat(newManager(wifiManager).forgetWifiNetwork("Home"))
+                .isEqualTo(com.mentra.asg_client.io.network.interfaces.WifiForgetOutcome.NOT_FOUND);
+    }
+
+    @Test
     public void reportsConfirmedEmptyWhenEnumerationSucceedsWithNoSavedNetworks() {
         WifiManager wifiManager = mock(WifiManager.class);
         when(wifiManager.getConfiguredNetworks()).thenReturn(Collections.emptyList());
