@@ -15,12 +15,12 @@ function readyChecks(services, probes) {
     .sort((left, right) => left.url.localeCompare(right.url))
 }
 
-function observedServices(services, imageName, sourceCommit) {
+function observedServices(services, imageName, sourceCommit, porterRevision) {
   return Object.keys(services).map((service, index) => ({
     service,
     digest: `sha256:${String(index + 1).repeat(64)}`,
     images: [`registry.example.com/${imageName}:${sourceCommit}`],
-    porterRevision: "revision-42",
+    porterRevision,
     podUids: [`${service}-pod-uid`],
     workloadUids: [`${service}-workload-uid`],
   }))
@@ -61,13 +61,13 @@ export function cloudRecordForPlan(plan) {
             requestedTag: plan.sourceCommit,
           },
           deploymentId: "porter:revision-7",
-          observedServices: observedServices(companion.services, name, plan.sourceCommit),
+          observedServices: observedServices(companion.services, name, plan.sourceCommit, "revision-7"),
           checks: readyChecks(companion.services, companion.probes),
         },
       ]),
     ),
     deploymentId: "porter:revision-42",
-    observedServices: observedServices(target.services, "cloud-v2", plan.sourceCommit),
+    observedServices: observedServices(target.services, "cloud-v2", plan.sourceCommit, "revision-42"),
     checks: readyChecks(target.services, ["healthz", "ready"]),
     completedAt: "2026-08-27T20:00:00.000Z",
     provenanceUrl: "https://github.com/Mentra-Community/MentraOS/actions/runs/123",

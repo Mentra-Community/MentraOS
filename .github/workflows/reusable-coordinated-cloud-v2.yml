@@ -39,7 +39,10 @@ jobs:
   deploy:
     name: Deploy and verify Cloud V2 ${{ inputs.deployment_environment }}
     runs-on: blacksmith-4vcpu-ubuntu-2404
-    timeout-minutes: 60
+    # Budget: 45 min Core/Runtime apply + 30 min companion apply, plus probes
+    # and pod read-back. A job cap below that sum could cancel an already
+    # successful companion apply before its evidence is recorded.
+    timeout-minutes: 90
     environment:
       name: ${{ inputs.approval_environment || inputs.deployment_environment }}
     concurrency:
