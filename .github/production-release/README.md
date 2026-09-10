@@ -77,10 +77,11 @@ Local Merge server (`miniapps/merge`), as `merge-dev`, `merge-staging`, and
 that includes a companion app, make sure for each environment that:
 
 - the Porter environment group named in its `miniapps/merge/porter.<env>.yaml`
-  exists on the companion cluster listed in
-  `.github/scripts/coordinated-cloud-v2-records.mjs`; and
-- DNS for its public host resolves to that cluster's ingress, because the job
-  probes `/healthz` on every companion host before it records evidence.
+  exists in Porter project `15081` (environment groups are project-wide) and
+  is available to that companion app; and
+- DNS for its public host resolves to the ingress of the companion cluster
+  listed in `.github/scripts/coordinated-cloud-v2-records.mjs`, because the
+  job probes `/healthz` on every companion host before it records evidence.
 
 The production Cloud configuration preflight covers Core and Runtime only; the
 companion environment groups are not part of the versioned contract.
