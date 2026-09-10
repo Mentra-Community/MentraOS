@@ -10,7 +10,10 @@ import {
   isHttpsRegistryUrl,
   npmMembersInOrder,
   npmReleaseTag,
+  npmReadbackAttempts,
+  npmReadbackWaitSeconds,
   npmViewPublishedTarball,
+  NPM_READBACK_POLL_SECONDS,
   publishWithRetry,
   releaseMetadataArgs,
   requireNpmProvenanceSource,
@@ -87,6 +90,56 @@ test("waits through empty npm metadata until the registry exposes the tarball", 
     "https://registry.npmjs.org/package/-/package-3.1.0.tgz",
   )
   assert.equal(sleeps, 2)
+})
+
+test("waits at least 30 minutes for npm to finish processing a publish", () => {
+  assert.equal(npmReadbackWaitSeconds(), 30 * 60)
+  assert.equal(npmReadbackWaitSeconds(1024), 30 * 60)
+  assert.equal(npmReadbackAttempts(), (30 * 60) / NPM_READBACK_POLL_SECONDS + 1)
+
+  let sleeps = 0
+  const progress = []
+  assert.equal(
+    npmViewPublishedTarball("package@3.1.0", {
+      view: () => "",
+      sleep: () => {
+        sleeps += 1
+      },
+      log: (line) => progress.push(line),
+    }),
+    null,
+  )
+  assert.equal(sleeps * NPM_READBACK_POLL_SECONDS, 30 * 60)
+  assert.equal(progress.length, 6)
+  assert.match(progress[0], /^npm has not exposed package@3\.1\.0 yet; waited 300s of up to 1800s$/)
+  assert.match(progress.at(-1), /waited 1800s of up to 1800s$/)
+})
+
+test("waits longer for larger tarballs before giving up on the read-back", () => {
+  const bluetoothSdkBytes = Math.round(18.5 * 1024 * 1024)
+  assert.equal(npmReadbackWaitSeconds(bluetoothSdkBytes), 19 * 2 * 60)
+  assert.ok(npmReadbackWaitSeconds(bluetoothSdkBytes) > npmReadbackWaitSeconds())
+  assert.ok(npmReadbackWaitSeconds(60 * 1024 * 1024) > npmReadbackWaitSeconds(bluetoothSdkBytes))
+
+  let sleeps = 0
+  let views = 0
+  assert.equal(
+    npmViewPublishedTarball("@mentra/bluetooth-sdk@3.1.0-beta.192", {
+      tarballBytes: bluetoothSdkBytes,
+      view: () => {
+        views += 1
+        return null
+      },
+      sleep: () => {
+        sleeps += 1
+      },
+      log: () => {},
+    }),
+    null,
+  )
+  assert.equal(views, sleeps + 1)
+  assert.equal(sleeps * NPM_READBACK_POLL_SECONDS, npmReadbackWaitSeconds(bluetoothSdkBytes))
+  assert.ok(sleeps * NPM_READBACK_POLL_SECONDS > 30 * 60)
 })
 
 test("requires the package checkout to match the immutable release plan", () => {
