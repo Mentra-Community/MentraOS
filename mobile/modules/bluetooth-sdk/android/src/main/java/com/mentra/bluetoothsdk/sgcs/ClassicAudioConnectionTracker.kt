@@ -5,6 +5,12 @@ internal enum class ClassicAudioProfile {
     HEADSET,
 }
 
+/** A confirmed connection is sufficient; declaring disconnection requires both profile reads. */
+internal fun readyClassicAudioSnapshot(states: Map<ClassicAudioProfile, Boolean>): Set<ClassicAudioProfile>? {
+    val connected = states.filterValues { it }.keys
+    return if (connected.isNotEmpty() || states.size == ClassicAudioProfile.entries.size) connected else null
+}
+
 /**
  * Tracks the Android Classic audio profiles for one dual-mode glasses device.
  *
