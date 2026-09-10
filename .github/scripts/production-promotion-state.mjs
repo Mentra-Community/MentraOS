@@ -79,16 +79,6 @@ export const NEXT_ACTIONS = Object.freeze({
   "aborted": {kind: "none"},
 })
 
-// Stable package publication (npm latest, Maven Central, SwiftPM) runs from
-// production-release-packages.yml independently of the mobile path. Its
-// evidence is appended to the chain without changing the promotion state, so
-// it can land before, during, or after store review. It is refused at the
-// finalizing checkpoint, whose last evidence entry must stay the 100 percent
-// rollout observation, and after a terminal state.
-export const PACKAGE_EVIDENCE_KINDS = Object.freeze(["production-packages-publication", "production-packages-release"])
-
-const PACKAGE_EVIDENCE_KIND_SET = new Set(PACKAGE_EVIDENCE_KINDS)
-
 function fail(message) {
   throw new Error(`Invalid production promotion: ${message}`)
 }
