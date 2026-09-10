@@ -76,6 +76,12 @@ public class AsgConstants {
     /** Tolerate brief phone BLE outages before releasing a remotely owned camera stream. */
     public static final long STREAM_PHONE_DISCONNECT_GRACE_MS = 10_000L;
 
+    /** Native controller challenge cadence; retransmission never renews the response deadline. */
+    public static final long STREAM_CONTROLLER_PROBE_INTERVAL_MS = 2_000L;
+
+    /** Stop capture after sustained app unresponsiveness, even if the OS retains BLE. */
+    public static final long STREAM_CONTROLLER_RESPONSE_TIMEOUT_MS = 10_000L;
+
     /** Glasses-owned start/stop control with process-scoped, revisioned status snapshots. */
     public static final int STREAM_CONTROL_VERSION = 1;
 

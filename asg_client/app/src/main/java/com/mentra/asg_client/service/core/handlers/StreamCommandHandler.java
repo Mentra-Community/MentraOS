@@ -12,6 +12,7 @@ import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.LinkStateMachine;
 import com.mentra.asg_client.io.streaming.StreamPhonePresencePolicy;
+import com.mentra.asg_client.io.streaming.StreamControllerLease;
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
 import com.mentra.asg_client.utils.WakeLockManager;
 import com.mentra.asg_client.io.hardware.core.HardwareManagerFactory;
@@ -61,8 +62,13 @@ public class StreamCommandHandler implements ICommandHandler {
     private boolean mDisposed;
     private Runnable mPhoneLossDeadline;
     private String mOwnedStreamId;
+    private String mOwnedControllerId;
     private long mOwnedStartRevision = -1;
     private Runnable mResourceRefresh;
+    private Runnable mControllerProbeTick;
+    private final StreamControllerLease mControllerLease = new StreamControllerLease(
+            AsgConstants.STREAM_CONTROLLER_RESPONSE_TIMEOUT_MS,
+            () -> java.util.UUID.randomUUID().toString());
     private final LinkStateMachine.Listener mPresenceListener = (state, caps, presence) ->
             mLifecycleHandler.post(() -> {
                 // Read the latest signal after dispatch; queued reports may predate a start or
@@ -102,7 +108,8 @@ public class StreamCommandHandler implements ICommandHandler {
 
     @Override
     public Set<String> getSupportedCommandTypes() {
-        return Set.of("start_stream", "stop_stream", "get_stream_status", "keep_stream_alive");
+        return Set.of("start_stream", "stop_stream", "get_stream_status", "keep_stream_alive",
+                "stream_controller_response");
     }
 
     @Override
@@ -124,6 +131,13 @@ public class StreamCommandHandler implements ICommandHandler {
                     return handleStatusCommand();
                 case "keep_stream_alive":
                     return handleKeepAliveCommand(data);
+                case "stream_controller_response":
+                    return Integer.valueOf(1).equals(data.opt("protocolVersion"))
+                            && mOwnedStreamId != null
+                            && mOwnedStreamId.equals(data.opt("streamId"))
+                            && mOwnedControllerId.equals(data.opt("controllerId"))
+                            && mControllerLease.acknowledge(data.optString("probeId", ""),
+                                    SystemClock.elapsedRealtime());
                 default:
                     Log.e(TAG, "Unsupported stream command: " + commandType);
                     return false;
@@ -165,6 +179,12 @@ public class StreamCommandHandler implements ICommandHandler {
         String streamId = data.optString("streamId", "");
         if (streamId.isEmpty()) streamId = "asg-" + java.util.UUID.randomUUID();
         try {
+            if (!Integer.valueOf(1).equals(data.opt("controllerProbeVersion"))
+                    || !(data.opt("controllerId") instanceof String)
+                    || data.optString("controllerId", "").isEmpty()) {
+                sendStreamErrorStatus(streamId, "Update the Mentra App: native stream controller probing is required");
+                return false;
+            }
             bindPhonePresence();
             if (!mPhonePolicy.canStart()) {
                 sendStreamErrorStatus(streamId,
@@ -261,7 +281,7 @@ public class StreamCommandHandler implements ICommandHandler {
                         applyEisForStreaming(config.getVideoWidth(), config.getVideoHeight());
                         eisChanged = true;
                         Log.d(TAG, "Starting RTMP stream to: " + streamUrl);
-                        beginStreamOwnership(streamId);
+                        beginStreamOwnership(streamId, data.getString("controllerId"));
                         RtmpStreamingService.startStreaming(
                                 context, streamUrl, streamId, flash, sound, config);
                         streamStarted = true;
@@ -278,7 +298,7 @@ public class StreamCommandHandler implements ICommandHandler {
                         applyEisForStreaming(config.getVideoWidth(), config.getVideoHeight());
                         eisChanged = true;
                         Log.d(TAG, "Starting SRT stream to: " + streamUrl);
-                        beginStreamOwnership(streamId);
+                        beginStreamOwnership(streamId, data.getString("controllerId"));
                         SrtStreamingService.startStreaming(
                                 context, streamUrl, streamId, flash, sound, config);
                         streamStarted = true;
@@ -310,7 +330,7 @@ public class StreamCommandHandler implements ICommandHandler {
                             String value = data.optString("auth_token", "");
                             if (!value.isEmpty()) authToken = value;
                         }
-                        beginStreamOwnership(streamId);
+                        beginStreamOwnership(streamId, data.getString("controllerId"));
                         WhipStreamingService.startStreaming(
                                 context, streamUrl, streamId, flash, sound, config, authToken);
                         streamStarted = true;
@@ -542,11 +562,41 @@ public class StreamCommandHandler implements ICommandHandler {
         updatePhonePresence(link.getPhonePresence());
     }
 
-    private void beginStreamOwnership(String streamId) {
+    private void beginStreamOwnership(String streamId, String controllerId) {
         mOwnedStreamId = streamId;
+        mOwnedControllerId = controllerId;
         long generation = mPhonePolicy.start();
         streamingManager.beginStreamSession(streamId);
         mOwnedStartRevision = streamingManager.getStreamSnapshot().optLong("revision", -1);
+        mControllerLease.start(SystemClock.elapsedRealtime());
+        mControllerProbeTick = new Runnable() {
+            @Override public void run() {
+                if (mDisposed || mOwnedStreamId == null
+                        || generation != mPhonePolicy.getGeneration()) return;
+                if (mControllerLease.expired(SystemClock.elapsedRealtime())) {
+                    streamingManager.getStreamingStatusCallback().onStreamError(
+                            "Controlling phone app stopped responding", mOwnedStreamId);
+                    stopAllServices();
+                    return;
+                }
+                try {
+                    JSONObject probe = new JSONObject();
+                    probe.put("type", "stream_controller_probe");
+                    probe.put("protocolVersion", 1);
+                    probe.put("streamId", mOwnedStreamId);
+                    probe.put("controllerId", mOwnedControllerId);
+                    probe.put("probeId", mControllerLease.probeId());
+                    if (mServiceManager != null && mServiceManager.getBluetoothManager() != null) {
+                        mServiceManager.getBluetoothManager().sendMessage(
+                                probe.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                    }
+                } catch (Exception error) {
+                    Log.w(TAG, "Unable to send native stream controller probe", error);
+                }
+                mLifecycleHandler.postDelayed(this, AsgConstants.STREAM_CONTROLLER_PROBE_INTERVAL_MS);
+            }
+        };
+        mControllerProbeTick.run();
         mResourceRefresh = new Runnable() {
             @Override
             public void run() {
@@ -562,12 +612,17 @@ public class StreamCommandHandler implements ICommandHandler {
     }
 
     private void releaseStreamOwnership() {
+        mControllerLease.stop();
+        if (mControllerProbeTick != null) mLifecycleHandler.removeCallbacks(mControllerProbeTick);
+        mControllerProbeTick = null;
         mPhonePolicy.stop();
         cancelPhoneLossDeadline();
         if (mResourceRefresh != null) mLifecycleHandler.removeCallbacks(mResourceRefresh);
         mResourceRefresh = null;
         mOwnedStreamId = null;
+        mOwnedControllerId = null;
         mOwnedStartRevision = -1;
+        WakeLockManager.release(WakeLockManager.WakeOwner.STREAMING);
         mHotspotActivityTracker.onStreamStopped();
     }
 

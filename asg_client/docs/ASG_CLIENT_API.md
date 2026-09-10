@@ -330,6 +330,17 @@ unavailable. The glasses continue until explicit stop, terminal publisher/device
 10 seconds of sustained phone absence/unknown presence. Brief BLE outages do not end the stream.
 Stream wake-lock and local-hotspot activity are maintained on the glasses, not by heartbeats.
 
+Starts must include `controllerProbeVersion: 1` and a nonempty, process-scoped `controllerId`;
+older callers are rejected before capture starts. Every two seconds ASG sends
+`{"type":"stream_controller_probe","protocolVersion":1,"controllerId":"phone-process","streamId":"stream-123","probeId":"fresh-nonce"}`.
+The owning native SDK immediately echoes the complete tuple as `stream_controller_response`
+from its BLE receive callback. No JavaScript timer or cloud message is involved. ASG stops after
+ten seconds without a fresh matching response even when BES still reports phone presence.
+It retransmits an unanswered nonce without extending its deadline and rotates it after acceptance;
+duplicate, late, wrong-controller, and replacement-session responses cannot keep capture alive.
+The SDK generates a new controller identity on process restart. Validate background/screen-off
+and force-kill behavior on physical iOS and Android phones before releasing this protocol.
+
 **Response wire type:** `stream_status` (new universal type from `MediaManager.sendStreamStatusResponse`). Legacy `rtmp_stream_status` is still produced by `ResponseBuilder` in some paths.
 
 ```json

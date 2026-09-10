@@ -126,9 +126,19 @@ old callback cannot stop a replacement stream, even if its public id is reused.
 Starting a stream requires confirmed phone presence. BES builds that do not expose that signal
 must be updated before starting phone-owned streaming; unknown presence must not authorize an
 indefinitely running camera. If presence becomes unknown during a stream (for example, during
-BES transport recovery), the same bounded grace applies. Physical qualification must include
-killing the Mentra App on both phone platforms: a surviving OS-managed BLE connection must not
-be assumed to prove the controlling app is alive.
+BES transport recovery), the same bounded grace applies.
+
+BLE presence does not prove the controlling app is executing. Updated native SDKs attach
+`controllerProbeVersion: 1` and a process-scoped `controllerId` to each start. ASG rejects starts
+without that support, sends a fresh native controller challenge every two seconds, and stops
+after ten seconds without a matching response. Retransmissions and duplicate/late responses
+never renew this deadline. Challenges are answered directly in the native BLE receive path,
+without JavaScript, cloud connectivity, or a phone-side periodic timer. The controller identity
+survives BLE reconnects but changes after app termination; reopening the app cannot silently
+take over the old session. Both phone-presence and controller-response checks must remain healthy.
+Physical qualification must verify screen-off/background operation, force-kill on both phone
+platforms, and short BLE outages before release; native callback wake behavior is not proven by
+unit tests.
 
 WHIP streams seed WebRTC with an explicit initial send bitrate capped by the caller's configured maximum. Congestion control remains enabled so the sender can still reduce bitrate on constrained networks instead of treating the configured bitrate as a fixed rate.
 
@@ -277,7 +287,7 @@ upgrade OTA completing).
 1. Phone or another authorized command source sends a stream-start command with destination/protocol configuration.
 2. `asg_client` starts the appropriate streaming foreground service.
 3. The service acquires camera/microphone resources, sets privacy indicators, and connects to the streaming endpoint.
-4. The glasses maintain resource leases locally and report publisher reconnect/failure state. Sustained phone BLE loss ends the session after its disconnect grace.
+4. The glasses maintain resource leases locally and report publisher reconnect/failure state. Sustained phone BLE loss or an unresponsive native controller ends the session after its bounded grace.
 5. Stop, error, or disconnect paths release camera/microphone resources and reset LEDs.
 
 ### Media sync flow
