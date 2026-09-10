@@ -71,11 +71,10 @@ export default function InitScreen() {
   // Zustand store hooks
   // Runtime is the canonical boot version-policy service. Core keeps its
   // legacy endpoint only for already-released clients.
-  const [runtimeUrl] = useSetting(SETTINGS.cloud_runtime_url.key)
   const [superMode] = useSetting(SETTINGS.super_mode.key)
   const [appBootExtraInfo] = useSetting(SETTINGS.app_boot_extra_info.key)
   const [bootPhase, setBootPhase] = useState<string>("Starting up…")
-  const [cachedRequiredVersion, setCachedRequiredVersion] = useSetting(SETTINGS.cached_required_version.key)
+  const [, setCachedRequiredVersion] = useSetting(SETTINGS.cached_required_version.key)
   const updateUrl =
     Platform.OS === "ios"
       ? activeDeployment.manifest.appUpdates.storeUrls.ios
@@ -192,7 +191,12 @@ export default function InitScreen() {
     }
 
     const versionRuntimeUrl = resolvedEndpoints().runtime
-    const cachedVersion = activeDeployment.kind === "consumer" ? readCachedRequiredVersion(cachedRequiredVersion) : null
+    // Reset may have cleared settings while this callback still closes over the
+    // previous render. Read the current cache before enforcing an offline floor.
+    const cachedVersion =
+      activeDeployment.kind === "consumer"
+        ? readCachedRequiredVersion(engine.settings.get(SETTINGS.cached_required_version.key))
+        : null
 
     // Runtime serves the policy before authentication. Retries cover boot-time
     // DNS blips that would otherwise dump users at the connection screen.
@@ -212,6 +216,7 @@ export default function InitScreen() {
         return
       }
 
+      setIsBlockedByVersion(false)
       setState("connection")
       setIsRetrying(false)
       return
@@ -221,11 +226,7 @@ export default function InitScreen() {
     console.log(`INDEX: Version check: local=${localVer}, required=${required}, recommended=${recommended}`)
 
     // Cache the required version for offline enforcement
-    if (
-      activeDeployment.kind === "consumer" &&
-      required &&
-      required !== readCachedRequiredVersion(cachedRequiredVersion)
-    ) {
+    if (activeDeployment.kind === "consumer" && required && required !== cachedVersion) {
       setCachedRequiredVersion(`${CACHED_VERSION_SOURCE}${required}`)
     }
 
@@ -339,19 +340,6 @@ export default function InitScreen() {
     }
     init()
   }, [authLoading, isNavigationReady, selectionResolved])
-
-  // Clear the legacy consumer cache when its Runtime changes so a stricter
-  // server's requirement doesn't block access to a different backend.
-  // Skip the initial mount so the cached value is preserved for offline enforcement.
-  const runtimeUrlRef = useRef(runtimeUrl)
-  useEffect(() => {
-    if (runtimeUrlRef.current !== runtimeUrl) {
-      runtimeUrlRef.current = runtimeUrl
-      if (cachedRequiredVersion) {
-        setCachedRequiredVersion("")
-      }
-    }
-  }, [runtimeUrl])
 
   useEffect(() => {
     setAnimation("fade")

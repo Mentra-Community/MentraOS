@@ -34,6 +34,7 @@ import {BgTimer} from "../utils/timers"
 import {logCloudV2TranscriptMetric} from "./CloudTranscriptE2EMetrics"
 import {LocalMiniappUserIdentity} from "./LocalMiniappUserIdentity"
 import {nativeHttpResponseBody} from "./NativeHttpResponse"
+import {resolveCloudEndpoints} from "./cloudEndpointPolicy"
 
 const LOG_TAG = "cloudClient"
 type CloudCore = NonNullable<CloudClient["core"]>
@@ -56,11 +57,6 @@ function clearPersistentFailureAlarm(): void {
 
 type Lc3FrameSizeBytes = 20 | 40 | 60
 
-// Neutral last-ditch fallbacks (reachable under `adb reverse`) for when the host
-// passes no endpoints. The host normally resolves the real URLs (dev override /
-// Metro host / env) and hands them in via `engine.configure({config})`.
-const FALLBACK_CORE_URL = "http://localhost:3000"
-const FALLBACK_RUNTIME_URL = "http://localhost:3001"
 const LOCAL_AUTH_PORT = 3002
 
 let client: CloudClient | null = null
@@ -100,16 +96,7 @@ const statusListeners = new Set<(snapshot: CloudClientStatusSnapshot) => void>()
 const connectionListeners = new Set<(connected: boolean) => void>()
 
 function resolveEndpoints(): {core?: string; runtime: string} {
-  const cfg = getConfigValues()
-  if (cfg.resolveCloudEndpoints) return cfg.resolveCloudEndpoints()
-  if (endpointsOverride) return endpointsOverride
-  const runtime = cfg.runtimeUrl === null ? "" : cfg.runtimeUrl?.trim() || FALLBACK_RUNTIME_URL
-  if (!runtime) throw new Error("cloudClient: Runtime endpoint is not configured")
-  const core = cfg.coreUrl === null ? undefined : cfg.coreUrl?.trim() || FALLBACK_CORE_URL
-  return {
-    ...(core ? {core} : {}),
-    runtime,
-  }
+  return resolveCloudEndpoints(getConfigValues(), endpointsOverride)
 }
 
 function getCoreClient(): CloudCore {
@@ -555,7 +542,7 @@ export const cloudClientService = {
 
   /**
    * Tear down + rebuild. Pass new endpoints to switch URLs; pass `null` to CLEAR
-   * a prior override and fall back to the boot config (so cleared/default cloud
+   * a prior override and resume the host resolver or boot config (so cleared/default cloud
    * URLs don't keep reconnecting to a stale override); omit to keep the current.
    */
   reconnect(endpoints?: {core?: string; runtime: string} | null): void {

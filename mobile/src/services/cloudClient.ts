@@ -134,8 +134,9 @@ export const cloudClient = {
   clearAuthSession: (): Promise<void> => cloudClientService.clearAuthSession(),
   init: (): void => cloudClientService.init(),
   reconnect: (): void => {
-    const {core, runtime} = activeDeploymentEndpoints()
-    cloudClientService.reconnect(core ? {core, runtime} : {runtime})
+    // Use the live host resolver instead of freezing today's Metro address as
+    // an explicit engine reconnect pin.
+    cloudClientService.reconnect(null)
   },
   getPreinstalledMiniappRegistry: () => cloudClientService.getPreinstalledMiniappRegistry(),
   getMiniappAuthToken: (packageName: string, opts?: {minTtlMs?: number; devAttestation?: string}) =>

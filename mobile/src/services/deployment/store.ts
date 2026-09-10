@@ -68,7 +68,7 @@ export class DeploymentStore {
     return this.active.manifest.telemetry
   }
 
-  activate(candidate: DeploymentCandidate): WorkspaceDeployment {
+  async activate(candidate: DeploymentCandidate): Promise<WorkspaceDeployment> {
     const deployment: WorkspaceDeployment = {
       kind: "workspace",
       source: "manual",
@@ -77,13 +77,17 @@ export class DeploymentStore {
       manifest: candidate.manifest,
       activatedAt: new Date().toISOString(),
     }
+    await clearDeploymentDebugOverrides()
     this.persistence.save(deployment)
     this.selectingWorkspace = false
     this.setActive(deployment)
     return deployment
   }
 
-  returnToMentra(): void {
+  async returnToMentra(): Promise<void> {
+    // Login buttons also reconfirm an existing consumer after token expiry.
+    // Only an actual deployment switch should discard its debug configuration.
+    if (this.active.kind === "workspace" || this.selectingWorkspace) await clearDeploymentDebugOverrides()
     const deployment = createConsumerDeployment()
     this.persistence.save(deployment)
     this.selectingWorkspace = false
@@ -94,18 +98,20 @@ export class DeploymentStore {
   restoreConsumerSessionSelection(): void {
     if (this.active.kind !== "consumer" || this.resolved || this.selectingWorkspace) return
     this.persistence.save(this.active)
-    this.setActive(this.active, true, false)
+    this.setActive(this.active, true)
   }
 
   /** Enter discovery without allowing cached consumer credentials to opt back in. */
-  beginWorkspaceSelection(): void {
+  async beginWorkspaceSelection(): Promise<void> {
+    await clearDeploymentDebugOverrides()
     this.persistence.remove()
     this.selectingWorkspace = true
     this.setActive(createConsumerDeployment(), false)
   }
 
   /** Return to the neutral selector without opting into consumer telemetry. */
-  clearSelection(): void {
+  async clearSelection(): Promise<void> {
+    await clearDeploymentDebugOverrides()
     this.persistence.remove()
     this.selectingWorkspace = false
     this.setActive(createConsumerDeployment(), false)
@@ -116,8 +122,7 @@ export class DeploymentStore {
     return () => this.listeners.delete(listener)
   }
 
-  private setActive(deployment: ActiveDeployment, resolved = true, clearOverrides = true): void {
-    if (clearOverrides) clearDeploymentDebugOverrides()
+  private setActive(deployment: ActiveDeployment, resolved = true): void {
     this.active = deployment
     this.resolved = resolved
     for (const listener of this.listeners) listener(deployment, resolved)

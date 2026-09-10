@@ -48,7 +48,7 @@ export function createOfficialManifest(): DeploymentManifest {
       nativeMeetings: true,
       cloudSpeech: true,
       onDeviceSpeech: true,
-      navigation: true,
+      navigation: process.env.EXPO_PUBLIC_DEPLOYMENT_REGION !== "china",
     },
     telemetry: true,
   }

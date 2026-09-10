@@ -20,14 +20,19 @@ export default function WorkspaceSignInScreen() {
   const {theme} = useAppTheme()
   const [loading, setLoading] = useState(false)
 
-  const cancelWorkspace = () => {
+  const cancelWorkspace = async () => {
     if (loading) return
     setLoading(true)
-    // leaveWorkspace changes the deployment synchronously before its
-    // best-effort native account cleanup. Navigate immediately so the user is
-    // never stranded here by an MSAL callback failure.
-    void leaveWorkspace("consumer")
-    replaceAll("/auth/start")
+    try {
+      // Await durable local selection; native MSAL cleanup remains best effort.
+      await leaveWorkspace("consumer")
+      replaceAll("/auth/start")
+    } catch (error) {
+      showAlert(translate("common:error"), error instanceof Error ? error.message : String(error), [
+        {text: translate("common:ok")},
+      ])
+      setLoading(false)
+    }
   }
 
   focusEffectPreventBack((event) => {

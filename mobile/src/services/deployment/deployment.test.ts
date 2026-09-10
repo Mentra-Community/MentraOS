@@ -432,7 +432,7 @@ class MemoryDeploymentStorage implements DeploymentStorage {
 }
 
 describe("DeploymentStore", () => {
-  it("starts unresolved and persists an explicit Mentra or workspace selection", () => {
+  it("starts unresolved and persists an explicit Mentra or workspace selection", async () => {
     const persistence = new MemoryDeploymentStorage()
     const store = new DeploymentStore(persistence)
     expect(store.getActive()).toMatchObject({
@@ -443,7 +443,7 @@ describe("DeploymentStore", () => {
     expect(store.isResolved()).toBe(false)
     expect(store.isTelemetryAllowed()).toBe(false)
 
-    store.activate({
+    await store.activate({
       workspaceOrigin: WORKSPACE,
       manifestUrl: `${WORKSPACE}/.well-known/mentra-deployment.json`,
       manifest: manifest(),
@@ -454,7 +454,7 @@ describe("DeploymentStore", () => {
     })
     expect(store.isTelemetryAllowed()).toBe(false)
 
-    store.returnToMentra()
+    await store.returnToMentra()
     expect(store.getActive()).toMatchObject({
       kind: "consumer",
       source: "embedded",
@@ -464,7 +464,7 @@ describe("DeploymentStore", () => {
     expect(store.isTelemetryAllowed()).toBe(true)
     expect(new DeploymentStore(persistence).isResolved()).toBe(true)
 
-    store.clearSelection()
+    await store.clearSelection()
     expect(store.isResolved()).toBe(false)
     expect(store.isTelemetryAllowed()).toBe(false)
   })

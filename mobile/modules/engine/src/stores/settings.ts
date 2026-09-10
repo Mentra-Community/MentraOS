@@ -691,6 +691,7 @@ export const SETTINGS: Record<string, Setting> = {
     writable: true,
     saveOnServer: false,
     persist: true,
+    resetOnBuildEnvChange: true,
   },
   // OTA update dismissal - stores the version code user dismissed (not persisted so resets on app restart)
   dismissed_ota_version: {
@@ -909,12 +910,13 @@ export const useSettingsStore = create<SettingsState>()(
         }
         // console.log("SETTINGS: SET MANY LOCALLY: ", settingsToLoad)
 
-        set((state) => ({
-          settings: {...state.settings, ...settingsToLoad},
-        }))
-
-        // save to storage:
-        await Promise.all(Object.entries(settingsToLoad).map(([key, value]) => storage.save(key, value)))
+        // MMKV writes are synchronous Results, not rejecting Promises. Check
+        // each result before publishing the new in-memory settings.
+        for (const [key, value] of Object.entries(settingsToLoad)) {
+          const saved = storage.save(key, value)
+          if (saved.is_error()) throw saved.error
+        }
+        set((state) => ({settings: {...state.settings, ...settingsToLoad}}))
       })
     },
     // loads any preferences that have been changed from the default and saved to DISK!

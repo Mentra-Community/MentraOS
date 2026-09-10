@@ -69,8 +69,8 @@ afterAll(() => {
 it.each(["consumer", "workspace"])("saves, tests, and resets %s overrides to the selected manifest", async (kind) => {
   process.env.EXPO_PUBLIC_CLOUD_CORE_URL = "https://core.build.example"
   process.env.EXPO_PUBLIC_CLOUD_RUNTIME_URL = "https://runtime.build.example"
-  deploymentStore.returnToMentra()
-  if (kind === "workspace") deploymentStore.activate(workspace)
+  await deploymentStore.returnToMentra()
+  if (kind === "workspace") await deploymentStore.activate(workspace)
   const baseline = deploymentStore.getActive().manifest.services
   const screen = render(<CloudUrl />)
   fireEvent.changeText(screen.getByPlaceholderText("e.g., http://192.168.1.100:3000"), "https://core.debug.example/")
@@ -85,16 +85,12 @@ it.each(["consumer", "workspace"])("saves, tests, and resets %s overrides to the
     "https://runtime.debug.example/healthz",
     expect.objectContaining({method: "GET"}),
   )
-  expect(cloudClientService.reconnect).toHaveBeenLastCalledWith({
-    core: "https://core.debug.example",
-    runtime: "https://runtime.debug.example",
-  })
+  expect(resolvedEndpoints()).toEqual({core: "https://core.debug.example", runtime: "https://runtime.debug.example"})
+  expect(cloudClientService.reconnect).toHaveBeenLastCalledWith(null)
 
   await act(async () => fireEvent.press(screen.getByText("Reset")))
-  expect(cloudClientService.reconnect).toHaveBeenLastCalledWith({
-    core: baseline.coreUrl,
-    runtime: baseline.runtimeUrl,
-  })
+  expect(resolvedEndpoints()).toEqual({core: baseline.coreUrl, runtime: baseline.runtimeUrl})
+  expect(cloudClientService.reconnect).toHaveBeenLastCalledWith(null)
 })
 
 it("does not apply an in-flight health check to another deployment", async () => {
@@ -109,7 +105,9 @@ it("does not apply an in-flight health check to another deployment", async () =>
   fireEvent.changeText(screen.getByPlaceholderText("e.g., http://192.168.1.100:3000"), "https://core.debug.example")
   fireEvent.changeText(screen.getByPlaceholderText("e.g., http://192.168.1.100:3001"), "https://runtime.debug.example")
   fireEvent.press(screen.getByText("Save & Test"))
-  act(() => deploymentStore.activate(workspace))
+  await act(async () => {
+    await deploymentStore.activate(workspace)
+  })
   await act(async () => finishProbe({ok: true, status: 200} as Response))
   expect(resolvedEndpoints()).toEqual({
     core: workspace.manifest.services.coreUrl,

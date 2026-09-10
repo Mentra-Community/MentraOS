@@ -10,6 +10,7 @@ import {translate} from "@/i18n"
 import {useDeployment} from "@/services/deployment"
 import {useNavigationStore} from "@/stores/navigation"
 import {LogoutUtils} from "@/utils/LogoutUtils"
+import showAlert from "@/utils/AlertUtils"
 
 export default function WorkspaceConfirmScreen() {
   const {candidate, clearCandidate, store} = useDeployment()
@@ -92,12 +93,16 @@ export default function WorkspaceConfirmScreen() {
       // fresh workspace enrollment must not contact Mentra infrastructure.
       await LogoutUtils.performCompleteLogout({skipAuthSignOut: true})
       if (!mounted.current) return
-      store.activate(candidate)
+      await store.activate(candidate)
       clearCandidate()
       // Teardown is complete: allow our own replacement through the iOS
       // removal guard, whether navigation dispatches immediately or later.
       activatingRef.current = false
       replace("/auth/workspace-signin")
+    } catch (error) {
+      showAlert(translate("common:error"), error instanceof Error ? error.message : String(error), [
+        {text: translate("common:ok")},
+      ])
     } finally {
       activatingRef.current = false
       if (mounted.current) setActivating(false)

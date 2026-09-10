@@ -33,14 +33,21 @@ Debug Settings shows baseline and effective URLs for both deployment types:
   reconnects. A probe completed after an organization switch cannot save into
   the new deployment.
 - **Reset** clears the overrides and restores the selected manifest's URLs. It
-  does not leave the workspace.
+  clears the old backend's cached version requirement before retrying and does
+  not leave the workspace. URL writes own cache invalidation so a delayed React
+  effect cannot erase a freshly fetched requirement.
 - **Restart** keeps the overrides. `metro-auto` resolves against the current
   Metro host each time; if unavailable, it uses the selected manifest's defaults.
 - **Logout or organization selection** clears active Core, Runtime, and OTA
   overrides. Credential expiry alone does not change deployment configuration.
+  Reconfirming consumer login keeps its overrides. Deployment changes wait for
+  the clear to persist; a failed write leaves the selection unchanged for retry.
 
 `engine.dev` uses the host resolver when present; other engine hosts retain their
-existing explicit URL behavior. Endpoint overrides do not change Entra authority,
+existing explicit URL behavior. A partial URL update preserves the other override
+only when both belong to the same deployment (including legacy consumer values).
+An explicit `cloudClientService.reconnect({core, runtime})` pins those endpoints;
+`reconnect(null)` resumes the live manifest resolver. Endpoint overrides do not change Entra authority,
 scopes, feature policy, or miniapp configuration. The target backend must support
 the selected deployment's authentication.
 

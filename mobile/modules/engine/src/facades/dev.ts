@@ -19,6 +19,7 @@ import {getConfigValues} from "../runtime/bootstrap"
 import {decideDevLaunchRoute} from "../utils/devMiniappLaunch"
 import {registerDevApp, DEV_APP_PACKAGE_NAME, type DevAppRecord} from "../services/AppRegistry"
 import {useAppStatusStore} from "../stores/apps"
+import {scopeCloudUrlOverrides} from "../services/cloudEndpointPolicy"
 
 type CloudUrlOverrides = {core?: string; runtime?: string}
 
@@ -30,7 +31,7 @@ type CloudUrlOverrides = {core?: string; runtime?: string}
 function applyCloudUrlReconnect(urls: CloudUrlOverrides = currentCloudUrlOverrides()): void {
   const hostResolver = getConfigValues().resolveCloudEndpoints
   if (hostResolver) {
-    cloudClientService.reconnect(hostResolver())
+    cloudClientService.reconnect(null)
     return
   }
   const resolved = resolveCloudUrlReconnectTarget(urls)
@@ -98,14 +99,28 @@ export const dev = {
   setCloudUrls: (urls: {core?: string; runtime?: string}) => {
     const config = getConfigValues()
     if (config.resolveCloudEndpoints) {
+      const scope = config.cloudDebugScope ?? ""
+      const scoped = scopeCloudUrlOverrides(
+        {
+          scope: useSettingsStore.getState().getSetting(SETTINGS.cloud_url_deployment.key),
+          ...currentCloudUrlOverrides(),
+        },
+        scope,
+        urls,
+      )
       const values: Record<string, unknown> = {
-        [SETTINGS.cloud_url_deployment.key]: config.cloudDebugScope ?? "",
+        [SETTINGS.cloud_url_deployment.key]: scope,
+        [SETTINGS.cloud_core_url.key]: scoped.core,
+        [SETTINGS.cloud_runtime_url.key]: scoped.runtime,
         [SETTINGS.cached_required_version.key]: "",
       }
-      if (urls.core !== undefined) values[SETTINGS.cloud_core_url.key] = urls.core
-      if (urls.runtime !== undefined) values[SETTINGS.cloud_runtime_url.key] = urls.runtime
-      useSettingsStore.getState().setManyLocally(values)
-      applyCloudUrlReconnect()
+      void useSettingsStore
+        .getState()
+        .setManyLocally(values)
+        .then((result) => {
+          if (result.is_error()) console.error("engine.dev.setCloudUrls: could not save URLs", result.error)
+          else applyCloudUrlReconnect()
+        })
       return
     }
     const next = {...currentCloudUrlOverrides(), ...urls}

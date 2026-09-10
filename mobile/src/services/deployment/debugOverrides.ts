@@ -38,15 +38,15 @@ export function resolveDeploymentManifest(deployment: ActiveDeployment): Deploym
   }
 }
 
-export function clearDeploymentDebugOverrides(): void {
-  // setManyLocal updates in-memory values synchronously, before selection changes.
-  void engine.settings.setManyLocal({
+export async function clearDeploymentDebugOverrides(): Promise<void> {
+  const result = await engine.settings.setManyLocal({
     [SETTINGS.cloud_core_url.key]: "",
     [SETTINGS.cloud_runtime_url.key]: "",
     [SETTINGS.cloud_url_deployment.key]: "",
     [SETTINGS.ota_version_url.key]: "",
     [SETTINGS.cached_required_version.key]: "",
   })
+  if (result.is_error()) throw result.error
 }
 
 export async function saveDeploymentCloudOverrides(
