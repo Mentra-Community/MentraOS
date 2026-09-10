@@ -2,24 +2,6 @@ import CoreBluetooth
 import Foundation
 
 @MainActor
-private final class ActiveStreamKeepAlive {
-    let streamId: String
-    let intervalSeconds: Int
-    var pendingAckId: String?
-    var missedAckCount = 0
-    var task: Task<Void, Never>?
-    // Missed-ACK counting only begins once the stream is confirmed live/coming up, so a slow
-    // startup (glasses can't ACK until they reach starting/streaming) can't trip a false
-    // keep-alive timeout before the stream is ever up.
-    var armed = false
-
-    init(streamId: String, intervalSeconds: Int) {
-        self.streamId = streamId
-        self.intervalSeconds = intervalSeconds
-    }
-}
-
-@MainActor
 private final class ActiveScanSession {
     let model: DeviceModel
     let onResults: ([Device]) -> Void
@@ -47,8 +29,8 @@ private final class PendingWifiScan {
     let pending: PendingResponse<[WifiScanResult]>
     let scanId: String
     var latestResults: [WifiScanResult] = []
-    // Chunks accumulated from scanId-echoing glasses, deduplicated by SSID;
-    // resolved only when the glasses flag the scan complete.
+    /// Chunks accumulated from scanId-echoing glasses, deduplicated by SSID;
+    /// resolved only when the glasses flag the scan complete.
     var accumulated: [WifiScanResult] = []
 
     init(pending: PendingResponse<[WifiScanResult]>, scanId: String) {
@@ -101,17 +83,17 @@ private final class PendingVideoRecordingRequest {
     }
 }
 
-// seq records send order (assigned and handed to the BLE queue in a single
-// MainActor turn) so that an id-carrying status for a newer start can
-// identify which older in-flight starts it preempted.
+/// seq records send order (assigned and handed to the BLE queue in a single
+/// MainActor turn) so that an id-carrying status for a newer start can
+/// identify which older in-flight starts it preempted.
 @MainActor
 private final class PendingStreamStart {
     let seq: Int
     let pending: PendingResponse<StreamStatusEvent>
-    // Set when an id-carrying error arrives: a fatal publisher error never
-    // reaches the reconnect machinery and winds down with a streamId-less
-    // stopped, so the stash both attributes that stopped to this start and
-    // preserves the real error details for the rejection.
+    /// Set when an id-carrying error arrives: a fatal publisher error never
+    /// reaches the reconnect machinery and winds down with a streamId-less
+    /// stopped, so the stash both attributes that stopped to this start and
+    /// preserves the real error details for the rejection.
     var lastError: StreamStatusEvent?
 
     init(seq: Int, pending: PendingResponse<StreamStatusEvent>) {
@@ -150,7 +132,7 @@ private final class PendingResponse<T> {
         continuation = nil
     }
 
-    func wait(timeoutMs: Int = 15_000) async throws -> T {
+    func wait(timeoutMs: Int = 15000) async throws -> T {
         if let result {
             return try result.get()
         }
@@ -175,14 +157,13 @@ private final class PendingResponse<T> {
 
 @MainActor
 public final class MentraBluetoothSDK {
-    private static let wifiScanTimeoutMs = 20_000
+    private static let wifiScanTimeoutMs = 20000
     // A photo response is terminal only after capture, encoding, transport, and upload.
     // Max-quality BLE fallback can legitimately exceed the generic command deadline.
-    private static let photoRequestTimeoutMs = 30_000
-    private static let otaBesVersionWaitMs = 5_000
-    private static let otaMtkVersionWaitMs = 2_000
+    private static let photoRequestTimeoutMs = 30000
+    private static let otaBesVersionWaitMs = 5000
+    private static let otaMtkVersionWaitMs = 2000
     private static let otaVersionPollMs = 100
-    private static let defaultStreamKeepAliveIntervalSeconds = 5
 
     public weak var delegate: MentraBluetoothSDKDelegate?
 
@@ -199,7 +180,7 @@ public final class MentraBluetoothSDK {
     private var suppressDefaultDeviceEvents = false
     private var defaultDeviceApplyGeneration = 0
     private var activeScanSessions: [UUID: ActiveScanSession] = [:]
-    private var activeStreamKeepAlive: ActiveStreamKeepAlive?
+    private let streamSession = StreamSessionState()
     private let analytics: BluetoothSdkAnalytics
     private var pendingPhotoRequests: [String: PendingResponse<PhotoResponseEvent>] = [:]
     private var pendingCameraStatusRequests: [String: PendingResponse<CameraStatusEvent>] = [:]
@@ -609,7 +590,8 @@ public final class MentraBluetoothSDK {
                     for key in ["button_photo_zsl_mfnr", "button_photo_mfnr", "button_photo_zsl", "button_photo_noise_reduction",
                                 "button_photo_edge_enhancement", "button_photo_isp_digital_gain",
                                 "button_photo_isp_analog_gain", "button_photo_ae_exposure_divisor",
-                                "button_photo_iso_cap", "button_photo_compress", "button_photo_sound"] {
+                                "button_photo_iso_cap", "button_photo_compress", "button_photo_sound"]
+                    {
                         DeviceStore.shared.remove(cat, key)
                     }
                 }
@@ -863,7 +845,8 @@ public final class MentraBluetoothSDK {
                 return try await pending.wait(timeoutMs: MentraBluetoothSDK.wifiScanTimeoutMs)
             } catch {
                 if (error as? BluetoothSdkError)?.code == "request_timeout",
-                   !request.latestResults.isEmpty {
+                   !request.latestResults.isEmpty
+                {
                     return request.latestResults
                 }
                 throw error
@@ -1043,14 +1026,10 @@ public final class MentraBluetoothSDK {
     }
 
     public func startStream(_ request: StreamRequest) async throws -> StreamStatusEvent {
-        try await startStream(request, startSdkKeepAlive: true)
-    }
-
-    func startExternallyManagedStream(_ request: StreamRequest) async throws -> StreamStatusEvent {
-        try await startStream(request, startSdkKeepAlive: false)
-    }
-
-    private func startStream(_ request: StreamRequest, startSdkKeepAlive: Bool) async throws -> StreamStatusEvent {
+        try requireGlassesConnected(operation: "start stream")
+        guard streamSession.supported else {
+            throw BluetoothSdkError(code: "stream_control_unsupported", message: "Update the glasses software before starting a stream.")
+        }
         var values = request.values
         let streamId = stringValue(values, "streamId").flatMap { $0.isEmpty ? nil : $0 } ?? "sdk-\(UUID().uuidString)"
         values["streamId"] = streamId
@@ -1061,26 +1040,15 @@ public final class MentraBluetoothSDK {
         // glasses' FIFO.
         streamStartSeq += 1
         pendingStreamStarts[streamId] = PendingStreamStart(seq: streamStartSeq, pending: pending)
-        stopStreamKeepAliveMonitor()
         DeviceManager.shared.startStream(values)
         do {
-            let event = try await pending.wait(timeoutMs: 30_000)
+            let event = try await pending.wait(timeoutMs: 30000)
             pendingStreamStarts.removeValue(forKey: streamId)
-            if startSdkKeepAlive {
-                startStreamKeepAliveMonitor(
-                    streamId: streamId,
-                    intervalSeconds: Self.defaultStreamKeepAliveIntervalSeconds
-                )
-            }
             return event
         } catch {
             pendingStreamStarts.removeValue(forKey: streamId)
             throw error
         }
-    }
-
-    func sendExternallyManagedStreamKeepAlive(_ request: StreamKeepAliveRequest) {
-        DeviceManager.shared.keepStreamAlive(request.values)
     }
 
     public func rgbLedControl(_ request: RgbLedRequest) async throws -> RgbLedControlResponseEvent {
@@ -1119,11 +1087,10 @@ public final class MentraBluetoothSDK {
         // separate the pending starts the glasses consumed before it (lower
         // seq) from starts sent after it (higher seq).
         streamStartSeq += 1
-        pendingStreamStop = (streamId: activeStreamKeepAlive?.streamId, seq: streamStartSeq, pending: pending)
-        stopStreamKeepAliveMonitor()
+        pendingStreamStop = (streamId: streamSession.currentStreamId, seq: streamStartSeq, pending: pending)
         DeviceManager.shared.stopStream()
         do {
-            let event = try await pending.wait(timeoutMs: 15_000)
+            let event = try await pending.wait(timeoutMs: 15000)
             if pendingStreamStop?.pending === pending {
                 pendingStreamStop = nil
             }
@@ -1195,7 +1162,7 @@ public final class MentraBluetoothSDK {
         )
         DeviceManager.shared.stopVideoRecording(requestId, webhookUrl, authToken)
         do {
-            let timeoutMs = waitForUpload ? videoUploadStopTimeoutMs : 15_000
+            let timeoutMs = waitForUpload ? videoUploadStopTimeoutMs : 15000
             let event = try await pending.wait(timeoutMs: timeoutMs)
             pendingVideoRecordingRequests.removeValue(forKey: requestId)
             return event
@@ -1384,7 +1351,9 @@ public final class MentraBluetoothSDK {
         try await startOtaCommand(otaVersionUrl: otaVersionUrl)
     }
 
-    func sendOtaQueryStatus() async throws -> OtaQueryResult { try await queryOtaStatus() }
+    func sendOtaQueryStatus() async throws -> OtaQueryResult {
+        try await queryOtaStatus()
+    }
 
     func startAr99OtaFromFile(_ path: String) throws -> Bool {
         try requireGlassesConnected(operation: "start AR99 OTA")
@@ -1448,7 +1417,7 @@ public final class MentraBluetoothSDK {
         timeoutMs: Int,
         isReady: (GlassesStatus) -> Bool
     ) async -> GlassesStatus {
-        let deadline = Date().addingTimeInterval(Double(timeoutMs) / 1_000)
+        let deadline = Date().addingTimeInterval(Double(timeoutMs) / 1000)
         var status = initialStatus
         while Date() < deadline {
             status = glassesStatus
@@ -1456,7 +1425,7 @@ public final class MentraBluetoothSDK {
                 return status
             }
 
-            let remainingMs = max(0, Int(deadline.timeIntervalSinceNow * 1_000))
+            let remainingMs = max(0, Int(deadline.timeIntervalSinceNow * 1000))
             let sleepMs = min(Self.otaVersionPollMs, remainingMs)
             if sleepMs <= 0 {
                 break
@@ -1497,7 +1466,6 @@ public final class MentraBluetoothSDK {
     }
 
     public func invalidate() {
-        stopStreamKeepAliveMonitor()
         if let bluetoothAvailabilityListenerId {
             BluetoothAvailability.shared.removeStateListener(bluetoothAvailabilityListenerId)
             self.bluetoothAvailabilityListenerId = nil
@@ -1592,90 +1560,6 @@ public final class MentraBluetoothSDK {
         }
     }
 
-    private func startStreamKeepAliveMonitor(streamId: String, intervalSeconds requestedIntervalSeconds: Int) {
-        let intervalSeconds = requestedIntervalSeconds > 0 ? requestedIntervalSeconds : Self.defaultStreamKeepAliveIntervalSeconds
-        let tracker = ActiveStreamKeepAlive(streamId: streamId, intervalSeconds: intervalSeconds)
-        activeStreamKeepAlive = tracker
-        sendNextStreamKeepAlive(for: tracker)
-    }
-
-    private func stopStreamKeepAliveMonitor() {
-        activeStreamKeepAlive?.task?.cancel()
-        activeStreamKeepAlive = nil
-    }
-
-    private func sendNextStreamKeepAlive(for tracker: ActiveStreamKeepAlive) {
-        guard activeStreamKeepAlive === tracker else { return }
-
-        if tracker.armed, tracker.pendingAckId != nil {
-            tracker.missedAckCount += 1
-            if tracker.missedAckCount >= 3 {
-                activeStreamKeepAlive = nil
-                tracker.task?.cancel()
-                let event = StreamStatusEvent(
-                    status: .error(
-                        streamId: tracker.streamId,
-                        errorDetails: "Stream keep-alive timed out after \(tracker.missedAckCount) missed ACKs",
-                        timestamp: Int(Date().timeIntervalSince1970 * 1000),
-                        resolvedConfig: nil
-                    )
-                )
-                delegate?.mentraBluetoothSDK(self, didReceive: .streamStatus(event))
-                stopStreamKeepAliveMonitor()
-                DeviceManager.shared.stopStream()
-                return
-            }
-        }
-
-        let ackId = "ack-\(Int(Date().timeIntervalSince1970 * 1000))"
-        tracker.pendingAckId = ackId
-        DeviceManager.shared.keepStreamAlive(
-            StreamKeepAliveRequest(streamId: tracker.streamId, ackId: ackId).values
-        )
-
-        tracker.task?.cancel()
-        tracker.task = Task { @MainActor [weak self, weak tracker] in
-            guard let tracker else { return }
-            try? await Task.sleep(nanoseconds: UInt64(tracker.intervalSeconds) * 1_000_000_000)
-            self?.sendNextStreamKeepAlive(for: tracker)
-        }
-    }
-
-    private func handleStreamKeepAliveAck(_ event: KeepAliveAckEvent) -> Bool {
-        guard let tracker = activeStreamKeepAlive,
-              event.streamId == tracker.streamId,
-              event.ackId == tracker.pendingAckId
-        else {
-            return false
-        }
-        tracker.pendingAckId = nil
-        tracker.missedAckCount = 0
-        return true
-    }
-
-    private func handleStreamStatusForKeepAlive(_ status: StreamStatus) {
-        guard let streamId = status.streamId,
-              activeStreamKeepAlive?.streamId == streamId
-        else {
-            return
-        }
-
-        switch status.state {
-        case .stopped, .stopping, .error, .reconnectFailed:
-            stopStreamKeepAliveMonitor()
-        default:
-            // A non-terminal status means the stream is live or coming up and the glasses can
-            // now ACK; arm the missed-ACK detector from here so a slow startup before the first
-            // ACK can't trip a false keep-alive timeout. On the arming transition, drop any
-            // pre-arm bookkeeping so a stale unacked id can't immediately count as a miss.
-            if let tracker = activeStreamKeepAlive, !tracker.armed {
-                tracker.armed = true
-                tracker.pendingAckId = nil
-                tracker.missedAckCount = 0
-            }
-        }
-    }
-
     private func handleStreamStatusForRequests(_ event: StreamStatusEvent) {
         if let (streamId, start) = matchingStreamStart(for: event) {
             // Preemption is only proven by statuses the start path emits after
@@ -1743,13 +1627,13 @@ public final class MentraBluetoothSDK {
         }
     }
 
-    // The glasses process BLE commands FIFO and every start_stream begins by
-    // stopping whatever runs, so an id-carrying status proving start X's
-    // start path ran on the glasses also proves every lower-seq start has
-    // already been preempted. Their only verdict on current firmware is a
-    // streamId-less stopped, which the id-less heuristic deliberately
-    // ignores — without this they would run out the 30s timeout instead of
-    // failing fast.
+    /// The glasses process BLE commands FIFO and every start_stream begins by
+    /// stopping whatever runs, so an id-carrying status proving start X's
+    /// start path ran on the glasses also proves every lower-seq start has
+    /// already been preempted. Their only verdict on current firmware is a
+    /// streamId-less stopped, which the id-less heuristic deliberately
+    /// ignores — without this they would run out the 30s timeout instead of
+    /// failing fast.
     private func rejectPreemptedStreamStarts(winnerSeq: Int) {
         for (streamId, start) in pendingStreamStarts where start.seq < winnerSeq {
             pendingStreamStarts.removeValue(forKey: streamId)
@@ -1763,11 +1647,11 @@ public final class MentraBluetoothSDK {
         }
     }
 
-    // The glasses process BLE commands FIFO, so this stop's ack also settles
-    // every start sent before it: whatever those starts brought up (or would
-    // have brought up) has been stopped, and no further status will arrive
-    // for them. Without this they would run out the 30s start timeout.
-    // Starts sent after the stop keep waiting for their own statuses.
+    /// The glasses process BLE commands FIFO, so this stop's ack also settles
+    /// every start sent before it: whatever those starts brought up (or would
+    /// have brought up) has been stopped, and no further status will arrive
+    /// for them. Without this they would run out the 30s start timeout.
+    /// Starts sent after the stop keep waiting for their own statuses.
     private func rejectStreamStartsSuperseded(byStopSeq stopSeq: Int) {
         for (streamId, start) in pendingStreamStarts where start.seq < stopSeq {
             pendingStreamStarts.removeValue(forKey: streamId)
@@ -1969,9 +1853,9 @@ public final class MentraBluetoothSDK {
         request.pending.resolve(results)
     }
 
-    // scanId-echoing glasses: results for another scan are ignored instead of
-    // resolving the pending request, and matching chunks accumulate until the
-    // glasses flag the scan complete.
+    /// scanId-echoing glasses: results for another scan are ignored instead of
+    /// resolving the pending request, and matching chunks accumulate until the
+    /// glasses flag the scan complete.
     private func handleCorrelatedWifiScanChunk(
         scanId: String,
         results: [WifiScanResult],
@@ -2116,7 +2000,8 @@ public final class MentraBluetoothSDK {
             projectName: projectName
         )
     }
-private func dispatchDiscoveredDevices(_ rawSearchResults: Any?) {
+
+    private func dispatchDiscoveredDevices(_ rawSearchResults: Any?) {
         guard let results = rawSearchResults as? [[String: Any]] else { return }
         for result in results {
             guard let name = result["name"] as? String else { continue }
@@ -2274,16 +2159,16 @@ private func dispatchDiscoveredDevices(_ rawSearchResults: Any?) {
             let event = RgbLedControlResponseEvent(values: data)
             handleRgbLedResponseForRequests(event)
             delegate?.mentraBluetoothSDK(self, didReceive: .rgbLedControlResponse(event))
+        case "stream_control_ready":
+            streamSession.ready(sessionId: data["sid"] as? String, controlVersion: data["streamControlVersion"] as? Int)
         case "stream_status":
+            if data["revision"] != nil && !streamSession.accept(data) { return }
             let event = StreamStatusEvent(values: data)
             handleStreamStatusForRequests(event)
-            handleStreamStatusForKeepAlive(event.status)
             delegate?.mentraBluetoothSDK(self, didReceive: .streamStatus(event))
         case "keep_alive_ack":
             let event = KeepAliveAckEvent(values: data)
-            if !handleStreamKeepAliveAck(event) {
-                delegate?.mentraBluetoothSDK(self, didReceive: .keepAliveAck(event))
-            }
+            delegate?.mentraBluetoothSDK(self, didReceive: .keepAliveAck(event))
         case "ota_start_ack":
             var values = data
             values["type"] = "ota_start_ack"

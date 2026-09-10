@@ -46,7 +46,6 @@ import {
   ScanModelOptions,
   ScanOptions,
   SettingsAckSuccessEvent,
-  StreamKeepAliveRequest,
   StreamStartRequest,
   StreamStatusEvent,
   VideoRecordingStartedStatusEvent,
@@ -202,9 +201,7 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
 
   // Stream Commands
   startStream(params: StreamStartRequest): Promise<StreamStatusEvent>
-  startExternallyManagedStream(params: StreamStartRequest): Promise<StreamStatusEvent>
   stopStream(): Promise<StreamStatusEvent>
-  sendExternallyManagedStreamKeepAlive(params: StreamKeepAliveRequest): Promise<void>
 
   // Microphone Commands
   setMicState(enabled: boolean, useGlassesMic?: boolean, sendTranscript?: boolean, sendLc3Data?: boolean): Promise<void>

@@ -63,8 +63,6 @@ import org.webrtc.VideoTrack;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Timer;
-import java.util.TimerTask;
 
 import okhttp3.Call;
 import okhttp3.Callback;
@@ -150,6 +148,7 @@ public class WhipStreamingService extends Service {
   private volatile boolean mWhipStreamingNotified = false;
   /** Bumped on each new PeerConnection so queued ICE/HTTP callbacks cannot act on a later negotiation. */
   private volatile int mNegotiationGeneration = 0;
+  private volatile long mSessionGeneration;
   private Runnable mPostOfferTimeoutRunnable = () -> {};
   private Runnable mIceConnectTimeoutRunnable = this::failIceConnectTimeout;
 
@@ -162,8 +161,6 @@ public class WhipStreamingService extends Service {
   private final Object mStateLock = new Object();
 
   // ---- Stream timeout (keep-alive) ----
-  private static final long STREAM_TIMEOUT_MS = 60000; // 60 seconds
-  private Timer mStreamTimeoutTimer;
 
   // ---- Battery monitoring ----
   private static IStateManager sStateManager;
@@ -314,6 +311,7 @@ public class WhipStreamingService extends Service {
       mAuthToken = intent.getStringExtra("auth_token");
 
       if (whipUrl != null && !whipUrl.isEmpty()) {
+        final long session = ++mSessionGeneration;
         mWhipUrl = whipUrl;
         if (streamId != null && !streamId.isEmpty()) {
           mCurrentStreamId = streamId;
@@ -321,7 +319,9 @@ public class WhipStreamingService extends Service {
         mStartupStartedAtMs = SystemClock.elapsedRealtime();
         logStartupStage("service_command_received");
         // Defer until onStartCommand returns, without adding a fixed delay.
-        mMainHandler.post(this::startStreaming);
+        mMainHandler.post(() -> {
+          if (session == mSessionGeneration) startStreaming();
+        });
       }
     }
 
@@ -414,6 +414,7 @@ public class WhipStreamingService extends Service {
   }
 
   private void stopStreaming(boolean forReconnect) {
+    if (!forReconnect) mSessionGeneration++;
     boolean hasWebRtcResources = hasWebRtcResources();
     synchronized (mStateLock) {
       if (mStreamState == StreamState.STOPPING) {
@@ -426,7 +427,6 @@ public class WhipStreamingService extends Service {
     }
 
     mMainHandler.removeCallbacks(mStatsRunnable);
-    cancelStreamTimeout();
     stopBatteryMonitoring();
     Log.d(TAG, "Stopping WHIP streaming (forReconnect=" + forReconnect + ")");
 
@@ -862,7 +862,6 @@ public class WhipStreamingService extends Service {
     if (AsgConstants.ENABLE_PIPELINE_FPS_TELEMETRY) {
       mMainHandler.postDelayed(mStatsRunnable, AsgConstants.STREAM_METRICS_INTERVAL_MS);
     }
-    scheduleStreamTimeout(mCurrentStreamId);
     startBatteryMonitoring();
     Log.i(TAG, "Streaming started via WHIP, negotiated video codec: "
         + firstVideoCodecFromSdp(answerSdp));
@@ -1061,6 +1060,7 @@ public class WhipStreamingService extends Service {
 
   private class WhipPeerConnectionObserver implements PeerConnection.Observer {
     private final int generation;
+    private boolean publisherDisconnected;
 
     WhipPeerConnectionObserver(int generation) {
       this.generation = generation;
@@ -1098,17 +1098,28 @@ public class WhipStreamingService extends Service {
       } else if (newState == PeerConnection.PeerConnectionState.CONNECTED) {
         mMainHandler.post(() -> {
           if (isStale()) return;
+          if (publisherDisconnected) {
+            publisherDisconnected = false;
+            notifyReconnected(mWhipUrl, mReconnectAttempts);
+          }
           completeWhipStartupIfNeeded();
         });
       } else if (newState == PeerConnection.PeerConnectionState.DISCONNECTED) {
         Log.w(TAG, "PeerConnection disconnected — waiting before reconnect");
-        mMainHandler.postDelayed(() -> {
+        mMainHandler.post(() -> {
           if (isStale()) return;
           synchronized (mStateLock) {
             if (mStreamState != StreamState.STREAMING) return;
           }
-          attemptReconnect("PeerConnection disconnected");
-        }, 2000);
+          if (publisherDisconnected) return;
+          publisherDisconnected = true;
+          notifyReconnecting(mReconnectAttempts, MAX_RECONNECT_ATTEMPTS, "Publisher disconnected");
+          mMainHandler.postDelayed(() -> {
+            if (isStale() || !publisherDisconnected || mPeerConnection == null
+                || mPeerConnection.connectionState() != PeerConnection.PeerConnectionState.DISCONNECTED) return;
+            attemptReconnect("PeerConnection disconnected");
+          }, AsgConstants.WHIP_PUBLISHER_DISCONNECT_GRACE_MS);
+        });
       }
     }
 
@@ -1211,7 +1222,6 @@ public class WhipStreamingService extends Service {
 
   private void cleanupFailedStartup() {
     mMainHandler.removeCallbacks(mStatsRunnable);
-    cancelStreamTimeout();
     stopBatteryMonitoring();
     if (mWhipResourceUrl != null) {
       deleteWhipResource(mWhipResourceUrl);
@@ -1226,6 +1236,7 @@ public class WhipStreamingService extends Service {
     mStreamStartedAtMs = 0;
     mLastStatsAtMs = 0;
     WakeLockManager.release(WakeLockManager.WakeOwner.STREAMING);
+    restoreEisDefault();
     resetState();
     updateNotification("Stream failed");
   }
@@ -1255,46 +1266,43 @@ public class WhipStreamingService extends Service {
   // -----------------------------------------------------------------------
 
   private void notifyStarting(String url) {
-    if (sStatusCallback != null) mMainHandler.post(() -> sStatusCallback.onStreamStarting(url, mCurrentStreamId));
+    deliverStatus((callback, id) -> callback.onStreamStarting(url, id));
   }
 
   private void notifyStarted(String url) {
-    if (sStatusCallback != null) mMainHandler.post(() -> sStatusCallback.onStreamStarted(url, mCurrentStreamId));
+    deliverStatus((callback, id) -> callback.onStreamStarted(url, id));
   }
 
   private void notifyStopped() {
-    StreamingStatusCallback callback = sStatusCallback;
-    if (callback != null) {
-      // Capture now: by the time the posted runnable runs, a newer start may
-      // already have overwritten mCurrentStreamId.
-      String streamId = mCurrentStreamId;
-      mMainHandler.post(() -> callback.onStreamStopped(streamId));
-    }
+    deliverStatus((callback, id) -> callback.onStreamStopped(id));
   }
 
   private void notifyReconnecting(int attempt, int maxAttempts, String reason) {
-    if (sStatusCallback != null) mMainHandler.post(() -> sStatusCallback.onReconnecting(attempt, maxAttempts, reason, mCurrentStreamId));
+    deliverStatus((callback, id) -> callback.onReconnecting(attempt, maxAttempts, reason, id));
   }
 
   private void notifyReconnected(String url, int attempt) {
-    if (sStatusCallback != null) mMainHandler.post(() -> sStatusCallback.onReconnected(url, attempt, mCurrentStreamId));
+    deliverStatus((callback, id) -> callback.onReconnected(url, attempt, id));
   }
 
   private void notifyReconnectFailed(int maxAttempts) {
-    if (sStatusCallback != null) mMainHandler.post(() -> sStatusCallback.onReconnectFailed(maxAttempts, mCurrentStreamId));
+    deliverStatus((callback, id) -> callback.onReconnectFailed(maxAttempts, id));
+  }
+
+  private void deliverStatus(java.util.function.BiConsumer<StreamingStatusCallback, String> delivery) {
+    StreamingStatusCallback callback = sStatusCallback;
+    String streamId = mCurrentStreamId;
+    long session = mSessionGeneration;
+    if (callback == null) return;
+    Runnable notify = () -> {
+      if (session == mSessionGeneration && callback == sStatusCallback) delivery.accept(callback, streamId);
+    };
+    if (Looper.myLooper() == Looper.getMainLooper()) notify.run();
+    else mMainHandler.post(notify);
   }
 
   private void notifyError(String error) {
-    StreamingStatusCallback callback = sStatusCallback;
-    if (callback != null) {
-      String streamId = mCurrentStreamId;
-      Runnable notify = () -> callback.onStreamError(error, streamId);
-      if (Looper.myLooper() == Looper.getMainLooper()) {
-        notify.run();
-      } else {
-        mMainHandler.post(notify);
-      }
-    }
+    deliverStatus((callback, id) -> callback.onStreamError(error, id));
   }
 
   private void notifyMetrics(
@@ -1398,37 +1406,6 @@ public class WhipStreamingService extends Service {
   // Stream timeout (keep-alive)
   // -----------------------------------------------------------------------
 
-  private void scheduleStreamTimeout(String streamId) {
-    cancelStreamTimeout();
-
-    if (AsgConstants.DISABLE_STREAM_KEEP_ALIVE_TIMEOUT) {
-      Log.i(TAG, "Keep-alive timeout disabled; stream will not auto-stop: " + streamId);
-      return;
-    }
-
-    mStreamTimeoutTimer = new Timer("WhipStreamTimeout-" + streamId);
-    mStreamTimeoutTimer.schedule(new TimerTask() {
-      @Override
-      public void run() {
-        mMainHandler.post(() -> {
-          synchronized (mStateLock) {
-            if (mStreamState != StreamState.STREAMING) return;
-          }
-          Log.w(TAG, "Stream timed out - no keep-alive received within " + STREAM_TIMEOUT_MS + "ms");
-          notifyError("Stream timed out - no keep-alive from cloud");
-          stopStreaming();
-        });
-      }
-    }, STREAM_TIMEOUT_MS);
-  }
-
-  private void cancelStreamTimeout() {
-    if (mStreamTimeoutTimer != null) {
-      mStreamTimeoutTimer.cancel();
-      mStreamTimeoutTimer = null;
-    }
-  }
-
   // -----------------------------------------------------------------------
   // Battery monitoring
   // -----------------------------------------------------------------------
@@ -1527,6 +1504,7 @@ public class WhipStreamingService extends Service {
     setStreamConfig(config);
 
     if (sInstance != null) {
+      sInstance.mSessionGeneration++;
       sInstance.mWhipUrl = whipUrl;
       sInstance.mAuthToken = authToken;
       sInstance.mCurrentStreamId = streamId;
@@ -1561,8 +1539,12 @@ public class WhipStreamingService extends Service {
    * Stop the active WHIP stream.
    */
   public static void stopStreaming(Context context) {
-    if (sInstance != null) sInstance.stopStreaming();
-    context.stopService(new Intent(context, WhipStreamingService.class));
+    if (sInstance != null) {
+      sInstance.stopStreaming();
+    } else {
+      // Cancel a start intent that Android has not delivered yet.
+      context.stopService(new Intent(context, WhipStreamingService.class));
+    }
   }
 
   /** @return true if a WHIP stream is currently active */
@@ -1614,19 +1596,13 @@ public class WhipStreamingService extends Service {
   }
 
   /**
-   * Reset the stream timeout timer (called by keep-alive commands).
+   * Validate a legacy keep-alive id without changing stream lifetime or wake ownership.
    * @return true if the streamId matches the current stream
    */
-  public static boolean resetStreamTimeout(String streamId) {
-    if (sInstance == null) return false;
-    boolean matches = streamId != null && streamId.equals(sInstance.mCurrentStreamId);
-    if (matches) {
-      sInstance.scheduleStreamTimeout(streamId);
-      // Re-acquire wake lock on keep-alive
-      WakeLockManager.acquireFullWakeLockAndBringToForeground(
-          sInstance.getApplicationContext(), WakeLockManager.WakeOwner.STREAMING, 2180000, 5000);
-    }
-    return matches;
+  public static boolean isCurrentStream(String streamId) {
+    WhipStreamingService instance = sInstance;
+    return instance != null && streamId != null && streamId.equals(instance.mCurrentStreamId)
+        && (isStreaming() || isReconnecting());
   }
 
   public static void setStreamConfig(WhipStreamConfig config) {

@@ -796,6 +796,11 @@ export type StreamLiveStats = {
 type StreamStatusCommon = {
   type: "stream_status"
   streamId?: string
+  /** ASG process identity and monotonic revision for reconnect reconciliation. */
+  sid?: string
+  revision?: number
+  terminal?: boolean
+  errorDetails?: string
   timestamp?: number
   resolvedConfig?: StreamResolvedConfig
   stats?: StreamLiveStats
@@ -830,7 +835,7 @@ export type StreamStatusEvent =
     })
   | (StreamStatusCommon & {
       kind: "snapshot"
-      status: "streaming" | "reconnecting" | "stopped"
+      status: StreamStatusState
       streaming: boolean
       reconnecting: boolean
       attempt?: number

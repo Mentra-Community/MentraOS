@@ -4255,6 +4255,10 @@ class MentraLive : SGCManager() {
                 // is correct here; version_info detection covers the restart case.
                 json.optString("sid", "").takeIf { it.isNotEmpty() }?.let { glassesSessionId = it }
                 readinessCompletedThisBleSession = true
+                Bridge.sendTypedMessage("stream_control_ready", mapOf(
+                    "sid" to json.optString("sid", ""),
+                    "streamControlVersion" to json.optInt("streamControlVersion", 0),
+                ))
 
                 // Set the ready flag to stop any future readiness checks
                 glassesReady = true

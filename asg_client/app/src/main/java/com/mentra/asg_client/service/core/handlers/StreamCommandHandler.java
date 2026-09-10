@@ -5,7 +5,15 @@ import android.hardware.camera2.CameraAccessException;
 import android.hardware.camera2.CameraCharacteristics;
 import android.hardware.camera2.CameraManager;
 import android.os.SystemClock;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
+import com.mentra.asg_client.AsgConstants;
+import com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager;
+import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.LinkStateMachine;
+import com.mentra.asg_client.io.streaming.StreamPhonePresencePolicy;
+import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
+import com.mentra.asg_client.utils.WakeLockManager;
 import com.mentra.asg_client.io.hardware.core.HardwareManagerFactory;
 
 import com.mentra.asg_client.io.media.core.MediaCaptureService;
@@ -45,16 +53,49 @@ public class StreamCommandHandler implements ICommandHandler {
     private final IStateManager stateManager;
     private final IMediaManager streamingManager;
     private final HotspotStreamActivityTracker mHotspotActivityTracker;
+    private final AsgClientServiceManager mServiceManager;
+    private final Handler mLifecycleHandler = new Handler(Looper.getMainLooper());
+    private final StreamPhonePresencePolicy mPhonePolicy = new StreamPhonePresencePolicy(
+            AsgConstants.STREAM_PHONE_DISCONNECT_GRACE_MS);
+    private LinkStateMachine mPhoneLink;
+    private boolean mDisposed;
+    private Runnable mPhoneLossDeadline;
+    private String mOwnedStreamId;
+    private Runnable mResourceRefresh;
+    private final LinkStateMachine.Listener mPresenceListener = (state, caps, presence) ->
+            mLifecycleHandler.post(() -> {
+                // Read the latest signal after dispatch; queued reports may predate a start or
+                // a replacement UART session. Never replay an old PRESENT over a newer ABSENT.
+                if (mPhoneLink != null) updatePhonePresence(mPhoneLink.getPhonePresence());
+            });
 
     public StreamCommandHandler(
             Context context,
             IStateManager stateManager,
             IMediaManager streamingManager,
             INetworkManager networkManager) {
+        this(context, stateManager, streamingManager, networkManager, null);
+    }
+
+    /** Creates the phone-owned streaming command handler with authoritative BES presence. */
+    public StreamCommandHandler(
+            Context context,
+            IStateManager stateManager,
+            IMediaManager streamingManager,
+            INetworkManager networkManager,
+            AsgClientServiceManager serviceManager) {
         this.context = context;
         this.stateManager = stateManager;
         this.streamingManager = streamingManager;
         this.mHotspotActivityTracker = new HotspotStreamActivityTracker(networkManager);
+        this.mServiceManager = serviceManager;
+        streamingManager.setStreamStatusListener(status -> mLifecycleHandler.post(() -> {
+            if (status.optBoolean("terminal", false)
+                    && mOwnedStreamId != null
+                    && mOwnedStreamId.equals(status.optString("streamId", ""))) {
+                releaseStreamOwnership();
+            }
+        }));
     }
 
     @Override
@@ -64,6 +105,13 @@ public class StreamCommandHandler implements ICommandHandler {
 
     @Override
     public boolean handleCommand(String commandType, JSONObject data) {
+        if (!getSupportedCommandTypes().contains(commandType)) return false;
+        // Commands, presence edges, and deadline claims must mutate the same lifecycle owner.
+        if (Looper.myLooper() != mLifecycleHandler.getLooper()) {
+            mLifecycleHandler.post(() -> handleCommand(commandType, data));
+            return true;
+        }
+        if (mDisposed) return false;
         try {
             switch (commandType) {
                 case "start_stream":
@@ -113,7 +161,14 @@ public class StreamCommandHandler implements ICommandHandler {
         boolean eisChanged = false;
         boolean streamStarted = false;
         String streamId = data.optString("streamId", "");
+        if (streamId.isEmpty()) streamId = "asg-" + java.util.UUID.randomUUID();
         try {
+            bindPhonePresence();
+            if (!mPhonePolicy.canStart()) {
+                sendStreamErrorStatus(streamId,
+                        "Phone BLE presence unavailable; connect the Mentra App and update BES firmware");
+                return false;
+            }
             // Accept streamUrl first, then legacy rtmpUrl / srtUrl keys
             String streamUrl = data.optString("streamUrl", "");
             if (streamUrl.isEmpty()) streamUrl = data.optString("rtmpUrl", "");
@@ -204,6 +259,7 @@ public class StreamCommandHandler implements ICommandHandler {
                         applyEisForStreaming(config.getVideoWidth(), config.getVideoHeight());
                         eisChanged = true;
                         Log.d(TAG, "Starting RTMP stream to: " + streamUrl);
+                        beginStreamOwnership(streamId);
                         RtmpStreamingService.startStreaming(
                                 context, streamUrl, streamId, flash, sound, config);
                         streamStarted = true;
@@ -220,6 +276,7 @@ public class StreamCommandHandler implements ICommandHandler {
                         applyEisForStreaming(config.getVideoWidth(), config.getVideoHeight());
                         eisChanged = true;
                         Log.d(TAG, "Starting SRT stream to: " + streamUrl);
+                        beginStreamOwnership(streamId);
                         SrtStreamingService.startStreaming(
                                 context, streamUrl, streamId, flash, sound, config);
                         streamStarted = true;
@@ -251,6 +308,7 @@ public class StreamCommandHandler implements ICommandHandler {
                             String value = data.optString("auth_token", "");
                             if (!value.isEmpty()) authToken = value;
                         }
+                        beginStreamOwnership(streamId);
                         WhipStreamingService.startStreaming(
                                 context, streamUrl, streamId, flash, sound, config, authToken);
                         streamStarted = true;
@@ -263,6 +321,10 @@ public class StreamCommandHandler implements ICommandHandler {
 
             return true;
         } catch (Exception e) {
+            if (!streamStarted && streamId.equals(mOwnedStreamId)) {
+                streamingManager.getStreamingStatusCallback().onStreamError(e.getMessage(), streamId);
+                releaseStreamOwnership();
+            }
             if (eisChanged && !streamStarted) {
                 restoreEisAfterStreaming();
             }
@@ -373,38 +435,22 @@ public class StreamCommandHandler implements ICommandHandler {
 
     /** Handle stop stream command — stops whichever service is currently streaming. */
     public boolean handleStopCommand() {
-        try {
-            if (RtmpStreamingService.isStreaming() || RtmpStreamingService.isReconnecting()) {
-                sendStreamStoppingStatus(RtmpStreamingService.getCurrentStreamId());
-                RtmpStreamingService.stopStreaming(context);
-                mHotspotActivityTracker.onStreamStopped();
-                restoreEisAfterStreaming();
-                return true;
-            } else if (SrtStreamingService.isStreaming() || SrtStreamingService.isReconnecting()) {
-                sendStreamStoppingStatus(SrtStreamingService.getCurrentStreamId());
-                SrtStreamingService.stopStreaming(context);
-                mHotspotActivityTracker.onStreamStopped();
-                restoreEisAfterStreaming();
-                return true;
-            } else if (WhipStreamingService.isStreaming()
-                    || WhipStreamingService.isReconnecting()) {
-                sendStreamStoppingStatus(WhipStreamingService.getCurrentStreamId());
-                WhipStreamingService.stopStreaming(context);
-                mHotspotActivityTracker.onStreamStopped();
-                restoreEisAfterStreaming();
-                return true;
-            } else {
-                mHotspotActivityTracker.onStreamStopped();
-                streamingManager.sendStreamStatusResponse(
-                        false, ServiceConstants.STATUS_ERROR, ServiceConstants.ERROR_NOT_STREAMING);
-                return false;
-            }
-        } catch (Exception e) {
-            Log.e(TAG, "Error handling stop stream command", e);
-            streamingManager.sendStreamStatusResponse(
-                    false, ServiceConstants.STATUS_ERROR, e.getMessage());
-            return false;
+        if (Looper.myLooper() != mLifecycleHandler.getLooper()) {
+            mLifecycleHandler.post(this::handleStopCommand);
+            return true;
         }
+        String stoppedId = mOwnedStreamId;
+        if (stoppedId == null) stoppedId = streamingManager.getStreamSnapshot().optString("streamId", null);
+        if (stoppedId != null) sendStreamStoppingStatus(stoppedId);
+        stopAllServices();
+        restoreEisAfterStreaming();
+        if (stoppedId != null) {
+            streamingManager.getStreamingStatusCallback().onStreamStopped(stoppedId);
+        } else {
+            // Stop is idempotent, including after an ASG restart or a lost stop response.
+            streamingManager.sendStreamStatusResponse(true, streamingManager.getStreamSnapshot());
+        }
+        return true;
     }
 
     /** Send an error stream status echoing the rejected command's streamId when it carried one. */
@@ -446,151 +492,113 @@ public class StreamCommandHandler implements ICommandHandler {
 
     /** Handle get stream status command. */
     public boolean handleStatusCommand() {
-        try {
-            boolean isStreaming =
-                    RtmpStreamingService.isActivelyStreaming()
-                            || SrtStreamingService.isActivelyStreaming()
-                            || WhipStreamingService.isActivelyStreaming();
-            boolean isStarting =
-                    RtmpStreamingService.isStarting()
-                            || SrtStreamingService.isStarting()
-                            || WhipStreamingService.isStarting();
-            boolean isReconnecting =
-                    RtmpStreamingService.isReconnecting()
-                            || SrtStreamingService.isReconnecting()
-                            || WhipStreamingService.isReconnecting();
-
-            JSONObject status = new JSONObject();
-            status.put("kind", "snapshot");
-            status.put(
-                    "status",
-                    isReconnecting
-                            ? "reconnecting"
-                            : (isStarting
-                                    ? "initializing"
-                                    : (isStreaming ? "streaming" : "stopped")));
-            status.put("streaming", isStreaming);
-            status.put("reconnecting", isReconnecting);
-
-            String streamId = null;
-            if (RtmpStreamingService.isStreaming() || RtmpStreamingService.isReconnecting()) {
-                streamId = RtmpStreamingService.getCurrentStreamId();
-            } else if (SrtStreamingService.isStreaming() || SrtStreamingService.isReconnecting()) {
-                streamId = SrtStreamingService.getCurrentStreamId();
-            } else if (WhipStreamingService.isStreaming()
-                    || WhipStreamingService.isReconnecting()) {
-                streamId = WhipStreamingService.getCurrentStreamId();
-            }
-            if (streamId != null && !streamId.isEmpty()) {
-                status.put("streamId", streamId);
-            }
-
-            if (isReconnecting) {
-                if (RtmpStreamingService.isReconnecting()) {
-                    status.put("attempt", RtmpStreamingService.getReconnectAttempt());
-                } else if (SrtStreamingService.isReconnecting()) {
-                    status.put("attempt", SrtStreamingService.getReconnectAttempt());
-                }
-            }
-
-            streamingManager.sendStreamStatusResponse(true, status);
+        if (Looper.myLooper() != mLifecycleHandler.getLooper()) {
+            mLifecycleHandler.post(this::handleStatusCommand);
             return true;
-        } catch (JSONException e) {
-            Log.e(TAG, "Error creating stream status response", e);
-            streamingManager.sendStreamStatusResponse(
-                    false, ServiceConstants.STATUS_ERROR, ServiceConstants.ERROR_JSON_ERROR);
-            return false;
         }
+        streamingManager.sendStreamStatusResponse(true, streamingManager.getStreamSnapshot());
+        return true;
     }
 
     /** Handle keep stream alive command — resets the timeout on whichever service is active. */
     public boolean handleKeepAliveCommand(JSONObject data) {
-        try {
-            String streamId = data.optString("streamId", "");
-            String ackId = data.optString("ackId", "");
+        String streamId = data.optString("streamId", "");
+        String ackId = data.optString("ackId", "");
+        if (streamId.isEmpty() || ackId.isEmpty()) return false;
+        boolean matches = RtmpStreamingService.isCurrentStream(streamId)
+                || SrtStreamingService.isCurrentStream(streamId)
+                || WhipStreamingService.isCurrentStream(streamId);
+        if (matches) streamingManager.sendKeepAliveAck(streamId, ackId);
+        // Legacy receipt only: no phone-loss deadline or resource ownership changes.
+        return matches;
+    }
 
-            if (streamId.isEmpty() || ackId.isEmpty()) {
-                Log.d(TAG, "Keep-alive missing required fields (streamId or ackId) - ignoring");
-                return false;
+    private boolean stopAllServices() {
+        boolean hadStream = mOwnedStreamId != null || RtmpStreamingService.isStreaming()
+                || RtmpStreamingService.isReconnecting() || SrtStreamingService.isStreaming()
+                || SrtStreamingService.isReconnecting() || WhipStreamingService.isStreaming()
+                || WhipStreamingService.isReconnecting();
+        releaseStreamOwnership();
+        // Stop pending service starts too. Publishers release capture synchronously; sleeping
+        // here cannot prove teardown and would block the same dispatcher that handles BLE loss.
+        RtmpStreamingService.stopStreaming(context);
+        SrtStreamingService.stopStreaming(context);
+        WhipStreamingService.stopStreaming(context);
+        return hadStream;
+    }
+
+    private void bindPhonePresence() {
+        if (mServiceManager == null
+                || !(mServiceManager.getBluetoothManager() instanceof K900BluetoothManager)) return;
+        LinkStateMachine link = ((K900BluetoothManager) mServiceManager.getBluetoothManager())
+                .getLinkStateMachine();
+        if (mPhoneLink != link) {
+            if (mPhoneLink != null) mPhoneLink.removeListener(mPresenceListener);
+            mPhoneLink = link;
+            link.addListener(mPresenceListener);
+        }
+        updatePhonePresence(link.getPhonePresence());
+    }
+
+    private void beginStreamOwnership(String streamId) {
+        mOwnedStreamId = streamId;
+        long generation = mPhonePolicy.start();
+        streamingManager.beginStreamSession(streamId);
+        mResourceRefresh = new Runnable() {
+            @Override
+            public void run() {
+                if (mDisposed || mOwnedStreamId == null
+                        || generation != mPhonePolicy.getGeneration()) return;
+                WakeLockManager.acquireCpu(context, WakeLockManager.WakeOwner.STREAMING,
+                        AsgConstants.STREAM_CPU_LEASE_MS);
+                mHotspotActivityTracker.onSessionActive();
+                mLifecycleHandler.postDelayed(this, AsgConstants.STREAM_RESOURCE_REFRESH_MS);
             }
+        };
+        mResourceRefresh.run();
+    }
 
-            // Try each service in turn
-            if (RtmpStreamingService.isStreaming() || RtmpStreamingService.isReconnecting()) {
-                boolean valid = RtmpStreamingService.resetStreamTimeout(streamId);
-                if (valid || RtmpStreamingService.isStreaming()) {
-                    if (valid) {
-                        mHotspotActivityTracker.onKeepAlive();
-                    }
-                    streamingManager.sendKeepAliveAck(streamId, ackId);
-                    return true;
-                }
-            }
+    private void releaseStreamOwnership() {
+        mPhonePolicy.stop();
+        cancelPhoneLossDeadline();
+        if (mResourceRefresh != null) mLifecycleHandler.removeCallbacks(mResourceRefresh);
+        mResourceRefresh = null;
+        mOwnedStreamId = null;
+        mHotspotActivityTracker.onStreamStopped();
+    }
 
-            if (SrtStreamingService.isStreaming() || SrtStreamingService.isReconnecting()) {
-                boolean valid = SrtStreamingService.resetStreamTimeout(streamId);
-                if (valid || SrtStreamingService.isStreaming()) {
-                    if (valid) {
-                        mHotspotActivityTracker.onKeepAlive();
-                    }
-                    streamingManager.sendKeepAliveAck(streamId, ackId);
-                    return true;
-                }
-            }
+    private void updatePhonePresence(LinkStateMachine.PhonePresence presence) {
+        if (mDisposed) return;
+        mPhonePolicy.onPresence(StreamPhonePresencePolicy.Presence.valueOf(presence.name()),
+                SystemClock.elapsedRealtime());
+        cancelPhoneLossDeadline();
+        long deadline = mPhonePolicy.getLossDeadlineMs();
+        if (deadline < 0) return;
+        long generation = mPhonePolicy.getGeneration();
+        mPhoneLossDeadline = () -> {
+            if (!mPhonePolicy.claimExpiredStop(generation, SystemClock.elapsedRealtime())) return;
+            streamingManager.getStreamingStatusCallback().onStreamError(
+                    "Phone BLE disconnected beyond grace period", mOwnedStreamId);
+            stopAllServices();
+        };
+        mLifecycleHandler.postDelayed(mPhoneLossDeadline,
+                Math.max(0, deadline - SystemClock.elapsedRealtime()));
+    }
 
-            if (WhipStreamingService.isStreaming() || WhipStreamingService.isReconnecting()) {
-                boolean valid = WhipStreamingService.resetStreamTimeout(streamId);
-                if (valid || WhipStreamingService.isStreaming()) {
-                    if (valid) {
-                        mHotspotActivityTracker.onKeepAlive();
-                    } else {
-                        // The ACK below keeps the phone's session alive, but the glasses
-                        // watchdog was NOT reset: this keep-alive names a stream that is not
-                        // the one running. Make the split visible so a 60 s "stream timed
-                        // out" that follows can be traced to the id mismatch.
-                        Log.w(TAG, "Keep-alive streamId mismatch: got " + streamId
-                                + ", active WHIP stream differs - ACKing without resetting watchdog");
-                    }
-                    streamingManager.sendKeepAliveAck(streamId, ackId);
-                    return true;
-                }
-            }
-
-            Log.w(TAG, "Keep-alive for unknown stream, not currently streaming: " + streamId);
-            return false;
-        } catch (Exception e) {
-            Log.e(TAG, "Error handling keep-alive command", e);
-            return false;
+    private void cancelPhoneLossDeadline() {
+        if (mPhoneLossDeadline != null) {
+            mLifecycleHandler.removeCallbacks(mPhoneLossDeadline);
+            mPhoneLossDeadline = null;
         }
     }
 
-    // -------------------------------------------------------------------------
-    // Helpers
-    // -------------------------------------------------------------------------
-
-    private boolean stopAllServices() {
-        mHotspotActivityTracker.onStreamStopped();
-        boolean stoppedExistingStream = false;
-        if (RtmpStreamingService.isStreaming() || RtmpStreamingService.isReconnecting()) {
-            RtmpStreamingService.stopStreaming(context);
-            stoppedExistingStream = true;
-        }
-        if (SrtStreamingService.isStreaming() || SrtStreamingService.isReconnecting()) {
-            SrtStreamingService.stopStreaming(context);
-            stoppedExistingStream = true;
-        }
-        if (WhipStreamingService.isStreaming() || WhipStreamingService.isReconnecting()) {
-            WhipStreamingService.stopStreaming(context);
-            stoppedExistingStream = true;
-        }
-        if (stoppedExistingStream) {
-            // Give an active service time to release camera/encoder resources
-            // before replacing it. Cold starts do not need this delay.
-            try {
-                Thread.sleep(500);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
-            }
-        }
-        return stoppedExistingStream;
+    /** Releases the presence subscription and terminates streams when the command owner closes. */
+    public void cleanup() {
+        mLifecycleHandler.post(() -> {
+            mDisposed = true;
+            streamingManager.setStreamStatusListener(null);
+            if (mPhoneLink != null) mPhoneLink.removeListener(mPresenceListener);
+            stopAllServices();
+        });
     }
 }
