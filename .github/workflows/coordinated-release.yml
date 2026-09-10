@@ -40,6 +40,7 @@ jobs:
       play_track: ${{ steps.release.outputs.play_track }}
       example_play_track: ${{ steps.release.outputs.example_play_track }}
       testflight_group: ${{ steps.release.outputs.testflight_group }}
+      testflight_audience: ${{ steps.release.outputs.testflight_audience }}
       example_testflight_group: ${{ steps.release.outputs.example_testflight_group }}
       example_testflight_audience: ${{ steps.release.outputs.example_testflight_audience }}
       dry_run: ${{ steps.release.outputs.dry_run }}
@@ -65,6 +66,7 @@ jobs:
               echo "play_track=internal" >> "$GITHUB_OUTPUT"
               echo "example_play_track=internal" >> "$GITHUB_OUTPUT"
               echo "testflight_group=Mentra Dev" >> "$GITHUB_OUTPUT"
+              echo "testflight_audience=internal" >> "$GITHUB_OUTPUT"
               echo "example_testflight_group=Mentra Dev" >> "$GITHUB_OUTPUT"
               echo "example_testflight_audience=internal" >> "$GITHUB_OUTPUT"
               ;;
@@ -76,7 +78,8 @@ jobs:
               echo "backend_environment=staging" >> "$GITHUB_OUTPUT"
               echo "play_track=beta" >> "$GITHUB_OUTPUT"
               echo "example_play_track=beta" >> "$GITHUB_OUTPUT"
-              echo "testflight_group=Mentra Staging" >> "$GITHUB_OUTPUT"
+              echo "testflight_group=Mentra Staging Public" >> "$GITHUB_OUTPUT"
+              echo "testflight_audience=external" >> "$GITHUB_OUTPUT"
               echo "example_testflight_group=Mentra Staging Public" >> "$GITHUB_OUTPUT"
               echo "example_testflight_audience=external" >> "$GITHUB_OUTPUT"
               ;;
@@ -159,6 +162,7 @@ jobs:
             --ota-inputs ota-release-inputs.json \
             --starter-kit-source starter-kit-source.json \
             --require-version-mirrors true \
+            --public-beta-testflight true \
             --output "$output"
           if [[ "$output" == "release-plan.verify.json" ]]; then
             cmp release-plan.json "$output"
@@ -173,6 +177,7 @@ jobs:
             --ota-inputs ota-release-inputs.json \
             --starter-kit-source starter-kit-source.json \
             --require-version-mirrors true \
+            --public-beta-testflight true \
             --output release-plan.json
           cmp release-plan.first.json release-plan.json
 
@@ -184,6 +189,7 @@ jobs:
           PLAY_TRACK: ${{ steps.channel.outputs.play_track }}
           EXAMPLE_PLAY_TRACK: ${{ steps.channel.outputs.example_play_track }}
           TESTFLIGHT_GROUP: ${{ steps.channel.outputs.testflight_group }}
+          TESTFLIGHT_AUDIENCE: ${{ steps.channel.outputs.testflight_audience }}
           EXAMPLE_TESTFLIGHT_GROUP: ${{ steps.channel.outputs.example_testflight_group }}
           EXAMPLE_TESTFLIGHT_AUDIENCE: ${{ steps.channel.outputs.example_testflight_audience }}
         run: |
@@ -205,6 +211,7 @@ jobs:
             echo "play_track=$PLAY_TRACK"
             echo "example_play_track=$EXAMPLE_PLAY_TRACK"
             echo "testflight_group=$TESTFLIGHT_GROUP"
+            echo "testflight_audience=$TESTFLIGHT_AUDIENCE"
             echo "example_testflight_group=$EXAMPLE_TESTFLIGHT_GROUP"
             echo "example_testflight_audience=$EXAMPLE_TESTFLIGHT_AUDIENCE"
             echo "dry_run=$dry_run"
@@ -266,7 +273,7 @@ jobs:
             echo "- Mobile backend: \`${{ steps.release.outputs.backend_environment }}\`"
             echo "- Google Play: \`${{ steps.release.outputs.play_track }}\`"
             echo "- Example Google Play: \`${{ steps.release.outputs.example_play_track }}\`"
-            echo "- TestFlight: \`${{ steps.release.outputs.testflight_group }}\`"
+            echo "- TestFlight: \`${{ steps.release.outputs.testflight_group }}\` (\`${{ steps.release.outputs.testflight_audience }}\`)"
             echo "- Example TestFlight: \`${{ steps.release.outputs.example_testflight_group }}\` (\`${{ steps.release.outputs.example_testflight_audience }}\`)"
             echo "- Dry run: \`${{ steps.release.outputs.dry_run }}\`"
           } >> "$GITHUB_STEP_SUMMARY"
@@ -332,6 +339,7 @@ jobs:
       backend_environment: ${{ needs.plan.outputs.backend_environment }}
       play_track: ${{ needs.plan.outputs.play_track }}
       testflight_group: ${{ needs.plan.outputs.testflight_group }}
+      testflight_audience: ${{ needs.plan.outputs.testflight_audience }}
       dry_run: ${{ needs.plan.outputs.dry_run == 'true' }}
     secrets: inherit
 
@@ -1074,6 +1082,9 @@ jobs:
           RELEASE_IDENTITY: ${{ needs.plan.outputs.release_identity }}
           PLAY_TRACK: ${{ needs.plan.outputs.play_track }}
           TESTFLIGHT_GROUP: ${{ needs.plan.outputs.testflight_group }}
+          TESTFLIGHT_DISTRIBUTION_STATUS: ${{ needs.mobile.outputs.testflight_distribution_status }}
+          TESTFLIGHT_INSTALL_URL: ${{ needs.mobile.outputs.testflight_install_url }}
+          TESTFLIGHT_REVIEW_STATE: ${{ needs.mobile.outputs.testflight_review_state }}
           PLAN_RESULT: ${{ needs.plan.result }}
           CLOUD_V2_RESULT: ${{ needs.cloud-v2.result }}
           OTA_RESULT: ${{ needs.ota.result }}

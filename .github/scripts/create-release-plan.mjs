@@ -33,6 +33,7 @@ const plan = createReleasePlan({
   nativeBuildNumber: Number(args["native-build-number"]),
   otaInputs,
   starterKitSource,
+  publicBetaTestflight: args["public-beta-testflight"] === "true",
 })
 const output = path.resolve(args.output || "release-plan.json")
 writeFileSync(output, serializeReleaseRecord(plan))
