@@ -1,5 +1,6 @@
 package com.mentra.bluetoothsdk.sgcs
 
+import com.mentra.bluetoothsdk.NativeNotificationConfig
 import java.io.IOException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.async
@@ -110,7 +111,43 @@ class EvenFileServiceTest {
         assertEquals(first, ids.forPhoneId("app-key"))
         assertNotEquals(first, ids.forPhoneId(first.toString()))
         assertNotEquals(ids.forPhoneId(""), ids.forPhoneId(""))
-        repeat(10000) { ids.forPhoneId("other-$it") }
-        assertNotEquals(ids.forPhoneId("a"), ids.forPhoneId("b"))
+        repeat(1000) { ids.forPhoneId("other-$it") }
+        assertEquals(first, ids.forPhoneId("app-key"))
     }
+
+    @Test fun `capacity never evicts known ids or reuses anonymous ids`() {
+        val ids = NotificationIds()
+        val known = ids.forPhoneId("retained-card")
+        val allocated = mutableSetOf(known)
+        repeat(7999) { assertTrue(allocated.add(ids.forPhoneId(""))) }
+        assertEquals(8000, allocated.size)
+        assertEquals(2000, allocated.minOrNull())
+        assertEquals(9999, allocated.maxOrNull())
+        assertEquals("notification_id_capacity_exhausted",
+            assertThrows(IllegalStateException::class.java) { ids.forPhoneId("new-card") }.message)
+        assertThrows(IllegalStateException::class.java) { ids.forPhoneId("") }
+        assertEquals(known, ids.forPhoneId("retained-card"))
+    }
+
+    @Test fun `all named ids remain stable when capacity is exhausted`() {
+        val ids = NotificationIds()
+        val allocated = (0 until 8000).associate { it.toString() to ids.forPhoneId(it.toString()) }
+        assertEquals(8000, allocated.values.toSet().size)
+        assertThrows(IllegalStateException::class.java) { ids.forPhoneId("new") }
+        allocated.forEach { (key, value) -> assertEquals(value, ids.forPhoneId(key)) }
+    }
+
+    @Test fun `disabled controls stop presentation without changing the whitelist`() {
+        val commands = NotificationProto.controls(NativeNotificationConfig(enabled = false), 11, 12)
+        assertEquals(listOf(11), commands.map { it.first })
+        assertArrayEquals(byteArrayOf(8, 1, 16, 11, 26, 8, 8, 0, 16, 1, 24, 5, 40, 0), commands.single().second)
+    }
+
+    @Test fun `enabled controls include the phone-side filtering override`() {
+        val commands = NotificationProto.controls(NativeNotificationConfig(enabled = true), 11, 12)
+        assertEquals(listOf(11, 12), commands.map { it.first })
+        assertArrayEquals(byteArrayOf(8, 1, 16, 11, 26, 8, 8, 1, 16, 1, 24, 5, 40, 0), commands.first().second)
+        assertArrayEquals(byteArrayOf(8, 3, 16, 12, 50, 2, 8, 1), commands.last().second)
+    }
+
 }

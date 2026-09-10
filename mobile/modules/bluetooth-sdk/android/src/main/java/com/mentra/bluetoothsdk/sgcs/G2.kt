@@ -853,12 +853,22 @@ private object EvenAIProto {
  * Control plane for the on-glasses notification centre. Content does not travel here — it goes
  * over the file service below. Wire formats: `notes/g2-notification-service.md`.
  */
-private object NotificationProto {
+internal object NotificationProto {
     const val CMD_CTRL = 1
     const val CMD_NOTIFICATION_IOS = 2
     const val CMD_WHITELIST_CTRL = 3
     const val CMD_WHITELIST_CHK = 4
     const val CMD_COMM_RSP = 161
+
+    /** Disabling presentation must not change the firmware's app-filter policy. */
+    fun controls(config: NativeNotificationConfig, controlMagic: Int, filterMagic: Int): List<Pair<Int, ByteArray>> = buildList {
+        add(controlMagic to notificationCtrl(
+            controlMagic, if (config.enabled) 1 else 0,
+            if (config.autoDisplay) 1 else 0, config.durationSeconds,
+            if (config.doNotDisturb) 1 else 0,
+        ))
+        if (config.enabled) add(filterMagic to whitelistCtrl(filterMagic, whitelistDisable = 1))
+    }
 
     fun notificationCtrl(
         magicRandom: Int,
@@ -3938,17 +3948,10 @@ class G2 : SGCManager() {
         val targetChar = rightWriteChar ?: throw java.io.IOException("not_connected")
         val controlMagic = sendManager.nextMagicRandom()
         val filterMagic = sendManager.nextMagicRandom()
-        notificationControlMagics = setOf(controlMagic, filterMagic)
-        val commands = listOf(
-            NotificationProto.notificationCtrl(
-                controlMagic, if (config.enabled) 1 else 0,
-                if (config.autoDisplay) 1 else 0, config.durationSeconds,
-                if (config.doNotDisturb) 1 else 0,
-            ),
-            // Filtering is already performed by Android's phone notification policy.
-            NotificationProto.whitelistCtrl(filterMagic, whitelistDisable = 1),
-        )
-        for ((index, payload) in commands.withIndex()) {
+        val commands = NotificationProto.controls(config, controlMagic, filterMagic)
+        notificationControlMagics = commands.map { it.first }.toSet()
+        for ((index, command) in commands.withIndex()) {
+            val payload = command.second
             if (index > 0) delay(400) // Verified device requirement between control commands.
             val packets = sendManager.buildPackets(ServiceID.NOTIFICATION.value, payload, reserveFlag = true)
             kotlinx.coroutines.withContext(bleWriteExecutor.asCoroutineDispatcher()) {

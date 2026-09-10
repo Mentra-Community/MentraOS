@@ -72,30 +72,35 @@ describe("native notification settings", () => {
 
   it("keeps the latest Android permission result when foreground refreshes overlap", async () => {
     Object.defineProperty(Platform, "OS", {configurable: true, value: "android"})
-    let foreground: (state: AppStateStatus) => void = () => {}
-    const appState = jest.spyOn(AppState, "addEventListener").mockImplementation((_event, listener) => {
-      foreground = listener
-      return {remove: jest.fn()}
-    })
-    let resolveOld: (granted: boolean) => void = () => {}
-    ;(engine.phoneNotifications.hasListenerPermission as jest.Mock)
-      .mockReturnValueOnce(
-        new Promise<boolean>((resolve) => {
-          resolveOld = resolve
-        }),
-      )
-      .mockResolvedValueOnce(true)
-    const ui = render(<NativeNotificationSettings />)
-    await act(async () => {
-      foreground("active")
-    })
-    expect(ui.queryByText("settings:nativeNotificationsGrantAccess")).toBeNull()
-    await act(async () => {
-      resolveOld(false)
-    })
-    expect(ui.queryByText("settings:nativeNotificationsGrantAccess")).toBeNull()
-    ui.unmount()
-    appState.mockImplementation(() => ({remove: jest.fn()}))
+    const originalAddEventListener = AppState.addEventListener
+    let ui: ReturnType<typeof render> | undefined
+    try {
+      let foreground: (state: AppStateStatus) => void = () => {}
+      AppState.addEventListener = jest.fn((_event, listener) => {
+        foreground = listener
+        return {remove: jest.fn()}
+      })
+      let resolveOld: (granted: boolean) => void = () => {}
+      ;(engine.phoneNotifications.hasListenerPermission as jest.Mock)
+        .mockReturnValueOnce(
+          new Promise<boolean>((resolve) => {
+            resolveOld = resolve
+          }),
+        )
+        .mockResolvedValueOnce(true)
+      ui = render(<NativeNotificationSettings />)
+      await act(async () => {
+        foreground("active")
+      })
+      expect(ui.queryByText("settings:nativeNotificationsGrantAccess")).toBeNull()
+      await act(async () => {
+        resolveOld(false)
+      })
+      expect(ui.queryByText("settings:nativeNotificationsGrantAccess")).toBeNull()
+    } finally {
+      AppState.addEventListener = originalAddEventListener
+      ui?.unmount()
+    }
   })
 
   it("updates the shared master setting and hides dependent controls", async () => {
