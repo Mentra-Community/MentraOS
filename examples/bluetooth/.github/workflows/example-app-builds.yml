@@ -218,6 +218,9 @@ jobs:
             build
 
       - name: Package unsigned IPA
+        # Coordinated releases consume this artifact from their validation PR.
+        # Ordinary PRs only need the mandatory analysis and build above.
+        if: github.event_name == 'workflow_dispatch' || startsWith(github.head_ref, 'coordinated/')
         id: collect
         working-directory: examples/ios
         env:
@@ -237,6 +240,7 @@ jobs:
           echo "path=examples/ios/$output" >> "$GITHUB_OUTPUT"
 
       - name: Upload IPA artifact
+        if: github.event_name == 'workflow_dispatch' || startsWith(github.head_ref, 'coordinated/')
         uses: actions/upload-artifact@v4
         with:
           name: mentra-example-ios
