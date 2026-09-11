@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import {existsSync, readFileSync, mkdtempSync, rmSync} from "node:fs"
+import {existsSync, readFileSync, mkdtempSync, readdirSync, rmSync} from "node:fs"
 import {spawnSync} from "node:child_process"
 import {tmpdir} from "node:os"
 import path from "node:path"
@@ -667,4 +667,77 @@ test("the production example is keyed on the promoted beta and never promotes a 
   assert.match(testflight, /if \.channel == "dev" then "internal" else "external" end/)
   assert.doesNotMatch(example + testflight, /Mentra SDK Example|Production Candidates/)
   assert.equal(existsSync(new URL("../workflows/reusable-production-starter-kit-android.yml", import.meta.url)), false)
+})
+
+// Every publish-immutable-release-asset.mjs invocation in a workflow, as its
+// raw --file and --name arguments. Each invocation is cut at its own
+// --repository argument so one call can never borrow another's arguments.
+export function immutablePublishArguments(source) {
+  const invocations = []
+  const parts = source.split("publish-immutable-release-asset.mjs")
+  for (const part of parts.slice(1)) {
+    const scope = part.split("--repository")[0]
+    const argument = (flag) => {
+      const match = new RegExp(`${flag}\\s+(?:"([^"]*)"|(\\S+))`).exec(scope)
+      return match ? (match[1] ?? match[2]) : null
+    }
+    invocations.push({file: argument("--file"), name: argument("--name")})
+  }
+  return invocations
+}
+
+// A --file whose basename is not the --name fails at publication time. Two
+// spellings are accepted: the basename of the file string equals the name
+// string (plain names, "$variable" names, and "${{ ... }}" expressions alike),
+// or both are the asset_path and asset_name outputs of the same step, which
+// prepareEvidenceAsset in production-promotion-assets.mjs derives together.
+export function immutablePublishMismatches(source) {
+  return immutablePublishArguments(source).filter(({file, name}) => {
+    if (!file || !name) return true
+    if (file.split("/").pop() === name) return false
+    const pathOutput = /^\$\{\{ steps\.([a-z-]+)\.outputs\.asset_path \}\}$/.exec(file)
+    const nameOutput = /^\$\{\{ steps\.([a-z-]+)\.outputs\.asset_name \}\}$/.exec(name)
+    return !(pathOutput && nameOutput && pathOutput[1] === nameOutput[1])
+  })
+}
+
+test("immutable assets in every production workflow are published from a file named like the asset", () => {
+  const names = readdirSync(new URL("../workflows/", import.meta.url)).filter((name) =>
+    /^production-release-.*\.yml$/.test(name),
+  )
+  assert.ok(names.length >= 10, `expected the production workflows, found ${names.length}`)
+  let invocations = 0
+  for (const name of names) {
+    const source = workflow(name)
+    invocations += immutablePublishArguments(source).length
+    assert.deepEqual(immutablePublishMismatches(source), [], `${name} publishes an asset under another name`)
+  }
+  assert.ok(invocations >= 18, `expected every publisher invocation to be inspected, found ${invocations}`)
+})
+
+test("the immutable publish contract inspects each invocation on its own", () => {
+  const snippet = `
+          node .github/scripts/publish-immutable-release-asset.mjs \\
+            --file "promotion-output/$plan_name" \\
+            --name "$plan_name" \\
+            --release-id "1" \\
+            --repository "$GITHUB_REPOSITORY"
+          node .github/scripts/publish-immutable-release-asset.mjs \\
+            --file promotion-input/current/release-plan.json \\
+            --name current-production-release-plan.json \\
+            --release-id "1" \\
+            --repository "$GITHUB_REPOSITORY"
+          node .github/scripts/publish-immutable-release-asset.mjs --file "\${{ steps.a.outputs.asset_path }}" --name "\${{ steps.b.outputs.asset_name }}" --release-id "1" --repository "$GITHUB_REPOSITORY"
+          node .github/scripts/publish-immutable-release-asset.mjs --file "\${{ steps.a.outputs.asset_path }}" --name "\${{ steps.a.outputs.asset_name }}" --release-id "1" --repository "$GITHUB_REPOSITORY"
+          node .github/scripts/publish-immutable-release-asset.mjs \\
+            --file promotion-input/stores/current-production-store-inventory.json \\
+            --name current-production-store-inventory.json \\
+            --release-id "1" \\
+            --repository "$GITHUB_REPOSITORY"
+  `
+  assert.equal(immutablePublishArguments(snippet).length, 5)
+  assert.deepEqual(
+    immutablePublishMismatches(snippet).map(({name}) => name),
+    ["current-production-release-plan.json", "\${{ steps.b.outputs.asset_name }}"],
+  )
 })

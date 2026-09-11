@@ -255,19 +255,23 @@ jobs:
             --release-id "${{ steps.container.outputs.release_id }}" \
             --repository "$GITHUB_REPOSITORY"
           if [[ "${{ steps.previous.outputs.found }}" == "true" ]]; then
+            cp promotion-input/current/release-plan.json promotion-input/current/current-production-release-plan.json
+            cp promotion-input/current/release-manifest.json promotion-input/current/current-production-release-manifest.json
             node .github/scripts/publish-immutable-release-asset.mjs \
-              --file promotion-input/current/release-plan.json \
+              --file promotion-input/current/current-production-release-plan.json \
               --name current-production-release-plan.json \
               --release-id "${{ steps.container.outputs.release_id }}" \
               --repository "$GITHUB_REPOSITORY"
             node .github/scripts/publish-immutable-release-asset.mjs \
-              --file promotion-input/current/release-manifest.json \
+              --file promotion-input/current/current-production-release-manifest.json \
               --name current-production-release-manifest.json \
               --release-id "${{ steps.container.outputs.release_id }}" \
               --repository "$GITHUB_REPOSITORY"
           fi
+          # The immutable publisher requires the file basename to be the asset name.
+          cp promotion-input/stores/mentra-inventory.json promotion-input/stores/current-production-store-inventory.json
           node .github/scripts/publish-immutable-release-asset.mjs \
-            --file promotion-input/stores/mentra-inventory.json \
+            --file promotion-input/stores/current-production-store-inventory.json \
             --name current-production-store-inventory.json \
             --release-id "${{ steps.container.outputs.release_id }}" \
             --repository "$GITHUB_REPOSITORY"
