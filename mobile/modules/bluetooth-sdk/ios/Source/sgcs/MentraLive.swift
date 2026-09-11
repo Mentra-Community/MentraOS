@@ -448,8 +448,11 @@ class BlePhotoUploadService {
         webhookUrl: String,
         authToken: String?
     ) async throws -> String {
-        guard let url = URL(string: webhookUrl) else {
-            Bridge.log("LIVE: Invalid webhook URL: \(webhookUrl)")
+        // The BLE relay may target the app's own LocalPhotoUploadServer; rewrite it to
+        // loopback (Android parity) so delivery survives Wi-Fi changes after registration.
+        let effectiveWebhookUrl = LocalPhotoReceiverRegistry.loopbackUploadUrl(for: webhookUrl) ?? webhookUrl
+        guard let url = URL(string: effectiveWebhookUrl) else {
+            Bridge.log("LIVE: Invalid webhook URL: \(effectiveWebhookUrl)")
             throw PhotoUploadError.uploadFailed("Invalid webhook URL")
         }
 
@@ -497,7 +500,11 @@ class BlePhotoUploadService {
 
         request.httpBody = body
 
-        Bridge.log("LIVE: Uploading photo to webhook: \(webhookUrl)")
+        if effectiveWebhookUrl != webhookUrl {
+            Bridge.log("LIVE: Uploading BLE fallback photo to local receiver via loopback: \(effectiveWebhookUrl)")
+        } else {
+            Bridge.log("LIVE: Uploading photo to webhook: \(webhookUrl)")
+        }
 
         do {
             let (data, response) = try await URLSession.shared.data(for: request)

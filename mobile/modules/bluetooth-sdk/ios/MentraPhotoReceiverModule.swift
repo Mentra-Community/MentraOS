@@ -48,6 +48,7 @@ public class MentraPhotoReceiverModule: Module {
 
     if let activePort = server.activePort {
       let uploadUrl = "http://\(host):\(activePort)/upload"
+      LocalPhotoReceiverRegistry.register(uploadUrl)
       emitStatus(message: "Photo receiver ready at \(uploadUrl)")
       return receiverResult(uploadUrl: uploadUrl, host: host, port: activePort)
     }
@@ -57,6 +58,7 @@ public class MentraPhotoReceiverModule: Module {
       do {
         let actualPort = try server.start(port: UInt16(port))
         let uploadUrl = "http://\(host):\(actualPort)/upload"
+        LocalPhotoReceiverRegistry.register(uploadUrl)
         emitStatus(message: "Photo receiver ready at \(uploadUrl)")
         return receiverResult(uploadUrl: uploadUrl, host: host, port: actualPort)
       } catch {
@@ -74,6 +76,7 @@ public class MentraPhotoReceiverModule: Module {
     receiverLock.lock()
     defer { receiverLock.unlock() }
 
+    LocalPhotoReceiverRegistry.unregister()
     photoUploadServer?.stop()
     emitStatus(message: "Photo receiver stopped")
   }
