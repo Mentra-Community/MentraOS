@@ -83,6 +83,17 @@ private final class PendingVideoRecordingRequest {
     }
 }
 
+@MainActor
+private final class PendingVersionInfoRequest {
+    let pending: PendingResponse<VersionInfoResult>
+    let accumulator: VersionInfoResponseAccumulator
+
+    init(pending: PendingResponse<VersionInfoResult>, requestId: String) {
+        self.pending = pending
+        accumulator = VersionInfoResponseAccumulator(expectedRequestId: requestId)
+    }
+}
+
 /// seq records send order (assigned and handed to the BLE queue in a single
 /// MainActor turn) so that an id-carrying status for a newer start can
 /// identify which older in-flight starts it preempted.
@@ -200,7 +211,7 @@ public final class MentraBluetoothSDK {
     private var wifiScanTask: Task<[WifiScanResult], Error>?
     private var pendingWifiStatus: PendingWifiStatusRequest?
     private var pendingHotspotStatus: PendingHotspotStatusRequest?
-    private var pendingVersionInfo: PendingResponse<VersionInfoResult>?
+    private var pendingVersionInfo: PendingVersionInfoRequest?
     private var configuredOtaVersionUrl: String?
 
     public init(configuration: MentraBluetoothSDKConfiguration = .default) {
@@ -1209,17 +1220,19 @@ public final class MentraBluetoothSDK {
                 message: "A version info request is already waiting for a glasses response."
             )
         }
+        let requestId = UUID().uuidString
         let pending = PendingResponse<VersionInfoResult>(operation: "version info request")
-        pendingVersionInfo = pending
-        DeviceManager.shared.requestVersionInfo()
+        let request = PendingVersionInfoRequest(pending: pending, requestId: requestId)
+        pendingVersionInfo = request
+        DeviceManager.shared.requestVersionInfo(requestId: requestId)
         do {
             let status = try await pending.wait()
-            if pendingVersionInfo === pending {
+            if pendingVersionInfo === request {
                 pendingVersionInfo = nil
             }
             return status
         } catch {
-            if pendingVersionInfo === pending {
+            if pendingVersionInfo === request {
                 pendingVersionInfo = nil
             }
             throw error
@@ -2060,6 +2073,19 @@ public final class MentraBluetoothSDK {
         activeSession.onComplete(activeSession.latestResults)
     }
 
+    private func handleVersionInfoForRequest(_ data: [String: Any]) {
+        guard let request = pendingVersionInfo else { return }
+        switch request.accumulator.accept(data) {
+        case .ignored:
+            break
+        case .waiting:
+            break
+        case let .complete(result):
+            pendingVersionInfo = nil
+            request.pending.resolve(result)
+        }
+    }
+
     private func dispatchBridgeEvent(_ eventName: String, _ data: [String: Any]) {
         switch eventName {
         case "log":
@@ -2192,7 +2218,7 @@ public final class MentraBluetoothSDK {
             delegate?.mentraBluetoothSDK(self, didReceive: .settingsAck(event))
         case "version_info":
             let event = VersionInfoResult(values: data)
-            pendingVersionInfo?.resolve(event)
+            handleVersionInfoForRequest(data)
             delegate?.mentraBluetoothSDK(self, didReceive: .versionInfo(event))
         case "compatible_glasses_search_stop":
             delegate?.mentraBluetoothSDK(self, didStopScan: .completed)

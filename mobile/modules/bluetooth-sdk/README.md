@@ -115,6 +115,24 @@ Android apps should request the permissions required by the features they use:
 
 Some Android 12+ devices require Location permission and Location services before BLE scan callbacks are delivered.
 
+### Android Foreground Service Types
+
+The SDK service reads its allowed types from the merged Android manifest.
+The default manifest retains MentraOS's connected-device, microphone, location,
+media-playback and data-sync capabilities. A Bluetooth-only host can override
+`com.mentra.bluetoothsdk.services.ForegroundService` to use `connectedDevice`
+with `tools:replace="android:foregroundServiceType"`, and remove unused typed
+FGS permissions from its final manifest. Startup then uses `connectedDevice`
+instead of `dataSync`; the SDK's `CHANGE_WIFI_STATE` permission satisfies its
+startup prerequisite even before a Bluetooth runtime permission is granted.
+
+Only restrict types when the corresponding background features are unused.
+Receiving the glasses' BLE audio is distinct from selecting Android's phone or
+Bluetooth headset microphone. Hosts using Android microphone capture, location
+tracking or background media playback must retain the corresponding types and
+permissions, including those required by other native modules. At least
+`connectedDevice` or `dataSync` must remain for SDK service startup.
+
 iOS apps should include usage descriptions:
 
 ```json
@@ -422,7 +440,7 @@ await sdk.setDashboardContent("")
 Settings commands that return `SettingsAckSuccessEvent` reject when the ASG reports an error ack. The SDK updates its local settings store only after that ASG ack resolves successfully, so observed SDK state reflects the acknowledged glasses state rather than a queued request. Raw `settings_ack` listener events still use `SettingsAckEvent` because they can include both success and failure statuses. `rgbLedControl(...)` resolves from a successful ASG `rgb_led_control_response` and rejects when the ASG reports `state: "error"`; raw `settings_ack` and `rgb_led_control_response` events remain available through listeners.
 
 WiFi, hotspot, and version-info commands resolve from the ASG response path, not local dispatch:
-`requestWifiScan()` resolves from the ASG `wifi_scan_result` completion response with the updated scan list, including `[]` when no networks are found. Intermediate `wifi_scan_result` events can arrive with `scanComplete: false` while the glasses stream discovered networks; the final event uses `scanComplete: true`. If older glasses stream non-empty scan results but never send the completion event, the request resolves with the accumulated scan list when the request times out. `sendWifiCredentials()` resolves when the requested SSID is connected, `forgetWifiNetwork()` resolves when that SSID is no longer connected, `setHotspotState()` resolves when the requested hotspot state is reported, and `requestVersionInfo()` resolves from the ASG `version_info` response instead of local store changes.
+`requestWifiScan()` resolves from the ASG `wifi_scan_result` completion response with the updated scan list, including `[]` when no networks are found. Intermediate `wifi_scan_result` events can arrive with `scanComplete: false` while the glasses stream discovered networks; the final event uses `scanComplete: true`. If older glasses stream non-empty scan results but never send the completion event, the request resolves with the accumulated scan list when the request times out. `sendWifiCredentials()` resolves when the requested SSID is connected, `forgetWifiNetwork()` resolves when that SSID is no longer connected, and `setHotspotState()` resolves when the requested hotspot state is reported. `requestVersionInfo()` waits for all chunks declared by the correlated response's `chunkCount`, `chunkIndex`, and `final` metadata. Legacy single-message responses complete immediately; legacy chunked responses complete on `version_info_3` after `version_info_1`. Missing final chunks time out rather than returning partial data after a quiet period.
 
 The SDK automatically sends the phone wall clock once shortly after a glasses connection becomes ready. It waits for the initial command burst to drain before timestamping the command so startup queue delay does not become clock skew. The once-per-connection guard resets after disconnect, so every successful reconnect synchronizes again. The SDK does not periodically verify or correct clock skew during a long-lived connection; apps that require periodic reconciliation can compare `requestVersionInfo().systemTimeMs` with the phone clock.
 
