@@ -192,7 +192,12 @@ function mergePromotionPullRequest({repository, branch, source, target, family, 
 function promoteExactHead({repository, source, target, family, mergeBody}) {
   const sourceHead = branchHead(repository, source)
   const targetHead = branchHead(repository, target)
-  const compare = ghJson(["api", `repos/${repository}/compare/${targetHead}...${sourceHead}`])
+  const compare = ghJson([
+    "api",
+    `repos/${repository}/compare/${targetHead}...${sourceHead}?per_page=1`,
+    "--jq",
+    "{status: .status, ahead_by: .ahead_by, behind_by: .behind_by}",
+  ])
   if (compare.ahead_by === 0) {
     if (!mergeBody || hasMergeBody(repository, targetHead, mergeBody)) {
       console.log(`${repository}:${target} already contains ${sourceHead}`)
