@@ -161,7 +161,7 @@ jobs:
         run: |
           set -euo pipefail
           APP_PACKAGE_NAME=com.mentra.mentra \
-            GOOGLE_PLAY_INVENTORY_OUTPUT=../stores/mentra-google.json \
+            GOOGLE_PLAY_INVENTORY_OUTPUT="$GITHUB_WORKSPACE/promotion-input/stores/mentra-google.json" \
             bundle exec fastlane google_play_inventory
           jq -s '{apple: .[0], google: .[1]}' \
             ../stores/mentra-apple.json ../stores/mentra-google.json \
