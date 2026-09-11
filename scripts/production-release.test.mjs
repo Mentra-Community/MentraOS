@@ -6,6 +6,7 @@ import {
   branchPromotionState,
   packagesConfirmationMessage,
   parseCliArgs,
+  parseJsonLines,
   releaseBranchSources,
   requireCommandState,
   statusSummary,
@@ -177,4 +178,13 @@ test("dispatches stable package phases from the promoted beta without a promotio
     packagesConfirmationMessage({beta_identity: "3.1.0-beta.192", phase: "release"}),
     /moves npm latest.*3\.1\.0/,
   )
+})
+
+test("parses line-delimited gh projections and ignores blank lines", () => {
+  assert.deepEqual(parseJsonLines('{"id":1,"tag_name":"a"}\n\n{"id":2,"tag_name":"b"}\n'), [
+    {id: 1, tag_name: "a"},
+    {id: 2, tag_name: "b"},
+  ])
+  assert.deepEqual(parseJsonLines(""), [])
+  assert.throws(() => parseJsonLines("{not json}"), SyntaxError)
 })
