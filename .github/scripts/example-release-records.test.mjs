@@ -211,7 +211,7 @@ function productionFixtures() {
     otaManifest: {url: "https://example.com/ota.json", sha256: "c".repeat(64)},
   }
   plan.example = {
-    testflight: {group: "Mentra SDK Example Production Candidates", audience: "internal"},
+    testflight: {group: "Mentra Bluetooth Example Production Candidates", audience: "internal"},
     googlePlay: {track: "internal"},
     storePromotion: "never",
   }
@@ -234,7 +234,7 @@ function productionFixtures() {
       releaseIdentity: plan.releaseIdentity,
       channel: "production",
       version: {marketingVersion: "3.1.0", buildNumber: 310000058},
-      group: {id: "group-2", name: "Mentra SDK Example Production Candidates"},
+      group: {id: "group-2", name: "Mentra Bluetooth Example Production Candidates"},
       distribution: {
         audience: "internal",
         status: "available",
@@ -284,7 +284,7 @@ test("a production example is finalized against the promoted beta's manifest and
   assert.equal(record.betaManifest.name, `mentra-release-${f.betaPlan.releaseIdentity}.json`)
   assert.equal(record.promotion.selectedBetaIdentity, f.betaPlan.releaseIdentity)
   assert.equal(record.promotion.storePromotion, "never")
-  assert.equal(record.starterKit.testflight.group.name, "Mentra SDK Example Production Candidates")
+  assert.equal(record.starterKit.testflight.group.name, "Mentra Bluetooth Example Production Candidates")
   assert.equal(record.starterKit.testflight.distribution.audience, "internal")
   assert.equal(record.starterKit.googlePlay.track, "internal")
   assert.equal(validateExampleReleaseRecord(record, f.plan), record)

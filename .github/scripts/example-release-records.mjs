@@ -38,7 +38,7 @@ function requireIsoUtc(value, label) {
 export function exampleTestflightDestination(channel) {
   if (channel === "dev") return {group: "Mentra Dev", audience: "internal"}
   if (channel === "beta") return {group: "Mentra Staging Public", audience: "external"}
-  if (channel === "production") return {group: "Mentra SDK Example Production Candidates", audience: "internal"}
+  if (channel === "production") return {group: "Mentra Bluetooth Example Production Candidates", audience: "internal"}
   throw new Error(`Unsupported example release channel ${JSON.stringify(channel)}`)
 }
 

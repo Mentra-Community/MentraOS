@@ -507,7 +507,7 @@ export function packagesConfirmationMessage(request) {
     : `This moves npm latest, publishes Maven Central, and pushes the public SwiftPM tag for ${request.beta_identity.replace(/-beta\.\d+$/, "")}. GitHub will still require production-packages-release approval.`
 }
 
-// The production Bluetooth SDK example is keyed on the promoted beta like the
+// The production Bluetooth example is keyed on the promoted beta like the
 // stable packages, and depends on them being public: it builds the Starter Kit
 // against the plain X.Y.Z npm packages and uploads candidates to the internal
 // TestFlight group and Play track. It never promotes a store listing.
@@ -518,7 +518,7 @@ export function validateExampleOptions(options) {
 
 export function exampleConfirmationMessage(request) {
   const identity = request.beta_identity.replace(/-beta\.\d+$/, "")
-  return `This builds the production Bluetooth SDK example ${identity} from the public ${identity} packages and uploads its candidates to the internal TestFlight group and Play track. It never releases the example to a store. Run it after 'packages --phase release'.`
+  return `This builds the production Bluetooth example ${identity} from the public ${identity} packages and uploads its candidates to the internal TestFlight group and Play track. It never releases the example to a store. Run it after 'packages --phase release'.`
 }
 
 export function advanceConfirmationMessage(request) {

@@ -1,6 +1,6 @@
-name: Production Release - Bluetooth SDK Example
+name: Production Release - Bluetooth Example
 
-# Builds the production Bluetooth SDK example candidates for a promoted beta:
+# Builds the production Bluetooth example candidates for a promoted beta:
 # the Starter Kit main branch against the public plain X.Y.Z npm packages and
 # the beta's frozen OTA pin, uploaded to the internal TestFlight group and the
 # internal Play track, and recorded as mentra-example-release-X.Y.Z.json in
@@ -324,7 +324,7 @@ jobs:
     secrets: inherit
 
   finalize-example:
-    name: Record the production Bluetooth SDK example
+    name: Record the production Bluetooth example
     needs: [load, starter-kit, example-testflight, example-google-play]
     runs-on: ubuntu-latest
     timeout-minutes: 15
@@ -436,7 +436,7 @@ jobs:
       - name: Summarize the production example
         run: |
           {
-            echo "## Production Bluetooth SDK example"
+            echo "## Production Bluetooth example"
             echo ""
             echo "- Release: \`${{ steps.results.outputs.identity }}\`"
             echo "- Record: \`${{ steps.results.outputs.record_name }}\` in \`${{ needs.load.outputs.stable_tag }}\`"

@@ -656,5 +656,10 @@ test("the production example is keyed on the promoted beta and never promotes a 
     4,
   )
   assert.doesNotMatch(play, /node \.github\/scripts\/coordinated-example-google-play\.mjs/)
+  const testflight = workflow("reusable-coordinated-example-testflight.yml")
+  assert.match(testflight, /release-tooling\/\.github\/scripts\/coordinated-example-testflight-record\.mjs/)
+  assert.doesNotMatch(testflight, /node \.github\/scripts\/coordinated-example-testflight-record\.mjs/)
+  assert.match(testflight, /Mentra Bluetooth Example Production Candidates/)
+  assert.doesNotMatch(example + testflight, /Mentra SDK Example/)
   assert.equal(existsSync(new URL("../workflows/reusable-production-starter-kit-android.yml", import.meta.url)), false)
 })

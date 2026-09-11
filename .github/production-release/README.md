@@ -463,9 +463,9 @@ Stop conditions specific to packages:
 - Do not run phase 2 until the Cloud side of the release is at least deployed
   or you have explicitly decided that the stable packages may lead it.
 
-## Bluetooth SDK example - production candidates
+## Bluetooth example - production candidates
 
-The production Bluetooth SDK example is built by `production-release-example.yml`
+The production Bluetooth example is built by `production-release-example.yml`
 after the stable packages are public. Like the packages it is keyed on the
 promoted beta, never on a promotion attempt, and it never transitions the
 promotion state machine.
@@ -485,7 +485,7 @@ Then it:
   branch to the plain versions, builds the examples, tags `sdk-X.Y.Z`, and
   publishes them in the non-prerelease Starter Kit release `sdk-X.Y.Z`
   (including `mentra-example-react-native-X.Y.Z.apk`);
-- uploads the iOS candidate to the `Mentra SDK Example Production Candidates`
+- uploads the iOS candidate to the `Mentra Bluetooth Example Production Candidates`
   internal TestFlight group and the Android candidate to the Play `internal`
   track; and
 - records `mentra-example-release-X.Y.Z.json` in the stable release

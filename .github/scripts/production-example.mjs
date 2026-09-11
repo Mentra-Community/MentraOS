@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-// Production Bluetooth SDK example candidates.
+// Production Bluetooth example candidates.
 //
 // The Starter Kit example is its own release notion. Its production release is
 // keyed on the promoted beta exactly like the stable packages: it builds the
@@ -18,7 +18,7 @@ import {validateSelectedBeta} from "./prepare-production-promotion.mjs"
 import {createReleasePlan, loadReleaseFamily, serializeReleaseRecord} from "./release-family.mjs"
 
 export const EXAMPLE_BUNDLE_ID = "com.mentra.bluetoothsdkexample"
-export const EXAMPLE_TESTFLIGHT_GROUP = "Mentra SDK Example Production Candidates"
+export const EXAMPLE_TESTFLIGHT_GROUP = "Mentra Bluetooth Example Production Candidates"
 export const EXAMPLE_PLAY_TRACK = "internal"
 const ANDROID_MAX_VERSION_CODE = 2_100_000_000
 

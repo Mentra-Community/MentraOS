@@ -108,7 +108,7 @@ test("records an independently allocated production Starter Kit candidate", () =
     input({
       plan: productionPlan,
       starterKit: productionStarterKit,
-      groupName: "Mentra SDK Example Production Candidates",
+      groupName: "Mentra Bluetooth Example Production Candidates",
       buildNumber: 310000099,
     }),
   )
