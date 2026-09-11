@@ -5,7 +5,7 @@ production. It covers Cloud V2 and the Mentra App on iOS and Android.
 
 The Bluetooth SDK Starter Kit example app is outside the promotion state
 machine. Its production candidates are built by a separate workflow keyed on
-the promoted beta (see "Bluetooth SDK example" below): they go to the internal
+the promoted beta (see "Bluetooth example" below): they go to the internal
 TestFlight group and the internal Play track for acceptance and are never
 submitted for review or released publicly. Do not add the example app manually
 to a promotion attempt.
