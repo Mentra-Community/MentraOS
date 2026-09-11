@@ -7,6 +7,7 @@ import {
   packagesConfirmationMessage,
   parseCliArgs,
   parseJsonLines,
+  promotionGateState,
   releaseBranchSources,
   requireCommandState,
   statusSummary,
@@ -186,4 +187,39 @@ test("parses line-delimited gh projections and ignores blank lines", () => {
   ])
   assert.deepEqual(parseJsonLines(""), [])
   assert.throws(() => parseJsonLines("{not json}"), SyntaxError)
+})
+
+test("the promotion gate follows the ci-gate status and ignores push-triggered beta jobs", () => {
+  const betaJob = {
+    name: "Publish React Native example to Google Play / Build",
+    workflow: "Coordinated Mentra Release",
+    event: "push",
+    bucket: "fail",
+  }
+  const bot = {name: "Plan agent cycle", workflow: "PR Agent Orchestrator", event: "pull_request", bucket: "fail"}
+  const build = {
+    name: "Mobile App iOS Build",
+    workflow: "Mobile App iOS Build",
+    event: "pull_request",
+    bucket: "pending",
+  }
+  const gatePending = {
+    name: "ci-gate-dev",
+    workflow: "",
+    event: "",
+    bucket: "pending",
+    description: "Waiting on: Mobile App iOS Build",
+  }
+  const gatePassed = {...gatePending, bucket: "pass", description: "All required area builds passed"}
+  const gateFailed = {...gatePending, bucket: "fail"}
+
+  assert.equal(promotionGateState([betaJob, bot, build, gatePending]).state, "pending")
+  assert.equal(promotionGateState([betaJob, bot, build, gatePassed]).state, "passed")
+  assert.deepEqual(promotionGateState([betaJob, bot, gateFailed]).rows, [gateFailed])
+  // Without a ci-gate status only pull-request-triggered checks decide.
+  assert.equal(promotionGateState([betaJob, build]).state, "pending")
+  assert.equal(promotionGateState([betaJob, {...build, bucket: "pass"}]).state, "passed")
+  assert.equal(promotionGateState([betaJob, bot, {...build, bucket: "pass"}]).state, "failed")
+  assert.equal(promotionGateState([betaJob]).state, "passed")
+  assert.throws(() => promotionGateState(null), /must be an array/)
 })
