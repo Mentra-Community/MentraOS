@@ -32,7 +32,13 @@ function pods() {
         ownerReferences: [{uid: `${service}-workload-uid`}],
       },
       spec: {
-        containers: [{name: service, env: [{name: "PORTER_POD_REVISION", value: "revision-42"}]}],
+        containers: [
+          {
+            name: service,
+            image: `registry.example.com/cloud-v2:${sourceCommit}`,
+            env: [{name: "PORTER_POD_REVISION", value: "revision-42"}],
+          },
+        ],
       },
       status: {
         phase: "Running",
@@ -161,7 +167,7 @@ test("fails closed on unready pods, mutable image observations, and missing publ
   )
 
   const wrongSource = pods()
-  wrongSource.items[1].status.containerStatuses[0].image = `registry.example.com/cloud-v2:${"b".repeat(40)}`
+  wrongSource.items[1].spec.containers[0].image = `registry.example.com/cloud-v2:${"b".repeat(40)}`
   assert.throws(
     () =>
       createCloudV2DeploymentRecord({
@@ -192,6 +198,53 @@ test("fails closed on unready pods, mutable image observations, and missing publ
         provenanceUrl,
       }),
     /missing or duplicated/,
+  )
+})
+
+test("identifies the requested tag from the deployed pod spec, not the kubelet's image name", () => {
+  // A byte-identical rebuild under a new tag keeps the digest the node already
+  // pulled, and the kubelet keeps reporting that digest under the first tag it
+  // knew. The spec carries what Porter deployed; the digest stays the identity.
+  const stale = pods()
+  for (const pod of stale.items) {
+    pod.status.containerStatuses[0].image = `registry.example.com/cloud-v2:${"c".repeat(40)}`
+  }
+  const record = createCloudV2DeploymentRecord({
+    plan: plan("production", "3.1.0"),
+    environment: "prod",
+    sourceCommit,
+    requestedTag: sourceCommit,
+    status: "deployed",
+    pods: stale,
+    checks: checks("prod"),
+    completedAt: "2026-08-27T20:00:00.000Z",
+    provenanceUrl,
+  })
+  assert.deepEqual(
+    record.observedServices.map((service) => service.images),
+    [[`registry.example.com/cloud-v2:${sourceCommit}`], [`registry.example.com/cloud-v2:${sourceCommit}`]],
+  )
+  assert.equal(
+    record.observedServices.every((service) => service.digest === `sha256:${"b".repeat(64)}`),
+    true,
+  )
+
+  const missingSpec = pods()
+  delete missingSpec.items[0].spec.containers[0].image
+  assert.throws(
+    () =>
+      createCloudV2DeploymentRecord({
+        plan: plan("production", "3.1.0"),
+        environment: "prod",
+        sourceCommit,
+        requestedTag: sourceCommit,
+        status: "deployed",
+        pods: missingSpec,
+        checks: checks("prod"),
+        completedAt: "2026-08-27T20:00:00.000Z",
+        provenanceUrl,
+      }),
+    /has no requested image/,
   )
 })
 

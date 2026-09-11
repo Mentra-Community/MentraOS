@@ -153,7 +153,13 @@ function observeServices(pods) {
         const match = status.imageID.match(/@?(sha256:[0-9a-f]{64})$/)
         if (!match) throw new Error(`Observed ${service} imageID does not contain an immutable digest`)
         digests.add(match[1])
-        if (status.image) images.add(status.image)
+        // The requested tag is read from the pod spec, which is what Porter
+        // deployed. The kubelet's status.image names the reference under which
+        // the node first pulled that digest, so a byte-identical rebuild under
+        // a new tag keeps reporting the old tag there while imageID is exact.
+        const requested = (pod.spec?.containers || []).find((container) => container.name === status.name)?.image
+        if (!requested) throw new Error(`Observed ${service} container ${status.name} has no requested image`)
+        images.add(requested)
       }
       const revision = observedPodRevision(pod)
       if (revision) revisions.add(revision)
