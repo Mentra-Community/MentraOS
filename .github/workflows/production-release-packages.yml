@@ -1,0 +1,544 @@
+name: Production Release - Stable Packages
+
+# Publishes the plain X.Y.Z package versions of a promoted coordinated beta:
+# npm `latest`, the stable Maven Central coordinates, and the SwiftPM tag.
+#
+# This is deliberately separate from the Cloud deployment and the Mentra App
+# promotion. It is keyed on the frozen beta release plan, builds from that
+# plan's exact sourceCommit once it is contained in main, and may run before,
+# during, or after store review. Its evidence lives only in the stable release
+# container mentra-vX.Y.Z; the promotion state machine is read solely to refuse
+# an identity that a live attempt froze from a different beta, never written.
+#
+# publish  - stage: npm X.Y.Z under `candidate-X.Y.Z`, a validated but
+#            unpublished USER_MANAGED Sonatype deployment, and the exported
+#            SwiftPM commit on the mirror branch `release/X.Y.Z`.
+# release  - go public: move npm `latest`, request the Sonatype publication,
+#            and push the SwiftPM tag `X.Y.Z`.
+
+on:
+  workflow_dispatch:
+    inputs:
+      beta_identity:
+        description: Promoted coordinated beta whose frozen source publishes the stable packages, for example 3.1.0-beta.192
+        required: true
+        type: string
+      phase:
+        description: publish stages the plain versions without moving any default pointer; release makes them public
+        required: true
+        type: choice
+        options:
+          - publish
+          - release
+
+permissions:
+  actions: read
+  contents: write
+  id-token: write
+
+concurrency:
+  # One package run at a time: two betas of the same base version share the
+  # stable X.Y.Z coordinates and container.
+  group: production-release-packages
+  cancel-in-progress: false
+
+jobs:
+  load:
+    name: Freeze the promoted beta source and package plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      release_identity: ${{ steps.plan.outputs.release_identity }}
+      source_commit: ${{ steps.plan.outputs.source_commit }}
+      stable_tag: ${{ steps.plan.outputs.stable_tag }}
+      ota_url: ${{ steps.plan.outputs.ota_manifest_url }}
+      ota_sha256: ${{ steps.plan.outputs.ota_manifest_sha256 }}
+      npm_tag: ${{ steps.plan.outputs.npm_tag }}
+      plan_artifact: ${{ steps.artifact.outputs.name }}
+      stable_release_id: ${{ steps.container.outputs.release_id }}
+      promotion_note: ${{ steps.guard.outputs.note }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Validate dispatch and selected beta identity
+        id: identity
+        env:
+          BETA_IDENTITY: ${{ inputs.beta_identity }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF_NAME" == "main" ]]
+          [[ "$BETA_IDENTITY" =~ ^[0-9]+\.[0-9]+\.[0-9]+-beta\.[1-9][0-9]*$ ]]
+          release_identity="${BETA_IDENTITY%%-*}"
+          {
+            echo "release_identity=$release_identity"
+            echo "beta_tag=mentra-builds-v$release_identity"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Download and verify the completed selected beta
+        id: beta
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BETA_IDENTITY: ${{ inputs.beta_identity }}
+          BETA_TAG: ${{ steps.identity.outputs.beta_tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p packages-input/beta
+          state=$(gh release view "$BETA_TAG" --json isDraft,isPrerelease --jq '[.isDraft,.isPrerelease] | @tsv')
+          [[ "$state" == $'false\ttrue' ]]
+          gh release download "$BETA_TAG" \
+            --pattern "mentra-release-plan-$BETA_IDENTITY.json" \
+            --pattern "mentra-release-$BETA_IDENTITY.json" \
+            --dir packages-input/beta
+          mv "packages-input/beta/mentra-release-plan-$BETA_IDENTITY.json" packages-input/beta/release-plan.json
+          mv "packages-input/beta/mentra-release-$BETA_IDENTITY.json" packages-input/beta/release-manifest.json
+          [[ "$(jq -er .completedAt packages-input/beta/release-manifest.json)" != "" ]]
+          node .github/scripts/verify-release-artifacts.mjs --manifest packages-input/beta/release-manifest.json
+          source_commit=$(jq -er .sourceCommit packages-input/beta/release-plan.json)
+          git cat-file -e "$source_commit^{commit}"
+          # Stable packages ship from main: the promoted beta source must already be there.
+          git merge-base --is-ancestor "$source_commit" origin/main
+          {
+            echo "source_commit=$source_commit"
+            echo "manifest_url=https://github.com/${GITHUB_REPOSITORY}/releases/download/$BETA_TAG/mentra-release-$BETA_IDENTITY.json"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Checkout the frozen package source separately from workflow tooling
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.beta.outputs.source_commit }}
+          path: release-source
+
+      - name: Freeze the production package plan from the beta source
+        id: plan
+        run: |
+          set -euo pipefail
+          mkdir -p release-intent
+          node .github/scripts/production-packages.mjs plan \
+            --root release-source \
+            --beta-plan packages-input/beta/release-plan.json \
+            --beta-manifest packages-input/beta/release-manifest.json \
+            --beta-manifest-url "${{ steps.beta.outputs.manifest_url }}" \
+            --output release-intent/release-plan.json \
+            --github-output "$GITHUB_OUTPUT"
+          [[ "$(jq -er .releaseIdentity release-intent/release-plan.json)" == "${{ steps.identity.outputs.release_identity }}" ]]
+          [[ "$(jq -er .sourceCommit release-intent/release-plan.json)" == "${{ steps.beta.outputs.source_commit }}" ]]
+
+      - name: Refuse an identity that a live promotion froze from another beta
+        id: guard
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          node .github/scripts/production-promotion-assets.mjs download-latest-attempt \
+            --repository "$GITHUB_REPOSITORY" \
+            --release "${{ steps.identity.outputs.release_identity }}" \
+            --output promotion-input/current.json \
+            --github-output promotion-input/outputs.env
+          if ! grep -qx 'found=true' promotion-input/outputs.env; then
+            echo "note=no promotion attempt exists for ${{ steps.identity.outputs.release_identity }}" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          node .github/scripts/production-promotion-state.mjs packages-guard \
+            --record promotion-input/current.json \
+            --beta "${{ inputs.beta_identity }}" \
+            --source-commit "${{ steps.beta.outputs.source_commit }}"
+          echo "note=promotion attempt $(sed -n 's/^attempt=//p' promotion-input/outputs.env) ($(sed -n 's/^state=//p' promotion-input/outputs.env)) selected the same beta" >> "$GITHUB_OUTPUT"
+
+      - name: Allocate or reuse the stable release container
+        id: container
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          node .github/scripts/production-packages.mjs ensure-container
+          --repository "$GITHUB_REPOSITORY"
+          --plan release-intent/release-plan.json
+          --github-output "$GITHUB_OUTPUT"
+
+      - name: Name the immutable plan artifact
+        id: artifact
+        run: echo "name=production-packages-plan-${GITHUB_RUN_ID}" >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.artifact.outputs.name }}
+          path: release-intent/release-plan.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Summarize frozen package inputs
+        run: |
+          {
+            echo "## Stable package inputs"
+            echo
+            echo "- Release: \`${{ steps.plan.outputs.release_identity }}\`"
+            echo "- Selected beta: \`${{ inputs.beta_identity }}\`"
+            echo "- Source: \`${{ steps.plan.outputs.source_commit }}\`"
+            echo "- Stable container: \`${{ steps.plan.outputs.stable_tag }}\`"
+            echo "- npm candidate dist-tag: \`${{ steps.plan.outputs.npm_tag }}\`"
+            echo "- Promotion: ${{ steps.guard.outputs.note }}"
+            echo
+            echo "This phase does not deploy Cloud, upload a mobile app, or change any store."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  approve:
+    name: Approve staging the plain package versions
+    if: inputs.phase == 'publish'
+    needs: load
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    environment:
+      name: production-packages
+    steps:
+      - run: |
+          echo "Approved publishing ${{ needs.load.outputs.release_identity }} packages from ${{ needs.load.outputs.source_commit }}."
+          echo "npm publishes under ${{ needs.load.outputs.npm_tag }}; latest, Maven Central, and the SwiftPM tag wait for the release phase."
+
+  npm:
+    name: Publish plain npm versions under the candidate dist-tag
+    if: inputs.phase == 'publish'
+    needs: [load, approve]
+    uses: ./.github/workflows/reusable-coordinated-npm.yml
+    with:
+      source_commit: ${{ needs.load.outputs.source_commit }}
+      release_plan_artifact: ${{ needs.load.outputs.plan_artifact }}
+      members: all
+      result_artifact: production-packages-npm-${{ github.run_id }}
+      ota_manifest_url: ${{ needs.load.outputs.ota_url }}
+      ota_manifest_sha256: ${{ needs.load.outputs.ota_sha256 }}
+      npm_tag: ${{ needs.load.outputs.npm_tag }}
+    secrets: inherit
+
+  sdk-native:
+    name: Stage Maven Central deployment and SwiftPM export
+    if: inputs.phase == 'publish'
+    needs: [load, approve]
+    uses: ./.github/workflows/reusable-coordinated-sdk-native.yml
+    with:
+      source_commit: ${{ needs.load.outputs.source_commit }}
+      release_plan_artifact: ${{ needs.load.outputs.plan_artifact }}
+      release_id: ${{ needs.load.outputs.stable_release_id }}
+      ota_manifest_url: ${{ needs.load.outputs.ota_url }}
+      ota_manifest_sha256: ${{ needs.load.outputs.ota_sha256 }}
+    secrets: inherit
+
+  record-publication:
+    name: Record the staged package publication
+    if: inputs.phase == 'publish'
+    needs: [load, npm, sdk-native]
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.load.outputs.plan_artifact }}
+          path: release-intent
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: production-packages-npm-${{ github.run_id }}
+          path: packages-input/npm
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.sdk-native.outputs.result_artifact }}
+          path: packages-input/sdk-native
+
+      - name: Assemble immutable publication evidence
+        id: evidence
+        env:
+          NPM_TAG: ${{ needs.load.outputs.npm_tag }}
+          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          plan=release-intent/release-plan.json
+          npm=packages-input/npm/npm-publications.json
+          native=packages-input/sdk-native/sdk-native-publications.json
+          release_set_id=$(jq -er .releaseSetId "$plan")
+          [[ "$(jq -er .releaseSetId "$npm")" == "$release_set_id" ]]
+          [[ "$(jq -er .releaseSetId "$native")" == "$release_set_id" ]]
+          mkdir -p packages-output
+          jq -n \
+            --slurpfile plan "$plan" \
+            --slurpfile npm "$npm" \
+            --slurpfile native "$native" \
+            --arg tag "$NPM_TAG" \
+            --arg actor "$GITHUB_ACTOR" \
+            --arg url "$RUN_URL" \
+            '{
+              schemaVersion: 1,
+              kind: "production-packages-publication",
+              releaseSetId: $plan[0].releaseSetId,
+              releaseIdentity: $plan[0].releaseIdentity,
+              sourceCommit: $plan[0].sourceCommit,
+              selectedBetaIdentity: $plan[0].promotion.selectedBetaIdentity,
+              npmCandidateTag: $tag,
+              npm: $npm[0],
+              sdkNative: $native[0],
+              actor: $actor,
+              provenanceUrl: $url
+            }' > packages-output/publication.json
+          node .github/scripts/production-promotion-assets.mjs prepare-evidence \
+            --file packages-output/publication.json \
+            --kind production-packages-publication \
+            --url "$RUN_URL" \
+            --output packages-output/evidence.json \
+            --output-directory packages-output/evidence-assets \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Publish the evidence into the stable release container
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          node .github/scripts/publish-immutable-release-asset.mjs
+          --file "${{ steps.evidence.outputs.asset_path }}"
+          --name "${{ steps.evidence.outputs.asset_name }}"
+          --release-id "${{ needs.load.outputs.stable_release_id }}"
+          --repository "$GITHUB_REPOSITORY"
+
+      - name: Summarize the staged publication
+        run: |
+          {
+            echo "## Stable packages staged"
+            echo
+            echo "- Release: \`${{ needs.load.outputs.release_identity }}\` from \`${{ needs.load.outputs.source_commit }}\`"
+            echo "- npm: plain versions published under \`${{ needs.load.outputs.npm_tag }}\`; \`latest\` unchanged"
+            echo "- Maven Central: USER_MANAGED deployment validated, not published"
+            echo "- SwiftPM: export staged on \`release/${{ needs.load.outputs.release_identity }}\`; no public tag"
+            echo "- Evidence: \`${{ steps.evidence.outputs.asset_name }}\` in \`${{ needs.load.outputs.stable_tag }}\`"
+            echo "- Promotion: ${{ needs.load.outputs.promotion_note }}"
+            echo
+            echo "Run the release phase to move npm latest, publish Maven Central, and push the SwiftPM tag."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  release:
+    name: Move latest, publish Maven Central, and tag SwiftPM
+    if: inputs.phase == 'release'
+    needs: load
+    runs-on: ubuntu-latest
+    timeout-minutes: 90
+    environment:
+      name: production-packages-release
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+          registry-url: https://registry.npmjs.org
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.load.outputs.plan_artifact }}
+          path: release-intent
+
+      - name: Require registry credentials
+        env:
+          NPM_TOKEN: ${{ secrets.NPM_TOKEN }}
+          MAVEN_CENTRAL_TOKEN_BASE64: ${{ secrets.MAVEN_CENTRAL_TOKEN_BASE64 }}
+          PUSH_TOKEN: ${{ secrets.MENTRA_BLUETOOTH_SDK_IOS_PUSH_TOKEN }}
+        run: |
+          set -euo pipefail
+          test -n "$NPM_TOKEN"
+          test -n "$MAVEN_CENTRAL_TOKEN_BASE64"
+          test -n "$PUSH_TOKEN"
+
+      # Every public mutation below is irreversible, so all three targets are
+      # checked first and nothing moves until each one is ready.
+      - name: Preflight npm without moving any dist-tag
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: >-
+          node .github/scripts/promote-npm-latest.mjs
+          --plan release-intent/release-plan.json
+          --npm-tag "${{ needs.load.outputs.npm_tag }}"
+          --output-dir packages-output/npm-preflight
+          --dry-run true
+
+      - name: Preflight the validated Sonatype deployment
+        env:
+          GH_TOKEN: ${{ github.token }}
+          MAVEN_CENTRAL_TOKEN_BASE64: ${{ secrets.MAVEN_CENTRAL_TOKEN_BASE64 }}
+          RELEASE_ID: ${{ needs.load.outputs.stable_release_id }}
+          VERSION: ${{ needs.load.outputs.release_identity }}
+        run: |
+          set -euo pipefail
+          mkdir -p packages-output/maven
+          asset_name="mentra-$VERSION-sonatype-deployment.json"
+          assets=$(gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases/$RELEASE_ID/assets?per_page=100" | jq 'add')
+          asset_id=$(jq -er --arg name "$asset_name" '[.[] | select(.name == $name)] | if length == 1 then .[0].id else error("Sonatype deployment record must be unique; run the publish phase first") end' <<< "$assets")
+          gh api -H "Accept: application/octet-stream" \
+            "repos/${GITHUB_REPOSITORY}/releases/assets/$asset_id" > packages-output/maven/sonatype-deployment.json
+          [[ "$(jq -er .deploymentName packages-output/maven/sonatype-deployment.json)" == "mentra-$VERSION-android-sdk" ]]
+          [[ "$(jq -er .publishingType packages-output/maven/sonatype-deployment.json)" == "USER_MANAGED" ]]
+          node .github/scripts/sonatype-central-deployment.mjs inspect \
+            --record packages-output/maven/sonatype-deployment.json \
+            --output packages-output/maven/sonatype-inspection.json
+          state=$(jq -er .deploymentState packages-output/maven/sonatype-inspection.json)
+          [[ "$state" == VALIDATED || "$state" == PUBLISHED || "$state" == PUBLISHING ]]
+
+      - name: Checkout the SwiftPM mirror
+        uses: actions/checkout@v4
+        with:
+          repository: Mentra-Community/mentra-bluetooth-sdk-ios
+          path: mentra-bluetooth-sdk-ios
+          token: ${{ secrets.MENTRA_BLUETOOTH_SDK_IOS_PUSH_TOKEN }}
+          fetch-depth: 0
+
+      - name: Preflight the staged SwiftPM commit against its archived export
+        id: swiftpm
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_ID: ${{ needs.load.outputs.stable_release_id }}
+          VERSION: ${{ needs.load.outputs.release_identity }}
+        run: |
+          set -euo pipefail
+          archive_name=$(jq -er .artifactNames.iosSdkArchive release-intent/release-plan.json)
+          mkdir -p packages-output/swiftpm
+          assets=$(gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases/$RELEASE_ID/assets?per_page=100" | jq 'add')
+          asset_id=$(jq -er --arg name "$archive_name" '[.[] | select(.name == $name)] | if length == 1 then .[0].id else error("SwiftPM archive must be unique; run the publish phase first") end' <<< "$assets")
+          gh api -H "Accept: application/octet-stream" \
+            "repos/${GITHUB_REPOSITORY}/releases/assets/$asset_id" > "packages-output/swiftpm/$archive_name"
+          cd mentra-bluetooth-sdk-ios
+          git fetch --tags origin
+          if git rev-parse -q --verify "refs/tags/$VERSION^{commit}" >/dev/null; then
+            mirror_sha=$(git rev-parse "refs/tags/$VERSION^{commit}")
+            status=reused
+          elif git rev-parse -q --verify "refs/remotes/origin/release/$VERSION^{commit}" >/dev/null; then
+            mirror_sha=$(git rev-parse "refs/remotes/origin/release/$VERSION^{commit}")
+            status=published
+          else
+            echo "The mirror has neither tag $VERSION nor branch release/$VERSION; run the publish phase first." >&2
+            exit 1
+          fi
+          # git archive stamps the archived commit into the tar's pax header, so the
+          # archive identifies its commit without re-archiving on a different runner.
+          archived_sha=$(git get-tar-commit-id < "$GITHUB_WORKSPACE/packages-output/swiftpm/$archive_name")
+          [[ "$archived_sha" == "$mirror_sha" ]]
+          {
+            echo "mirror_sha=$mirror_sha"
+            echo "status=$status"
+            echo "tag_url=https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios/tree/$VERSION"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Move npm latest to the staged plain versions
+        env:
+          NODE_AUTH_TOKEN: ${{ secrets.NPM_TOKEN }}
+        run: >-
+          node .github/scripts/promote-npm-latest.mjs
+          --plan release-intent/release-plan.json
+          --npm-tag "${{ needs.load.outputs.npm_tag }}"
+          --output-dir packages-output/npm
+
+      - name: Publish the validated Sonatype deployment to Maven Central
+        env:
+          MAVEN_CENTRAL_TOKEN_BASE64: ${{ secrets.MAVEN_CENTRAL_TOKEN_BASE64 }}
+        run: |
+          set -euo pipefail
+          node .github/scripts/sonatype-central-deployment.mjs publish \
+            --record packages-output/maven/sonatype-deployment.json \
+            --output packages-output/maven/sonatype-publication.json
+          [[ "$(jq -er .deploymentState packages-output/maven/sonatype-publication.json)" == "PUBLISHED" ]]
+
+      - name: Push the public SwiftPM tag at the staged commit
+        if: steps.swiftpm.outputs.status == 'published'
+        working-directory: mentra-bluetooth-sdk-ios
+        env:
+          VERSION: ${{ needs.load.outputs.release_identity }}
+          MIRROR_SHA: ${{ steps.swiftpm.outputs.mirror_sha }}
+        run: |
+          set -euo pipefail
+          git tag "$VERSION" "$MIRROR_SHA"
+          git push origin "refs/tags/$VERSION"
+          if git merge-base --is-ancestor "refs/remotes/origin/main" "$MIRROR_SHA"; then
+            git push origin "$MIRROR_SHA:refs/heads/main"
+          else
+            echo "::notice::Mirror main has moved past the staged $VERSION commit; the tag is public and main is left unchanged."
+          fi
+
+      - name: Assemble immutable release evidence
+        id: evidence
+        env:
+          RUN_URL: https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}
+        run: |
+          set -euo pipefail
+          jq -n \
+            --slurpfile plan release-intent/release-plan.json \
+            --slurpfile npm packages-output/npm/npm-latest.json \
+            --slurpfile maven packages-output/maven/sonatype-publication.json \
+            --arg mirror "${{ steps.swiftpm.outputs.mirror_sha }}" \
+            --arg swiftStatus "${{ steps.swiftpm.outputs.status }}" \
+            --arg tagUrl "${{ steps.swiftpm.outputs.tag_url }}" \
+            --arg actor "$GITHUB_ACTOR" \
+            --arg url "$RUN_URL" \
+            '{
+              schemaVersion: 1,
+              kind: "production-packages-release",
+              releaseSetId: $plan[0].releaseSetId,
+              releaseIdentity: $plan[0].releaseIdentity,
+              sourceCommit: $plan[0].sourceCommit,
+              selectedBetaIdentity: $plan[0].promotion.selectedBetaIdentity,
+              npm: $npm[0],
+              maven: {
+                deploymentId: $maven[0].deploymentId,
+                deploymentName: $maven[0].deploymentName,
+                deploymentState: $maven[0].deploymentState,
+                purls: $maven[0].purls
+              },
+              swiftpm: {
+                status: $swiftStatus,
+                tag: $plan[0].releaseIdentity,
+                mirrorCommit: $mirror,
+                url: $tagUrl
+              },
+              actor: $actor,
+              provenanceUrl: $url
+            }' > packages-output/release.json
+          node .github/scripts/production-promotion-assets.mjs prepare-evidence \
+            --file packages-output/release.json \
+            --kind production-packages-release \
+            --url "$RUN_URL" \
+            --output packages-output/evidence.json \
+            --output-directory packages-output/evidence-assets \
+            --github-output "$GITHUB_OUTPUT"
+
+      - name: Publish the evidence into the stable release container
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          node .github/scripts/publish-immutable-release-asset.mjs
+          --file "${{ steps.evidence.outputs.asset_path }}"
+          --name "${{ steps.evidence.outputs.asset_name }}"
+          --release-id "${{ needs.load.outputs.stable_release_id }}"
+          --repository "$GITHUB_REPOSITORY"
+
+      - name: Summarize the public package release
+        run: |
+          {
+            echo "## Stable packages released"
+            echo
+            echo "- Release: \`${{ needs.load.outputs.release_identity }}\` from \`${{ needs.load.outputs.source_commit }}\`"
+            echo "- npm: \`latest\` now points at the plain versions; \`${{ needs.load.outputs.npm_tag }}\` retired"
+            echo "- Maven Central: deployment \`$(jq -er .deploymentState packages-output/maven/sonatype-publication.json)\` (sync to search can lag)"
+            echo "- SwiftPM: ${{ steps.swiftpm.outputs.tag_url }} (\`${{ steps.swiftpm.outputs.status }}\`)"
+            echo "- Evidence: \`${{ steps.evidence.outputs.asset_name }}\` in \`${{ needs.load.outputs.stable_tag }}\`"
+            echo "- Promotion: ${{ needs.load.outputs.promotion_note }}"
+            echo
+            echo "This workflow did not deploy Cloud or change an app store."
+          } >> "$GITHUB_STEP_SUMMARY"

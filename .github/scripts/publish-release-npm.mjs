@@ -125,14 +125,49 @@ export function isHttpsRegistryUrl(value) {
   return typeof value === "string" && value.startsWith("https://")
 }
 
+// npm processes a large publish asynchronously ("Your package is being
+// processed and may take a few minutes to become available"), and the
+// metadata read-back keeps returning nothing until that finishes. Seen
+// 2026-09-10 in the beta 3.1.0-beta.192 release: the 18.5 MB
+// @mentra/bluetooth-sdk tarball published fine but was still invisible after
+// the previous 10-minute bound, so the job failed and only a re-run recovered
+// it through the "reused" path. Wait at least 30 minutes, and longer for
+// bigger tarballs, before treating the missing metadata as a failure.
+export const NPM_READBACK_POLL_SECONDS = 5
+export const NPM_READBACK_MIN_WAIT_SECONDS = 30 * 60
+export const NPM_READBACK_SECONDS_PER_MEBIBYTE = 2 * 60
+
+export function npmReadbackWaitSeconds(tarballBytes = 0) {
+  const mebibytes = Math.ceil(Math.max(0, Number(tarballBytes) || 0) / (1024 * 1024))
+  return Math.max(NPM_READBACK_MIN_WAIT_SECONDS, mebibytes * NPM_READBACK_SECONDS_PER_MEBIBYTE)
+}
+
+export function npmReadbackAttempts(tarballBytes = 0) {
+  return Math.ceil(npmReadbackWaitSeconds(tarballBytes) / NPM_READBACK_POLL_SECONDS) + 1
+}
+
 export function npmViewPublishedTarball(
   spec,
-  {attempts = 120, view = npmView, sleep = () => execFileSync("sleep", ["5"])} = {},
+  {
+    tarballBytes = 0,
+    attempts = npmReadbackAttempts(tarballBytes),
+    view = npmView,
+    sleep = () => execFileSync("sleep", [String(NPM_READBACK_POLL_SECONDS)]),
+    log = console.log,
+  } = {},
 ) {
+  const progressEvery = Math.max(1, Math.round((5 * 60) / NPM_READBACK_POLL_SECONDS))
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     const value = parseViewValue(view(spec, "dist.tarball"))
     if (isHttpsRegistryUrl(value)) return value
-    if (attempt < attempts) sleep()
+    if (attempt < attempts) {
+      sleep()
+      if (attempt % progressEvery === 0) {
+        const waited = attempt * NPM_READBACK_POLL_SECONDS
+        const bound = (attempts - 1) * NPM_READBACK_POLL_SECONDS
+        log(`npm has not exposed ${spec} yet; waited ${waited}s of up to ${bound}s`)
+      }
+    }
   }
   return null
 }
@@ -402,9 +437,11 @@ export function publishReleaseNpm({
 
     let url = `https://registry.npmjs.org/${encodeURIComponent(name)}`
     if (!dryRun) {
-      const registryUrl = npmViewPublishedTarball(coordinate)
+      const registryUrl = npmViewPublishedTarball(coordinate, {tarballBytes: bytes.length})
       if (!isHttpsRegistryUrl(registryUrl)) {
-        throw new Error(`${coordinate} was published but has no HTTPS registry tarball URL`)
+        throw new Error(
+          `${coordinate} was published but has no HTTPS registry tarball URL after ${npmReadbackWaitSeconds(bytes.length)}s`,
+        )
       }
       url = registryUrl
     }

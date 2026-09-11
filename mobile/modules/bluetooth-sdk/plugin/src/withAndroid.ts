@@ -11,11 +11,18 @@ import {
 } from "expo/config-plugins"
 
 import {type BluetoothSdkPluginProps} from "./index"
+import {resolveAnalyticsProps} from "./analyticsProps"
 
 const META_ANALYTICS_DISABLED = "com.mentra.bluetoothsdk.analytics.disabled"
+const META_ANALYTICS_ENVIRONMENT = "com.mentra.bluetoothsdk.analytics.environment"
 const STALE_META_POSTHOG_API_KEY = "com.mentra.bluetoothsdk.analytics.posthog_api_key"
 const STALE_META_POSTHOG_HOST = "com.mentra.bluetoothsdk.analytics.posthog_host"
-const ANALYTICS_META_NAMES = [META_ANALYTICS_DISABLED, STALE_META_POSTHOG_API_KEY, STALE_META_POSTHOG_HOST]
+const ANALYTICS_META_NAMES = [
+  META_ANALYTICS_DISABLED,
+  META_ANALYTICS_ENVIRONMENT,
+  STALE_META_POSTHOG_API_KEY,
+  STALE_META_POSTHOG_HOST,
+]
 
 function getBluetoothSdkRoot(): string {
   return path.dirname(require.resolve("../../package.json"))
@@ -32,7 +39,9 @@ function withSettingsGradleModifications(config: any) {
   return withSettingsGradle(config, (config) => {
     let settingsGradle = config.modResults.contents
     const bluetoothSdkRoot = getBluetoothSdkRoot()
-    const bluetoothSdkRootExpression = `System.getenv("MENTRA_BLUETOOTH_SDK_PACKAGE_PATH") ?: ${toGroovyString(bluetoothSdkRoot)}`
+    const bluetoothSdkRootExpression = `System.getenv("MENTRA_BLUETOOTH_SDK_PACKAGE_PATH") ?: ${toGroovyString(
+      bluetoothSdkRoot,
+    )}`
 
     if (!settingsGradle.includes("project(':mentra-bluetooth-sdk').projectDir")) {
       const bluetoothSdkProjectBlock = `
@@ -160,22 +169,6 @@ function withSherpaOnnxLocalMavenRepo(config: any) {
   })
 }
 
-function resolveAnalyticsProps(props: BluetoothSdkPluginProps | undefined) {
-  const analytics = props?.analytics
-  let disabled: boolean | undefined
-  if (analytics === false) {
-    disabled = true
-  } else if (analytics === true) {
-    disabled = false
-  } else if (typeof analytics === "object" && analytics.enabled !== undefined) {
-    disabled = !analytics.enabled
-  }
-
-  return {
-    disabled,
-  }
-}
-
 function upsertMetaData(application: any, name: string, value: string) {
   application["meta-data"] ??= []
   const existing = application["meta-data"].find((item: any) => item.$?.["android:name"] === name)
@@ -202,6 +195,9 @@ function withAnalyticsManifestMetadata(config: any, props: BluetoothSdkPluginPro
 
     if (analytics.disabled !== undefined) {
       upsertMetaData(application, META_ANALYTICS_DISABLED, analytics.disabled ? "true" : "false")
+    }
+    if (analytics.environment !== undefined) {
+      upsertMetaData(application, META_ANALYTICS_ENVIRONMENT, analytics.environment)
     }
 
     return config

@@ -3,6 +3,7 @@
 import { setBuildEnv } from './set-build-env.mjs';
 import { withRetry, isSentryTransientError, writeSummary } from './release-utils.mjs';
 import { validateReleaseArchive } from './release-bundle-config.mjs';
+import { validateAndroidSdkAnalyticsMetadata } from './release-sdk-metadata.mjs';
 import { getBuildNumber } from './build-number.mjs';
 import { cp, mkdir } from 'fs/promises';
 import { existsSync } from 'fs';
@@ -114,7 +115,8 @@ console.log('APK built successfully');
 // a clean Metro cache, but this prevents a future release-script regression
 // from publishing an APK with missing runtime configuration.
 validateReleaseArchive(apkPath, 'Android');
-console.log('Verified Android release JS bundle configuration');
+validateAndroidSdkAnalyticsMetadata(apkPath);
+console.log('Verified Android release JS bundle configuration and Bluetooth SDK analytics metadata');
 
 // Coordinated release CI owns immutable artifact naming and distribution. Keep
 // the established build/sign/validation path, but return both store and
