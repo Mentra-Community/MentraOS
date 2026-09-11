@@ -422,8 +422,9 @@ public class RecoveryWorkerManager {
      * FLAG_EXCLUDE_STOPPED_PACKAGES to every broadcast by default and also withholds
      * BOOT_COMPLETED from stopped packages, so without FLAG_INCLUDE_STOPPED_PACKAGES a freshly
      * deployed worker is never woken: start requests and downgrade handoffs are dropped
-     * silently and the worker stays dormant across reboots. Delivering the intent runs the
-     * receiver, which clears the stopped state for good.
+     * silently and the worker stays dormant across reboots. Delivering a manifest-received
+     * intent (start request, downgrade handoff) runs the receiver, which clears the stopped
+     * state until the next force-stop or fresh install.
      */
     public static Intent newRecoveryIntent(String action) {
         Intent intent = new Intent(action);

@@ -25,9 +25,11 @@ ASG deploys the worker through the OEM installer, which leaves the package in An
 "stopped" state until one of its components has run. Stopped packages receive no
 broadcasts (the system adds `FLAG_EXCLUDE_STOPPED_PACKAGES` to every broadcast) and no
 `BOOT_COMPLETED`, so a freshly deployed worker cannot wake itself. Every ASG-to-worker
-intent (start request, install notifications, downgrade handoff) must therefore be built
-with `RecoveryWorkerManager.newRecoveryIntent`, which adds `FLAG_INCLUDE_STOPPED_PACKAGES`;
-the first delivered intent runs the receiver and clears the stopped state permanently.
+intent (start request, downgrade handoff, install notifications, heartbeat pong) must
+therefore be built with `RecoveryWorkerManager.newRecoveryIntent`, which adds
+`FLAG_INCLUDE_STOPPED_PACKAGES`. Only the manifest-registered `RecoveryControlReceiver`
+actions (start request, downgrade handoff) can cold-start the worker; delivering one of
+them clears the stopped state until the next force-stop or fresh install.
 
 ## Backup contract
 
