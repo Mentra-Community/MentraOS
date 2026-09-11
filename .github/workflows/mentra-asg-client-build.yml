@@ -350,10 +350,6 @@ jobs:
       #   working-directory: ./asg_client
       #   run: ./gradlew spotlessCheck
 
-      - name: Mark build succeeded
-        id: build-ok
-        run: echo "ok=true" >> $GITHUB_OUTPUT
-
       - name: Upload Release APK (artifact)
         uses: actions/upload-artifact@v4
         with:
@@ -361,9 +357,11 @@ jobs:
           path: asg_client/app/build/outputs/apk/release/app-release.apk
 
       - name: Upload APK to pr-builds release
-        id: upload-apk
+        # Required, not best-effort: the PR mobile APK pins the manifest
+        # published below, which points at this asset. A failed upload must
+        # fail the workflow rather than leave the phone pinned to a manifest
+        # that never appears.
         if: github.event_name == 'pull_request'
-        continue-on-error: true
         uses: actions/github-script@v7
         with:
           script: |
@@ -411,9 +409,9 @@ jobs:
             console.log(`Successfully uploaded ${apkName}`);
 
       - name: Publish the OTA manifest for this build
-        # Only once the APK it points at is on the release, and never on push
-        # or dispatch runs, which have no PR manifest to publish.
-        if: github.event_name == 'pull_request' && steps.upload-apk.outcome == 'success'
+        # Runs after the APK it points at is on the release; push and dispatch
+        # runs have no PR manifest to publish.
+        if: github.event_name == 'pull_request'
         env:
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -443,6 +441,12 @@ jobs:
           node .github/scripts/build-bluetooth-sdk-ota-manifest.mjs
           gh release upload "$PR_BUILDS_TAG" "$OUTPUT_PATH" --clobber
           echo "Published ${OUTPUT_PATH##*/} pinning ASG ${ASG_VERSION_CODE} (${ASG_VERSION_NAME})."
+
+      - name: Mark build published
+        # Everything a tester needs exists from here on: the APK, its release
+        # asset and the OTA manifest (on PRs). Later steps are best-effort.
+        id: build-ok
+        run: echo "ok=true" >> "$GITHUB_OUTPUT"
 
       - name: Cleanup old release assets
         if: github.event_name == 'pull_request'
@@ -534,7 +538,7 @@ jobs:
             const previousShaMatch = comment.body.match(/🕶️ ASG Client[\s\S]*?✅ \*\*Ready to test!\*\* \(commit `([a-f0-9]+)`\)/)
                                   || comment.body.match(/📦 \*\*Previous build:\*\* \(commit `([a-f0-9]+)`\)/);
 
-            let buildStatus = `### 🕶️ ASG Client Build\n❌ **Build failed** (commit \`${sha}\`) - [View logs](${runUrl})`;
+            let buildStatus = `### 🕶️ ASG Client Build\n❌ **Build or publication failed** (commit \`${sha}\`) - [View logs](${runUrl})`;
 
             if (previousDownloadMatch && previousShaMatch && previousShaMatch[1] !== sha) {
               buildStatus += `\n\n📦 **Previous build:** (commit \`${previousShaMatch[1]}\`) - [📥 **Download ASG APK**](${previousDownloadMatch[1]})`;
