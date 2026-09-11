@@ -336,6 +336,30 @@ test("a production example refuses a manifest, plan, or destination that is not 
     () => assembleProduction({exampleGooglePlay: {...f.exampleGooglePlay, track: "beta"}}),
     /track does not match/,
   )
+  // A skipped review submission is retried, never frozen as the production record.
+  assert.throws(
+    () =>
+      assembleProduction({
+        exampleTestflight: {
+          ...f.exampleTestflight,
+          distribution: {
+            ...f.exampleTestflight.distribution,
+            status: "skipped",
+            skipReason: "external_review_setup_required",
+          },
+        },
+      }),
+    /was skipped \(external_review_setup_required\); rerun/,
+  )
+  assert.equal(
+    assembleProduction({
+      exampleTestflight: {
+        ...f.exampleTestflight,
+        distribution: {...f.exampleTestflight.distribution, status: "available", reviewState: "APPROVED"},
+      },
+    }).starterKit.testflight.distribution.status,
+    "available",
+  )
 })
 
 test("validation rejects records that do not describe a finalized example", () => {

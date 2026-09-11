@@ -87,6 +87,14 @@ export function verifyExampleTestflight(plan, starterKit, exampleTestflight) {
   if (distribution.status === "skipped" && !distribution.skipReason) {
     throw new Error("Skipped example TestFlight distribution must identify its reason")
   }
+  // A dev or beta example may skip review while another build is blocking
+  // it. The production record is written once Apple has this build for
+  // review, so a skipped submission must be retried, never frozen.
+  if (plan.channel === "production" && distribution.status === "skipped") {
+    throw new Error(
+      `Production example TestFlight distribution was skipped (${distribution.skipReason}); rerun once it can be submitted for review`,
+    )
+  }
   return exampleTestflight
 }
 
