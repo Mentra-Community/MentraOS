@@ -30,6 +30,7 @@ const record = {
   source: {mentraosCommit: commit("c")},
   coordinates: {
     currentMentraApp: {
+      provenance: "coordinated",
       sourceCommit: currentSource,
       provenanceUrl: "https://example.com/current.json",
       ios: {marketingVersion: currentVersion, buildNumber: 100},

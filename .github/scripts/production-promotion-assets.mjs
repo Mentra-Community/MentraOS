@@ -385,9 +385,11 @@ function main() {
       betaManifest: readJson("beta-manifest"),
       betaManifestSha256: fileSha256("beta-manifest"),
       betaManifestUrl: args["beta-manifest-url"],
-      previousPlanSha256: fileSha256("previous-plan"),
-      previousManifestSha256: fileSha256("previous-manifest"),
-      previousManifestUrl: args["previous-manifest-url"],
+      // A first coordinated promotion has no previous production release; its
+      // selection is still fingerprinted on the store inventories.
+      previousPlanSha256: args["previous-plan"] ? fileSha256("previous-plan") : null,
+      previousManifestSha256: args["previous-manifest"] ? fileSha256("previous-manifest") : null,
+      previousManifestUrl: args["previous-manifest-url"] || null,
       mentraInventory: readJson("mentra-inventory"),
     })
     output({selection_digest: digest}, args["github-output"])

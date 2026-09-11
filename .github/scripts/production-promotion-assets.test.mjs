@@ -121,6 +121,7 @@ function initialRecord() {
     source: {mentraosCommit: "a".repeat(40)},
     coordinates: {
       currentMentraApp: {
+        provenance: "coordinated",
         sourceCommit: "f".repeat(40),
         provenanceUrl: "https://example.com/current.json",
         ios: coordinate(1),
