@@ -20,6 +20,8 @@
     <uses-permission android:name="android.permission.RECORD_AUDIO" />
     <uses-permission android:name="android.permission.POST_NOTIFICATIONS" />
     <uses-permission android:name="android.permission.INTERNET" />
+    <!-- Device sessions must not acquire Android 15's six-hour dataSync budget. -->
+    <uses-permission android:name="android.permission.FOREGROUND_SERVICE_DATA_SYNC" tools:node="remove" />
 
     <application
         android:label="@string/app_name"
@@ -27,6 +29,10 @@
         android:roundIcon="@mipmap/ic_launcher_round"
         android:usesCleartextTraffic="true"
         android:theme="@style/Theme.MentraExample">
+        <service
+            android:name="com.mentra.bluetoothsdk.services.ForegroundService"
+            android:foregroundServiceType="connectedDevice|location|mediaPlayback|microphone"
+            tools:replace="android:foregroundServiceType" />
         <activity
             android:name=".MainActivity"
             android:exported="true"
