@@ -190,24 +190,6 @@
         "bun-types": "^1.3.14",
       },
     },
-    "miniapps/merge": {
-      "name": "local-merge",
-      "dependencies": {
-        "@mentra/auth": "workspace:*",
-        "@mentra/miniapp": "workspace:*",
-        "hono": "^4.11.1",
-        "react": "^19.0.0",
-        "react-dom": "^19.0.0",
-        "tailwindcss": "^4.0.8",
-      },
-      "devDependencies": {
-        "@mentra/miniapp-cli": "workspace:*",
-        "@types/react": "^19.1.6",
-        "@types/react-dom": "^19.1.6",
-        "bun-plugin-tailwind": "^0.1.2",
-        "bun-types": "^1.3.14",
-      },
-    },
     "miniapps/navigation": {
       "name": "navigation-miniapp",
       "version": "1.0.6",
@@ -1304,8 +1286,6 @@
     "listr2": ["listr2@9.0.5", "", { "dependencies": { "cli-truncate": "^5.0.0", "colorette": "^2.0.20", "eventemitter3": "^5.0.1", "log-update": "^6.1.0", "rfdc": "^1.4.1", "wrap-ansi": "^9.0.0" } }, "sha512-ME4Fb83LgEgwNw96RKNvKV4VTLuXfoKudAmm2lP8Kk87KaMK0/Xrx/aAkMWmT8mDb+3MlFDspfbCs7adjRxA2g=="],
 
     "local-captions": ["local-captions@workspace:miniapps/captions"],
-
-    "local-merge": ["local-merge@workspace:miniapps/merge"],
 
     "local-translation": ["local-translation@workspace:miniapps/translation"],
 
