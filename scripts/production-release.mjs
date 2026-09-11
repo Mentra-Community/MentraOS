@@ -189,6 +189,19 @@ function ensurePromotionBranch(repository, branch, commit) {
 // status, and only if no such status exists on the head do the pull-request
 // triggered check-runs (never push-triggered ones) decide.
 const CI_GATE_CONTEXT = /^ci-gate(-[a-z0-9-]+)?$/
+// The area builders the ci-gate aggregates (its allowlist in ci-gate.yml).
+// When no gate status has registered on the head, only these decide; advisory
+// bots and helpers on the pull request never gate a promotion.
+const CI_GATE_WORKFLOWS = new Set([
+  "Mobile App iOS Build",
+  "Mobile App Android Build",
+  "MentraOS ASG Client Build",
+  "Mobile App Quality Checks",
+  "OEM Host Boundary Gate",
+  "Coordinated Release Family Checks",
+  "Bun Lockfile Checks",
+  "Cloud V2 Validation",
+])
 const PROMOTION_GATE_POLL_SECONDS = 30
 const PROMOTION_GATE_TIMEOUT_SECONDS = 4 * 60 * 60
 // Right after the pull request is created only the beta's push-triggered rows
@@ -201,7 +214,10 @@ const PROMOTION_GATE_CALL_TIMEOUT_MS = 2 * 60 * 1000
 export function promotionGateState(rows, {settled = false} = {}) {
   if (!Array.isArray(rows)) throw new Error("Pull request checks must be an array")
   const gates = rows.filter((row) => CI_GATE_CONTEXT.test(row.name || "") && !row.workflow)
-  const relevant = gates.length > 0 ? gates : rows.filter((row) => row.event === "pull_request")
+  const relevant =
+    gates.length > 0
+      ? gates
+      : rows.filter((row) => row.event === "pull_request" && CI_GATE_WORKFLOWS.has(row.workflow || ""))
   const failed = relevant.filter((row) => row.bucket === "fail" || row.bucket === "cancel")
   if (failed.length > 0) return {state: "failed", rows: failed}
   const pending = relevant.filter((row) => row.bucket === "pending")
