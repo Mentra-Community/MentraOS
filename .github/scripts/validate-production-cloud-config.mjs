@@ -73,7 +73,36 @@ export function validateContractCoverage(contract, sourceKeys) {
   }
   if (overlaps.length > 0)
     throw new Error(`Cloud configuration keys have conflicting classifications: ${overlaps.join(", ")}`)
+  const rules = [
+    ...Object.entries(contract.required || {}).map(([id, rule]) => ({id, rule})),
+    ...(contract.requiredAnyOf || []).map((rule) => ({id: rule.id, rule})),
+  ]
+  for (const {id, rule} of rules) {
+    const condition = rule.requiredWhen
+    if (condition === undefined) continue
+    const selector = contract.required?.[condition.key]
+    const allowed = new Set([...(selector?.values || []), ...Object.values(selector?.valuesByEnvironment || {}).flat()])
+    if (
+      !selector ||
+      selector.kind !== "enum" ||
+      !Array.isArray(condition.values) ||
+      condition.values.length === 0 ||
+      condition.values.some((value) => !allowed.has(value))
+    ) {
+      throw new Error(`${id} is conditional on ${condition.key}, which is not a required enum offering those values`)
+    }
+  }
   return true
+}
+
+// A requirement with `requiredWhen` only applies while the selecting key holds
+// one of the listed values (for example the runtime storage webhook secret and
+// R2 credentials, which only matter when STORAGE_PROVIDER is r2 or s3). While
+// inactive, the keys may still be present and are then validated as usual.
+function requirementActive(rule, values) {
+  const condition = rule.requiredWhen
+  if (condition === undefined) return true
+  return condition.values.includes(values[condition.key])
 }
 
 function parseUrl(value, protocols, label) {
@@ -159,13 +188,24 @@ export function validateProductionCloudConfig({contract, environment, values}) {
   if (!new Set(["staging", "prod"]).has(environment)) throw new Error(`Unsupported environment ${environment}`)
   validateContractCoverage(contract, [])
   const checks = []
+  const isPresent = (key) => typeof values[key] === "string" && values[key].trim() !== ""
   for (const [key, rule] of Object.entries(contract.required)) {
+    if (!requirementActive(rule, values) && !isPresent(key)) {
+      checks.push({id: key, keys: [], status: "inactive", acceptanceTest: rule.acceptanceTest})
+      continue
+    }
     validateValue(values[key], rule, key, environment)
     checks.push({id: key, keys: [key], status: "pass", acceptanceTest: rule.acceptanceTest})
   }
   for (const requirement of contract.requiredAnyOf || []) {
-    const present = requirement.keys.filter((key) => typeof values[key] === "string" && values[key].trim() !== "")
-    if (present.length === 0) throw new Error(`${requirement.id} requires one of ${requirement.keys.join(", ")}`)
+    const present = requirement.keys.filter(isPresent)
+    if (present.length === 0) {
+      if (!requirementActive(requirement, values)) {
+        checks.push({id: requirement.id, keys: [], status: "inactive", acceptanceTest: requirement.acceptanceTest})
+        continue
+      }
+      throw new Error(`${requirement.id} requires one of ${requirement.keys.join(", ")}`)
+    }
     present.forEach((key) => validateValue(values[key], requirement, key, environment))
     checks.push({
       id: requirement.id,
