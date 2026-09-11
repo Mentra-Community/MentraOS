@@ -6,6 +6,9 @@ import { notifyReportSlack, type ReportSlackNotification } from "./report-slack.
 const WEBHOOK_URL = "https://hooks.slack.test/services/T000/B000/reports";
 const AUTOMATIC_WEBHOOK_URL = "https://hooks.slack.test/services/T000/B000/automatic";
 const AGENT_URL = "https://dev-agent.mentraglass.com";
+const BOT_TOKEN = "xoxb-test-reports-bot-token";
+const CHANNEL_ID = "C0TESTMAIN";
+const AUTOMATIC_CHANNEL_ID = "C0TESTAUTO";
 const AGENT_SIGNING_SECRET = "test-agent-signing-secret-with-at-least-32-bytes";
 
 const savedEnv = {
@@ -17,6 +20,10 @@ const savedEnv = {
   CLOUD_REPORT_AGENT_SIGNING_SECRET: process.env.CLOUD_REPORT_AGENT_SIGNING_SECRET,
   CLOUD_REPORT_AGENT_SLACK_INTERACTIVITY_ENABLED:
     process.env.CLOUD_REPORT_AGENT_SLACK_INTERACTIVITY_ENABLED,
+  CLOUD_REPORTS_SLACK_BOT_TOKEN: process.env.CLOUD_REPORTS_SLACK_BOT_TOKEN,
+  CLOUD_REPORTS_SLACK_CHANNEL_ID: process.env.CLOUD_REPORTS_SLACK_CHANNEL_ID,
+  CLOUD_REPORTS_SLACK_CHANNEL_ID_AUTOMATIC:
+    process.env.CLOUD_REPORTS_SLACK_CHANNEL_ID_AUTOMATIC,
 };
 const realFetch = globalThis.fetch;
 
@@ -31,6 +38,9 @@ beforeEach(() => {
   delete process.env.CLOUD_REPORT_AGENT_URL;
   delete process.env.CLOUD_REPORT_AGENT_SIGNING_SECRET;
   delete process.env.CLOUD_REPORT_AGENT_SLACK_INTERACTIVITY_ENABLED;
+  delete process.env.CLOUD_REPORTS_SLACK_BOT_TOKEN;
+  delete process.env.CLOUD_REPORTS_SLACK_CHANNEL_ID;
+  delete process.env.CLOUD_REPORTS_SLACK_CHANNEL_ID_AUTOMATIC;
   process.env.CLOUD_CORE_ENVIRONMENT = "test-env";
   fetchMock = mock<FetchCall>(async () => new Response("ok", { status: 200 }));
   globalThis.fetch = fetchMock as unknown as typeof fetch;
@@ -50,6 +60,12 @@ afterEach(() => {
   restoreEnv(
     "CLOUD_REPORT_AGENT_SLACK_INTERACTIVITY_ENABLED",
     savedEnv.CLOUD_REPORT_AGENT_SLACK_INTERACTIVITY_ENABLED,
+  );
+  restoreEnv("CLOUD_REPORTS_SLACK_BOT_TOKEN", savedEnv.CLOUD_REPORTS_SLACK_BOT_TOKEN);
+  restoreEnv("CLOUD_REPORTS_SLACK_CHANNEL_ID", savedEnv.CLOUD_REPORTS_SLACK_CHANNEL_ID);
+  restoreEnv(
+    "CLOUD_REPORTS_SLACK_CHANNEL_ID_AUTOMATIC",
+    savedEnv.CLOUD_REPORTS_SLACK_CHANNEL_ID_AUTOMATIC,
   );
 });
 
@@ -397,6 +413,57 @@ describe("notifyReportSlack", () => {
     const blocksJson = JSON.stringify(payload.blocks);
     expect(blocksJson).toContain("r".repeat(300));
     expect(blocksJson).not.toContain("r".repeat(301));
+  });
+
+  test("posts through chat.postMessage when a bot token and channel are configured", async () => {
+    process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL = WEBHOOK_URL;
+    process.env.CLOUD_REPORTS_SLACK_BOT_TOKEN = BOT_TOKEN;
+    process.env.CLOUD_REPORTS_SLACK_CHANNEL_ID = CHANNEL_ID;
+    fetchMock.mockImplementation(async () => Response.json({ ok: true, ts: "123.456" }));
+
+    await expect(notifyReportSlack(bugNotification())).resolves.toEqual({ ok: true });
+
+    const [url, init] = fetchMock.mock.calls[0]!;
+    expect(String(url)).toBe("https://slack.com/api/chat.postMessage");
+    expect((init?.headers as Record<string, string>).authorization).toBe(`Bearer ${BOT_TOKEN}`);
+    const body = JSON.parse(String(init?.body));
+    expect(body.channel).toBe(CHANNEL_ID);
+    expect(body.blocks.length).toBeGreaterThan(0);
+  });
+
+  test("keeps using the webhook when the bot token has no channel to post to", async () => {
+    process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL = WEBHOOK_URL;
+    process.env.CLOUD_REPORTS_SLACK_BOT_TOKEN = BOT_TOKEN;
+
+    await notifyReportSlack(bugNotification());
+
+    expect(String(fetchMock.mock.calls[0]![0])).toBe(WEBHOOK_URL);
+  });
+
+  test("routes automatic reports to their own channel id when the split is set", async () => {
+    process.env.CLOUD_REPORTS_SLACK_BOT_TOKEN = BOT_TOKEN;
+    process.env.CLOUD_REPORTS_SLACK_CHANNEL_ID = CHANNEL_ID;
+    process.env.CLOUD_REPORTS_SLACK_CHANNEL_ID_AUTOMATIC = AUTOMATIC_CHANNEL_ID;
+    fetchMock.mockImplementation(async () => Response.json({ ok: true, ts: "1.2" }));
+
+    await notifyReportSlack(bugNotification({ kind: "automatic" }));
+    expect(JSON.parse(String(fetchMock.mock.calls[0]![1]?.body)).channel).toBe(
+      AUTOMATIC_CHANNEL_ID,
+    );
+
+    fetchMock.mockClear();
+    delete process.env.CLOUD_REPORTS_SLACK_CHANNEL_ID_AUTOMATIC;
+    await notifyReportSlack(bugNotification({ kind: "automatic" }));
+    expect(JSON.parse(String(fetchMock.mock.calls[0]![1]?.body)).channel).toBe(CHANNEL_ID);
+  });
+
+  test("treats a 200 with ok:false as a failure, not a delivered message", async () => {
+    process.env.CLOUD_REPORTS_SLACK_BOT_TOKEN = BOT_TOKEN;
+    process.env.CLOUD_REPORTS_SLACK_CHANNEL_ID = CHANNEL_ID;
+    // Slack answers 200 for refusals such as not_in_channel or invalid_auth.
+    fetchMock.mockImplementation(async () => Response.json({ ok: false, error: "not_in_channel" }));
+
+    await expect(notifyReportSlack(bugNotification())).resolves.toEqual({ ok: false });
   });
 
   test("resolves without throwing when the webhook request fails", async () => {
