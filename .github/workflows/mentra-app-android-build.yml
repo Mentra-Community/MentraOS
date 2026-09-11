@@ -2,6 +2,9 @@ name: Mobile App Android Build
 
 on:
   pull_request:
+    # Every PR APK pins the OTA manifest that mentra-asg-client-build.yml
+    # publishes for the same PR head, so that workflow's pull_request paths
+    # must stay a superset of these.
     paths:
       - "mobile/**"
       - ".github/workflows/mentra-app-android-build.yml"
@@ -43,7 +46,12 @@ jobs:
       EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID }}
       EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY }}
       MENTRAOS_PINNED_BUILD_NUMBER: ${{ inputs.build_number || '' }}
-      EXPO_PUBLIC_ASG_OTA_VERSION_URL: ${{ inputs.ota_manifest_url || '' }}
+      # Glasses OTA pin. A pull request pins the manifest that MentraOS ASG
+      # Client Build publishes for the same PR head (ota-pr-<n>-<sha>.json on
+      # the pr-builds release), so a PR APK updates Mentra Live glasses to the
+      # ASG client built from the PR's own ASG sources. Pushes stay unpinned
+      # compile checks; a dispatch may pass an explicit manifest URL.
+      EXPO_PUBLIC_ASG_OTA_VERSION_URL: ${{ inputs.ota_manifest_url || (github.event_name == 'pull_request' && format('https://github.com/{0}/releases/download/pr-builds/ota-pr-{1}-{2}.json', github.repository, github.event.pull_request.number, github.event.pull_request.head.sha)) || '' }}
       # Compile-check APKs are phone sideloads. Full ABI belongs on the
       # coordinated release workflow, not on this compile-check workflow.
       ORG_GRADLE_PROJECT_reactNativeArchitectures: arm64-v8a
@@ -364,7 +372,7 @@ jobs:
           fi
 
       - name: Verify embedded OTA manifest pin
-        if: inputs.ota_manifest_url != ''
+        if: env.EXPO_PUBLIC_ASG_OTA_VERSION_URL != ''
         run: |
           python3 - <<'PY'
           import os
@@ -491,11 +499,14 @@ jobs:
             if (!comment) return;
 
             const prNumber = context.payload.pull_request.number;
-            const sha = context.payload.pull_request.head.sha.substring(0, 7);
+            const headSha = context.payload.pull_request.head.sha;
+            const sha = headSha.substring(0, 7);
             const apkName = `mobile-pr-${prNumber}-${sha}.apk`;
-            const downloadUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/pr-builds/${apkName}`;
+            const releaseBase = `https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/pr-builds`;
+            const downloadUrl = `${releaseBase}/${apkName}`;
+            const manifestName = `ota-pr-${prNumber}-${headSha}.json`;
 
-            const buildStatus = `### 📱 Mobile App Build\n✅ **Ready to test!** (commit \`${sha}\`)\n\n[📥 **Download APK**](${downloadUrl})`;
+            const buildStatus = `### 📱 Mobile App Build\n✅ **Ready to test!** (commit \`${sha}\`)\n\n[📥 **Download APK**](${downloadUrl})\n\n🕶️ Updates Mentra Live glasses to this PR's ASG client via OTA (pinned to [${manifestName}](${releaseBase}/${manifestName}), published by the ASG Client Build job).`;
 
             const newBody = comment.body.replace(
               /<!-- android-build-status -->[\s\S]*?<!-- \/android-build-status -->/,
