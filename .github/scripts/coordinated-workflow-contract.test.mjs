@@ -306,7 +306,10 @@ test("mobile destinations use real TestFlight groups without changing the releas
 test("coordinated docs publish only after finalization to the matching channel", () => {
   const coordinator = workflow("coordinated-release.yml")
   const plan = jobBlock(coordinator, "plan")
-  const starterKit = jobBlock(coordinator, "starter-kit")
+  const starterKitJob = jobBlock(coordinator, "starter-kit")
+  // The Starter Kit request is shared with the production example: the
+  // coordinator only wires the reusable workflow.
+  const starterKit = jobBlock(workflow("reusable-coordinated-starter-kit.yml"), "starter-kit")
   const engineConsumer = jobBlock(coordinator, "engine-consumer")
   const exampleTestflight = jobBlock(coordinator, "example-testflight")
   const docs = jobBlock(coordinator, "docs")
@@ -320,9 +323,13 @@ test("coordinated docs publish only after finalization to the matching channel",
   // finalized as a separate record, so it can never make the beta incomplete.
   assert.match(finalize, /^    needs: \[plan, cloud-v2, ota, npm, sdk-native, mobile, engine-consumer\]$/m)
   assert.doesNotMatch(finalize, /starter-kit|example-testflight|example-google-play/)
-  assert.match(starterKit, /^    needs: \[plan, ota, npm, sdk-native, finalize\]$/m)
+  assert.match(starterKitJob, /^    needs: \[plan, ota, npm, sdk-native, finalize\]$/m)
+  assert.match(starterKitJob, /uses: \.\/\.github\/workflows\/reusable-coordinated-starter-kit\.yml/)
+  assert.match(starterKitJob, /if: needs\.plan\.outputs\.dry_run != 'true'/)
   assert.match(engineConsumer, /^    needs: \[plan, npm\]$/m)
   assert.match(starterKit, /coordinated-example-release\.yml/)
+  assert.match(starterKit, /production\) target_branch=main ;;/)
+  assert.match(starterKit, /container_tag="sdk-\$identity"/)
   assert.doesNotMatch(coordinator, /Freeze the Starter Kit channel source/)
   assert.doesNotMatch(coordinator, /--starter-kit-source|starterKitSource|Starter-Kit-Source/)
   assert.match(
@@ -601,10 +608,63 @@ test("Play lane outputs in the production workflows are absolute paths", () => {
     "production-release-status.yml",
     "production-release-store-release.yml",
     "production-release-store-submit.yml",
+    "production-release-example.yml",
   ]) {
     const source = workflow(name)
     for (const match of source.matchAll(/GOOGLE_PLAY_[A-Z_]*OUTPUT=(\S+)/g)) {
       assert.match(match[1], /^"\$GITHUB_WORKSPACE\//, `${name}: ${match[0]}`)
     }
   }
+})
+
+test("the production example is keyed on the promoted beta and never promotes a store listing", () => {
+  const example = workflow("production-release-example.yml")
+  const load = jobBlock(example, "load")
+  const finalize = jobBlock(example, "finalize-example")
+  const play = workflow("reusable-coordinated-example-google-play.yml")
+
+  assert.match(example, /group: production-release-example\n/)
+  assert.match(load, /environment:\n      name: production-store-status/)
+  assert.match(load, /git merge-base --is-ancestor "\$source_commit" origin\/main/)
+  assert.match(load, /npm view "\$name@\$RELEASE_IDENTITY" version/)
+  assert.match(load, /production-example\.mjs plan/)
+  assert.match(load, /--apple-inventory example-input\/stores\/example-apple\.json/)
+  assert.match(load, /GOOGLE_PLAY_INVENTORY_OUTPUT="\$GITHUB_WORKSPACE\/example-input\/stores\/example-google\.json"/)
+  assert.match(load, /production-packages\.mjs ensure-container/)
+  assert.match(example, /uses: \.\/\.github\/workflows\/reusable-coordinated-starter-kit\.yml/)
+  assert.match(example, /uses: \.\/\.github\/workflows\/reusable-coordinated-example-testflight\.yml/)
+  assert.match(example, /uses: \.\/\.github\/workflows\/reusable-coordinated-example-google-play\.yml/)
+  assert.match(example, /production_build_number: \$\{\{ fromJSON\(needs\.load\.outputs\.build_number\) \}\}/)
+  assert.match(finalize, /example-release-records\.mjs/)
+  assert.match(load, /Recover the example plan a previous run already froze/)
+  assert.match(load, /--existing-plan example-input\/existing-plan\.json/)
+  assert.match(load, /cp release-intent\/release-plan\.json "release-intent\/\$PLAN_ASSET"/)
+  assert.match(load, /--file "release-intent\/\$PLAN_ASSET" \\\n\s+--name "\$PLAN_ASSET"/)
+  assert.doesNotMatch(load, /mv "[^"]*" "\1"/)
+  assert.match(finalize, /example-release-records\.mjs reconcile/)
+  assert.match(finalize, /if: steps\.results\.outputs\.published != 'true'/)
+  assert.doesNotMatch(finalize, /cmp existing-record\.json/)
+  assert.match(play, /if \[\[ "\$\(jq -er \.channel "\$plan"\)" == "production" \]\]; then/)
+  assert.match(play, /target_commitish <<< "\$release"\)" == "\$\(jq -er \.sourceCommit "\$plan"\)"/)
+  assert.match(finalize, /publish-immutable-release-asset\.mjs/)
+  assert.doesNotMatch(
+    example,
+    /production-status|store-submit|store-release|rollout|submit-for-review|app-store-version/i,
+  )
+  assert.doesNotMatch(example, /production-store-submission|production-store-release/)
+  // The Play lane runs its scripts from the workflow revision so a promoted
+  // beta that predates production support can still build the example.
+  assert.match(play, /Checkout example tooling from the workflow revision/)
+  assert.equal(
+    [...play.matchAll(/release-tooling\/\.github\/scripts\/coordinated-example-google-play\.mjs/g)].length,
+    4,
+  )
+  assert.doesNotMatch(play, /node \.github\/scripts\/coordinated-example-google-play\.mjs/)
+  const testflight = workflow("reusable-coordinated-example-testflight.yml")
+  assert.match(testflight, /release-tooling\/\.github\/scripts\/coordinated-example-testflight-record\.mjs/)
+  assert.doesNotMatch(testflight, /node \.github\/scripts\/coordinated-example-testflight-record\.mjs/)
+  assert.match(testflight, /elif \.channel == "production" then "Mentra Bluetooth Example"/)
+  assert.match(testflight, /if \.channel == "dev" then "internal" else "external" end/)
+  assert.doesNotMatch(example + testflight, /Mentra SDK Example|Production Candidates/)
+  assert.equal(existsSync(new URL("../workflows/reusable-production-starter-kit-android.yml", import.meta.url)), false)
 })

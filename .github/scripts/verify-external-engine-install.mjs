@@ -59,12 +59,17 @@ export function verifyExternalEngineInstall({fixtureDir, plan}) {
 
   for (const name of expected) {
     const records = installed.get(name) ?? []
-    if (records.length !== 1) throw new Error(`${name} resolved ${records.length} physical copies; expected exactly one`)
+    if (records.length !== 1)
+      throw new Error(`${name} resolved ${records.length} physical copies; expected exactly one`)
     const [record] = records
     if (record.version !== plan.releaseIdentity) {
       throw new Error(`${name} resolved ${record.version}, expected ${plan.releaseIdentity}`)
     }
-    if (record.link || !record.resolved?.startsWith("https://registry.npmjs.org/") || !record.integrity?.startsWith("sha512-")) {
+    if (
+      record.link ||
+      !record.resolved?.startsWith("https://registry.npmjs.org/") ||
+      !record.integrity?.startsWith("sha512-")
+    ) {
       throw new Error(`${name} did not resolve as an integrity-checked public npm artifact`)
     }
   }

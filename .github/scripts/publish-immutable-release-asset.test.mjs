@@ -34,7 +34,10 @@ test("filters all release asset pages inside gh and safely quotes the exact name
 })
 
 test("filtered lookups retain missing-asset and duplicate-asset behavior", () => {
-  assert.equal(findReleaseAsset("owner/repo", "1", "missing", () => ""), null)
+  assert.equal(
+    findReleaseAsset("owner/repo", "1", "missing", () => ""),
+    null,
+  )
   assert.throws(
     () => findReleaseAsset("owner/repo", "1", "one", () => '{"id":1,"name":"one"}\n{"id":2,"name":"one"}\n'),
     /duplicate asset one/,

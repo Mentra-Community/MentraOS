@@ -16,45 +16,45 @@
 // pick it up — acceptable while these are pre-1.0/alpha.
 //
 // Usage: node rewrite-file-deps.mjs <packageDir>
-import {readFileSync, writeFileSync} from 'node:fs';
-import {resolve} from 'node:path';
+import {readFileSync, writeFileSync} from "node:fs"
+import {resolve} from "node:path"
 
-const pkgDir = process.argv[2];
+const pkgDir = process.argv[2]
 if (!pkgDir) {
-  console.error('usage: rewrite-file-deps.mjs <packageDir>');
-  process.exit(1);
+  console.error("usage: rewrite-file-deps.mjs <packageDir>")
+  process.exit(1)
 }
 
-const pkgPath = resolve(pkgDir, 'package.json');
-const pkg = JSON.parse(readFileSync(pkgPath, 'utf8'));
-const label = pkg.name || pkgDir;
+const pkgPath = resolve(pkgDir, "package.json")
+const pkg = JSON.parse(readFileSync(pkgPath, "utf8"))
+const label = pkg.name || pkgDir
 
-const DEP_FIELDS = ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies'];
-let changed = 0;
+const DEP_FIELDS = ["dependencies", "devDependencies", "optionalDependencies", "peerDependencies"]
+let changed = 0
 
 for (const field of DEP_FIELDS) {
-  const deps = pkg[field];
-  if (!deps) continue;
+  const deps = pkg[field]
+  if (!deps) continue
   for (const [name, spec] of Object.entries(deps)) {
-    if (typeof spec !== 'string' || !spec.startsWith('file:')) continue;
-    const targetPath = resolve(pkgDir, spec.slice('file:'.length), 'package.json');
-    let target;
+    if (typeof spec !== "string" || !spec.startsWith("file:")) continue
+    const targetPath = resolve(pkgDir, spec.slice("file:".length), "package.json")
+    let target
     try {
-      target = JSON.parse(readFileSync(targetPath, 'utf8'));
+      target = JSON.parse(readFileSync(targetPath, "utf8"))
     } catch (err) {
-      throw new Error(`${label}: cannot resolve file: dep ${name} -> ${spec} (${targetPath}): ${err.message}`);
+      throw new Error(`${label}: cannot resolve file: dep ${name} -> ${spec} (${targetPath}): ${err.message}`)
     }
-    if (!target.version) throw new Error(`${label}: referenced package ${targetPath} has no version`);
-    const pinned = target.version;
-    console.log(`${label}: ${field}.${name}  ${spec} -> ${pinned}`);
-    deps[name] = pinned;
-    changed++;
+    if (!target.version) throw new Error(`${label}: referenced package ${targetPath} has no version`)
+    const pinned = target.version
+    console.log(`${label}: ${field}.${name}  ${spec} -> ${pinned}`)
+    deps[name] = pinned
+    changed++
   }
 }
 
 if (changed === 0) {
-  console.log(`${label}: no file: deps to rewrite`);
+  console.log(`${label}: no file: deps to rewrite`)
 } else {
-  writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + '\n');
-  console.log(`${label}: rewrote ${changed} file: dep(s)`);
+  writeFileSync(pkgPath, JSON.stringify(pkg, null, 2) + "\n")
+  console.log(`${label}: rewrote ${changed} file: dep(s)`)
 }

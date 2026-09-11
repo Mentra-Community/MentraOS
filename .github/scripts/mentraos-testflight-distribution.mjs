@@ -4,11 +4,15 @@ export function validateMentraosTestflightDistribution(plan, group, record) {
     throw new Error("Public MentraOS TestFlight is only supported for staging")
   }
   if (
-    !record || record.group !== group || record.audience !== (external ? "external" : "internal") ||
+    !record ||
+    record.group !== group ||
+    record.audience !== (external ? "external" : "internal") ||
     !["available", "submitted", "skipped"].includes(record.status) ||
-    typeof record.buildId !== "string" || !record.buildId ||
+    typeof record.buildId !== "string" ||
+    !record.buildId ||
     !/^https:\/\//.test(record.installUrl || "")
-  ) throw new Error("Invalid MentraOS TestFlight distribution evidence")
+  )
+    throw new Error("Invalid MentraOS TestFlight distribution evidence")
   if (!external && record.status !== "available") throw new Error("Internal MentraOS TestFlight must be available")
   if (external && !/^https:\/\/testflight\.apple\.com\/join\/[A-Za-z0-9]+$/.test(record.installUrl)) {
     throw new Error("Public MentraOS TestFlight requires a public invitation URL")
@@ -16,6 +20,7 @@ export function validateMentraosTestflightDistribution(plan, group, record) {
   if (external && record.status === "available" && record.reviewState !== "APPROVED") {
     throw new Error("Available public MentraOS TestFlight requires approved review evidence")
   }
-  if (record.status === "skipped" && !record.skipReason) throw new Error("Skipped MentraOS TestFlight must identify its reason")
+  if (record.status === "skipped" && !record.skipReason)
+    throw new Error("Skipped MentraOS TestFlight must identify its reason")
   return record
 }

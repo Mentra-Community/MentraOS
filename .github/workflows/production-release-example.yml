@@ -1,0 +1,454 @@
+name: Production Release - Bluetooth Example
+
+# Builds the production Bluetooth example for a promoted beta: the Starter Kit
+# main branch against the public plain X.Y.Z npm packages and the beta's
+# frozen OTA pin, distributed through the public TestFlight link and a
+# dedicated closed Play track, and recorded as mentra-example-release-X.Y.Z.json in the
+# stable release container. Like the stable packages it is keyed on the beta,
+# never on a promotion attempt, and it never promotes a store listing.
+
+on:
+  workflow_dispatch:
+    inputs:
+      beta_identity:
+        description: Promoted coordinated beta whose public packages build the production example, for example 3.1.0-beta.212
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: write
+
+concurrency:
+  group: production-release-example
+  cancel-in-progress: false
+
+env:
+  EXAMPLE_BUNDLE_ID: com.mentra.bluetoothsdkexample
+
+jobs:
+  load:
+    name: Freeze the promoted beta source and example plan
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    environment:
+      name: production-store-status
+    outputs:
+      release_identity: ${{ steps.plan.outputs.release_identity }}
+      source_commit: ${{ steps.plan.outputs.source_commit }}
+      stable_tag: ${{ steps.plan.outputs.stable_tag }}
+      ota_url: ${{ steps.plan.outputs.ota_manifest_url }}
+      ota_sha256: ${{ steps.plan.outputs.ota_manifest_sha256 }}
+      build_number: ${{ steps.plan.outputs.build_number }}
+      testflight_group: ${{ steps.plan.outputs.testflight_group }}
+      testflight_audience: ${{ steps.plan.outputs.testflight_audience }}
+      play_track: ${{ steps.plan.outputs.play_track }}
+      plan_artifact: ${{ steps.artifact.outputs.plan }}
+      beta_artifact: ${{ steps.artifact.outputs.beta }}
+      beta_manifest_url: ${{ steps.beta.outputs.manifest_url }}
+      stable_release_id: ${{ steps.container.outputs.release_id }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+          fetch-depth: 0
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - uses: ruby/setup-ruby@v1
+        with:
+          ruby-version: "3.3"
+
+      - name: Validate dispatch and selected beta identity
+        id: identity
+        env:
+          BETA_IDENTITY: ${{ inputs.beta_identity }}
+        run: |
+          set -euo pipefail
+          [[ "$GITHUB_REF_NAME" == "main" ]]
+          [[ "$BETA_IDENTITY" =~ ^[0-9]+\.[0-9]+\.[0-9]+-beta\.[1-9][0-9]*$ ]]
+          release_identity="${BETA_IDENTITY%%-*}"
+          {
+            echo "release_identity=$release_identity"
+            echo "beta_tag=mentra-builds-v$release_identity"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Download and verify the completed selected beta
+        id: beta
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BETA_IDENTITY: ${{ inputs.beta_identity }}
+          BETA_TAG: ${{ steps.identity.outputs.beta_tag }}
+        run: |
+          set -euo pipefail
+          mkdir -p example-input/beta
+          state=$(gh release view "$BETA_TAG" --json isDraft,isPrerelease --jq '[.isDraft,.isPrerelease] | @tsv')
+          [[ "$state" == $'false\ttrue' ]]
+          gh release download "$BETA_TAG" \
+            --pattern "mentra-release-plan-$BETA_IDENTITY.json" \
+            --pattern "mentra-release-$BETA_IDENTITY.json" \
+            --dir example-input/beta
+          mv "example-input/beta/mentra-release-plan-$BETA_IDENTITY.json" example-input/beta/release-plan.json
+          [[ "$(jq -er .completedAt "example-input/beta/mentra-release-$BETA_IDENTITY.json")" != "" ]]
+          node .github/scripts/verify-release-artifacts.mjs --manifest "example-input/beta/mentra-release-$BETA_IDENTITY.json"
+          source_commit=$(jq -er .sourceCommit example-input/beta/release-plan.json)
+          git cat-file -e "$source_commit^{commit}"
+          git merge-base --is-ancestor "$source_commit" origin/main
+          {
+            echo "source_commit=$source_commit"
+            echo "manifest_path=example-input/beta/mentra-release-$BETA_IDENTITY.json"
+            echo "manifest_url=https://github.com/${GITHUB_REPOSITORY}/releases/download/$BETA_TAG/mentra-release-$BETA_IDENTITY.json"
+          } >> "$GITHUB_OUTPUT"
+
+      # The Starter Kit installs the SDK and Engine from the public registry, so
+      # the plain versions must already be released (packages --phase release).
+      - name: Require the public plain packages the example builds against
+        env:
+          RELEASE_IDENTITY: ${{ steps.identity.outputs.release_identity }}
+        run: |
+          set -euo pipefail
+          for name in @mentra/bluetooth-sdk @mentra/engine; do
+            if [[ "$(npm view "$name@$RELEASE_IDENTITY" version 2>/dev/null)" != "$RELEASE_IDENTITY" ]]; then
+              echo "$name@$RELEASE_IDENTITY is not public on npm; run 'packages --beta ${{ inputs.beta_identity }} --phase release' first." >&2
+              exit 1
+            fi
+          done
+
+      - name: Checkout the frozen source separately from workflow tooling
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ steps.beta.outputs.source_commit }}
+          path: release-source
+
+      - name: Inject read-only store credentials
+        uses: ./.github/actions/inject-signing
+        with:
+          play: "true"
+          ios: "true"
+          google-play-key-json: ${{ secrets.GOOGLE_PLAY_KEY_JSON }}
+          asc-api-key-p8-b64: ${{ secrets.ASC_API_KEY_P8_B64 }}
+          asc-api-key-id: ${{ secrets.ASC_API_KEY_ID }}
+          asc-api-issuer-id: ${{ secrets.ASC_API_ISSUER_ID }}
+
+      - name: Resolve App Store Connect credential path
+        id: asc
+        run: |
+          set -euo pipefail
+          key_path=$(sed -n 's/^ASC_API_KEY_PATH=//p' "$MENTRA_ASC_CONFIG_PATH")
+          test -f "$key_path"
+          echo "key_path=$key_path" >> "$GITHUB_OUTPUT"
+
+      - name: Read the example App Store inventory
+        run: |
+          set -euo pipefail
+          mkdir -p example-input/stores
+          node mobile/scripts/app-store-connect-build.mjs inventory \
+            --issuer-id "${{ secrets.ASC_API_ISSUER_ID }}" \
+            --key-id "${{ secrets.ASC_API_KEY_ID }}" \
+            --key-path "${{ steps.asc.outputs.key_path }}" \
+            --bundle-id "$EXAMPLE_BUNDLE_ID" \
+            --output example-input/stores/example-apple.json
+
+      # The example's Play record may not be reachable yet. The build number is
+      # then allocated from App Store Connect and the beta alone; Play itself
+      # refuses a version code it has already seen.
+      - name: Read the example Google Play inventory
+        id: google
+        continue-on-error: true
+        run: |
+          set -euo pipefail
+          mkdir -p example-input/play/fastlane
+          cp mobile/ci/fastlane-android/Fastfile mobile/ci/fastlane-android/Appfile example-input/play/fastlane/
+          cp mobile/Gemfile mobile/Gemfile.lock example-input/play/
+          cd example-input/play
+          bundle install
+          # fastlane runs the lane from inside fastlane/, so the output path must
+          # be absolute.
+          APP_PACKAGE_NAME="$EXAMPLE_BUNDLE_ID" \
+            GOOGLE_PLAY_INVENTORY_OUTPUT="$GITHUB_WORKSPACE/example-input/stores/example-google.json" \
+            bundle exec fastlane google_play_inventory
+
+      # The allocated build number must survive reruns: a retry after a partial
+      # upload has to reuse the plan the first run froze, not resample the
+      # stores and move the candidate identity. The plan is persisted as an
+      # immutable asset of the stable container before any upload.
+      - name: Recover the example plan a previous run already froze
+        id: existing
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STABLE_TAG: mentra-v${{ steps.identity.outputs.release_identity }}
+          PLAN_ASSET: production-example-plan-${{ steps.identity.outputs.release_identity }}.json
+        run: |
+          set -euo pipefail
+          releases=$(gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases?per_page=100" | jq 'add')
+          release_id=$(jq -r --arg tag "$STABLE_TAG" \
+            '[.[] | select(.tag_name == $tag)] | if length == 0 then empty elif length == 1 then .[0].id else error("multiple releases are tagged " + $tag) end' \
+            <<< "$releases")
+          if [[ -z "$release_id" ]]; then
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          assets=$(gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases/$release_id/assets?per_page=100" | jq 'add')
+          asset_id=$(jq -r --arg name "$PLAN_ASSET" \
+            '[.[] | select(.name == $name)] | if length == 0 then empty elif length == 1 then .[0].id else error("multiple assets are named " + $name) end' \
+            <<< "$assets")
+          if [[ -z "$asset_id" ]]; then
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          gh api -H "Accept: application/octet-stream" "repos/${GITHUB_REPOSITORY}/releases/assets/$asset_id" \
+            > example-input/existing-plan.json
+          echo "Reusing the example plan already frozen as $PLAN_ASSET"
+          echo "found=true" >> "$GITHUB_OUTPUT"
+
+      - name: Freeze the production example plan from the beta source
+        id: plan
+        run: |
+          set -euo pipefail
+          mkdir -p release-intent
+          existing=()
+          if [[ "${{ steps.existing.outputs.found }}" == "true" ]]; then
+            existing=(--existing-plan example-input/existing-plan.json)
+          fi
+          google=()
+          if [[ "${{ steps.google.outcome }}" == "success" && -s example-input/stores/example-google.json ]]; then
+            google=(--google-inventory example-input/stores/example-google.json)
+          else
+            echo "Warning: the example Google Play inventory is unavailable; allocating from App Store Connect and the beta." >&2
+          fi
+          node .github/scripts/production-example.mjs plan \
+            --root release-source \
+            --beta-plan example-input/beta/release-plan.json \
+            --beta-manifest "${{ steps.beta.outputs.manifest_path }}" \
+            --beta-manifest-url "${{ steps.beta.outputs.manifest_url }}" \
+            --apple-inventory example-input/stores/example-apple.json \
+            "${google[@]}" \
+            "${existing[@]}" \
+            --output release-intent/release-plan.json \
+            --github-output "$GITHUB_OUTPUT"
+          [[ "$(jq -er .releaseIdentity release-intent/release-plan.json)" == "${{ steps.identity.outputs.release_identity }}" ]]
+          [[ "$(jq -er .sourceCommit release-intent/release-plan.json)" == "${{ steps.beta.outputs.source_commit }}" ]]
+
+      - name: Allocate or reuse the stable release container
+        id: container
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          node .github/scripts/production-packages.mjs ensure-container
+          --repository "$GITHUB_REPOSITORY"
+          --plan release-intent/release-plan.json
+          --github-output "$GITHUB_OUTPUT"
+
+      - name: Persist the frozen example plan before any upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PLAN_ASSET: production-example-plan-${{ steps.identity.outputs.release_identity }}.json
+        run: |
+          set -euo pipefail
+          # The immutable publisher requires the file basename to be the asset name.
+          cp release-intent/release-plan.json "release-intent/$PLAN_ASSET"
+          node .github/scripts/publish-immutable-release-asset.mjs \
+            --file "release-intent/$PLAN_ASSET" \
+            --name "$PLAN_ASSET" \
+            --release-id "${{ steps.container.outputs.release_id }}" \
+            --repository "$GITHUB_REPOSITORY"
+
+      - name: Name the immutable input artifacts
+        id: artifact
+        run: |
+          {
+            echo "plan=production-example-plan-${GITHUB_RUN_ID}"
+            echo "beta=production-example-beta-${GITHUB_RUN_ID}"
+          } >> "$GITHUB_OUTPUT"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.artifact.outputs.plan }}
+          path: release-intent/release-plan.json
+          if-no-files-found: error
+          retention-days: 30
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.artifact.outputs.beta }}
+          path: ${{ steps.beta.outputs.manifest_path }}
+          if-no-files-found: error
+          retention-days: 30
+
+      - name: Summarize frozen example inputs
+        run: |
+          {
+            echo "## Production example inputs"
+            echo
+            echo "- Release: \`${{ steps.plan.outputs.release_identity }}\`"
+            echo "- Selected beta: \`${{ inputs.beta_identity }}\`"
+            echo "- Source: \`${{ steps.plan.outputs.source_commit }}\`"
+            echo "- Example build number: \`${{ steps.plan.outputs.build_number }}\`"
+            echo "- TestFlight: \`${{ steps.plan.outputs.testflight_group }}\` (${{ steps.plan.outputs.testflight_audience }})"
+            echo "- Google Play track: \`${{ steps.plan.outputs.play_track }}\`"
+            echo "- Stable container: \`${{ steps.plan.outputs.stable_tag }}\`"
+            echo
+            echo "The example is never promoted to a public store from this workflow."
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  starter-kit:
+    name: Build the production Starter Kit examples
+    needs: load
+    uses: ./.github/workflows/reusable-coordinated-starter-kit.yml
+    with:
+      source_commit: ${{ needs.load.outputs.source_commit }}
+      release_plan_artifact: ${{ needs.load.outputs.plan_artifact }}
+      ota_manifest_url: ${{ needs.load.outputs.ota_url }}
+      ota_manifest_sha256: ${{ needs.load.outputs.ota_sha256 }}
+    secrets: inherit
+
+  example-testflight:
+    name: Distribute the example through TestFlight
+    needs: [load, starter-kit]
+    uses: ./.github/workflows/reusable-coordinated-example-testflight.yml
+    with:
+      source_commit: ${{ needs.load.outputs.source_commit }}
+      release_plan_artifact: ${{ needs.load.outputs.plan_artifact }}
+      starter_kit_result_artifact: ${{ needs.starter-kit.outputs.result_artifact }}
+      testflight_group: ${{ needs.load.outputs.testflight_group }}
+      testflight_audience: ${{ needs.load.outputs.testflight_audience }}
+      production_build_number: ${{ fromJSON(needs.load.outputs.build_number) }}
+    secrets: inherit
+
+  example-google-play:
+    name: Distribute the example through its closed Play track
+    needs: [load, starter-kit]
+    uses: ./.github/workflows/reusable-coordinated-example-google-play.yml
+    with:
+      source_commit: ${{ needs.load.outputs.source_commit }}
+      release_plan_artifact: ${{ needs.load.outputs.plan_artifact }}
+      starter_kit_result_artifact: ${{ needs.starter-kit.outputs.result_artifact }}
+      release_id: ${{ needs.load.outputs.stable_release_id }}
+      play_track: ${{ needs.load.outputs.play_track }}
+    secrets: inherit
+
+  finalize-example:
+    name: Record the production Bluetooth example
+    needs: [load, starter-kit, example-testflight, example-google-play]
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.load.outputs.plan_artifact }}
+          path: release-input/plan
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.load.outputs.beta_artifact }}
+          path: release-input/beta
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.starter-kit.outputs.result_artifact }}
+          path: release-input/starter-kit
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.example-testflight.outputs.result_artifact }}
+          path: release-input/example-testflight
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.example-google-play.outputs.result_artifact }}
+          path: release-input/example-google-play
+
+      - name: Assemble the example release record against the promoted beta
+        id: results
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p finalized-example
+          plan=release-input/plan/release-plan.json
+          identity=$(jq -er .releaseIdentity "$plan")
+          beta_manifest=$(find release-input/beta -type f -name 'mentra-release-*.json' -print -quit)
+          starter_kit_result=$(find release-input/starter-kit -type f -name 'starter-kit-release-*.json' -print -quit)
+          example_testflight=$(find release-input/example-testflight -type f -name 'example-testflight-publication.json' -print -quit)
+          test -s "$beta_manifest"
+          test -n "$starter_kit_result"
+          test -n "$example_testflight"
+          record_name="mentra-example-release-$identity.json"
+          # A rerun re-observes the same candidates (reused uploads, a new run
+          # URL) rather than reproducing the first observation byte for byte.
+          # The record published by the first completed run is therefore the
+          # canonical one: it is validated and checked against this run's
+          # candidate identities instead of being regenerated. The container is
+          # a draft, so the record is read through the release API.
+          assets=$(gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases/${{ needs.load.outputs.stable_release_id }}/assets?per_page=100" | jq 'add')
+          asset_id=$(jq -r --arg name "$record_name" '[.[] | select(.name == $name)] | if length == 0 then empty elif length == 1 then .[0].id else error("multiple assets are named " + $name) end' <<< "$assets")
+          if [[ -n "$asset_id" ]]; then
+            gh api -H "Accept: application/octet-stream" "repos/${GITHUB_REPOSITORY}/releases/assets/$asset_id" > "finalized-example/$record_name"
+            echo "Reconciling this run's candidates against the example record already published as $record_name"
+            node .github/scripts/example-release-records.mjs reconcile \
+              --plan "$plan" \
+              --record "finalized-example/$record_name" \
+              --starter-kit "$starter_kit_result" \
+              --example-testflight "$example_testflight" \
+              --example-google-play release-input/example-google-play/example-google-play-publication.json
+            echo "published=true" >> "$GITHUB_OUTPUT"
+          else
+            node .github/scripts/example-release-records.mjs assemble \
+              --plan "$plan" \
+              --beta-manifest "$beta_manifest" \
+              --beta-manifest-url "${{ needs.load.outputs.beta_manifest_url }}" \
+              --starter-kit "$starter_kit_result" \
+              --starter-kit-result-url "${{ needs.starter-kit.outputs.result_url }}" \
+              --example-testflight "$example_testflight" \
+              --example-google-play release-input/example-google-play/example-google-play-publication.json \
+              --completed-at "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" \
+              --provenance-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+              --output "finalized-example/$record_name"
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
+          {
+            echo "identity=$identity"
+            echo "record_name=$record_name"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Publish the immutable example release record
+        if: steps.results.outputs.published != 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          node .github/scripts/publish-immutable-release-asset.mjs
+          --file "finalized-example/${{ steps.results.outputs.record_name }}"
+          --name "${{ steps.results.outputs.record_name }}"
+          --release-id "${{ needs.load.outputs.stable_release_id }}"
+          --repository "${{ github.repository }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: production-example-release-result-${{ github.run_id }}
+          path: finalized-example
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Summarize the production example
+        run: |
+          {
+            echo "## Production Bluetooth example"
+            echo ""
+            echo "- Release: \`${{ steps.results.outputs.identity }}\`"
+            echo "- Record: \`${{ steps.results.outputs.record_name }}\` in \`${{ needs.load.outputs.stable_tag }}\`"
+            echo "- Starter Kit builds: ${{ needs.starter-kit.outputs.release_url }}"
+            echo "- TestFlight: ${{ needs.example-testflight.outputs.install_url }}"
+            echo "- Google Play: ${{ needs.example-google-play.outputs.install_url }}"
+            echo ""
+            echo "The example was not promoted to a public store."
+          } >> "$GITHUB_STEP_SUMMARY"

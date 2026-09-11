@@ -54,8 +54,8 @@ export function createExampleTestflightRecord({
       ? "Mentra Dev"
       : plan.channel === "beta"
         ? "Mentra Staging Public"
-        : "Mentra SDK Example Production Candidates"
-  const expectedAudience = plan.channel === "beta" ? "external" : "internal"
+        : "Mentra Bluetooth Example"
+  const expectedAudience = plan.channel === "dev" ? "internal" : "external"
   if (!Number.isSafeInteger(buildNumber) || buildNumber < 1) throw new Error("TestFlight build number must be positive")
   if (groupName !== expectedGroup) throw new Error(`TestFlight group must be ${expectedGroup}`)
   if (audience !== expectedAudience) throw new Error(`TestFlight audience must be ${expectedAudience}`)

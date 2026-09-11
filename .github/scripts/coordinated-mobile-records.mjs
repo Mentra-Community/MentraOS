@@ -166,11 +166,17 @@ function main() {
       ipa: path.resolve(args.ipa),
       ipaUrl: args["ipa-url"],
       testflightGroup: args["testflight-group"],
-      testflight: args["distribution-status"] ? {
-        group: args["testflight-group"], audience: args.audience,
-        status: args["distribution-status"], buildId: args["build-id"],
-        installUrl: args["install-url"], reviewState: args["review-state"] || "", skipReason: args["skip-reason"] || "",
-      } : undefined,
+      testflight: args["distribution-status"]
+        ? {
+            group: args["testflight-group"],
+            audience: args.audience,
+            status: args["distribution-status"],
+            buildId: args["build-id"],
+            installUrl: args["install-url"],
+            reviewState: args["review-state"] || "",
+            skipReason: args["skip-reason"] || "",
+          }
+        : undefined,
       storeStatus: args.status,
       provenanceUrl: args["provenance-url"],
     })

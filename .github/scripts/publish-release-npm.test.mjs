@@ -282,19 +282,20 @@ test("keeps bounded attempts and the publish error when every recovery read fail
   let pauses = 0
   const publishError = new Error("publish connection reset")
   assert.throws(
-    () => publishWithRetry("@mentra/engine@3.2.0-dev.157", "sha512-abc", {
-      attempts: 3,
-      publish: () => {
-        publishes += 1
-        throw publishError
-      },
-      registryIntegrityOf: () => {
-        throw new Error("registry unavailable")
-      },
-      sleep: () => {
-        pauses += 1
-      },
-    }),
+    () =>
+      publishWithRetry("@mentra/engine@3.2.0-dev.157", "sha512-abc", {
+        attempts: 3,
+        publish: () => {
+          publishes += 1
+          throw publishError
+        },
+        registryIntegrityOf: () => {
+          throw new Error("registry unavailable")
+        },
+        sleep: () => {
+          pauses += 1
+        },
+      }),
     (error) => error === publishError,
   )
   assert.equal(publishes, 3)

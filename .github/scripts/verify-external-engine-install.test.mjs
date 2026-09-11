@@ -30,7 +30,7 @@ function fixture(lockPackages) {
   const root = mkdtempSync(path.join(os.tmpdir(), "mentra-engine-install-"))
   writeFileSync(
     path.join(root, "package.json"),
-    JSON.stringify({dependencies: {"@mentra/engine": plan.releaseIdentity, react: "19.2.0"}}),
+    JSON.stringify({dependencies: {"@mentra/engine": plan.releaseIdentity, "react": "19.2.0"}}),
   )
   writeFileSync(path.join(root, "package-lock.json"), JSON.stringify({packages: lockPackages}))
   return root
@@ -41,9 +41,7 @@ function registry(version) {
 }
 
 function validLock() {
-  return Object.fromEntries(
-    expectedClosure.map((name) => [`node_modules/${name}`, registry(plan.releaseIdentity)]),
-  )
+  return Object.fromEntries(expectedClosure.map((name) => [`node_modules/${name}`, registry(plan.releaseIdentity)]))
 }
 
 test("accepts one exact registry-backed Engine closure", () => {

@@ -32,9 +32,18 @@ function requireIsoUtc(value, label) {
   return value
 }
 
+// The production example is distributed like a public beta, through an
+// external TestFlight group with a public link; it is never released through
+// a store from the production workflow.
+export function exampleTestflightDestination(channel) {
+  if (channel === "dev") return {group: "Mentra Dev", audience: "internal"}
+  if (channel === "beta") return {group: "Mentra Staging Public", audience: "external"}
+  if (channel === "production") return {group: "Mentra Bluetooth Example", audience: "external"}
+  throw new Error(`Unsupported example release channel ${JSON.stringify(channel)}`)
+}
+
 export function verifyExampleTestflight(plan, starterKit, exampleTestflight) {
-  const expectedGroup = plan.channel === "dev" ? "Mentra Dev" : "Mentra Staging Public"
-  const expectedAudience = plan.channel === "dev" ? "internal" : "external"
+  const {group: expectedGroup, audience: expectedAudience} = exampleTestflightDestination(plan.channel)
   const distribution = exampleTestflight?.distribution
   if (
     exampleTestflight?.schemaVersion !== 1 ||
@@ -69,7 +78,7 @@ export function verifyExampleTestflight(plan, starterKit, exampleTestflight) {
   ) {
     throw new Error("Example TestFlight IPA evidence is invalid")
   }
-  if (plan.channel === "dev" && distribution.status !== "available") {
+  if (expectedAudience === "internal" && distribution.status !== "available") {
     throw new Error("Internal example TestFlight distribution must be available")
   }
   if (expectedAudience === "external" && !/^https:\/\/testflight\.apple\.com\/join\//.test(distribution.installUrl)) {
@@ -77,6 +86,14 @@ export function verifyExampleTestflight(plan, starterKit, exampleTestflight) {
   }
   if (distribution.status === "skipped" && !distribution.skipReason) {
     throw new Error("Skipped example TestFlight distribution must identify its reason")
+  }
+  // A dev or beta example may skip review while another build is blocking
+  // it. The production record is written once Apple has this build for
+  // review, so a skipped submission must be retried, never frozen.
+  if (plan.channel === "production" && distribution.status === "skipped") {
+    throw new Error(
+      `Production example TestFlight distribution was skipped (${distribution.skipReason}); rerun once it can be submitted for review`,
+    )
   }
   return exampleTestflight
 }
@@ -143,23 +160,52 @@ export function verifyStarterKitResult(plan, starterKit, resultUrl, exampleTestf
   }
 }
 
+// A dev or beta example is built against the finalized manifest of its own
+// coordinated release. A production example is built against the finalized
+// manifest of the beta the production release was promoted from: the plan's
+// promotion block pins that manifest by URL and digest.
+export function exampleBetaManifestName(plan) {
+  return plan.channel === "production"
+    ? `mentra-release-${plan.promotion?.selectedBetaIdentity}.json`
+    : plan.artifactNames.releaseManifest
+}
+
 function verifyBetaManifest(plan, betaManifest, betaManifestUrl, betaManifestSha256) {
+  const production = plan.channel === "production"
+  const expected = production
+    ? {
+        releaseSetId: plan.promotion?.selectedBetaReleaseSetId,
+        releaseIdentity: plan.promotion?.selectedBetaIdentity,
+        channel: "beta",
+      }
+    : {releaseSetId: plan.releaseSetId, releaseIdentity: plan.releaseIdentity, channel: plan.channel}
   if (
     betaManifest?.schemaVersion !== 1 ||
-    betaManifest.releaseSetId !== plan.releaseSetId ||
-    betaManifest.releaseIdentity !== plan.releaseIdentity ||
-    betaManifest.channel !== plan.channel ||
+    betaManifest.releaseSetId !== expected.releaseSetId ||
+    betaManifest.releaseIdentity !== expected.releaseIdentity ||
+    betaManifest.channel !== expected.channel ||
     betaManifest.sourceCommit !== plan.sourceCommit ||
     typeof betaManifest.completedAt !== "string"
   ) {
-    throw new Error("The example release requires the finalized manifest of the same coordinated beta")
+    throw new Error(
+      production
+        ? "The production example requires the finalized manifest of the promoted beta"
+        : "The example release requires the finalized manifest of the same coordinated beta",
+    )
   }
   requireIsoUtc(betaManifest.completedAt, "betaManifest.completedAt")
   if (!SHA256_PATTERN.test(betaManifestSha256 || "")) {
     throw new Error("betaManifest.sha256 must be a lowercase SHA-256 digest")
   }
+  if (
+    production &&
+    (plan.promotion.selectedBetaManifest?.url !== betaManifestUrl ||
+      plan.promotion.selectedBetaManifest?.sha256 !== betaManifestSha256)
+  ) {
+    throw new Error("The production example requires the exact beta manifest the plan was promoted from")
+  }
   return {
-    name: plan.artifactNames.releaseManifest,
+    name: exampleBetaManifestName(plan),
     url: requirePublicHttpsUrl(betaManifestUrl, "betaManifest.url"),
     sha256: betaManifestSha256,
     completedAt: betaManifest.completedAt,
@@ -178,8 +224,14 @@ export function assembleExampleReleaseResults({
   completedAt,
   provenanceUrl,
 }) {
-  if (plan?.releaseSetId !== `mentra-${plan?.releaseIdentity}` || plan.channel === "production") {
-    throw new Error("The example release requires a coordinated dev or beta release plan")
+  if (
+    plan?.releaseSetId !== `mentra-${plan?.releaseIdentity}` ||
+    !["dev", "beta", "production"].includes(plan.channel)
+  ) {
+    throw new Error("The example release requires a coordinated dev, beta, or production release plan")
+  }
+  if (plan.channel === "production" && plan.example?.storePromotion !== "never") {
+    throw new Error("The production example plan must declare that it is never promoted to a store")
   }
   const beta = verifyBetaManifest(plan, betaManifest, betaManifestUrl, betaManifestSha256)
   const verified = verifyStarterKitResult(plan, starterKit, starterKitResultUrl, exampleTestflight, exampleGooglePlay)
@@ -191,7 +243,11 @@ export function assembleExampleReleaseResults({
     familyBaseVersion: plan.familyBaseVersion,
     channel: plan.channel,
     sourceCommit: plan.sourceCommit,
+    native: plan.native,
     betaManifest: beta,
+    ...(plan.channel === "production"
+      ? {promotion: {...plan.promotion, storePromotion: plan.example.storePromotion}}
+      : {}),
     starterKit: verified.record,
     artifacts: verified.artifacts,
     completedAt: requireIsoUtc(completedAt, "completedAt"),
@@ -207,7 +263,8 @@ export function validateExampleReleaseRecord(record, plan) {
     record.releaseIdentity !== plan.releaseIdentity ||
     record.channel !== plan.channel ||
     record.sourceCommit !== plan.sourceCommit ||
-    record.betaManifest?.name !== plan.artifactNames.releaseManifest ||
+    record.betaManifest?.name !== exampleBetaManifestName(plan) ||
+    (plan.channel === "production" && record.promotion?.storePromotion !== "never") ||
     !SHA256_PATTERN.test(record.betaManifest?.sha256 || "") ||
     !Array.isArray(record.artifacts) ||
     record.artifacts.length < 3 ||
@@ -219,6 +276,42 @@ export function validateExampleReleaseRecord(record, plan) {
   requireIsoUtc(record.betaManifest.completedAt, "betaManifest.completedAt")
   requireIsoUtc(record.completedAt, "completedAt")
   requirePublicHttpsUrl(record.provenanceUrl, "provenanceUrl")
+  return record
+}
+
+// A rerun re-observes the same candidates rather than reproducing the first
+// run's observation byte for byte (uploads report "reused", IPA evidence is
+// omitted, run URLs differ). The record published by the first completed run
+// stays canonical; this checks that the candidates this run observed are the
+// ones that record describes.
+export function reconcileExampleReleaseRecord({plan, record, starterKit, exampleTestflight, exampleGooglePlay}) {
+  validateExampleReleaseRecord(record, plan)
+  const recorded = record.starterKit
+  const mismatches = []
+  const check = (label, actual, expected) => {
+    if (actual !== expected)
+      mismatches.push(`${label}: recorded ${JSON.stringify(expected)}, observed ${JSON.stringify(actual)}`)
+  }
+  check("Starter Kit release commit", starterKit?.starterKit?.releaseCommit, recorded.starterKit?.releaseCommit)
+  check("Starter Kit merge commit", starterKit?.starterKit?.mergeCommit, recorded.starterKit?.mergeCommit)
+  for (const artifact of record.artifacts) {
+    const observed = starterKit?.artifacts?.find((candidate) => candidate.name === artifact.coordinate)
+    check(`Starter Kit artifact ${artifact.coordinate}`, observed?.sha256, artifact.sha256)
+  }
+  check("TestFlight build id", exampleTestflight?.build?.id, recorded.testflight?.build?.id)
+  check("TestFlight build number", exampleTestflight?.version?.buildNumber, recorded.testflight?.version?.buildNumber)
+  check(
+    "TestFlight marketing version",
+    exampleTestflight?.version?.marketingVersion,
+    recorded.testflight?.version?.marketingVersion,
+  )
+  check("TestFlight group", exampleTestflight?.group?.id, recorded.testflight?.group?.id)
+  check("Google Play version code", exampleGooglePlay?.version?.buildNumber, recorded.googlePlay?.version?.buildNumber)
+  check("Google Play track", exampleGooglePlay?.track, recorded.googlePlay?.track)
+  check("Google Play bundle digest", exampleGooglePlay?.aab?.sha256, recorded.googlePlay?.aab?.sha256)
+  if (mismatches.length > 0) {
+    throw new Error(`This run's example candidates differ from the published record: ${mismatches.join("; ")}`)
+  }
   return record
 }
 
@@ -238,7 +331,21 @@ function readJson(file) {
 }
 
 function main() {
-  const args = parseArgs(process.argv.slice(2))
+  // The bare form (no command) assembles, matching the coordinated release.
+  const command = process.argv[2]?.startsWith("--") ? "assemble" : process.argv[2]
+  const args = parseArgs(process.argv.slice(command === process.argv[2] ? 3 : 2))
+  if (command === "reconcile") {
+    const record = reconcileExampleReleaseRecord({
+      plan: readJson(args.plan),
+      record: readJson(args.record),
+      starterKit: readJson(args["starter-kit"]),
+      exampleTestflight: readJson(args["example-testflight"]),
+      exampleGooglePlay: readJson(args["example-google-play"]),
+    })
+    console.log(`Published ${record.kind} ${record.releaseIdentity} describes this run's candidates`)
+    return
+  }
+  if (command !== "assemble") throw new Error(`Unknown example release command ${JSON.stringify(command)}`)
   const betaManifestBytes = readFileSync(path.resolve(args["beta-manifest"]))
   const record = assembleExampleReleaseResults({
     plan: readJson(args.plan),
