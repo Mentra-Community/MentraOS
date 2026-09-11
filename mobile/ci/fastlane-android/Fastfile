@@ -21,6 +21,15 @@ platform :android do
     # google_play_track_version_codes action (one more edit each) is not
     # opened.
     releases = {}
+    # Supply's client reads its credentials from Supply.config, which the
+    # google_play_track_version_codes action used to populate as a side effect.
+    # Build it from Supply's own options so the Appfile defaults (package name,
+    # json_key_file) still apply.
+    require "supply"
+    Supply.config = FastlaneCore::Configuration.create(
+      Supply::Options.available_options,
+      { package_name: package_name },
+    )
     client = Supply::Client.make_from_config
     client.begin_edit(package_name: package_name)
     begin
