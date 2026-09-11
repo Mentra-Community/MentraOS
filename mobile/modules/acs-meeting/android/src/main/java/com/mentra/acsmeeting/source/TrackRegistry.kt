@@ -4,7 +4,9 @@ package com.mentra.acsmeeting.source
  * Dedupe WebRTC track attachments by native track id.
  * Three observer callbacks can deliver distinct Java wrappers of one track;
  * object identity cannot be used. [reset] is load-bearing: [CloudflareWhepSource.start]
- * calls stop first, and a stale claim set makes reconnect never attach a sink.
+ * calls stop first, and a stale claim set makes reconnect never attach a sink. SoftAP
+ * WHIP renegotiate reuses the same track id (`video0`); without a reset the new peer
+ * decodes frames that never reach the ACS sink.
  */
 class TrackRegistry {
   private val ids = mutableSetOf<String>()

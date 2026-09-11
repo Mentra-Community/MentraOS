@@ -1,6 +1,7 @@
 package com.mentra.acsmeeting
 
 import android.content.Context
+import android.os.SystemClock
 import android.util.Base64
 import android.util.Log
 import com.azure.android.communication.calling.AudioStreamBufferDuration
@@ -79,6 +80,7 @@ import com.mentra.acsmeeting.source.VideoSourceArm
 import com.mentra.acsmeeting.telemetry.AvSyncProbe
 import com.mentra.acsmeeting.telemetry.PipelineStats
 import com.mentra.acsmeeting.telemetry.PipelineTicker
+import com.mentra.acsmeeting.trace.SoftApTrace
 import com.mentra.acsmeeting.video.AcsFrameSender
 import com.mentra.acsmeeting.video.VideoProfile
 import java.util.concurrent.CountDownLatch
@@ -110,6 +112,17 @@ class AcsMeetingSession(
     Log.i(TAG, it)
   }
   private val executor: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor()
+
+  /**
+   * How long a task sat on [executor] before it started running.
+   *
+   * Everything here is serialized onto one thread, so a `join` that appears to take 40 s may have
+   * spent 38 of them queued behind the previous call's `leaveLocked`. Without this there is no way
+   * to tell that apart from a slow ACS, and the two have opposite fixes.
+   */
+  private fun traceQueued(stage: String, submittedAt: Long, vararg fields: Pair<String, Any?>) {
+    SoftApTrace.stage(stage, *fields, "queuedMs" to (SystemClock.elapsedRealtime() - submittedAt))
+  }
   private val scheduler = ExecutorPolicyScheduler(executor)
   private val outgoingReady = AtomicBoolean(false)
   private val muted = AtomicBoolean(false)
@@ -213,7 +226,7 @@ class AcsMeetingSession(
    * with no timeout of its own: on device it stalled for 30 s while cellular was still validating,
    * and a cancelled join that later succeeds would otherwise leave a live agent nobody owns.
    */
-  @Volatile private var joinGeneration = 0
+  private val joinGeneration = AtomicInteger(0)
   /**
    * `createCallAgent` Future we stopped waiting on. ACS still finishes signing in; this is the only
    * handle that can dispose that leftover agent before the next join.
@@ -269,10 +282,13 @@ class AcsMeetingSession(
     val error = AtomicReference<Exception?>(null)
     phase = "connecting"
     lastError = null
+    val submittedAt = SystemClock.elapsedRealtime()
     executor.execute {
+      traceQueued("session_prepare_agent_begin", submittedAt)
+      val startedAt = SystemClock.elapsedRealtime()
       try {
         leaveLocked(emitIdle = false)
-        val generation = joinGeneration
+        val generation = joinGeneration.get()
         lastError = null
         emit("connecting")
         val credential = CommunicationTokenCredential(token)
@@ -282,10 +298,19 @@ class AcsMeetingSession(
         callAgent = obtainCallAgent(callClient!!, credential, agentOptions, generation, PREPARE_AGENT_WAIT_MS)
         agentPrepared = true
         Log.i(TAG, "ACS call agent prepared before SoftAP")
+        SoftApTrace.stage(
+          "session_prepare_agent_end",
+          "durationMs" to (SystemClock.elapsedRealtime() - startedAt),
+        )
       } catch (failed: Exception) {
         agentPrepared = false
         lastError = formatAcsError(failed)
         Log.e(TAG, "prepare agent failed $lastError", failed)
+        SoftApTrace.failure(
+          "session_prepare_agent_failed",
+          "durationMs" to (SystemClock.elapsedRealtime() - startedAt),
+          "reason" to lastError,
+        )
         leaveLocked(emitIdle = false)
         emit("error")
         error.set(failed)
@@ -294,6 +319,10 @@ class AcsMeetingSession(
       }
     }
     if (!done.await(PREPARE_AGENT_WAIT_MS + ABANDONED_AGENT_REJOIN_WAIT_MS + 5_000L, TimeUnit.MILLISECONDS)) {
+      SoftApTrace.failure(
+        "session_prepare_agent_stuck",
+        "waitedMs" to (SystemClock.elapsedRealtime() - submittedAt),
+      )
       throw IllegalStateException(
         "ACS_AGENT_TIMEOUT: Teams did not finish signing this phone in within " +
           "${PREPARE_AGENT_WAIT_MS / 1000}s.",
@@ -337,7 +366,10 @@ class AcsMeetingSession(
     // network down if it is missing. ACS join itself stays on the executor.
     val softApReady = if (videoSource is MeetingVideoSourceSpec.SoftAp) CountDownLatch(1) else null
     val softApBindError = AtomicReference<Exception?>(null)
+    val submittedAt = SystemClock.elapsedRealtime()
     executor.execute {
+      traceQueued("session_join_begin", submittedAt, "transport" to videoSource.kind)
+      val startedAt = SystemClock.elapsedRealtime()
       try {
         // Tear down any previous call without announcing idle: the caller already
         // holds a "connecting" snapshot, and an idle event landing after it made
@@ -348,7 +380,7 @@ class AcsMeetingSession(
         leaveLocked(emitIdle = false, keepAgent = reuseAgent)
         // After the teardown, because that teardown bumps the generation itself. Everything that
         // moves it runs on this executor, so the value is stable for the rest of this join.
-        val generation = joinGeneration
+        val generation = joinGeneration.get()
         val requested = video
         this.profile = when (AcsInvestigation.outgoingRate) {
           OutgoingRateArm.CLAMP_TO_SOFTWARE_CEILING -> requested.forSoftwareEncoder()
@@ -596,10 +628,25 @@ class AcsMeetingSession(
             "source=${this.audioSource} audio=${if (synthetic) "off" else "on"} " +
             "armVirtual=${plan.armVirtual} transportMuted=${plan.transportMuted}",
         )
+        SoftApTrace.stage(
+          "session_join_end",
+          "durationMs" to (SystemClock.elapsedRealtime() - startedAt),
+          "reusedAgent" to reuseAgent,
+          "ingestUrl" to (media.ingestUrl ?: "none"),
+        )
+        if (generation != joinGeneration.get()) {
+          throw IllegalStateException("The meeting was cancelled before it finished joining")
+        }
         softApReady?.countDown()
       } catch (error: Exception) {
         val message = formatAcsError(error)
         Log.e(TAG, "join failed $message", error)
+        SoftApTrace.failure(
+          "session_join_failed",
+          "durationMs" to (SystemClock.elapsedRealtime() - startedAt),
+          "reason" to message,
+          "ingestUrl" to (media.ingestUrl ?: "none"),
+        )
         // A step after a successful ACS join (e.g. WHEP start) can throw. Record
         // the failure before tearing the call down: lastError makes pushCallState
         // ignore the hang-up's async disconnected callbacks, and emitIdle=false
@@ -622,6 +669,13 @@ class AcsMeetingSession(
     }
     if (softApReady != null) {
       if (!softApReady.await(SOFTAP_JOIN_WAIT_MS, TimeUnit.MILLISECONDS)) {
+        // The executor never got far enough to bind the listener. It is still running, so this
+        // failure leaves work in flight that the next join's barrier has to wait out.
+        SoftApTrace.failure(
+          "session_join_bind_timeout",
+          "waitedMs" to (SystemClock.elapsedRealtime() - submittedAt),
+          "timeoutMs" to SOFTAP_JOIN_WAIT_MS,
+        )
         throw IllegalStateException("SoftAP ingest listener did not bind in ${SOFTAP_JOIN_WAIT_MS}ms")
       }
       softApBindError.get()?.let { throw it }
@@ -759,7 +813,17 @@ class AcsMeetingSession(
   }
 
   fun leave() {
-    executor.execute { leaveLocked() }
+    val submittedAt = SystemClock.elapsedRealtime()
+    // Invalidate before queueing: leaveLocked cannot run until the executor finishes the current
+    // join/hang-up, and without this bump a Cancel sits behind an unbounded ACS Future.
+    joinGeneration.incrementAndGet()
+    // Queued and unwaited, so the only evidence this leave ever ran is the line the task logs
+    // when it starts. A `leave` with no matching begin means the executor never reached it.
+    SoftApTrace.stage("session_leave_queued")
+    executor.execute {
+      traceQueued("session_leave_begin", submittedAt)
+      leaveLocked()
+    }
   }
 
   /**
@@ -779,16 +843,37 @@ class AcsMeetingSession(
   fun leaveAndAwait(timeoutMs: Long): Boolean {
     val done = CountDownLatch(1)
     val failure = AtomicReference<Exception?>(null)
+    val submittedAt = SystemClock.elapsedRealtime()
+    joinGeneration.incrementAndGet()
     executor.execute {
+      traceQueued("session_leave_and_await_begin", submittedAt)
+      val startedAt = SystemClock.elapsedRealtime()
       try {
         leaveLocked(failures = failure)
+        SoftApTrace.stage(
+          "session_leave_and_await_end",
+          "durationMs" to (SystemClock.elapsedRealtime() - startedAt),
+          // Recorded rather than only logged: this is the one the host rethrows and turns into a
+          // refusal for the next call.
+          "recordedFailure" to (failure.get()?.let { "${it.javaClass.simpleName}: ${it.message ?: ""}" } ?: "none"),
+        )
       } catch (error: Exception) {
+        SoftApTrace.failure(
+          "session_leave_and_await_failed",
+          "durationMs" to (SystemClock.elapsedRealtime() - startedAt),
+          "reason" to "${error.javaClass.simpleName}: ${error.message ?: ""}",
+        )
         failure.compareAndSet(null, error)
       } finally {
         done.countDown()
       }
     }
-    if (!done.await(timeoutMs, TimeUnit.MILLISECONDS)) throw IllegalStateException("acs_leave_timeout")
+    if (!done.await(timeoutMs, TimeUnit.MILLISECONDS)) {
+      // The cleanup is still running. Nothing is abandoned and nothing is safe to restart yet,
+      // which is why this is reported rather than treated as a finished teardown.
+      SoftApTrace.failure("session_leave_and_await_timeout", "timeoutMs" to timeoutMs)
+      throw IllegalStateException("acs_leave_timeout")
+    }
     failure.get()?.let { throw it }
     return true
   }
@@ -809,7 +894,10 @@ class AcsMeetingSession(
   fun endForEveryone(): Map<String, Any> {
     val done = CountDownLatch(1)
     val failure = AtomicReference<Exception?>(null)
+    val submittedAt = SystemClock.elapsedRealtime()
     executor.execute {
+      traceQueued("session_end_for_everyone_begin", submittedAt)
+      val startedAt = SystemClock.elapsedRealtime()
       try {
         val active = call ?: throw IllegalStateException("no_active_call")
         // Re-read rather than trusting the cached value: capabilities arrive asynchronously and the
@@ -819,14 +907,26 @@ class AcsMeetingSession(
         Log.i(TAG, "end for everyone: hangUp(forEveryone=true) allowed=${capability.allowed}")
         active.hangUp(HangUpOptions().setForEveryone(true)).get()
         Log.i(TAG, "end for everyone: ACS accepted the hang-up")
+        SoftApTrace.stage(
+          "session_end_for_everyone_end",
+          "durationMs" to (SystemClock.elapsedRealtime() - startedAt),
+        )
       } catch (error: Exception) {
         Log.w(TAG, "end for everyone failed", error)
+        SoftApTrace.failure(
+          "session_end_for_everyone_failed",
+          "durationMs" to (SystemClock.elapsedRealtime() - startedAt),
+          "reason" to "${error.javaClass.simpleName}: ${error.message ?: ""}",
+        )
         failure.set(error)
       } finally {
         done.countDown()
       }
     }
     val settled = done.await(END_FOR_EVERYONE_WAIT_MS, TimeUnit.MILLISECONDS)
+    if (!settled) {
+      SoftApTrace.failure("session_end_for_everyone_timeout", "timeoutMs" to END_FOR_EVERYONE_WAIT_MS)
+    }
     // Queued unconditionally, and after the await so it cannot dispose the agent out from under the
     // hang-up. A timed-out End still leaves this device.
     executor.execute { leaveLocked() }
@@ -1247,12 +1347,21 @@ class AcsMeetingSession(
     generation: Int,
     waitMs: Long,
   ): CallAgent {
+    val startedAt = SystemClock.elapsedRealtime()
+    SoftApTrace.stage("session_call_agent_wait", "waitMs" to waitMs, "generation" to generation)
     val pending = client.createCallAgent(context, credential, options)
     val agent = try {
       pending.get(waitMs, TimeUnit.MILLISECONDS)
     } catch (timeout: TimeoutException) {
       abandonedAgent = pending
       sweepLateAgent(pending, 0)
+      // The sign-in is still running and still owns the identity. Named here because the next
+      // join's "identity already exists" failure is otherwise the first sign of this one.
+      SoftApTrace.failure(
+        "session_call_agent_abandoned",
+        "waitedMs" to (SystemClock.elapsedRealtime() - startedAt),
+        "waitMs" to waitMs,
+      )
       throw IllegalStateException(
         "ACS_AGENT_TIMEOUT: Teams did not finish signing this phone in within " +
           "${waitMs / 1000}s. This step needs the internet, so it usually means mobile " +
@@ -1260,12 +1369,19 @@ class AcsMeetingSession(
         timeout,
       )
     }
-    // Belt and braces. Generation only moves on this executor, so a leave cannot land while we are
-    // blocked above — but that is an invariant of the current threading, not of this function.
-    if (generation != joinGeneration) {
+    // Leave now bumps generation off this executor, so a Cancel during `createCallAgent` can
+    // land while we are blocked above. That is the case this check exists for.
+    if (generation != joinGeneration.get()) {
       runCatching { agent.dispose() }
+      SoftApTrace.failure(
+        "session_call_agent_stale",
+        "waitedMs" to (SystemClock.elapsedRealtime() - startedAt),
+        "generation" to generation,
+        "current" to joinGeneration.get(),
+      )
       throw IllegalStateException("ACS_AGENT_STALE: the call was torn down before Teams signed in")
     }
+    SoftApTrace.stage("session_call_agent_ready", "waitedMs" to (SystemClock.elapsedRealtime() - startedAt))
     return agent
   }
 
@@ -1279,6 +1395,9 @@ class AcsMeetingSession(
   private fun sweepLateAgent(pending: Future<CallAgent>, sweep: Int) {
     if (sweep >= LATE_AGENT_SWEEPS) {
       Log.w(TAG, "abandoned call agent never completed; stopping sweep")
+      // Giving up on the sweep is giving up on disposing that agent. It is a bounded leak by
+      // design, but it is a leak, and the next sign-in is where it will be felt.
+      SoftApTrace.failure("session_late_agent_abandoned", "sweeps" to sweep)
       return
     }
     executor.schedule({
@@ -1290,6 +1409,7 @@ class AcsMeetingSession(
       }
       abandonedAgent = null
       Log.w(TAG, "disposing call agent that arrived after its join was abandoned")
+      SoftApTrace.stage("session_late_agent_disposed", "sweep" to sweep)
       runCatching { late.dispose() }
     }, LATE_AGENT_SWEEP_MS, TimeUnit.MILLISECONDS)
   }
@@ -1302,13 +1422,25 @@ class AcsMeetingSession(
    */
   private fun disposeAbandonedAgent(waitMs: Long) {
     val pending = abandonedAgent ?: return
+    val startedAt = SystemClock.elapsedRealtime()
     val late = AbandonedCallAgent.take(pending, waitMs)
     if (late != null) {
       abandonedAgent = null
       Log.w(TAG, "disposing abandoned call agent before the next join")
+      SoftApTrace.stage(
+        "session_abandoned_agent_disposed",
+        "waitedMs" to (SystemClock.elapsedRealtime() - startedAt),
+      )
       runCatching { late.dispose() }
       return
     }
+    // Still not finished. The identity stays taken, so the `createCallAgent` about to run may be
+    // refused — which is the retry [obtainCallAgent] exists for, not an unexplained join failure.
+    SoftApTrace.failure(
+      "session_abandoned_agent_unclaimed",
+      "waitedMs" to (SystemClock.elapsedRealtime() - startedAt),
+      "done" to pending.isDone,
+    )
     if (pending.isDone) abandonedAgent = null
   }
 
@@ -1323,13 +1455,27 @@ class AcsMeetingSession(
   ) {
     // Invalidate first: a bounded ACS operation still in flight has to find a stale generation
     // rather than attach an agent to a session that is being torn down.
-    joinGeneration++
+    joinGeneration.incrementAndGet()
+    val startedAt = SystemClock.elapsedRealtime()
+    SoftApTrace.stage(
+      "session_cleanup_begin",
+      "emitIdle" to emitIdle,
+      "keepAgent" to keepAgent,
+      "hasCall" to (call != null),
+      "hasAgent" to (callAgent != null),
+      "recordsFailures" to (failures != null),
+    )
+    // A dozen releases share one `try`, so the catch below cannot name the one that threw — and
+    // the first throw skips every release after it. The breadcrumb is what turns "leave cleanup
+    // failed" into a location; it is coarse on purpose, one name per group of related releases.
+    var releasing = "telemetry"
     try {
       ticker.stop()
       detachDiagnostics()
       detachMediaStats()
       detachCapabilities()
       roster.detach()
+      releasing = "audio"
       phoneMic.setEnabled(false)
       stopUplink()
       incomingPump.reset()
@@ -1344,29 +1490,79 @@ class AcsMeetingSession(
       pcmBridge?.finishDump()
       // Detach before stop so the teardown's own IDLE transition does not emit a
       // snapshot (or schedule a rebuild) for a call that is going away.
+      releasing = "media"
       cancelMediaRestart()
       media.setStateListener(null)
       mediaSource = SourceState.IDLE
       currentSourceKind = SourceKind.WHEP
       media.stop()
       frameSender.detach()
+      releasing = "none"
     } catch (error: Exception) {
       Log.w(TAG, "leave cleanup failed", error)
+      // Whether this was recorded decides whether the host refuses the next call or never hears
+      // about it, so the trace says which of the two happened.
+      SoftApTrace.failure(
+        "session_cleanup_failed",
+        "releasing" to releasing,
+        "reason" to "${error.javaClass.simpleName}: ${error.message ?: ""}",
+        "recorded" to (failures != null),
+      )
       failures?.compareAndSet(null, error)
     }
     // Hang up and dispose must be independent: a failed hang-up must not skip
     // dispose, or the ACS agent leaks and the guest stays in the Teams roster.
     if (!keepAgent) {
+      val hangUpStartedAt = SystemClock.elapsedRealtime()
       try {
-        call?.hangUp()?.get()
+        val pending = call?.hangUp()
+        if (pending != null) {
+          // Bounded on purpose: an unbounded `get()` on this Future is what parked Leave behind
+          // the previous call on the single session executor, so Cancel never came back.
+          pending.get(HANGUP_WAIT_MS, TimeUnit.MILLISECONDS)
+        }
+        SoftApTrace.stage(
+          "session_hangup",
+          "hadCall" to (call != null),
+          "durationMs" to (SystemClock.elapsedRealtime() - hangUpStartedAt),
+        )
+      } catch (timeout: TimeoutException) {
+        Log.w(TAG, "leave hangUp timed out after ${HANGUP_WAIT_MS}ms")
+        SoftApTrace.failure(
+          "session_hangup_timeout",
+          "durationMs" to (SystemClock.elapsedRealtime() - hangUpStartedAt),
+          "timeoutMs" to HANGUP_WAIT_MS,
+          "recorded" to (failures != null),
+        )
+        failures?.compareAndSet(null, IllegalStateException("acs_hangup_timeout"))
       } catch (error: Exception) {
         Log.w(TAG, "leave hangUp failed", error)
+        SoftApTrace.failure(
+          "session_hangup_failed",
+          "durationMs" to (SystemClock.elapsedRealtime() - hangUpStartedAt),
+          "reason" to "${error.javaClass.simpleName}: ${error.message ?: ""}",
+          "recorded" to (failures != null),
+        )
         failures?.compareAndSet(null, error)
       }
+      val disposeStartedAt = SystemClock.elapsedRealtime()
       try {
         callAgent?.dispose()
+        SoftApTrace.stage(
+          "session_agent_disposed",
+          "hadAgent" to (callAgent != null),
+          "durationMs" to (SystemClock.elapsedRealtime() - disposeStartedAt),
+        )
       } catch (error: Exception) {
         Log.w(TAG, "leave dispose failed", error)
+        // A leaked agent keeps the identity ACS refuses to share, so the next sign-in fails with
+        // "CallAgent associated with this identity already exists" rather than here.
+        SoftApTrace.failure(
+          "session_agent_dispose_failed",
+          "durationMs" to (SystemClock.elapsedRealtime() - disposeStartedAt),
+          "reason" to "${error.javaClass.simpleName}: ${error.message ?: ""}",
+          "recorded" to (failures != null),
+        )
         failures?.compareAndSet(null, error)
       }
       disposeAbandonedAgent(waitMs = 0)
@@ -1393,6 +1589,12 @@ class AcsMeetingSession(
       lastError = null
       emit("idle")
     }
+    SoftApTrace.stage(
+      "session_cleanup_end",
+      "durationMs" to (SystemClock.elapsedRealtime() - startedAt),
+      "keptAgent" to keepAgent,
+      "recordedFailure" to (failures?.get()?.let { "${it.javaClass.simpleName}: ${it.message ?: ""}" } ?: "none"),
+    )
   }
 
   private inner class SessionAudioController : AudioStreamController {
@@ -1449,6 +1651,15 @@ class AcsMeetingSession(
      * How long End waits for ACS to accept the hang-up before reporting it unconfirmed. Local
      * teardown runs either way; this only bounds how long the wearer stares at a confirm sheet.
      */
+    /**
+     * How long Leave waits for ACS `hangUp()` before disposing the agent anyway.
+     *
+     * This Future has no timeout of its own. On the single session executor an unbounded `get()`
+     * is the hang that made Cancel sit on "Leaving the meeting" while the next join queued behind
+     * the same stuck hang-up.
+     */
+    private const val HANGUP_WAIT_MS = 8_000L
+
     private const val END_FOR_EVERYONE_WAIT_MS = 15_000L
 
     /**

@@ -42,6 +42,11 @@ class WhipIngestServerLoopbackTest {
     /** Set to hold [negotiate] open, simulating a slow ICE gather. */
     @Volatile var block: CountDownLatch? = null
 
+    /** ICE already dead — a second POST should replace, not 409. */
+    @Volatile var failed = false
+
+    override fun publisherFailed(): Boolean = failed
+
     override fun negotiate(sessionId: String, offer: String): Result<String> {
       offers.add(sessionId to offer)
       entered.countDown()
@@ -190,6 +195,27 @@ class WhipIngestServerLoopbackTest {
     assertThat(negotiator.offers).hasSize(1)
     gate.countDown()
     publisher.join(5_000)
+  }
+
+  /**
+   * Glasses reconnect after `PeerConnection disconnected` POSTs again. If ingest ICE is already
+   * failed, 409 wedges the call: StreamManager never started on SoftAP, so nobody tears the slot
+   * down. Replace the dead publisher instead.
+   */
+  @Test
+  fun `a second offer replaces a dead publisher instead of 409`() {
+    val negotiator = StubNegotiator()
+    val endpoint = start(negotiator)
+
+    val first = request(endpoint.port, postOffer())
+    assertThat(first.statusLine).isEqualTo("HTTP/1.1 201 Created")
+
+    negotiator.failed = true
+    val retry = request(endpoint.port, postOffer())
+
+    assertThat(retry.statusLine).isEqualTo("HTTP/1.1 201 Created")
+    assertThat(negotiator.terminated).contains("sess-1")
+    assertThat(negotiator.offers).hasSize(2)
   }
 
   // -----------------------------------------------------------------

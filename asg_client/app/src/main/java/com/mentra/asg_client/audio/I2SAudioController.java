@@ -51,6 +51,14 @@ public class I2SAudioController {
     // Track if WE are actively controlling I2S (to prevent receiver feedback loop)
     private static volatile boolean isControllingI2S = false;
 
+    /**
+     * Firmware-reported playback we do not own — a music app, a system sound. It streams over the
+     * same MCU bridge as our cues, so a camera cue must neither re-announce {@code mh_starti2s}
+     * underneath it nor send {@code mh_stopi2s} when the cue ends. Either one cuts the stream
+     * mid-song, which is what made a burst of photos chop the music once per shot.
+     */
+    private static volatile boolean externalAudioPlaying = false;
+
     public I2SAudioController(Context context) {
         this.context = context.getApplicationContext();
     }
@@ -86,9 +94,13 @@ public class I2SAudioController {
         Log.i(TAG, "Playing I2S overlay asset: " + assetName);
         isControllingI2S = true;
 
-        long i2sRequestedAtMs = SystemClock.elapsedRealtime();
-        // Do not restart the bridge underneath a loading beep that is still finishing.
-        if (overlayPlayers.isEmpty() && mediaPlayer == null && !notifyI2SState(true, true)) {
+        // Do not restart the bridge underneath a loading beep that is still finishing, or
+        // underneath external audio that is already streaming through it.
+        boolean bridgeAlreadyOpen =
+                !overlayPlayers.isEmpty() || mediaPlayer != null || externalAudioPlaying;
+        // 0 records that we did not reopen the bridge, so no settle is owed before start().
+        long i2sRequestedAtMs = bridgeAlreadyOpen ? 0L : SystemClock.elapsedRealtime();
+        if (!bridgeAlreadyOpen && !notifyI2SState(true, true)) {
             Log.w(TAG, "Failed to start I2S path; skipping overlay playback");
             refreshControlFlag();
             return 0L;
@@ -388,6 +400,21 @@ public class I2SAudioController {
         return isControllingI2S;
     }
 
+    /**
+     * Records firmware-reported playback that this controller does not own, so camera cues leave
+     * the bridge alone while it streams. Call this only for broadcasts that are not ours —
+     * our own MediaPlayer also makes the firmware report playback, and treating that as external
+     * would leave the path open with nothing left to close it.
+     */
+    public static void setExternalAudioPlaying(boolean playing) {
+        externalAudioPlaying = playing;
+    }
+
+    /** Visible for tests: whether external audio currently holds the bridge open. */
+    static boolean isExternalAudioPlaying() {
+        return externalAudioPlaying;
+    }
+
     private void stopCurrentPlayer() {
         if (mediaPlayer != null) {
             MediaPlayer playerToStop = mediaPlayer;
@@ -428,14 +455,18 @@ public class I2SAudioController {
     }
 
     private void startPlayerAfterI2sSettle(MediaPlayer player, long i2sRequestedAtMs) {
-        long remaining = I2S_START_SETTLE_MS - (SystemClock.elapsedRealtime() - i2sRequestedAtMs);
-        if (remaining > 0L) {
-            try {
-                Thread.sleep(remaining);
-            } catch (InterruptedException e) {
-                Thread.currentThread().interrupt();
+        // 0 means the bridge was already open and armed, so there is no dead window to wait out.
+        if (i2sRequestedAtMs > 0L) {
+            long remaining =
+                    I2S_START_SETTLE_MS - (SystemClock.elapsedRealtime() - i2sRequestedAtMs);
+            if (remaining > 0L) {
+                try {
+                    Thread.sleep(remaining);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                }
+                Log.i(TAG, "[I2S-RATE] settled " + remaining + "ms before MediaPlayer.start");
             }
-            Log.i(TAG, "[I2S-RATE] settled " + remaining + "ms before MediaPlayer.start");
         }
         player.start();
     }
@@ -447,7 +478,9 @@ public class I2SAudioController {
     }
 
     private void closeI2SIfIdle() {
-        if (mediaPlayer == null && overlayPlayers.isEmpty()) {
+        // External audio owns its own close: the firmware's stop broadcast is forwarded straight
+        // to the service. Closing here would cut a song that is still playing.
+        if (mediaPlayer == null && overlayPlayers.isEmpty() && !externalAudioPlaying) {
             notifyI2SState(false);
         }
     }

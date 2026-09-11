@@ -14,6 +14,9 @@
  * wait is worth mentioning — the common restart clears in a microtask, and a status line that
  * flashed on every Start would teach the wearer to ignore the one time it mattered.
  */
+
+import {softapTrace} from "../utils/softapTrace"
+
 export interface CleanupBarrierOptions {
   /** Opens when the previous attempt's teardown *and* its in-flight join body have both finished. */
   settled: Promise<void>
@@ -24,6 +27,13 @@ export interface CleanupBarrierOptions {
   narrateAfterMs: number
   /** Injectable for tests; a real timer everywhere else. */
   delay?: (ms: number) => Promise<void>
+  /**
+   * Which attempt is being held, and which one it is held behind. Diagnostics only, and separate
+   * from the trace id because the barrier runs before the transport mints one: a restart that was
+   * delayed here is otherwise indistinguishable in the log from one that started slowly.
+   */
+  attempt?: number
+  waitingFor?: string
 }
 
 export const CLEANUP_BARRIER_COPY = "Still cleaning up the last call…"
@@ -35,16 +45,28 @@ export const CLEANUP_BARRIER_COPY = "Still cleaning up the last call…"
  * restart was held rather than instant.
  */
 export async function awaitCleanupBarrier(options: CleanupBarrierOptions): Promise<{narrated: boolean}> {
-  if (options.settledDone) return {narrated: false}
+  const trace = {attempt: options.attempt ?? "unknown", waitingFor: options.waitingFor ?? "unknown"}
+  if (options.settledDone) {
+    softapTrace("softap_cleanup_barrier_open", {...trace, waitedMs: 0, reason: "already settled"})
+    return {narrated: false}
+  }
+  const startedAt = Date.now()
+  // Logged on entry as well as on exit, because the interesting case is the one where the exit
+  // line never arrives: a wait that is still open is only visible as an entry with nothing after it.
+  softapTrace("softap_cleanup_barrier_wait", trace)
   const delay = options.delay ?? ((ms: number) => new Promise<void>((resolve) => setTimeout(resolve, ms)))
   const promptly = await Promise.race([
     options.settled.then(() => true),
     delay(options.narrateAfterMs).then(() => false),
   ])
-  if (promptly) return {narrated: false}
+  if (promptly) {
+    softapTrace("softap_cleanup_barrier_open", {...trace, waitedMs: Date.now() - startedAt, narrated: false})
+    return {narrated: false}
+  }
   options.narrate(CLEANUP_BARRIER_COPY)
   // The race decided what to say. It does not decide whether to proceed: that is this line, and
   // it has no escape.
   await options.settled
+  softapTrace("softap_cleanup_barrier_open", {...trace, waitedMs: Date.now() - startedAt, narrated: true})
   return {narrated: true}
 }

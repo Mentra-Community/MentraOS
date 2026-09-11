@@ -4,6 +4,8 @@ import android.content.Context;
 import android.hardware.camera2.CameraAccessException;
 import android.hardware.camera2.CameraCharacteristics;
 import android.hardware.camera2.CameraManager;
+import android.os.Handler;
+import android.os.Looper;
 import android.os.SystemClock;
 import android.util.Log;
 import com.mentra.asg_client.io.hardware.core.HardwareManagerFactory;
@@ -51,7 +53,8 @@ public class StreamCommandHandler implements ICommandHandler {
         this.context = context;
         this.stateManager = stateManager;
         this.streamingManager = streamingManager;
-        this.mHotspotActivityTracker = new HotspotStreamActivityTracker(networkManager);
+        this.mHotspotActivityTracker =
+                new HotspotStreamActivityTracker(networkManager, new Handler(Looper.getMainLooper()));
     }
 
     @Override

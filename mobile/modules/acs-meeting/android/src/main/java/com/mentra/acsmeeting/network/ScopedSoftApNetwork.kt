@@ -636,6 +636,13 @@ class ScopedSoftApNetwork(private val context: Context) {
         const val WIFI_ENABLE_SETTLE_MS = 1_500L
 
         /**
+         * After `WifiNetworkSpecifier` returns Unavailable while leaving another AP (office Wi-Fi
+         * or a phone hotspot), Samsung has already dropped that network. A second specifier from
+         * an idle STA is the join that succeeds; this is the gap before we issue it.
+         */
+        const val UNAVAILABLE_RETRY_SETTLE_MS = 2_000L
+
+        /**
          * dnsmasq (DHCP/DNS) on the hotspot, then the glasses' local HTTP servers. Any answer —
          * accept or refuse — proves the path; only silence fails it.
          */

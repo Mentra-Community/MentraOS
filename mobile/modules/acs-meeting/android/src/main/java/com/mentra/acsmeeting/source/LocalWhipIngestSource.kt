@@ -180,11 +180,7 @@ class LocalWhipIngestSource(
     cancelFirstFrameDeadline()
     cancelSelectedPairProof()
     firstFrame.reset()
-    runCatching { attachedVideo?.removeSink(relay.videoSink) }
-    attachedVideo = null
-    videoIds.reset()
-    audioIds.reset()
-    audioTracks.clear()
+    detachTracks()
     relay.resetRotationLog()
     // Bump before disposing so in-flight observer callbacks see a stale generation rather than
     // the IDLE we are about to publish.
@@ -238,6 +234,14 @@ class LocalWhipIngestSource(
           "hostCandidates" to verdict.hostCandidates.size,
         )
       }
+    }
+
+    // A glasses WHIP reconnect POSTs a new offer on the same listener. The previous peer's
+    // `video0` claim must not survive: that is the 17:48:28 miss where ICE came back, the
+    // decoder produced frames, and the ACS sink never saw one.
+    detachTracks()
+    if (state == SourceState.FAILED || state == SourceState.LIVE) {
+      transition(SourceState.CONNECTING, "renegotiate")
     }
 
     val gathered = CountDownLatch(1)
@@ -376,13 +380,33 @@ class LocalWhipIngestSource(
     return Result.success(local)
   }
 
+  override fun publisherFailed(): Boolean = state == SourceState.FAILED
+
   override fun terminate(sessionId: String) {
     SoftApTrace.stage("ingest_session_terminated", "session" to sessionId)
     generation++
     cancelFirstFrameDeadline()
     cancelSelectedPairProof()
+    detachTracks()
     disposePeer()
     if (state != SourceState.IDLE) transition(SourceState.FAILED, "publisher_terminated")
+  }
+
+  /**
+   * Drop sink attachments and id claims so the next peer can attach `video0` again.
+   *
+   * Glasses WHIP reconnect keeps the same track ids. [TrackRegistry.claim] then returns false,
+   * [attachVideo] skips `addSink`, WebRTC still decodes, and the first-frame gate expires.
+   */
+  private fun detachTracks() {
+    runCatching { attachedVideo?.removeSink(relay.videoSink) }
+    attachedVideo = null
+    for (track in audioTracks) {
+      runCatching { track.removeSink(relay.audioSink) }
+    }
+    audioTracks.clear()
+    videoIds.reset()
+    audioIds.reset()
   }
 
   private fun negotiationFailed(sessionId: String, reason: String): Result<String> {
@@ -474,8 +498,18 @@ class LocalWhipIngestSource(
         state == PeerConnection.IceConnectionState.DISCONNECTED
       ) {
         transition(SourceState.FAILED, "ice_${state.name.lowercase()}")
+      } else if (state == PeerConnection.IceConnectionState.CONNECTED ||
+        state == PeerConnection.IceConnectionState.COMPLETED
+      ) {
+        // Same bounce WHEP already handles: consent freshness can DISCONNECTED → CONNECTED
+        // without a new offer. Stay FAILED and the UI never leaves Reconnecting even after
+        // media is flowing again.
+        if (this@LocalWhipIngestSource.state == SourceState.FAILED) {
+          transition(SourceState.CONNECTING, "ice_recovered")
+          armFirstFrame(gen)
+        }
+        armSelectedPairProof(gen)
       }
-      if (state == PeerConnection.IceConnectionState.CONNECTED) armSelectedPairProof(gen)
     }
 
     override fun onIceConnectionReceivingChange(receiving: Boolean) = Unit

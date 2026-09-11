@@ -12,7 +12,7 @@ import audioPlaybackService from "./AudioPlaybackService"
 import micStateCoordinator from "./MicStateCoordinator"
 import {SETTINGS, useSettingsStore} from "../stores/settings"
 import {Pcm16LevelMeter} from "../utils/pcm16"
-import {softapTraceId} from "../utils/softapTrace"
+import {softapTrace, softapTraceFailure, softapTraceId} from "../utils/softapTrace"
 import {ACS_CALL_MIC, type AcsAudioSource, type ResolvedAudioSource, type SourceReason} from "./acsAudioSource"
 import type {SoftapProgress} from "./SoftapCallTransport"
 
@@ -682,15 +682,34 @@ class AcsMeetingService {
    * @param timeoutMs how long to wait before treating the silence as a failure
    */
   waitForFirstFrame(timeoutMs: number): Promise<void> {
-    if (this.lastState.mediaSource === "live") return Promise.resolve()
+    if (this.lastState.mediaSource === "live") {
+      softapTrace("acs_first_frame_already_live", {mediaSource: this.lastState.mediaSource})
+      return Promise.resolve()
+    }
+    const startedAt = Date.now()
+    softapTrace("acs_first_frame_wait", {
+      timeoutMs,
+      mediaSource: this.lastState.mediaSource ?? "unknown",
+      state: this.lastState.state,
+    })
     return new Promise<void>((resolve, reject) => {
       const settle = (error?: Error) => {
         if (done) return
         done = true
         clearTimeout(timer)
         this.firstFrameWaiters.delete(settle)
-        if (error) reject(error)
-        else resolve()
+        // The step this closes is the one that decides whether the call is usable, so its outcome
+        // is named rather than inferred from whichever line happens to follow.
+        if (error) {
+          softapTraceFailure("acs_first_frame_wait_done", {
+            waitedMs: Date.now() - startedAt,
+            reason: error.message,
+          })
+          reject(error)
+        } else {
+          softapTrace("acs_first_frame_wait_done", {waitedMs: Date.now() - startedAt})
+          resolve()
+        }
       }
       let done = false
       const timer = setTimeout(
@@ -716,10 +735,27 @@ class AcsMeetingService {
    */
   async prepareAgent(args: {token: string; displayName?: string}): Promise<void> {
     const native = getNative()
-    if (!native?.prepareAgent) return
+    if (!native?.prepareAgent) {
+      // A host that cannot pre-sign-in still joins; it just does the sign-in inside the SoftAP
+      // join, which is the 20-second ACS_AGENT_TIMEOUT this step exists to avoid. Worth a line,
+      // because from the trace alone that build looks like one whose sign-in was instant.
+      softapTrace("acs_prepare_agent_skipped", {reason: native ? "unsupported build" : "no native module"})
+      return
+    }
     console.log("[AcsMeeting] phase=prepare-agent")
-    await native.prepareAgent({token: args.token, displayName: args.displayName})
+    const startedAt = Date.now()
+    softapTrace("acs_native_prepare_agent", {hasDisplayName: Boolean(args.displayName)})
+    try {
+      await native.prepareAgent({token: args.token, displayName: args.displayName})
+    } catch (error) {
+      softapTraceFailure("acs_native_prepare_agent_failed", {
+        durationMs: Date.now() - startedAt,
+        reason: error instanceof Error ? error.message : String(error),
+      })
+      throw error
+    }
     console.log("[AcsMeeting] phase=prepare-agent-ok")
+    softapTrace("acs_native_prepare_agent_ok", {durationMs: Date.now() - startedAt})
   }
 
   async join(
@@ -769,6 +805,16 @@ class AcsMeetingService {
       micTransport: this.micTransport,
       preferredMic: useSettingsStore.getState().getSetting(SETTINGS.preferred_mic.key),
     })
+    const joinStartedAt = Date.now()
+    softapTrace("acs_native_join", {
+      packageName,
+      generation,
+      transport: args.videoSource.type,
+      audioSource: resolved.source,
+      micTransport: this.micTransport,
+      audioDelayMs: lc3Uplink ? SOFTAP_LC3_AUDIO_DELAY_MS : 0,
+      video: video ? `${video.width}x${video.height}@${video.fps}` : "default",
+    })
     try {
       const state = await native.join({
         meetingUrl: args.meetingUrl,
@@ -780,12 +826,29 @@ class AcsMeetingService {
         ...(lc3Uplink ? {audioDelayMs: SOFTAP_LC3_AUDIO_DELAY_MS} : {}),
         ...(video ? {video} : {}),
       })
+      softapTrace("acs_native_join_returned", {
+        packageName,
+        generation,
+        state: state.state,
+        hasIngestUrl: typeof state.ingestUrl === "string" && state.ingestUrl.length > 0,
+        durationMs: Date.now() - joinStartedAt,
+      })
       if (generation !== this.callGeneration) {
         // The wearer left while ACS was still joining. Nothing above knows about this call, so
         // hanging it up here is the only thing that takes the device out of the Teams roster.
         console.warn("[AcsMeeting] phase=join-cancelled", {packageName, generation})
+        softapTraceFailure("acs_native_join_cancelled", {
+          packageName,
+          generation,
+          current: this.callGeneration,
+          durationMs: Date.now() - joinStartedAt,
+        })
         await native.leave().catch((leaveError) => {
           console.warn("[AcsMeeting] native leave after a cancelled join failed", leaveError)
+          softapTraceFailure("acs_native_leave_after_cancelled_join_failed", {
+            packageName,
+            reason: leaveError instanceof Error ? leaveError.message : String(leaveError),
+          })
         })
         throw new Error("The meeting was cancelled before it finished joining")
       }
@@ -806,8 +869,18 @@ class AcsMeetingService {
         packageName,
         error: error instanceof Error ? error.message : String(error),
       })
+      softapTraceFailure("acs_native_join_failed", {
+        packageName,
+        generation,
+        durationMs: Date.now() - joinStartedAt,
+        reason: error instanceof Error ? error.message : String(error),
+      })
       await native.leave().catch((leaveError) => {
         console.warn("[AcsMeeting] native leave after failed join also failed", leaveError)
+        softapTraceFailure("acs_native_leave_after_failed_join_failed", {
+          packageName,
+          reason: leaveError instanceof Error ? leaveError.message : String(leaveError),
+        })
       })
       await this.releaseHostState()
       throw error
@@ -828,10 +901,25 @@ class AcsMeetingService {
   }
 
   async leave(packageName: string): Promise<void> {
-    if (this.owner && this.owner !== packageName) return
+    if (this.owner && this.owner !== packageName) {
+      // Not the owner, so this is a no-op rather than a leave. Said out loud because a miniapp
+      // that thinks it left and a host that never hung up look identical from the miniapp's side.
+      softapTrace("acs_native_leave_ignored", {packageName, owner: this.owner})
+      return
+    }
     const native = getNative()
+    const startedAt = Date.now()
+    softapTrace("acs_native_leave", {packageName, nativeLoaded: Boolean(native)})
     try {
       await native?.leave()
+      softapTrace("acs_native_leave_ok", {packageName, durationMs: Date.now() - startedAt})
+    } catch (error) {
+      softapTraceFailure("acs_native_leave_failed", {
+        packageName,
+        durationMs: Date.now() - startedAt,
+        reason: error instanceof Error ? error.message : String(error),
+      })
+      throw error
     } finally {
       await this.releaseHostState()
     }
@@ -850,15 +938,38 @@ class AcsMeetingService {
    * @param timeoutMs how long native may take before it reports the cleanup as stuck
    */
   async leaveAndAwait(packageName: string, timeoutMs = ACS_LEAVE_WAIT_MS): Promise<{completed: boolean; reason?: string}> {
-    if (this.owner && this.owner !== packageName) return {completed: true}
+    if (this.owner && this.owner !== packageName) {
+      softapTrace("acs_native_leave_and_await_ignored", {packageName, owner: this.owner})
+      return {completed: true}
+    }
     const native = getNative()
     if (!native?.leaveAndAwait) {
+      // The fallback is the case the cleanup barrier was built for: this build's leave returns
+      // before its own teardown has finished, so nothing downstream can treat "left" as "idle".
+      softapTraceFailure("acs_native_leave_and_await_unsupported", {
+        packageName,
+        nativeLoaded: Boolean(native),
+      })
       await this.leave(packageName)
       return {completed: false, reason: "unsupported"}
     }
+    const startedAt = Date.now()
+    softapTrace("acs_native_leave_and_await", {packageName, timeoutMs})
     try {
       const outcome = await native.leaveAndAwait({timeoutMs})
+      softapTrace("acs_native_leave_and_await_ok", {
+        packageName,
+        completed: outcome?.completed !== false,
+        durationMs: Date.now() - startedAt,
+      })
       return {completed: outcome?.completed !== false}
+    } catch (error) {
+      softapTraceFailure("acs_native_leave_and_await_failed", {
+        packageName,
+        durationMs: Date.now() - startedAt,
+        reason: error instanceof Error ? error.message : String(error),
+      })
+      throw error
     } finally {
       await this.releaseHostState()
     }
@@ -878,12 +989,25 @@ class AcsMeetingService {
     }
     const native = getNative()
     if (!native?.endForEveryone) {
+      softapTraceFailure("acs_native_end_unsupported", {packageName, nativeLoaded: Boolean(native)})
       throw new Error("Update the Mentra App to end a meeting for everyone")
     }
+    const startedAt = Date.now()
+    softapTrace("acs_native_end", {packageName})
     try {
       const state = await native.endForEveryone()
       console.log("[AcsMeeting] phase=end-for-everyone-ok", {state: state.state})
+      softapTrace("acs_native_end_ok", {packageName, state: state.state, durationMs: Date.now() - startedAt})
       return state
+    } catch (error) {
+      // The meeting may still be live for the others; this device is out regardless. Logged as a
+      // failure of the claim, not of the teardown.
+      softapTraceFailure("acs_native_end_failed", {
+        packageName,
+        durationMs: Date.now() - startedAt,
+        reason: error instanceof Error ? error.message : String(error),
+      })
+      throw error
     } finally {
       await this.releaseHostState()
     }

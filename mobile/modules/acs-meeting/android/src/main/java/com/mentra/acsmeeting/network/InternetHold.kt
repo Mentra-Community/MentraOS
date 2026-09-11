@@ -2,11 +2,14 @@ package com.mentra.acsmeeting.network
 
 import android.content.Context
 import android.net.ConnectivityManager
+import android.net.LinkProperties
 import android.net.Network
 import android.net.NetworkCapabilities
 import android.net.NetworkRequest
+import android.net.wifi.WifiManager
 import android.os.SystemClock
 import com.mentra.acsmeeting.trace.SoftApTrace
+import java.net.Inet4Address
 import java.util.concurrent.CountDownLatch
 import java.util.concurrent.TimeUnit
 
@@ -40,13 +43,22 @@ import java.util.concurrent.TimeUnit
 class InternetHold(private val context: Context) {
 
     /** The app's default network as the framework currently reports it. */
-    data class DefaultNetwork(val transport: String, val validated: Boolean, val present: Boolean) {
-        /** Whether ACS can be expected to reach the internet over this. */
+    data class DefaultNetwork(
+        val transport: String,
+        val validated: Boolean,
+        val present: Boolean,
+        /** The leftover glasses AP from a SoftAP call — local only, no path to Teams. */
+        val glassesHotspot: Boolean = false,
+    ) {
+        /** Whether ACS (or the next `teams:create`) can be expected to reach the internet over this. */
         val usable: Boolean
-            get() = present && validated
+            get() = present && validated && !glassesHotspot
 
-        override fun toString(): String =
-            if (!present) "none" else "$transport${if (validated) " (validated)" else " (unvalidated)"}"
+        override fun toString(): String {
+            if (!present) return "none"
+            val state = if (validated) "validated" else "unvalidated"
+            return if (glassesHotspot) "$transport ($state, leftover-hotspot)" else "$transport ($state)"
+        }
     }
 
     /** Outcome of holding cellular up. [validated] is the only field worth branching on. */
@@ -65,9 +77,21 @@ class InternetHold(private val context: Context) {
      * that drops it.
      */
     fun awaitValidatedCellular(timeoutMs: Long = CELLULAR_WAIT_MS): CellularHold {
-        val manager = connectivityManager() ?: return CellularHold(false, false, 0)
+        val manager = connectivityManager()
+        if (manager == null) {
+            SoftApTrace.failure("cellular_hold_requested", "reason" to "no connectivity manager")
+            return CellularHold(false, false, 0)
+        }
         val validated = CountDownLatch(1)
         val startedAt = SystemClock.elapsedRealtime()
+        // Entry as well as outcome: this blocks for up to [timeoutMs] before anything else in the
+        // join happens, so a wearer's "nothing happened for fifteen seconds" needs a line here.
+        SoftApTrace.stage(
+            "cellular_hold_requested",
+            "timeoutMs" to timeoutMs,
+            "pinned" to synchronized(lock) { processPinned },
+            "default" to defaultNetwork().toString(),
+        )
 
         val watcher =
             object : ConnectivityManager.NetworkCallback() {
@@ -83,9 +107,15 @@ class InternetHold(private val context: Context) {
                             // Mobile data can return as a different Network. Retire the old pin
                             // without allowing a released callback to bind the next call.
                             if (callback === this && processPinned && pinnedNetwork != network) {
+                                val previous = pinnedNetwork?.toString() ?: "none"
                                 val ok = manager.bindProcessToNetwork(network)
                                 if (ok) pinnedNetwork = network
-                                SoftApTrace.stage("cellular_pin_refreshed", "ok" to ok)
+                                SoftApTrace.stage(
+                                    "cellular_pin_refreshed",
+                                    "ok" to ok,
+                                    "network" to network,
+                                    "replaced" to previous,
+                                )
                             }
                         }
                     }
@@ -98,7 +128,10 @@ class InternetHold(private val context: Context) {
                         // the entire app bound to a dead network in the meantime.
                         manager.bindProcessToNetwork(null)
                         pinnedNetwork = null
-                        SoftApTrace.stage("cellular_pin_lost")
+                        // The intent to pin survives, so this is not a leak — but the process is
+                        // unbound from here until cellular validates again, and that window is
+                        // where an unbound socket can land on the glasses AP.
+                        SoftApTrace.stage("cellular_pin_lost", "network" to network)
                     }
                 }
             }
@@ -112,7 +145,7 @@ class InternetHold(private val context: Context) {
         val held =
             runCatching {
                 synchronized(lock) {
-                    releaseLocked()
+                    releaseLocked(reason = "re-requesting cellular")
                     manager.requestNetwork(request, watcher)
                     callback = watcher
                 }
@@ -170,32 +203,59 @@ class InternetHold(private val context: Context) {
      * Anything that pins must unpin — via [unbindProcess], or via [release] on teardown.
      */
     fun bindProcessToCellular(): Boolean {
-        val manager = connectivityManager() ?: return false
+        val manager = connectivityManager()
+        if (manager == null) {
+            SoftApTrace.failure("process_pinned_to_cellular", "ok" to false, "reason" to "no connectivity manager")
+            return false
+        }
         val network = findValidatedCellular(manager)
         if (network == null) {
             SoftApTrace.failure("process_pinned_to_cellular", "ok" to false, "reason" to "no validated cellular")
             return false
         }
+        val alreadyPinned = synchronized(lock) { pinnedNetwork }
         val ok = runCatching { manager.bindProcessToNetwork(network) }.getOrDefault(false)
         if (ok) synchronized(lock) {
             processPinned = true
             pinnedNetwork = network
         }
-        SoftApTrace.stage("process_pinned_to_cellular", "ok" to ok)
+        // Which network, not just that one was taken. Mobile data comes back as a different
+        // [Network] after a hotspot join, and a pin on the previous handle is indistinguishable
+        // from a working one until ACS times out on a route that no longer exists.
+        SoftApTrace.stage(
+            "process_pinned_to_cellular",
+            "ok" to ok,
+            "network" to network,
+            "replaced" to (alreadyPinned?.toString() ?: "none"),
+        )
         return ok
     }
 
     /** Undo [bindProcessToCellular]. Safe to call when nothing is pinned, and safe to call twice. */
     fun unbindProcess() {
+        val previous = synchronized(lock) { pinnedNetwork }
         val pinned = synchronized(lock) {
             processPinned.also {
                 processPinned = false
                 pinnedNetwork = null
             }
         }
-        if (!pinned) return
+        if (!pinned) {
+            // The WHIP bind lifts the pin around itself, so "nothing was pinned" here means the
+            // sign-in never took one — which is the state in which that ServerSocket is fine and
+            // ACS's own sockets are not. Different bug, same-looking log without this line.
+            SoftApTrace.stage("process_unpinned", "ok" to true, "reason" to "nothing pinned")
+            return
+        }
         val ok = runCatching { connectivityManager()?.bindProcessToNetwork(null) }.isSuccess
-        SoftApTrace.stage("process_unpinned", "ok" to ok)
+        // The default route the process falls back onto is the whole risk of unpinning: a leftover
+        // glasses AP here is what made the next `teams:create` fail with no internet.
+        SoftApTrace.stage(
+            "process_unpinned",
+            "ok" to ok,
+            "released" to (previous?.toString() ?: "unknown"),
+            "default" to defaultNetwork().toString(),
+        )
     }
 
     /**
@@ -215,6 +275,7 @@ class InternetHold(private val context: Context) {
             "transport" to current.transport,
             "validated" to current.validated,
             "present" to current.present,
+            "glassesHotspot" to current.glassesHotspot,
         )
         // Error level when unusable so it survives a level filter: this is the line that explains an
         // ACS join failing on a hotspot that was itself fine.
@@ -233,10 +294,85 @@ class InternetHold(private val context: Context) {
         val capabilities =
             manager.getNetworkCapabilities(active)
                 ?: return DefaultNetwork("unknown", false, true)
+        val transport = transportName(capabilities)
+        val glassesHotspot =
+            transport == "wifi" && isGlassesHotspotDefault(active, manager.getLinkProperties(active))
         return DefaultNetwork(
-            transportName(capabilities),
+            transport,
             capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED),
             true,
+            glassesHotspot,
+        )
+    }
+
+    private fun isGlassesHotspotDefault(network: Network, links: LinkProperties?): Boolean {
+        val ssid = currentWifiSsid()
+        if (isGlassesHotspotSsid(ssid)) {
+            SoftApTrace.stage("default_is_glasses_hotspot", "ssid" to ssid, "network" to network)
+            return true
+        }
+        val softAp = links?.linkAddresses?.any { address ->
+            val ip = address.address
+            ip is Inet4Address && isAndroidSoftApIpv4(ip.address)
+        } == true
+        if (softAp) {
+            SoftApTrace.stage(
+                "default_is_glasses_hotspot",
+                "ssid" to ssid.ifEmpty { "unknown" },
+                "reason" to "192.168.43.0/24",
+                "network" to network,
+            )
+        }
+        return softAp
+    }
+
+    private fun currentWifiSsid(): String {
+        val raw =
+            runCatching {
+                context.applicationContext.getSystemService(WifiManager::class.java)?.connectionInfo?.ssid
+            }.getOrNull()
+                .orEmpty()
+        return raw.trim().trim('"')
+    }
+
+    /**
+     * Drop the cellular pin only once the phone has a validated default internet of its own.
+     *
+     * Cancelling while the glasses hotspot is coming up used to unpin immediately. The AP was
+     * still broadcasting, Android treated it as the default Wi-Fi, and the next `teams:create`
+     * left the process over a network with no internet — which the wearer saw as
+     * `Request failed (503)` from Cloudflare, not as a hotspot problem.
+     *
+     * If the default route is still the leftover AP when the wait expires, the pin stays. The
+     * next sign-in refreshes it; unpinning onto SoftAP is the one thing we must not do.
+     */
+    fun releaseWhenDefaultInternetReady(timeoutMs: Long = DEFAULT_WAIT_MS) {
+        val startedAt = SystemClock.elapsedRealtime()
+        SoftApTrace.stage(
+            "cellular_hold_release_requested",
+            "timeoutMs" to timeoutMs,
+            "pinned" to synchronized(lock) { processPinned },
+        )
+        val network = awaitValidatedDefault(timeoutMs)
+        if (network.usable) {
+            release()
+            SoftApTrace.stage(
+                "cellular_hold_release_done",
+                "waitedMs" to (SystemClock.elapsedRealtime() - startedAt),
+                "default" to network.toString(),
+            )
+            return
+        }
+        // Re-pin: a previous `leave()` may already have dropped the bind onto leftover Wi-Fi, and
+        // keeping a dead hold is not enough — the next `teams:create` still leaves through SoftAP
+        // and Cloudflare answers 503.
+        bindProcessToCellular()
+        SoftApTrace.failure(
+            "cellular_hold_kept",
+            "reason" to "default network is not usable internet; unpinning would strand the next request on SoftAP",
+            "transport" to network.transport,
+            "validated" to network.validated,
+            "glassesHotspot" to network.glassesHotspot,
         )
     }
 
@@ -245,14 +381,28 @@ class InternetHold(private val context: Context) {
         synchronized(lock) { releaseLocked() }
     }
 
-    private fun releaseLocked() {
+    /**
+     * @param reason why the hold is being dropped. `teardown` means a pin found here outlived the
+     *   code that took it and is reported as a leak; a re-request drops the pin on purpose, and
+     *   calling both the same thing would cry wolf on every second sign-in.
+     */
+    private fun releaseLocked(reason: String = "teardown") {
         // Backstop only: [bindProcessToCellular]'s caller unpins in a `finally`. Leaving the process
         // pinned across a teardown would break the *next* call's WHIP listener, not this one's, which
         // is exactly the kind of failure that is impossible to read from a log.
         if (processPinned) {
+            val dropped = pinnedNetwork?.toString() ?: "unknown"
             runCatching { connectivityManager()?.bindProcessToNetwork(null) }
             processPinned = false
             pinnedNetwork = null
+            if (reason == "teardown") {
+                // Reaching the backstop means the pin outlived the code that took it. That is the
+                // leak this class is most afraid of, so it is reported as a failure even though it
+                // has just been repaired: the next call would have inherited it.
+                SoftApTrace.failure("cellular_pin_leaked", "network" to dropped)
+            } else {
+                SoftApTrace.stage("cellular_pin_dropped", "network" to dropped, "reason" to reason)
+            }
         }
         val active = callback
         if (active != null) {
@@ -314,5 +464,21 @@ class InternetHold(private val context: Context) {
                 ethernet -> "ethernet"
                 else -> "other"
             }
+
+        /**
+         * Mentra Live SoftAP SSIDs look like `MentraLive_15f63c`. Android quotes them and, without
+         * location permission, reports `<unknown ssid>` instead — so SSID alone is not enough.
+         */
+        fun isGlassesHotspotSsid(ssid: String): Boolean {
+            val normalized = ssid.trim().trim('"')
+            return normalized.startsWith("MentraLive", ignoreCase = true)
+        }
+
+        /** Android SoftAP's usual IPv4 LAN. Location-less `<unknown ssid>` still lands here. */
+        fun isAndroidSoftApIpv4(bytes: ByteArray): Boolean =
+            bytes.size == 4 &&
+                (bytes[0].toInt() and 0xff) == 192 &&
+                (bytes[1].toInt() and 0xff) == 168 &&
+                (bytes[2].toInt() and 0xff) == 43
     }
 }

@@ -52,6 +52,13 @@ class WhipIngestServer(
 
     /** Release the peer for [sessionId]. Must be idempotent; DELETE and stop() can both call it. */
     fun terminate(sessionId: String)
+
+    /**
+     * ICE on the live publisher is already dead. A second POST then replaces instead of 409:
+     * the glasses reconnect after `PeerConnection disconnected` without a DELETE that freed
+     * the slot, and 409 is what left the meeting black.
+     */
+    fun publisherFailed(): Boolean = false
   }
 
   private val lock = Any()
@@ -190,18 +197,39 @@ class WhipIngestServer(
   private fun handle(request: WhipIngestProtocol.Request): WhipIngestProtocol.Response {
     val action: WhipIngestProtocol.Action
     val endpointSnapshot: WhipIngestProtocol.Endpoint?
+    var deadSession: String? = null
     synchronized(lock) {
-      action = WhipIngestProtocol.decide(request, state, idFactory())
+      val decided = WhipIngestProtocol.decide(request, state, idFactory())
       endpointSnapshot = endpoint
-      // Reserve the slot inside the lock so a duplicate POST during a gather gets 409 rather than
-      // creating a second peer for the same publisher.
-      when (action) {
-        is WhipIngestProtocol.Action.Negotiate ->
-          state = state.copy(activeSessionId = action.sessionId)
-        is WhipIngestProtocol.Action.Terminate ->
-          state = state.copy(activeSessionId = null)
-        is WhipIngestProtocol.Action.Reply -> Unit
+      val replaceDead =
+        decided is WhipIngestProtocol.Action.Reply &&
+          decided.response.status == 409 &&
+          negotiator.publisherFailed()
+      if (replaceDead) {
+        deadSession = state.activeSessionId
+        val replacement = WhipIngestProtocol.Action.Negotiate(idFactory(), request.body)
+        state = state.copy(activeSessionId = replacement.sessionId)
+        action = replacement
+      } else {
+        action = decided
+        // Reserve the slot inside the lock so a duplicate POST during a gather gets 409 rather than
+        // creating a second peer for the same publisher.
+        when (decided) {
+          is WhipIngestProtocol.Action.Negotiate ->
+            state = state.copy(activeSessionId = decided.sessionId)
+          is WhipIngestProtocol.Action.Terminate ->
+            state = state.copy(activeSessionId = null)
+          is WhipIngestProtocol.Action.Reply -> Unit
+        }
       }
+    }
+    deadSession?.let { released ->
+      SoftApTrace.stage(
+        "whip_replace_dead_publisher",
+        "released" to released,
+        "session" to (action as? WhipIngestProtocol.Action.Negotiate)?.sessionId,
+      )
+      runCatching { negotiator.terminate(released) }
     }
 
     return when (action) {

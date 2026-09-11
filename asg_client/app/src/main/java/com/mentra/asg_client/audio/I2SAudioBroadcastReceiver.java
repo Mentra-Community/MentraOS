@@ -50,6 +50,11 @@ public class I2SAudioBroadcastReceiver extends BroadcastReceiver {
             return;
         }
 
+        // This playback is not ours, so it owns the bridge for as long as it runs. Camera cues
+        // check this before re-announcing or closing I2S; without it every shutter in a burst
+        // tore the path down and back up underneath the music.
+        I2SAudioController.setExternalAudioPlaying(start);
+
         // Forward external app audio state to MCU (e.g., VLC, system sounds)
         Intent serviceIntent = new Intent(context, AsgClientService.class);
         serviceIntent.setAction(AsgClientService.ACTION_I2S_AUDIO_STATE);

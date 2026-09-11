@@ -1019,7 +1019,10 @@ describe("createSoftapCallDeps", () => {
     }
   }
 
-  function deps(overrides: Partial<ReturnType<typeof subsystems>["subsystems"]> = {}) {
+  function deps(
+    overrides: Partial<ReturnType<typeof subsystems>["subsystems"]> = {},
+    options: {hotspotBroadcastWaitMs?: number} = {},
+  ) {
     const harness = subsystems()
     return {
       calls: harness.calls,
@@ -1030,6 +1033,7 @@ describe("createSoftapCallDeps", () => {
         displayName: "Mentra Live",
         awaitFirstFrame: async () => {},
         subsystems: {...harness.subsystems, ...overrides},
+        hotspotBroadcastWaitMs: options.hotspotBroadcastWaitMs,
       }),
     }
   }
@@ -1200,6 +1204,47 @@ describe("createSoftapCallDeps", () => {
     await expect(thrown.deps.joinScopedNetwork("MentraLive-1234", "hunter2!")).resolves.toBe("192.168.43.20")
   })
 
+  test("an Unavailable scoped join cycles the glasses hotspot and joins again from idle", async () => {
+    // The first specifier steals wlan0 from office/personal Wi-Fi and Samsung assoc-rejects the
+    // glasses AP. After that request dies the STA is idle — cycling the AP and joining again is
+    // the recovery that worked at 17:43:20 after a failed switch.
+    let attempts = 0
+    const {calls, deps: real} = deps(
+      {
+        joinScopedNetwork: async () => {
+          attempts += 1
+          if (attempts === 1) {
+            throw new Error(
+              "Call to function 'MentraAcsMeeting.joinScopedNetwork' has been rejected.\n→ Caused by: com.mentra.acsmeeting.network.ScopedNetworkError$Unavailable: Could not join MentraLive_15f63c (SSID not in scan, Wi-Fi off, or the system join prompt was dismissed)",
+            )
+          }
+          return "192.168.43.20"
+        },
+      },
+      {hotspotBroadcastWaitMs: 0},
+    )
+    const details: string[] = []
+    await expect(real.joinScopedNetwork("MentraLive-1234", "hunter2!", (d) => details.push(d))).resolves.toBe(
+      "192.168.43.20",
+    )
+    expect(attempts).toBe(2)
+    expect(calls).toContainEqual(["setHotspotState", false])
+    expect(calls).toContainEqual(["setHotspotState", true])
+    expect(details.some((d) => d.includes("cycling"))).toBe(true)
+  })
+
+  test("a non-Unavailable scoped join failure is not retried", async () => {
+    let attempts = 0
+    const {deps: real} = deps({
+      joinScopedNetwork: async () => {
+        attempts += 1
+        throw new Error("SOFTAP_WIFI_DISABLED")
+      },
+    })
+    await expect(real.joinScopedNetwork("MentraLive-1234", "hunter2!")).rejects.toThrow("SOFTAP_WIFI_DISABLED")
+    expect(attempts).toBe(1)
+  })
+
   test("the glasses are told to publish in host-only ICE mode", async () => {
     // An empty stun server is what puts the glasses in host-only mode; a configured one would add
     // several seconds of doomed gathering to every call, since the hotspot has no route to it.
@@ -1342,19 +1387,52 @@ describe("createSoftapCallDeps", () => {
   })
 
   test("a hotspot that reports enabled with no SSID is a failure", async () => {
-    const harness = deps({
-      setHotspotState: async () => ({state: "enabled"}),
-    })
+    const harness = deps(
+      {
+        setHotspotState: async () => ({state: "enabled"}),
+      },
+      {hotspotBroadcastWaitMs: 0},
+    )
 
     await expect(harness.deps.startHotspot()).rejects.toThrow()
   })
 
   test("a hotspot that stays disabled is a failure naming the state", async () => {
-    const harness = deps({
-      setHotspotState: async () => ({state: "disabled"}),
-    })
+    const harness = deps(
+      {
+        setHotspotState: async () => ({state: "disabled"}),
+      },
+      {hotspotBroadcastWaitMs: 0},
+    )
 
     await expect(harness.deps.startHotspot()).rejects.toThrow("state=disabled")
+  })
+
+  test("a first enable that fails is cycled off and tried again", async () => {
+    let enables = 0
+    const toggles: boolean[] = []
+    const {deps: real} = deps(
+      {
+        setHotspotState: async (enabled: boolean) => {
+          toggles.push(enabled)
+          if (enabled) {
+            enables += 1
+            if (enables === 1) return {state: "disabled"}
+            return {state: "enabled", ssid: "MentraLive-1234", password: "hunter2!"}
+          }
+          return {state: "disabled"}
+        },
+      },
+      {hotspotBroadcastWaitMs: 0},
+    )
+    const details: string[] = []
+    await expect(real.startHotspot((d) => details.push(d))).resolves.toEqual({
+      ssid: "MentraLive-1234",
+      passphrase: "hunter2!",
+    })
+    expect(enables).toBe(2)
+    expect(toggles).toEqual([true, false, true])
+    expect(details.some((d) => d.includes("trying again"))).toBe(true)
   })
 
   test("stopHotspot asks for disabled rather than toggling blindly", async () => {

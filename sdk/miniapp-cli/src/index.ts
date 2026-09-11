@@ -19,6 +19,7 @@ function printUsage(): void {
   console.log('                                            --usb              reach the phone over USB');
   console.log('                                                               (adb reverse, no shared Wi-Fi)');
   console.log('                                            --device <serial>  target one adb device');
+  console.log('                                            --no-hot-reload    serve + log only; no remount on save');
   console.log('  release                          Build, pack, and serve a QR to install on a phone');
   console.log('                                   Options: --no-cache  --qr-output <path>');
   console.log('  pack                             Production-build and package miniapp into build/<pkg>-<version>.zip (--no-build to skip build)');
@@ -50,6 +51,7 @@ switch (subcommand) {
       qrOutput: flagValue('--qr-output'),
       usb: process.argv.includes('--usb'),
       device: flagValue('--device'),
+      hotReload: !process.argv.includes('--no-hot-reload'),
     });
     break;
   case 'release':

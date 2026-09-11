@@ -51,6 +51,18 @@ export class SoftapCallError extends Error {
 /** Gallery sync already learned this: glasses report enabled before the SSID is in the phone scan. */
 export const HOTSPOT_BROADCAST_WAIT_MS = 3_000
 
+/**
+ * Android's WifiNetworkSpecifier called onUnavailable. The native message lists three causes
+ * because the callback does not say which one happened; on the 18:02 Samsung path the SSID was
+ * in scan and the join sheet was bypassed — assoc rejected after leaving another AP.
+ */
+function isScopedJoinUnavailable(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return /SOFTAP_UNAVAILABLE|ScopedNetworkError\$Unavailable|SSID not in scan, Wi-Fi off, or the system join prompt/i.test(
+    message,
+  )
+}
+
 export type SoftapStepStatus = "pending" | "running" | "done" | "failed"
 
 /**
@@ -282,7 +294,13 @@ export class SoftapCallTransport {
 
   /** Narration for a running step: what the phone or the glasses just reported. */
   private note(generation: number, step: SoftapStep, detail: string): void {
-    if (generation !== this.generation) return
+    if (generation !== this.generation) {
+      // A step that is still narrating after the sequence moved on. The detail is dropped rather
+      // than written onto the new attempt's checklist, and the drop is said out loud because a
+      // step that goes quiet here is usually one that is still holding a native call open.
+      softapTrace("softap_step_note_dropped", {step, generation, current: this.generation, detail})
+      return
+    }
     softapTrace("softap_step_note", {step, detail})
     this.setStep(step, {detail})
   }
@@ -305,6 +323,12 @@ export class SoftapCallTransport {
    * "Cannot start glasses hotspot" followed by a scoped join that never found the SSID.
    */
   lastTeardownFailures(): SoftapStep[] {
+    // Logged on read rather than only on write, because this is the moment the list turns into a
+    // refusal for the next call: a wearer told to power-cycle the hotspot needs the reason to be
+    // findable, and the write happened somewhere in the middle of a noisy teardown.
+    if (this.teardownFailures.length > 0) {
+      softapTraceFailure("softap_teardown_failures_read", {steps: this.teardownFailures.join(",")})
+    }
     return [...this.teardownFailures]
   }
 
@@ -314,9 +338,14 @@ export class SoftapCallTransport {
    */
   async start(options: SoftapCallOptions = {}): Promise<void> {
     if (this.cancelledBeforeStart) {
+      // The wearer's Cancel landed before the sequence began, so there is no step to name and no
+      // trace id yet. This line is the only evidence that the flag did its job rather than the
+      // join having silently never been asked for.
+      softapTraceFailure("softap_call_refused", {reason: "cancelled before start"})
       throw new SoftapCallError("hotspot", "CANCELLED", "SoftAP call was cancelled before it started")
     }
     if (this.phase !== "idle" && this.phase !== "failed") {
+      softapTraceFailure("softap_call_refused", {reason: "already active", phase: this.phase})
       throw new SoftapCallError("hotspot", "ALREADY_ACTIVE", `A SoftAP call is already ${this.phase}`)
     }
     this.startedEver = true
@@ -401,7 +430,13 @@ export class SoftapCallTransport {
         report("Video is live in the meeting")
       })
 
-      if (generation !== this.generation) return
+      if (generation !== this.generation) {
+        // Every step succeeded and the call is nevertheless not this transport's any more. The
+        // steps released themselves on the way past, so there is nothing to undo — but a join
+        // that got all the way to a frame and then vanished is otherwise a log that simply stops.
+        softapTraceFailure("softap_call_abandoned_at_live", {generation, current: this.generation})
+        return
+      }
       this.phase = "live"
       softapTrace("softap_call_live")
       this.emitProgress()
@@ -433,7 +468,10 @@ export class SoftapCallTransport {
     // failure even during the very first await below.
     this.terminating = true
     if (options.mode) this.teardownMode = options.mode
-    if (this.stopping) return this.stopping
+    if (this.stopping) {
+      softapTrace("softap_stop_joined_in_flight", {mode: this.teardownMode})
+      return this.stopping
+    }
     const running = this.running
     if (this.completed.length === 0 && this.phase === "idle" && !running) {
       // Nothing was built, so there is nothing to unwind — but a start() that has not run yet
@@ -441,6 +479,12 @@ export class SoftapCallTransport {
       // the old one.
       this.generation++
       if (!this.startedEver) this.cancelledBeforeStart = true
+      softapTrace("softap_stop_nothing_built", {
+        // The distinction the next `start()` turns on: a transport that was never started refuses
+        // outright, one that has already run is reusable.
+        cancelledBeforeStart: this.cancelledBeforeStart,
+        generation: this.generation,
+      })
       return
     }
 
@@ -457,13 +501,18 @@ export class SoftapCallTransport {
       // hold the next call back, never let it race this one's cleanup.
       if (running) {
         softapTrace("softap_stop_waiting_for_step", {step: running.step})
+        const waitStartedAt = Date.now()
         await running.settled
+        // This wait is unbounded by design, so its duration is the difference between "the leave
+        // was slow" and "the leave was held by a native call that had not returned".
+        softapTrace("softap_stop_step_settled", {step: running.step, waitedMs: Date.now() - waitStartedAt})
       }
       const failures: SoftapStep[] = []
       for (const step of [...this.completed].reverse()) {
+        const undoStartedAt = Date.now()
         try {
           await this.undo(step)
-          softapTrace("softap_step_undone", {step})
+          softapTrace("softap_step_undone", {step, durationMs: Date.now() - undoStartedAt})
         } catch (error) {
           // Recorded, not rethrown: the remaining steps still have to be undone. The caller reads
           // them back through [lastTeardownFailures] and refuses the next call, because a hotspot
@@ -471,6 +520,7 @@ export class SoftapCallTransport {
           failures.push(step)
           softapTraceFailure("softap_step_undo_failed", {
             step,
+            durationMs: Date.now() - undoStartedAt,
             reason: error instanceof Error ? error.message : String(error),
           })
         }
@@ -558,6 +608,9 @@ export class SoftapCallTransport {
     run: (report: SoftapStepReporter) => Promise<void>,
   ): Promise<void> {
     if (generation !== this.generation) {
+      // The sequence stopped between two steps. Named here because the caller only ever sees one
+      // CANCELLED error, and which step it never reached is the thing worth knowing.
+      softapTraceFailure("softap_step_skipped_after_cancel", {step, generation, current: this.generation})
       throw new SoftapCallError(step, "CANCELLED", `SoftAP call was cancelled before ${step}`)
     }
     // Published before the first await so a `stop()` on the very next tick can see it. Settled in
@@ -713,15 +766,33 @@ export function createSoftapCallDeps(args: {
   const hotspotBroadcastWaitMs = args.hotspotBroadcastWaitMs ?? HOTSPOT_BROADCAST_WAIT_MS
   return {
     startHotspot: async (report) => {
-      const status = await subsystems.setHotspotState(true)
-      if (status.state !== "enabled" || !status.ssid) {
-        throw new Error(`the glasses hotspot did not start (state=${status.state})`)
+      const enable = async () => {
+        const status = await subsystems.setHotspotState(true)
+        if (status.state !== "enabled" || !status.ssid) {
+          throw new Error(`the glasses hotspot did not start (state=${status.state})`)
+        }
+        if (!status.password) {
+          throw new Error("the glasses hotspot reported no password")
+        }
+        report?.(`Glasses report hotspot ${status.ssid} enabled`)
+        return {ssid: status.ssid, passphrase: status.password}
       }
-      if (!status.password) {
-        throw new Error("the glasses hotspot reported no password")
+      try {
+        return await enable()
+      } catch (error) {
+        if (error instanceof Error && /no password/.test(error.message)) throw error
+        // Cancel-then-start races the previous disable: the glasses report disabled (or no SSID)
+        // and the UI said "Couldn't start glasses hotspot" before step 2 ran on a leftover AP.
+        softapTraceFailure("hotspot_enable_retry", {
+          reason: error instanceof Error ? error.message : String(error),
+        })
+        report?.("Glasses hotspot did not start; turning it off and trying again")
+        await subsystems.setHotspotState(false)
+        if (hotspotBroadcastWaitMs > 0) {
+          await new Promise<void>(resolve => setTimeout(resolve, Math.min(1_000, hotspotBroadcastWaitMs)))
+        }
+        return await enable()
       }
-      report?.(`Glasses report hotspot ${status.ssid} enabled`)
-      return {ssid: status.ssid, passphrase: status.password}
     },
     waitUntilHotspotJoinable: async (report) => {
       if (hotspotBroadcastWaitMs <= 0) return
@@ -733,7 +804,28 @@ export function createSoftapCallDeps(args: {
       await subsystems.setHotspotState(false)
     },
     joinScopedNetwork: async (ssid, passphrase, report) => {
-      const address = await subsystems.joinScopedNetwork(ssid, passphrase)
+      const joinOnce = (nextSsid: string, nextPassphrase: string) =>
+        subsystems.joinScopedNetwork(nextSsid, nextPassphrase)
+      let address: string | undefined
+      try {
+        address = await joinOnce(ssid, passphrase)
+      } catch (error) {
+        if (!isScopedJoinUnavailable(error)) throw error
+        // First specifier left the phone's previous Wi-Fi and assoc-rejected the glasses AP.
+        // Cycle the AP and join again from an idle STA — the radio is free now.
+        softapTraceFailure("scoped_join_unavailable_retry", {ssid})
+        report?.("Phone couldn't join; cycling the glasses hotspot and trying again")
+        await subsystems.setHotspotState(false)
+        const status = await subsystems.setHotspotState(true)
+        if (status.state !== "enabled" || !status.ssid || !status.password) throw error
+        if (hotspotBroadcastWaitMs > 0) {
+          report?.(
+            `Giving the hotspot ${Math.round(hotspotBroadcastWaitMs / 1000)}s to start broadcasting`,
+          )
+          await new Promise<void>(resolve => setTimeout(resolve, hotspotBroadcastWaitMs))
+        }
+        address = await joinOnce(status.ssid, status.password)
+      }
       if (subsystems.probeGateway) {
         report?.(`Phone is ${address ?? "on the hotspot"}; checking it can reach the glasses`)
         try {

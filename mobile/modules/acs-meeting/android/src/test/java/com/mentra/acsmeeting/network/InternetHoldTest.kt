@@ -43,11 +43,37 @@ class InternetHoldTest {
     }
 
     @Test
+    fun `a validated leftover glasses hotspot is not usable internet`() {
+        // The 17:52:24 failure: Android marked MentraLive_* VALIDATED, teardown dropped the
+        // cellular pin, and the next teams:create left through SoftAP. Cloudflare answered 503.
+        val leftover =
+            InternetHold.DefaultNetwork("wifi", validated = true, present = true, glassesHotspot = true)
+        assertFalse(leftover.usable)
+        assertEquals("wifi (validated, leftover-hotspot)", leftover.toString())
+    }
+
+    @Test
     fun `a validated cellular network renders with its transport and state`() {
         assertEquals(
             "cellular (validated)",
             InternetHold.DefaultNetwork("cellular", validated = true, present = true).toString(),
         )
+    }
+
+    @Test
+    fun `Mentra Live SoftAP SSIDs are leftover glasses hotspots`() {
+        assertTrue(InternetHold.isGlassesHotspotSsid("MentraLive_15f63c"))
+        assertTrue(InternetHold.isGlassesHotspotSsid("\"MentraLive_15f63c\""))
+        assertTrue(InternetHold.isGlassesHotspotSsid("mentralive_aabbcc"))
+        assertFalse(InternetHold.isGlassesHotspotSsid("<unknown ssid>"))
+        assertFalse(InternetHold.isGlassesHotspotSsid("Office-WiFi"))
+    }
+
+    @Test
+    fun `Android SoftAP IPv4 is the leftover glasses LAN`() {
+        assertTrue(InternetHold.isAndroidSoftApIpv4(byteArrayOf(192.toByte(), 168.toByte(), 43, 154.toByte())))
+        assertFalse(InternetHold.isAndroidSoftApIpv4(byteArrayOf(192.toByte(), 168.toByte(), 1, 10)))
+        assertFalse(InternetHold.isAndroidSoftApIpv4(byteArrayOf(10, 0, 0, 1)))
     }
 
     @Test

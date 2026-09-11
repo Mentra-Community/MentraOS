@@ -10,7 +10,7 @@ mentra-miniapp <command>
 
 | Command                                           | What it does                                                              |
 | ------------------------------------------------- | ------------------------------------------------------------------------- |
-| [`dev`](#dev)                                     | Starts the dev server with hot reload, prints a QR to load it on a phone  |
+| [`dev`](#dev)                                     | Starts the dev server (hot reload unless `--no-hot-reload`), prints a QR to load it on a phone  |
 | [`release`](#release)                             | Builds, packs, and serves a QR to install the release on a phone over LAN |
 | [`pack`](#pack)                                   | Validates the manifest and zips `dist/` into `<pkg>-<version>.zip`        |
 | [`manifest`](#manifest)                           | Interactive top-level wizard for editing `miniapp.json`                   |
@@ -26,6 +26,7 @@ Run with no args to print the same usage table.
 
 ```bash
 mentra-miniapp dev
+mentra-miniapp dev --no-hot-reload          # serve + logs only; no remount on save
 mentra-miniapp dev --usb                    # reach the phone over USB, no shared Wi-Fi
 mentra-miniapp dev --usb --device <serial>  # pick one of several attached devices
 ```
@@ -36,7 +37,7 @@ What it does:
 2. Runs the project's `build.ts` so `dist/background/index.js` and `dist/ui/*` are current.
 3. Picks the first free adjacent port pair starting at `port`: one for static files and the next for the dev sidecar.
 4. Starts a static server that serves `miniapp.json`, `icon.png`, and project files.
-5. Starts a **dev sidecar** on `port + 1` — a WebSocket the phone connects to for live reload + console-log forwarding back to your terminal. Failure here is non-fatal; the miniapp still runs without live reload.
+5. Starts a **dev sidecar** on `port + 1` — a WebSocket the phone connects to for live reload + console-log forwarding back to your terminal. Failure here is non-fatal; the miniapp still runs without live reload. `--no-hot-reload` keeps the log bridge and `bundle.zip` endpoint but skips the filesystem watcher, so saves no longer remount the WebView or respawn the background JSContext.
 6. Detects the LAN IP (or sets up USB tunnels with `--usb`), builds a `miniapp://dev?url=…&name=…&package=…&dev=<sidecarPort>` URL, and prints a terminal QR + the raw URL.
 7. Watches for LAN-IP changes (Wi-Fi switch) every 2s and reprints the QR. Skipped under `--usb`, where the QR host is a fixed loopback address.
 
