@@ -74,6 +74,44 @@ test("freezes selected source and allocates new store build numbers", () => {
   assert.deepEqual(Object.keys(record.source), ["mentraosCommit"])
   assert.deepEqual(productionPlan.promotion.otaManifest, betaManifest.otaManifest)
   assert.equal(record.coordinates.currentMentraApp.sourceCommit, "f".repeat(40))
+  assert.equal(record.coordinates.currentMentraApp.provenance, "coordinated")
+  assert.equal(record.state, "selected")
+})
+
+test("first promotion freezes the store-observed public app and skips the compatibility lab", () => {
+  const {productionPlan, record} = prepare({
+    previousManifest: null,
+    mentraInventory: {
+      apple: {
+        bundleId: "com.mentra.mentra",
+        current: {marketingVersion: "3.0", buildNumber: 51180073},
+        maxBuildNumber: 310000060,
+      },
+      google: {packageName: "com.mentra.mentra", currentVersionCode: 51180031, maxVersionCode: 310000059},
+    },
+  })
+  assert.equal(record.state, "staging-compatible")
+  assert.deepEqual(record.coordinates.currentMentraApp, {
+    provenance: "store-observed",
+    sourceCommit: null,
+    provenanceUrl: null,
+    ios: {marketingVersion: "3.0", buildNumber: 51180073},
+    android: {marketingVersion: "3.0", buildNumber: 51180031},
+  })
+  assert.equal(record.coordinates.compatibilityLab, null)
+  assert.equal(productionPlan.native.buildNumber, 310000061)
+  assert.equal(record.coordinates.candidates.mentraApp.android.buildNumber, 310000061)
+})
+
+test("first promotion still requires a public app in both stores", () => {
+  assert.throws(
+    () =>
+      prepare({
+        previousManifest: null,
+        mentraInventory: inventory("com.mentra.mentra", null, 310000060, 310000059),
+      }),
+    /has no current public store release/,
+  )
 })
 
 test("rejects store state that does not match current production provenance", () => {
