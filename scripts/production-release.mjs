@@ -191,8 +191,14 @@ function ensurePromotionBranch(repository, branch, commit) {
 const CI_GATE_CONTEXT = /^ci-gate(-[a-z0-9-]+)?$/
 const PROMOTION_GATE_POLL_SECONDS = 30
 const PROMOTION_GATE_TIMEOUT_SECONDS = 4 * 60 * 60
+// Right after the pull request is created only the beta's push-triggered rows
+// exist; the pull request's own builders and the ci-gate status register over
+// the following minutes. Until that settling window has elapsed, an empty gate
+// means "not registered yet", never "nothing to run".
+const PROMOTION_GATE_SETTLE_SECONDS = 15 * 60
+const PROMOTION_GATE_CALL_TIMEOUT_MS = 2 * 60 * 1000
 
-export function promotionGateState(rows) {
+export function promotionGateState(rows, {settled = false} = {}) {
   if (!Array.isArray(rows)) throw new Error("Pull request checks must be an array")
   const gates = rows.filter((row) => CI_GATE_CONTEXT.test(row.name || "") && !row.workflow)
   const relevant = gates.length > 0 ? gates : rows.filter((row) => row.event === "pull_request")
@@ -200,6 +206,7 @@ export function promotionGateState(rows) {
   if (failed.length > 0) return {state: "failed", rows: failed}
   const pending = relevant.filter((row) => row.bucket === "pending")
   if (pending.length > 0) return {state: "pending", rows: pending}
+  if (relevant.length === 0 && !settled) return {state: "pending", rows: []}
   return {state: "passed", rows: relevant}
 }
 
@@ -209,7 +216,12 @@ function pullRequestChecks(url, repository) {
   const result = spawnSync(
     "gh",
     ["pr", "checks", url, "--repo", repository, "--json", "name,workflow,event,bucket,description"],
-    {encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], maxBuffer: GH_MAX_BUFFER},
+    {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      maxBuffer: GH_MAX_BUFFER,
+      timeout: PROMOTION_GATE_CALL_TIMEOUT_MS,
+    },
   )
   if (result.error) throw result.error
   const output = (result.stdout || "").trim()
@@ -220,10 +232,12 @@ function pullRequestChecks(url, repository) {
 }
 
 function waitForPromotionGate(url, repository) {
-  const deadline = Date.now() + PROMOTION_GATE_TIMEOUT_SECONDS * 1000
+  const started = Date.now()
+  const deadline = started + PROMOTION_GATE_TIMEOUT_SECONDS * 1000
   for (;;) {
-    const gate = promotionGateState(pullRequestChecks(url, repository))
-    const names = gate.rows.map((row) => row.name).join(", ")
+    const settled = Date.now() - started >= PROMOTION_GATE_SETTLE_SECONDS * 1000
+    const gate = promotionGateState(pullRequestChecks(url, repository), {settled})
+    const names = gate.rows.map((row) => row.name).join(", ") || "checks to register"
     if (gate.state === "failed") throw new Error(`${url} has failing checks: ${names}`)
     if (gate.state === "passed") {
       console.log(`Checks passed for ${url}${names ? `: ${names}` : ""}`)

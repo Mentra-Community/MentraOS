@@ -220,6 +220,12 @@ test("the promotion gate follows the ci-gate status and ignores push-triggered b
   assert.equal(promotionGateState([betaJob, build]).state, "pending")
   assert.equal(promotionGateState([betaJob, {...build, bucket: "pass"}]).state, "passed")
   assert.equal(promotionGateState([betaJob, bot, {...build, bucket: "pass"}]).state, "failed")
-  assert.equal(promotionGateState([betaJob]).state, "passed")
+  // Only the beta's push rows exist right after the PR is created: keep waiting
+  // until registration has settled, then an empty gate means nothing applies.
+  assert.equal(promotionGateState([betaJob]).state, "pending")
+  assert.equal(promotionGateState([betaJob], {settled: false}).state, "pending")
+  assert.equal(promotionGateState([betaJob], {settled: true}).state, "passed")
+  assert.equal(promotionGateState([betaJob, build], {settled: true}).state, "pending")
+  assert.equal(promotionGateState([betaJob, {...build, bucket: "fail"}], {settled: true}).state, "failed")
   assert.throws(() => promotionGateState(null), /must be an array/)
 })
