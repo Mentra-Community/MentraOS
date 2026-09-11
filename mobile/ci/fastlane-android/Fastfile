@@ -15,12 +15,16 @@ platform :android do
     output = ENV.fetch("GOOGLE_PLAY_INVENTORY_OUTPUT")
     tracks = ENV.fetch("GOOGLE_PLAY_INVENTORY_TRACKS", "internal,beta,production").split(",")
     package_name = ENV.fetch("APP_PACKAGE_NAME", "com.mentra.mentra")
+    # Google meters edit creation per day, and every coordinated build and
+    # store lane spends some. Read every track inside one edit: the release
+    # inventory already carries the version codes, so the per-track
+    # google_play_track_version_codes action (one more edit each) is not
+    # opened.
     releases = {}
-    versions = tracks.to_h do |track|
-      action_codes = google_play_track_version_codes(track: track).map(&:to_i).sort
-      client = Supply::Client.make_from_config
-      client.begin_edit(package_name: package_name)
-      begin
+    client = Supply::Client.make_from_config
+    client.begin_edit(package_name: package_name)
+    begin
+      tracks.each do |track|
         releases[track] = client.track_releases(track).map do |release|
           {
             name: release.name,
@@ -29,12 +33,12 @@ platform :android do
             versionCodes: (release.version_codes || []).map(&:to_i).sort,
           }
         end
-      ensure
-        client.abort_current_edit
       end
-      release_codes = releases.fetch(track).flat_map { |release| release.fetch(:versionCodes) }.uniq.sort
-      UI.user_error!("Google Play #{track} release inventory disagrees with its version-code inventory") unless release_codes == action_codes
-      [track, action_codes]
+    ensure
+      client.abort_current_edit
+    end
+    versions = tracks.to_h do |track|
+      [track, releases.fetch(track).flat_map { |release| release.fetch(:versionCodes) }.uniq.sort]
     end
     all_codes = versions.values.flatten
     public_statuses = ["inProgress", "completed"]
