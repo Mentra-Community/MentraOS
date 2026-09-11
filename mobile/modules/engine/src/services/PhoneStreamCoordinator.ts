@@ -36,6 +36,7 @@
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import type {StreamResolvedConfig, StreamStartRequest, StreamStatusEvent} from "@mentra/bluetooth-sdk/internal"
 import {isGlassesConnected} from "./GlassesReadiness"
+import {phoneCameraFovCoordinator} from "./PhoneCameraFovCoordinator"
 import {useGlassesStore} from "../stores/glasses"
 
 import {slimStreamStatusEvent, streamStatusSignature} from "./slimStreamStatus"
@@ -210,6 +211,7 @@ export class PhoneStreamCoordinator {
   private idCounter = 0
   private readonly timings: TimingConfig
   private readonly linkSource: GlassesLinkSource
+  private readonly pendingCameraChanges: () => Promise<void>
   private unsubscribeLink: (() => void) | null = null
   private suspended: SuspendedState | null = null
   /**
@@ -233,9 +235,13 @@ export class PhoneStreamCoordinator {
   /** Send full resolvedConfig only once per stream session. */
   private resolvedConfigForwarded = false
 
-  constructor(timings: CoordinatorTimings = {}, deps: {linkSource?: GlassesLinkSource} = {}) {
+  constructor(
+    timings: CoordinatorTimings = {},
+    deps: {linkSource?: GlassesLinkSource; pendingCameraChanges?: () => Promise<void>} = {},
+  ) {
     this.timings = {...DEFAULT_TIMINGS, ...timings}
     this.linkSource = deps.linkSource ?? storeLinkSource
+    this.pendingCameraChanges = deps.pendingCameraChanges ?? (() => phoneCameraFovCoordinator.whenSettled())
   }
 
   /**
@@ -322,7 +328,12 @@ export class PhoneStreamCoordinator {
       throw new StreamConflictError("STREAM_URL_REQUIRED", "streamUrl is required")
     }
     this.assertGlassesConnected()
+    // Capture before entering the stream queue: a later FOV release may itself
+    // await stop(), and must not become a circular dependency of this start.
+    const cameraReady = this.pendingCameraChanges()
     return this.runExclusive(async () => {
+      await cameraReady
+      this.assertGlassesConnected()
       if (this.current) {
         throw new StreamConflictError(
           "STREAM_ALREADY_ACTIVE",
@@ -365,6 +376,7 @@ export class PhoneStreamCoordinator {
   }
 
   async startManaged(packageName: string, opts: StartManagedOptions): Promise<ManagedStartResult> {
+    const cameraReady = this.pendingCameraChanges()
     const startupStartedAtMs = Date.now()
     // streamId doesn't exist yet — it's minted a few lines below, once we
     // know this is a fresh provision rather than a join onto an existing one.
@@ -383,6 +395,8 @@ export class PhoneStreamCoordinator {
       | {kind: "fresh"; entry: ManagedEntry}
 
     const decision = await this.runExclusive(async (): Promise<JoinDecision> => {
+      await cameraReady
+      this.assertGlassesConnected()
       if (this.current && this.current.kind === "unmanaged") {
         throw new StreamConflictError(
           "STREAM_ALREADY_ACTIVE",

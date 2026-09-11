@@ -42,6 +42,11 @@ export class PhoneCameraFovCoordinator {
 
   constructor(private readonly legacyRestartSettleMs = LEGACY_CAMERA_RESTART_SETTLE_MS) {}
 
+  /** Capture a barrier for FOV work already submitted, excluding future requests. */
+  whenSettled(): Promise<void> {
+    return this.queue.then(() => undefined)
+  }
+
   /** Report-safe FOV ownership snapshot for incident diagnostics. */
   getDiagnosticSnapshot(): Record<string, unknown> {
     return {

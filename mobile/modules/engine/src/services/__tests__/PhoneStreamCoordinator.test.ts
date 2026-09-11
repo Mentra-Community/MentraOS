@@ -12,10 +12,23 @@ const streamStatusFor = (req: unknown) => ({
 })
 const startStream = mock(async (req: unknown) => streamStatusFor(req))
 const stopStream = mock(async () => {})
+const setCameraFovOverride = mock(async (request: {fov: number}) => ({
+  ...request,
+  roiPosition: "center",
+  requestId: "fov-ack",
+  timestamp: 1,
+}))
+const releaseCameraFovOverride = mock(async () => {})
 const sendExternallyManagedStreamKeepAlive = mock(async (_req: unknown) => {})
 
 mock.module("@mentra/bluetooth-sdk/internal", () => ({
-  default: {startStream, stopStream, sendExternallyManagedStreamKeepAlive},
+  default: {
+    startStream,
+    stopStream,
+    setCameraFovOverride,
+    releaseCameraFovOverride,
+    sendExternallyManagedStreamKeepAlive,
+  },
 }))
 
 const provisionManagedStream = mock(async (_destinations?: unknown) => ({
@@ -77,6 +90,8 @@ beforeEach(() => {
   startStream.mockClear()
   startStream.mockClear()
   stopStream.mockClear()
+  setCameraFovOverride.mockClear()
+  releaseCameraFovOverride.mockClear()
   sendExternallyManagedStreamKeepAlive.mockClear()
   provisionManagedStream.mockClear()
   getManagedStreamStatus.mockClear()
@@ -98,6 +113,7 @@ afterEach(() => {
 })
 
 const {PhoneStreamCoordinator, StreamConflictError, LINK_STATUS} = await import("../PhoneStreamCoordinator")
+const {PhoneCameraFovCoordinator} = await import("../PhoneCameraFovCoordinator")
 
 /** Drivable stand-in for the glasses store's BLE connection state. */
 function fakeLink(initial = true) {
@@ -125,6 +141,69 @@ function fakeLink(initial = true) {
 const settle = (ms = 5) => new Promise((r) => setTimeout(r, ms))
 
 describe("PhoneStreamCoordinator", () => {
+  test("respawn waits for old capture cleanup, FOV restoration, and its new crop", async () => {
+    const fov = new PhoneCameraFovCoordinator()
+    const coord = new PhoneStreamCoordinator({}, {pendingCameraChanges: () => fov.whenSettled()})
+    await fov.setOverride("com.a", {fov: 82})
+    await coord.startUnmanaged("com.a", {streamUrl: "rtmp://x"})
+    startStream.mockImplementationOnce(async (request) => {
+      expect(releaseCameraFovOverride).toHaveBeenCalledTimes(1)
+      expect(fov.getDiagnosticSnapshot().owners).toMatchObject([{packageName: "com.a", fov: 102}])
+      return streamStatusFor(request)
+    })
+    let completeStop!: () => void
+    stopStream.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          completeStop = resolve
+        }),
+    )
+    const stopped = coord.stop("com.a")
+    const released = fov.releaseForApp("com.a", stopped)
+    const crop = fov.setOverride("com.a", {fov: 102})
+    const restarted = coord.startUnmanaged("com.a", {streamUrl: "rtmp://x"})
+    await settle()
+    expect(startStream).toHaveBeenCalledTimes(1)
+    expect(setCameraFovOverride).toHaveBeenCalledTimes(1)
+    expect(releaseCameraFovOverride).not.toHaveBeenCalled()
+
+    completeStop()
+    await Promise.all([released, crop, restarted])
+    expect(startStream).toHaveBeenCalledTimes(2)
+    expect(setCameraFovOverride.mock.calls[1]![0]).toMatchObject({fov: 102})
+    await coord.stop("com.a")
+    await fov.releaseForApp("com.a")
+  })
+
+  test("managed start waits for pending camera changes before provisioning", async () => {
+    let ready!: () => void
+    const barrier = new Promise<void>((resolve) => {
+      ready = resolve
+    })
+    const coord = new PhoneStreamCoordinator(
+      {hlsReadinessInitialDelayMs: 1, hlsReadinessPollMs: 1},
+      {pendingCameraChanges: () => barrier},
+    )
+    const started = coord.startManaged("com.a", {})
+    await settle()
+    expect(provisionManagedStream).not.toHaveBeenCalled()
+    expect(startStream).not.toHaveBeenCalled()
+    ready()
+    await started
+    await coord.stop("com.a")
+  })
+
+  test("start does not wait for a later FOV release that depends on its queued stop", async () => {
+    let barrier = Promise.resolve()
+    const coord = new PhoneStreamCoordinator({}, {pendingCameraChanges: () => barrier})
+    const started = coord.startUnmanaged("com.a", {streamUrl: "rtmp://x"})
+    const stopped = coord.stop("com.a")
+    barrier = stopped
+    await Promise.all([started, stopped])
+    expect(startStream).toHaveBeenCalledTimes(1)
+    expect(stopStream).toHaveBeenCalledTimes(1)
+  }, 1000)
+
   describe("BLE link suspension", () => {
     const timings = {
       hlsReadinessInitialDelayMs: 5,
