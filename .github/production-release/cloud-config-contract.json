@@ -1,6 +1,6 @@
 {
   "schemaVersion": 1,
-  "contractVersion": "2026-08-28.1",
+  "contractVersion": "2026-09-11.1",
   "required": {
     "AUDIO_PROVIDER": {"kind": "enum", "values": ["soniox"], "acceptanceTest": "runtime-transcription"},
     "AUDIO_UDP_ADVERTISED_HOST": {"kind": "host", "acceptanceTest": "runtime-audio-transport"},
@@ -27,7 +27,11 @@
     "MENTRA_MINIAPP_JWT_PRIVATE_KEY": {"kind": "private-key", "acceptanceTest": "miniapp-token"},
     "MENTRA_MINIAPP_JWT_PUBLIC_KEY": {"kind": "public-key", "acceptanceTest": "miniapp-token"},
     "MONGO_URL": {"kind": "mongo-url", "acceptanceTest": "core-readiness"},
-    "NODE_ENV": {"kind": "enum", "values": ["production"], "acceptanceTest": "service-readiness"},
+    "NODE_ENV": {
+      "kind": "enum",
+      "valuesByEnvironment": {"staging": ["staging", "production"], "prod": ["production"]},
+      "acceptanceTest": "service-readiness"
+    },
     "PORTAL_URL": {"kind": "https-url", "acceptanceTest": "portal-login"},
     "REDIS_URL": {"kind": "redis-url", "acceptanceTest": "runtime-readiness"},
     "REFRESH_TOKEN_PEPPER": {"kind": "secret", "acceptanceTest": "session-restoration"},
