@@ -7,6 +7,11 @@ declare class AcsMeetingNativeModule extends NativeModule<AcsMeetingModuleEvents
   /** Sign in to ACS before SoftAP so Teams is not resolved through glasses DNS. */
   prepareAgent(options: {token: string; displayName?: string}): Promise<AcsMeetingState>
   leave(): Promise<void>
+  /**
+   * Leave, and resolve only once the hang-up, the agent disposal, and the network releases have
+   * finished. `leave()` only queues that work, so awaiting it proves nothing about cleanup.
+   */
+  leaveAndAwait(options: {timeoutMs: number}): Promise<{completed: boolean}>
   setMuted(muted: boolean): Promise<AcsMeetingState>
   setAudioSource(source: "glasses" | "phone"): Promise<AcsMeetingState>
   updateVideoSource(whepUrl: string): Promise<void>

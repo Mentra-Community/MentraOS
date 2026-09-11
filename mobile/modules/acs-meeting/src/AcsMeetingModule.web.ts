@@ -14,6 +14,9 @@ export default {
   async leave(): Promise<void> {
     unavailable()
   },
+  async leaveAndAwait(_options: {timeoutMs: number}): Promise<{completed: boolean}> {
+    unavailable()
+  },
   async setMuted(_muted: boolean): Promise<AcsMeetingState> {
     unavailable()
   },

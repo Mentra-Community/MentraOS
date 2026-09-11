@@ -41,7 +41,7 @@ data class VideoProfile(
      * statistics report `codecName: "h264 sw"`), so the pixel count is a real
      * CPU cost, not just a bitrate cost.
      */
-    val HD = VideoProfile(width = 1280, height = 720, fps = 15, maxBitrateBps = 2_500_000)
+    val HD = VideoProfile(width = 1280, height = 720, fps = 15, maxBitrateBps = 3_000_000)
 
     /** Quarter the pixels of [HD]. Use when the software encoder cannot hold 15 fps at 720p. */
     val SD = VideoProfile(width = 640, height = 360, fps = 15, maxBitrateBps = 1_000_000)
@@ -61,26 +61,25 @@ data class VideoProfile(
     /**
      * ACS P540. VirtualOutgoingVideoStream documents 960×540, not 540×960.
      * 540p A/B uses this size on both WHIP and ACS.
+     *
+     * The ceiling sits above the glasses→phone WHIP default (2.5 Mbps) so the
+     * Teams hop is not the quality bottleneck. Mentra Call Auto sends this
+     * number as `maxBitrateBps`; an explicit picker value still overrides it.
      */
-    val P540 = VideoProfile(width = 960, height = 540, fps = 30, maxBitrateBps = 1_500_000)
+    val P540 = VideoProfile(width = 960, height = 540, fps = 30, maxBitrateBps = 3_000_000)
 
     /**
      * Same P540 geometry at 15 fps. Selectable from Mentra Call; not the default.
      * Isolates pixel-count savings without doubling frame work versus [P540].
      *
-     * The ceiling is sized from the picture rather than copied from [P540]. By the
-     * Kush gauge a high-motion 960x540 at 15 fps needs `960·540·15·0.28` ≈ 2.18 Mbps
-     * to avoid visible blocking, and a head-mounted camera is high motion by
-     * definition. At the old 1.5 Mbps the same geometry topped out near 0.19 bits per
-     * pixel even spending every bit, so 540p could not look sharp at any frame rate —
-     * device runs sat at 0.165–0.217 and the picture was reported pixelated.
-     *
-     * Raising it is worth something because ACS treats this as a target, not a wall:
-     * the `P9 quality` line recorded `used=108%` with the wire at 1623 kbps against
-     * the old 1.5 Mbps grant. The rate controller was already reaching past the
-     * number, so a larger one gives it somewhere to reach rather than being ignored.
+     * The ceiling is sized from the picture rather than copied from an older
+     * 1.5 Mbps grant. By the Kush gauge a high-motion 960x540 at 15 fps needs
+     * `960·540·15·0.28` ≈ 2.18 Mbps to avoid visible blocking, and a
+     * head-mounted camera is high motion by definition. It also has to clear
+     * the 2.5 Mbps glasses→phone WHIP default, so the grant is 3 Mbps — the
+     * next discrete step above that link.
      */
-    val P540_15 = VideoProfile(width = 960, height = 540, fps = 15, maxBitrateBps = 2_200_000)
+    val P540_15 = VideoProfile(width = 960, height = 540, fps = 15, maxBitrateBps = 3_000_000)
 
     fun parse(width: Int, height: Int, fps: Int, maxBitrateBps: Int): VideoProfile? {
       if (maxBitrateBps <= 0) return null

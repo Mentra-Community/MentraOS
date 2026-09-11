@@ -142,6 +142,13 @@ export function resolveAcsAudioSource(): ResolvedAudioSource {
  */
 const SOFTAP_BLE_LC3_UPLINK = true
 /**
+ * How long native may take to finish a leave before it reports the cleanup as stuck.
+ *
+ * Generous on purpose: this is a diagnostic ceiling on a hang-up plus an agent disposal, not a
+ * readiness deadline. The caller treats a timeout as "cleanup failed", never as "safe to restart".
+ */
+const ACS_LEAVE_WAIT_MS = 20_000
+/**
  * SoftAP video (camera → H.264 → WHIP → WHEP → ACS) is slower than BLE LC3.
  * Hold glasses PCM this long so the talk track does not lead the picture.
  * Set from SoftAP+LC3 clap correlator (2026-09-10): leads 70/201/173/300/142 ms,
@@ -297,6 +304,15 @@ type NativeModule = {
     video?: AcsOutgoingVideo
   }): Promise<MeetingState & {ingestUrl?: string}>
   leave(): Promise<void>
+  /**
+   * Leave, and resolve only once the hang-up, the agent disposal, and the network releases have
+   * actually finished.
+   *
+   * [leave] queues its work on the session executor and returns immediately, so awaiting it proves
+   * nothing about cleanup — which is what let a fast Stop/Start start a second call on top of the
+   * first one's teardown. Absent on natives that predate the signal.
+   */
+  leaveAndAwait?(options: {timeoutMs: number}): Promise<{completed: boolean}>
   /**
    * End the group call for everyone, then tear this device down. Rejects when the capability is
    * denied or ACS refuses — and has still left the call. Absent on natives that predate End.
@@ -816,6 +832,33 @@ class AcsMeetingService {
     const native = getNative()
     try {
       await native?.leave()
+    } finally {
+      await this.releaseHostState()
+    }
+  }
+
+  /**
+   * Leave, and do not resolve until native reports its cleanup is finished.
+   *
+   * The difference from [leave] is the whole point: native's `leave()` queues the hang-up, the
+   * agent disposal, and the network releases on its session executor and returns straight away, so
+   * a caller that awaits it and then starts the next call is racing the previous one's teardown.
+   *
+   * Falls back to [leave] on builds that predate the signal and says so, rather than pretending to
+   * a guarantee it cannot give.
+   *
+   * @param timeoutMs how long native may take before it reports the cleanup as stuck
+   */
+  async leaveAndAwait(packageName: string, timeoutMs = ACS_LEAVE_WAIT_MS): Promise<{completed: boolean; reason?: string}> {
+    if (this.owner && this.owner !== packageName) return {completed: true}
+    const native = getNative()
+    if (!native?.leaveAndAwait) {
+      await this.leave(packageName)
+      return {completed: false, reason: "unsupported"}
+    }
+    try {
+      const outcome = await native.leaveAndAwait({timeoutMs})
+      return {completed: outcome?.completed !== false}
     } finally {
       await this.releaseHostState()
     }

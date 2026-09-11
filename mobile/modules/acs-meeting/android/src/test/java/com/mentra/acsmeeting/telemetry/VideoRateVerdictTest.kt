@@ -5,7 +5,7 @@ import org.assertj.core.api.Assertions.assertThat
 import org.junit.Test
 
 class VideoRateVerdictTest {
-  /** 540p15 against the 1.5 Mbps budget Mentra Call grants it. */
+  /** 540p15 against a starved 1.5 Mbps budget — the grant Mentra Call used to send. */
   private fun verdict(
     advertisedFps: Double = 15.0,
     sinkFps: Double = 15.0,
@@ -27,6 +27,36 @@ class VideoRateVerdictTest {
   @Test
   fun aWireHoldingTheAdvertisedRateIsOk() {
     assertThat(verdict()).isEqualTo(Bound.OK)
+  }
+
+  /**
+   * The verdict that decides whether "the call quality is low" is answered by raising the grant.
+   * Every frame is on the wire, so nothing here is short — but the bits are pressed against the
+   * ceiling, which is the one condition under which a bigger number changes the picture. Without
+   * this the same tick reads OK and the ceiling never enters the conversation.
+   */
+  @Test
+  fun aFullRateRidingTheCeilingIsNamedAsCapBound() {
+    assertThat(verdict(wireBitrateBps = 1_480_000)).isEqualTo(Bound.CAP_BOUND)
+    // The controller routinely overshoots the grant; that is still the ceiling binding.
+    assertThat(verdict(wireBitrateBps = 1_623_000)).isEqualTo(Bound.CAP_BOUND)
+  }
+
+  /** Headroom under the grant at a full rate is a healthy stream, not a ceiling problem. */
+  @Test
+  fun aFullRateWithBitsToSpareIsStillPlainOk() {
+    assertThat(verdict(wireBitrateBps = 1_100_000)).isEqualTo(Bound.OK)
+    assertThat(verdict(wireBitrateBps = null)).isEqualTo(Bound.OK)
+  }
+
+  /**
+   * Cap-bound is about the ceiling, and a short frame rate means something else is wrong first.
+   * Raising the grant for a stream that cannot fill the one it has buys nothing.
+   */
+  @Test
+  fun aShortRateIsDiagnosedBeforeTheCeilingIsConsidered() {
+    assertThat(verdict(wireFps = 8.0, wireBitrateBps = 1_480_000, cpuPercent = 92.0))
+      .isEqualTo(Bound.ENCODER_SHORT)
   }
 
   /**

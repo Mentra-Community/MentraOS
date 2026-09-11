@@ -130,10 +130,35 @@ export interface SoftapCallOptions {
    * ends. Exceptions thrown here are swallowed — a broken listener must not fail the call.
    */
   onProgress?: (progress: SoftapProgress) => void
+  /**
+   * Narration the caller already showed before the sequence existed — signing in to Teams, asking
+   * for a permission. Without it the first `emitProgress` would blank the checklist the wearer is
+   * already reading. Only `detail` is taken: the caller reports what it did, it does not get to
+   * claim a step ran.
+   */
+  initialSteps?: SoftapStepState[]
 }
 
 function freshSteps(): SoftapStepState[] {
   return SOFTAP_STEPS.map((step) => ({step, status: "pending"}))
+}
+
+/** See {@link SoftapCallOptions.initialSteps}. */
+function seededSteps(initial: SoftapStepState[] | undefined): SoftapStepState[] {
+  if (!initial?.length) return freshSteps()
+  return freshSteps().map((step) => {
+    const seed = initial.find((entry) => entry.step === step.step)
+    return seed?.detail ? {...step, detail: seed.detail} : step
+  })
+}
+
+/** A promise plus the function that settles it. */
+function deferred(): {promise: Promise<void>; resolve: () => void} {
+  let resolve!: () => void
+  const promise = new Promise<void>((settle) => {
+    resolve = settle
+  })
+  return {promise, resolve}
 }
 
 /**
@@ -170,6 +195,28 @@ export class SoftapCallTransport {
    */
   private generation = 0
   private stopping: Promise<void> | null = null
+  /**
+   * The step currently in flight, and a promise that settles only after its body *and* the undo it
+   * runs when it finds itself cancelled are both finished.
+   *
+   * This is what [stop] waits on. A step that resolves late still owns a resource — a hotspot that
+   * came up after the wearer left — and its release happens inside the step, out of the teardown's
+   * sight. Without this wait, `stop()` resolves while that release is still pending and the next
+   * call brings a hotspot up straight into it.
+   */
+  private running: {step: SoftapStep; settled: Promise<void>} | null = null
+  /** True once [start] has been called at least once, so [stop] can tell "cancelled" from "reusable". */
+  private startedEver = false
+  /**
+   * A [stop] that landed before the sequence ever began.
+   *
+   * There is nothing to unwind in that case, so the flag is the only thing that can carry the
+   * cancellation forward: a `start()` arriving afterwards belongs to the attempt that was just
+   * cancelled and must refuse rather than build a call nobody is waiting for.
+   */
+  private cancelledBeforeStart = false
+  /** Steps whose undo threw during the last teardown. See [lastTeardownFailures]. */
+  private teardownFailures: SoftapStep[] = []
   /**
    * Raised the instant a teardown is decided, before any resource is touched.
    *
@@ -251,13 +298,28 @@ export class SoftapCallTransport {
   }
 
   /**
+   * Steps whose undo threw during the last teardown, so the caller can refuse the next call.
+   *
+   * Teardown deliberately swallows these to keep unwinding — but a hotspot that would not turn off
+   * is exactly the state the next call cannot be built on, and starting anyway is what produced
+   * "Cannot start glasses hotspot" followed by a scoped join that never found the SSID.
+   */
+  lastTeardownFailures(): SoftapStep[] {
+    return [...this.teardownFailures]
+  }
+
+  /**
    * Runs the sequence. On any failure the partial sequence is torn down before the error is
    * rethrown, so a failed start never leaves a hotspot up or a publisher running.
    */
   async start(options: SoftapCallOptions = {}): Promise<void> {
+    if (this.cancelledBeforeStart) {
+      throw new SoftapCallError("hotspot", "CANCELLED", "SoftAP call was cancelled before it started")
+    }
     if (this.phase !== "idle" && this.phase !== "failed") {
       throw new SoftapCallError("hotspot", "ALREADY_ACTIVE", `A SoftAP call is already ${this.phase}`)
     }
+    this.startedEver = true
     const generation = ++this.generation
     this.phase = "starting"
     this.terminating = false
@@ -266,7 +328,8 @@ export class SoftapCallTransport {
     this.completed = []
     this.ingestUrl = null
     this.hotspot = null
-    this.steps = freshSteps()
+    this.teardownFailures = []
+    this.steps = seededSteps(options.initialSteps)
     this.stepStartedAt.clear()
     this.startedAt = Date.now()
     this.onProgress = options.onProgress
@@ -371,7 +434,15 @@ export class SoftapCallTransport {
     this.terminating = true
     if (options.mode) this.teardownMode = options.mode
     if (this.stopping) return this.stopping
-    if (this.completed.length === 0 && this.phase === "idle") return
+    const running = this.running
+    if (this.completed.length === 0 && this.phase === "idle" && !running) {
+      // Nothing was built, so there is nothing to unwind — but a start() that has not run yet
+      // still has to be refused, and a generation bump still has to invalidate anything holding
+      // the old one.
+      this.generation++
+      if (!this.startedEver) this.cancelledBeforeStart = true
+      return
+    }
 
     this.generation++
     this.phase = "stopping"
@@ -380,13 +451,23 @@ export class SoftapCallTransport {
     this.emitProgress()
 
     this.stopping = (async () => {
-      const failures: string[] = []
+      // The generation bump above has already told the in-flight step to release whatever it
+      // produced. Waiting for that release is what makes a resolved `stop()` mean "nothing from
+      // this call is still coming". Deliberately unbounded: a native call that never returns must
+      // hold the next call back, never let it race this one's cleanup.
+      if (running) {
+        softapTrace("softap_stop_waiting_for_step", {step: running.step})
+        await running.settled
+      }
+      const failures: SoftapStep[] = []
       for (const step of [...this.completed].reverse()) {
         try {
           await this.undo(step)
           softapTrace("softap_step_undone", {step})
         } catch (error) {
-          // Recorded, not rethrown: the remaining steps still have to be undone.
+          // Recorded, not rethrown: the remaining steps still have to be undone. The caller reads
+          // them back through [lastTeardownFailures] and refuses the next call, because a hotspot
+          // that would not turn off is exactly the state the next call cannot build on.
           failures.push(step)
           softapTraceFailure("softap_step_undo_failed", {
             step,
@@ -398,6 +479,7 @@ export class SoftapCallTransport {
       this.hotspot = null
       this.ingestUrl = null
       this.phase = "idle"
+      this.teardownFailures = failures
       softapTrace("softap_call_stopped", {undoFailures: failures.join(",")})
       resetSoftapTrace()
       // A failed start keeps its checklist so the UI can show which step broke; a deliberate
@@ -478,6 +560,25 @@ export class SoftapCallTransport {
     if (generation !== this.generation) {
       throw new SoftapCallError(step, "CANCELLED", `SoftAP call was cancelled before ${step}`)
     }
+    // Published before the first await so a `stop()` on the very next tick can see it. Settled in
+    // the `finally`, after any self-undo, so waiting on it means the step owns nothing any more.
+    const settle = deferred()
+    this.running = {step, settled: settle.promise}
+    try {
+      await this.runStep(generation, step, code, run)
+    } finally {
+      if (this.running?.settled === settle.promise) this.running = null
+      settle.resolve()
+    }
+  }
+
+  /** The step body itself. Split out so [step] can publish and settle {@link running} around it. */
+  private async runStep(
+    generation: number,
+    step: SoftapStep,
+    code: string,
+    run: (report: SoftapStepReporter) => Promise<void>,
+  ): Promise<void> {
     softapTrace("softap_step_begin", {step})
     const startedAt = Date.now()
     this.stepStartedAt.set(step, startedAt)

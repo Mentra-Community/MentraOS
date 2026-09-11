@@ -50,10 +50,18 @@ class VideoProfileTest {
   }
 
   @Test
+  fun acsCeilingsSitAboveTheGlassesPhoneLink() {
+    val glassesPhoneBps = 2_500_000
+    for (profile in listOf(VideoProfile.HD, VideoProfile.P540, VideoProfile.P540_15)) {
+      assertThat(profile.maxBitrateBps).isGreaterThan(glassesPhoneBps)
+    }
+  }
+
+  @Test
   fun parseAcceptsDocumentedVirtualCameraSizesAndRejectsPortraitAnd480p() {
-    assertThat(VideoProfile.parse(1280, 720, 15, 2_500_000)).isEqualTo(VideoProfile.HD)
-    assertThat(VideoProfile.parse(960, 540, 30, 1_500_000)).isEqualTo(VideoProfile.P540)
-    assertThat(VideoProfile.parse(960, 540, 15, 2_200_000)).isEqualTo(VideoProfile.P540_15)
+    assertThat(VideoProfile.parse(1280, 720, 15, 3_000_000)).isEqualTo(VideoProfile.HD)
+    assertThat(VideoProfile.parse(960, 540, 30, 3_000_000)).isEqualTo(VideoProfile.P540)
+    assertThat(VideoProfile.parse(960, 540, 15, 3_000_000)).isEqualTo(VideoProfile.P540_15)
     assertThat(VideoProfile.parse(540, 960, 30, 1_500_000)).isNull()
     assertThat(VideoProfile.parse(854, 480, 15, 1_500_000)).isNull()
   }

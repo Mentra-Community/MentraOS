@@ -855,7 +855,7 @@ struct AcsOutgoingVideo {
     let fps: Int
     let maxBitrateBps: Int
 
-    static let hd = AcsOutgoingVideo(width: 1280, height: 720, fps: 15, maxBitrateBps: 2_500_000)
+    static let hd = AcsOutgoingVideo(width: 1280, height: 720, fps: 15, maxBitrateBps: 3_000_000)
     static let allowedSizes: Set<String> = ["1280x720", "960x540"]
 }
 

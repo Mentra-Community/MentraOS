@@ -23,6 +23,9 @@ package com.mentra.acsmeeting.telemetry
  *   CPU to spare and the bitrate far under the budget we granted. The rate
  *   controller is throttling an encoder that could keep up. Cutting fps or
  *   pixels here makes it worse; fix delivery consistency.
+ * - [Bound.CAP_BOUND] every frame is on the wire and the bitrate is pressed
+ *   against the ceiling we granted. Nothing is broken; the grant is simply the
+ *   limit, so the picture cannot get sharper until the number does.
  */
 object VideoRateVerdict {
   enum class Bound {
@@ -31,6 +34,7 @@ object VideoRateVerdict {
     PACER_SHORT,
     ENCODER_SHORT,
     BITRATE_STARVED,
+    CAP_BOUND,
     UNKNOWN,
   }
 
@@ -52,6 +56,16 @@ object VideoRateVerdict {
   /** Wire bitrate below this fraction of the granted budget is a throttled stream. */
   const val STARVED_FRACTION = 0.6
 
+  /**
+   * Wire bitrate at or above this fraction of the grant counts as riding the ceiling.
+   *
+   * The grant is a target rather than a wall — a device run recorded the wire at 1623 kbps
+   * against a 1.5 Mbps grant, 108% — so "pressed against it" has to mean near, not exactly at.
+   * 0.95 is below the noise on a controller that routinely overshoots and well above the 0.85
+   * that [VideoQuality.SPENDING_FRACTION] treats as merely spending the budget.
+   */
+  const val CAP_BOUND_FRACTION = 0.95
+
   fun of(
     advertisedFps: Double,
     sinkFps: Double,
@@ -71,7 +85,15 @@ object VideoRateVerdict {
     val deliverable = minOf(advertisedFps, sinkFps)
     if (admittedFps < deliverable * PACER_SHORT_FRACTION) return Bound.PACER_SHORT
     if (wireFps == null) return Bound.UNKNOWN
-    if (wireFps >= admittedFps * SHORT_FRACTION) return Bound.OK
+    if (wireFps >= admittedFps * SHORT_FRACTION) {
+      // A full frame rate is not the same as a good picture, and this is the one case where the
+      // fix is the ceiling itself. Reporting it as a plain OK is how "the quality is low" turns
+      // into an argument about the encoder: every rate number looks healthy, so the grant — the
+      // one thing actually holding the bits down — never comes up.
+      val capBound =
+        wireBitrateBps != null && budgetBps > 0 && wireBitrateBps >= budgetBps * CAP_BOUND_FRACTION
+      return if (capBound) Bound.CAP_BOUND else Bound.OK
+    }
     if (cpuPercent != null && cpuPercent >= CPU_BUSY_PERCENT) return Bound.ENCODER_SHORT
     val starved =
       wireBitrateBps != null && budgetBps > 0 && wireBitrateBps < budgetBps * STARVED_FRACTION
@@ -85,6 +107,7 @@ object VideoRateVerdict {
     Bound.PACER_SHORT -> "our gate drops frames the source supplied; check FramePacer interval"
     Bound.ENCODER_SHORT -> "ACS encoder is the ceiling; cut pixels (VideoProfile.SD) not fps"
     Bound.BITRATE_STARVED -> "rate controller is throttling, not CPU; do not cut fps or pixels"
+    Bound.CAP_BOUND -> "wire is riding the granted ceiling; raising maxBitrateBps is the only lever"
     Bound.UNKNOWN -> "not enough evidence yet"
   }
 

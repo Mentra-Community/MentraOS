@@ -217,6 +217,66 @@ describe("AcsMeetingService", () => {
     expect(writeStreamChunk).toHaveBeenCalledTimes(1)
   })
 
+  /**
+   * The whole point of the second verb: native's `leave()` queues its hang-up and agent disposal
+   * and returns, so a host that awaits it and then starts the next call is racing this call's
+   * teardown through the same hotspot.
+   */
+  test("leaveAndAwait uses the native completion signal when the build has one", async () => {
+    const native = fakeNative()
+    const leaveAndAwait = mock(async (_options: {timeoutMs: number}) => ({completed: true}))
+    setAcsMeetingNativeForTests({...native, leaveAndAwait})
+    await acsMeetingService.join("com.mentra.call", {
+      meetingUrl: "https://teams.microsoft.com/l/meetup-join/x",
+      token: "tok",
+      videoSource: {type: "whep", url: "https://example.com/whep"},
+    })
+
+    await expect(acsMeetingService.leaveAndAwait("com.mentra.call", 1234)).resolves.toEqual({completed: true})
+
+    expect(leaveAndAwait).toHaveBeenCalledWith({timeoutMs: 1234})
+    expect(native.leave).not.toHaveBeenCalled()
+    expect(acsMeetingService.ownerPackage()).toBeNull()
+  })
+
+  /** An older host still has to work — it just cannot promise the cleanup finished, and says so. */
+  test("leaveAndAwait falls back to leave on a native that predates it and reports the weaker guarantee", async () => {
+    const native = fakeNative()
+    setAcsMeetingNativeForTests(native)
+    await acsMeetingService.join("com.mentra.call", {
+      meetingUrl: "https://teams.microsoft.com/l/meetup-join/x",
+      token: "tok",
+      videoSource: {type: "whep", url: "https://example.com/whep"},
+    })
+
+    await expect(acsMeetingService.leaveAndAwait("com.mentra.call")).resolves.toEqual({
+      completed: false,
+      reason: "unsupported",
+    })
+
+    expect(native.leave).toHaveBeenCalledTimes(1)
+  })
+
+  /** A cleanup failure must surface, not be reported as a clean teardown the next call can trust. */
+  test("leaveAndAwait propagates a native cleanup failure and still releases host state", async () => {
+    const native = fakeNative()
+    setAcsMeetingNativeForTests({
+      ...native,
+      leaveAndAwait: async () => {
+        throw new Error("acs_leave_timeout")
+      },
+    })
+    await acsMeetingService.join("com.mentra.call", {
+      meetingUrl: "https://teams.microsoft.com/l/meetup-join/x",
+      token: "tok",
+      videoSource: {type: "whep", url: "https://example.com/whep"},
+    })
+
+    await expect(acsMeetingService.leaveAndAwait("com.mentra.call")).rejects.toThrow("acs_leave_timeout")
+
+    expect(acsMeetingService.ownerPackage()).toBeNull()
+  })
+
   test("leave unbinds native listeners so stale events do not reach the old owner", async () => {
     const native = fakeNative()
     setAcsMeetingNativeForTests(native)

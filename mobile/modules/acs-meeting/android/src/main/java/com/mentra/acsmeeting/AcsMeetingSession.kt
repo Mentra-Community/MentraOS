@@ -763,6 +763,37 @@ class AcsMeetingSession(
   }
 
   /**
+   * Leave, and do not return until the cleanup has actually finished.
+   *
+   * [leave] hands the work to [executor] and returns straight away, so a caller that awaits it and
+   * then starts the next call is racing this one's hang-up, agent disposal, and media teardown
+   * through the same hardware. That race is what turned a quick Stop/Start into a hotspot the
+   * previous call switched off underneath the new one.
+   *
+   * Failures that [leaveLocked] otherwise only logs are captured and rethrown here: reporting a
+   * clean teardown that did not happen is exactly what lets the next call build on leaked state.
+   *
+   * @param timeoutMs how long the cleanup may take before it is reported as stuck
+   * @throws IllegalStateException when the cleanup did not finish in time
+   */
+  fun leaveAndAwait(timeoutMs: Long): Boolean {
+    val done = CountDownLatch(1)
+    val failure = AtomicReference<Exception?>(null)
+    executor.execute {
+      try {
+        leaveLocked(failures = failure)
+      } catch (error: Exception) {
+        failure.compareAndSet(null, error)
+      } finally {
+        done.countDown()
+      }
+    }
+    if (!done.await(timeoutMs, TimeUnit.MILLISECONDS)) throw IllegalStateException("acs_leave_timeout")
+    failure.get()?.let { throw it }
+    return true
+  }
+
+  /**
    * End the Teams group call for everyone, then tear this device down.
    *
    * Blocking, unlike [leave], because the caller has to know whether the meeting actually died: the
@@ -1281,7 +1312,15 @@ class AcsMeetingSession(
     if (pending.isDone) abandonedAgent = null
   }
 
-  private fun leaveLocked(emitIdle: Boolean = true, keepAgent: Boolean = false) {
+  /**
+   * @param failures when present, the first cleanup exception is recorded here instead of only
+   *   being logged, so [leaveAndAwait] can tell its caller the teardown did not really succeed
+   */
+  private fun leaveLocked(
+    emitIdle: Boolean = true,
+    keepAgent: Boolean = false,
+    failures: AtomicReference<Exception?>? = null,
+  ) {
     // Invalidate first: a bounded ACS operation still in flight has to find a stale generation
     // rather than attach an agent to a session that is being torn down.
     joinGeneration++
@@ -1313,6 +1352,7 @@ class AcsMeetingSession(
       frameSender.detach()
     } catch (error: Exception) {
       Log.w(TAG, "leave cleanup failed", error)
+      failures?.compareAndSet(null, error)
     }
     // Hang up and dispose must be independent: a failed hang-up must not skip
     // dispose, or the ACS agent leaks and the guest stays in the Teams roster.
@@ -1321,11 +1361,13 @@ class AcsMeetingSession(
         call?.hangUp()?.get()
       } catch (error: Exception) {
         Log.w(TAG, "leave hangUp failed", error)
+        failures?.compareAndSet(null, error)
       }
       try {
         callAgent?.dispose()
       } catch (error: Exception) {
         Log.w(TAG, "leave dispose failed", error)
+        failures?.compareAndSet(null, error)
       }
       disposeAbandonedAgent(waitMs = 0)
       callClient = null

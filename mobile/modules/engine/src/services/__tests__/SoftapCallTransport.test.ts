@@ -231,6 +231,63 @@ describe("SoftapCallTransport teardown", () => {
     expect(transport.currentPhase()).toBe("idle")
     expect(transport.activeSteps()).toEqual([])
   })
+
+  /**
+   * Swallowing an undo failure is right for the teardown — the remaining steps still have to run —
+   * and wrong for everything after it. A hotspot that would not switch off is precisely the state
+   * the next call cannot be built on, and starting anyway is what produced "Cannot start glasses
+   * hotspot" followed by a scoped join that never found the SSID. So the failures are kept, by
+   * name, for the caller that decides whether there is going to be a next call.
+   */
+  test("a swallowed teardown failure is still reported by name afterwards", async () => {
+    const {calls, transport} = recordingDeps((recorded) => ({
+      stopHotspot: async () => {
+        recorded.push("stopHotspot")
+        throw new Error("hotspot stuck on")
+      },
+    }))
+    await transport.start()
+    calls.length = 0
+
+    await transport.stop()
+
+    expect(calls).toEqual(TEARDOWN_ORDER)
+    expect(transport.lastTeardownFailures()).toEqual(["hotspot"])
+  })
+
+  test("every failed undo is named, in teardown order", async () => {
+    const failing = async () => {
+      throw new Error("nope")
+    }
+    const {transport} = recordingDeps({
+      stopPublishing: failing,
+      leaveScopedNetwork: failing,
+    })
+    await transport.start()
+
+    await transport.stop()
+
+    expect(transport.lastTeardownFailures()).toEqual(["publish", "scopedJoin"])
+  })
+
+  /** A clean teardown must not leave a stale accusation behind for the next call to trip over. */
+  test("a clean teardown reports no failures, and a later one does not inherit an earlier one", async () => {
+    let brokenHotspot = true
+    const {transport} = recordingDeps({
+      stopHotspot: async () => {
+        if (brokenHotspot) throw new Error("hotspot stuck on")
+      },
+    })
+    await transport.start()
+    await transport.stop()
+    expect(transport.lastTeardownFailures()).toEqual(["hotspot"])
+
+    brokenHotspot = false
+    await transport.start()
+    await transport.stop()
+
+    expect(transport.lastTeardownFailures()).toEqual([])
+  })
 })
 
 describe("SoftapCallTransport end for everyone", () => {
@@ -589,6 +646,211 @@ describe("SoftapCallTransport leave during every phase", () => {
     expect(calls).toContain("startHotspot")
     expect(calls).toContain("stopHotspot")
     expect(calls).not.toContain("joinScopedNetwork")
+  })
+})
+
+describe("SoftapCallTransport stop waits for the step in flight", () => {
+  /**
+   * The restart race, at the layer that can close it.
+   *
+   * `stop()` used to resolve while the hotspot command was still in flight. The caller took that
+   * as "nothing from this call is still coming", started the next one, and the first call's late
+   * `setHotspotState(false)` turned off the hotspot the new call had just brought up — which the
+   * wearer saw as "Couldn't start glasses hotspot" followed by a scoped join that could not find
+   * the SSID.
+   */
+  test("stop does not resolve until the late step has released what it produced", async () => {
+    let release!: () => void
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    const calls: string[] = []
+    const {transport} = recordingDeps({
+      startHotspot: async () => {
+        await blocked
+        calls.push("startHotspot")
+        return {ssid: "MentraLive-1234", passphrase: "hunter2!"}
+      },
+      stopHotspot: async () => {
+        calls.push("stopHotspot")
+      },
+    })
+
+    const started = transport.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const stopped = transport.stop()
+    let stopResolved = false
+    void stopped.then(() => {
+      stopResolved = true
+    })
+    // The hotspot command is still in flight, so the teardown cannot honestly be finished.
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(stopResolved).toBe(false)
+
+    release()
+    await expect(started).rejects.toBeInstanceOf(SoftapCallError)
+    await stopped
+
+    expect(calls).toEqual(["startHotspot", "stopHotspot"])
+  })
+
+  /** The point of the wait: the next call starts on a transport with nothing left to fire. */
+  test("a call started after stop resolves never sees the previous call's undo", async () => {
+    let release!: () => void
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let first = true
+    const calls: string[] = []
+    const {transport} = recordingDeps({
+      startHotspot: async () => {
+        if (first) {
+          first = false
+          await blocked
+        }
+        calls.push("startHotspot")
+        return {ssid: "MentraLive-1234", passphrase: "hunter2!"}
+      },
+      stopHotspot: async () => {
+        calls.push("stopHotspot")
+      },
+    })
+
+    const started = transport.start()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const stopped = transport.stop()
+    release()
+    await expect(started).rejects.toBeInstanceOf(SoftapCallError)
+    await stopped
+    calls.length = 0
+
+    await transport.start()
+    // Give any straggler from the first attempt a turn it must not use.
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(calls).toEqual(["startHotspot"])
+    expect(transport.currentPhase()).toBe("live")
+  })
+
+  /**
+   * The UI half of the same race. A checklist event from the call the wearer just cancelled,
+   * arriving after the next one has started, redraws the new call's rows with the old call's
+   * progress — the screen jumps backwards, or forwards to a step that has not happened. The
+   * cancelled attempt's listener has to stop being a listener the moment the next one begins.
+   */
+  test("a listener from the cancelled call receives nothing once the next call has begun", async () => {
+    let release!: () => void
+    const blocked = new Promise<void>((resolve) => {
+      release = resolve
+    })
+    let first = true
+    const {transport} = recordingDeps({
+      startHotspot: async () => {
+        if (first) {
+          first = false
+          await blocked
+        }
+        return {ssid: "MentraLive-1234", passphrase: "hunter2!"}
+      },
+    })
+
+    const stale: string[] = []
+    const started = transport.start({onProgress: (progress) => stale.push(progress.phase)})
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const stopped = transport.stop()
+    release()
+    await expect(started).rejects.toBeInstanceOf(SoftapCallError)
+    await stopped
+
+    const fresh: string[] = []
+    stale.length = 0
+    await transport.start({onProgress: (progress) => fresh.push(progress.phase)})
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(fresh).not.toHaveLength(0)
+    expect(stale).toEqual([])
+  })
+
+  /**
+   * `start()` handles its own failure by awaiting `stop()`. A `stop()` that waited on the whole
+   * `start()` promise would therefore wait on itself; it waits on the running step alone.
+   */
+  test("stop during a failing start resolves rather than deadlocking", async () => {
+    const {transport} = recordingDeps({
+      joinScopedNetwork: async () => {
+        throw new Error("EHOSTUNREACH")
+      },
+    })
+
+    const started = transport.start()
+    const stopped = transport.stop()
+
+    await expect(started).rejects.toBeInstanceOf(SoftapCallError)
+    await expect(stopped).resolves.toBeUndefined()
+    expect(transport.currentPhase()).toBe("failed")
+  })
+
+  /**
+   * Cancel can land before the sequence exists at all — the host is still asking for a permission
+   * or signing in to Teams. There is nothing to unwind, so refusing the start is the only way the
+   * cancellation can mean anything.
+   */
+  test("a stop before the first start makes that start refuse", async () => {
+    const {calls, transport} = recordingDeps()
+
+    await transport.stop()
+
+    await expect(transport.start()).rejects.toMatchObject({code: "CANCELLED"})
+    expect(calls).toEqual([])
+    expect(transport.currentPhase()).toBe("idle")
+  })
+
+  test("a stop between two cycles does not poison the next start", async () => {
+    const {transport} = recordingDeps()
+    await transport.start()
+    await transport.stop()
+    await transport.stop()
+
+    await expect(transport.start()).resolves.toBeUndefined()
+    expect(transport.currentPhase()).toBe("live")
+  })
+})
+
+describe("SoftapCallTransport preflight narration", () => {
+  /**
+   * The host narrates work that happens before the sequence exists (permissions, ACS sign-in) on
+   * the first row. Wiping it on the first emit would blank a line the wearer is already reading.
+   */
+  test("initial step details survive into the first snapshot", async () => {
+    const {transport} = recordingDeps({
+      startHotspot: async () => new Promise(() => {}) as Promise<{ssid: string; passphrase: string}>,
+    })
+    const seen: Array<string | undefined> = []
+
+    void transport.start({
+      initialSteps: [{step: "hotspot", status: "pending", detail: "Signing in to Teams…"}],
+      onProgress: (progress) => seen.push(progress.steps.find((step) => step.step === "hotspot")?.detail),
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(seen[0]).toBe("Signing in to Teams…")
+    // The step's own narration takes over as soon as it runs.
+    expect(seen.at(-1)).toBe("Asking the glasses to turn on their hotspot")
+  })
+
+  test("a caller cannot mark a step done before it ran", async () => {
+    const {transport} = recordingDeps({
+      startHotspot: async () => new Promise(() => {}) as Promise<{ssid: string; passphrase: string}>,
+    })
+    let first: SoftapProgress | undefined
+
+    void transport.start({
+      initialSteps: [{step: "scopedJoin", status: "done", detail: "not really"}],
+      onProgress: (progress) => (first ??= progress),
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+
+    expect(first?.steps.find((step) => step.step === "scopedJoin")?.status).toBe("pending")
   })
 })
 

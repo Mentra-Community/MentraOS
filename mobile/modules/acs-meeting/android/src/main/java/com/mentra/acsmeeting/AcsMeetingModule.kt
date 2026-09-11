@@ -300,6 +300,24 @@ class AcsMeetingModule : Module() {
     }
 
     /**
+     * Leave, and resolve only once the cleanup has actually finished.
+     *
+     * `leave` queues its work and returns, which is fine for a wearer who is done but useless to a
+     * host that has to know when the next call may safely start. This also releases the cellular
+     * process pin: `prepareAgent` takes it before any scoped network exists, so a call cancelled
+     * during sign-in would otherwise leave this whole process pinned with nothing to unpin it.
+     */
+    AsyncFunction("leaveAndAwait") { options: Map<String, Any?> ->
+      val timeoutMs = (options["timeoutMs"] as? Number)?.toLong() ?: 20_000L
+      val completed = try {
+        session?.leaveAndAwait(timeoutMs) ?: true
+      } finally {
+        internetHold?.release()
+      }
+      mapOf("completed" to completed)
+    }
+
+    /**
      * End the Teams group call for everyone. Rejects when there is no call, when this participant
      * is known not to be allowed to, or when ACS refuses — and tears this device down regardless,
      * so a rejection means "we could not end it for the others", never "you are still in it".
