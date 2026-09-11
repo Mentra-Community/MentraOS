@@ -87,6 +87,28 @@ export function createProductionExamplePlan({
   return plan
 }
 
+// A previous run may already have frozen and persisted the plan for this
+// identity. It is reused verbatim when it describes the same selected beta,
+// source, and manifest; any other frozen plan is a hard stop rather than a
+// silently different candidate identity.
+export function reuseExistingExamplePlan({existingPlan, betaPlan, betaManifestUrl, betaManifestSha256}) {
+  if (
+    existingPlan?.channel !== "production" ||
+    existingPlan.releaseSetId !== `mentra-${existingPlan.releaseIdentity}` ||
+    existingPlan.sourceCommit !== betaPlan.sourceCommit ||
+    existingPlan.promotion?.selectedBetaIdentity !== betaPlan.releaseIdentity ||
+    existingPlan.promotion?.selectedBetaReleaseSetId !== betaPlan.releaseSetId ||
+    existingPlan.promotion?.selectedBetaManifest?.url !== betaManifestUrl ||
+    existingPlan.promotion?.selectedBetaManifest?.sha256 !== betaManifestSha256 ||
+    existingPlan.example?.storePromotion !== "never" ||
+    !Number.isSafeInteger(existingPlan.native?.buildNumber) ||
+    existingPlan.native.buildNumber <= betaPlan.native.buildNumber
+  ) {
+    throw new Error("A production example plan already frozen for this identity describes different inputs")
+  }
+  return existingPlan
+}
+
 function parseArgs(args) {
   const values = {}
   for (let index = 0; index < args.length; index += 2) {
@@ -114,19 +136,43 @@ function main() {
   if (command === "plan") {
     const betaPlan = readJson(args["beta-plan"])
     const betaManifestPath = path.resolve(args["beta-manifest"])
-    const buildNumber = allocateExampleBuildNumber({
-      betaPlan,
-      appleInventory: readJson(args["apple-inventory"]),
-      googleInventory: args["google-inventory"] ? readJson(args["google-inventory"]) : null,
-    })
-    const plan = createProductionExamplePlan({
-      family: loadReleaseFamily({rootDir: path.resolve(args.root || process.cwd()), requireVersionMirrors: true}),
-      betaPlan,
-      betaManifest: readJson(betaManifestPath),
-      betaManifestUrl: args["beta-manifest-url"],
-      betaManifestSha256: createHash("sha256").update(readFileSync(betaManifestPath)).digest("hex"),
-      buildNumber,
-    })
+    const betaManifestSha256 = createHash("sha256").update(readFileSync(betaManifestPath)).digest("hex")
+    const family = loadReleaseFamily({rootDir: path.resolve(args.root || process.cwd()), requireVersionMirrors: true})
+    let plan
+    if (args["existing-plan"]) {
+      plan = reuseExistingExamplePlan({
+        existingPlan: readJson(args["existing-plan"]),
+        betaPlan,
+        betaManifestUrl: args["beta-manifest-url"],
+        betaManifestSha256,
+      })
+      // The frozen plan must still be the one this checkout would derive.
+      const derived = createProductionExamplePlan({
+        family,
+        betaPlan,
+        betaManifest: readJson(betaManifestPath),
+        betaManifestUrl: args["beta-manifest-url"],
+        betaManifestSha256,
+        buildNumber: plan.native.buildNumber,
+      })
+      if (serializeReleaseRecord(derived) !== serializeReleaseRecord(plan)) {
+        throw new Error("The frozen production example plan no longer matches the selected beta source")
+      }
+    } else {
+      const buildNumber = allocateExampleBuildNumber({
+        betaPlan,
+        appleInventory: readJson(args["apple-inventory"]),
+        googleInventory: args["google-inventory"] ? readJson(args["google-inventory"]) : null,
+      })
+      plan = createProductionExamplePlan({
+        family,
+        betaPlan,
+        betaManifest: readJson(betaManifestPath),
+        betaManifestUrl: args["beta-manifest-url"],
+        betaManifestSha256,
+        buildNumber,
+      })
+    }
     writeFileSync(path.resolve(args.output), serializeReleaseRecord(plan))
     output(
       {

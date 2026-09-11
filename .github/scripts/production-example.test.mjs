@@ -3,7 +3,12 @@ import path from "node:path"
 import test from "node:test"
 import {fileURLToPath} from "node:url"
 
-import {EXAMPLE_BUNDLE_ID, allocateExampleBuildNumber, createProductionExamplePlan} from "./production-example.mjs"
+import {
+  EXAMPLE_BUNDLE_ID,
+  allocateExampleBuildNumber,
+  createProductionExamplePlan,
+  reuseExistingExamplePlan,
+} from "./production-example.mjs"
 import {createReleasePlan, loadReleaseFamily, releaseRecordSha256} from "./release-family.mjs"
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
@@ -103,5 +108,46 @@ test("freezes a production example plan keyed on the promoted beta with the allo
         buildNumber: 310000213,
       }),
     /not complete/,
+  )
+})
+
+test("a plan frozen by an earlier run is reused only for the same beta, source, and manifest", () => {
+  const betaManifestUrl =
+    "https://github.com/Mentra-Community/MentraOS/releases/download/mentra-builds-v3.1.0/mentra-release-3.1.0-beta.212.json"
+  const existingPlan = createProductionExamplePlan({
+    family,
+    betaPlan,
+    betaManifest,
+    betaManifestUrl,
+    betaManifestSha256: "b".repeat(64),
+    buildNumber: 310000213,
+  })
+  assert.equal(
+    reuseExistingExamplePlan({existingPlan, betaPlan, betaManifestUrl, betaManifestSha256: "b".repeat(64)}),
+    existingPlan,
+  )
+  assert.throws(
+    () => reuseExistingExamplePlan({existingPlan, betaPlan, betaManifestUrl, betaManifestSha256: "c".repeat(64)}),
+    /describes different inputs/,
+  )
+  assert.throws(
+    () =>
+      reuseExistingExamplePlan({
+        existingPlan,
+        betaPlan: {...betaPlan, releaseIdentity: "3.1.0-beta.213", releaseSetId: "mentra-3.1.0-beta.213"},
+        betaManifestUrl,
+        betaManifestSha256: "b".repeat(64),
+      }),
+    /describes different inputs/,
+  )
+  assert.throws(
+    () =>
+      reuseExistingExamplePlan({
+        existingPlan: {...existingPlan, example: {...existingPlan.example, storePromotion: "app-store"}},
+        betaPlan,
+        betaManifestUrl,
+        betaManifestSha256: "b".repeat(64),
+      }),
+    /describes different inputs/,
   )
 })

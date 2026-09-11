@@ -91,7 +91,6 @@ jobs:
             --pattern "mentra-release-$BETA_IDENTITY.json" \
             --dir example-input/beta
           mv "example-input/beta/mentra-release-plan-$BETA_IDENTITY.json" example-input/beta/release-plan.json
-          mv "example-input/beta/mentra-release-$BETA_IDENTITY.json" "example-input/beta/mentra-release-$BETA_IDENTITY.json"
           [[ "$(jq -er .completedAt "example-input/beta/mentra-release-$BETA_IDENTITY.json")" != "" ]]
           node .github/scripts/verify-release-artifacts.mjs --manifest "example-input/beta/mentra-release-$BETA_IDENTITY.json"
           source_commit=$(jq -er .sourceCommit example-input/beta/release-plan.json)
@@ -169,11 +168,48 @@ jobs:
             GOOGLE_PLAY_INVENTORY_OUTPUT=../stores/example-google.json \
             bundle exec fastlane google_play_inventory
 
+      # The allocated build number must survive reruns: a retry after a partial
+      # upload has to reuse the plan the first run froze, not resample the
+      # stores and move the candidate identity. The plan is persisted as an
+      # immutable asset of the stable container before any upload.
+      - name: Recover the example plan a previous run already froze
+        id: existing
+        env:
+          GH_TOKEN: ${{ github.token }}
+          STABLE_TAG: mentra-v${{ steps.identity.outputs.release_identity }}
+          PLAN_ASSET: production-example-plan-${{ steps.identity.outputs.release_identity }}.json
+        run: |
+          set -euo pipefail
+          releases=$(gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases?per_page=100" | jq 'add')
+          release_id=$(jq -r --arg tag "$STABLE_TAG" \
+            '[.[] | select(.tag_name == $tag)] | if length == 0 then empty elif length == 1 then .[0].id else error("multiple releases are tagged " + $tag) end' \
+            <<< "$releases")
+          if [[ -z "$release_id" ]]; then
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          assets=$(gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases/$release_id/assets?per_page=100" | jq 'add')
+          asset_id=$(jq -r --arg name "$PLAN_ASSET" \
+            '[.[] | select(.name == $name)] | if length == 0 then empty elif length == 1 then .[0].id else error("multiple assets are named " + $name) end' \
+            <<< "$assets")
+          if [[ -z "$asset_id" ]]; then
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          gh api -H "Accept: application/octet-stream" "repos/${GITHUB_REPOSITORY}/releases/assets/$asset_id" \
+            > example-input/existing-plan.json
+          echo "Reusing the example plan already frozen as $PLAN_ASSET"
+          echo "found=true" >> "$GITHUB_OUTPUT"
+
       - name: Freeze the production example plan from the beta source
         id: plan
         run: |
           set -euo pipefail
           mkdir -p release-intent
+          existing=()
+          if [[ "${{ steps.existing.outputs.found }}" == "true" ]]; then
+            existing=(--existing-plan example-input/existing-plan.json)
+          fi
           google=()
           if [[ "${{ steps.google.outcome }}" == "success" && -s example-input/stores/example-google.json ]]; then
             google=(--google-inventory example-input/stores/example-google.json)
@@ -187,6 +223,7 @@ jobs:
             --beta-manifest-url "${{ steps.beta.outputs.manifest_url }}" \
             --apple-inventory example-input/stores/example-apple.json \
             "${google[@]}" \
+            "${existing[@]}" \
             --output release-intent/release-plan.json \
             --github-output "$GITHUB_OUTPUT"
           [[ "$(jq -er .releaseIdentity release-intent/release-plan.json)" == "${{ steps.identity.outputs.release_identity }}" ]]
@@ -201,6 +238,16 @@ jobs:
           --repository "$GITHUB_REPOSITORY"
           --plan release-intent/release-plan.json
           --github-output "$GITHUB_OUTPUT"
+
+      - name: Persist the frozen example plan before any upload
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          node .github/scripts/publish-immutable-release-asset.mjs
+          --file release-intent/release-plan.json
+          --name "production-example-plan-${{ steps.identity.outputs.release_identity }}.json"
+          --release-id "${{ steps.container.outputs.release_id }}"
+          --repository "$GITHUB_REPOSITORY"
 
       - name: Name the immutable input artifacts
         id: artifact
@@ -331,31 +378,37 @@ jobs:
           test -n "$starter_kit_result"
           test -n "$example_testflight"
           record_name="mentra-example-release-$identity.json"
-          completed_at=$(date -u +%Y-%m-%dT%H:%M:%S.000Z)
-          provenance_url="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-          # Reruns keep the first record's timestamps; the container is a draft,
-          # so the existing record is read through the release API.
+          # A rerun re-observes the same candidates (reused uploads, a new run
+          # URL) rather than reproducing the first observation byte for byte.
+          # The record published by the first completed run is therefore the
+          # canonical one: it is validated and checked against this run's
+          # candidate identities instead of being regenerated. The container is
+          # a draft, so the record is read through the release API.
           assets=$(gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases/${{ needs.load.outputs.stable_release_id }}/assets?per_page=100" | jq 'add')
-          asset_id=$(jq -r --arg name "$record_name" '[.[] | select(.name == $name)] | if length == 1 then .[0].id else empty end' <<< "$assets")
+          asset_id=$(jq -r --arg name "$record_name" '[.[] | select(.name == $name)] | if length == 0 then empty elif length == 1 then .[0].id else error("multiple assets are named " + $name) end' <<< "$assets")
           if [[ -n "$asset_id" ]]; then
-            gh api -H "Accept: application/octet-stream" "repos/${GITHUB_REPOSITORY}/releases/assets/$asset_id" > existing-record.json
-            echo "Reconciling against the example record already published as $record_name"
-            completed_at=$(jq -er .completedAt existing-record.json)
-            provenance_url=$(jq -er .provenanceUrl existing-record.json)
-          fi
-          node .github/scripts/example-release-records.mjs \
-            --plan "$plan" \
-            --beta-manifest "$beta_manifest" \
-            --beta-manifest-url "${{ needs.load.outputs.beta_manifest_url }}" \
-            --starter-kit "$starter_kit_result" \
-            --starter-kit-result-url "${{ needs.starter-kit.outputs.result_url }}" \
-            --example-testflight "$example_testflight" \
-            --example-google-play release-input/example-google-play/example-google-play-publication.json \
-            --completed-at "$completed_at" \
-            --provenance-url "$provenance_url" \
-            --output "finalized-example/$record_name"
-          if [[ -f existing-record.json ]]; then
-            cmp existing-record.json "finalized-example/$record_name"
+            gh api -H "Accept: application/octet-stream" "repos/${GITHUB_REPOSITORY}/releases/assets/$asset_id" > "finalized-example/$record_name"
+            echo "Reconciling this run's candidates against the example record already published as $record_name"
+            node .github/scripts/example-release-records.mjs reconcile \
+              --plan "$plan" \
+              --record "finalized-example/$record_name" \
+              --starter-kit "$starter_kit_result" \
+              --example-testflight "$example_testflight" \
+              --example-google-play release-input/example-google-play/example-google-play-publication.json
+            echo "published=true" >> "$GITHUB_OUTPUT"
+          else
+            node .github/scripts/example-release-records.mjs assemble \
+              --plan "$plan" \
+              --beta-manifest "$beta_manifest" \
+              --beta-manifest-url "${{ needs.load.outputs.beta_manifest_url }}" \
+              --starter-kit "$starter_kit_result" \
+              --starter-kit-result-url "${{ needs.starter-kit.outputs.result_url }}" \
+              --example-testflight "$example_testflight" \
+              --example-google-play release-input/example-google-play/example-google-play-publication.json \
+              --completed-at "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" \
+              --provenance-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+              --output "finalized-example/$record_name"
+            echo "published=false" >> "$GITHUB_OUTPUT"
           fi
           {
             echo "identity=$identity"
@@ -363,6 +416,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Publish the immutable example release record
+        if: steps.results.outputs.published != 'true'
         env:
           GH_TOKEN: ${{ github.token }}
         run: >-

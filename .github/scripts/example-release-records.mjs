@@ -271,6 +271,42 @@ export function validateExampleReleaseRecord(record, plan) {
   return record
 }
 
+// A rerun re-observes the same candidates rather than reproducing the first
+// run's observation byte for byte (uploads report "reused", IPA evidence is
+// omitted, run URLs differ). The record published by the first completed run
+// stays canonical; this checks that the candidates this run observed are the
+// ones that record describes.
+export function reconcileExampleReleaseRecord({plan, record, starterKit, exampleTestflight, exampleGooglePlay}) {
+  validateExampleReleaseRecord(record, plan)
+  const recorded = record.starterKit
+  const mismatches = []
+  const check = (label, actual, expected) => {
+    if (actual !== expected)
+      mismatches.push(`${label}: recorded ${JSON.stringify(expected)}, observed ${JSON.stringify(actual)}`)
+  }
+  check("Starter Kit release commit", starterKit?.starterKit?.releaseCommit, recorded.starterKit?.releaseCommit)
+  check("Starter Kit merge commit", starterKit?.starterKit?.mergeCommit, recorded.starterKit?.mergeCommit)
+  for (const artifact of record.artifacts) {
+    const observed = starterKit?.artifacts?.find((candidate) => candidate.name === artifact.coordinate)
+    check(`Starter Kit artifact ${artifact.coordinate}`, observed?.sha256, artifact.sha256)
+  }
+  check("TestFlight build id", exampleTestflight?.build?.id, recorded.testflight?.build?.id)
+  check("TestFlight build number", exampleTestflight?.version?.buildNumber, recorded.testflight?.version?.buildNumber)
+  check(
+    "TestFlight marketing version",
+    exampleTestflight?.version?.marketingVersion,
+    recorded.testflight?.version?.marketingVersion,
+  )
+  check("TestFlight group", exampleTestflight?.group?.id, recorded.testflight?.group?.id)
+  check("Google Play version code", exampleGooglePlay?.version?.buildNumber, recorded.googlePlay?.version?.buildNumber)
+  check("Google Play track", exampleGooglePlay?.track, recorded.googlePlay?.track)
+  check("Google Play bundle digest", exampleGooglePlay?.aab?.sha256, recorded.googlePlay?.aab?.sha256)
+  if (mismatches.length > 0) {
+    throw new Error(`This run's example candidates differ from the published record: ${mismatches.join("; ")}`)
+  }
+  return record
+}
+
 function parseArgs(args) {
   const values = {}
   for (let index = 0; index < args.length; index += 2) {
@@ -287,7 +323,21 @@ function readJson(file) {
 }
 
 function main() {
-  const args = parseArgs(process.argv.slice(2))
+  // The bare form (no command) assembles, matching the coordinated release.
+  const command = process.argv[2]?.startsWith("--") ? "assemble" : process.argv[2]
+  const args = parseArgs(process.argv.slice(command === process.argv[2] ? 3 : 2))
+  if (command === "reconcile") {
+    const record = reconcileExampleReleaseRecord({
+      plan: readJson(args.plan),
+      record: readJson(args.record),
+      starterKit: readJson(args["starter-kit"]),
+      exampleTestflight: readJson(args["example-testflight"]),
+      exampleGooglePlay: readJson(args["example-google-play"]),
+    })
+    console.log(`Published ${record.kind} ${record.releaseIdentity} describes this run's candidates`)
+    return
+  }
+  if (command !== "assemble") throw new Error(`Unknown example release command ${JSON.stringify(command)}`)
   const betaManifestBytes = readFileSync(path.resolve(args["beta-manifest"]))
   const record = assembleExampleReleaseResults({
     plan: readJson(args.plan),

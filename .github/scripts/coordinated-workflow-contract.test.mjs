@@ -633,7 +633,15 @@ test("the production example is keyed on the promoted beta and never promotes a 
   assert.match(example, /uses: \.\/\.github\/workflows\/reusable-coordinated-example-google-play\.yml/)
   assert.match(example, /production_build_number: \$\{\{ fromJSON\(needs\.load\.outputs\.build_number\) \}\}/)
   assert.match(finalize, /example-release-records\.mjs/)
-  assert.match(finalize, /cmp existing-record\.json "finalized-example\/\$record_name"/)
+  assert.match(load, /Recover the example plan a previous run already froze/)
+  assert.match(load, /--existing-plan example-input\/existing-plan\.json/)
+  assert.match(load, /--name "production-example-plan-\$\{\{ steps\.identity\.outputs\.release_identity \}\}\.json"/)
+  assert.doesNotMatch(load, /mv "[^"]*" "\1"/)
+  assert.match(finalize, /example-release-records\.mjs reconcile/)
+  assert.match(finalize, /if: steps\.results\.outputs\.published != 'true'/)
+  assert.doesNotMatch(finalize, /cmp existing-record\.json/)
+  assert.match(play, /if \[\[ "\$\(jq -er \.channel "\$plan"\)" == "production" \]\]; then/)
+  assert.match(play, /target_commitish <<< "\$release"\)" == "\$\(jq -er \.sourceCommit "\$plan"\)"/)
   assert.match(finalize, /publish-immutable-release-asset\.mjs/)
   assert.doesNotMatch(
     example,

@@ -7,6 +7,7 @@ import {
   EXAMPLE_RELEASE_KIND,
   assembleExampleReleaseResults,
   exampleReleaseAssetName,
+  reconcileExampleReleaseRecord,
   validateExampleReleaseRecord,
   verifyStarterKitResult,
 } from "./example-release-records.mjs"
@@ -345,5 +346,51 @@ test("validation rejects records that do not describe a finalized example", () =
   assert.throws(
     () => validateExampleReleaseRecord({...record, betaManifest: {...record.betaManifest, sha256: "x"}}, plan),
     /finalized Mentra Bluetooth example/,
+  )
+})
+
+test("a rerun reconciles its re-observed candidates against the published production record", () => {
+  const f = productionFixtures()
+  const record = assembleProduction()
+  const rerun = {
+    plan: f.plan,
+    record,
+    starterKit: f.starterKit,
+    exampleTestflight: {
+      ...f.exampleTestflight,
+      build: {...f.exampleTestflight.build, uploadStatus: "reused"},
+      ipa: undefined,
+      provenanceUrl: "https://github.com/Mentra-Community/MentraOS/actions/runs/999",
+    },
+    exampleGooglePlay: {
+      ...f.exampleGooglePlay,
+      uploadStatus: "reused",
+      provenanceUrl: "https://github.com/Mentra-Community/MentraOS/actions/runs/999",
+    },
+  }
+  assert.equal(reconcileExampleReleaseRecord(rerun), record)
+  assert.throws(
+    () =>
+      reconcileExampleReleaseRecord({
+        ...rerun,
+        exampleTestflight: {...rerun.exampleTestflight, build: {...rerun.exampleTestflight.build, id: "build-9"}},
+      }),
+    /TestFlight build id/,
+  )
+  assert.throws(
+    () =>
+      reconcileExampleReleaseRecord({
+        ...rerun,
+        starterKit: {...f.starterKit, starterKit: {...f.starterKit.starterKit, releaseCommit: "9".repeat(40)}},
+      }),
+    /Starter Kit release commit/,
+  )
+  assert.throws(
+    () =>
+      reconcileExampleReleaseRecord({
+        ...rerun,
+        exampleGooglePlay: {...rerun.exampleGooglePlay, aab: {...rerun.exampleGooglePlay.aab, sha256: "7".repeat(64)}},
+      }),
+    /Google Play bundle digest/,
   )
 })
