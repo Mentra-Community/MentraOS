@@ -1,5 +1,5 @@
 #!/usr/bin/env node
-import {execFileSync} from "node:child_process"
+import {execFileSync, spawnSync} from "node:child_process"
 import {createHash} from "node:crypto"
 import {copyFileSync, mkdtempSync, readFileSync} from "node:fs"
 import {tmpdir} from "node:os"
@@ -180,6 +180,91 @@ function ensurePromotionBranch(repository, branch, commit) {
   ])
 }
 
+// A promotion pull request's head is the exact beta source commit, so every
+// check-run of the coordinated release that built that beta is attached to it,
+// including jobs that do not gate the beta (the Bluetooth example's store
+// publishes). `gh pr checks --fail-fast` would count those, and the advisory
+// pull-request bots, as merge blockers. The promotion gate is therefore the
+// repository's own aggregate of required area builds, the `ci-gate-*` commit
+// status, and only if no such status exists on the head do the pull-request
+// triggered check-runs (never push-triggered ones) decide.
+const CI_GATE_CONTEXT = /^ci-gate(-[a-z0-9-]+)?$/
+// The area builders the ci-gate aggregates (its allowlist in ci-gate.yml).
+// When no gate status has registered on the head, only these decide; advisory
+// bots and helpers on the pull request never gate a promotion.
+const CI_GATE_WORKFLOWS = new Set([
+  "Mobile App iOS Build",
+  "Mobile App Android Build",
+  "MentraOS ASG Client Build",
+  "Mobile App Quality Checks",
+  "OEM Host Boundary Gate",
+  "Coordinated Release Family Checks",
+  "Bun Lockfile Checks",
+  "Cloud V2 Validation",
+])
+const PROMOTION_GATE_POLL_SECONDS = 30
+const PROMOTION_GATE_TIMEOUT_SECONDS = 4 * 60 * 60
+// Right after the pull request is created only the beta's push-triggered rows
+// exist; the pull request's own builders and the ci-gate status register over
+// the following minutes. Until that settling window has elapsed, an empty gate
+// means "not registered yet", never "nothing to run".
+const PROMOTION_GATE_SETTLE_SECONDS = 15 * 60
+const PROMOTION_GATE_CALL_TIMEOUT_MS = 2 * 60 * 1000
+
+export function promotionGateState(rows, {settled = false} = {}) {
+  if (!Array.isArray(rows)) throw new Error("Pull request checks must be an array")
+  const gates = rows.filter((row) => CI_GATE_CONTEXT.test(row.name || "") && !row.workflow)
+  const relevant =
+    gates.length > 0
+      ? gates
+      : rows.filter((row) => row.event === "pull_request" && CI_GATE_WORKFLOWS.has(row.workflow || ""))
+  const failed = relevant.filter((row) => row.bucket === "fail" || row.bucket === "cancel")
+  if (failed.length > 0) return {state: "failed", rows: failed}
+  const pending = relevant.filter((row) => row.bucket === "pending")
+  if (pending.length > 0) return {state: "pending", rows: pending}
+  if (relevant.length === 0 && !settled) return {state: "pending", rows: []}
+  return {state: "passed", rows: relevant}
+}
+
+function pullRequestChecks(url, repository) {
+  // gh exits 8 while checks are pending and 1 when any failed; the JSON is
+  // still complete in both cases, so read stdout regardless of the status.
+  const result = spawnSync(
+    "gh",
+    ["pr", "checks", url, "--repo", repository, "--json", "name,workflow,event,bucket,description"],
+    {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+      maxBuffer: GH_MAX_BUFFER,
+      timeout: PROMOTION_GATE_CALL_TIMEOUT_MS,
+    },
+  )
+  if (result.error) throw result.error
+  const output = (result.stdout || "").trim()
+  if (!output.startsWith("[")) {
+    throw new Error(`gh pr checks failed for ${url}: ${(result.stderr || output).trim()}`)
+  }
+  return JSON.parse(output)
+}
+
+function waitForPromotionGate(url, repository) {
+  const started = Date.now()
+  const deadline = started + PROMOTION_GATE_TIMEOUT_SECONDS * 1000
+  for (;;) {
+    const settled = Date.now() - started >= PROMOTION_GATE_SETTLE_SECONDS * 1000
+    const gate = promotionGateState(pullRequestChecks(url, repository), {settled})
+    const names = gate.rows.map((row) => row.name).join(", ") || "checks to register"
+    if (gate.state === "failed") throw new Error(`${url} has failing checks: ${names}`)
+    if (gate.state === "passed") {
+      console.log(`Checks passed for ${url}${names ? `: ${names}` : ""}`)
+      return
+    }
+    if (Date.now() > deadline) throw new Error(`${url} checks are still pending: ${names}`)
+    console.log(`Waiting on: ${names}`)
+    execFileSync("sleep", [String(PROMOTION_GATE_POLL_SECONDS)])
+  }
+}
+
 function promoteExactCommit({repository, sourceCommit, target, releaseIdentity, mergeBody}) {
   ensureCommitIsOnBranch(repository, sourceCommit, "staging")
   const relationship = requirePromotionRelationship(repository, target, sourceCommit)
@@ -239,9 +324,7 @@ function promoteExactCommit({repository, sourceCommit, target, releaseIdentity, 
   if (pull.state !== "OPEN") throw new Error(`${pull.url} is ${pull.state.toLowerCase()}`)
 
   console.log(`Waiting for ${pull.url}`)
-  execFileSync("gh", ["pr", "checks", pull.url, "--repo", repository, "--watch", "--fail-fast"], {
-    stdio: "inherit",
-  })
+  waitForPromotionGate(pull.url, repository)
   const currentTargetHead = branchHead(repository, target)
   if (currentTargetHead !== targetHead) {
     throw new Error(
