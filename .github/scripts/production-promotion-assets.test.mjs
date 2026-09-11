@@ -5,6 +5,7 @@ import path from "node:path"
 import test from "node:test"
 
 import {
+  latestProductionRelease,
   matchingPromotionContainers,
   nextPromotionAttempt,
   planPromotionContainerAllocation,
@@ -294,4 +295,33 @@ test("reassembles paginated gh listings streamed as JSON lines", () => {
   const {parseJsonLines} = assetsModule
   assert.deepEqual(parseJsonLines('{"id":1}\n{"id":2}\n\n'), [{id: 1}, {id: 2}])
   assert.deepEqual(parseJsonLines(""), [])
+})
+
+test("finds the newest published coordinated production release across the whole listing", () => {
+  const release = (tag_name, published_at, extra = {}) => ({
+    id: tag_name,
+    tag_name,
+    draft: false,
+    prerelease: false,
+    published_at,
+    ...extra,
+  })
+  const unrelated = Array.from({length: 150}, (_, index) =>
+    release(`v2.${index}`, `2026-09-${String((index % 28) + 1).padStart(2, "0")}T00:00:00Z`),
+  )
+  assert.equal(latestProductionRelease(unrelated), null)
+  assert.equal(latestProductionRelease([]), null)
+  const listing = [
+    ...unrelated,
+    release("mentra-v3.0.0", "2026-08-01T00:00:00Z"),
+    release("mentra-v3.1.0", "2026-08-20T00:00:00Z"),
+    release("mentra-v3.2.0", "2026-08-25T00:00:00Z", {draft: true}),
+    release("mentra-v3.3.0", "2026-08-26T00:00:00Z", {prerelease: true}),
+    release("mentra-builds-v3.4.0", "2026-08-27T00:00:00Z"),
+    release("mentra-production-promotion-v3.1.0-attempt-1", "2026-08-28T00:00:00Z"),
+  ]
+  const latest = latestProductionRelease(listing)
+  assert.equal(latest.tag, "mentra-v3.1.0")
+  assert.equal(latest.releaseIdentity, "3.1.0")
+  assert.equal(latestProductionRelease(listing.slice(0, 100)), null)
 })

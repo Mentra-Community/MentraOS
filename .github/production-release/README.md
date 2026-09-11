@@ -56,7 +56,8 @@ The required order is:
 
 Mobile N+1 compatibility with Cloud N is not a normal gate. Customers will
 inevitably keep Mobile N after Cloud N+1 is deployed, so Mobile N with Cloud N+1
-is mandatory.
+is mandatory. Step 1 needs the current app's source provenance; the first
+coordinated promotion has none and keeps only step 3 (see "Phase 1").
 
 ## One-time repository and account setup
 
@@ -155,8 +156,9 @@ release this one publishes and runs Phase 2 normally.
 If preparation stops before `status` can find an initial state record, rerun
 `start` with the same beta. That interrupted bootstrap may leave an empty draft
 attempt, but it has not deployed Cloud, uploaded an app, or consumed a store
-build coordinate. Once `status` returns `selected`, resume that attempt with
-`next` rather than starting another one.
+build coordinate. Once `status` returns `selected` (or `staging-compatible` for
+a first coordinated promotion), resume that attempt with `next` rather than
+starting another one.
 
 ## Phase 2 - Mobile N against staging Cloud N+1
 

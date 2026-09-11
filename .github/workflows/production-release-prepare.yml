@@ -84,10 +84,12 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          latest=$(gh release list --exclude-drafts --exclude-pre-releases --limit 100 \
-            --json tagName,publishedAt \
-            --jq '[.[] | select(.tagName | test("^mentra-v[0-9]+\\.[0-9]+\\.[0-9]+$"))] | sort_by(.publishedAt) | last')
-          if [[ "$latest" == "null" || -z "$latest" ]]; then
+          # Walks every release page: a truncated listing could hide an older
+          # mentra-vX.Y.Z and wrongly skip Phase 2.
+          node .github/scripts/production-promotion-assets.mjs latest-production-release \
+            --repository "$GITHUB_REPOSITORY" \
+            --github-output promotion-input/latest-production.env
+          if ! grep -qx 'found=true' promotion-input/latest-production.env; then
             # First coordinated promotion. The public app predates this system,
             # so it is frozen from the store inventories instead and has no
             # compatibility lab; see "Phase 1" in the runbook.
@@ -95,8 +97,9 @@ jobs:
             echo "found=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          tag=$(jq -er .tagName <<< "$latest")
-          identity="${tag#mentra-v}"
+          tag=$(sed -n 's/^tag=//p' promotion-input/latest-production.env)
+          identity=$(sed -n 's/^identity=//p' promotion-input/latest-production.env)
+          [[ "$tag" == "mentra-v$identity" ]]
           name="mentra-release-$identity.json"
           plan_name="mentra-release-plan-$identity.json"
           mkdir -p promotion-input/current

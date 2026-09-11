@@ -27,7 +27,7 @@ function gh(args, options = {}) {
 // The releases endpoint inlines every asset of every release; with hundreds of
 // coordinated build assets per family that exceeds Node's default 1 MiB
 // subprocess buffer. Keep only the fields the promotion logic reads.
-export const RELEASE_LIST_FIELDS = "{id, tag_name, name, body, draft, prerelease, target_commitish}"
+export const RELEASE_LIST_FIELDS = "{id, tag_name, name, body, draft, prerelease, target_commitish, published_at}"
 export const ASSET_LIST_FIELDS = "{id, name, url, size}"
 
 // gh cannot combine --slurp with --jq, so paginated listings are streamed as
@@ -117,6 +117,23 @@ export function prepareEvidenceAsset({file, kind, url, outputDirectory, assetPre
       assetName,
     },
   }
+}
+
+const PRODUCTION_RELEASE_TAG_PATTERN = /^mentra-v((?:0|[1-9]\d*)\.(?:0|[1-9]\d*)\.(?:0|[1-9]\d*))$/
+
+// The newest published (non-draft, non-prerelease) coordinated production
+// release, or null when none exists yet. Callers must pass the complete
+// paginated release listing: a truncated listing could hide an older
+// mentra-vX.Y.Z behind newer unrelated releases and wrongly classify the
+// public app as store-observed, skipping Phase 2.
+export function latestProductionRelease(releases) {
+  const published = releases
+    .filter((release) => release.draft === false && release.prerelease === false)
+    .map((release) => ({release, match: PRODUCTION_RELEASE_TAG_PATTERN.exec(release.tag_name || "")}))
+    .filter(({release, match}) => match && typeof release.published_at === "string")
+    .sort((left, right) => left.release.published_at.localeCompare(right.release.published_at))
+  const latest = published.at(-1)
+  return latest ? {releaseIdentity: latest.match[1], tag: latest.release.tag_name, release: latest.release} : null
 }
 
 export function parsePromotionContainer(release) {
@@ -393,6 +410,14 @@ function main() {
       mentraInventory: readJson("mentra-inventory"),
     })
     output({selection_digest: digest}, args["github-output"])
+    return
+  }
+  if (command === "latest-production-release") {
+    const latest = latestProductionRelease(listReleases(args.repository))
+    output(
+      latest ? {found: true, tag: latest.tag, identity: latest.releaseIdentity} : {found: false},
+      args["github-output"],
+    )
     return
   }
   if (command === "create-container") {
