@@ -14,7 +14,7 @@ const releaseWorkflow = readFileSync(new URL("../workflows/coordinated-example-r
 test("keeps iOS validation mandatory and packages artifacts only for release or manual runs", () => {
   const workflow = readFileSync(new URL("../workflows/example-app-builds.yml", import.meta.url), "utf8")
   const ios = workflow.split("\n  ios:\n")[1].split("\n  macos:\n")[0]
-  const artifactCondition = "if: github.event_name == 'workflow_dispatch' || startsWith(github.head_ref, 'coordinated/')"
+  const artifactCondition = "if: github.event_name == 'workflow_dispatch' || (github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'coordinated/'))"
   for (const name of ["Package unsigned IPA", "Upload IPA artifact"]) {
     const step = ios.split(`- name: ${name}\n`)[1].split("\n      - name:")[0]
     assert.ok(step.includes(artifactCondition), `${name} must preserve coordinated-release artifacts`)
