@@ -16,6 +16,11 @@ const plan = createReleasePlan({
 })
 const version = plan.releaseIdentity
 const candidateTag = `candidate-${version}`
+// A version guaranteed to be newer than `version` however the repository's own
+// current release identity happens to be set, so these fixtures never
+// coincidentally collide with the real value under test.
+const [major, minor, patch] = version.split(".").map(Number)
+const newerVersion = `${major}.${minor}.${patch + 1}`
 
 test("orders plain versions and treats a prerelease as older than its plain release", () => {
   assert.equal(compareVersions("3.1.0", "3.1.0"), 0)
@@ -40,7 +45,7 @@ test("moves latest only from a published candidate tag and never backwards", () 
   })
   assert.throws(() => latestFlipDecision({version, candidateTag, distTags: {latest: "3.0.2"}}), /run the publish phase/)
   assert.throws(
-    () => latestFlipDecision({version, candidateTag, distTags: {[candidateTag]: version, latest: "3.2.0"}}),
+    () => latestFlipDecision({version, candidateTag, distTags: {[candidateTag]: version, latest: newerVersion}}),
     /refusing to move it back/,
   )
 })
@@ -146,7 +151,7 @@ test("moves nothing when any member would be unpublished or downgraded", () => {
       members.map((name, index) => [
         name,
         index === members.length - 1
-          ? [["latest", "3.2.0"]]
+          ? [["latest", newerVersion]]
           : [
               [candidateTag, version],
               ["latest", "3.0.0"],
