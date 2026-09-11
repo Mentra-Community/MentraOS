@@ -373,9 +373,7 @@ public class RtmpStreamingService extends Service {
         } catch (Exception e) {
             Log.e(TAG, "Error creating surface", e);
             EventBus.getDefault().post(new StreamingEvent.Error("Failed to create surface: " + e.getMessage()));
-            if (sStatusCallback != null) {
-                sStatusCallback.onStreamError("Failed to create surface: " + e.getMessage(), mCurrentStreamId);
-            }
+            throw new IllegalStateException("Failed to create surface", e);
         }
     }
 
@@ -748,13 +746,10 @@ public class RtmpStreamingService extends Service {
         } catch (Exception e) {
             Log.e(TAG, "Failed to initialize streamer", e);
             EventBus.getDefault().post(new StreamingEvent.Error("Initialization failed: " + e.getMessage()));
-            if (sStatusCallback != null) {
-                sStatusCallback.onStreamError("Initialization failed: " + e.getMessage(), mCurrentStreamId);
-            }
-
             // Report streaming initialization failure
             StreamingReporting.reportInitializationFailure(RtmpStreamingService.this,
                 mRtmpUrl, e.getMessage(), e);
+            throw new IllegalStateException("Failed to initialize RTMP streamer", e);
         }
     }
 
@@ -1169,7 +1164,7 @@ public class RtmpStreamingService extends Service {
                     // overwrote it, and the failure belongs to the stream being
                     // stopped.
                     if (sStatusCallback != null) {
-                        sStatusCallback.onStreamError("Failed to stop stream: " + failure.getMessage(), stoppedStreamId);
+                        sStatusCallback.onStreamError("Failed to stop stream: " + failure.getMessage(), stoppedStreamId, preserveSession);
                     }
                 }
                 Log.d(TAG, "Stream stop completed");
@@ -1202,7 +1197,7 @@ public class RtmpStreamingService extends Service {
 
                 // Notify TPA developer of cleanup failure
                 if (sStatusCallback != null) {
-                    sStatusCallback.onStreamError("Failed to stop camera preview: " + e.getMessage(), mCurrentStreamId);
+                    sStatusCallback.onStreamError("Failed to stop camera preview: " + e.getMessage(), stoppedStreamId, preserveSession);
                 }
             }
 
@@ -1219,7 +1214,7 @@ public class RtmpStreamingService extends Service {
 
                 // Notify TPA developer of cleanup failure
                 if (sStatusCallback != null) {
-                    sStatusCallback.onStreamError("Failed to release streaming resources: " + e.getMessage(), mCurrentStreamId);
+                    sStatusCallback.onStreamError("Failed to release streaming resources: " + e.getMessage(), stoppedStreamId, preserveSession);
                 }
             }
 
@@ -1285,6 +1280,10 @@ public class RtmpStreamingService extends Service {
      * @param reason The reason for the reconnection
      */
     private void scheduleReconnect(String reason) {
+        // Retire this publisher and its delayed recovery checks as soon as a retry
+        // is selected. Queued loss/error callbacks must not consume another attempt.
+        mPublisherCallbacks.advance();
+        mReconnectionSequence++;
         mAwaitingPublisherRecovery = true;
         // Don't reconnect if we've reached the max attempts
         if (mReconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {

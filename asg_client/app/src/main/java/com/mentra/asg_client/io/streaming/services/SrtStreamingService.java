@@ -290,7 +290,7 @@ public class SrtStreamingService extends Service {
           + " (encode " + mStreamConfig.getVideoWidth() + "x" + mStreamConfig.getVideoHeight() + ")");
     } catch (Exception e) {
       Log.e(TAG, "Error creating surface", e);
-      if (sStatusCallback != null) sStatusCallback.onStreamError("Failed to create surface: " + e.getMessage(), mCurrentStreamId);
+      throw new IllegalStateException("Failed to create surface", e);
     }
   }
 
@@ -530,8 +530,8 @@ public class SrtStreamingService extends Service {
     } catch (Exception e) {
       Log.e(TAG, "Failed to initialize SRT streamer", e);
       EventBus.getDefault().post(new StreamingEvent.Error("Initialization failed: " + e.getMessage()));
-      if (sStatusCallback != null) sStatusCallback.onStreamError("Initialization failed: " + e.getMessage(), mCurrentStreamId);
       StreamingReporting.reportInitializationFailure(SrtStreamingService.this, mSrtUrl, e.getMessage(), e);
+      throw new IllegalStateException("Failed to initialize SRT streamer", e);
     }
   }
 
@@ -732,7 +732,7 @@ public class SrtStreamingService extends Service {
           // Use the id captured before cleanup: this continuation can resume after
           // the state reset cleared mCurrentStreamId or a replacement stream
           // overwrote it, and the failure belongs to the stream being stopped.
-          if (sStatusCallback != null) sStatusCallback.onStreamError("Failed to stop SRT stream: " + failure.getMessage(), stoppedStreamId);
+          if (sStatusCallback != null) sStatusCallback.onStreamError("Failed to stop SRT stream: " + failure.getMessage(), stoppedStreamId, preserveSession);
         }
         Log.d(TAG, "SRT stream stop completed");
           });
@@ -745,12 +745,12 @@ public class SrtStreamingService extends Service {
       try { srtStreamerToCleanup.stopPreview(); Log.d(TAG, "SRT camera preview stopped"); } catch (Exception e) {
         Log.e(TAG, "Error stopping SRT preview", e);
         StreamingReporting.reportPreviewStartFailure(SrtStreamingService.this, "stop_preview_error", e);
-        if (sStatusCallback != null) sStatusCallback.onStreamError("Failed to stop camera preview: " + e.getMessage(), mCurrentStreamId);
+        if (sStatusCallback != null) sStatusCallback.onStreamError("Failed to stop camera preview: " + e.getMessage(), stoppedStreamId, preserveSession);
       }
       try { srtStreamerToCleanup.release(); Log.d(TAG, "SRT streamer released"); } catch (Exception e) {
         Log.e(TAG, "Error releasing SRT streamer", e);
         StreamingReporting.reportResourceCleanupFailure(SrtStreamingService.this, "streamer", "release_error", e);
-        if (sStatusCallback != null) sStatusCallback.onStreamError("Failed to release SRT resources: " + e.getMessage(), mCurrentStreamId);
+        if (sStatusCallback != null) sStatusCallback.onStreamError("Failed to release SRT resources: " + e.getMessage(), stoppedStreamId, preserveSession);
       }
       if (mSrtStreamer == srtStreamerToCleanup) mSrtStreamer = null;
       mLastSrtStreamerForCleanup = null;
@@ -788,6 +788,10 @@ public class SrtStreamingService extends Service {
   }
 
   private void scheduleReconnect(String reason) {
+    // Retire this publisher and its delayed recovery checks as soon as a retry
+    // is selected. Queued loss/error callbacks must not consume another attempt.
+    mPublisherCallbacks.advance();
+    mReconnectionSequence++;
     mAwaitingPublisherRecovery = true;
     if (mReconnectAttempts >= MAX_RECONNECT_ATTEMPTS) {
       Log.w(TAG, "Max SRT reconnection attempts reached");
