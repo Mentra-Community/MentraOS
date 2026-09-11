@@ -15,17 +15,6 @@ class Bridge {
     private static let micChannels = 1
     private static let lc3FrameDurationMs = 10
     private static let defaultLc3FrameSizeBytes = 60
-    private static let audioTraceMetadataKeys = [
-        "sampleRate",
-        "bitsPerSample",
-        "channels",
-        "encoding",
-        "frameDurationMs",
-        "frameSizeBytes",
-        "bitrate",
-        "packetizedFromGlasses",
-        "voiceActivityDetectionEnabled",
-    ]
     private static let eventSinkLock = NSLock()
     private static let defaultEventSinkId = "default"
     private static var eventSinks: [String: (String, [String: Any]) -> Void] = [:]
@@ -700,47 +689,21 @@ class Bridge {
         dispatchEvent(type, body)
     }
 
+    /// Returns nil for events that must not be traced.
+    ///
+    /// "log" is excluded so tracing never recurses back through the log event. Audio payload
+    /// events are excluded because they arrive at frame rate, which made every microphone
+    /// frame emit a second bridge event. On Android that overflowed the JNI global reference
+    /// table and aborted the process; here it is wasted work on the audio path. Audio flow is
+    /// reported by "mic_health" instead, at a rate that does not scale with the frame rate.
     private static func tracePayloadForTypedMessage(_ type: String, body: [String: Any]) -> [String: Any]? {
-        if type == "log" {
+        if type == "log" || isAudioPayloadEvent(type) {
             return nil
-        }
-        if isAudioPayloadEvent(type) {
-            return audioTracePayload(type, body: body)
         }
         return body
     }
 
     private static func isAudioPayloadEvent(_ type: String) -> Bool {
         type == "mic_pcm" || type == "mic_lc3"
-    }
-
-    private static func audioTracePayload(_ type: String, body: [String: Any]) -> [String: Any] {
-        var payload: [String: Any] = [
-            "type": type,
-            "timestamp": Int(Date().timeIntervalSince1970 * 1000),
-            "payloadOmitted": true,
-            "payloadOmittedReason": "audio",
-        ]
-
-        switch type {
-        case "mic_pcm":
-            if let data = body["pcm"] as? Data {
-                payload["audioBytes"] = data.count
-            }
-        case "mic_lc3":
-            if let data = body["lc3"] as? Data {
-                payload["audioBytes"] = data.count
-            }
-        default:
-            break
-        }
-
-        for key in audioTraceMetadataKeys {
-            if let value = body[key] {
-                payload[key] = value
-            }
-        }
-
-        return payload
     }
 }

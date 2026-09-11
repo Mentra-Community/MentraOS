@@ -29,6 +29,15 @@ to its existing retention limits. Native diagnostics are also kept in the native
 console. Forwarding covers SDK-owned diagnostics while the JS runtime is active,
 not arbitrary OS or third-party native logs or logs from before subscription.
 
+On Android, forwarding to JavaScript is capped at 100 messages per second. Each
+forwarded message holds a JNI global reference until the JavaScript thread drains
+it, so an unbounded log source can exhaust the process-wide reference table and
+abort the app rather than merely slow it down. Messages above the cap are dropped
+from the JavaScript stream only — they are still written to the native console —
+and each second that drops anything emits a single notice saying how many were
+withheld. Per-frame microphone payload events are not traced at all; use the
+`mic_health` event to observe audio flow.
+
 Rebuild the native app after updating the SDK to pick up both platforms' logging
 changes. Adding this JS package alone cannot reroute logs in an older binary.
 
