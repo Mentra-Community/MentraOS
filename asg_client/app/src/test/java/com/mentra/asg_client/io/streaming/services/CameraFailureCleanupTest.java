@@ -31,6 +31,41 @@ import org.robolectric.annotation.Config;
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 33)
 public class CameraFailureCleanupTest {
+    @Test public void unsupportedCameraSwitchPreservesTheRunningSession() throws Exception {
+        try (MockedConstruction<CameraSource> cameras = mockConstruction(CameraSource.class);
+                MockedConstruction<AudioSource> microphones = mockConstruction(AudioSource.class)) {
+            IMuxer muxer = mock(IMuxer.class, RETURNS_DEEP_STUBS);
+            IEndpoint endpoint = mock(IEndpoint.class);
+            BaseCameraStreamer streamer = new BaseCameraStreamer(mock(Context.class), true, muxer, endpoint, null);
+            CameraSource camera = cameras.constructed().get(0);
+            Field running = BaseStreamer.class.getDeclaredField("isStreaming");
+            running.setAccessible(true);
+            running.setBoolean(streamer, true);
+            Field generation = BaseStreamer.class.getDeclaredField("cameraGeneration");
+            generation.setAccessible(true);
+            long before = generation.getLong(streamer);
+            doThrow(new UnsupportedOperationException("unsupported fps")).when(camera).validateCameraId("unsupported");
+
+            assertThrows(UnsupportedOperationException.class, () -> streamer.setCamera("unsupported"));
+
+            assertTrue(running.getBoolean(streamer));
+            assertEquals(before, generation.getLong(streamer));
+            verify(camera, never()).switchCamera(anyString(), null);
+            verify(camera, never()).stopPreview();
+            verify(camera, never()).release();
+            verify(microphones.constructed().get(0), never()).stopStream();
+            verify(microphones.constructed().get(0), never()).release();
+            verify(muxer, never()).stopStream();
+            verify(muxer, never()).release();
+            verify(endpoint, never()).stopStream(null);
+            verify(endpoint, never()).release();
+            // A subsequent supported request still works on the same publisher.
+            streamer.setCamera("supported");
+            verify(camera).switchCamera("supported", null);
+            streamer.release();
+        }
+    }
+
     @Test public void activeCameraErrorReachesRealStreamerCleanupWithoutAnExplicitStop() throws Exception {
         try (MockedConstruction<CameraSource> cameras = mockConstruction(CameraSource.class);
                 MockedConstruction<AudioSource> microphones = mockConstruction(AudioSource.class)) {
