@@ -30,6 +30,20 @@ function validateInventory(inventory, {bundleId, allowNoCurrent}) {
 }
 
 function validateCurrentMentraApp(previousManifest, inventory) {
+  if (previousManifest === null) {
+    // First coordinated promotion: no mentra-vX.Y.Z release describes the public
+    // app, so freeze exactly what both stores serve today. The app cannot be
+    // rebuilt for the compatibility lab, but Phase 5 still verifies it against
+    // production Cloud N+1 using these coordinates.
+    const {marketingVersion, buildNumber} = inventory.apple.current
+    return {
+      provenance: "store-observed",
+      sourceCommit: null,
+      provenanceUrl: null,
+      ios: {marketingVersion, buildNumber},
+      android: {marketingVersion, buildNumber: inventory.google.currentVersionCode},
+    }
+  }
   const expected = previousManifest.native
   if (
     !expected ||
@@ -43,6 +57,7 @@ function validateCurrentMentraApp(previousManifest, inventory) {
     throw new Error("Previous production manifest has no full source commit")
   }
   return {
+    provenance: "coordinated",
     sourceCommit: previousManifest.sourceCommit,
     provenanceUrl: previousManifest.url,
     ios: {marketingVersion: expected.marketingVersion, buildNumber: expected.buildNumber},
@@ -98,8 +113,9 @@ export function prepareProductionPromotion({
     mentraInventory.google.maxVersionCode,
     betaPlan.native.buildNumber,
   )
-  const compatibilityLabBuildNumber = lastMentraBuildNumber + 1
-  const mentraBuildNumber = lastMentraBuildNumber + 2
+  const hasCompatibilityLab = currentMentraApp.provenance === "coordinated"
+  const compatibilityLabBuildNumber = hasCompatibilityLab ? lastMentraBuildNumber + 1 : null
+  const mentraBuildNumber = lastMentraBuildNumber + (hasCompatibilityLab ? 2 : 1)
   const productionPlan = createReleasePlan({
     family,
     channel: "production",
@@ -125,13 +141,15 @@ export function prepareProductionPromotion({
     source: {mentraosCommit: betaPlan.sourceCommit},
     coordinates: {
       currentMentraApp,
-      compatibilityLab: {
-        ios: {marketingVersion: currentMentraApp.ios.marketingVersion, buildNumber: compatibilityLabBuildNumber},
-        android: {
-          marketingVersion: currentMentraApp.android.marketingVersion,
-          buildNumber: compatibilityLabBuildNumber,
-        },
-      },
+      compatibilityLab: hasCompatibilityLab
+        ? {
+            ios: {marketingVersion: currentMentraApp.ios.marketingVersion, buildNumber: compatibilityLabBuildNumber},
+            android: {
+              marketingVersion: currentMentraApp.android.marketingVersion,
+              buildNumber: compatibilityLabBuildNumber,
+            },
+          }
+        : null,
       candidates: {
         mentraApp: {
           ios: {marketingVersion: productionPlan.native.marketingVersion, buildNumber: mentraBuildNumber},
@@ -172,8 +190,11 @@ function readJson(file) {
 function main() {
   const args = parseArgs(process.argv.slice(2))
   const betaManifestPath = path.resolve(args["beta-manifest"])
-  const previousManifest = readJson(args["previous-manifest"])
-  previousManifest.url = args["previous-manifest-url"]
+  let previousManifest = null
+  if (args["previous-manifest"] || args["previous-manifest-url"]) {
+    previousManifest = readJson(args["previous-manifest"])
+    previousManifest.url = args["previous-manifest-url"]
+  }
   const result = prepareProductionPromotion({
     family: loadReleaseFamily({rootDir: path.resolve(args.root || process.cwd()), requireVersionMirrors: true}),
     betaPlan: readJson(args["beta-plan"]),
