@@ -218,6 +218,7 @@ describe("verifyIosHotspotSsid", () => {
     await expect(verifyIosHotspotSsid(HOTSPOT_INFO.ssid, readCurrentSsid, sleep, 3)).resolves.toEqual({
       status: "matched",
       lastSeenSsid: HOTSPOT_INFO.ssid,
+      permissionBlocked: false,
     })
     expect(readCurrentSsid).toHaveBeenCalledTimes(2)
     expect(sleep).toHaveBeenCalledTimes(1)
@@ -236,6 +237,7 @@ describe("verifyIosHotspotSsid", () => {
     await expect(verifyIosHotspotSsid(HOTSPOT_INFO.ssid, readCurrentSsid, sleep, 30)).resolves.toEqual({
       status: "unavailable",
       lastSeenSsid: "error",
+      permissionBlocked: true,
     })
     expect(readCurrentSsid).toHaveBeenCalledTimes(1)
     expect(sleep).not.toHaveBeenCalled()
@@ -251,6 +253,7 @@ describe("verifyIosHotspotSsid", () => {
     await expect(verifyIosHotspotSsid(HOTSPOT_INFO.ssid, readCurrentSsid, sleep, 3)).resolves.toEqual({
       status: "matched",
       lastSeenSsid: HOTSPOT_INFO.ssid,
+      permissionBlocked: false,
     })
     expect(readCurrentSsid).toHaveBeenCalledTimes(2)
   })
@@ -262,9 +265,26 @@ describe("verifyIosHotspotSsid", () => {
     await expect(verifyIosHotspotSsid(HOTSPOT_INFO.ssid, readCurrentSsid, sleep, 3)).resolves.toEqual({
       status: "mismatched",
       lastSeenSsid: "home",
+      permissionBlocked: false,
     })
     expect(readCurrentSsid).toHaveBeenCalledTimes(3)
     expect(sleep).toHaveBeenCalledTimes(2)
+  })
+
+  it("does not blame Location when every read fails transiently", async () => {
+    // `unavailable` is NOT proof that Location is denied: exhausting transient reads
+    // lands here with the permission fully granted. Reporting permissionBlocked would
+    // make the caller disable later SSID gates and tell the user to grant a permission
+    // they already have.
+    const readCurrentSsid = jest.fn().mockRejectedValue(wifiError("couldNotDetectSSID", "Cannot detect SSID"))
+    const sleep = jest.fn().mockResolvedValue(undefined)
+
+    await expect(verifyIosHotspotSsid(HOTSPOT_INFO.ssid, readCurrentSsid, sleep, 3)).resolves.toEqual({
+      status: "unavailable",
+      lastSeenSsid: "error",
+      permissionBlocked: false,
+    })
+    expect(readCurrentSsid).toHaveBeenCalledTimes(3)
   })
 
   it("treats an empty SSID as unknown, not as a mismatch", async () => {
@@ -276,6 +296,7 @@ describe("verifyIosHotspotSsid", () => {
     await expect(verifyIosHotspotSsid(HOTSPOT_INFO.ssid, readCurrentSsid, sleep, 3)).resolves.toEqual({
       status: "unavailable",
       lastSeenSsid: "null",
+      permissionBlocked: false,
     })
   })
 })
@@ -331,6 +352,34 @@ describe("GallerySyncService", () => {
     expect(startDownloadSpy).toHaveBeenCalledWith(HOTSPOT_INFO)
     // The whole point of the fix: a permission wall must not cost 30 polls per attempt.
     expect(mockGetCurrentWifiSSID.mock.calls.length).toBeLessThanOrEqual(2)
+  })
+
+  it("does not tell the user to grant Location when SSID reads fail transiently", async () => {
+    // Location IS granted here; the reads just never resolve to a network. The failure
+    // must not be attributed to the permission, and the readable-mismatch gate must stay
+    // armed for the remaining retries.
+    Object.defineProperty(Platform, "OS", {value: "ios", configurable: true, writable: true})
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
+    mockGetCurrentWifiSSID.mockRejectedValue(wifiError("couldNotDetectSSID", "Cannot detect SSID"))
+    jest.spyOn(gallerySyncService as any, "showWifiJoinExplanation").mockResolvedValue(true)
+    jest.spyOn(localNetworkTransport, "connect").mockResolvedValue(undefined)
+    jest.spyOn(localNetworkTransport, "fetch").mockRejectedValue(new Error("Network request failed"))
+    const startDownloadSpy = jest.spyOn(gallerySyncService as any, "startFileDownload").mockResolvedValue(undefined)
+
+    const notices: string[] = []
+    const unsubscribe = onGalleryNotice((notice) => notices.push(notice.code))
+    try {
+      const pending = (gallerySyncService as any).connectToHotspotWifi(HOTSPOT_INFO)
+      // 5 attempts x (15s verify + 10s probe + 3s retry delay)
+      await jest.advanceTimersByTimeAsync(200_000)
+      await pending
+    } finally {
+      unsubscribe()
+    }
+
+    expect(startDownloadSpy).not.toHaveBeenCalled()
+    expect(notices).not.toContain("location_permission_required")
+    expect(useGallerySyncStore.getState().lastError).not.toMatch(/Location/i)
   })
 
   it("still refuses to download when a readable SSID is not the glasses hotspot", async () => {

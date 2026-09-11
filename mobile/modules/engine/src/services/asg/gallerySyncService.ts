@@ -37,6 +37,13 @@ import {cameraRollExportCoordinator} from "./cameraRollExportCoordinator"
 export type IosHotspotSsidVerification = {
   status: "matched" | "mismatched" | "unavailable"
   lastSeenSsid: string
+  /**
+   * Only true when reads hit a Location PERMISSION wall. `unavailable` alone is a weaker
+   * claim — it also covers "every read failed transiently" and "every read came back
+   * empty", which can happen with Location fully granted. Callers must not blame Location
+   * (or disable later SSID gates) on the strength of `status` alone.
+   */
+  permissionBlocked: boolean
 }
 
 /**
@@ -86,19 +93,22 @@ export async function verifyIosHotspotSsid(
       }
 
       if (currentSsid && currentSsid === targetSsid) {
-        return {status: "matched", lastSeenSsid}
+        return {status: "matched", lastSeenSsid, permissionBlocked: false}
       }
     } catch (error) {
       lastSeenSsid = "error"
       if (isSsidPermissionError(error)) {
-        return {status: "unavailable", lastSeenSsid}
+        return {status: "unavailable", lastSeenSsid, permissionBlocked: true}
       }
     }
 
     if (attempt < maxAttempts - 1) await sleep()
   }
 
-  return {status: observedSsid ? "mismatched" : "unavailable", lastSeenSsid}
+  // Falling out of the loop without a single legible SSID is "we never saw the network",
+  // NOT "we are not allowed to look" — transient read failures and empty reads land here
+  // with Location granted, so permissionBlocked stays false.
+  return {status: observedSsid ? "mismatched" : "unavailable", lastSeenSsid, permissionBlocked: false}
 }
 
 // Timing constants
@@ -1146,13 +1156,17 @@ class GallerySyncService {
             }
 
             if (verification.status === "unavailable") {
-              // Reads failed for a reason pre-flight did not predict (permission revoked
-              // mid-sync, or the SSID was never legible). Latch it so the remaining gates
-              // in this sync stop paying for reads that cannot succeed.
-              this.ssidReadable = false
               console.warn(
                 `[GallerySyncService] 🍎 SSID inspection unavailable; using glasses connectivity probe instead`,
               )
+              // Latch ONLY on a real permission wall (revoked between pre-flight and now).
+              // A run of transient or empty reads must leave `ssidReadable` alone: killing
+              // it here would disable the readable-mismatch gate for the remaining retries
+              // and make a later failure blame Location while it is granted.
+              if (verification.permissionBlocked) {
+                console.warn(`[GallerySyncService] 🍎 Location permission was revoked mid-sync - skipping SSID gates`)
+                this.ssidReadable = false
+              }
             } else {
               console.log(`[GallerySyncService] 🍎 ✅ SSID verification succeeded`)
             }
