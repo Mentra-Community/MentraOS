@@ -1784,6 +1784,9 @@ class DeviceManager {
         sgc?.requestWifiScan(scanId)
     }
 
+    fun requestSavedWifiNetworks(requestId: String, sid: String): Boolean =
+        sgc?.requestSavedWifiNetworks(requestId, sid) ?: false
+
     fun sendIncidentId(incidentId: String, apiBaseUrl: String? = null) {
         Bridge.log("MAN: Sending incidentId to glasses for log upload: $incidentId")
         sgc?.sendIncidentId(incidentId, apiBaseUrl)
@@ -1802,10 +1805,8 @@ class DeviceManager {
         sgc?.sendWifiCredentials(ssid, password)
     }
 
-    fun forgetWifiNetwork(ssid: String) {
-        Bridge.log("MAN: Forgetting wifi network: $ssid")
-        sgc?.forgetWifiNetwork(ssid)
-    }
+    fun forgetWifiNetwork(ssid: String, requestId: String? = null, sid: String? = null): Boolean =
+        sgc?.forgetWifiNetwork(ssid, requestId, sid) ?: false
 
     fun setHotspotState(enabled: Boolean) {
         Bridge.log("MAN: Setting glasses hotspot state: $enabled")

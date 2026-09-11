@@ -494,6 +494,8 @@ public class Bridge private constructor() {
                     ?.let {
                         body[VersionInfoResponseAccumulator.RESPONSE_REQUEST_ID_KEY] = it
                     }
+            body["versionInfoType"] = stringField("versionInfoType", "version_info_type")
+            body["sid"] = stringField("sid")
             body["androidVersion"] = stringField("androidVersion", "android_version")
             body["firmwareVersion"] = stringField("firmwareVersion", "firmware_version")
             body["besFirmwareVersion"] = stringField("besFirmwareVersion", "bes_fw_version")
@@ -512,6 +514,15 @@ public class Bridge private constructor() {
             (values["hotspotOtaVersion"] as? Number
                             ?: values["hotspot_ota_version"] as? Number)
                     ?.let { body["hotspotOtaVersion"] = it.toInt() }
+            for ((key, wireKey) in listOf(
+                "wifiForgetResultVersion" to "wifi_forget_result_version",
+                "savedWifiNetworksVersion" to "saved_wifi_networks_version",
+            )) {
+                if (values.containsKey(key) || values.containsKey(wireKey)) {
+                    // Preserve malformed presence: it must not become legacy or be rounded to v1.
+                    body[key] = values[key] ?: values[wireKey] ?: -1
+                }
+            }
             sendTypedMessage("version_info", body)
         }
 
@@ -590,6 +601,58 @@ public class Bridge private constructor() {
                     if (error != null) status.toMap() + mapOf("error" to error)
                     else status.toMap()
             sendTypedMessage("wifi_status_change", payload)
+        }
+
+        @JvmStatic
+        fun sendWifiForgetResult(
+                requestId: String,
+                sid: String,
+                ssid: String,
+                protocolVersion: Int,
+                outcome: String,
+                legacyDispatched: Boolean?,
+                connected: Boolean?,
+                currentSsid: String,
+                localIp: String,
+                error: String?,
+        ) {
+            val body =
+                    normalizeWifiForgetResultEvent(
+                            requestId,
+                            sid,
+                            ssid,
+                            protocolVersion,
+                            outcome,
+                            legacyDispatched,
+                            connected,
+                            currentSsid,
+                            localIp,
+                            error,
+                    )
+            if (body == null) {
+                log("Dropping malformed wifi_forget_result without modern or legacy fields")
+                return
+            }
+            sendTypedMessage("wifi_forget_result", body)
+        }
+
+        @JvmStatic
+        fun sendSavedWifiNetworks(
+                requestId: String,
+                sid: String,
+                protocolVersion: Int,
+                outcome: String,
+                networks: List<String>,
+                error: String?,
+        ) {
+            val body = HashMap<String, Any>()
+            body["requestId"] = requestId
+            body["sid"] = sid
+            body["protocolVersion"] = protocolVersion
+            body["outcome"] = outcome
+            body["networks"] = networks
+            if (error != null) body["error"] = error
+            sendTypedMessage("saved_wifi_networks", body)
         }
 
         /**

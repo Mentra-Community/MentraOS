@@ -78,17 +78,17 @@ Capture a still photo. The handler routes through `transferMethod` to one of thr
 }
 ```
 
-| Field            | Type    | Default             | Description                                                 |
-| ---------------- | ------- | ------------------- | ----------------------------------------------------------- |
-| `requestId`      | string  | —                   | Required; correlates request with response                  |
-| `packageName`    | string  | resolved by handler | Originating app package                                     |
-| `webhookUrl`     | string  | ""                  | HTTPS endpoint for `direct` / `auto` upload                 |
-| `authToken`      | string  | ""                  | Bearer token for the webhook                                |
-| `transferMethod` | string  | `"direct"`          | One of `direct`, `ble`, `auto`. `auto` requires `bleImgId`. |
-| `bleImgId`       | string  | ""                  | Required for `ble` and `auto` transfer methods              |
-| `save`           | boolean | `false`             | Also save the photo to local gallery                        |
-| `size`               | string  | `"medium"`          | `low`, `medium`, `high`, or `max` (legacy `small`→`low`, `large`→`high`, `full`→`max`) |
-| `mode`               | string  | `"photo"`           | `photo` for normal capture, or `text` for ASG text-sensor constants + text-aware BLE processing |
+| Field            | Type    | Default             | Description                                                                                     |
+| ---------------- | ------- | ------------------- | ----------------------------------------------------------------------------------------------- |
+| `requestId`      | string  | —                   | Required; correlates request with response                                                      |
+| `packageName`    | string  | resolved by handler | Originating app package                                                                         |
+| `webhookUrl`     | string  | ""                  | HTTPS endpoint for `direct` / `auto` upload                                                     |
+| `authToken`      | string  | ""                  | Bearer token for the webhook                                                                    |
+| `transferMethod` | string  | `"direct"`          | One of `direct`, `ble`, `auto`. `auto` requires `bleImgId`.                                     |
+| `bleImgId`       | string  | ""                  | Required for `ble` and `auto` transfer methods                                                  |
+| `save`           | boolean | `false`             | Also save the photo to local gallery                                                            |
+| `size`           | string  | `"medium"`          | `low`, `medium`, `high`, or `max` (legacy `small`→`low`, `large`→`high`, `full`→`max`)          |
+| `mode`           | string  | `"photo"`           | `photo` for normal capture, or `text` for ASG text-sensor constants + text-aware BLE processing |
 
 **Text mode behavior**
 
@@ -179,13 +179,13 @@ software AVIF encode) changes both paths at once.
 
 Status metadata is stage-specific:
 
-| Status | Optional fields | Description |
-| ------ | --------------- | ----------- |
-| `configuring` | `resolvedConfig` | Effective JPEG dimensions, quality, requested size, source (`sdk` or `button`), transfer method, compression, and manual exposure fields when present |
-| `capturing` | `requestedCaptureConfig`, `meteredPreview` | Camera2 still request about to be submitted, plus the latest AE preview estimate before capture |
-| `captured` | `captureMetadata` | HAL-applied still capture result, including actual exposure time, ISO, frame duration, AE state/name, sensor timestamp, and related camera modes when available |
-| `uploading`, `compressing`, `ble_fallback_compression`, `ready_for_transfer`, `transferring` | none | Transport progress only; capture metadata is not repeated here. `ble_fallback_compression` means Wi-Fi/webhook upload failed and the photo is being compressed for Bluetooth fallback |
-| `failed` | `errorCode`, `errorMessage` | Capture or transfer failure details |
+| Status                                                                                       | Optional fields                            | Description                                                                                                                                                                           |
+| -------------------------------------------------------------------------------------------- | ------------------------------------------ | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `configuring`                                                                                | `resolvedConfig`                           | Effective JPEG dimensions, quality, requested size, source (`sdk` or `button`), transfer method, compression, and manual exposure fields when present                                 |
+| `capturing`                                                                                  | `requestedCaptureConfig`, `meteredPreview` | Camera2 still request about to be submitted, plus the latest AE preview estimate before capture                                                                                       |
+| `captured`                                                                                   | `captureMetadata`                          | HAL-applied still capture result, including actual exposure time, ISO, frame duration, AE state/name, sensor timestamp, and related camera modes when available                       |
+| `uploading`, `compressing`, `ble_fallback_compression`, `ready_for_transfer`, `transferring` | none                                       | Transport progress only; capture metadata is not repeated here. `ble_fallback_compression` means Wi-Fi/webhook upload failed and the photo is being compressed for Bluetooth fallback |
+| `failed`                                                                                     | `errorCode`, `errorMessage`                | Capture or transfer failure details                                                                                                                                                   |
 
 `captureMetadata` on `captured` is the right place to read the actual still capture values:
 
@@ -466,10 +466,66 @@ No response is required (fire-and-forget).
 #### `forget_wifi`
 
 ```json
-{"type": "forget_wifi", "ssid": "OldNetwork"}
+{"type": "forget_wifi", "ssid": "OldNetwork", "protocolVersion": 1, "requestId": "forget-123", "sid": "asg-session-id"}
 ```
 
-`ssid` is required; empty SSID returns `false` without action.
+`ssid` is required. A modern request carries exactly `protocolVersion: 1`, a nonempty `requestId`, and the expected process-session
+`sid` advertised by `version_info_1`. Legacy requests omit all three fields. ASG rejects partial tuples,
+malformed or unknown versions, and a mismatched session before invoking the network
+backend. `connected`, `current_ssid`, and `local_ip` are a best-effort current link snapshot, not a
+claim that disconnection has already propagated. If ASG cannot read link state, it omits
+`connected` and the dependent snapshot fields instead of reporting a fabricated disconnection.
+Terminal `wifi_forget_result` and `saved_wifi_networks` frames use at-least-once delivery: ASG adds
+`mId` and retries until the phone returns `msg_ack`. Consumers of raw events should deduplicate by
+`requestId` and `sid`; native Promise coordinators accept only the first matching terminal frame.
+
+```json
+{
+  "type": "wifi_forget_result",
+  "requestId": "forget-123",
+  "sid": "asg-session-id",
+  "ssid": "OldNetwork",
+  "protocol_version": 1,
+  "outcome": "dispatched",
+  "connected": false,
+  "current_ssid": "",
+  "local_ip": ""
+}
+```
+
+`outcome` is `confirmed`, `dispatched`, `not_found`, `unsupported`, or `failed`. `confirmed` means
+the platform API synchronously reported removal; `dispatched` means only that an asynchronous
+platform command was queued. K900 always uses `dispatched` on successful broadcast dispatch because
+its vendor SystemUI API has no completion callback. Failures can include a stable `error` such as
+`forget_failed`, `invalid_ssid`, `stale_session`, or `network_manager_unavailable`. Phone SDKs send
+legacy commands without correlation fields only when the capability advertisement is absent.
+An uncorrelated legacy result uses `ssid` and `dispatched`, with no `requestId`, `sid`, protocol
+version, or `outcome`. Partial preview tuples are rejected, never downgraded to legacy.
+
+#### `request_saved_wifi_networks`
+
+List SSIDs configured on the glasses. The response echoes the required correlation id.
+
+```json
+{"type": "request_saved_wifi_networks", "protocolVersion": 1, "requestId": "saved-123", "sid": "asg-session-id"}
+```
+
+```json
+{
+  "type": "saved_wifi_networks",
+  "requestId": "saved-123",
+  "sid": "asg-session-id",
+  "protocol_version": 1,
+  "outcome": "confirmed",
+  "networks": ["Field AP", "Warehouse"]
+}
+```
+
+The list is sorted, deduplicated, preserves exact SSID spelling/whitespace, and contains SSIDs only
+(never credentials). `outcome` is `confirmed`, `unsupported`, or `failed`; a non-confirmed response
+has an empty `networks` array plus an `error`. K900 advertises this protocol as unsupported: its
+credentials are vendor-owned and the available broadcast has no result path, while Android
+`WifiManager` can be empty or stale.
 
 ---
 
@@ -507,7 +563,7 @@ The glasses also emit `battery_status` outbound:
 
 Returns version information in chunks to fit the BLE MTU:
 
-- `version_info_1`: `app_version`, `build_number`, `device_model`, `android_version`, `system_time_ms`, `sid`
+- `version_info_1`: `app_version`, `build_number`, `device_model`, `android_version`, `system_time_ms`, `sid`, `wifi_forget_result_version`, `saved_wifi_networks_version`
 - `version_info_3`: `bes_fw_version`, `mtk_fw_version`, `bt_mac_address`, `wifi_mac_address`, `serial_number`
 
 Modern responses echo `request_id` and carry the same process `sid` on every chunk.
@@ -529,6 +585,11 @@ generic `0123456789ABCDEF` Android/ADB placeholder is omitted.
 after BES responds to the MAC-address request.
 `wifi_mac_address` is the MTK Wi-Fi interface MAC and is omitted when Android
 does not expose a valid address.
+`wifi_forget_result_version` describes the ASG handler's correlated result protocol, so this build
+advertises version `1` for every active network backend; a backend that cannot remove credentials
+still returns a correlated `unsupported` outcome. `saved_wifi_networks_version` is derived from the
+active backend because reliable enumeration is not universal, and `0` means unsupported for this
+process session. K900 advertises forget result version `1` and saved-network listing `0`.
 
 ---
 

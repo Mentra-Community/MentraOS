@@ -69,9 +69,12 @@ class MentraBluetoothSdk private constructor(
     private var pendingOtaStart: PendingResponse<OtaStartAckEvent>? = null
     private var pendingStreamStop: PendingStreamStop? = null
     private var pendingWifiScan: PendingWifiScan? = null
+    private var pendingSavedWifiNetworks: PendingSavedWifiNetworks? = null
     private var pendingWifiStatus: PendingWifiStatusRequest? = null
+    private var pendingWifiForget: PendingWifiForgetRequest? = null
     private var pendingHotspotStatus: PendingHotspotStatusRequest? = null
     private var pendingVersionInfo: PendingVersionInfoRequest? = null
+    private val wifiSessionCapabilities = WifiSessionCapabilities()
     @Volatile private var configuredOtaVersionUrl: String? = null
 
     init {
@@ -195,15 +198,28 @@ class MentraBluetoothSdk private constructor(
     )
 
     private data class PendingWifiStatusRequest(
-        val operation: WifiStatusOperation,
         val ssid: String,
         val pending: PendingResponse<WifiStatusEvent>,
     )
 
-    private enum class WifiStatusOperation {
-        CONNECT,
-        FORGET,
-    }
+    private data class PendingWifiForgetRequest(
+        val ssid: String,
+        val requestId: String,
+        var sid: String,
+        val epoch: Long,
+        val pending: PendingResponse<WifiForgetResult>,
+        var mode: WifiRequestMode,
+        var commandSent: Boolean = false,
+    )
+
+    private data class PendingSavedWifiNetworks(
+        val requestId: String,
+        var sid: String,
+        val epoch: Long,
+        val pending: PendingResponse<SavedWifiNetworksResult>,
+        var mode: WifiRequestMode,
+        var commandSent: Boolean = false,
+    )
 
     private data class PendingHotspotStatusRequest(
         val enabled: Boolean,
@@ -239,6 +255,7 @@ class MentraBluetoothSdk private constructor(
                     "$operation timed out waiting for glasses response.",
                 )
         }
+
     }
 
     fun addListener(listener: MentraBluetoothSdkListener) {
@@ -880,13 +897,13 @@ class MentraBluetoothSdk private constructor(
     suspend fun sendWifiCredentials(ssid: String, password: String): WifiStatusEvent {
         val pending = PendingResponse<WifiStatusEvent>("WiFi connect request")
         synchronized(oneShotLock) {
-            if (pendingWifiStatus != null) {
+            if (pendingWifiStatus != null || pendingWifiForget != null) {
                 throw BluetoothSdkException(
                     "request_in_flight",
                     "A WiFi status command is already waiting for a glasses response.",
                 )
             }
-            pendingWifiStatus = PendingWifiStatusRequest(WifiStatusOperation.CONNECT, ssid, pending)
+            pendingWifiStatus = PendingWifiStatusRequest(ssid, pending)
         }
         try {
             deviceManager.sendWifiCredentials(ssid, password)
@@ -900,24 +917,94 @@ class MentraBluetoothSdk private constructor(
         }
     }
 
-    suspend fun forgetWifiNetwork(ssid: String): WifiStatusEvent {
-        val pending = PendingResponse<WifiStatusEvent>("WiFi forget request")
+    suspend fun forgetWifiNetwork(ssid: String): WifiForgetResult {
+        if (!wifiSsidIsValid(ssid)) {
+            throw BluetoothSdkException("invalid_ssid", "WiFi SSID cannot be empty.")
+        }
+        val pending = PendingResponse<WifiForgetResult>("WiFi forget request")
+        val requestId = "forget-${UUID.randomUUID()}"
+        lateinit var request: PendingWifiForgetRequest
         synchronized(oneShotLock) {
-            if (pendingWifiStatus != null) {
+            if (pendingWifiStatus != null || pendingWifiForget != null) {
                 throw BluetoothSdkException(
                     "request_in_flight",
                     "A WiFi status command is already waiting for a glasses response.",
                 )
             }
-            pendingWifiStatus = PendingWifiStatusRequest(WifiStatusOperation.FORGET, ssid, pending)
+            request =
+                PendingWifiForgetRequest(
+                    ssid = ssid,
+                    requestId = requestId,
+                    sid = wifiSessionCapabilities.sessionId,
+                    epoch = wifiSessionCapabilities.epoch,
+                    pending = pending,
+                    mode = wifiSessionCapabilities.forgetMode(),
+                )
+            pendingWifiForget = request
         }
         try {
-            deviceManager.forgetWifiNetwork(ssid)
+            dispatchWifiForgetIfReady(request)
             return pending.await()
+        } catch (error: BluetoothSdkException) {
+            if (error.code == "request_timeout" && synchronized(oneShotLock) { request.mode == WifiRequestMode.DISCOVERING }) {
+                throw BluetoothSdkException(WIFI_CAPABILITY_NEGOTIATION_TIMEOUT_CODE, "WiFi capability negotiation timed out.")
+            }
+            throw error
         } finally {
             synchronized(oneShotLock) {
-                if (pendingWifiStatus?.pending === pending) {
-                    pendingWifiStatus = null
+                if (pendingWifiForget === request) {
+                    pendingWifiForget = null
+                }
+            }
+        }
+    }
+
+    suspend fun getSavedWifiNetworks(): SavedWifiNetworksResult {
+        val requestId = "saved-${UUID.randomUUID()}"
+        val pending = PendingResponse<SavedWifiNetworksResult>("Saved WiFi networks request")
+        var request: PendingSavedWifiNetworks? = null
+        var unsupported: SavedWifiNetworksResult? = null
+        synchronized(oneShotLock) {
+            if (pendingSavedWifiNetworks != null) {
+                throw BluetoothSdkException(
+                    "request_in_flight",
+                    "A saved WiFi networks request is already waiting for a glasses response.",
+                )
+            }
+            val snapshot = wifiSessionCapabilities.savedNetworksRequestSnapshot()
+            if (snapshot.mode == WifiRequestMode.LEGACY || snapshot.mode == WifiRequestMode.UNSUPPORTED) {
+                unsupported =
+                    SavedWifiNetworksResult(
+                        outcome = SavedWifiNetworksOutcome.UNSUPPORTED,
+                        networks = emptyList(),
+                        error = "saved_wifi_networks_unsupported",
+                    )
+                return@synchronized
+            }
+            request =
+                PendingSavedWifiNetworks(
+                    requestId = requestId,
+                    sid = snapshot.sessionId,
+                    epoch = snapshot.epoch,
+                    pending = pending,
+                    mode = snapshot.mode,
+                )
+            pendingSavedWifiNetworks = request
+        }
+        unsupported?.let { return it }
+        val activeRequest = checkNotNull(request)
+        try {
+            dispatchSavedWifiNetworksIfReady(activeRequest)
+            return pending.await()
+        } catch (error: BluetoothSdkException) {
+            if (error.code == "request_timeout" && synchronized(oneShotLock) { activeRequest.mode == WifiRequestMode.DISCOVERING }) {
+                throw BluetoothSdkException(WIFI_CAPABILITY_NEGOTIATION_TIMEOUT_CODE, "WiFi capability negotiation timed out.")
+            }
+            throw error
+        } finally {
+            synchronized(oneShotLock) {
+                if (pendingSavedWifiNetworks === activeRequest) {
+                    pendingSavedWifiNetworks = null
                 }
             }
         }
@@ -1468,6 +1555,7 @@ class MentraBluetoothSdk private constructor(
 
     override fun close() {
         stopStreamKeepAliveMonitor()
+        resetWifiProtocolSession("", "sdk_closed")
         if (activityLifecycleCallbacksRegistered) {
             (appContext as? Application)?.unregisterActivityLifecycleCallbacks(
                 activityLifecycleCallbacks,
@@ -1483,6 +1571,9 @@ class MentraBluetoothSdk private constructor(
     private fun dispatchStoreUpdate(category: String, changes: Map<String, Any>) {
         when (ObservableStore.normalizeCategory(category)) {
             "glasses" -> {
+                if (changes["connected"] == false) {
+                    resetWifiProtocolSession("", "wifi_session_disconnected")
+                }
                 analytics.observeGlassesStatus(getRawGlassesStatus())
                 val state = getState()
                 dispatchToListeners {
@@ -1691,6 +1782,27 @@ class MentraBluetoothSdk private constructor(
                 handleWifiStatusForRequests(event)
                 dispatchToListeners { it.onWifiStatusChanged(event) }
             }
+            "wifi_forget_result" -> {
+                handleWifiForgetResultForRequests(data)
+                dispatchToListeners { it.onRawEvent(eventName, data) }
+            }
+            "saved_wifi_networks" -> {
+                handleSavedWifiNetworksForRequests(data)
+                dispatchToListeners { it.onRawEvent(eventName, data) }
+            }
+            "wifi_protocol_session_ready" -> {
+                resetWifiProtocolSession(
+                    data["sid"] as? String ?: "",
+                    "wifi_session_restarted",
+                )
+            }
+            "glasses_session_changed" -> {
+                resetWifiProtocolSession(
+                    data["sid"] as? String ?: "",
+                    "wifi_session_changed",
+                )
+                dispatchToListeners { it.onRawEvent(eventName, data) }
+            }
             "wifi_scan_result" -> {
                 val networks =
                     (data["networks"] as? List<*>)
@@ -1800,6 +1912,9 @@ class MentraBluetoothSdk private constructor(
                 dispatchToListeners { it.onSettingsAck(event) }
             }
             "version_info" -> {
+                if (data["versionInfoType"] == "version_info_1" || data["versionInfoType"] == "version_info") {
+                    applyWifiProtocolCapabilities(data)
+                }
                 val event = VersionInfoResult.fromMap(data)
                 handleVersionInfoForRequest(data)
                 dispatchToListeners { it.onVersionInfo(event) }
@@ -2220,43 +2335,184 @@ class MentraBluetoothSdk private constructor(
     }
 
     private fun handleWifiStatusForRequests(event: WifiStatusEvent) {
-        val request = synchronized(oneShotLock) { pendingWifiStatus } ?: return
+        val connectRequest = synchronized(oneShotLock) { pendingWifiStatus }
         // A wifi_status carrying the explicit error field is the glasses' failure
         // verdict for the in-flight connect: reject now instead of running out the
         // request timeout. Only the error field counts as failure — the glasses'
         // connect sequence emits a debounced bare connected=false ~1-2s after
         // credentials while association is still in progress, and rejecting on that
         // would kill every connect attempt early.
-        if (request.operation == WifiStatusOperation.CONNECT && event.error != null) {
+        if (connectRequest != null && event.error != null) {
             synchronized(oneShotLock) {
-                if (pendingWifiStatus === request) {
+                if (pendingWifiStatus === connectRequest) {
                     pendingWifiStatus = null
                 }
             }
-            request.pending.reject(
+            connectRequest.pending.reject(
                 BluetoothSdkException(
                     event.error,
-                    "Glasses failed to join \"${request.ssid}\": ${event.error}",
+                    "Glasses failed to join \"${connectRequest.ssid}\": ${event.error}",
                 )
             )
             return
         }
-        if (!wifiStatusMatches(event.status, request)) return
-        synchronized(oneShotLock) {
-            if (pendingWifiStatus === request) {
-                pendingWifiStatus = null
+        if (connectRequest != null && wifiStatusMatchesConnect(event.status, connectRequest.ssid)) {
+            synchronized(oneShotLock) {
+                if (pendingWifiStatus === connectRequest) {
+                    pendingWifiStatus = null
+                }
             }
+            connectRequest.pending.resolve(event)
+            return
         }
-        request.pending.resolve(event)
+
+        // Forget never settles from link state: modern requests require a correlated result,
+        // while legacy requests resolve as unverified at accepted dispatch.
     }
 
-    private fun wifiStatusMatches(status: WifiStatus, request: PendingWifiStatusRequest): Boolean =
-        when (request.operation) {
-            WifiStatusOperation.CONNECT ->
-                status is WifiStatus.Connected && status.ssid == request.ssid
-            WifiStatusOperation.FORGET ->
-                status == WifiStatus.Disconnected || (status is WifiStatus.Connected && status.ssid != request.ssid)
+    private fun handleWifiForgetResultForRequests(data: Map<String, Any>) {
+        val request = synchronized(oneShotLock) { pendingWifiForget } ?: return
+        if (request.mode != WifiRequestMode.MODERN) return
+        val version =
+            synchronized(oneShotLock) {
+                if (request.epoch != wifiSessionCapabilities.epoch) return
+                (wifiSessionCapabilities.forgetResult as? WifiProtocolCapability.Supported)?.version
+            } ?: return
+        val result =
+            parseWifiForgetResult(
+                request.requestId,
+                request.sid,
+                request.ssid,
+                version,
+                data,
+            ) ?: return
+
+        synchronized(oneShotLock) {
+            if (pendingWifiForget !== request || request.epoch != wifiSessionCapabilities.epoch) {
+                return
+            }
+            pendingWifiForget = null
         }
+        request.pending.resolve(result)
+    }
+
+    private fun handleSavedWifiNetworksForRequests(data: Map<String, Any>) {
+        val request = synchronized(oneShotLock) { pendingSavedWifiNetworks } ?: return
+        if (request.mode != WifiRequestMode.MODERN) return
+        val version =
+            synchronized(oneShotLock) {
+                if (request.epoch != wifiSessionCapabilities.epoch) return
+                (wifiSessionCapabilities.savedNetworks as? WifiProtocolCapability.Supported)?.version
+            } ?: return
+        val result =
+            parseSavedWifiNetworks(
+                request.requestId,
+                request.sid,
+                version,
+                data,
+            ) ?: return
+        synchronized(oneShotLock) {
+            if (pendingSavedWifiNetworks !== request || request.epoch != wifiSessionCapabilities.epoch) {
+                return
+            }
+            pendingSavedWifiNetworks = null
+        }
+        request.pending.resolve(result)
+    }
+
+    private fun wifiStatusMatchesConnect(status: WifiStatus, ssid: String): Boolean =
+        status is WifiStatus.Connected && status.ssid == ssid
+
+    private fun dispatchWifiForgetIfReady(request: PendingWifiForgetRequest) {
+        synchronized(oneShotLock) {
+            if (pendingWifiForget !== request || request.epoch != wifiSessionCapabilities.epoch ||
+                request.mode == WifiRequestMode.DISCOVERING || request.commandSent) return
+            if (request.mode == WifiRequestMode.UNSUPPORTED) {
+                request.pending.reject(BluetoothSdkException("wifi_protocol_unsupported", "Unsupported WiFi forget protocol version."))
+                return
+            }
+            request.sid = wifiSessionCapabilities.sessionId
+            request.commandSent = deviceManager.forgetWifiNetwork(
+                request.ssid,
+                request.requestId.takeIf { request.mode == WifiRequestMode.MODERN },
+                request.sid.takeIf { request.mode == WifiRequestMode.MODERN },
+            )
+            if (!request.commandSent) {
+                request.pending.reject(BluetoothSdkException("dispatch_failed", "No active glasses transport accepted WiFi forget."))
+            } else if (request.mode == WifiRequestMode.LEGACY) {
+                pendingWifiForget = null
+                request.pending.resolve(legacyWifiForgetResult(request.ssid))
+            }
+        }
+    }
+
+    private fun dispatchSavedWifiNetworksIfReady(request: PendingSavedWifiNetworks) {
+        synchronized(oneShotLock) {
+            if (pendingSavedWifiNetworks !== request || request.epoch != wifiSessionCapabilities.epoch ||
+                request.mode != WifiRequestMode.MODERN || request.commandSent) return
+            request.sid = wifiSessionCapabilities.sessionId
+            request.commandSent = deviceManager.requestSavedWifiNetworks(request.requestId, request.sid)
+            if (!request.commandSent) {
+                request.pending.reject(BluetoothSdkException("dispatch_failed", "No active glasses transport accepted saved WiFi request."))
+            }
+        }
+    }
+
+    private fun applyWifiProtocolCapabilities(data: Map<String, Any>) {
+        var forgetToDispatch: PendingWifiForgetRequest? = null
+        var savedToDispatch: PendingSavedWifiNetworks? = null
+        var unsupportedSaved: PendingSavedWifiNetworks? = null
+        synchronized(oneShotLock) {
+            wifiSessionCapabilities.applyVersionInfo1(data)
+            pendingWifiForget?.takeIf { it.epoch == wifiSessionCapabilities.epoch }?.let { request ->
+                if (request.mode == WifiRequestMode.DISCOVERING) {
+                    request.mode = wifiSessionCapabilities.forgetMode()
+                    forgetToDispatch = request
+                }
+            }
+            pendingSavedWifiNetworks?.takeIf { it.epoch == wifiSessionCapabilities.epoch }?.let { request ->
+                if (request.mode == WifiRequestMode.DISCOVERING) {
+                    request.mode = wifiSessionCapabilities.savedNetworksMode()
+                    if (request.mode == WifiRequestMode.LEGACY || request.mode == WifiRequestMode.UNSUPPORTED) {
+                        pendingSavedWifiNetworks = null
+                        unsupportedSaved = request
+                    } else {
+                        savedToDispatch = request
+                    }
+                }
+            }
+        }
+        unsupportedSaved?.let { request ->
+            request.pending.resolve(
+                SavedWifiNetworksResult(
+                    outcome = SavedWifiNetworksOutcome.UNSUPPORTED,
+                    networks = emptyList(),
+                    error = "saved_wifi_networks_unsupported",
+                )
+            )
+        }
+        forgetToDispatch?.let(::dispatchWifiForgetIfReady)
+        savedToDispatch?.let(::dispatchSavedWifiNetworksIfReady)
+    }
+
+    private fun resetWifiProtocolSession(sessionId: String, code: String) {
+        val error = BluetoothSdkException(code, "The glasses WiFi protocol session changed.")
+        val pendingToReject = mutableListOf<PendingResponse<*>>()
+        synchronized(oneShotLock) {
+            wifiSessionCapabilities.reset(sessionId)
+            pendingWifiStatus?.pending?.let(pendingToReject::add)
+            pendingWifiForget?.pending?.let(pendingToReject::add)
+            pendingSavedWifiNetworks?.pending?.let(pendingToReject::add)
+            pendingWifiScan?.pending?.let(pendingToReject::add)
+            pendingHotspotStatus?.pending?.let(pendingToReject::add)
+            pendingWifiStatus = null
+            pendingWifiForget = null
+            pendingSavedWifiNetworks = null
+            pendingWifiScan = null
+            pendingHotspotStatus = null
+        }
+        pendingToReject.forEach { it.reject(error) }
+    }
 
     private fun handleHotspotStatusForRequests(event: HotspotStatusEvent) {
         val request = synchronized(oneShotLock) { pendingHotspotStatus } ?: return

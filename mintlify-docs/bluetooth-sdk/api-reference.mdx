@@ -30,15 +30,15 @@ Only documented imports are part of the supported app developer API. Undocumente
   <Tab title="React Native">
 
 ```tsx
-import {useBluetoothEvent, useMentraBluetooth} from '@mentra/bluetooth-sdk/react';
+import {useBluetoothEvent, useMentraBluetooth} from "@mentra/bluetooth-sdk/react"
 
 function DeviceScreen() {
-  const mentra = useMentraBluetooth();
-  useBluetoothEvent('button_press', (event) => {
-    console.log(event.buttonId, event.pressType);
-  });
+  const mentra = useMentraBluetooth()
+  useBluetoothEvent("button_press", (event) => {
+    console.log(event.buttonId, event.pressType)
+  })
 
-  console.log(mentra.glasses.connection.state);
+  console.log(mentra.glasses.connection.state)
 }
 ```
 
@@ -178,28 +178,28 @@ these SDK usage pings.
 const devices = await BluetoothSdk.scan(DeviceModels.MentraLive, {
   timeoutMs: 10_000,
   onResults: (nextDevices) => renderDevicePicker(nextDevices),
-});
+})
 
-const device = await chooseDevice(devices);
-await BluetoothSdk.connect(device, {saveAsDefault: false});
+const device = await chooseDevice(devices)
+await BluetoothSdk.connect(device, {saveAsDefault: false})
 
-await BluetoothSdk.setDefaultDevice(device);
+await BluetoothSdk.setDefaultDevice(device)
 
 async function reconnectSavedDevice() {
-  const defaultDevice = await BluetoothSdk.getDefaultDevice();
+  const defaultDevice = await BluetoothSdk.getDefaultDevice()
   if (defaultDevice) {
-    await BluetoothSdk.connectDefault();
+    await BluetoothSdk.connectDefault()
   }
 }
 
 async function clearSavedDevice() {
-  await BluetoothSdk.clearDefaultDevice();
+  await BluetoothSdk.clearDefaultDevice()
 }
 
 async function stopConnection() {
-  await BluetoothSdk.cancelConnectionAttempt();
-  await BluetoothSdk.disconnect();
-  await BluetoothSdk.forget();
+  await BluetoothSdk.cancelConnectionAttempt()
+  await BluetoothSdk.disconnect()
+  await BluetoothSdk.forget()
 }
 ```
 
@@ -367,20 +367,20 @@ Do not require `rssi` for picker rows. Use SDK-provided stable discovery order b
   <Tab title="React Native">
 
 ```tsx
-import {useMentraBluetooth} from '@mentra/bluetooth-sdk/react';
+import {useMentraBluetooth} from "@mentra/bluetooth-sdk/react"
 
-const mentra = useMentraBluetooth();
+const mentra = useMentraBluetooth()
 ```
 
 React Native exposes `mentra.glasses.connection` as a discriminated union:
 
 ```ts
 type GlassesConnectionStatus =
-  | {state: 'disconnected'}
-  | {state: 'scanning'}
-  | {state: 'connecting'}
-  | {state: 'bonding'}
-  | {state: 'connected'; fullyBooted: boolean};
+  | {state: "disconnected"}
+  | {state: "scanning"}
+  | {state: "connecting"}
+  | {state: "bonding"}
+  | {state: "connected"; fullyBooted: boolean}
 ```
 
 Use `mentra.glasses.connection.state` for link-layer progress. `fullyBooted` only exists when `state === 'connected'`. The hook exposes the React app state as `glasses`, `sdk`, and `scan`.
@@ -434,13 +434,13 @@ These are the supported React Native app developer entrypoints:
 | Default device | `getDefaultDevice`, `setDefaultDevice`, `clearDefaultDevice` |
 | Connection | `scan`, `startScan`, `stopScan`, `connect`, `connectDefault`, `cancelConnectionAttempt`, `disconnect`, `forget` |
 | Display | `displayText`, `clearDisplay`, `setDashboardContent`, `showDashboard`, `setDashboardPosition`, `setHeadUpAngle`, `setScreenDisabled` |
-| Wi-Fi and hotspot | `requestWifiScan`, `sendWifiCredentials`, `forgetWifiNetwork`, `setHotspotState` |
+| Wi-Fi and hotspot | `requestWifiScan`, `getSavedWifiNetworks`, `sendWifiCredentials`, `forgetWifiNetwork`, `setHotspotState` |
 | Camera and gallery | `requestPhoto`, `warmUpCamera`, `stopCameraWarmUp`, `queryGalleryStatus`, `setGalleryModeEnabled`, `setPhotoCaptureDefaults` (deprecated), `setVideoRecordingDefaults`, `setMaxVideoRecordingDuration`, `setCameraFov`, `setCameraFovOverride`, `releaseCameraFovOverride`, `startVideoRecording`, `stopVideoRecording`, `queryVideoRecordingStatus` |
 | Streaming | `startStream`, `stopStream` |
 | Audio | `setMicState`, `setVoiceActivityDetectionEnabled`, `setLoudnessGateEnabled`, `setPreferredMic`, `setOwnAppAudioPlaying`, `getGlassesMediaVolume`, `setGlassesMediaVolume` |
 | LED, version, and OTA | `rgbLedControl`, `requestVersionInfo`, `checkForOtaUpdate`, `startOtaUpdate` |
 
-React Native helper exports include `DeviceModels`, `isConnectedGlassesConnectionStatus`, `isReadyGlassesConnectionStatus`, `isBusyGlassesConnectionStatus`, `isConnectedWifiStatus`, and `isEnabledHotspotStatus`. The React subpath exports `useMentraBluetooth`, `useBluetoothScan`, and `useBluetoothEvent`.
+React Native helper exports include `DeviceModels`, `WifiForgetResult`, `WifiForgetOutcome`, `SavedWifiNetworksResult`, `SavedWifiNetworksOutcome`, `isConnectedGlassesConnectionStatus`, `isReadyGlassesConnectionStatus`, `isBusyGlassesConnectionStatus`, `isConnectedWifiStatus`, and `isEnabledHotspotStatus`. The React subpath exports `useMentraBluetooth`, `useBluetoothScan`, and `useBluetoothEvent`.
 
 For React Native status UI, use `useMentraBluetooth()` from `@mentra/bluetooth-sdk/react`. It returns `mentra.glasses`, `mentra.sdk`, and `mentra.scan` for connection, battery, Wi-Fi, hotspot, scan, and SDK runtime state.
 
@@ -512,8 +512,9 @@ React Native exposes the narrowest return types for clear branching after `await
 | API | Resolves With | Rejection / Throw Criteria |
 | --- | --- | --- |
 | `requestWifiScan()` | Final `WifiSearchResult[]` from `wifi_scan_result` where `scanComplete: true`, including `[]` when no networks are found. | Scan response timeout, send failure, or another Wi-Fi scan already in flight. |
+| `getSavedWifiNetworks()`                                 | `SavedWifiNetworksResult`. `outcome: "confirmed"` includes exact saved SSIDs from a reliable enumeration backend. `outcome: "unsupported"` includes `networks: []` on K900 and legacy firmware. Whitespace is preserved so a returned SSID can be passed back to `forgetWifiNetwork`. Capability-unknown calls wait for `version_info_1`; negotiation and response share one 15-second deadline. Only protocol version 1 is supported.                                                                                                                                                                                                                                                                                                                                                                                                                       | Capability-negotiation timeout, request timeout, session reset/disconnect, send failure, or another saved-list request in flight. Glasses-reported `unsupported` and `failed` are typed results, not transport exceptions.                                                                                                                                                                                                                                                                                                                                                                                        |
 | `sendWifiCredentials(ssid, password)` | `WifiStatusChangeEvent` whose state is `connected` for the requested SSID. Success typically resolves within a few seconds. | Glasses-reported provisioning failure, with the reason as the error code: `wrong_password` (typically ~7s), `connect_timeout` (~12s, network unreachable or join never completed), or `connected_to_other_network` (the glasses ended up on a different SSID than requested). Also request timeout, send failure, or another Wi-Fi status command in flight. Routine `disconnected` events during association do **not** reject — the glasses briefly report disconnected while switching networks. Glasses running older software never send failure reasons; failed attempts there surface as request timeouts. |
-| `forgetWifiNetwork(ssid)` | `WifiStatusChangeEvent` once the requested SSID is no longer connected. | Timeout, send failure, or another Wi-Fi status command in flight. |
+| `forgetWifiNetwork(ssid)`                                | `WifiForgetResult` with `outcome` of `confirmed`, `dispatched`, `not_found`, `unsupported`, `failed`, or `legacy_unverified`. Capability-unknown calls wait for `version_info_1`; negotiation and response share one 15-second deadline. A discovery timeout never selects legacy. Modern results are correlated by request ID, glasses session ID, protocol version, and exact requested SSID; `wifi_status_change` cannot settle them. K900 returns `dispatched`, meaning its asynchronous SystemUI broadcast was queued, not that removal was verified. `connected` is an optional diagnostic snapshot and is omitted, rather than fabricated as `false`, if ASG cannot read link state. Legacy firmware returns `legacy_unverified` immediately after accepted native dispatch, without a fabricated link snapshot. Transport correlation remains internal. This return type intentionally replaces the previous `WifiStatusChangeEvent`. | Empty SSID, capability-negotiation timeout, request timeout, session reset/disconnect, send failure, or another Wi-Fi status command in flight. Glasses-reported semantic failures are typed results.                                                                                                                                                                                                                                                                                                                                                                                                             |
 | `setHotspotState(enabled)` | `HotspotStatusChangeEvent` matching the requested enabled/disabled state. | `hotspot_error`, timeout, send failure, or another hotspot command in flight. |
 | `requestVersionInfo()` | `VersionInfoResult` from the ASG `version_info` response. | Timeout, send failure, or another version query in flight. |
 | Gallery capture settings | `SettingsAckSuccessEvent` with a non-failure status such as `applied` or `ready`; the SDK local settings store updates only after this ASG ack resolves. | `settings_ack.status` of `error`, `failed`, `failure`, or `rejected`; timeout; or send failure. |
@@ -555,7 +556,7 @@ Use `setGalleryModeEnabled(true)` to enable local button capture, and `setGaller
 | --- | --- |
 | Connection | `scan`, `startScan`, `stopScan`, `connect`, `connectDefault`, `disconnect`, `forget` |
 | Display | `displayText`, `clearDisplay`, `setDashboardContent`, `showDashboard`, dashboard position, and head-up angle |
-| Wi-Fi and hotspot | `requestWifiScan`, `sendWifiCredentials`, `forgetWifiNetwork`, `setHotspotState` |
+| Wi-Fi and hotspot | `requestWifiScan`, `getSavedWifiNetworks`, `sendWifiCredentials`, `forgetWifiNetwork`, `setHotspotState` |
 | Camera | `requestPhoto`, gallery mode, photo capture defaults, video recording defaults, camera field of view |
 | Streaming | `startStream`, `stopStream` |
 | Audio | `setMicState`, Voice Activity Detection setting and events, audio callbacks, local transcription, media volume |
@@ -599,21 +600,21 @@ React Native components should use `useBluetoothEvent()` for hardware events. Th
   <Tab title="React Native">
 
 ```tsx
-import {useBluetoothEvent} from '@mentra/bluetooth-sdk/react';
+import {useBluetoothEvent} from "@mentra/bluetooth-sdk/react"
 
 export function HardwareEventLogger() {
-  useBluetoothEvent('button_press', (event) => console.log(event));
-  useBluetoothEvent('touch_event', (event) => console.log(event));
-  useBluetoothEvent('photo_status', (event) => console.log(event.status, event.resolvedConfig));
-  useBluetoothEvent('stream_status', (event) => console.log(event.resolvedConfig?.video?.fps));
-  useBluetoothEvent('ota_status', (event) => console.log(event.overall_percent));
-  useBluetoothEvent('speaking_status', (event) => console.log(event.speaking));
-  useBluetoothEvent('mic_pcm', (event) => {
-    console.log(event.sampleRate, event.bitsPerSample, event.channels, event.encoding);
-    console.log(event.pcm);
-  });
+  useBluetoothEvent("button_press", (event) => console.log(event))
+  useBluetoothEvent("touch_event", (event) => console.log(event))
+  useBluetoothEvent("photo_status", (event) => console.log(event.status, event.resolvedConfig))
+  useBluetoothEvent("stream_status", (event) => console.log(event.resolvedConfig?.video?.fps))
+  useBluetoothEvent("ota_status", (event) => console.log(event.overall_percent))
+  useBluetoothEvent("speaking_status", (event) => console.log(event.speaking))
+  useBluetoothEvent("mic_pcm", (event) => {
+    console.log(event.sampleRate, event.bitsPerSample, event.channels, event.encoding)
+    console.log(event.pcm)
+  })
 
-  return null;
+  return null
 }
 ```
 
@@ -686,7 +687,9 @@ The React Native event surface is typed through `BluetoothSdkEventMap`. These ar
 | `local_transcription` | `LocalTranscriptionEvent` | SDK local transcription text update. |
 | `wifi_status_change` | `WifiStatusChangeEvent` | Glasses Wi-Fi connection state changes. When the event is the verdict of a failed `sendWifiCredentials` attempt it carries an `error` reason (`wrong_password`, `connect_timeout`, `connected_to_other_network`); the reason describes the attempt, not the link, so `connected_to_other_network` arrives on a `connected` state. Routine link updates carry no `error`. |
 | `wifi_scan_result` | `WifiScanResultEvent` | Wi-Fi scan results. Intermediate events can have `scanComplete: false`; the final event has `scanComplete: true` and is what `requestWifiScan()` awaits. |
-| `version_info` | `VersionInfoEvent` | Glasses version metadata response. Also returned by `requestVersionInfo()`. |
+| `wifi_forget_result`              | `WifiForgetResultEvent`             | Discriminated raw result union. `mode: "modern"` is session-correlated and carries semantic `outcome`; K900 `outcome: "dispatched"` does not prove the asynchronous vendor receiver removed the credential. `mode: "legacy"` preserves an older frame's `dispatched` boolean without inventing missing correlation fields. In either mode, optional `connected` is omitted when the wire frame has no diagnostic link snapshot. Delivery is at least once; raw listeners should deduplicate modern retries by `(requestId, sid)`. Promise APIs ignore duplicates after the first matching terminal result. |
+| `saved_wifi_networks`             | `SavedWifiNetworksEvent`            | Session-correlated saved-SSID result from a backend that advertised support. Delivery is at least once; raw listeners should deduplicate retries by `requestId` and `sid`. Promise APIs ignore duplicates after the first matching terminal result.                                                                                                                                                                                                                                                                                                                                                                        |
+| `version_info`                    | `VersionInfoEvent`                  | Glasses version metadata response. `version_info_1` can include `wifiForgetResultVersion` and `savedWifiNetworksVersion`; absent/0 means unsupported for that glasses session. Also returned by `requestVersionInfo()`.                                                                                                                                                                                                                                                                                                                                                                                                    |
 | `hotspot_status_change` | `HotspotStatusChangeEvent` | Glasses hotspot state changes. |
 | `hotspot_error` | `HotspotErrorEvent` | Hotspot operation fails. |
 | `photo_response` | `PhotoResponseEvent` | Terminal photo result. Success means capture and webhook delivery completed; error means the glasses or phone rejected/failed the request. `requestPhoto(...)` resolves with the success case and rejects on the error case; progress follows through `photo_status`. |

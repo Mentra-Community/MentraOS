@@ -22,7 +22,6 @@ import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.NetworkUtils;
 import com.mentra.asg_client.camera.UvcStreamingState;
 import com.mentra.asg_client.io.bluetooth.interfaces.ICompanionTransport;
-import com.mentra.asg_client.io.media.utils.MediaStorage;
 import com.mentra.asg_client.io.bluetooth.interfaces.TransportListener;
 import com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager;
 import com.mentra.asg_client.io.file.core.FileManager;
@@ -31,11 +30,11 @@ import com.mentra.asg_client.io.hardware.interfaces.RgbLedConstants;
 import com.mentra.asg_client.io.media.core.MediaCaptureService;
 import com.mentra.asg_client.io.media.interfaces.ServiceCallbackInterface;
 import com.mentra.asg_client.io.media.managers.MediaUploadQueueManager;
+import com.mentra.asg_client.io.media.utils.MediaStorage;
 import com.mentra.asg_client.io.network.interfaces.INetworkManager;
 import com.mentra.asg_client.io.network.interfaces.NetworkStateListener;
 import com.mentra.asg_client.io.ota.helpers.OtaHelper;
 import com.mentra.asg_client.io.ota.interfaces.IBesOtaRegistry;
-import com.mentra.asg_client.io.ota.utils.OtaConstants;
 import com.mentra.asg_client.io.streaming.events.StreamingEvent;
 import com.mentra.asg_client.logging.BleTraceLogger;
 import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
@@ -92,8 +91,8 @@ public class AsgClientService extends Service implements NetworkStateListener, T
     @Inject Provider<ICompanionTransport> companionTransportProvider;
 
     /**
-     * Provider for the device-appropriate network manager, deferred for the same reason as
-     * {@link #companionTransportProvider}.
+     * Provider for the device-appropriate network manager, deferred for the same reason as {@link
+     * #companionTransportProvider}.
      */
     @Inject Provider<INetworkManager> networkManagerProvider;
 
@@ -1302,9 +1301,15 @@ public class AsgClientService extends Service implements NetworkStateListener, T
                 chunk1.put("sid", ProcessSessionId.SID);
                 chunk1.put(
                         "hotspot_ota_version",
-                        DeviceProfile.detect(this).isK900()
-                                ? AsgConstants.HOTSPOT_OTA_VERSION
-                                : 0);
+                        DeviceProfile.detect(this).isK900() ? AsgConstants.HOTSPOT_OTA_VERSION : 0);
+                INetworkManager networkManager =
+                        serviceInitializer.getServiceManager().getNetworkManager();
+                chunk1.put(
+                        "wifi_forget_result_version",
+                        AsgConstants.WIFI_FORGET_RESULT_VERSION);
+                chunk1.put(
+                        "saved_wifi_networks_version",
+                        networkManager != null ? networkManager.getSavedWifiNetworksVersion() : 0);
 
                 Log.d(TAG, "📤 Sending version_info_1: " + chunk1.toString());
                 serviceInitializer
