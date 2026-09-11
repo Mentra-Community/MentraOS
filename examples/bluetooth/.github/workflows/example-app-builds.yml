@@ -133,6 +133,11 @@ jobs:
         run: |
           ./gradlew :app:assembleDebug --no-daemon
 
+      - name: Verify foreground service types
+        if: steps.availability.outputs.available == 'true'
+        working-directory: examples/android
+        run: python3 scripts/check-foreground-service.py app/build/intermediates/merged_manifests/debug/processDebugManifest/AndroidManifest.xml
+
       - name: Collect APK
         if: steps.availability.outputs.available == 'true'
         id: collect
