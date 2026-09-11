@@ -142,7 +142,15 @@ function validateValue(value, rule, label, environment) {
 // same material the service will actually load.
 export function keyMaterial(value, label) {
   const text = String(value).replace(/\\n/g, "\n").trim()
-  if (text.includes("-----BEGIN ")) return text
+  if (text.includes("-----BEGIN ")) {
+    // A PEM must be of the slot's own type: createPublicKey would happily
+    // derive a public key from private material, but the service's
+    // importSPKI would not, so private PEM in a public slot must fail here.
+    const expected =
+      label === "PUBLIC KEY" ? /^-----BEGIN (?:PUBLIC KEY|CERTIFICATE)-----/m : /^-----BEGIN [A-Z ]*PRIVATE KEY-----/m
+    if (!expected.test(text)) throw new Error("not key material of the expected type")
+    return text
+  }
   if (!/^[A-Za-z0-9+/=\s]+$/.test(text)) throw new Error("not key material")
   return `-----BEGIN ${label}-----\n${text.replace(/\s+/g, "")}\n-----END ${label}-----`
 }

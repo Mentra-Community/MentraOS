@@ -149,6 +149,43 @@ test("accepts the bare base64 key bodies Cloud V2 stores, and rejects mismatched
   )
 })
 
+test("private key material is rejected in a public-key slot, in PEM and escaped form", () => {
+  const {privateKey, publicKey} = generateKeyPairSync("ed25519")
+  const privatePem = privateKey.export({type: "pkcs8", format: "pem"})
+  const privateBody = privateKey.export({type: "pkcs8", format: "der"}).toString("base64")
+  const publicBody = publicKey.export({type: "spki", format: "der"}).toString("base64")
+  const pairContract = {
+    schemaVersion: 1,
+    contractVersion: "test",
+    required: {PRIVATE_KEY: {kind: "private-key"}, PUBLIC_KEY: {kind: "public-key"}},
+    keyPairs: [{id: "pair", privateKey: "PRIVATE_KEY", publicKey: "PUBLIC_KEY", acceptanceTest: "auth"}],
+  }
+  for (const publicSlot of [privatePem, privatePem.replace(/\n/g, "\\n")]) {
+    assert.throws(
+      () =>
+        validateProductionCloudConfig({
+          contract: pairContract,
+          environment: "prod",
+          values: {PRIVATE_KEY: privateBody, PUBLIC_KEY: publicSlot},
+        }),
+      /not a public key/,
+    )
+  }
+  assert.throws(
+    () =>
+      keyMaterial(publicBody && `-----BEGIN PUBLIC KEY-----\n${publicBody}\n-----END PUBLIC KEY-----`, "PRIVATE KEY"),
+    /expected type/,
+  )
+  assert.equal(
+    validateProductionCloudConfig({
+      contract: pairContract,
+      environment: "prod",
+      values: {PRIVATE_KEY: privateBody, PUBLIC_KEY: publicBody},
+    }).checks.find((check) => check.id === "pair").status,
+    "pass",
+  )
+})
+
 test("staging may run with NODE_ENV=staging while prod must be production", () => {
   const rule = {kind: "enum", valuesByEnvironment: {staging: ["staging", "production"], prod: ["production"]}}
   const single = {schemaVersion: 1, contractVersion: "test", required: {NODE_ENV: rule}}
