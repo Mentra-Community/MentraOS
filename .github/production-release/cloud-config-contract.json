@@ -1,11 +1,15 @@
 {
   "schemaVersion": 1,
-  "contractVersion": "2026-09-11.1",
+  "contractVersion": "2026-09-11.2",
   "required": {
     "AUDIO_PROVIDER": {"kind": "enum", "values": ["soniox"], "acceptanceTest": "runtime-transcription"},
     "AUDIO_UDP_ADVERTISED_HOST": {"kind": "host", "acceptanceTest": "runtime-audio-transport"},
     "AUDIO_UDP_ADVERTISED_PORT": {"kind": "integer", "acceptanceTest": "runtime-audio-transport"},
-    "CAMERA_WEBHOOK_SECRET": {"kind": "secret", "acceptanceTest": "camera-upload"},
+    "CAMERA_WEBHOOK_SECRET": {
+      "kind": "secret",
+      "requiredWhen": {"key": "STORAGE_PROVIDER", "values": ["r2", "s3"]},
+      "acceptanceTest": "camera-upload"
+    },
     "CLOUD_ADMIN_CONSOLE_URL": {"kind": "https-url", "acceptanceTest": "incident-admin-link"},
     "CLOUD_CORE_ENVIRONMENT": {
       "kind": "enum",
@@ -37,7 +41,7 @@
     "REFRESH_TOKEN_PEPPER": {"kind": "secret", "acceptanceTest": "session-restoration"},
     "RESEND_API_KEY": {"kind": "secret", "acceptanceTest": "transactional-email"},
     "SONIOX_API_KEY": {"kind": "secret", "acceptanceTest": "runtime-transcription"},
-    "STORAGE_PROVIDER": {"kind": "enum", "values": ["r2", "s3"], "acceptanceTest": "camera-upload"},
+    "STORAGE_PROVIDER": {"kind": "enum", "values": ["local", "r2", "s3"], "acceptanceTest": "camera-upload"},
     "STREAM_PROVIDER": {"kind": "enum", "values": ["cloudflare"], "acceptanceTest": "managed-stream"},
     "SUPABASE_ANON_KEY": {"kind": "secret", "acceptanceTest": "account-token-exchange"},
     "SUPABASE_SERVICE_ROLE_KEY": {"kind": "secret", "acceptanceTest": "account-token-exchange"},
@@ -85,24 +89,28 @@
     },
     {
       "id": "runtime-storage-endpoint",
+      "requiredWhen": {"key": "STORAGE_PROVIDER", "values": ["r2", "s3"]},
       "keys": ["STORAGE_S3_ENDPOINT", "R2_ENDPOINT", "CLOUDFLARE_R2_S3_ENDPOINT"],
       "kind": "https-url",
       "acceptanceTest": "camera-upload"
     },
     {
       "id": "runtime-storage-bucket",
+      "requiredWhen": {"key": "STORAGE_PROVIDER", "values": ["r2", "s3"]},
       "keys": ["STORAGE_S3_BUCKET", "R2_BUCKET", "CLOUDFLARE_R2_GALLERY_BUCKET"],
       "kind": "string",
       "acceptanceTest": "camera-upload"
     },
     {
       "id": "runtime-storage-access-key",
+      "requiredWhen": {"key": "STORAGE_PROVIDER", "values": ["r2", "s3"]},
       "keys": ["STORAGE_S3_ACCESS_KEY_ID", "R2_ACCESS_KEY_ID", "CLOUDFLARE_R2_ACCESS_KEY_ID"],
       "kind": "secret",
       "acceptanceTest": "camera-upload"
     },
     {
       "id": "runtime-storage-secret-key",
+      "requiredWhen": {"key": "STORAGE_PROVIDER", "values": ["r2", "s3"]},
       "keys": ["STORAGE_S3_SECRET_ACCESS_KEY", "R2_SECRET_ACCESS_KEY", "CLOUDFLARE_R2_SECRET_ACCESS_KEY"],
       "kind": "secret",
       "acceptanceTest": "camera-upload"

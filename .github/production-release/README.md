@@ -227,6 +227,12 @@ Run `next` once for preflight and, after it succeeds, again for deployment:
 Preflight loads staging and production configuration into temporary mode-0600
 files, validates the versioned contract, and publishes only key names and
 pass/fail results. It never compares or publishes raw values or secret hashes.
+Some requirements are conditional (`requiredWhen` in the contract): the
+runtime's storage-event webhook secret and its R2/S3 credentials apply only
+while `STORAGE_PROVIDER` is `r2` or `s3`. Production runs the `local` provider
+for managed photos (the cloud photo path is being retired), so those checks
+report `inactive` rather than failing; keys that are present anyway are still
+validated.
 
 Before approving `production-cloud`, compare the frozen source, target, previous
 revision, migration notes, and rollback coordinates in the workflow summary.

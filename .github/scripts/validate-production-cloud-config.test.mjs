@@ -199,3 +199,91 @@ test("staging may run with NODE_ENV=staging while prod must be production", () =
     /not an allowed prod value/,
   )
 })
+
+const conditionalContract = {
+  schemaVersion: 1,
+  contractVersion: "test-2",
+  required: {
+    STORAGE_PROVIDER: {kind: "enum", values: ["local", "r2"], acceptanceTest: "camera"},
+    CAMERA_WEBHOOK_SECRET: {
+      kind: "secret",
+      requiredWhen: {key: "STORAGE_PROVIDER", values: ["r2"]},
+      acceptanceTest: "camera",
+    },
+  },
+  requiredAnyOf: [
+    {
+      id: "runtime-storage-endpoint",
+      keys: ["STORAGE_S3_ENDPOINT", "R2_ENDPOINT"],
+      kind: "https-url",
+      requiredWhen: {key: "STORAGE_PROVIDER", values: ["r2"]},
+      acceptanceTest: "camera",
+    },
+  ],
+}
+
+test("conditional requirements apply only while the selecting key holds a listed value", () => {
+  const local = validateProductionCloudConfig({
+    contract: conditionalContract,
+    environment: "prod",
+    values: {STORAGE_PROVIDER: "local"},
+  })
+  assert.deepEqual(
+    local.checks.map((check) => [check.id, check.status, check.keys]),
+    [
+      ["CAMERA_WEBHOOK_SECRET", "inactive", []],
+      ["runtime-storage-endpoint", "inactive", []],
+      ["STORAGE_PROVIDER", "pass", ["STORAGE_PROVIDER"]],
+    ],
+  )
+  // Inactive keys that are nevertheless present are still validated.
+  assert.throws(
+    () =>
+      validateProductionCloudConfig({
+        contract: conditionalContract,
+        environment: "prod",
+        values: {STORAGE_PROVIDER: "local", R2_ENDPOINT: "http://localhost:9000"},
+      }),
+    /R2_ENDPOINT/,
+  )
+  assert.throws(
+    () =>
+      validateProductionCloudConfig({
+        contract: conditionalContract,
+        environment: "prod",
+        values: {STORAGE_PROVIDER: "r2", R2_ENDPOINT: "https://account.r2.cloudflarestorage.com"},
+      }),
+    /CAMERA_WEBHOOK_SECRET is missing/,
+  )
+  assert.throws(
+    () =>
+      validateProductionCloudConfig({
+        contract: conditionalContract,
+        environment: "prod",
+        values: {STORAGE_PROVIDER: "r2", CAMERA_WEBHOOK_SECRET: "s3cret"},
+      }),
+    /runtime-storage-endpoint requires one of/,
+  )
+  const remote = validateProductionCloudConfig({
+    contract: conditionalContract,
+    environment: "prod",
+    values: {
+      STORAGE_PROVIDER: "r2",
+      CAMERA_WEBHOOK_SECRET: "s3cret",
+      R2_ENDPOINT: "https://account.r2.cloudflarestorage.com",
+    },
+  })
+  assert.equal(
+    remote.checks.every((check) => check.status === "pass"),
+    true,
+  )
+})
+
+test("a condition must point at a required enum that offers the listed values", () => {
+  const unknownSelector = structuredClone(conditionalContract)
+  unknownSelector.required.CAMERA_WEBHOOK_SECRET.requiredWhen = {key: "PHOTO_MODE", values: ["cloud"]}
+  assert.throws(() => validateContractCoverage(unknownSelector, []), /conditional on PHOTO_MODE/)
+  const unknownValue = structuredClone(conditionalContract)
+  unknownValue.requiredAnyOf[0].requiredWhen = {key: "STORAGE_PROVIDER", values: ["gcs"]}
+  assert.throws(() => validateContractCoverage(unknownValue, []), /conditional on STORAGE_PROVIDER/)
+})
