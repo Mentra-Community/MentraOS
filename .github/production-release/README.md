@@ -6,9 +6,16 @@ production. It covers Cloud V2 and the Mentra App on iOS and Android.
 The Bluetooth SDK Starter Kit example app is explicitly outside this production
 promotion system. These workflows do not build it, upload it to TestFlight or
 Google Play, submit it for review, or release it publicly. Do not add the example
-app manually to a promotion attempt. Its coordinated beta pipeline remains
-separate and unchanged. Publishing it to app stores later requires a reviewed
-workflow and runbook change; it is not an operator-time option.
+app manually to a promotion attempt. Publishing it to app stores later requires
+a reviewed workflow and runbook change; it is not an operator-time option.
+
+The example app is also its own release notion in the coordinated beta. A beta
+is complete, and promotable, when `finalize` writes `mentra-release-<beta>.json`
+for Cloud V2, the Mentra App, the Engine, and the Bluetooth SDK. The Starter
+Kit examples are then built against that finalized beta and recorded
+separately as `mentra-example-release-<beta>.json`, the "finalized Mentra
+Bluetooth example". An example build or store publish that fails never makes
+the beta incomplete and never blocks a promotion.
 
 The process is resumable. It records immutable state in a draft GitHub release
 named `mentra-production-promotion-vX.Y.Z-attempt-N`. Store review may take days;
@@ -16,10 +23,9 @@ no GitHub runner waits for it.
 
 ## Safety rules
 
-- Promote only a completed coordinated beta whose MentraOS and Starter Kit
-  sources already contain their respective `main` branches. If either branch
-  has production-only commits, back-merge them into `staging` and complete a new
-  beta before promotion.
+- Promote only a completed coordinated beta whose MentraOS source already
+  contains `main`. If `main` has production-only commits, back-merge them into
+  `staging` and complete a new beta before promotion.
 - Start only after the selected beta's exact sources are in `main`.
 - Never patch or re-sign a beta binary. Production mobile candidates are rebuilt
   from the frozen source with production configuration.
@@ -96,12 +102,11 @@ git pull --ff-only origin staging
 ./scripts/production-release.mjs promote --beta X.Y.Z-beta.N
 ```
 
-This creates and merges the Starter Kit `staging` to `main` pull request first,
-then the MentraOS `staging` to `main` pull request. It only advances branch
-history. It does not build or publish the Starter Kit, deploy Cloud, upload
-mobile apps, submit stores, or create production-promotion state. It fails
-before opening either pull request if the selected beta does not already
-contain both `main` heads.
+This creates and merges the MentraOS `staging` to `main` pull request. It only
+advances branch history. It does not touch the Starter Kit repository, deploy
+Cloud, upload mobile apps, submit stores, or create production-promotion state.
+It fails before opening the pull request if the selected beta does not already
+contain the `main` head.
 
 Then, from a clean, up-to-date MentraOS `main` checkout:
 

@@ -10,16 +10,18 @@ const readJson = (file) => JSON.parse(readFileSync(file, "utf8"))
 
 export function verifyExampleAabIdentity(plan, aab, bundletool, run = execFileSync) {
   const expected = {
-    package: EXAMPLE_PACKAGE_ID,
+    "package": EXAMPLE_PACKAGE_ID,
     "android:versionCode": String(plan.native.buildNumber),
     "android:versionName": plan.native.marketingVersion,
   }
   for (const [attribute, value] of Object.entries(expected)) {
-    const actual = run("java", [
-      "-jar", bundletool, "dump", "manifest", `--bundle=${aab}`, "--module=base",
-      `--xpath=/manifest/@${attribute}`,
-    ], {encoding: "utf8"}).trim()
-    if (actual !== value) throw new Error(`AAB ${attribute} ${JSON.stringify(actual)} does not match ${JSON.stringify(value)}`)
+    const actual = run(
+      "java",
+      ["-jar", bundletool, "dump", "manifest", `--bundle=${aab}`, "--module=base", `--xpath=/manifest/@${attribute}`],
+      {encoding: "utf8"},
+    ).trim()
+    if (actual !== value)
+      throw new Error(`AAB ${attribute} ${JSON.stringify(actual)} does not match ${JSON.stringify(value)}`)
   }
 }
 
@@ -31,11 +33,16 @@ export function examplePlayCoordinates(plan, starterKit, track) {
     starterKit.releaseIdentity !== plan.releaseIdentity ||
     starterKit.channel !== plan.channel ||
     starterKit.mentraos?.sourceCommit !== plan.sourceCommit ||
-    starterKit.starterKit?.baseCommit !== plan.starterKitSource?.sourceCommit ||
+    !/^[0-9a-f]{40}$/.test(starterKit.starterKit?.baseCommit || "") ||
     !/^[0-9a-f]{40}$/.test(starterKit.starterKit?.releaseCommit || "") ||
     ["@mentra/bluetooth-sdk", "@mentra/engine"].some((name) => starterKit.packages?.[name] !== plan.releaseIdentity)
-  ) throw new Error("Example Google Play source does not match the validated Starter Kit release")
-  if (!Number.isSafeInteger(plan.native?.buildNumber) || plan.native.buildNumber < 1 || plan.native.buildNumber > 2100000000) {
+  )
+    throw new Error("Example Google Play source does not match the validated Starter Kit release")
+  if (
+    !Number.isSafeInteger(plan.native?.buildNumber) ||
+    plan.native.buildNumber < 1 ||
+    plan.native.buildNumber > 2100000000
+  ) {
     throw new Error("Example Google Play requires a valid coordinated Android version code")
   }
   const aabName = `mentra-example-react-native-${plan.releaseIdentity}.aab`
@@ -54,7 +61,8 @@ export function examplePlayCoordinates(plan, starterKit, track) {
 export function configureExampleAndroid(plan, config, packageJson) {
   if (!["dev", "beta"].includes(plan.channel)) throw new Error("Only coordinated prerelease examples are supported")
   for (const name of ["@mentra/bluetooth-sdk", "@mentra/engine"]) {
-    if (packageJson.dependencies?.[name] !== plan.releaseIdentity) throw new Error(`Example ${name} must match the release`)
+    if (packageJson.dependencies?.[name] !== plan.releaseIdentity)
+      throw new Error(`Example ${name} must match the release`)
   }
   return {
     ...config,
@@ -84,13 +92,24 @@ export function validateExampleGooglePlay(plan, starterKit, record) {
     record.distribution?.installUrl !== installUrl ||
     record.aab?.url !== coordinates.aab_url ||
     !/^[0-9a-f]{64}$/.test(record.aab?.sha256 || "") ||
-    !Number.isSafeInteger(record.aab?.size) || record.aab.size < 1 ||
+    !Number.isSafeInteger(record.aab?.size) ||
+    record.aab.size < 1 ||
     !/^https:\/\/github\.com\/Mentra-Community\/MentraOS\/actions\/runs\/\d+$/.test(record.provenanceUrl || "")
-  ) throw new Error("Example Google Play publication evidence does not match the release")
+  )
+    throw new Error("Example Google Play publication evidence does not match the release")
   return record
 }
 
-export function createExampleGooglePlayRecord({plan, starterKit, track, codes, aab, artifactUrl, uploadStatus, provenanceUrl}) {
+export function createExampleGooglePlayRecord({
+  plan,
+  starterKit,
+  track,
+  codes,
+  aab,
+  artifactUrl,
+  uploadStatus,
+  provenanceUrl,
+}) {
   examplePlayCoordinates(plan, starterKit, track)
   if (!Array.isArray(codes) || !codes.map(Number).includes(plan.native.buildNumber)) {
     throw new Error("Google Play did not retain the exact coordinated version code")
@@ -141,8 +160,14 @@ function main() {
   }
   if (command !== "record") throw new Error(`Unknown command: ${command}`)
   const record = createExampleGooglePlayRecord({
-    plan, starterKit, track: options.track, codes: readJson(options.codes), aab: readFileSync(options.aab),
-    artifactUrl: options["artifact-url"], uploadStatus: options["upload-status"], provenanceUrl: options["provenance-url"],
+    plan,
+    starterKit,
+    track: options.track,
+    codes: readJson(options.codes),
+    aab: readFileSync(options.aab),
+    artifactUrl: options["artifact-url"],
+    uploadStatus: options["upload-status"],
+    provenanceUrl: options["provenance-url"],
   })
   writeFileSync(options.output, `${JSON.stringify(record, null, 2)}\n`)
 }

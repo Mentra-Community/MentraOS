@@ -16,7 +16,6 @@ import {
 import {ATTESTATION_CHECKS, nextAction, validateAttestation} from "../.github/scripts/production-promotion-state.mjs"
 
 const REPOSITORY = "Mentra-Community/MentraOS"
-const STARTER_KIT_REPOSITORY = "Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit"
 const DEFAULT_REF = "main"
 const VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/
 const BETA_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-beta\.([1-9]\d*)$/
@@ -228,12 +227,9 @@ export function releaseBranchSources(result, betaIdentity) {
     throw new Error(`The coordinated release result does not describe completed beta ${betaIdentity}`)
   }
   const mentraosCommit = result.sourceCommit
-  const starterKitCommit = result.starterKit?.starterKit?.mergeCommit
   if (!SHA_PATTERN.test(mentraosCommit || "")) throw new Error("The beta result has no valid MentraOS source commit")
-  if (!SHA_PATTERN.test(starterKitCommit || ""))
-    throw new Error("The beta result has no valid Starter Kit merge commit")
   if (!result.completedAt) throw new Error("The beta result is not complete")
-  return {mentraosCommit, starterKitCommit}
+  return {mentraosCommit}
 }
 
 function loadReleaseBranchSources(betaIdentity) {
@@ -373,7 +369,7 @@ async function confirmBranchPromotion(betaIdentity, options) {
   if (!process.stdin.isTTY || !process.stdout.isTTY) {
     throw new Error("Refusing branch promotion without an interactive terminal; rerun with --yes after reviewing it")
   }
-  console.log(`This promotes the exact ${betaIdentity} Starter Kit and MentraOS sources from staging to main.`)
+  console.log(`This promotes the exact ${betaIdentity} MentraOS source from staging to main.`)
   const reader = createInterface({input: process.stdin, output: process.stdout})
   const answer = await reader.question("Type the beta identity to continue: ")
   reader.close()
@@ -492,22 +488,13 @@ async function main(argv = process.argv.slice(2)) {
     verifyCheckoutForPromotion()
     const sources = loadReleaseBranchSources(options.beta)
     ensureCommitIsOnBranch(REPOSITORY, sources.mentraosCommit, "staging")
-    ensureCommitIsOnBranch(STARTER_KIT_REPOSITORY, sources.starterKitCommit, "staging")
     requirePromotionRelationship(REPOSITORY, "main", sources.mentraosCommit)
-    requirePromotionRelationship(STARTER_KIT_REPOSITORY, "main", sources.starterKitCommit)
     await confirmBranchPromotion(options.beta, options)
-    promoteExactCommit({
-      repository: STARTER_KIT_REPOSITORY,
-      sourceCommit: sources.starterKitCommit,
-      target: "main",
-      releaseIdentity: options.beta,
-    })
     promoteExactCommit({
       repository: REPOSITORY,
       sourceCommit: sources.mentraosCommit,
       target: "main",
       releaseIdentity: options.beta,
-      mergeBody: `Starter-Kit-Source: ${sources.starterKitCommit}`,
     })
     console.log(`Branch promotion for ${options.beta} is complete. Continue from a clean, up-to-date main checkout.`)
     return

@@ -70,11 +70,10 @@ test("reads exact branch sources from a completed coordinated beta", () => {
         channel: "beta",
         completedAt: "2026-08-31T18:40:40.000Z",
         sourceCommit: "a".repeat(40),
-        starterKit: {starterKit: {mergeCommit: "b".repeat(40)}},
       },
       "3.1.0-beta.105",
     ),
-    {mentraosCommit: "a".repeat(40), starterKitCommit: "b".repeat(40)},
+    {mentraosCommit: "a".repeat(40)},
   )
 })
 
@@ -92,13 +91,12 @@ test("rejects incomplete or mismatched beta branch sources", () => {
     channel: "beta",
     completedAt: "2026-08-31T18:40:40.000Z",
     sourceCommit: "a".repeat(40),
-    starterKit: {starterKit: {mergeCommit: "b".repeat(40)}},
   }
   assert.throws(() => releaseBranchSources(result, "3.1.0-beta.106"), /does not describe completed beta/)
   assert.throws(() => releaseBranchSources({...result, completedAt: undefined}, result.releaseIdentity), /not complete/)
   assert.throws(
-    () => releaseBranchSources({...result, starterKit: {starterKit: {}}}, result.releaseIdentity),
-    /no valid Starter Kit merge commit/,
+    () => releaseBranchSources({...result, sourceCommit: "short"}, result.releaseIdentity),
+    /no valid MentraOS source commit/,
   )
 })
 
