@@ -115,6 +115,24 @@ Android apps should request the permissions required by the features they use:
 
 Some Android 12+ devices require Location permission and Location services before BLE scan callbacks are delivered.
 
+### Android Foreground Service Types
+
+The SDK service reads its allowed types from the merged Android manifest.
+The default manifest retains MentraOS's connected-device, microphone, location,
+media-playback and data-sync capabilities. A Bluetooth-only host can override
+`com.mentra.bluetoothsdk.services.ForegroundService` to use `connectedDevice`
+with `tools:replace="android:foregroundServiceType"`, and remove unused typed
+FGS permissions from its final manifest. Startup then uses `connectedDevice`
+instead of `dataSync`; the SDK's `CHANGE_WIFI_STATE` permission satisfies its
+startup prerequisite even before a Bluetooth runtime permission is granted.
+
+Only restrict types when the corresponding background features are unused.
+Receiving the glasses' BLE audio is distinct from selecting Android's phone or
+Bluetooth headset microphone. Hosts using Android microphone capture, location
+tracking or background media playback must retain the corresponding types and
+permissions, including those required by other native modules. At least
+`connectedDevice` or `dataSync` must remain for SDK service startup.
+
 iOS apps should include usage descriptions:
 
 ```json
