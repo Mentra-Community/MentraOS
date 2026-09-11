@@ -26,6 +26,16 @@ Consult module-specific AGENTS.md when working within that module.
 
 Core client app lives in `mobile/` (Expo React Native). Backend services, the Cloud Client, protocol package, CLI, web portals, and cloud tests live in `cloud-v2/`. The local Mentra Miniapp SDK is `mobile/modules/miniapp/`; developer tooling is in `sdk/`. Platform SDKs are in `mobile/modules/bluetooth-sdk/` and `sdk_ios/`; hardware tooling lives in `mcu_client/`. Public Mintlify docs live in `mintlify-docs/`; notes and plans live in `agents/` and `notes/` — see [`notes/README.md`](notes/README.md) for the specs/plans convention.
 
+First-party miniapps and their backends also live in `miniapps/`. All of those
+miniapps are part of this repository's source scope. For example,
+`com.mentra.merge` is owned by this monorepo: its client is in
+`miniapps/merge/miniapp/` and its backend is in `miniapps/merge/backend/`.
+Package identifiers can be found in `miniapps/**/miniapp.json`; the surrounding
+component directories contain backend and deployment files. A separate backend
+hostname does not imply a separate repository or third-party ownership.
+The external first-party miniapp repositories are listed under
+"Related Miniapp Repositories" below; their source can be private.
+
 ## Build Commands
 
 ### React Native (mobile)

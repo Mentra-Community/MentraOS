@@ -19,6 +19,7 @@ import { createHmac } from "node:crypto";
 const logger = createLogger("core").child({ service: "report-slack.service" });
 
 const SLACK_TIMEOUT_MS = 10_000;
+const SLACK_POST_MESSAGE_URL = "https://slack.com/api/chat.postMessage";
 const REPORT_AGENT_ACTION_TTL_SECONDS = 7 * 24 * 60 * 60;
 
 /** How much user-authored text a Slack field keeps, mirroring V1 limits. */
@@ -87,38 +88,70 @@ type SlackButton = {
 
 /**
  * Post a report summary to the reports Slack channel. Resolves with
- * `{ok: false, skipped: true}` when CLOUD_REPORTS_SLACK_WEBHOOK_URL is unset
- * and `{ok: false}` on send failure; it never rejects.
+ * `{ok: false, skipped: true}` when no destination is configured and
+ * `{ok: false}` on send failure; it never rejects.
  */
 export async function notifyReportSlack(
   notification: ReportSlackNotification,
 ): Promise<ReportSlackResult> {
-  const webhookUrl = webhookUrlFor(notification.kind);
-  if (!webhookUrl) {
+  const destination = slackDestinationFor(notification.kind);
+  if (!destination) {
     logger.debug(
       { reportId: notification.reportId, kind: notification.kind },
-      "no Slack webhook configured for this report kind; skipping notification",
+      "no Slack destination configured for this report kind; skipping notification",
     );
     return { ok: false, skipped: true };
   }
 
   try {
-    const res = await fetch(webhookUrl, {
-      method: "POST",
-      headers: { "content-type": "application/json" },
-      body: JSON.stringify(buildSlackMessage(notification)),
-      signal: AbortSignal.timeout(SLACK_TIMEOUT_MS),
-    });
+    const message = buildSlackMessage(notification);
+    const res =
+      destination.transport === "bot"
+        ? await fetch(SLACK_POST_MESSAGE_URL, {
+            method: "POST",
+            headers: {
+              "content-type": "application/json; charset=utf-8",
+              authorization: `Bearer ${destination.token}`,
+            },
+            body: JSON.stringify({ channel: destination.channel, ...message }),
+            signal: AbortSignal.timeout(SLACK_TIMEOUT_MS),
+          })
+        : await fetch(destination.url, {
+            method: "POST",
+            headers: { "content-type": "application/json" },
+            body: JSON.stringify(message),
+            signal: AbortSignal.timeout(SLACK_TIMEOUT_MS),
+          });
     if (!res.ok) {
       logger.error(
         {
           reportId: notification.reportId,
+          transport: destination.transport,
           status: res.status,
           body: await res.text().catch(() => ""),
         },
         "report Slack notification failed",
       );
       return { ok: false };
+    }
+    // The Web API answers 200 with {ok:false} on refusal, so a bot post that
+    // only checks the status code would report success for a dropped message.
+    if (destination.transport === "bot") {
+      const body = (await res.json().catch(() => null)) as
+        | { ok?: boolean; error?: string; ts?: string }
+        | null;
+      if (!body?.ok) {
+        logger.error(
+          { reportId: notification.reportId, error: body?.error ?? "unknown_error" },
+          "report Slack notification rejected by chat.postMessage",
+        );
+        return { ok: false };
+      }
+      logger.info(
+        { reportId: notification.reportId, ts: body.ts },
+        "report Slack notification sent",
+      );
+      return { ok: true };
     }
     logger.info({ reportId: notification.reportId }, "report Slack notification sent");
     return { ok: true };
@@ -129,6 +162,38 @@ export async function notifyReportSlack(
     );
     return { ok: false };
   }
+}
+
+type SlackDestination =
+  | { transport: "bot"; token: string; channel: string }
+  | { transport: "webhook"; url: string };
+
+/**
+ * Slack cannot edit a message posted through an incoming webhook: it arrives as
+ * a bare `bot_message` carrying no app identity, so `chat.update` answers
+ * `cant_update_message` no matter which token asks or what scopes it holds. The
+ * dev agent edits the original report to show run progress, so a configured bot
+ * token and channel take precedence — `chat.postMessage` stamps the app identity
+ * that makes the message editable. The webhook stays as the fallback so local
+ * and unconfigured environments keep working unchanged.
+ */
+function slackDestinationFor(
+  kind: ReportSlackNotification["kind"],
+): SlackDestination | undefined {
+  const token = process.env.CLOUD_REPORTS_SLACK_BOT_TOKEN;
+  const channel = channelIdFor(kind);
+  if (token && channel) return { transport: "bot", token, channel };
+  const url = webhookUrlFor(kind);
+  return url ? { transport: "webhook", url } : undefined;
+}
+
+/** Mirrors the webhook split so automatic reports keep their own channel. */
+function channelIdFor(kind: ReportSlackNotification["kind"]): string | undefined {
+  const main = process.env.CLOUD_REPORTS_SLACK_CHANNEL_ID;
+  if (kind === "automatic") {
+    return process.env.CLOUD_REPORTS_SLACK_CHANNEL_ID_AUTOMATIC || main;
+  }
+  return main;
 }
 
 /**
