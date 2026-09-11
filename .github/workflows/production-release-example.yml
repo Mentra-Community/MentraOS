@@ -242,12 +242,16 @@ jobs:
       - name: Persist the frozen example plan before any upload
         env:
           GH_TOKEN: ${{ github.token }}
-        run: >-
-          node .github/scripts/publish-immutable-release-asset.mjs
-          --file release-intent/release-plan.json
-          --name "production-example-plan-${{ steps.identity.outputs.release_identity }}.json"
-          --release-id "${{ steps.container.outputs.release_id }}"
-          --repository "$GITHUB_REPOSITORY"
+          PLAN_ASSET: production-example-plan-${{ steps.identity.outputs.release_identity }}.json
+        run: |
+          set -euo pipefail
+          # The immutable publisher requires the file basename to be the asset name.
+          cp release-intent/release-plan.json "release-intent/$PLAN_ASSET"
+          node .github/scripts/publish-immutable-release-asset.mjs \
+            --file "release-intent/$PLAN_ASSET" \
+            --name "$PLAN_ASSET" \
+            --release-id "${{ steps.container.outputs.release_id }}" \
+            --repository "$GITHUB_REPOSITORY"
 
       - name: Name the immutable input artifacts
         id: artifact
