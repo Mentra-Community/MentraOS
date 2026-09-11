@@ -5,8 +5,8 @@
 // keyed on the promoted beta exactly like the stable packages: it builds the
 // Starter Kit main branch against the public plain X.Y.Z packages and the
 // beta's frozen OTA pin (whose ASG client is named after the same base
-// version), uploads the candidates to the internal TestFlight group and the
-// internal Play track, and records mentra-example-release-X.Y.Z.json in the
+// version), distributes it through the public TestFlight link and the Play
+// open-testing link, and records mentra-example-release-X.Y.Z.json in the
 // stable release container. Nothing here promotes a store listing: the
 // example never reaches a public store from this workflow.
 import {createHash} from "node:crypto"
@@ -18,8 +18,13 @@ import {validateSelectedBeta} from "./prepare-production-promotion.mjs"
 import {createReleasePlan, loadReleaseFamily, serializeReleaseRecord} from "./release-family.mjs"
 
 export const EXAMPLE_BUNDLE_ID = "com.mentra.bluetoothsdkexample"
-export const EXAMPLE_TESTFLIGHT_GROUP = "Mentra Bluetooth Example Production Candidates"
-export const EXAMPLE_PLAY_TRACK = "internal"
+// The production example is distributed like a public beta, not like a store
+// candidate: an external TestFlight group with a public link and the Play
+// open-testing track with its opt-in link. Nothing in this lane submits a
+// store listing.
+export const EXAMPLE_TESTFLIGHT_GROUP = "Mentra Bluetooth Example"
+export const EXAMPLE_TESTFLIGHT_AUDIENCE = "external"
+export const EXAMPLE_PLAY_TRACK = "beta"
 const ANDROID_MAX_VERSION_CODE = 2_100_000_000
 
 function requireInteger(value, label) {
@@ -80,7 +85,7 @@ export function createProductionExamplePlan({
     otaManifest: betaManifest.otaManifest,
   }
   plan.example = {
-    testflight: {group: EXAMPLE_TESTFLIGHT_GROUP, audience: "internal"},
+    testflight: {group: EXAMPLE_TESTFLIGHT_GROUP, audience: EXAMPLE_TESTFLIGHT_AUDIENCE},
     googlePlay: {track: EXAMPLE_PLAY_TRACK},
     storePromotion: "never",
   }

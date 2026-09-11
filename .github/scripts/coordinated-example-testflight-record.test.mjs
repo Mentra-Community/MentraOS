@@ -108,7 +108,9 @@ test("records an independently allocated production Starter Kit candidate", () =
     input({
       plan: productionPlan,
       starterKit: productionStarterKit,
-      groupName: "Mentra Bluetooth Example Production Candidates",
+      groupName: "Mentra Bluetooth Example",
+      audience: "external",
+      installUrl: "https://testflight.apple.com/join/production123",
       buildNumber: 310000099,
     }),
   )

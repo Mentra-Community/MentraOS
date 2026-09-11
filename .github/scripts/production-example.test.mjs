@@ -81,9 +81,9 @@ test("freezes a production example plan keyed on the promoted beta with the allo
   assert.equal(plan.artifactContainerTag, `mentra-v${family.familyBaseVersion}`)
   assert.deepEqual(plan.promotion.otaManifest, betaManifest.otaManifest)
   assert.equal(plan.promotion.selectedBetaIdentity, betaPlan.releaseIdentity)
-  assert.equal(plan.example.testflight.group, "Mentra Bluetooth Example Production Candidates")
-  assert.equal(plan.example.testflight.audience, "internal")
-  assert.equal(plan.example.googlePlay.track, "internal")
+  assert.equal(plan.example.testflight.group, "Mentra Bluetooth Example")
+  assert.equal(plan.example.testflight.audience, "external")
+  assert.equal(plan.example.googlePlay.track, "beta")
   assert.equal(plan.example.storePromotion, "never")
   assert.throws(
     () =>

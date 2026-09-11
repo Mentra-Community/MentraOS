@@ -26,13 +26,15 @@ export function verifyExampleAabIdentity(plan, aab, bundletool, run = execFileSy
 }
 
 export function examplePlayAudience(channel) {
-  return channel === "beta" ? "external" : "internal"
+  return channel === "dev" ? "internal" : "external"
 }
 
 export function examplePlayCoordinates(plan, starterKit, track) {
-  // Production example candidates stay on the internal track: the example is
-  // accepted by employees and never promoted to a public Play release here.
-  const expectedTrack = {dev: "internal", beta: "beta", production: "internal"}[plan.channel]
+  // The production example is public through the open-testing ("beta") track's
+  // opt-in link, never through a Play production release. Open testing is one
+  // track per app, so it serves whichever example carries the highest version
+  // code; the beta channel's example must leave it once production ships.
+  const expectedTrack = {dev: "internal", beta: "beta", production: "beta"}[plan.channel]
   if (!expectedTrack || track !== expectedTrack) throw new Error("Example Google Play track does not match the channel")
   if (
     starterKit.releaseSetId !== plan.releaseSetId ||

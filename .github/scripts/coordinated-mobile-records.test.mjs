@@ -52,13 +52,32 @@ test("records and merges exact mobile store and downloadable artifacts", () => {
   assert.equal(merged.publications.mentraos["google-play"].coordinate, "com.mentra.mentra:310000057:beta")
   assert.equal(merged.publications.mentraos["app-store-connect"].status, "reused")
   assert.equal(merged.artifacts.length, 3)
-  const publicPlan = {...plan, channel: "beta", native: {...plan.native, testflight: {group: "Mentra Staging Public", audience: "external"}}}
-  const publicInput = {plan: publicPlan, ipa, ipaUrl: `${base}/${plan.artifactNames.iosApp}`, testflightGroup: "Mentra Staging Public", storeStatus: "published", provenanceUrl}
+  const publicPlan = {
+    ...plan,
+    channel: "beta",
+    native: {...plan.native, testflight: {group: "Mentra Staging Public", audience: "external"}},
+  }
+  const publicInput = {
+    plan: publicPlan,
+    ipa,
+    ipaUrl: `${base}/${plan.artifactNames.iosApp}`,
+    testflightGroup: "Mentra Staging Public",
+    storeStatus: "published",
+    provenanceUrl,
+  }
   assert.throws(() => createIosRecord(publicInput), /distribution evidence/)
-  const publicIos = createIosRecord({...publicInput, testflight: {
-    group: "Mentra Staging Public", audience: "external", buildId: "build-1", status: "skipped",
-    installUrl: "https://testflight.apple.com/join/public123", skipReason: "external_review_pending", reviewState: "IN_REVIEW",
-  }})
+  const publicIos = createIosRecord({
+    ...publicInput,
+    testflight: {
+      group: "Mentra Staging Public",
+      audience: "external",
+      buildId: "build-1",
+      status: "skipped",
+      installUrl: "https://testflight.apple.com/join/public123",
+      skipReason: "external_review_pending",
+      reviewState: "IN_REVIEW",
+    },
+  })
   const publicMerged = mergeMobileRecords({plan: publicPlan, android, ios: publicIos})
   assert.equal(publicMerged.publications.mentraos["app-store-connect"].testflight.status, "skipped")
   assert.doesNotThrow(() => createIosRecord({...publicInput, storeStatus: "built"}))

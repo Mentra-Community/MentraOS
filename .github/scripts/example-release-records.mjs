@@ -32,13 +32,13 @@ function requireIsoUtc(value, label) {
   return value
 }
 
-// Production example candidates go to the internal candidates group, never to
-// a public group: the example is distributed to employees for acceptance and
-// is not released through a store from the production workflow.
+// The production example is distributed like a public beta, through an
+// external TestFlight group with a public link; it is never released through
+// a store from the production workflow.
 export function exampleTestflightDestination(channel) {
   if (channel === "dev") return {group: "Mentra Dev", audience: "internal"}
   if (channel === "beta") return {group: "Mentra Staging Public", audience: "external"}
-  if (channel === "production") return {group: "Mentra Bluetooth Example Production Candidates", audience: "internal"}
+  if (channel === "production") return {group: "Mentra Bluetooth Example", audience: "external"}
   throw new Error(`Unsupported example release channel ${JSON.stringify(channel)}`)
 }
 

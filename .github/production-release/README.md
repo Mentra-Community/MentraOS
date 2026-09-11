@@ -5,9 +5,9 @@ production. It covers Cloud V2 and the Mentra App on iOS and Android.
 
 The Bluetooth SDK Starter Kit example app is outside the promotion state
 machine. Its production candidates are built by a separate workflow keyed on
-the promoted beta (see "Bluetooth example" below): they go to the internal
-TestFlight group and the internal Play track for acceptance and are never
-submitted for review or released publicly. Do not add the example app manually
+the promoted beta (see "Bluetooth example" below): it is distributed through
+a public TestFlight link and the Play open-testing link and is never submitted
+for App Review or released through a store. Do not add the example app manually
 to a promotion attempt.
 
 The example app is also its own release notion in the coordinated beta. A beta
@@ -485,9 +485,13 @@ Then it:
   branch to the plain versions, builds the examples, tags `sdk-X.Y.Z`, and
   publishes them in the non-prerelease Starter Kit release `sdk-X.Y.Z`
   (including `mentra-example-react-native-X.Y.Z.apk`);
-- uploads the iOS candidate to the `Mentra Bluetooth Example Production Candidates`
-  internal TestFlight group and the Android candidate to the Play `internal`
-  track; and
+- uploads the iOS build to the external TestFlight group `Mentra Bluetooth
+Example` (created with its public link on first use) and submits it for
+  Beta App Review, and uploads the Android build to the Play open-testing
+  (`beta`) track with its opt-in link. Open testing is one track per app, so
+  it serves whichever example has the highest version code: the beta
+  channel's example must move to a closed track once production ships from
+  it; and
 - records `mentra-example-release-X.Y.Z.json` in the stable release
   `mentra-vX.Y.Z`, the same draft the packages and the rollout finalization
   stage records into. The record carries `storePromotion: "never"`.
@@ -495,7 +499,9 @@ Then it:
 A rerun reuses the Starter Kit release, TestFlight build, and Play upload that
 already exist and refuses anything that exists with different bytes. A Play
 upload that fails leaves the Starter Kit release and TestFlight build in place
-and stops the record; rerun once Play accepts the candidate.
+and stops the record; rerun once Play accepts the build. The record is written
+as soon as Apple has the build for review; the public link becomes installable
+when Beta App Review approves it.
 
 ## Abort, retry, and incident handling
 

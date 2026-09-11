@@ -15,8 +15,10 @@ function renderVariables(directory, variables) {
     if (!entry.isFile() || !entry.name.endsWith(".mdx")) continue
 
     const source = readFileSync(entryPath, "utf8")
-    const rendered = Object.entries(variables)
-      .reduce((content, [name, value]) => content.replaceAll(`{{${name}}}`, value), source)
+    const rendered = Object.entries(variables).reduce(
+      (content, [name, value]) => content.replaceAll(`{{${name}}}`, value),
+      source,
+    )
     if (/\{\{[A-Za-z0-9_-]+\}\}/.test(rendered)) {
       throw new Error(`Unresolved documentation variable in ${entryPath}`)
     }

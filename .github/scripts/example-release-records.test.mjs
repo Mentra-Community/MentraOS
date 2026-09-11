@@ -211,8 +211,8 @@ function productionFixtures() {
     otaManifest: {url: "https://example.com/ota.json", sha256: "c".repeat(64)},
   }
   plan.example = {
-    testflight: {group: "Mentra Bluetooth Example Production Candidates", audience: "internal"},
-    googlePlay: {track: "internal"},
+    testflight: {group: "Mentra Bluetooth Example", audience: "external"},
+    googlePlay: {track: "beta"},
     storePromotion: "never",
   }
   const production = {
@@ -234,11 +234,12 @@ function productionFixtures() {
       releaseIdentity: plan.releaseIdentity,
       channel: "production",
       version: {marketingVersion: "3.1.0", buildNumber: 310000058},
-      group: {id: "group-2", name: "Mentra Bluetooth Example Production Candidates"},
+      group: {id: "group-2", name: "Mentra Bluetooth Example"},
       distribution: {
-        audience: "internal",
-        status: "available",
-        installUrl: "https://appstoreconnect.apple.com/apps/6792839366/testflight/groups/group-2",
+        audience: "external",
+        status: "submitted",
+        installUrl: "https://testflight.apple.com/join/production123",
+        reviewState: "WAITING_FOR_REVIEW",
       },
     },
     exampleGooglePlay: {
@@ -247,8 +248,8 @@ function productionFixtures() {
       releaseIdentity: plan.releaseIdentity,
       channel: "production",
       version: {marketingVersion: "3.1.0", buildNumber: 310000058},
-      track: "internal",
-      distribution: {...exampleGooglePlay.distribution, audience: "internal"},
+      track: "beta",
+      distribution: {...exampleGooglePlay.distribution, audience: "external"},
       aab: {
         ...exampleGooglePlay.aab,
         url: `https://github.com/Mentra-Community/MentraOS/releases/download/${plan.artifactContainerTag}/mentra-example-react-native-3.1.0.aab`,
@@ -284,9 +285,11 @@ test("a production example is finalized against the promoted beta's manifest and
   assert.equal(record.betaManifest.name, `mentra-release-${f.betaPlan.releaseIdentity}.json`)
   assert.equal(record.promotion.selectedBetaIdentity, f.betaPlan.releaseIdentity)
   assert.equal(record.promotion.storePromotion, "never")
-  assert.equal(record.starterKit.testflight.group.name, "Mentra Bluetooth Example Production Candidates")
-  assert.equal(record.starterKit.testflight.distribution.audience, "internal")
-  assert.equal(record.starterKit.googlePlay.track, "internal")
+  assert.equal(record.starterKit.testflight.group.name, "Mentra Bluetooth Example")
+  assert.equal(record.starterKit.testflight.distribution.audience, "external")
+  assert.match(record.starterKit.testflight.distribution.installUrl, /^https:\/\/testflight\.apple\.com\/join\//)
+  assert.equal(record.starterKit.googlePlay.track, "beta")
+  assert.equal(record.starterKit.googlePlay.distribution.audience, "external")
   assert.equal(validateExampleReleaseRecord(record, f.plan), record)
   assert.throws(
     () =>
@@ -321,13 +324,16 @@ test("a production example refuses a manifest, plan, or destination that is not 
       assembleProduction({
         exampleTestflight: {
           ...f.exampleTestflight,
-          distribution: {...f.exampleTestflight.distribution, status: "submitted"},
+          distribution: {
+            ...f.exampleTestflight.distribution,
+            installUrl: "https://appstoreconnect.apple.com/apps/6792839366/testflight/groups/group-2",
+          },
         },
       }),
-    /must be available/,
+    /public invitation link/,
   )
   assert.throws(
-    () => assembleProduction({exampleGooglePlay: {...f.exampleGooglePlay, track: "beta"}}),
+    () => assembleProduction({exampleGooglePlay: {...f.exampleGooglePlay, track: "internal"}}),
     /track does not match/,
   )
 })

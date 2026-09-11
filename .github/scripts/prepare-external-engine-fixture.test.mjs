@@ -14,7 +14,7 @@ test("removes every monorepo shortcut from the external Engine fixture", () => {
   writeFileSync(
     path.join(source, "package.json"),
     JSON.stringify({
-      dependencies: {"@mentra/engine": "workspace:*", "@mentra/crust": "workspace:*", react: "19.2.0"},
+      dependencies: {"@mentra/engine": "workspace:*", "@mentra/crust": "workspace:*", "react": "19.2.0"},
       expo: {autolinking: {nativeModulesDir: "../../mobile/modules"}},
     }),
   )
@@ -29,7 +29,7 @@ test("removes every monorepo shortcut from the external Engine fixture", () => {
   prepareExternalEngineFixture({sourceDir: source, outputDir: output, releaseIdentity: "3.1.0-beta.57"})
 
   const packageJson = JSON.parse(readFileSync(path.join(output, "package.json"), "utf8"))
-  assert.deepEqual(packageJson.dependencies, {react: "19.2.0", "@mentra/engine": "3.1.0-beta.57"})
+  assert.deepEqual(packageJson.dependencies, {"react": "19.2.0", "@mentra/engine": "3.1.0-beta.57"})
   assert.deepEqual(packageJson.expo, {})
   const tsconfig = JSON.parse(readFileSync(path.join(output, "tsconfig.json"), "utf8"))
   assert.deepEqual(tsconfig.compilerOptions, {strict: true})
