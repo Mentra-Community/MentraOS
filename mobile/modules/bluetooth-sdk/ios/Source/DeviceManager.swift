@@ -1032,7 +1032,7 @@ struct ViewState {
 
         let connectionKey = "\(sgc.type):\(deviceName)"
         syncSystemTimeOnceForConnection(sgc, connectionKey: connectionKey)
-        
+
         // re-apply display height/depth after reconnection
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
             // Re-read the current sgc rather than capturing the connect-time instance: the user may
@@ -1510,6 +1510,10 @@ struct ViewState {
         sgc?.requestWifiScan(scanId: scanId)
     }
 
+    @discardableResult func requestSavedWifiNetworks(requestId: String, sid: String) -> Bool {
+        sgc?.requestSavedWifiNetworks(requestId: requestId, sid: sid) ?? false
+    }
+
     func sendIncidentId(_ incidentId: String, apiBaseUrl: String? = nil) {
         Bridge.log("MAN: Sending incidentId to glasses for log upload: \(incidentId)")
         sgc?.sendIncidentId(incidentId, apiBaseUrl: apiBaseUrl)
@@ -1520,9 +1524,8 @@ struct ViewState {
         sgc?.sendWifiCredentials(ssid, password)
     }
 
-    func forgetWifiNetwork(_ ssid: String) {
-        Bridge.log("MAN: Forgetting wifi network: \(ssid)")
-        sgc?.forgetWifiNetwork(ssid)
+    @discardableResult func forgetWifiNetwork(_ ssid: String, requestId: String? = nil, sid: String? = nil) -> Bool {
+        sgc?.forgetWifiNetwork(ssid, requestId: requestId, sid: sid) ?? false
     }
 
     func setHotspotState(_ enabled: Bool) {
@@ -1682,9 +1685,13 @@ struct ViewState {
 
     /// Request version info from glasses.
     /// Glasses will respond with version_info message containing build number, firmware version, etc.
-    func requestVersionInfo() {
+    func requestVersionInfo(requestId: String? = nil) {
         Bridge.log("MAN: 📱 Requesting version info from glasses")
-        sgc?.requestVersionInfo()
+        if let live = sgc as? MentraLive {
+            live.requestVersionInfo(requestId: requestId)
+        } else {
+            sgc?.requestVersionInfo()
+        }
     }
 
     /// Send shutdown command to glasses.
@@ -1823,7 +1830,7 @@ struct ViewState {
         sgc.requestPhoto(routed)
     }
 
-    func connectDefault() {
+    func connectDefault(requiresAncs: Bool = true) {
         if defaultWearable.isEmpty {
             Bridge.log("MAN: No default wearable, returning")
             return
@@ -1839,6 +1846,7 @@ struct ViewState {
             return
         }
         initSGC(defaultWearable)
+        (sgc as? MentraLive)?.setRequiresAncs(requiresAncs)
         if let live = sgc as? MentraLive, live.isPairingYieldActive() {
             Bridge.log("MAN: connectDefault skipped — Mentra Live pairing yield active")
             return
@@ -1862,7 +1870,7 @@ struct ViewState {
         controller?.connectById(controllerDeviceName)
     }
 
-    func connectByName(_ dName: String) {
+    func connectByName(_ dName: String, requiresAncs: Bool = true) {
         Bridge.log("MAN: Connecting to wearable: \(dName)")
         var name = dName
 
@@ -1895,6 +1903,7 @@ struct ViewState {
             self.pendingDeviceName = name
 
             initSGC(self.pendingWearable)
+            (sgc as? MentraLive)?.setRequiresAncs(requiresAncs)
             sgc?.connectById(name)
         }
     }

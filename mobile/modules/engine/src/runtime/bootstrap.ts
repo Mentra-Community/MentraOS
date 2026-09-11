@@ -28,6 +28,10 @@ export interface IslandConfigValues {
   coreUrl?: string | null
   /** cloud-v2 runtime service base URL. */
   runtimeUrl?: string | null
+  /** Host's live manifest/override resolver, also used on automatic reconnects. */
+  resolveCloudEndpoints?: () => {core: string; runtime: string}
+  /** Scope for debug settings written through engine.dev. */
+  cloudDebugScope?: string
   /** Open Runtime's live WebSocket/audio session. Defaults to true. */
   runtimeRealtimeSession?: boolean
   /** Complete allowlist for bundled/local miniapps; null or omitted allows all. */
@@ -40,6 +44,8 @@ export interface IslandConfigValues {
   cloudAuthStorageKey?: string
   /** Deployment-pinned Mentra Live OTA manifest; explicit null disables remote OTA. */
   otaManifestUrl?: string | null
+  /** Official deployments retain the legacy-device and embedded release fallback. */
+  allowLegacyOtaFallback?: boolean
   /** Deployment capability policy. Omitted entries preserve consumer behavior. */
   features?: Partial<Record<IslandFeatureName, boolean>>
   /** OEM identifier (Mentra is OEM #0); reserved for OEM auth/telemetry. */

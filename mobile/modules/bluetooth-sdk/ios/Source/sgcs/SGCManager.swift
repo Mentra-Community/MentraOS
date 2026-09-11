@@ -195,8 +195,10 @@ protocol SGCManager {
     // MARK: - Network Management
 
     func requestWifiScan(scanId: String?)
+    @discardableResult func requestSavedWifiNetworks(requestId: String, sid: String) -> Bool
     func sendWifiCredentials(_ ssid: String, _ password: String)
     func forgetWifiNetwork(_ ssid: String)
+    @discardableResult func forgetWifiNetwork(_ ssid: String, requestId: String?, sid: String?) -> Bool
     func sendHotspotState(_ enabled: Bool)
     func sendWifiAdbState(_ enabled: Bool)
     func sendOtaStart(otaVersionUrl: String?)
@@ -232,7 +234,17 @@ protocol SGCManager {
 /// doesn't seem to work for concurrency reasons :(
 /// we can make read-only getters for convienence though:
 extension SGCManager {
-    var isMicSuspendedForAudio: Bool { false }
+    var isMicSuspendedForAudio: Bool {
+        false
+    }
+
+    @discardableResult func requestSavedWifiNetworks(requestId _: String, sid _: String) -> Bool {
+        false
+    }
+
+    @discardableResult func forgetWifiNetwork(_: String, requestId _: String?, sid _: String?) -> Bool {
+        false
+    }
 
     /// Default: no-op. Only G2 renders positioned text containers; other glasses ignore it.
     func sendPositionedText(

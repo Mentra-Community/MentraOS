@@ -339,6 +339,8 @@ class BluetoothSdkModule : Module() {
             "local_transcription",
             "wifi_status_change",
             "wifi_scan_result",
+            "wifi_forget_result",
+            "saved_wifi_networks",
             "hotspot_status_change",
             "hotspot_error",
             "photo_response",
@@ -592,12 +594,14 @@ class BluetoothSdkModule : Module() {
 
         SdkCoroutineFunction("requestWifiScan") { -> requireSdk().requestWifiScan().map { it.toMap() } }
 
+        SdkCoroutineFunction("getSavedWifiNetworks") { -> requireSdk().getSavedWifiNetworks().toMap() }
+
         SdkCoroutineFunction("sendWifiCredentials") { ssid: String, password: String ->
             requireSdk().sendWifiCredentials(ssid, password).values
         }
 
         SdkCoroutineFunction("forgetWifiNetwork") { ssid: String ->
-            requireSdk().forgetWifiNetwork(ssid).values
+            requireSdk().forgetWifiNetwork(ssid).toMap()
         }
 
         SdkCoroutineFunction("setHotspotState") { enabled: Boolean ->
@@ -803,15 +807,7 @@ class BluetoothSdkModule : Module() {
             requireSdk().startStream(StreamRequest.fromMap(params)).values
         }
 
-        SdkCoroutineFunction("startExternallyManagedStream") { params: Map<String, Any> ->
-            requireSdk().startExternallyManagedStream(StreamRequest.fromMap(params)).values
-        }
-
         SdkCoroutineFunction("stopStream") { -> requireSdk().stopStream().values }
-
-        SdkAsyncFunction("sendExternallyManagedStreamKeepAlive") { params: Map<String, Any> ->
-            sdk?.sendExternallyManagedStreamKeepAlive(StreamKeepAliveRequest.fromMap(params))
-        }
 
         // MARK: - Microphone Commands
 

@@ -104,7 +104,7 @@ if (result.status !== 0) process.exit(result.status ?? 1)
       {
         name: "test-miniapp",
         private: true,
-        scripts: {pack: "sh ./pack.sh"},
+        scripts: {pack: "sh ./pack.sh", "pack:prod": "sh ./pack.sh"},
       },
       null,
       2,
@@ -190,6 +190,18 @@ describe("isSamePackageZip / pruneOtherZips", () => {
 })
 
 describe("syncMiniapp", () => {
+  test("selects the production pack script and never falls back when it is missing", () => {
+    const base = makeFixtureRoot()
+    const {repo} = writeFixtureRepo(base)
+    const {assetsDir, mobileRoot} = writeMentraLayout(base)
+    const ctx = {repoRoot: base, mobileRoot, assetsDir, reposConfigPath: join(base, "missing.json")}
+    const result = syncMiniapp(["--repo", repo, "--pack-script", "pack:prod", "--dry-run"], ctx)
+    expect(result.code).toBe(0)
+    expect(result.summary.packCommand).toBe("bun run pack:prod")
+    const missing = syncMiniapp(["--repo", repo, "--pack-script", "pack:missing", "--dry-run"], ctx)
+    expect(missing.code).toBe(1)
+  })
+
   test("dry-run mutates nothing", () => {
     const base = makeFixtureRoot()
     const {repo, miniappDir} = writeFixtureRepo(base, {version: "1.0.0"})

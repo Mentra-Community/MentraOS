@@ -3,7 +3,6 @@ import * as ImagePicker from "expo-image-picker"
 import {useRef, useState} from "react"
 import {Image, Platform, Pressable, ScrollView, TextInput, View, Linking, ActivityIndicator} from "react-native"
 
-import {APP_STORE_REVIEW_URL, PLAY_STORE_URL} from "@/constants/appConfig"
 import {Button, Icon, Screen, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useAuth} from "@/contexts/AuthContext"
@@ -49,13 +48,9 @@ export default function FeedbackPage() {
   const {goBack, getPreviousRoute} = useNavigationStore.getState()
   const deployment = deploymentStore.getActive()
   const reviewUrl =
-    deployment.kind === "workspace"
-      ? Platform.OS === "ios"
-        ? deployment.manifest.appUpdates.reviewUrls.ios
-        : deployment.manifest.appUpdates.reviewUrls.android
-      : Platform.OS === "ios"
-        ? APP_STORE_REVIEW_URL
-        : PLAY_STORE_URL
+    Platform.OS === "ios"
+      ? deployment.manifest.appUpdates.reviewUrls.ios
+      : deployment.manifest.appUpdates.reviewUrls.android
 
   useRegisterCapsule({
     packageName: "com.mentra.settings",

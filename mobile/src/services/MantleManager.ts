@@ -508,7 +508,7 @@ class MantleManager {
       }
     }
 
-    if (deployment.kind === "consumer" || deployment.manifest.features.onDeviceSpeech) {
+    if (deployment.manifest.features.onDeviceSpeech) {
       offlineSpeechModelService.startBackgroundDownloads()
     }
 
@@ -636,8 +636,7 @@ class MantleManager {
    */
   private async installBundledMiniapps() {
     const deployment = deploymentStore.getActive()
-    const approved =
-      deployment.kind === "workspace" ? deployment.manifest.systemMiniapps.approvedPackageNamesOverride : null
+    const approved = deployment.manifest.systemMiniapps.approvedPackageNamesOverride
     for (const module of BUNDLED_MINIAPPS) {
       try {
         const asset = Asset.fromModule(module)
@@ -781,12 +780,8 @@ class MantleManager {
 
     // Subscribe to individual Bluetooth SDK events.
     {
-      this.subs.push(
-        BluetoothSdk.addListener("log", (event) => {
-          if (event.message?.startsWith("MAN: displayEvent ")) return
-          console.log("CORE:", event.message)
-        }),
-      )
+      // The Bluetooth SDK forwards native diagnostics to the JS console itself,
+      // including for external hosts. A second listener here would duplicate them.
 
       // wifi_status_change / glasses_wifi / hotspot_status_change:
       // moved to island DeviceEventRouter (started by engine.start())

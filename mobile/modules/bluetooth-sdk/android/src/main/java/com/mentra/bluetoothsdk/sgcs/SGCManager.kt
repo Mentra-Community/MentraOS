@@ -313,8 +313,10 @@ abstract class SGCManager {
 
     // Network Management
     abstract fun requestWifiScan(scanId: String?)
+    open fun requestSavedWifiNetworks(requestId: String, sid: String): Boolean = false
     abstract fun sendWifiCredentials(ssid: String, password: String)
     abstract fun forgetWifiNetwork(ssid: String)
+    open fun forgetWifiNetwork(ssid: String, requestId: String?, sid: String?): Boolean = false
     abstract fun sendHotspotState(enabled: Boolean)
 
     /** Set glasses system clock (Mentra Live and G2; no-op on other devices). */

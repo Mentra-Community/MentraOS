@@ -1,0 +1,221 @@
+import assert from "node:assert/strict"
+import path from "node:path"
+import test from "node:test"
+import {fileURLToPath} from "node:url"
+
+import {
+  EXAMPLE_RELEASE_KIND,
+  assembleExampleReleaseResults,
+  exampleReleaseAssetName,
+  validateExampleReleaseRecord,
+  verifyStarterKitResult,
+} from "./example-release-records.mjs"
+import {createReleasePlan, loadReleaseFamily} from "./release-family.mjs"
+
+const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
+const provenanceUrl = "https://github.com/Mentra-Community/MentraOS/actions/runs/123"
+
+function planFor(channel = "beta") {
+  return createReleasePlan({
+    family: loadReleaseFamily({rootDir}),
+    channel,
+    sequence: 57,
+    sourceCommit: "a".repeat(40),
+    nativeBuildNumber: 310000057,
+  })
+}
+
+function fixtures(plan) {
+  const betaManifest = {
+    schemaVersion: 1,
+    releaseSetId: plan.releaseSetId,
+    releaseIdentity: plan.releaseIdentity,
+    channel: plan.channel,
+    sourceCommit: plan.sourceCommit,
+    completedAt: "2026-08-25T01:00:00.000Z",
+  }
+  const starterKit = {
+    schemaVersion: 1,
+    releaseSetId: plan.releaseSetId,
+    releaseIdentity: plan.releaseIdentity,
+    familyBaseVersion: plan.familyBaseVersion,
+    channel: plan.channel,
+    mentraos: {sourceCommit: plan.sourceCommit, coordinatorRunUrl: provenanceUrl},
+    ota: {manifestUrl: "https://example.com/ota.json", manifestSha256: "c".repeat(64)},
+    starterKit: {
+      baseCommit: "1".repeat(40),
+      releaseCommit: "2".repeat(40),
+      mergeCommit: "3".repeat(40),
+      sourceTag: `sdk-${plan.releaseIdentity}`,
+      artifactContainerTag: `sdk-builds-v${plan.familyBaseVersion}`,
+      releaseUrl: "https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit/releases/tag/sdk-builds-v3.1.0",
+      pullRequestUrl: "https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit/pull/51",
+      validationRunUrl: "https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit/actions/runs/456",
+    },
+    packages: {
+      "@mentra/bluetooth-sdk": plan.releaseIdentity,
+      "@mentra/engine": plan.releaseIdentity,
+    },
+    artifacts: ["ios", "reactNative", "reactNativeElevenLabsAudio"].map((key, index) => ({
+      key,
+      name: `mentra-example-${key}-${plan.releaseIdentity}.${key === "ios" ? "ipa" : "apk"}`,
+      url: `https://example.com/mentra-example-${key}-${plan.releaseIdentity}`,
+      size: index + 1,
+      sha256: String(index + 1).repeat(64),
+      contentType: "application/octet-stream",
+    })),
+  }
+  const exampleTestflight = {
+    schemaVersion: 1,
+    releaseSetId: plan.releaseSetId,
+    releaseIdentity: plan.releaseIdentity,
+    channel: plan.channel,
+    mentraosSourceCommit: plan.sourceCommit,
+    starterKitReleaseCommit: starterKit.starterKit.releaseCommit,
+    app: {id: "6792839366", bundleId: "com.mentra.bluetoothsdkexample"},
+    version: {marketingVersion: plan.native.marketingVersion, buildNumber: plan.native.buildNumber},
+    build: {id: "build-1", processingState: "VALID", uploadStatus: "published"},
+    group: {id: "group-1", name: "Mentra Staging Public"},
+    distribution: {
+      audience: "external",
+      status: "submitted",
+      installUrl: "https://testflight.apple.com/join/public123",
+      reviewState: "WAITING_FOR_REVIEW",
+    },
+    provenanceUrl,
+    ipa: {size: 123, sha256: "9".repeat(64)},
+  }
+  const exampleGooglePlay = {
+    schemaVersion: 1,
+    releaseSetId: plan.releaseSetId,
+    releaseIdentity: plan.releaseIdentity,
+    channel: plan.channel,
+    mentraosSourceCommit: plan.sourceCommit,
+    starterKitReleaseCommit: starterKit.starterKit.releaseCommit,
+    packageId: "com.mentra.bluetoothsdkexample",
+    version: {marketingVersion: plan.native.marketingVersion, buildNumber: plan.native.buildNumber},
+    track: "beta",
+    uploadStatus: "published",
+    distribution: {
+      status: "submitted",
+      audience: "external",
+      installUrl: "https://play.google.com/apps/testing/com.mentra.bluetoothsdkexample",
+    },
+    aab: {
+      url: `https://github.com/Mentra-Community/MentraOS/releases/download/${plan.artifactContainerTag}/mentra-example-react-native-${plan.releaseIdentity}.aab`,
+      sha256: "8".repeat(64),
+      size: 123,
+    },
+    provenanceUrl,
+  }
+  return {betaManifest, starterKit, exampleTestflight, exampleGooglePlay}
+}
+
+function assemble(plan, overrides = {}) {
+  const {betaManifest, starterKit, exampleTestflight, exampleGooglePlay} = fixtures(plan)
+  return assembleExampleReleaseResults({
+    plan,
+    betaManifest,
+    betaManifestUrl: `https://github.com/Mentra-Community/MentraOS/releases/download/${plan.artifactContainerTag}/${plan.artifactNames.releaseManifest}`,
+    betaManifestSha256: "b".repeat(64),
+    starterKit,
+    starterKitResultUrl: "https://example.com/starter-kit-result.json",
+    exampleTestflight,
+    exampleGooglePlay,
+    completedAt: "2026-08-25T02:00:00.000Z",
+    provenanceUrl,
+    ...overrides,
+  })
+}
+
+test("finalizes the Bluetooth example as its own record against a finalized beta", () => {
+  const plan = planFor()
+  const record = assemble(plan)
+
+  assert.equal(record.kind, EXAMPLE_RELEASE_KIND)
+  assert.equal(record.releaseIdentity, plan.releaseIdentity)
+  assert.equal(record.betaManifest.name, plan.artifactNames.releaseManifest)
+  assert.equal(record.betaManifest.completedAt, "2026-08-25T01:00:00.000Z")
+  assert.equal(record.starterKit.resultUrl, "https://example.com/starter-kit-result.json")
+  assert.equal(record.starterKit.testflight.build.id, "build-1")
+  assert.equal(record.starterKit.googlePlay.track, "beta")
+  assert.deepEqual(
+    record.artifacts.map((artifact) => artifact.coordinate),
+    fixtures(plan).starterKit.artifacts.map((artifact) => artifact.name),
+  )
+  assert.equal(exampleReleaseAssetName(plan.releaseIdentity), `mentra-example-release-${plan.releaseIdentity}.json`)
+  assert.equal(validateExampleReleaseRecord(record, plan), record)
+})
+
+test("the example release cannot be assembled without the finalized beta it was built against", () => {
+  const plan = planFor()
+  const {betaManifest} = fixtures(plan)
+  assert.throws(
+    () => assemble(plan, {betaManifest: {...betaManifest, releaseIdentity: "3.1.0-beta.56"}}),
+    /finalized manifest of the same coordinated beta/,
+  )
+  assert.throws(
+    () => assemble(plan, {betaManifest: {...betaManifest, completedAt: undefined}}),
+    /finalized manifest of the same coordinated beta/,
+  )
+  assert.throws(() => assemble(plan, {betaManifestSha256: "nope"}), /SHA-256/)
+  assert.throws(() => assemble(plan, {betaManifestUrl: "http://example.com/beta.json"}), /HTTPS/)
+})
+
+test("the example release verifies the Starter Kit evidence on its own terms", () => {
+  const plan = planFor()
+  const {starterKit} = fixtures(plan)
+  assert.throws(() => assemble(plan, {starterKit: undefined}), /Starter Kit result does not match the release plan/)
+  assert.throws(
+    () => assemble(plan, {starterKit: {...starterKit, releaseSetId: "mentra-other"}}),
+    /Starter Kit result does not match the release plan/,
+  )
+  assert.throws(
+    () => assemble(plan, {starterKit: {...starterKit, starterKit: {...starterKit.starterKit, baseCommit: "abc"}}}),
+    /Starter Kit result does not match the release plan/,
+  )
+  assert.throws(
+    () => assemble(plan, {starterKit: {...starterKit, packages: {"@mentra/bluetooth-sdk": "0.0.0"}}}),
+    /version does not match/,
+  )
+  // Any Starter Kit channel head is acceptable: the Mentra plan no longer pins one.
+  const other = {...starterKit, starterKit: {...starterKit.starterKit, baseCommit: "f".repeat(40)}}
+  assert.equal(
+    verifyStarterKitResult(
+      plan,
+      other,
+      "https://example.com/r.json",
+      fixtures(plan).exampleTestflight,
+      fixtures(plan).exampleGooglePlay,
+    ).record.starterKit.baseCommit,
+    "f".repeat(40),
+  )
+})
+
+test("only dev and beta plans have an example release", () => {
+  const family = loadReleaseFamily({rootDir})
+  const production = createReleasePlan({
+    family,
+    channel: "production",
+    sourceCommit: "a".repeat(40),
+    nativeBuildNumber: 3100057,
+  })
+  assert.throws(() => assemble(production), /coordinated dev or beta release plan/)
+})
+
+test("validation rejects records that do not describe a finalized example", () => {
+  const plan = planFor()
+  const record = assemble(plan)
+  assert.throws(
+    () => validateExampleReleaseRecord({...record, kind: "other"}, plan),
+    /finalized Mentra Bluetooth example/,
+  )
+  assert.throws(
+    () => validateExampleReleaseRecord({...record, artifacts: []}, plan),
+    /finalized Mentra Bluetooth example/,
+  )
+  assert.throws(
+    () => validateExampleReleaseRecord({...record, betaManifest: {...record.betaManifest, sha256: "x"}}, plan),
+    /finalized Mentra Bluetooth example/,
+  )
+})

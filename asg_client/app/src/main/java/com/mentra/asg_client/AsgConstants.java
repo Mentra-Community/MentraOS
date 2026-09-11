@@ -47,6 +47,11 @@ public class AsgConstants {
     public static final long MTK_OTA_MAX_DOWNLOAD_BYTES = 1024L * 1024 * 1024;
     /** Non-retryable until the user frees storage on the glasses. */
     public static final String OTA_INSUFFICIENT_STORAGE = "insufficient_storage";
+    /** Protocol version for session-correlated {@code wifi_forget_result} responses. */
+    public static final int WIFI_FORGET_RESULT_VERSION = 1;
+
+    /** Protocol version for session-correlated saved WiFi network responses. */
+    public static final int SAVED_WIFI_NETWORKS_VERSION = 1;
 
     /** Canonical camera crop defaults shared with the phone and Bluetooth SDK. */
     public static final int CAMERA_FOV_DEFAULT = 118;
@@ -85,13 +90,26 @@ public class AsgConstants {
      */
     public static final boolean ENABLE_CALL_PIPELINE_DIAGNOSTICS = true;
 
-    /**
-     * Local-testing stopgap that disables the 60s keep-alive watchdog for RTMP/SRT/WHIP streams.
-     * When true, {@code scheduleStreamTimeout()} early-returns and an orphaned stream (lost
-     * phone/cloud keep-alives via BLE disconnect or killed app) never auto-stops, holding the
-     * camera and draining battery/thermals. MUST stay false for production; flip locally only.
-     */
-    public static final boolean DISABLE_STREAM_KEEP_ALIVE_TIMEOUT = false;
+    /** Tolerate brief phone BLE outages before releasing a remotely owned camera stream. */
+    public static final long STREAM_PHONE_DISCONNECT_GRACE_MS = 10_000L;
+
+    /** Native controller challenge cadence; retransmission never renews the response deadline. */
+    public static final long STREAM_CONTROLLER_PROBE_INTERVAL_MS = 2_000L;
+
+    /** Stop capture after sustained app unresponsiveness, even if the OS retains BLE. */
+    public static final long STREAM_CONTROLLER_RESPONSE_TIMEOUT_MS = 10_000L;
+
+    /** Glasses-owned start/stop control with process-scoped, revisioned status snapshots. */
+    public static final int STREAM_CONTROL_VERSION = 1;
+
+    /** Refresh local stream resource leases without relying on phone or cloud keep-alives. */
+    public static final long STREAM_RESOURCE_REFRESH_MS = 30_000L;
+
+    /** Bounded CPU lease renewed only while a stream session owns capture. */
+    public static final long STREAM_CPU_LEASE_MS = 90_000L;
+
+    /** Allow WebRTC to recover a brief publisher disconnect before rebuilding the connection. */
+    public static final long WHIP_PUBLISHER_DISCONNECT_GRACE_MS = 2_000L;
 
     /** Linux thermal sysfs root used to discover the Mentra Live CPU sensor. */
     public static final String THERMAL_SYSFS_ROOT = "/sys/class/thermal";
@@ -303,9 +321,9 @@ public class AsgConstants {
     public static final long UART_BOOT_RECOVERY_INITIAL_DELAY_MS = 8000;
 
     /**
-     * Grace after bounded UART recovery is exhausted before a BES OTA timeout becomes terminal.
-     * BES can finish rebooting after the transport scan, and an exact target-version reply from
-     * that later Linux boot is authoritative.
+     * Grace after bounded UART recovery is exhausted before a BES OTA timeout becomes terminal. BES
+     * can finish rebooting after the transport scan, and an exact target-version reply from that
+     * later Linux boot is authoritative.
      */
     public static final long BES_OTA_RECOVERY_FAILURE_GRACE_MS = 30000;
 
@@ -524,8 +542,8 @@ public class AsgConstants {
     public static final int BLE_PHOTO_MAX_TARGET_PX = 1920;
 
     /**
-     * Phone → glasses JSON command type to enable or disable Wi-Fi ADB (Mentra Live).
-     * Persisted via AsgSettings and applied at boot (default off).
+     * Phone → glasses JSON command type to enable or disable Wi-Fi ADB (Mentra Live). Persisted via
+     * AsgSettings and applied at boot (default off).
      */
     public static final String COMMAND_SET_WIFI_ADB_STATE = "set_wifi_adb_state";
 }

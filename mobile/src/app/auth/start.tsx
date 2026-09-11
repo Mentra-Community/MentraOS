@@ -43,7 +43,7 @@ export default function LoginScreen() {
   }
 
   const handleGoogleSignIn = async () => {
-    store.returnToMentra()
+    if (!(await selectDeployment(() => store.returnToMentra()))) return
     const res = await mentraAuth.googleSignIn()
     if (res.is_error()) {
       return
@@ -53,7 +53,7 @@ export default function LoginScreen() {
   }
 
   const handleAppleSignIn = async () => {
-    store.returnToMentra()
+    if (!(await selectDeployment(() => store.returnToMentra()))) return
     const res = await mentraAuth.appleSignIn()
     if (res.is_error()) {
       console.error("Apple sign in failed:", res.error)
@@ -64,10 +64,22 @@ export default function LoginScreen() {
   }
 
   const handleSignup = async () => {
-    store.returnToMentra()
+    if (!(await selectDeployment(() => store.returnToMentra()))) return
     setAnimation("simple_push")
     await new Promise((resolve) => setTimeout(resolve, 1))
     push("/auth/signup")
+  }
+
+  const selectDeployment = async (select: () => Promise<void>): Promise<boolean> => {
+    try {
+      await select()
+      return true
+    } catch (error) {
+      showAlert(translate("common:error"), error instanceof Error ? error.message : String(error), [
+        {text: translate("common:ok")},
+      ])
+      return false
+    }
   }
 
   return (
@@ -120,8 +132,8 @@ export default function LoginScreen() {
           <View className="flex-row justify-center items-center gap-1 mt-2">
             <Text className="text-sm text-muted-foreground">{translate("login:alreadyHaveAccount")}</Text>
             <TouchableOpacity
-              onPress={() => {
-                store.returnToMentra()
+              onPress={async () => {
+                if (!(await selectDeployment(() => store.returnToMentra()))) return
                 push("/auth/email-login")
               }}>
               <Text className="text-sm text-secondary-foreground font-semibold">{translate("login:logIn")}</Text>
@@ -139,11 +151,11 @@ export default function LoginScreen() {
           <Button
             preset="secondary"
             text={translate("workspace:connectAction")}
-            onPress={() => {
+            onPress={async () => {
               // Stop Mentra telemetry/cloud effects before contacting the
               // customer workspace, even when a prior consumer selection was
               // persisted on this installation.
-              store.beginWorkspaceSelection()
+              if (!(await selectDeployment(() => store.beginWorkspaceSelection()))) return
               push("/auth/workspace")
             }}
             LeftAccessory={() => <Icon name="building" size={20} color={theme.colors.foreground} />}

@@ -519,6 +519,14 @@ data class StreamStatusEvent(
     val status: StreamStatus,
     val stats: StreamLiveStats? = null,
 ) {
+    var processSessionId: String? = null
+        private set
+    var revision: Long? = null
+        private set
+    var terminal: Boolean? = null
+        private set
+    var errorDetails: String? = null
+        private set
     // True when the glasses will retry the failed publisher themselves
     // (emitting side lands in PR #3488); absent on older firmware and on
     // events not parsed from a glasses status map. Carried here instead of
@@ -531,6 +539,10 @@ data class StreamStatusEvent(
         stats = StreamLiveStats.fromMap(stringMapValue(values["stats"])),
     ) {
         willRetry = boolValue(values, "willRetry")
+        processSessionId = stringValue(values, "sid")
+        revision = longValue(values, "revision")
+        terminal = boolValue(values, "terminal")
+        errorDetails = stringValue(values, "errorDetails")
     }
 
     val state: StreamState get() = status.state
@@ -539,6 +551,10 @@ data class StreamStatusEvent(
     val values: Map<String, Any>
         get() = buildMap {
             putAll(status.toEventMap())
+            processSessionId?.let { put("sid", it) }
+            revision?.let { put("revision", it) }
+            terminal?.let { put("terminal", it) }
+            errorDetails?.let { put("errorDetails", it) }
             stats?.let { put("stats", it.toMap()) }
             willRetry?.let { put("willRetry", it) }
         }

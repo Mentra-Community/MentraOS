@@ -11,8 +11,6 @@ cloud-v2/**/.wrangler
 !miniapps/
 !miniapps/*/
 !miniapps/*/package.json
-!miniapps/merge/
-!miniapps/merge/**
 
 !sdk/
 sdk/*

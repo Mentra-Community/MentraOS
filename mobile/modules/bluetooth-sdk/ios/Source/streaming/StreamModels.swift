@@ -675,6 +675,10 @@ public enum StreamStatus: CustomStringConvertible, Equatable {
 public struct StreamStatusEvent: CustomStringConvertible {
     public let status: StreamStatus
     public let stats: StreamLiveStats?
+    public private(set) var processSessionId: String?
+    public private(set) var revision: Int?
+    public private(set) var terminal: Bool?
+    public private(set) var errorDetails: String?
     /// True when the glasses will retry the failed publisher themselves
     /// (emitting side lands in PR #3488); absent on older firmware and on
     /// events not parsed from a glasses status map. Carried here instead of
@@ -690,6 +694,10 @@ public struct StreamStatusEvent: CustomStringConvertible {
         status = StreamStatus(values: values)
         stats = StreamLiveStats(values: values["stats"] as? [String: Any])
         willRetry = boolValue(values, "willRetry")
+        processSessionId = stringValue(values, "sid")
+        revision = optionalIntValue(values, "revision")
+        terminal = boolValue(values, "terminal")
+        errorDetails = stringValue(values, "errorDetails")
     }
 
     public var state: StreamState {
@@ -707,6 +715,10 @@ public struct StreamStatusEvent: CustomStringConvertible {
     public var values: [String: Any] {
         var values = status.values
         values["type"] = "stream_status"
+        if let processSessionId { values["sid"] = processSessionId }
+        if let revision { values["revision"] = revision }
+        if let terminal { values["terminal"] = terminal }
+        if let errorDetails { values["errorDetails"] = errorDetails }
         if let stats {
             values["stats"] = stats.values
         }

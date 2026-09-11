@@ -17,12 +17,10 @@ import android.os.IBinder;
 import android.os.Looper;
 import android.util.Log;
 import android.util.Size;
-import com.dev.api.DevApi;
 import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.NetworkUtils;
 import com.mentra.asg_client.camera.UvcStreamingState;
 import com.mentra.asg_client.io.bluetooth.interfaces.ICompanionTransport;
-import com.mentra.asg_client.io.media.utils.MediaStorage;
 import com.mentra.asg_client.io.bluetooth.interfaces.TransportListener;
 import com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager;
 import com.mentra.asg_client.io.file.core.FileManager;
@@ -31,11 +29,11 @@ import com.mentra.asg_client.io.hardware.interfaces.RgbLedConstants;
 import com.mentra.asg_client.io.media.core.MediaCaptureService;
 import com.mentra.asg_client.io.media.interfaces.ServiceCallbackInterface;
 import com.mentra.asg_client.io.media.managers.MediaUploadQueueManager;
+import com.mentra.asg_client.io.media.utils.MediaStorage;
 import com.mentra.asg_client.io.network.interfaces.INetworkManager;
 import com.mentra.asg_client.io.network.interfaces.NetworkStateListener;
 import com.mentra.asg_client.io.ota.helpers.OtaHelper;
 import com.mentra.asg_client.io.ota.interfaces.IBesOtaRegistry;
-import com.mentra.asg_client.io.ota.utils.OtaConstants;
 import com.mentra.asg_client.io.streaming.events.StreamingEvent;
 import com.mentra.asg_client.logging.BleTraceLogger;
 import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
@@ -92,8 +90,8 @@ public class AsgClientService extends Service implements NetworkStateListener, T
     @Inject Provider<ICompanionTransport> companionTransportProvider;
 
     /**
-     * Provider for the device-appropriate network manager, deferred for the same reason as
-     * {@link #companionTransportProvider}.
+     * Provider for the device-appropriate network manager, deferred for the same reason as {@link
+     * #companionTransportProvider}.
      */
     @Inject Provider<INetworkManager> networkManagerProvider;
 
@@ -847,12 +845,12 @@ public class AsgClientService extends Service implements NetworkStateListener, T
             int fov = asgSettings.getCameraFov();
             int roiPosition = asgSettings.getCameraRoiPosition();
             try {
-                DevApi.setCameraFov(fov, roiPosition);
-                SystemControllerFactory.get(this).restartCameraHal();
-                CameraRestartCooldown.setCooldown();
+                var result = CameraFovController.apply(this, fov, roiPosition,
+                        () -> !serviceInitializer.getStreamingManager()
+                                .getStreamSnapshot().optBoolean("terminal", true));
                 Log.d(
                         TAG,
-                        "Applied saved camera FOV on start: fov="
+                        "Saved camera FOV startup result=" + result + ": fov="
                                 + fov
                                 + ", roi_position="
                                 + roiPosition);
@@ -1204,6 +1202,11 @@ public class AsgClientService extends Service implements NetworkStateListener, T
      * a window where the check runs and assumes the stock client.
      */
     public void sendVersionInfo() {
+        sendVersionInfo(null);
+    }
+
+    /** Send version information and echo the optional phone request id on every response chunk. */
+    public void sendVersionInfo(String requestId) {
         Log.i(TAG, "📊 Sending version information (chunked for MTU)");
 
         try {
@@ -1274,6 +1277,9 @@ public class AsgClientService extends Service implements NetworkStateListener, T
                 // Chunk 1: Basic device info (smaller payload)
                 JSONObject chunk1 = new JSONObject();
                 chunk1.put("type", "version_info_1");
+                chunk1.put("chunkIndex", 1);
+                chunk1.put("chunkCount", 2);
+                chunk1.put("final", false);
                 // Runtime package identity. A build made without Mentra's release keystore
                 // installs as "com.mentra.asg_client.thirdparty" and coexists with the stock
                 // system app, so build_number alone cannot tell the phone which client it is
@@ -1281,6 +1287,9 @@ public class AsgClientService extends Service implements NetworkStateListener, T
                 // version against the stock manifest pin, installs the stock APK the sideloaded
                 // client is not, and re-prompts forever.
                 chunk1.put("package_name", getPackageName());
+                if (requestId != null && !requestId.isEmpty()) {
+                    chunk1.put("request_id", requestId);
+                }
                 chunk1.put("app_version", appVersion);
                 chunk1.put("build_number", buildNumber);
                 chunk1.put("device_model", deviceModel);
@@ -1291,9 +1300,15 @@ public class AsgClientService extends Service implements NetworkStateListener, T
                 chunk1.put("sid", ProcessSessionId.SID);
                 chunk1.put(
                         "hotspot_ota_version",
-                        DeviceProfile.detect(this).isK900()
-                                ? AsgConstants.HOTSPOT_OTA_VERSION
-                                : 0);
+                        DeviceProfile.detect(this).isK900() ? AsgConstants.HOTSPOT_OTA_VERSION : 0);
+                INetworkManager networkManager =
+                        serviceInitializer.getServiceManager().getNetworkManager();
+                chunk1.put(
+                        "wifi_forget_result_version",
+                        AsgConstants.WIFI_FORGET_RESULT_VERSION);
+                chunk1.put(
+                        "saved_wifi_networks_version",
+                        networkManager != null ? networkManager.getSavedWifiNetworksVersion() : 0);
 
                 Log.d(TAG, "📤 Sending version_info_1: " + chunk1.toString());
                 serviceInitializer
@@ -1311,6 +1326,13 @@ public class AsgClientService extends Service implements NetworkStateListener, T
                 // Chunk 3: Firmware info (BES version, MTK version, BT MAC)
                 JSONObject chunk3 = new JSONObject();
                 chunk3.put("type", "version_info_3");
+                chunk3.put("chunkIndex", 2);
+                chunk3.put("chunkCount", 2);
+                chunk3.put("final", true);
+                chunk3.put("sid", ProcessSessionId.SID);
+                if (requestId != null && !requestId.isEmpty()) {
+                    chunk3.put("request_id", requestId);
+                }
                 chunk3.put("bes_fw_version", besFirmwareVersion);
                 chunk3.put("mtk_fw_version", mtkFirmwareVersion);
                 chunk3.put("bt_mac_address", besBtMac);

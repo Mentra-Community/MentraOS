@@ -985,18 +985,23 @@ class LocalMiniappRuntime {
 
     // Warm-up is a request-owned camera lease. Cancel it even if the app record was already
     // removed so a close racing the camera-open promise cannot leave the sensor running.
-    // Keep camera teardown ordered: restoring FOV can restart the HAL, so the warm-up lease must
-    // finish closing the sensor before FOV reconciliation begins. Continue to FOV cleanup even if
-    // warm-up cancellation fails; phone ownership remains retryable until the ASG lease TTL.
-    void phonePhotoCoordinator
-      .stopWarmUpForApp(packageName)
-      .catch((error) => {
-        console.warn(`${LOG_TAG}: failed to stop camera warm-up for ${packageName} on unregister`, error)
-      })
-      .then(() => phoneCameraFovCoordinator.releaseForApp(packageName))
-      .catch((error) => {
-        console.warn(`${LOG_TAG}: failed to release camera FOV override for ${packageName} on unregister`, error)
-      })
+    // Close all camera consumers before restoring FOV. A shared publisher may
+    // remain active for another subscriber; a rejected FOV release then stops
+    // renewing the departed owner's lease and ASG restores it once idle.
+    const cameraCleanup = Promise.allSettled([
+      phonePhotoCoordinator.stopWarmUpForApp(packageName),
+      phoneStreamCoordinator.stop(packageName),
+      phoneVideoCoordinator.stopForApp(packageName),
+    ]).then((results) => {
+      for (const result of results) {
+        if (result.status === "rejected") {
+          console.warn(`${LOG_TAG}: failed to stop camera consumer for ${packageName} on unregister`, result.reason)
+        }
+      }
+    })
+    void phoneCameraFovCoordinator.releaseForApp(packageName, cameraCleanup).catch((error) => {
+      console.warn(`${LOG_TAG}: failed to release camera FOV override for ${packageName} on unregister`, error)
+    })
     const app = this.connectedApps.get(packageName)
     if (!app) {
       if (releasedMicGateOverride) {
@@ -1024,19 +1029,6 @@ class LocalMiniappRuntime {
     // so a crashed/closed miniapp doesn't leak partial files or file handles.
     this.blobStore.onAppGone(packageName)
 
-    // Release phone-owned camera streams. If a miniapp closes/crashes without
-    // sending STREAM_STOP, the host coordinator must drop its subscriber/owner
-    // so glasses publishing and managed Cloudflare inputs do not leak.
-    void phoneStreamCoordinator.stop(packageName).catch((error) => {
-      console.warn(`${LOG_TAG}: failed to stop stream for ${packageName} on unregister`, error)
-    })
-
-    // Stop any phone-owned video recordings for this app. A miniapp that
-    // closes/crashes mid-recording loses its recordingId, so without this the
-    // glasses keep recording until the max-recording timeout or thermal shutdown.
-    void phoneVideoCoordinator.stopForApp(packageName).catch((error) => {
-      console.warn(`${LOG_TAG}: failed to stop video recording for ${packageName} on unregister`, error)
-    })
     void acsMeetingService.leaveIfOwner(packageName).catch((error) => {
       console.warn(`${LOG_TAG}: failed to leave ACS meeting for ${packageName} on unregister`, error)
     })

@@ -114,9 +114,7 @@ public class Bridge private constructor() {
         /** Log a message and send it to JavaScript */
         @JvmStatic
         fun log(message: String) {
-            val data = HashMap<String, Any>()
-            data["message"] = message
-            sendTypedMessage("log", data as Map<String, Any>)
+            com.mentra.bluetoothsdk.utils.NativeLog.i(TAG, message)
         }
 
         /** Report tar.bz2 extraction progress to JavaScript. */
@@ -482,11 +480,26 @@ public class Bridge private constructor() {
         }
 
         @JvmStatic
-        fun sendVersionInfo(values: Map<String, Any>) {
+        @JvmOverloads
+        fun sendVersionInfo(values: Map<String, Any>, responseChunk: String = "version_info") {
             fun stringField(vararg keys: String): String =
                     keys.firstNotNullOfOrNull { key -> values[key] as? String } ?: ""
             val body = HashMap<String, Any>()
             body["type"] = "version_info"
+            body[VersionInfoResponseAccumulator.RESPONSE_CHUNK_KEY] = responseChunk
+            mapOf(
+                "chunkIndex" to VersionInfoResponseAccumulator.RESPONSE_INDEX_KEY,
+                "chunkCount" to VersionInfoResponseAccumulator.RESPONSE_COUNT_KEY,
+                "final" to VersionInfoResponseAccumulator.RESPONSE_FINAL_KEY,
+                "sid" to VersionInfoResponseAccumulator.RESPONSE_SID_KEY,
+            ).forEach { (wireKey, internalKey) -> values[wireKey]?.let { body[internalKey] = it } }
+            (values["requestId"] as? String ?: values["request_id"] as? String)
+                    ?.takeIf { it.isNotEmpty() }
+                    ?.let {
+                        body[VersionInfoResponseAccumulator.RESPONSE_REQUEST_ID_KEY] = it
+                    }
+            body["versionInfoType"] = stringField("versionInfoType", "version_info_type")
+            body["sid"] = stringField("sid")
             body["androidVersion"] = stringField("androidVersion", "android_version")
             body["firmwareVersion"] = stringField("firmwareVersion", "firmware_version")
             body["besFirmwareVersion"] = stringField("besFirmwareVersion", "bes_fw_version")
@@ -505,6 +518,15 @@ public class Bridge private constructor() {
             (values["hotspotOtaVersion"] as? Number
                             ?: values["hotspot_ota_version"] as? Number)
                     ?.let { body["hotspotOtaVersion"] = it.toInt() }
+            for ((key, wireKey) in listOf(
+                "wifiForgetResultVersion" to "wifi_forget_result_version",
+                "savedWifiNetworksVersion" to "saved_wifi_networks_version",
+            )) {
+                if (values.containsKey(key) || values.containsKey(wireKey)) {
+                    // Preserve malformed presence: it must not become legacy or be rounded to v1.
+                    body[key] = values[key] ?: values[wireKey] ?: -1
+                }
+            }
             sendTypedMessage("version_info", body)
         }
 
@@ -583,6 +605,58 @@ public class Bridge private constructor() {
                     if (error != null) status.toMap() + mapOf("error" to error)
                     else status.toMap()
             sendTypedMessage("wifi_status_change", payload)
+        }
+
+        @JvmStatic
+        fun sendWifiForgetResult(
+                requestId: String,
+                sid: String,
+                ssid: String,
+                protocolVersion: Int,
+                outcome: String,
+                legacyDispatched: Boolean?,
+                connected: Boolean?,
+                currentSsid: String,
+                localIp: String,
+                error: String?,
+        ) {
+            val body =
+                    normalizeWifiForgetResultEvent(
+                            requestId,
+                            sid,
+                            ssid,
+                            protocolVersion,
+                            outcome,
+                            legacyDispatched,
+                            connected,
+                            currentSsid,
+                            localIp,
+                            error,
+                    )
+            if (body == null) {
+                log("Dropping malformed wifi_forget_result without modern or legacy fields")
+                return
+            }
+            sendTypedMessage("wifi_forget_result", body)
+        }
+
+        @JvmStatic
+        fun sendSavedWifiNetworks(
+                requestId: String,
+                sid: String,
+                protocolVersion: Int,
+                outcome: String,
+                networks: List<String>,
+                error: String?,
+        ) {
+            val body = HashMap<String, Any>()
+            body["requestId"] = requestId
+            body["sid"] = sid
+            body["protocolVersion"] = protocolVersion
+            body["outcome"] = outcome
+            body["networks"] = networks
+            if (error != null) body["error"] = error
+            sendTypedMessage("saved_wifi_networks", body)
         }
 
         /**

@@ -130,6 +130,43 @@ function validateAppCoordinate(value, label) {
   return value
 }
 
+// The current public Mentra App is either "coordinated" (its source commit and
+// provenance come from the previous mentra-vX.Y.Z release, so Phase 2 can rebuild
+// it as a compatibility-lab app) or "store-observed" (only the store inventories
+// describe it, because no coordinated production release exists yet). A
+// store-observed app cannot be rebuilt, so its promotion has no compatibility
+// lab and starts at staging-compatible instead of selected.
+export const CURRENT_APP_PROVENANCES = Object.freeze(["coordinated", "store-observed"])
+
+export function hasCompatibilityLab(record) {
+  return record.coordinates.currentMentraApp.provenance === "coordinated"
+}
+
+function validateCurrentMentraApp(coordinates) {
+  const current = coordinates.currentMentraApp
+  if (!current || typeof current !== "object" || Array.isArray(current)) {
+    fail("coordinates.currentMentraApp must be an object")
+  }
+  if (!CURRENT_APP_PROVENANCES.includes(current.provenance)) {
+    fail("coordinates.currentMentraApp.provenance must be coordinated or store-observed")
+  }
+  validateAppCoordinate(current.ios, "coordinates.currentMentraApp.ios")
+  validateAppCoordinate(current.android, "coordinates.currentMentraApp.android")
+  if (current.provenance === "coordinated") {
+    requireCommit(current.sourceCommit, "coordinates.currentMentraApp.sourceCommit")
+    requireHttps(current.provenanceUrl, "coordinates.currentMentraApp.provenanceUrl")
+    validateAppCoordinate(coordinates.compatibilityLab?.ios, "coordinates.compatibilityLab.ios")
+    validateAppCoordinate(coordinates.compatibilityLab?.android, "coordinates.compatibilityLab.android")
+    return
+  }
+  if (current.sourceCommit !== null || current.provenanceUrl !== null) {
+    fail("a store-observed current Mentra App has no source commit or provenance URL")
+  }
+  if (coordinates.compatibilityLab !== null) {
+    fail("a store-observed current Mentra App cannot have compatibility-lab coordinates")
+  }
+}
+
 function validatePromotionSource(source) {
   if (!source || typeof source !== "object" || Array.isArray(source)) fail("source must be an object")
   if (!isDeepStrictEqual(Object.keys(source).sort(), ["mentraosCommit"])) {
@@ -192,12 +229,10 @@ export function validatePromotionRecord(record) {
   requireHttps(record.selectedBeta.manifestUrl, "selectedBeta.manifestUrl")
   requireSha256(record.selectedBeta.manifestSha256, "selectedBeta.manifestSha256")
   if (!record.coordinates || typeof record.coordinates !== "object") fail("coordinates must be an object")
-  requireCommit(record.coordinates.currentMentraApp.sourceCommit, "coordinates.currentMentraApp.sourceCommit")
-  requireHttps(record.coordinates.currentMentraApp.provenanceUrl, "coordinates.currentMentraApp.provenanceUrl")
-  validateAppCoordinate(record.coordinates.currentMentraApp.ios, "coordinates.currentMentraApp.ios")
-  validateAppCoordinate(record.coordinates.currentMentraApp.android, "coordinates.currentMentraApp.android")
-  validateAppCoordinate(record.coordinates.compatibilityLab.ios, "coordinates.compatibilityLab.ios")
-  validateAppCoordinate(record.coordinates.compatibilityLab.android, "coordinates.compatibilityLab.android")
+  validateCurrentMentraApp(record.coordinates)
+  if (!hasCompatibilityLab(record) && record.state === "selected") {
+    fail("a promotion without a compatibility lab cannot be in state selected")
+  }
   if (!isDeepStrictEqual(Object.keys(record.coordinates.candidates).sort(), ["mentraApp"])) {
     fail("coordinates.candidates must contain only mentraApp")
   }
@@ -286,7 +321,9 @@ export function createInitialPromotionRecord({
     promotionId: `mentra-${releaseIdentity}-attempt-${attempt}`,
     releaseIdentity,
     attempt,
-    state: "selected",
+    // Without a rebuildable current app there is no Phase 2, so the promotion
+    // starts where Phase 2 would have ended.
+    state: coordinates?.currentMentraApp?.provenance === "store-observed" ? "staging-compatible" : "selected",
     sequence: 0,
     previous: null,
     createdAt,
@@ -336,6 +373,23 @@ export function abortPromotionRecord({record, actor, createdAt, provenanceUrl, r
   return validatePromotionChain(record, next)
 }
 
+// Stable package publication (production-release-packages.yml) never writes to
+// this chain: its evidence lives in the stable draft release, so it cannot race
+// a mobile or Cloud transition. It only reads the newest attempt to make sure a
+// live promotion did not freeze a different beta or source under the identity
+// it is about to publish.
+export function requirePromotionMatchesPackages(record, {betaIdentity, sourceCommit}) {
+  validatePromotionRecord(record)
+  if (record.state === "aborted") return {state: record.state, attempt: record.attempt}
+  if (record.selectedBeta.identity !== betaIdentity) {
+    fail(`promotion attempt ${record.attempt} selected ${record.selectedBeta.identity}, not ${betaIdentity}`)
+  }
+  if (record.source.mentraosCommit !== sourceCommit) {
+    fail(`promotion attempt ${record.attempt} froze source ${record.source.mentraosCommit}, not ${sourceCommit}`)
+  }
+  return {state: record.state, attempt: record.attempt}
+}
+
 function secretLike(value) {
   return (
     /-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(value) ||
@@ -371,7 +425,8 @@ export function validateAttestation(attestation, record, expectedCheck) {
   if (!check || (expectedCheck && attestation.check !== expectedCheck)) fail("attestation check is not expected")
   if (
     attestation.check === "staging-mobile-n-compatibility" &&
-    !record.evidence.some((item) => item.kind === "staging-mobile-n-compatibility-lab")
+    (!hasCompatibilityLab(record) ||
+      !record.evidence.some((item) => item.kind === "staging-mobile-n-compatibility-lab"))
   ) {
     fail("staging Mobile N acceptance requires recorded compatibility-lab build evidence")
   }
@@ -482,6 +537,14 @@ function main() {
       evidence: readJson(args.evidence),
     })
     writeFileSync(path.resolve(args.output), serializeReleaseRecord(record))
+    return
+  }
+  if (command === "packages-guard") {
+    const result = requirePromotionMatchesPackages(readJson(args.record), {
+      betaIdentity: args.beta,
+      sourceCommit: args["source-commit"],
+    })
+    console.log(`promotion attempt ${result.attempt} (${result.state}) matches ${args.beta}`)
     return
   }
   if (command === "abort") {

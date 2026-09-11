@@ -4,7 +4,7 @@ import android.media.AudioAttributes
 import android.media.AudioFormat
 import android.media.AudioTrack
 import android.util.Base64
-import android.util.Log
+import com.mentra.bluetoothsdk.utils.NativeLog as Log
 import java.util.ArrayDeque
 import java.util.concurrent.locks.ReentrantLock
 import kotlin.concurrent.withLock

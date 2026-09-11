@@ -69,6 +69,7 @@ function finalizingRecord() {
     source: {mentraosCommit: "a".repeat(40)},
     coordinates: {
       currentMentraApp: {
+        provenance: "coordinated",
         sourceCommit: "f".repeat(40),
         provenanceUrl: "https://example.com/current.json",
         ios: {marketingVersion: "3.0.0", buildNumber: 300000100},
@@ -110,6 +111,76 @@ function finalizingRecord() {
   }
   return record
 }
+
+function storeObservedFinalizingRecord() {
+  let record = createInitialPromotionRecord({
+    releaseIdentity: baseVersion,
+    attempt: 2,
+    selectedBeta: {
+      identity: selectedBetaIdentity,
+      releaseSetId: `mentra-${selectedBetaIdentity}`,
+      manifestUrl: "https://example.com/beta.json",
+      manifestSha256: "b".repeat(64),
+    },
+    source: {mentraosCommit: "a".repeat(40)},
+    coordinates: {
+      currentMentraApp: {
+        provenance: "store-observed",
+        sourceCommit: null,
+        provenanceUrl: null,
+        ios: {marketingVersion: "3.0", buildNumber: 51180073},
+        android: {marketingVersion: "3.0", buildNumber: 51180031},
+      },
+      compatibilityLab: null,
+      candidates: {
+        mentraApp: {
+          ios: {marketingVersion: baseVersion, buildNumber: 310000102},
+          android: {marketingVersion: baseVersion, buildNumber: 310000102},
+        },
+      },
+    },
+    actor: "release-owner",
+    createdAt: "2026-08-28T10:00:00.000Z",
+    provenanceUrl: "https://github.com/Mentra-Community/MentraOS/actions/runs/1",
+    evidence: [evidence("selected-beta-manifest")],
+  })
+  assert.equal(record.state, "staging-compatible")
+  for (const state of PROMOTION_STATES.slice(2, PROMOTION_STATES.indexOf("finalizing") + 1)) {
+    record = transitionPromotionRecord({
+      record,
+      to: state,
+      actor: "release-owner",
+      createdAt: `2026-08-28T10:${String(record.sequence + 2).padStart(2, "0")}:00.000Z`,
+      provenanceUrl: `https://github.com/Mentra-Community/MentraOS/actions/runs/${record.sequence + 3}`,
+      evidence: evidence(kinds.get(state)),
+    })
+  }
+  return record
+}
+
+test("finalizes a first promotion whose current app was only store-observed", () => {
+  const record = storeObservedFinalizingRecord()
+  const manifest = finalizeProductionPromotion({
+    plan,
+    record,
+    checkpointUrl: `https://github.com/Mentra-Community/MentraOS/releases/download/promotion/${record.promotionId}.json`,
+  })
+  assert.equal(manifest.kind, "mentra-production-release")
+  assert.equal(manifest.native.buildNumber, 310000102)
+  assert.ok(!record.evidence.some(({kind}) => kind.startsWith("staging-mobile-n")))
+})
+
+test("a coordinated current app still needs both Phase 2 evidence kinds to finalize", () => {
+  const record = finalizingRecord()
+  const withoutLab = {
+    ...record,
+    evidence: record.evidence.filter(({kind}) => kind !== "staging-mobile-n-compatibility-lab"),
+  }
+  assert.throws(
+    () => finalizeProductionPromotion({plan, record: withoutLab, checkpointUrl: "https://example.com/checkpoint.json"}),
+    /missing staging-mobile-n-compatibility-lab evidence/,
+  )
+})
 
 test("creates the canonical production manifest from the finalizing checkpoint", () => {
   const record = finalizingRecord()

@@ -1,5 +1,8 @@
 import {createScanSession} from "./scanSession"
 import {NativeModule, requireNativeModule} from "expo"
+import {Platform} from "react-native"
+
+import {installNativeLogConsole} from "./nativeLogConsole"
 
 import {
   BluetoothSettingsUpdate,
@@ -43,7 +46,6 @@ import {
   ScanModelOptions,
   ScanOptions,
   SettingsAckSuccessEvent,
-  StreamKeepAliveRequest,
   StreamStartRequest,
   StreamStatusEvent,
   VideoRecordingStartedStatusEvent,
@@ -52,6 +54,8 @@ import {
   VideoRecordingStatusEvent,
   VersionInfoResult,
   WarmUpCameraParams,
+  SavedWifiNetworksResult,
+  WifiForgetResult,
   WifiSearchResult,
   WifiStatusChangeEvent,
 } from "../BluetoothSdk.types"
@@ -122,8 +126,9 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
 
   // WiFi Commands
   requestWifiScan(): Promise<WifiSearchResult[]>
+  getSavedWifiNetworks(): Promise<SavedWifiNetworksResult>
   sendWifiCredentials(ssid: string, password: string): Promise<WifiStatusChangeEvent>
-  forgetWifiNetwork(ssid: string): Promise<WifiStatusChangeEvent>
+  forgetWifiNetwork(ssid: string): Promise<WifiForgetResult>
   setHotspotState(enabled: boolean): Promise<HotspotStatusChangeEvent>
   /** Enable or disable Wi-Fi ADB on Mentra Live (no-op on other devices). */
   setWifiAdbState(enabled: boolean): Promise<void>
@@ -199,9 +204,7 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
 
   // Stream Commands
   startStream(params: StreamStartRequest): Promise<StreamStatusEvent>
-  startExternallyManagedStream(params: StreamStartRequest): Promise<StreamStatusEvent>
   stopStream(): Promise<StreamStatusEvent>
-  sendExternallyManagedStreamKeepAlive(params: StreamKeepAliveRequest): Promise<void>
 
   // Microphone Commands
   setMicState(enabled: boolean, useGlassesMic?: boolean, sendTranscript?: boolean, sendLc3Data?: boolean): Promise<void>
@@ -309,10 +312,12 @@ export type BluetoothSdkInternalModule = BluetoothSdkNativeModule
 // This call loads the native module object from the JSI.
 // NativeModule<BluetoothSdkModuleEvents> already extends EventEmitter<BluetoothSdkModuleEvents>
 const NativeBluetoothSdkModule = requireNativeModule<BluetoothSdkNativeModule>("BluetoothSdk")
+installNativeLogConsole(NativeBluetoothSdkModule, Platform.OS)
 
 const DEFAULT_CONNECT_OPTIONS: Required<ConnectOptions> = {
   saveAsDefault: true,
   cancelExistingConnectionAttempt: true,
+  requiresAncs: true,
 }
 
 const DEFAULT_SCAN_TIMEOUT_MS = 15_000

@@ -9,6 +9,7 @@ import {
   createInitialPromotionRecord,
   nextAction,
   promotionAssetName,
+  requirePromotionMatchesPackages,
   transitionPromotionRecord,
   transitionWithAttestation,
   validateAttestation,
@@ -36,6 +37,7 @@ function initial() {
     source: {mentraosCommit: "a".repeat(40)},
     coordinates: {
       currentMentraApp: {
+        provenance: "coordinated",
         sourceCommit: "f".repeat(40),
         provenanceUrl: "https://github.com/Mentra-Community/MentraOS/releases/tag/mentra-v3.0.0",
         ios: coordinate(300000100),
@@ -44,6 +46,36 @@ function initial() {
       compatibilityLab: {ios: coordinate(310000090), android: coordinate(310000090)},
       candidates: {
         mentraApp: {ios: coordinate(310000100), android: coordinate(310000101)},
+      },
+    },
+    actor: "release-owner",
+    createdAt: now,
+    provenanceUrl: runUrl,
+  })
+}
+
+function storeObserved() {
+  return createInitialPromotionRecord({
+    releaseIdentity: "3.1.0",
+    attempt: 1,
+    selectedBeta: {
+      identity: "3.1.0-beta.57",
+      releaseSetId: "mentra-3.1.0-beta.57",
+      manifestUrl: "https://github.com/Mentra-Community/MentraOS/releases/download/mentra-builds-v3.1.0/beta.json",
+      manifestSha256: "b".repeat(64),
+    },
+    source: {mentraosCommit: "a".repeat(40)},
+    coordinates: {
+      currentMentraApp: {
+        provenance: "store-observed",
+        sourceCommit: null,
+        provenanceUrl: null,
+        ios: {marketingVersion: "3.0", buildNumber: 51180073},
+        android: {marketingVersion: "3.0", buildNumber: 51180031},
+      },
+      compatibilityLab: null,
+      candidates: {
+        mentraApp: {ios: coordinate(310000100), android: coordinate(310000100)},
       },
     },
     actor: "release-owner",
@@ -409,4 +441,153 @@ test("allows append-only rollout observations before completion", () => {
   })
   assert.equal(completed.state, "completed")
   assert.equal(completed.previous.assetName, promotionAssetName(finalizing))
+})
+
+test("stable packages only read the promotion to reject a conflicting frozen beta", () => {
+  const link = {betaIdentity: "3.1.0-beta.57", sourceCommit: "a".repeat(40)}
+  for (const state of PROMOTION_STATES) {
+    const record = atState(state)
+    assert.deepEqual(requirePromotionMatchesPackages(record, link), {state, attempt: 1})
+  }
+  const aborted = abortPromotionRecord({
+    record: initial(),
+    actor: "release-owner",
+    createdAt: now,
+    provenanceUrl: runUrl,
+    reason: "withdrawn",
+  })
+  assert.equal(requirePromotionMatchesPackages(aborted, {...link, betaIdentity: "3.1.0-beta.58"}).state, "aborted")
+  assert.throws(
+    () => requirePromotionMatchesPackages(initial(), {...link, betaIdentity: "3.1.0-beta.58"}),
+    /selected 3\.1\.0-beta\.57/,
+  )
+  assert.throws(
+    () => requirePromotionMatchesPackages(initial(), {...link, sourceCommit: "e".repeat(40)}),
+    /froze source/,
+  )
+  assert.throws(
+    () =>
+      transitionPromotionRecord({
+        record: initial(),
+        to: "selected",
+        actor: "release-owner",
+        createdAt: now,
+        provenanceUrl: runUrl,
+        evidence: evidence("production-packages-publication"),
+      }),
+    /not contiguous/,
+  )
+})
+
+test("a store-observed current app skips the compatibility lab and starts at staging-compatible", () => {
+  const record = storeObserved()
+  assert.equal(record.state, "staging-compatible")
+  assert.equal(record.sequence, 0)
+  assert.deepEqual(nextAction(record), {
+    kind: "workflow",
+    workflow: "production-release-cloud.yml",
+    phase: "preflight",
+  })
+  const next = transitionPromotionRecord({
+    record,
+    to: "production-config-ready",
+    actor: "release-owner",
+    createdAt: now,
+    provenanceUrl: runUrl,
+    evidence: evidence("production-config-ready"),
+  })
+  assert.equal(next.state, "production-config-ready")
+  assert.throws(
+    () => validatePromotionRecord({...record, state: "selected"}),
+    /without a compatibility lab cannot be in state selected/,
+  )
+})
+
+test("a store-observed current app cannot carry coordinated provenance or lab coordinates", () => {
+  const record = storeObserved()
+  assert.throws(
+    () =>
+      validatePromotionRecord({
+        ...record,
+        coordinates: {
+          ...record.coordinates,
+          currentMentraApp: {...record.coordinates.currentMentraApp, sourceCommit: "f".repeat(40)},
+        },
+      }),
+    /has no source commit or provenance URL/,
+  )
+  assert.throws(
+    () =>
+      validatePromotionRecord({
+        ...record,
+        coordinates: {...record.coordinates, compatibilityLab: {ios: coordinate(1), android: coordinate(1)}},
+      }),
+    /cannot have compatibility-lab coordinates/,
+  )
+  assert.throws(
+    () =>
+      validatePromotionRecord({
+        ...record,
+        coordinates: {
+          ...record.coordinates,
+          currentMentraApp: {...record.coordinates.currentMentraApp, provenance: "legacy"},
+        },
+      }),
+    /provenance must be coordinated or store-observed/,
+  )
+  const coordinated = initial()
+  assert.throws(
+    () =>
+      validatePromotionRecord({
+        ...coordinated,
+        coordinates: {...coordinated.coordinates, compatibilityLab: null},
+      }),
+    /compatibilityLab\.ios must be an object/,
+  )
+})
+
+test("the store-observed app is still attested against production Cloud N+1 by its store coordinates", () => {
+  let record = storeObserved()
+  for (const state of ["production-config-ready", "cloud-deployed"]) {
+    record = transitionPromotionRecord({
+      record,
+      to: state,
+      actor: "release-owner",
+      createdAt: now,
+      provenanceUrl: runUrl,
+      evidence: evidence(state),
+    })
+  }
+  assert.deepEqual(nextAction(record), {kind: "attest", check: "production-mobile-n-compatibility"})
+  const attestation = {
+    schemaVersion: 1,
+    promotionId: record.promotionId,
+    releaseIdentity: record.releaseIdentity,
+    check: "production-mobile-n-compatibility",
+    result: "pass",
+    performedAt: now,
+    tester: {githubLogin: "tester"},
+    tests: [
+      {
+        product: "mentra-app",
+        platform: "ios",
+        result: "pass",
+        appVersion: "3.0",
+        appBuild: "51180073",
+        deviceModel: "iPhone",
+        osVersion: "26.0",
+      },
+      {
+        product: "mentra-app",
+        platform: "android",
+        result: "pass",
+        appVersion: "3.0",
+        appBuild: "51180031",
+        deviceModel: "Pixel",
+        osVersion: "16",
+      },
+    ],
+    evidenceUrls: [runUrl],
+  }
+  assert.equal(validateAttestation(attestation, record), attestation)
 })

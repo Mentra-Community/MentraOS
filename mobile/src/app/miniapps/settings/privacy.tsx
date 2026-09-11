@@ -14,8 +14,6 @@ import {checkAndRequestNotificationAccessSpecialPermission} from "@/utils/Notifi
 import {checkFeaturePermissions, PermissionFeatures, requestFeaturePermissions} from "@/utils/PermissionsUtils"
 import {deploymentStore} from "@/services/deployment"
 
-const CONSUMER_PRIVACY_POLICY_URL = "https://mentraglass.com/privacy-policy"
-
 export default function PrivacySettingsScreen() {
   const [notificationsEnabled, setNotificationsEnabled] = useState(true)
   const [calendarEnabled, setCalendarEnabled] = useState(true)
@@ -26,8 +24,7 @@ export default function PrivacySettingsScreen() {
   const {theme} = useAppTheme()
   const {goBack} = useNavigationStore.getState()
   const deployment = deploymentStore.getActive()
-  const privacyPolicyUrl =
-    deployment.kind === "workspace" ? deployment.manifest.links.privacyPolicyUrl : CONSUMER_PRIVACY_POLICY_URL
+  const privacyPolicyUrl = deployment.manifest.links.privacyPolicyUrl
 
   // Check permissions when screen loads
   useEffect(() => {

@@ -1677,7 +1677,7 @@ extension G1 {
         Task {
             let success = await setBrightnessRaw(brightnessLevel, autoMode: autoMode)
             if !success {
-                NSLog("Failed to set brightness to level \(level)% (mapped to \(mappedLevel))")
+                Bridge.log("Failed to set brightness to level \(level)% (mapped to \(mappedLevel))")
             }
         }
     }

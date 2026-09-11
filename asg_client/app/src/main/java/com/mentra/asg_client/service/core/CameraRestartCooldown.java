@@ -32,4 +32,9 @@ public final class CameraRestartCooldown {
     public static boolean isActive() {
         return System.currentTimeMillis() < cooldownUntilMs;
     }
+
+    /** Time still needed before acknowledging a crop as ready for capture. */
+    public static long remainingMs() {
+        return Math.max(0L, cooldownUntilMs - System.currentTimeMillis());
+    }
 }

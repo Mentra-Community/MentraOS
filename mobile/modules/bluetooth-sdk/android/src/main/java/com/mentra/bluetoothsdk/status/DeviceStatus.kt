@@ -189,6 +189,10 @@ data class VersionInfoResult(
     val appVersion: String,
     val packageName: String,
     val hotspotOtaVersion: Int,
+    val wifiForgetResultVersion: Int? = null,
+    val savedWifiNetworksVersion: Int? = null,
+    val versionInfoType: String? = null,
+    val sid: String? = null,
 ) {
     internal fun toMap(): Map<String, Any> =
         buildMap {
@@ -200,13 +204,16 @@ data class VersionInfoResult(
             systemTimeMs?.let { put("systemTimeMs", it) }
             put("otaVersionUrl", otaVersionUrl)
             put("appVersion", appVersion)
-            // Only when known. requestVersionInfo() resolves from ANY version_info chunk, and
-            // only chunk 1 carries package_name — emitting "" from a chunk-3 resolution would
-            // overwrite a known identity with "absent", which the OTA guard reads as stock.
+            // Only when known: per-chunk events may omit package identity. Emitting an empty
+            // value would overwrite a known identity, which the OTA guard uses to identify stock.
             if (packageName.isNotEmpty()) {
                 put("packageName", packageName)
             }
             put("hotspotOtaVersion", hotspotOtaVersion)
+            wifiForgetResultVersion?.let { put("wifiForgetResultVersion", it) }
+            savedWifiNetworksVersion?.let { put("savedWifiNetworksVersion", it) }
+            versionInfoType?.let { put("versionInfoType", it) }
+            sid?.let { put("sid", it) }
         }
 
     companion object {
@@ -237,6 +244,12 @@ data class VersionInfoResult(
                 packageName = stringValue(values, "packageName", "package_name") ?: "",
                 hotspotOtaVersion =
                     numberValue(values, "hotspotOtaVersion", "hotspot_ota_version") ?: 0,
+                wifiForgetResultVersion =
+                    numberValue(values, "wifiForgetResultVersion", "wifi_forget_result_version"),
+                savedWifiNetworksVersion =
+                    numberValue(values, "savedWifiNetworksVersion", "saved_wifi_networks_version"),
+                versionInfoType = stringValue(values, "versionInfoType", "version_info_type"),
+                sid = stringValue(values, "sid"),
             )
     }
 }

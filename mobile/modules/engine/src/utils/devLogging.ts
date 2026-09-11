@@ -59,7 +59,6 @@ class LogRingBuffer {
       /The action 'POP_TO_TOP' was not handled/,
       /socket-0 binding/,
       /socket-0 bound to/,
-      /Error while flushing PostHog/,
       /backTitleFontFamily prop is not available on Android/,
       /disableBackButtonMenu prop is not available on Android/,
       /backTitleVisible prop is not available on Android/,

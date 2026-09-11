@@ -23,6 +23,16 @@ export function slimStreamStatusEvent(
     status: event.status,
   }
   if (event.streamId) slim.streamId = event.streamId
+  if (event.sid) slim.sid = event.sid
+  if (typeof event.revision === "number") slim.revision = event.revision
+  if (typeof event.terminal === "boolean") slim.terminal = event.terminal
+  if ("willRetry" in event && typeof event.willRetry === "boolean") slim.willRetry = event.willRetry
+  if (event.errorDetails) slim.errorDetails = event.errorDetails
+  if (event.kind === "reconnect") {
+    if ("reason" in event) slim.reason = event.reason
+    if ("attempt" in event) slim.attempt = event.attempt
+    if ("maxAttempts" in event) slim.maxAttempts = event.maxAttempts
+  }
   const ts = event.timestamp
   if (typeof ts === "number" && Number.isFinite(ts)) slim.timestamp = ts
   if (options.includeResolvedConfig && event.resolvedConfig) {

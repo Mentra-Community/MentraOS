@@ -140,68 +140,6 @@ test("creates a deterministic release plan with exact dependency versions", () =
   assert.equal(productionPlan.artifactContainerName, `Mentra ${baseVersion}`)
 })
 
-test("pins the exact Starter Kit source for the selected channel", () => {
-  const family = loadReleaseFamily({rootDir: repositoryRoot})
-  const starterKitSource = {
-    repository: "Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit",
-    branch: "staging",
-    sourceCommit: "c".repeat(40),
-  }
-  const plan = createReleasePlan({
-    family,
-    channel: "beta",
-    sequence: 57,
-    sourceCommit: "a".repeat(40),
-    nativeBuildNumber: 3100057,
-    starterKitSource,
-  })
-
-  assert.deepEqual(plan.starterKitSource, starterKitSource)
-  assert.throws(
-    () =>
-      createReleasePlan({
-        family,
-        channel: "beta",
-        sequence: 57,
-        sourceCommit: "a".repeat(40),
-        nativeBuildNumber: 3100057,
-        starterKitSource: {...starterKitSource, branch: "dev"},
-      }),
-    /exact channel branch and commit/,
-  )
-})
-
-test("pins the exact Starter Kit source for the selected channel", () => {
-  const family = loadReleaseFamily({rootDir: repositoryRoot})
-  const starterKitSource = {
-    repository: "Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit",
-    branch: "staging",
-    sourceCommit: "c".repeat(40),
-  }
-  const plan = createReleasePlan({
-    family,
-    channel: "beta",
-    sequence: 57,
-    sourceCommit: "a".repeat(40),
-    nativeBuildNumber: 3100057,
-    starterKitSource,
-  })
-
-  assert.deepEqual(plan.starterKitSource, starterKitSource)
-  assert.throws(
-    () =>
-      createReleasePlan({
-        family,
-        channel: "beta",
-        sequence: 57,
-        sourceCommit: "a".repeat(40),
-        nativeBuildNumber: 3100057,
-        starterKitSource: {...starterKitSource, branch: "dev"},
-      }),
-    /exact channel branch and commit/,
-  )
-})
-
 test("serializes records canonically and finalizes only complete release results", () => {
   const family = loadReleaseFamily({rootDir: repositoryRoot})
   const plan = createReleasePlan({
@@ -257,6 +195,76 @@ test("serializes records canonically and finalizes only complete release results
   assert.deepEqual(manifest.changelog, plan.changelog)
   assert.equal(manifest.cloud.environment, "staging")
   assert.equal(manifest.runtimeImage.reference, `ghcr.io/mentra-community/mentra-cloud@sha256:${"8".repeat(64)}`)
+  const publicPlan = createReleasePlan({
+    family,
+    channel: "beta",
+    sequence: 57,
+    sourceCommit: "a".repeat(40),
+    nativeBuildNumber: 3100057,
+    publicBetaTestflight: true,
+  })
+  assert.deepEqual(publicPlan.native.testflight, {group: "Mentra Staging Public", audience: "external"})
+  const publicResults = structuredClone(results)
+  const ios = publicResults.publications.mentraos["app-store-connect"]
+  ios.coordinate = `com.mentra.mentra:${publicPlan.native.marketingVersion}:${publicPlan.native.buildNumber}:Mentra Staging Public`
+  assert.throws(
+    () => finalizeReleaseManifest({plan: publicPlan, results: publicResults, completedAt: "2026-08-24T20:00:00.000Z"}),
+    /distribution evidence/,
+  )
+  ios.testflight = {
+    group: "Mentra Staging Public",
+    audience: "external",
+    status: "submitted",
+    buildId: "build-1",
+    installUrl: "https://testflight.apple.com/join/public123",
+    reviewState: "WAITING_FOR_REVIEW",
+  }
+  const publicManifest = finalizeReleaseManifest({
+    plan: publicPlan,
+    results: publicResults,
+    completedAt: "2026-08-24T20:00:00.000Z",
+  })
+  assert.equal(publicManifest.publications.mentraos["app-store-connect"].testflight.status, "submitted")
+  ios.testflight.status = "available"
+  assert.throws(
+    () => finalizeReleaseManifest({plan: publicPlan, results: publicResults, completedAt: "2026-08-24T20:00:00.000Z"}),
+    /approved review/,
+  )
+  ios.testflight.reviewState = "APPROVED"
+  const approvedManifest = finalizeReleaseManifest({
+    plan: publicPlan,
+    results: publicResults,
+    completedAt: "2026-08-24T20:00:00.000Z",
+  })
+  assert.equal(approvedManifest.publications.mentraos["app-store-connect"].testflight.status, "available")
+  ios.testflight.status = "skipped"
+  ios.testflight.reviewState = "IN_REVIEW"
+  assert.throws(
+    () => finalizeReleaseManifest({plan: publicPlan, results: publicResults, completedAt: "2026-08-24T20:00:00.000Z"}),
+    /identify its reason/,
+  )
+  ios.testflight.skipReason = "external_review_pending"
+  const skippedManifest = finalizeReleaseManifest({
+    plan: publicPlan,
+    results: publicResults,
+    completedAt: "2026-08-24T20:00:00.000Z",
+  })
+  assert.equal(skippedManifest.publications.mentraos["app-store-connect"].testflight.status, "skipped")
+  assert.equal(
+    skippedManifest.publications.mentraos["app-store-connect"].testflight.skipReason,
+    "external_review_pending",
+  )
+  assert.equal(
+    createReleasePlan({
+      family,
+      channel: "dev",
+      sequence: 57,
+      sourceCommit: "a".repeat(40),
+      nativeBuildNumber: 3100057,
+      publicBetaTestflight: true,
+    }).native.testflight,
+    undefined,
+  )
   assert.equal(serializeReleaseRecord({z: 1, a: 2}), '{\n  "a": 2,\n  "z": 1\n}\n')
 
   const incompletePlan = structuredClone(plan)

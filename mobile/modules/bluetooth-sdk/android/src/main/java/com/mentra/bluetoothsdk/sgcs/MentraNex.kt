@@ -27,7 +27,7 @@ import android.bluetooth.le.ScanSettings
 import android.os.Message
 import android.os.Handler
 import android.os.Looper
-import android.util.Log
+import com.mentra.bluetoothsdk.utils.NativeLog as Log
 import android.content.Context
 
 import mentraos.ble.MentraosBle.GlassesToPhone
