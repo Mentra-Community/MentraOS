@@ -70,12 +70,39 @@ credentials or directly calls Porter, App Store Connect, or Google Play.
 See .github/production-release/README.md for the complete procedure.`
 }
 
+// Node's default spawn buffer is 1 MB. GitHub listings for this repository
+// already exceed it (the release list is several megabytes and the builds
+// release alone has hundreds of assets), so every gh call gets a generous
+// buffer AND the listings below ask gh to project only the fields used.
+const GH_MAX_BUFFER = 64 * 1024 * 1024
+const RELEASE_FIELDS = "{id, tag_name, name, draft, prerelease, body, target_commitish}"
+const ASSET_FIELDS = "{id, name, digest, size, url, browser_download_url}"
+
 function execGh(args, options = {}) {
-  return execFileSync("gh", args, {encoding: "utf8", stdio: ["ignore", "pipe", "inherit"], ...options})
+  return execFileSync("gh", args, {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "inherit"],
+    maxBuffer: GH_MAX_BUFFER,
+    ...options,
+  })
 }
 
 function ghJson(args) {
   return JSON.parse(execGh(args))
+}
+
+export function parseJsonLines(output) {
+  return output
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => JSON.parse(line))
+}
+
+// `gh api --paginate` cannot combine --slurp with --jq, so page through with a
+// projection that emits one JSON object per line and parse those lines.
+function ghPaginated(endpoint, projection) {
+  return parseJsonLines(execGh(["api", "--paginate", endpoint, "--jq", `.[] | ${projection} | tojson`]))
 }
 
 function branchHead(repository, branch) {
@@ -243,8 +270,21 @@ export function releaseBranchSources(result, betaIdentity) {
 function loadReleaseBranchSources(betaIdentity) {
   const family = betaIdentity.slice(0, betaIdentity.indexOf("-beta."))
   const assetName = `mentra-release-${betaIdentity}.json`
-  const release = ghJson(["release", "view", `mentra-builds-v${family}`, "--repo", REPOSITORY, "--json", "assets"])
-  const asset = release.assets.find((candidate) => candidate.name === assetName)
+  const matches = parseJsonLines(
+    execGh([
+      "release",
+      "view",
+      `mentra-builds-v${family}`,
+      "--repo",
+      REPOSITORY,
+      "--json",
+      "assets",
+      "--jq",
+      `.assets[] | select(.name == ${JSON.stringify(assetName)}) | {name, apiUrl, digest} | tojson`,
+    ]),
+  )
+  if (matches.length > 1) throw new Error(`Release contains duplicate asset ${assetName}`)
+  const asset = matches[0]
   if (!asset) throw new Error(`Completed release asset ${assetName} was not found`)
   const contents = execGh(["api", "-H", "Accept: application/octet-stream", asset.apiUrl], {
     maxBuffer: 20 * 1024 * 1024,
@@ -257,7 +297,7 @@ function loadReleaseBranchSources(betaIdentity) {
 }
 
 function listReleases() {
-  return ghJson(["api", "--paginate", "--slurp", `repos/${REPOSITORY}/releases?per_page=100`]).flat()
+  return ghPaginated(`repos/${REPOSITORY}/releases?per_page=100`, RELEASE_FIELDS)
 }
 
 function resolveAttempt(releases, releaseIdentity, requestedAttempt) {
@@ -276,12 +316,7 @@ function loadLatestRecord(releaseIdentity, requestedAttempt) {
   const releases = listReleases()
   const attempt = resolveAttempt(releases, releaseIdentity, requestedAttempt)
   const release = requirePromotionContainer(releases, releaseIdentity, attempt)
-  const assets = ghJson([
-    "api",
-    "--paginate",
-    "--slurp",
-    `repos/${REPOSITORY}/releases/${release.id}/assets?per_page=100`,
-  ]).flat()
+  const assets = ghPaginated(`repos/${REPOSITORY}/releases/${release.id}/assets?per_page=100`, ASSET_FIELDS)
   const states = stateAssets(assets, releaseIdentity, attempt)
   if (states.length === 0) throw new Error(`Promotion ${releaseIdentity} attempt ${attempt} has no state record`)
   const entries = states.map((state) => {
