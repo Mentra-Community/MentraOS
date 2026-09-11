@@ -56,7 +56,8 @@ The required order is:
 
 Mobile N+1 compatibility with Cloud N is not a normal gate. Customers will
 inevitably keep Mobile N after Cloud N+1 is deployed, so Mobile N with Cloud N+1
-is mandatory.
+is mandatory. Step 1 needs the current app's source provenance; the first
+coordinated promotion has none and keeps only step 3 (see "Phase 1").
 
 ## One-time repository and account setup
 
@@ -138,17 +139,32 @@ Preparation fails if:
 - its source is not contained in `main`;
 - the public Mentra App does not match the previous production manifest;
 - store build numbers cannot be allocated monotonically; or
-- the current production release lacks provenance. For a one-time provenance
-  bootstrap, create and review an accurate immutable current-production record;
-  do not invent coordinates in the workflow.
+- a published `mentra-vX.Y.Z` release exists but its record does not describe
+  the public Mentra App.
+
+When no published `mentra-vX.Y.Z` release exists yet (the first coordinated
+promotion), the public Mentra App predates this system and cannot be rebuilt
+from provenance. Preparation then freezes the app exactly as both stores serve
+it (`currentMentraApp.provenance` is `store-observed`, with the App Store build
+number and the Play production version code), publishes the store inventory
+into the attempt container, and creates the initial record directly in
+`staging-compatible`: Phase 2 does not exist for that attempt because there is
+no source to build a lab app from. Phase 5 still verifies the real store app
+against production Cloud N+1. Every later promotion finds the `mentra-vX.Y.Z`
+release this one publishes and runs Phase 2 normally.
 
 If preparation stops before `status` can find an initial state record, rerun
 `start` with the same beta. That interrupted bootstrap may leave an empty draft
 attempt, but it has not deployed Cloud, uploaded an app, or consumed a store
-build coordinate. Once `status` returns `selected`, resume that attempt with
-`next` rather than starting another one.
+build coordinate. Once `status` returns `selected` (or `staging-compatible` for
+a first coordinated promotion), resume that attempt with `next` rather than
+starting another one.
 
 ## Phase 2 - Mobile N against staging Cloud N+1
+
+This phase only exists when the current production app has coordinated
+provenance. `status` shows a first coordinated promotion already in
+`staging-compatible`; continue with Phase 3.
 
 Run the next action and watch it to completion:
 

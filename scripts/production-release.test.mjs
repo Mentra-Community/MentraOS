@@ -34,6 +34,7 @@ const baseRecord = {
   source: {mentraosCommit: "a".repeat(40)},
   coordinates: {
     currentMentraApp: {
+      provenance: "coordinated",
       sourceCommit: "f".repeat(40),
       provenanceUrl: "https://github.com/Mentra-Community/MentraOS/releases/tag/mentra-v3.0.0",
       ios: {marketingVersion: "3.0.0", buildNumber: 1},
