@@ -511,9 +511,3 @@ jobs:
             echo "Both build attempts failed"
             exit 1
           fi
-
-      - name: Upload Device Build
-        uses: actions/upload-artifact@v4
-        with:
-          name: ios-device-build
-          path: mobile/ios/build-device/Build/Products/Release-iphoneos/Mentra.app
