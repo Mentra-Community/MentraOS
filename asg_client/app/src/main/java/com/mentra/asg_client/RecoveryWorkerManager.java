@@ -415,9 +415,25 @@ public class RecoveryWorkerManager {
         }
     }
 
+    /**
+     * Builds an intent addressed to the recovery worker. Every ASG-to-worker intent must be
+     * created here. The worker is installed by the OEM installer and sits in Android's
+     * "stopped" state until one of its components has run once; Android adds
+     * FLAG_EXCLUDE_STOPPED_PACKAGES to every broadcast by default and also withholds
+     * BOOT_COMPLETED from stopped packages, so without FLAG_INCLUDE_STOPPED_PACKAGES a freshly
+     * deployed worker is never woken: start requests and downgrade handoffs are dropped
+     * silently and the worker stays dormant across reboots. Delivering the intent runs the
+     * receiver, which clears the stopped state for good.
+     */
+    public static Intent newRecoveryIntent(String action) {
+        Intent intent = new Intent(action);
+        intent.setPackage(RECOVERY_PACKAGE);
+        intent.addFlags(Intent.FLAG_INCLUDE_STOPPED_PACKAGES);
+        return intent;
+    }
+
     private boolean sendStartRecoveryBroadcast() {
-        Intent startIntent = new Intent(ACTION_START_RECOVERY);
-        startIntent.setPackage(RECOVERY_PACKAGE);
+        Intent startIntent = newRecoveryIntent(ACTION_START_RECOVERY);
         List<ResolveInfo> receivers =
                 context.getPackageManager().queryBroadcastReceivers(startIntent, 0);
         if (receivers == null || receivers.isEmpty()) {
