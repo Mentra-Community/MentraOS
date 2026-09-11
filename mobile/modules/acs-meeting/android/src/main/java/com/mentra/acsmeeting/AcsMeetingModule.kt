@@ -1,5 +1,6 @@
 package com.mentra.acsmeeting
 
+import android.content.Context
 import android.content.Intent
 import android.os.Build
 import android.os.SystemClock
@@ -47,6 +48,12 @@ class AcsMeetingModule : Module() {
    * the session's ingest source and this join agree on the same [android.net.Network].
    */
   private var scopedNetwork: ScopedSoftApNetwork? = null
+
+  // prepareAgent creates the session before joinScopedNetwork runs. Give it the same holder
+  // now, so its ingest source sees the network populated later instead of retaining null.
+  @Synchronized
+  private fun getOrCreateScopedNetwork(context: Context): ScopedSoftApNetwork =
+    scopedNetwork ?: ScopedSoftApNetwork(context.applicationContext).also { scopedNetwork = it }
 
   /**
    * Holds cellular up across the hotspot join, and reports what the default network became.
@@ -117,7 +124,7 @@ class AcsMeetingModule : Module() {
     AsyncFunction("joinScopedNetwork") { ssid: String, passphrase: String ->
       traced("join_scoped_network", "ssid" to ssid) {
         val context = appContext.reactContext ?: throw IllegalStateException("no react context")
-        val scoped = scopedNetwork ?: ScopedSoftApNetwork(context.applicationContext).also { scopedNetwork = it }
+        val scoped = getOrCreateScopedNetwork(context)
         // Cellular first, and validated, because the next line is what takes office Wi-Fi away. A
         // phone whose cellular cannot carry TLS strands the ACS join for its whole timeout with
         // device-wide DNS failures, which reads as a hotspot problem and is not one.
@@ -267,7 +274,7 @@ class AcsMeetingModule : Module() {
               mapOf("base64" to base64, "sampleRate" to rate, "channels" to channels),
             )
           },
-          scopedNetwork = scopedNetwork ?: ScopedSoftApNetwork(context.applicationContext).also { scopedNetwork = it },
+          scopedNetwork = getOrCreateScopedNetwork(context),
         ).also { session = it }
         val hold = internetHold ?: InternetHold(context.applicationContext).also { internetHold = it }
         // Request cellular rather than trusting it to be up: a phone sitting on Wi-Fi may have the
@@ -318,7 +325,7 @@ class AcsMeetingModule : Module() {
               mapOf("base64" to base64, "sampleRate" to rate, "channels" to channels),
             )
           },
-          scopedNetwork = scopedNetwork ?: ScopedSoftApNetwork(context.applicationContext).also { scopedNetwork = it },
+          scopedNetwork = getOrCreateScopedNetwork(context),
         ).also { session = it }
         // The process is already pinned to cellular by now (sign-in and the scoped join both pin, and
         // ACS keeps the route its sockets were created with). Lift it only across the WHIP listener

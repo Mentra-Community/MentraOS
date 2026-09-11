@@ -188,11 +188,11 @@ class ScopedSoftApNetwork(private val context: Context) {
      * Whether the local-network permission is granted. Below the SDK level that enforces it, access
      * is implicit and this reports true.
      */
-    fun hasLocalNetworkPermission(): Boolean {
-        if (Build.VERSION.SDK_INT < LOCAL_NETWORK_ENFORCED_SDK) return true
-        return context.checkSelfPermission(ScopedNetworkError.LOCAL_NETWORK_PERMISSION) ==
-            PackageManager.PERMISSION_GRANTED
-    }
+    fun hasLocalNetworkPermission(): Boolean =
+        hasLocalNetworkPermission(Build.VERSION.SDK_INT, context.applicationInfo.targetSdkVersion) {
+            context.checkSelfPermission(ScopedNetworkError.LOCAL_NETWORK_PERMISSION) ==
+                PackageManager.PERMISSION_GRANTED
+        }
 
     /**
      * Join [ssid] and block until it is usable or the request fails.
@@ -626,6 +626,16 @@ class ScopedSoftApNetwork(private val context: Context) {
     companion object {
         /** Android 17. `ACCESS_LOCAL_NETWORK` is enforced for apps targeting SDK 37+. */
         const val LOCAL_NETWORK_ENFORCED_SDK = 37
+
+        /** Legacy targets retain implicit LAN access, even when the runtime grant reports denied. */
+        internal fun hasLocalNetworkPermission(
+            sdkInt: Int,
+            targetSdkInt: Int,
+            permissionGranted: () -> Boolean,
+        ): Boolean =
+            sdkInt < LOCAL_NETWORK_ENFORCED_SDK ||
+                targetSdkInt < LOCAL_NETWORK_ENFORCED_SDK ||
+                permissionGranted()
 
         private const val AWAIT_GRACE_MS = 2_000L
 
