@@ -120,10 +120,14 @@ jobs:
         run: |
           set -euo pipefail
           config="${{ steps.target.outputs.porter_config }}"
+          # Porter's CLI tags the image from GITHUB_SHA when it runs inside
+          # Actions, which is the dispatching commit rather than the frozen
+          # source on a workflow_dispatch from main; the explicit flag wins.
           porter apply \
             -w \
             -f "${config#cloud-v2/}" \
             -x "${{ steps.target.outputs.porter_target }}" \
+            --tag "$PORTER_TAG" \
             --cluster "$PORTER_CLUSTER" \
             --project "$PORTER_PROJECT"
 

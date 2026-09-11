@@ -230,6 +230,11 @@ test("Cloud V2 deploys once per coordinated environment before mobile publicatio
   assert.match(cloud, /group: coordinated-cloud-v2-\$\{\{ inputs\.deployment_environment \}\}/)
   assert.match(cloud, /cancel-in-progress: false/)
   assert.match(cloud, /porter apply \\\n+            -w/)
+  // Porter's CLI otherwise tags from GITHUB_SHA, which on a workflow_dispatch
+  // from main is the dispatching commit, not the frozen source; the deploy
+  // verifies the observed image tag against the source, so the tag is explicit.
+  assert.match(cloud, /PORTER_TAG: \$\{\{ steps\.source\.outputs\.tag \}\}/)
+  assert.match(cloud, /--tag "\$PORTER_TAG" \\/)
   assert.match(cloud, /getent hosts "\$host"/)
   assert.match(cloud, /for probe in healthz ready/)
   assert.match(cloud, /porter kubectl -- get pods/)
