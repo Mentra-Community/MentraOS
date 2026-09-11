@@ -11,10 +11,15 @@ const entries = [
   {mode: "100644", object: "a".repeat(40), path: "asg_client/app/build.gradle"},
   {mode: "160000", object: "b".repeat(40), path: "asg_client/StreamPackLite"},
 ]
-const versionName = "3.1.0-beta.57"
+const versionName = "3.1.0"
 
 test("derives a deterministic content-addressed ASG identity", () => {
-  const first = computeAsgBuildIdentity({entries, latestInputCommitTimestamp: 1_782_000_000, versionCode: 100_057, versionName})
+  const first = computeAsgBuildIdentity({
+    entries,
+    latestInputCommitTimestamp: 1_782_000_000,
+    versionCode: 100_057,
+    versionName,
+  })
   const reordered = computeAsgBuildIdentity({
     entries: [...entries].reverse(),
     latestInputCommitTimestamp: 1_782_000_000,
@@ -30,7 +35,12 @@ test("derives a deterministic content-addressed ASG identity", () => {
 })
 
 test("changes identity when an effective source or build contract changes", () => {
-  const baseline = computeAsgBuildIdentity({entries, latestInputCommitTimestamp: 1_782_000_000, versionCode: 100_057, versionName})
+  const baseline = computeAsgBuildIdentity({
+    entries,
+    latestInputCommitTimestamp: 1_782_000_000,
+    versionCode: 100_057,
+    versionName,
+  })
   const sourceChange = computeAsgBuildIdentity({
     entries: [{...entries[0], object: "c".repeat(40)}, entries[1]],
     latestInputCommitTimestamp: 1_782_000_100,
@@ -45,13 +55,36 @@ test("changes identity when an effective source or build contract changes", () =
     contract: {androidBuildVariant: "release", javaVersion: "21"},
   })
 
+  const nameChange = computeAsgBuildIdentity({
+    entries,
+    latestInputCommitTimestamp: 1_782_000_000,
+    versionCode: 100_057,
+    versionName: "3.2.0",
+  })
+
   assert.notEqual(sourceChange.fingerprint, baseline.fingerprint)
   assert.notEqual(sourceChange.versionCode, baseline.versionCode)
   assert.notEqual(contractChange.fingerprint, baseline.fingerprint)
+  assert.notEqual(nameChange.fingerprint, baseline.fingerprint)
+  assert.equal(nameChange.versionName, "3.2.0")
+})
+
+test("the ASG versionName is the plain family base version and part of the fingerprint", () => {
+  assert.throws(
+    () =>
+      computeAsgBuildFingerprint({entries, latestInputCommitTimestamp: 1_782_000_000, versionName: "3.1.0-beta.57"}),
+    /plain X\.Y\.Z family base version/,
+  )
+  const fingerprint = computeAsgBuildFingerprint({entries, latestInputCommitTimestamp: 1_782_000_000, versionName})
+  assert.equal(fingerprint.versionName, versionName)
+  assert.throws(
+    () => finalizeAsgBuildIdentity({buildFingerprint: fingerprint, versionCode: 301_000_001, versionName: "3.2.0"}),
+    /does not match the fingerprinted name/,
+  )
 })
 
 test("allocates the externally selected version code without changing the content fingerprint", () => {
-  const fingerprint = computeAsgBuildFingerprint({entries, latestInputCommitTimestamp: 1_782_000_000})
+  const fingerprint = computeAsgBuildFingerprint({entries, latestInputCommitTimestamp: 1_782_000_000, versionName})
   const first = finalizeAsgBuildIdentity({buildFingerprint: fingerprint, versionCode: 100_057, versionName})
   const later = finalizeAsgBuildIdentity({buildFingerprint: fingerprint, versionCode: 100_099, versionName})
 
