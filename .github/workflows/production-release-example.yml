@@ -2,8 +2,8 @@ name: Production Release - Bluetooth Example
 
 # Builds the production Bluetooth example for a promoted beta: the Starter Kit
 # main branch against the public plain X.Y.Z npm packages and the beta's
-# frozen OTA pin, distributed through the public TestFlight link and the Play
-# open-testing link, and recorded as mentra-example-release-X.Y.Z.json in the
+# frozen OTA pin, distributed through the public TestFlight link and a
+# dedicated closed Play track, and recorded as mentra-example-release-X.Y.Z.json in the
 # stable release container. Like the stable packages it is keyed on the beta,
 # never on a promotion attempt, and it never promotes a store listing.
 
@@ -316,7 +316,7 @@ jobs:
     secrets: inherit
 
   example-google-play:
-    name: Distribute the example through Play open testing
+    name: Distribute the example through its closed Play track
     needs: [load, starter-kit]
     uses: ./.github/workflows/reusable-coordinated-example-google-play.yml
     with:

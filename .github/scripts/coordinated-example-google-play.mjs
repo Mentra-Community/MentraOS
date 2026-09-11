@@ -26,15 +26,19 @@ export function verifyExampleAabIdentity(plan, aab, bundletool, run = execFileSy
 }
 
 export function examplePlayAudience(channel) {
-  return channel === "dev" ? "internal" : "external"
+  return channel === "beta" ? "external" : "internal"
 }
 
 export function examplePlayCoordinates(plan, starterKit, track) {
-  // The production example is public through the open-testing ("beta") track's
-  // opt-in link, never through a Play production release. Open testing is one
-  // track per app, so it serves whichever example carries the highest version
-  // code; the beta channel's example must leave it once production ships.
-  const expectedTrack = {dev: "internal", beta: "beta", production: "beta"}[plan.channel]
+  // The production example has its own closed track, created in Play Console
+  // under exactly this name, so it never competes with the dev and beta
+  // examples for the internal and open-testing tracks (a track serves one
+  // release at a time). It is never promoted to a Play production release.
+  const expectedTrack = {
+    dev: "internal",
+    beta: "beta",
+    production: "Mentra Bluetooth Example Production Candidates",
+  }[plan.channel]
   if (!expectedTrack || track !== expectedTrack) throw new Error("Example Google Play track does not match the channel")
   if (
     starterKit.releaseSetId !== plan.releaseSetId ||

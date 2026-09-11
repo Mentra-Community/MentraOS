@@ -212,7 +212,7 @@ function productionFixtures() {
   }
   plan.example = {
     testflight: {group: "Mentra Bluetooth Example", audience: "external"},
-    googlePlay: {track: "beta"},
+    googlePlay: {track: "Mentra Bluetooth Example Production Candidates"},
     storePromotion: "never",
   }
   const production = {
@@ -248,8 +248,8 @@ function productionFixtures() {
       releaseIdentity: plan.releaseIdentity,
       channel: "production",
       version: {marketingVersion: "3.1.0", buildNumber: 310000058},
-      track: "beta",
-      distribution: {...exampleGooglePlay.distribution, audience: "external"},
+      track: "Mentra Bluetooth Example Production Candidates",
+      distribution: {...exampleGooglePlay.distribution, audience: "internal"},
       aab: {
         ...exampleGooglePlay.aab,
         url: `https://github.com/Mentra-Community/MentraOS/releases/download/${plan.artifactContainerTag}/mentra-example-react-native-3.1.0.aab`,
@@ -288,8 +288,8 @@ test("a production example is finalized against the promoted beta's manifest and
   assert.equal(record.starterKit.testflight.group.name, "Mentra Bluetooth Example")
   assert.equal(record.starterKit.testflight.distribution.audience, "external")
   assert.match(record.starterKit.testflight.distribution.installUrl, /^https:\/\/testflight\.apple\.com\/join\//)
-  assert.equal(record.starterKit.googlePlay.track, "beta")
-  assert.equal(record.starterKit.googlePlay.distribution.audience, "external")
+  assert.equal(record.starterKit.googlePlay.track, "Mentra Bluetooth Example Production Candidates")
+  assert.equal(record.starterKit.googlePlay.distribution.audience, "internal")
   assert.equal(validateExampleReleaseRecord(record, f.plan), record)
   assert.throws(
     () =>
@@ -333,7 +333,7 @@ test("a production example refuses a manifest, plan, or destination that is not 
     /public invitation link/,
   )
   assert.throws(
-    () => assembleProduction({exampleGooglePlay: {...f.exampleGooglePlay, track: "internal"}}),
+    () => assembleProduction({exampleGooglePlay: {...f.exampleGooglePlay, track: "beta"}}),
     /track does not match/,
   )
 })

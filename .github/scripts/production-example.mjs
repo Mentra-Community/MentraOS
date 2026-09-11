@@ -18,13 +18,14 @@ import {validateSelectedBeta} from "./prepare-production-promotion.mjs"
 import {createReleasePlan, loadReleaseFamily, serializeReleaseRecord} from "./release-family.mjs"
 
 export const EXAMPLE_BUNDLE_ID = "com.mentra.bluetoothsdkexample"
-// The production example is distributed like a public beta, not like a store
-// candidate: an external TestFlight group with a public link and the Play
-// open-testing track with its opt-in link. Nothing in this lane submits a
-// store listing.
+// iOS is distributed like a public beta: an external TestFlight group with a
+// public link. Android goes to a dedicated closed Play track so it never
+// competes with the dev and beta examples for the shared internal and
+// open-testing tracks (a Play track serves one release at a time). Nothing in
+// this lane submits a store listing.
 export const EXAMPLE_TESTFLIGHT_GROUP = "Mentra Bluetooth Example"
 export const EXAMPLE_TESTFLIGHT_AUDIENCE = "external"
-export const EXAMPLE_PLAY_TRACK = "beta"
+export const EXAMPLE_PLAY_TRACK = "Mentra Bluetooth Example Production Candidates"
 const ANDROID_MAX_VERSION_CODE = 2_100_000_000
 
 function requireInteger(value, label) {

@@ -83,7 +83,7 @@ test("freezes a production example plan keyed on the promoted beta with the allo
   assert.equal(plan.promotion.selectedBetaIdentity, betaPlan.releaseIdentity)
   assert.equal(plan.example.testflight.group, "Mentra Bluetooth Example")
   assert.equal(plan.example.testflight.audience, "external")
-  assert.equal(plan.example.googlePlay.track, "beta")
+  assert.equal(plan.example.googlePlay.track, "Mentra Bluetooth Example Production Candidates")
   assert.equal(plan.example.storePromotion, "never")
   assert.throws(
     () =>

@@ -61,7 +61,15 @@ for (const channel of ["dev", "beta"]) {
 test("rejects incorrect channels, source revisions, packages, and absent Play version codes", () => {
   const {plan, starterKit, track} = fixture()
   assert.throws(() => examplePlayCoordinates(plan, starterKit, "production"), /track/)
-  assert.throws(() => examplePlayCoordinates({...plan, channel: "production"}, starterKit, "beta"), /source/)
+  assert.throws(
+    () =>
+      examplePlayCoordinates(
+        {...plan, channel: "production"},
+        starterKit,
+        "Mentra Bluetooth Example Production Candidates",
+      ),
+    /source/,
+  )
   assert.throws(() => examplePlayCoordinates({...plan, channel: "production"}, starterKit, "internal"), /track/)
   assert.throws(() => examplePlayCoordinates(plan, {...starterKit, packages: {}}, track), /source/)
   assert.throws(
@@ -168,7 +176,7 @@ test("coordinator preserves MentraOS tracks and separates example audiences", ()
   assert.match(notification, /checks_line\+=" \| Example Google Play:/)
 })
 
-test("the production example is public through the open-testing track", () => {
+test("the production example has its own closed Play track for an internal audience", () => {
   const {plan: beta, starterKit: betaKit} = fixture()
   const plan = {
     ...beta,
@@ -185,11 +193,12 @@ test("the production example is public through the open-testing track", () => {
     releaseSetId: "mentra-3.1.0",
     packages: {"@mentra/bluetooth-sdk": "3.1.0", "@mentra/engine": "3.1.0"},
   }
-  const coordinates = examplePlayCoordinates(plan, starterKit, "beta")
+  const coordinates = examplePlayCoordinates(plan, starterKit, "Mentra Bluetooth Example Production Candidates")
   assert.equal(coordinates.build_number, 310000099)
   assert.equal(coordinates.aab_name, "mentra-example-react-native-3.1.0.aab")
   assert.match(coordinates.aab_url, /mentra-v3\.1\.0\/mentra-example-react-native-3\.1\.0\.aab$/)
   assert.throws(() => examplePlayCoordinates(plan, starterKit, "internal"), /track/)
+  assert.throws(() => examplePlayCoordinates(plan, starterKit, "beta"), /track/)
   const config = configureExampleAndroid(
     plan,
     {expo: {ios: {bundleIdentifier: "x"}, android: {}}},
@@ -200,13 +209,13 @@ test("the production example is public through the open-testing track", () => {
   const record = createExampleGooglePlayRecord({
     plan,
     starterKit,
-    track: "beta",
+    track: "Mentra Bluetooth Example Production Candidates",
     codes: [310000099],
     aab: Buffer.from("aab"),
     artifactUrl: coordinates.aab_url,
     uploadStatus: "published",
     provenanceUrl: "https://github.com/Mentra-Community/MentraOS/actions/runs/1",
   })
-  assert.equal(record.distribution.audience, "external")
-  assert.equal(record.track, "beta")
+  assert.equal(record.distribution.audience, "internal")
+  assert.equal(record.track, "Mentra Bluetooth Example Production Candidates")
 })

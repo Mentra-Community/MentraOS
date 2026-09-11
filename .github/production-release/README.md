@@ -6,9 +6,9 @@ production. It covers Cloud V2 and the Mentra App on iOS and Android.
 The Bluetooth SDK Starter Kit example app is outside the promotion state
 machine. Its production candidates are built by a separate workflow keyed on
 the promoted beta (see "Bluetooth example" below): it is distributed through
-a public TestFlight link and the Play open-testing link and is never submitted
-for App Review or released through a store. Do not add the example app manually
-to a promotion attempt.
+a public TestFlight link and a dedicated closed Play track and is never
+submitted for App Review or released through a store. Do not add the example
+app manually to a promotion attempt.
 
 The example app is also its own release notion in the coordinated beta. A beta
 is complete, and promotable, when `finalize` writes `mentra-release-<beta>.json`
@@ -485,13 +485,13 @@ Then it:
   branch to the plain versions, builds the examples, tags `sdk-X.Y.Z`, and
   publishes them in the non-prerelease Starter Kit release `sdk-X.Y.Z`
   (including `mentra-example-react-native-X.Y.Z.apk`);
-- uploads the iOS build to the external TestFlight group `Mentra Bluetooth
-Example` (created with its public link on first use) and submits it for
-  Beta App Review, and uploads the Android build to the Play open-testing
-  (`beta`) track with its opt-in link. Open testing is one track per app, so
-  it serves whichever example has the highest version code: the beta
-  channel's example must move to a closed track once production ships from
-  it; and
+- uploads the iOS build to the external TestFlight group
+  `Mentra Bluetooth Example` (created with its public link on first use) and
+  submits it for Beta App Review, and uploads the Android build to the closed
+  Play track `Mentra Bluetooth Example Production Candidates`. Create that
+  track once in Play Console under exactly that name; a Play track serves one
+  release at a time, so the production example never shares the internal or
+  open-testing tracks with the dev and beta examples; and
 - records `mentra-example-release-X.Y.Z.json` in the stable release
   `mentra-vX.Y.Z`, the same draft the packages and the rollout finalization
   stage records into. The record carries `storePromotion: "never"`.
