@@ -53,7 +53,7 @@ download the files carrying the same full version:
 - `mentra-example-rn-elevenlabs-audio-<version>.apk` — React Native ElevenLabs audio example
 - `mentra-example-ios-<version>-unsigned.ipa` — native iOS example
 
-Android APKs install directly from the phone browser (enable installs from unknown sources when prompted). The iOS IPA is unsigned; install it with a sideloading tool such as [Sideloadly](https://sideloadly.io/) or [AltStore](https://altstore.io/), which re-signs it with your own Apple ID. Pull-request builds are also available for 90 days as run artifacts on each [workflow run](https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit/actions/workflows/example-app-builds.yml).
+Android APKs install directly from the phone browser (enable installs from unknown sources when prompted). The iOS IPA is unsigned; install it with a sideloading tool such as [Sideloadly](https://sideloadly.io/) or [AltStore](https://altstore.io/), which re-signs it with your own Apple ID. Android pull-request builds are also available for 90 days as run artifacts on each [workflow run](https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit/actions/workflows/example-app-builds.yml). Ordinary pull requests analyze and compile the native iOS example without packaging or uploading it; unsigned IPA artifacts are retained for coordinated-release pull requests and manual workflow runs.
 
 ## What The Examples Demonstrate
 
