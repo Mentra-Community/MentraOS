@@ -164,8 +164,10 @@ jobs:
           cp mobile/Gemfile mobile/Gemfile.lock example-input/play/
           cd example-input/play
           bundle install
+          # fastlane runs the lane from inside fastlane/, so the output path must
+          # be absolute.
           APP_PACKAGE_NAME="$EXAMPLE_BUNDLE_ID" \
-            GOOGLE_PLAY_INVENTORY_OUTPUT=../stores/example-google.json \
+            GOOGLE_PLAY_INVENTORY_OUTPUT="$GITHUB_WORKSPACE/example-input/stores/example-google.json" \
             bundle exec fastlane google_play_inventory
 
       # The allocated build number must survive reruns: a retry after a partial

@@ -615,6 +615,8 @@ test("Play lane outputs in the production workflows are absolute paths", () => {
       assert.match(match[1], /^"\$GITHUB_WORKSPACE\//, `${name}: ${match[0]}`)
     }
   }
+})
+
 test("the production example is keyed on the promoted beta and never promotes a store listing", () => {
   const example = workflow("production-release-example.yml")
   const load = jobBlock(example, "load")
@@ -627,6 +629,7 @@ test("the production example is keyed on the promoted beta and never promotes a 
   assert.match(load, /npm view "\$name@\$RELEASE_IDENTITY" version/)
   assert.match(load, /production-example\.mjs plan/)
   assert.match(load, /--apple-inventory example-input\/stores\/example-apple\.json/)
+  assert.match(load, /GOOGLE_PLAY_INVENTORY_OUTPUT="\$GITHUB_WORKSPACE\/example-input\/stores\/example-google\.json"/)
   assert.match(load, /production-packages\.mjs ensure-container/)
   assert.match(example, /uses: \.\/\.github\/workflows\/reusable-coordinated-starter-kit\.yml/)
   assert.match(example, /uses: \.\/\.github\/workflows\/reusable-coordinated-example-testflight\.yml/)
