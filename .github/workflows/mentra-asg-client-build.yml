@@ -1,10 +1,32 @@
 name: MentraOS ASG Client Build
 
+# Pull requests: publish the ASG client a PR mobile build pins for glasses OTA.
+#
+# Every Mobile App Android Build PR APK embeds the OTA manifest URL
+# https://github.com/<repo>/releases/download/pr-builds/ota-pr-<n>-<head sha>.json
+# and this workflow is the only producer of that manifest, so its pull_request
+# paths must stay a superset of that workflow's. The manifest points at an ASG
+# client built from the PR's own ASG sources: the `select` job fingerprints
+# those sources exactly like the coordinated release lane and reuses the
+# coordinated artifact when one exists (the common case for PRs that leave
+# asg_client untouched); otherwise the `build` job builds one and publishes it
+# next to the manifest on the pr-builds release.
+#
+# Pushes to dev/main and manual dispatches only compile-check the ASG client.
+
 on:
   pull_request:
     paths:
       - "asg_client/**"
+      - "mobile/**"
+      # The root version is the ASG versionName and part of the fingerprint.
+      - "package.json"
       - ".github/workflows/mentra-asg-client-build.yml"
+      - ".github/workflows/mentra-app-android-build.yml"
+      - ".github/scripts/select-pr-asg.mjs"
+      - ".github/scripts/compute-asg-build-identity.mjs"
+      - ".github/scripts/allocate-asg-version.mjs"
+      - ".github/scripts/build-bluetooth-sdk-ota-manifest.mjs"
   push:
     branches:
       - main
@@ -22,8 +44,110 @@ permissions:
   contents: write
   pull-requests: write
 
+env:
+  # Content-addressed ASG artifacts of the coordinated release lane
+  # (reusable-coordinated-ota.yml): mentra-live-asg-<versionCode>-<fingerprint>.{apk,json}.
+  ASG_RELEASE_TAG: mentra-coordinated-asg
+  PR_BUILDS_TAG: pr-builds
+
 jobs:
+  select:
+    if: github.event_name == 'pull_request'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      mode: ${{ steps.select.outputs.mode }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+        with:
+          # The fingerprint script needs the commit history for its
+          # path-limited `git log`; trees are enough, blobs stay remote.
+          fetch-depth: 0
+          filter: blob:none
+
+      - name: Select the ASG client for this pull request
+        id: select
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p pr-asg-work
+          release_id=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${ASG_RELEASE_TAG}" --jq .id)
+          gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases/${release_id}/assets?per_page=100" \
+            | jq 'add' > pr-asg-work/coordinated-asg-assets.json
+          node .github/scripts/select-pr-asg.mjs \
+            --source-commit "$GITHUB_SHA" \
+            --assets pr-asg-work/coordinated-asg-assets.json \
+            --output pr-asg-work/selection.json
+
+      - name: Publish the OTA manifest for the reused ASG client
+        if: steps.select.outputs.mode == 'reuse'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PROVENANCE_ASSET: ${{ steps.select.outputs.provenance_asset }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          gh release download "$ASG_RELEASE_TAG" --pattern "$PROVENANCE_ASSET" --dir pr-asg-work
+          provenance="pr-asg-work/${PROVENANCE_ASSET}"
+          ASG_APK_URL=$(jq -er .apk.url "$provenance")
+          ASG_APK_SHA256=$(jq -er .apk.sha256 "$provenance")
+          ASG_APK_SIZE=$(jq -er .apk.size "$provenance")
+          ASG_VERSION_CODE=$(jq -er .versionCode "$provenance")
+          ASG_VERSION_NAME=$(jq -er .versionName "$provenance")
+          RELEASE_VERSION="pr-${PR_NUMBER}-${HEAD_SHA}"
+          FIRMWARE_MANIFEST=asg_client/ota_manifests/firmware_live.json
+          OUTPUT_PATH="pr-asg-work/ota-pr-${PR_NUMBER}-${HEAD_SHA}.json"
+          export ASG_APK_URL ASG_APK_SHA256 ASG_APK_SIZE ASG_VERSION_CODE ASG_VERSION_NAME
+          export RELEASE_VERSION FIRMWARE_MANIFEST OUTPUT_PATH
+          node .github/scripts/build-bluetooth-sdk-ota-manifest.mjs
+          gh release upload "$PR_BUILDS_TAG" "$OUTPUT_PATH" --clobber
+          echo "Published ${OUTPUT_PATH##*/} pinning coordinated ASG ${ASG_VERSION_CODE} (${ASG_VERSION_NAME})."
+
+      - name: Update PR comment - Reused coordinated build
+        if: steps.select.outputs.mode == 'reuse'
+        uses: actions/github-script@v7
+        env:
+          ASG_VERSION_CODE: ${{ steps.select.outputs.version_code }}
+        with:
+          script: |
+            const comments = await github.rest.issues.listComments({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              issue_number: context.issue.number,
+            });
+
+            const marker = '<!-- pr-review-helper -->';
+            const comment = comments.data.find(c => c.body.includes(marker));
+            if (!comment) return;
+
+            const prNumber = context.payload.pull_request.number;
+            const headSha = context.payload.pull_request.head.sha;
+            const sha = headSha.substring(0, 7);
+            const manifestName = `ota-pr-${prNumber}-${headSha}.json`;
+            const manifestUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/pr-builds/${manifestName}`;
+
+            const buildStatus = `### 🕶️ ASG Client Build\n♻️ **Unchanged in this PR** (commit \`${sha}\`) - reusing coordinated ASG build \`${process.env.ASG_VERSION_CODE}\`\n\n🔄 **OTA manifest:** [${manifestName}](${manifestUrl}) - the Mobile App PR build updates Mentra Live glasses to this ASG client.`;
+
+            const newBody = comment.body.replace(
+              /<!-- asg-build-status -->[\s\S]*?<!-- \/asg-build-status -->/,
+              `<!-- asg-build-status -->\n${buildStatus}\n<!-- /asg-build-status -->`
+            );
+
+            await github.rest.issues.updateComment({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              comment_id: comment.id,
+              body: newBody
+            });
+
   build:
+    needs: select
+    # Pushes and dispatches always build; a pull request builds only when no
+    # coordinated ASG artifact matches its sources (select decided "build").
+    if: ${{ !cancelled() && (github.event_name != 'pull_request' || needs.select.outputs.mode == 'build') }}
     # Blacksmith 4 vCPU Ubuntu. Signing creds come from secrets via inject-signing
     # (no longer needs the mac runners' ~/.mentra/credentials), keeping mac
     # capacity free for iOS + staging/release builds. Faster than the free
@@ -115,6 +239,19 @@ jobs:
         run: |
           # Create .env from example
           cp .env.example .env
+
+      - name: Pin the ASG version code
+        # asg_client/app/build.gradle treats an unpinned build as a development
+        # build: its versionName gets a "-dev" suffix that opts the glasses out
+        # of OTA. CI pins the same time-derived code the mobile app uses
+        # (mobile/scripts/build-number.mjs), so the APK and the OTA manifest
+        # written below agree and the build is OTA-installable.
+        run: |
+          set -euo pipefail
+          code=$(node --input-type=module -e "import('./mobile/scripts/build-number.mjs').then(m => console.log(m.getBuildNumber()))")
+          [[ "$code" =~ ^[1-9][0-9]*$ ]]
+          echo "ASG_VERSION_CODE=$code" >> "$GITHUB_ENV"
+          echo "ASG versionCode pinned to $code"
 
       - name: Cache Gradle dependencies
         uses: actions/cache@v4
@@ -224,6 +361,7 @@ jobs:
           path: asg_client/app/build/outputs/apk/release/app-release.apk
 
       - name: Upload APK to pr-builds release
+        id: upload-apk
         if: github.event_name == 'pull_request'
         continue-on-error: true
         uses: actions/github-script@v7
@@ -272,6 +410,40 @@ jobs:
 
             console.log(`Successfully uploaded ${apkName}`);
 
+      - name: Publish the OTA manifest for this build
+        # Only once the APK it points at is on the release, and never on push
+        # or dispatch runs, which have no PR manifest to publish.
+        if: github.event_name == 'pull_request' && steps.upload-apk.outcome == 'success'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          apk=asg_client/app/build/outputs/apk/release/app-release.apk
+          aapt=$(find "$ANDROID_HOME/build-tools" -type f -name aapt -perm -111 | LC_ALL=C sort | tail -1)
+          test -n "$aapt"
+          badging=$("$aapt" dump badging "$apk" | sed -n '1p')
+          version_code=$(sed -n "s/.*versionCode='\([^']*\)'.*/\1/p" <<< "$badging")
+          version_name=$(sed -n "s/.*versionName='\([^']*\)'.*/\1/p" <<< "$badging")
+          if [[ "$version_code" != "$ASG_VERSION_CODE" ]]; then
+            echo "::error::Built APK carries versionCode ${version_code:-<missing>}, expected the pinned ${ASG_VERSION_CODE}."
+            exit 1
+          fi
+          mkdir -p pr-asg-work
+          ASG_APK_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${PR_BUILDS_TAG}/asg-pr-${PR_NUMBER}-${HEAD_SHA:0:7}.apk"
+          ASG_APK_SHA256=$(sha256sum "$apk" | cut -d' ' -f1)
+          ASG_APK_SIZE=$(stat -c %s "$apk")
+          ASG_VERSION_NAME="$version_name"
+          RELEASE_VERSION="pr-${PR_NUMBER}-${HEAD_SHA}"
+          FIRMWARE_MANIFEST=asg_client/ota_manifests/firmware_live.json
+          OUTPUT_PATH="pr-asg-work/ota-pr-${PR_NUMBER}-${HEAD_SHA}.json"
+          export ASG_APK_URL ASG_APK_SHA256 ASG_APK_SIZE ASG_VERSION_CODE ASG_VERSION_NAME
+          export RELEASE_VERSION FIRMWARE_MANIFEST OUTPUT_PATH
+          node .github/scripts/build-bluetooth-sdk-ota-manifest.mjs
+          gh release upload "$PR_BUILDS_TAG" "$OUTPUT_PATH" --clobber
+          echo "Published ${OUTPUT_PATH##*/} pinning ASG ${ASG_VERSION_CODE} (${ASG_VERSION_NAME})."
+
       - name: Cleanup old release assets
         if: github.event_name == 'pull_request'
         continue-on-error: true
@@ -318,11 +490,14 @@ jobs:
             if (!comment) return;
 
             const prNumber = context.payload.pull_request.number;
-            const sha = context.payload.pull_request.head.sha.substring(0, 7);
+            const headSha = context.payload.pull_request.head.sha;
+            const sha = headSha.substring(0, 7);
             const apkName = `asg-pr-${prNumber}-${sha}.apk`;
-            const downloadUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/pr-builds/${apkName}`;
+            const releaseBase = `https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/pr-builds`;
+            const downloadUrl = `${releaseBase}/${apkName}`;
+            const manifestName = `ota-pr-${prNumber}-${headSha}.json`;
 
-            const buildStatus = `### 🕶️ ASG Client Build\n✅ **Ready to test!** (commit \`${sha}\`)\n\n[📥 **Download ASG APK**](${downloadUrl})`;
+            const buildStatus = `### 🕶️ ASG Client Build\n✅ **Ready to test!** (commit \`${sha}\`)\n\n[📥 **Download ASG APK**](${downloadUrl})\n\n🔄 **OTA manifest:** [${manifestName}](${releaseBase}/${manifestName}) - the Mobile App PR build updates Mentra Live glasses to this ASG build.`;
 
             const newBody = comment.body.replace(
               /<!-- asg-build-status -->[\s\S]*?<!-- \/asg-build-status -->/,

@@ -52,8 +52,16 @@ test('writes the coordinated release version independently of the ASG version', 
   assert.deepEqual(JSON.parse(readFileSync(inputsPath, 'utf8')).mtkFullOta, manifest.mtk_full_ota);
 });
 
+test('labels a pull request build manifest with its PR number and commit', () => {
+  const {outputPath, result} = runManifestBuild('pr-3927-4987210f6e');
+  assert.equal(result.status, 0, result.stderr);
+  assert.equal(JSON.parse(readFileSync(outputPath, 'utf8')).releaseVersion, 'pr-3927-4987210f6e');
+});
+
 test('rejects a value outside the coordinated release identity format', () => {
-  const {result} = runManifestBuild('asg.40');
-  assert.notEqual(result.status, 0);
-  assert.match(result.stderr, /Invalid coordinated release version/);
+  for (const invalid of ['asg.40', 'pr-3927', 'pr-0-4987210', 'pr-3927-branch']) {
+    const {result} = runManifestBuild(invalid);
+    assert.notEqual(result.status, 0, invalid);
+    assert.match(result.stderr, /Invalid release version/);
+  }
 });
