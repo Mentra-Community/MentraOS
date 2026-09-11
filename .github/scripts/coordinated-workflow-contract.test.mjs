@@ -275,7 +275,10 @@ test("Private Deployment is release-matched and recorded by the dev coordinator"
   assert.match(privateDeploymentJob, /needs\.plan\.outputs\.cloud_environment == 'dev'/)
   assert.match(privateDeploymentJob, /source_commit: \$\{\{ needs\.plan\.outputs\.source_commit \}\}/)
   assert.match(privateDeploymentJob, /release_plan_artifact: \$\{\{ needs\.plan\.outputs\.plan_artifact \}\}/)
-  assert.match(privateDeploymentJob, /runtime_image_artifact: \$\{\{ needs\.runtime-image\.outputs\.result_artifact \}\}/)
+  assert.match(
+    privateDeploymentJob,
+    /runtime_image_artifact: \$\{\{ needs\.runtime-image\.outputs\.result_artifact \}\}/,
+  )
   assert.match(privateDeployment, /workflow_call:/)
   assert.doesNotMatch(privateDeployment, /push:/)
   assert.doesNotMatch(privateDeployment, /workflow_dispatch:/)
