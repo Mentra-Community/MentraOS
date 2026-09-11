@@ -337,6 +337,18 @@ test("coordinated docs publish only after finalization to the matching channel",
   assert.match(finalizeExample, /record_name="mentra-example-release-\$identity\.json"/)
   assert.match(finalizeExample, /publish-immutable-release-asset\.mjs/)
   assert.match(finalizeExample, /verify-public-release-asset\.mjs/)
+  // Retries are idempotent: the Starter Kit head the earlier attempt used is
+  // recovered from its candidate (or release tag), and an already-published
+  // example record is reproduced byte-for-byte instead of re-minted.
+  assert.match(
+    starterKit,
+    /candidate_parent=\$\(gh api "repos\/\$STARTER_KIT_REPOSITORY\/commits\/coordinated\/\$identity" --jq '\.parents\[0\]\.sha'/,
+  )
+  assert.match(starterKit, /commits\/sdk-\$identity" --jq '\.parents\[0\]\.sha'/)
+  assert.match(finalizeExample, /--output existing-record\.json/)
+  assert.match(finalizeExample, /completed_at=\$\(jq -er \.completedAt existing-record\.json\)/)
+  assert.match(finalizeExample, /cmp existing-record\.json "finalized-example\/\$record_name"/)
+  assert.match(finalizeExample, /--completed-at "\$completed_at"/)
   assert.match(plan, /Restore the release plan selected by an earlier attempt/)
   assert.match(plan, /actions\/runs\/\$GITHUB_RUN_ID\/artifacts/)
   assert.match(plan, /gh run download "\$GITHUB_RUN_ID"/)

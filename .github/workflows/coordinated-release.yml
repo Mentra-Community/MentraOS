@@ -393,7 +393,23 @@ jobs:
             *) echo "Unsupported prerelease Starter Kit channel $channel" >&2; exit 1 ;;
           esac
 
-          expected_head=$(git ls-remote "https://github.com/$STARTER_KIT_REPOSITORY.git" "refs/heads/$target_branch" | awk '{print $1}')
+          # The Starter Kit repository builds every coordinated example from its
+          # own channel head, so nothing about it is frozen in the Mentra plan.
+          # A retry must still resend the head the earlier attempt used: the
+          # Starter Kit only accepts a byte-identical payload whose head is the
+          # parent of the candidate it already created. Recover that head from
+          # the candidate branch, or from the release tag if the candidate was
+          # already merged and the branch deleted, before sampling a new head.
+          candidate_parent=$(gh api "repos/$STARTER_KIT_REPOSITORY/commits/coordinated/$identity" --jq '.parents[0].sha' 2>/dev/null || true)
+          if [[ ! "$candidate_parent" =~ ^[0-9a-f]{40}$ ]]; then
+            candidate_parent=$(gh api "repos/$STARTER_KIT_REPOSITORY/commits/sdk-$identity" --jq '.parents[0].sha' 2>/dev/null || true)
+          fi
+          if [[ "$candidate_parent" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Reusing the Starter Kit head $candidate_parent recorded by the earlier request for $identity"
+            expected_head="$candidate_parent"
+          else
+            expected_head=$(git ls-remote "https://github.com/$STARTER_KIT_REPOSITORY.git" "refs/heads/$target_branch" | awk '{print $1}')
+          fi
           [[ "$expected_head" =~ ^[0-9a-f]{40}$ ]]
           payload=$(jq -cn \
             --arg releaseSetId "$release_set_id" \
@@ -920,6 +936,19 @@ jobs:
           test -n "$starter_kit_result"
           test -n "$example_testflight"
           record_name="mentra-example-release-$identity.json"
+          record_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/$tag/$record_name"
+          # Immutable asset: a retry after a partial publication must reproduce
+          # the exact bytes already on the release, so reuse that record's
+          # completion time and provenance instead of minting new ones.
+          completed_at=$(date -u +%Y-%m-%dT%H:%M:%S.000Z)
+          provenance_url="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          if curl --fail --silent --show-error --location "$record_url" --output existing-record.json 2>/dev/null; then
+            echo "Reconciling against the example record already published at $record_url"
+            completed_at=$(jq -er .completedAt existing-record.json)
+            provenance_url=$(jq -er .provenanceUrl existing-record.json)
+          else
+            rm -f existing-record.json
+          fi
           node .github/scripts/example-release-records.mjs \
             --plan "$plan" \
             --beta-manifest "$beta_manifest" \
@@ -928,14 +957,17 @@ jobs:
             --starter-kit-result-url "${{ needs.starter-kit.outputs.result_url }}" \
             --example-testflight "$example_testflight" \
             --example-google-play release-input/example-google-play/example-google-play-publication.json \
-            --completed-at "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" \
-            --provenance-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --completed-at "$completed_at" \
+            --provenance-url "$provenance_url" \
             --output "finalized-example/$record_name"
+          if [[ -f existing-record.json ]]; then
+            cmp existing-record.json "finalized-example/$record_name"
+          fi
           {
             echo "tag=$tag"
             echo "identity=$identity"
             echo "record_name=$record_name"
-            echo "record_url=https://github.com/${GITHUB_REPOSITORY}/releases/download/$tag/$record_name"
+            echo "record_url=$record_url"
           } >> "$GITHUB_OUTPUT"
 
       - name: Publish and verify the immutable example release record
