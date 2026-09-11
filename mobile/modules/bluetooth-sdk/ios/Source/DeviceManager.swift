@@ -1510,6 +1510,10 @@ struct ViewState {
         sgc?.requestWifiScan(scanId: scanId)
     }
 
+    @discardableResult func requestSavedWifiNetworks(requestId: String, sid: String) -> Bool {
+        sgc?.requestSavedWifiNetworks(requestId: requestId, sid: sid) ?? false
+    }
+
     func sendIncidentId(_ incidentId: String, apiBaseUrl: String? = nil) {
         Bridge.log("MAN: Sending incidentId to glasses for log upload: \(incidentId)")
         sgc?.sendIncidentId(incidentId, apiBaseUrl: apiBaseUrl)
@@ -1520,9 +1524,8 @@ struct ViewState {
         sgc?.sendWifiCredentials(ssid, password)
     }
 
-    func forgetWifiNetwork(_ ssid: String) {
-        Bridge.log("MAN: Forgetting wifi network: \(ssid)")
-        sgc?.forgetWifiNetwork(ssid)
+    @discardableResult func forgetWifiNetwork(_ ssid: String, requestId: String? = nil, sid: String? = nil) -> Bool {
+        sgc?.forgetWifiNetwork(ssid, requestId: requestId, sid: sid) ?? false
     }
 
     func setHotspotState(_ enabled: Bool) {

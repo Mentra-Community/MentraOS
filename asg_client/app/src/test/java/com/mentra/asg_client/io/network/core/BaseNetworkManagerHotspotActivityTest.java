@@ -92,6 +92,9 @@ public class BaseNetworkManagerHotspotActivityTest {
         public void disconnectFromWifi() {}
 
         @Override
-        public void forgetWifiNetwork(String ssid) {}
+        public com.mentra.asg_client.io.network.interfaces.WifiForgetOutcome forgetWifiNetwork(
+                String ssid) {
+            return com.mentra.asg_client.io.network.interfaces.WifiForgetOutcome.UNSUPPORTED;
+        }
     }
 }

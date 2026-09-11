@@ -128,6 +128,68 @@ export type WifiStatusChangeEvent = WifiStatus & {
   error?: string
 }
 
+export type WifiForgetOutcome =
+  | "confirmed"
+  | "dispatched"
+  | "not_found"
+  | "unsupported"
+  | "failed"
+  | "legacy_unverified"
+
+export type WifiForgetResult = {
+  ssid: string
+  outcome: WifiForgetOutcome
+  connected?: boolean
+  currentSsid?: string
+  localIp?: string
+  error?: string
+}
+
+export type ModernWifiForgetResultEvent = {
+  type: "wifi_forget_result"
+  mode: "modern"
+  requestId: string
+  sid: string
+  ssid: string
+  protocolVersion: number
+  outcome: Exclude<WifiForgetOutcome, "legacy_unverified">
+  connected?: boolean
+  currentSsid?: string
+  localIp?: string
+  error?: string
+}
+
+export type LegacyWifiForgetResultEvent = {
+  type: "wifi_forget_result"
+  mode: "legacy"
+  ssid: string
+  dispatched: boolean
+  connected?: boolean
+  currentSsid?: string
+  localIp?: string
+  error?: string
+}
+
+export type WifiForgetResultEvent = ModernWifiForgetResultEvent | LegacyWifiForgetResultEvent
+
+export type SavedWifiNetworksOutcome = "confirmed" | "unsupported" | "failed"
+
+export type SavedWifiNetworksResult = {
+  outcome: SavedWifiNetworksOutcome
+  networks: string[]
+  error?: string
+}
+
+export type SavedWifiNetworksEvent = {
+  type: "saved_wifi_networks"
+  requestId: string
+  sid: string
+  protocolVersion: number
+  outcome: SavedWifiNetworksOutcome
+  networks: string[]
+  error?: string
+}
+
 export type HotspotStatus = {state: "disabled"} | {state: "enabled"; ssid: string; password: string; localIp: string}
 
 export type EnabledHotspotStatus = Extract<HotspotStatus, {state: "enabled"}>
@@ -147,6 +209,8 @@ export type HotspotErrorEvent = {
 }
 
 export type VersionInfoResult = {
+  versionInfoType?: string
+  sid?: string
   androidVersion: string
   firmwareVersion: string
   besFirmwareVersion: string
@@ -169,6 +233,10 @@ export type VersionInfoResult = {
   packageName?: string
   /** Phone-served hotspot OTA protocol version; 0 means unsupported/legacy glasses. */
   hotspotOtaVersion: number
+  /** Session-correlated WiFi forget result protocol; absent/0 means unsupported. */
+  wifiForgetResultVersion?: number
+  /** Session-correlated saved-network listing protocol; absent/0 means unsupported. */
+  savedWifiNetworksVersion?: number
 }
 
 export type VersionInfoEvent = VersionInfoResult & {
@@ -935,6 +1003,8 @@ export type BluetoothSdkModuleEvents = {
   phone_notification_dismissed: (event: PhoneNotificationDismissedEvent) => void
   wifi_status_change: (event: WifiStatusChangeEvent) => void
   wifi_scan_result: (event: WifiScanResultEvent) => void
+  wifi_forget_result: (event: WifiForgetResultEvent) => void
+  saved_wifi_networks: (event: SavedWifiNetworksEvent) => void
   hotspot_status_change: (event: HotspotStatusChangeEvent) => void
   hotspot_error: (event: HotspotErrorEvent) => void
   photo_response: (event: PhotoResponseEvent) => void
@@ -1095,6 +1165,8 @@ export type BluetoothSdkEventMap = {
   local_transcription: LocalTranscriptionEvent
   wifi_status_change: WifiStatusChangeEvent
   wifi_scan_result: WifiScanResultEvent
+  wifi_forget_result: WifiForgetResultEvent
+  saved_wifi_networks: SavedWifiNetworksEvent
   hotspot_status_change: HotspotStatusChangeEvent
   hotspot_error: HotspotErrorEvent
   photo_response: PhotoResponseEvent
@@ -1187,8 +1259,11 @@ export interface BluetoothSdkPublicModule {
   ping(): Promise<void>
 
   requestWifiScan(): Promise<WifiSearchResult[]>
+  /** List exact WiFi SSIDs from glasses that support reliable saved-network enumeration. */
+  getSavedWifiNetworks(): Promise<SavedWifiNetworksResult>
   sendWifiCredentials(ssid: string, password: string): Promise<WifiStatusChangeEvent>
-  forgetWifiNetwork(ssid: string): Promise<WifiStatusChangeEvent>
+  /** Forget a saved network and return its correlated semantic outcome. */
+  forgetWifiNetwork(ssid: string): Promise<WifiForgetResult>
   setHotspotState(enabled: boolean): Promise<HotspotStatusChangeEvent>
   /** Set the glasses clock from the phone after an OTA clock-skew failure. */
   setSystemTime(timestampMs: number): Promise<void>
