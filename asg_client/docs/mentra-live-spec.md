@@ -115,6 +115,18 @@ Every camera-button press should still be forwarded to the phone as a `button_pr
 
 Mentra Live supports camera/microphone live streaming paths from `asg_client`, including RTMP, SRT, and WHIP services. Streaming behavior must coordinate camera ownership, microphone foreground-service requirements, reconnect/keep-alive handling, and privacy LED state.
 
+Camera FOV synchronization is idempotent against the last successfully submitted hardware crop,
+not just saved preferences. Startup, persistent settings, and temporary override leases use the
+same gate. An unchanged crop never restarts the HAL. A changed crop is rejected as `camera_busy`
+while a publisher is pending, live, or reconnecting; while a photo/video or warm-camera service
+owns the camera; or while USB webcam capture is active. Busy persistent changes are not saved.
+Override release/expiry retains ownership until the saved crop can be restored safely.
+
+Miniapps observe publisher recovery rather than creating a second stop/restart loop from Wi-Fi
+or BLE observations. Retry intent survives forwarding through the phone. Terminal publisher
+failures require fresh user intent to start another session. Stream teardown attempts camera,
+microphone, encoder, muxer, and endpoint cleanup independently, even after a camera HAL error.
+
 The OS-1937 streaming lifecycle is owned by the phone's explicit start/stop commands, not by
 cloud-era per-stream keep-alives. A stream may otherwise end on terminal publisher or device
 failure, or after sustained loss of the controlling phone. BES phone BLE presence is authoritative;

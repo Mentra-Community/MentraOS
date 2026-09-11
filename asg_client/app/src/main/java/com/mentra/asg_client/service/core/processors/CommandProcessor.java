@@ -433,7 +433,8 @@ public class CommandProcessor {
 
             commandHandlerRegistry.registerHandler(
                     new SettingsCommandHandler(
-                            serviceManager, communicationManager, responseBuilder));
+                            serviceManager, communicationManager, responseBuilder,
+                            () -> !streamingManager.getStreamSnapshot().optBoolean("terminal", true)));
             Log.d(TAG, "✅ Registered SettingsCommandHandler");
 
             commandHandlerRegistry.registerHandler(otaCommandHandler);
