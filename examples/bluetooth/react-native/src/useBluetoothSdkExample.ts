@@ -3110,8 +3110,8 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       if (!wifi) {
         throw new Error('No connected Wi-Fi network to forget.');
       }
-      const status = await BluetoothSdk.forgetWifiNetwork(wifi.ssid);
-      addEvent('LIVE', `Wi-Fi ${status.state === 'connected' ? status.ssid : status.state}`);
+      const result = await BluetoothSdk.forgetWifiNetwork(wifi.ssid);
+      addEvent('LIVE', `Wi-Fi forget ${result.outcome}: ${result.ssid}`);
     });
   }
 
