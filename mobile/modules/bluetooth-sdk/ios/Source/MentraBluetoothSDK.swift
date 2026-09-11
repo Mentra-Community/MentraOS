@@ -141,9 +141,9 @@ private final class PendingVersionInfoRequest {
     }
 }
 
-// seq records send order (assigned and handed to the BLE queue in a single
-// MainActor turn) so that an id-carrying status for a newer start can
-// identify which older in-flight starts it preempted.
+/// seq records send order (assigned and handed to the BLE queue in a single
+/// MainActor turn) so that an id-carrying status for a newer start can
+/// identify which older in-flight starts it preempted.
 @MainActor
 private final class PendingStreamStart {
     let seq: Int
@@ -2260,6 +2260,7 @@ public final class MentraBluetoothSDK {
             projectName: projectName
         )
     }
+
     private func dispatchDiscoveredDevices(_ rawSearchResults: Any?) {
         guard let results = rawSearchResults as? [[String: Any]] else { return }
         for result in results {
