@@ -83,7 +83,15 @@ function branchHead(repository, branch) {
 }
 
 function compareCommits(repository, base, head) {
-  return ghJson(["api", `repos/${repository}/compare/${base}...${head}`])
+  // Only the relationship is needed. The full compare payload lists commits
+  // and file patches, which for a whole release cycle exceeds the spawn buffer
+  // (spawnSync gh ENOBUFS), so trim it in gh before it reaches this process.
+  return ghJson([
+    "api",
+    `repos/${repository}/compare/${base}...${head}?per_page=1`,
+    "--jq",
+    "{status: .status, ahead_by: .ahead_by, behind_by: .behind_by}",
+  ])
 }
 
 function ensureCommitIsOnBranch(repository, commit, branch) {
