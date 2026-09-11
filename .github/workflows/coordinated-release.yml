@@ -113,7 +113,6 @@ jobs:
           artifact=$(jq -er '.[0].name' <<< "$matches")
           gh run download "$GITHUB_RUN_ID" --repo "$GITHUB_REPOSITORY" --name "$artifact" --dir restored-plan
           cp restored-plan/release-plan.json release-plan.json
-          jq -e .starterKitSource release-plan.json > starter-kit-source.json
           echo "restored=true" >> "$GITHUB_OUTPUT"
 
       - name: Collect promoted firmware inputs
@@ -121,30 +120,6 @@ jobs:
 
       - name: Verify generated changelog catalogs
         run: node .github/scripts/generate-changelog-catalog.mjs --check
-
-      - name: Freeze the Starter Kit channel source
-        if: steps.restore-plan.outputs.restored != 'true'
-        run: |
-          set -euo pipefail
-          starter_repository=Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit
-          case "${{ github.ref_name }}" in
-            dev) starter_branch=dev ;;
-            staging)
-              starter_branch=staging
-              starter_head=$(git log -1 --format='%(trailers:key=Starter-Kit-Source,valueonly)' | tr -d '[:space:]')
-              ;;
-            *) echo "Unsupported Starter Kit channel for ${{ github.ref_name }}" >&2; exit 1 ;;
-          esac
-          if [[ -z "${starter_head:-}" ]]; then
-            starter_head=$(git ls-remote "https://github.com/$starter_repository.git" "refs/heads/$starter_branch" | awk '{print $1}')
-          fi
-          [[ "$starter_head" =~ ^[0-9a-f]{40}$ ]]
-          jq -n \
-            --arg repository "$starter_repository" \
-            --arg branch "$starter_branch" \
-            --arg sourceCommit "$starter_head" \
-            '{repository: $repository, branch: $branch, sourceCommit: $sourceCommit}' \
-            > starter-kit-source.json
 
       - name: Create deterministic release plan
         run: |
@@ -160,7 +135,6 @@ jobs:
             --source-commit "${{ github.sha }}" \
             --native-build-number "$((310000000 + ${{ github.run_number }}))" \
             --ota-inputs ota-release-inputs.json \
-            --starter-kit-source starter-kit-source.json \
             --require-version-mirrors true \
             --public-beta-testflight true \
             --output "$output"
@@ -175,7 +149,6 @@ jobs:
             --source-commit "${{ github.sha }}" \
             --native-build-number "$((310000000 + ${{ github.run_number }}))" \
             --ota-inputs ota-release-inputs.json \
-            --starter-kit-source starter-kit-source.json \
             --require-version-mirrors true \
             --public-beta-testflight true \
             --output release-plan.json
@@ -355,7 +328,9 @@ jobs:
 
   starter-kit:
     name: Build coordinated Starter Kit examples
-    needs: [plan, ota, npm, sdk-native]
+    # Runs only after the Mentra beta is finalized: the example is its own
+    # release notion built against a complete beta, never a gate on it.
+    needs: [plan, ota, npm, sdk-native, finalize]
     runs-on: ubuntu-latest
     timeout-minutes: 150
     outputs:
@@ -418,9 +393,24 @@ jobs:
             *) echo "Unsupported prerelease Starter Kit channel $channel" >&2; exit 1 ;;
           esac
 
-          [[ "$(jq -er .starterKitSource.repository "$plan")" == "$STARTER_KIT_REPOSITORY" ]]
-          [[ "$(jq -er .starterKitSource.branch "$plan")" == "$target_branch" ]]
-          expected_head=$(jq -er .starterKitSource.sourceCommit "$plan")
+          # The Starter Kit repository builds every coordinated example from its
+          # own channel head, so nothing about it is frozen in the Mentra plan.
+          # A retry must still resend the head the earlier attempt used: the
+          # Starter Kit only accepts a byte-identical payload whose head is the
+          # parent of the candidate it already created. Recover that head from
+          # the candidate branch, or from the release tag if the candidate was
+          # already merged and the branch deleted, before sampling a new head.
+          candidate_parent=$(gh api "repos/$STARTER_KIT_REPOSITORY/commits/coordinated/$identity" --jq '.parents[0].sha' 2>/dev/null || true)
+          if [[ ! "$candidate_parent" =~ ^[0-9a-f]{40}$ ]]; then
+            candidate_parent=$(gh api "repos/$STARTER_KIT_REPOSITORY/commits/sdk-$identity" --jq '.parents[0].sha' 2>/dev/null || true)
+          fi
+          if [[ "$candidate_parent" =~ ^[0-9a-f]{40}$ ]]; then
+            echo "Reusing the Starter Kit head $candidate_parent recorded by the earlier request for $identity"
+            expected_head="$candidate_parent"
+          else
+            expected_head=$(git ls-remote "https://github.com/$STARTER_KIT_REPOSITORY.git" "refs/heads/$target_branch" | awk '{print $1}')
+          fi
+          [[ "$expected_head" =~ ^[0-9a-f]{40}$ ]]
           payload=$(jq -cn \
             --arg releaseSetId "$release_set_id" \
             --arg releaseIdentity "$identity" \
@@ -711,7 +701,9 @@ jobs:
 
   finalize:
     name: Finalize immutable release bill of materials
-    needs: [plan, cloud-v2, ota, npm, sdk-native, mobile, engine-consumer, starter-kit, example-testflight, example-google-play]
+    # A Mentra beta (Cloud V2, Mentra App, Engine, Bluetooth SDK) is complete
+    # when these succeed. The Bluetooth example is finalized separately below.
+    needs: [plan, cloud-v2, ota, npm, sdk-native, mobile, engine-consumer]
     if: >-
       always() &&
       needs.plan.result == 'success' &&
@@ -720,12 +712,7 @@ jobs:
       needs.npm.result == 'success' &&
       needs.sdk-native.result == 'success' &&
       needs.mobile.result == 'success' &&
-      needs.engine-consumer.result == 'success' &&
-      needs.starter-kit.result == 'success' &&
-      (needs.example-testflight.result == 'success' ||
-        (needs.plan.outputs.dry_run == 'true' && needs.example-testflight.result == 'skipped')) &&
-      (needs.example-google-play.result == 'success' ||
-        (needs.plan.outputs.dry_run == 'true' && needs.example-google-play.result == 'skipped'))
+      needs.engine-consumer.result == 'success'
     runs-on: ubuntu-latest
     timeout-minutes: 15
     steps:
@@ -767,24 +754,6 @@ jobs:
           name: ${{ needs.mobile.outputs.result_artifact }}
           path: release-input/mobile
 
-      - uses: actions/download-artifact@v4
-        if: needs.plan.outputs.dry_run != 'true'
-        with:
-          name: ${{ needs.starter-kit.outputs.result_artifact }}
-          path: release-input/starter-kit
-
-      - uses: actions/download-artifact@v4
-        if: needs.plan.outputs.dry_run != 'true'
-        with:
-          name: ${{ needs.example-testflight.outputs.result_artifact }}
-          path: release-input/example-testflight
-
-      - uses: actions/download-artifact@v4
-        if: needs.plan.outputs.dry_run != 'true'
-        with:
-          name: ${{ needs.example-google-play.outputs.result_artifact }}
-          path: release-input/example-google-play
-
       - name: Assemble complete publication evidence
         id: results
         run: |
@@ -797,19 +766,6 @@ jobs:
           test -f "$asg_selection"
           engine_package=$(find release-input/npm -type f -name 'mentra-engine-*.tgz' -print -quit)
           test -n "$engine_package"
-          starter_kit_args=()
-          if [[ "${{ needs.plan.outputs.dry_run }}" != "true" ]]; then
-            starter_kit_result=$(find release-input/starter-kit -type f -name 'starter-kit-release-*.json' -print -quit)
-            example_testflight=$(find release-input/example-testflight -type f -name 'example-testflight-publication.json' -print -quit)
-            test -n "$starter_kit_result"
-            test -n "$example_testflight"
-            starter_kit_args=(
-              --starter-kit "$starter_kit_result"
-              --starter-kit-result-url "${{ needs.starter-kit.outputs.result_url }}"
-              --example-testflight "$example_testflight"
-              --example-google-play release-input/example-google-play/example-google-play-publication.json
-            )
-          fi
           node .github/scripts/assemble-coordinated-release-results.mjs \
             --plan "$plan" \
             --ota release-input/ota/ota-result.json \
@@ -817,7 +773,6 @@ jobs:
             --native release-input/sdk-native/sdk-native-publications.json \
             --mobile release-input/mobile/mobile-publications.json \
             --cloud release-input/cloud-v2/cloud-v2-deployment.json \
-            "${starter_kit_args[@]}" \
             --asg-selection "$asg_selection" \
             --engine-package "$engine_package" \
             --release-asset-base-url "https://github.com/${GITHUB_REPOSITORY}/releases/download/$tag" \
@@ -913,10 +868,143 @@ jobs:
             fi
           } >> "$GITHUB_STEP_SUMMARY"
 
+  finalize-example:
+    name: Finalize the Mentra Bluetooth example release
+    # The example release is a separate notion from the Mentra beta: it is
+    # built against the finalized beta and recorded in its own asset, so an
+    # example failure never makes the beta incomplete.
+    needs: [plan, finalize, starter-kit, example-testflight, example-google-play]
+    if: >-
+      always() &&
+      needs.plan.result == 'success' &&
+      needs.plan.outputs.dry_run != 'true' &&
+      needs.finalize.result == 'success' &&
+      needs.starter-kit.result == 'success' &&
+      needs.example-testflight.result == 'success' &&
+      needs.example-google-play.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      record_url: ${{ steps.results.outputs.record_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.plan.outputs.source_commit }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.plan.outputs.plan_artifact }}
+          path: release-input/plan
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: coordinated-release-result-${{ needs.plan.outputs.release_set_id }}
+          path: release-input/finalized
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.starter-kit.outputs.result_artifact }}
+          path: release-input/starter-kit
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.example-testflight.outputs.result_artifact }}
+          path: release-input/example-testflight
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.example-google-play.outputs.result_artifact }}
+          path: release-input/example-google-play
+
+      - name: Assemble the example release record against the finalized beta
+        id: results
+        run: |
+          set -euo pipefail
+          mkdir -p finalized-example
+          plan=release-input/plan/release-plan.json
+          identity=$(jq -er .releaseIdentity "$plan")
+          tag=$(jq -er .artifactContainerTag "$plan")
+          manifest_name=$(jq -er .artifactNames.releaseManifest "$plan")
+          beta_manifest="release-input/finalized/$manifest_name"
+          test -s "$beta_manifest"
+          starter_kit_result=$(find release-input/starter-kit -type f -name 'starter-kit-release-*.json' -print -quit)
+          example_testflight=$(find release-input/example-testflight -type f -name 'example-testflight-publication.json' -print -quit)
+          test -n "$starter_kit_result"
+          test -n "$example_testflight"
+          record_name="mentra-example-release-$identity.json"
+          record_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/$tag/$record_name"
+          # Immutable asset: a retry after a partial publication must reproduce
+          # the exact bytes already on the release, so reuse that record's
+          # completion time and provenance instead of minting new ones.
+          completed_at=$(date -u +%Y-%m-%dT%H:%M:%S.000Z)
+          provenance_url="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
+          if curl --fail --silent --show-error --location "$record_url" --output existing-record.json 2>/dev/null; then
+            echo "Reconciling against the example record already published at $record_url"
+            completed_at=$(jq -er .completedAt existing-record.json)
+            provenance_url=$(jq -er .provenanceUrl existing-record.json)
+          else
+            rm -f existing-record.json
+          fi
+          node .github/scripts/example-release-records.mjs \
+            --plan "$plan" \
+            --beta-manifest "$beta_manifest" \
+            --beta-manifest-url "https://github.com/${GITHUB_REPOSITORY}/releases/download/$tag/$manifest_name" \
+            --starter-kit "$starter_kit_result" \
+            --starter-kit-result-url "${{ needs.starter-kit.outputs.result_url }}" \
+            --example-testflight "$example_testflight" \
+            --example-google-play release-input/example-google-play/example-google-play-publication.json \
+            --completed-at "$completed_at" \
+            --provenance-url "$provenance_url" \
+            --output "finalized-example/$record_name"
+          if [[ -f existing-record.json ]]; then
+            cmp existing-record.json "finalized-example/$record_name"
+          fi
+          {
+            echo "tag=$tag"
+            echo "identity=$identity"
+            echo "record_name=$record_name"
+            echo "record_url=$record_url"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Publish and verify the immutable example release record
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          node .github/scripts/publish-immutable-release-asset.mjs \
+            --file "finalized-example/${{ steps.results.outputs.record_name }}" \
+            --name "${{ steps.results.outputs.record_name }}" \
+            --release-id "${{ needs.plan.outputs.release_id }}" \
+            --repository "${{ github.repository }}"
+          node .github/scripts/verify-public-release-asset.mjs \
+            --file "finalized-example/${{ steps.results.outputs.record_name }}" \
+            --url "${{ steps.results.outputs.record_url }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coordinated-example-release-result-${{ needs.plan.outputs.release_set_id }}
+          path: finalized-example
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Summarize the example release
+        run: |
+          {
+            echo "## Mentra Bluetooth example release"
+            echo ""
+            echo "- Release: \`${{ steps.results.outputs.identity }}\`"
+            echo "- Record: ${{ steps.results.outputs.record_url }}"
+            echo "- Starter Kit builds: ${{ needs.starter-kit.outputs.release_url }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
   docs:
     name: Publish release-matched documentation
-    needs: [plan, starter-kit, example-testflight, finalize]
-    if: needs.plan.result == 'success' && needs.starter-kit.result == 'success' && needs.example-testflight.result == 'success' && needs.finalize.result == 'success' && needs.plan.outputs.dry_run != 'true'
+    needs: [plan, starter-kit, example-testflight, finalize, finalize-example]
+    if: needs.plan.result == 'success' && needs.starter-kit.result == 'success' && needs.example-testflight.result == 'success' && needs.finalize.result == 'success' && needs.finalize-example.result == 'success' && needs.plan.outputs.dry_run != 'true'
     runs-on: ubuntu-latest
     timeout-minutes: 20
     outputs:
@@ -1062,7 +1150,7 @@ jobs:
   notify-slack:
     name: Notify release Slack channel
     needs:
-      [plan, cloud-v2, ota, npm, sdk-native, mobile, engine-consumer, starter-kit, example-testflight, example-google-play, finalize, docs]
+      [plan, cloud-v2, ota, npm, sdk-native, mobile, engine-consumer, starter-kit, example-testflight, example-google-play, finalize, finalize-example, docs]
     if: always() && github.event_name == 'push'
     runs-on: ubuntu-latest
     steps:
@@ -1100,6 +1188,7 @@ jobs:
           EXAMPLE_GOOGLE_PLAY_TRACK: ${{ needs.plan.outputs.example_play_track }}
           EXAMPLE_GOOGLE_PLAY_INSTALL_URL: ${{ needs.example-google-play.outputs.install_url }}
           FINALIZE_RESULT: ${{ needs.finalize.result }}
+          FINALIZE_EXAMPLE_RESULT: ${{ needs.finalize-example.result }}
           DOCS_RESULT: ${{ needs.docs.result }}
           DOCS_URL: ${{ needs.docs.outputs.docs_url }}
           APK_NAME: ${{ needs.mobile.outputs.apk_name }}
