@@ -123,11 +123,10 @@ permissions are blocked in `app.json`. Ordinary Bluetooth, Wi-Fi, location and
 audio permissions are separate and are not removed by this configuration.
 The existing iOS `audio` background mode is preserved explicitly in `infoPlist`.
 
-This requires an SDK whose Android `ForegroundService` honors the merged host
-manifest for both startup and subsequent type selection. The dependency pin
-must be advanced to that SDK release before this configuration is shipped;
-until then, use the local SDK override below for validation. An older SDK tries
-to start undeclared service types. Rebuild the native app after changing these
+The pinned SDK includes Android `ForegroundService` support for the merged
+host manifest at both startup and subsequent type selection. Do not downgrade
+the SDK below `3.2.0-dev.200` while using this configuration: older SDKs try to
+start undeclared service types. Rebuild the native app after changing these
 settings; a JavaScript update cannot change the manifest.
 
 Before release, verify connection/reconnection and permissions on a physical
