@@ -2579,6 +2579,15 @@ class G2 : SGCManager() {
                 for (id in frame.removed) {
                     if (id !in paintedIds) applySceneRemove(id)
                 }
+                // A replay carries no `removed` list and forgot the element mapping above, so
+                // a list the retained scene no longer has would linger — and keep event
+                // capture. Drop it structurally.
+                if (frame.replay && listContainers.isNotEmpty() && frame.elements.none { it.type == "list" }) {
+                    Bridge.log("G2: applySceneFrame — replay without a list, dropping the stale list container")
+                    listContainers.clear()
+                    sceneListByElement.clear()
+                    requestPageRebuild()
+                }
             } finally {
                 // Flush inside finally: a mid-frame exception must not strand
                 // a pending structural rebuild (the page would sit stale until
@@ -2884,9 +2893,12 @@ class G2 : SGCManager() {
                 selectionBorder = selectionBorder,
                 items = items
             )
-        val existingId = sceneListByElement[elementId]
-        val idx = if (existingId != null) listContainers.indexOfFirst { it.id == existingId } else -1
-        if (idx >= 0 && listContainers[idx] == next) {
+        // Match by content, not by the element mapping: a replay (dashboard close, reconnect)
+        // forgets the mapping while the page may already carry this exact list — rebinding it
+        // avoids a shutdown/rebuild that would reset the firmware's highlight mid-recovery.
+        if (listContainers.firstOrNull() == next) {
+            sceneListByElement.entries.removeAll { it.value == LIST_CONTAINER_ID }
+            sceneListByElement[elementId] = LIST_CONTAINER_ID
             return
         }
         // One list per page: a new list element replaces whatever list was there.

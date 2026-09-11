@@ -2447,6 +2447,15 @@ class G2: NSObject, SGCManager {
         for id in frame.removed where !paintedIds.contains(id) {
             await removeLayoutElement(id, layoutId: frame.appId)
         }
+        // A replay carries no `removed` list and forgot the element mapping above, so a list
+        // the retained scene no longer has would linger — and keep event capture. Drop it
+        // structurally.
+        if frame.replay, !listContainers.isEmpty, !frame.elements.contains(where: { $0.type == "list" }) {
+            Bridge.log("G2: applySceneFrame — replay without a list, dropping the stale list container")
+            listContainers.removeAll()
+            sceneListByElement.removeAll()
+            await requestPageRebuild()
+        }
         sceneBatchDepth -= 1
         if sceneStructuralPending {
             sceneStructuralPending = false
@@ -2477,10 +2486,12 @@ class G2: NSObject, SGCManager {
             borderWidth: borderWidth, borderRadius: borderRadius,
             selectionBorder: selectionBorder, items: items
         )
-        if let existingId = sceneListByElement[elementId],
-           let current = listContainers.first(where: { $0.id == existingId }),
-           current == next
-        {
+        // Match by content, not by the element mapping: a replay (dashboard close, reconnect)
+        // forgets the mapping while the page may already carry this exact list — rebinding it
+        // avoids a shutdown/rebuild that would reset the firmware's highlight mid-recovery.
+        if listContainers.first == next {
+            sceneListByElement = sceneListByElement.filter { $0.value != G2.listContainerID }
+            sceneListByElement[elementId] = G2.listContainerID
             return
         }
         // One list per page: a new list element replaces whatever list was there.
