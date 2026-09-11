@@ -257,6 +257,9 @@ android {
         unitTests {
             includeAndroidResources = true
             all {
+                testLogging {
+                    exceptionFormat = 'full'
+                }
                 def textDetectInputDir = System.getProperty('textdetect.inputDir')
                 if (textDetectInputDir != null) {
                     systemProperty 'textdetect.inputDir', textDetectInputDir

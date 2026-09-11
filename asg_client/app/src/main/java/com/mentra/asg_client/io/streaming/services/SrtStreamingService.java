@@ -1121,6 +1121,8 @@ public class SrtStreamingService extends Service {
   }
 
   private boolean isRetryableError(StreamPackError error) {
+    // Device loss is terminal; only transport failures may recover this session.
+    if (error instanceof io.github.thibaultbee.streampack.error.CameraError) return false;
     String message = error.getMessage();
     if (message == null) return true;
     if (message.contains("SocketException") || message.contains("Connection") || message.contains("Timeout") ||

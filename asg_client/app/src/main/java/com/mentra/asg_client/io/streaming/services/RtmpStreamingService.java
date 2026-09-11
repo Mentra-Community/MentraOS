@@ -1794,6 +1794,9 @@ public class RtmpStreamingService extends Service {
      * @return true if the error should trigger reconnection attempts, false if it's fatal
      */
     private boolean isRetryableError(StreamPackError error) {
+        // A lost camera is a device failure, not a network retry. Starting a new
+        // publisher requires fresh user intent after all capture resources close.
+        if (error instanceof io.github.thibaultbee.streampack.error.CameraError) return false;
         String message = error.getMessage();
         if (message == null) {
             // Unknown error, default to retry

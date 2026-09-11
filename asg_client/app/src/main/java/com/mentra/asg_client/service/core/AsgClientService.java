@@ -17,7 +17,6 @@ import android.os.IBinder;
 import android.os.Looper;
 import android.util.Log;
 import android.util.Size;
-import com.dev.api.DevApi;
 import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.NetworkUtils;
 import com.mentra.asg_client.camera.UvcStreamingState;
@@ -846,12 +845,12 @@ public class AsgClientService extends Service implements NetworkStateListener, T
             int fov = asgSettings.getCameraFov();
             int roiPosition = asgSettings.getCameraRoiPosition();
             try {
-                DevApi.setCameraFov(fov, roiPosition);
-                SystemControllerFactory.get(this).restartCameraHal();
-                CameraRestartCooldown.setCooldown();
+                var result = CameraFovController.apply(this, fov, roiPosition,
+                        () -> !serviceInitializer.getStreamingManager()
+                                .getStreamSnapshot().optBoolean("terminal", true));
                 Log.d(
                         TAG,
-                        "Applied saved camera FOV on start: fov="
+                        "Saved camera FOV startup result=" + result + ": fov="
                                 + fov
                                 + ", roi_position="
                                 + roiPosition);

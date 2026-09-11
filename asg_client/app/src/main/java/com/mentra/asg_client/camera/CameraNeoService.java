@@ -70,9 +70,12 @@ import java.util.Set;
 import java.util.concurrent.Executor;
 import java.util.concurrent.Executors;
 import java.util.concurrent.atomic.AtomicBoolean;
+import java.util.function.BooleanSupplier;
+import com.mentra.asg_client.camera.policy.CameraFovPolicy;
 
 public class CameraNeoService extends LifecycleService {
     private static final String TAG = "CameraNeo";
+    private static volatile boolean sVideoStartRequested;
 
     private static final String CHANNEL_ID = "CameraNeoServiceChannel";
     private static final int NOTIFICATION_ID = 1;
@@ -441,6 +444,19 @@ public class CameraNeoService extends LifecycleService {
         void onRecordingError(String videoId, String errorMessage);
     }
 
+    /** Serialize FOV writes with photo/video enqueue and warm-camera lease acquisition. */
+    public static CameraFovPolicy.Result applyFovWhenIdle(
+            CameraFovPolicy policy, int fov, int roi, BooleanSupplier externalCaptureBusy,
+            Runnable write) {
+        synchronized (SERVICE_LOCK) {
+            return policy.apply(fov, roi,
+                    () -> sInstance != null || sVideoStartRequested
+                            || QueuedPhotoRequestQueue.getInstance().size() > 0
+                            || !sPendingWarmCallbacks.isEmpty() || externalCaptureBusy.getAsBoolean(),
+                    write);
+        }
+    }
+
     /**
      * Check if the camera is currently in use for photo capture or video recording. This relies on
      * the service instance being available.
@@ -600,6 +616,7 @@ public class CameraNeoService extends LifecycleService {
         synchronized (SERVICE_LOCK) {
             Log.d(TAG, "CameraNeoService Camera2 service created");
             sInstance = this;
+            sVideoStartRequested = false;
         }
         Log.i(
                 TAG,
@@ -1123,18 +1140,26 @@ public class CameraNeoService extends LifecycleService {
             String filePath,
             VideoSettings settings,
             VideoRecordingCallback callback) {
-        VideoRecordingSession.setPendingVideoCallback(callback);
+        synchronized (SERVICE_LOCK) {
+            VideoRecordingSession.setPendingVideoCallback(callback);
 
-        Intent intent = new Intent(context, CameraNeoService.class);
-        intent.setAction(ACTION_START_VIDEO_RECORDING);
-        intent.putExtra(EXTRA_VIDEO_ID, videoId);
-        intent.putExtra(EXTRA_VIDEO_FILE_PATH, filePath);
-        if (settings != null) {
-            intent.putExtra(EXTRA_VIDEO_SETTINGS + "_width", settings.width);
-            intent.putExtra(EXTRA_VIDEO_SETTINGS + "_height", settings.height);
-            intent.putExtra(EXTRA_VIDEO_SETTINGS + "_fps", settings.fps);
+            Intent intent = new Intent(context, CameraNeoService.class);
+            intent.setAction(ACTION_START_VIDEO_RECORDING);
+            intent.putExtra(EXTRA_VIDEO_ID, videoId);
+            intent.putExtra(EXTRA_VIDEO_FILE_PATH, filePath);
+            if (settings != null) {
+                intent.putExtra(EXTRA_VIDEO_SETTINGS + "_width", settings.width);
+                intent.putExtra(EXTRA_VIDEO_SETTINGS + "_height", settings.height);
+                intent.putExtra(EXTRA_VIDEO_SETTINGS + "_fps", settings.fps);
+            }
+            sVideoStartRequested = true;
+            try {
+                context.startForegroundService(intent);
+            } catch (RuntimeException e) {
+                sVideoStartRequested = false;
+                throw e;
+            }
         }
-        context.startForegroundService(intent);
     }
 
     /**
@@ -1168,6 +1193,7 @@ public class CameraNeoService extends LifecycleService {
                     dispatchNextPhotoRequest();
                     break;
                 case ACTION_START_VIDEO_RECORDING:
+                    sVideoStartRequested = false;
                     {
                         String videoId = intent.getStringExtra(EXTRA_VIDEO_ID);
                         String videoPath = intent.getStringExtra(EXTRA_VIDEO_FILE_PATH);
@@ -1941,6 +1967,7 @@ public class CameraNeoService extends LifecycleService {
             releaseWakeLocks();
 
             sInstance = null;
+            sVideoStartRequested = false;
 
             QueuedPhotoRequestQueue.getInstance()
                     .failAllPending("Camera service terminated unexpectedly");

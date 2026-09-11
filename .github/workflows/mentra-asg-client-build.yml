@@ -197,6 +197,17 @@ jobs:
         working-directory: ./asg_client
         run: ./gradlew testDebugUnitTest
 
+      - name: Upload unit test reports
+        if: ${{ always() }}
+        uses: actions/upload-artifact@v4
+        with:
+          name: asg-unit-test-reports
+          path: |
+            asg_client/**/build/test-results/testDebugUnitTest/*.xml
+            asg_client/**/build/reports/tests/testDebugUnitTest/**
+          if-no-files-found: ignore
+          retention-days: 7
+
      # Temporarily disabled while ASG Java files are reformatted in a follow-up.
       # - name: Spotless check
       #   working-directory: ./asg_client

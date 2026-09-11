@@ -14,6 +14,10 @@ const event: StreamStatusEvent = {
 }
 
 describe("slimStreamStatusEvent", () => {
+  test("preserves retry intent so miniapps cannot mistake transient errors for stream end", () => {
+    const retrying = {...event, kind: "error", status: "error", willRetry: true} as StreamStatusEvent
+    expect(slimStreamStatusEvent(retrying)).toMatchObject({status: "error", willRetry: true})
+  })
   test("preserves terminal publisher error and reconciliation metadata", () => {
     expect(
       slimStreamStatusEvent({
