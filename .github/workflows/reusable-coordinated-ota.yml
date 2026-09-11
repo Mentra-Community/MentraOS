@@ -140,11 +140,24 @@ jobs:
           }
           EOF
 
+      # The ASG client is named and numbered after the family base version
+      # (root package.json), so every dev, beta, and promoted production release
+      # of one family shares an ASG client that reports the plain X.Y.Z and no
+      # OTA prompt separates the Mentra App from other Bluetooth SDK apps.
+      - name: Resolve the family base version for the ASG client
+        id: asg-base
+        run: |
+          set -euo pipefail
+          base_version=$(jq -er .familyBaseVersion release-intent/release-plan.json)
+          [[ "$base_version" =~ ^[0-9]+\.[0-9]+\.[0-9]+$ ]]
+          echo "version=$base_version" >> "$GITHUB_OUTPUT"
+
       - name: Compute effective ASG build fingerprint
         id: asg-fingerprint
         run: >-
           node .github/scripts/compute-asg-build-identity.mjs
           --source-commit "${{ github.sha }}"
+          --version-name "${{ steps.asg-base.outputs.version }}"
           --output coordinated-ota-work/asg-build-fingerprint.json
 
       - name: Allocate or reuse the ASG version code
@@ -152,7 +165,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           ASG_FINGERPRINT: ${{ steps.asg-fingerprint.outputs.fingerprint }}
-          WORKFLOW_RUN_NUMBER: ${{ github.run_number }}
+          ASG_BASE_VERSION: ${{ steps.asg-base.outputs.version }}
         run: |
           set -euo pipefail
           mkdir -p coordinated-ota-work
@@ -171,7 +184,7 @@ jobs:
           node .github/scripts/allocate-asg-version.mjs \
             --assets coordinated-ota-work/release-assets.json \
             --fingerprint "$ASG_FINGERPRINT" \
-            --run-number "$WORKFLOW_RUN_NUMBER" \
+            --base-version "$ASG_BASE_VERSION" \
             --output coordinated-ota-work/asg-allocation.json
 
           if [[ "${{ inputs.dry_run }}" != "true" ]]; then
@@ -194,12 +207,18 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
           PROVENANCE_ASSET: ${{ steps.existing-asg.outputs.provenance_asset }}
+          ASG_BASE_VERSION: ${{ steps.asg-base.outputs.version }}
         run: |
-          version_name=$(jq -er .releaseIdentity release-intent/release-plan.json)
+          set -euo pipefail
+          version_name="$ASG_BASE_VERSION"
           if [[ "${{ steps.existing-asg.outputs.exists }}" == "true" ]]; then
             gh release download "$ASG_RELEASE_TAG" --pattern "$PROVENANCE_ASSET" --dir coordinated-ota-work
             mv "coordinated-ota-work/$PROVENANCE_ASSET" coordinated-ota-work/asg-provenance.json
-            version_name=$(jq -er .versionName coordinated-ota-work/asg-provenance.json)
+            recorded=$(jq -er .versionName coordinated-ota-work/asg-provenance.json)
+            if [[ "$recorded" != "$version_name" ]]; then
+              echo "Reused ASG build is named $recorded, not the family base version $version_name." >&2
+              exit 1
+            fi
           fi
           echo "version_name=$version_name" >> "$GITHUB_OUTPUT"
 
