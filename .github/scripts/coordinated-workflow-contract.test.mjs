@@ -668,3 +668,25 @@ test("the production example is keyed on the promoted beta and never promotes a 
   assert.doesNotMatch(example + testflight, /Mentra SDK Example|Production Candidates/)
   assert.equal(existsSync(new URL("../workflows/reusable-production-starter-kit-android.yml", import.meta.url)), false)
 })
+
+test("immutable assets in the production workflows are published from a file named like the asset", () => {
+  // publish-immutable-release-asset.mjs refuses a --file whose basename is
+  // not the --name; a workflow that renames on the way to the container
+  // fails at publication time.
+  for (const name of [
+    "production-release-prepare.yml",
+    "production-release-example.yml",
+    "production-release-rollout.yml",
+    "production-release-packages.yml",
+  ]) {
+    const source = workflow(name)
+    const calls = source.matchAll(
+      /publish-immutable-release-asset\.mjs[^\n]*(?:\n[^\n]*)*?--file\s+"?([^\s"]+)"?[^\n]*(?:\n[^\n]*)*?--name\s+"?([^\s"]+)"?/g,
+    )
+    for (const [, file, assetName] of calls) {
+      const basename = file.split("/").pop()
+      // Names built from shell variables must reuse the same variable.
+      assert.equal(basename, assetName, `${name}: --file ${file} vs --name ${assetName}`)
+    }
+  }
+})
