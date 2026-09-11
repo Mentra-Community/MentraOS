@@ -120,12 +120,31 @@ function validateValue(value, rule, label, environment) {
   if (rule.kind === "host" && (!/^[A-Za-z0-9.-]+$/.test(value) || !value.includes("."))) {
     throw new Error(`${label} is not a hostname`)
   }
-  if (rule.kind === "private-key" && !/-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(value)) {
-    throw new Error(`${label} is not private-key PEM`)
+  if (rule.kind === "private-key") {
+    try {
+      createPrivateKey(keyMaterial(value, "PRIVATE KEY"))
+    } catch {
+      throw new Error(`${label} is not a private key (PEM or PKCS#8 base64 body)`)
+    }
   }
-  if (rule.kind === "public-key" && !/-----BEGIN (?:PUBLIC KEY|CERTIFICATE)-----/.test(value)) {
-    throw new Error(`${label} is not public-key PEM`)
+  if (rule.kind === "public-key") {
+    try {
+      createPublicKey(keyMaterial(value, "PUBLIC KEY"))
+    } catch {
+      throw new Error(`${label} is not a public key (PEM or SPKI base64 body)`)
+    }
   }
+}
+
+// Cloud V2 stores its Ed25519 signing keys as bare base64 PKCS#8 / SPKI bodies
+// and rebuilds the PEM armour when loading them (signing-keys.service.ts
+// toPem). Accept that form as well as full PEM, so the contract checks the
+// same material the service will actually load.
+export function keyMaterial(value, label) {
+  const text = String(value).replace(/\\n/g, "\n").trim()
+  if (text.includes("-----BEGIN ")) return text
+  if (!/^[A-Za-z0-9+/=\s]+$/.test(text)) throw new Error("not key material")
+  return `-----BEGIN ${label}-----\n${text.replace(/\s+/g, "")}\n-----END ${label}-----`
 }
 
 export function validateProductionCloudConfig({contract, environment, values}) {
@@ -156,8 +175,14 @@ export function validateProductionCloudConfig({contract, environment, values}) {
     let derived
     let supplied
     try {
-      derived = createPublicKey(createPrivateKey(values[pair.privateKey])).export({type: "spki", format: "pem"})
-      supplied = createPublicKey(values[pair.publicKey]).export({type: "spki", format: "pem"})
+      derived = createPublicKey(createPrivateKey(keyMaterial(values[pair.privateKey], "PRIVATE KEY"))).export({
+        type: "spki",
+        format: "pem",
+      })
+      supplied = createPublicKey(keyMaterial(values[pair.publicKey], "PUBLIC KEY")).export({
+        type: "spki",
+        format: "pem",
+      })
     } catch {
       throw new Error(`${pair.id} contains an invalid key pair`)
     }
