@@ -548,7 +548,7 @@ test("release-family promotion orders both repositories and reconciles Starter K
   assert.match(script, /run\.head_sha !== stagingHead/)
   assert.match(script, /expectedIdentity = `\$\{plan\.familyBaseVersion\}-beta\.\$\{run\.run_number\}`/)
   assert.match(script, /plan\.sourceCommit !== stagingHead/)
-  assert.match(script, /plan\.starterKitSource\?\.sourceCommit !== starterKitSource/)
+  assert.doesNotMatch(script, /plan\.starterKitSource|Starter-Kit-Source trailer/)
   assert.match(script, /createMetadataCommit\(repository, targetHead, family, mergeBody\)/)
   assert.match(script, /release\/promote-\$\{family\}-refresh-pin-\$\{marker\}/)
   assert.match(script, /promotionBranchHead\(repository, branch\) \|\|/)

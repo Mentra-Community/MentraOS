@@ -306,6 +306,10 @@ function commitTrailer(repository, commit, key) {
   return values[0]
 }
 
+// A Mentra beta is complete on its own; the Starter Kit example is finalized
+// separately against it and the release plan no longer pins a Starter Kit
+// source. The Starter Kit reconciliation below only needs the family, so the
+// beta cut is validated on its MentraOS run, source, and identity alone.
 function requireSuccessfulBetaRun(runId) {
   if (!/^\d+$/.test(runId || "")) fail("finish requires --run RUN_ID")
   const run = ghJson(["api", `repos/${MENTRAOS_REPOSITORY}/actions/runs/${runId}`])
@@ -323,11 +327,6 @@ function requireSuccessfulBetaRun(runId) {
   if (run.head_sha !== stagingHead) {
     fail(`${run.html_url} released ${run.head_sha}, but the current staging release cut is ${stagingHead}`)
   }
-  const starterKitSource = commitTrailer(MENTRAOS_REPOSITORY, stagingHead, "Starter-Kit-Source")
-  if (!/^[0-9a-f]{40}$/.test(starterKitSource)) {
-    fail(`${MENTRAOS_REPOSITORY}:${stagingHead} has an invalid Starter-Kit-Source trailer`)
-  }
-
   const plan = downloadReleasePlan(runId)
   versionTuple(plan.familyBaseVersion)
   const expectedIdentity = `${plan.familyBaseVersion}-beta.${run.run_number}`
@@ -335,10 +334,7 @@ function requireSuccessfulBetaRun(runId) {
     plan.channel !== "beta" ||
     plan.sequence !== run.run_number ||
     plan.releaseIdentity !== expectedIdentity ||
-    plan.sourceCommit !== stagingHead ||
-    plan.starterKitSource?.repository !== STARTER_KIT_REPOSITORY ||
-    plan.starterKitSource?.branch !== "staging" ||
-    plan.starterKitSource?.sourceCommit !== starterKitSource
+    plan.sourceCommit !== stagingHead
   ) {
     fail(`${run.html_url} release plan does not match the current staging beta cut`)
   }
