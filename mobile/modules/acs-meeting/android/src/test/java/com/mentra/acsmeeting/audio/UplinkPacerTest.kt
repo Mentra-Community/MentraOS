@@ -4,6 +4,21 @@ import org.assertj.core.api.Assertions.assertThat
 import org.junit.Test
 
 class UplinkPacerTest {
+  @Test
+  fun lc3HeadroomAbsorbsRepeated140msDeliveryBursts() {
+    val pacer = UplinkPacer()
+    pacer.configureTarget(UplinkPacer.LC3_TARGET_MS)
+    pacer.push(tone(UplinkPacer.LC3_TARGET_MS))
+    repeat(1500) { tick ->
+      if (tick > 0 && tick % 7 == 0) pacer.push(tone(140))
+      assertThat(pacer.tick(tick * 20_000_000L).silence)
+        .describedAs("tick %d of bursty LC3", tick).isFalse()
+    }
+    assertThat(pacer.snapshot(30_000_000_000L).overflowDroppedMs).isZero()
+    pacer.configureTarget(UplinkPacer.TARGET_MS)
+    assertThat(pacer.depthMs()).isZero()
+    assertThat(pacer.state()).isEqualTo(UplinkPacer.State.PREROLLING)
+  }
   private val frameBytes = UplinkPacer.FRAME_BYTES
   private val tickNanos = UplinkPacer.FRAME_MS * 1_000_000L
 

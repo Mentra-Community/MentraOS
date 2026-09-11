@@ -30,7 +30,7 @@ import kotlin.math.min
  * every entry point is synchronized on this instance.
  */
 class UplinkPacer(
-  private val targetMs: Int = TARGET_MS,
+  private var targetMs: Int = TARGET_MS,
   private val log: ((String) -> Unit)? = null,
 ) {
   enum class State { PREROLLING, RUNNING, STARVED }
@@ -77,6 +77,14 @@ class UplinkPacer(
   private var driftDroppedBytes = 0L
   private var driftInsertedBytes = 0L
   private var lastUnderrunLogNanos = 0L
+
+  /** Select headroom for the producer before starting a call; discard the previous call's PCM. */
+  @Synchronized
+  fun configureTarget(ms: Int) {
+    require(ms in FRAME_MS..EMERGENCY_CAP_MS)
+    targetMs = ms
+    reset()
+  }
 
   /** Appends 48 kHz mono PCM16 from the producer thread. */
   @Synchronized
@@ -235,11 +243,11 @@ class UplinkPacer(
     val emaMs = depthEmaBytes / BYTES_PER_MS
     val slice = CORRECTION_MS * BYTES_PER_MS
     when {
-      emaMs > HIGH_MS -> {
+      emaMs > targetMs + (HIGH_MS - TARGET_MS) -> {
         dropOldest(slice)
         driftDroppedBytes += slice
       }
-      emaMs < LOW_MS -> {
+      emaMs < targetMs - (TARGET_MS - LOW_MS) -> {
         if (used + slice > CAPACITY_BYTES) return
         write(SILENCE_SLICE, 0, slice)
         driftInsertedBytes += slice
@@ -305,6 +313,8 @@ class UplinkPacer(
     const val FRAME_BYTES = FRAME_MS * BYTES_PER_MS
 
     const val TARGET_MS = 60
+    // Device traces contain 90–130 ms BLE delivery gaps. Preserve enough real PCM for those gaps.
+    const val LC3_TARGET_MS = 160
     const val LOW_MS = 40
     const val HIGH_MS = 100
     /**

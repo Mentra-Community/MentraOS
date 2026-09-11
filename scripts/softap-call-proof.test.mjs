@@ -551,3 +551,22 @@ test("the required order matches the sequence the orchestrator implements", () =
     "softap_call_live",
   ])
 })
+
+test("reads host phase events and multiline RN fields, including failed cleanup", () => {
+  const capture = [
+    "09-10 18:00:00.000 100 101 I ReactNativeJS: '[SOFTAP_TRACE] traceId=abc123 phase=softap_call_start elapsedMs=0', { traceId: 'abc123' }",
+    "09-10 18:01:00.000 100 101 I ReactNativeJS: '[SOFTAP_TRACE] traceId=abc123 phase=softap_call_stopped elapsedMs=60000', { undoFailures: 'hotspot',",
+    "09-10 18:01:00.000 100 101 I ReactNativeJS:   stopped: true }",
+    "09-10 18:01:00.000 100 101 I ReactNativeJS: unrelated: 'noise'",
+  ].join("\n")
+  const events = parseTrace(capture)
+  assert.equal(events.length, 2)
+  assert.equal(events[0].stage, "softap_call_start")
+  assert.equal(events[1].elapsedMs, 60000)
+  assert.equal(events[1].fields.undoFailures, "hotspot")
+  assert.equal(events[1].fields.stopped, "true")
+  assert.equal(events[1].fields.unrelated, undefined)
+  assert.equal(analyze(capture).calls.length, 1)
+  const withStop = [...events.slice(0, 1), {stage: "softap_call_stop", traceId: "abc123", fields: {}}, ...events.slice(1)]
+  assert.equal(named(proveCall(withStop), "teardown released every step").ok, false)
+})

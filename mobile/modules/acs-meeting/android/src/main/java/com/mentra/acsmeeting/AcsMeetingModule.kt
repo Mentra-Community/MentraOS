@@ -77,6 +77,12 @@ class AcsMeetingModule : Module() {
       ScopedNetworkChangeDetector.install { scopedNetwork }
     }
 
+    AsyncFunction("beginTrace") { traceId: String ->
+      require(traceId.matches(Regex("[A-Za-z0-9]*"))) { "invalid trace id" }
+      com.mentra.acsmeeting.trace.SoftApTrace.begin(traceId)
+      Unit
+    }
+
     /**
      * Join the glasses hotspot as a scoped, internet-less network and return this phone's address
      * on it. The address is what the WHIP listener binds to, so a join that produces no address is
@@ -214,7 +220,7 @@ class AcsMeetingModule : Module() {
             mapOf("base64" to base64, "sampleRate" to rate, "channels" to channels),
           )
         },
-        scopedNetwork = scopedNetwork,
+        scopedNetwork = scopedNetwork ?: ScopedSoftApNetwork(context.applicationContext).also { scopedNetwork = it },
       ).also { session = it }
       val hold = internetHold ?: InternetHold(context.applicationContext).also { internetHold = it }
       // Request cellular rather than trusting it to be up: a phone sitting on Wi-Fi may have the
@@ -254,7 +260,7 @@ class AcsMeetingModule : Module() {
             mapOf("base64" to base64, "sampleRate" to rate, "channels" to channels),
           )
         },
-        scopedNetwork = scopedNetwork,
+        scopedNetwork = scopedNetwork ?: ScopedSoftApNetwork(context.applicationContext).also { scopedNetwork = it },
       ).also { session = it }
       // The process is already pinned to cellular by now (sign-in and the scoped join both pin, and
       // ACS keeps the route its sockets were created with). Lift it only across the WHIP listener

@@ -46,7 +46,7 @@ data class I420FormatSpec(
     const val MAX_FPS = 30f
 
     /** VirtualOutgoingVideoStream join allowlist. P540 is 960×540, never 540×960. */
-    private val ALLOWED_SIZES = setOf(1280 to 720, 960 to 540)
+    private val ALLOWED_SIZES = setOf(1280 to 720, 960 to 540, 858 to 480)
 
     fun of(width: Int = 1280, height: Int = 720, fps: Float = 20f): I420FormatSpec {
       val chroma = I420Packer.chromaStride(width)

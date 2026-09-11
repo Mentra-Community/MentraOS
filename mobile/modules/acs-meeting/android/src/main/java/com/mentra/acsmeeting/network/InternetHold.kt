@@ -55,6 +55,7 @@ class InternetHold(private val context: Context) {
     private val lock = Any()
     private var callback: ConnectivityManager.NetworkCallback? = null
     private var processPinned = false
+    private var pinnedNetwork: Network? = null
 
     /**
      * Request cellular and wait until it validates, bounded by [timeoutMs].
@@ -76,7 +77,29 @@ class InternetHold(private val context: Context) {
                 ) {
                     // Validation is a capability change, not an availability one: `onAvailable`
                     // fires for a cellular network that cannot yet carry a TLS handshake.
-                    if (isValidatedInternet(capabilities)) validated.countDown()
+                    if (isValidatedInternet(capabilities)) {
+                        validated.countDown()
+                        synchronized(lock) {
+                            // Mobile data can return as a different Network. Retire the old pin
+                            // without allowing a released callback to bind the next call.
+                            if (callback === this && processPinned && pinnedNetwork != network) {
+                                val ok = manager.bindProcessToNetwork(network)
+                                if (ok) pinnedNetwork = network
+                                SoftApTrace.stage("cellular_pin_refreshed", "ok" to ok)
+                            }
+                        }
+                    }
+                }
+
+                override fun onLost(network: Network) {
+                    synchronized(lock) {
+                        if (callback !== this || !processPinned || pinnedNetwork != network) return
+                        // Keep the intent to pin when cellular validates again, but do not leave
+                        // the entire app bound to a dead network in the meantime.
+                        manager.bindProcessToNetwork(null)
+                        pinnedNetwork = null
+                        SoftApTrace.stage("cellular_pin_lost")
+                    }
                 }
             }
 
@@ -154,14 +177,22 @@ class InternetHold(private val context: Context) {
             return false
         }
         val ok = runCatching { manager.bindProcessToNetwork(network) }.getOrDefault(false)
-        if (ok) synchronized(lock) { processPinned = true }
+        if (ok) synchronized(lock) {
+            processPinned = true
+            pinnedNetwork = network
+        }
         SoftApTrace.stage("process_pinned_to_cellular", "ok" to ok)
         return ok
     }
 
     /** Undo [bindProcessToCellular]. Safe to call when nothing is pinned, and safe to call twice. */
     fun unbindProcess() {
-        val pinned = synchronized(lock) { processPinned.also { processPinned = false } }
+        val pinned = synchronized(lock) {
+            processPinned.also {
+                processPinned = false
+                pinnedNetwork = null
+            }
+        }
         if (!pinned) return
         val ok = runCatching { connectivityManager()?.bindProcessToNetwork(null) }.isSuccess
         SoftApTrace.stage("process_unpinned", "ok" to ok)
@@ -221,6 +252,7 @@ class InternetHold(private val context: Context) {
         if (processPinned) {
             runCatching { connectivityManager()?.bindProcessToNetwork(null) }
             processPinned = false
+            pinnedNetwork = null
         }
         val active = callback
         if (active != null) {

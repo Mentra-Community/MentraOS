@@ -12,6 +12,7 @@ import audioPlaybackService from "./AudioPlaybackService"
 import micStateCoordinator from "./MicStateCoordinator"
 import {SETTINGS, useSettingsStore} from "../stores/settings"
 import {Pcm16LevelMeter} from "../utils/pcm16"
+import {softapTraceId} from "../utils/softapTrace"
 import {ACS_CALL_MIC, type AcsAudioSource, type ResolvedAudioSource, type SourceReason} from "./acsAudioSource"
 import type {SoftapProgress} from "./SoftapCallTransport"
 
@@ -203,7 +204,7 @@ export type AcsOutgoingVideo = {
 }
 
 /** ACS VirtualOutgoingVideoStream documented 16:9 sizes. P540 is 960×540, not 540×960. */
-const ACS_VIRTUAL_CAMERA_SIZES = new Set(["1280x720", "960x540"])
+const ACS_VIRTUAL_CAMERA_SIZES = new Set(["1280x720", "960x540", "858x480"])
 
 export function parseAcsOutgoingVideo(raw: unknown): AcsOutgoingVideo | undefined {
   if (raw == null) return undefined
@@ -311,6 +312,7 @@ type NativeModule = {
    * address on it. Absent on natives that predate SoftAP, and rejects on iOS.
    */
   joinScopedNetwork?(ssid: string, passphrase: string): Promise<string>
+  beginTrace?(traceId: string): Promise<void>
   leaveScopedNetwork?(): Promise<void>
   /**
    * TCP-probe the hotspot gateway over the scoped network. Absent on natives that predate it.
@@ -567,6 +569,7 @@ class AcsMeetingService {
     }
     this.scopedTerminating = false
     this.bindScopedNetworkLost(native)
+    await native.beginTrace?.(softapTraceId())
     return await native.joinScopedNetwork(ssid, passphrase)
   }
 

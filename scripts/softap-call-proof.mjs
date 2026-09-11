@@ -28,7 +28,7 @@ export const TRACE_MARKER = "SOFTAP_TRACE"
  * Parse a logcat capture into trace events, ignoring every line that is not ours.
  *
  * Tolerant of logcat's several formats (threadtime, brief, raw) because the capture may come from a
- * bug report rather than from this script. Anything carrying the marker and a `stage=` is an event;
+ * bug report rather than from this script. Native `stage=` and host `phase=` are both events;
  * anything else is noise, including our own tooling's output.
  *
  * @param {string} text raw capture
@@ -36,20 +36,39 @@ export const TRACE_MARKER = "SOFTAP_TRACE"
  */
 export function parseTrace(text) {
   const events = []
+  let continued = null
   for (const line of text.split(/\r?\n/)) {
-    if (!line.includes(`[${TRACE_MARKER}]`)) continue
-    const stage = /\bstage=([A-Za-z0-9_]+)/.exec(line)
+    if (!line.includes(`[${TRACE_MARKER}]`)) {
+      // React Native prints the host's field object across several logcat lines.
+      const body = /ReactNativeJS:\s+(.*)$/.exec(line)?.[1]
+      if (continued && body && /^(?:[A-Za-z_]+:|})/.test(body)) {
+        Object.assign(continued.fields, parseObjectFields(body))
+        if (body.includes("}")) continued = null
+      } else continued = null
+      continue
+    }
+    continued = null
+    const stage = /\b(?:stage|phase)=([A-Za-z0-9_]+)/.exec(line)
     if (!stage) continue
     events.push({
       stage: stage[1],
       traceId: /\btraceId=([A-Za-z0-9]+)/.exec(line)?.[1] ?? "",
       elapsedMs: Number(/\belapsedMs=(\d+)/.exec(line)?.[1] ?? 0),
-      fields: parseFields(line),
+      fields: {...parseFields(line), ...parseObjectFields(line.slice(line.indexOf("{")))},
       // Logcat puts the level in a lone-letter column; `E` is how SoftApTrace.failure reports.
       level: / E(?:\/|\s)/.test(line) ? "E" : "I",
     })
+    if (line.includes("ReactNativeJS:") && line.includes("{") && !line.includes("}")) continued = events.at(-1)
   }
   return events
+}
+
+/** Read primitive diagnostic fields only. Never evaluate a logged JavaScript object. */
+function parseObjectFields(text) {
+  const fields = {}
+  const pattern = /(?:^|[,{]\s*)([A-Za-z_][A-Za-z0-9_]*):\s*(?:'([^']*)'|"([^"]*)"|(true|false|null|-?\d+(?:\.\d+)?))/g
+  for (const match of text.matchAll(pattern)) fields[match[1]] = match[2] ?? match[3] ?? match[4]
+  return fields
 }
 
 /** Trailing `key=value` pairs, honouring the quoting `SoftApTrace.sanitize` applies to spaces. */
@@ -59,7 +78,7 @@ function parseFields(line) {
   let match
   while ((match = pattern.exec(line)) !== null) {
     const [, key, raw] = match
-    if (key === "stage" || key === "traceId" || key === "elapsedMs") continue
+    if (key === "stage" || key === "phase" || key === "traceId" || key === "elapsedMs") continue
     fields[key] = raw.startsWith('"') ? raw.slice(1, -1) : raw
   }
   return fields

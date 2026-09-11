@@ -381,11 +381,16 @@ class AcsMeetingSession(
         val delayMs = (audioDelayMs ?: AcsInvestigation.acsAudioDelayMs)
           .coerceIn(0, AudioUplinkChain.MAX_DELAY_MS)
         configuredAudioDelayMs = delayMs
+        val headroom = if (videoSource.kind == SourceKind.SOFTAP && parsed != AudioSourceKind.PHONE) {
+          UplinkPacer.LC3_TARGET_MS
+        } else UplinkPacer.TARGET_MS
+        pacer.configureTarget(headroom)
         avSync.reset()
         uplinkChain = AudioUplinkChain(
           bridge,
           pacer,
-          delayMs,
+          // Move delay into a jitter buffer that can absorb BLE bursts, rather than adding latency.
+          (delayMs - (headroom - UplinkPacer.TARGET_MS)).coerceAtLeast(0),
           onIngest = { pcm, nowNs -> avSync.onAudio(pcm, nowNs) },
         )
         if (reuseAgent) {
@@ -912,11 +917,18 @@ class AcsMeetingSession(
       CallState.CONNECTING -> "connecting"
       CallState.IN_LOBBY -> "lobby"
       CallState.CONNECTED -> "connected"
-      CallState.DISCONNECTING -> "disconnected"
+      CallState.DISCONNECTING -> phase
       CallState.DISCONNECTED -> "disconnected"
       else -> phase
     }
     val end = describeEndReason(call)
+    // A failed connection is recoverable; do not tell the wearer the remote meeting ended.
+    // Wait for DISCONNECTED because DISCONNECTING may not yet carry the final reason.
+    if (state == CallState.DISCONNECTED && (end["code"] as? Number)?.toInt()?.let { it != 0 } == true) {
+      phase = "error"
+      lastError = "ACS_CONNECTION_LOST: The Teams connection was lost. Check mobile data and rejoin. " +
+        "(code=${end["code"]}, subcode=${end["subcode"]})"
+    }
     Log.i(TAG, "ACS call state=$state phase=$phase previous=$previous end=$end")
     if (phase == "connected" && previous != "connected") {
       call?.let {

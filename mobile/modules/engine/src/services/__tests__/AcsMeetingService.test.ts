@@ -452,6 +452,11 @@ describe("AcsMeetingService", () => {
   })
 
   test("parseAcsOutgoingVideo accepts documented 16:9 sizes and rejects 540×960 and 854×480", () => {
+    for (const fps of [15, 24, 30]) {
+      expect(parseAcsOutgoingVideo({width: 858, height: 480, fps, maxBitrateBps: 1_000_000})).toEqual({
+        width: 858, height: 480, fps, maxBitrateBps: 1_000_000,
+      })
+    }
     expect(parseAcsOutgoingVideo({width: 1280, height: 720, fps: 15, maxBitrateBps: 2_500_000})).toEqual({
       width: 1280,
       height: 720,
