@@ -5,7 +5,20 @@ import {beforeEach, describe, expect, mock, test} from "bun:test"
 // Mock module dependencies BEFORE importing the coordinator.
 
 // --- BLE native bridge (@mentra/bluetooth-sdk/internal) -------------------
-const requestPhotoNative = mock(async (_req: unknown): Promise<undefined> => undefined)
+// requestPhoto resolves at terminal photo_response success with the delivered
+// fileUri (destination {kind: "phone"}).
+const DELIVERY = {
+  type: "photo_response" as const,
+  state: "success" as const,
+  requestId: "0001",
+  uploadUrl: "",
+  timestamp: 0,
+  fileUri: "file:///data/MentraLive_Images/PHONE_0001.jpg",
+  mimeType: "image/jpeg",
+  byteCount: 4321,
+  savedToCameraRoll: false,
+}
+const requestPhotoNative = mock(async (_req: unknown) => DELIVERY)
 const warmUpCameraNative = mock(async (_req: unknown): Promise<undefined> => undefined)
 const stopCameraWarmUpNative = mock(async (_requestId: string): Promise<undefined> => undefined)
 
@@ -17,20 +30,38 @@ mock.module("@mentra/bluetooth-sdk/internal", () => ({
   },
 }))
 
-// --- cloud-v2 managed-photo service (CloudClientService singleton) --------
-const PRESIGN = {
-  requestId: "rq-test-1",
-  uploadUrl: "https://cloud.test/api/v2/runtime/photo/upload/rq-test-1",
-  readUrl: "https://cloud.test/api/v2/runtime/photo/read/rq-test-1",
+// --- expo-file-system (delivered JPEG read + delete) -----------------------
+// The coordinator reads the SDK-delivered file into a data URL and deletes it.
+const FILE_BASE64 = "/9j/4AAQSkZJRgABAQAAAQABAAD/2wBDAAgGBgcGBQgHBwcJCQgKDA=="
+const EXPECTED_DATA_URL = `data:image/jpeg;base64,${FILE_BASE64}`
+const openedFiles: string[] = []
+const fileBase64 = mock(async (): Promise<string> => FILE_BASE64)
+const fileDelete = mock((): void => undefined)
+let fileSize: number | null = 4321
+class MockFile {
+  constructor(public readonly uri: string) {
+    openedFiles.push(uri)
+  }
+  get size(): number | null {
+    return fileSize
+  }
+  base64(): Promise<string> {
+    return fileBase64()
+  }
+  delete(): void {
+    fileDelete()
+  }
 }
-const startManagedPhoto = mock(async (_opts: {size?: string}) => PRESIGN)
-const awaitManagedPhotoReady = mock(
-  async (_requestId: string): Promise<{readUrl?: string}> => ({readUrl: "https://r2.test/signed"}),
-)
+mock.module("expo-file-system", () => ({File: MockFile}))
 
-mock.module("../CloudClientService", () => ({
-  cloudClientService: {startManagedPhoto, awaitManagedPhotoReady},
-}))
+// --- no network, ever -------------------------------------------------------
+// Local-miniapp photos must never touch the cloud or the runtime: any fetch is
+// a test failure. (CloudClientService is deliberately not imported by the
+// coordinator any more, so there is nothing to mock there.)
+const fetchMock = mock(async (_url: string | URL | Request, _init?: RequestInit): Promise<Response> => {
+  throw new Error("local-miniapp photos must not make network requests")
+})
+globalThis.fetch = fetchMock as unknown as typeof fetch
 
 // --- glasses store + readiness ---------------------------------------------
 // The coordinator's connected precheck reads the engine glasses store via
@@ -47,20 +78,25 @@ mock.module("../GlassesReadiness", () => ({
   isGlassesConnected: (connection: {state?: string} | undefined) => connection?.state === "connected",
 }))
 
-const {CAPTURE_PIPELINE_TIMEOUT_MS, PhonePhotoCoordinator, PhotoError} = await import("../PhonePhotoCoordinator")
+const {CAPTURE_PIPELINE_TIMEOUT_MS, NATIVE_PHONE_DELIVERY_TIMEOUT_MS, PhonePhotoCoordinator, PhotoError} = await import(
+  "../PhonePhotoCoordinator"
+)
 
 beforeEach(() => {
   requestPhotoNative.mockClear()
   warmUpCameraNative.mockClear()
   stopCameraWarmUpNative.mockClear()
-  startManagedPhoto.mockClear()
-  awaitManagedPhotoReady.mockClear()
+  fetchMock.mockClear()
+  fileBase64.mockClear()
+  fileDelete.mockClear()
+  openedFiles.length = 0
+  fileSize = 4321
   glassesState = {connection: {state: "connected"}}
   // Restore default mock behaviors that prior tests may have changed.
-  requestPhotoNative.mockImplementation(async () => undefined)
+  requestPhotoNative.mockImplementation(async () => DELIVERY)
   warmUpCameraNative.mockImplementation(async () => undefined)
-  startManagedPhoto.mockResolvedValue(PRESIGN)
-  awaitManagedPhotoReady.mockResolvedValue({readUrl: "https://r2.test/signed"})
+  fileBase64.mockImplementation(async () => FILE_BASE64)
+  fileDelete.mockImplementation(() => undefined)
 })
 
 /** Await a rejection and return it as a PhotoError, failing if it resolves. */
@@ -74,9 +110,16 @@ async function expectPhotoError(p: Promise<unknown>): Promise<InstanceType<typeo
   throw new Error("expected the promise to reject")
 }
 
+function nativeArg(index = 0): Record<string, unknown> {
+  return requestPhotoNative.mock.calls[index]![0] as Record<string, unknown>
+}
+
 describe("PhonePhotoCoordinator", () => {
-  test("pipeline watchdog does not preempt the managed-photo ready-push timeout", () => {
-    expect(CAPTURE_PIPELINE_TIMEOUT_MS).toBeGreaterThan(30_000)
+  test("pipeline watchdog sits above the Bluetooth SDK's phone-delivery deadline", () => {
+    expect(NATIVE_PHONE_DELIVERY_TIMEOUT_MS).toBe(60_000)
+    expect(CAPTURE_PIPELINE_TIMEOUT_MS).toBeGreaterThan(NATIVE_PHONE_DELIVERY_TIMEOUT_MS)
+    // ...and below the miniapp SDK's default takePhoto deadline (90 s, camera.ts).
+    expect(CAPTURE_PIPELINE_TIMEOUT_MS).toBeLessThan(90_000)
   })
 
   describe("prechecks", () => {
@@ -86,9 +129,9 @@ describe("PhonePhotoCoordinator", () => {
       const err = await expectPhotoError(coord.takePhoto("com.a", {}))
       expect(err.code).toBe("GLASSES_NOT_CONNECTED")
       expect(err.stage).toBe("command")
-      // Should NOT have called cloud or BLE.
-      expect(startManagedPhoto).not.toHaveBeenCalled()
+      // Should NOT have touched BLE or the file system.
       expect(requestPhotoNative).not.toHaveBeenCalled()
+      expect(openedFiles).toHaveLength(0)
     })
 
     test("hasCamera is intentionally NOT pre-checked (glasses-side handler is the source of truth)", async () => {
@@ -98,80 +141,74 @@ describe("PhonePhotoCoordinator", () => {
       // capability data.
       glassesState = {connection: {state: "connected"}, capabilities: {hasCamera: false}}
       const coord = new PhonePhotoCoordinator()
-      await expect(coord.takePhoto("com.a", {})).resolves.toEqual(
-        expect.objectContaining({photoUrl: "https://r2.test/signed"}),
-      )
+      await expect(coord.takePhoto("com.a", {})).resolves.toEqual(expect.objectContaining({mimeType: "image/jpeg"}))
     })
   })
 
-  describe("happy path", () => {
-    test("presigns, drives BLE, resolves with the photo.ready push readUrl", async () => {
+  describe("happy path (BLE-only, no cloud)", () => {
+    test("drives BLE with destination {kind: 'phone'} and returns the photo inline", async () => {
       const coord = new PhonePhotoCoordinator()
       const result = await coord.takePhoto("com.a", {size: "medium"})
-      expect(result.photoUrl).toBe("https://r2.test/signed")
-      expect(result.mimeType).toBe("image/jpeg")
-      expect(result.requestId).toBe("rq-test-1")
 
-      expect(startManagedPhoto).toHaveBeenCalledWith({size: "medium"})
-      expect(awaitManagedPhotoReady).toHaveBeenCalledWith("rq-test-1")
+      // NO cloud presign, NO runtime publish — no network request at all.
+      expect(fetchMock).not.toHaveBeenCalled()
 
-      // BLE call shape: wire v2 sends a short 4-hex correlation id (not the
-      // cloud UUID) plus the owning appId.
+      // BLE call shape: wire v2 sends a short 4-hex correlation id plus the
+      // owning appId; delivery is the phone destination with no webhook fields.
       expect(requestPhotoNative).toHaveBeenCalledTimes(1)
-      const arg = requestPhotoNative.mock.calls[0]![0] as {
-        requestId: string
-        appId: string
-        size: string
-        mode: string
-        webhookUrl: string
-        authToken: string | null
-        compress: string
-        save: boolean
-        sound: boolean
-        exposureTimeNs: number | null
-      }
+      const arg = nativeArg()
       expect(arg.requestId).toMatch(/^[0-9a-f]{4}$/)
       expect(arg.appId).toBe("com.a")
       expect(arg.size).toBe("medium")
       expect(arg.mode).toBe("photo")
-      expect(arg.webhookUrl).toBe(PRESIGN.uploadUrl)
-      expect(arg.authToken).toBeNull()
-      expect(arg.compress).toBe("none")
-      expect(arg.save).toBe(false)
+      expect(arg.destination).toEqual({kind: "phone"})
       expect(arg.sound).toBe(true)
       expect(arg.exposureTimeNs).toBeNull()
-      // Public presigned upload URL → transfer method stays on native "auto".
+      // The webhook-era flats must be absent: destination + flat fields throw
+      // inside the SDK's normalizer.
+      expect("webhookUrl" in arg).toBe(false)
+      expect("authToken" in arg).toBe(false)
+      expect("transferMethod" in arg).toBe(false)
+      expect("save" in arg).toBe(false)
+      expect("compress" in arg).toBe(false)
+
+      // Completion reads the delivered file once, hands the miniapp the bytes
+      // inline (photoUrl carries the same data URL), and deletes the file.
+      expect(openedFiles).toEqual([DELIVERY.fileUri])
+      expect(fileBase64).toHaveBeenCalledTimes(1)
+      expect(fileDelete).toHaveBeenCalledTimes(1)
+      expect(result.dataUrl).toBe(EXPECTED_DATA_URL)
+      expect(result.photoUrl).toBe(EXPECTED_DATA_URL)
+      expect(result.mimeType).toBe("image/jpeg")
+      expect(result.size).toBe(4321)
+      expect(result.requestId).toMatch(/^photo_/)
+    })
+
+    test("maps saveToGallery to the phone arm's keepOnGlasses", async () => {
+      const coord = new PhonePhotoCoordinator()
+      await coord.takePhoto("com.a", {saveToGallery: true, sound: false})
+      expect(nativeArg()).toMatchObject({destination: {kind: "phone", keepOnGlasses: true}, sound: false})
+      expect("save" in nativeArg()).toBe(false)
+    })
+
+    test("passes saveToCameraRoll onto the phone destination", async () => {
+      const coord = new PhonePhotoCoordinator()
+      await coord.takePhoto("com.a", {saveToCameraRoll: true})
+      expect(nativeArg()).toMatchObject({destination: {kind: "phone", saveToCameraRoll: true}})
+    })
+
+    test("ignores a miniapp transferMethod: delivery is always BLE phone delivery", async () => {
+      const coord = new PhonePhotoCoordinator()
+      await coord.takePhoto("com.a", {transferMethod: "direct"})
+      const arg = nativeArg()
+      expect(arg.destination).toEqual({kind: "phone"})
       expect("transferMethod" in arg).toBe(false)
     })
 
-    test("falls back to the presigned readUrl when the ready push carries none", async () => {
-      awaitManagedPhotoReady.mockResolvedValueOnce({})
+    test("drops compress on the phone arm (transport codec governs)", async () => {
       const coord = new PhonePhotoCoordinator()
-      const result = await coord.takePhoto("com.a", {})
-      expect(result.photoUrl).toBe(PRESIGN.readUrl)
-    })
-
-    test("forces BLE transfer when the upload URL is loopback, overriding direct", async () => {
-      startManagedPhoto.mockResolvedValueOnce({
-        requestId: "rq-loop",
-        uploadUrl: "http://127.0.0.1:8089/photo/upload/rq-loop",
-        readUrl: "http://127.0.0.1:8089/photo/read/rq-loop",
-      })
-      const coord = new PhonePhotoCoordinator()
-      await coord.takePhoto("com.a", {transferMethod: "direct"})
-      expect(requestPhotoNative.mock.calls[0]![0]).toMatchObject({transferMethod: "ble"})
-    })
-
-    test("passes a miniapp's forced BLE transfer to the native request", async () => {
-      const coord = new PhonePhotoCoordinator()
-      await coord.takePhoto("com.a", {transferMethod: "ble"})
-      expect(requestPhotoNative.mock.calls[0]![0]).toMatchObject({transferMethod: "ble"})
-    })
-
-    test("passes a miniapp's direct transfer to the native request", async () => {
-      const coord = new PhonePhotoCoordinator()
-      await coord.takePhoto("com.a", {transferMethod: "direct"})
-      expect(requestPhotoNative.mock.calls[0]![0]).toMatchObject({transferMethod: "direct"})
+      await coord.takePhoto("com.a", {compress: "high"})
+      expect("compress" in nativeArg()).toBe(false)
     })
 
     test("rejects an unknown runtime transfer method before starting the photo pipeline", async () => {
@@ -182,7 +219,6 @@ describe("PhonePhotoCoordinator", () => {
         code: "INVALID_ARGUMENT",
         message: 'Invalid transferMethod "wifi". Expected "auto", "direct", or "ble".',
       })
-      expect(startManagedPhoto).not.toHaveBeenCalled()
       expect(requestPhotoNative).not.toHaveBeenCalled()
     })
 
@@ -194,7 +230,6 @@ describe("PhonePhotoCoordinator", () => {
         code: "INVALID_ARGUMENT",
         message: 'Invalid transferMethod null. Expected "auto", "direct", or "ble".',
       })
-      expect(startManagedPhoto).not.toHaveBeenCalled()
       expect(requestPhotoNative).not.toHaveBeenCalled()
     })
 
@@ -206,156 +241,161 @@ describe("PhonePhotoCoordinator", () => {
         code: "INVALID_ARGUMENT",
         message: 'Invalid transferMethod "". Expected "auto", "direct", or "ble".',
       })
-      expect(startManagedPhoto).not.toHaveBeenCalled()
       expect(requestPhotoNative).not.toHaveBeenCalled()
-    })
-
-    test("passes saveToGallery and sound through to the native take_photo command", async () => {
-      const coord = new PhonePhotoCoordinator()
-      await coord.takePhoto("com.a", {saveToGallery: true, sound: false})
-      expect(requestPhotoNative).toHaveBeenCalledTimes(1)
-      expect(requestPhotoNative.mock.calls[0]![0]).toMatchObject({save: true, sound: false})
     })
 
     test("passes exposureTimeNs through to the native take_photo command", async () => {
       const coord = new PhonePhotoCoordinator()
       await coord.takePhoto("com.a", {exposureTimeNs: 12_000_000})
-      expect(requestPhotoNative.mock.calls[0]![0]).toMatchObject({exposureTimeNs: 12_000_000})
+      expect(nativeArg()).toMatchObject({exposureTimeNs: 12_000_000})
     })
 
-    test("passes text mode through without forcing public max quality", async () => {
+    test("passes text mode through without touching the requested size", async () => {
       const coord = new PhonePhotoCoordinator()
       await coord.takePhoto("com.a", {mode: "text", size: "low"})
-      expect(startManagedPhoto).toHaveBeenCalledWith({size: "max"})
-      expect(requestPhotoNative.mock.calls[0]![0]).toMatchObject({mode: "text", size: "low"})
+      expect(nativeArg()).toMatchObject({mode: "text", size: "low"})
     })
 
     test("passes zsl and mfnr through to the native take_photo command", async () => {
       const coord = new PhonePhotoCoordinator()
       await coord.takePhoto("com.a", {zsl: true, mfnr: false})
-      expect(requestPhotoNative.mock.calls[0]![0]).toMatchObject({zsl: true, mfnr: false})
+      expect(nativeArg()).toMatchObject({zsl: true, mfnr: false})
     })
 
     test("omits zsl and mfnr when unset", async () => {
       const coord = new PhonePhotoCoordinator()
       await coord.takePhoto("com.a", {})
-      expect(requestPhotoNative.mock.calls[0]![0]).not.toHaveProperty("zsl")
-      expect(requestPhotoNative.mock.calls[0]![0]).not.toHaveProperty("mfnr")
+      expect(nativeArg()).not.toHaveProperty("zsl")
+      expect(nativeArg()).not.toHaveProperty("mfnr")
     })
 
     test("normalizes legacy size 'full' to 'max' for the native take_photo command", async () => {
       const coord = new PhonePhotoCoordinator()
       // Legacy wire values may still arrive from older callers at runtime.
       await coord.takePhoto("com.a", {size: "full"})
-      expect(requestPhotoNative.mock.calls[0]![0]).toMatchObject({size: "max"})
-      expect(startManagedPhoto).toHaveBeenCalledWith({size: "full"})
+      expect(nativeArg()).toMatchObject({size: "max"})
     })
 
-    test.each(["low", "high", "max"] as const)("presign accepts canonical size %s without HTTP 400", async (size) => {
+    test("falls back to image/jpeg and the delivery byteCount when the file size is unknown", async () => {
+      requestPhotoNative.mockResolvedValueOnce({...DELIVERY, mimeType: undefined} as unknown as typeof DELIVERY)
+      fileSize = null
       const coord = new PhonePhotoCoordinator()
-      await coord.takePhoto("com.a", {size})
-      expect(startManagedPhoto).toHaveBeenCalledWith({size})
-      expect(requestPhotoNative.mock.calls[0]![0]).toMatchObject({size})
+      const result = await coord.takePhoto("com.a", {})
+      expect(result.mimeType).toBe("image/jpeg")
+      expect(result.dataUrl).toBe(EXPECTED_DATA_URL)
+      expect(result.size).toBe(DELIVERY.byteCount)
+    })
+
+    test("reports an unknown size when neither the file nor the delivery carries one", async () => {
+      requestPhotoNative.mockResolvedValueOnce({...DELIVERY, byteCount: undefined} as unknown as typeof DELIVERY)
+      fileSize = null
+      const coord = new PhonePhotoCoordinator()
+      const result = await coord.takePhoto("com.a", {})
+      expect(result.size).toBe(-1)
     })
 
     test("owns(requestId) true mid-flight, false after completion", async () => {
       const coord = new PhonePhotoCoordinator()
       let observedDuring = false
-      awaitManagedPhotoReady.mockImplementationOnce(async () => {
-        // While awaiting the ready push, the coordinator should claim ownership.
-        observedDuring = coord.owns("rq-test-1")
-        return {readUrl: "https://r2.test/signed"}
+      let observedId = ""
+      fileBase64.mockImplementationOnce(async () => {
+        // While reading the delivered file, the coordinator should still claim ownership.
+        observedId = nativeArg().requestId as string
+        observedDuring = coord.owns(observedId)
+        return FILE_BASE64
       })
       await coord.takePhoto("com.a", {})
       expect(observedDuring).toBe(true)
-      expect(coord.owns("rq-test-1")).toBe(false)
+      expect(coord.owns(observedId)).toBe(false)
     })
 
-    test("sends a short BLE requestId while keeping the cloud UUID internally", async () => {
+    test("sends a short BLE requestId while keeping the full phone-minted id internally", async () => {
       const coord = new PhonePhotoCoordinator()
-      let bleIdDuringFlight = ""
-      awaitManagedPhotoReady.mockImplementationOnce(async () => {
-        bleIdDuringFlight = (requestPhotoNative.mock.calls[0]![0] as {requestId: string}).requestId
-        expect(bleIdDuringFlight).toHaveLength(4)
-        expect(coord.resolveCloudRequestId(bleIdDuringFlight)).toBe("rq-test-1")
-        return {readUrl: "https://r2.test/signed"}
-      })
-
       const result = await coord.takePhoto("com.a", {size: "medium"})
-      expect(result.requestId).toBe("rq-test-1")
-      expect(requestPhotoNative).toHaveBeenCalledTimes(1)
-      expect((requestPhotoNative.mock.calls[0]![0] as {requestId: string}).requestId).toBe(bleIdDuringFlight)
+      const bleId = nativeArg().requestId as string
+      expect(bleId).toHaveLength(4)
+      expect(result.requestId).toMatch(/^photo_/)
       // Mapping is cleaned up after completion.
-      expect(coord.owns(bleIdDuringFlight)).toBe(false)
+      expect(coord.owns(bleId)).toBe(false)
+      expect(coord.resolveRequestId(bleId)).toBe(bleId) // mapping gone → passthrough
     })
 
     test("owns() accepts short BLE ids while a capture is in flight", async () => {
       const coord = new PhonePhotoCoordinator()
-      awaitManagedPhotoReady.mockImplementationOnce(() => new Promise<never>(() => {}))
+      requestPhotoNative.mockImplementationOnce(() => new Promise<never>(() => {}))
       void coord.takePhoto("com.a", {}).catch(() => {})
       await new Promise((r) => setTimeout(r, 5))
-      const bleId = (requestPhotoNative.mock.calls[0]![0] as {requestId: string}).requestId
+      const bleId = nativeArg().requestId as string
       expect(coord.owns(bleId)).toBe(true)
-      expect(coord.resolveCloudRequestId(bleId)).toBe("rq-test-1")
+      expect(coord.resolveRequestId(bleId)).toMatch(/^photo_/)
       // Settle the hanging request so it can't leak into the next test.
       coord.handlePhotoError(bleId, "TEST_TEARDOWN", "teardown")
     })
   })
 
   describe("error paths", () => {
-    test("presign failure surfaces as PhotoError(PHOTO_REQUEST_FAILED) and skips BLE", async () => {
-      startManagedPhoto.mockRejectedValueOnce(new Error("cloud down"))
-      const coord = new PhonePhotoCoordinator()
-      const err = await expectPhotoError(coord.takePhoto("com.a", {}))
-      expect(err.code).toBe("PHOTO_REQUEST_FAILED")
-      expect(err.stage).toBe("presign")
-      expect(err.transport).toBe("cloud-rest")
-      expect(requestPhotoNative).not.toHaveBeenCalled()
-    })
-
-    test("BluetoothSdk.requestPhoto rejection surfaces as PhotoError(BLE_SEND_FAILED) and releases the slot", async () => {
-      // Hang the ready push so the BLE rejection deterministically wins.
-      awaitManagedPhotoReady.mockImplementationOnce(() => new Promise<never>(() => {}))
+    test("native rejection surfaces as a typed PhotoError and releases the slot", async () => {
       requestPhotoNative.mockRejectedValueOnce(new Error("BLE down"))
       const coord = new PhonePhotoCoordinator()
       const err = await expectPhotoError(coord.takePhoto("com.a", {}))
-      expect(err.code).toBe("BLE_SEND_FAILED")
-      expect(err.stage).toBe("command")
+      expect(err.code).toBe("PHOTO_FAILED")
+      expect(err.stage).toBe("capture")
       expect(err.transport).toBe("ble")
-      expect(coord.owns("rq-test-1")).toBe(false)
+      expect(openedFiles).toHaveLength(0)
+      expect(coord.getDiagnosticSnapshot()).toMatchObject({activeCaptureCount: 0})
     })
 
-    test("ready-push failure surfaces as PhotoError(POLL_FAILED)", async () => {
-      awaitManagedPhotoReady.mockRejectedValueOnce(new Error("push channel died"))
+    test("native rejection keeps a typed code from the glasses error when present", async () => {
+      requestPhotoNative.mockRejectedValueOnce(Object.assign(new Error("Camera busy"), {code: "CAMERA_BUSY"}))
       const coord = new PhonePhotoCoordinator()
       const err = await expectPhotoError(coord.takePhoto("com.a", {}))
-      expect(err.code).toBe("POLL_FAILED")
-      expect(err.stage).toBe("push")
-      expect(err.transport).toBe("ws")
+      expect(err.code).toBe("CAMERA_BUSY")
     })
 
-    test("ready-push failure keeps a typed code from the cloud error when present", async () => {
-      awaitManagedPhotoReady.mockRejectedValueOnce(
-        Object.assign(new Error("Upload did not arrive"), {code: "PHOTO_TIMEOUT"}),
-      )
+    test("a success delivery without a fileUri rejects instead of reading anything", async () => {
+      requestPhotoNative.mockResolvedValueOnce({...DELIVERY, fileUri: undefined} as unknown as typeof DELIVERY)
       const coord = new PhonePhotoCoordinator()
       const err = await expectPhotoError(coord.takePhoto("com.a", {}))
-      expect(err.code).toBe("PHOTO_TIMEOUT")
+      expect(err.code).toBe("PHOTO_DELIVERY_INCOMPLETE")
+      expect(openedFiles).toHaveLength(0)
     })
 
-    test("handlePhotoError mid-flight short-circuits the ready push with the glasses-reported code", async () => {
-      // Make the ready push hang so we can race it against handlePhotoError.
-      awaitManagedPhotoReady.mockImplementationOnce(() => new Promise<never>(() => {}))
+    test("an unreadable delivered file rejects with PHOTO_DELIVERY_FAILED at the deliver stage", async () => {
+      fileBase64.mockImplementationOnce(async () => {
+        throw new Error("ENOENT")
+      })
+      const coord = new PhonePhotoCoordinator()
+      const err = await expectPhotoError(coord.takePhoto("com.a", {}))
+      expect(err.code).toBe("PHOTO_DELIVERY_FAILED")
+      expect(err.stage).toBe("deliver")
+      expect(err.transport).toBe("local-file")
+      expect(err.message).toContain("ENOENT")
+      expect(fileDelete).not.toHaveBeenCalled()
+    })
+
+    test("a failed cleanup of the delivered file does not fail the photo", async () => {
+      fileDelete.mockImplementationOnce(() => {
+        throw new Error("EACCES")
+      })
+      const coord = new PhonePhotoCoordinator()
+      const result = await coord.takePhoto("com.a", {})
+      expect(result.dataUrl).toBe(EXPECTED_DATA_URL)
+    })
+
+    test("handlePhotoError mid-flight short-circuits the capture with the glasses-reported code", async () => {
+      // Make the native pipeline hang so we can race it against handlePhotoError.
+      requestPhotoNative.mockImplementationOnce(() => new Promise<never>(() => {}))
       const coord = new PhonePhotoCoordinator()
       const p = coord.takePhoto("com.a", {})
       // Wait a tick so the coordinator registers activeRequests.
       await new Promise((r) => setTimeout(r, 5))
-      expect(coord.owns("rq-test-1")).toBe(true)
-      coord.handlePhotoError("rq-test-1", "BATTERY_LOW", "Battery too low")
+      const bleId = nativeArg().requestId as string
+      expect(coord.owns(bleId)).toBe(true)
+      coord.handlePhotoError(bleId, "BATTERY_LOW", "Battery too low")
       const err = await expectPhotoError(p)
       expect(err.code).toBe("BATTERY_LOW")
       expect(err.stage).toBe("capture")
-      expect(coord.owns("rq-test-1")).toBe(false)
+      expect(coord.owns(bleId)).toBe(false)
     })
 
     test("handlePhotoError for an unknown requestId is a silent no-op", () => {
@@ -363,44 +403,43 @@ describe("PhonePhotoCoordinator", () => {
       expect(() => coord.handlePhotoError("does-not-exist", "X", "y")).not.toThrow()
     })
 
-    test("handlePhotoError racing the BLE send still rejects the takePhoto Promise (no silent drop)", async () => {
-      // Worst race: the BLE send resolves, then glasses report an error on the
-      // very next microtask — BEFORE the ready push gets a chance to settle.
+    test("handlePhotoError racing the native completion still rejects the takePhoto Promise (no silent drop)", async () => {
+      // Worst race: glasses report an error through the gated listener on the
+      // very next microtask — BEFORE the native promise settles.
       const coord = new PhonePhotoCoordinator()
-      awaitManagedPhotoReady.mockImplementationOnce(() => new Promise<never>(() => {}))
-      requestPhotoNative.mockImplementationOnce(async () => {
-        queueMicrotask(() => coord.handlePhotoError("rq-test-1", "CAMERA_BUSY", "Busy"))
-        return undefined
+      requestPhotoNative.mockImplementationOnce(async (req: unknown) => {
+        const bleId = (req as {requestId: string}).requestId
+        queueMicrotask(() => coord.handlePhotoError(bleId, "CAMERA_BUSY", "Busy"))
+        return new Promise<never>(() => {})
       })
       const err = await expectPhotoError(coord.takePhoto("com.a", {}))
       expect(err.code).toBe("CAMERA_BUSY")
+    })
+
+    test("a late native completion after handlePhotoError does not read the file", async () => {
+      const coord = new PhonePhotoCoordinator()
+      let deliver!: (evt: typeof DELIVERY) => void
+      requestPhotoNative.mockImplementationOnce(() => new Promise((resolve) => (deliver = resolve)))
+      const p = coord.takePhoto("com.a", {})
+      await new Promise((r) => setTimeout(r, 5))
+      const bleId = nativeArg().requestId as string
+      coord.handlePhotoError(bleId, "BATTERY_LOW", "Battery too low")
+      await expectPhotoError(p)
+      deliver(DELIVERY)
+      await new Promise((r) => setTimeout(r, 5))
+      expect(openedFiles).toHaveLength(0)
     })
   })
 
   describe("concurrency", () => {
     test("two takePhoto calls each get their own requestId, no cross-talk", async () => {
-      startManagedPhoto
-        .mockResolvedValueOnce({
-          requestId: "rq-A",
-          uploadUrl: "https://cloud.test/api/v2/runtime/photo/upload/rq-A",
-          readUrl: "https://cloud.test/api/v2/runtime/photo/read/rq-A",
-        })
-        .mockResolvedValueOnce({
-          requestId: "rq-B",
-          uploadUrl: "https://cloud.test/api/v2/runtime/photo/upload/rq-B",
-          readUrl: "https://cloud.test/api/v2/runtime/photo/read/rq-B",
-        })
-      awaitManagedPhotoReady.mockImplementation(async (requestId: string) => ({
-        readUrl: `https://r2.test/${requestId}`,
-      }))
-
       const coord = new PhonePhotoCoordinator()
       const [a, b] = await Promise.all([coord.takePhoto("com.a", {}), coord.takePhoto("com.b", {})])
-      expect(a.requestId).toBe("rq-A")
-      expect(b.requestId).toBe("rq-B")
-      expect(a.photoUrl).toBe("https://r2.test/rq-A")
-      expect(b.photoUrl).toBe("https://r2.test/rq-B")
+      expect(a.requestId).not.toBe(b.requestId)
+      expect(a.dataUrl).toBe(EXPECTED_DATA_URL)
+      expect(b.dataUrl).toBe(EXPECTED_DATA_URL)
       expect(requestPhotoNative).toHaveBeenCalledTimes(2)
+      expect(openedFiles).toHaveLength(2)
     })
   })
 

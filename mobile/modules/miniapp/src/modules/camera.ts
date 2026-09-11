@@ -34,13 +34,20 @@ export interface TakePhotoOptions {
   /** Capture at maximum source quality and optimize BLE delivery for readable text. */
   mode?: "photo" | "text"
   /**
-   * Image delivery path. `auto` tries direct Wi-Fi upload and falls back to
-   * BLE; `direct` disables BLE fallback; `ble` always relays through the phone.
+   * @deprecated Miniapp photos always ride BLE to the phone; the value is
+   * accepted for compatibility but no longer affects delivery.
    */
   transferMethod?: "auto" | "direct" | "ble"
+  /**
+   * @deprecated Compression only applied to webhook uploads. BLE phone
+   * delivery is governed by the transport codec, so this is ignored.
+   */
   compress?: "none" | "low" | "medium" | "high"
   sound?: boolean
+  /** Keep a copy of the capture in the glasses gallery. */
   saveToGallery?: boolean
+  /** Also export the delivered photo to the phone's OS camera roll. */
+  saveToCameraRoll?: boolean
   /**
    * Manual shutter / exposure time in nanoseconds. Omit (or pass undefined)
    * to let the glasses auto-expose. Honored only on cameras that support
@@ -70,20 +77,38 @@ export interface TakePhotoOptions {
   /** ISP analog gain hint. */
   ispAnalogGain?: string
   /**
-   * Override the SDK's default 60s request timeout for this capture only.
-   * Leave unset for a normal user-triggered capture (the full 60s ceiling is
-   * appropriate there). Callers that speculatively fire a capture and may
-   * abandon it if the result isn't needed (e.g. a short-lived non-visual
-   * assistant turn racing a capture against a ~1s latency cap) should pass a
-   * short value here so the abandoned `takePhoto()` promise settles quickly
-   * instead of sitting on the default 60s ceiling.
+   * Request deadline in milliseconds. Defaults to `PHOTO_REQUEST_TIMEOUT_MS`
+   * (90 s), which sits above the host's whole capture pipeline so host-side
+   * errors arrive as typed errors rather than a generic timeout. Pass `0` to
+   * disable the deadline.
    */
   timeoutMs?: number
 }
 
+/**
+ * Default request deadline for `takePhoto`. Must sit above the host's photo
+ * pipeline: the Bluetooth SDK's 60 s phone-delivery deadline, then the phone
+ * coordinator's 75 s last-resort watchdog (PhonePhotoCoordinator), so the host
+ * can always report its own typed error before this generic timeout fires.
+ */
+export const PHOTO_REQUEST_TIMEOUT_MS = 90_000
+
 export interface PhotoTaken {
-  /** Request id that correlates ASG status, upload, and phone/cloud logs. */
+  /** Request id that correlates ASG status and phone logs. */
   requestId: string
+  /**
+   * The photo itself as an inline `data:image/jpeg;base64,...` URL. Present on
+   * hosts that deliver photos over BLE to the phone (Mentra App >= 3.2);
+   * older hosts return only a short-lived download `photoUrl`.
+   */
+  dataUrl?: string
+  /**
+   * Same as `dataUrl` on current hosts, so code that renders `photoUrl`
+   * (`display.render` images, `<img src>`) keeps working. The background
+   * runtime's `fetch` is a native HTTP bridge and does not accept data URLs —
+   * decode `dataUrl` (e.g. `base64ToBytes`) when you need the bytes. On older
+   * hosts this is a short-lived HTTPS download URL.
+   */
   photoUrl: string
   mimeType: string
   size: number
@@ -158,12 +183,16 @@ export class CameraModule {
   }
 
   /**
-   * Take a photo via the glasses camera. Returns a URL to the captured image.
+   * Take a photo via the glasses camera and get the image back inline.
    * Requires CAMERA permission declared in miniapp.json.
    *
-   * The photo is uploaded to cloud storage; the returned URL is a short-TTL
-   * (~30 minute) signed download URL. If the glasses don't have a camera,
-   * the phone-side handler rejects with an error. Check
+   * The photo rides BLE from the glasses to the phone — no cloud or network
+   * request is in the path, so this works air-gapped — and resolves with the
+   * JPEG as `dataUrl` (`photoUrl` carries the same data URL for rendering;
+   * decode `dataUrl` rather than fetching it). Because delivery
+   * is BLE-only, large sizes (`size: "max"`) transfer more slowly, and final
+   * quality is governed by the BLE transport codec. If the glasses don't have
+   * a camera, the phone-side handler rejects with an error. Check
    * `session.capabilities.hasCamera` before calling.
    */
   async takePhoto(options: TakePhotoOptions = {}): Promise<PhotoTaken> {
@@ -176,6 +205,7 @@ export class CameraModule {
         compress: options.compress ?? "none",
         sound: options.sound ?? true,
         saveToGallery: options.saveToGallery ?? false,
+        ...(options.saveToCameraRoll !== undefined ? {saveToCameraRoll: options.saveToCameraRoll} : {}),
         exposureTimeNs: options.exposureTimeNs,
         iso: options.iso,
         aeExposureDivisor: options.aeExposureDivisor,
@@ -187,7 +217,7 @@ export class CameraModule {
         ispDigitalGain: options.ispDigitalGain,
         ispAnalogGain: options.ispAnalogGain,
       },
-      options.timeoutMs != null ? {timeoutMs: options.timeoutMs} : undefined,
+      {timeoutMs: options.timeoutMs ?? PHOTO_REQUEST_TIMEOUT_MS},
     )
   }
 

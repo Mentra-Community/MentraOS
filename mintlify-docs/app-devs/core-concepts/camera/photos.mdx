@@ -32,14 +32,18 @@ before calling so you don't fire a request the glasses can't satisfy.
 
 ## Take a photo
 
-`takePhoto` sends the request, waits while the glasses capture and the phone
-uploads, then resolves with the photo metadata. The returned `photoUrl` is a
-signed download URL with a short TTL (about 30 minutes), so fetch or display it
-soon after.
+`takePhoto` sends the request, waits while the glasses capture and transfer the
+image to the phone over Bluetooth, then resolves with the photo inline: `dataUrl`
+is a `data:image/jpeg;base64,...` URL you can render directly or decode (for
+example with `base64ToBytes` from the SDK) to upload wherever you need it;
+`photoUrl` carries the same value for rendering, but the background runtime's
+`fetch` does not accept data URLs. No cloud request is involved, so this also
+works without connectivity.
 
 ```typescript
 const photo = await session.camera.takePhoto({ size: "high", sound: false });
-// photo.photoUrl  – signed URL, ~30 min TTL
+// photo.dataUrl   – data:image/jpeg;base64,... (the image itself)
+// photo.photoUrl  – same data URL
 // photo.mimeType  – e.g. "image/jpeg"
 // photo.size      – bytes
 ```
@@ -49,10 +53,11 @@ All options are optional. The defaults are listed below.
 | Option | Type | Default | What it does |
 |---|---|---|---|
 | `size` | `"low" \| "medium" \| "high" \| "max"` | `"medium"` | Capture resolution. |
-| `transferMethod` | `"auto" \| "direct" \| "ble"` | `"auto"` | Use `"direct"` for webhook upload without BLE fallback, or `"ble"` to always relay through the phone. |
-| `compress` | `"none" \| "low" \| "medium" \| "high"` | `"none"` | JPEG compression applied before upload. |
 | `sound` | `boolean` | `true` | Play a shutter sound on the glasses. |
 | `saveToGallery` | `boolean` | `false` | Keep a copy in the glasses gallery. |
+| `saveToCameraRoll` | `boolean` | `false` | Also export the photo to the phone's OS camera roll. |
+| `transferMethod` | `"auto" \| "direct" \| "ble"` | — | Deprecated and ignored: delivery is always Bluetooth to the phone. |
+| `compress` | `"none" \| "low" \| "medium" \| "high"` | — | Deprecated and ignored: the Bluetooth transport codec governs quality. |
 | `exposureTimeNs` | `number` | auto | Manual shutter time in nanoseconds. Honored only on cameras with manual exposure; ignored otherwise. Omit to auto-expose. |
 
 Unknown runtime `transferMethod` values are rejected instead of being treated as `"auto"`.
@@ -62,7 +67,8 @@ The result is a `PhotoTaken`:
 | Field | Type | Description |
 |---|---|---|
 | `requestId` | `string` | Correlates the request with ASG status and upload logs. |
-| `photoUrl` | `string` | Signed download URL for the captured image (~30 min TTL). |
+| `dataUrl` | `string` | The captured image inline, `data:image/jpeg;base64,...`. |
+| `photoUrl` | `string` | Same data URL as `dataUrl` (kept for code that renders a URL; not fetchable in the background runtime). |
 | `mimeType` | `string` | MIME type of the image, e.g. `"image/jpeg"`. |
 | `size` | `number` | Image size in bytes. |
 

@@ -4,7 +4,7 @@ import {describe, expect, test} from "bun:test"
 
 import {MiniappRequestType} from "../protocol"
 import type {MiniappSession} from "../session"
-import {CameraModule, type CameraFovResult, type PhotoTaken} from "./camera"
+import {CameraModule, PHOTO_REQUEST_TIMEOUT_MS, type CameraFovResult, type PhotoTaken} from "./camera"
 
 function mockSession<T>(result: T) {
   const requestCalls: object[] = []
@@ -116,6 +116,17 @@ describe("CameraModule", () => {
     expect(requestCalls[0]).toMatchObject({transferMethod: ""})
   })
 
+  test("takePhoto forwards saveToCameraRoll and omits it when unset", async () => {
+    const {session, requestCalls} = mockSession({})
+    const camera = new CameraModule(session)
+
+    await camera.takePhoto({saveToCameraRoll: true})
+    await camera.takePhoto({})
+
+    expect(requestCalls[0]).toMatchObject({saveToCameraRoll: true})
+    expect(Object.keys(requestCalls[1] as Record<string, unknown>)).not.toContain("saveToCameraRoll")
+  })
+
   test("takePhoto forwards zsl and mfnr", async () => {
     const {session, requestCalls} = mockSession({})
     const camera = new CameraModule(session)
@@ -134,13 +145,15 @@ describe("CameraModule", () => {
     expect(requestOptions).toEqual([{timeoutMs: 1_200}])
   })
 
-  test("takePhoto omits the options argument when timeoutMs is unset", async () => {
+  test("takePhoto defaults the deadline above the host photo pipeline", async () => {
     const {session, requestOptions} = mockSession({})
     const camera = new CameraModule(session)
 
     await camera.takePhoto({})
 
-    expect(requestOptions).toEqual([undefined])
+    // Bluetooth SDK phone delivery: 60 s; PhonePhotoCoordinator watchdog: 75 s.
+    expect(PHOTO_REQUEST_TIMEOUT_MS).toBeGreaterThan(75_000)
+    expect(requestOptions).toEqual([{timeoutMs: PHOTO_REQUEST_TIMEOUT_MS}])
   })
 
   test("warmUp forwards size and default duration", async () => {
