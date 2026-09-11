@@ -8,51 +8,14 @@ export const SentryNavigationIntegration = Sentry.reactNavigationIntegration({
   ignoreEmptyBackNavigationTransactions: true, // default: true
 })
 
-/**
- * Demote known third-party fatal errors to non-fatal Sentry reports so the
- * app doesn't get torn down by them. Currently filters:
- *   - PostHog session-id uuidv7 generation throwing `RangeError: invalid field value`
- *     (MENTRA-OS-1SE). Affects devices with clock skew; can't be fixed from app code
- *     without upgrading @posthog/core.
- */
-let knownErrorFilterInstalled = false
 let sentryInitialized = false
 let sentryInitializationBlocked = false
 let requestedSentryState = false
 let reconcilingSentryState = false
 let deploymentSubscriptionInstalled = false
 
-const installKnownErrorFilter = () => {
-  if (knownErrorFilterInstalled) return
-  knownErrorFilterInstalled = true
-  const ErrorUtils = (global as any).ErrorUtils
-  if (!ErrorUtils || typeof ErrorUtils.getGlobalHandler !== "function") return
-  const previous = ErrorUtils.getGlobalHandler()
-  ErrorUtils.setGlobalHandler((error: any, isFatal?: boolean) => {
-    try {
-      const msg = error?.message ?? String(error)
-      const stack = error?.stack ?? ""
-      const isPosthogUuidV7 =
-        msg === "invalid field value" &&
-        (stack.includes("fromFieldsV7") || stack.includes("uuidv7") || stack.includes("getSessionId"))
-      if (isPosthogUuidV7) {
-        Sentry.captureException(error, {
-          tags: {filtered: "posthog_uuidv7_rangeerror"},
-          level: "warning",
-        })
-        return
-      }
-    } catch {
-      // fall through to default handler on any meta-error
-    }
-    previous?.(error, isFatal)
-  })
-}
-
 function initializeSentry() {
   if (sentryInitialized) return
-  // Always install — the filter prevents a known-fatal PostHog bug from killing
-  // the app even when Sentry itself isn't initialized.
   // Only initialize Sentry if DSN is provided
   const sentryDsn = process.env.EXPO_PUBLIC_SENTRY_DSN
   const isChina = engine.settings.get(SETTINGS.china_deployment.key)
@@ -145,7 +108,6 @@ export const updateSentryForActiveDeployment = () => {
 }
 
 export const SentrySetup = () => {
-  installKnownErrorFilter()
   if (!deploymentSubscriptionInstalled) {
     deploymentSubscriptionInstalled = true
     // DeploymentStore notifies synchronously. This starts disabling Sentry at

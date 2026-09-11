@@ -18,6 +18,7 @@ import {
   stateAssets,
   validateStateRecordChain,
 } from "./production-promotion-assets.mjs"
+import * as assetsModule from "./production-promotion-assets.mjs"
 import {
   abortPromotionRecord,
   createInitialPromotionRecord,
@@ -264,4 +265,32 @@ test("validates every immutable state and digest before returning latest", () =>
   const tampered = structuredClone(entries)
   tampered[1].record.coordinates.candidates.mentraApp.ios.buildNumber += 1
   assert.throws(() => validateStateRecordChain(tampered, "3.1.0", 1), /digest|frozen field coordinates/)
+})
+
+test("resolves the newest promotion attempt for stable package evidence", () => {
+  const {latestPromotionContainer} = assetsModule
+  assert.equal(latestPromotionContainer([], "3.1.0"), null)
+  const releases = [
+    {tag_name: "mentra-production-promotion-v3.1.0-attempt-2"},
+    {tag_name: "mentra-production-promotion-v3.0.0-attempt-4"},
+    {tag_name: "mentra-production-promotion-v3.1.0-attempt-1"},
+    {tag_name: "mentra-builds-v3.1.0"},
+  ]
+  const latest = latestPromotionContainer(releases, "3.1.0")
+  assert.equal(latest.attempt, 2)
+  assert.equal(latest.releaseIdentity, "3.1.0")
+  assert.equal(latestPromotionContainer(releases, "3.2.0"), null)
+})
+
+test("writes step outputs into a directory that does not exist yet", () => {
+  const {writeOutputs} = assetsModule
+  const file = path.join(mkdtempSync(path.join(tmpdir(), "promotion-outputs-")), "promotion-input", "outputs.env")
+  writeOutputs({found: false}, file)
+  assert.equal(readFileSync(file, "utf8"), "found=false\n")
+})
+
+test("reassembles paginated gh listings streamed as JSON lines", () => {
+  const {parseJsonLines} = assetsModule
+  assert.deepEqual(parseJsonLines('{"id":1}\n{"id":2}\n\n'), [{id: 1}, {id: 2}])
+  assert.deepEqual(parseJsonLines(""), [])
 })

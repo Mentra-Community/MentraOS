@@ -1,5 +1,5 @@
 const packageJson = require("../../../package.json")
-const {applyBluetoothSdkInfoPlist, INFO_SDK_VERSION} = require("../withIos")
+const {applyBluetoothSdkInfoPlist, INFO_SDK_VERSION, INFO_ANALYTICS_ENVIRONMENT} = require("../withIos")
 
 describe("Bluetooth SDK iOS config", () => {
   it("stamps the package version into Info.plist for workspace builds", () => {
@@ -23,5 +23,15 @@ describe("Bluetooth SDK iOS config", () => {
     })
     expect(infoPlist).not.toHaveProperty("MentraBluetoothSdkPostHogApiKey")
     expect(infoPlist).not.toHaveProperty("MentraBluetoothSdkPostHogHost")
+  })
+
+  it("stamps the host environment and clears a stale one when unset", () => {
+    const stamped = applyBluetoothSdkInfoPlist({}, {analytics: {environment: "Staging"}})
+    expect(stamped[INFO_ANALYTICS_ENVIRONMENT]).toBe("staging")
+    expect(stamped).not.toHaveProperty("MentraBluetoothSdkAnalyticsDisabled")
+
+    const cleared = applyBluetoothSdkInfoPlist({[INFO_ANALYTICS_ENVIRONMENT]: "prod"}, {analytics: true})
+    expect(cleared).not.toHaveProperty(INFO_ANALYTICS_ENVIRONMENT)
+    expect(cleared.MentraBluetoothSdkAnalyticsDisabled).toBe(false)
   })
 })

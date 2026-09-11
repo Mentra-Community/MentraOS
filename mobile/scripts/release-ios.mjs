@@ -7,6 +7,7 @@ import {
   validateReleaseArchive,
   xcodeBuildSettings,
 } from './release-bundle-config.mjs';
+import { validateIosSdkAnalyticsMetadata } from './release-sdk-metadata.mjs';
 import { getBuildNumber } from './build-number.mjs';
 import { cp, mkdir } from 'fs/promises';
 import { existsSync } from 'fs';
@@ -268,6 +269,7 @@ console.log('IPA exported:', ipaPath);
 // contain stale or missing Expo public configuration if Xcode did not pass the
 // build environment into Metro. Refuse to publish that binary anywhere.
 validateReleaseArchive(ipaPath, 'iOS');
+validateIosSdkAnalyticsMetadata(ipaPath);
 console.log('Verified iOS release JS bundle configuration');
 
 // Coordinated release CI distributes the exact validated IPA and owns its

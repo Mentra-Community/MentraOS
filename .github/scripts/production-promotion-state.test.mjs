@@ -9,6 +9,7 @@ import {
   createInitialPromotionRecord,
   nextAction,
   promotionAssetName,
+  requirePromotionMatchesPackages,
   transitionPromotionRecord,
   transitionWithAttestation,
   validateAttestation,
@@ -409,4 +410,40 @@ test("allows append-only rollout observations before completion", () => {
   })
   assert.equal(completed.state, "completed")
   assert.equal(completed.previous.assetName, promotionAssetName(finalizing))
+})
+
+test("stable packages only read the promotion to reject a conflicting frozen beta", () => {
+  const link = {betaIdentity: "3.1.0-beta.57", sourceCommit: "a".repeat(40)}
+  for (const state of PROMOTION_STATES) {
+    const record = atState(state)
+    assert.deepEqual(requirePromotionMatchesPackages(record, link), {state, attempt: 1})
+  }
+  const aborted = abortPromotionRecord({
+    record: initial(),
+    actor: "release-owner",
+    createdAt: now,
+    provenanceUrl: runUrl,
+    reason: "withdrawn",
+  })
+  assert.equal(requirePromotionMatchesPackages(aborted, {...link, betaIdentity: "3.1.0-beta.58"}).state, "aborted")
+  assert.throws(
+    () => requirePromotionMatchesPackages(initial(), {...link, betaIdentity: "3.1.0-beta.58"}),
+    /selected 3\.1\.0-beta\.57/,
+  )
+  assert.throws(
+    () => requirePromotionMatchesPackages(initial(), {...link, sourceCommit: "e".repeat(40)}),
+    /froze source/,
+  )
+  assert.throws(
+    () =>
+      transitionPromotionRecord({
+        record: initial(),
+        to: "selected",
+        actor: "release-owner",
+        createdAt: now,
+        provenanceUrl: runUrl,
+        evidence: evidence("production-packages-publication"),
+      }),
+    /not contiguous/,
+  )
 })

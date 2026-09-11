@@ -258,10 +258,12 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
         "./modules/bluetooth-sdk/app.plugin.js",
         {
           node: true,
-          // The Mentra App sends identified support telemetry through Cloud V2.
-          // Keep the SDK's anonymous analytics enabled by default for standalone
-          // integrators, but disable the duplicate embedded copy in this host.
-          analytics: false,
+          // Bluetooth SDK usage analytics are the single source of truth for
+          // glasses WAU across every host, the Mentra App included. Cloud V2
+          // support profiles are a separate per-account diagnostic and do not
+          // replace them. The lane lets PostHog separate store builds from the
+          // dev and staging release lanes that share this bundle id.
+          analytics: {environment: process.env.EXPO_PUBLIC_BUILD_ENV || "dev"},
         },
       ],
       // "./plugins/withSplashScreen.ts",
