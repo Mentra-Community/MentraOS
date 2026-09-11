@@ -3,11 +3,12 @@
 This is the employee procedure for promoting one completed coordinated beta to
 production. It covers Cloud V2 and the Mentra App on iOS and Android.
 
-The Bluetooth SDK Starter Kit example app is explicitly outside this production
-promotion system. These workflows do not build it, upload it to TestFlight or
-Google Play, submit it for review, or release it publicly. Do not add the example
-app manually to a promotion attempt. Publishing it to app stores later requires
-a reviewed workflow and runbook change; it is not an operator-time option.
+The Bluetooth SDK Starter Kit example app is outside the promotion state
+machine. Its production candidates are built by a separate workflow keyed on
+the promoted beta (see "Bluetooth SDK example" below): they go to the internal
+TestFlight group and the internal Play track for acceptance and are never
+submitted for review or released publicly. Do not add the example app manually
+to a promotion attempt.
 
 The example app is also its own release notion in the coordinated beta. A beta
 is complete, and promotable, when `finalize` writes `mentra-release-<beta>.json`
@@ -461,6 +462,40 @@ Stop conditions specific to packages:
   bump the family base version on `dev` and cut a new beta.
 - Do not run phase 2 until the Cloud side of the release is at least deployed
   or you have explicitly decided that the stable packages may lead it.
+
+## Bluetooth SDK example - production candidates
+
+The production Bluetooth SDK example is built by `production-release-example.yml`
+after the stable packages are public. Like the packages it is keyed on the
+promoted beta, never on a promotion attempt, and it never transitions the
+promotion state machine.
+
+```bash
+./scripts/production-release.mjs example --beta X.Y.Z-beta.N
+```
+
+It refuses to start until `@mentra/bluetooth-sdk@X.Y.Z` and `@mentra/engine@X.Y.Z`
+are public on npm, because the Starter Kit installs them from the registry.
+Then it:
+
+- freezes a production example plan from the beta's exact `sourceCommit` and
+  frozen OTA manifest pin, with one example build number allocated above both
+  store inventories and the beta's own number;
+- requests the Starter Kit's production channel, which synchronizes its `main`
+  branch to the plain versions, builds the examples, tags `sdk-X.Y.Z`, and
+  publishes them in the non-prerelease Starter Kit release `sdk-X.Y.Z`
+  (including `mentra-example-react-native-X.Y.Z.apk`);
+- uploads the iOS candidate to the `Mentra SDK Example Production Candidates`
+  internal TestFlight group and the Android candidate to the Play `internal`
+  track; and
+- records `mentra-example-release-X.Y.Z.json` in the stable release
+  `mentra-vX.Y.Z`, the same draft the packages and the rollout finalization
+  stage records into. The record carries `storePromotion: "never"`.
+
+A rerun reuses the Starter Kit release, TestFlight build, and Play upload that
+already exist and refuses anything that exists with different bytes. A Play
+upload that fails leaves the Starter Kit release and TestFlight build in place
+and stops the record; rerun once Play accepts the candidate.
 
 ## Abort, retry, and incident handling
 

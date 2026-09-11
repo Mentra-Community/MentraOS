@@ -50,6 +50,17 @@ jobs:
         with:
           ref: ${{ inputs.source_commit }}
 
+      # The example scripts run from the workflow revision, not from the frozen
+      # source: a production example is built from a promoted beta commit that
+      # may predate the production support in these scripts. On dev and
+      # staging the two revisions are the same commit.
+      - name: Checkout example tooling from the workflow revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: release-tooling
+          sparse-checkout: .github/scripts
+          sparse-checkout-cone-mode: false
       - uses: actions/download-artifact@v4
         with:
           name: ${{ inputs.release_plan_artifact }}
@@ -72,7 +83,7 @@ jobs:
           set -euo pipefail
           starter=$(find release-input/starter-kit -type f -name 'starter-kit-release-*.json' -print -quit)
           test -n "$starter"
-          node .github/scripts/coordinated-example-google-play.mjs coordinates \
+          node release-tooling/.github/scripts/coordinated-example-google-play.mjs coordinates \
             --plan release-input/plan/release-plan.json --starter-kit "$starter" \
             --track "$GOOGLE_PLAY_TRACK" --output "$GITHUB_OUTPUT"
           echo "starter_result=$starter" >> "$GITHUB_OUTPUT"
@@ -193,7 +204,7 @@ jobs:
         run: |
           set -euo pipefail
           [[ "$(git rev-parse HEAD)" == "${{ steps.coordinates.outputs.starter_release_commit }}" ]]
-          node "$GITHUB_WORKSPACE/.github/scripts/coordinated-example-google-play.mjs" configure \
+          node "$GITHUB_WORKSPACE/release-tooling/.github/scripts/coordinated-example-google-play.mjs" configure \
             --plan "$GITHUB_WORKSPACE/release-input/plan/release-plan.json" --app app.json --package package.json
           bun install --frozen-lockfile
           bunx expo prebuild --platform android
@@ -227,7 +238,7 @@ jobs:
         run: |
           set -euo pipefail
           aab="release-output/${{ steps.coordinates.outputs.aab_name }}"
-          node .github/scripts/coordinated-example-google-play.mjs verify-aab \
+          node release-tooling/.github/scripts/coordinated-example-google-play.mjs verify-aab \
             --plan release-input/plan/release-plan.json --aab "$aab" --bundletool "$RUNNER_TEMP/bundletool.jar"
           jarsigner -verify "$aab"
           keytool -printcert -jarfile "$aab" > "$RUNNER_TEMP/example-certificate.txt"
@@ -268,7 +279,7 @@ jobs:
         run: |
           set -euo pipefail
           bundle exec fastlane track_version_codes
-          node ../.github/scripts/coordinated-example-google-play.mjs record \
+          node ../release-tooling/.github/scripts/coordinated-example-google-play.mjs record \
             --plan ../release-input/plan/release-plan.json \
             --starter-kit "../${{ steps.coordinates.outputs.starter_result }}" \
             --track "$GOOGLE_PLAY_TRACK" --codes "$GOOGLE_PLAY_VERSION_CODES_OUTPUT" \

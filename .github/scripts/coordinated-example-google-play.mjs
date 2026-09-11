@@ -25,8 +25,14 @@ export function verifyExampleAabIdentity(plan, aab, bundletool, run = execFileSy
   }
 }
 
+export function examplePlayAudience(channel) {
+  return channel === "beta" ? "external" : "internal"
+}
+
 export function examplePlayCoordinates(plan, starterKit, track) {
-  const expectedTrack = {dev: "internal", beta: "beta"}[plan.channel]
+  // Production example candidates stay on the internal track: the example is
+  // accepted by employees and never promoted to a public Play release here.
+  const expectedTrack = {dev: "internal", beta: "beta", production: "internal"}[plan.channel]
   if (!expectedTrack || track !== expectedTrack) throw new Error("Example Google Play track does not match the channel")
   if (
     starterKit.releaseSetId !== plan.releaseSetId ||
@@ -59,7 +65,9 @@ export function examplePlayCoordinates(plan, starterKit, track) {
 }
 
 export function configureExampleAndroid(plan, config, packageJson) {
-  if (!["dev", "beta"].includes(plan.channel)) throw new Error("Only coordinated prerelease examples are supported")
+  if (!["dev", "beta", "production"].includes(plan.channel)) {
+    throw new Error("Only coordinated dev, beta, or production examples are supported")
+  }
   for (const name of ["@mentra/bluetooth-sdk", "@mentra/engine"]) {
     if (packageJson.dependencies?.[name] !== plan.releaseIdentity)
       throw new Error(`Example ${name} must match the release`)
@@ -88,7 +96,7 @@ export function validateExampleGooglePlay(plan, starterKit, record) {
     record.version?.buildNumber !== plan.native.buildNumber ||
     !["published", "reused"].includes(record.uploadStatus) ||
     record.distribution?.status !== "submitted" ||
-    record.distribution?.audience !== (plan.channel === "dev" ? "internal" : "external") ||
+    record.distribution?.audience !== examplePlayAudience(plan.channel) ||
     record.distribution?.installUrl !== installUrl ||
     record.aab?.url !== coordinates.aab_url ||
     !/^[0-9a-f]{64}$/.test(record.aab?.sha256 || "") ||
@@ -126,7 +134,7 @@ export function createExampleGooglePlayRecord({
     track,
     uploadStatus,
     // Track acceptance is not proof that review or tester availability has completed.
-    distribution: {status: "submitted", audience: plan.channel === "dev" ? "internal" : "external", installUrl},
+    distribution: {status: "submitted", audience: examplePlayAudience(plan.channel), installUrl},
     aab: {url: artifactUrl, sha256: createHash("sha256").update(aab).digest("hex"), size: aab.length},
     provenanceUrl,
   })

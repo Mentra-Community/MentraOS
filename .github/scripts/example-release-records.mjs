@@ -32,9 +32,18 @@ function requireIsoUtc(value, label) {
   return value
 }
 
+// Production example candidates go to the internal candidates group, never to
+// a public group: the example is distributed to employees for acceptance and
+// is not released through a store from the production workflow.
+export function exampleTestflightDestination(channel) {
+  if (channel === "dev") return {group: "Mentra Dev", audience: "internal"}
+  if (channel === "beta") return {group: "Mentra Staging Public", audience: "external"}
+  if (channel === "production") return {group: "Mentra SDK Example Production Candidates", audience: "internal"}
+  throw new Error(`Unsupported example release channel ${JSON.stringify(channel)}`)
+}
+
 export function verifyExampleTestflight(plan, starterKit, exampleTestflight) {
-  const expectedGroup = plan.channel === "dev" ? "Mentra Dev" : "Mentra Staging Public"
-  const expectedAudience = plan.channel === "dev" ? "internal" : "external"
+  const {group: expectedGroup, audience: expectedAudience} = exampleTestflightDestination(plan.channel)
   const distribution = exampleTestflight?.distribution
   if (
     exampleTestflight?.schemaVersion !== 1 ||
@@ -69,7 +78,7 @@ export function verifyExampleTestflight(plan, starterKit, exampleTestflight) {
   ) {
     throw new Error("Example TestFlight IPA evidence is invalid")
   }
-  if (plan.channel === "dev" && distribution.status !== "available") {
+  if (expectedAudience === "internal" && distribution.status !== "available") {
     throw new Error("Internal example TestFlight distribution must be available")
   }
   if (expectedAudience === "external" && !/^https:\/\/testflight\.apple\.com\/join\//.test(distribution.installUrl)) {
@@ -143,23 +152,52 @@ export function verifyStarterKitResult(plan, starterKit, resultUrl, exampleTestf
   }
 }
 
+// A dev or beta example is built against the finalized manifest of its own
+// coordinated release. A production example is built against the finalized
+// manifest of the beta the production release was promoted from: the plan's
+// promotion block pins that manifest by URL and digest.
+export function exampleBetaManifestName(plan) {
+  return plan.channel === "production"
+    ? `mentra-release-${plan.promotion?.selectedBetaIdentity}.json`
+    : plan.artifactNames.releaseManifest
+}
+
 function verifyBetaManifest(plan, betaManifest, betaManifestUrl, betaManifestSha256) {
+  const production = plan.channel === "production"
+  const expected = production
+    ? {
+        releaseSetId: plan.promotion?.selectedBetaReleaseSetId,
+        releaseIdentity: plan.promotion?.selectedBetaIdentity,
+        channel: "beta",
+      }
+    : {releaseSetId: plan.releaseSetId, releaseIdentity: plan.releaseIdentity, channel: plan.channel}
   if (
     betaManifest?.schemaVersion !== 1 ||
-    betaManifest.releaseSetId !== plan.releaseSetId ||
-    betaManifest.releaseIdentity !== plan.releaseIdentity ||
-    betaManifest.channel !== plan.channel ||
+    betaManifest.releaseSetId !== expected.releaseSetId ||
+    betaManifest.releaseIdentity !== expected.releaseIdentity ||
+    betaManifest.channel !== expected.channel ||
     betaManifest.sourceCommit !== plan.sourceCommit ||
     typeof betaManifest.completedAt !== "string"
   ) {
-    throw new Error("The example release requires the finalized manifest of the same coordinated beta")
+    throw new Error(
+      production
+        ? "The production example requires the finalized manifest of the promoted beta"
+        : "The example release requires the finalized manifest of the same coordinated beta",
+    )
   }
   requireIsoUtc(betaManifest.completedAt, "betaManifest.completedAt")
   if (!SHA256_PATTERN.test(betaManifestSha256 || "")) {
     throw new Error("betaManifest.sha256 must be a lowercase SHA-256 digest")
   }
+  if (
+    production &&
+    (plan.promotion.selectedBetaManifest?.url !== betaManifestUrl ||
+      plan.promotion.selectedBetaManifest?.sha256 !== betaManifestSha256)
+  ) {
+    throw new Error("The production example requires the exact beta manifest the plan was promoted from")
+  }
   return {
-    name: plan.artifactNames.releaseManifest,
+    name: exampleBetaManifestName(plan),
     url: requirePublicHttpsUrl(betaManifestUrl, "betaManifest.url"),
     sha256: betaManifestSha256,
     completedAt: betaManifest.completedAt,
@@ -178,8 +216,14 @@ export function assembleExampleReleaseResults({
   completedAt,
   provenanceUrl,
 }) {
-  if (plan?.releaseSetId !== `mentra-${plan?.releaseIdentity}` || plan.channel === "production") {
-    throw new Error("The example release requires a coordinated dev or beta release plan")
+  if (
+    plan?.releaseSetId !== `mentra-${plan?.releaseIdentity}` ||
+    !["dev", "beta", "production"].includes(plan.channel)
+  ) {
+    throw new Error("The example release requires a coordinated dev, beta, or production release plan")
+  }
+  if (plan.channel === "production" && plan.example?.storePromotion !== "never") {
+    throw new Error("The production example plan must declare that it is never promoted to a store")
   }
   const beta = verifyBetaManifest(plan, betaManifest, betaManifestUrl, betaManifestSha256)
   const verified = verifyStarterKitResult(plan, starterKit, starterKitResultUrl, exampleTestflight, exampleGooglePlay)
@@ -191,7 +235,11 @@ export function assembleExampleReleaseResults({
     familyBaseVersion: plan.familyBaseVersion,
     channel: plan.channel,
     sourceCommit: plan.sourceCommit,
+    native: plan.native,
     betaManifest: beta,
+    ...(plan.channel === "production"
+      ? {promotion: {...plan.promotion, storePromotion: plan.example.storePromotion}}
+      : {}),
     starterKit: verified.record,
     artifacts: verified.artifacts,
     completedAt: requireIsoUtc(completedAt, "completedAt"),
@@ -207,7 +255,8 @@ export function validateExampleReleaseRecord(record, plan) {
     record.releaseIdentity !== plan.releaseIdentity ||
     record.channel !== plan.channel ||
     record.sourceCommit !== plan.sourceCommit ||
-    record.betaManifest?.name !== plan.artifactNames.releaseManifest ||
+    record.betaManifest?.name !== exampleBetaManifestName(plan) ||
+    (plan.channel === "production" && record.promotion?.storePromotion !== "never") ||
     !SHA256_PATTERN.test(record.betaManifest?.sha256 || "") ||
     !Array.isArray(record.artifacts) ||
     record.artifacts.length < 3 ||

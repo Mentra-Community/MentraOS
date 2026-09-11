@@ -4,6 +4,7 @@ import test from "node:test"
 import {
   advanceConfirmationMessage,
   branchPromotionState,
+  exampleConfirmationMessage,
   packagesConfirmationMessage,
   parseCliArgs,
   parseJsonLines,
@@ -11,6 +12,7 @@ import {
   requireCommandState,
   statusSummary,
   validateAdvanceOptions,
+  validateExampleOptions,
   validatePackagesOptions,
 } from "./production-release.mjs"
 
@@ -187,4 +189,12 @@ test("parses line-delimited gh projections and ignores blank lines", () => {
   ])
   assert.deepEqual(parseJsonLines(""), [])
   assert.throws(() => parseJsonLines("{not json}"), SyntaxError)
+})
+
+test("dispatches the production example from the promoted beta and never promises a store release", () => {
+  assert.deepEqual(validateExampleOptions({beta: "3.1.0-beta.212"}), {beta_identity: "3.1.0-beta.212"})
+  assert.throws(() => validateExampleOptions({beta: "3.1.0"}), /--beta X\.Y\.Z-beta\.N/)
+  const message = exampleConfirmationMessage({beta_identity: "3.1.0-beta.212"})
+  assert.match(message, /example 3\.1\.0 from the public 3\.1\.0 packages/)
+  assert.match(message, /never releases the example to a store/)
 })

@@ -63,6 +63,7 @@ Commands:
   advance  --release X.Y.Z [--attempt N] [--android-percent N | --complete] [--yes]
   abort    --release X.Y.Z [--attempt N] --reason TEXT [--yes]
   packages --beta X.Y.Z-beta.N --phase publish|release [--yes]
+  example  --beta X.Y.Z-beta.N [--yes]
   watch    --run RUN_ID
 
 This CLI dispatches protected GitHub workflows. It never reads production
@@ -506,6 +507,20 @@ export function packagesConfirmationMessage(request) {
     : `This moves npm latest, publishes Maven Central, and pushes the public SwiftPM tag for ${request.beta_identity.replace(/-beta\.\d+$/, "")}. GitHub will still require production-packages-release approval.`
 }
 
+// The production Bluetooth SDK example is keyed on the promoted beta like the
+// stable packages, and depends on them being public: it builds the Starter Kit
+// against the plain X.Y.Z npm packages and uploads candidates to the internal
+// TestFlight group and Play track. It never promotes a store listing.
+export function validateExampleOptions(options) {
+  if (!BETA_PATTERN.test(options.beta || "")) throw commandError("example requires --beta X.Y.Z-beta.N")
+  return {beta_identity: options.beta}
+}
+
+export function exampleConfirmationMessage(request) {
+  const identity = request.beta_identity.replace(/-beta\.\d+$/, "")
+  return `This builds the production Bluetooth SDK example ${identity} from the public ${identity} packages and uploads its candidates to the internal TestFlight group and Play track. It never releases the example to a store. Run it after 'packages --phase release'.`
+}
+
 export function advanceConfirmationMessage(request) {
   return request.action === "complete"
     ? "This requests final verification and completion of the public release."
@@ -557,6 +572,16 @@ async function main(argv = process.argv.slice(2)) {
       release: request.beta_identity.replace(/-beta\.\d+$/, ""),
     })
     dispatch("production-release-packages.yml", request)
+    return
+  }
+
+  if (command === "example") {
+    const request = validateExampleOptions(options)
+    await confirmEffect(exampleConfirmationMessage(request), {
+      ...options,
+      release: request.beta_identity.replace(/-beta\.\d+$/, ""),
+    })
+    dispatch("production-release-example.yml", request)
     return
   }
 
