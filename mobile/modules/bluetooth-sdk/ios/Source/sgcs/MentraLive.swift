@@ -1022,17 +1022,17 @@ extension MentraLive: CBCentralManagerDelegate {
     }
 
     #if !os(macOS)
-    nonisolated func centralManager(
-        _: CBCentralManager, didUpdateANCSAuthorizationFor peripheral: CBPeripheral
-    ) {
-        DispatchQueue.main.async { [weak self] in
-            guard let self, peripheral === self.connectedPeripheral else { return }
-            Bridge.log(
-                "LIVE: ANCS authorization updated: \(peripheral.ancsAuthorized ? "authorized" : "not authorized")"
-            )
-            self.enableAncsRelayIfAuthorized()
+        nonisolated func centralManager(
+            _: CBCentralManager, didUpdateANCSAuthorizationFor peripheral: CBPeripheral
+        ) {
+            DispatchQueue.main.async { [weak self] in
+                guard let self, peripheral === self.connectedPeripheral else { return }
+                Bridge.log(
+                    "LIVE: ANCS authorization updated: \(peripheral.ancsAuthorized ? "authorized" : "not authorized")"
+                )
+                self.enableAncsRelayIfAuthorized()
+            }
         }
-    }
     #endif
 
     nonisolated func centralManager(
@@ -2154,6 +2154,8 @@ class MentraLive: NSObject, SGCManager {
         Bridge.log("Starting stream")
         var json = message
         json.removeValue(forKey: "timestamp")
+        json["controllerProbeVersion"] = 1
+        json["controllerId"] = StreamControllerProbe.controllerId
         sendJson(json, wakeUp: true)
     }
 
@@ -2461,16 +2463,16 @@ class MentraLive: NSObject, SGCManager {
         startConnectionTimeout()
 
         #if os(macOS)
-        centralManager?.connect(peripheral, options: nil)
+            centralManager?.connect(peripheral, options: nil)
         #else
-        // ANCS is hosted by iOS and is only exposed to authorized accessories.
-        // The default requirement lets the system complete that authorization flow
-        // before the glasses subscribe; apps that do not relay notifications can opt out.
-        Bridge.log("LIVE: ANCS connection requirement \(requiresAncs ? "enabled" : "disabled")")
-        centralManager?.connect(
-            peripheral,
-            options: MentraLiveConnectionOptions.coreBluetoothOptions(requiresAncs: requiresAncs)
-        )
+            // ANCS is hosted by iOS and is only exposed to authorized accessories.
+            // The default requirement lets the system complete that authorization flow
+            // before the glasses subscribe; apps that do not relay notifications can opt out.
+            Bridge.log("LIVE: ANCS connection requirement \(requiresAncs ? "enabled" : "disabled")")
+            centralManager?.connect(
+                peripheral,
+                options: MentraLiveConnectionOptions.coreBluetoothOptions(requiresAncs: requiresAncs)
+            )
         #endif
     }
 
@@ -2479,23 +2481,23 @@ class MentraLive: NSObject, SGCManager {
     /// for old mobile clients that never send it.
     private func enableAncsRelayIfAuthorized() {
         #if !os(macOS)
-        guard !ancsRelayEnableRequested,
-              let peripheral = connectedPeripheral,
-              txCharacteristic != nil,
-              rxCharacteristic?.isNotifying == true,
-              peripheral.ancsAuthorized
-        else {
-            return
-        }
+            guard !ancsRelayEnableRequested,
+                  let peripheral = connectedPeripheral,
+                  txCharacteristic != nil,
+                  rxCharacteristic?.isNotifying == true,
+                  peripheral.ancsAuthorized
+            else {
+                return
+            }
 
-        let command: [String: Any] = [
-            "C": "cs_ancs",
-            "B": ["enabled": 1],
-        ]
-        if sendRawK900Command(command) {
-            ancsRelayEnableRequested = true
-            Bridge.log("LIVE: Requested ANCS relay from compatible firmware")
-        }
+            let command: [String: Any] = [
+                "C": "cs_ancs",
+                "B": ["enabled": 1],
+            ]
+            if sendRawK900Command(command) {
+                ancsRelayEnableRequested = true
+                Bridge.log("LIVE: Requested ANCS relay from compatible firmware")
+            }
         #endif
     }
 
@@ -2802,6 +2804,10 @@ class MentraLive: NSObject, SGCManager {
                 body: ["sid": glassesSessionId ?? ""]
             )
             readinessCompletedThisBleSession = true
+            Bridge.sendTypedMessage("stream_control_ready", body: [
+                "sid": json["sid"] as? String ?? "",
+                "streamControlVersion": json["streamControlVersion"] as? Int ?? 0,
+            ])
             handleGlassesReady()
 
         case "battery_status":
@@ -2968,6 +2974,11 @@ class MentraLive: NSObject, SGCManager {
             let success = state == "success" || json["success"] as? Bool == true
             let error = json["errorCode"] as? String ?? json["error"] as? String
             Bridge.sendRgbLedControlResponse(requestId: requestId, success: success, error: error)
+
+        case "stream_controller_probe":
+            if let response = StreamControllerProbe.response(json) {
+                sendJson(response)
+            }
 
         case "pong":
             Bridge.log("LIVE: Received pong response - connection healthy")

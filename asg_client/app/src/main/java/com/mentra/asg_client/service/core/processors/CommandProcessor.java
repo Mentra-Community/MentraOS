@@ -85,6 +85,7 @@ public class CommandProcessor {
     private final RgbLedCommandHandler rgbLedCommandHandler;
 
     private final OtaCommandHandler otaCommandHandler;
+    private StreamCommandHandler streamCommandHandler;
 
     public CommandProcessor(
             Context context,
@@ -351,6 +352,9 @@ public class CommandProcessor {
         if (handler != null) {
             Log.d(TAG, "✅ Found modern handler: " + handler.getClass().getSimpleName());
             boolean success = handler.handleCommand(type, commandData.data());
+            if (success && "phone_ready".equals(type) && streamCommandHandler != null) {
+                streamCommandHandler.handleStatusCommand();
+            }
             if (success) {
                 Log.i(TAG, "✅ Command handled successfully by modern handler: " + type);
             } else {
@@ -408,12 +412,13 @@ public class CommandProcessor {
             commandHandlerRegistry.registerHandler(new KeepAwakeCommandHandler());
             Log.d(TAG, "✅ Registered KeepAwakeCommandHandler");
 
-            commandHandlerRegistry.registerHandler(
-                    new StreamCommandHandler(
+            streamCommandHandler = new StreamCommandHandler(
                             context,
                             stateManager,
                             streamingManager,
-                            serviceManager.getNetworkManager()));
+                            serviceManager.getNetworkManager(),
+                            serviceManager);
+            commandHandlerRegistry.registerHandler(streamCommandHandler);
             Log.d(TAG, "✅ Registered StreamCommandHandler");
 
             commandHandlerRegistry.registerHandler(
@@ -606,6 +611,7 @@ public class CommandProcessor {
 
     public void cleanup() {
         besTracePoller.stop();
+        if (streamCommandHandler != null) streamCommandHandler.cleanup();
     }
 
     /**

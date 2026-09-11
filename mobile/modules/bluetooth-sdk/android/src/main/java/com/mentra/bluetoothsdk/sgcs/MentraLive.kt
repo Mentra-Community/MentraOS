@@ -4086,6 +4086,14 @@ class MentraLive : SGCManager() {
                 val percent = json.optInt("percent", batteryLevel)
                 updateBatteryStatus(percent, isCharging)
             }
+            "stream_controller_probe" -> {
+                val values = mapOf("protocolVersion" to json.opt("protocolVersion"),
+                    "controllerId" to json.opt("controllerId"), "streamId" to json.opt("streamId"),
+                    "probeId" to json.opt("probeId"))
+                com.mentra.bluetoothsdk.streaming.StreamControllerProbe.response(values)?.let {
+                    sendJson(JSONObject(it))
+                }
+            }
             "pong" ->
                     // Process heartbeat pong response
                     Bridge.log("LIVE: Received pong response - connection healthy")
@@ -4565,6 +4573,10 @@ class MentraLive : SGCManager() {
                         mapOf("sid" to (glassesSessionId ?: "")),
                 )
                 readinessCompletedThisBleSession = true
+                Bridge.sendTypedMessage("stream_control_ready", mapOf(
+                    "sid" to json.optString("sid", ""),
+                    "streamControlVersion" to json.optInt("streamControlVersion", 0),
+                ))
 
                 // Set the ready flag to stop any future readiness checks
                 glassesReady = true
@@ -6802,6 +6814,8 @@ class MentraLive : SGCManager() {
             val json = JSONObject(message as Map<*, *>)
             // Remove timestamp as iOS does
             json.remove("timestamp")
+            json.put("controllerProbeVersion", 1)
+            json.put("controllerId", com.mentra.bluetoothsdk.streaming.StreamControllerProbe.controllerId)
             sendJson(json, true)
         } catch (e: Exception) {
             Log.e(TAG, "Error creating RTMP stream start JSON", e)

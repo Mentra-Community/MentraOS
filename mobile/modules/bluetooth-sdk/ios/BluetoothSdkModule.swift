@@ -625,20 +625,9 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             return try await sdk.startStream(StreamRequest(values: params)).values
         }
 
-        AsyncFunction("startExternallyManagedStream") { (params: [String: Any]) in
-            let sdk = await MainActor.run { self.bluetoothSdk() }
-            return try await sdk.startExternallyManagedStream(StreamRequest(values: params)).values
-        }
-
         AsyncFunction("stopStream") {
             let sdk = await MainActor.run { self.bluetoothSdk() }
             return try await sdk.stopStream().values
-        }
-
-        AsyncFunction("sendExternallyManagedStreamKeepAlive") { (params: [String: Any]) in
-            await MainActor.run {
-                self.bluetoothSdk().sendExternallyManagedStreamKeepAlive(StreamKeepAliveRequest(values: params))
-            }
         }
 
         // MARK: - Audio Playback Monitoring
