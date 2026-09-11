@@ -18,6 +18,9 @@
         "com.apple.developer.networking.wifi-info": true
       },
       "infoPlist": {
+        "UIBackgroundModes": [
+          "audio"
+        ],
         "NSBluetoothAlwaysUsageDescription": "This example app uses Bluetooth to connect to smart glasses.",
         "NSBluetoothPeripheralUsageDescription": "This example app uses Bluetooth to connect to smart glasses.",
         "NSCameraUsageDescription": "This example app can trigger camera capture on connected smart glasses.",
@@ -29,6 +32,12 @@
     "android": {
       "package": "com.mentra.bluetoothsdk.example.reactnative",
       "softwareKeyboardLayoutMode": "pan",
+      "blockedPermissions": [
+        "android.permission.FOREGROUND_SERVICE_DATA_SYNC",
+        "android.permission.FOREGROUND_SERVICE_LOCATION",
+        "android.permission.FOREGROUND_SERVICE_MEDIA_PLAYBACK",
+        "android.permission.FOREGROUND_SERVICE_MICROPHONE"
+      ],
       "permissions": [
         "android.permission.BLUETOOTH",
         "android.permission.BLUETOOTH_ADMIN",
@@ -73,7 +82,13 @@
           }
         }
       ],
-      "expo-audio",
+      [
+        "expo-audio",
+        {
+          "enableBackgroundPlayback": false,
+          "enableBackgroundRecording": false
+        }
+      ],
       [
         "expo-splash-screen",
         {
@@ -83,7 +98,8 @@
         }
       ],
       "expo-video",
-      "react-native-wifi-reborn"
+      "react-native-wifi-reborn",
+      "./plugins/withConnectedDeviceForegroundService"
     ]
   }
 }

@@ -111,6 +111,30 @@ Local on-device STT/TTS via Sherpa-ONNX is **not** bundled in the public Android
 
 Day-to-day iteration: prefer `bun run android:dev` after the first successful install.
 
+## Android Foreground Services
+
+This Bluetooth-only host declares `connectedDevice` for the SDK foreground
+service. Its microphone demo receives PCM from the glasses over BLE; it does
+not select Android's phone microphone. It does not run location tasks or play
+media in the background. `withConnectedDeviceForegroundService` overrides the
+SDK service type and removes Expo's unused location task service. Expo audio
+background playback and recording are disabled, and the four unused typed FGS
+permissions are blocked in `app.json`. Ordinary Bluetooth, Wi-Fi, location and
+audio permissions are separate and are not removed by this configuration.
+The existing iOS `audio` background mode is preserved explicitly in `infoPlist`.
+
+The pinned SDK includes Android `ForegroundService` support for the merged
+host manifest at both startup and subsequent type selection. Do not downgrade
+the SDK below `3.2.0-dev.200` while using this configuration: older SDKs try to
+start undeclared service types. Rebuild the native app after changing these
+settings; a JavaScript update cannot change the manifest.
+
+Before release, verify connection/reconnection and permissions on a physical
+Android phone, including app background/resume, glasses microphone recording,
+media playback pause on background, photo transfers, and both OTA transports.
+The retained connected-device service still needs a Google Play declaration
+and demonstration video.
+
 ## SDK Plugin Configuration
 
 The example's `app.json` already includes the Mentra SDK plugin:
