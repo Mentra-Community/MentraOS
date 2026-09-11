@@ -6,7 +6,10 @@ import android.hardware.camera2.CameraAccessException;
 import android.hardware.camera2.CameraCharacteristics;
 import android.hardware.camera2.CameraManager;
 import android.hardware.camera2.params.StreamConfigurationMap;
+import android.util.Log;
 import android.util.Size;
+
+import java.util.Arrays;
 
 import com.mentra.asg_client.io.streaming.config.RtmpStreamConfig;
 
@@ -14,6 +17,8 @@ import com.mentra.asg_client.io.streaming.config.RtmpStreamConfig;
  * Shared capture-size selection logic for WHIP, RTMP, and SRT camera streaming.
  */
 public final class WhipCameraFormatSelector {
+
+  private static final String TAG = "StreamQuality";
 
   private WhipCameraFormatSelector() {
   }
@@ -144,16 +149,83 @@ public final class WhipCameraFormatSelector {
       return false;
     }
     CameraCharacteristics chars = cm.getCameraCharacteristics(id);
-    if (!canSatisfyWithoutUpscale(chars, config.getVideoWidth(), config.getVideoHeight())) {
+    SelectionResult selection =
+        selectCaptureSize(chars, config.getVideoWidth(), config.getVideoHeight());
+    logCameraLivestreamResolutions(id, config.getVideoWidth(), config.getVideoHeight(), selection);
+    if (selection == null
+        || !selection.hasSupportedSizes()
+        || selection.requiresUpscale()) {
       return false;
     }
-    Size raw = selectNativeCaptureSizeRawOrNull(chars, config.getVideoWidth(),
-        config.getVideoHeight());
+    Size raw = selection.getRawCaptureSize();
     if (raw == null) {
       return false;
     }
     config.setCaptureSize(raw.getWidth(), raw.getHeight());
     return true;
+  }
+
+  /**
+   * Logs camera SurfaceTexture output sizes plus the selected capture vs encode resolution.
+   * "defaultMax" is the largest advertised SurfaceTexture size (landscape-normalized).
+   */
+  public static void logCameraLivestreamResolutions(
+      String cameraId, int encodeWidth, int encodeHeight, SelectionResult selection) {
+    if (selection == null) {
+      Log.i(
+          TAG,
+          "[CAMERA_RES] cameraId="
+              + cameraId
+              + " encode="
+              + encodeWidth
+              + "x"
+              + encodeHeight
+              + " selection=null");
+      return;
+    }
+
+    Size[] available = selection.getAvailableOutputSizes();
+    Size defaultMax = findLargestLandscapeSize(available);
+    Size selectedRaw = selection.getRawCaptureSize();
+    Size selectedNorm = selection.getNormalizedCaptureSize();
+
+    Log.i(
+        TAG,
+        "[CAMERA_RES] cameraId="
+            + cameraId
+            + " encode="
+            + encodeWidth
+            + "x"
+            + encodeHeight
+            + " selectedCapture="
+            + (selectedRaw != null ? selectedRaw.getWidth() + "x" + selectedRaw.getHeight() : "n/a")
+            + " selectedNormalized="
+            + (selectedNorm != null
+                ? selectedNorm.getWidth() + "x" + selectedNorm.getHeight()
+                : "n/a")
+            + " defaultMax="
+            + (defaultMax != null ? defaultMax.getWidth() + "x" + defaultMax.getHeight() : "n/a")
+            + " transformPenalty="
+            + selection.getTransformPenalty()
+            + " available="
+            + (available != null ? Arrays.toString(available) : "[]"));
+  }
+
+  private static Size findLargestLandscapeSize(Size[] sizes) {
+    if (sizes == null || sizes.length == 0) {
+      return null;
+    }
+    Size best = null;
+    long bestArea = -1L;
+    for (Size raw : sizes) {
+      Size norm = normalizeLandscapeSize(raw);
+      long area = (long) norm.getWidth() * norm.getHeight();
+      if (area > bestArea) {
+        bestArea = area;
+        best = norm;
+      }
+    }
+    return best;
   }
 
   public static SelectionResult selectCaptureSize(CameraCharacteristics characteristics,

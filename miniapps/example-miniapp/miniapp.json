@@ -1,0 +1,60 @@
+{
+  "$schema": "./node_modules/@mentra/miniapp-cli/schema/miniapp.schema.json",
+  "packageName": "com.mentra.example",
+  "version": "1.0.0",
+  "name": "Mentra Example",
+  "description": "Reference miniapp for the @mentra/miniapp SDK. Demonstrates transcription, text wall display, TTS, button events, and the full per-iface SDK Tester surface.",
+  "icon": "icon.png",
+  "type": "standard",
+  "sdkVersion": "0.3.0",
+  "minHostVersion": "2.13.0",
+  "entry": {
+    "background": "background/index.js",
+    "ui": "ui/index.html"
+  },
+  "permissions": [
+    {
+      "type": "MICROPHONE",
+      "description": "Used for live transcription and the ElevenLabs ConvAI tester"
+    },
+    {
+      "type": "CAMERA",
+      "description": "takePhoto / streaming on the SDK Tester camera page"
+    },
+    {
+      "type": "LOCATION",
+      "description": "Exercised by the SDK Tester page"
+    },
+    {
+      "type": "READ_NOTIFICATIONS",
+      "description": "Exercised by the SDK Tester page"
+    },
+    {
+      "type": "CALENDAR",
+      "description": "Lists phone calendar events in the SDK Tester"
+    }
+  ],
+  "hardwareRequirements": [
+    {
+      "type": "DISPLAY",
+      "level": "OPTIONAL",
+      "description": "Shows live transcription on display glasses; tester pages work without one"
+    },
+    {
+      "type": "MICROPHONE",
+      "level": "REQUIRED",
+      "description": "Captures speech for transcription"
+    },
+    {
+      "type": "SPEAKER",
+      "level": "OPTIONAL",
+      "description": "Plays ElevenLabs agent audio / TTS on audio glasses"
+    },
+    {
+      "type": "CAMERA",
+      "level": "OPTIONAL",
+      "description": "takePhoto / streaming tester pages on camera glasses"
+    }
+  ],
+  "port": 3140
+}

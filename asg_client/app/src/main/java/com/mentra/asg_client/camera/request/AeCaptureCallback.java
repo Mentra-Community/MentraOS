@@ -23,7 +23,11 @@ public final class AeCaptureCallback extends CameraCaptureSession.CaptureCallbac
 
         void recordMeteredExposureNs(Long exposureNs);
 
-        void postDelayed(Runnable runnable, long delayMs);
+        /** Schedule still capture after {@code delayMs}, with request validation owned by caller. */
+        void scheduleCapturePhoto(long delayMs);
+
+        /** Minimum time from first AE convergence to still capture for the active request. */
+        long minimumExposureStabilizationDelayMs();
 
         void requestAeLock(CameraCaptureSession session);
 
@@ -83,13 +87,17 @@ public final class AeCaptureCallback extends CameraCaptureSession.CaptureCallbac
                     + precaptureTrigger + ", AE state: " + AeStateMachine.getAeStateName(aeState));
         }
 
+        aeStateMachine.noteRepeatingFrame(aeState, exposureEarly, sensEarly);
+
         long elapsedNs = aeStateMachine.elapsedNsSinceAeStart();
         AeStateMachine.AeRepeatCaptureDecision decision =
                 AeStateMachine.evaluateRepeatingRequestAeStep(
                         aeStateMachine.waitingForAeConvergence(),
                         aeStateMachine.aeLockRequested(),
                         aeState,
-                        elapsedNs);
+                        elapsedNs,
+                        aeStateMachine.stableConvergedFrames(),
+                        aeStateMachine.nsSinceFirstConverged());
 
         switch (decision) {
             case CONTINUE_WAITING_NULL_AE:
@@ -100,10 +108,12 @@ public final class AeCaptureCallback extends CameraCaptureSession.CaptureCallbac
                 break;
             case CAPTURE_NOW_TIMEOUT: {
                 long elapsedMs = elapsedNs / 1_000_000;
+                long remainingStabilityMs = remainingExposureStabilizationDelayMs();
                 Log.w(TAG, "🔍 ⚠️ AE CONVERGENCE TIMEOUT after " + elapsedMs + "ms (limit: "
-                        + (AeStateMachine.AE_WAIT_MAX_NS / 1_000_000) + "ms), forcing capture");
+                        + (AeStateMachine.AE_WAIT_MAX_NS / 1_000_000) + "ms), capture delay "
+                        + remainingStabilityMs + "ms");
                 aeStateMachine.clearWaitFlags();
-                hooks.capturePhoto();
+                hooks.scheduleCapturePhoto(remainingStabilityMs);
                 break;
             }
             case CAPTURE_NOW_LOCK_CONFIRMED: {
@@ -120,19 +130,35 @@ public final class AeCaptureCallback extends CameraCaptureSession.CaptureCallbac
                             + AeStateMachine.getAeStateName(aeState));
                 }
                 break;
-            case CAPTURE_AFTER_STABILIZATION_DELAY: {
+            case CAPTURE_NOW_STABLE: {
                 long elapsedMs = elapsedNs / 1_000_000;
-                Log.i(TAG, "🔍 ✅ AE CONVERGED in " + elapsedMs + "ms! State: "
-                        + AeStateMachine.getAeStateName(aeState) + ", waiting "
-                        + AeStateMachine.EXPOSURE_STABILIZATION_DELAY_MS
-                        + "ms for exposure stabilization [FAST MODE]");
+                long stabilityMs = aeStateMachine.nsSinceFirstConverged() / 1_000_000;
+                long minimumStabilityMs = hooks.minimumExposureStabilizationDelayMs();
+                long remainingStabilityMs = Math.max(0L, minimumStabilityMs - stabilityMs);
                 aeStateMachine.clearWaitFlags();
-                hooks.postDelayed(() -> {
-                    Log.i(TAG, "🔍 Exposure stabilization complete, capturing photo");
+                if (remainingStabilityMs > 0L) {
+                    Log.i(TAG, "🔍 ✅ AE CONVERGED+STABLE in " + elapsedMs + "ms! State: "
+                            + AeStateMachine.getAeStateName(aeState) + " (stability wait "
+                            + stabilityMs + "ms, " + aeStateMachine.stableConvergedFrames()
+                            + " stable frames), waiting " + remainingStabilityMs
+                            + "ms for cold-start exposure settling");
+                    hooks.scheduleCapturePhoto(remainingStabilityMs);
+                } else {
+                    Log.i(TAG, "🔍 ✅ AE CONVERGED+STABLE in " + elapsedMs + "ms! State: "
+                            + AeStateMachine.getAeStateName(aeState) + " (stability wait "
+                            + stabilityMs + "ms, " + aeStateMachine.stableConvergedFrames()
+                            + " stable frames), capturing photo [ADAPTIVE]");
                     hooks.capturePhoto();
-                }, AeStateMachine.EXPOSURE_STABILIZATION_DELAY_MS);
+                }
                 break;
             }
+            case CONTINUE_WAITING_FOR_STABILITY:
+                if (callbackCount % 10 == 0) {
+                    Log.d(TAG, "🔍 AE converged, waiting for exposure stability... ("
+                            + aeStateMachine.stableConvergedFrames() + "/"
+                            + AeStateMachine.STABLE_FRAMES_REQUIRED + " stable frames)");
+                }
+                break;
             case REQUEST_AE_LOCK: {
                 long elapsedMs = elapsedNs / 1_000_000;
                 Log.i(TAG, "🔍 ✅ AE CONVERGED in " + elapsedMs + "ms! State: "
@@ -154,6 +180,16 @@ public final class AeCaptureCallback extends CameraCaptureSession.CaptureCallbac
             case IGNORE_NOT_WAITING:
                 break;
         }
+    }
+
+    private long remainingExposureStabilizationDelayMs() {
+        if (!aeStateMachine.hasSeenAeConvergence()) {
+            return 0L;
+        }
+        long nsSinceFirstConverged = aeStateMachine.nsSinceFirstConverged();
+        long minimumStabilityMs = hooks.minimumExposureStabilizationDelayMs();
+        long stabilityMs = nsSinceFirstConverged / 1_000_000;
+        return Math.max(0L, minimumStabilityMs - stabilityMs);
     }
 
     @Override

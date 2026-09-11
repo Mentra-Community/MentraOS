@@ -1,0 +1,332 @@
+/**
+ * @fileoverview Miniapp release lifecycle integration tests.
+ *
+ * Exercises the developer-facing release flow and the admin review/publish
+ * flow without relying on a WorkOS browser session. A running local Mongo is
+ * required; the test uses its own database and wipes only the involved
+ * collections.
+ */
+
+import { tmpdir } from "node:os";
+import { join } from "node:path";
+import crypto from "node:crypto";
+import {
+  afterAll,
+  beforeAll,
+  beforeEach,
+  describe,
+  expect,
+  test,
+} from "bun:test";
+
+process.env.CLOUD_CORE_LOCAL_STORAGE_DIR = join(
+  tmpdir(),
+  `mentra-miniapp-release-test-${process.pid}`,
+);
+
+import {
+  connectMongo,
+  disconnectMongo,
+} from "../packages/core/src/connections/mongo.connection";
+import { MiniAppAssetModel } from "../packages/core/src/models/miniapp-asset.model";
+import { MiniAppModel } from "../packages/core/src/models/miniapp.model";
+import { MiniAppReleaseModel } from "../packages/core/src/models/miniapp-release.model";
+import { DeveloperSigningKeyModel } from "../packages/core/src/models/developer-signing-key.model";
+import { PreinstalledRegistryModel } from "../packages/core/src/models/preinstalled-registry.model";
+import { PreinstalledRegistryRevisionModel } from "../packages/core/src/models/preinstalled-registry-revision.model";
+import type { PreinstalledRegistryService } from "../packages/core/src/services/miniapps/preinstalled-registry.service";
+import type { MiniAppService } from "../packages/core/src/services/miniapps/miniapp.service";
+import type {
+  DeveloperJwk,
+  DeveloperSigningService,
+} from "../packages/core/src/services/miniapps/developer-signing.service";
+
+const developer = {
+  developerId: "dev_test_user",
+  email: "dev@example.com",
+  orgId: "org_release_lifecycle",
+  packagePrefix: "com.example",
+};
+
+let miniapps: MiniAppService;
+let registries: PreinstalledRegistryService;
+let signing: DeveloperSigningService;
+
+beforeAll(async () => {
+  await connectMongo(
+    process.env.MONGO_URL ??
+      "mongodb://127.0.0.1:27017/mentra-cloud-v2-test",
+  );
+  await Promise.all([
+    MiniAppModel.syncIndexes(),
+    MiniAppReleaseModel.syncIndexes(),
+    DeveloperSigningKeyModel.syncIndexes(),
+    MiniAppAssetModel.syncIndexes(),
+    PreinstalledRegistryModel.syncIndexes(),
+    PreinstalledRegistryRevisionModel.syncIndexes(),
+  ]);
+  const { MiniAppService } = await import(
+    "../packages/core/src/services/miniapps/miniapp.service"
+  );
+  const { PreinstalledRegistryService } = await import(
+    "../packages/core/src/services/miniapps/preinstalled-registry.service"
+  );
+  const { DeveloperSigningService } = await import(
+    "../packages/core/src/services/miniapps/developer-signing.service"
+  );
+  miniapps = new MiniAppService();
+  registries = new PreinstalledRegistryService();
+  signing = new DeveloperSigningService();
+});
+
+afterAll(async () => {
+  await disconnectMongo();
+});
+
+beforeEach(async () => {
+  await Promise.all([
+    MiniAppModel.deleteMany({ orgId: developer.orgId }),
+    MiniAppReleaseModel.deleteMany({ orgId: developer.orgId }),
+    DeveloperSigningKeyModel.deleteMany({ orgId: developer.orgId }),
+    MiniAppAssetModel.deleteMany({ orgId: developer.orgId }),
+    PreinstalledRegistryModel.deleteMany({ createdBy: "admin@mentraglass.com" }),
+    PreinstalledRegistryRevisionModel.deleteMany({ createdBy: "admin@mentraglass.com" }),
+  ]);
+});
+
+describe("miniapp release lifecycle", () => {
+  test("developer submits a bundle, admin accepts it, then publishes it", async () => {
+    const app = await miniapps.createMiniApp(developer, {
+      packageName: "com.example.weather",
+      displayName: "Weather",
+      description: "Test miniapp",
+    });
+    expect(app.packageName).toBe("com.example.weather");
+
+    const release = await miniapps.createRelease(developer, {
+      packageName: "com.example.weather",
+      version: "1.0.0",
+      manifest: {
+        packageName: "com.example.weather",
+        name: "Weather",
+        version: "1.0.0",
+      },
+      bundle: new TextEncoder().encode("zip bytes for test"),
+      fileName: "bundle.zip",
+    });
+    expect(release.status).toBe("draft");
+    expect(release.releaseBundleAssetId).toBeTruthy();
+    expect(release.bundleSha256).toMatch(/^[a-f0-9]{64}$/);
+
+    const submitted = await miniapps.submitRelease(
+      developer,
+      "com.example.weather",
+      release.id,
+    );
+    expect(submitted.status).toBe("submitted");
+
+    const adminRows = await miniapps.listAdminSubmissions();
+    expect(adminRows.map(row => row.id)).toContain(release.id);
+
+    const accepted = await miniapps.approveRelease({
+      releaseId: release.id,
+      adminId: "admin@mentraglass.com",
+      notes: "Looks good.",
+    });
+    expect(accepted.status).toBe("accepted");
+    expect(accepted.reviewedBy).toBe("admin@mentraglass.com");
+
+    const published = await miniapps.publishRelease({
+      releaseId: release.id,
+      adminId: "admin@mentraglass.com",
+    });
+    expect(published.status).toBe("published");
+
+    const savedApp = await MiniAppModel.findOne({
+      packageName: "com.example.weather",
+    }).lean();
+    expect(savedApp?.activeReleaseId).toBe(release.id);
+  });
+
+  test("getBundleAsset only serves bundles for accepted or published releases", async () => {
+    await miniapps.createMiniApp(developer, {
+      packageName: "com.example.secret",
+      displayName: "Secret",
+      description: "unpublished",
+    });
+    const release = await miniapps.createRelease(developer, {
+      packageName: "com.example.secret",
+      version: "1.0.0",
+      manifest: { packageName: "com.example.secret", name: "Secret", version: "1.0.0" },
+      bundle: new TextEncoder().encode("zip bytes for test"),
+      fileName: "bundle.zip",
+    });
+    const assetId = release.releaseBundleAssetId!;
+
+    // A draft (unreviewed) bundle must not be downloadable by asset id.
+    await expect(registries.getBundleAsset(assetId)).rejects.toMatchObject({ status: 404 });
+
+    // Once accepted, the same asset id resolves.
+    await miniapps.submitRelease(developer, "com.example.secret", release.id);
+    await miniapps.approveRelease({ releaseId: release.id, adminId: "admin@mentraglass.com" });
+    const asset = await registries.getBundleAsset(assetId);
+    expect(asset._id.toString()).toBe(assetId);
+  });
+
+  test("developer signing key authorizes dev attestation only for owned package", async () => {
+    await miniapps.createMiniApp(developer, {
+      packageName: "com.example.devtool",
+      displayName: "Dev Tool",
+    });
+
+    const pair = crypto.generateKeyPairSync("ed25519");
+    const privateKeyJwk = pair.privateKey.export({ format: "jwk" }) as DeveloperJwk;
+    const publicKeyJwk = pair.publicKey.export({ format: "jwk" }) as DeveloperJwk;
+    const { id: signingKeyId } = await signing.registerKey(developer, { publicKeyJwk });
+    const payload = {
+      packageName: "com.example.devtool",
+      devServerUrl: "http://127.0.0.1:3000",
+      nonce: crypto.randomUUID(),
+      expiresAt: new Date(Date.now() + 60_000).toISOString(),
+      signingKeyId,
+    };
+    const privateKey = crypto.createPrivateKey({ key: privateKeyJwk as crypto.JsonWebKeyInput, format: "jwk" });
+    const signature = crypto.sign(null, Buffer.from(canonicalJson(payload)), privateKey).toString("base64url");
+
+    await expect(signing.verifyDevAttestation("com.example.devtool", { ...payload, signature })).resolves.toBeUndefined();
+    await expect(signing.verifyDevAttestation("com.example.other", { ...payload, signature })).rejects.toThrow(
+      "attestation packageName does not match request",
+    );
+  });
+
+  test("accepted releases can be promoted into the client preinstall registry", async () => {
+    await miniapps.createMiniApp(developer, {
+      packageName: "com.example.captions",
+      displayName: "Captions",
+    });
+    const release = await miniapps.createRelease(developer, {
+      packageName: "com.example.captions",
+      version: "2.0.0",
+      manifest: {
+        packageName: "com.example.captions",
+        name: "Captions",
+        version: "2.0.0",
+      },
+      bundle: new TextEncoder().encode("preinstalled bundle bytes"),
+      fileName: "bundle.zip",
+    });
+    await miniapps.submitRelease(developer, "com.example.captions", release.id);
+    await miniapps.approveRelease({
+      releaseId: release.id,
+      adminId: "admin@mentraglass.com",
+    });
+
+    const publishable = await registries.listPublishableReleases();
+    expect(publishable.map(row => row.id)).toContain(release.id);
+
+    const registry = await registries.ensureRegistry(
+      { adminId: "admin@mentraglass.com" },
+      { environment: "dev" },
+    );
+    const revision = await registries.createRevision(
+      { adminId: "admin@mentraglass.com" },
+      registry.id,
+      {
+        reason: "test preinstall",
+        entries: [
+          {
+            releaseId: release.id,
+            installPolicy: "keep_updated",
+            required: true,
+          },
+        ],
+      },
+    );
+    await registries.promoteRevision(
+      { adminId: "admin@mentraglass.com" },
+      registry.id,
+      revision.id,
+    );
+
+    const clientRegistry = await registries.clientRegistry({
+      environment: "dev",
+      baseUrl: "https://core.dev.example",
+    });
+    expect(clientRegistry.entries).toHaveLength(1);
+    expect(clientRegistry.entries[0]).toMatchObject({
+      packageName: "com.example.captions",
+      version: "2.0.0",
+      required: true,
+      installPolicy: "keep_updated",
+      channel: "dev",
+      bundleSha256: release.bundleSha256,
+    });
+    expect(clientRegistry.entries[0]?.bundleUrl).toContain(
+      "https://core.dev.example/api/client/miniapps/bundles/",
+    );
+  });
+
+  test("preinstall registry rejects multiple releases for the same miniapp", async () => {
+    await miniapps.createMiniApp(developer, {
+      packageName: "com.example.duplicate",
+      displayName: "Duplicate",
+    });
+    const first = await miniapps.createRelease(developer, {
+      packageName: "com.example.duplicate",
+      version: "1.0.0",
+      manifest: {
+        packageName: "com.example.duplicate",
+        name: "Duplicate",
+        version: "1.0.0",
+      },
+      bundle: new TextEncoder().encode("first bundle bytes"),
+      fileName: "first.zip",
+    });
+    const second = await miniapps.createRelease(developer, {
+      packageName: "com.example.duplicate",
+      version: "1.0.1",
+      manifest: {
+        packageName: "com.example.duplicate",
+        name: "Duplicate",
+        version: "1.0.1",
+      },
+      bundle: new TextEncoder().encode("second bundle bytes"),
+      fileName: "second.zip",
+    });
+    await miniapps.submitRelease(developer, "com.example.duplicate", first.id);
+    await miniapps.submitRelease(developer, "com.example.duplicate", second.id);
+    await miniapps.approveRelease({
+      releaseId: first.id,
+      adminId: "admin@mentraglass.com",
+    });
+    await miniapps.approveRelease({
+      releaseId: second.id,
+      adminId: "admin@mentraglass.com",
+    });
+
+    const registry = await registries.ensureRegistry(
+      { adminId: "admin@mentraglass.com" },
+      { environment: "dev" },
+    );
+    await expect(registries.createRevision(
+      { adminId: "admin@mentraglass.com" },
+      registry.id,
+      {
+        entries: [
+          { releaseId: first.id },
+          { releaseId: second.id },
+        ],
+      },
+    )).rejects.toThrow("can only include one release per miniapp");
+  });
+});
+
+function canonicalJson(value: unknown): string {
+  if (value === null || typeof value !== "object") return JSON.stringify(value);
+  if (Array.isArray(value)) return `[${value.map(canonicalJson).join(",")}]`;
+  const record = value as Record<string, unknown>;
+  return `{${Object.keys(record)
+    .sort()
+    .map(key => `${JSON.stringify(key)}:${canonicalJson(record[key])}`)
+    .join(",")}}`;
+}

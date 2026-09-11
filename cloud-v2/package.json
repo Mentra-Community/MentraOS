@@ -1,0 +1,42 @@
+{
+  "name": "cloud-v2",
+  "version": "0.0.0",
+  "private": true,
+  "description": "MentraOS cloud rewrite. Local JS miniapp SDK backend, horizontally scalable, three packages (core / runtime / proxy).",
+  "workspaces": ["packages/*", "test/*", "websites/*"],
+  "engines": {
+    "bun": ">=1.3.0"
+  },
+  "scripts": {
+    "setup": "bun scripts/setup.ts",
+    "setup:test": "bun scripts/setup.ts --test",
+    "test:down": "docker compose -f docker-compose.test.yml down",
+    "dev": "bun scripts/dev.ts",
+    "dev:local": "bash scripts/dev-local.sh",
+    "dev:core": "bun --watch packages/core/src/index.ts",
+    "dev:runtime": "bun --watch packages/runtime/src/index.ts",
+    "dev:proxy": "bun --watch packages/proxy/src/index.ts",
+    "dev:test-oem": "bun --watch test/test-oem/src/index.ts",
+    "dev:console": "bun --cwd websites/console dev",
+    "dev:admin": "bun --cwd websites/admin dev",
+    "dev:portal": "bun --cwd websites/portal dev",
+    "mentra:local": "bun packages/cli/src/index.ts",
+    "mentra:dev": "doppler run --project cloud-v2 --config dev_aws -- env MENTRA_CORE_URL=https://core.dev.us-west-2.mentraglass.com MENTRA_CONSOLE_URL=https://console2.dev.mentraglass.com bun packages/cli/src/index.ts",
+    "mentra:staging": "doppler run --project cloud-v2 --config staging -- env MENTRA_CORE_URL=https://core.staging.us-west-2.mentraglass.com MENTRA_CONSOLE_URL=https://console2.staging.mentraglass.com bun packages/cli/src/index.ts",
+    "mentra:prod": "doppler run --project cloud-v2 --config prod -- env MENTRA_CORE_URL=https://core.mentraglass.com MENTRA_CONSOLE_URL=https://console2.mentraglass.com bun packages/cli/src/index.ts",
+    "build:console": "bun --cwd websites/console build",
+    "build:admin": "bun --cwd websites/admin build",
+    "build:portal": "bun --cwd websites/portal build",
+    "deploy:pages": "bun scripts/deploy-pages.ts",
+    "typecheck:console": "bun --cwd websites/console typecheck",
+    "typecheck:admin": "bun --cwd websites/admin typecheck",
+    "typecheck:portal": "bun --cwd websites/portal typecheck",
+    "fault:e2e": "bun scripts/audio-fault-e2e.ts",
+    "typecheck": "tsc -b",
+    "test": "bun test"
+  },
+  "devDependencies": {
+    "@types/bun": "latest",
+    "typescript": "^5.7.0"
+  }
+}

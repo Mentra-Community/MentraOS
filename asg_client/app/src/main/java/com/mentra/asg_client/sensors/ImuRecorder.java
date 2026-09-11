@@ -10,6 +10,8 @@ import android.os.HandlerThread;
 import android.os.SystemClock;
 import android.util.Log;
 
+import androidx.annotation.Nullable;
+
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -22,15 +24,15 @@ import java.io.FileWriter;
 import java.io.IOException;
 
 /**
- * Records IMU (accelerometer + gyroscope) data during photo/video capture.
- * Writes a sidecar JSON file alongside the media file for phone-side
- * post-processing (e.g., gyro-based video stabilization).
+ * Records IMU (accelerometer + gyroscope) data during photo/video capture. Writes a sidecar JSON
+ * file alongside the media file for phone-side post-processing (e.g., gyro-based video
+ * stabilization).
  *
  * <p>Sampling at ~100Hz, captures timestamp + accel[3] + gyro[3] per sample.
  *
  * <h3>Threading</h3>
  * Sensor callbacks are delivered on a dedicated {@link HandlerThread} owned by this recorder, NOT
- * the thread that calls {@link #startRecording()}. This matters: the camera pipeline calls
+ * the thread that calls {@link #startRecording(String)}. This matters: the camera pipeline calls
  * {@code startRecording()} from a background {@code HandlerThread} that has a Looper but never
  * pumps sensor events, and the no-Handler {@code registerListener} overload posts to the
  * <em>main</em> looper. Registering against our own handler guarantees delivery regardless of the
@@ -45,6 +47,13 @@ import java.io.IOException;
  * can be recovered/retried; {@code .partial} files are excluded from gallery/Wi-Fi sync. On a
  * capture failure or {@link #cancel()} the partial is deleted — there the camera pipeline wipes the
  * whole capture directory, so there is no surviving media for a sidecar to belong to.
+ *
+ * <h3>Photo EXIF path</h3>
+ * Photo capture additionally needs the assembled payload in memory (to embed a trimmed copy into
+ * the JPEG's EXIF UserComment) before the sidecar is written. {@link #stopRecordingAndBuildPayload()}
+ * stops the stream and returns the assembled {@link JSONObject}; {@link #writeSidecar(String,
+ * JSONObject)} then persists it next to the media file. Video capture uses the simpler
+ * {@link #stopRecordingAndSave(String)} which assembles and writes in one step.
  */
 public class ImuRecorder implements SensorEventListener {
   private static final String TAG = "ImuRecorder";
@@ -171,15 +180,8 @@ public class ImuRecorder implements SensorEventListener {
    * @return Path to the sidecar JSON file, or null on failure
    */
   public String stopRecordingAndSave(String mediaFilePath) {
-    mRecording = false;
-    mSensorManager.unregisterListener(this);
-
-    // Flush + close the stream on the sensor thread so it can't race with a late onSensorChanged,
-    // then continue assembly on the caller's thread once the sink is quiesced.
-    flushAndCloseStreamSync();
-
-    File partial = mPartialFile;
-    if (partial == null || !partial.exists()) {
+    File partial = stopAndQuiesce();
+    if (partial == null) {
       Log.w(TAG, "No IMU samples captured");
       return null;
     }
@@ -189,12 +191,16 @@ public class ImuRecorder implements SensorEventListener {
     File parentDir = new File(mediaFilePath).getParentFile();
     String sidecarPath = new File(parentDir, SIDECAR_NAME).getAbsolutePath();
     try {
-      int written = assembleSidecar(partial, new File(sidecarPath));
-      if (written == 0) {
+      JSONObject payload = buildPayloadFromPartial(partial);
+      if (payload == null || payload.optInt("sampleCount", 0) == 0) {
         Log.w(TAG, "No IMU samples captured");
         partial.delete();
         return null;
       }
+      try (FileWriter writer = new FileWriter(sidecarPath)) {
+        writer.write(payload.toString());
+      }
+      int written = payload.optInt("sampleCount", 0);
       partial.delete();
       Log.d(TAG, "IMU sidecar written: " + sidecarPath + " (" + written + " samples)");
       return sidecarPath;
@@ -208,6 +214,87 @@ public class ImuRecorder implements SensorEventListener {
       Log.e(TAG, "Failed to assemble IMU sidecar; retaining partial at " + partial.getAbsolutePath(), e);
       return null;
     }
+  }
+
+  /**
+   * Stop recording and build the IMU payload JSON in memory (same schema as the sidecar file).
+   *
+   * <p>Used by the photo pipeline, which embeds a trimmed copy of the payload into the JPEG's EXIF
+   * UserComment before persisting the full sidecar via {@link #writeSidecar(String, JSONObject)}.
+   * The streamed partial is deleted once the payload has been assembled; if assembly fails the
+   * partial is retained for recovery (it is then the only copy of the IMU data).
+   *
+   * @return IMU payload JSON, or null when no samples were captured or assembly fails
+   */
+  @Nullable
+  public JSONObject stopRecordingAndBuildPayload() {
+    File partial = stopAndQuiesce();
+    if (partial == null) {
+      Log.w(TAG, "No IMU samples captured");
+      return null;
+    }
+    try {
+      JSONObject payload = buildPayloadFromPartial(partial);
+      if (payload == null || payload.optInt("sampleCount", 0) == 0) {
+        Log.w(TAG, "No IMU samples captured");
+        partial.delete();
+        return null;
+      }
+      partial.delete();
+      return payload;
+    } catch (JSONException | IOException e) {
+      Log.e(TAG, "Failed to assemble IMU payload; retaining partial at " + partial.getAbsolutePath(), e);
+      return null;
+    }
+  }
+
+  /**
+   * Write the {@code imu.json} sidecar next to the media file using an already-assembled payload.
+   * Used by the photo pipeline after {@link #stopRecordingAndBuildPayload()}.
+   *
+   * @return Path to the sidecar JSON file, or null on failure
+   */
+  @Nullable
+  public String writeSidecar(String mediaFilePath, JSONObject payload) {
+    File parentDir = new File(mediaFilePath).getParentFile();
+    if (parentDir == null) {
+      Log.e(TAG, "Cannot resolve parent dir for sidecar: " + mediaFilePath);
+      return null;
+    }
+    String sidecarPath = new File(parentDir, SIDECAR_NAME).getAbsolutePath();
+    try (FileWriter writer = new FileWriter(sidecarPath)) {
+      writer.write(payload.toString());
+      Log.d(
+          TAG,
+          "IMU sidecar written: "
+              + sidecarPath
+              + " ("
+              + payload.optInt("sampleCount", 0)
+              + " samples)");
+      return sidecarPath;
+    } catch (IOException e) {
+      Log.e(TAG, "Failed to write IMU sidecar", e);
+      return null;
+    }
+  }
+
+  /**
+   * Stop sensor delivery, quiesce the stream sink, and return the streamed partial file (or null
+   * when nothing was captured). Shared entry point for both the video and photo stop paths.
+   */
+  @Nullable
+  private File stopAndQuiesce() {
+    mRecording = false;
+    mSensorManager.unregisterListener(this);
+    // Flush + close the stream on the sensor thread so it can't race with a late onSensorChanged,
+    // then continue assembly on the caller's thread once the sink is quiesced.
+    flushAndCloseStreamSync();
+
+    File partial = mPartialFile;
+    if (partial == null || !partial.exists()) {
+      return null;
+    }
+    return partial;
   }
 
   /** Stop sensor delivery and close the stream, leaving the partial file untouched. */
@@ -324,12 +411,12 @@ public class ImuRecorder implements SensorEventListener {
   }
 
   /**
-   * Read the streamed JSONL partial and write the canonical {@code imu.json} object. Keeps the
-   * exact same on-disk schema the previous in-memory implementation produced.
-   *
-   * @return number of samples written.
+   * Read the streamed JSONL partial and build the canonical {@code imu.json} object. Keeps the
+   * exact same on-disk schema the previous in-memory implementation produced. Returns null when the
+   * partial holds no samples.
    */
-  private int assembleSidecar(File partial, File sidecar) throws IOException, JSONException {
+  @Nullable
+  private JSONObject buildPayloadFromPartial(File partial) throws IOException, JSONException {
     JSONArray samples = new JSONArray();
     long lastRelMs = 0;
     try (BufferedReader reader = new BufferedReader(new FileReader(partial))) {
@@ -343,7 +430,7 @@ public class ImuRecorder implements SensorEventListener {
     }
 
     if (samples.length() == 0) {
-      return 0;
+      return null;
     }
 
     JSONObject root = new JSONObject();
@@ -369,11 +456,7 @@ public class ImuRecorder implements SensorEventListener {
     }
     root.put("durationMs", lastRelMs);
     root.put("samples", samples);
-
-    try (FileWriter writer = new FileWriter(sidecar)) {
-      writer.write(root.toString());
-    }
-    return samples.length();
+    return root;
   }
 
   private static double round4(float v) {

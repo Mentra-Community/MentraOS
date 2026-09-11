@@ -1,5 +1,6 @@
 package com.mentra.asg_client.io.file.core;
 
+import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.logging.Logger;
 import com.mentra.asg_client.io.file.managers.FileOperationsManager;
 import com.mentra.asg_client.io.file.managers.FileSecurityManager;
@@ -47,7 +48,7 @@ public class FileManagerImpl implements FileManager {
         this.directoryManager = new DirectoryManager(baseDirectory, logger);
         this.thumbnailManager = new ThumbnailManager(baseDirectory, logger);
         this.operationLogger = new FileOperationLogger(logger);
-        
+
         logger.info(TAG, "FileManagerImpl initialized with base directory: " + baseDirectory.getAbsolutePath());
 
         // Clean up orphaned/empty capture folders left by crashes or failed recordings
@@ -139,7 +140,7 @@ public class FileManagerImpl implements FileManager {
                 Log.w(TAG, "⚠️ Error checking file path security", e);
                 return null;
             }
-            
+
             Log.d(TAG, "✅ File found: " + file.getAbsolutePath() + " (Size: " + file.length() + " bytes)");
             return file;
             
@@ -239,7 +240,7 @@ public class FileManagerImpl implements FileManager {
                 mimeType,
                 packageName
             );
-            
+
             Log.d(TAG, "✅ Metadata created successfully for: " + fileName + " (Size: " + file.length() + " bytes)");
             return metadata;
             
@@ -324,6 +325,16 @@ public class FileManagerImpl implements FileManager {
                         Log.d(TAG, "⏭️ Skipping .partial file from listing: " + item.getAbsolutePath());
                         continue;
                     }
+                    // Skip thumb.jpg capture sidecars (written at video finalize for USB/desktop
+                    // consumers). The Wi-Fi gallery has its own thumbnail cache; listing these
+                    // would advertise them to phone sync as primary capture files.
+                    if (getDefaultPackageName().equals(packageName)
+                            && directory.getName().startsWith("VID_")
+                            && item.getName()
+                                    .equalsIgnoreCase(
+                                            AsgConstants.VIDEO_THUMBNAIL_SIDECAR_NAME)) {
+                        continue;
+                    }
                     // Add file to metadata list
                     String mimeType = new MimeTypeRegistry().getMimeType(item.getName());
                     String relativePath = getRelativePath(rootDir, item);
@@ -342,8 +353,13 @@ public class FileManagerImpl implements FileManager {
                 } else if (item.isDirectory()) {
                     // Skip the transient holding area for SDK no-save photos — those files are
                     // mid-upload and must never appear in gallery counts or Wi-Fi sync listings.
-                    if (FileManager.SDK_PENDING_DIR_NAME.equals(item.getName())) {
-                        Log.d(TAG, "⏭️ Skipping SDK pending dir from listing: " + item.getAbsolutePath());
+                    if (FileManager.SDK_PENDING_DIR_NAME.equals(item.getName())
+                            || FileManager.GALLERY_TRASH_DIR_NAME.equals(item.getName())
+                            || FileManager.GALLERY_METADATA_DIR_NAME.equals(item.getName())) {
+                        Log.d(
+                                TAG,
+                                "⏭️ Skipping internal media dir from listing: "
+                                        + item.getAbsolutePath());
                         continue;
                     }
                     // Recursively scan subdirectory
@@ -482,7 +498,7 @@ public class FileManagerImpl implements FileManager {
     @Override
     public int cleanupOldFiles(String packageName, long maxAgeMs) {
         Log.d(TAG, "🧹 cleanupOldFiles() started - Package: " + packageName + ", MaxAge: " + maxAgeMs + "ms");
-        
+
         // Calculate max age in hours for logging
         long maxAgeHours = maxAgeMs / (1000 * 60 * 60);
         Log.d(TAG, "📊 Max age in hours: " + maxAgeHours + " hours");
@@ -566,11 +582,17 @@ public class FileManagerImpl implements FileManager {
 
             // Recursively scan and clean up old files
             int deletedCount = 0;
-            long totalDeletedSize = 0;
+            long[] totalDeletedSize = {0};
 
             deletedCount = cleanupFilesRecursively(packageDir, packageName, cutoffTime, totalDeletedSize);
 
-            Log.i(TAG, "✅ Cleanup completed: " + deletedCount + " files deleted, " + totalDeletedSize + " bytes freed");
+            Log.i(
+                    TAG,
+                    "✅ Cleanup completed: "
+                            + deletedCount
+                            + " files deleted, "
+                            + totalDeletedSize[0]
+                            + " bytes freed");
             return deletedCount;
 
         } catch (Exception e) {
@@ -590,41 +612,83 @@ public class FileManagerImpl implements FileManager {
             }
         }
     }
-    
+
+    @Override
+    public int cleanupOldSdkPendingFiles(String packageName, long maxAgeMs) {
+        if (!securityManager.validateOperation(packageName, null, "SDK_PENDING_CLEANUP")) {
+            Log.e(TAG, "Security validation failed for SDK pending cleanup: " + packageName);
+            return 0;
+        }
+
+        ReadWriteLock lock = null;
+        try {
+            lock = lockManager.acquireWriteLock(packageName, 5000, "SDK_PENDING_CLEANUP");
+            if (lock == null) {
+                Log.w(TAG, "Timed out acquiring lock for SDK pending cleanup: " + packageName);
+                return 0;
+            }
+
+            File packageDir = directoryManager.getPackageDirectory(packageName);
+            File pendingDir = new File(packageDir, FileManager.SDK_PENDING_DIR_NAME);
+            long cutoffTime = System.currentTimeMillis() - maxAgeMs;
+            long[] totalDeletedSize = {0};
+            int deletedCount =
+                    cleanupFilesRecursively(pendingDir, packageName, cutoffTime, totalDeletedSize);
+            removeEmptyDirectories(pendingDir, false);
+
+            Log.i(
+                    TAG,
+                    "SDK pending cleanup completed: "
+                            + deletedCount
+                            + " files deleted, "
+                            + totalDeletedSize[0]
+                            + " bytes freed");
+            return deletedCount;
+        } catch (Exception e) {
+            Log.e(TAG, "Error cleaning SDK pending files for package: " + packageName, e);
+            return 0;
+        } finally {
+            if (lock != null) {
+                lockManager.releaseWriteLock(lock, packageName);
+            }
+        }
+    }
+
     /**
      * Recursively scan and clean up old files in a directory and its subdirectories
+     *
      * @param directory The directory to scan
      * @param packageName The package name for logging
      * @param cutoffTime The cutoff time for file deletion
-     * @param totalDeletedSize Running total of deleted size
+     * @param totalDeletedSize Single-element running total of deleted size
      * @return Number of files deleted
      */
-    private int cleanupFilesRecursively(File directory, String packageName, long cutoffTime, long totalDeletedSize) {
+    private int cleanupFilesRecursively(File directory, String packageName, long cutoffTime, long[] totalDeletedSize) {
         if (!directory.exists() || !directory.isDirectory()) {
             return 0;
         }
-        
+
         int deletedCount = 0;
         File[] items = directory.listFiles();
-        
+
         if (items != null) {
             Log.d(TAG, "🔍 Scanning " + items.length + " items in: " + directory.getName());
-            
+
             for (File item : items) {
                 if (item.isFile()) {
                     long lastModified = item.lastModified();
                     if (lastModified < cutoffTime) {
                         long fileSize = item.length();
                         String relativePath = getRelativePath(directory, item);
-                        
+
                         Log.d(TAG, "🗑️ Deleting old file: " + relativePath + " (last modified: " + new java.util.Date(lastModified) + ", size: " + fileSize + " bytes)");
-                        
+
                         try {
                             if (item.delete()) {
                                 deletedCount++;
-                                totalDeletedSize += fileSize;
+                                totalDeletedSize[0] += fileSize;
                                 Log.d(TAG, "✅ Successfully deleted: " + relativePath);
-                                
+
                                 // Log the deletion
                                 operationLogger.logOperation("DELETE", packageName, relativePath, fileSize, true);
                             } else {
@@ -635,16 +699,43 @@ public class FileManagerImpl implements FileManager {
                         }
                     }
                 } else if (item.isDirectory()) {
+                    if (FileManager.GALLERY_TRASH_DIR_NAME.equals(item.getName())
+                            || FileManager.GALLERY_METADATA_DIR_NAME.equals(item.getName())) {
+                        Log.d(
+                                TAG,
+                                "Skipping gallery-managed directory during legacy cleanup: "
+                                        + item.getAbsolutePath());
+                        continue;
+                    }
                     // Recursively clean up subdirectory
                     Log.d(TAG, "📁 Scanning subdirectory for cleanup: " + item.getName());
                     deletedCount += cleanupFilesRecursively(item, packageName, cutoffTime, totalDeletedSize);
+                    removeEmptyDirectories(item, true);
                 }
             }
         }
-        
+
         return deletedCount;
     }
-    
+
+    private void removeEmptyDirectories(File directory, boolean removeRoot) {
+        if (!directory.exists() || !directory.isDirectory()) {
+            return;
+        }
+        File[] children = directory.listFiles();
+        if (children != null) {
+            for (File child : children) {
+                if (child.isDirectory()) {
+                    removeEmptyDirectories(child, true);
+                }
+            }
+        }
+        File[] remaining = directory.listFiles();
+        if (removeRoot && remaining != null && remaining.length == 0 && !directory.delete()) {
+            Log.w(TAG, "Failed to remove empty cleanup directory: " + directory.getAbsolutePath());
+        }
+    }
+
     // StorageOperations implementation
     @Override
     public long getAvailableSpace() {
@@ -714,8 +805,10 @@ public class FileManagerImpl implements FileManager {
                         lower.endsWith(".mp4") || lower.endsWith(".mov") || lower.endsWith(".avi");
                     // Exclude HDR brackets — they're not standalone media
                     boolean isBracket = lower.matches("ev-?\\d+\\.jpe?g");
+                    boolean isVideoThumbnail =
+                            lower.equals(AsgConstants.VIDEO_THUMBNAIL_SIDECAR_NAME);
 
-                    if (isMediaExtension && !isBracket) {
+                    if (isMediaExtension && !isBracket && !isVideoThumbnail) {
                         boolean isVideo = lower.endsWith(".mp4") || lower.endsWith(".mov") || lower.endsWith(".avi");
                         if (isVideo) {
                             // Videos need moov atom validation — a killed process leaves
@@ -753,4 +846,4 @@ public class FileManagerImpl implements FileManager {
             logger.error(TAG, "Error cleaning up orphaned captures", e);
         }
     }
-} 
+}

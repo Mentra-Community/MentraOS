@@ -1,0 +1,232 @@
+import assert from "node:assert/strict"
+import {mkdtempSync, writeFileSync} from "node:fs"
+import {tmpdir} from "node:os"
+import path from "node:path"
+import test from "node:test"
+
+import {
+  inspectDeployment,
+  publishDeployment,
+  requirePublishingType,
+  uploadAutomaticDeployment,
+  uploadDeployment,
+  waitForValidatedDeployment,
+} from "./sonatype-central-deployment.mjs"
+
+const deploymentId = "28570f16-da32-4c14-bd2e-c1acc0782365"
+const deploymentName = "mentra-3.1.0-beta.57-android-sdk"
+const expectedPurls = [
+  "pkg:maven/com.mentraglass/bluetooth-sdk@3.1.0-beta.57",
+  "pkg:maven/com.mentraglass/lc3Lib@3.1.0-beta.57",
+]
+
+function bundle() {
+  const file = path.join(mkdtempSync(path.join(tmpdir(), "central-bundle-")), "bundle.zip")
+  writeFileSync(file, "bundle")
+  return file
+}
+
+function record() {
+  return {
+    schemaVersion: 1,
+    deploymentId,
+    deploymentName,
+    bundleSha256: "a".repeat(64),
+    expectedPurls,
+  }
+}
+
+function jsonResponse(value, status = 200) {
+  return new Response(JSON.stringify(value), {status})
+}
+
+test("uploads an automatically published deployment and returns a durable recovery record", async () => {
+  let request
+  const result = await uploadAutomaticDeployment({
+    bundle: bundle(),
+    token: "token",
+    deploymentName,
+    expectedPurls,
+    fetchImpl: async (url, options) => {
+      request = {url: String(url), options}
+      return new Response(deploymentId, {status: 201})
+    },
+  })
+
+  assert.match(request.url, /publishingType=AUTOMATIC/)
+  assert.match(request.url, /name=mentra-3.1.0-beta.57-android-sdk/)
+  assert.equal(request.options.method, "POST")
+  assert.equal(result.deploymentId, deploymentId)
+  assert.equal(result.bundleSha256.length, 64)
+  assert.deepEqual(result.expectedPurls, expectedPurls)
+})
+
+test("uploads a user-managed deployment for the production channel without publishing it", async () => {
+  let request
+  const result = await uploadDeployment({
+    bundle: bundle(),
+    token: "token",
+    deploymentName: "mentra-3.1.0-android-sdk",
+    expectedPurls: ["pkg:maven/com.mentraglass/bluetooth-sdk@3.1.0", "pkg:maven/com.mentraglass/lc3Lib@3.1.0"],
+    publishingType: "USER_MANAGED",
+    fetchImpl: async (url, options) => {
+      request = {url: String(url), options}
+      return new Response(deploymentId, {status: 201})
+    },
+  })
+
+  assert.match(request.url, /publishingType=USER_MANAGED/)
+  assert.equal(result.publishingType, "USER_MANAGED")
+  assert.equal(requirePublishingType(undefined), "AUTOMATIC")
+  assert.throws(() => requirePublishingType("MANUAL"), /Unsupported Sonatype publishing type/)
+  await assert.rejects(
+    () =>
+      uploadDeployment({
+        bundle: bundle(),
+        token: "token",
+        deploymentName,
+        expectedPurls,
+        publishingType: "manual",
+        fetchImpl: async () => new Response(deploymentId, {status: 201}),
+      }),
+    /Unsupported Sonatype publishing type/,
+  )
+})
+
+test("publishes a persisted deployment only after validation", async () => {
+  const states = ["PENDING", "VALIDATED", "VALIDATED", "PUBLISHING", "PUBLISHED"]
+  let publicationRequests = 0
+  const result = await publishDeployment({
+    record: record(),
+    token: "token",
+    fetchImpl: async (url) => {
+      if (String(url).includes(`/deployment/${deploymentId}`)) {
+        publicationRequests += 1
+        return new Response(null, {status: 204})
+      }
+      const deploymentState = states.shift()
+      return jsonResponse({
+        deploymentId,
+        deploymentName,
+        deploymentState,
+        purls: deploymentState === "PUBLISHED" ? expectedPurls : [],
+      })
+    },
+    sleepImpl: async () => {},
+  })
+
+  assert.equal(publicationRequests, 1)
+  assert.equal(result.deploymentState, "PUBLISHED")
+})
+
+test("resumes a publishing deployment without sending another publication request", async () => {
+  const states = ["PUBLISHING", "PUBLISHED"]
+  let publicationRequests = 0
+  await publishDeployment({
+    record: record(),
+    token: "token",
+    fetchImpl: async (url) => {
+      if (String(url).includes(`/deployment/${deploymentId}`)) publicationRequests += 1
+      const deploymentState = states.shift()
+      return jsonResponse({deploymentId, deploymentName, deploymentState, purls: expectedPurls})
+    },
+    sleepImpl: async () => {},
+  })
+  assert.equal(publicationRequests, 0)
+})
+
+test("accepts published deployment while optional PURLs are absent", async () => {
+  let publicationRequests = 0
+  const result = await publishDeployment({
+    record: record(),
+    token: "token",
+    fetchImpl: async (url) => {
+      if (String(url).includes(`/deployment/${deploymentId}`)) publicationRequests += 1
+      return jsonResponse({
+        deploymentId,
+        deploymentName,
+        deploymentState: "PUBLISHED",
+        purls: [],
+      })
+    },
+    sleepImpl: async () => {},
+  })
+
+  assert.equal(publicationRequests, 0)
+  assert.deepEqual(result.purls, [])
+})
+
+test("replaces a persisted deployment only after Sonatype reports it failed", async () => {
+  const failed = await inspectDeployment({
+    record: record(),
+    token: "token",
+    fetchImpl: async () =>
+      jsonResponse({deploymentId, deploymentName, deploymentState: "FAILED", errors: ["invalid signature"]}),
+  })
+  assert.equal(failed.disposition, "replace")
+  assert.deepEqual(failed.errors, ["invalid signature"])
+
+  const publishing = await inspectDeployment({
+    record: record(),
+    token: "token",
+    fetchImpl: async () => jsonResponse({deploymentId, deploymentName, deploymentState: "PUBLISHING"}),
+  })
+  assert.equal(publishing.disposition, "resume")
+})
+
+test("resumes a published deployment when status PURLs are incomplete", async () => {
+  const result = await inspectDeployment({
+    record: record(),
+    token: "token",
+    fetchImpl: async () =>
+      jsonResponse({deploymentId, deploymentName, deploymentState: "PUBLISHED", purls: [expectedPurls[0]]}),
+  })
+
+  assert.equal(result.disposition, "resume")
+  assert.deepEqual(result.purls, [expectedPurls[0]])
+})
+
+test("preserves partial published PURLs for observability", async () => {
+  const result = await publishDeployment({
+    record: record(),
+    token: "token",
+    fetchImpl: async () =>
+      jsonResponse({deploymentId, deploymentName, deploymentState: "PUBLISHED", purls: [expectedPurls[0]]}),
+    sleepImpl: async () => {},
+  })
+
+  assert.deepEqual(result.purls, [expectedPurls[0]])
+})
+
+test("waits for a user-managed deployment to validate without requesting publication", async () => {
+  const states = ["PENDING", "VALIDATING", "VALIDATED"]
+  let publicationRequests = 0
+  const result = await waitForValidatedDeployment({
+    record: {...record(), publishingType: "USER_MANAGED"},
+    token: "token",
+    sleepImpl: async () => {},
+    fetchImpl: async (url, options) => {
+      const target = String(url)
+      if (target.includes("/api/v1/publisher/status")) {
+        return jsonResponse({deploymentId, deploymentName, deploymentState: states.shift()})
+      }
+      if (target.includes(`/api/v1/publisher/deployment/${deploymentId}`) && options.method === "POST") {
+        publicationRequests += 1
+        return new Response("", {status: 204})
+      }
+      throw new Error(`Unexpected request ${target}`)
+    },
+  })
+  assert.equal(result.deploymentState, "VALIDATED")
+  assert.equal(publicationRequests, 0)
+  await assert.rejects(
+    () =>
+      waitForValidatedDeployment({
+        record: record(),
+        token: "token",
+        sleepImpl: async () => {},
+        fetchImpl: async () => jsonResponse({deploymentId, deploymentName, deploymentState: "FAILED", errors: {a: 1}}),
+      }),
+    /failed/,
+  )
+})

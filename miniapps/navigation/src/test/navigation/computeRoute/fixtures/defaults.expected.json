@@ -1,0 +1,5 @@
+{
+  "type": "miniapp_navigation_compute_route",
+  "mode": "driving",
+  "alternatives": 1
+}

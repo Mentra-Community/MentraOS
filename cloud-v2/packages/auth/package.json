@@ -1,0 +1,44 @@
+{
+  "name": "@mentra/auth",
+  "version": "0.1.0-dev.0",
+  "description": "Verify Mentra Local Runtime auth tokens (JWKS) in miniapp backends.",
+  "type": "module",
+  "main": "./dist/index.js",
+  "types": "./dist/index.d.ts",
+  "exports": {
+    ".": {
+      "types": "./dist/index.d.ts",
+      "default": "./dist/index.js"
+    }
+  },
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "publishConfig": {
+    "access": "public",
+    "tag": "dev"
+  },
+  "scripts": {
+    "build": "tsc -b",
+    "test": "bun test src"
+  },
+  "dependencies": {
+    "jose": "^5.9.6"
+  },
+  "keywords": [
+    "mentra",
+    "mentraos",
+    "auth",
+    "jwks"
+  ],
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/Mentra-Community/MentraOS.git",
+    "directory": "cloud-v2/packages/auth"
+  },
+  "homepage": "https://github.com/Mentra-Community/MentraOS/tree/dev/cloud-v2/packages/auth#readme",
+  "bugs": {
+    "url": "https://github.com/Mentra-Community/MentraOS/issues"
+  }
+}

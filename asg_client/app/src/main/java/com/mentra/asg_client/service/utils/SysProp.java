@@ -5,6 +5,7 @@ import android.content.Intent;
 import android.util.Log;
 
 import java.lang.reflect.Method;
+import java.util.Locale;
 
 /**
  * Utility class for reading/writing Android system properties.
@@ -16,6 +17,10 @@ public class SysProp {
 
     // System property key for BES BT MAC address
     public static final String KEY_BES_BT_MAC = "persist.mentra.live.mac";
+    public static final String KEY_DEVICE_SERIAL = "ro.serialno";
+    private static final String GENERIC_ANDROID_SERIAL = "0123456789ABCDEF";
+
+    private static volatile String cachedBesBtMac = "";
 
     /**
      * Get a system property value using reflection
@@ -112,7 +117,12 @@ public class SysProp {
      * @return BT MAC address or empty string if not set
      */
     public static String getBesBtMac(Context context) {
-        return get(context, KEY_BES_BT_MAC);
+        String persisted = normalizeBesBtMac(get(context, KEY_BES_BT_MAC));
+        if (!persisted.isEmpty()) {
+            cachedBesBtMac = persisted;
+            return persisted;
+        }
+        return cachedBesBtMac;
     }
 
     /**
@@ -121,7 +131,55 @@ public class SysProp {
      * @param mac BT MAC address (e.g., "12:23:AB:CD:EF:3E")
      */
     public static void setBesBtMac(Context context, String mac) {
-        set(context, KEY_BES_BT_MAC, mac);
+        String normalized = normalizeBesBtMac(mac);
+        if (normalized.isEmpty()) {
+            Log.w(TAG, "Ignoring invalid BES BT MAC address");
+            return;
+        }
+
+        // The SystemUI broadcast persists asynchronously. Cache first so version_info sent in
+        // response to this same BES event already contains the newly learned address.
+        cachedBesBtMac = normalized;
+        set(context, KEY_BES_BT_MAC, normalized);
+    }
+
+    /**
+     * Get the Mentra Live product serial provisioned by the Android firmware.
+     *
+     * <p>This intentionally reads {@code ro.serialno}; {@code ro.boot.serialno} is a generic
+     * platform value on current Mentra Live devices and is not a device identity.
+     */
+    public static String getDeviceSerial(Context context) {
+        return normalizeDeviceSerial(get(context, KEY_DEVICE_SERIAL));
+    }
+
+    /** Normalize a product serial, returning an empty string for unprovisioned values. */
+    public static String normalizeDeviceSerial(String serial) {
+        if (serial == null) {
+            return "";
+        }
+        String normalized = serial.trim();
+        if (normalized.isEmpty()
+                || normalized.matches("0+")
+                || normalized.equalsIgnoreCase(GENERIC_ANDROID_SERIAL)
+                || normalized.equalsIgnoreCase("unknown")
+                || normalized.equalsIgnoreCase("null")
+                || normalized.equalsIgnoreCase("n/a")) {
+            return "";
+        }
+        return normalized;
+    }
+
+    /** Normalize a BES Bluetooth MAC, returning an empty string for invalid addresses. */
+    public static String normalizeBesBtMac(String mac) {
+        if (mac == null) {
+            return "";
+        }
+        String normalized = mac.trim().toUpperCase(Locale.US);
+        if (!normalized.matches("([0-9A-F]{2}:){5}[0-9A-F]{2}")
+                || normalized.replace(":", "").matches("0+")) {
+            return "";
+        }
+        return normalized;
     }
 }
-

@@ -47,6 +47,44 @@ public class CameraOpenerTest {
     }
 
     @Test
+    public void resolveJpegSize_maxSelectsLargestAvailable() {
+        Size max = new Size(4032, 3024);
+        Size[] sizes =
+                new Size[] {
+                    new Size(1920, 1080),
+                    max,
+                    new Size(3264, 2448),
+                    new Size(3840, 2160),
+                };
+
+        Size chosen = CameraOpener.resolveJpegSize(sizes, false, "max");
+        assertThat(chosen).isSameAs(max);
+    }
+
+    @Test
+    public void resolveJpegSize_textUsesClosestToAsgSensorConstants() {
+        Size exact = new Size(3840, 2160);
+        Size[] withExact =
+                new Size[] {
+                    new Size(1920, 1080),
+                    exact,
+                    new Size(4032, 3024),
+                    new Size(3264, 2448),
+                };
+        assertThat(CameraOpener.resolveJpegSize(withExact, true, "text")).isSameAs(exact);
+
+        Size closestByL1 = new Size(3264, 2448);
+        Size[] withoutExact =
+                new Size[] {
+                    new Size(1920, 1080),
+                    new Size(4032, 3024),
+                    closestByL1,
+                };
+        // Fallback uses CameraSizeSelector L1 distance to 3840×2160 (not aspect-ratio filter).
+        assertThat(CameraOpener.resolveJpegSize(withoutExact, true, "text")).isSameAs(closestByL1);
+    }
+
+    @Test
     public void resolveVideoSize_usesDefaultWhenSettingsInvalid() {
         Size[] sizes = new Size[] {new Size(1280, 720), new Size(1920, 1080)};
         Size chosen = CameraOpener.resolveVideoSize(sizes, null);

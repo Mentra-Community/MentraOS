@@ -23,11 +23,7 @@ public interface INetworkManager {
      */
     void disableWifi();
     
-    /**
-     * Start a hotspot with device-generated persistent credentials
-     * SSID format: MentraOS_XXXXX where XXXXX is a persistent device ID
-     * Password: 12345678 (fixed)
-     */
+    /** Start a hotspot. Credentials may be generated dynamically by the platform. */
     void startHotspot();
     
     /**
@@ -134,4 +130,4 @@ public interface INetworkManager {
      * Cleanup resources when the manager is no longer needed
      */
     void shutdown();
-} 
+}

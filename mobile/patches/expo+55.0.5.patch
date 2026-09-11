@@ -1,0 +1,29 @@
+diff --git a/scripts/react-native-xcode.sh b/scripts/react-native-xcode.sh
+--- a/scripts/react-native-xcode.sh
++++ b/scripts/react-native-xcode.sh
+@@ -15,14 +15,18 @@
+ 
+ # Enables iOS devices to get the IP address of the machine running Metro
+ if [[ ! "$SKIP_BUNDLING_METRO_IP" && "$CONFIGURATION" = *Debug* && ! "$PLATFORM_NAME" == *simulator ]]; then
+-  for num in 0 1 2 3 4 5 6 7 8; do
+-    IP=$(ipconfig getifaddr en${num})
+-    if [ ! -z "$IP" ]; then
+-      break
++  if [ -n "$REACT_NATIVE_PACKAGER_HOSTNAME" ]; then
++    IP="$REACT_NATIVE_PACKAGER_HOSTNAME"
++  else
++    for num in 0 1 2 3 4 5 6 7 8; do
++      IP=$(ipconfig getifaddr en${num})
++      if [ ! -z "$IP" ]; then
++        break
++      fi
++    done
++    if [ -z "$IP" ]; then
++      IP=$(ifconfig | grep 'inet ' | grep -v ' 127.' | grep -v ' 169.254.' |cut -d\   -f2  | awk 'NR==1{print $1}')
+     fi
+-  done
+-  if [ -z "$IP" ]; then
+-    IP=$(ifconfig | grep 'inet ' | grep -v ' 127.' | grep -v ' 169.254.' |cut -d\   -f2  | awk 'NR==1{print $1}')
+   fi
+ 
+   echo "$IP" > "$DEST/ip.txt"

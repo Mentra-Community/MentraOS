@@ -104,6 +104,11 @@ export function MicPcmLogger() {
     console.log(event.pcm);
   });
 
+  useBluetoothEvent('mic_health', (event) => {
+    console.log(event.reason, event.sequenceGapEvents, event.decodeFailures);
+    console.log(event.lastLc3ReceivedAt, event.lastPcmProducedAt);
+  });
+
   return null;
 }
 ```
@@ -112,7 +117,9 @@ export function MicPcmLogger() {
 
 `mic_lc3` emits SDK-encoded LC3 frames with `sampleRate`, `channels`, `frameDurationMs`, `frameSizeBytes`, `bitrate`, `packetizedFromGlasses`, and `voiceActivityDetectionEnabled`. For SDK-encoded LC3 events, `packetizedFromGlasses` is `false`: the SDK decodes glasses microphone LC3 and re-encodes it to the SDK's canonical LC3 output format before emitting app-facing LC3 events.
 
-Native Android and iOS apps receive `MicPcmEvent` and `MicLc3Event` objects with the same metadata through the SDK listener/delegate surfaces. Disable microphone audio callbacks when the app finishes using them.
+Native Android and iOS apps receive `MicPcmEvent` and `MicLc3Event` objects with the same metadata through the SDK listener/delegate surfaces. They also receive typed `MicHealthEvent` events through `onMicHealth` on Android and `.micHealth` on iOS.
+
+`mic_health` fires only when native processing detects an LC3 `sequence_gap` or `decode_failure`. It includes cumulative `sequenceGapEvents` and `decodeFailures` counters for the current connection, plus `lastLc3ReceivedAt`, `lastPcmProducedAt`, and the event `timestamp` in Unix milliseconds when available. Use the timestamps with your own stall policy; the SDK does not emit a separate stall event. Disable microphone audio callbacks when the app finishes using them.
 
 ## Voice Activity Detection
 

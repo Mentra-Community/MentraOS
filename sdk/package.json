@@ -1,12 +1,21 @@
 {
   "private": true,
   "workspaces": [
-    "*",
-    "../mobile/modules/miniapp"
+    "create-mentra-miniapp",
+    "example-oem-app",
+    "miniapp-cli",
+    "../cloud-v2/packages/*",
+    "../mobile/modules/miniapp",
+    "../mobile/modules/jspolyfill",
+    "../mobile/modules/crust",
+    "../mobile/modules/engine",
+    "../mobile/modules/bluetooth-sdk",
+    "../miniapps/*"
   ],
   "scripts": {
-    "build:miniapp": "cd miniapp && bun run build",
+    "build:miniapp": "cd ../mobile/modules/miniapp && bun run build",
     "build": "bun run build:miniapp",
-    "test": "cd miniapp && bun test"
+    "postinstall": "bun run build:miniapp || echo '\\n[sdk postinstall] WARNING: failed to build @mentra/miniapp. The example miniapp will not run until you build it manually:\\n  cd mobile/modules/miniapp && bun run build\\n'",
+    "test": "cd ../mobile/modules/miniapp && bun test"
   }
 }

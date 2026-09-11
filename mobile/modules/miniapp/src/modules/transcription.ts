@@ -21,15 +21,31 @@
 import {MiniappRequestType, MiniappStreamType} from "../protocol"
 import {MiniappSession} from "../session"
 import type {TranscriptionData, UnsubscribeFn} from "./events"
+import {requireLanguageHint, requireTranscriptionLanguage} from "./languages"
+import type {LanguageHint, TranscriptionLanguage} from "./languages"
 
 /** Configuration for cloud-side transcription behavior. */
 export interface TranscriptionConfig {
-  /** ISO 639-1 language hints to improve detection accuracy (e.g. ["en", "ja"]). */
-  languageHints?: string[]
+  /**
+   * Language hints to improve auto-detection accuracy. Bare ISO 639-1 codes
+   * from the registry (e.g. ["en", "ja"]); registry BCP-47 tags are accepted
+   * and normalized ("en-US" -> "en"). Anything else throws
+   * `MiniappValidationError`.
+   */
+  languageHints?: LanguageHint[]
   /** Custom vocabulary / boosted terms (e.g. ["MentraOS", "HIPAA"]). */
   vocabulary?: string[]
   /** Enable speaker diarisation. Defaults vary by provider. */
   diarization?: boolean
+}
+
+export interface TranscriptionOptions {
+  /**
+   * Use only on-device STT for this listener; never deliver cloud transcripts.
+   * Other listeners on the same stream keep their own routing choice. Requires
+   * a downloaded local STT model.
+   */
+  forceLocal?: boolean
 }
 
 export class TranscriptionModule {
@@ -46,9 +62,9 @@ export class TranscriptionModule {
    * (handlers on `transcription:auto` receive any `transcription:<lang>`
    * event) preserves existing semantics.
    */
-  on(handler: (data: TranscriptionData) => void): UnsubscribeFn {
+  on(handler: (data: TranscriptionData) => void, options: TranscriptionOptions = {}): UnsubscribeFn {
     return this.track(
-      this.session._subscribe(`${MiniappStreamType.TRANSCRIPTION}:auto`, handler as (data: unknown) => void),
+      this.session._subscribe(`${MiniappStreamType.TRANSCRIPTION}:auto`, handler as (data: unknown) => void, options),
     )
   }
 
@@ -56,17 +72,34 @@ export class TranscriptionModule {
    * Subscribe to transcription for one or more specific languages. Each call
    * is independent; multiple can be active simultaneously.
    *
-   * @param language - BCP-47 tag(s), e.g. `"en-US"` or `["en-US", "es-ES"]`.
+   * Languages are validated against the platform registry
+   * (`SUPPORTED_TRANSCRIPTION_LANGUAGES`): registry BCP-47 tags pass through,
+   * bare registry codes canonicalize ("fr" -> "fr-FR"), anything else throws
+   * `MiniappValidationError` immediately — an invalid language must never
+   * become a subscription that silently transcribes the wrong thing
+   * (OS-1746 / issue 021).
+   *
+   * @param language - Registry tag(s), e.g. `"en-US"` or `["en-US", "es-ES"]`.
    * @param handler  - Called for every event in any of the listed languages.
    */
-  forLanguage(language: string | string[], handler: (data: TranscriptionData) => void): UnsubscribeFn {
-    const langs = Array.isArray(language) ? language : [language]
+  forLanguage(
+    language: TranscriptionLanguage | TranscriptionLanguage[],
+    handler: (data: TranscriptionData) => void,
+    options: TranscriptionOptions = {},
+  ): UnsubscribeFn {
+    const langs = (Array.isArray(language) ? language : [language]).map((lang) =>
+      requireTranscriptionLanguage(lang, "transcription.forLanguage(language)"),
+    )
     if (langs.length === 0) return () => {}
 
     const unsubs: UnsubscribeFn[] = []
     for (const lang of langs) {
       unsubs.push(
-        this.session._subscribe(`${MiniappStreamType.TRANSCRIPTION}:${lang}`, handler as (data: unknown) => void),
+        this.session._subscribe(
+          `${MiniappStreamType.TRANSCRIPTION}:${lang}`,
+          handler as (data: unknown) => void,
+          options,
+        ),
       )
     }
     const combined: UnsubscribeFn = () => {
@@ -83,15 +116,29 @@ export class TranscriptionModule {
 
   /**
    * Apply transcription configuration (language hints, custom vocabulary,
-   * diarisation toggle). Sent to the cloud immediately. Cached locally so we
-   * could re-send on reconnect (future).
+   * diarisation toggle). Hints are validated against the registry and
+   * normalized to bare codes ("en-US" -> "en"); unknown values throw
+   * `MiniappValidationError` synchronously.
+   *
+   * Sent to the phone runtime as a REQUEST (not a one-shot) so the returned
+   * promise rejects if the runtime cannot apply it — a config that the
+   * platform ignores must be loud, not silent (issue 021 S3). Cached locally
+   * so the runtime can re-apply on reconnect.
    */
-  configure(config: TranscriptionConfig): void {
-    this.currentConfig = {...config}
-    this.session.sendOneShot({
-      type: MiniappRequestType.TRANSCRIPTION_CONFIG,
-      config: {...config},
-    })
+  configure(config: TranscriptionConfig): Promise<void> {
+    const normalized: TranscriptionConfig = {
+      ...config,
+      languageHints: config.languageHints?.map((hint) =>
+        requireLanguageHint(hint, "transcription.configure(languageHints)"),
+      ),
+    }
+    this.currentConfig = {...normalized}
+    return this.session
+      .sendRequest<void>({
+        type: MiniappRequestType.TRANSCRIPTION_CONFIG,
+        config: {...normalized},
+      })
+      .then(() => undefined)
   }
 
   /** Tear down every transcription subscription this module owns. */

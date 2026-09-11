@@ -3,7 +3,7 @@
 ## Overview
 Complete plan for fixing the unreliable OTA updater across 400 deployed Android Smart Glasses.
 
-**IMPORTANT**: OTA Updater v2 is an UPDATE to the existing app (versionCode: 2), not a separate app. Same package name: `com.augmentos.otaupdater`
+**IMPORTANT**: Recovery worker is now a dedicated sidecar package: `com.mentra.recovery`.
 
 ## Documentation Structure
 

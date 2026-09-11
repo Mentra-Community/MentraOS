@@ -1,8 +1,36 @@
 plugins {
     id 'com.android.application'
     id 'androidx.navigation.safeargs'
-
     id 'io.sentry.android.gradle' version '5.8.0'
+    id 'com.google.dagger.hilt.android'
+}
+
+apply plugin: 'com.diffplug.spotless'
+
+def hasSpotlessRatchetGitDir = {
+    def dir = rootProject.projectDir
+    while (dir != null) {
+        if (new File(dir, ".git").isDirectory()) {
+            return true
+        }
+        dir = dir.parentFile
+    }
+    return false
+}
+
+spotless {
+    java {
+        target 'src/**/*.java'
+        googleJavaFormat('1.17.0').aosp()
+        if (hasSpotlessRatchetGitDir()) {
+            ratchetFrom 'origin/dev'
+        } else {
+            logger.lifecycle("Skipping Spotless ratchetFrom because this checkout does not expose a .git directory to Spotless.")
+        }
+        toggleOffOn()
+        trimTrailingWhitespace()
+        endWithNewline()
+    }
 }
 
 // 1. Import classes for file/stream and properties
@@ -18,6 +46,41 @@ if (envFile.exists()) {
     logger.warn(".env file not found at ${envFile}")
 }
 
+// Match mobile/scripts/build-number.mjs: 100000 + seconds since Jan 1 2025 UTC.
+// CI pins ASG_VERSION_CODE so generated manifests exactly match the built APK.
+def asgBuildEpochMs = 1735689600000L
+def asgBuildBaseline = 100000
+
+def pinnedAsgVersionCode = (
+        project.findProperty("ASG_VERSION_CODE")
+                ?: System.getenv("ASG_VERSION_CODE")
+                ?: System.getenv("MENTRAOS_PINNED_BUILD_NUMBER")
+)
+def isPinnedCiBuild = pinnedAsgVersionCode != null && !pinnedAsgVersionCode.toString().trim().isEmpty()
+
+def resolveAsgVersionCode = {
+    if (isPinnedCiBuild) {
+        def parsed = pinnedAsgVersionCode.toString().trim().toInteger()
+        if (parsed <= 0) {
+            throw new GradleException("ASG_VERSION_CODE must be a positive integer")
+        }
+        return parsed
+    }
+
+    return asgBuildBaseline + ((System.currentTimeMillis() - asgBuildEpochMs) / 1000L).toInteger()
+}
+
+def asgVersionCodeValue = resolveAsgVersionCode()
+// Unpinned builds are development builds regardless of buildType (local installRelease is the
+// common dev workflow for performance): the "-dev" versionName suffix makes the phone skip OTA
+// for them, so a sideloaded build is never prompted to roll back to the app's pinned release.
+// CI always pins ASG_VERSION_CODE, so CI artifacts get clean version names and full OTA.
+def asgVersionNameValue = (
+        project.findProperty("ASG_VERSION_NAME")
+                ?: System.getenv("ASG_VERSION_NAME")
+                ?: (asgVersionCodeValue.toString() + (isPinnedCiBuild ? "" : "-dev"))
+).toString()
+
 /**
  * Release signing credentials from environment variables
  */
@@ -31,6 +94,15 @@ def localKeystoreFile = file("../credentials/asg-keystore.jks")
 def productionKeystoreFile = sharedKeystoreFile.exists() ? sharedKeystoreFile : localKeystoreFile
 def useReleaseKey = productionKeystoreFile.exists() && asgStorePassword ? true : false
 
+def sentryAuthToken = System.getenv("SENTRY_AUTH_TOKEN") ?:
+                     project.hasProperty("sentryAuthToken") ? project.property("sentryAuthToken") : null
+def sentryDsnValue = (envProperties['SENTRY_DSN'] ?: "").toString().trim()
+def isSentryDsnConfigured = !sentryDsnValue.isEmpty() && sentryDsnValue.contains("sentry.io")
+def sentryDisableAutoUpload = System.getenv("SENTRY_DISABLE_AUTO_UPLOAD") == "true"
+// Local `installRelease` is unpinned. Only CI-pinned artifacts should upload symbols.
+// A leftover SENTRY_AUTH_TOKEN must not fail a local install (401 / org limits).
+def enableSentryUpload = isSentryDsnConfigured && sentryAuthToken && isPinnedCiBuild && !sentryDisableAutoUpload
+
 // Print signing configuration status during build
 gradle.taskGraph.whenReady { taskGraph ->
     def isReleaseBuild = taskGraph.allTasks.any { it.name.toLowerCase().contains('release') }
@@ -40,6 +112,9 @@ gradle.taskGraph.whenReady { taskGraph ->
         println ""
         println "╔════════════════════════════════════════════════════════════════╗"
         println "║                    ASG CLIENT SIGNING INFO                     ║"
+        println "╠════════════════════════════════════════════════════════════════╣"
+        println "║  Version Code: ${asgVersionCodeValue.toString().padRight(47)}║"
+        println "║  Version Name: ${asgVersionNameValue.take(47).padRight(47)}║"
         println "╠════════════════════════════════════════════════════════════════╣"
 
         if (isReleaseBuild) {
@@ -89,34 +164,22 @@ gradle.taskGraph.whenReady { taskGraph ->
         println "╚════════════════════════════════════════════════════════════════╝"
         println ""
 
-        // Check Sentry configuration status (from .env file)
-        def sentryDsn = envProperties['SENTRY_DSN'] ?: ""
-        def sentryAuthToken = System.getenv("SENTRY_AUTH_TOKEN") ?:
-                             (project.hasProperty("sentryAuthToken") ? project.property("sentryAuthToken") : null)
-
-        def isSentryConfigured = sentryDsn && !sentryDsn.isEmpty() && sentryDsn.contains("sentry.io")
-
         println "╔════════════════════════════════════════════════════════════════╗"
         println "║                    SENTRY ERROR REPORTING                      ║"
         println "╠════════════════════════════════════════════════════════════════╣"
 
-        if (isSentryConfigured) {
+        if (enableSentryUpload) {
             println "║  ✅ SENTRY: ENABLED - Crashes will be reported                 ║"
             println "║     Config: .env file                                         ║"
-            if (sentryAuthToken) {
-                println "║     Source Maps: ✅ Will be uploaded                          ║"
-            } else {
-                println "║     Source Maps: ❌ SENTRY_AUTH_TOKEN not set                 ║"
-            }
+            println "║     Source Maps: ✅ Will be uploaded                          ║"
         } else {
             println "║  ⚠️  SENTRY: DISABLED - Crashes will NOT be reported to cloud  ║"
             println "║                                                               ║"
             println "║  Local file logging is still enabled at:                      ║"
             println "║     /sdcard/mentra_crash_logs/                                ║"
             println "║                                                               ║"
-            println "║  To enable Sentry:                                            ║"
-            println "║  1. Copy .env.example to .env                                 ║"
-            println "║  2. Set SENTRY_DSN=https://xxx@sentry.io/xxx                  ║"
+            println "║  Symbol upload is CI-only. Local installRelease skips it      ║"
+            println "║  so a leftover SENTRY_AUTH_TOKEN cannot fail the build.       ║"
         }
 
         println "╚════════════════════════════════════════════════════════════════╝"
@@ -132,6 +195,10 @@ android {
     compileOptions {
         sourceCompatibility JavaVersion.VERSION_17 // Or VERSION_1_8, VERSION_11, etc.
         targetCompatibility JavaVersion.VERSION_17 // Should generally match sourceCompatibility
+    }
+
+    hilt {
+        enableAggregatingTask = true
     }
 
     signingConfigs {
@@ -184,6 +251,16 @@ android {
     testOptions {
         unitTests {
             includeAndroidResources = true
+            all {
+                def textDetectInputDir = System.getProperty('textdetect.inputDir')
+                if (textDetectInputDir != null) {
+                    systemProperty 'textdetect.inputDir', textDetectInputDir
+                }
+                def textDetectOutputDir = System.getProperty('textdetect.outputDir')
+                if (textDetectOutputDir != null) {
+                    systemProperty 'textdetect.outputDir', textDetectOutputDir
+                }
+            }
         }
     }
 
@@ -192,8 +269,8 @@ android {
 
         minSdk 28
         targetSdk 33
-        versionCode 39
-        versionName "39.0"
+        versionCode asgVersionCodeValue
+        versionName asgVersionNameValue
 
         ndk {
             abiFilters "armeabi-v7a", "arm64-v8a"
@@ -212,6 +289,8 @@ android {
 
         // Sentry configuration
         buildConfigField "String", "SENTRY_DSN", "\"${envProperties['SENTRY_DSN'] ?: ""}\""
+
+        buildConfigField "boolean", "ENABLE_SYSTEM_NETWORK_MANAGER", "true"
     }
 
     packagingOptions {
@@ -286,37 +365,21 @@ dependencies {
     implementation "androidx.lifecycle:lifecycle-extensions:2.2.0"
     annotationProcessor "androidx.lifecycle:lifecycle-compiler:2.2.0"
 
-    //REST API volley
-    implementation 'com.android.volley:volley:1.2.1';
-
     //EventBus, greenrobot
     implementation("org.greenrobot:eventbus:3.3.1")
 
     //location services
     implementation 'com.google.android.gms:play-services-location:18.0.0'
 
+    // Bundled/offline text localization for Mentra Live text-mode photos.
+    implementation 'com.google.mlkit:text-recognition:16.0.1'
+
     //websocket
     implementation 'com.squareup.okhttp3:okhttp:4.9.3'
 
 
-    implementation 'io.reactivex.rxjava3:rxjava:3.0.0'
-    implementation "io.reactivex.rxjava3:rxandroid:3.0.0"
-
-    // SGM leftover for ASG connector
-    implementation "org.java-websocket:Java-WebSocket:1.5.2"
-
     // For demo
     implementation 'org.nanohttpd:nanohttpd:2.3.1'
-
-    // Uncomment to use Nordic's BLE library
-    implementation 'no.nordicsemi.android:ble:2.4.0'
-
-    // CameraX dependencies
-    implementation "androidx.camera:camera-core:1.3.0"
-    implementation "androidx.camera:camera-camera2:1.3.0"
-    implementation "androidx.camera:camera-lifecycle:1.3.0"
-    implementation "androidx.camera:camera-view:1.3.0"
-    implementation "androidx.camera:camera-extensions:1.3.0"
 
     // StreamPackLite dependencies
     implementation project(':core')
@@ -329,11 +392,19 @@ dependencies {
     // JSON handling
     implementation 'org.json:json:20210307'
     
+    // Decode the exact LZMA-alone chunks used by BES release OTA artifacts before authorization.
+    implementation 'org.tukaani:xz:1.9'
+
     // AVIF encoding/decoding support
     implementation 'com.github.awxkee:avif-coder:1.7.3'
+    implementation 'androidx.heifwriter:heifwriter:1.1.0'
+    implementation "androidx.exifinterface:exifinterface:1.3.7"
 
     // Sentry SDK for error reporting
     implementation 'io.sentry:sentry-android:7.5.0'
+
+    implementation 'com.google.dagger:hilt-android:2.51.1'
+    annotationProcessor 'com.google.dagger:hilt-compiler:2.51.1'
 
     // Google WebRTC for Android (WHIP streaming)
     // Community-maintained prebuilt of the official Google WebRTC codebase; uses org.webrtc package.
@@ -347,38 +418,161 @@ dependencies {
     androidTestImplementation 'androidx.test.ext:junit:1.1.5'
 }
 
-// Check if Sentry auth token is available
-def sentryAuthToken = System.getenv("SENTRY_AUTH_TOKEN") ?: 
-                     project.hasProperty("sentryAuthToken") ? project.property("sentryAuthToken") : null
-
 sentry {
     org = "mentra-labs"
     projectName = "mentra-asg-client"
 
-    // Only enable Sentry features if auth token is present
-    if (sentryAuthToken) {
-        // this will upload your source code to Sentry to show it as part of the stack traces
+    if (enableSentryUpload) {
         includeSourceContext = true
         uploadNativeSymbols = true
         autoUploadNativeSymbols = true
         autoUploadSourceContext = true
     } else {
-        // Disable all Sentry upload tasks when no auth token
         includeSourceContext = false
         uploadNativeSymbols = false
         autoUploadNativeSymbols = false
         autoUploadSourceContext = false
-        
-        // Don't fail the build if Sentry operations fail
         ignoredBuildTypes = ["release", "debug"]
     }
 }
 
-// Disable Sentry tasks when auth token is not present
+tasks.register('checkNoFullyQualifiedMentraTypes') {
+    doLast {
+        def violations = []
+        def fqcnTypePattern = ~/com\.mentra\.asg_client\.(\w+\.)+[A-Z]\w*/
+        fileTree(dir: 'src/main/java', include: '**/*.java').each { File f ->
+            boolean inBlockComment = false
+            f.readLines().eachWithIndex { line, int idx ->
+                def trimmed = line.trim()
+                if (inBlockComment) {
+                    if (trimmed.contains('*/')) {
+                        inBlockComment = false
+                    }
+                    int commentEnd = line.indexOf('*/')
+                    if (commentEnd >= 0) {
+                        inBlockComment = false
+                        line = line.substring(commentEnd + 2)
+                        trimmed = line.trim()
+                    } else {
+                        return
+                    }
+                }
+                if (trimmed.startsWith('import ')
+                        || trimmed.startsWith('package ')
+                        || trimmed.startsWith('*')
+                        || trimmed.startsWith('/**')
+                        || trimmed.startsWith('/*')
+                        || trimmed.startsWith('//')) {
+                    if (trimmed.startsWith('/*') && !trimmed.contains('*/')) {
+                        inBlockComment = true
+                    }
+                    return
+                }
+                // Intent action strings and broadcast actions are not Java type references.
+                if (line.contains('"com.mentra.asg_client')) {
+                    return
+                }
+                if (fqcnTypePattern.matcher(line).find()) {
+                    violations << "${f.path}:${idx + 1}"
+                }
+            }
+        }
+        if (!violations.isEmpty()) {
+            throw new GradleException(
+                    'Use imports instead of fully-qualified com.mentra.asg_client types: '
+                            + violations.join(', '))
+        }
+    }
+}
+
+def resolveAdbExecutable() {
+    def sdk = android.sdkDirectory
+    def unix = new File(sdk, "platform-tools/adb")
+    if (unix.exists()) {
+        return unix
+    }
+    return new File(sdk, "platform-tools/adb.exe")
+}
+
+def listConnectedAdbDeviceLines() {
+    def out = new ByteArrayOutputStream()
+    def err = new ByteArrayOutputStream()
+    exec {
+        commandLine resolveAdbExecutable(), "devices", "-l"
+        standardOutput = out
+        errorOutput = err
+        ignoreExitValue = true
+    }
+    return out.toString().readLines().findAll { line ->
+        line ==~ /.*\s+device(\s+.*)?$/ && !line.startsWith("List of devices")
+    }
+}
+
+def isMentraLiveAdbLine(String line) {
+    def lower = line.toLowerCase()
+    return lower.contains("mentra") || lower.contains("k900") || lower.contains("xy_smart")
+}
+
+def resolveAsgInstallSerials() {
+    def connected = listConnectedAdbDeviceLines()
+    if (connected.isEmpty()) {
+        throw new GradleException(
+                "No connected devices. Plug Mentra Live in with the Infinity Cable (or Wi-Fi ADB) and retry.")
+    }
+    def requested = System.getenv("ANDROID_SERIAL")
+    if (requested) {
+        def match = connected.find { it.startsWith(requested + "\t") || it.startsWith(requested + " ") }
+        if (match == null) {
+            throw new GradleException("ANDROID_SERIAL=${requested} is not connected.\n" + connected.join("\n"))
+        }
+        return [requested]
+    }
+    def glasses = connected.findAll { isMentraLiveAdbLine(it) }
+    if (glasses.isEmpty()) {
+        throw new GradleException(
+                "No Mentra Live connected. asg_client will not install onto a phone (Play Protect rejects it).\n"
+                        + "Connect the glasses, or set ANDROID_SERIAL to the glasses serial.\n"
+                        + connected.join("\n"))
+    }
+    return glasses.collect { it.split(/\s+/)[0] }
+}
+
+// Disable Sentry upload on local installs. Target Mentra Live only so a
+// plugged-in phone cannot fail installRelease with VERIFICATION_FAILURE.
 afterEvaluate {
-    if (!sentryAuthToken) {
+    tasks.matching { it.name == 'preBuild' }.configureEach {
+        dependsOn('checkNoFullyQualifiedMentraTypes')
+    }
+    if (!enableSentryUpload) {
         tasks.matching { it.name.contains("sentry") || it.name.contains("Sentry") }.configureEach {
             enabled = false
+        }
+    } else {
+        tasks.matching { it.name.contains("sentry") || it.name.contains("Sentry") }.configureEach {
+            if (it.hasProperty("ignoreFailures")) {
+                it.ignoreFailures = true
+            }
+        }
+    }
+
+    android.applicationVariants.configureEach { variant ->
+        def installTask = tasks.findByName("install${variant.name.capitalize()}")
+        if (installTask == null) {
+            return
+        }
+        def apkFile = file("${buildDir}/outputs/apk/${variant.name}/app-${variant.name}.apk")
+        installTask.actions.clear()
+        installTask.doLast {
+            def serials = resolveAsgInstallSerials()
+            if (!apkFile.exists()) {
+                throw new GradleException("APK not found: ${apkFile}")
+            }
+            serials.each { serial ->
+                logger.lifecycle("Installing ${apkFile.name} on Mentra Live (${serial})")
+                exec {
+                    commandLine resolveAdbExecutable(), "-s", serial, "install", "-r", "-d", "--no-incremental", apkFile
+                }
+            }
         }
     }
 }

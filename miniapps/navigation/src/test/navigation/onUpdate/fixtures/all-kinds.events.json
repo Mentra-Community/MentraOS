@@ -1,0 +1,7 @@
+[
+  {"kind": "maneuver", "maneuverType": "TURN_LEFT", "distanceMeters": 50},
+  {"kind": "off_route", "offRouteDistanceMeters": 18},
+  {"kind": "rerouting"},
+  {"kind": "arrived"},
+  {"kind": "error", "message": "GPS lost"}
+]

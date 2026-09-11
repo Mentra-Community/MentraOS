@@ -1,6 +1,6 @@
-import {AppletInterface, AppletPermission} from "@/../../cloud/packages/types/src"
-import BluetoothSdk from "@mentra/bluetooth-sdk"
-import CrustModule from "crust"
+import {AppletInterface, AppletPermission} from "@mentra/engine"
+import CrustModule from "@mentra/crust"
+import * as ExpoCalendar from "expo-calendar"
 import {Alert, Linking, PermissionsAndroid, Platform} from "react-native"
 import BleManager from "react-native-ble-manager"
 import {check, PERMISSIONS, request, RESULTS} from "react-native-permissions"
@@ -99,8 +99,9 @@ const PERMISSION_CONFIG: Record<string, PermissionConfig> = {
   },
   [PermissionFeatures.CALENDAR]: {
     name: "Calendar",
-    description: "Used to display your events on your glasses",
+    description: "Allows miniapps to read your calendar events",
     ios: [PERMISSIONS.IOS.CALENDARS],
+    // Expo Calendar requires both Android grants even when only calling read APIs.
     android: [PermissionsAndroid.PERMISSIONS.READ_CALENDAR, PermissionsAndroid.PERMISSIONS.WRITE_CALENDAR],
     critical: false,
   },
@@ -200,7 +201,7 @@ export const hasPermissionBeenRequested = async (featureKey: string): Promise<bo
     console.log("Failed to get permission requested status, assuming it has not been requested", res.error)
     return false
   }
-  return true
+  return res.value === true
 }
 
 export const markPermissionGranted = async (featureKey: string): Promise<void> => {
@@ -216,7 +217,7 @@ export const hasPermissionBeenGranted = async (featureKey: string): Promise<bool
     console.log("Failed to get permission granted status", res.error)
     return false
   }
-  return true
+  return res.value === true
 }
 
 // Battery optimization permission temporarily disabled
@@ -348,6 +349,20 @@ export const requestFeaturePermissions = async (featureKey: string): Promise<boo
   if (Platform.OS === "ios" && config.ios.length > 0) {
     for (const permission of config.ios) {
       try {
+        // Calendar reads and their permission prompt both belong to
+        // expo-calendar. Keeping the check, request, and eventual reads on
+        // the same EventKit bridge avoids a first-grant race where
+        // react-native-permissions resolves before expo-calendar observes the
+        // updated authorization state.
+        if (permission === PERMISSIONS.IOS.CALENDARS) {
+          const currentPermission = await ExpoCalendar.getCalendarPermissionsAsync()
+          if (currentPermission.status === "denied" && !currentPermission.canAskAgain) {
+            await handlePreviouslyDeniedPermission(config)
+            return false
+          }
+          continue
+        }
+
         // Check current status before requesting
         const currentStatus = await check(permission)
         console.log(`Current status for ${permission}:`, currentStatus)
@@ -468,10 +483,28 @@ export const requestFeaturePermissions = async (featureKey: string): Promise<boo
   if (Platform.OS === "ios" && config.ios.length > 0) {
     for (const permission of config.ios) {
       try {
+        if (permission === PERMISSIONS.IOS.CALENDARS) {
+          // Use the permission response returned by the same native module
+          // that reads calendars. A separate immediate get call can still
+          // observe the pre-prompt state during the app's first session.
+          const eventKit = await ExpoCalendar.requestCalendarPermissionsAsync()
+          if (eventKit.status === "granted") {
+            partiallyGranted = true
+            await markPermissionGranted(featureKey)
+          } else {
+            allGranted = false
+            if (!eventKit.canAskAgain) {
+              await handlePreviouslyDeniedPermission(config)
+              return false
+            }
+          }
+          continue
+        }
+
         const result = await request(permission)
         if (result === RESULTS.GRANTED) {
           partiallyGranted = true
-          await markPermissionGranted(permission)
+          await markPermissionGranted(featureKey)
         } else if (result === RESULTS.LIMITED) {
           partiallyGranted = true
           allGranted = false
@@ -647,23 +680,25 @@ export const checkFeaturePermissions = async (featureKey: string): Promise<boole
           return true
         }
 
+        if (permission === PERMISSIONS.IOS.CALENDARS) {
+          // EventKit is the source of truth for calendar reads: react-native-
+          // permissions can report a scoped (write-only/limited) grant as
+          // granted, while expo-calendar — what the runtime reads events with —
+          // requires full access.
+          const eventKit = await ExpoCalendar.getCalendarPermissionsAsync()
+          if (eventKit.status !== "granted") {
+            allGranted = false
+          }
+          continue
+        }
+
         const status = await check(permission)
         if (status != RESULTS.GRANTED && status != RESULTS.LIMITED) {
           allGranted = false
         }
-
-        if (permission === PERMISSIONS.IOS.CALENDARS) {
-          // this permission is wierd and we should assume it's granted if we've been granted it before, but check for sure by requesting it:
-          if (await hasPermissionBeenGranted(permission)) {
-            // request the permission again to be sure (will do nothing if already granted)
-            const result = await request(permission)
-            if (result === RESULTS.GRANTED) {
-              return true
-            }
-          }
-        }
       } catch (error) {
         console.error(`Error checking iOS permission ${permission}:`, error)
+        allGranted = false
       }
     }
     return allGranted
@@ -704,23 +739,20 @@ export const askPermissionsUI = async (app: AppletInterface, _theme: Theme): Pro
         {
           text: translate("common:next"),
           onPress: async () => {
-            await requestPermissionsUI(neededPermissions)
+            const requestResult = await requestPermissionsUI(neededPermissions)
+            if (requestResult === "cancelled") {
+              resolve(-1)
+              return
+            }
 
             // Check if permissions were actually granted
             const stillNeededPermissions = await checkPermissionsUI(app)
 
-            // If we still need READ_NOTIFICATIONS, don't auto-retry
-            if (stillNeededPermissions.includes(PermissionFeatures.READ_NOTIFICATIONS) && Platform.OS === "android") {
-              // Permission flow is in progress, user needs to complete it manually
-              resolve(-1) // Return 0 to indicate "in progress" state
-              return
-            }
-
-            // For other permissions that were granted, proceed
+            // The notification-listener request waits for the Settings
+            // round-trip, so any permission still missing here was denied.
             if (stillNeededPermissions.length === 0) {
               resolve(1) // Success
             } else {
-              // Still have missing permissions (other than READ_NOTIFICATIONS)
               resolve(0) // Failed to get all permissions
             }
           },
@@ -806,14 +838,17 @@ export const checkPermissionsUI = async (app: AppletInterface) => {
   return neededPermissions
 }
 
-export const requestPermissionsUI = async (permissions: string[]) => {
+export const requestPermissionsUI = async (permissions: string[]): Promise<"completed" | "cancelled"> => {
   for (const permission of permissions) {
     await requestFeaturePermissions(permission)
   }
 
   if (permissions.includes(PermissionFeatures.READ_NOTIFICATIONS) && Platform.OS === "android") {
-    await checkAndRequestNotificationAccessSpecialPermission()
+    const result = await checkAndRequestNotificationAccessSpecialPermission()
+    if (result === "cancelled") return "cancelled"
   }
+
+  return "completed"
 }
 
 // Utility methods for checking permissions and device capabilities
@@ -861,13 +896,43 @@ async function isLocationPermissionGranted(): Promise<boolean> {
   }
 }
 
+const LOCATION_SERVICES_CHECK_TIMEOUT_MS = 5000
+const LOCATION_SERVICES_CACHE_MS = 3000
+
+let locationServicesCache: {value: boolean; at: number} | null = null
+let locationServicesCheckPromise: Promise<boolean> | null = null
+
+async function readLocationServicesEnabled(): Promise<boolean> {
+  const locationServicesEnabled = await Promise.race([
+    CrustModule.isLocationServicesEnabled(),
+    new Promise<boolean>((_, reject) => {
+      setTimeout(() => reject(new Error("Location services check timed out")), LOCATION_SERVICES_CHECK_TIMEOUT_MS)
+    }),
+  ])
+  console.log("Location services enabled (native check):", locationServicesEnabled)
+  return locationServicesEnabled
+}
+
 async function isLocationServicesEnabled(): Promise<boolean> {
   try {
     if (Platform.OS === "android") {
-      // Use our native module to check if location services are enabled
-      const locationServicesEnabled = await CrustModule.isLocationServicesEnabled()
-      console.log("Location services enabled (native check):", locationServicesEnabled)
-      return locationServicesEnabled
+      const now = Date.now()
+      if (locationServicesCache && now - locationServicesCache.at < LOCATION_SERVICES_CACHE_MS) {
+        return locationServicesCache.value
+      }
+
+      if (!locationServicesCheckPromise) {
+        locationServicesCheckPromise = readLocationServicesEnabled()
+          .then((enabled) => {
+            locationServicesCache = {value: enabled, at: Date.now()}
+            return enabled
+          })
+          .finally(() => {
+            locationServicesCheckPromise = null
+          })
+      }
+
+      return await locationServicesCheckPromise
     } else if (Platform.OS === "ios") {
       // iOS doesn't require location for BLE scanning since iOS 13
       return true
@@ -875,6 +940,11 @@ async function isLocationServicesEnabled(): Promise<boolean> {
     return true
   } catch (error) {
     console.error("Error checking if location services are enabled:", error)
+    if (error instanceof Error && error.message.includes("timed out")) {
+      console.warn("Location services check timed out — assuming enabled so sync can proceed")
+      locationServicesCache = {value: true, at: Date.now()}
+      return true
+    }
     return false
   }
 }

@@ -31,20 +31,6 @@ https://docs.mentraglass.com/mcp
 
 This is the **docs MCP** (SDK reference and guides). It is not the Developer Console.
 
-### Developer Console MCP (incidents, optional)
-
-MentraOS also ships a **local** MCP server for the Developer Console (`cloud/packages/console-mcp`). Use it to triage bug-report incidents from Cursor (list incidents, fetch metadata, filter logs). It is separate from the docs URL above.
-
-| Credential | Enables |
-|------------|---------|
-| `MENTRA_AGENT_API_KEY` | `incident_list`, `incident_get`, `incident_get_logs` |
-| `MENTRA_CLI_TOKEN` | App and org management tools (optional) |
-| `MENTRA_ADMIN_JWT` | Internal admin review tools (Mentra staff only) |
-
-The agent API key must match the cloud server's `MENTRA_AGENT_API_KEY` (see `cloud/.env` when running API locally). MiniApp and CLI-key creation stay in the [Developer Console](https://console.mentra.glass), not via MCP.
-
-Full setup, env vars, and tests: [`cloud/packages/console-mcp/README.md`](https://github.com/Mentra-Community/MentraOS/blob/dev/cloud/packages/console-mcp/README.md) in the MentraOS repo.
-
 ---
 
 ## Setup by IDE
@@ -88,28 +74,6 @@ Add this to your Cursor MCP config file at `~/.cursor/mcp.json` (create it if it
 ```
 
 Then **restart Cursor** and approve the MCP server if prompted.
-
-<Accordion title="Optional: Developer Console MCP (incidents)">
-Clone [MentraOS](https://github.com/Mentra-Community/MentraOS) and add a second server entry. Use the wrapper script so Bun is found when Cursor starts MCP with a minimal `PATH`:
-
-```json
-{
-  "mcpServers": {
-    "mentraos-docs": {
-      "url": "https://docs.mentraglass.com/mcp"
-    },
-    "mentra-console": {
-      "command": "/absolute/path/to/MentraOS/cloud/packages/console-mcp/scripts/run-mcp.sh",
-      "args": []
-    }
-  }
-}
-```
-
-`run-mcp.sh` reads `export MENTRA_AGENT_API_KEY=...` from `~/.zshrc` if not already set. You can also pass keys in an `"env"` block on the server entry.
-
-After restart, ask the agent to run `console_auth_status`. You should see `incidents: true` when the key is configured. For local API dev, set `MENTRA_API_HOST` to `http://localhost:8002` in `env` or `~/.zshrc`.
-</Accordion>
 
 <Accordion title="Alternative: Project-level config">
 You can also create `.cursor/mcp.json` in your project root to enable MentraOS docs only for that project.
@@ -233,18 +197,6 @@ Your AI should now give you accurate, up-to-date answers using our docs.
     Fix your Node.js package permissions with a version manager or npm prefix configuration instead of running downloaded packages with `sudo`.
   </Accordion>
 
-  <Accordion title="mentra-console MCP errored in Cursor">
-    Cursor often spawns MCP with a minimal `PATH`, so `bun` may not be found. Point `command` at `cloud/packages/console-mcp/scripts/run-mcp.sh` (not bare `bun`). Install [Bun](https://bun.sh) if needed. Restart the server in **Cursor Settings → MCP**.
-
-    Verify from a terminal:
-
-    ```bash
-    cd cloud/packages/console-mcp
-    bun test
-    export MENTRA_AGENT_API_KEY=your-key
-    bun run smoke
-    ```
-  </Accordion>
 </AccordionGroup>
 
 ---

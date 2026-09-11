@@ -6,18 +6,19 @@ import android.util.SparseIntArray;
 import android.view.Display;
 import android.view.Surface;
 import android.view.WindowManager;
-
+import com.mentra.asg_client.service.utils.DeviceProfile;
 import com.mentra.asg_client.service.utils.ServiceUtils;
 
 /**
  * Phase 3 prep: resolves the display rotation and the JPEG EXIF orientation tag.
  *
- * <p>Split out of {@link CameraNeoService} because the rotation lookup table and the device-rotation
- * decision are reusable utilities — both photo and video paths consult them, and they have no
- * dependency on the camera service lifecycle.
+ * <p>Split out of {@link CameraNeoService} because the rotation lookup table and the
+ * device-rotation decision are reusable utilities — both photo and video paths consult them, and
+ * they have no dependency on the camera service lifecycle.
  *
- * <p>Behavior is preserved bit-for-bit: K900 devices use {@link ServiceUtils#determineDefaultRotationForDevice}
- * unconditionally; other Android devices fall back to {@link WindowManager#getDefaultDisplay()}.
+ * <p>Behavior is preserved bit-for-bit: K900 devices use {@link
+ * ServiceUtils#determineDefaultRotationForDevice} unconditionally; other Android devices fall back
+ * to {@link WindowManager#getDefaultDisplay()}.
  */
 public final class JpegOrientationResolver {
 
@@ -51,14 +52,21 @@ public final class JpegOrientationResolver {
         int deviceDefaultRotation = ServiceUtils.determineDefaultRotationForDevice(context);
         String deviceType = ServiceUtils.getDeviceTypeString(context);
 
-        Log.d(TAG, "📱 Device type: " + deviceType + ", Default rotation: " + deviceDefaultRotation + "°");
+        Log.d(
+                TAG,
+                "📱 Device type: "
+                        + deviceType
+                        + ", Default rotation: "
+                        + deviceDefaultRotation
+                        + "°");
 
-        if (ServiceUtils.isK900Device(context)) {
+        if (DeviceProfile.detect(context).isK900()) {
             Log.d(TAG, "🔄 Using K900-specific rotation: " + deviceDefaultRotation + "°");
             return deviceDefaultRotation;
         }
 
-        WindowManager windowManager = (WindowManager) context.getSystemService(Context.WINDOW_SERVICE);
+        WindowManager windowManager =
+                (WindowManager) context.getSystemService(Context.WINDOW_SERVICE);
         if (windowManager != null) {
             Display display = windowManager.getDefaultDisplay();
             switch (display.getRotation()) {
@@ -80,7 +88,11 @@ public final class JpegOrientationResolver {
             }
         }
 
-        Log.w(TAG, "⚠️ WindowManager unavailable - using device default: " + deviceDefaultRotation + "°");
+        Log.w(
+                TAG,
+                "⚠️ WindowManager unavailable - using device default: "
+                        + deviceDefaultRotation
+                        + "°");
         return deviceDefaultRotation;
     }
 
@@ -88,7 +100,8 @@ public final class JpegOrientationResolver {
      * Resolve the JPEG EXIF orientation tag for a current display rotation.
      *
      * @param context service or activity context.
-     * @return EXIF orientation in degrees ({@value #DEFAULT_JPEG_ORIENTATION} when no entry matches).
+     * @return EXIF orientation in degrees ({@value #DEFAULT_JPEG_ORIENTATION} when no entry
+     *     matches).
      */
     public static int getJpegOrientation(Context context) {
         int displayOrientation = getDisplayRotation(context);

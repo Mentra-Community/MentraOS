@@ -48,6 +48,25 @@ const ja = {
     hardwareIncompatible: "ハードウェア非対応",
     hardwareIncompatibleMessage: "{{app}}は接続されたグラスで利用できないハードウェアが必要です: {{missing}}",
   },
+  settings: {
+    ...en.settings,
+    forgetGlassesWhilePairing:
+      "Bluetoothのペアリング中です。先にシステムのペアリングダイアログを承認または閉じてから、もう一度グラスのペアリング解除をお試しください。",
+  },
+  pairing: {
+    ...en.pairing,
+    nearbyNotInPairingModeHint:
+      "近くにMentra Liveが見つかりましたが、ペアリングモードではありません。電源ボタンを素早く3回押してから、もう一度お試しください。",
+    notInPairingModeLabel: "ペアリングモードではありません",
+    notInPairingModeAlertTitle: "ペアリングモードを開始",
+    notInPairingModeAlertMessage:
+      "電源ボタンを素早く3回押してください。LEDが点滅し、グラスが4文字のコードを読み上げます。その後、もう一度グラスを選択してください。",
+    pairingCodeLabel: "コード {{code}}",
+    legacyFirmwareLabel: "レガシーファームウェア",
+    livePairingModeInfo:
+      "電源ボタンを素早く3回押してください。LEDが点滅し、グラスが4文字のコード（0–9、A–F）を読み上げます。複数台が表示された場合は、そのコードで照合してください。",
+    noGlassesFoundHint: "電源ボタンを素早く3回押してから、もう一度お試しください。",
+  },
   demoNavigator: {
     componentsTab: "コンポーネント",
     debugTab: "デバッグ",
@@ -124,6 +143,18 @@ const ja = {
       content:
         "お気に入りのエピソードがまだありません。エピソードにあるハートマークにタップして、お気に入りに追加しましょう！",
     },
+  },
+  qrScan: {
+    defaultTitle: "QRコードをスキャン",
+    defaultHint: "カメラをQRコードに向けてください",
+    checkingPermission: "カメラの許可を確認しています\u2026",
+    permissionTitle: "カメラへのアクセスが必要です",
+    permissionBody:
+      "QRコードのスキャンにカメラを使います。この画面を開いている間だけ使用します。",
+    grantAccess: "カメラへのアクセスを許可",
+    openSettings: "設定を開く",
+    permissionDeniedTitle: "許可が拒否されました",
+    permissionDeniedBody: "QRコードをスキャンするには、設定でカメラへのアクセスを有効にしてください。",
   },
 } satisfies TranslationResource
 

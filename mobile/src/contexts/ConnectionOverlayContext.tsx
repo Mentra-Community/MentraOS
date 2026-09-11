@@ -3,9 +3,10 @@ import {View, Modal, ActivityIndicator} from "react-native"
 import {usePathname} from "expo-router"
 import {Text, Button} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {useNavigationStore} from "@/stores/navigation"
-import {selectGlassesConnected, useGlassesStore} from "@/stores/glasses"
 import {translate} from "@/i18n"
+import {engine} from "@mentra/engine"
 import {create} from "zustand"
 
 const CANCEL_BUTTON_DELAY_MS = 10000 // 10 seconds before enabling cancel button
@@ -59,7 +60,8 @@ function GlobalConnectionOverlay() {
   const {theme} = useAppTheme()
   const {clearHistoryAndGoHome} = useNavigationStore.getState()
   const pathname = usePathname()
-  const glassesConnected = useGlassesStore(selectGlassesConnected)
+  const glassesConnected =
+    useEngineSnapshot(engine.glasses.status, (onChange) => engine.glasses.onStatus(onChange)).state === "connected"
   const {customTitle, customMessage, hideStopButton, smallTitle, suppressOverlay} = useConnectionOverlayConfig()
 
   const [showOverlay, setShowOverlay] = useState(false)

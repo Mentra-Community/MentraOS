@@ -12,7 +12,11 @@ class Simulated: SGCManager {
         DeviceStore.shared.apply("glasses", "connected", true)
         DeviceStore.shared.apply("glasses", "connectionState", ConnTypes.CONNECTED)
         DeviceStore.shared.apply("glasses", "micEnabled", false)
-        DeviceStore.shared.apply("glasses", "voiceActivityDetectionEnabled", true)
+        DeviceStore.shared.apply(
+            "glasses",
+            "voiceActivityDetectionEnabled",
+            BluetoothSdkDefaults.voiceActivityDetectionEnabled
+        )
         DeviceStore.shared.apply("glasses", "bluetoothClassicConnected", false)
     }
 
@@ -75,8 +79,8 @@ class Simulated: SGCManager {
 
     // MARK: - Camera & Media
 
-    func requestPhoto(_: String, appId _: String, size _: String?, webhookUrl _: String?, authToken _: String?, compress _: String?, flash _: Bool, sound _: Bool, exposureTimeNs _: Double?) {
-        Bridge.log("requestPhoto")
+    func requestPhoto(_ request: PhotoRequest) {
+        Bridge.log("requestPhoto save=\(request.save) sound=\(request.sound)")
     }
 
     func startStream(_: [String: Any]) {
@@ -91,7 +95,7 @@ class Simulated: SGCManager {
         Bridge.log("sendStreamKeepAlive")
     }
 
-    func startVideoRecording(requestId _: String, save _: Bool, flash _: Bool, sound _: Bool) {
+    func startVideoRecording(requestId _: String, save _: Bool, sound _: Bool) {
         Bridge.log("startVideoRecording")
     }
 
@@ -107,10 +111,6 @@ class Simulated: SGCManager {
 
     func sendButtonVideoRecordingSettings() {
         Bridge.log("sendButtonVideoRecordingSettings")
-    }
-
-    func sendButtonCameraLedSetting() {
-        Bridge.log("sendButtonCameraLedSetting")
     }
 
     func sendCameraFovSetting() {
@@ -129,15 +129,19 @@ class Simulated: SGCManager {
         Bridge.log("clearDisplay")
     }
 
-    func sendTextWall(_: String) {
+    func sendText(_ text: String) async {
+        await sendTextWall(text)
+    }
+
+    func sendTextWall(_: String) async {
         Bridge.log("sendTextWall")
     }
 
-    func sendDoubleTextWall(_: String, _: String) {
+    func sendDoubleTextWall(_: String, _: String) async {
         Bridge.log("sendDoubleTextWall")
     }
 
-    func displayBitmap(base64ImageData _: String) async -> Bool {
+    func displayBitmap(base64ImageData _: String, x _: Int32?, y _: Int32?, width _: Int32?, height _: Int32?) async -> Bool {
         Bridge.log("displayBitmap")
         return false
     }
@@ -222,7 +226,7 @@ class Simulated: SGCManager {
 
     // MARK: - Network Management
 
-    func requestWifiScan() {
+    func requestWifiScan(scanId _: String?) {
         Bridge.log("requestWifiScan")
     }
 
@@ -242,7 +246,7 @@ class Simulated: SGCManager {
         Bridge.log("sendUserEmailToGlasses: \(email)")
     }
 
-    func sendOtaStart() {
+    func sendOtaStart(otaVersionUrl: String?) {
         Bridge.log("sendOtaStart")
     }
 

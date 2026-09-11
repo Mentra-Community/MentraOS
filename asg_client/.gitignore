@@ -21,3 +21,7 @@ sentry.properties
 sentry.properties.*
 app/src/main/assets/sentry.properties
 app/src/main/assets/sentry.properties.*
+
+# Local test fixtures/scratch data (photos, tuning-run outputs, device-pulled
+# debug artifacts) — never commit these; keep them local-only.
+/testdata/

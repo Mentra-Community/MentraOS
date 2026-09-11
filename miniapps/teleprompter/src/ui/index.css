@@ -1,0 +1,156 @@
+@import url("https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@400;500;600;700;800&display=swap");
+@import "tailwindcss";
+
+/* Class-based dark mode: `dark:` utilities apply under a `.dark` ancestor
+   (toggled on <html> from the host-reported color scheme in App.tsx). */
+@custom-variant dark (&:is(.dark *));
+
+:root {
+  --radius: 0.75rem;
+  --background: oklch(1 0 0);
+  --foreground: oklch(0.145 0 0);
+  --primary: #16a34a;
+  --primary-foreground: #ffffff;
+  --primary-text: #15803d;
+  --header-from: #22c55e;
+  --header-to: #15803d;
+  --border: oklch(0.922 0 0);
+  --ring: oklch(0.708 0 0);
+
+  font-family:
+    "Red Hat Display",
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    Roboto,
+    "Helvetica Neue",
+    Arial,
+    sans-serif;
+}
+
+.dark {
+  --background: oklch(0.145 0 0);
+  --foreground: oklch(0.985 0 0);
+  --primary: #166534;
+  --primary-foreground: #ffffff;
+  --primary-text: #4ade80;
+  --header-from: #166534;
+  --header-to: #14532d;
+  --border: oklch(1 0 0 / 12%);
+  --ring: oklch(0.556 0 0);
+}
+
+* {
+  border-color: var(--border);
+  outline-color: rgb(from var(--ring) r g b / 50%);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background: #f4f4f5;
+  color: var(--foreground);
+  overflow: hidden;
+  font-family: "Red Hat Display", -apple-system, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Native feel: chrome can't be long-press selected. Only opt-in content is. */
+:root {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+.selectable-text {
+  user-select: text;
+  -webkit-user-select: text;
+  -webkit-touch-callout: default;
+}
+
+/* Form controls stay editable/selectable. */
+input,
+textarea,
+select,
+[contenteditable] {
+  user-select: text;
+  -webkit-user-select: text;
+  -webkit-touch-callout: default;
+}
+
+@media (prefers-reduced-motion) {
+  *,
+  ::before,
+  ::after {
+    animation: none !important;
+  }
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+/* Teleprompter range slider — themed, large hit target. */
+input[type="range"].tp-range {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 100%;
+  height: 6px;
+  border-radius: 9999px;
+  background: #e4e4e7;
+  outline: none;
+}
+
+input[type="range"].tp-range::-webkit-slider-thumb {
+  -webkit-appearance: none;
+  appearance: none;
+  width: 22px;
+  height: 22px;
+  border-radius: 9999px;
+  background: var(--primary);
+  border: 3px solid #ffffff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+  cursor: pointer;
+}
+
+input[type="range"].tp-range::-moz-range-thumb {
+  width: 22px;
+  height: 22px;
+  border-radius: 9999px;
+  background: var(--primary);
+  border: 3px solid #ffffff;
+  box-shadow: 0 1px 4px rgba(0, 0, 0, 0.25);
+  cursor: pointer;
+}
+
+/* ── Dark theme — additive overrides for the hardcoded light values above.
+   Light mode is untouched: these only apply under `.dark`. ─────────────── */
+
+.dark body {
+  background: #0b0b0d;
+}
+
+.dark input[type="range"].tp-range {
+  background: #3f3f46;
+}
+
+.dark input[type="range"].tp-range::-webkit-slider-thumb {
+  border-color: #18181b;
+}
+
+.dark input[type="range"].tp-range::-moz-range-thumb {
+  border-color: #18181b;
+}

@@ -1,5 +1,6 @@
+/* eslint-disable no-restricted-imports */
 import {PhotoInfo} from "@/types/asg"
-import {useGallerySyncStore} from "@/stores/gallerySync"
+import {useGallerySyncStore} from "../../modules/engine/src/stores/gallerySync"
 
 const createPhoto = (name: string): PhotoInfo => ({
   name,
@@ -12,6 +13,14 @@ const createPhoto = (name: string): PhotoInfo => ({
 describe("gallerySync store", () => {
   beforeEach(() => {
     useGallerySyncStore.getState().reset()
+  })
+
+  it("resets the reactive sync-start latch", () => {
+    useGallerySyncStore.getState().setSyncStarting(true)
+
+    useGallerySyncStore.getState().reset()
+
+    expect(useGallerySyncStore.getState().syncStarting).toBe(false)
   })
 
   it("removes deleted items from the retained queue", () => {

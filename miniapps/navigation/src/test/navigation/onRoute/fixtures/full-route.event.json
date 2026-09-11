@@ -1,0 +1,11 @@
+{
+  "points": [
+    {"lat": 1, "lng": 2},
+    {"lat": 3, "lng": 4}
+  ],
+  "totalDistanceMeters": 500,
+  "totalDurationSeconds": 120,
+  "steps": [
+    {"lat": 1, "lng": 2, "routeIndex": 0, "road": "A St", "maneuver": "DEPART", "distanceMeters": 100}
+  ]
+}

@@ -1,0 +1,25 @@
+{
+  "name": "local-translation",
+  "private": true,
+  "description": "Local island-runtime port of the MentraOS Live Translation app",
+  "scripts": {
+    "dev": "mentra-miniapp dev",
+    "build": "bun run build.ts",
+    "pack": "mentra-miniapp pack"
+  },
+  "dependencies": {
+    "@mentra/miniapp": "workspace:*",
+    "clsx": "^2.1.1",
+    "lucide-react": "^0.511.0",
+    "react": "^19.0.0",
+    "react-dom": "^19.0.0",
+    "tailwind-merge": "^3.0.2",
+    "tailwindcss": "^4.0.8"
+  },
+  "devDependencies": {
+    "@mentra/miniapp-cli": "workspace:*",
+    "@types/react": "^19.1.6",
+    "@types/react-dom": "^19.1.6",
+    "bun-plugin-tailwind": "^0.1.2"
+  }
+}

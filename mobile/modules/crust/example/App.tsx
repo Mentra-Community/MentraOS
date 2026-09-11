@@ -1,5 +1,5 @@
 import {useEvent} from "expo"
-import Crust, {CrustView} from "crust"
+import Crust, {CrustView} from "@mentra/crust"
 import {Button, SafeAreaView, ScrollView, Text, View} from "react-native"
 
 export default function App() {

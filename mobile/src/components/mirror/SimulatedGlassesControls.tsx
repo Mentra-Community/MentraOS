@@ -5,18 +5,16 @@ import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 
 import {Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import socketComms from "@/services/SocketComms"
-import {useDisplayStore} from "@/stores/display"
 import {ThemedStyle} from "@/theme"
-import { BgTimer } from "@mentra/island"
+import {engine} from "@mentra/engine"
 
 interface SimulatedGlassesControlsProps {}
 
 export const SimulatedGlassesControls: React.FC<SimulatedGlassesControlsProps> = () => {
-  const {themed, theme} = useAppTheme()
+  const {themed} = useAppTheme()
   const insets = useSaferAreaInsets()
   const [showDashboard, setShowDashboard] = useState(false)
-  const {setView} = useDisplayStore()
+  const {setView} = engine.display.mirror
 
   // when this is unmounted, set the dashboard position to down:
   useFocusEffect(
@@ -37,38 +35,10 @@ export const SimulatedGlassesControls: React.FC<SimulatedGlassesControlsProps> =
     setShowDashboard(!showDashboard)
   }
 
-  const handleButtonPress = async (pressType: "short" | "long") => {
-    console.log(`SimulatedGlassesControls: Button ${pressType} press triggered`)
-    try {
-      const result = await socketComms.sendButtonPress("camera", pressType)
-      console.log(`SimulatedGlassesControls: Button ${pressType} press command sent successfully, result:`, result)
-    } catch (error) {
-      console.error("Failed to simulate button press:", error)
-      console.error("Error details:", JSON.stringify(error))
-    }
-  }
-
-  // Handle press in/out for detecting short vs long press
-  let pressTimer: number | null = null
-
-  const handlePressIn = () => {
-    console.log("SimulatedGlassesControls: Button press started")
-    // Set a timer for long press (500ms threshold)
-    pressTimer = BgTimer.setTimeout(() => {
-      handleButtonPress("long")
-      pressTimer = null
-    }, 500)
-  }
-
-  const handlePressOut = () => {
-    console.log("SimulatedGlassesControls: Button press ended")
-    // If timer is still active, it was a short press
-    if (pressTimer) {
-      BgTimer.clearTimeout(pressTimer)
-      pressTimer = null
-      handleButtonPress("short")
-    }
-  }
+  // The simulated hardware-button control was removed with Cloud V1 app
+  // end-of-life: its only effect was relaying a button_press onto the V1
+  // socket for cloud-SDK apps. Local miniapps receive button presses from
+  // real device events via island's DeviceEventRouter.
 
   return (
     <>
@@ -85,20 +55,6 @@ export const SimulatedGlassesControls: React.FC<SimulatedGlassesControlsProps> =
         ]}>
         {showDashboard ? <Text tx="simulatedGlasses:hideDashboard" /> : <Text tx="simulatedGlasses:showDashboard" />}
       </TouchableOpacity>
-
-      {/* Button Press - single button for both short and long press */}
-      <TouchableOpacity
-        onPressIn={handlePressIn}
-        onPressOut={handlePressOut}
-        style={[
-          themed($edgeButton),
-          {
-            bottom: insets.bottom + 40,
-            left: 20,
-          },
-        ]}>
-        {/* <Icon name="touch-app" size={24} color={theme.colors.icon} /> */}
-      </TouchableOpacity>
     </>
   )
 }
@@ -108,18 +64,6 @@ const $toggleDashboardButton: ThemedStyle<ViewStyle> = ({colors}) => ({
   paddingHorizontal: 16,
   height: 48,
   width: 160,
-  borderRadius: 50,
-  justifyContent: "center",
-  alignItems: "center",
-  zIndex: 20,
-  backgroundColor: colors.palette.secondary200,
-})
-
-const $edgeButton: ThemedStyle<ViewStyle> = ({colors}) => ({
-  position: "absolute",
-  paddingHorizontal: 16,
-  height: 48,
-  // width: 130,
   borderRadius: 50,
   justifyContent: "center",
   alignItems: "center",

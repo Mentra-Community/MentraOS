@@ -10,6 +10,8 @@ import android.os.Handler;
 import android.os.Looper;
 import android.os.PowerManager;
 import android.util.Log;
+import com.mentra.asg_client.logging.BleTraceLogger;
+import com.mentra.asg_client.utils.WakeLockManager;
 import com.mentra.asg_client.service.core.AsgClientService;
 
 /**
@@ -26,16 +28,14 @@ public class BootstrapActivity extends Activity {
         try {
             super.onCreate(savedInstanceState);
             Log.e(TAG, "BootstrapActivity onCreate - preparing to start AsgClientService");
+            BleTraceLogger.logLifecycle(this, "BootstrapActivity", "activity_create");
             
             // Log boot information for debugging
             logBootInfo();
             
-            // Create PowerManager WakeLock to ensure we stay awake during service start
-            PowerManager powerManager = (PowerManager) getSystemService(Context.POWER_SERVICE);
-            PowerManager.WakeLock wakeLock = powerManager.newWakeLock(
-                PowerManager.PARTIAL_WAKE_LOCK,
-                "AugmentOS:BootstrapWakeLock");
-            wakeLock.acquire(60000); // 60 second timeout as safety
+            // Keep the SoC awake through service start via the owner-keyed lease manager
+            // (self-expires; BOOTSTRAP owns it so no other subsystem can revoke it early)
+            WakeLockManager.acquireCpu(this, WakeLockManager.WakeOwner.BOOTSTRAP, 60000);
             
             // Wait a moment to let system services fully initialize, then start our service
             new Handler(Looper.getMainLooper()).postDelayed(() -> {
@@ -60,18 +60,15 @@ public class BootstrapActivity extends Activity {
                     // Wait a moment to ensure the service starts properly, then finish
                     new Handler(Looper.getMainLooper()).postDelayed(() -> {
                         Log.e(TAG, "AsgClientService started, finishing BootstrapActivity");
-                        if (wakeLock.isHeld()) {
-                            wakeLock.release();
-                        }
+                        WakeLockManager.release(WakeLockManager.WakeOwner.BOOTSTRAP);
+                        BleTraceLogger.logLifecycle(this, "BootstrapActivity", "activity_finish");
                         finish();
                     }, FINISH_DELAY_MS);
                     
                 } catch (Exception e) {
                     Log.e(TAG, "ERROR starting AsgClientService: " + e.getMessage(), e);
                     recordServiceStartAttempt(false);
-                    if (wakeLock.isHeld()) {
-                        wakeLock.release();
-                    }
+                    WakeLockManager.release(WakeLockManager.WakeOwner.BOOTSTRAP);
                     finish();
                 }
             }, STARTUP_DELAY_MS);
@@ -136,6 +133,7 @@ public class BootstrapActivity extends Activity {
     protected void onDestroy() {
         try {
             Log.e(TAG, "BootstrapActivity onDestroy");
+            BleTraceLogger.logLifecycle(this, "BootstrapActivity", "activity_destroy");
             super.onDestroy();
         } catch (Exception e) {
             Log.e(TAG, "Error in onDestroy", e);

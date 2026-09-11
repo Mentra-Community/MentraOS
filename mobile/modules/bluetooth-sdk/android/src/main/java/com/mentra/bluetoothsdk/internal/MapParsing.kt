@@ -8,6 +8,14 @@ internal fun numberValue(
         (values[key] as? Number)?.toInt()
     }
 
+internal fun doubleValue(
+    values: Map<String, Any>,
+    vararg keys: String,
+): Double? =
+    keys.firstNotNullOfOrNull { key ->
+        (values[key] as? Number)?.toDouble()
+    }
+
 internal fun stringValue(
     values: Map<String, Any>,
     vararg keys: String,

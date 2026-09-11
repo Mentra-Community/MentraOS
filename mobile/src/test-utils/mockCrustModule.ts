@@ -24,6 +24,7 @@ export const crustModuleMock = {
   getInstalledApps: jest.fn(() => Promise.resolve([])),
   getInstalledAppsForNotifications: jest.fn(() => Promise.resolve([])),
   hasNotificationListenerPermission: jest.fn(() => Promise.resolve(false)),
+  refreshNotificationListener: jest.fn(() => Promise.resolve(false)),
   openNotificationListenerSettings: jest.fn(() => Promise.resolve(false)),
   isBetaBuild: jest.fn(() => Promise.resolve(false)),
   processGalleryImage: jest.fn(() => Promise.resolve({success: true})),

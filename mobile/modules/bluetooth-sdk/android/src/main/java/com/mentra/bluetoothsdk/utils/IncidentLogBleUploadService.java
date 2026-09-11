@@ -13,7 +13,7 @@ import okhttp3.RequestBody;
 import okhttp3.Response;
 
 /**
- * POSTs incident log JSON (from BLE relay) using the same path as glasses direct upload.
+ * POSTs report artifact JSON from the BLE relay using the same path as glasses direct upload.
  */
 public final class IncidentLogBleUploadService {
 
@@ -42,9 +42,10 @@ public final class IncidentLogBleUploadService {
                 }
                 HttpUrl url = baseHttpUrl.newBuilder()
                         .addPathSegment("api")
-                        .addPathSegment("incidents")
+                        .addPathSegment("client")
+                        .addPathSegment("reports")
                         .addPathSegment(incidentId)
-                        .addPathSegment("logs")
+                        .addPathSegment("artifacts")
                         .build();
                 RequestBody body = RequestBody.create(jsonUtf8, JSON);
                 OkHttpClient client = new OkHttpClient.Builder()

@@ -1,17 +1,19 @@
-import CrustModule from "crust"
+import CrustModule from "@mentra/crust"
 import {useEffect, useState} from "react"
 import {AppState, Platform, ScrollView} from "react-native"
 
 import {Header, Screen} from "@/components/ignite"
 import PermissionButton from "@/components/settings/PermButton"
-import ToggleSetting from "@/components/settings/ToggleSetting"
+import {RouteButton} from "@/components/ui/RouteButton"
 import {Spacer} from "@/components/ui/Spacer"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
-import {SETTINGS, useSetting} from "@/stores/settings"
+import {showLeaveAppAlert} from "@/utils/AlertUtils"
 import {checkAndRequestNotificationAccessSpecialPermission} from "@/utils/NotificationServiceUtils"
 import {checkFeaturePermissions, PermissionFeatures, requestFeaturePermissions} from "@/utils/PermissionsUtils"
+
+const PRIVACY_POLICY_URL = "https://mentraglass.com/privacy-policy"
 
 export default function PrivacySettingsScreen() {
   const [notificationsEnabled, setNotificationsEnabled] = useState(true)
@@ -22,7 +24,6 @@ export default function PrivacySettingsScreen() {
   const [appState, setAppState] = useState(AppState.currentState)
   const {theme} = useAppTheme()
   const {goBack} = useNavigationStore.getState()
-  const [sensingEnabled, setSensingEnabled] = useSetting(SETTINGS.sensing_enabled.key)
 
   // Check permissions when screen loads
   useEffect(() => {
@@ -121,9 +122,8 @@ export default function PrivacySettingsScreen() {
     }
   }, []) // subscribe only once
 
-  const toggleSensing = async () => {
-    const newSensing = !sensingEnabled
-    await setSensingEnabled(newSensing)
+  const handleOpenPrivacyPolicy = () => {
+    showLeaveAppAlert(PRIVACY_POLICY_URL)
   }
 
   const handleToggleNotifications = async () => {
@@ -241,11 +241,10 @@ export default function PrivacySettingsScreen() {
           </>
         )}
 
-        <ToggleSetting
-          label={translate("settings:sensingLabel")}
-          subtitle={translate("settings:sensingSubtitle")}
-          value={sensingEnabled}
-          onValueChange={toggleSensing}
+        <RouteButton
+          label={translate("settings:privacyPolicyLabel")}
+          subtitle={translate("settings:privacyPolicySubtitle")}
+          onPress={handleOpenPrivacyPolicy}
         />
       </ScrollView>
     </Screen>

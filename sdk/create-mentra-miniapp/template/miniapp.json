@@ -1,8 +1,19 @@
 {
+  "$schema": "./node_modules/@mentra/miniapp-cli/schema/miniapp.schema.json",
   "packageName": "{{packageName}}",
   "version": "1.0.0",
   "name": "My Miniapp",
   "description": "A MentraOS miniapp",
+  "icon": "icon.png",
+  "type": "standard",
+  "sdkVersion": "0.3.0",
+  "minHostVersion": "1.42.0",
+  "entry": {
+    "background": "background/index.js",
+    "ui": "ui/index.html"
+  },
   "permissions": [],
-  "hardwareRequirements": []
+  "hardwareRequirements": [
+    {"type": "DISPLAY", "level": "REQUIRED", "description": "Renders text + UI on glasses"}
+  ]
 }

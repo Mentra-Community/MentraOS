@@ -50,7 +50,7 @@ const BrightnessSetting: React.FC<BrightnessSettingProps> = ({
   }
 
   return (
-    <GlassView style={[themed($outerContainer), style]}>
+    <GlassView androidShadowSize="sm" style={[themed($outerContainer), style]}>
       {/* Toggle Section */}
       <View
         style={[

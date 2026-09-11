@@ -2,7 +2,7 @@ package com.mentra.asg_client.service.core.handlers;
 
 import android.content.Context;
 import android.util.Log;
-
+import com.mentra.asg_client.io.bes.log.BesLogManager;
 import com.mentra.asg_client.io.bluetooth.interfaces.IBluetoothManager;
 import com.mentra.asg_client.reporting.GlassesLogBuffer;
 import com.mentra.asg_client.service.legacy.interfaces.ICommandHandler;
@@ -12,10 +12,6 @@ import com.mentra.asg_client.service.system.interfaces.IStateManager;
 import com.mentra.asg_client.utils.IncidentLogBleRelayNaming;
 import com.mentra.asg_client.utils.IncidentUploadOkHttp;
 import com.mentra.asg_client.utils.ServerConfigUtil;
-
-import org.json.JSONArray;
-import org.json.JSONObject;
-
 import java.io.File;
 import java.io.FileOutputStream;
 import java.io.IOException;
@@ -24,7 +20,6 @@ import java.util.Set;
 import java.util.concurrent.CountDownLatch;
 import java.util.concurrent.TimeUnit;
 import java.util.concurrent.atomic.AtomicReference;
-
 import okhttp3.Call;
 import okhttp3.Callback;
 import okhttp3.MediaType;
@@ -32,13 +27,15 @@ import okhttp3.OkHttpClient;
 import okhttp3.Request;
 import okhttp3.RequestBody;
 import okhttp3.Response;
+import org.json.JSONArray;
+import org.json.JSONObject;
 
 /**
  * Handles the "upload_incident_logs" BLE command from the phone.
  *
  * <p>With WiFi: POSTs logcat and BES logs to the backend from the glasses (existing behavior).
  * Without WiFi: runs mh_logs to completion, then relays glasses_firmware and glasses JSON to the
- * phone via two sequential K900 BLE file transfers; the phone POSTs to the same API.</p>
+ * phone via two sequential K900 BLE file transfers; the phone POSTs to the same API.
  */
 public class UploadIncidentLogsCommandHandler implements ICommandHandler {
 
@@ -56,19 +53,21 @@ public class UploadIncidentLogsCommandHandler implements ICommandHandler {
     private final IConfigurationManager mConfigurationManager;
     private final K900CommandHandler mK900CommandHandler;
     private final IStateManager mStateManager;
+
     /**
      * Resolved at command time via {@link AsgClientServiceManager#getBluetoothManager()} — not at
-     * handler construction, because {@link com.mentra.asg_client.service.core.ServiceContainer}
+     * handler construction, because {@link com.mentra.asg_client.service.core.ServiceInitializer}
      * builds {@code CommandProcessor} before {@code AsgClientServiceManager#initialize()} creates
      * the Bluetooth manager.
      */
     private final AsgClientServiceManager mServiceManager;
 
-    public UploadIncidentLogsCommandHandler(Context context,
-                                            IConfigurationManager configurationManager,
-                                            K900CommandHandler k900CommandHandler,
-                                            IStateManager stateManager,
-                                            AsgClientServiceManager serviceManager) {
+    public UploadIncidentLogsCommandHandler(
+            Context context,
+            IConfigurationManager configurationManager,
+            K900CommandHandler k900CommandHandler,
+            IStateManager stateManager,
+            AsgClientServiceManager serviceManager) {
         mContext = context;
         mConfigurationManager = configurationManager;
         mK900CommandHandler = k900CommandHandler;
@@ -124,67 +123,97 @@ public class UploadIncidentLogsCommandHandler implements ICommandHandler {
                 return;
             }
 
-            String baseUrl = (apiBaseUrl != null && !apiBaseUrl.isEmpty())
-                    ? apiBaseUrl
-                    : ServerConfigUtil.getServerBaseUrl(mContext);
+            String baseUrl =
+                    (apiBaseUrl != null && !apiBaseUrl.isEmpty())
+                            ? apiBaseUrl
+                            : ServerConfigUtil.getServerBaseUrl(mContext);
             if (baseUrl == null || baseUrl.trim().isEmpty()) {
                 Log.e(TAG, "No server base URL available — cannot upload incident logs");
                 triggerBleFallback(incidentId, "http_missing_base_url");
                 return;
             }
-            String url = baseUrl + "/api/incidents/" + incidentId + "/logs";
+            String url = buildReportArtifactsUrl(baseUrl, incidentId);
 
             JSONArray logs = GlassesLogBuffer.getRecentLogs(MAX_LOG_LINES);
 
             JSONObject body = new JSONObject();
+            body.put("type", "logs");
             body.put("source", "glasses");
-            body.put("logs", logs);
+            body.put("entries", logs);
 
             String bodyStr = body.toString();
             RequestBody requestBody = RequestBody.create(bodyStr, JSON_MEDIA_TYPE);
 
-            OkHttpClient.Builder clientBuilder = new OkHttpClient.Builder()
-                    .connectTimeout(15, TimeUnit.SECONDS)
-                    .writeTimeout(30, TimeUnit.SECONDS)
-                    .readTimeout(15, TimeUnit.SECONDS);
+            OkHttpClient.Builder clientBuilder =
+                    new OkHttpClient.Builder()
+                            .connectTimeout(15, TimeUnit.SECONDS)
+                            .writeTimeout(30, TimeUnit.SECONDS)
+                            .readTimeout(15, TimeUnit.SECONDS);
             IncidentUploadOkHttp.applyRelaxedRevocation(clientBuilder);
             OkHttpClient client = clientBuilder.build();
 
-            Request request = new Request.Builder()
-                    .url(url)
-                    .header("Authorization", "Bearer " + coreToken)
-                    .post(requestBody)
-                    .build();
+            Request request =
+                    new Request.Builder()
+                            .url(url)
+                            .header("Authorization", "Bearer " + coreToken)
+                            .post(requestBody)
+                            .build();
 
             int bodyPreviewLen = Math.min(bodyStr.length(), 1500);
-            Log.i(TAG, "[LOGS] Glasses logs (logcat) full request: method=POST url=" + url
-                    + " body.source=glasses body.logs.length=" + logs.length()
-                    + " bodyPreview=" + (bodyStr.length() > bodyPreviewLen ? bodyStr.substring(0, bodyPreviewLen) + "..." : bodyStr));
+            Log.i(
+                    TAG,
+                    "[LOGS] Glasses logs (logcat) full request: method=POST url="
+                            + url
+                            + " body.source=glasses body.entries.length="
+                            + logs.length()
+                            + " bodyPreview="
+                            + (bodyStr.length() > bodyPreviewLen
+                                    ? bodyStr.substring(0, bodyPreviewLen) + "..."
+                                    : bodyStr));
 
-            client.newCall(request).enqueue(new Callback() {
-                @Override
-                public void onFailure(Call call, IOException e) {
-                    Log.e(TAG, "Failed to upload glasses logs for incident " + incidentId, e);
-                    triggerBleFallback(incidentId, "http_onFailure");
-                }
+            client.newCall(request)
+                    .enqueue(
+                            new Callback() {
+                                @Override
+                                public void onFailure(Call call, IOException e) {
+                                    Log.e(
+                                            TAG,
+                                            "Failed to upload glasses logs for incident "
+                                                    + incidentId,
+                                            e);
+                                    triggerBleFallback(incidentId, "http_onFailure");
+                                }
 
-                @Override
-                public void onResponse(Call call, Response response) {
-                    if (response.isSuccessful()) {
-                        Log.i(TAG, "✅ Glasses logs uploaded for incident " + incidentId
-                                + " (" + logs.length() + " entries)");
-                        if (mK900CommandHandler != null) {
-                            mK900CommandHandler.requestBesLogs(
-                                    incidentId, mContext, mConfigurationManager, apiBaseUrl);
-                        }
-                    } else {
-                        Log.e(TAG, "❌ Server rejected glasses logs upload, status: "
-                                + response.code() + " for incident " + incidentId);
-                        triggerBleFallback(incidentId, "http_status_" + response.code());
-                    }
-                    response.close();
-                }
-            });
+                                @Override
+                                public void onResponse(Call call, Response response) {
+                                    if (response.isSuccessful()) {
+                                        Log.i(
+                                                TAG,
+                                                "✅ Glasses logs uploaded for incident "
+                                                        + incidentId
+                                                        + " ("
+                                                        + logs.length()
+                                                        + " entries)");
+                                        if (mK900CommandHandler != null) {
+                                            mK900CommandHandler.requestBesLogs(
+                                                    incidentId,
+                                                    mContext,
+                                                    mConfigurationManager,
+                                                    apiBaseUrl);
+                                        }
+                                    } else {
+                                        Log.e(
+                                                TAG,
+                                                "❌ Server rejected glasses logs upload, status: "
+                                                        + response.code()
+                                                        + " for incident "
+                                                        + incidentId);
+                                        triggerBleFallback(
+                                                incidentId, "http_status_" + response.code());
+                                    }
+                                    response.close();
+                                }
+                            });
 
         } catch (Exception e) {
             Log.e(TAG, "Error preparing glasses logs upload for incident " + incidentId, e);
@@ -198,7 +227,8 @@ public class UploadIncidentLogsCommandHandler implements ICommandHandler {
     }
 
     private void relayLogsViaBle(String incidentId) {
-        IBluetoothManager bt = mServiceManager != null ? mServiceManager.getBluetoothManager() : null;
+        IBluetoothManager bt =
+                mServiceManager != null ? mServiceManager.getBluetoothManager() : null;
         if (bt == null) {
             Log.e(TAG, "No BluetoothManager — cannot BLE-relay incident logs");
             return;
@@ -219,7 +249,10 @@ public class UploadIncidentLogsCommandHandler implements ICommandHandler {
             AtomicReference<String> firmwareJson = new AtomicReference<>(null);
 
             if (mK900CommandHandler != null) {
-                mK900CommandHandler.requestBesLogs(incidentId, mContext, mConfigurationManager,
+                mK900CommandHandler.requestBesLogs(
+                        incidentId,
+                        mContext,
+                        mConfigurationManager,
                         json -> {
                             firmwareJson.set(json);
                             besDone.countDown();
@@ -230,18 +263,20 @@ public class UploadIncidentLogsCommandHandler implements ICommandHandler {
 
             boolean besFinished = besDone.await(BES_WAIT_SEC, TimeUnit.SECONDS);
             if (!besFinished) {
-                Log.w(TAG, "Timed out waiting for BES log collection — sending empty firmware payload");
+                Log.w(
+                        TAG,
+                        "Timed out waiting for BES log collection — sending empty firmware payload");
             }
             String fwJson = firmwareJson.get();
             if (fwJson == null) {
-                fwJson = com.mentra.asg_client.io.bes.log.BesLogManager.buildFirmwareUploadJson("");
+                fwJson = BesLogManager.buildFirmwareUploadJson("");
             }
 
             String bName = IncidentLogBleRelayNaming.bleFileBaseName(incidentId, 'B');
             File bFile = new File(mContext.getCacheDir(), bName);
             writeUtf8File(bFile, fwJson);
 
-            if (!bt.sendImageFile(bFile.getAbsolutePath())) {
+            if (!bt.sendFile(bFile.getAbsolutePath())) {
                 Log.e(TAG, "Failed to start BLE transfer for firmware log file " + bName);
                 deleteQuietly(bFile);
                 return;
@@ -249,7 +284,10 @@ public class UploadIncidentLogsCommandHandler implements ICommandHandler {
             boolean firmwareIdle = waitUntilFileTransferIdle(bt, FILE_TRANSFER_MAX_WAIT_MS);
             deleteQuietly(bFile);
             if (!firmwareIdle) {
-                Log.e(TAG, "Timed out waiting for firmware BLE transfer — aborting relay for incident " + incidentId);
+                Log.e(
+                        TAG,
+                        "Timed out waiting for firmware BLE transfer — aborting relay for incident "
+                                + incidentId);
                 return;
             }
 
@@ -258,7 +296,7 @@ public class UploadIncidentLogsCommandHandler implements ICommandHandler {
             File lFile = new File(mContext.getCacheDir(), lName);
             writeUtf8File(lFile, logcatJson);
 
-            if (!bt.sendImageFile(lFile.getAbsolutePath())) {
+            if (!bt.sendFile(lFile.getAbsolutePath())) {
                 Log.e(TAG, "Failed to start BLE transfer for logcat file " + lName);
                 deleteQuietly(lFile);
                 return;
@@ -266,7 +304,10 @@ public class UploadIncidentLogsCommandHandler implements ICommandHandler {
             boolean logcatIdle = waitUntilFileTransferIdle(bt, FILE_TRANSFER_MAX_WAIT_MS);
             deleteQuietly(lFile);
             if (!logcatIdle) {
-                Log.e(TAG, "Timed out waiting for logcat BLE transfer — relay incomplete for incident " + incidentId);
+                Log.e(
+                        TAG,
+                        "Timed out waiting for logcat BLE transfer — relay incomplete for incident "
+                                + incidentId);
                 return;
             }
 
@@ -282,9 +323,18 @@ public class UploadIncidentLogsCommandHandler implements ICommandHandler {
     private String buildGlassesLogcatJson() throws Exception {
         JSONArray logs = GlassesLogBuffer.getRecentLogs(MAX_LOG_LINES);
         JSONObject body = new JSONObject();
+        body.put("type", "logs");
         body.put("source", "glasses");
-        body.put("logs", logs);
+        body.put("entries", logs);
         return body.toString();
+    }
+
+    private static String buildReportArtifactsUrl(String baseUrl, String reportId) {
+        String trimmed = baseUrl != null ? baseUrl.trim() : "";
+        while (trimmed.endsWith("/")) {
+            trimmed = trimmed.substring(0, trimmed.length() - 1);
+        }
+        return trimmed + "/api/client/reports/" + reportId + "/artifacts";
     }
 
     private static void writeUtf8File(File file, String utf8) throws IOException {
@@ -303,14 +353,13 @@ public class UploadIncidentLogsCommandHandler implements ICommandHandler {
     /**
      * Polls until the BLE file transfer becomes idle or {@code maxWaitMs} elapses.
      *
-     * @return {@code true} if the transfer became idle within the deadline,
-     *         {@code false} if the deadline was reached while still in progress
+     * @return {@code true} if the transfer became idle within the deadline, {@code false} if the
+     *     deadline was reached while still in progress
      */
     private boolean waitUntilFileTransferIdle(IBluetoothManager bt, long maxWaitMs)
             throws InterruptedException {
         long deadline = System.currentTimeMillis() + maxWaitMs;
-        while (bt.isFileTransferInProgress()
-                && System.currentTimeMillis() < deadline) {
+        while (bt.isFileTransferInProgress() && System.currentTimeMillis() < deadline) {
             Thread.sleep(FILE_TRANSFER_IDLE_POLL_MS);
         }
         return !bt.isFileTransferInProgress();

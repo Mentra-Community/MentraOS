@@ -1,0 +1,42 @@
+# Debug UDP Network Load Balancer for cloud-v2 runtime audio.
+#
+# This is also the TEMPLATE for other environments: clone it and replace
+# cloud-debug with cloud-<env> in metadata.name, metadata.labels, and
+# spec.selector. Full steps: docs/runbooks/deploy/udp-nlb-aws.md.
+#
+# Apply after the Porter app exists, with DIRECT kubectl (aws eks
+# update-kubeconfig first; `porter kubectl` is read-only and cannot create
+# Services):
+#   kubectl apply -f deploy/audio-udp-nlb-debug.yaml
+#
+# Then put the provisioned NLB hostname into the env's own Doppler config
+# (AUDIO_UDP_ADVERTISED_HOST) and redeploy, or clients keep advertising a
+# dead host and silently fall back to WS audio.
+#
+# This service is intentionally separate from Porter's generated services:
+# Porter exposes HTTP/WS through nginx/ALB, while UDP audio needs a direct NLB.
+
+apiVersion: v1
+kind: Service
+metadata:
+  name: cloud-debug-audio-udp
+  namespace: default
+  labels:
+    porter.run/app-name: cloud-debug
+    app.kubernetes.io/managed-by: kubectl
+  annotations:
+    description: "UDP LoadBalancer for cloud-v2 debug runtime audio (not managed by Porter)"
+    service.beta.kubernetes.io/aws-load-balancer-type: "nlb"
+    service.beta.kubernetes.io/aws-load-balancer-scheme: "internet-facing"
+    service.beta.kubernetes.io/aws-load-balancer-cross-zone-load-balancing-enabled: "true"
+spec:
+  type: LoadBalancer
+  selector:
+    porter.run/app-name: cloud-debug
+    porter.run/service-name: runtime
+  ports:
+    - name: udp-audio
+      protocol: UDP
+      port: 8000
+      targetPort: 8000
+  externalTrafficPolicy: Local

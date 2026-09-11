@@ -1,8 +1,9 @@
 import {FontAwesome} from "@expo/vector-icons"
+import {useRoute} from "@react-navigation/native"
 import {useEffect, useState} from "react"
 import {ActivityIndicator, ScrollView, TextInput, TextStyle, TouchableOpacity, View, ViewStyle} from "react-native"
 
-import {Button, Header, Screen, Text} from "@/components/ignite"
+import {Button, Header, Icon, Screen, Text} from "@/components/ignite"
 import {Spacer} from "@/components/ui/Spacer"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
@@ -13,55 +14,89 @@ import mentraAuth from "@/utils/auth/authClient"
 import {mapAuthError} from "@/utils/auth/authErrors"
 
 export default function ResetPasswordScreen() {
-  const [email, setEmail] = useState("")
+  const route = useRoute()
+  const {email: emailParam} = (route.params ?? {}) as {email?: string}
+  const isCodeFlow = !!emailParam
+
+  const [email, setEmail] = useState(emailParam ?? "")
+  const [code, setCode] = useState("")
   const [newPassword, setNewPassword] = useState("")
   const [confirmPassword, setConfirmPassword] = useState("")
   const [isLoading, setIsLoading] = useState(false)
   const [showNewPassword, setShowNewPassword] = useState(false)
   const [showConfirmPassword, setShowConfirmPassword] = useState(false)
-  const [isValidToken, setIsValidToken] = useState(false)
+  const [isValidToken, setIsValidToken] = useState(isCodeFlow)
 
   const {theme, themed} = useAppTheme()
   const {goBack, replaceAll} = useNavigationStore.getState()
 
   const passwordsMatch = newPassword === confirmPassword && newPassword.length > 0
-  const isFormValid = passwordsMatch && newPassword.length >= 6
+  const isFormValid = isCodeFlow
+    ? passwordsMatch && newPassword.length >= 6 && code.trim().length > 0
+    : passwordsMatch && newPassword.length >= 6
 
   useEffect(() => {
-    // Check if we have a valid session from the reset password link
+    if (isCodeFlow) return
     checkSession()
   }, [])
 
   const checkSession = async () => {
     const res = await mentraAuth.getSession()
     if (res.is_error()) {
-      // No valid session, redirect back to login
       showAlert(translate("common:error"), translate("login:invalidResetLink"))
       replaceAll("/auth/start")
       return
     }
     const session = res.value
     setIsValidToken(true)
-    // Get the user's email from the session
     if (session.user?.email) {
       setEmail(session.user.email)
     }
   }
 
-  const handleResetPassword = async () => {
-    // Validation checks with specific error messages
+  const handleResetPasswordByCode = async () => {
     if (newPassword.length < 6) {
       showAlert(translate("common:error"), translate("profileSettings:passwordTooShort"))
       return
     }
-
     if (newPassword !== confirmPassword) {
       showAlert(translate("common:error"), translate("profileSettings:passwordsDoNotMatch"))
       return
     }
-
     setIsLoading(true)
+    const res = await mentraAuth.resetPasswordByCode(email, code.trim(), newPassword)
+    if (res.is_error()) {
+      console.error("Error resetting password by code:", res.error)
+      showAlert(translate("common:error"), mapAuthError(res.error), [{text: translate("common:ok")}])
+      setIsLoading(false)
+      return
+    }
 
+    // Auto sign-in after successful reset
+    const res2 = await mentraAuth.signInWithPassword({email, password: newPassword})
+    setIsLoading(false)
+    if (res2.is_error()) {
+      console.error("Error auto-logging in after password reset:", res2.error)
+      showAlert(translate("login:passwordResetSuccess"), translate("login:redirectingToLogin"), [
+        {text: translate("common:ok"), onPress: () => replaceAll("/auth/start")},
+      ])
+      return
+    }
+    showAlert(translate("login:passwordResetSuccess"), translate("login:loggingYouIn"), [
+      {text: translate("common:ok"), onPress: () => replaceAll("/")},
+    ])
+  }
+
+  const handleResetPassword = async () => {
+    if (newPassword.length < 6) {
+      showAlert(translate("common:error"), translate("profileSettings:passwordTooShort"))
+      return
+    }
+    if (newPassword !== confirmPassword) {
+      showAlert(translate("common:error"), translate("profileSettings:passwordsDoNotMatch"))
+      return
+    }
+    setIsLoading(true)
     let res = await mentraAuth.updateUserPassword(newPassword)
     if (res.is_error()) {
       console.error("Error resetting password:", res.error)
@@ -71,7 +106,6 @@ export default function ResetPasswordScreen() {
     }
 
     if (!email) {
-      // No email, fallback to login redirect
       setIsLoading(false)
       await mentraAuth.signOut()
       showAlert(translate("login:passwordResetSuccess"), translate("login:redirectingToLogin"), [
@@ -80,12 +114,9 @@ export default function ResetPasswordScreen() {
       return
     }
 
-    // Try to automatically log the user in with the new password
     const res2 = await mentraAuth.signInWithPassword({email, password: newPassword})
     setIsLoading(false)
-
     if (res2.is_error()) {
-      // If auto-login fails, just redirect to login
       console.error("Error auto-logging in after password reset:", res2.error)
       await mentraAuth.signOut()
       showAlert(translate("login:passwordResetSuccess"), translate("login:redirectingToLogin"), [
@@ -93,8 +124,6 @@ export default function ResetPasswordScreen() {
       ])
       return
     }
-
-    // Auto-login succeeded
     showAlert(translate("login:passwordResetSuccess"), translate("login:loggingYouIn"), [
       {text: translate("common:ok"), onPress: () => replaceAll("/")},
     ])
@@ -120,10 +149,13 @@ export default function ResetPasswordScreen() {
         showsVerticalScrollIndicator={false}
         keyboardShouldPersistTaps="handled">
         <View style={themed($card)}>
-          <Text tx="login:resetPasswordSubtitle" style={themed($subtitle)} />
+          <Text
+            text={isCodeFlow ? translate("login:resetPasswordCodeSubtitle") : translate("login:resetPasswordSubtitle")}
+            style={themed($subtitle)}
+          />
 
           <View style={themed($form)}>
-            {/* Display email field for password managers */}
+            {/* Email (read-only, helps password managers) */}
             {email && (
               <View style={themed($inputGroup)}>
                 <Text tx="login:email" style={themed($inputLabel)} />
@@ -141,6 +173,29 @@ export default function ResetPasswordScreen() {
                 </View>
               </View>
             )}
+
+            {/* Verification code — only for Authing/China code flow */}
+            {isCodeFlow && (
+              <View style={themed($inputGroup)}>
+                <Text tx="login:verificationCode" style={themed($inputLabel)} />
+                <View style={themed($enhancedInputContainer)}>
+                  <Icon name="mail" size={16} color={theme.colors.text} />
+                  <Spacer width={spacing.s1} />
+                  <TextInput
+                    hitSlop={{top: 16, bottom: 16}}
+                    style={themed($enhancedInput)}
+                    placeholder={translate("login:verificationCodePlaceholder")}
+                    value={code}
+                    onChangeText={setCode}
+                    keyboardType="number-pad"
+                    autoCapitalize="none"
+                    autoFocus={true}
+                    placeholderTextColor={theme.colors.textDim}
+                  />
+                </View>
+              </View>
+            )}
+
             <View style={themed($inputGroup)}>
               <Text tx="profileSettings:newPassword" style={themed($inputLabel)} />
               <View style={themed($enhancedInputContainer)}>
@@ -155,7 +210,7 @@ export default function ResetPasswordScreen() {
                   onChangeText={setNewPassword}
                   secureTextEntry={!showNewPassword}
                   placeholderTextColor={theme.colors.textDim}
-                  autoFocus={true}
+                  autoFocus={!isCodeFlow}
                 />
                 <TouchableOpacity
                   hitSlop={{top: 16, bottom: 16, left: 16, right: 16}}
@@ -199,7 +254,7 @@ export default function ResetPasswordScreen() {
               style={themed($primaryButton)}
               pressedStyle={themed($pressedButton)}
               textStyle={themed($buttonText)}
-              onPress={handleResetPassword}
+              onPress={isCodeFlow ? handleResetPasswordByCode : handleResetPassword}
               disabled={!isFormValid || isLoading}
               {...(isLoading && {
                 LeftAccessory: () => (
@@ -214,7 +269,6 @@ export default function ResetPasswordScreen() {
   )
 }
 
-// Themed Styles - matching login and change-password screens
 const $scrollContent: ThemedStyle<ViewStyle> = () => ({
   flexGrow: 1,
 })

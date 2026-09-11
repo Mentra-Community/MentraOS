@@ -79,7 +79,7 @@ private func jlog(_ message: String) {
         let beforeMB = MemoryMonitor.currentMemoryMB()
         jlog("🧪 JSCExperiment.spawn(\(count)) starting; baseline \(String(format: "%.1f", beforeMB)) MB")
         var spawned = 0
-        for i in 0..<count {
+        for i in 0 ..< count {
             let id = "spike-\(UUID().uuidString.prefix(8))-\(i)"
             if spawnOne(id: id) {
                 spawned += 1
@@ -102,19 +102,19 @@ private func jlog(_ message: String) {
             ctx.name = "MentraJS: \(id)"
             // Inspectable in dev builds only. iOS 16.4+ guarded.
             #if DEBUG
-            if #available(iOS 16.4, *) {
-                ctx.isInspectable = true
-            }
+                if #available(iOS 16.4, *) {
+                    ctx.isInspectable = true
+                }
             #endif
 
             // Single-dispatcher bridge. Per Pebble's CrashReproducer doc, never
             // bind individual native callbacks as JSValue properties — JSC's GC
             // races with ARC and crashes. One C-callable function only.
-            let dispatch: @convention(block) (String, String, [Any]?) -> Any? = { iface, method, args in
+            let dispatch: @convention(block) (String, String, [Any]?) -> Any? = { _, _, _ in
                 // Stub: real impl routes to native services.
                 // For the spike we just need __dispatch to exist so the
                 // workload can call it without throwing.
-                return NSNull()
+                NSNull()
             }
             ctx.setObject(dispatch, forKeyedSubscript: "__dispatch" as NSString)
 
@@ -147,7 +147,7 @@ private func jlog(_ message: String) {
             // setInterval that fires the JS callback. The JS code already
             // expects setInterval to exist as a global.
             let setInterval: @convention(block) (JSValue, Double) -> Int = { fn, ms in
-                let id = Int.random(in: 1...Int.max)
+                let id = Int.random(in: 1 ... Int.max)
                 // Stub: we won't actually fire in the spike, but the JS
                 // callback existing is what we want for memory measurement.
                 _ = fn // hold a ref to keep the JS callback alive

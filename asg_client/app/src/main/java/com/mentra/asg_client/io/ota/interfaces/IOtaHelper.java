@@ -13,20 +13,7 @@ public interface IOtaHelper {
      * @param context Application context
      */
     void initialize(Context context);
-    
-    /**
-     * Start version checking
-     * @param context Application context
-     * @return true if version check started successfully, false otherwise
-     */
-    boolean startVersionCheck(Context context);
-    
-    /**
-     * Check if version checking is in progress
-     * @return true if checking, false otherwise
-     */
-    boolean isCheckingVersion();
-    
+
     /**
      * Check if update is in progress
      * @return true if updating, false otherwise
@@ -103,37 +90,16 @@ public interface IOtaHelper {
      * @return true if battery is sufficient, false otherwise
      */
     boolean isBatterySufficientForUpdates();
-    
-    /**
-     * Start periodic checks
-     */
-    void startPeriodicChecks();
-    
-    /**
-     * Stop periodic checks
-     */
-    void stopPeriodicChecks();
-    
-    /**
-     * Register network callback
-     * @param context Application context
-     */
-    void registerNetworkCallback(Context context);
-    
-    /**
-     * Unregister network callback
-     */
-    void unregisterNetworkCallback();
-    
+
     /**
      * Check if network is available
      * @param context Application context
      * @return true if network is available, false otherwise
      */
     boolean isNetworkAvailable(Context context);
-    
+
     /**
      * Cleanup resources when helper is no longer needed
      */
     void cleanup();
-} 
+}

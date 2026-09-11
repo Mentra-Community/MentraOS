@@ -18,6 +18,7 @@ export default function WifiPasswordScreen() {
   const initialSsid = (params.ssid as string) || ""
   const returnTo = params.returnTo as string | undefined
   const nextRoute = params.nextRoute as string | undefined
+  const returnToMiniapp = params.returnToMiniapp as string | undefined
 
   const {theme} = useAppTheme()
   const {push, goBack} = useNavigationStore.getState()
@@ -65,6 +66,7 @@ export default function WifiPasswordScreen() {
       rememberPassword: rememberPassword.toString(),
       returnTo,
       nextRoute,
+      returnToMiniapp,
     })
   }
 

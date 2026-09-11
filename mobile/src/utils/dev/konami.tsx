@@ -3,7 +3,7 @@ import {Platform, View} from "react-native"
 import {Gesture, GestureDetector} from "react-native-gesture-handler"
 
 import {useNavigationStore} from "@/stores/navigation"
-import {BgTimer} from "@mentra/island"
+import {BgTimer} from "@mentra/engine"
 
 type Direction = "up" | "down" | "left" | "right"
 
@@ -136,10 +136,15 @@ export function KonamiCodeProvider({children}: {children: React.ReactNode}) {
 
   const contextValue = useMemo(() => ({enabled, setEnabled}), [enabled])
 
-  if (!enabled) {
-    return <KonamiContext.Provider value={contextValue}>{children}</KonamiContext.Provider>
-  }
-
+  // Always render the SAME tree shape regardless of `enabled`. This provider
+  // wraps the entire app (AllProviders → AllEffects → Compositor →
+  // OfflineAppHost), so if we returned bare `{children}` when disabled and a
+  // `<GestureDetector>`-wrapped tree when enabled, flipping `enabled` would
+  // change the element type directly under the provider — remounting the whole
+  // app subtree and resetting any hosted offline app (e.g. Settings) back to
+  // its initial route. The display-position screen toggles `enabled` on mount,
+  // which is why opening it "restarted" the Settings app. `enabled` still fully
+  // suppresses code detection via the `enabledRef` guard in `addDirection`.
   return (
     <KonamiContext.Provider value={contextValue}>
       <GestureDetector gesture={composedGesture}>

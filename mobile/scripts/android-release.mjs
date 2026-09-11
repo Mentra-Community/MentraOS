@@ -54,11 +54,53 @@ await $({stdio: "inherit"})`bun expo export --platform android --clear`
 // Build release APK
 await $({ stdio: 'inherit', cwd: 'android' })`./gradlew assembleRelease`;
 
-// Install APK on device
-await $({ stdio: 'inherit' })`adb install -r android/app/build/outputs/apk/release/app-release.apk`;
+// Install APK on device. Prefer ANDROID_SERIAL; otherwise pick a phone when
+// Mentra Live glasses are also attached (adb fails on "more than one device").
+const apkPath = 'android/app/build/outputs/apk/release/app-release.apk'
+const serial = await resolveAdbSerial()
+console.log(`Installing APK on ${serial}...`)
+await $({stdio: 'inherit'})`adb -s ${serial} install -r ${apkPath}`
 
 console.log('✅ Android release built and installed successfully!');
 if (nameSuffix) {
   console.log(`   Package: com.mentra.mentra.${nameSuffix}`)
   console.log(`   App label: ${nameSuffix}`)
+}
+
+async function resolveAdbSerial() {
+  if (process.env.ANDROID_SERIAL?.trim()) {
+    return process.env.ANDROID_SERIAL.trim()
+  }
+
+  const {stdout} = await $`adb devices -l`
+  const devices = stdout
+    .split('\n')
+    .slice(1)
+    .map((line) => line.trim())
+    .filter((line) => line && !line.startsWith('*'))
+    .map((line) => {
+      const parts = line.split(/\s+/)
+      return {serial: parts[0], state: parts[1], raw: line}
+    })
+    .filter((d) => d.state === 'device')
+
+  if (devices.length === 0) {
+    throw new Error('No adb devices ready. Connect a phone and retry.')
+  }
+  if (devices.length === 1) {
+    return devices[0].serial
+  }
+
+  const phones = devices.filter((d) => !/MentraLive|Mentra_Live/i.test(d.raw))
+  if (phones.length === 1) {
+    console.log(
+      `Multiple adb devices; installing on phone ${phones[0].serial} (skipping Mentra Live)`,
+    )
+    return phones[0].serial
+  }
+
+  const list = devices.map((d) => `  ${d.raw}`).join('\n')
+  throw new Error(
+    `Multiple adb devices; set ANDROID_SERIAL to choose one:\n${list}`,
+  )
 }

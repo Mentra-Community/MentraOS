@@ -1,12 +1,14 @@
 # Camera web server
 
-ASG Client embeds a small HTTP server on the glasses (default port **8089**) that the phone uses to enumerate, sync, and download captured photos and videos. It also exposes endpoints for taking pictures, server status, and bulk file management.
+ASG Client embeds a small HTTP server on the glasses (default port **8089**) that the phone uses to enumerate, sync, and download captured photos and videos while connected to the Mentra Live hotspot. It also exposes endpoints for taking pictures, server status, and bulk file management.
 
 Source: `app/src/main/java/com/mentra/asg_client/io/server/`. Main class: `AsgCameraServer` (`io/server/services/AsgCameraServer.java`), built on the abstract `AsgServer` (`io/server/core/AsgServer.java`) which wraps NanoHTTPD.
 
 ## When the server runs
 
-The server is started by `AsgClientServiceManager.initializeCameraWebServer()` after WiFi credentials are accepted (see `WifiCommandHandler.handleSetWifiCredentials`). It listens on the local WiFi address only — it is not exposed beyond the network the glasses are joined to.
+The server starts only after the Mentra Live hotspot reports ready and stops as soon as the hotspot stops. `AsgClientService.onHotspotStateChanged()` drives the matching server lifecycle through `AsgClientServiceManager`. At process startup, an already-active hotspot is adopted before the service manager synchronizes the server state.
+
+NanoHTTPD binds specifically to the active hotspot gateway address, not to every interface. Ordinary station-mode WiFi connections never start the server and cannot reach it.
 
 `AsgClientServiceManager.getCameraServer()` exposes the running instance to other components. The gallery command handler, for example, reads counts from the server's `FileManager`.
 
@@ -27,7 +29,7 @@ CacheManager cache = new DefaultCacheManager(logger);
 RateLimiter rate = new DefaultRateLimiter(100, 60_000, logger);
 
 AsgCameraServer server = new AsgCameraServer(
-    config, network, cache, rate, logger, fileManager
+    config, network, cache, rate, logger, fileManager, hotspotGatewayIp
 );
 
 server.setOnPictureRequestListener(() -> mediaCaptureService.takePicture());
@@ -98,6 +100,14 @@ Bulk-delete a list of filenames. Used by the phone app when the user removes ite
 
 Files that don't exist are reported as `success: false` in the per-file results but don't fail the whole request.
 
+### Capture IDs and `request_id`
+
+Captures live in directories named `<IMG|VID>_<yyyyMMdd_HHmmss_SSS>_<rand>[_<requestId>]`. The directory name is the `capture_id` returned by `/api/sync`, and the optional trailing segment is the (sanitized) `requestId` of the SDK `take_photo` / video request that produced the capture — the same convention videos have always used, extended to photos.
+
+When a capture ID embeds a request ID, `/api/sync` capture groups and `/api/gallery` entries include it as an explicit `request_id` field (extracted by `CaptureRequestId.extractFromCaptureId`), so clients can correlate bulk-synced files with the originating photo request instead of timestamp-matching. Button-press captures have no originating request; their stable ID is the `capture_id` itself, which is also used as the `requestId` in the photo status messages the glasses emit during the capture. Legacy files and button captures simply omit `request_id`.
+
+The capture ID is also stamped into the photo's EXIF `ImageUniqueID` tag at save time (`PhotoExifMetadataWriter.writeCaptureIdFromPath`), and carried onto re-encoded upload copies, so the correlation survives file renames and camera-roll export where the directory name is lost.
+
 ### Active recording exclusion
 
 `AsgCameraServer.ActiveRecordingProvider` lets the capture service inform the server about videos that are currently being written. The server uses this to:
@@ -117,7 +127,7 @@ Files that don't exist are reported as `success: false` in the per-file results 
 
 ## Curl test recipes
 
-Replace `<GLASSES_IP>` with the WiFi IP of the glasses (visible in the phone app's pairing screen).
+Replace `<GLASSES_IP>` with the hotspot gateway IP reported by the glasses.
 
 ```bash
 # Health

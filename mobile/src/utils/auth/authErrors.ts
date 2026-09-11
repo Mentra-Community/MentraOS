@@ -65,14 +65,109 @@ const ERROR_CODE_MAP: Record<string, TxKeyPath> = {
 }
 
 /**
- * Maps raw Supabase/auth error messages to user-friendly translated strings.
- * This prevents showing cryptic error messages like "Anonymous sign-ins are disabled"
- * to end users.
+ * Authing (China provider) error-code to translation key mapping.
+ *
+ * The authing-js-sdk throws errors whose `.message` is a JSON string shaped
+ * like `{"code":2006,"message":"密码错误","data":...}` (see
+ * node_modules/authing-js-sdk HttpClient). These codes/messages do not match
+ * any Supabase code or English phrase, so without this mapping every Authing
+ * failure collapses to the generic fallback.
+ *
+ * Only codes we are confident about are listed; the Chinese-keyword matching
+ * in `mapAuthingError` is the primary workhorse. Extend this map as real codes
+ * are observed in incident logs.
+ */
+const AUTHING_CODE_MAP: Record<number, TxKeyPath> = {
+  2004: "login:errors.userNotFound", // 用户不存在 / account does not exist
+  2006: "login:errors.invalidCredentials", // 密码错误 / incorrect password
+}
+
+/**
+ * Parse an Authing JSON error into its {code, message}, or null if the error is
+ * not an Authing-style JSON payload.
+ */
+const parseAuthingError = (error: Error | string): {code: number | null; message: string} | null => {
+  const raw = typeof error === "string" ? error : error?.message
+  if (!raw || typeof raw !== "string" || !raw.trim().startsWith("{")) return null
+  try {
+    const parsed = JSON.parse(raw)
+    if (parsed && (typeof parsed.code === "number" || typeof parsed.message === "string")) {
+      return {code: typeof parsed.code === "number" ? parsed.code : null, message: String(parsed.message ?? "")}
+    }
+  } catch {
+    // not JSON — fall through to the standard matchers
+  }
+  return null
+}
+
+/**
+ * Map an Authing error to a translation key using the numeric code first, then
+ * Chinese-keyword matching on the human-readable message. Returns null when
+ * nothing matches so the caller can fall through to the generic handling.
+ */
+const mapAuthingError = (code: number | null, message: string): TxKeyPath | null => {
+  if (code !== null && AUTHING_CODE_MAP[code]) return AUTHING_CODE_MAP[code]
+
+  const m = message.toLowerCase()
+  // Credentials — wrong password
+  if (m.includes("密码错误") || m.includes("密码不正确") || m.includes("password")) {
+    return "login:errors.invalidCredentials"
+  }
+  // Account not found
+  if (m.includes("用户不存在") || m.includes("账号不存在") || m.includes("帐号不存在")) {
+    return "login:errors.userNotFound"
+  }
+  // Email already registered
+  if (m.includes("已注册") || m.includes("已被注册") || m.includes("已存在")) {
+    return "login:errors.emailAlreadyRegistered"
+  }
+  // Verification code expired / invalid
+  if (m.includes("验证码") && (m.includes("过期") || m.includes("失效"))) {
+    return "login:errors.otpExpired"
+  }
+  if (m.includes("验证码") && (m.includes("错误") || m.includes("无效"))) {
+    return "login:errors.invalidOtp"
+  }
+  // Weak password
+  if (m.includes("密码") && (m.includes("强度") || m.includes("简单") || m.includes("弱"))) {
+    return "login:errors.weakPassword"
+  }
+  // Invalid email format
+  if (m.includes("邮箱") && (m.includes("格式") || m.includes("无效") || m.includes("不正确"))) {
+    return "login:errors.invalidEmailDomain"
+  }
+  // Account suspended / banned / frozen
+  if (m.includes("禁用") || m.includes("封禁") || m.includes("冻结")) {
+    return "login:errors.userBanned"
+  }
+  // Rate limiting
+  if (m.includes("频繁") || m.includes("次数过多") || m.includes("限制")) {
+    return "login:errors.tooManyAttempts"
+  }
+  // Network / timeout
+  if (m.includes("网络")) return "login:errors.networkError"
+  if (m.includes("超时")) return "login:errors.requestTimeout"
+
+  return null
+}
+
+/**
+ * Maps raw Supabase/Authing/auth error messages to user-friendly translated
+ * strings. This prevents showing cryptic error messages like "Anonymous
+ * sign-ins are disabled" to end users.
  *
  * Per Supabase docs: "Always use error.code and error.name to identify errors,
  * not string matching on error messages"
  */
 export const mapAuthError = (error: Error | string): string => {
+  // Authing (China provider) errors arrive as a JSON-stringified message.
+  // Handle them before the Supabase matchers, which expect different shapes.
+  const authing = parseAuthingError(error)
+  if (authing) {
+    const key = mapAuthingError(authing.code, authing.message)
+    if (key) return translate(key)
+  }
+
   // First try to get the error code (preferred method per Supabase docs)
   const errorCode = typeof error === "object" && "code" in error ? (error as any).code : null
 

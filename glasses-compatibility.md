@@ -2,40 +2,45 @@
 
 ## Supported Devices
 
-MentraOS supports a wide range of smart glasses with varying features and capabilities.
+MentraOS supports smart glasses through explicit device and project identifiers. A
+Bluetooth name or manufacturer-data prefix is a compatibility claim; do not add a
+prefix unless the hardware is validated and listed here.
 
 ## Feature Compatibility Matrix
 
-| Model             | Display (Text) | Display (Images) | Microphone | Speaker | Camera |
-| ----------------- | -------------- | ---------------- | ---------- | ------- | ------ |
-| Even Realities G1 | ✅             | ✅               | ✅         | ❌      | ❌     |
-| Mentra Live       | ❌             | ❌               | ✅         | ✅      | ✅     |
-| Mentra Mach 1     | ✅             | ❌               | ⚠️\*       | ❌      | ❌     |
-| Vuzix Z100        | ✅             | ❌               | ⚠️\*       | ❌      | ❌     |
+| Model | Display (Text) | Display (Images) | Microphone | Speaker | Camera |
+| --- | --- | --- | --- | --- | --- |
+| Even Realities G1 | Full | Full | Full | Not available | Not available |
+| Mentra Live | Not available | Not available | Full | Full | Full |
+| Mentra Mach 1 | Full | Not available | Partial* | Not available | Not available |
+| Vuzix Z100 | Full | Not available | Partial* | Not available | Not available |
+| Xingyi AR99 | Full | Not available | Full | Not available | Not available |
 
-### Legend
+* Microphone support via connected phone's microphone.
 
-- ✅ Full support
-- ⚠️ Partial support
-- ❌ Not available
+## AR99 Compatibility Matrix
 
-### Notes
+The Mentra App exposes validated Xingyi AR99 hardware as `DeviceTypes.AR99`.
+Only the exact BLE project identifier listed below is supported.
 
-\* Microphone support via connected phone's microphone
+| Manufacturer | Display model | Device type | BLE project identifier |
+| --- | --- | --- | --- |
+| Xingyi Intelligent | Xingyi AR99 | `AR99` | `AR99` |
 
-## Additional Compatible Devices
-
-MentraOS is continuously expanding support for new smart glasses. For the latest compatibility information and to request support for new devices, please visit our [documentation](https://docs.mentra.glass) or join our [Discord community](https://mentra.glass/discord).
+`AF98`, `AF99`, `HVXM`, and `HVXF` are not supported project identifiers and
+must be rejected by scanning and advertisement parsing. AR99 pairing must fail
+closed when a scan result has no project identifier or has a project identifier
+outside the matrix above.
 
 ## Getting Started
 
-1. Download the MentraOS app from the [App Store](https://apps.apple.com/us/app/mentra-the-smart-glasses-app/id6747363193) or [Google Play](https://play.google.com/store/apps/details?id=com.mentra.mentra)
-2. Connect your smart glasses via Bluetooth
-3. Start using apps from the [Mentra Store](https://apps.mentra.glass)
+1. Download the Mentra App from the [App Store](https://apps.apple.com/us/app/mentra-the-smart-glasses-app/id6747363193) or [Google Play](https://play.google.com/store/apps/details?id=com.mentra.mentra).
+2. Connect your smart glasses via Bluetooth.
+3. Start using miniapps from the [Mentra Miniapp Store](https://apps.mentra.glass).
 
 ## Need Help?
 
-If you're having trouble connecting your smart glasses or want to confirm compatibility, please:
+If you are having trouble connecting your smart glasses or want to confirm compatibility, please:
 
 - Check our [documentation](https://docs.mentra.glass)
 - Join our [Discord community](https://mentra.glass/discord)

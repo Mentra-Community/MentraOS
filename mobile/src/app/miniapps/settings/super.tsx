@@ -5,7 +5,7 @@ import {Header, Screen} from "@/components/ignite"
 import ToggleSetting from "@/components/settings/ToggleSetting"
 import {Group} from "@/components/ui/Group"
 import {useNavigationStore} from "@/stores/navigation"
-import {SETTINGS, useSetting} from "@/stores/settings"
+import {SETTINGS, useSetting} from "@mentra/engine"
 import {RouteButton} from "@/components/ui/RouteButton"
 
 export default function SuperSettingsScreen() {
@@ -16,8 +16,10 @@ export default function SuperSettingsScreen() {
     SETTINGS.debug_navigation_history.key,
   )
   const [debugCoreStatusBarEnabled, setDebugCoreStatusBarEnabled] = useSetting(SETTINGS.debug_core_status_bar.key)
+  const [iosAppSwitcherBottomSwipe, setIosAppSwitcherBottomSwipe] = useSetting(
+    SETTINGS.ios_app_switcher_bottom_swipe.key,
+  )
   const {push} = useNavigationStore.getState()
-
   return (
     <Screen preset="fixed">
       <Header title="Super Settings" leftIcon="chevron-left" onLeftPress={() => goBack()} />
@@ -49,6 +51,12 @@ export default function SuperSettingsScreen() {
               value={useNativeDashboard}
               onValueChange={(value) => setUseNativeDashboard(value)}
             />
+
+            <ToggleSetting
+              label="Enable iOS App Switcher Bottom Swipe"
+              value={iosAppSwitcherBottomSwipe}
+              onValueChange={(value) => setIosAppSwitcherBottomSwipe(value)}
+            />
           </Group>
 
           <Group title="Debug">
@@ -58,7 +66,7 @@ export default function SuperSettingsScreen() {
           </Group>
 
           <Group title="Mini Apps">
-            <RouteButton label="Miniapp Developer" onPress={() => push("/miniapps/settings/miniapp-developer")} />
+            <RouteButton label="Miniapp Developer" onPress={() => push("/miniapps/settings/miniapp-dev")} />
           </Group>
         </View>
         <View className="flex h-16" />

@@ -1,0 +1,9 @@
+{
+  "type": "miniapp_navigation_start",
+  "lat": 37.7,
+  "lng": -122.4,
+  "stops": [{"lat": 37.7, "lng": -122.4}],
+  "mode": "driving",
+  "simulate": false,
+  "speedMultiplier": 1
+}

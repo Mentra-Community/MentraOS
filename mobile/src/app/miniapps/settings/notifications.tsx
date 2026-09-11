@@ -1,4 +1,4 @@
-import CrustModule from "crust"
+import CrustModule from "@mentra/crust"
 import {useState, useEffect, useCallback, useMemo, useRef} from "react"
 import {View, Platform, TextInput, FlatList, ActivityIndicator, Image} from "react-native"
 import Toast from "react-native-toast-message"
@@ -7,7 +7,7 @@ import {Screen, Text, Header, Switch} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
 import {notifyPackageName} from "@/constants/miniapps"
-import {SETTINGS, useSetting} from "@/stores/settings"
+import {SETTINGS, useSetting} from "@mentra/engine"
 import {useRegisterCapsule} from "@/stores/capsule"
 
 interface InstalledApp {
@@ -24,17 +24,20 @@ export default function NotificationSettingsScreen() {
   const {theme} = useAppTheme()
   const viewShotRef = useRef<View>(null)
 
-  const [apps, setApps] = useState<InstalledApp[]>([])
-  const [blocklist, setBlocklist] = useSetting(SETTINGS.notifications_blocklist.key)
-  const [searchQuery, setSearchQuery] = useState("")
-  const [loading, setLoading] = useState(true)
-  const [refreshing, setRefreshing] = useState(false)
-
+  // Render the global capsule (minimize / close) button over this screen, like
+  // the other miniapp screens. The import + viewShotRef were already here but the
+  // hook was never called, so the Notify miniapp had no capsule menu.
   useRegisterCapsule({
     packageName: notifyPackageName,
     viewShotRef,
     visibleOnRoutes: ["/miniapps/settings/notifications"],
   })
+
+  const [apps, setApps] = useState<InstalledApp[]>([])
+  const [blocklist, setBlocklist] = useSetting(SETTINGS.notifications_blocklist.key)
+  const [searchQuery, setSearchQuery] = useState("")
+  const [loading, setLoading] = useState(true)
+  const [refreshing, setRefreshing] = useState(false)
 
   useEffect(() => {
     loadInstalledApps()

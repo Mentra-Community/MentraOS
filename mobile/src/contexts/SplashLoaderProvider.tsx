@@ -4,8 +4,7 @@ import {scheduleOnRN} from "react-native-worklets"
 
 import {Screen} from "@/components/ignite"
 import {SplashVideo} from "@/components/splash/SplashVideo"
-import {useAppTheme} from "@/contexts/ThemeContext"
-import {SETTINGS, useSetting} from "@/stores/settings"
+import {SETTINGS, useSetting} from "@mentra/engine"
 
 interface SplashLoaderContextType {
   splashEnabled: boolean
@@ -25,8 +24,7 @@ export const useSplashLoader = (): SplashLoaderContextType => {
 const FADE_MS = 250
 
 export const SplashLoaderProvider: FC<{children: ReactNode}> = ({children}) => {
-  const {theme} = useAppTheme()
-  const [superMode] = useSetting(SETTINGS.super_mode.key)
+  const [appBootExtraInfo] = useSetting(SETTINGS.app_boot_extra_info.key)
   const [splashEnabled, setSplashEnabledState] = useState(false)
   const [visible, setVisible] = useState(false)
   const opacity = useSharedValue(0)
@@ -58,7 +56,7 @@ export const SplashLoaderProvider: FC<{children: ReactNode}> = ({children}) => {
       {visible && (
         <Animated.View className="absolute inset-0 z-50" style={overlayStyle}>
           <Screen preset="fixed">
-            <SplashVideo colorOverride={superMode ? theme.colors.chart_5 : undefined} />
+            <SplashVideo label={appBootExtraInfo ? "Opening link…" : undefined} />
           </Screen>
         </Animated.View>
       )}

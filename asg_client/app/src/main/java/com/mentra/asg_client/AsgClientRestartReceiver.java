@@ -1,17 +1,13 @@
 package com.mentra.asg_client;
 
 import android.content.BroadcastReceiver;
-
 import android.content.Context;
 import android.content.Intent;
 import android.os.Build;
 import android.util.Log;
-
 import com.mentra.asg_client.service.core.AsgClientService;
 
-/**
- * Broadcast receiver for handling service restart requests from OTA updater
- */
+/** Broadcast receiver for handling service restart requests from OTA updater */
 public class AsgClientRestartReceiver extends BroadcastReceiver {
     private static final String TAG = "AsgClientRestartReceiver";
 
@@ -40,13 +36,14 @@ public class AsgClientRestartReceiver extends BroadcastReceiver {
                     context.startService(serviceIntent);
                 }
 
-                // Send restart complete broadcast
+                // Keep legacy completion signal for one release while old updater may still be
+                // present.
                 Intent completeIntent = new Intent(AsgClientService.ACTION_RESTART_COMPLETE);
                 completeIntent.setPackage("com.augmentos.otaupdater");
                 context.sendBroadcast(completeIntent);
                 Log.i(TAG, "Sent restart complete broadcast from receiver");
 
-                // Also send heartbeat ack
+                // Keep legacy heartbeat ACK for one release while old updater may still be present.
                 Intent ackIntent = new Intent("com.mentra.asg_client.ACTION_HEARTBEAT_ACK");
                 ackIntent.setPackage("com.augmentos.otaupdater");
                 context.sendBroadcast(ackIntent);

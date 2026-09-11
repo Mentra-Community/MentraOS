@@ -8,8 +8,55 @@ import java.io.BufferedOutputStream
 import java.io.File
 import java.io.FileInputStream
 import java.io.FileOutputStream
+import java.io.InputStream
 import org.apache.commons.compress.archivers.tar.TarArchiveInputStream
 import org.apache.commons.compress.compressors.bzip2.BZip2CompressorInputStream
+
+/**
+ * Wraps an InputStream so we can observe how many compressed bytes have been
+ * consumed from the source .tar.bz2. Used to report extraction progress to JS
+ * — bz2 reads sequentially, so bytes-consumed/total is a reasonable proxy for
+ * "% of work done".
+ */
+private class ProgressInputStream(
+        private val wrapped: InputStream,
+        private val totalBytes: Long,
+        private val onProgress: (Long, Long) -> Unit,
+) : InputStream() {
+    private var bytesRead: Long = 0
+    private var lastEmittedAt: Long = 0
+    private val emitIntervalMs = 200L
+
+    override fun read(): Int {
+        val byte = wrapped.read()
+        if (byte != -1) {
+            bytesRead++
+            maybeEmit()
+        }
+        return byte
+    }
+
+    override fun read(b: ByteArray, off: Int, len: Int): Int {
+        val n = wrapped.read(b, off, len)
+        if (n > 0) {
+            bytesRead += n
+            maybeEmit()
+        }
+        return n
+    }
+
+    override fun close() {
+        wrapped.close()
+    }
+
+    private fun maybeEmit() {
+        val now = System.currentTimeMillis()
+        if (now - lastEmittedAt >= emitIntervalMs) {
+            lastEmittedAt = now
+            onProgress(bytesRead, totalBytes)
+        }
+    }
+}
 
 /**
  * STTTools provides utilities for STT model management.
@@ -85,21 +132,26 @@ object STTTools {
             }
 
             // Check for CTC model
-            val ctcModelFile = File(modelDir, "model.int8.onnx")
+            val ctcModelFile = findReadableFile(modelDir, listOf("model.int8.onnx", "model.onnx"))
             if (ctcModelFile.exists() && ctcModelFile.canRead() && ctcModelFile.length() > 0) {
                 Bridge.log("STT CTC model found at: $path (size: ${ctcModelFile.length()} bytes)")
                 return true
             }
 
             // Check for transducer model
-            val transducerFiles = listOf("encoder.onnx", "decoder.onnx", "joiner.onnx")
+            val transducerFiles =
+                    listOf(
+                            "encoder" to listOf("encoder.onnx", "encoder.int8.onnx"),
+                            "decoder" to listOf("decoder.onnx", "decoder.int8.onnx"),
+                            "joiner" to listOf("joiner.onnx", "joiner.int8.onnx")
+                    )
             val allTransducerFilesPresent =
-                    transducerFiles.all { fileName ->
-                        val file = File(modelDir, fileName)
+                    transducerFiles.all { (label, candidates) ->
+                        val file = findReadableFile(modelDir, candidates)
                         val exists = file.exists() && file.canRead() && file.length() > 0
                         if (!exists) {
                             Bridge.log(
-                                    "STT model missing or invalid transducer file: $fileName at $path"
+                                    "STT model missing or invalid transducer file: $label at $path"
                             )
                         }
                         exists
@@ -153,9 +205,17 @@ object STTTools {
             var fileCount = 0
             var bytesExtracted = 0L
 
+            val totalCompressedBytes = sourceFile.length()
+            Bridge.sendExtractionProgress(0, 0, totalCompressedBytes)
+
             // Open the tar.bz2 file with buffered streams for better performance
             FileInputStream(sourceFile).use { fis ->
-                BufferedInputStream(fis).use { bis ->
+                ProgressInputStream(fis, totalCompressedBytes) { read, total ->
+                    val pct =
+                            if (total > 0) ((read * 99L) / total).coerceIn(0L, 99L).toInt() else 0
+                    Bridge.sendExtractionProgress(pct, read, total)
+                }.use { progress ->
+                BufferedInputStream(progress, 65536).use { bis ->
                     Bridge.log("Opening bz2 decompression stream...")
                     BZip2CompressorInputStream(bis).use { bzIn ->
                         Bridge.log("Opening tar archive stream...")
@@ -166,31 +226,25 @@ object STTTools {
                             while (entry != null) {
                                 try {
                                     val outputFile = File(destDir, entry.name)
-                                    Bridge.log(
-                                            "Processing entry: ${entry.name} (${entry.size} bytes, isDir=${entry.isDirectory})"
-                                    )
 
                                     if (entry.isDirectory) {
-                                        // Create directory
                                         if (!outputFile.exists()) {
                                             outputFile.mkdirs()
                                         }
                                     } else {
-                                        // Create parent directories if needed
                                         outputFile.parentFile?.let { parent ->
                                             if (!parent.exists()) {
                                                 parent.mkdirs()
                                             }
                                         }
 
-                                        // Extract file with buffered output for better performance
                                         FileOutputStream(outputFile).use { fos ->
-                                            BufferedOutputStream(fos).use { bos ->
-                                                val buffer =
-                                                        ByteArray(
-                                                                4096
-                                                        ) // Use 4KB buffer like original
-                                                // implementation
+                                            BufferedOutputStream(fos, 65536).use { bos ->
+                                                // 64KB buffer matches iOS path and cuts JNI/stream
+                                                // overhead ~16x vs. the prior 4KB. The per-read
+                                                // progress hook is already 200ms-throttled by
+                                                // ProgressInputStream, so we don't log per-chunk.
+                                                val buffer = ByteArray(65536)
                                                 var len: Int
                                                 var fileBytes = 0L
                                                 val fileSizeMB = entry.size / 1024 / 1024
@@ -201,16 +255,13 @@ object STTTools {
                                                     fileBytes += len
                                                     bytesExtracted += len
 
-                                                    // For large files (>10MB), log progress every
-                                                    // 10MB
                                                     if (fileSizeMB > 10) {
                                                         val currentMB = fileBytes / 1024 / 1024
                                                         if (currentMB >= lastProgressMB + 10) {
                                                             lastProgressMB = currentMB
                                                             val percent =
                                                                     if (entry.size > 0)
-                                                                            (fileBytes * 100 /
-                                                                                    entry.size)
+                                                                            (fileBytes * 100 / entry.size)
                                                                     else 0
                                                             Bridge.log(
                                                                     "  Extracting ${entry.name}: ${currentMB}MB / ${fileSizeMB}MB (${percent}%)"
@@ -220,21 +271,11 @@ object STTTools {
                                                 }
 
                                                 fileCount++
-
-                                                // Log progress every file for debugging
-                                                val mbExtracted = bytesExtracted / 1024 / 1024
-                                                Bridge.log(
-                                                        "Extracted file $fileCount (${mbExtracted}MB total) - ${entry.name}"
-                                                )
                                             }
                                         }
                                     }
 
-                                    Bridge.log("Getting next entry...")
                                     entry = tarIn.nextEntry
-                                    Bridge.log(
-                                            "Next entry received: ${entry?.name ?: "null (end of archive)"}"
-                                    )
                                 } catch (e: Exception) {
                                     Bridge.log(
                                             "ERROR extracting entry ${entry?.name}: ${e.javaClass.simpleName}: ${e.message}"
@@ -248,7 +289,10 @@ object STTTools {
                         }
                     }
                 }
+                }
             }
+
+            Bridge.sendExtractionProgress(100, totalCompressedBytes, totalCompressedBytes)
 
             val duration = (System.currentTimeMillis() - startTime) / 1000
             val mbExtracted = bytesExtracted / 1024 / 1024
@@ -290,11 +334,12 @@ object STTTools {
             if (actualModelDir != destDir) {
                 Bridge.log("Moving files from subdirectory to parent directory")
                 actualModelDir.listFiles()?.forEach { file ->
-                    if (!file.isDirectory) {
-                        val targetFile = File(destDir, file.name)
-                        Bridge.log("Moving ${file.name}")
-                        file.renameTo(targetFile)
+                    val targetFile = File(destDir, file.name)
+                    if (targetFile.exists()) {
+                        targetFile.deleteRecursively()
                     }
+                    Bridge.log("Moving ${file.name}")
+                    file.renameTo(targetFile)
                 }
                 // Delete the now-empty subdirectory
                 actualModelDir.delete()
@@ -311,6 +356,12 @@ object STTTools {
     /** Get SharedPreferences instance */
     private fun getPrefs(context: Context): SharedPreferences {
         return context.getSharedPreferences(PREFS_NAME, Context.MODE_PRIVATE)
+    }
+
+    private fun findReadableFile(modelDir: File, candidates: List<String>): File {
+        return candidates.map { File(modelDir, it) }.firstOrNull { file ->
+            file.exists() && file.canRead() && file.length() > 0
+        } ?: File(modelDir, candidates.first())
     }
 
     /** Clear all STT model settings */

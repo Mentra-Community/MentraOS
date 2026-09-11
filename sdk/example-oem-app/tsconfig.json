@@ -1,0 +1,10 @@
+{
+  "extends": "expo/tsconfig.base",
+  "compilerOptions": {
+    "strict": true,
+    "paths": {
+      "@mentra/engine": ["../../mobile/modules/engine/build/index.d.ts"]
+    }
+  },
+  "include": ["**/*.ts", "**/*.tsx"]
+}

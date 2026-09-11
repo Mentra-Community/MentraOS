@@ -160,3 +160,15 @@ D/PhotoTest: ================================
 - [ ] Error propagation to SDK
 - [ ] Retry logic
 - [ ] Fallback mechanisms
+
+## Physical-device shutter-sound timing
+
+Use a Mentra Live device; an emulator cannot validate camera HAL or speaker latency.
+
+1. Start from a cold camera and take a button photo in bright daylight, normal indoor light, and a dim room.
+2. Repeat each environment with a warm camera, an SDK local-save photo, and an SDK BLE/webhook photo.
+3. Confirm cold captures play the prep click immediately and then at a steady 900ms cadence. Warm captures should not play a prep click.
+4. Confirm the prep click stops at sensor exposure start and the snap begins near exposure end. Filter Logcat for `Still capture started (HAL)`, `still_frame_available`, and `Playing camera snap from` to see whether the exposure estimate or completed-frame callback won the race.
+5. Compare the estimate in the snap log against the actual exposure in the following `MFNR_DIAG` / `still_hal_completed` log. The audible snap should start no more than 250ms before actual exposure end in each lighting condition.
+6. Enable HDR burst and confirm the snap waits for the final bracket's exposure start.
+7. Force a capture failure and confirm only that request's prep clicks stop; unrelated prompts must continue.

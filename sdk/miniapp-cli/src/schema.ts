@@ -15,10 +15,12 @@
 
 import {writeFileSync, mkdirSync} from 'fs';
 import {dirname, resolve} from 'path';
+import {fileURLToPath} from 'url';
 import {
   ALLOWED_PERMISSIONS,
   ALLOWED_HARDWARE_TYPES,
   ALLOWED_HARDWARE_LEVELS,
+  ALLOWED_ACTION_PARAM_TYPES,
 } from './manifest.js';
 
 const SCHEMA_ID = 'https://schemas.mentra.glass/miniapp/v1.json';
@@ -60,6 +62,35 @@ export function generateSchema(): Record<string, unknown> {
         minimum: 1,
         maximum: 65535,
         description: 'Port the dev server listens on (default 3000)',
+      },
+      sdkVersion: {
+        type: 'string',
+        description: 'Semver of the @mentra/miniapp SDK this bundle targets. Host refuses to spawn a miniapp whose sdkVersion is incompatible with the runtime it ships.',
+      },
+      minHostVersion: {
+        type: 'string',
+        description: 'Semver of the lowest MentraOS Manager host version that can run this bundle. The host re-validates this on every install and after host upgrades; bundles that no longer meet the bar are disabled (not deleted) with a clear UI.',
+      },
+      entry: {
+        type: 'object',
+        description: 'Two-layer bundle entry points. Background is the always-running JSContext entry; UI is the on-demand WebView entry.',
+        additionalProperties: false,
+        required: ['background'],
+        properties: {
+          background: {
+            type: 'string',
+            description: 'Path to the background bundle, relative to the bundle root (e.g. background/index.js). Required for V2+ two-layer bundles.',
+          },
+          ui: {
+            type: 'string',
+            description: "Path to the UI bundle entry HTML, relative to the bundle root (e.g. ui/index.html). Optional  -- pure-background miniapps don't need a WebView.",
+          },
+        },
+      },
+      type: {
+        type: 'string',
+        enum: ['standard', 'background'],
+        description: "Miniapp type. 'standard' includes a UI WebView; 'background' is JSContext-only. Defaults to 'standard'.",
       },
       permissions: {
         type: 'array',
@@ -110,6 +141,56 @@ export function generateSchema(): Record<string, unknown> {
           },
         },
       },
+      actions: {
+        type: 'array',
+        description: 'Actions other (system) miniapps can invoke via session.actions. Maps 1:1 onto MCP tools.',
+        items: {
+          type: 'object',
+          required: ['id', 'description'],
+          additionalProperties: false,
+          properties: {
+            id: {
+              type: 'string',
+              pattern: '^[a-z][a-z0-9_]*$',
+              maxLength: 64,
+              description: 'Unique-within-app action id (lowercase, starts with a letter).',
+            },
+            description: {
+              type: 'string',
+              description: 'AI-facing contract  -- say when to use the action.',
+            },
+            parameters: {
+              type: 'object',
+              description: 'JSON-Schema input descriptor (the MCP inputSchema subset).',
+              properties: {
+                type: {const: 'object'},
+                properties: {
+                  type: 'object',
+                  additionalProperties: {
+                    type: 'object',
+                    properties: {
+                      type: {type: 'string', enum: [...ALLOWED_ACTION_PARAM_TYPES]},
+                      description: {type: 'string'},
+                      enum: {type: 'array'},
+                      items: {
+                        type: 'object',
+                        properties: {
+                          type: {type: 'string', enum: ['string', 'number', 'boolean']},
+                        },
+                      },
+                    },
+                  },
+                },
+                required: {type: 'array', items: {type: 'string'}},
+              },
+            },
+            outputSchema: {
+              type: 'object',
+              description: 'JSON-Schema descriptor for the structured action result (MCP outputSchema).',
+            },
+          },
+        },
+      },
     },
   };
 }
@@ -135,9 +216,10 @@ export function schemaPrint(): void {
  * own scripts (e.g. as a build step) so the published file stays in sync.
  */
 export function regenerateSchemaFile(): void {
-  // Resolve relative to this file: sdk/miniapp-cli/src/schema.ts → ../schema/miniapp.schema.json
-  const here = new URL(import.meta.url).pathname;
+  // Resolve relative to this file: sdk/miniapp-cli/src/schema.ts  -> ../schema/miniapp.schema.json
+  const here = fileURLToPath(import.meta.url);
   const target = resolve(here, '..', '..', 'schema', 'miniapp.schema.json');
   writeSchemaFile(target);
   process.stdout.write(`Wrote ${target}\n`);
 }
+

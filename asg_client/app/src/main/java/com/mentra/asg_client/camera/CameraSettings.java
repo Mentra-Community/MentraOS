@@ -4,15 +4,15 @@ import android.content.Context;
 import android.hardware.camera2.CameraCharacteristics;
 import android.hardware.camera2.CameraMetadata;
 import android.hardware.camera2.CaptureRequest;
-import android.hardware.camera2.CaptureResult;
 import android.util.Log;
 
+import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.settings.AsgSettings;
 
 import java.util.List;
 
 /**
- * Camera settings helper for MediaTek vendor-specific features (ZSL, MFNR).
+ * Camera settings helper for MediaTek vendor-specific features (independent ZSL + MFNR).
  * Handles vendor key detection and configuration for enhanced photo quality.
  */
 public class CameraSettings {
@@ -78,68 +78,70 @@ public class CameraSettings {
       }
     }
 
-    // Log summary of detected features
     boolean zslSupported = isZslSupported();
     boolean mfnrSupported = isMfnrSupported();
     Log.d(TAG, "Vendor key detection complete - ZSL: " + zslSupported + ", MFNR: " + mfnrSupported);
   }
 
-  /**
-   * Check if ZSL is supported (vendor keys available)
-   * @return true if ZSL vendor keys are available
-   */
+  /** @return true if ZSL vendor keys are available */
   public boolean isZslSupported() {
     return mKeyZslMode != null;
   }
 
-  /**
-   * Check if MFNR is supported (vendor keys available)
-   * @return true if MFNR vendor keys are available
-   */
+  /** @return true if MFNR vendor keys are available */
   public boolean isMfnrSupported() {
     return mKeyAisRequestMode != null;
   }
 
   /**
-   * Configure preview builder with ZSL enabled (for photo preview).
-   * ZSL must be enabled during preview to fill the circular buffer for MFNR.
-   * @param builder Capture request builder for preview
+   * Configure preview builder using the global ZSL device default.
+   * Prefer {@link #configurePreviewBuilder(CaptureRequest.Builder, boolean)} with the
+   * per-request resolved value so preview buffering matches the pending capture.
    */
   public void configurePreviewBuilder(CaptureRequest.Builder builder) {
+    configurePreviewBuilder(builder, mAsgSettings.isZslEnabled() || mAsgSettings.isMfnrEnabled());
+  }
+
+  /**
+   * Configure preview builder with ZSL buffering when {@code zsl} is true.
+   * MFNR/AIS is always off in preview; MFNR only applies on the still request.
+   * Callers should pass {@code zsl || mfnr} because MFNR needs the ZSL circular buffer.
+   */
+  public void configurePreviewBuilder(CaptureRequest.Builder builder, boolean zsl) {
     if (builder == null) {
       Log.w(TAG, "Preview builder is null, cannot configure");
       return;
     }
 
-    // Check if ZSL is enabled in settings
-    boolean zslEnabled = mAsgSettings.isZslEnabled();
-    if (!zslEnabled) {
-      Log.d(TAG, "ZSL disabled by settings - skipping vendor key configuration");
+    boolean enabled = AsgConstants.ENABLE_ZSL && zsl;
+    if (!enabled) {
+      builder.set(CaptureRequest.CONTROL_ENABLE_ZSL, false);
+      if (mKeyZslMode != null) {
+        builder.set(mKeyZslMode, new byte[]{0});
+      }
+      if (mKeyAisRequestMode != null) {
+        builder.set(mKeyAisRequestMode, new int[]{0});
+      }
+      Log.d(TAG, "Preview ZSL disabled - cleared preview vendor key configuration");
       return;
     }
 
-    // Check if vendor keys are available
     if (!isZslSupported()) {
       Log.d(TAG, "ZSL vendor keys not available - using standard Camera2 API");
       return;
     }
 
-    Log.d(TAG, "🔍 DIAGNOSTIC: Configuring preview builder with ZSL");
+    Log.d(TAG, "Configuring preview builder with ZSL buffering");
 
-    // Enable ZSL during preview to fill circular buffer
-    // ZSL works by: preview accumulates full-resolution frames -> capture reads from buffer -> MFNR gets 6 frames for merging
-    // If ZSL is disabled during preview, buffer will be empty and MFNR cannot get enough frames!
     builder.set(CaptureRequest.CONTROL_ENABLE_ZSL, true);
-    Log.d(TAG, "🔍 Set CONTROL_ENABLE_ZSL = true in preview builder");
+    Log.d(TAG, "Set CONTROL_ENABLE_ZSL = true in preview builder");
 
     if (mKeyZslMode != null) {
       byte[] zslMode = new byte[]{1};
       builder.set(mKeyZslMode, zslMode);
-      Log.d(TAG, "Preview: ZSL_MODE vendor key set to ON (1) - Required for MFNR buffer");
+      Log.d(TAG, "Preview: ZSL_MODE vendor key set to ON (1)");
     }
 
-    // Disable MFNR/AIS during preview (multi-frame processing only needed for capture)
-    // But keep ZSL enabled to fill the buffer
     if (mKeyAisRequestMode != null) {
       int[] aisOff = new int[]{0};
       builder.set(mKeyAisRequestMode, aisOff);
@@ -147,19 +149,13 @@ public class CameraSettings {
     }
   }
 
-  /**
-   * Check if 3DNR (temporal noise reduction) is supported
-   * @return true if 3DNR vendor key is available
-   */
+  /** @return true if 3DNR vendor key is available */
   public boolean is3DNRSupported() {
     return mKey3DNRMode != null;
   }
 
   /**
    * Configure 3DNR (temporal noise reduction) on a video capture request builder.
-   * 3DNR uses inter-frame data to reduce noise in video, significantly improving
-   * low-light video quality with minimal performance cost.
-   * @param builder Capture request builder for video preview/recording
    */
   public void configure3DNR(CaptureRequest.Builder builder) {
     if (builder == null) {
@@ -181,61 +177,64 @@ public class CameraSettings {
   }
 
   /**
-   * Configure capture builder with ZSL + MFNR enabled (for photo capture).
-   * @param builder Capture request builder for still capture
+   * Configure capture builder using the global ZSL and MFNR device defaults.
    */
   public void configureCaptureBuilder(CaptureRequest.Builder builder) {
+    configureCaptureBuilder(
+        builder, mAsgSettings.isZslEnabled(), mAsgSettings.isMfnrEnabled());
+  }
+
+  /**
+   * Configure capture builder with independent ZSL and MFNR vendor keys.
+   */
+  public void configureCaptureBuilder(
+      CaptureRequest.Builder builder, boolean zsl, boolean mfnr) {
     if (builder == null) {
       Log.w(TAG, "Capture builder is null, cannot configure");
       return;
     }
 
-    // Check if ZSL is enabled in settings
-    boolean zslEnabled = mAsgSettings.isZslEnabled();
-    boolean mfnrEnabled = mAsgSettings.isMfnrEnabled();
+    boolean zslEnabled = AsgConstants.ENABLE_ZSL && zsl;
+    boolean mfnrEnabled = AsgConstants.ENABLE_MFNR && mfnr;
 
-    if (!zslEnabled && !mfnrEnabled) {
-      Log.d(TAG, "ZSL and MFNR disabled by settings - skipping vendor key configuration");
-      return;
-    }
+    Log.i(
+        TAG,
+        "Applied vendor config — ZSL="
+            + (zslEnabled ? "on" : "off")
+            + " MFNR="
+            + (mfnrEnabled ? "on" : "off"));
 
-    Log.d(TAG, "🔍 DIAGNOSTIC: Configuring capture builder with ZSL/MFNR");
-
-    // Enable ZSL for capture
     if (zslEnabled && isZslSupported()) {
       builder.set(CaptureRequest.CONTROL_ENABLE_ZSL, true);
-      Log.d(TAG, "🔍 Set CONTROL_ENABLE_ZSL = true in capture builder");
-
       if (mKeyZslMode != null) {
-        byte[] zslMode = new byte[]{1};
-        builder.set(mKeyZslMode, zslMode);
+        builder.set(mKeyZslMode, new byte[]{1});
         Log.d(TAG, "Capture: ZSL_MODE vendor key set to ON (1)");
       }
-    } else if (zslEnabled) {
-      Log.d(TAG, "ZSL enabled in settings but vendor keys not available");
+    } else {
+      builder.set(CaptureRequest.CONTROL_ENABLE_ZSL, false);
+      if (mKeyZslMode != null) {
+        builder.set(mKeyZslMode, new byte[]{0});
+        Log.d(TAG, "Capture: ZSL_MODE vendor key set to OFF (0)");
+      }
     }
 
-    // Enable MFNR for capture (mode 255 = full MFNR)
     if (mfnrEnabled && isMfnrSupported()) {
       if (mKeyAisRequestMode != null) {
-        int[] mfnrMode = new int[]{255};
-        builder.set(mKeyAisRequestMode, mfnrMode);
+        builder.set(mKeyAisRequestMode, new int[]{255});
         Log.d(TAG, "Capture: MFNR/AIS mode set to ON (255) - Full multi-frame noise reduction");
       }
-    } else if (mfnrEnabled) {
-      Log.d(TAG, "MFNR enabled in settings but vendor keys not available");
+    } else if (mKeyAisRequestMode != null) {
+      builder.set(mKeyAisRequestMode, new int[]{0});
+      Log.d(TAG, "Capture: MFNR/AIS mode set to OFF (0)");
     }
 
-    // Critical: Do NOT set ISO vendor key - let system auto-adjust
-    // Setting ISO to 0 would limit ISO upper bound, causing ISO to only reach 400-500 in low light
-    // This prevents MFNR from triggering (requires ISO>800)
-    // By not setting it, system can auto-adjust ISO to 1000+ based on AE algorithm
-    Log.d(TAG, "Capture: ISO vendor key NOT set - Let system auto-adjust (allows ISO>1000 for MFNR)");
+    // Do NOT set ISO vendor key — let system auto-adjust so MFNR can trigger (ISO>800).
+    if (mfnrEnabled) {
+      Log.d(TAG, "Capture: ISO vendor key NOT set - Let system auto-adjust (allows ISO>1000 for MFNR)");
+    }
 
-    // Set standard capture settings
     builder.set(CaptureRequest.CONTROL_AWB_MODE, CaptureRequest.CONTROL_AWB_MODE_AUTO);
     builder.set(CaptureRequest.CONTROL_AE_ANTIBANDING_MODE, 3);
     builder.set(CaptureRequest.FLASH_MODE, CameraMetadata.FLASH_MODE_OFF);
   }
 }
-

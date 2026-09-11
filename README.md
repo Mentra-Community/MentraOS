@@ -1,19 +1,14 @@
 <div align="center">
-  <p>
-    <img src="./images/mach1.png" alt="Mentra Mach 1" height="80" style="margin: 0 15px;" />
-    <img src="./mobile/assets/glasses/g1.png" alt="Even Realities G1" height="80" style="margin: 0 15px;" />
-    <img src="./images/MentraLiveFinal.png" alt="Mentra Live" height="80" style="margin: 0 15px;" />
-  </p>
-  <h1>MentraOS</h1>
-  <h3>The open source operating system for smart glasses</h3>
-  
+  <img src="./images/Github-Readme.png" alt="Mentra: The open source smart glasses operating system" width="100%" />
+
   <p>
     <a href="https://mentra.glass">Website</a> •
     <a href="https://docs.mentra.glass">Documentation</a> •
     <a href="https://console.mentra.glass">Developer Console</a> •
-    <a href="https://apps.mentra.glass">Mentra Store</a>
+    <a href="https://apps.mentra.glass">Mentra MiniApp Store</a>
   </p>
 
+  <!--
   <p>
     <img src="https://img.shields.io/github/contributors/TeamOpenSmartGlasses/DiscussPlusPlus" alt="Contributors" />
     <img src="https://img.shields.io/github/license/TeamOpenSmartGlasses/DiscussPlusPlus" alt="License" />
@@ -21,6 +16,7 @@
     <img src="https://img.shields.io/github/v/release/TeamOpenSmartGlasses/DiscussPlusPlus" alt="GitHub Release Version" />
     <img src="https://img.shields.io/github/last-commit/TeamOpenSmartGlasses/DiscussPlusPlus" alt="Last Updated" />
   </p>
+  -->
 </div>
 
 <div align="center">
@@ -32,8 +28,85 @@
   </a>
 </div>
 
+## Write Once, Run on Any Smart Glasses
+
+MentraOS is how developers and businesses build smart glasses apps.
+
+MentraOS handles pairing, connection, data streaming, hardware access, and cross-device compatibility, so you can focus on building amazing apps. Development goes from months to days.
+
+Every component is open source under the MIT license, giving you privacy, freedom, and control.
+
+## Supported Smart Glasses
+
+MentraOS works across a growing ecosystem of smart glasses.
+
 <div align="center">
-  <h4>Nightly Builds</h4>
+  <table border="0" cellspacing="0" cellpadding="0" width="100%" style="border: 0 !important; border-collapse: separate; border-spacing: 8px;">
+    <tbody>
+      <tr style="border: 0 !important; background: transparent;">
+        <td align="center" valign="top" width="20%" style="border: 1px solid #e5e7eb; border-radius: 14px; padding: 24px 12px 12px; background: #ffffff;">
+          <br />
+          <img src="./images/glasses/mentra-live.png" alt="Mentra Live" width="140" />
+          <br /><br />
+          <p align="center"><b>Mentra Live</b></p>
+        </td>
+        <td align="center" valign="top" width="20%" style="border: 1px solid #bbf7d0; border-radius: 14px; padding: 24px 12px 12px; background: #ffffff;">
+          <br />
+          <img src="./images/glasses/even-realities-g2.png" alt="Even Realities G2" width="140" />
+          <br /><br />
+          <p align="center"><b>Even Realities G2</b></p>
+        </td>
+        <td align="center" valign="top" width="20%" style="border: 1px solid #e5e7eb; border-radius: 14px; padding: 24px 12px 12px; background: #ffffff;">
+          <br />
+          <img src="./images/glasses/vuzix-z100.png" alt="Vuzix Z100" width="140" />
+          <br /><br />
+          <p align="center"><b>Vuzix Z100</b></p>
+        </td>
+        <td align="center" valign="top" width="20%" style="border: 1px solid #e5e7eb; border-radius: 14px; padding: 24px 12px 12px; background: #ffffff;">
+          <br />
+          <img src="./images/glasses/even-realities-g1.png" alt="Even Realities G1" width="140" />
+          <br /><br />
+          <p align="center"><b>Even Realities G1</b></p>
+        </td>
+        <td align="center" valign="top" width="20%" style="border: 1px solid #fed7aa; border-radius: 14px; padding: 24px 12px 12px; background: #ffffff;">
+          <br />
+          <img src="./images/glasses/nimo.png" alt="NIMO" width="95" />
+          <br /><br />
+          <p align="center"><b>NIMO&nbsp;(Coming&nbsp;Soon)</b></p>
+        </td>
+      </tr>
+    </tbody>
+  </table>
+</div>
+
+## Why Build with MentraOS?
+
+- **Cross-Compatibility:** Build one app that runs on supported smart glasses from multiple manufacturers.
+- **Fast Development:** Go from months of custom smart glasses development to a working app in days.
+- **Hardware Access:** Use displays, microphones, cameras, speakers, and everything else smart glasses expose from one API.
+- **App Distribution:** Publish to the Mentra MiniApp Store and reach users across the MentraOS ecosystem.
+- **Business Deployment:** Deploy smart glasses apps for field work, remote support, training, accessibility, and compliance-sensitive workflows. MentraOS is already being deployed by Fortune 500 companies.
+- **Open Source Control:** Own it, host it, modify it, and extend it. MentraOS is MIT-licensed infrastructure designed for privacy, transparency, and freedom from hardware or cloud lock-in.
+
+## Apps on the Mentra MiniApp Store
+
+Browse, install, and run glasses apps from your phone. Try captions, AI notes, proactive AI, translation, streaming, and more.
+
+<div align="center">
+  <img src="./images/Mockup_appshomepage.png" alt="MentraOS glasses apps homepage" width="364" />
+</div>
+
+## How MentraOS Works
+
+MentraOS runs glasses apps on the phone inside the Mentra Runtime. Multiple glasses apps can run simultaneously, controlling your smart glasses through one shared connection.
+
+This keeps the glasses lightweight while letting multiple apps run together, like captions, notes, notifications, dashboard, and AI tools. It also allows one app to work with any pair of supported smart glasses.
+
+Manufacturers can integrate the Mentra Runtime into their own iOS and Android apps to unlock the Mentra ecosystem while preserving their brand, app, and customer relationship.
+
+## Nightly Builds
+
+<div align="center">
   <p>
     <a href="https://github.com/TeamOpenSmartGlasses/DiscussPlusPlus/releases/download/nightly-builds/mobile-latest.apk">
       <img src="https://img.shields.io/badge/Mobile_App-Download_APK-blue?style=for-the-badge&logo=android" alt="Download Mobile APK" />
@@ -44,149 +117,39 @@
   </p>
 </div>
 
-## Supported Smart Glasses
+## Community
 
-Works with Even Realities G1, Mentra Mach 1, Mentra Live. See [smart glasses compatibility list here](./glasses-compatibility.md).
+MentraOS is built by developers, companies, and users who believe the next personal computer should be open, cross-compatible, private, and user-controlled.
 
-## Apps on Mentra Store
-
-The Mentra Store already has a ton of useful apps that real users are running everyday. Here are some apps already published by developers on the Mentra Store:
-
-<div align="center">
-  <table border="0" cellspacing="0" cellpadding="0" style="border: 0 !important; border-collapse: collapse;">
-    <tbody>
-    <tr style="border: 0 !important; background: transparent;">
-      <td align="center" style="border: 0 !important; padding: 15px; background: transparent;">
-        <a href="https://apps.mentra.glass/package/com.augmentos.livecaptions" style="text-decoration: none; color: inherit;">
-          <img src="https://appstore.augmentos.org/app-icons/captions.png" alt="Live Captions" width="80" style="border-radius: 18px;" />
-          <br /><b>Captions</b>
-        </a>
-      </td>
-      <td align="center" style="border: 0 !important; padding: 15px; background: transparent;">
-        <a href="https://apps.mentra.glass/package/com.mentra.link" style="text-decoration: none; color: inherit;">
-          <img src="https://appstore.augmentos.org/app-icons/mentra-link.png" alt="Link" width="80" style="border-radius: 18px;" />
-          <br /><b>Link</b>
-        </a>
-      </td>
-      <td align="center" style="border: 0 !important; padding: 15px; background: transparent;">
-        <a href="https://apps.mentra.glass/package/com.mentra.merge" style="text-decoration: none; color: inherit;">
-          <img src="https://appstore.augmentos.org/app-icons/mentra-merge.png" alt="Merge" width="80" style="border-radius: 18px;" />
-          <br /><b>Merge</b>
-        </a>
-      </td>
-      <td align="center" style="border: 0 !important; padding: 15px; background: transparent;">
-        <a href="https://apps.mentra.glass/package/com.mentra.notes" style="text-decoration: none; color: inherit;">
-          <img src="./images/MentraNotes.png" alt="Notes" width="80" style="border-radius: 18px;" />
-          <br /><b>Notes</b>
-        </a>
-      </td>
-    </tr>
-    <tr style="border: 0 !important; background: transparent;">
-      <td align="center" style="border: 0 !important; padding: 15px; background: transparent;">
-        <a href="https://apps.mentra.glass/package/com.mentra.calendarreminder" style="text-decoration: none; color: inherit;">
-          <img src="https://imagedelivery.net/nrc8B2Lk8UIoyW7fY8uHVg/32095bee-2bbd-4564-4777-4f99fcf73700/square" alt="Calendar Reminder" width="80" style="border-radius: 18px;" />
-          <br /><b>Calendar</b>
-        </a>
-      </td>
-      <td align="center" style="border: 0 !important; padding: 15px; background: transparent;">
-        <a href="https://apps.mentra.glass/package/com.mentra.dash" style="text-decoration: none; color: inherit;">
-          <img src="./images/MentraDash.png" alt="Dash" width="80" style="border-radius: 18px;" />
-          <br /><b>Dash</b>
-        </a>
-      </td>
-      <td align="center" style="border: 0 !important; padding: 15px; background: transparent;">
-        <a href="https://apps.mentra.glass/package/com.mentra.translation" style="text-decoration: none; color: inherit;">
-          <img src="https://imagedelivery.net/nrc8B2Lk8UIoyW7fY8uHVg/b5891997-3e90-4bdc-398a-834e3318b900/square" alt="Live Translation" width="80" style="border-radius: 18px;" />
-          <br /><b>Translation</b>
-        </a>
-      </td>
-      <td align="center" style="border: 0 !important; padding: 15px; background: transparent;">
-        <a href="https://apps.mentra.glass" style="text-decoration: none; color: inherit;">
-          <img src="./images/MentraLogoSquareRound.png" alt="Mentra Store" width="80" style="border-radius: 18px;" />
-          <br /><b>See All</b>
-        </a>
-      </td>
-    </tr>
-    </tbody>
-  </table>
-</div>
-
-## Write Once, Run on Any Smart Glasses
-
-**MentraOS is how developers build smart glasses apps.** We handle the pairing, connection, data streaming, and cross-compatibility, so you can focus on creating amazing apps. Every component is 100% open source (MIT license).
-
-### Why Build with MentraOS?
-
-- **Cross Compatibility**: Your app runs on any pair of smart glasses
-- **Speed**: TypeScript SDK means you're making apps in minutes, not months
-- **Control**: Access smart glasses I/O - displays, microphones, cameras, speakers
-- **Distribution**: Get your app in front of everyone using smart glasses
-
-## Development Setup
-
-### Quick Start
-
-For detailed setup instructions, see [CLAUDE.md](./CLAUDE.md) in the repository root.
-
-### Recommended Development Environment (Mobile)
-
-- **Platform**: macOS or Linux (Windows has known issues with this project)
-- **Node.js**: Version 20.x (use nvm for version management)
-- **Package Manager**: bun (preferred) or npm
-- **Android**: Android Studio with Java SDK 17
-- **iOS**: Xcode (macOS only)
-- **Cloud**: Docker and Docker Compose
-
-### Key Commands
-
-**Mobile App** (`mobile/`):
-
-```bash
-bun install
-bun start              # Start dev server
-bun android            # Run on Android
-bun ios                # Run on iOS
-bun test               # Run tests
-```
-
-**Cloud Backend** (`cloud/`):
-
-```bash
-bun install
-bun run dev            # Start Docker dev environment
-bun run test           # Run tests
-```
-
-For complete build instructions, testing guidelines, and code style requirements, see [CLAUDE.md](./CLAUDE.md).
-
-## MentraOS Community
-
-The MentraOS Community is a group of developers, companies, and users dedicated to ensuring the next personal computer is open, cross-compatible, and user-controlled. That's why we're building MentraOS.
-
-To get involved, join the [MentraOS Community Discord server](https://mentra.glass/discord).
-
-## Contact
-
-Have questions or ideas? We'd love to hear from you!
-
-- **Email**: [team@mentra.glass](mailto:team@mentra.glass)
-- **Discord**: [Join our community](http://mentra.glass/discord)
-- **Twitter**: [Follow @mentralabs](https://x.com/mentralabs)
+Join us and become part of the Mentra Community by joining our Discord server:  
+[https://mentra.glass/discord](https://mentra.glass/discord)
 
 ## Contributing
 
-MentraOS is made by a community and we welcome PRs. Here's the Contributors Guide: [docs.mentra.glass/os-devs/contributing](https://docs.mentraglass.com/os-devs/contributing/overview)
+MentraOS is made by a community and we welcome pull requests.
 
-Looking for ways to contribute? We mark issues we'd love the community to help with using the **"Help Wanted"** tag. Check them out here: [Help Wanted Issues](https://github.com/Mentra-Community/MentraOS/issues?q=is%3Aissue%20state%3Aopen%20label%3A%22help%20wanted%22)
+**Contributor guide:**  
+[https://docs.mentraglass.com/os-devs/contributing/overview](https://docs.mentraglass.com/os-devs/contributing/overview)
+
+Looking for ways to contribute? We mark issues we'd love the community to help with using the "Help Wanted" tag.
+
+**Help wanted issues:**  
+[https://github.com/Mentra-Community/MentraOS/issues?q=is%3Aissue%20state%3Aopen%20label%3A%22help%20wanted%22](https://github.com/Mentra-Community/MentraOS/issues?q=is%3Aissue%20state%3Aopen%20label%3A%22help%20wanted%22)
+
+## Contact
+
+- **Email:** [team@mentra.glass](mailto:team@mentra.glass)
+- **Discord:** [https://mentra.glass/discord](https://mentra.glass/discord)
+- **X:** [https://x.com/mentraglass](https://x.com/mentraglass)
 
 ## License
 
-MIT License Copyright 2025 MentraOS Community
+MIT License
 
----
+Copyright 2026 Mentra Labs, Inc.
 
 <div align="center">
   <br />
-  <img width="100" alt="MentraOS" src="./images/MentraLogoSquareRound.png" style="border-radius: 20%;" />
-  <h3>© 2025 Mentra Labs</h3>
+  <img width="100" alt="MentraOS" src="./images/MentraLogoWhiteSquare.svg" style="border-radius: 20%;" />
+  <h3>© 2026 Mentra Labs, Inc.</h3>
 </div>

@@ -1,0 +1,201 @@
+{
+  "schemaVersion": 1,
+  "contractVersion": "2026-08-28.1",
+  "required": {
+    "AUDIO_PROVIDER": {"kind": "enum", "values": ["soniox"], "acceptanceTest": "runtime-transcription"},
+    "AUDIO_UDP_ADVERTISED_HOST": {"kind": "host", "acceptanceTest": "runtime-audio-transport"},
+    "AUDIO_UDP_ADVERTISED_PORT": {"kind": "integer", "acceptanceTest": "runtime-audio-transport"},
+    "CAMERA_WEBHOOK_SECRET": {"kind": "secret", "acceptanceTest": "camera-upload"},
+    "CLOUD_ADMIN_CONSOLE_URL": {"kind": "https-url", "acceptanceTest": "incident-admin-link"},
+    "CLOUD_CORE_ENVIRONMENT": {
+      "kind": "enum",
+      "valuesByEnvironment": {"staging": ["staging"], "prod": ["prod"]},
+      "acceptanceTest": "core-environment"
+    },
+    "CLOUD_RUNTIME_AUTH_AUDIENCE": {"kind": "string", "acceptanceTest": "runtime-session-auth"},
+    "CLOUD_RUNTIME_AUTH_ISSUERS": {"kind": "json", "acceptanceTest": "runtime-session-auth"},
+    "CLOUD_STORAGE_PROVIDER": {"kind": "enum", "values": ["r2", "s3"], "acceptanceTest": "core-storage"},
+    "CONSOLE2_URL": {"kind": "https-url", "acceptanceTest": "console-login"},
+    "COOKIE_SECURE": {"kind": "enum", "values": ["true"], "acceptanceTest": "console-login"},
+    "EMAIL_SENDER": {"kind": "string", "acceptanceTest": "transactional-email"},
+    "MAPBOX_ACCESS_TOKEN": {"kind": "secret", "acceptanceTest": "maps-provider"},
+    "MAPS_PROVIDER": {"kind": "enum", "values": ["mapbox"], "acceptanceTest": "maps-provider"},
+    "MENTRA_ACCOUNT_JWT_PRIVATE_KEY": {"kind": "private-key", "acceptanceTest": "account-token-exchange"},
+    "MENTRA_ACCOUNT_JWT_PUBLIC_KEY": {"kind": "public-key", "acceptanceTest": "account-token-exchange"},
+    "MENTRA_JWT_PRIVATE_KEY": {"kind": "private-key", "acceptanceTest": "runtime-session-auth"},
+    "MENTRA_JWT_PUBLIC_KEY": {"kind": "public-key", "acceptanceTest": "runtime-session-auth"},
+    "MENTRA_MINIAPP_JWT_PRIVATE_KEY": {"kind": "private-key", "acceptanceTest": "miniapp-token"},
+    "MENTRA_MINIAPP_JWT_PUBLIC_KEY": {"kind": "public-key", "acceptanceTest": "miniapp-token"},
+    "MONGO_URL": {"kind": "mongo-url", "acceptanceTest": "core-readiness"},
+    "NODE_ENV": {"kind": "enum", "values": ["production"], "acceptanceTest": "service-readiness"},
+    "PORTAL_URL": {"kind": "https-url", "acceptanceTest": "portal-login"},
+    "REDIS_URL": {"kind": "redis-url", "acceptanceTest": "runtime-readiness"},
+    "REFRESH_TOKEN_PEPPER": {"kind": "secret", "acceptanceTest": "session-restoration"},
+    "RESEND_API_KEY": {"kind": "secret", "acceptanceTest": "transactional-email"},
+    "SONIOX_API_KEY": {"kind": "secret", "acceptanceTest": "runtime-transcription"},
+    "STORAGE_PROVIDER": {"kind": "enum", "values": ["r2", "s3"], "acceptanceTest": "camera-upload"},
+    "STREAM_PROVIDER": {"kind": "enum", "values": ["cloudflare"], "acceptanceTest": "managed-stream"},
+    "SUPABASE_ANON_KEY": {"kind": "secret", "acceptanceTest": "account-token-exchange"},
+    "SUPABASE_SERVICE_ROLE_KEY": {"kind": "secret", "acceptanceTest": "account-token-exchange"},
+    "SUPABASE_URL": {"kind": "https-url", "acceptanceTest": "account-token-exchange"},
+    "SUPPORT_DEVICE_ID_HMAC_KEY": {"kind": "secret", "acceptanceTest": "support-profile"},
+    "WORKOS_API_KEY": {"kind": "secret", "acceptanceTest": "console-login"},
+    "WORKOS_CLIENT_ID": {"kind": "string", "acceptanceTest": "console-login"},
+    "WORKOS_COOKIE_PASSWORD": {"kind": "secret", "acceptanceTest": "console-login"},
+    "WORKOS_REDIRECT_URI": {"kind": "https-url", "acceptanceTest": "console-login"}
+  },
+  "requiredAnyOf": [
+    {
+      "id": "core-storage-endpoint",
+      "keys": ["CLOUD_STORAGE_S3_ENDPOINT", "CLOUD_CORE_STORAGE_S3_ENDPOINT", "CLOUD_CORE_R2_ENDPOINT", "R2_ENDPOINT"],
+      "kind": "https-url",
+      "acceptanceTest": "core-storage"
+    },
+    {
+      "id": "core-storage-bucket",
+      "keys": ["CLOUD_STORAGE_S3_BUCKET", "CLOUD_CORE_STORAGE_S3_BUCKET", "CLOUD_CORE_R2_BUCKET", "R2_BUCKET"],
+      "kind": "string",
+      "acceptanceTest": "core-storage"
+    },
+    {
+      "id": "core-storage-access-key",
+      "keys": [
+        "CLOUD_STORAGE_S3_ACCESS_KEY_ID",
+        "CLOUD_CORE_STORAGE_S3_ACCESS_KEY_ID",
+        "CLOUD_CORE_R2_ACCESS_KEY_ID",
+        "R2_ACCESS_KEY_ID"
+      ],
+      "kind": "secret",
+      "acceptanceTest": "core-storage"
+    },
+    {
+      "id": "core-storage-secret-key",
+      "keys": [
+        "CLOUD_STORAGE_S3_SECRET_ACCESS_KEY",
+        "CLOUD_CORE_STORAGE_S3_SECRET_ACCESS_KEY",
+        "CLOUD_CORE_R2_SECRET_ACCESS_KEY",
+        "R2_SECRET_ACCESS_KEY"
+      ],
+      "kind": "secret",
+      "acceptanceTest": "core-storage"
+    },
+    {
+      "id": "runtime-storage-endpoint",
+      "keys": ["STORAGE_S3_ENDPOINT", "R2_ENDPOINT", "CLOUDFLARE_R2_S3_ENDPOINT"],
+      "kind": "https-url",
+      "acceptanceTest": "camera-upload"
+    },
+    {
+      "id": "runtime-storage-bucket",
+      "keys": ["STORAGE_S3_BUCKET", "R2_BUCKET", "CLOUDFLARE_R2_GALLERY_BUCKET"],
+      "kind": "string",
+      "acceptanceTest": "camera-upload"
+    },
+    {
+      "id": "runtime-storage-access-key",
+      "keys": ["STORAGE_S3_ACCESS_KEY_ID", "R2_ACCESS_KEY_ID", "CLOUDFLARE_R2_ACCESS_KEY_ID"],
+      "kind": "secret",
+      "acceptanceTest": "camera-upload"
+    },
+    {
+      "id": "runtime-storage-secret-key",
+      "keys": ["STORAGE_S3_SECRET_ACCESS_KEY", "R2_SECRET_ACCESS_KEY", "CLOUDFLARE_R2_SECRET_ACCESS_KEY"],
+      "kind": "secret",
+      "acceptanceTest": "camera-upload"
+    },
+    {
+      "id": "stream-account",
+      "keys": ["CF_STREAM_ACCOUNT_ID", "CLOUDFLARE_ACCOUNT_ID"],
+      "kind": "string",
+      "acceptanceTest": "managed-stream"
+    },
+    {
+      "id": "stream-token",
+      "keys": ["CF_STREAM_API_TOKEN", "CLOUDFLARE_API_TOKEN"],
+      "kind": "secret",
+      "acceptanceTest": "managed-stream"
+    }
+  ],
+  "keyPairs": [
+    {
+      "id": "account-jwt-key-pair",
+      "privateKey": "MENTRA_ACCOUNT_JWT_PRIVATE_KEY",
+      "publicKey": "MENTRA_ACCOUNT_JWT_PUBLIC_KEY",
+      "acceptanceTest": "account-token-exchange"
+    },
+    {
+      "id": "runtime-jwt-key-pair",
+      "privateKey": "MENTRA_JWT_PRIVATE_KEY",
+      "publicKey": "MENTRA_JWT_PUBLIC_KEY",
+      "acceptanceTest": "runtime-session-auth"
+    },
+    {
+      "id": "miniapp-jwt-key-pair",
+      "privateKey": "MENTRA_MINIAPP_JWT_PRIVATE_KEY",
+      "publicKey": "MENTRA_MINIAPP_JWT_PUBLIC_KEY",
+      "acceptanceTest": "miniapp-token"
+    }
+  ],
+  "forbidden": [
+    "AUDIO_DEBUG_ECHO",
+    "AUDIO_FORWARD_TRANSCRIPT_STUBS",
+    "CAMERA_LOCAL_DIR",
+    "CLOUD_CORE_LOCAL_STORAGE_DIR",
+    "CLOUD_STORAGE_LOCAL_DIR",
+    "MENTRA_CLI_EMAIL",
+    "MENTRA_CLI_ORGANIZATION_ID",
+    "MENTRA_CLI_TOKEN",
+    "MENTRA_CLI_WORKOS_USER_ID",
+    "MENTRA_TOKEN"
+  ],
+  "optional": [
+    "ADMIN_URL",
+    "AUDIO_UDP_PORT",
+    "AUDIO_WORKERS",
+    "CLOUD_CLIENT_MIN_VERSION",
+    "CLOUD_CLIENT_RECOMMENDED_VERSION",
+    "CLOUD_CORE_ADMIN_EMAILS",
+    "CLOUD_CORE_ADMIN_EMAIL_DOMAINS",
+    "CLOUD_CORE_RESERVED_PACKAGE_PREFIXES",
+    "CLOUD_CORE_RUNTIME_TOKEN_ISSUER",
+    "CLOUD_CORE_STORAGE_PROVIDER",
+    "CLOUD_MINIAPP_SLACK_WEBHOOK_URL",
+    "CLOUD_REPORTS_SLACK_WEBHOOK_AUTOMATIC_URL",
+    "CLOUD_REPORTS_SLACK_WEBHOOK_URL",
+    "CLOUD_REPORT_AGENT_API_TOKEN",
+    "CLOUD_REPORT_AGENT_SIGNING_SECRET",
+    "CLOUD_REPORT_AGENT_SLACK_INTERACTIVITY_ENABLED",
+    "CLOUD_REPORT_AGENT_URL",
+    "DEPLOYMENT_REGION",
+    "ELEVENLABS_API_KEY",
+    "ELEVENLABS_DEFAULT_MODEL_ID",
+    "ELEVENLABS_DEFAULT_SIMILARITY",
+    "ELEVENLABS_DEFAULT_SPEED",
+    "ELEVENLABS_DEFAULT_STABILITY",
+    "ELEVENLABS_DEFAULT_STYLE",
+    "ELEVENLABS_DEFAULT_VOICE_ID",
+    "HOSTNAME",
+    "LOG_LEVEL",
+    "LOG_STDOUT_JSON",
+    "MENTRA_CONSOLE_URL",
+    "MENTRA_CORE_URL",
+    "MENTRA_JWKS_URLS",
+    "MENTRA_MINIAPP_TOKEN_TTL_SEC",
+    "MENTRA_WORKOS_CLIENT_ID",
+    "POD_ID",
+    "PORT",
+    "POSTHOG_API_KEY",
+    "POSTHOG_HOST",
+    "REGION",
+    "SENTRY_DSN",
+    "SONIOX_AUDIO_GAP_THRESHOLD_MS",
+    "SONIOX_ENDPOINT_DEBOUNCE_MS",
+    "SONIOX_GAP_CHECK_INTERVAL_MS",
+    "SONIOX_MODEL",
+    "SONIOX_RECONNECT_BASE_MS",
+    "SONIOX_RECONNECT_MAX_ATTEMPTS",
+    "SONIOX_RECONNECT_MAX_MS",
+    "WORKER_ID",
+    "WORKOS_API_BASE_URL"
+  ]
+}

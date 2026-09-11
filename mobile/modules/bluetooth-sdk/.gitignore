@@ -26,6 +26,9 @@ DerivedData
 *.xcuserstate
 project.xcworkspace
 
+# swift pm changes?
+.build/
+
 # Android/IJ
 #
 .classpath

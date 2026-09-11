@@ -14,6 +14,13 @@ on:
       - ".github/workflows/augmentos-manager-jest.yml"
   workflow_dispatch:
 
+# Cancel a branch's in-flight check when a newer commit is pushed to it.
+# Scoped per-ref so branches never cancel each other; keeps the runner
+# queue from filling with superseded runs.
+concurrency:
+  group: mobile-quality-${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     runs-on: self-hosted
@@ -42,11 +49,15 @@ jobs:
 
       - name: Install dependencies
         working-directory: ./mobile
-        run: bun install
+        run: bun install --frozen-lockfile
 
       - name: Run TypeScript type check
         working-directory: ./mobile
         run: bun run compile
+
+      - name: Run release tooling tests
+        working-directory: ./mobile
+        run: node --test scripts/*.test.mjs
 
       - name: Run Jest tests
         working-directory: ./mobile

@@ -1,0 +1,33 @@
+# Bun / Node
+node_modules/
+bun.lockb
+
+# Build output
+dist/
+*.tsbuildinfo
+# Stray tsc emit in src/ trees — sources are .ts only; the rest is build
+# noise (typically from someone running `tsc` without `--noEmit`).
+packages/*/src/**/*.js
+packages/*/src/**/*.js.map
+packages/*/src/**/*.d.ts
+packages/*/src/**/*.d.ts.map
+
+# Env (Doppler is source of truth; .env.local is for personal overrides)
+.env
+.env.local
+.env.*.local
+
+# Editor
+.vscode/
+.idea/
+*.swp
+
+# OS
+.DS_Store
+
+# Logs
+*.log
+logs/
+
+# Local Core storage provider output
+.cloud-v2-storage/

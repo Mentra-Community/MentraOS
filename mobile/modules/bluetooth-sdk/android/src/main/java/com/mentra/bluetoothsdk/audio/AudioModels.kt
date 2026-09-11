@@ -21,7 +21,9 @@ data class MicPcmEvent(
         bitsPerSample = numberValue(values, "bitsPerSample") ?: BITS_PER_SAMPLE,
         channels = numberValue(values, "channels") ?: CHANNELS,
         encoding = stringValue(values, "encoding") ?: ENCODING,
-        voiceActivityDetectionEnabled = boolValue(values, "voiceActivityDetectionEnabled") ?: true,
+        voiceActivityDetectionEnabled =
+            boolValue(values, "voiceActivityDetectionEnabled")
+                ?: BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED,
     )
 
     fun toMap(): Map<String, Any> =
@@ -63,7 +65,9 @@ data class MicLc3Event(
         frameSizeBytes = numberValue(values, "frameSizeBytes") ?: DEFAULT_FRAME_SIZE_BYTES,
         bitrate = numberValue(values, "bitrate") ?: DEFAULT_BITRATE,
         packetizedFromGlasses = boolValue(values, "packetizedFromGlasses") ?: false,
-        voiceActivityDetectionEnabled = boolValue(values, "voiceActivityDetectionEnabled") ?: true,
+        voiceActivityDetectionEnabled =
+            boolValue(values, "voiceActivityDetectionEnabled")
+                ?: BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED,
     )
 
     fun toMap(): Map<String, Any> =
@@ -88,6 +92,21 @@ data class MicLc3Event(
         const val DEFAULT_FRAME_SIZE_BYTES = 60
         const val DEFAULT_BITRATE = DEFAULT_FRAME_SIZE_BYTES * 8 * (1000 / FRAME_DURATION_MS)
     }
+}
+
+internal data class MicHealth(
+    val sequenceGapEvents: Long,
+    val decodeFailures: Long,
+    val lastLc3ReceivedAt: Long?,
+    val lastPcmProducedAt: Long?,
+) {
+    fun toMap(): Map<String, Any> =
+        buildMap {
+            put("sequenceGapEvents", sequenceGapEvents)
+            put("decodeFailures", decodeFailures)
+            lastLc3ReceivedAt?.let { put("lastLc3ReceivedAt", it) }
+            lastPcmProducedAt?.let { put("lastPcmProducedAt", it) }
+        }
 }
 
 data class LocalTranscriptionEvent(

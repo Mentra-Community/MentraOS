@@ -3,6 +3,7 @@ package com.mentra.asg_client.service.communication.managers;
 import android.util.Log;
 
 import com.mentra.asg_client.service.communication.interfaces.IResponseBuilder;
+import com.mentra.asg_client.service.utils.ProcessSessionId;
 
 import org.json.JSONArray;
 import org.json.JSONException;
@@ -143,6 +144,9 @@ public class ResponseBuilder implements IResponseBuilder {
             JSONObject response = new JSONObject();
             response.put("type", "glasses_ready");
             response.put("timestamp", System.currentTimeMillis());
+            // Process session id: a changed (or newly appearing) sid tells the phone the
+            // asg process restarted even though the BES kept the BLE link alive.
+            response.put("sid", ProcessSessionId.SID);
             return response;
         } catch (JSONException e) {
             Log.e(TAG, "Error creating glasses_ready response", e);

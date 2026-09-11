@@ -1,0 +1,63 @@
+{
+  "$schema": "./node_modules/@mentra/miniapp-cli/schema/miniapp.schema.json",
+  "packageName": "com.mentra.teleprompter",
+  "version": "1.0.6",
+  "name": "Teleprompter",
+  "description": "Your notes, floating in front of you while you speak. Paste a script, then read it from your glasses — scrolling follows your voice or runs at a speed you set.",
+  "icon": "icon.png",
+  "type": "standard",
+  "sdkVersion": "0.3.0",
+  "minHostVersion": "1.42.0",
+  "port": 3160,
+  "entry": {
+    "background": "background/index.js",
+    "ui": "ui/index.html"
+  },
+  "permissions": [
+    {
+      "type": "MICROPHONE",
+      "description": "Used for voice-following auto-scroll — the teleprompter advances as you speak"
+    }
+  ],
+  "hardwareRequirements": [
+    {
+      "type": "DISPLAY",
+      "level": "REQUIRED",
+      "description": "Renders your script on the glasses display while you present"
+    },
+    {
+      "type": "MICROPHONE",
+      "level": "OPTIONAL",
+      "description": "Captures speech so scrolling can follow your voice; timed scrolling works without it"
+    }
+  ],
+  "actions": [
+    {
+      "id": "load_script",
+      "description": "Load text into the teleprompter and start reading it on the glasses. Use when the user wants to put a speech, talking points, lines, or any notes up on their glasses — e.g. 'put my toast on the teleprompter' or 'teleprompt this'. Replaces the current script and resets to the top. By default it begins scrolling immediately at the user's saved speed (or following their voice if they've turned on AI Scroll); set autostart false to just show the opening lines so the user can start when ready.",
+      "parameters": {
+        "type": "object",
+        "properties": {
+          "script": {
+            "type": "string",
+            "description": "The full script to display. Use blank lines to separate paragraphs; the teleprompter wraps each line to fit the glasses."
+          },
+          "autostart": {
+            "type": "boolean",
+            "description": "Defaults to true — start scrolling from the top right away. Set false to load the script and show the opening lines without scrolling, so the user can start when ready."
+          }
+        },
+        "required": ["script"]
+      },
+      "outputSchema": {
+        "type": "object",
+        "properties": {
+          "words": {"type": "number"},
+          "lines": {"type": "number"},
+          "started": {"type": "boolean"}
+        },
+        "required": ["words", "lines", "started"]
+      }
+    }
+  ]
+}

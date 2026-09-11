@@ -1,0 +1,98 @@
+name: Deploy cloud-v2 websites
+
+on:
+  workflow_dispatch:
+    inputs:
+      environment:
+        description: "Cloud V2 environment to deploy"
+        type: choice
+        required: true
+        default: dev
+        options:
+          - dev
+          - staging
+          - prod
+      site:
+        description: "Website to deploy"
+        type: choice
+        required: true
+        default: all
+        options:
+          - all
+          - console
+          - admin
+          - portal
+  push:
+    branches:
+      - dev
+      - staging
+      - main
+    paths:
+      - "cloud-v2/websites/**"
+      - "cloud-v2/scripts/deploy-pages.ts"
+      - ".github/workflows/cloud-v2-pages.yml"
+
+concurrency:
+  group: cloud-v2-pages-${{ github.event_name == 'workflow_dispatch' && inputs.environment || github.ref_name }}
+  cancel-in-progress: true
+
+permissions:
+  contents: read
+
+jobs:
+  deploy:
+    name: Deploy Cloud V2 Pages
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    env:
+      CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+      CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_PAGES_API_TOKEN }}
+    steps:
+      - name: Checkout code
+        uses: actions/checkout@v4
+
+      - name: Setup Bun
+        uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: "1.3.14"
+
+      # `bunx wrangler` runs Wrangler under the runner's system Node, not Bun.
+      # Current Wrangler enforces a runtime minimum of Node 22, while the
+      # Blacksmith image defaults to Node 20 — which failed the deploy with
+      # "Wrangler requires at least Node.js v22.0.0". Pin Node 22 (LTS) here.
+      - name: Setup Node
+        uses: actions/setup-node@v4
+        with:
+          node-version: "22"
+
+      - name: Resolve deployment target
+        id: target
+        shell: bash
+        run: |
+          set -euo pipefail
+          if [[ "${{ github.event_name }}" == "workflow_dispatch" ]]; then
+            env_name="${{ inputs.environment }}"
+            site="${{ inputs.site }}"
+            # Guard: a manual prod deploy is only allowed from the main branch.
+            if [[ "${env_name}" == "prod" && "${{ github.ref_name }}" != "main" ]]; then
+              echo "Refusing to deploy prod from ref '${{ github.ref_name }}'; prod deploys are only allowed from main." >&2
+              exit 1
+            fi
+          else
+            case "${{ github.ref_name }}" in
+              dev) env_name="dev" ;;
+              staging) env_name="staging" ;;
+              main) env_name="prod" ;;
+              *) echo "Unsupported branch: ${{ github.ref_name }}" >&2; exit 1 ;;
+            esac
+            site="all"
+          fi
+          echo "environment=${env_name}" >> "$GITHUB_OUTPUT"
+          echo "site=${site}" >> "$GITHUB_OUTPUT"
+
+      - name: Install cloud-v2 dependencies
+        working-directory: cloud-v2
+        run: bun install --frozen-lockfile
+
+      - name: Deploy Pages
+        working-directory: cloud-v2
+        run: bun scripts/deploy-pages.ts "${{ steps.target.outputs.environment }}" "${{ steps.target.outputs.site }}"

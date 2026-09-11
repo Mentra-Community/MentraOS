@@ -32,6 +32,12 @@ public class StillCaptureBuilderTest {
         recorder = new CaptureRequestRecorder();
     }
 
+    @Test
+    public void vendorZslMfnr_isAllowedOnlyForAutoExposure() {
+        assertThat(StillCaptureBuilder.allowsVendorZslMfnr(false)).isTrue();
+        assertThat(StillCaptureBuilder.allowsVendorZslMfnr(true)).isFalse();
+    }
+
     // ===== configureExposure — manual path =====
 
     @Test

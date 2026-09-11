@@ -1,9 +1,9 @@
 /**
  * @fileoverview DashboardAPI — noop surface in v1.
  *
- * Deferred per Phase 2.14. The cloud DashboardManager owns widget rendering
- * in OS-ranked rotation. Keeping the API shape so miniapps compile, but calls
- * are noop + console.warn.
+ * The cloud DashboardManager owns widget rendering in OS-ranked
+ * rotation. Keeping the API shape so miniapps compile, but calls are
+ * noop + console.warn.
  */
 
 import {MiniappRequestType} from "../protocol"
@@ -18,7 +18,7 @@ export class DashboardAPI {
 
   setContent(mode: DashboardMode, content: string): void {
     if (!this.warned) {
-      console.warn("[@mentra/miniapp] dashboard.setContent() is deferred in v1 (see Phase 2.14).")
+      console.warn("[@mentra/miniapp] dashboard.setContent() is deferred in v1.")
       this.warned = true
     }
     // Still forward so the phone can log/ignore consistently.

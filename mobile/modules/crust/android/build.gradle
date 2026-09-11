@@ -9,6 +9,19 @@ applyKotlinExpoModulesCorePlugin()
 useCoreDependencies()
 useExpoPublishing()
 
+// MentraJS Android runtime: QuickJS via dokar3/quickjs-kt.
+//
+// Zipline's `bind(name, service)` registers services in an internal Kotlin
+// map keyed by name for the Kotlin/JS-compiled `Zipline.take()` API; it does
+// not install JS globals on globalThis. Our polyfill is hand-written JS that
+// reads `globalThis.__mentraNativeBridge`, so the Zipline path silently
+// dropped every JS→host dispatch on Android.
+//
+// dokar3/quickjs-kt exposes `QuickJs.function(name) { args -> ... }` which
+// installs the lambda directly as a property of globalThis via QuickJS's
+// `JS_SetPropertyStr(JS_NewCFunction(...))`. This matches iOS Apple JSC's
+// `ctx.setObject(closure, forKeyedSubscript: ...)` pattern point-for-point.
+
 // If you want to use the managed Android SDK versions from expo-modules-core, set this to true.
 // The Android SDK versions will be bumped from time to time in SDK releases and may introduce breaking changes in your module code.
 // Most of the time, you may like to manage the Android SDK versions yourself.
@@ -36,6 +49,26 @@ android {
   defaultConfig {
     versionCode 1
     versionName "0.1.0"
+    multiDexEnabled true
+  }
+  // Pull the MentraJS polyfill bundle from the sibling @mentra/jspolyfill
+  // module's `assets/` directory — single committed source of truth. The
+  // file is read at runtime via `appContext.assets.open("startup.js")`.
+  // Cross-module sourceSet entry beats checking the same artifact into git
+  // multiple times.
+  sourceSets {
+    main {
+      assets.srcDirs += '../../jspolyfill/assets'
+    }
+  }
+  compileOptions {
+    coreLibraryDesugaringEnabled true
+  }
+  buildTypes {
+    internal {
+      initWith release
+      matchingFallbacks = ['release']
+    }
   }
   buildTypes {
     internal {
@@ -49,6 +82,65 @@ android {
 }
 
 dependencies {
+  // Mapbox Navigation SDK v3 (replaces Google Navigation SDK).
+  // Drives headless turn-by-turn nav in NavigationManager.kt: route
+  // progress, off-route + automatic rerouting, enhanced (map-matched)
+  // location, and the MapboxReplayer simulation harness for dev trips.
+  // Resolved from the authenticated Mapbox Downloads Maven repo, which is
+  // injected into the root project's allprojects.repositories at prebuild by
+  // mobile/plugins/android.ts (withProjectBuildGradleModifications), using the
+  // MAPBOX_DOWNLOADS_TOKEN (Downloads:Read sk.… token) from the env/gradle.properties.
+  //
+  // We depend on the headless modules directly, NOT the umbrella
+  // `navigationcore:android` artifact — that one also drags in `ui-maps`,
+  // `voice`, and `copilot`, which a custom glasses HUD doesn't use (dead
+  // APK weight). `:navigation` is the core engine; `:tripdata` carries the
+  // banner/maneuver formatting used to label turns.
+  // Version pinned to 3.25.0 — re-check https://docs.mapbox.com/android/navigation/releases/
+  def isChinaBuild = System.getenv("EXPO_PUBLIC_DEPLOYMENT_REGION") == "china"
+  if (isChinaBuild) {
+    compileOnly 'com.mapbox.navigationcore:navigation:3.25.0'
+    compileOnly 'com.mapbox.navigationcore:tripdata:3.25.0'
+  } else {
+    implementation 'com.mapbox.navigationcore:navigation:3.25.0'
+    implementation 'com.mapbox.navigationcore:tripdata:3.25.0'
+  }
+
+  // Required for Java 8+ APIs on minSdk < 26 (was needed by Google Nav SDK;
+  // Mapbox Nav SDK likewise targets desugared core libs).
+  coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.4'
+}
+
+dependencies {
   implementation 'com.google.android.gms:play-services-location:21.0.1'
   implementation 'com.google.android.gms:play-services-base:18.2.0'
+}
+
+dependencies {
+  // MentraJS — QuickJS for per-miniapp JS contexts. dokar3/quickjs-kt is a
+  // KMP wrapper around Bellard QuickJS that exposes `function(name) { ... }`
+  // for installing Kotlin lambdas as JS globals via `JS_SetPropertyStr`.
+  // Mirrors iOS Apple JSC's `setObject(_, forKeyedSubscript:)` pattern.
+  //
+  // Version pin: this Expo SDK 55 build uses Kotlin 2.1.20, which can read
+  // metadata up to 2.2.0. dokar3 1.0.1+ ships classes with metadata 2.3.0
+  // (compiled with Kotlin 2.3.x) and is unreadable here. 1.0.0-alpha13 is
+  // the last release compiled with Kotlin 2.0 (metadata 2.0.0) — its API
+  // (`QuickJs.create`, `evaluate`, `function` extension) matches 1.0.5 1:1.
+  // Bump only when the host Kotlin compiler clears 2.3.0 metadata.
+  implementation 'io.github.dokar3:quickjs-kt-android:1.0.0-alpha13'
+
+  // OkHttp for fetch / WebSocket — already used elsewhere in MentraOS;
+  // pinned here so the gradle plugin doesn't downgrade us.
+  implementation 'com.squareup.okhttp3:okhttp:4.12.0'
+
+  // Tink for X25519 (Android stdlib X25519 is API 33+ only; minSdk is 24).
+  // ~1.2 MB AAR. Crypto.subtle's SHA / AES-GCM / HMAC stay on javax.crypto
+  // which ships on the platform.
+  implementation 'com.google.crypto.tink:tink-android:1.14.1'
+
+  // Kotlin coroutines: dokar3's `evaluate()` is suspend; we bridge it via
+  // `runBlocking(dispatcher)` from the per-miniapp single-thread executor.
+  implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-core:1.8.1'
+  implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1'
 }

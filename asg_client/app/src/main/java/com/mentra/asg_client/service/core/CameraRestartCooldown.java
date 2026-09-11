@@ -6,7 +6,7 @@ package com.mentra.asg_client.service.core;
  * misleading feedback while the camera is coming back up.
  */
 public final class CameraRestartCooldown {
-    private static final int COOLDOWN_DURATION_MS = 3000;
+    public static final int DEFAULT_COOLDOWN_DURATION_MS = 5000;
 
     private static volatile long cooldownUntilMs = 0;
 
@@ -20,10 +20,10 @@ public final class CameraRestartCooldown {
     }
 
     /**
-     * Start the cooldown with the default duration (3 seconds).
+     * Start the cooldown with the default duration (5 seconds).
      */
     public static void setCooldown() {
-        setCooldownMs(COOLDOWN_DURATION_MS);
+        setCooldownMs(DEFAULT_COOLDOWN_DURATION_MS);
     }
 
     /**

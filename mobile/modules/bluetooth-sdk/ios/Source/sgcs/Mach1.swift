@@ -15,10 +15,7 @@ import UltraliteSDK
 class Mach1: UltraliteBaseViewController, SGCManager {
     func sendIncidentId(_: String, apiBaseUrl _: String?) {}
 
-    func requestPhoto(
-        _: String, appId _: String, size _: String?, webhookUrl _: String?, authToken _: String?,
-        compress _: String?, flash _: Bool, sound _: Bool, exposureTimeNs _: Double?
-    ) {}
+    func requestPhoto(_: PhotoRequest) {}
 
     func sendGalleryMode() {}
 
@@ -26,7 +23,7 @@ class Mach1: UltraliteBaseViewController, SGCManager {
 
     var connectionState: String = ConnTypes.DISCONNECTED
 
-    func sendOtaStart() {}
+    func sendOtaStart(otaVersionUrl: String?) {}
     func sendOtaQueryStatus() {}
 
     func sendJson(_: [String: Any], wakeUp _: Bool, requireAck _: Bool) {}
@@ -36,8 +33,6 @@ class Mach1: UltraliteBaseViewController, SGCManager {
     func sendButtonVideoRecordingSettings() {}
 
     func sendButtonMaxRecordingTime(_: Int) {}
-
-    func sendButtonCameraLedSetting() {}
 
     func sendCameraFovSetting() {}
 
@@ -60,7 +55,7 @@ class Mach1: UltraliteBaseViewController, SGCManager {
         )
     }
 
-    func requestWifiScan() {}
+    func requestWifiScan(scanId _: String?) {}
 
     func sendWifiCredentials(_: String, _: String) {}
 
@@ -90,7 +85,7 @@ class Mach1: UltraliteBaseViewController, SGCManager {
 
     func sendStreamKeepAlive(_: [String: Any]) {}
 
-    func startVideoRecording(requestId _: String, save _: Bool, flash _: Bool, sound _: Bool) {}
+    func startVideoRecording(requestId _: String, save _: Bool, sound _: Bool) {}
 
     func stopVideoRecording(requestId _: String) {}
 
@@ -325,7 +320,11 @@ class Mach1: UltraliteBaseViewController, SGCManager {
         UltraliteManager.shared.stopScan()
     }
 
-    func sendTextWall(_ text: String) {
+    func sendText(_ text: String) async {
+        await sendTextWall(text)
+    }
+
+    func sendTextWall(_ text: String) async {
         //    displayTextWall(text)
         guard let device = UltraliteManager.shared.currentDevice else {
             Bridge.log("Mach1Manager: No current device")
@@ -355,7 +354,7 @@ class Mach1: UltraliteBaseViewController, SGCManager {
     ///
     /// Column composition is handled by DisplayProcessor in React Native.
     /// This method is a "dumb pipe" - it just combines and sends the text.
-    func sendDoubleTextWall(_ topText: String, _ bottomText: String) {
+    func sendDoubleTextWall(_ topText: String, _ bottomText: String) async {
         guard let device = UltraliteManager.shared.currentDevice else {
             Bridge.log("Mach1Manager: No current device")
             ready = false
@@ -430,7 +429,7 @@ class Mach1: UltraliteBaseViewController, SGCManager {
         }
     }
 
-    func displayBitmap(base64ImageData: String) async -> Bool {
+    func displayBitmap(base64ImageData: String, x _: Int32? = nil, y _: Int32? = nil, width _: Int32? = nil, height _: Int32? = nil) async -> Bool {
         guard let bmpData = Data(base64Encoded: base64ImageData) else {
             Bridge.log("MACH1: Failed to decode base64 image data")
             return false

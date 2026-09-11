@@ -10,10 +10,11 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import showAlert from "@/utils/AlertUtils"
-import {decideDevLaunchRoute} from "@mentra/island"
+import {decideDevLaunchRoute, engine} from "@mentra/engine"
+import {registerDevApp, type DevAppRecord} from "@mentra/engine-host-internal"
 import {askPermissionsUI, checkPermissionsUI, PERMISSION_CONFIG} from "@/utils/PermissionsUtils"
 import {storage} from "@/utils/storage/storage"
-import type {AppletInterface, AppletPermission} from "@/../../cloud/packages/types/src"
+import type {AppletInterface, AppletPermission} from "@mentra/engine"
 
 const RECENT_KEY = "miniapp_dev_recent"
 const MAX_RECENT = 5
@@ -33,6 +34,21 @@ function resolveIconUrl(baseUrl: string, iconPath: string | undefined): string |
   if (!iconPath) return undefined
   if (/^https?:\/\//.test(iconPath)) return iconPath
   return `${baseUrl.replace(/\/$/, "")}/${iconPath.replace(/^\//, "")}`
+}
+
+/**
+ * Derive the dev sidecar port from a `mentra-miniapp dev` user-server URL. The
+ * CLI starts the static user server on `port` and the bundle/live-reload sidecar
+ * on `port + 1`, so the sidecar is the URL's port plus one. Returns undefined if
+ * the URL has no explicit port (nothing to derive a sidecar from).
+ */
+function deriveDevPort(url: string): number | undefined {
+  try {
+    const port = Number(new URL(url).port)
+    return Number.isFinite(port) && port > 0 ? port + 1 : undefined
+  } catch {
+    return undefined
+  }
 }
 
 export default function MiniappDeveloperUrlScreen() {
@@ -65,14 +81,16 @@ export default function MiniappDeveloperUrlScreen() {
       return
     }
 
+    const packageName = launchResult.manifest.packageName || entry.packageName
+    const appName = launchResult.manifest.name || entry.name
     const manifestPermissions: AppletPermission[] = Array.isArray(launchResult.manifest.permissions)
       ? (launchResult.manifest.permissions as AppletPermission[])
       : []
 
     if (manifestPermissions.length > 0) {
       const fakeApplet = {
-        packageName: entry.packageName,
-        name: entry.name,
+        packageName,
+        name: appName,
         permissions: manifestPermissions,
       } as unknown as AppletInterface
       const permResult = await askPermissionsUI(fakeApplet, theme)
@@ -82,7 +100,7 @@ export default function MiniappDeveloperUrlScreen() {
         const friendlyNames = stillNeeded.map((p) => PERMISSION_CONFIG[p]?.name ?? p).join(", ")
         showAlert(
           "Required permissions denied",
-          `${entry.name} can't run without these permissions: ${friendlyNames}. Open Settings to enable them, then try again.`,
+          `${appName} can't run without these permissions: ${friendlyNames}. Open Settings to enable them, then try again.`,
           [
             {text: "Open Settings", onPress: () => Linking.openSettings()},
             {text: "Cancel", style: "cancel"},
@@ -92,24 +110,38 @@ export default function MiniappDeveloperUrlScreen() {
       }
     }
 
-    push("/applet/local", {
-      packageName: entry.packageName,
-      devUrl: entry.url,
-      appName: entry.name,
-      iconUrl: entry.iconUrl,
+    // Refresh this package's manifest metadata before foregrounding it. Other
+    // dev packages remain registered and independently launchable.
+    const existing = engine.miniapps.list().find((app) => app.packageName === packageName)
+    if (existing?.running) await engine.miniapps.stop(packageName)
+    const resolvedUrl = launchResult.resolvedUrl || entry.url
+    await registerDevApp({
+      packageName,
+      name: appName,
+      iconUrl: resolveIconUrl(resolvedUrl, launchResult.manifest.icon) ?? entry.iconUrl ?? `${resolvedUrl}/icon.png`,
+      // Persist the host that answered — not the stale QR/recent-list IP.
+      devUrl: resolvedUrl,
+      devPort: deriveDevPort(resolvedUrl),
+      type: launchResult.manifest.type as DevAppRecord["type"],
+      permissions: launchResult.manifest.permissions as DevAppRecord["permissions"],
+      hardwareRequirements: launchResult.manifest.hardwareRequirements as DevAppRecord["hardwareRequirements"],
+      actions: launchResult.manifest.actions as DevAppRecord["actions"],
     })
+
+    await engine.miniapps.refresh()
+    await engine.miniapps.setForeground(packageName)
   }
 
   const handleLoadUrl = async () => {
     const trimmed = url.trim().replace(/\/+$/, "")
     if (!trimmed) {
-      showAlert(translate("devSettings:miniappUrlEmptyTitle"), translate("devSettings:miniappUrlEmptyBody"), [
+      showAlert(translate("debugSettings:miniappUrlEmptyTitle"), translate("debugSettings:miniappUrlEmptyBody"), [
         {text: "OK"},
       ])
       return
     }
     if (!trimmed.startsWith("http://") && !trimmed.startsWith("https://")) {
-      showAlert(translate("devSettings:miniappUrlInvalidTitle"), translate("devSettings:miniappUrlInvalidBody"), [
+      showAlert(translate("debugSettings:miniappUrlInvalidTitle"), translate("debugSettings:miniappUrlInvalidBody"), [
         {text: "OK"},
       ])
       return
@@ -122,8 +154,8 @@ export default function MiniappDeveloperUrlScreen() {
       const launchResult = await decideDevLaunchRoute("", trimmed)
       if (launchResult.decision === "offline") {
         showAlert(
-          translate("devSettings:miniappUrlFetchErrorTitle"),
-          translate("devSettings:miniappUrlFetchErrorBody", {url: trimmed}),
+          translate("debugSettings:miniappUrlFetchErrorTitle"),
+          translate("debugSettings:miniappUrlFetchErrorBody", {url: trimmed}),
           [{text: "OK"}],
         )
         return
@@ -139,10 +171,6 @@ export default function MiniappDeveloperUrlScreen() {
       }
       const updated = [entry, ...recent.filter((r) => r.url !== entry.url)].slice(0, MAX_RECENT)
       saveRecent(updated)
-      // Persist the dev URL keyed on packageName so Composer's
-      // getLocalApplets sees it and so home-tile taps after a phone
-      // restart can route to the live server.
-      storage.save(`${entry.packageName}_dev_url`, entry.url)
 
       // launchDevMiniapp re-runs the reachability + manifest fetch (cheap;
       // catches manifest changes between save and tap) and runs the
@@ -155,17 +183,17 @@ export default function MiniappDeveloperUrlScreen() {
 
   return (
     <Screen preset="fixed">
-      <Header title={translate("devSettings:miniappUrlTitle")} leftIcon="chevron-left" onLeftPress={() => goBack()} />
+      <Header title={translate("debugSettings:miniappUrlTitle")} leftIcon="chevron-left" onLeftPress={() => goBack()} />
 
       <ScrollView className="flex px-6 -mx-6">
         <View className="flex gap-6">
-          <Group title={translate("devSettings:miniappUrlGroupTitle")}>
+          <Group title={translate("debugSettings:miniappUrlGroupTitle")}>
             <GlassView className="bg-primary-foreground rounded-2xl px-4 py-4 gap-2">
-              <Text className="text-base text-text" tx="devSettings:miniappUrlLabel" />
+              <Text className="text-base text-text" tx="debugSettings:miniappUrlLabel" />
               <Text className="text-xs text-textDim flex-row flex-wrap">
-                {translate("devSettings:miniappUrlSubtitlePrefix")}
+                {translate("debugSettings:miniappUrlSubtitlePrefix")}
                 <Text className="font-mono text-text" text="/miniapp.json" />
-                {translate("devSettings:miniappUrlSubtitleSuffix")}
+                {translate("debugSettings:miniappUrlSubtitleSuffix")}
               </Text>
               <TextInput
                 className="bg-background border border-primary rounded-lg px-3 py-2 text-sm mt-1 mb-1 text-text"
@@ -179,7 +207,7 @@ export default function MiniappDeveloperUrlScreen() {
                 editable={!loading}
               />
               <Button
-                tx={loading ? "devSettings:miniappUrlLoadingButton" : "devSettings:miniappUrlLoadButton"}
+                tx={loading ? "debugSettings:miniappUrlLoadingButton" : "debugSettings:miniappUrlLoadButton"}
                 onPress={handleLoadUrl}
                 disabled={loading}
                 preset="alternate"
@@ -189,7 +217,7 @@ export default function MiniappDeveloperUrlScreen() {
           </Group>
 
           {recent.length > 0 && (
-            <Group title={translate("devSettings:miniappUrlRecentTitle")}>
+            <Group title={translate("debugSettings:miniappUrlRecentTitle")}>
               {recent.map((item) => (
                 <RouteButton
                   key={item.url}

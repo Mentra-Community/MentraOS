@@ -94,7 +94,10 @@ public class AsgServerManager {
         }
 
         try {
-            server.startServer();
+            if (!server.startServer()) {
+                logger.error("ServerManager", "🚀 ❌ Server failed to start: " + serverName);
+                return false;
+            }
             logger.info("ServerManager", "🚀 ✅ Server started successfully: " + serverName);
             logger.info("ServerManager", "🚀 📍 Port: " + server.getListeningPort());
             logger.info("ServerManager", "🚀 🌐 URL: " + server.getServerUrl());
@@ -297,4 +300,4 @@ public class AsgServerManager {
         AsgServer server = servers.get(serverName);
         return server != null && server.isAlive();
     }
-} 
+}

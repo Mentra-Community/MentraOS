@@ -2,10 +2,12 @@
 
 SDK for building MentraOS local miniapps — static web apps that run inside the MentraOS phone app's WebView and talk to smart glasses via a typed session API.
 
-> Companion package: **[`@mentra/miniapp-cli`](../miniapp-cli/README.md)** — `mentra-miniapp` CLI (`dev`, `release`, `pack`, `manifest`, `permission`, `hardware`, `schema`). Per-command docs live there.
+> Developing this SDK or running the in-repo example from a fresh clone? Start at the **[SDK developer guide](../../../sdk/README.md)** (setup, build loop, doc map).
+> Per-module deep dives (return shapes, events, error codes): **[`sdk/docs/`](../../../sdk/docs/README.md)**.
+> Companion package: **[`@mentra/miniapp-cli`](../../../sdk/miniapp-cli/README.md)** — `mentra-miniapp` CLI (`dev`, `release`, `pack`, `manifest`, `permission`, `hardware`, `schema`). Per-command docs live there.
 > Scaffolder: `bunx create-mentra-miniapp my-app`.
-> Reference miniapp: [`sdk/example-miniapp/`](../example-miniapp).
-> High-level walkthrough: [`agents/miniapp-sdk-overview.md`](../../agents/miniapp-sdk-overview.md).
+> Reference miniapp: [`sdk/example-miniapp/`](../../../sdk/example-miniapp).
+> High-level walkthrough: [`agents/miniapp-sdk-overview.md`](../../../agents/miniapp-sdk-overview.md).
 
 ## Install
 
@@ -33,8 +35,10 @@ import {MiniappSession} from "@mentra/miniapp"
 const session = new MiniappSession()
 await session.connect() // sends CONNECT, resolves on CONNECT_ACK
 
-session.display.showTextWall("hello")
-const unsub = session.transcription.on((d) => session.display.showTextWall(d.text))
+// render() replaces the whole frame; stable ids update in place, render([]) clears.
+const box = {x: 0, y: 0, w: 576, h: 288} // raw device px — see session.capabilities.display
+session.display.render([{type: "text", id: "hello", box, text: "hello"}])
+const unsub = session.transcription.on((d) => session.display.render([{type: "text", id: "hello", box, text: d.text}]))
 // later: unsub()
 ```
 
@@ -100,35 +104,45 @@ Convenience wrappers: `onVisibilityChange`, `onCapabilitiesChange`, `onColorSche
 
 ## Modules
 
-All event subscribers return an `UnsubscribeFn`. Subscriptions are ref-counted: the SDK only sends `SUBSCRIBE` over the wire when a stream's count transitions 0↔1.
+All event subscribers return an `UnsubscribeFn`. Subscriptions are ref-counted: the SDK sends `SUBSCRIBE` when a stream's active state or routing metadata changes.
 
-| Module                        | Methods                                                                                                                                  |
-| ----------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------- |
-| `session.display`             | `showTextWall`, `showDoubleTextWall`, `showReferenceCard`, `showDashboardCard`, `showBitmapView`, `clearView`                            |
-| `session.speaker`             | `play({audioUrl})`, `speak(text, {voice_id?, …})` (cloud TTS), `stop()`, `onStateChange(handler)`                                        |
-| `session.mic`                 | `onAudioChunk(handler)`, `onVoiceActivity(handler)`, `stop()`, `hasPermission`                                                           |
-| `session.transcription`       | `on(handler)`, `forLanguage(lang \| [langs], handler)`, `configure({languageHints, vocabulary, diarization})`, `stop()`, `hasPermission` |
-| `session.translation`         | `forLanguagePair(from, to, handler)`, `stop()`, `hasPermission`                                                                          |
-| `session.input`               | `onButtonPress(handler)`, `onTouch(handler \| gesture, handler \| gestures, handler)`                                                    |
-| `session.location`            | `onUpdate(handler)`, `hasPermission`                                                                                                     |
-| `session.imu`                 | `onHeadPosition(handler)`                                                                                                                |
-| `session.glasses`             | `onBattery(handler)`, `onConnection(handler)`                                                                                            |
-| `session.phone.notifications` | `on(handler)`, `onDismissed(handler)`, `stop()`, `hasPermission`                                                                         |
-| `session.phone.calendar`      | `on(handler)`, `stop()`, `hasPermission`                                                                                                 |
-| `session.phone`               | `onBattery(handler)`                                                                                                                     |
-| `session.system`              | `share(opts)`, `openUrl(url)`, `copyToClipboard(text)`, `download(opts)`                                                                 |
-| `session.camera`              | `takePhoto({size?, compress?, sound?, saveToGallery?})`, `setFov({horizontal, vertical})`, `hasPermission`                               |
-| `session.led`                 | `turnOn({color?, ontime?, offtime?, count?})`, `turnOff()`, `blink(color, ontime, offtime, count)`, `solid(color, duration)`             |
-| `session.permissions`         | `has(type)`, `getAll()`, `onUpdate(handler)`, `onPermissionError(handler)`                                                               |
-| `session.storage`             | `get(key)`, `set(key, value)`, `delete(key)`, `list()` — strings only, scoped to `(userId, packageName)`                                 |
-| `session.stream`              | `startUnmanaged({streamUrl})`, `startManaged({restreamDestinations?})`, `stop(streamId?)`                                                |
-| `session.dashboard`           | `setContent(mode, content)` — **noop in v1**, prints a one-time `console.warn`. Cloud DashboardManager owns rendering.                   |
+| Module                        | Methods                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                      |
+| ----------------------------- | -------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `session.display`             | `render(elements, opts?)` — scene API: diffed frames, stable-id in-place updates, `render([])` clears                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `session.speaker`             | `play({audioUrl})`, `speak(text, options?)`, `createStream({sampleRate?, volume?})` for bounded 16-bit PCM output, `stop()`, `onStateChange(handler)`                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `session.mic`                 | `onAudioChunk(handler)`, `onVoiceActivity(handler)`, `stop()`, `hasPermission`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                               |
+| `session.transcription`       | `on(handler, {forceLocal?})`, `forLanguage(lang \| [langs], handler, {forceLocal?})`, `configure({languageHints, vocabulary, diarization})`, `stop()`, `hasPermission`                                                                                                                                                                                                                                                                                                                                                                                                                       |
+| `session.translation`         | `forLanguagePair(from, to, handler)`, `stop()`, `hasPermission`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                              |
+| `session.input`               | `onButtonPress(handler)`, `onTouch(handler \| gesture, handler \| gestures, handler)`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                        |
+| `session.location`            | `onUpdate(handler)`, `hasPermission`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `session.imu`                 | `onHeadPosition(handler)`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `session.glasses`             | `onBattery(handler)`, `onConnection(handler)`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                |
+| `session.phone.notifications` | `on(handler)`, `onDismissed(handler)`, `stop()`, `hasPermission`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                             |
+| `session.phone.calendar`      | `listEvents({startsAt, endsAt, limit?})`, `hasPermission`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `session.phone`               | `onBattery(handler)`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `session.system`              | `share(opts)`, `openUrl(url)`, `copyToClipboard(text)`, `download(opts)`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `session.camera`              | `takePhoto({size?, mode?, transferMethod?, compress?, sound?, saveToGallery?, zsl?, mfnr?, timeoutMs?, ...})`, `setFov({fov, roiPosition?} \| {preset})`, `hasPermission`                                                                                                                                                                                                                                                                                                                                                                                                                    |
+| `session.led`                 | `turnOn({color?, ontime?, offtime?, count?})`, `turnOff()`, `blink(color, ontime, offtime, count)`, `solid(color, duration)` — resolve after the glasses acknowledge the RGB command                                                                                                                                                                                                                                                                                                                                                                                                         |
+| `session.permissions`         | `has(type)`, `getAll()`, `onUpdate(handler)`, `onPermissionError(handler)`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                                   |
+| `session.storage`             | `get(key)`, `set(key, value)`, `delete(key)`, `list()` — strings only, scoped to `(userId, packageName)`                                                                                                                                                                                                                                                                                                                                                                                                                                                                                     |
+| `session.stream`              | `startUnmanaged({streamUrl, video?, audio?, sound?})`, `startManaged({restreamDestinations?, video?, audio?, sound?, ingest?})`, `stop(streamId?)` — stream video input fields are `width`, `height`, `bitrate`, and `fps`; resolved status reports effective frame rate as `resolvedConfig.video.fps`. Start resolves with `{streamId, status, resolvedConfig?}` after glasses report the publisher is streaming; managed starts also return playback URLs; `ingest` selects `"srt"` for HLS/recording or `"whip"` for low-latency WebRTC; stop is idempotent for an already-stopped stream |
+| `session.dashboard`           | `setContent(mode, content)` — **noop in v1**, prints a one-time `console.warn`. Cloud DashboardManager owns rendering.                                                                                                                                                                                                                                                                                                                                                                                                                                                                       |
 
 `session.events` is **internal**. It exposes `subscribe(rawStreamType, handler)` only as a forward-compat escape hatch for new event types not yet wrapped on a domain module — prefer the typed module surface.
 
+### Camera FOV
+
+`await session.camera.setFov({fov, roiPosition})` applies a temporary, miniapp-owned FOV/ROI override and resolves with `CameraFovResult` after the ASG client reports the setting was applied following the camera restart cooldown. The host restores the previous live miniapp override—or the persistent 118-degree full-sensor base—when this miniapp closes. `roiPosition` accepts `"center"`, `"bottom"`, or `"top"` and defaults to `"center"`. You can also call `setFov({preset: "narrow" | "standard" | "wide"})`; presets map to 82, 102, and 118 degrees with center ROI. The call requires `CAMERA` in `miniapp.json` and rejects with `MiniappRequestError` if the host or glasses cannot apply it.
+
+### Camera Photos
+
+`await session.camera.takePhoto(...)` resolves only after the photo is delivered through the phone/cloud upload path. The result includes `{requestId, photoUrl, mimeType, size}`. Glasses-side or phone-relay failures such as `CAMERA_BUSY`, `BATTERY_LOW`, storage errors, or fallback upload failures reject before upload polling completes; intermediate `photo_status` progress and request acceptance alone do not resolve the miniapp photo promise.
+
+Pass `transferMethod: "ble"` to skip direct Wi-Fi upload and always relay the image through the phone over Bluetooth. The default `"auto"` mode tries direct upload first and falls back to BLE.
+
 ### Transcription language convention
 
-Transcription/translation streams use a colon-suffixed wire format: `transcription:en-US`, `translation:en-US:fr-FR`. `session.transcription.on(handler)` subscribes to `transcription:auto` (cloud auto-detects). The detected language is in the payload. A handler on `transcription:auto` receives any `transcription:<lang>` event — wildcard fan-out — so "give me transcripts in whatever language" works without manual wiring. Use `session.transcription.forLanguage(lang | [langs], handler)` to pin specific languages.
+Transcription/translation streams use a colon-suffixed wire format: `transcription:en-US`, `translation:en-US:fr-FR`. `session.transcription.on(handler)` subscribes to `transcription:auto` (cloud auto-detects). The detected language is in the payload. A handler on `transcription:auto` receives any `transcription:<lang>` event — wildcard fan-out — so "give me transcripts in whatever language" works without manual wiring. Use `session.transcription.forLanguage(lang | [langs], handler)` to pin specific languages. Pass `{forceLocal: true}` as the final argument to either method to require on-device transcription and suppress cloud results for that subscription. Routing is per listener, so a default listener on the same stream can continue receiving cloud transcription.
 
 ### Permissions semantics
 
@@ -179,7 +193,7 @@ The CLI validates the manifest on every `dev`, `release`, and `pack`. Run `mentr
 
 ## CLI
 
-The author-facing CLI lives in a sibling package: **[`@mentra/miniapp-cli`](../miniapp-cli/README.md)** (binary: `mentra-miniapp`). Full per-command docs there. Quick map:
+The author-facing CLI lives in a sibling package: **[`@mentra/miniapp-cli`](../../../sdk/miniapp-cli/README.md)** (binary: `mentra-miniapp`). Full per-command docs there. Quick map:
 
 | Command                                                        | Purpose                                                      |
 | -------------------------------------------------------------- | ------------------------------------------------------------ |
@@ -191,7 +205,7 @@ The author-facing CLI lives in a sibling package: **[`@mentra/miniapp-cli`](../m
 | `mentra-miniapp hardware list \| add \| remove [TYPE] [LEVEL]` | Object-verb manifest edits for hardware requirements         |
 | `mentra-miniapp schema print`                                  | Print the canonical `miniapp.json` JSON Schema               |
 
-See [the CLI README](../miniapp-cli/README.md) for flags, semantics, and the `mentra-miniapp://` URL schemes the QR codes encode.
+See [the CLI README](../../../sdk/miniapp-cli/README.md) for flags, semantics, and the `miniapp://` URL schemes the QR codes encode.
 
 ## Host-injected globals — `window.MentraOS`
 
@@ -214,7 +228,7 @@ Use `getMentraOSGlobals()` (exported from the package) to read it with the right
 Auto-selected by `createTransport(options)`:
 
 - **`PostMessageTransport`** — used inside the MentraOS WebView. `window.ReactNativeWebView.postMessage` outbound, `window` `message` listener inbound.
-- **`LocalSocketTransport`** — fallback for laptop browsers. Default endpoint `ws://127.0.0.1:8765`. The phone-side server it talks to is Phase 4 — the in-laptop-browser dev story is currently broken; see the overview doc for status.
+- **`LocalSocketTransport`** — fallback for laptop browsers. Default endpoint `ws://127.0.0.1:8765`. The in-laptop-browser dev story is currently broken; see the overview doc for status.
 
 Both are exported for advanced uses (forced transport, tests). `MockTransport` is also exported for unit tests.
 
@@ -235,13 +249,13 @@ Smart-glasses miniapps are **always-on services**. The webview is a UI on top of
 
 **Rule:** user-facing glasses logic lives in a session-scoped controller, instantiated once at module init. React pages read controller-driven state via a store (Zustand recommended) and call imperative methods on the controller for user-triggered actions. They do **not** subscribe to `session.*` directly.
 
-See [`sdk/example-miniapp/src/controller/GlassesController.ts`](../example-miniapp/src/controller/GlassesController.ts) for a worked reference.
+See [`sdk/example-miniapp/src/controller/GlassesController.ts`](../../../sdk/example-miniapp/src/background/controllers/GlassesController.ts) for a worked reference.
 
 **Tester pages exception:** `pages/tester/*` are diagnostic surfaces — by design they inline-subscribe to `session.*` and tear down on unmount. This is the only place where that pattern is acceptable.
 
 ## File map
 
 - Runtime: [`src/{session,protocol,envelope,globals}.ts`](./src/), [`src/modules/`](./src/modules/), [`src/transport/`](./src/transport/), [`src/react/`](./src/react/)
-- CLI: [`../miniapp-cli/src/`](../miniapp-cli/src/)
-- Scaffolder: [`../create-mentra-miniapp/`](../create-mentra-miniapp/)
-- Reference miniapp: [`../example-miniapp/`](../example-miniapp/)
+- CLI: [`../miniapp-cli/src/`](../../../sdk/miniapp-cli/src/)
+- Scaffolder: [`../create-mentra-miniapp/`](../../../sdk/create-mentra-miniapp/)
+- Reference miniapp: [`../example-miniapp/`](../../../sdk/example-miniapp/)

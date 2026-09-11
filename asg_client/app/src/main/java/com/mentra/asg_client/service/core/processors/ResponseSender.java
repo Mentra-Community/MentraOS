@@ -1,17 +1,17 @@
 package com.mentra.asg_client.service.core.processors;
 
 import android.util.Log;
-import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
+import com.mentra.asg_client.io.bluetooth.interfaces.IBluetoothManager;
 import com.mentra.asg_client.service.communication.reliability.ReliableMessageManager;
-
+import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
 import org.json.JSONException;
 import org.json.JSONObject;
 
 /**
  * Response sender component following Single Responsibility Principle.
- * <p>
- * This class is responsible for sending various types of responses
- * over Bluetooth Low Energy (BLE) communication with optional reliability.
+ *
+ * <p>This class is responsible for sending various types of responses over Bluetooth Low Energy
+ * (BLE) communication with optional reliability.
  */
 public class ResponseSender {
     private static final String TAG = "ResponseSender";
@@ -27,16 +27,22 @@ public class ResponseSender {
     public ResponseSender(AsgClientServiceManager serviceManager) {
         this.serviceManager = serviceManager;
 
-        // Initialize reliability manager - use 'this.serviceManager' to always get current reference
-        this.reliableManager = new ReliableMessageManager(
-            data -> {
-                if (this.serviceManager != null &&
-                    this.serviceManager.getBluetoothManager() != null) {
-                    return this.serviceManager.getBluetoothManager().sendData(data);
-                }
-                return false;
-            }
-        );
+        // Initialize reliability manager - use 'this.serviceManager' to always get current
+        // reference
+        this.reliableManager =
+                new ReliableMessageManager(
+                        (data, callback, gate) -> {
+                            if (this.serviceManager != null
+                                    && this.serviceManager.getBluetoothManager() != null) {
+                                return this.serviceManager
+                                        .getBluetoothManager()
+                                        .sendMessage(
+                                                data,
+                                                callback != null ? callback::onComplete : null,
+                                                adaptSendGate(gate));
+                            }
+                            return false;
+                        });
 
         // Enable by default - worst case with old phones is just some extra retries
         this.reliableManager.setEnabled(true, 1);
@@ -44,8 +50,27 @@ public class ResponseSender {
         Log.d(TAG, "✅ Response sender initialized with reliability support");
     }
 
+    private static IBluetoothManager.SendMessageGate adaptSendGate(
+            ReliableMessageManager.SendGate gate) {
+        if (gate == null) {
+            return null;
+        }
+        return new IBluetoothManager.SendMessageGate() {
+            @Override
+            public boolean shouldSend() {
+                return gate.shouldSend();
+            }
+
+            @Override
+            public Object lock() {
+                return gate.lock();
+            }
+        };
+    }
+
     /**
      * Get the reliable message manager (for CommandProcessor to handle ACKs).
+     *
      * @return The ReliableMessageManager instance
      */
     public ReliableMessageManager getReliableManager() {
@@ -55,14 +80,20 @@ public class ResponseSender {
     /**
      * Send download progress notification over BLE.
      *
-     * @param status          The status of the download (e.g., "started", "completed", "failed")
-     * @param progress        The download progress percentage (0-100)
+     * @param status The status of the download (e.g., "started", "completed", "failed")
+     * @param progress The download progress percentage (0-100)
      * @param bytesDownloaded The number of bytes downloaded so far
-     * @param totalBytes      The total number of bytes to download
-     * @param errorMessage    Error message if download failed, null otherwise
-     * @param timestamp       The timestamp of the progress update
+     * @param totalBytes The total number of bytes to download
+     * @param errorMessage Error message if download failed, null otherwise
+     * @param timestamp The timestamp of the progress update
      */
-    public void sendDownloadProgress(String status, int progress, long bytesDownloaded, long totalBytes, String errorMessage, long timestamp) {
+    public void sendDownloadProgress(
+            String status,
+            int progress,
+            long bytesDownloaded,
+            long totalBytes,
+            String errorMessage,
+            long timestamp) {
         if (!isBluetoothConnected()) {
             Log.d(TAG, "Cannot send download progress - not connected to BLE device");
             return;
@@ -82,7 +113,15 @@ public class ResponseSender {
 
             // Use reliable sending for OTA progress
             boolean sent = reliableManager.sendMessage(downloadProgress);
-            Log.d(TAG, "📥 Sent download progress via BLE: " + status + " - " + progress + "% (sent: " + sent + ")");
+            Log.d(
+                    TAG,
+                    "📥 Sent download progress via BLE: "
+                            + status
+                            + " - "
+                            + progress
+                            + "% (sent: "
+                            + sent
+                            + ")");
 
         } catch (JSONException e) {
             Log.e(TAG, "Error creating download progress JSON", e);
@@ -92,12 +131,13 @@ public class ResponseSender {
     /**
      * Send installation progress notification over BLE.
      *
-     * @param status       The status of the installation (e.g., "started", "completed", "failed")
-     * @param apkPath      The path to the APK being installed
+     * @param status The status of the installation (e.g., "started", "completed", "failed")
+     * @param apkPath The path to the APK being installed
      * @param errorMessage Error message if installation failed, null otherwise
-     * @param timestamp    The timestamp of the progress update
+     * @param timestamp The timestamp of the progress update
      */
-    public void sendInstallationProgress(String status, String apkPath, String errorMessage, long timestamp) {
+    public void sendInstallationProgress(
+            String status, String apkPath, String errorMessage, long timestamp) {
         if (!isBluetoothConnected()) {
             Log.d(TAG, "Cannot send installation progress - not connected to BLE device");
             return;
@@ -115,7 +155,15 @@ public class ResponseSender {
 
             // Use reliable sending for OTA installation
             boolean sent = reliableManager.sendMessage(installationProgress);
-            Log.d(TAG, "🔧 Sent installation progress via BLE: " + status + " - " + apkPath + " (sent: " + sent + ")");
+            Log.d(
+                    TAG,
+                    "🔧 Sent installation progress via BLE: "
+                            + status
+                            + " - "
+                            + apkPath
+                            + " (sent: "
+                            + sent
+                            + ")");
 
         } catch (JSONException e) {
             Log.e(TAG, "Error creating installation progress JSON", e);
@@ -123,9 +171,8 @@ public class ResponseSender {
     }
 
     /**
-     * Send MTK firmware update complete notification over BLE.
-     * Notifies mobile app that MTK firmware has been successfully updated
-     * and glasses need to be restarted.
+     * Send MTK firmware update complete notification over BLE. Notifies mobile app that MTK
+     * firmware has been successfully updated and glasses need to be restarted.
      */
     public void sendMtkUpdateComplete() {
         if (!isBluetoothConnected()) {
@@ -181,8 +228,8 @@ public class ResponseSender {
      * Send a generic JSON response over BLE with reliability support.
      *
      * @param responseType The type of response
-     * @param data         The response data
-     * @param messageId    Optional message ID for acknowledgment (not used with reliability)
+     * @param data The response data
+     * @param messageId Optional message ID for acknowledgment (not used with reliability)
      */
     public void sendGenericResponse(String responseType, JSONObject data, long messageId) {
         if (!isBluetoothConnected()) {
@@ -210,9 +257,9 @@ public class ResponseSender {
     /**
      * Send error response over BLE with reliability.
      *
-     * @param errorCode    The error code
+     * @param errorCode The error code
      * @param errorMessage The error message
-     * @param messageId    Optional message ID for acknowledgment (not used with reliability)
+     * @param messageId Optional message ID for acknowledgment (not used with reliability)
      */
     public void sendErrorResponse(String errorCode, String errorMessage, long messageId) {
         if (!isBluetoothConnected()) {
@@ -229,7 +276,15 @@ public class ResponseSender {
 
             // Use reliable sending for errors (critical messages)
             boolean sent = reliableManager.sendMessage(errorResponse);
-            Log.d(TAG, "❌ Sent error response via BLE: " + errorCode + " - " + errorMessage + " (sent: " + sent + ")");
+            Log.d(
+                    TAG,
+                    "❌ Sent error response via BLE: "
+                            + errorCode
+                            + " - "
+                            + errorMessage
+                            + " (sent: "
+                            + sent
+                            + ")");
 
         } catch (JSONException e) {
             Log.e(TAG, "Error creating error response JSON", e);
@@ -242,9 +297,9 @@ public class ResponseSender {
      * @return true if Bluetooth is connected, false otherwise
      */
     private boolean isBluetoothConnected() {
-        return serviceManager != null &&
-                serviceManager.getBluetoothManager() != null &&
-                serviceManager.getBluetoothManager().isConnected();
+        return serviceManager != null
+                && serviceManager.getBluetoothManager() != null
+                && serviceManager.getBluetoothManager().isConnected();
     }
 
     /**
@@ -254,7 +309,7 @@ public class ResponseSender {
      */
     private void sendDataOverBluetooth(byte[] data) {
         try {
-            serviceManager.getBluetoothManager().sendData(data);
+            serviceManager.getBluetoothManager().sendMessage(data);
         } catch (Exception e) {
             Log.e(TAG, "Error sending data over Bluetooth", e);
         }
@@ -268,4 +323,4 @@ public class ResponseSender {
     public AsgClientServiceManager getServiceManager() {
         return serviceManager;
     }
-} 
+}

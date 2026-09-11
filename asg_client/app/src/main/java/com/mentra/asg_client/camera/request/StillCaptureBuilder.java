@@ -21,9 +21,8 @@ import com.mentra.asg_client.camera.policy.MeteringRegions;
  * responsible for:
  * <ul>
  *   <li>adding capture targets (preview/still surfaces) before invoking,</li>
- *   <li>applying vendor-specific {@code CameraSettings.configureCaptureBuilder(...)} on the
- *       auto-exposure path (skipped for manual since manual SENSOR_* keys conflict with the
- *       vendor MFNR pipeline), and</li>
+ *   <li>applying vendor-specific {@code CameraSettings.configureCaptureBuilder(...)} with the
+ *       resolved per-request {@code zsl}/{@code mfnr} flags on the auto-exposure path only, and</li>
  *   <li>calling {@code builder.build()} + {@code session.capture(...)}.</li>
  * </ul>
  */
@@ -47,6 +46,11 @@ public final class StillCaptureBuilder {
                 builder.set(key, value);
             }
         };
+    }
+
+    /** Vendor ZSL/MFNR processing must not be combined with fixed manual SENSOR_* controls. */
+    public static boolean allowsVendorZslMfnr(boolean useManual) {
+        return !useManual;
     }
 
     /**
@@ -105,8 +109,17 @@ public final class StillCaptureBuilder {
      * Configure the post-processing pipeline keys (NR/Edge), JPEG quality, and JPEG orientation.
      */
     public static void configureQualityAndOrientation(Sink sink, int jpegQuality, int jpegOrientation) {
+        configureQualityAndOrientation(sink, jpegQuality, jpegOrientation, true);
+    }
+
+    public static void configureQualityAndOrientation(
+            Sink sink, int jpegQuality, int jpegOrientation, boolean edgeEnhancementEnabled) {
         sink.set(CaptureRequest.NOISE_REDUCTION_MODE, CaptureRequest.NOISE_REDUCTION_MODE_HIGH_QUALITY);
-        sink.set(CaptureRequest.EDGE_MODE, CaptureRequest.EDGE_MODE_HIGH_QUALITY);
+        sink.set(
+                CaptureRequest.EDGE_MODE,
+                edgeEnhancementEnabled
+                        ? CaptureRequest.EDGE_MODE_HIGH_QUALITY
+                        : CaptureRequest.EDGE_MODE_OFF);
         sink.set(CaptureRequest.JPEG_QUALITY, (byte) jpegQuality);
         sink.set(CaptureRequest.JPEG_ORIENTATION, jpegOrientation);
     }
@@ -126,9 +139,43 @@ public final class StillCaptureBuilder {
                           Size jpegSize,
                           int jpegQuality,
                           int jpegOrientation) {
-        configureExposure(sink, useManual, manualClampedNs, manualIso, manualFrameDurationNs,
-                userExposureCompensation, selectedFpsRange);
+        configure(
+                sink,
+                useManual,
+                manualClampedNs,
+                manualIso,
+                manualFrameDurationNs,
+                userExposureCompensation,
+                selectedFpsRange,
+                hasAutoFocus,
+                jpegSize,
+                jpegQuality,
+                jpegOrientation,
+                true);
+    }
+
+    public static void configure(
+            Sink sink,
+            boolean useManual,
+            long manualClampedNs,
+            int manualIso,
+            long manualFrameDurationNs,
+            int userExposureCompensation,
+            Range<Integer> selectedFpsRange,
+            boolean hasAutoFocus,
+            Size jpegSize,
+            int jpegQuality,
+            int jpegOrientation,
+            boolean edgeEnhancementEnabled) {
+        configureExposure(
+                sink,
+                useManual,
+                manualClampedNs,
+                manualIso,
+                manualFrameDurationNs,
+                userExposureCompensation,
+                selectedFpsRange);
         configureFocusAndMetering(sink, hasAutoFocus, jpegSize, useManual);
-        configureQualityAndOrientation(sink, jpegQuality, jpegOrientation);
+        configureQualityAndOrientation(sink, jpegQuality, jpegOrientation, edgeEnhancementEnabled);
     }
 }

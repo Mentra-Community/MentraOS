@@ -58,10 +58,40 @@ public interface StreamingStatusCallback {
     void onReconnectFailed(int maxAttempts, String streamId);
 
     /**
-     * Called when a streaming error occurs
+     * Called when a terminal streaming error occurs (no retry scheduled)
      *
      * @param error    Error message
      * @param streamId The stream ID, or null
      */
-    void onStreamError(String error, String streamId);
+    default void onStreamError(String error, String streamId) {
+        onStreamError(error, streamId, false);
+    }
+
+    /**
+     * Called when a streaming error occurs
+     *
+     * @param error     Error message
+     * @param streamId  The stream ID, or null
+     * @param willRetry True when the service has already scheduled a reconnect for
+     *                  this error, so the phone should not treat it as terminal
+     */
+    void onStreamError(String error, String streamId, boolean willRetry);
+
+    /**
+     * Called with current encoder and device telemetry while a stream is active.
+     *
+     * @param streamId The active stream ID, or null
+     * @param bitrateBps Current video bitrate in bits per second
+     * @param fps Current video frame rate
+     * @param droppedFrames Current dropped-frame count
+     * @param durationSeconds Seconds since the stream started
+     * @param temperatureC CPU temperature in Celsius, or {@link Double#NaN} if unavailable
+     */
+    default void onStreamMetrics(
+            String streamId,
+            long bitrateBps,
+            double fps,
+            long droppedFrames,
+            long durationSeconds,
+            double temperatureC) {}
 }

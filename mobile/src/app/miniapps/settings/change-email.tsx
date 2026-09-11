@@ -13,6 +13,10 @@ import {mapAuthError} from "@/utils/auth/authErrors"
 
 export default function ChangeEmailScreen() {
   const [newEmail, setNewEmail] = useState("")
+  const [password, setPassword] = useState("")
+  const [code, setCode] = useState("")
+  // Two steps: request (email a code to the NEW address), then confirm with it.
+  const [step, setStep] = useState<"request" | "confirm">("request")
   const [isLoading, setIsLoading] = useState(false)
 
   const {goBack} = useNavigationStore.getState()
@@ -30,10 +34,14 @@ export default function ChangeEmailScreen() {
       showAlert(translate("common:error"), translate("login:invalidEmail"), [{text: translate("common:ok")}])
       return
     }
+    if (!password) {
+      showAlert(translate("common:error"), translate("login:errors.passwordRequired"), [{text: translate("common:ok")}])
+      return
+    }
 
     setIsLoading(true)
 
-    const res = await mentraAuth.updateUserEmail(newEmail)
+    const res = await mentraAuth.updateUserEmail(newEmail, password)
     if (res.is_error()) {
       console.error("Error updating email:", res.error)
       showAlert(translate("common:error"), mapAuthError(res.error), [{text: translate("common:ok")}])
@@ -42,11 +50,23 @@ export default function ChangeEmailScreen() {
     }
 
     setIsLoading(false)
-    showAlert(
-      translate("profileSettings:emailChangeRequested"),
-      translate("profileSettings:checkNewEmailForVerification"),
-      [{text: translate("common:ok"), onPress: () => goBack()}],
-    )
+    setStep("confirm")
+  }
+
+  const handleConfirmCode = async () => {
+    if (!code.trim()) return
+    setIsLoading(true)
+    const res = await mentraAuth.confirmEmailChange(code.trim())
+    if (res.is_error()) {
+      console.error("Error confirming email change:", res.error)
+      showAlert(translate("common:error"), mapAuthError(res.error), [{text: translate("common:ok")}])
+      setIsLoading(false)
+      return
+    }
+    setIsLoading(false)
+    showAlert(translate("common:success"), translate("profileSettings:emailChangeSuccess"), [
+      {text: translate("common:ok"), onPress: () => goBack()},
+    ])
   }
 
   return (
@@ -54,45 +74,104 @@ export default function ChangeEmailScreen() {
       <Header title={translate("profileSettings:changeEmail")} leftIcon="chevron-left" onLeftPress={goBack} />
       <ScrollView contentContainerStyle={themed($scrollContent)} showsVerticalScrollIndicator={false}>
         <View style={themed($card)}>
-          <Text style={themed($subtitle)}>{translate("profileSettings:changeEmailSubtitle")}</Text>
+          <Text style={themed($subtitle)}>
+            {step === "request"
+              ? translate("profileSettings:changeEmailSubtitle")
+              : translate("profileSettings:emailChangeCodeSubtitle")}
+          </Text>
 
-          <View style={themed($form)}>
-            <View style={themed($inputGroup)}>
-              <Text style={themed($inputLabel)}>{translate("profileSettings:newEmailPlaceholder")}</Text>
-              <View style={themed($enhancedInputContainer)}>
-                <TextInput
-                  hitSlop={{top: 16, bottom: 16}}
-                  style={themed($enhancedInput)}
-                  placeholder={translate("profileSettings:newEmailPlaceholder")}
-                  value={newEmail}
-                  autoCapitalize="none"
-                  keyboardType="email-address"
-                  autoComplete="email"
-                  onChangeText={setNewEmail}
-                  placeholderTextColor={theme.colors.textDim}
-                  autoFocus={true}
-                />
+          {step === "request" ? (
+            <View style={themed($form)}>
+              <View style={themed($inputGroup)}>
+                <Text style={themed($inputLabel)}>{translate("profileSettings:newEmailPlaceholder")}</Text>
+                <View style={themed($enhancedInputContainer)}>
+                  <TextInput
+                    hitSlop={{top: 16, bottom: 16}}
+                    style={themed($enhancedInput)}
+                    placeholder={translate("profileSettings:newEmailPlaceholder")}
+                    value={newEmail}
+                    autoCapitalize="none"
+                    keyboardType="email-address"
+                    autoComplete="email"
+                    onChangeText={setNewEmail}
+                    placeholderTextColor={theme.colors.textDim}
+                    autoFocus={true}
+                  />
+                </View>
               </View>
+
+              <View style={themed($inputGroup)}>
+                <Text style={themed($inputLabel)}>{translate("login:password")}</Text>
+                <View style={themed($enhancedInputContainer)}>
+                  <TextInput
+                    hitSlop={{top: 16, bottom: 16}}
+                    style={themed($enhancedInput)}
+                    placeholder={translate("login:passwordPlaceholder")}
+                    value={password}
+                    autoCapitalize="none"
+                    secureTextEntry={true}
+                    onChangeText={setPassword}
+                    placeholderTextColor={theme.colors.textDim}
+                  />
+                </View>
+              </View>
+
+              <Spacer height={spacing.s6} />
+
+              <Button
+                text={translate("profileSettings:sendVerificationEmail")}
+                style={themed($primaryButton)}
+                pressedStyle={themed($pressedButton)}
+                textStyle={themed($buttonText)}
+                onPress={handleChangeEmail}
+                disabled={!newEmail.trim() || !password || isLoading}
+                {...(isLoading
+                  ? {
+                      LeftAccessory: () => (
+                        <ActivityIndicator size="small" color={theme.colors.foreground} style={{marginRight: 8}} />
+                      ),
+                    }
+                  : {})}
+              />
             </View>
+          ) : (
+            <View style={themed($form)}>
+              <View style={themed($inputGroup)}>
+                <Text style={themed($inputLabel)}>{translate("profileSettings:emailChangeCodePlaceholder")}</Text>
+                <View style={themed($enhancedInputContainer)}>
+                  <TextInput
+                    hitSlop={{top: 16, bottom: 16}}
+                    style={themed($enhancedInput)}
+                    placeholder={translate("profileSettings:emailChangeCodePlaceholder")}
+                    value={code}
+                    autoCapitalize="none"
+                    keyboardType="number-pad"
+                    onChangeText={setCode}
+                    placeholderTextColor={theme.colors.textDim}
+                    autoFocus={true}
+                  />
+                </View>
+              </View>
 
-            <Spacer height={spacing.s6} />
+              <Spacer height={spacing.s6} />
 
-            <Button
-              text={translate("profileSettings:sendVerificationEmail")}
-              style={themed($primaryButton)}
-              pressedStyle={themed($pressedButton)}
-              textStyle={themed($buttonText)}
-              onPress={handleChangeEmail}
-              disabled={!newEmail.trim() || isLoading}
-              {...(isLoading
-                ? {
-                    LeftAccessory: () => (
-                      <ActivityIndicator size="small" color={theme.colors.foreground} style={{marginRight: 8}} />
-                    ),
-                  }
-                : {})}
-            />
-          </View>
+              <Button
+                text={translate("profileSettings:confirmEmailChange")}
+                style={themed($primaryButton)}
+                pressedStyle={themed($pressedButton)}
+                textStyle={themed($buttonText)}
+                onPress={handleConfirmCode}
+                disabled={!code.trim() || isLoading}
+                {...(isLoading
+                  ? {
+                      LeftAccessory: () => (
+                        <ActivityIndicator size="small" color={theme.colors.foreground} style={{marginRight: 8}} />
+                      ),
+                    }
+                  : {})}
+              />
+            </View>
+          )}
         </View>
       </ScrollView>
     </Screen>

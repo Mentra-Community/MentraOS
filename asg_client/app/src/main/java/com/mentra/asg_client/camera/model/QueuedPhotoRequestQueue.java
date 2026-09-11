@@ -57,6 +57,17 @@ public final class QueuedPhotoRequestQueue {
         return queue.peek();
     }
 
+    /** Rolls back an exact request that could not be dispatched to the camera service. */
+    public synchronized boolean remove(QueuedPhotoRequest request) {
+        if (!queue.remove(request)) {
+            return false;
+        }
+        if (callbackRegistry.get(request.requestId) == request.callback) {
+            callbackRegistry.remove(request.requestId);
+        }
+        return true;
+    }
+
     /**
      * Ensures the head (or a peeked) request has its callback before comparing camera config or
      * opening the HAL. Does not remove from the queue.

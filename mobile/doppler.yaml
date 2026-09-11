@@ -1,0 +1,24 @@
+# Repo-level Doppler defaults for the mobile client.
+#
+# Doppler is OPT-IN for mobile: it is the easy way to get the Mapbox tokens
+# (the navigation SDK's pk. runtime token + the sk. Downloads:Read build token)
+# injected into a build without hand-editing ~/.gradle/gradle.properties and
+# ~/.netrc. Run a build under Doppler to use it:
+#
+#   doppler login                 # one-time
+#   doppler setup                 # reads this file, auto-configures project+config
+#   doppler run -- bun android    # (or: bun ios) — Mapbox tokens injected
+#
+# Plain `bun android` / `bun ios` still work WITHOUT Doppler, provided the dev
+# has set the Mapbox tokens manually (~/.gradle/gradle.properties + ~/.netrc),
+# which is the pre-Doppler method. The Mapbox Nav SDK is a hard build dependency,
+# so a valid sk. must come from one of those two sources or the build fails at
+# dependency download.
+#
+# Only the Mapbox tokens are sourced from Doppler today; every other mobile env
+# value still comes from .env / .env.example. This file is checked in and
+# contains NO secrets — only the project pointer.
+
+setup:
+  - project: mentra-mobile-client
+    config: dev

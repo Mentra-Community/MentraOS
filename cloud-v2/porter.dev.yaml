@@ -1,0 +1,67 @@
+version: v2
+name: cloud-dev
+
+envGroups:
+  - cloud-v2-dev-doppler
+
+build:
+  method: docker
+  context: ../
+  dockerfile: ./docker/Dockerfile
+
+services:
+  - name: core
+    type: web
+    run: bun packages/core/src/index.ts
+    port: 3000
+    instances: 1
+    cpuCores: 0.25
+    ramMegabytes: 1024
+    domains:
+      - name: core.dev.us-west-2.mentraglass.com
+    livenessCheck:
+      enabled: true
+      httpPath: /healthz
+      timeoutSeconds: 3
+      initialDelaySeconds: 15
+    readinessCheck:
+      enabled: true
+      httpPath: /ready
+      timeoutSeconds: 5
+      initialDelaySeconds: 15
+    ingressAnnotations:
+      nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+      nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+      nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+    terminationGracePeriodSeconds: 10
+
+  - name: runtime
+    type: web
+    run: bun packages/runtime/src/index.ts
+    port: 3001
+    instances: 1
+    cpuCores: 0.5
+    ramMegabytes: 2048
+    domains:
+      - name: runtime.dev.us-west-2.mentraglass.com
+    env:
+      AUDIO_WORKERS: "1"
+    livenessCheck:
+      enabled: true
+      httpPath: /healthz
+      timeoutSeconds: 3
+      initialDelaySeconds: 15
+    readinessCheck:
+      enabled: true
+      httpPath: /ready
+      timeoutSeconds: 5
+      initialDelaySeconds: 15
+    ingressAnnotations:
+      nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
+      nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
+      nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
+    terminationGracePeriodSeconds: 10
+    additionalPorts:
+      - port: 8000
+        protocol: UDP
+        name: udp-audio

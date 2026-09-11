@@ -1,0 +1,9 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 512 512" role="img" aria-labelledby="title">
+  <title id="title">MentraOS</title>
+  <rect width="512" height="512" rx="64" fill="#fff" />
+  <g fill="#06bf73" transform="translate(77 160) scale(7.77)">
+    <rect y="13.51" width="10.94" height="10.94" />
+    <polygon points="28.3 24.45 8.72 10.94 8.72 0 28.3 13.51 28.3 24.45" />
+    <polygon points="46.09 24.45 26.51 10.94 26.51 0 46.09 13.51 46.09 24.45" />
+  </g>
+</svg>

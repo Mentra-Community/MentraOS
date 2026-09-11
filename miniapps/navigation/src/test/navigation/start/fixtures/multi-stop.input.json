@@ -1,0 +1,8 @@
+{
+  "stops": [
+    {"lat": 1, "lng": 2},
+    {"lat": 3, "lng": 4},
+    {"lat": 5, "lng": 6}
+  ],
+  "mode": "walking"
+}

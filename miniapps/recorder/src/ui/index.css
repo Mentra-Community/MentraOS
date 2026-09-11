@@ -1,0 +1,187 @@
+@import url("https://fonts.googleapis.com/css2?family=Red+Hat+Display:wght@400;500;600;700;800&display=swap");
+@import "tailwindcss";
+
+/* Light theme is the DEFAULT. The `.dark` class (toggled from useColorScheme,
+   i.e. what the Mentra host reports) flips to the dark palette. */
+:root {
+  --radius: 0.875rem;
+
+  /* iOS-style grouped look: WHITE page, soft-grey cards. */
+  --bg: #ffffff;
+  --surface: #f4f4f7; /* iOS secondary grouped background */
+  --surface-2: #e9e9ef;
+  --text: #1c1c1e; /* iOS label */
+  --text-muted: #8a8a8e; /* iOS secondary label */
+  --border: #ececf1;
+
+  /* Brand accent — the orange→red recorder waveform. */
+  --accent: #f4511e;
+  --accent-2: #e53935;
+  --accent-fg: #ffffff;
+  --rec: #ff3b30; /* recording red (FAB / stop) */
+  --green: #22c55e; /* play circles + live waveform */
+  --amber: #f59e0b; /* active toggle pill */
+
+  /* Brand gradients — tie the chrome to the orange→red logo. */
+  --rec-grad: linear-gradient(150deg, #ff7a45 0%, #ff3b30 100%);
+  --green-grad: linear-gradient(150deg, #34d97b 0%, #16a34a 100%);
+  --accent-grad: linear-gradient(135deg, var(--accent), var(--accent-2));
+
+  /* Soft, layered iOS-style elevation. */
+  --shadow-card: 0 1px 2px rgba(17, 24, 39, 0.04), 0 6px 18px rgba(17, 24, 39, 0.06);
+  --shadow-pop: 0 10px 34px rgba(17, 24, 39, 0.14);
+  --shadow-fab: 0 8px 22px rgba(255, 59, 48, 0.36), 0 2px 6px rgba(255, 59, 48, 0.28);
+
+  font-family:
+    "Red Hat Display",
+    ui-sans-serif,
+    system-ui,
+    -apple-system,
+    BlinkMacSystemFont,
+    "Segoe UI",
+    Roboto,
+    "Helvetica Neue",
+    Arial,
+    sans-serif;
+}
+
+.dark {
+  --bg: #0b0b0d;
+  --surface: #161619; /* zinc-900-ish */
+  --surface-2: #232327;
+  --text: #fafafa;
+  --text-muted: #a1a1aa; /* zinc-400 */
+  --border: #29292e;
+
+  --accent: #ff5a2c;
+  --accent-2: #ff3b30;
+  --accent-fg: #ffffff;
+  --rec: #ff3b30;
+  --green: #22c55e;
+  --amber: #fbbf24;
+
+  --rec-grad: linear-gradient(150deg, #ff7a45 0%, #ff3b30 100%);
+  --green-grad: linear-gradient(150deg, #34d97b 0%, #16a34a 100%);
+
+  --shadow-card: 0 1px 2px rgba(0, 0, 0, 0.5), 0 8px 22px rgba(0, 0, 0, 0.4);
+  --shadow-pop: 0 12px 36px rgba(0, 0, 0, 0.55);
+  --shadow-fab: 0 8px 24px rgba(255, 59, 48, 0.42), 0 2px 6px rgba(0, 0, 0, 0.4);
+}
+
+html,
+body,
+#root {
+  height: 100%;
+}
+
+body {
+  margin: 0;
+  padding: 0;
+  background: var(--bg);
+  color: var(--text);
+  overflow: hidden;
+  font-family: "Red Hat Display", -apple-system, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+/* Native feel: chrome can't be long-press selected. */
+:root {
+  user-select: none;
+  -webkit-user-select: none;
+  -webkit-touch-callout: none;
+}
+
+input,
+textarea,
+select,
+[contenteditable] {
+  user-select: text;
+  -webkit-user-select: text;
+}
+
+.scrollbar-hide::-webkit-scrollbar {
+  display: none;
+}
+.scrollbar-hide {
+  -ms-overflow-style: none;
+  scrollbar-width: none;
+}
+
+@keyframes rec-pulse {
+  0%,
+  100% {
+    opacity: 1;
+  }
+  50% {
+    opacity: 0.35;
+  }
+}
+.rec-pulse {
+  animation: rec-pulse 1.4s ease-in-out infinite;
+}
+
+@media (prefers-reduced-motion) {
+  .rec-pulse {
+    animation: none;
+  }
+}
+
+/* Lively waveform: each bar oscillates vertically around its level-driven height. */
+@keyframes wave-bounce {
+  0%,
+  100% {
+    transform: scaleY(0.5);
+  }
+  50% {
+    transform: scaleY(1);
+  }
+}
+.wave-bar {
+  transform-origin: center;
+  animation: wave-bounce 0.85s ease-in-out infinite;
+}
+@media (prefers-reduced-motion) {
+  .wave-bar {
+    animation: none;
+  }
+}
+
+/* Soft card elevation. */
+.elev {
+  box-shadow: var(--shadow-card);
+}
+
+/* Search/input field with an accent focus ring. */
+.field {
+  transition:
+    box-shadow 0.2s ease,
+    border-color 0.2s ease;
+}
+.field:focus-within {
+  border-color: color-mix(in srgb, var(--accent) 45%, var(--border));
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--accent) 14%, transparent);
+}
+
+/* Smooth height-animated disclosure (grid-rows 0fr → 1fr). */
+.expander {
+  display: grid;
+  grid-template-rows: 0fr;
+  transition: grid-template-rows 0.3s cubic-bezier(0.32, 0.72, 0, 1);
+}
+.expander.open {
+  grid-template-rows: 1fr;
+}
+.expander > .expander-inner {
+  overflow: hidden;
+  min-height: 0;
+}
+
+/* Tactile press feedback for tappable cards/buttons. */
+.press {
+  transition:
+    transform 0.12s ease,
+    box-shadow 0.2s ease;
+}
+.press:active {
+  transform: scale(0.985);
+}

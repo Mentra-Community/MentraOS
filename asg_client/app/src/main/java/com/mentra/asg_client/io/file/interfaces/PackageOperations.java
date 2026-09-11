@@ -28,12 +28,27 @@ public interface PackageOperations {
      * @return Total size in bytes
      */
     long getPackageSize(String packageName);
-    
+
     /**
      * Clean up old files in a package based on age
+     *
      * @param packageName The package name
      * @param maxAgeMs Maximum age in milliseconds
      * @return Number of files cleaned up
      */
     int cleanupOldFiles(String packageName, long maxAgeMs);
-} 
+
+    /**
+     * Clean up orphaned SDK captures from the gallery-hidden pending directory only.
+     *
+     * <p>The default keeps alternate implementations source/binary compatible. Implementations that
+     * use {@code FileManager.SDK_PENDING_DIR_NAME} should override it.
+     *
+     * @param packageName The package name
+     * @param maxAgeMs Maximum age in milliseconds
+     * @return Number of pending files cleaned up
+     */
+    default int cleanupOldSdkPendingFiles(String packageName, long maxAgeMs) {
+        return 0;
+    }
+}

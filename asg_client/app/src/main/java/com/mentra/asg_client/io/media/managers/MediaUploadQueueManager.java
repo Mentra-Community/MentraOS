@@ -5,6 +5,8 @@ import android.util.Log;
 
 import androidx.annotation.NonNull;
 
+import com.mentra.asg_client.io.media.utils.MediaStorage;
+
 import org.json.JSONArray;
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -72,7 +74,7 @@ public class MediaUploadQueueManager {
      */
     public MediaUploadQueueManager(@NonNull Context context) {
         mContext = context.getApplicationContext();
-        mQueueDir = new File(mContext.getExternalFilesDir(null), QUEUE_DIR_NAME);
+        mQueueDir = new File(MediaStorage.getMediaRoot(mContext), QUEUE_DIR_NAME);
         mManifestFile = new File(mQueueDir, MANIFEST_FILENAME);
         mExecutor = Executors.newSingleThreadExecutor();
 

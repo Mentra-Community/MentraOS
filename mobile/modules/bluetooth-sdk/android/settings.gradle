@@ -1,1 +1,4 @@
 include ':lc3Lib'
+
+include ':silero'
+project(':silero').projectDir = new File(rootDir, 'silero')

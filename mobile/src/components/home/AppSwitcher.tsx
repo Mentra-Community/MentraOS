@@ -1,5 +1,5 @@
 import {RefObject, useCallback, useEffect, useRef, useState} from "react"
-import {View, Dimensions, Pressable, Platform} from "react-native"
+import {View, Dimensions, Pressable, Platform, BackHandler} from "react-native"
 import {Image, useImage} from "expo-image"
 import {Text} from "@/components/ignite/"
 import Animated, {
@@ -16,18 +16,12 @@ import Animated, {
 } from "react-native-reanimated"
 import {Gesture, GestureDetector} from "react-native-gesture-handler"
 import {runOnJS, scheduleOnRN} from "react-native-worklets"
-import {
-  BgTimer,
-  saveLastOpenTime,
-  sortAppsByLastOpenTime,
-  useActiveApps,
-  useAppStatusStore,
-  type ClientApp,
-} from "@mentra/island"
+import {BgTimer, saveLastOpenTime, sortAppsByLastOpenTime, engine, type ClientApp, useActiveApps, useSetForeground} from "@mentra/engine"
 import AppIcon from "@/components/home/AppIcon"
+import {isOfflineHosted} from "@/components/miniapp/offlineHostedPackages"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 import {useNavigationStore} from "@/stores/navigation"
-import {SETTINGS, useSetting} from "@/stores/settings"
+import {SETTINGS, useSetting} from "@mentra/engine"
 import {BlurView} from "expo-blur"
 import GlassView from "@/components/ui/GlassView"
 import {hapticBuzz} from "@/utils/utils"
@@ -194,6 +188,14 @@ function AppCardItem({app, index, count, translateX, onDismiss, onSelect}: AppCa
 
   const imageHeight = imageAspectRatio != null ? (CARD_WIDTH - 4) * imageAspectRatio : null
 
+  const SwipeIndicator = useCallback(() => {
+    return (
+      <View className="absolute bottom-2 left-0 right-0 items-center">
+        <View className="w-24 h-[5px] rounded-full bg-white/30" />
+      </View>
+    )
+  }, [])
+
   return (
     <GestureDetector gesture={composedGesture}>
       <AnimatedPressable
@@ -202,6 +204,7 @@ function AppCardItem({app, index, count, translateX, onDismiss, onSelect}: AppCa
           {
             width: CARD_WIDTH - 4, // idk why we need this -4, but it's more work than it's worth to figure out
             // height: imageHeight,
+            height: CARD_HEIGHT,
             position: "absolute",
             left: 0,
             // zIndex: index,// ensure the cards are on top of each other
@@ -217,27 +220,23 @@ function AppCardItem({app, index, count, translateX, onDismiss, onSelect}: AppCa
           </Animated.View>
         </View>
         <View
-          className="rounded-3xl overflow-hidden w-full shadow-2xl bg-primary-foreground"
+          className="rounded-4xl overflow-hidden w-full shadow-2xl bg-primary-foreground"
           style={{
             boxShadow: "0px 8px 32px 0px rgba(0, 0, 0, 0.2)",
-            height: imageHeight,
+            // height: imageHeight,
+            height: CARD_HEIGHT - 24,
           }}>
-          {!app.screenshot && (
-            <View className="flex-1 items-center justify-center">
-              <AppIcon app={app} className="w-12 h-12" />
-            </View>
-          )}
-
-          {app.screenshot && (
+          {app.screenshot ? (
             <View className="flex-1" style={{overflow: "hidden"}}>
               <Image source={{uri: app.screenshot}} style={{width: "100%", height: "100%"}} contentFit="cover" />
+              <SwipeIndicator />
+            </View>
+          ) : (
+            <View className="flex-1 items-center justify-center">
+              <AppIcon app={app} className="w-12 h-12" />
+              <SwipeIndicator />
             </View>
           )}
-        </View>
-
-        {/* Swipe indicator */}
-        <View className="absolute bottom-2 left-0 right-0 items-center">
-          <View className="w-24 h-[5px] rounded-full bg-white/30" />
         </View>
       </AnimatedPressable>
     </GestureDetector>
@@ -279,6 +278,7 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
   const prevTranslationX = useSharedValue(0)
   const openX = useSharedValue(-1)
   const {push} = useNavigationStore.getState()
+  const setForeground = useSetForeground()
   const insets = useSaferAreaInsets()
   let directApps = useActiveApps()
   let [apps, setApps] = useState<ClientApp[]>([])
@@ -286,6 +286,11 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
   const [blurPointerEvents, setBlurPointerEvents] = useState<"auto" | "none">("none")
   const [_androidBlur] = useSetting(SETTINGS.android_blur.key)
   const [showNoAppsMessage, setShowNoAppsMessage] = useState(true)
+  // JS-thread mirror of swipeProgress open-ness, so the Android hardware back
+  // gesture can dismiss the switcher (the switcher is an overlay, not a route,
+  // so navigation's back handler never sees it). Synced from the swipeProgress
+  // useAnimatedReaction below.
+  const [isOpen, setIsOpen] = useState(false)
   const dotsPanGestureRef = useRef(Gesture.Pan())
 
   // for testing:
@@ -296,12 +301,23 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
   //   return useAppletStatusStore.getState().apps.filter((a) => activePackageNames.includes(a.packageName))
   // }, [activePackageNames])
 
+  // While a card tap is mid-flight (selection → app opens under the drawer →
+  // drawer closes ~750ms later), the store updates several times
+  // (last-open-time save, foregrounded flip) and each poll would re-sort the
+  // VISIBLE card stack — the tapped card jumps to the end of the list and the
+  // whole strip thrashes left/right ("seizure" during open,
+  // rep_01KY6D2EMFXC8JQKZH9EGMZ5G3). Freeze the rendered order for the whole
+  // selection window and apply the final order once, after the close finishes.
+  const selectionInFlight = useRef(false)
+  const directAppsRef = useRef(directApps)
+  directAppsRef.current = directApps
+
   useEffect(() => {
+    if (selectionInFlight.current) return
     let cancelled = false
     sortAppsByLastOpenTime(directApps).then((sorted) => {
-      if (!cancelled) setApps(sorted)
+      if (!cancelled && !selectionInFlight.current) setApps(sorted)
     })
-    // console.log("apps screenshot", apps.map((a) => a.screenshot))
     return () => {
       cancelled = true
     }
@@ -320,9 +336,27 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
   useEffect(() => {
     if (prevAppsLength.current === 0 && apps.length > 0) {
       translateX.value = -((apps.length - 2) * CARD_WIDTH)
+      // Opened-before-mount case (see mount-sync effect below): snap to the
+      // most recent card once the async-sorted list lands.
+      if (swipeProgress.value > 0.5) {
+        goToIndex(apps.length - 1, true)
+      }
     }
     prevAppsLength.current = apps.length
   }, [apps.length])
+
+  // The Compositor's bottom swipe-up can commit while home isn't mounted
+  // (clearHistoryAndGoHome remounts this screen with the shared progress
+  // already at 1), so the useAnimatedReaction below never sees the 0→1
+  // crossing — sync the open state on mount instead.
+  useEffect(() => {
+    if (swipeProgress.value > 0.5) {
+      openX.value = 0
+      setBlurPointerEvents("auto")
+      setShowNoAppsMessage(false)
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [])
 
   // Derive animations from swipeProgress
   const backdropStyle = useAnimatedStyle(() => ({
@@ -564,29 +598,39 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
         goToIndex(index)
       }
       // setTimeout(() => {
-      useAppStatusStore.getState().stop(packageName)
+      engine.miniapps.stop(packageName)
       // }, 100)
 
-      // auto-close if there are no more apps left:
-      if (apps.length === 1) {
-        handleClose()
-      }
+      // Auto-close is handled by the drained-list effect (near handleClose)
+      // rather than a guard here: `stop()` updates the store async, and rapid
+      // multi-swipes fire several dismiss callbacks that all close over the
+      // same stale `apps.length`, so an `apps.length === 1` check here never
+      // matches and the switcher gets stuck open on an empty (blurred) screen.
     },
     [apps.length, translateX.value, apps],
   )
+
+  const goToEnd = useCallback(() => {
+    goToIndex(apps.length-1, true)
+  }, [apps.length])
 
   const goToIndex = useCallback(
     (index: number, instant: boolean = false) => {
       index = index - 1
       const cardWidth = CARD_WIDTH + CARD_SPACING
       const clamped = Math.max(-1, Math.min(index, apps.length - 1))
+      console.log("APPSWITCHER: goToIndex()", index, clamped, instant, apps.length)
+      if (clamped === targetIndex.value) {
+        // console.log("APPSWITCHER: goToIndex() - already at index", index)
+        return
+      }
       targetIndex.value = clamped
       let target = -clamped * cardWidth
       if (instant) {
         translateX.value = withTiming(target, {duration: 10})
       } else {
         translateX.value = withSpring(target, {
-          damping: 1000,
+          damping: 500,
           stiffness: 350,
           overshootClamping: true,
         })
@@ -604,21 +648,23 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
       return
     }
 
+    // Freeze the visible card order until the drawer has fully closed (see
+    // the sort effect above). Released in handleClose's settle timeout.
+    selectionInFlight.current = true
+
     // Handle apps with custom routes (offline or online with offlineRoute override)
-    if (applet.offlineRoute) {
+    if (applet.offlineRoute && isOfflineHosted(applet.packageName)) {
+      // Registry-hosted offline apps render in the Compositor overlay like
+      // local miniapps (setForeground already saves last-open time).
+      setForeground(applet.packageName)
+    } else if (applet.offlineRoute) {
       saveLastOpenTime(applet.packageName)
       push(applet.offlineRoute, {transition: "fade"})
-    } else if (applet.webviewUrl && applet.healthy) {
-      saveLastOpenTime(applet.packageName)
-      push("/applet/webview", {
-        webviewURL: applet.webviewUrl,
-        appName: applet.name,
-        packageName: applet.packageName,
-        transition: "fade",
-      })
     } else if (applet.local) {
-      saveLastOpenTime(applet.packageName)
-      useAppStatusStore.getState().setForeground(applet.packageName)
+      // Local miniapps are rendered by the Compositor overlay rather than a
+      // pushed route — foreground the app and let <Compositor /> mount its
+      // WebView (with the opening animation + back-swipe to background).
+      setForeground(applet.packageName)
     } else {
       saveLastOpenTime(applet.packageName)
       push("/applet/settings", {
@@ -641,8 +687,38 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
     setTimeout(() => {
       swipeProgress.value = 0
       // goToIndex(apps.length - 1, true)
+      // Selection window over (drawer is fully hidden): unfreeze the card
+      // order and apply the sort that was suppressed during the open/close.
+      if (selectionInFlight.current) {
+        selectionInFlight.current = false
+        sortAppsByLastOpenTime(directAppsRef.current).then((sorted) => {
+          if (!selectionInFlight.current) setApps(sorted)
+        })
+      }
     }, 250)
   }, [apps.length])
+
+  // Edge-triggered close when the open switcher's app list has actually drained
+  // to empty. Driven off the real rendered `apps` list (the source of truth),
+  // so it fires exactly once no matter how many cards were flung at once.
+  useEffect(() => {
+    if (isOpen && apps.length === 0) {
+      handleClose()
+    }
+  }, [isOpen, apps.length, handleClose])
+
+  // Android: the hardware/native back gesture should dismiss the switcher. It's an
+  // overlay (not a route), so navigation never sees it — register a BackHandler
+  // while open and consume the event so it doesn't fall through to navigating away
+  // from home.
+  useEffect(() => {
+    if (Platform.OS !== "android" || !isOpen) return
+    const sub = BackHandler.addEventListener("hardwareBackPress", () => {
+      handleClose()
+      return true
+    })
+    return () => sub.remove()
+  }, [isOpen, handleClose])
 
   useAnimatedReaction(
     () => swipeProgress.value,
@@ -650,7 +726,8 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
       if (previous !== null && current == 1 && previous < 1) {
         // setTimeout(() => {
         if (apps.length > 1) {
-          runOnJS(goToIndex)(apps.length - 1, true)
+          console.log("APPSWITCHER: swipeProgress.value - opening to last index", apps.length - 1)
+          runOnJS(goToEnd)()
         }
         openX.value = withSpring(0, {damping: 200, stiffness: 1000, overshootClamping: true})
         // }, 200)
@@ -660,9 +737,10 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
         // scheduleOnRN(() => {setIsOpen(false)})
       }
       if (previous !== null && current > 0 && previous == 0) {
-        // console.log("just opened")
-        runOnJS(goToIndex)(apps.length - 1, true)
+        console.log("APPSWITCHER: JUST OPENED: swipeProgress.value - opening to last index", apps.length - 1)
+        runOnJS(goToEnd)()
         runOnJS(setBlurPointerEvents)("auto")
+        runOnJS(setIsOpen)(true)
         if (apps.length > 0) {
           runOnJS(setShowNoAppsMessage)(false)
         }
@@ -671,6 +749,7 @@ export default function AppSwitcher({swipeProgress, blurTargetRef: _blurTargetRe
         // console.log("just closed")
         runOnJS(setBlurPointerEvents)("none")
         runOnJS(setShowNoAppsMessage)(true)
+        runOnJS(setIsOpen)(false)
       }
     },
   )

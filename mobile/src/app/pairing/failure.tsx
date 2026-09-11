@@ -1,4 +1,4 @@
-import BluetoothSdk from "@mentra/bluetooth-sdk"
+import {engine} from "@mentra/engine"
 import {useLocalSearchParams} from "expo-router"
 import {useEffect} from "react"
 import {View} from "react-native"
@@ -30,7 +30,10 @@ export default function PairingFailureScreen() {
   }, [])
 
   const handleRetry = () => {
-    BluetoothSdk.forget()
+    // Clears the failed attempt; a pre-existing pairing (re-pair) is preserved.
+    void engine.pairing.abandonAttempt().catch((error) => {
+      console.warn("Pairing retry cleanup failed:", error)
+    })
     clearHistoryAndGoHome()
     push("/pairing/select-glasses-model")
   }

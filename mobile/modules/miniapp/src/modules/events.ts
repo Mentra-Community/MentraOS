@@ -9,7 +9,7 @@
  *   - session.imu.onHeadPosition(...)
  *   - session.location.onUpdate(...)
  *   - session.glasses.onBattery(...) / onConnection(...)
- *   - session.phone.onNotification(...) / onCalendarEvent(...) / onBattery(...)
+ *   - session.phone.notifications.on(...) / session.phone.onBattery(...)
  *
  * This module's only public method is `subscribe(rawStreamType, handler)` —
  * a forward-compat escape hatch for new event types not yet wrapped on a
@@ -30,10 +30,13 @@
 
 import {EventEmitter} from "eventemitter3"
 
-import {MiniappRequestType} from "../protocol"
+import {MiniappRequestType, MiniappStreamType} from "../protocol"
 import {MiniappSession} from "../session"
 
 export type UnsubscribeFn = () => void
+
+/** @internal Host-selected delivery target for a transcription event. */
+export type TranscriptionEventRoute = "default" | "forceLocal" | "all"
 
 // ---------------------------------------------------------------------------
 // Shared event data shapes — re-exported by index.ts so consumers can type
@@ -51,6 +54,12 @@ export interface TranslationData {
   isFinal: boolean
   sourceLanguage: string
   targetLanguage: string
+  /** Source-language text of the same utterance, when the provider supplies it. */
+  originalText?: string
+  /** Stable id correlating interim + final results of one utterance. */
+  utteranceId?: string
+  /** Speaker id when the provider reports diarization. */
+  speakerId?: string
 }
 
 export interface ButtonPressData {
@@ -60,6 +69,15 @@ export interface ButtonPressData {
 
 export interface HeadPositionData {
   position: "up" | "down"
+}
+
+export interface AccelData {
+  /** Accelerometer axes in g (gravity-normalized). */
+  x: number
+  y: number
+  z: number
+  /** Unix ms timestamp of the reading. */
+  timestamp: number
 }
 
 export interface LocationData {
@@ -73,6 +91,11 @@ export interface LocationData {
   correlationId?: string
 }
 
+export interface HeadingData {
+  /** Compass heading in degrees, 0 = north, 90 = east. */
+  degrees: number
+}
+
 export interface BatteryData {
   level: number
   charging: boolean
@@ -81,6 +104,13 @@ export interface BatteryData {
 export interface ConnectionData {
   connected: boolean
   modelName?: string
+}
+
+/** Glasses Wi-Fi state. `connected` is false on glasses without Wi-Fi or when offline. */
+export interface WifiData {
+  connected: boolean
+  ssid?: string
+  localIp?: string
 }
 
 export interface PhoneNotificationData {
@@ -108,27 +138,14 @@ export interface NotificationDismissedData {
   timestamp: number
 }
 
-export interface CalendarEventData {
-  eventId: string
-  title: string
-  /** ISO 8601 start time. */
-  dtStart: string
-  /** ISO 8601 end time. */
-  dtEnd: string
-  timezone: string
-  allDay: boolean
-  location: string
-  notes: string
-  calendarId: string
-}
-
 export interface VadData {
   /** True while the user is speaking (voice detected), false when silent. */
   status: boolean
 }
 
 export interface TouchData {
-  kind: "click" | "double_click" | "scroll_top" | "scroll_bottom" | string
+  /** The gesture: single_tap, double_tap, triple_tap, long_press, swipe_up, or swipe_down. */
+  kind: "single_tap" | "double_tap" | "triple_tap" | "long_press" | "swipe_up" | "swipe_down" | string
 }
 
 export interface AudioChunkData {
@@ -144,8 +161,10 @@ export interface AudioChunkData {
 
 export class EventManager {
   private readonly emitter = new EventEmitter()
-  /** Stream -> ref count. Outbound SUBSCRIBE is sent when refs transition 0↔1. */
+  /** Stream -> ref count. Outbound SUBSCRIBE tracks active streams and routing changes. */
   private readonly refCounts = new Map<string, number>()
+  /** Transcription stream -> refs that require on-device-only processing. */
+  private readonly forceLocalRefCounts = new Map<string, number>()
 
   constructor(private readonly session: MiniappSession) {}
 
@@ -154,23 +173,58 @@ export class EventManager {
    * suffix like `"transcription:en-US"`. Forward-compat escape hatch for new
    * event types not yet wrapped on a domain module. Most authors should use
    * typed methods on domain modules instead.
+   *
+   * Stream names beginning with `_` (e.g. `_ui` for the session.ui bus) are
+   * INTERNAL — they ride the local _forwardEvent fan-out and never appear in
+   * the outbound SUBSCRIBE list. Native already knows to deliver UI envelopes
+   * via a separate envelope `type`; the EventManager only routes them
+   * locally.
    */
-  subscribe(stream: string, handler: (data: unknown) => void): UnsubscribeFn {
-    this.emitter.on(stream, handler)
-    const before = this.refCounts.get(stream) ?? 0
-    this.refCounts.set(stream, before + 1)
-    if (before === 0) {
-      this.sendSubscriptionUpdate()
+  subscribe(stream: string, handler: (data: unknown) => void, options: {forceLocal?: boolean} = {}): UnsubscribeFn {
+    const isInternal = stream.startsWith("_")
+    const forceLocal = options.forceLocal === true && stream.startsWith(`${MiniappStreamType.TRANSCRIPTION}:`)
+    const listener = (data: unknown, route?: TranscriptionEventRoute) => {
+      if (stream.startsWith(`${MiniappStreamType.TRANSCRIPTION}:`)) {
+        // Hosts that predate routed transcription events omit `route`. Treat
+        // those events as the default/cloud path so a forceLocal listener can
+        // never accidentally receive cloud text.
+        if (forceLocal ? route !== "forceLocal" && route !== "all" : route === "forceLocal") return
+      }
+      handler(data)
+    }
+    this.emitter.on(stream, listener)
+    if (!isInternal) {
+      const before = this.refCounts.get(stream) ?? 0
+      this.refCounts.set(stream, before + 1)
+      const forceLocalBefore = this.forceLocalRefCounts.get(stream) ?? 0
+      const defaultBefore = before - forceLocalBefore
+      if (forceLocal) this.forceLocalRefCounts.set(stream, forceLocalBefore + 1)
+      if (before === 0 || (forceLocal && forceLocalBefore === 0) || (!forceLocal && defaultBefore === 0)) {
+        this.sendSubscriptionUpdate()
+      }
     }
     return () => {
-      this.emitter.off(stream, handler)
+      this.emitter.off(stream, listener)
+      if (isInternal) return
       const current = this.refCounts.get(stream) ?? 0
+      const forceLocalCurrent = this.forceLocalRefCounts.get(stream) ?? 0
+      let subscriptionChanged = current <= 1
       if (current <= 1) {
         this.refCounts.delete(stream)
-        this.sendSubscriptionUpdate()
       } else {
         this.refCounts.set(stream, current - 1)
       }
+      if (forceLocal) {
+        if (forceLocalCurrent <= 1) {
+          this.forceLocalRefCounts.delete(stream)
+          subscriptionChanged = true
+        } else {
+          this.forceLocalRefCounts.set(stream, forceLocalCurrent - 1)
+        }
+      } else if (current - forceLocalCurrent <= 1) {
+        subscriptionChanged = true
+      }
+      if (subscriptionChanged) this.sendSubscriptionUpdate()
     }
   }
 
@@ -178,6 +232,7 @@ export class EventManager {
   unsubscribeAll(): void {
     this.emitter.removeAllListeners()
     this.refCounts.clear()
+    this.forceLocalRefCounts.clear()
     this.sendSubscriptionUpdate()
   }
 
@@ -186,23 +241,51 @@ export class EventManager {
   // -------------------------------------------------------------------------
 
   /** @internal */
-  _forwardEvent(stream: string, data: unknown): void {
-    this.emitter.emit(stream, data)
+  _forwardEvent(stream: string, data: unknown, transcriptionRoute?: TranscriptionEventRoute): void {
+    this.emitter.emit(stream, data, transcriptionRoute)
 
-    // Wildcard fan-out: a handler subscribed to "transcription:auto" should
-    // receive any "transcription:<lang>" event. The detected language is in
-    // data.transcribeLanguage. Same for translation.
+    // Wildcard fan-out: handlers register under wildcard patterns
+    // ("transcription:auto", "translation:*:<target>", …) but the host
+    // delivers events under the CONCRETE stream key
+    // ("transcription:en-US", "translation:en:es"). Re-emit on every
+    // pattern the concrete key satisfies — the same pattern set
+    // LocalMiniappRuntime.forwardEvent matches on the host side —
+    // otherwise a wildcard subscriber never fires.
     if (stream.startsWith("transcription:") && stream !== "transcription:auto") {
-      this.emitter.emit("transcription:auto", data)
-    } else if (stream.startsWith("translation:") && stream !== "translation:auto") {
-      this.emitter.emit("translation:auto", data)
+      this.emitter.emit("transcription:auto", data, transcriptionRoute)
+    } else if (stream.startsWith("translation:")) {
+      const parts = stream.split(":")
+      const patterns = new Set<string>(["translation:auto"])
+      if (parts.length === 3) {
+        const [, source, target] = parts
+        patterns.add("translation:*:*")
+        patterns.add(`translation:*:${target}`)
+        patterns.add(`translation:${source}:*`)
+      }
+      patterns.delete(stream) // exact key already emitted above
+      for (const pattern of patterns) {
+        this.emitter.emit(pattern, data)
+      }
     }
   }
 
   private sendSubscriptionUpdate(): void {
+    const subscriptions = Array.from(this.refCounts.keys()).map((stream) => {
+      if (stream === MiniappStreamType.LOCATION_UPDATE) return {stream: "location_stream", rate: "realtime"}
+
+      const forceLocalRefs = this.forceLocalRefCounts.get(stream) ?? 0
+      if (forceLocalRefs === 0) return stream
+
+      const totalRefs = this.refCounts.get(stream) ?? 0
+      return {
+        stream,
+        forceLocal: true,
+        ...(totalRefs > forceLocalRefs ? {includeCloud: true} : {}),
+      }
+    })
     this.session.sendOneShot({
       type: MiniappRequestType.SUBSCRIBE,
-      subscriptions: Array.from(this.refCounts.keys()),
+      subscriptions,
     })
   }
 }

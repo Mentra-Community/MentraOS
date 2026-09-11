@@ -4,7 +4,7 @@ import {
   INVALID_DOWNLOADED_MEDIA,
   validateCaptureMetadataForDownload,
   validateDownloadedMediaFile,
-} from "./galleryMediaValidation"
+} from "../../../modules/engine/src/services/asg/galleryMediaValidation"
 
 jest.mock("@dr.pogodin/react-native-fs", () => ({
   exists: jest.fn(),

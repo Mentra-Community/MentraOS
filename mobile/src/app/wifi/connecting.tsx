@@ -1,15 +1,60 @@
-import BluetoothSdk from "@mentra/bluetooth-sdk"
+import {engine} from "@mentra/engine"
 import {useLocalSearchParams} from "expo-router"
-import {useEffect, useRef, useState, useCallback} from "react"
+import {useEffect, useState, useCallback} from "react"
 import {ActivityIndicator, View} from "react-native"
 import {Button, Header, Icon, Screen, Text} from "@/components/ignite"
 import {usePushPrevious} from "@/contexts/NavigationHistoryContext"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
-import {useGlassesStore} from "@/stores/glasses"
 import WifiCredentialsService from "@/utils/wifi/WifiCredentialsService"
 import {MentraLogoStandalone} from "@/components/brands/MentraLogoStandalone"
-import {translate} from "@/i18n"
+import {translate, type TxKeyPath} from "@/i18n"
+
+type WifiConnectionErrorCopy = {
+  titleTx: TxKeyPath
+  descriptionTx: TxKeyPath
+}
+
+function wifiConnectionErrorCopy(error: unknown): WifiConnectionErrorCopy {
+  const code = typeof (error as {code?: unknown})?.code === "string" ? (error as {code: string}).code : undefined
+  const message = error instanceof Error ? error.message : String(error)
+
+  if (code === "bluetooth_powered_off") {
+    return {
+      titleTx: "wifi:errors.bluetoothPoweredOffTitle",
+      descriptionTx: "wifi:errors.bluetoothPoweredOffDescription",
+    }
+  }
+  if (code === "bluetooth_permission_denied") {
+    return {
+      titleTx: "wifi:errors.bluetoothPermissionTitle",
+      descriptionTx: "wifi:errors.bluetoothPermissionDescription",
+    }
+  }
+  if (code === "bluetooth_unsupported") {
+    return {
+      titleTx: "wifi:errors.bluetoothUnsupportedTitle",
+      descriptionTx: "wifi:errors.bluetoothUnsupportedDescription",
+    }
+  }
+  if (code === "request_in_flight") {
+    return {
+      titleTx: "wifi:errors.connectionInProgressTitle",
+      descriptionTx: "wifi:errors.connectionInProgressDescription",
+    }
+  }
+  if (code === "request_timeout" || message.includes("timed out")) {
+    return {
+      titleTx: "wifi:errors.glassesNoResponseTitle",
+      descriptionTx: "wifi:errors.glassesNoResponseDescription",
+    }
+  }
+
+  return {
+    titleTx: "wifi:errors.connectionFailedTitle",
+    descriptionTx: "wifi:errors.connectionFailedDescription",
+  }
+}
 
 export default function WifiConnectingScreen() {
   const params = useLocalSearchParams()
@@ -18,95 +63,58 @@ export default function WifiConnectingScreen() {
   const password = (params.password as string) || ""
   const rememberPassword = (params.rememberPassword as string) === "true"
   const returnTo = params.returnTo as string | undefined
+  const returnToMiniapp = params.returnToMiniapp as string | undefined
   const _nextRoute = params.nextRoute as string | undefined
 
   const {theme} = useAppTheme()
   const [connectionStatus, setConnectionStatus] = useState<"connecting" | "success" | "failed">("connecting")
   const [errorMessage, setErrorMessage] = useState("")
-  const connectionTimeoutRef = useRef<ReturnType<typeof setTimeout> | null>(null)
-  const failureGracePeriodRef = useRef<ReturnType<typeof setTimeout> | null>(null)
+  const [errorDescription, setErrorDescription] = useState("")
 
-  const {goBack, push} = useNavigationStore.getState()
+  const {goBack, push, clearHistoryAndGoHome} = useNavigationStore.getState()
   const pushPrevious = usePushPrevious()
-  const connectedWifiSsid = useGlassesStore((state) => (state.wifi.state === "connected" ? state.wifi.ssid : undefined))
 
   useEffect(() => {
     // Start connection attempt
     attemptConnection()
-
-    return () => {
-      if (connectionTimeoutRef.current) {
-        clearTimeout(connectionTimeoutRef.current)
-        connectionTimeoutRef.current = null
-      }
-      if (failureGracePeriodRef.current) {
-        clearTimeout(failureGracePeriodRef.current)
-        failureGracePeriodRef.current = null
-      }
-    }
   }, [ssid])
 
-  useEffect(() => {
-    console.log("WiFi connection status changed:", connectedWifiSsid)
+  const attemptConnection = async () => {
+    try {
+      console.log("Attempting to send wifi credentials to Core", ssid, password)
+      await engine.glasses.wifi.connect(ssid, password)
 
-    if (connectedWifiSsid === ssid) {
-      if (connectionTimeoutRef.current) {
-        clearTimeout(connectionTimeoutRef.current)
-        connectionTimeoutRef.current = null
-      }
-      if (failureGracePeriodRef.current) {
-        clearTimeout(failureGracePeriodRef.current)
-        failureGracePeriodRef.current = null
-      }
-
-      // Save credentials ONLY on successful connection if checkbox was checked
-      // This ensures we never save wrong passwords
+      // Save credentials ONLY on successful connection if checkbox was checked.
+      // This ensures we never save wrong passwords.
       if (password && rememberPassword) {
         WifiCredentialsService.saveCredentials(ssid, password, true)
         WifiCredentialsService.updateLastConnected(ssid)
       }
 
       setConnectionStatus("success")
-      // Don't show banner anymore since we have a dedicated success screen
-      // User will manually dismiss with Done button
-    } else if (connectionStatus === "connecting" && !failureGracePeriodRef.current) {
-      // Set up a grace period before showing failure. The glasses can briefly
-      // report old or disconnected WiFi state while applying new credentials.
-      failureGracePeriodRef.current = setTimeout(() => {
-        console.log("#$%^& Failed to connect to the network. Please check your password and try again.")
-        setConnectionStatus("failed")
-        setErrorMessage("Failed to connect to the network. Please check your password and try again.")
-        failureGracePeriodRef.current = null
-      }, 10000)
-    }
-  }, [connectedWifiSsid, connectionStatus, password, rememberPassword, ssid])
-
-  const attemptConnection = async () => {
-    try {
-      console.log("Attempting to send wifi credentials to Core", ssid, password)
-      await BluetoothSdk.sendWifiCredentials(ssid, password)
-
-      // Set timeout for connection attempt (20 seconds)
-      connectionTimeoutRef.current = setTimeout(() => {
-        if (connectionStatus === "connecting") {
-          setConnectionStatus("failed")
-          setErrorMessage("Connection timed out. Please try again.")
-        }
-      }, 20000)
     } catch (error) {
-      console.error("Error sending WiFi credentials:", error)
+      console.error("Error connecting WiFi:", error)
+      const copy = wifiConnectionErrorCopy(error)
       setConnectionStatus("failed")
-      setErrorMessage("Failed to send credentials to glasses. Please try again.")
+      setErrorMessage(translate(copy.titleTx))
+      setErrorDescription(translate(copy.descriptionTx))
     }
   }
 
   const handleTryAgain = () => {
     setConnectionStatus("connecting")
     setErrorMessage("")
+    setErrorDescription("")
     attemptConnection()
   }
 
-  const handleSuccess = useCallback(() => {
+  const handleSuccess = useCallback(async () => {
+    if (returnToMiniapp) {
+      clearHistoryAndGoHome({transition: "fade"})
+      await engine.miniapps.setForeground(returnToMiniapp)
+      return
+    }
+
     const history = useNavigationStore.getState().history
     // Check if OTA check-for-updates is already in the stack (initial pairing flow)
     const otaIndex = history.indexOf("/ota/check-for-updates")
@@ -125,7 +133,7 @@ export default function WifiConnectingScreen() {
       console.log("WiFi success: OTA not in stack, pushing /ota/check-for-updates")
       push("/ota/check-for-updates")
     }
-  }, [pushPrevious, push])
+  }, [clearHistoryAndGoHome, pushPrevious, push, returnToMiniapp])
 
   const handleHeaderBack = useCallback(() => {
     goBack()
@@ -169,9 +177,9 @@ export default function WifiConnectingScreen() {
                 <Icon name="wifi-off" size={64} color={theme.colors.destructive} />
               </View>
               <Text className="text-2xl font-semibold text-text text-center mb-6">{errorMessage}</Text>
-              <Text className="text-base text-muted-foreground text-center mb-8 px-8" tx="wifi:failedDescription" />
+              <Text className="text-base text-muted-foreground text-center mb-8 px-8" text={errorDescription} />
             </View>
-            <Button text="Try Again" onPress={handleTryAgain} />
+            <Button tx="common:tryAgain" onPress={handleTryAgain} />
           </View>
         )
     }

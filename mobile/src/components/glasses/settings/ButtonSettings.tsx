@@ -7,7 +7,7 @@ import {AppPicker} from "@/components/settings/AppPicker"
 import ToggleSetting from "@/components/settings/ToggleSetting"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {translate} from "@/i18n"
-import type {ClientApp} from "@mentra/island"
+import type {ClientApp} from "@mentra/engine"
 import {ThemedStyle} from "@/theme"
 import GlassView from "@/components/ui/GlassView"
 interface ButtonSettingsProps {

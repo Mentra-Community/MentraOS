@@ -7,7 +7,7 @@ class STTTools {
         // Send partial result to server witgetConnectedBluetoothNameh proper formatting
         let transcriptionLanguage =
             UserDefaults.standard.string(forKey: "STTModelLanguageCode") ?? "en-US"
-        Bridge.log("Mentra: Sending partial transcription: \(text), \(transcriptionLanguage)")
+        // Bridge.log("Mentra: Sending partial transcription: \(text), \(transcriptionLanguage)")
         let transcription: [String: Any] = [
             "type": "local_transcription",
             "text": transcriptionLanguage == "en-US" ? text.lowercased() : text,
@@ -67,16 +67,18 @@ class STTTools {
         }
 
         // Check for CTC model
-        let ctcModelPath = (modelPath as NSString).appendingPathComponent("model.int8.onnx")
-        if fileManager.fileExists(atPath: ctcModelPath) {
+        if firstExistingFile(in: modelPath, candidates: ["model.int8.onnx", "model.onnx"]) != nil {
             return true
         }
 
         // Check for transducer model
-        let transducerFiles = ["encoder.onnx", "decoder.onnx", "joiner.onnx"]
-        for file in transducerFiles {
-            let filePath = (modelPath as NSString).appendingPathComponent(file)
-            if !fileManager.fileExists(atPath: filePath) {
+        let transducerFiles = [
+            ["encoder.onnx", "encoder.int8.onnx"],
+            ["decoder.onnx", "decoder.int8.onnx"],
+            ["joiner.onnx", "joiner.int8.onnx"],
+        ]
+        for candidates in transducerFiles {
+            if firstExistingFile(in: modelPath, candidates: candidates) == nil {
                 return false
             }
         }
@@ -95,18 +97,20 @@ class STTTools {
         }
 
         // Check for CTC model
-        let ctcModelPath = (path as NSString).appendingPathComponent("model.int8.onnx")
-        if fileManager.fileExists(atPath: ctcModelPath) {
+        if firstExistingFile(in: path, candidates: ["model.int8.onnx", "model.onnx"]) != nil {
             return true
         }
 
         // Check for transducer model
-        let transducerFiles = ["encoder.onnx", "decoder.onnx", "joiner.onnx"]
+        let transducerFiles = [
+            ["encoder.onnx", "encoder.int8.onnx"],
+            ["decoder.onnx", "decoder.int8.onnx"],
+            ["joiner.onnx", "joiner.int8.onnx"],
+        ]
         var allTransducerFilesPresent = true
 
-        for file in transducerFiles {
-            let filePath = (path as NSString).appendingPathComponent(file)
-            if !fileManager.fileExists(atPath: filePath) {
+        for candidates in transducerFiles {
+            if firstExistingFile(in: path, candidates: candidates) == nil {
                 allTransducerFilesPresent = false
                 break
             }
@@ -150,5 +154,16 @@ class STTTools {
             return false
         }
         return true
+    }
+
+    private static func firstExistingFile(in directory: String, candidates: [String]) -> String? {
+        let fileManager = FileManager.default
+        for candidate in candidates {
+            let path = (directory as NSString).appendingPathComponent(candidate)
+            if fileManager.fileExists(atPath: path) {
+                return path
+            }
+        }
+        return nil
     }
 }

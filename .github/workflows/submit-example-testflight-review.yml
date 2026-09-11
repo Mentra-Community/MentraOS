@@ -1,0 +1,152 @@
+name: Submit Example TestFlight Review
+
+on:
+  workflow_dispatch:
+    inputs:
+      beta_identity:
+        description: Exact completed beta release to submit, such as 3.1.0-beta.84
+        required: true
+        type: string
+      review_notes:
+        description: Optional notes explaining how the review feedback was addressed
+        required: false
+        default: ""
+        type: string
+
+permissions:
+  contents: read
+
+concurrency:
+  group: mentra-example-testflight-review
+  cancel-in-progress: false
+
+env:
+  EXAMPLE_APP_ID: "6792839366"
+  EXAMPLE_BUNDLE_ID: com.mentra.bluetoothsdkexample
+
+jobs:
+  submit:
+    name: Submit exact example build for external review
+    runs-on: ubuntu-latest
+    timeout-minutes: 70
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - name: Resolve the exact coordinated beta build
+        id: coordinates
+        env:
+          BETA_IDENTITY: ${{ inputs.beta_identity }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          [[ "$BETA_IDENTITY" =~ ^[0-9]+\.[0-9]+\.[0-9]+-beta\.[1-9][0-9]*$ ]]
+          base_version="${BETA_IDENTITY%%-*}"
+          tag="mentra-builds-v$base_version"
+          mkdir -p selected-beta
+          gh release download "$tag" \
+            --pattern "mentra-release-plan-$BETA_IDENTITY.json" \
+            --pattern "mentra-release-$BETA_IDENTITY.json" \
+            --dir selected-beta
+          plan="selected-beta/mentra-release-plan-$BETA_IDENTITY.json"
+          manifest="selected-beta/mentra-release-$BETA_IDENTITY.json"
+          [[ "$(jq -er .releaseIdentity "$plan")" == "$BETA_IDENTITY" ]]
+          [[ "$(jq -er .releaseIdentity "$manifest")" == "$BETA_IDENTITY" ]]
+          [[ "$(jq -er .releaseSetId "$plan")" == "$(jq -er .releaseSetId "$manifest")" ]]
+          [[ "$(jq -er .starterKit.testflight.app.id "$manifest")" == "$EXAMPLE_APP_ID" ]]
+          [[ "$(jq -er .starterKit.testflight.app.bundleId "$manifest")" == "$EXAMPLE_BUNDLE_ID" ]]
+          [[ "$(jq -er .starterKit.testflight.distribution.status "$manifest")" == "skipped" ]]
+          {
+            echo "beta_identity=$BETA_IDENTITY"
+            echo "marketing_version=$(jq -er .starterKit.testflight.version.marketingVersion "$manifest")"
+            echo "build_number=$(jq -er .starterKit.testflight.version.buildNumber "$manifest")"
+            echo "build_id=$(jq -er .starterKit.testflight.build.id "$manifest")"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Inject App Store Connect API credential
+        uses: ./.github/actions/inject-signing
+        with:
+          ios: "true"
+          asc-api-key-p8-b64: ${{ secrets.ASC_API_KEY_P8_B64 }}
+          asc-api-key-id: ${{ secrets.ASC_API_KEY_ID }}
+          asc-api-issuer-id: ${{ secrets.ASC_API_ISSUER_ID }}
+
+      - name: Resolve App Store Connect credential path
+        id: asc
+        run: |
+          set -euo pipefail
+          key_path=$(sed -n 's/^ASC_API_KEY_PATH=//p' "$MENTRA_ASC_CONFIG_PATH")
+          test -f "$key_path"
+          echo "key_path=$key_path" >> "$GITHUB_OUTPUT"
+
+      - name: Verify the review lane can accept a replacement
+        id: preflight
+        run: >-
+          node mobile/scripts/app-store-connect-build.mjs testflight-preflight
+          --issuer-id "${{ secrets.ASC_API_ISSUER_ID }}"
+          --key-id "${{ secrets.ASC_API_KEY_ID }}"
+          --key-path "${{ steps.asc.outputs.key_path }}"
+          --app-id "$EXAMPLE_APP_ID"
+          --bundle-id "$EXAMPLE_BUNDLE_ID"
+          --group-name "Mentra Staging Public"
+          --audience external
+          --install-url ""
+          --allow-rejected-override true
+
+      - name: Refuse to replace a review that is still active
+        if: steps.preflight.outputs.skip == 'true'
+        env:
+          REASON: ${{ steps.preflight.outputs.skip_reason }}
+          DETAIL: ${{ steps.preflight.outputs.skip_detail }}
+        run: |
+          echo "TestFlight review submission remains blocked: $REASON ($DETAIL)" >&2
+          exit 1
+
+      - name: Refuse to resubmit the rejected build itself
+        if: steps.preflight.outputs.review_state == 'REJECTED' && steps.preflight.outputs.review_build_id == steps.coordinates.outputs.build_id
+        run: |
+          echo "${{ steps.coordinates.outputs.beta_identity }} still identifies the rejected build; select a later skipped beta containing the review fix." >&2
+          exit 1
+
+      - name: Assign and submit the exact processed build
+        id: assignment
+        env:
+          MARKETING_VERSION: ${{ steps.coordinates.outputs.marketing_version }}
+          BUILD_NUMBER: ${{ steps.coordinates.outputs.build_number }}
+          BUILD_ID: ${{ steps.coordinates.outputs.build_id }}
+          REVIEW_NOTES: ${{ inputs.review_notes }}
+        run: >-
+          node mobile/scripts/app-store-connect-build.mjs assign
+          --issuer-id "${{ secrets.ASC_API_ISSUER_ID }}"
+          --key-id "${{ secrets.ASC_API_KEY_ID }}"
+          --key-path "${{ steps.asc.outputs.key_path }}"
+          --app-id "$EXAMPLE_APP_ID"
+          --bundle-id "$EXAMPLE_BUNDLE_ID"
+          --marketing-version "$MARKETING_VERSION"
+          --build-number "$BUILD_NUMBER"
+          --build-id "$BUILD_ID"
+          --group-name "Mentra Staging Public"
+          --audience external
+          --install-url "${{ steps.preflight.outputs.install_url }}"
+          --allow-rejected-override true
+          --review-notes "$REVIEW_NOTES"
+          --whats-new "Replacement example build $MARKETING_VERSION ($BUILD_NUMBER)."
+
+      - name: Summarize the submitted replacement
+        env:
+          BETA_IDENTITY: ${{ steps.coordinates.outputs.beta_identity }}
+          MARKETING_VERSION: ${{ steps.coordinates.outputs.marketing_version }}
+          BUILD_NUMBER: ${{ steps.coordinates.outputs.build_number }}
+        run: |
+          {
+            echo "## Example TestFlight review submission"
+            echo
+            echo "- Coordinated beta: \`$BETA_IDENTITY\`"
+            echo "- Build: \`$MARKETING_VERSION ($BUILD_NUMBER)\`"
+            echo "- Group: \`${{ steps.assignment.outputs.group_name }}\`"
+            echo "- Review state: \`${{ steps.assignment.outputs.review_state }}\`"
+            echo "- Public install link: ${{ steps.assignment.outputs.install_url }}"
+          } >> "$GITHUB_STEP_SUMMARY"

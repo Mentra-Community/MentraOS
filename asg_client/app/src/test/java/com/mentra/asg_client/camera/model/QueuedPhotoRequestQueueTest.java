@@ -76,6 +76,26 @@ public class QueuedPhotoRequestQueueTest {
     }
 
     @Test
+    public void remove_rollsBackOnlyTheExactRequest() {
+        QueuedPhotoRequestQueue q = QueuedPhotoRequestQueue.getInstance();
+        CameraNeoService.PhotoCaptureCallback cb = mock(CameraNeoService.PhotoCaptureCallback.class);
+        QueuedPhotoRequest rejected =
+                new QueuedPhotoRequest("/rejected", "s", false, true, null, cb);
+        QueuedPhotoRequest retained =
+                new QueuedPhotoRequest("/retained", "s", false, true, null, null);
+        q.offer(rejected);
+        q.offer(retained);
+
+        assertThat(q.remove(rejected)).isTrue();
+        assertThat(q.remove(rejected)).isFalse();
+        assertThat(q.size()).isEqualTo(1);
+        assertThat(q.poll()).isSameAs(retained);
+
+        q.failAllPending("after rollback");
+        verify(cb, never()).onPhotoError("after rollback");
+    }
+
+    @Test
     public void callbackRegistry_attachedOnPoll_whenRequestHadCallback() {
         QueuedPhotoRequestQueue q = QueuedPhotoRequestQueue.getInstance();
         CameraNeoService.PhotoCaptureCallback cb = mock(CameraNeoService.PhotoCaptureCallback.class);

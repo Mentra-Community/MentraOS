@@ -1,0 +1,38 @@
+# Build artifacts / caches — don't ship to the image.
+node_modules
+**/node_modules
+**/dist
+**/.next
+**/coverage
+**/.cache
+**/.parcel-cache
+**/tsconfig.tsbuildinfo
+
+# Local dev / test artifacts.
+.env
+.env.local
+.doppler*
+/tmp
+/dist
+
+# Test data / fixtures that aren't needed in prod (LC3 + WAV samples
+# live in /tmp during dev, but if any land in the tree, skip them).
+*.wav
+*.pcm
+*.lc3
+*.aiff
+
+# Git / IDE / docs not needed at runtime.
+.git
+.github
+.gitignore
+.vscode
+.idea
+*.md
+docs
+
+# Integration tests at workspace root — not run in prod.
+# (NOT excluding `test/` directory — that's the `test/test-oem` + test-client
+# workspaces which the lockfile references; excluding breaks `bun install`.)
+tests
+

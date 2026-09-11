@@ -1,0 +1,950 @@
+#!/bin/bash
+#
+# Bring Mentra Live firmware to the latest staging baseline before a third-party
+# ASG Client takes over. The rolling manifest is downloaded exactly once; every
+# artifact and transition in the rest of the run comes from that local snapshot.
+#
+# Usage:
+#   ADB_SERIAL=<serial> ./scripts/update-stock-for-dev.sh
+#   ./scripts/update-stock-for-dev.sh --manifest-url <https-url>
+#   ./scripts/update-stock-for-dev.sh --resume-thirdparty
+
+set -euo pipefail
+
+SCRIPT_DIR="$(cd "$(dirname "$0")" && pwd)"
+ASG_DIR="$(cd "$SCRIPT_DIR/.." && pwd)"
+REPO_DIR="$(cd "$ASG_DIR/.." && pwd)"
+
+DEFAULT_MANIFEST_URL="https://github.com/Mentra-Community/MentraOS/releases/download/staging-builds/staging_live_version.json"
+MANIFEST_URL="${ASG_DEV_OTA_MANIFEST_URL:-$DEFAULT_MANIFEST_URL}"
+RESUME_THIRDPARTY=false
+
+# Officially signed ASG 36 bridge. Its deliberately high versionCode allows it
+# to replace every old stock update, and it speaks to day-one BES firmware.
+BRIDGE_APK_URL="https://drive.usercontent.google.com/download?id=165WODzaMXkvpL5V3PQ28391wQQietxSQ&export=download&confirm=t"
+BRIDGE_APK_SHA256="8fbac72d3fb895548cdd2b213eb331f1d7b0e7532e4ad4a2233529a8170b9551"
+BRIDGE_APK_SIZE="87174306"
+BRIDGE_VERSION_CODE="99999999"
+
+STOCK_PKG="com.mentra.asg_client"
+DEV_PKG="com.mentra.asg_client.thirdparty"
+RECOVERY_PKG="com.mentra.recovery"
+LEGACY_UPDATER_PKG="com.augmentos.otaupdater"
+STOCK_COMPONENT="$STOCK_PKG/com.mentra.asg_client.MainActivity"
+DEV_COMPONENT="$DEV_PKG/com.mentra.asg_client.MainActivity"
+COMMAND_RECEIVER="$STOCK_PKG/.receiver.IntentCommandReceiver"
+LEGACY_STOCK_FILES="/storage/emulated/0/Android/data/$STOCK_PKG/files"
+LEGACY_STOCK_PARENT="/storage/emulated/0/Android/data/$STOCK_PKG"
+LEGACY_STOCK_BACKUP_PATH="/storage/emulated/0/asg/dev_setup_stock_files_backup"
+PRESERVED_STOCK_APK_DEVICE_PATH="/storage/emulated/0/asg/dev_setup_newer_stock.apk"
+PRESERVED_STOCK_STATE_PATH="/storage/emulated/0/asg/dev_setup_newer_stock.state"
+
+WORK_DIR=""
+DEVICE_MUTATED=false
+SUCCESS=false
+LEGACY_STOCK_BACKUP=""
+BRIDGE_ACTIVE=false
+PRESERVED_STOCK_APK_PATH=""
+PRESERVED_STOCK_VERSION_CODE=""
+
+usage() {
+  echo "Usage: $0 [--manifest-url <https-url>] [--resume-thirdparty]"
+}
+
+fail() {
+  echo ""
+  echo "ERROR: $1" >&2
+  exit 1
+}
+
+while [[ $# -gt 0 ]]; do
+  case "$1" in
+    --manifest-url)
+      [ "$#" -ge 2 ] || fail "--manifest-url requires a URL"
+      MANIFEST_URL="${2:-}"
+      shift 2
+      ;;
+    --resume-thirdparty)
+      RESUME_THIRDPARTY=true
+      shift
+      ;;
+    -h|--help)
+      usage
+      exit 0
+      ;;
+    *)
+      fail "Unknown option: $1"
+      ;;
+  esac
+done
+
+for command_name in adb curl jq python3; do
+  command -v "$command_name" >/dev/null 2>&1 || fail "Required command not found: $command_name"
+done
+
+source "$REPO_DIR/scripts/lib/glasses-device.sh"
+if [ -n "${ANDROID_SERIAL:-}" ] && [ -z "${ADB_SERIAL:-}" ]; then
+  ADB_SERIAL="$ANDROID_SERIAL"
+  export ADB_SERIAL
+fi
+resolve_serial
+ADB=(adb -s "$SERIAL")
+export ANDROID_SERIAL="$SERIAL"
+
+if [ "$RESUME_THIRDPARTY" = true ] \
+  && ! "${ADB[@]}" shell pm path "$DEV_PKG" 2>/dev/null | tr -d '\r' | grep -q '^package:'; then
+  fail "$DEV_PKG is not installed; run ./scripts/dev-setup.sh first"
+fi
+
+sha256_file() {
+  if command -v shasum >/dev/null 2>&1; then
+    shasum -a 256 "$1" | awk '{print $1}'
+  elif command -v sha256sum >/dev/null 2>&1; then
+    sha256sum "$1" | awk '{print $1}'
+  else
+    fail "No SHA-256 tool found (need shasum or sha256sum)"
+  fi
+}
+
+download_verified() {
+  local label="$1"
+  local url="$2"
+  local expected_sha="$3"
+  local expected_size="$4"
+  local destination="$5"
+  local actual_sha actual_size
+
+  echo "Downloading $label..."
+  curl --fail --location --retry 3 --retry-all-errors --output "${destination}.part" "$url"
+  mv "${destination}.part" "$destination"
+
+  actual_sha="$(sha256_file "$destination")"
+  if [ "$actual_sha" != "$expected_sha" ]; then
+    fail "$label SHA-256 mismatch (expected $expected_sha, got $actual_sha)"
+  fi
+
+  if [ -n "$expected_size" ]; then
+    actual_size="$(wc -c < "$destination" | tr -d ' ')"
+    if [ "$actual_size" != "$expected_size" ]; then
+      fail "$label size mismatch (expected $expected_size, got $actual_size)"
+    fi
+  fi
+  echo "Verified $label."
+}
+
+version_at_least() {
+  local installed="$1"
+  local target="$2"
+  awk -v installed="$installed" -v target="$target" 'BEGIN {
+    ni = split(installed, i, "."); nt = split(target, t, ".");
+    n = ni > nt ? ni : nt;
+    for (x = 1; x <= n; x++) {
+      iv = (x <= ni ? i[x] : 0) + 0;
+      tv = (x <= nt ? t[x] : 0) + 0;
+      if (iv > tv) exit 0;
+      if (iv < tv) exit 1;
+    }
+    exit 0;
+  }'
+}
+
+valid_bes_version() {
+  awk -F. 'NF != 4 { exit 1 } {
+    for (x = 1; x <= 4; x++) {
+      if ($x !~ /^[0-9][0-9]?[0-9]?$/ || $x + 0 > 255) exit 1;
+    }
+    exit 0;
+  }' <<< "$1"
+}
+
+firmware_suffix() {
+  printf '%s\n' "$1" | sed -nE 's/.*_([0-9]{8}(\.[0-9]+)?)$/\1/p'
+}
+
+adb_online() {
+  "${ADB[@]}" get-state >/dev/null 2>&1
+}
+
+package_version_code() {
+  "${ADB[@]}" shell dumpsys package "$1" 2>/dev/null \
+    | tr -d '\r' \
+    | sed -n 's/.*versionCode=\([0-9][0-9]*\).*/\1/p' \
+    | head -n 1
+}
+
+device_sha256() {
+  "${ADB[@]}" shell sha256sum "$1" 2>/dev/null | awk '{print $1}' | tr -d '\r'
+}
+
+clear_preserved_stock_update() {
+  "${ADB[@]}" shell rm -f \
+    "$PRESERVED_STOCK_APK_DEVICE_PATH" "$PRESERVED_STOCK_STATE_PATH" >/dev/null 2>&1 || true
+  PRESERVED_STOCK_APK_PATH=""
+  PRESERVED_STOCK_VERSION_CODE=""
+}
+
+load_preserved_stock_update() {
+  local presence state expected_sha actual_sha
+  local apk_exists=false state_exists=false
+
+  if ! presence="$("${ADB[@]}" shell \
+    "if [ -f '$PRESERVED_STOCK_APK_DEVICE_PATH' ]; then printf 1; else printf 0; fi; if [ -f '$PRESERVED_STOCK_STATE_PATH' ]; then printf 1; else printf 0; fi" \
+    2>/dev/null | tr -d '\r\n')"; then
+    echo "ADB disconnected while checking preserved stock-ASG state." >&2
+    return 1
+  fi
+  case "$presence" in
+    00) ;;
+    01) state_exists=true ;;
+    10) apk_exists=true ;;
+    11)
+      apk_exists=true
+      state_exists=true
+      ;;
+    *)
+      echo "Could not determine preserved stock-ASG state on the device." >&2
+      return 1
+      ;;
+  esac
+  if [ "$apk_exists" = false ] && [ "$state_exists" = false ]; then
+    return 0
+  fi
+  if [ "$apk_exists" != true ] || [ "$state_exists" != true ]; then
+    echo "Incomplete preserved stock-ASG update metadata on the device." >&2
+    return 1
+  fi
+
+  state="$("${ADB[@]}" shell cat "$PRESERVED_STOCK_STATE_PATH" 2>/dev/null | tr -d '\r\n')"
+  IFS=: read -r PRESERVED_STOCK_VERSION_CODE expected_sha <<< "$state"
+  if ! [[ "$PRESERVED_STOCK_VERSION_CODE" =~ ^[0-9]+$ ]] \
+    || ! [[ "$expected_sha" =~ ^[0-9a-f]{64}$ ]]; then
+    echo "Invalid preserved stock-ASG update metadata." >&2
+    return 1
+  fi
+  if [ "$PRESERVED_STOCK_VERSION_CODE" -le "$TARGET_VERSION_CODE" ]; then
+    echo "Discarding preserved stock ASG $PRESERVED_STOCK_VERSION_CODE because manifest target $TARGET_VERSION_CODE is at least as new."
+    clear_preserved_stock_update
+    return 0
+  fi
+
+  PRESERVED_STOCK_APK_PATH="$WORK_DIR/preserved-newer-stock.apk"
+  "${ADB[@]}" pull "$PRESERVED_STOCK_APK_DEVICE_PATH" "$PRESERVED_STOCK_APK_PATH" >/dev/null \
+    || return 1
+  actual_sha="$(sha256_file "$PRESERVED_STOCK_APK_PATH")"
+  if [ "$actual_sha" != "$expected_sha" ]; then
+    echo "Preserved stock-ASG update SHA-256 mismatch." >&2
+    return 1
+  fi
+  echo "Recovered stock ASG $PRESERVED_STOCK_VERSION_CODE preserved by an interrupted firmware update."
+}
+
+preserve_newer_stock_update() {
+  local installed_version package_path package_path_count device_sha host_sha
+  installed_version="$(package_version_code "$STOCK_PKG")"
+  if ! [[ "$installed_version" =~ ^[0-9]+$ ]] \
+    || [ "$installed_version" -le "$TARGET_VERSION_CODE" ]; then
+    return 0
+  fi
+
+  package_path="$("${ADB[@]}" shell pm path "$STOCK_PKG" 2>/dev/null \
+    | tr -d '\r' | sed -n 's/^package://p')"
+  package_path_count="$(printf '%s\n' "$package_path" | sed '/^$/d' | wc -l | tr -d ' ')"
+  if [ "$package_path_count" -ne 1 ]; then
+    echo "Newer stock ASG uses $package_path_count APK files; refusing an update that cannot restore it exactly." >&2
+    return 1
+  fi
+  case "$package_path" in
+    /data/app/*.apk) ;;
+    *)
+      echo "Newer stock ASG $installed_version is built into the system image and will be retained."
+      return 0
+      ;;
+  esac
+
+  clear_preserved_stock_update
+  PRESERVED_STOCK_APK_PATH="$WORK_DIR/preserved-newer-stock.apk"
+  echo "Preserving newer installed stock ASG $installed_version during firmware maintenance..."
+  "${ADB[@]}" pull "$package_path" "$PRESERVED_STOCK_APK_PATH" >/dev/null || return 1
+  host_sha="$(sha256_file "$PRESERVED_STOCK_APK_PATH")"
+  "${ADB[@]}" shell mkdir -p /storage/emulated/0/asg || return 1
+  "${ADB[@]}" push "$PRESERVED_STOCK_APK_PATH" "$PRESERVED_STOCK_APK_DEVICE_PATH" >/dev/null \
+    || return 1
+  device_sha="$(device_sha256 "$PRESERVED_STOCK_APK_DEVICE_PATH")"
+  [ "$device_sha" = "$host_sha" ] || return 1
+  "${ADB[@]}" shell \
+    "printf '%s' '$installed_version:$host_sha' > '$PRESERVED_STOCK_STATE_PATH'" \
+    || return 1
+  PRESERVED_STOCK_VERSION_CODE="$installed_version"
+  echo "Stored a verified recovery copy at $PRESERVED_STOCK_APK_DEVICE_PATH."
+}
+
+enable_stock_runtime() {
+  local resolved_home
+  if ! "${ADB[@]}" shell pm path "$STOCK_PKG" 2>/dev/null | tr -d '\r' | grep -q '^package:'; then
+    "${ADB[@]}" shell cmd package install-existing "$STOCK_PKG" >/dev/null \
+      || return 1
+  fi
+  "${ADB[@]}" shell pm enable "$STOCK_PKG" >/dev/null || return 1
+  "${ADB[@]}" shell pm clear-package-preferred-activities "$STOCK_PKG" >/dev/null 2>&1 || true
+  "${ADB[@]}" shell cmd package set-home-activity --user 0 "$STOCK_COMPONENT" >/dev/null \
+    || return 1
+  "${ADB[@]}" shell am start -n "$STOCK_COMPONENT" >/dev/null || return 1
+  resolved_home="$("${ADB[@]}" shell cmd package resolve-activity --brief --user 0 \
+    -a android.intent.action.MAIN \
+    -c android.intent.category.HOME 2>/dev/null | tr -d '\r' | tail -n 1)"
+  case "$resolved_home" in
+    "$STOCK_PKG"/*) ;;
+    *) return 1 ;;
+  esac
+}
+
+enable_thirdparty_runtime() {
+  local resolved_home
+  "${ADB[@]}" shell am force-stop "$RECOVERY_PKG" >/dev/null 2>&1 || true
+  "${ADB[@]}" shell pm disable-user --user 0 "$RECOVERY_PKG" >/dev/null 2>&1 || true
+  "${ADB[@]}" shell am force-stop "$LEGACY_UPDATER_PKG" >/dev/null 2>&1 || true
+  "${ADB[@]}" shell pm disable-user --user 0 "$LEGACY_UPDATER_PKG" >/dev/null 2>&1 || true
+  "${ADB[@]}" shell pm enable "$DEV_PKG" >/dev/null
+  "${ADB[@]}" shell pm disable-user --user 0 "$STOCK_PKG" >/dev/null
+  "${ADB[@]}" shell pm clear-package-preferred-activities "$STOCK_PKG" >/dev/null 2>&1 || true
+  "${ADB[@]}" shell pm clear-package-preferred-activities "$DEV_PKG" >/dev/null 2>&1 || true
+  "${ADB[@]}" shell cmd package set-home-activity --user 0 "$DEV_COMPONENT" >/dev/null
+  "${ADB[@]}" shell am start -a android.intent.action.MAIN \
+    -c android.intent.category.HOME >/dev/null 2>&1 || true
+  "${ADB[@]}" shell am start -n "$DEV_COMPONENT" >/dev/null
+
+  "${ADB[@]}" shell pm list packages -e 2>/dev/null \
+    | tr -d '\r' \
+    | grep -Fqx "package:$DEV_PKG" \
+    || fail "Could not re-enable $DEV_PKG after the firmware update"
+  resolved_home="$("${ADB[@]}" shell cmd package resolve-activity --brief --user 0 \
+    -a android.intent.action.MAIN \
+    -c android.intent.category.HOME 2>/dev/null | tr -d '\r' | tail -n 1)"
+  case "$resolved_home" in
+    "$DEV_PKG"/*) ;;
+    *) fail "Third-party package is enabled, but HOME resolved to ${resolved_home:-unknown}" ;;
+  esac
+}
+
+preserve_legacy_stock_files() {
+  local entry_count
+  entry_count="$("${ADB[@]}" shell \
+    "if [ -d '$LEGACY_STOCK_FILES' ]; then find '$LEGACY_STOCK_FILES' -mindepth 1 -print | wc -l; else echo 0; fi" \
+    2>/dev/null | tr -d '\r ' | tail -n 1)"
+  if ! [[ "$entry_count" =~ ^[0-9]+$ ]]; then
+    echo "Could not inventory legacy stock data before uninstall." >&2
+    return 1
+  fi
+
+  if "${ADB[@]}" shell test -e "$LEGACY_STOCK_BACKUP_PATH"; then
+    LEGACY_STOCK_BACKUP="$LEGACY_STOCK_BACKUP_PATH"
+    if [ "$entry_count" -eq 0 ]; then
+      echo "Reusing preserved legacy stock data from $LEGACY_STOCK_BACKUP_PATH."
+      return 0
+    fi
+    echo "Both preserved and live legacy stock data exist; refusing to overwrite either tree." >&2
+    return 1
+  fi
+  if [ "$entry_count" -eq 0 ]; then
+    return 0
+  fi
+  LEGACY_STOCK_BACKUP="$LEGACY_STOCK_BACKUP_PATH"
+  echo "Preserving $entry_count legacy stock-data entries during firmware maintenance..."
+  "${ADB[@]}" shell mkdir -p /storage/emulated/0/asg || return 1
+  "${ADB[@]}" shell mv "$LEGACY_STOCK_FILES" "$LEGACY_STOCK_BACKUP" \
+    || return 1
+  echo "Legacy stock data staged safely at $LEGACY_STOCK_BACKUP."
+}
+
+recover_orphaned_legacy_stock_files() {
+  if ! "${ADB[@]}" shell test -d "$LEGACY_STOCK_BACKUP_PATH"; then
+    return 0
+  fi
+  echo "Found legacy stock data preserved by an interrupted earlier run."
+  LEGACY_STOCK_BACKUP="$LEGACY_STOCK_BACKUP_PATH"
+  restore_legacy_stock_files \
+    || fail "Could not restore interrupted-run data from $LEGACY_STOCK_BACKUP_PATH"
+}
+
+restore_legacy_stock_files() {
+  if [ -z "$LEGACY_STOCK_BACKUP" ]; then
+    return 0
+  fi
+  if ! "${ADB[@]}" shell test -d "$LEGACY_STOCK_BACKUP"; then
+    LEGACY_STOCK_BACKUP=""
+    return 0
+  fi
+
+  # Package installation may recreate an empty external-files directory. rmdir
+  # refuses a non-empty destination. Prefer Toybox's -T so a concurrently
+  # recreated directory makes mv fail instead of nesting the backup. Very old
+  # builds lack -T, so detect and undo nesting before reporting failure there.
+  "${ADB[@]}" shell mkdir -p "$LEGACY_STOCK_PARENT"
+  "${ADB[@]}" shell rmdir "$LEGACY_STOCK_FILES" >/dev/null 2>&1 || true
+  if "${ADB[@]}" shell test -e "$LEGACY_STOCK_FILES"; then
+    echo "Legacy stock data remains safe at $LEGACY_STOCK_BACKUP." >&2
+    return 1
+  fi
+  if ! "${ADB[@]}" shell mv -T "$LEGACY_STOCK_BACKUP" "$LEGACY_STOCK_FILES" >/dev/null 2>&1; then
+    local nested_backup="$LEGACY_STOCK_FILES/${LEGACY_STOCK_BACKUP##*/}"
+    if ! "${ADB[@]}" shell test -d "$LEGACY_STOCK_BACKUP"; then
+      return 1
+    fi
+    if "${ADB[@]}" shell test -e "$LEGACY_STOCK_FILES"; then
+      echo "Legacy stock data remains safe at $LEGACY_STOCK_BACKUP." >&2
+      return 1
+    fi
+    "${ADB[@]}" shell mv "$LEGACY_STOCK_BACKUP" "$LEGACY_STOCK_FILES" || return 1
+    if "${ADB[@]}" shell test -d "$nested_backup"; then
+      "${ADB[@]}" shell mv "$nested_backup" "$LEGACY_STOCK_BACKUP" || {
+        echo "Legacy stock data remains safe at $nested_backup." >&2
+        return 1
+      }
+      echo "The stock-data directory was recreated during restore; preserved data was moved back to $LEGACY_STOCK_BACKUP." >&2
+      return 1
+    fi
+  fi
+  if "${ADB[@]}" shell test -e "$LEGACY_STOCK_BACKUP"; then
+    return 1
+  fi
+  echo "Restored legacy stock data for migration by the staging ASG Client."
+  LEGACY_STOCK_BACKUP=""
+}
+
+replace_bridge_with_target_stock() {
+  local installed_version
+  if [ "$BRIDGE_ACTIVE" != true ]; then
+    return 0
+  fi
+
+  "${ADB[@]}" shell am force-stop "$STOCK_PKG" >/dev/null 2>&1 || true
+  preserve_legacy_stock_files || return 1
+  "${ADB[@]}" uninstall "$STOCK_PKG" >/dev/null || return 1
+  "${ADB[@]}" shell cmd package install-existing "$STOCK_PKG" >/dev/null 2>&1 || true
+  installed_version="$(package_version_code "$STOCK_PKG")"
+  if [ -n "$PRESERVED_STOCK_APK_PATH" ]; then
+    if [[ "$installed_version" =~ ^[0-9]+$ ]] \
+      && [ "$installed_version" -ge "$PRESERVED_STOCK_VERSION_CODE" ]; then
+      echo "Built-in stock ASG $installed_version is at least as new as preserved update $PRESERVED_STOCK_VERSION_CODE; retaining it."
+    else
+      "${ADB[@]}" install -r "$PRESERVED_STOCK_APK_PATH" >/dev/null || return 1
+      installed_version="$(package_version_code "$STOCK_PKG")"
+      [ "$installed_version" = "$PRESERVED_STOCK_VERSION_CODE" ] || return 1
+      echo "Restored preserved stock ASG $installed_version."
+    fi
+  elif [[ "$installed_version" =~ ^[0-9]+$ ]] \
+    && [ "$installed_version" -gt "$TARGET_VERSION_CODE" ]; then
+    echo "Built-in stock ASG $installed_version is newer than staging target $TARGET_VERSION_CODE; retaining it."
+  else
+    "${ADB[@]}" shell pm disable-user --user 0 "$STOCK_PKG" >/dev/null 2>&1 || true
+    "${ADB[@]}" install -r "$TARGET_APK_PATH" >/dev/null || return 1
+    installed_version="$(package_version_code "$STOCK_PKG")"
+    [ "$installed_version" = "$TARGET_VERSION_CODE" ] || return 1
+  fi
+  BRIDGE_ACTIVE=false
+  restore_legacy_stock_files || return 1
+  clear_preserved_stock_update
+}
+
+restore_safe_stock_on_failure() {
+  local installed_version
+  if [ "$DEVICE_MUTATED" = true ] && adb_online; then
+    installed_version="$(package_version_code "$STOCK_PKG" || true)"
+    if [ "$installed_version" = "$BRIDGE_VERSION_CODE" ]; then
+      BRIDGE_ACTIVE=true
+    fi
+    echo "Restoring the stock launcher after the failed setup..." >&2
+    "${ADB[@]}" shell am force-stop "$DEV_PKG" >/dev/null 2>&1 || true
+    "${ADB[@]}" shell pm disable-user --user 0 "$DEV_PKG" >/dev/null 2>&1 || true
+    if [ "$BRIDGE_ACTIVE" = true ]; then
+      if replace_bridge_with_target_stock; then
+        echo "Restored a safe stock ASG after the interrupted update." >&2
+      else
+        echo "Could not fully restore stock ASG automatically; preserved data remains staged if needed." >&2
+      fi
+    fi
+    restore_legacy_stock_files || true
+    if enable_stock_runtime; then
+      echo "Stock launcher restored." >&2
+    else
+      echo "Could not fully restore stock automatically; run ./scripts/restore-stock.sh." >&2
+    fi
+    "${ADB[@]}" shell pm enable "$RECOVERY_PKG" >/dev/null 2>&1 || true
+    "${ADB[@]}" shell pm enable "$LEGACY_UPDATER_PKG" >/dev/null 2>&1 || true
+  elif [ "$DEVICE_MUTATED" = true ]; then
+    if [ "$BRIDGE_ACTIVE" = true ]; then
+      echo "Firmware maintenance may be incomplete. Reconnect ADB and rerun this updater; it will restore a safe stock ASG first." >&2
+    fi
+    if [ -n "$LEGACY_STOCK_BACKUP" ]; then
+      echo "Legacy stock data remains safe at $LEGACY_STOCK_BACKUP once ADB reconnects." >&2
+    fi
+  fi
+}
+
+cleanup() {
+  local status=$?
+  trap - EXIT
+  if [ "$SUCCESS" != true ]; then
+    restore_safe_stock_on_failure
+  fi
+  if [ -n "$WORK_DIR" ] && [ -d "$WORK_DIR" ]; then
+    rm -rf -- "$WORK_DIR"
+  fi
+  exit "$status"
+}
+trap cleanup EXIT
+
+wait_for_boot_after_reboot() {
+  local label="$1"
+  local previous_boot_id="$2"
+  local initial_start attempt_start now elapsed current_boot_id
+  local explicit_reboot_attempts=0
+  local saw_disconnect=false prompted=false explicit_reboot_sent=false
+  [ -n "$previous_boot_id" ] || fail "Could not capture the pre-update Android boot ID"
+  initial_start="$(date +%s)"
+  attempt_start="$initial_start"
+
+  echo "Waiting for $label reboot..."
+  while true; do
+    now="$(date +%s)"
+    if adb_online; then
+      current_boot_id="$("${ADB[@]}" shell cat /proc/sys/kernel/random/boot_id 2>/dev/null | tr -d '\r\n')"
+      if [ -n "$current_boot_id" ] && [ "$current_boot_id" != "$previous_boot_id" ]; then
+        break
+      fi
+
+      if [ "$explicit_reboot_sent" = true ]; then
+        if [ $((now - attempt_start)) -ge 180 ]; then
+          fail "$label stayed online without completing the explicit ADB reboot"
+        fi
+      elif [ "$saw_disconnect" = true ] || [ $((now - initial_start)) -ge 45 ]; then
+        if [ "$explicit_reboot_attempts" -ge 3 ]; then
+          fail "$label never accepted an explicit ADB reboot after three attempts"
+        fi
+        explicit_reboot_attempts=$((explicit_reboot_attempts + 1))
+        echo "ADB returned without proof of an Android reboot; sending an explicit ADB reboot."
+        if "${ADB[@]}" reboot >/dev/null 2>&1; then
+          explicit_reboot_sent=true
+          attempt_start="$now"
+          saw_disconnect=false
+          prompted=false
+        else
+          saw_disconnect=true
+          attempt_start="$now"
+          sleep 5
+        fi
+      fi
+    else
+      saw_disconnect=true
+      elapsed=$((now - attempt_start))
+      if [ "$elapsed" -ge 45 ] && [ "$prompted" = false ]; then
+        echo ""
+        echo "================================================================"
+        if [[ "$SERIAL" == *:* ]]; then
+          echo "Mentra Live rebooted, but Wi-Fi ADB did not reconnect after 45s."
+          echo "Waiting for Wi-Fi ADB device $SERIAL to return..."
+        else
+          echo "Mentra Live rebooted, but USB ADB did not reconnect after 45s."
+          echo "Unplug the Infinity Cable, then plug it back in."
+          echo "The script will resume automatically when ADB returns."
+        fi
+        echo "================================================================"
+        prompted=true
+      fi
+    fi
+    sleep 2
+  done
+
+  attempt_start="$(date +%s)"
+  while [ "$("${ADB[@]}" shell getprop sys.boot_completed 2>/dev/null | tr -d '\r')" != "1" ]; do
+    now="$(date +%s)"
+    if [ $((now - attempt_start)) -ge 180 ]; then
+      fail "$label returned over ADB but Android did not finish booting within 3 minutes"
+    fi
+    sleep 2
+  done
+  sleep 8
+  echo "$label reboot complete."
+}
+
+query_firmware_versions() {
+  local deadline line clean bes mtk
+  "${ADB[@]}" logcat -c >/dev/null 2>&1 || return 1
+  "${ADB[@]}" shell am broadcast \
+    -a com.mentra.asg_client.ACTION_SEND_COMMAND \
+    --es json '{"type":"request_version","mId":424242}' \
+    -n "$COMMAND_RECEIVER" >/dev/null 2>&1 || return 1
+
+  deadline=$((SECONDS + 20))
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    line="$("${ADB[@]}" logcat -d 2>/dev/null | tr -d '\r' | grep 'version_info_3' | tail -n 1 || true)"
+    if [ -n "$line" ]; then
+      clean="$(printf '%s\n' "$line" | tr -d '\\')"
+      bes="$(printf '%s\n' "$clean" | sed -n 's/.*"bes_fw_version":"\([^"]*\)".*/\1/p')"
+      mtk="$(printf '%s\n' "$clean" | sed -n 's/.*"mtk_fw_version":"\([^"]*\)".*/\1/p')"
+      if [ -n "$bes" ] && valid_bes_version "$bes"; then
+        printf '%s|%s\n' "$bes" "$mtk"
+        return 0
+      fi
+    fi
+    sleep 2
+  done
+  return 1
+}
+
+return_bes_to_rendezvous_before_bridge() {
+  local request_id deadline logs versions bes installed_version
+  request_id="devsetup_$$_$RANDOM"
+
+  echo "=== Preparing BES for firmware maintenance ==="
+  installed_version="$(package_version_code "$STOCK_PKG")"
+  if [[ "$installed_version" =~ ^[0-9]+$ ]] \
+    && [ "$installed_version" -gt "$TARGET_VERSION_CODE" ]; then
+    echo "Installed stock ASG $installed_version is newer than staging target $TARGET_VERSION_CODE; using it as the transition controller."
+  else
+    echo "Installing the manifest-pinned stock ASG as the transition controller..."
+    "${ADB[@]}" install -r "$TARGET_APK_PATH"
+    installed_version="$(package_version_code "$STOCK_PKG")"
+    [ "$installed_version" = "$TARGET_VERSION_CODE" ] \
+      || fail "Rendezvous controller expected versionCode $TARGET_VERSION_CODE, got ${installed_version:-unknown}"
+  fi
+  enable_stock_runtime
+  sleep 20
+
+  versions="$(query_firmware_versions || true)"
+  bes="${versions%%|*}"
+  if [ -z "$bes" ] || ! valid_bes_version "$bes"; then
+    # Current ASG scans both supported bauds. No proof normally identifies the
+    # factory BES generation that needs ASG 36's legacy protocol; stop the
+    # probe client and let the bridge attempt its fail-closed version query.
+    "${ADB[@]}" shell am force-stop "$STOCK_PKG" >/dev/null 2>&1 || true
+    sleep 2
+    echo "Current stock ASG found no BES link; continuing with compatibility recovery."
+    return 0
+  fi
+  echo "Current stock ASG found BES $bes before firmware maintenance."
+
+  "${ADB[@]}" logcat -c >/dev/null 2>&1 || true
+  "${ADB[@]}" shell am broadcast \
+    -a com.mentra.asg_client.ACTION_SEND_COMMAND \
+    --es json "{\"type\":\"reboot_bes_for_mtk_flash\",\"mId\":424243,\"request_id\":\"$request_id\"}" \
+    -n "$COMMAND_RECEIVER" >/dev/null \
+    || fail "Could not dispatch the BES rendezvous reset"
+
+  deadline=$((SECONDS + 30))
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    logs="$("${ADB[@]}" logcat -d 2>/dev/null | grep -F "MTK_FLASH_BES_RESET request_id=$request_id" || true)"
+    if printf '%s\n' "$logs" | grep -Fq 'uart_write=true'; then
+      # BES is now resetting to 460800. Stop the current client before it can
+      # rediscover the chip and renegotiate fast baud ahead of ASG 36.
+      "${ADB[@]}" shell am force-stop "$STOCK_PKG" >/dev/null 2>&1 || true
+      sleep 5
+      echo "BES reset completed; compatibility update is ready."
+      return 0
+    fi
+    if printf '%s\n' "$logs" | grep -Eq 'uart_write=false|queued=false|failed'; then
+      fail "Current stock ASG could not write the BES rendezvous reset"
+    fi
+    sleep 1
+  done
+  fail "Timed out waiting for proof that the BES rendezvous reset reached UART"
+}
+
+wait_for_bes_success() {
+  local target_version="$1"
+  local deadline logs versions bes
+  deadline=$((SECONDS + 420))
+
+  echo "Waiting for BES firmware transfer and apply (up to 7 minutes)..."
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    adb_online || fail "ADB disconnected during the BES transfer"
+    logs="$("${ADB[@]}" logcat -d 2>/dev/null | tail -n 500 || true)"
+    if printf '%s\n' "$logs" | grep -Fq 'BES firmware update SUCCESS! BES will reboot.'; then
+      echo "BES accepted the firmware and is rebooting."
+      break
+    fi
+    if printf '%s\n' "$logs" | grep -Eq 'Apply firmware error|WHOLE CRC32 CHECK FAILED|BES OTA authorization DENIED|Debug BES OTA dispatch failed|BES OTA failed to start|BesOtaManager not initialized'; then
+      fail "BES update failed; inspect adb logcat for the reported OTA error"
+    fi
+    sleep 3
+  done
+  if [ "$SECONDS" -ge "$deadline" ]; then
+    fail "Timed out waiting for BES to accept the firmware"
+  fi
+
+  sleep 25
+  deadline=$((SECONDS + 120))
+  while [ "$SECONDS" -lt "$deadline" ]; do
+    versions="$(query_firmware_versions || true)"
+    bes="${versions%%|*}"
+    if [ -n "$bes" ] && version_at_least "$bes" "$target_version"; then
+      echo "Verified BES firmware $bes."
+      return 0
+    fi
+    sleep 5
+  done
+  fail "BES applied, but target version $target_version could not be verified"
+}
+
+build_mtk_plan() {
+  local manifest="$1"
+  local initial="$2"
+  local plan="$3"
+  local cursor="$initial"
+  local step=0 count row end url sha filename suffix max_suffix candidate_suffix
+  local file_start_suffix file_end_suffix start_suffix end_suffix
+
+  : > "$plan"
+  while true; do
+    count="$(jq --arg current "$cursor" '[.mtk_patches[] | select(.start_firmware == $current)] | length' "$manifest")"
+    if [ "$count" -gt 1 ]; then
+      fail "Staging manifest has multiple MTK patches starting at $cursor"
+    fi
+    if [ "$count" -eq 0 ]; then
+      if jq -e --arg current "$cursor" 'any(.mtk_patches[]; .end_firmware == $current)' "$manifest" >/dev/null; then
+        echo "MTK is already at manifest terminal $cursor."
+        return 0
+      fi
+
+      suffix="$(firmware_suffix "$cursor")"
+      max_suffix=""
+      while IFS= read -r candidate_suffix; do
+        if [ -z "$max_suffix" ] || version_at_least "$candidate_suffix" "$max_suffix"; then
+          max_suffix="$candidate_suffix"
+        fi
+      done < <(jq -r '.mtk_patches[].end_firmware' "$manifest" | sed -nE 's/.*_([0-9]{8}(\.[0-9]+)?)$/\1/p')
+      if [ -n "$suffix" ] && [ -n "$max_suffix" ] && version_at_least "$suffix" "$max_suffix"; then
+        echo "MTK $cursor is newer than the staging manifest terminal; refusing to downgrade it."
+        return 0
+      fi
+      fail "No MTK patch path from device firmware $cursor in the staging manifest"
+    fi
+
+    if grep -Fqx -- "$cursor" "${plan}.visited" 2>/dev/null; then
+      fail "MTK patch graph contains a cycle at $cursor"
+    fi
+    printf '%s\n' "$cursor" >> "${plan}.visited"
+    row="$(jq -r --arg current "$cursor" '.mtk_patches[] | select(.start_firmware == $current) | [.end_firmware, .url, .sha256] | @tsv' "$manifest")"
+    IFS=$'\t' read -r end url sha <<< "$row"
+    sha="$(printf '%s\n' "$sha" | tr '[:upper:]' '[:lower:]')"
+    step=$((step + 1))
+    filename="$(basename "${url%%\?*}")"
+    if [[ "$filename" =~ _([0-9]{8}(\.[0-9]+)?)_([0-9]{8}(\.[0-9]+)?)\.zip$ ]]; then
+      file_start_suffix="${BASH_REMATCH[1]}"
+      file_end_suffix="${BASH_REMATCH[3]}"
+    else
+      fail "MTK patch URL has an unsupported filename: $filename"
+    fi
+    start_suffix="$(firmware_suffix "$cursor")"
+    end_suffix="$(firmware_suffix "$end")"
+    if [ "$file_start_suffix" != "$start_suffix" ] || [ "$file_end_suffix" != "$end_suffix" ]; then
+      fail "MTK patch filename $filename does not match manifest transition $cursor -> $end"
+    fi
+    mkdir -p "$WORK_DIR/mtk-$step"
+    download_verified "MTK patch $cursor -> $end" "$url" "$sha" "" "$WORK_DIR/mtk-$step/$filename"
+    printf '%s\t%s\t%s\n' "$cursor" "$end" "$WORK_DIR/mtk-$step/$filename" >> "$plan"
+    cursor="$end"
+  done
+}
+
+recover_orphaned_legacy_stock_files
+
+WORK_DIR="$(mktemp -d "${TMPDIR:-/tmp}/mentra-dev-ota.XXXXXX")"
+MANIFEST_PATH="$WORK_DIR/staging-manifest.json"
+BRIDGE_APK_PATH="$WORK_DIR/asg-36-bridge.apk"
+TARGET_APK_PATH="$WORK_DIR/staging-asg.apk"
+BES_PATH="$WORK_DIR/bes-firmware.bin"
+MTK_PLAN_PATH="$WORK_DIR/mtk-plan.tsv"
+
+echo ""
+echo "=== Preparing Mentra Live Stock Firmware ==="
+echo "Manifest: $MANIFEST_URL"
+echo "The manifest will be fetched once and pinned for this run."
+echo ""
+
+curl --fail --location --retry 3 --retry-all-errors --output "$MANIFEST_PATH" "$MANIFEST_URL"
+jq -e '
+  .apps["com.mentra.asg_client"] as $app
+  | ($app | type == "object")
+    and ($app.versionCode | type == "number" and . > 0 and floor == .)
+    and ($app.versionName | type == "string" and length > 0)
+    and ($app.apkUrl | type == "string" and test("^https://[^[:space:]]+$"))
+    and ($app.apkSize | type == "number" and . > 0 and floor == .)
+    and ($app.sha256 | type == "string" and test("^[0-9a-fA-F]{64}$"))
+' "$MANIFEST_PATH" >/dev/null || fail "Staging manifest contains invalid stock ASG metadata"
+
+TARGET_VERSION_CODE="$(jq -er '.apps["com.mentra.asg_client"].versionCode' "$MANIFEST_PATH")"
+TARGET_VERSION_NAME="$(jq -er '.apps["com.mentra.asg_client"].versionName' "$MANIFEST_PATH")"
+TARGET_APK_URL="$(jq -er '.apps["com.mentra.asg_client"].apkUrl' "$MANIFEST_PATH")"
+TARGET_APK_SIZE="$(jq -er '.apps["com.mentra.asg_client"].apkSize' "$MANIFEST_PATH")"
+TARGET_APK_SHA256="$(jq -er '.apps["com.mentra.asg_client"].sha256 | ascii_downcase' "$MANIFEST_PATH")"
+
+# Recover an ASG 36 bridge left by an interrupted run before unrelated BES or
+# MTK preflight can fail. Prefer a verified newer update preserved on-device;
+# otherwise use the independently validated stock target from this snapshot.
+download_verified "staging ASG Client" "$TARGET_APK_URL" "$TARGET_APK_SHA256" "$TARGET_APK_SIZE" "$TARGET_APK_PATH"
+INITIAL_STOCK_VERSION_CODE="$(package_version_code "$STOCK_PKG")"
+load_preserved_stock_update \
+  || fail "Could not validate the stock ASG preserved by an interrupted firmware update"
+if [ "$INITIAL_STOCK_VERSION_CODE" = "$BRIDGE_VERSION_CODE" ]; then
+  echo "Found an interrupted firmware update; restoring a safe stock ASG first."
+  DEVICE_MUTATED=true
+  BRIDGE_ACTIVE=true
+  replace_bridge_with_target_stock \
+    || fail "Could not recover a safe stock ASG from the interrupted firmware update"
+  enable_stock_runtime \
+    || fail "Recovered the stock ASG package, but could not activate its launcher"
+elif [ -n "$PRESERVED_STOCK_APK_PATH" ]; then
+  if [[ "$INITIAL_STOCK_VERSION_CODE" =~ ^[0-9]+$ ]] \
+    && [ "$INITIAL_STOCK_VERSION_CODE" -ge "$PRESERVED_STOCK_VERSION_CODE" ]; then
+    echo "Installed stock ASG $INITIAL_STOCK_VERSION_CODE is at least as new as preserved update $PRESERVED_STOCK_VERSION_CODE; removing the stale recovery copy."
+    clear_preserved_stock_update
+  else
+    echo "Bridge removal was interrupted after exposing stock ASG ${INITIAL_STOCK_VERSION_CODE:-unknown}; restoring preserved update $PRESERVED_STOCK_VERSION_CODE first."
+    DEVICE_MUTATED=true
+    "${ADB[@]}" install -r "$PRESERVED_STOCK_APK_PATH" >/dev/null \
+      || fail "Could not restore the preserved stock ASG update"
+    INITIAL_STOCK_VERSION_CODE="$(package_version_code "$STOCK_PKG")"
+    [ "$INITIAL_STOCK_VERSION_CODE" = "$PRESERVED_STOCK_VERSION_CODE" ] \
+      || fail "Preserved stock ASG restore expected versionCode $PRESERVED_STOCK_VERSION_CODE, got ${INITIAL_STOCK_VERSION_CODE:-unknown}"
+    clear_preserved_stock_update
+    enable_stock_runtime \
+      || fail "Restored the preserved stock ASG package, but could not activate its launcher"
+  fi
+fi
+
+"$REPO_DIR/.github/scripts/validate-asg-ota-manifest.sh" "$MANIFEST_PATH"
+jq -e '
+  .mtk_patches
+  | all(.[];
+      (.start_firmware | type == "string" and test("^MentraLive_[0-9]{8}(\\.[0-9]+)?$"))
+      and (.end_firmware | type == "string" and test("^MentraLive_[0-9]{8}(\\.[0-9]+)?$"))
+      and (.url | type == "string" and test("^https://[^[:space:]]+$"))
+      and (.sha256 | type == "string" and test("^[0-9a-fA-F]{64}$")))
+' "$MANIFEST_PATH" >/dev/null || fail "Staging manifest contains invalid MTK patch metadata"
+
+BES_VERSION="$(jq -er '.bes_firmware.version' "$MANIFEST_PATH")"
+BES_URL="$(jq -er '.bes_firmware.url' "$MANIFEST_PATH")"
+BES_SHA256="$(jq -er '.bes_firmware.sha256 | ascii_downcase' "$MANIFEST_PATH")"
+INITIAL_MTK="$("${ADB[@]}" shell getprop ro.custom.ota.version 2>/dev/null | tr -d '\r\n')"
+[ -n "$INITIAL_MTK" ] || fail "Could not read ro.custom.ota.version from Mentra Live"
+[[ "$INITIAL_MTK" =~ ^MentraLive_[0-9]{8}(\.[0-9]+)?$ ]] \
+  || fail "Unsupported MTK firmware version reported by device: $INITIAL_MTK"
+
+echo "Run snapshot:"
+echo "  ASG: $TARGET_VERSION_NAME ($TARGET_VERSION_CODE)"
+echo "  BES: $BES_VERSION"
+echo "  MTK: $INITIAL_MTK"
+echo ""
+
+# Except for interrupted-bridge recovery above, finish every remaining download
+# and integrity check before replacing any package or beginning a transition.
+download_verified "firmware compatibility client" "$BRIDGE_APK_URL" "$BRIDGE_APK_SHA256" "$BRIDGE_APK_SIZE" "$BRIDGE_APK_PATH"
+download_verified "BES firmware $BES_VERSION" "$BES_URL" "$BES_SHA256" "" "$BES_PATH"
+build_mtk_plan "$MANIFEST_PATH" "$INITIAL_MTK" "$MTK_PLAN_PATH"
+
+echo ""
+echo "All OTA artifacts are downloaded and verified."
+echo ""
+
+DEVICE_MUTATED=true
+"${ADB[@]}" shell am force-stop "$DEV_PKG" >/dev/null 2>&1 || true
+"${ADB[@]}" shell pm disable-user --user 0 "$DEV_PKG" >/dev/null 2>&1 || true
+"${ADB[@]}" shell am force-stop "$RECOVERY_PKG" >/dev/null 2>&1 || true
+"${ADB[@]}" shell pm disable-user --user 0 "$RECOVERY_PKG" >/dev/null 2>&1 || true
+"${ADB[@]}" shell am force-stop "$LEGACY_UPDATER_PKG" >/dev/null 2>&1 || true
+"${ADB[@]}" shell pm disable-user --user 0 "$LEGACY_UPDATER_PKG" >/dev/null 2>&1 || true
+return_bes_to_rendezvous_before_bridge
+
+echo "=== Preparing BES firmware compatibility ==="
+preserve_newer_stock_update \
+  || fail "Could not preserve the newer installed stock ASG before firmware maintenance"
+"${ADB[@]}" install -r "$BRIDGE_APK_PATH"
+INSTALLED_VERSION_CODE="$(package_version_code "$STOCK_PKG")"
+[ "$INSTALLED_VERSION_CODE" = "$BRIDGE_VERSION_CODE" ] \
+  || fail "Firmware compatibility client did not produce the expected versionCode $BRIDGE_VERSION_CODE"
+BRIDGE_ACTIVE=true
+"${ADB[@]}" shell am start -n "$STOCK_COMPONENT" >/dev/null
+sleep 20
+
+VERSIONS=""
+for attempt in 1 2 3; do
+  VERSIONS="$(query_firmware_versions || true)"
+  if [ -n "${VERSIONS%%|*}" ]; then
+    break
+  fi
+  if [ "$attempt" -lt 3 ]; then
+    echo "Could not read the current BES version; retrying ($attempt/3)..."
+    sleep 5
+  fi
+done
+CURRENT_BES="${VERSIONS%%|*}"
+[ -n "$CURRENT_BES" ] && valid_bes_version "$CURRENT_BES" \
+  || fail "Could not determine the current BES version; refusing to flash an unknown firmware state"
+echo "Detected BES firmware $CURRENT_BES."
+
+if version_at_least "$CURRENT_BES" "$BES_VERSION"; then
+  if [ "$CURRENT_BES" = "$BES_VERSION" ]; then
+    echo "BES is already at the staging target."
+  else
+    echo "BES $CURRENT_BES is newer than staging target $BES_VERSION; refusing to downgrade it."
+  fi
+else
+  echo "=== Updating BES to $BES_VERSION ==="
+  ANDROID_SERIAL="$SERIAL" "$SCRIPT_DIR/test-bes-ota.sh" "$BES_PATH" "$BES_VERSION" --no-follow
+  wait_for_bes_success "$BES_VERSION"
+fi
+
+echo ""
+echo "=== Restoring the current staging ASG Client ==="
+replace_bridge_with_target_stock \
+  || fail "Could not restore a safe stock ASG after firmware maintenance"
+enable_stock_runtime
+sleep 20
+
+if [ -s "$MTK_PLAN_PATH" ]; then
+  while IFS=$'\t' read -r PATCH_START PATCH_END PATCH_PATH; do
+    CURRENT_MTK="$("${ADB[@]}" shell getprop ro.custom.ota.version 2>/dev/null | tr -d '\r\n')"
+    [ "$CURRENT_MTK" = "$PATCH_START" ] \
+      || fail "MTK changed unexpectedly: patch requires $PATCH_START, device reports $CURRENT_MTK"
+
+    echo ""
+    echo "=== Updating MTK: $PATCH_START -> $PATCH_END ==="
+    BOOT_ID_BEFORE="$("${ADB[@]}" shell cat /proc/sys/kernel/random/boot_id 2>/dev/null | tr -d '\r\n')"
+    ANDROID_SERIAL="$SERIAL" "$SCRIPT_DIR/test-mtk-ota.sh" "$PATCH_PATH" \
+      --start-firmware "$PATCH_START" \
+      --end-firmware "$PATCH_END"
+    wait_for_boot_after_reboot "MTK" "$BOOT_ID_BEFORE"
+
+    CURRENT_MTK="$("${ADB[@]}" shell getprop ro.custom.ota.version 2>/dev/null | tr -d '\r\n')"
+    [ "$CURRENT_MTK" = "$PATCH_END" ] \
+      || fail "MTK rebooted but expected $PATCH_END, got ${CURRENT_MTK:-unknown}"
+    enable_stock_runtime
+    sleep 10
+  done < "$MTK_PLAN_PATH"
+fi
+
+FINAL_MTK="$("${ADB[@]}" shell getprop ro.custom.ota.version 2>/dev/null | tr -d '\r\n')"
+FINAL_STOCK_VERSION_CODE="$(package_version_code "$STOCK_PKG")"
+[[ "$FINAL_STOCK_VERSION_CODE" =~ ^[0-9]+$ ]] \
+  || fail "Could not verify the stock ASG version after firmware updates"
+[ "$FINAL_STOCK_VERSION_CODE" -ge "$TARGET_VERSION_CODE" ] \
+  || fail "Stock ASG versionCode $FINAL_STOCK_VERSION_CODE is below manifest target $TARGET_VERSION_CODE"
+echo ""
+echo "Stock firmware baseline is ready:"
+if [ "$FINAL_STOCK_VERSION_CODE" = "$TARGET_VERSION_CODE" ]; then
+  echo "  ASG: $TARGET_VERSION_NAME ($TARGET_VERSION_CODE)"
+else
+  echo "  ASG: versionCode $FINAL_STOCK_VERSION_CODE (newer than manifest target $TARGET_VERSION_CODE)"
+fi
+echo "  BES: $BES_VERSION or newer"
+echo "  MTK: $FINAL_MTK"
+
+if [ "$RESUME_THIRDPARTY" = true ]; then
+  echo ""
+  echo "=== Returning to the installed third-party ASG Client ==="
+  enable_thirdparty_runtime
+  echo "$DEV_PKG is active again; its APK and app data were preserved."
+fi
+
+SUCCESS=true

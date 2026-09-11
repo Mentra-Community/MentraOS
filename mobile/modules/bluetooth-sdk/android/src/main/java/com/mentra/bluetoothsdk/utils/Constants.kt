@@ -9,7 +9,9 @@ object DeviceTypes {
     const val Z100 = "Vuzix Z100"
     const val FRAME = "Brilliant Frame"
     const val G2 = "Even Realities G2"
-    val ALL = arrayOf(SIMULATED, G1, G2, MACH1, LIVE, Z100, FRAME, NEX)
+    const val NIMO = "NIMO"
+    const val AR99 = "AR99"
+    val ALL = arrayOf(SIMULATED, G1, G2, MACH1, LIVE, Z100, FRAME, NEX, NIMO, AR99)
 }
 
 object ControllerTypes {

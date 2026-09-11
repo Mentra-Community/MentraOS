@@ -1,0 +1,1667 @@
+package com.mentra.asg_client.io.bluetooth.managers.mentralive.internal;
+
+import android.util.Log;
+import com.mentra.asg_client.AsgConstants;
+import java.nio.charset.StandardCharsets;
+import java.util.ArrayDeque;
+import java.util.concurrent.CancellationException;
+import java.util.concurrent.ExecutionException;
+import java.util.concurrent.Executors;
+import java.util.concurrent.Future;
+import java.util.concurrent.FutureTask;
+import java.util.concurrent.ScheduledExecutorService;
+import java.util.concurrent.ScheduledFuture;
+import java.util.concurrent.TimeUnit;
+import org.json.JSONObject;
+
+/**
+ * Single policy owner for the ASG-to-BES UART.
+ *
+ * <p>The monitor serializes transport decisions while a dedicated FIFO lane serializes physical
+ * writes and descriptor transitions. Timers only feed events back through those two owners; they
+ * never mutate transport state independently.
+ */
+public final class BesUartTransportCoordinator {
+    private static final String TAG = "BES-UART";
+
+    /** Stable and transitional states of the physical ASG-to-BES UART. */
+    public enum State {
+        CLOSED,
+        DISCOVERING,
+        READY_RENDEZVOUS,
+        SWITCH_REQUESTED,
+        WAITING_FAST_REOPEN,
+        VERIFYING_FAST,
+        READY_FAST,
+        RECOVERING,
+        SAFETY_RECOVERING,
+        QUARANTINED
+    }
+
+    /** Long-lived operation currently preventing transport reconfiguration. */
+    public enum Operation {
+        NONE,
+        FILE_TRANSFER,
+        OTA_AUTHORIZATION,
+        OTA_TRANSFER
+    }
+
+    /** Opaque ownership token for one exclusive operation lifetime. */
+    public static final class OperationLease {
+        private final long id;
+        private final Operation acquiredAs;
+
+        private OperationLease(long id, Operation acquiredAs) {
+            this.id = id;
+            this.acquiredAs = acquiredAs;
+        }
+
+        @Override
+        public String toString() {
+            return acquiredAs + "#" + id;
+        }
+    }
+
+    /** Outcome of consuming a session-matched BES system-version reply. */
+    public enum SystemVersionResult {
+        IGNORED,
+        READY,
+        TRANSITIONING
+    }
+
+    /** Receive parser selected for bytes from one validated physical session. */
+    public enum InboundRoute {
+        REJECTED,
+        NORMAL,
+        OTA
+    }
+
+    /** Durable BES OTA policy projected by the one authoritative state store. */
+    public enum SafetyPolicy {
+        NORMAL,
+        OTA_OWNER_ONLY,
+        RECOVERY_PROBE_ONLY,
+        VERSION_PROBE_ONLY,
+        QUARANTINED
+    }
+
+    @FunctionalInterface
+    public interface SafetyState {
+        SafetyPolicy currentPolicy();
+
+        default void onRawOtaModeProven() {}
+
+        default void onRecoveryFailed() {}
+    }
+
+    /** A physical write performed on the FIFO UART lane without holding the state monitor. */
+    @FunctionalInterface
+    public interface WriteAction {
+        boolean write();
+    }
+
+    /** Hardware/protocol hooks implemented by {@code K900BluetoothManager}. */
+    public interface Host {
+        int currentBaud();
+
+        boolean isSerialOpen();
+
+        /**
+         * Replace the physical serial port at exactly {@code baud} and return its unstarted
+         * session, or {@code null} on failure.
+         */
+        SerialSession openAtBaud(int baud);
+
+        /** Start receiving after the coordinator has adopted the opened session. */
+        boolean startReader(SerialSession session);
+
+        /** Close an opened session that cannot be adopted or is no longer current. */
+        void closeSession(SerialSession session);
+
+        /** Invalidate the current link proof before a transition can be observed by consumers. */
+        void invalidateLinkProof();
+
+        /** Clear partial receive framing without reopening the port. */
+        void resetParser();
+
+        /** Write one coordinator-owned K900 control command synchronously. */
+        boolean writeControlCommand(byte[] json);
+
+        /** Write raw BES protocol bytes synchronously. */
+        boolean writeRawBytes(byte[] data);
+
+        /** Adjust receive polling for high-throughput file or OTA traffic. */
+        void setFastReceive(boolean enabled);
+
+        /** Whether this firmware version implements the negotiated fast-baud contract. */
+        boolean supportsFastBaud(String firmwareVersion);
+
+        /** Queue a barrier behind every outbound message accepted before this call. */
+        boolean queueAfterOutboundWrites(Runnable action);
+    }
+
+    private static final int[] RECOVERY_BAUDS = {
+        AsgConstants.UART_FAST_BAUD, AsgConstants.UART_RENDEZVOUS_BAUD
+    };
+    private static final int SAFETY_REOPEN_MAX_ATTEMPTS = 2;
+    private static final long SAFETY_REOPEN_RETRY_DELAY_MS = 200;
+
+    private final Object monitor = new Object();
+    private final Host host;
+    private final SafetyState safetyState;
+    private final long idleHealthProbeMs;
+    private final long healthProbeTimeoutMs;
+    private final BesUartIoLane ioLane = new BesUartIoLane();
+    private final ScheduledExecutorService executor = Executors.newSingleThreadScheduledExecutor();
+    private final ArrayDeque<FutureTask<Boolean>> deferredNormalWrites = new ArrayDeque<>();
+
+    private State state = State.CLOSED;
+    private Operation operation = Operation.NONE;
+    private OperationLease operationLease;
+    private boolean otaRawRouting = false;
+    private long nextOperationLeaseId = 1;
+    private SerialSession serialSession;
+    private long phaseGeneration = 0;
+    private SerialSession versionSession;
+    private SerialSession fastSwitchAttemptSession;
+    // Fast baud is an optional optimization. Once its negotiation or runtime proof fails, keep
+    // this coordinator at the universally supported 460800 rendezvous baud for the rest of the
+    // process. Serial recovery creates a new SerialSession, so a per-session attempt marker alone
+    // would immediately retry cs_baud and can starve every ordinary K900 command in a loop.
+    private boolean fastBaudSuppressed;
+    private int recoveryIndex = 0;
+    private int recoveryRetryAttempt = 0;
+    private String firmwareVersion = "";
+    // Target owned by the one in-flight cs_baud transaction. Fast-baud promotion and the
+    // mandatory pre-OTA return to rendezvous use the same request-and-prove machinery.
+    private int baudTransitionTarget;
+    private long discardedBytes = 0;
+    private int discardEvents = 0;
+    private boolean versionProbeDeferred = false;
+    private boolean outboundDrainPending = false;
+    private long outboundDrainGeneration = 0;
+    // A state-machine phase can remain unchanged across many READY_FAST health-timer rearms.
+    // Give every arm its own identity so a callback that already started before cancel(false)
+    // cannot clear a replacement timer or recover a link that a newer valid frame just proved.
+    private long healthTimerGeneration = 0;
+
+    private ScheduledFuture<?> phaseTimeout;
+    private ScheduledFuture<?> healthTimeout;
+    private int safetyRawProbeAttempts;
+    private boolean safetyRecoveryListenerReady;
+    private boolean safetyAlternateBaudAttempted;
+
+    public BesUartTransportCoordinator(Host host) {
+        this(host, () -> SafetyPolicy.NORMAL);
+    }
+
+    public BesUartTransportCoordinator(Host host, SafetyState safetyState) {
+        this(
+                host,
+                safetyState,
+                AsgConstants.UART_HIGH_BAUD_IDLE_PROBE_MS,
+                AsgConstants.UART_BAUD_PROBE_TIMEOUT_MS);
+    }
+
+    BesUartTransportCoordinator(
+            Host host, SafetyState safetyState, long idleHealthProbeMs, long healthProbeTimeoutMs) {
+        if (host == null) {
+            throw new IllegalArgumentException("host is required");
+        }
+        if (safetyState == null) {
+            throw new IllegalArgumentException("safetyState is required");
+        }
+        if (idleHealthProbeMs <= 0 || healthProbeTimeoutMs <= 0) {
+            throw new IllegalArgumentException("health probe timings must be positive");
+        }
+        this.host = host;
+        this.safetyState = safetyState;
+        this.idleHealthProbeMs = idleHealthProbeMs;
+        this.healthProbeTimeoutMs = healthProbeTimeoutMs;
+    }
+
+    public State getState() {
+        synchronized (monitor) {
+            return state;
+        }
+    }
+
+    public Operation getOperation() {
+        synchronized (monitor) {
+            return operation;
+        }
+    }
+
+    int getDeferredNormalWriteCount() {
+        synchronized (monitor) {
+            return deferredNormalWrites.size();
+        }
+    }
+
+    public boolean isReady() {
+        synchronized (monitor) {
+            return isReadyLocked();
+        }
+    }
+
+    /** Route bytes only when they belong to the descriptor currently owned by this coordinator. */
+    public InboundRoute inboundRoute(SerialSession session) {
+        synchronized (monitor) {
+            if (!isCurrentSerialSessionLocked(session) || state == State.CLOSED) {
+                return InboundRoute.REJECTED;
+            }
+            if (state == State.QUARANTINED) {
+                SafetyPolicy policy = safetyState.currentPolicy();
+                if (policy != SafetyPolicy.RECOVERY_PROBE_ONLY
+                        && policy != SafetyPolicy.VERSION_PROBE_ONLY) {
+                    return InboundRoute.REJECTED;
+                }
+                beginSafetyRecoveryLocked(policy, "current_session_activity");
+            }
+            return otaRawRouting ? InboundRoute.OTA : InboundRoute.NORMAL;
+        }
+    }
+
+    /** Session captured by receive callbacks so retired descriptors cannot mutate state. */
+    public SerialSession getSerialSession() {
+        synchronized (monitor) {
+            return serialSession;
+        }
+    }
+
+    public boolean isCurrentSerialSession(SerialSession session) {
+        synchronized (monitor) {
+            return isCurrentSerialSessionLocked(session);
+        }
+    }
+
+    /** Begin bounded raw-first recovery after the raw parser listener is registered. */
+    public void startSafetyRecovery() {
+        synchronized (monitor) {
+            // Listener registration and serial readiness can arrive in either order. Remember the
+            // registration so a later onSerialReady transition cannot strand the state machine in
+            // SAFETY_RECOVERING without ever sending its bounded probes.
+            safetyRecoveryListenerReady = true;
+            if (state != State.SAFETY_RECOVERING || !otaRawRouting) {
+                return;
+            }
+            armSafetyRecoveryProbesLocked();
+        }
+    }
+
+    private void armSafetyRecoveryProbesLocked() {
+        safetyRawProbeAttempts = 0;
+        long phase = ++phaseGeneration;
+        scheduleNextSafetyRawProbeLocked(phase);
+    }
+
+    /** Consume only a complete raw protocol-version response during bounded recovery. */
+    public boolean onSafetyRawProtocolResponse(byte command) {
+        synchronized (monitor) {
+            if (state != State.SAFETY_RECOVERING || command != (byte) 0x9A) {
+                return false;
+            }
+            Log.e(TAG, "BES still answers the raw OTA parser after restart");
+            safetyState.onRawOtaModeProven();
+            quarantineCurrentSessionLocked();
+            return true;
+        }
+    }
+
+    /** Run a receive-side mutation atomically only for the current serial reader. */
+    public boolean runForCurrentSerialSession(SerialSession session, Runnable action) {
+        synchronized (monitor) {
+            if (!isCurrentSerialSessionLocked(session) || action == null) {
+                return false;
+            }
+            action.run();
+            return true;
+        }
+    }
+
+    /** Start discovery at the rendezvous baud when the serial driver opens. */
+    public void onSerialReady(SerialSession session) {
+        synchronized (monitor) {
+            if (session == null) {
+                throw new IllegalArgumentException("session is required");
+            }
+            cancelAllTimersLocked();
+            cancelDeferredNormalWritesLocked("serial session replaced");
+            operation = Operation.NONE;
+            operationLease = null;
+            otaRawRouting = false;
+            host.setFastReceive(false);
+            state = State.DISCOVERING;
+            versionSession = null;
+            fastSwitchAttemptSession = null;
+            baudTransitionTarget = 0;
+            firmwareVersion = "";
+            discardedBytes = 0;
+            discardEvents = 0;
+            versionProbeDeferred = false;
+            cancelOutboundDrainLocked();
+            serialSession = session;
+            SafetyPolicy policy = safetyState.currentPolicy();
+            if (policy == SafetyPolicy.QUARANTINED || policy == SafetyPolicy.OTA_OWNER_ONLY) {
+                state = State.QUARANTINED;
+                phaseGeneration++;
+                Log.e(TAG, "UART quarantined by durable BES OTA state: " + policy);
+                return;
+            }
+            if (policy == SafetyPolicy.RECOVERY_PROBE_ONLY
+                    || policy == SafetyPolicy.VERSION_PROBE_ONLY) {
+                beginSafetyRecoveryLocked(policy, "serial_ready");
+                return;
+            }
+            long phase = ++phaseGeneration;
+            Log.i(TAG, "Serial ready; discovering BES at rendezvous baud");
+            scheduleProbeBurstLocked(
+                    phase,
+                    AsgConstants.UART_RENDEZVOUS_BAUD,
+                    0,
+                    AsgConstants.UART_RECOVERY_PROBES_PER_BURST,
+                    AsgConstants.UART_RECOVERY_PROBE_SPACING_MS);
+            phaseTimeout =
+                    executor.schedule(
+                            () -> startRecoveryIfCurrent(phase, "startup_discovery_timeout"),
+                            AsgConstants.UART_BOOT_RECOVERY_INITIAL_DELAY_MS,
+                            TimeUnit.MILLISECONDS);
+        }
+    }
+
+    public void onSerialClosed() {
+        synchronized (monitor) {
+            cancelAllTimersLocked();
+            cancelDeferredNormalWritesLocked("serial session closed");
+            phaseGeneration++;
+            serialSession = null;
+            versionSession = null;
+            fastSwitchAttemptSession = null;
+            baudTransitionTarget = 0;
+            firmwareVersion = "";
+            versionProbeDeferred = false;
+            safetyAlternateBaudAttempted = false;
+            cancelOutboundDrainLocked();
+            state = State.CLOSED;
+            operation = Operation.NONE;
+            operationLease = null;
+            otaRawRouting = false;
+            host.setFastReceive(false);
+            Log.i(TAG, "Serial closed");
+        }
+    }
+
+    private void scheduleNextSafetyRawProbeLocked(long phase) {
+        if (phase != phaseGeneration || state != State.SAFETY_RECOVERING) {
+            return;
+        }
+        if (safetyRawProbeAttempts >= 3) {
+            phaseTimeout =
+                    executor.schedule(() -> finishSafetyRawSilence(phase), 1, TimeUnit.SECONDS);
+            return;
+        }
+        safetyRawProbeAttempts++;
+        int attempt = safetyRawProbeAttempts;
+        ioLane.submit(
+                () -> {
+                    boolean sent = host.writeRawBytes(new byte[] {(byte) 0x99, 0, 0, 0, 0});
+                    Log.w(TAG, "Safety raw 0x99 probe " + attempt + "/3 sent=" + sent);
+                });
+        phaseTimeout =
+                executor.schedule(
+                        () -> {
+                            synchronized (monitor) {
+                                scheduleNextSafetyRawProbeLocked(phase);
+                            }
+                        },
+                        1,
+                        TimeUnit.SECONDS);
+    }
+
+    private void beginSafetyRecoveryLocked(SafetyPolicy policy, String reason) {
+        cancelAllTimersLocked();
+        cancelDeferredNormalWritesLocked("BES OTA recovery");
+        cancelOutboundDrainLocked();
+        otaRawRouting = true;
+        host.setFastReceive(false);
+        operation = Operation.NONE;
+        operationLease = null;
+        host.resetParser();
+        state = State.SAFETY_RECOVERING;
+        safetyRawProbeAttempts = 0;
+        safetyAlternateBaudAttempted = false;
+        phaseGeneration++;
+        if (safetyRecoveryListenerReady) {
+            Log.w(TAG, "Starting raw-first BES OTA recovery probe: " + policy + " reason=" + reason);
+            armSafetyRecoveryProbesLocked();
+        } else {
+            Log.w(TAG, "Awaiting raw parser listener before BES OTA recovery: " + policy);
+        }
+    }
+
+    private void finishSafetyRawSilence(long phase) {
+        synchronized (monitor) {
+            if (phase != phaseGeneration || state != State.SAFETY_RECOVERING) {
+                return;
+            }
+            // Raw silence is not proof of framed mode. Send exactly one source-audited cs_syvr and
+            // accept only its current-session sr_syvr. A restarted ASG process cannot know whether
+            // BES was left at rendezvous or fast baud, so a timeout advances to the one alternate
+            // physical baud and repeats this raw-first proof before failing closed.
+            otaRawRouting = false;
+            host.resetParser();
+            state = State.DISCOVERING;
+            long framedPhase = ++phaseGeneration;
+            scheduleProbeBurstLocked(framedPhase, host.currentBaud(), 0, 1, 0);
+            phaseTimeout =
+                    executor.schedule(
+                            () -> continueSafetyRecoveryIfCurrent(framedPhase),
+                            AsgConstants.UART_BAUD_PROBE_TIMEOUT_MS,
+                            TimeUnit.MILLISECONDS);
+        }
+    }
+
+    private void continueSafetyRecoveryIfCurrent(long phase) {
+        int alternateBaud;
+        synchronized (monitor) {
+            if (phase != phaseGeneration || state != State.DISCOVERING) {
+                return;
+            }
+            if (safetyAlternateBaudAttempted) {
+                safetyState.onRecoveryFailed();
+                quarantineCurrentSessionLocked();
+                return;
+            }
+            safetyAlternateBaudAttempted = true;
+            alternateBaud =
+                    host.currentBaud() == AsgConstants.UART_FAST_BAUD
+                            ? AsgConstants.UART_RENDEZVOUS_BAUD
+                            : AsgConstants.UART_FAST_BAUD;
+            host.invalidateLinkProof();
+            serialSession = null;
+            versionSession = null;
+            state = State.SAFETY_RECOVERING;
+            otaRawRouting = true;
+            long reopenPhase = ++phaseGeneration;
+            Log.w(TAG, "Safety recovery trying alternate UART baud " + alternateBaud);
+            ioLane.submit(() -> performSafetyRecoveryReopen(reopenPhase, alternateBaud, 1));
+        }
+    }
+
+    private void performSafetyRecoveryReopen(long reopenPhase, int baud, int attempt) {
+        synchronized (monitor) {
+            if (reopenPhase != phaseGeneration || state != State.SAFETY_RECOVERING) {
+                return;
+            }
+        }
+
+        SerialSession opened = replacePhysicalSession(baud);
+        boolean closeOpened = false;
+        boolean retry = false;
+        synchronized (monitor) {
+            if (reopenPhase != phaseGeneration || state != State.SAFETY_RECOVERING) {
+                closeOpened = opened != null;
+            } else if (!adoptAndStartSessionLocked(opened)) {
+                closeOpened = opened != null;
+                if (attempt < SAFETY_REOPEN_MAX_ATTEMPTS) {
+                    retry = true;
+                    Log.w(
+                            TAG,
+                            "Safety UART reopen attempt "
+                                    + attempt
+                                    + "/"
+                                    + SAFETY_REOPEN_MAX_ATTEMPTS
+                                    + " failed at "
+                                    + baud
+                                    + "; retrying local descriptor only");
+                } else {
+                    safetyState.onRecoveryFailed();
+                    quarantineCurrentSessionLocked();
+                }
+            } else {
+                armSafetyRecoveryProbesLocked();
+                Log.w(
+                        TAG,
+                        "Safety recovery reopened UART at alternate baud "
+                                + baud
+                                + " on attempt "
+                                + attempt);
+            }
+        }
+        if (closeOpened) {
+            host.closeSession(opened);
+        }
+        if (retry && !executor.isShutdown()) {
+            executor.schedule(
+                    () ->
+                            ioLane.submit(
+                                    () ->
+                                            performSafetyRecoveryReopen(
+                                                    reopenPhase, baud, attempt + 1)),
+                    SAFETY_REOPEN_RETRY_DELAY_MS,
+                    TimeUnit.MILLISECONDS);
+        }
+    }
+
+    /**
+     * Consume an {@code sr_syvr}. The preparation callback runs only for the current serial session
+     * and before any resulting baud transition. A reply that starts a baud switch never creates a
+     * transient ready edge.
+     */
+    public SystemVersionResult onSystemVersion(
+            String version, SerialSession receiveSession, Runnable beforeTransition) {
+        synchronized (monitor) {
+            if (!isCurrentSerialSessionLocked(receiveSession)
+                    || state == State.CLOSED
+                    || state == State.QUARANTINED
+                    || state == State.SWITCH_REQUESTED
+                    || state == State.WAITING_FAST_REOPEN
+                    || !host.isSerialOpen()) {
+                return SystemVersionResult.IGNORED;
+            }
+            if (beforeTransition != null) {
+                beforeTransition.run();
+            }
+            SafetyPolicy policy = safetyState.currentPolicy();
+            if (policy != SafetyPolicy.NORMAL) {
+                state = State.QUARANTINED;
+                Log.e(TAG, "sr_syvr did not resolve durable BES OTA policy: " + policy);
+                return SystemVersionResult.IGNORED;
+            }
+            firmwareVersion = version == null ? "" : version.trim();
+            versionSession = serialSession;
+            versionProbeDeferred = false;
+            discardedBytes = 0;
+            discardEvents = 0;
+            cancelPhaseTimeoutLocked();
+            phaseGeneration++;
+            recoveryRetryAttempt = 0;
+
+            int baud = host.currentBaud();
+            baudTransitionTarget = 0;
+            if (baud == AsgConstants.UART_FAST_BAUD) {
+                state = State.READY_FAST;
+                scheduleHealthCheckLocked();
+                monitor.notifyAll();
+                Log.i(TAG, "UART link ready at fast baud " + baud);
+                return SystemVersionResult.READY;
+            }
+
+            state = State.READY_RENDEZVOUS;
+            if (baud != AsgConstants.UART_RENDEZVOUS_BAUD) {
+                Log.w(TAG, "Unexpected proven baud " + baud + "; treating as rendezvous-ready");
+            }
+
+            advanceLocked();
+            monitor.notifyAll();
+            if (isReadyLocked()) {
+                Log.i(TAG, "UART link ready at rendezvous baud " + baud);
+                return SystemVersionResult.READY;
+            }
+            return SystemVersionResult.TRANSITIONING;
+        }
+    }
+
+    /** Consume the old-baud acknowledgement for a pending {@code cs_baud}. */
+    public boolean onBaudResponse(int status, int acknowledgedBaud, SerialSession receiveSession) {
+        synchronized (monitor) {
+            if (!isCurrentSerialSessionLocked(receiveSession) || state != State.SWITCH_REQUESTED) {
+                Log.w(TAG, "Ignoring sr_baud while state=" + state);
+                return false;
+            }
+            cancelPhaseTimeoutLocked();
+            int requestedBaud = baudTransitionTarget;
+            if (status != 0 || requestedBaud == 0 || acknowledgedBaud != requestedBaud) {
+                fastBaudSuppressed = true;
+                if (host.currentBaud() == AsgConstants.UART_FAST_BAUD) {
+                    state = State.READY_FAST;
+                    scheduleHealthCheckLocked();
+                } else {
+                    state = State.READY_RENDEZVOUS;
+                }
+                baudTransitionTarget = 0;
+                monitor.notifyAll();
+                Log.w(
+                        TAG,
+                        "Baud request rejected status="
+                                + status
+                                + " acknowledged="
+                                + acknowledgedBaud
+                                + " requested="
+                                + requestedBaud);
+                return true;
+            }
+
+            state = State.WAITING_FAST_REOPEN;
+            host.invalidateLinkProof();
+            long phase = ++phaseGeneration;
+            phaseTimeout =
+                    executor.schedule(
+                            () -> reopenBaudAndVerifyIfCurrent(phase, "sr_baud"),
+                            AsgConstants.UART_BAUD_REOPEN_DELAY_MS,
+                            TimeUnit.MILLISECONDS);
+            Log.i(
+                    TAG,
+                    "Baud request accepted for " + requestedBaud + "; waiting to reopen ASG UART");
+            return true;
+        }
+    }
+
+    /** Reset health accounting and accept a structurally valid frame as current-baud proof. */
+    public void onValidFrame(SerialSession receiveSession) {
+        synchronized (monitor) {
+            if (!isCurrentSerialSessionLocked(receiveSession)) {
+                return;
+            }
+            SafetyPolicy policy = safetyState.currentPolicy();
+            if (policy == SafetyPolicy.RECOVERY_PROBE_ONLY
+                    || policy == SafetyPolicy.VERSION_PROBE_ONLY) {
+                // During durable recovery, only the exact fresh sr_syvr requested after raw
+                // silence proves framed mode. Arbitrary valid traffic cannot reopen the UART.
+                return;
+            }
+            discardedBytes = 0;
+            discardEvents = 0;
+            if (state == State.DISCOVERING
+                    || state == State.VERIFYING_FAST
+                    || state == State.RECOVERING) {
+                cancelPhaseTimeoutLocked();
+                if (host.currentBaud() == AsgConstants.UART_FAST_BAUD) {
+                    state = State.READY_FAST;
+                    scheduleHealthCheckLocked();
+                } else {
+                    state = State.READY_RENDEZVOUS;
+                }
+                recoveryRetryAttempt = 0;
+                Log.i(TAG, "Structurally valid frame proved UART link at " + host.currentBaud());
+                return;
+            }
+            if (state == State.READY_FAST) {
+                scheduleHealthCheckLocked();
+            }
+        }
+    }
+
+    /** Trigger recovery after repeated wrong-baud-looking parser discards. */
+    public void onDiscardedBytes(long count, SerialSession receiveSession) {
+        synchronized (monitor) {
+            if (!isCurrentSerialSessionLocked(receiveSession)
+                    || count <= 0
+                    || state != State.READY_FAST) {
+                return;
+            }
+            discardedBytes += count;
+            discardEvents++;
+            if (operation != Operation.NONE
+                    || (discardedBytes < AsgConstants.UART_RUNTIME_RECOVERY_DISCARDED_BYTES
+                            && discardEvents < AsgConstants.UART_RUNTIME_RECOVERY_DISCARD_EVENTS)) {
+                return;
+            }
+            startRecoveryLocked("parser_discards");
+        }
+    }
+
+    public boolean runNormalWrite(WriteAction action) {
+        Future<Boolean> write;
+        synchronized (monitor) {
+            SafetyPolicy policy = safetyState.currentPolicy();
+            boolean otaOwnedDeferral =
+                    policy == SafetyPolicy.OTA_OWNER_ONLY
+                            && (operation == Operation.OTA_AUTHORIZATION
+                                    || operation == Operation.OTA_TRANSFER);
+            if (!isReadyLocked()
+                    || action == null
+                    || (policy != SafetyPolicy.NORMAL && !otaOwnedDeferral)) {
+                Log.w(TAG, "Rejecting normal write state=" + state + " operation=" + operation);
+                return false;
+            }
+            if (operation == Operation.NONE) {
+                write = ioLane.submit(action::write);
+            } else {
+                FutureTask<Boolean> deferred = new FutureTask<>(action::write);
+                deferredNormalWrites.addLast(deferred);
+                write = deferred;
+                Log.i(
+                        TAG,
+                        "Deferring normal write behind "
+                                + operation
+                                + " pending="
+                                + deferredNormalWrites.size());
+            }
+        }
+        return awaitBoolean(write, "normal write");
+    }
+
+    /** Raw BES protocol query outside an OTA transfer. */
+    public boolean writeRawControl(byte[] data) {
+        Future<Boolean> write;
+        synchronized (monitor) {
+            if (!isReadyLocked() || operation != Operation.NONE || data == null) {
+                Log.w(
+                        TAG,
+                        "Rejecting raw control write state=" + state + " operation=" + operation);
+                return false;
+            }
+            write = ioLane.submit(() -> host.writeRawBytes(data));
+        }
+        return awaitBoolean(write, "raw control write");
+    }
+
+    public boolean runFileWrite(OperationLease lease, WriteAction action) {
+        Future<Boolean> write;
+        synchronized (monitor) {
+            if (!isReadyLocked()
+                    || !ownsLeaseLocked(lease, Operation.FILE_TRANSFER)
+                    || action == null) {
+                Log.w(TAG, "Rejecting file write state=" + state + " operation=" + operation);
+                return false;
+            }
+            write = ioLane.submit(action::write);
+        }
+        return awaitBoolean(write, "file write");
+    }
+
+    public boolean writeOta(OperationLease lease, byte[] data) {
+        Future<Boolean> write;
+        synchronized (monitor) {
+            if (!isReadyLocked()
+                    || !ownsLeaseLocked(lease, Operation.OTA_TRANSFER)
+                    || data == null) {
+                Log.w(TAG, "Rejecting OTA write state=" + state + " operation=" + operation);
+                return false;
+            }
+            write = ioLane.submit(() -> host.writeRawBytes(data));
+        }
+        return awaitBoolean(write, "OTA write");
+    }
+
+    public OperationLease beginFileTransfer() {
+        return beginOperation(Operation.FILE_TRANSFER, true);
+    }
+
+    public void endFileTransfer(OperationLease lease) {
+        endOperation(lease, Operation.FILE_TRANSFER);
+    }
+
+    /**
+     * Write one terminal status while retaining exclusive file ownership, then release the lease.
+     * This keeps a deferred baud transition behind the status write.
+     */
+    public boolean endFileTransferWithFinalWrite(OperationLease lease, WriteAction finalWrite) {
+        try {
+            Future<Boolean> write;
+            synchronized (monitor) {
+                if (!ownsLeaseLocked(lease, Operation.FILE_TRANSFER)) {
+                    return false;
+                }
+                if (!isReadyLocked() || finalWrite == null) {
+                    return false;
+                }
+                write = ioLane.submit(finalWrite::write);
+            }
+            return awaitBoolean(write, "file terminal write");
+        } finally {
+            synchronized (monitor) {
+                releaseOperationLocked(lease, Operation.FILE_TRANSFER);
+            }
+        }
+    }
+
+    public OperationLease beginOtaAuthorization() {
+        if (!ensureRendezvousForOta()) {
+            return null;
+        }
+        OperationLease lease = beginOperation(Operation.OTA_AUTHORIZATION, false);
+        if (lease != null) {
+            Log.i(TAG, "BES OTA authorization owns stable UART");
+        }
+        return lease;
+    }
+
+    /**
+     * BES OTA deliberately uses the one universally supported baud. If ordinary traffic had
+     * negotiated the optional fast baud, reopen at 460800 and require a fresh sr_syvr before the
+     * authorization lease can be acquired. This wait runs on the ordered outbound worker; the
+     * serial reader remains free to deliver the proof.
+     */
+    private boolean ensureRendezvousForOta() {
+        synchronized (monitor) {
+            if (safetyState.currentPolicy() != SafetyPolicy.NORMAL
+                    || operation != Operation.NONE
+                    || state == State.CLOSED
+                    || state == State.QUARANTINED) {
+                return false;
+            }
+            fastBaudSuppressed = true;
+            if (state == State.READY_RENDEZVOUS
+                    && versionSession == serialSession
+                    && host.currentBaud() == AsgConstants.UART_RENDEZVOUS_BAUD) {
+                return true;
+            }
+
+            long deadlineNanos = System.nanoTime() + TimeUnit.SECONDS.toNanos(10);
+            boolean rendezvousSwitchAttempted = false;
+            while (true) {
+                if (state == State.CLOSED
+                        || state == State.QUARANTINED
+                        || safetyState.currentPolicy() != SafetyPolicy.NORMAL) {
+                    return false;
+                }
+                if (state == State.READY_RENDEZVOUS) {
+                    return versionSession == serialSession
+                            && host.currentBaud() == AsgConstants.UART_RENDEZVOUS_BAUD;
+                }
+                if (state == State.READY_FAST) {
+                    if (rendezvousSwitchAttempted) {
+                        Log.e(TAG, "BES rejected or failed the pre-OTA rendezvous transition");
+                        return false;
+                    }
+                    rendezvousSwitchAttempted = true;
+                    beginBaudSwitchLocked(AsgConstants.UART_RENDEZVOUS_BAUD);
+                }
+                long remainingNanos = deadlineNanos - System.nanoTime();
+                if (remainingNanos <= 0) {
+                    Log.e(TAG, "Timed out proving 460800 UART before BES OTA");
+                    return false;
+                }
+                try {
+                    TimeUnit.NANOSECONDS.timedWait(monitor, remainingNanos);
+                } catch (InterruptedException e) {
+                    Thread.currentThread().interrupt();
+                    return false;
+                }
+            }
+        }
+    }
+
+    /** Write the single normal-framed request owned by the OTA authorization lease. */
+    public boolean runOtaAuthorizationWrite(OperationLease lease, WriteAction action) {
+        Future<Boolean> write;
+        synchronized (monitor) {
+            if (!isReadyLocked()
+                    || !ownsLeaseLocked(lease, Operation.OTA_AUTHORIZATION)
+                    || action == null) {
+                Log.w(
+                        TAG,
+                        "Rejecting OTA authorization write state="
+                                + state
+                                + " operation="
+                                + operation);
+                return false;
+            }
+            write = ioLane.submit(action::write);
+        }
+        return awaitBoolean(write, "OTA authorization write");
+    }
+
+    public boolean promoteOtaAuthorizationToTransfer(OperationLease lease) {
+        Future<?> barrier;
+        synchronized (monitor) {
+            if (!isReadyLocked() || !ownsLeaseLocked(lease, Operation.OTA_AUTHORIZATION)) {
+                return false;
+            }
+            // Close authorization writes before placing the barrier. Inbound bytes remain on the
+            // normal parser until every accepted normal-framed write has physically completed.
+            operation = Operation.OTA_TRANSFER;
+            barrier = ioLane.submit(() -> {});
+        }
+
+        if (!awaitBarrier(barrier, "OTA promotion barrier")) {
+            return false;
+        }
+
+        synchronized (monitor) {
+            if (!isReadyLocked() || !ownsLeaseLocked(lease, Operation.OTA_TRANSFER)) {
+                return false;
+            }
+            otaRawRouting = true;
+            host.invalidateLinkProof();
+            host.setFastReceive(true);
+            Log.i(TAG, "BES OTA authorization promoted to raw transfer routing");
+            return true;
+        }
+    }
+
+    public void endOta(OperationLease lease) {
+        synchronized (monitor) {
+            if (operationLease != lease
+                    || (operation != Operation.OTA_AUTHORIZATION
+                            && operation != Operation.OTA_TRANSFER)) {
+                return;
+            }
+            otaRawRouting = false;
+            host.setFastReceive(false);
+            operation = Operation.NONE;
+            operationLease = null;
+            SafetyPolicy policy = safetyState.currentPolicy();
+            if (policy == SafetyPolicy.NORMAL) {
+                flushDeferredNormalWritesLocked();
+                resumeAfterOutboundDrainLocked();
+            } else if (policy == SafetyPolicy.RECOVERY_PROBE_ONLY
+                    || policy == SafetyPolicy.VERSION_PROBE_ONLY) {
+                beginSafetyRecoveryLocked(policy, "ota_ended");
+            } else {
+                cancelDeferredNormalWritesLocked("durable BES OTA quarantine");
+                state = State.QUARANTINED;
+            }
+        }
+    }
+
+    /** One-way same-boot quarantine after an authorization reservation existed. */
+    public boolean quarantineOta(OperationLease lease) {
+        synchronized (monitor) {
+            if (operationLease != lease
+                    || (operation != Operation.OTA_AUTHORIZATION
+                            && operation != Operation.OTA_TRANSFER)) {
+                quarantineCurrentSessionLocked();
+                return false;
+            }
+            quarantineCurrentSessionLocked();
+            return true;
+        }
+    }
+
+    public void quarantineCurrentSession() {
+        synchronized (monitor) {
+            quarantineCurrentSessionLocked();
+        }
+    }
+
+    private void quarantineCurrentSessionLocked() {
+        cancelAllTimersLocked();
+        cancelDeferredNormalWritesLocked("BES OTA state is ambiguous");
+        cancelOutboundDrainLocked();
+        phaseGeneration++;
+        otaRawRouting = false;
+        host.setFastReceive(false);
+        operation = Operation.NONE;
+        operationLease = null;
+        state = State.QUARANTINED;
+        monitor.notifyAll();
+        Log.e(TAG, "UART quarantined by durable BES OTA policy");
+    }
+
+    /**
+     * BES rebooted after applying OTA; return to rendezvous and rediscover one coherent session.
+     */
+    public void onBesOtaApplied() {
+        synchronized (monitor) {
+            cancelAllTimersLocked();
+            cancelDeferredNormalWritesLocked("BES OTA reset the serial session");
+            otaRawRouting = false;
+            host.setFastReceive(false);
+            operation = Operation.NONE;
+            operationLease = null;
+            versionSession = null;
+            fastSwitchAttemptSession = null;
+            firmwareVersion = "";
+            versionProbeDeferred = false;
+            cancelOutboundDrainLocked();
+            host.invalidateLinkProof();
+            serialSession = null;
+            if (safetyState.currentPolicy() == SafetyPolicy.OTA_OWNER_ONLY
+                    || safetyState.currentPolicy() == SafetyPolicy.QUARANTINED) {
+                state = State.QUARANTINED;
+                phaseGeneration++;
+                Log.i(TAG, "BES apply accepted; waiting for a new Linux boot");
+                return;
+            }
+            state = State.DISCOVERING;
+            long phase = ++phaseGeneration;
+            ioLane.submit(() -> reconnectAfterOta(phase));
+        }
+    }
+
+    private void reconnectAfterOta(long phase) {
+        synchronized (monitor) {
+            if (phase != phaseGeneration || state != State.DISCOVERING) {
+                return;
+            }
+        }
+
+        SerialSession opened = replacePhysicalSession(AsgConstants.UART_RENDEZVOUS_BAUD);
+        boolean closeOpened = false;
+        synchronized (monitor) {
+            if (phase != phaseGeneration || state != State.DISCOVERING) {
+                closeOpened = opened != null;
+            } else if (!adoptAndStartSessionLocked(opened)) {
+                closeOpened = opened != null;
+                state = State.RECOVERING;
+                recoveryIndex = 0;
+                recoveryRetryAttempt = 0;
+                phaseTimeout =
+                        executor.schedule(
+                                () -> runRecoveryCandidate(phase),
+                                AsgConstants.BES_OTA_RECONNECT_DELAY_MS,
+                                TimeUnit.MILLISECONDS);
+                Log.w(TAG, "Rendezvous open failed after BES OTA; recovery will retry");
+            } else {
+                scheduleProbeBurstLocked(
+                        phase,
+                        AsgConstants.UART_RENDEZVOUS_BAUD,
+                        AsgConstants.BES_OTA_RECONNECT_DELAY_MS,
+                        AsgConstants.UART_RECOVERY_PROBES_PER_BURST,
+                        AsgConstants.UART_RECOVERY_PROBE_SPACING_MS);
+                phaseTimeout =
+                        executor.schedule(
+                                () -> startRecoveryIfCurrent(phase, "bes_ota_reconnect_timeout"),
+                                AsgConstants.BES_OTA_RECONNECT_DELAY_MS
+                                        + AsgConstants.UART_BOOT_RECOVERY_INITIAL_DELAY_MS,
+                                TimeUnit.MILLISECONDS);
+            }
+        }
+        if (closeOpened) {
+            host.closeSession(opened);
+        }
+    }
+
+    public void shutdown() {
+        synchronized (monitor) {
+            cancelAllTimersLocked();
+            cancelDeferredNormalWritesLocked("transport shutdown");
+            state = State.CLOSED;
+            operation = Operation.NONE;
+            operationLease = null;
+            otaRawRouting = false;
+            cancelOutboundDrainLocked();
+            phaseGeneration++;
+            serialSession = null;
+            host.setFastReceive(false);
+        }
+        ioLane.shutdownNow();
+        executor.shutdownNow();
+    }
+
+    private OperationLease beginOperation(Operation requested, boolean fastReceive) {
+        Future<?> barrier;
+        OperationLease lease;
+        synchronized (monitor) {
+            if (!isReadyLocked() || operation != Operation.NONE) {
+                return null;
+            }
+            operation = requested;
+            lease = new OperationLease(nextOperationLeaseId++, requested);
+            operationLease = lease;
+            cancelHealthTimeoutLocked();
+            barrier = ioLane.submit(() -> {});
+        }
+
+        if (!awaitBarrier(barrier, requested + " barrier")) {
+            synchronized (monitor) {
+                releaseOperationLocked(lease, requested);
+            }
+            return null;
+        }
+
+        synchronized (monitor) {
+            if (!ownsLeaseLocked(lease, requested) || !isReadyLocked()) {
+                return null;
+            }
+            host.setFastReceive(fastReceive);
+            return lease;
+        }
+    }
+
+    private void endOperation(OperationLease lease, Operation expected) {
+        synchronized (monitor) {
+            releaseOperationLocked(lease, expected);
+        }
+    }
+
+    private boolean ownsLeaseLocked(OperationLease lease, Operation expected) {
+        return lease != null && operationLease == lease && operation == expected;
+    }
+
+    private void releaseOperationLocked(OperationLease lease, Operation expected) {
+        if (!ownsLeaseLocked(lease, expected)) {
+            return;
+        }
+        operationLease = null;
+        operation = Operation.NONE;
+        otaRawRouting = false;
+        host.setFastReceive(false);
+        flushDeferredNormalWritesLocked();
+        resumeAfterOutboundDrainLocked();
+    }
+
+    private void flushDeferredNormalWritesLocked() {
+        int count = deferredNormalWrites.size();
+        while (!deferredNormalWrites.isEmpty()) {
+            ioLane.execute(deferredNormalWrites.removeFirst());
+        }
+        if (count > 0) {
+            Log.i(TAG, "Released " + count + " deferred normal write(s) to the UART lane");
+        }
+    }
+
+    private void cancelDeferredNormalWritesLocked(String reason) {
+        int count = deferredNormalWrites.size();
+        while (!deferredNormalWrites.isEmpty()) {
+            deferredNormalWrites.removeFirst().cancel(false);
+        }
+        if (count > 0) {
+            Log.w(TAG, "Cancelled " + count + " deferred normal write(s): " + reason);
+        }
+    }
+
+    private void resumeAfterOutboundDrainLocked() {
+        if (outboundDrainPending) {
+            return;
+        }
+        outboundDrainPending = true;
+        long generation = ++outboundDrainGeneration;
+        if (!host.queueAfterOutboundWrites(() -> onOutboundDrained(generation))) {
+            outboundDrainPending = false;
+            resumeAfterOperationLocked();
+        }
+    }
+
+    private void onOutboundDrained(long generation) {
+        synchronized (monitor) {
+            if (!outboundDrainPending
+                    || generation != outboundDrainGeneration
+                    || state == State.CLOSED) {
+                return;
+            }
+            outboundDrainPending = false;
+            resumeAfterOperationLocked();
+        }
+    }
+
+    private void cancelOutboundDrainLocked() {
+        outboundDrainPending = false;
+        outboundDrainGeneration++;
+    }
+
+    private void resumeAfterOperationLocked() {
+        resumeDeferredVersionProbeLocked();
+        if (state == State.READY_FAST) {
+            scheduleHealthCheckLocked();
+        }
+        advanceLocked();
+    }
+
+    private boolean awaitBoolean(Future<Boolean> future, String description) {
+        try {
+            return Boolean.TRUE.equals(future.get());
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            Log.w(TAG, "Interrupted while waiting for " + description, e);
+        } catch (ExecutionException e) {
+            Log.e(TAG, "UART lane failed during " + description, e.getCause());
+        } catch (CancellationException e) {
+            Log.w(TAG, "UART lane cancelled " + description);
+        }
+        return false;
+    }
+
+    private boolean awaitBarrier(Future<?> future, String description) {
+        try {
+            future.get();
+            return true;
+        } catch (InterruptedException e) {
+            Thread.currentThread().interrupt();
+            Log.w(TAG, "Interrupted while waiting for " + description, e);
+        } catch (ExecutionException e) {
+            Log.e(TAG, "UART lane failed during " + description, e.getCause());
+        } catch (CancellationException e) {
+            Log.w(TAG, "UART lane cancelled " + description);
+        }
+        return false;
+    }
+
+    /** Advance immediately from current facts; no deferred intent survives outside the monitor. */
+    private void advanceLocked() {
+        if (state != State.READY_RENDEZVOUS
+                || operation != Operation.NONE
+                || outboundDrainPending
+                || fastBaudSuppressed
+                || versionSession != serialSession
+                || fastSwitchAttemptSession == serialSession
+                || firmwareVersion.isEmpty()
+                || !host.supportsFastBaud(firmwareVersion)) {
+            return;
+        }
+        beginFastSwitchLocked();
+    }
+
+    private void beginFastSwitchLocked() {
+        beginBaudSwitchLocked(AsgConstants.UART_FAST_BAUD);
+    }
+
+    private void beginBaudSwitchLocked(int targetBaud) {
+        fastSwitchAttemptSession = serialSession;
+        baudTransitionTarget = targetBaud;
+        state = State.SWITCH_REQUESTED;
+        host.invalidateLinkProof();
+        long phase = ++phaseGeneration;
+        ioLane.submit(
+                () -> {
+                    boolean sent = host.writeControlCommand(buildBaudRequest(targetBaud));
+                    onBaudRequestWriteComplete(phase, sent);
+                });
+    }
+
+    private void onBaudRequestWriteComplete(long phase, boolean sent) {
+        synchronized (monitor) {
+            if (phase != phaseGeneration || state != State.SWITCH_REQUESTED) {
+                return;
+            }
+            if (!sent) {
+                Log.e(
+                        TAG,
+                        "Could not completely write cs_baud; recovering indeterminate UART state");
+                startRecoveryLocked("baud_request_write_failed");
+                return;
+            }
+            phaseTimeout =
+                    executor.schedule(
+                            () -> reopenBaudAndVerifyIfCurrent(phase, "sr_baud_timeout"),
+                            AsgConstants.UART_BAUD_ACK_TIMEOUT_MS,
+                            TimeUnit.MILLISECONDS);
+            // sr_baud lets us reopen sooner, but it is not the safety proof: BES may switch before
+            // its old-baud acknowledgement reaches ASG. A fresh sr_syvr requested and received
+            // after reopening at targetBaud proves both the switch and the return UART path. If
+            // that proof fails, recovery scans both known baud rates and OTA remains blocked.
+            Log.i(TAG, "Requested UART baud " + baudTransitionTarget);
+        }
+    }
+
+    private void reopenBaudAndVerifyIfCurrent(long phase, String reason) {
+        synchronized (monitor) {
+            if (phase != phaseGeneration
+                    || (state != State.SWITCH_REQUESTED && state != State.WAITING_FAST_REOPEN)) {
+                return;
+            }
+            if (operation != Operation.NONE) {
+                Log.e(TAG, "Operation appeared during baud transition: " + operation);
+                return;
+            }
+            cancelPhaseTimeoutLocked();
+            serialSession = null;
+            host.invalidateLinkProof();
+            state = State.VERIFYING_FAST;
+            long reopenPhase = ++phaseGeneration;
+            ioLane.submit(() -> performBaudReopen(reopenPhase, reason));
+        }
+    }
+
+    private void performBaudReopen(long reopenPhase, String reason) {
+        int targetBaud;
+        synchronized (monitor) {
+            if (reopenPhase != phaseGeneration || state != State.VERIFYING_FAST) {
+                return;
+            }
+            targetBaud = baudTransitionTarget;
+        }
+
+        SerialSession opened = replacePhysicalSession(targetBaud);
+        boolean closeOpened = false;
+        synchronized (monitor) {
+            if (reopenPhase != phaseGeneration || state != State.VERIFYING_FAST) {
+                closeOpened = opened != null;
+            } else if (!adoptAndStartSessionLocked(opened)) {
+                closeOpened = opened != null;
+                startRecoveryLocked("baud_reopen_failed");
+            } else {
+                long verifyPhase = ++phaseGeneration;
+                scheduleProbeBurstLocked(
+                        verifyPhase,
+                        targetBaud,
+                        0,
+                        AsgConstants.UART_RECOVERY_PROBES_PER_BURST,
+                        AsgConstants.UART_RECOVERY_PROBE_SPACING_MS);
+                phaseTimeout =
+                        executor.schedule(
+                                () -> startRecoveryIfCurrent(verifyPhase, "baud_probe_timeout"),
+                                AsgConstants.UART_BAUD_PROBE_TIMEOUT_MS,
+                                TimeUnit.MILLISECONDS);
+                Log.i(
+                        TAG,
+                        "Reopened UART at "
+                                + targetBaud
+                                + "; verifying link (reason="
+                                + reason
+                                + ")");
+            }
+        }
+        if (closeOpened) {
+            host.closeSession(opened);
+        }
+    }
+
+    private void startRecoveryIfCurrent(long phase, String reason) {
+        synchronized (monitor) {
+            if (phase != phaseGeneration || isReadyLocked() || state == State.CLOSED) {
+                return;
+            }
+            startRecoveryLocked(reason);
+        }
+    }
+
+    private void startRecoveryLocked(String reason) {
+        if (operation != Operation.NONE) {
+            if (state == State.READY_FAST) {
+                scheduleHealthCheckLocked();
+            }
+            return;
+        }
+        if (state == State.SWITCH_REQUESTED
+                || state == State.WAITING_FAST_REOPEN
+                || state == State.VERIFYING_FAST
+                || state == State.READY_FAST) {
+            fastBaudSuppressed = true;
+            Log.w(TAG, "Suppressing optional fast baud after failed proof: " + reason);
+        }
+        cancelAllTimersLocked();
+        host.invalidateLinkProof();
+        serialSession = null;
+        state = State.RECOVERING;
+        recoveryIndex = 0;
+        recoveryRetryAttempt = 0;
+        long phase = ++phaseGeneration;
+        Log.w(TAG, "Starting UART recovery: " + reason);
+        executor.execute(() -> runRecoveryCandidate(phase));
+    }
+
+    private void runRecoveryCandidate(long phase) {
+        synchronized (monitor) {
+            if (phase != phaseGeneration || state != State.RECOVERING) {
+                return;
+            }
+            if (recoveryIndex >= RECOVERY_BAUDS.length) {
+                ioLane.submit(() -> parkRecoveryAtRendezvous(phase));
+                return;
+            }
+
+            int baud = RECOVERY_BAUDS[recoveryIndex++];
+            ioLane.submit(() -> performRecoveryCandidate(phase, baud));
+        }
+    }
+
+    private void performRecoveryCandidate(long phase, int baud) {
+        synchronized (monitor) {
+            if (phase != phaseGeneration || state != State.RECOVERING) {
+                return;
+            }
+            host.invalidateLinkProof();
+            serialSession = null;
+        }
+
+        SerialSession opened = replacePhysicalSession(baud);
+        boolean closeOpened = false;
+        synchronized (monitor) {
+            if (phase != phaseGeneration || state != State.RECOVERING) {
+                closeOpened = opened != null;
+            } else if (!adoptAndStartSessionLocked(opened)) {
+                closeOpened = opened != null;
+                executor.execute(() -> runRecoveryCandidate(phase));
+            } else {
+                long candidatePhase = ++phaseGeneration;
+                scheduleProbeBurstLocked(
+                        candidatePhase,
+                        baud,
+                        0,
+                        AsgConstants.UART_RUNTIME_RECOVERY_PROBES_PER_BAUD,
+                        AsgConstants.UART_RUNTIME_RECOVERY_PROBE_SPACING_MS);
+                phaseTimeout =
+                        executor.schedule(
+                                () -> continueRecovery(candidatePhase),
+                                AsgConstants.UART_RUNTIME_RECOVERY_STEP_TIMEOUT_MS,
+                                TimeUnit.MILLISECONDS);
+                Log.i(TAG, "Recovery probing baud " + baud);
+            }
+        }
+        if (closeOpened) {
+            host.closeSession(opened);
+        }
+    }
+
+    private void continueRecovery(long candidatePhase) {
+        synchronized (monitor) {
+            if (candidatePhase != phaseGeneration || state != State.RECOVERING) {
+                return;
+            }
+            long nextPhase = ++phaseGeneration;
+            executor.execute(() -> runRecoveryCandidate(nextPhase));
+        }
+    }
+
+    private void parkRecoveryAtRendezvous(long expectedPhase) {
+        synchronized (monitor) {
+            if (expectedPhase != phaseGeneration || state != State.RECOVERING) {
+                return;
+            }
+            serialSession = null;
+            host.invalidateLinkProof();
+        }
+
+        SerialSession opened = replacePhysicalSession(AsgConstants.UART_RENDEZVOUS_BAUD);
+        boolean closeOpened = false;
+        synchronized (monitor) {
+            if (expectedPhase != phaseGeneration || state != State.RECOVERING) {
+                closeOpened = opened != null;
+            } else {
+                boolean adopted = adoptAndStartSessionLocked(opened);
+                if (!adopted) {
+                    closeOpened = opened != null;
+                    Log.w(
+                            TAG,
+                            "Recovery could not open rendezvous baud; retaining retry ownership");
+                }
+                recoveryIndex = 0;
+                long delay = recoveryRetryDelayMs(recoveryRetryAttempt++);
+                long phase = ++phaseGeneration;
+                if (adopted) {
+                    scheduleProbeBurstLocked(
+                            phase,
+                            AsgConstants.UART_RENDEZVOUS_BAUD,
+                            0,
+                            AsgConstants.UART_RUNTIME_RECOVERY_PROBES_PER_BAUD,
+                            AsgConstants.UART_RUNTIME_RECOVERY_PROBE_SPACING_MS);
+                }
+                phaseTimeout =
+                        executor.schedule(
+                                () -> runRecoveryCandidate(phase), delay, TimeUnit.MILLISECONDS);
+                Log.w(TAG, "Recovery parked at rendezvous; retrying in " + delay + "ms");
+            }
+        }
+        if (closeOpened) {
+            host.closeSession(opened);
+        }
+    }
+
+    /** Publish the session before starting its reader so its first callback can be validated. */
+    private boolean adoptAndStartSessionLocked(SerialSession session) {
+        if (session == null) {
+            return false;
+        }
+        serialSession = session;
+        if (host.startReader(session)) {
+            return true;
+        }
+        serialSession = null;
+        return false;
+    }
+
+    /** Retire the prior descriptor before clearing parser state for the unstarted replacement. */
+    private SerialSession replacePhysicalSession(int baud) {
+        SerialSession session = host.openAtBaud(baud);
+        host.resetParser();
+        return session;
+    }
+
+    private void scheduleHealthCheckLocked() {
+        cancelHealthTimeoutLocked();
+        if (state == State.READY_FAST && !executor.isShutdown()) {
+            long phase = phaseGeneration;
+            long healthTimer = ++healthTimerGeneration;
+            healthTimeout =
+                    executor.schedule(
+                            () -> onHealthTimeout(phase, healthTimer),
+                            idleHealthProbeMs,
+                            TimeUnit.MILLISECONDS);
+        }
+    }
+
+    private void onHealthTimeout(long phase, long healthTimer) {
+        synchronized (monitor) {
+            if (healthTimer != healthTimerGeneration) {
+                return;
+            }
+            healthTimeout = null;
+            if (phase != phaseGeneration || state != State.READY_FAST) {
+                return;
+            }
+            if (operation != Operation.NONE) {
+                scheduleHealthCheckLocked();
+                return;
+            }
+            int baud = host.currentBaud();
+            scheduleProbeBurstLocked(phase, baud, 0, 1, 0);
+            long healthProbeTimer = ++healthTimerGeneration;
+            healthTimeout =
+                    executor.schedule(
+                            () -> onHealthProbeTimeout(phase, healthProbeTimer),
+                            healthProbeTimeoutMs,
+                            TimeUnit.MILLISECONDS);
+            Log.d(TAG, "Probing idle fast UART session at " + baud);
+        }
+    }
+
+    private void onHealthProbeTimeout(long phase, long healthTimer) {
+        synchronized (monitor) {
+            if (healthTimer != healthTimerGeneration) {
+                return;
+            }
+            healthTimeout = null;
+            if (phase != phaseGeneration || state != State.READY_FAST) {
+                return;
+            }
+            if (operation != Operation.NONE) {
+                scheduleHealthCheckLocked();
+                return;
+            }
+            startRecoveryLocked("idle_health_probe_timeout");
+        }
+    }
+
+    private void scheduleProbeBurstLocked(
+            long phase, int expectedBaud, long initialDelayMs, int count, long spacingMs) {
+        for (int i = 0; i < count; i++) {
+            long delay = initialDelayMs + i * spacingMs;
+            executor.schedule(
+                    () -> sendProbeIfCurrent(phase, expectedBaud), delay, TimeUnit.MILLISECONDS);
+        }
+    }
+
+    private void sendProbeIfCurrent(long phase, int expectedBaud) {
+        synchronized (monitor) {
+            if (phase != phaseGeneration
+                    || state == State.CLOSED
+                    || host.currentBaud() != expectedBaud) {
+                return;
+            }
+            if (operation != Operation.NONE) {
+                versionProbeDeferred = true;
+                return;
+            }
+            ioLane.submit(() -> executeProbeIfCurrent(phase, expectedBaud));
+        }
+    }
+
+    private void executeProbeIfCurrent(long phase, int expectedBaud) {
+        synchronized (monitor) {
+            if (phase != phaseGeneration
+                    || state == State.CLOSED
+                    || host.currentBaud() != expectedBaud) {
+                return;
+            }
+            if (operation != Operation.NONE) {
+                versionProbeDeferred = true;
+                return;
+            }
+        }
+        if (!host.writeControlCommand(buildSystemVersionRequest())) {
+            Log.w(TAG, "System-version probe write failed at " + expectedBaud);
+        }
+    }
+
+    private void resumeDeferredVersionProbeLocked() {
+        if (!versionProbeDeferred
+                || operation != Operation.NONE
+                || !isReadyLocked()
+                || versionSession == serialSession
+                || executor.isShutdown()) {
+            return;
+        }
+        versionProbeDeferred = false;
+        long phase = phaseGeneration;
+        int baud = host.currentBaud();
+        executor.execute(() -> sendProbeIfCurrent(phase, baud));
+    }
+
+    private boolean isReadyLocked() {
+        return state == State.READY_RENDEZVOUS || state == State.READY_FAST;
+    }
+
+    private boolean isCurrentSerialSessionLocked(SerialSession session) {
+        return session != null && session == serialSession;
+    }
+
+    private void cancelAllTimersLocked() {
+        cancelPhaseTimeoutLocked();
+        cancelHealthTimeoutLocked();
+    }
+
+    private void cancelPhaseTimeoutLocked() {
+        if (phaseTimeout != null) {
+            phaseTimeout.cancel(false);
+            phaseTimeout = null;
+        }
+    }
+
+    private void cancelHealthTimeoutLocked() {
+        healthTimerGeneration++;
+        if (healthTimeout != null) {
+            healthTimeout.cancel(false);
+            healthTimeout = null;
+        }
+    }
+
+    static long recoveryRetryDelayMs(int retryAttempt) {
+        long delay = AsgConstants.UART_RUNTIME_RECOVERY_RETRY_DELAY_MS;
+        for (int i = 0;
+                i < retryAttempt && delay < AsgConstants.UART_RUNTIME_RECOVERY_MAX_RETRY_DELAY_MS;
+                i++) {
+            delay = Math.min(delay * 2, AsgConstants.UART_RUNTIME_RECOVERY_MAX_RETRY_DELAY_MS);
+        }
+        return delay;
+    }
+
+    private static byte[] buildSystemVersionRequest() {
+        try {
+            JSONObject command = new JSONObject();
+            command.put("C", "cs_syvr");
+            command.put("V", 1);
+            command.put("B", "");
+            return command.toString().getBytes(StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            throw new IllegalStateException("Could not build cs_syvr", e);
+        }
+    }
+
+    private static byte[] buildBaudRequest(int targetBaud) {
+        try {
+            JSONObject body = new JSONObject();
+            body.put("baud", targetBaud);
+            JSONObject command = new JSONObject();
+            command.put("C", "cs_baud");
+            command.put("V", 1);
+            command.put("B", body.toString());
+            return command.toString().getBytes(StandardCharsets.UTF_8);
+        } catch (Exception e) {
+            throw new IllegalStateException("Could not build cs_baud", e);
+        }
+    }
+}

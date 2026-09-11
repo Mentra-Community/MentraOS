@@ -1,6 +1,10 @@
 # ASG Client (Android Smart Glasses Client)
 
-Android application that runs on Android-based smart glasses like Mentra Live. Connects to MentraOS Cloud via WebSocket and manages hardware interfaces (camera, microphone, LED control, sensors).
+Android application that runs on Android-based smart glasses like Mentra Live. Primary transport is BLE to the paired phone (the phone forwards to MentraOS Cloud). Manages hardware interfaces (camera, microphone, LED control, sensors).
+
+## Required Mentra Live Reference
+
+Before working on any code, docs, tests, or behavior under `asg_client`, read and apply [`docs/mentra-live-spec.md`](docs/mentra-live-spec.md). That spec is the standing product/platform reference for what Mentra Live is, its supported features, and how the glasses are expected to work. Keep it updated when product-level Mentra Live behavior changes.
 
 ## Compatible Devices
 
@@ -17,6 +21,7 @@ Android application that runs on Android-based smart glasses like Mentra Live. C
 - **Install on Device**: `./gradlew installDebug`
 - **Clean Build**: `./gradlew clean`
 - **Run Tests**: `./gradlew test`
+- **Local Compile Check**: from the repo root, `./scripts/check-android-compile.sh asg`
 
 ### Camera module tests
 
@@ -47,13 +52,15 @@ Camera sources live in `com.mentra.asg_client.camera` subpackages (`lifecycle/`,
 
 ### Dependencies
 
-- **StreamPackLite**: RTMP streaming library (must be cloned separately)
+- **StreamPackLite**: RTMP streaming library, vendored as a git submodule at
+  `asg_client/StreamPackLite`. A fresh clone with `--recurse-submodules` already has it;
+  otherwise initialize it once (from the repository root):
   ```bash
-  cd asg_client
-  git clone git@github.com:Mentra-Community/StreamPackLite.git
-  cd StreamPackLite
-  git checkout working
+  git submodule update --init asg_client/StreamPackLite
   ```
+  To move it to a newer StreamPackLite commit, update inside the submodule and commit the
+  new gitlink in this repo (`git -C asg_client/StreamPackLite pull origin working` then
+  `git add asg_client/StreamPackLite`).
 - **SmartGlassesManager**: Currently required to be in a sibling directory (will be merged into asg_client in the future)
 
 ## Environment Setup
@@ -114,7 +121,7 @@ This removes your custom build and restores the factory app.
 ```
 asg_client/
 ├── app/src/main/java/com/mentra/asg_client/
-│   ├── service/        # Main services (WebSocket, foreground service)
+│   ├── service/        # Main services (BLE bridge, foreground service)
 │   ├── camera/         # Camera capture and streaming
 │   ├── audio/          # Audio capture and processing
 │   ├── hardware/       # Hardware interfaces (LED, sensors)
@@ -125,8 +132,8 @@ asg_client/
 │   ├── utils/          # Utility classes
 │   ├── di/             # Dependency injection
 │   └── receiver/       # Broadcast receivers
-├── agents/             # Feature documentation
-├── StreamPackLite/     # RTMP streaming library (external)
+├── docs/               # ASG documentation, including feature docs and agent scratchpad
+├── StreamPackLite/     # RTMP streaming library (git submodule)
 ├── credentials/        # Debug keystore (not committed)
 ├── AGENTS.md           # Development guide
 ├── CLAUDE.md           # AI assistant reference
@@ -140,10 +147,21 @@ asg_client/
 - **Java Version**: Java 17 required
 - **Classes**: PascalCase (e.g., `AsgClientService`)
 - **Methods**: camelCase (e.g., `connectToCloud()`)
-- **Constants**: UPPER_SNAKE_CASE (e.g., `MAX_RETRY_ATTEMPTS`)
+- **Constants**: UPPER_SNAKE_CASE (e.g., `MAX_RETRY_ATTEMPTS`). See [Constants (`AsgConstants.java`)](#constants-asgconstantsjava) below.
 - **Member Variables**: mCamelCase with 'm' prefix (e.g., `mWebSocketClient`)
-- **Indentation**: 2 spaces
+- **Indentation**: 4 spaces
 - **Braces**: Opening brace on same line
+
+### Constants (`AsgConstants.java`)
+
+**Whenever you are asked to add a constant in `asg_client`, add it to `app/src/main/java/com/mentra/asg_client/AsgConstants.java`.** Do not introduce duplicate `private static final` fields in individual classes.
+
+- Naming: `public static final`, `UPPER_SNAKE_CASE`
+- Document tunables and debug/feature flags with a short Javadoc
+- Consume as `AsgConstants.FOO` from call sites
+- Group related constants together (photo/BLE pipeline, LED, endpoints, etc.)
+
+Examples already in that file: `ENABLE_PHOTO_TIMING_LOGS`, `ENABLE_GRAYSCALE_BLE_PHOTOS`, `FORCE_BLE_TRANSFER`, BLE quality caps.
 
 ### Documentation
 
@@ -153,7 +171,7 @@ asg_client/
 
 ### Architecture
 
-- **Dependency Injection**: Use Dagger/Hilt patterns in `/di` package
+- **Dependency Injection**: Hilt is used for the service layer (`AsgClientService` and the `di/hilt/` modules). Manual factories remain under `io/*/core/*Factory.java` and `service/utils/DeviceProfile` for device-detection paths.
 - **Error Reporting**: Use Sentry via reporting package
 - **Logging**: Use Android Logcat with appropriate tags
 - **Services**: Follow Android foreground service best practices
@@ -169,7 +187,7 @@ asg_client/
 
 ### Cloud Communication
 
-- **WebSocket**: Persistent connection to MentraOS Cloud
+- **Phone bridge**: Primary transport is BLE to the paired phone; the phone forwards to MentraOS Cloud. Some ancillary HTTP/WebSocket paths exist (see `BuildConfig.MENTRAOS_HOST`).
 - **Media Streaming**: RTMP streaming via StreamPackLite
 - **Event Handling**: Camera button events, sensor data
 
@@ -182,13 +200,11 @@ asg_client/
 ## Documentation Reference
 
 - **README.md** - Project overview and quick start
-- **agents/BES_OTA_README.md** - BES OTA update system
-- **agents/CAMERA_WEBSERVER_README.md** - Camera web server documentation
-- **agents/CUSTOM_GATT_AUDIO.md** - Custom GATT audio implementation
-- **agents/DELETE_FILES_ENDPOINT.md** - File deletion endpoint documentation
-- **agents/K900_LED_CONTROL.md** - K900 LED control system
-- **agents/PHOTO_TESTING_GUIDE.md** - Photo capture testing guide
-- **agents/RGB_LED_CONTROL_IMPLEMENTATION.md** - RGB LED control details
+- **docs/features/bes-ota.md** - BES OTA update system
+- **docs/features/camera-web-server.md** - Camera web server documentation, including the `/api/delete-files` endpoint
+- **docs/ASG_CLIENT_API.md** - ASG command surface, including audio and RGB LED commands
+- **docs/agents/PHOTO_TESTING_GUIDE.md** - Photo capture testing guide
+- **docs/features/led-control.md** - K900 local LED and RGB LED control details
 - **app/src/main/java/com/mentra/asg_client/reporting/SENTRY_CONFIGURATION.md** - Sentry error reporting setup
 - **app/src/main/java/com/mentra/asg_client/reporting/README.md** - Comprehensive reporting system guide
 
@@ -237,8 +253,7 @@ asg_client/
 
 **"StreamPackLite not found"**
 
-- Clone StreamPackLite repo in asg_client directory
-- Checkout `working` branch
+- Initialize the submodule: `git submodule update --init asg_client/StreamPackLite`
 
 **"SmartGlassesManager dependency not found"**
 
