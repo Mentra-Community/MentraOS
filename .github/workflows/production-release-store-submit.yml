@@ -116,10 +116,10 @@ jobs:
             GOOGLE_PLAY_TARGET_TRACK=production \
             GOOGLE_PLAY_VERSION_CODE="$build" \
             GOOGLE_PLAY_RELEASE_STATUS=draft \
-            GOOGLE_PLAY_PROMOTION_OUTPUT=../promotion-output/play/mentra.json \
+            GOOGLE_PLAY_PROMOTION_OUTPUT="$GITHUB_WORKSPACE/promotion-output/play/mentra.json" \
             bundle exec fastlane promote_google_play
           APP_PACKAGE_NAME=com.mentra.mentra \
-            GOOGLE_PLAY_INVENTORY_OUTPUT=mentraApp-inventory.json \
+            GOOGLE_PLAY_INVENTORY_OUTPUT="$GITHUB_WORKSPACE/play-tools/mentraApp-inventory.json" \
             bundle exec fastlane google_play_inventory
           node ../.github/scripts/validate-google-play-release.mjs \
             --inventory mentraApp-inventory.json \

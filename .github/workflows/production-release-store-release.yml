@@ -92,7 +92,7 @@ jobs:
           cd play-status
           bundle install
           expected=$(jq -er .coordinates.candidates.mentraApp.android.buildNumber ../promotion-input/current.json)
-          APP_PACKAGE_NAME=com.mentra.mentra GOOGLE_PLAY_INVENTORY_OUTPUT=mentraApp.json bundle exec fastlane google_play_inventory
+          APP_PACKAGE_NAME=com.mentra.mentra GOOGLE_PLAY_INVENTORY_OUTPUT="$GITHUB_WORKSPACE/play-status/mentraApp.json" bundle exec fastlane google_play_inventory
           node ../.github/scripts/validate-google-play-release.mjs \
             --inventory mentraApp.json \
             --version-code "$expected" \

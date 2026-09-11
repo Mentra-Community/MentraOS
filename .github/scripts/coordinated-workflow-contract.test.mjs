@@ -592,3 +592,19 @@ test("iOS status reports the failed phase instead of downstream skips", (t) => {
     assert.match(readFileSync(output, "utf8"), new RegExp(`^ios_result=${expected}$`, "m"))
   }
 })
+
+test("Play lane outputs in the production workflows are absolute paths", () => {
+  // fastlane runs every lane from inside the fastlane/ directory, so a
+  // relative output path lands one level deeper than the caller expects.
+  for (const name of [
+    "production-release-prepare.yml",
+    "production-release-status.yml",
+    "production-release-store-release.yml",
+    "production-release-store-submit.yml",
+  ]) {
+    const source = workflow(name)
+    for (const match of source.matchAll(/GOOGLE_PLAY_[A-Z_]*OUTPUT=(\S+)/g)) {
+      assert.match(match[1], /^"\$GITHUB_WORKSPACE\//, `${name}: ${match[0]}`)
+    }
+  }
+})
