@@ -366,15 +366,66 @@ private object EvenHubProto {
         return w.toByteArray()
     }
 
+    /** List_ItemContainerProperty — the rows of a [listContainerProperty]. */
+    fun listItemContainerProperty(
+        itemNames: List<String>,
+        itemWidth: Int = 0,
+        isItemSelectBorderEn: Boolean = true
+    ): ByteArray {
+        val w = ProtobufWriter()
+        w.writeInt32Field(1, itemNames.size) // Item_Count
+        w.writeInt32Field(2, itemWidth) // Item_Width (0 = firmware fills the container width)
+        w.writeInt32Field(3, if (isItemSelectBorderEn) 1 else 0) // Is_Item_Select_Border_En
+        for (name in itemNames) w.writeStringField(4, name) // repeated Item_Name
+        return w.toByteArray()
+    }
+
+    /**
+     * ListContainerProperty — a firmware-owned scrollable, selectable list. Fields 1-10 mirror
+     * [textContainerProperty]; 11 = Item_Container, 12 = Is_event_capture. The firmware scrolls
+     * and highlights rows itself and reports taps as List_ItemEvent (see the touch handler).
+     */
+    fun listContainerProperty(
+        x: Int,
+        y: Int,
+        width: Int,
+        height: Int,
+        borderWidth: Int,
+        borderColor: Int,
+        borderRadius: Int,
+        paddingLength: Int,
+        containerID: Int,
+        containerName: String? = null,
+        itemContainer: ByteArray,
+        isEventCapture: Boolean
+    ): ByteArray {
+        val w = ProtobufWriter()
+        w.writeInt32Field(1, x)
+        w.writeInt32Field(2, y)
+        w.writeInt32Field(3, width)
+        w.writeInt32Field(4, height)
+        w.writeInt32Field(5, borderWidth)
+        w.writeInt32Field(6, borderColor)
+        w.writeInt32Field(7, borderRadius)
+        w.writeInt32Field(8, paddingLength)
+        w.writeInt32Field(9, containerID)
+        containerName?.let { w.writeStringField(10, it) }
+        w.writeMessageField(11, itemContainer)
+        w.writeInt32Field(12, if (isEventCapture) 1 else 0)
+        return w.toByteArray()
+    }
+
     fun createStartupPageContainer(
         containerTotalNum: Int,
+        listContainers: List<ByteArray> = emptyList(),
         textContainers: List<ByteArray> = emptyList(),
         imageContainers: List<ByteArray> = emptyList()
     ): ByteArray {
         val w = ProtobufWriter()
         w.writeInt32Field(1, containerTotalNum)
-        for (tc in textContainers) w.writeMessageField(3, tc)
-        for (ic in imageContainers) w.writeMessageField(4, ic)
+        for (lc in listContainers) w.writeMessageField(2, lc) // repeated List_Object
+        for (tc in textContainers) w.writeMessageField(3, tc) // repeated Text_Object
+        for (ic in imageContainers) w.writeMessageField(4, ic) // repeated Image_Object
         return w.toByteArray()
     }
 
@@ -426,13 +477,14 @@ private object EvenHubProto {
     }
 
     fun createPageMessage(
+        listContainers: List<ByteArray> = emptyList(),
         textContainers: List<ByteArray> = emptyList(),
         imageContainers: List<ByteArray> = emptyList(),
         magicRandom: Int = 0,
         appId: Int? = null
     ): ByteArray {
-        val total = textContainers.size + imageContainers.size
-        val createMsg = createStartupPageContainer(total, textContainers, imageContainers)
+        val total = listContainers.size + textContainers.size + imageContainers.size
+        val createMsg = createStartupPageContainer(total, listContainers, textContainers, imageContainers)
         return evenHubMessage(
             EvenHubCmd.CREATE_STARTUP_PAGE,
             3,
@@ -443,13 +495,14 @@ private object EvenHubProto {
     }
 
     fun rebuildPageMessage(
+        listContainers: List<ByteArray> = emptyList(),
         textContainers: List<ByteArray> = emptyList(),
         imageContainers: List<ByteArray> = emptyList(),
         magicRandom: Int = 0,
         appId: Int? = null
     ): ByteArray {
-        val total = textContainers.size + imageContainers.size
-        val rebuildMsg = createStartupPageContainer(total, textContainers, imageContainers)
+        val total = listContainers.size + textContainers.size + imageContainers.size
+        val rebuildMsg = createStartupPageContainer(total, listContainers, textContainers, imageContainers)
         return evenHubMessage(
             EvenHubCmd.REBUILD_PAGE,
             7,
@@ -1564,6 +1617,34 @@ class G2 : SGCManager() {
     private val textContainerIDPool: List<Int> = listOf(1, 2, 3, 4, 5, 6)
 
     /**
+     * A tracked native list container (scene "list" element). The firmware owns scrolling and the
+     * highlighted row; there is no in-place row-update command, so any change to the rows or the
+     * rect is structural (page rebuild) and resets the highlight to the first row.
+     */
+    private data class ListContainer(
+        val id: Int,
+        val x: Int,
+        val y: Int,
+        val width: Int,
+        val height: Int,
+        val borderWidth: Int,
+        val borderRadius: Int,
+        val selectionBorder: Boolean,
+        val items: List<String>
+    ) {
+        val name: String
+            get() = "list-$id"
+    }
+
+    /**
+     * The page holds at most ONE list: the firmware allows exactly one event-capture container
+     * and a list only scrolls/selects while it is that container (the host budget mirrors this
+     * with maxListElements = 1). Id 7 sits between the text (1-6) and image (10-13) pools.
+     */
+    private val listContainers: MutableList<ListContainer> = mutableListOf()
+    private val LIST_CONTAINER_ID = 7
+
+    /**
      * One firmware text line (hardware-calibrated 2026-07-03: 28px overflows —
      * the fw draws its overflow-indicator tick — 40px is clean). Text
      * containers are silently grown to at least this.
@@ -2292,11 +2373,18 @@ class G2 : SGCManager() {
             .filter { !(it.x == 0 && it.y == 0 && it.width >= defaultTextWidth && it.height >= defaultTextHeight) }
             .map { it.id }
             .toSet()
-        if (huskIds.isNotEmpty()) {
+        // A native list can't be blanked in place either (no row-update command); it leaves
+        // the page together with the husks.
+        val purgeList = listContainers.isNotEmpty()
+        if (huskIds.isNotEmpty() || purgeList) {
             textContainers.removeAll { it.id in huskIds }
             sceneTextByElement.entries.removeAll { it.value in huskIds }
             sceneImageByElement.clear()
-            Bridge.log("G2: clearDisplay() — purging ${huskIds.size} positioned husk container(s), one rebuild")
+            listContainers.clear()
+            sceneListByElement.clear()
+            Bridge.log(
+                "G2: clearDisplay() — purging ${huskIds.size} positioned husk container(s)${if (purgeList) " + the list" else ""}, one rebuild"
+            )
             displayScope.launch { coalescedPageRebuild() }
         }
     }
@@ -2385,6 +2473,7 @@ class G2 : SGCManager() {
     // still rect-keyed underneath — the maps pin element↔container so content
     // updates go in place and moves recreate at the SAME container id.
     private val sceneTextByElement = mutableMapOf<String, Int>()
+    private val sceneListByElement = mutableMapOf<String, Int>()
 
     // Images map to an ARRAY of containers: firmware refuses image transfers
     // into containers beyond ~200x100 (hardware-verified 2026-07-03), so bigger
@@ -2459,6 +2548,7 @@ class G2 : SGCManager() {
             if (frame.replay) {
                 sceneTextByElement.clear()
                 sceneImageByElement.clear()
+                sceneListByElement.clear()
             }
             sceneBatchActive = true
             sceneStructuralPending = false
@@ -2479,6 +2569,10 @@ class G2 : SGCManager() {
                             applySceneText("", el.x, el.y, el.w, el.h, maxOf(1, el.border), el.radius, el.id)
                         "image" ->
                             el.data?.let { applySceneBitmap(it, el.x, el.y, el.w, el.h, el.id) }
+                        "list" ->
+                            el.items?.let {
+                                applySceneList(it, el.x, el.y, el.w, el.h, el.border, el.radius, el.selectionBorder, el.id)
+                            }
                         else -> Bridge.log("G2: applySceneFrame: unknown element type ${el.type}")
                     }
                 }
@@ -2504,6 +2598,7 @@ class G2 : SGCManager() {
         // the element mapping so creates re-match/re-register cleanly.
         sceneTextByElement.clear()
         sceneImageByElement.clear()
+        sceneListByElement.clear()
     }
 
     override fun drawLayoutText(
@@ -2745,6 +2840,64 @@ class G2 : SGCManager() {
         return gray
     }
 
+    override fun drawLayoutList(
+        items: List<String>,
+        x: Int,
+        y: Int,
+        width: Int,
+        height: Int,
+        borderWidth: Int,
+        borderRadius: Int,
+        selectionBorder: Boolean,
+        elementId: String,
+        layoutId: String?
+    ) {
+        displayScope.launch { applySceneList(items, x, y, width, height, borderWidth, borderRadius, selectionBorder, elementId) }
+    }
+
+    /**
+     * Scene list upsert — ALWAYS structural when anything differs (the firmware has no row-update
+     * command for list containers), through [requestPageRebuild] so a frame still rebuilds once.
+     * An identical repaint is a no-op on purpose: rebuilding would reset the firmware's scroll
+     * position and highlighted row under the user.
+     */
+    private suspend fun applySceneList(
+        items: List<String>,
+        x: Int,
+        y: Int,
+        width: Int,
+        height: Int,
+        borderWidth: Int,
+        borderRadius: Int,
+        selectionBorder: Boolean,
+        elementId: String
+    ) {
+        val next =
+            ListContainer(
+                id = LIST_CONTAINER_ID,
+                x = x,
+                y = y,
+                width = width,
+                height = height,
+                borderWidth = borderWidth,
+                borderRadius = borderRadius,
+                selectionBorder = selectionBorder,
+                items = items
+            )
+        val existingId = sceneListByElement[elementId]
+        val idx = if (existingId != null) listContainers.indexOfFirst { it.id == existingId } else -1
+        if (idx >= 0 && listContainers[idx] == next) {
+            return
+        }
+        // One list per page: a new list element replaces whatever list was there.
+        listContainers.clear()
+        sceneListByElement.entries.removeAll { it.value == LIST_CONTAINER_ID }
+        listContainers.add(next)
+        sceneListByElement[elementId] = LIST_CONTAINER_ID
+        Bridge.log("G2: applySceneList '$elementId' ${items.size} row(s) at $x,$y ${width}x$height — structural")
+        requestPageRebuild()
+    }
+
     override fun removeLayoutElement(elementId: String, layoutId: String?) {
         displayScope.launch { applySceneRemove(elementId) }
     }
@@ -2759,6 +2912,13 @@ class G2 : SGCManager() {
      * page without it. Never a per-remove shutdown (mic coupling).
      */
     private suspend fun applySceneRemove(elementId: String) {
+        sceneListByElement.remove(elementId)?.let { id ->
+            val idx = listContainers.indexOfFirst { it.id == id }
+            if (idx >= 0) {
+                listContainers.removeAt(idx)
+                requestPageRebuild()
+            }
+        }
         sceneTextByElement.remove(elementId)?.let { id ->
             val idx = textContainers.indexOfFirst { it.id == id }
             if (idx >= 0) {
@@ -2957,7 +3117,9 @@ class G2 : SGCManager() {
             // that would let a clear burst churn the page back up pointlessly.
             val hasPendingText = textContainers.any { it.pendingSends > 0 && it.content.isNotBlank() }
             val hasPendingImage = imageContainers.any { it.dirty && it.bmpData.isNotEmpty() }
-            if ((hasPendingText || hasPendingImage) && !(useNativeDashboard && dashboardShowing > 0)) {
+            // A list is embedded in the page create, so a tracked list is always pending content.
+            val hasPendingList = listContainers.isNotEmpty()
+            if ((hasPendingText || hasPendingImage || hasPendingList) && !(useNativeDashboard && dashboardShowing > 0)) {
                 Bridge.log("G2: reconcileDisplay() - page down with pending content, rebuilding once")
                 rebuildState()
             }
@@ -3288,7 +3450,9 @@ class G2 : SGCManager() {
                     paddingLength = 0,
                     containerID = 0,
                     containerName = "evt-0",
-                    isEventCapture = true,
+                    // A list must be the event-capture container to scroll/select, and the
+                    // firmware allows exactly one — hand the flag over while a list is up.
+                    isEventCapture = listContainers.isEmpty(),
                     content = ""
                 )
             )
@@ -3341,11 +3505,35 @@ class G2 : SGCManager() {
                 )
             }
 
+        val listContainerProps: List<ByteArray> =
+            listContainers.map { c ->
+                Bridge.log("G2: page-comp list id=${c.id} rect=${c.x},${c.y} ${c.width}x${c.height} rows=${c.items.size}")
+                EvenHubProto.listContainerProperty(
+                    x = c.x,
+                    y = c.y,
+                    width = c.width,
+                    height = c.height,
+                    borderWidth = c.borderWidth,
+                    borderColor = defaultTextBorderColor,
+                    borderRadius = c.borderRadius,
+                    paddingLength = defaultTextPaddingLength,
+                    containerID = c.id,
+                    containerName = c.name,
+                    itemContainer =
+                        EvenHubProto.listItemContainerProperty(
+                            itemNames = c.items,
+                            isItemSelectBorderEn = c.selectionBorder
+                        ),
+                    isEventCapture = true
+                )
+            }
+
         val msg: ByteArray
         if (!pageCreated) {
             Bridge.log("G2: using createPageMessage (first time)")
             msg =
                 EvenHubProto.createPageMessage(
+                    listContainers = listContainerProps,
                     textContainers = textContainerProps,
                     imageContainers = imageContainerProps,
                     magicRandom = sendManager.nextMagicRandom(),
@@ -3355,6 +3543,7 @@ class G2 : SGCManager() {
             Bridge.log("G2: using rebuildPageMessage")
             msg =
                 EvenHubProto.rebuildPageMessage(
+                    listContainers = listContainerProps,
                     textContainers = textContainerProps,
                     imageContainers = imageContainerProps,
                     magicRandom = sendManager.nextMagicRandom(),
@@ -5010,16 +5199,7 @@ class G2 : SGCManager() {
             }
 
             if (eventType == OsEventType.DOUBLE_CLICK) {
-                // trigger dashboard:
-                val isHeadUp = DeviceStore.get("glasses", "headUp") as? Boolean ?: false
-
-                val useNativeDashboard = DeviceStore.get("bluetooth", "use_native_dashboard") as? Boolean ?: false
-                if (useNativeDashboard) {
-                    showDashboard()
-                } else {
-                    // toggle head up:
-                    DeviceStore.apply("glasses", "headUp", !isHeadUp)
-                }
+                onDoubleClickGesture()
             }
 
             // System exit: the firmware killed our page (and the mic). ONLY mark state dead; do
@@ -5056,7 +5236,63 @@ class G2 : SGCManager() {
             return
         }
 
-        // ListEvent (field 1) - interaction with list container (not currently handled)
+        // List_ItemEvent (field 1) - a gesture on the native list container. The firmware
+        // already moved its highlight; we only relay which row the gesture landed on:
+        // 1=Container_ID, 2=Container_Name, 3=CurrentSelect_ItemName,
+        // 4=CurrentSelect_ItemIndex, 5=Event_Type (absent ⇒ click, like SysEvent).
+        (fields[1] as? ByteArray)?.let { listData ->
+            val listFields = ProtobufReader(listData).parseFields()
+            val eventTypeRaw = listFields[5] as? Int
+            val eventType: OsEventType? =
+                if (eventTypeRaw != null) OsEventType.fromInt(eventTypeRaw) else OsEventType.CLICK
+            if (eventType == null) {
+                Bridge.log("G2: unknown list event type: $listFields")
+                return@let
+            }
+            val gestureName = mapEventTypeToGesture(eventType)
+            if (gestureName == null) {
+                Bridge.log("G2: no gesture mapping for $eventType $listFields")
+                return@let
+            }
+            val selectedItemName = (listFields[3] as? ByteArray)?.let { String(it, Charsets.UTF_8) }
+            val selectedItemIndex = listFields[4] as? Int
+
+            Bridge.sendTouchEvent(
+                DeviceTypes.G2,
+                gestureName,
+                timestamp,
+                selectedItemIndex = selectedItemIndex,
+                selectedItemName = selectedItemName
+            )
+            Bridge.log("G2: ListEvent → $gestureName row=$selectedItemIndex '$selectedItemName'")
+
+            if (eventType == OsEventType.DOUBLE_CLICK) {
+                onDoubleClickGesture()
+            }
+            return
+        }
+    }
+
+    /**
+     * Double-tap is shared with phone-side consumers: a local miniapp that listens for touches
+     * claims it (the phone pushes `double_tap_claimed`; see LocalMiniappRuntime), and while
+     * claimed the gesture is theirs alone — no native dashboard, no head-up toggle. Decided here
+     * rather than on the phone so the shortcut keeps working while the app's JS is suspended.
+     */
+    private fun onDoubleClickGesture() {
+        val claimed = DeviceStore.get("bluetooth", "double_tap_claimed") as? Boolean ?: false
+        if (claimed) {
+            Bridge.log("G2: double-tap claimed by a miniapp — skipping the dashboard shortcut")
+            return
+        }
+        val useNativeDashboard = DeviceStore.get("bluetooth", "use_native_dashboard") as? Boolean ?: false
+        if (useNativeDashboard) {
+            showDashboard()
+        } else {
+            // toggle head up:
+            val isHeadUp = DeviceStore.get("glasses", "headUp") as? Boolean ?: false
+            DeviceStore.apply("glasses", "headUp", !isHeadUp)
+        }
     }
 
     private fun mapEventTypeToGesture(eventType: OsEventType): String? {

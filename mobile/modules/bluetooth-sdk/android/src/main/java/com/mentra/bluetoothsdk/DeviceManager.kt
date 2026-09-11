@@ -1727,7 +1727,9 @@ class DeviceManager {
                     border = (style?.get("border") as? Number)?.toInt() ?: 0,
                     radius = (style?.get("radius") as? Number)?.toInt() ?: 0,
                     change = el["change"] as? String ?: "created",
-                    contentHash = el["contentHash"] as? String ?: ""
+                    contentHash = el["contentHash"] as? String ?: "",
+                    items = (el["items"] as? List<*>)?.map { it.toString() },
+                    selectionBorder = (style?.get("selectionBorder") as? Boolean) ?: true
                 )
             }
         return SceneFrame(

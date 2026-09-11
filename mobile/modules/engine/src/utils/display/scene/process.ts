@@ -12,8 +12,45 @@ import {TextMeasurer} from "../measurer/TextMeasurer"
 import {TextWrapper} from "../wrapper/TextWrapper"
 import type {DisplayProfile} from "../profiles/types"
 import type {DiffableElement} from "./differ"
-import type {SceneBox, SceneDisplayCapabilities, SceneElementInput, SceneTextStyle} from "./types"
+import type {SceneBox, SceneDisplayCapabilities, SceneElementInput, SceneListStyle, SceneTextStyle} from "./types"
 import {elementContentHash} from "./types"
+
+/**
+ * Longest row a native list renders (G2 clips longer rows in-box; the cap keeps
+ * a runaway string from bloating the page-create packet). Device-independent:
+ * a list row is a menu label, not a paragraph.
+ */
+const MAX_LIST_ITEM_CHARS = 64
+
+/**
+ * Rows for a native list: strings only, one line each, at most `maxItems`.
+ * Returns the rows plus whether anything was dropped or clipped (⇒ degraded).
+ */
+export function normalizeListItems(items: unknown, maxItems: number): {rows: string[]; degraded: boolean} {
+  if (!Array.isArray(items)) return {rows: [], degraded: true}
+  let degraded = false
+  const rows: string[] = []
+  for (const raw of items) {
+    if (rows.length >= maxItems) {
+      degraded = true
+      break
+    }
+    if (typeof raw !== "string") {
+      degraded = true
+      continue
+    }
+    // A row is one firmware line; an embedded newline would desync the wire
+    // encoding's row count from what the glasses draw.
+    let row = raw.replace(/[\r\n]+/g, " ")
+    if (row.length > MAX_LIST_ITEM_CHARS) {
+      row = row.slice(0, MAX_LIST_ITEM_CHARS)
+      degraded = true
+    }
+    // The firmware treats an empty row string as "no row" — keep the slot visible.
+    rows.push(row.length === 0 ? " " : row)
+  }
+  return {rows, degraded}
+}
 
 export interface ProcessedScene {
   elements: DiffableElement[]
@@ -111,9 +148,11 @@ export function processScene(
   // Clamp + per-type limits, then budget in array order.
   let textBudget = caps.maxTextElements
   let imageBudget = caps.maxImageElements
+  let listBudget = caps.maxListElements
   const out: DiffableElement[] = []
 
-  for (const {el, index} of valid) {
+  for (const {el: raw, index} of valid) {
+    let el = raw
     const clamped = clampBox(el.box, caps.width, caps.height)
     if (!clamped) {
       dropped.push(reportId(el, index))
@@ -151,6 +190,46 @@ export function processScene(
         contentHash: elementContentHash({type: "image", data: el.data}),
       })
       continue
+    }
+
+    if (el.type === "list") {
+      // The row cap is a native-widget limit; an emulated list is bounded by
+      // its text box instead (the wrap step clips it like any text element).
+      const rowCap = caps.maxListElements > 0 ? Math.max(0, caps.maxListItems) : Number.POSITIVE_INFINITY
+      const {rows, degraded: rowsDegraded} = normalizeListItems(el.items, rowCap)
+      if (rowsDegraded) degraded = true
+      if (rows.length === 0) {
+        dropped.push(reportId(el, index))
+        degraded = true
+        continue
+      }
+      if (listBudget > 0) {
+        listBudget--
+        out.push({
+          id: el.id,
+          type: "list",
+          box: clamped,
+          items: rows,
+          style: el.style,
+          contentHash: elementContentHash({type: "list", items: rows, style: el.style}),
+        })
+        continue
+      }
+      // No native list slot (the device has none, or the frame already used
+      // its budget): keep the content by rendering the rows as one text
+      // element. Row selection is lost, so this is always reported.
+      degraded = true
+      const style: SceneListStyle = el.style ?? {}
+      const textStyle: SceneTextStyle = {}
+      if (style.border !== undefined) textStyle.border = style.border
+      if (style.radius !== undefined) textStyle.radius = style.radius
+      el = {
+        type: "text",
+        id: el.id,
+        box: el.box,
+        text: rows.join("\n"),
+        ...(Object.keys(textStyle).length ? {style: textStyle} : {}),
+      }
     }
 
     // text + rect share the text-container budget (design doc §3.4.6).

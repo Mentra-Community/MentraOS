@@ -9,7 +9,8 @@
  * honestly-reported. Text collapses in reading order (y, then x) joined by
  * blank lines; EXACTLY two text elements sharing a y-range with disjoint
  * x-ranges become a double_text_wall (ColumnComposer path downstream); rects
- * drop silently (decoration); images drop + report.
+ * drop silently (decoration); images drop + report; lists keep their rows as
+ * text (one per line) but report degraded — row selection is lost.
  */
 
 import type {SceneElementInput} from "./types"
@@ -46,6 +47,10 @@ export function degradeScene(input: readonly SceneElementInput[]): DegradedScene
     }
     if (el.type === "text") {
       texts.push(el)
+    } else if (el.type === "list") {
+      const rows = Array.isArray(el.items) ? el.items.filter((row): row is string => typeof row === "string") : []
+      texts.push({type: "text", id: el.id, box: el.box, text: rows.join("\n")})
+      degraded = true
     } else if (el.type === "image") {
       dropped.push(el.id ?? `image[${index}]`)
       degraded = true

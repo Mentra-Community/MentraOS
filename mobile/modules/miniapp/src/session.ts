@@ -68,6 +68,10 @@ export interface DisplayCapabilities {
   maxImageElements?: number
   /** Per-image dimension cap (box-level), when the device has one. */
   maxImagePx?: {width: number; height: number}
+  /** Native selectable-list budget: 0/absent ⇒ `list` elements render as plain text. */
+  maxListElements?: number
+  /** Rows a native list can hold; extra rows are dropped tail-first (reported as degraded). */
+  maxListItems?: number
   shapes?: string[]
   intensityLevels?: number
   partialUpdate?: boolean

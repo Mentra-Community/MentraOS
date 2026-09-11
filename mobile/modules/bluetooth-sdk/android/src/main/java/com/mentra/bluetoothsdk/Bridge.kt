@@ -363,11 +363,18 @@ public class Bridge private constructor() {
         /** Send touch/gesture event from glasses - matches iOS implementation */
         @JvmStatic
         @JvmOverloads
+        /**
+         * Touch gesture from the glasses. [selectedItemIndex] / [selectedItemName] identify the row
+         * of a native list the gesture landed on (G2 List_ItemEvent); absent for plain touchpad
+         * gestures.
+         */
         fun sendTouchEvent(
                 deviceModel: String,
                 gestureName: String,
                 timestamp: Long,
-                source: Int? = null
+                source: Int? = null,
+                selectedItemIndex: Int? = null,
+                selectedItemName: String? = null
         ) {
             val body = HashMap<String, Any>()
             body["type"] = "touch_event"
@@ -376,6 +383,12 @@ public class Bridge private constructor() {
             body["timestamp"] = timestamp
             if (source != null) {
                 body["source"] = source
+            }
+            if (selectedItemIndex != null) {
+                body["selectedItemIndex"] = selectedItemIndex
+            }
+            if (selectedItemName != null) {
+                body["selectedItemName"] = selectedItemName
             }
             sendTypedMessage("touch_event", body)
         }

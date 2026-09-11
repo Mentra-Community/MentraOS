@@ -5,8 +5,10 @@ export type {
   SceneChange,
   SceneDisplayCapabilities,
   SceneElementInput,
+  SceneElementStyle,
   SceneElementType,
   SceneFrame,
+  SceneListStyle,
   SceneProcessResult,
   SceneRectStyle,
   SceneTextStyle,
@@ -15,7 +17,7 @@ export {boxesEqual, contentHash, elementContentHash} from "./types"
 export type {DiffResult, DiffableElement} from "./differ"
 export {diffScene} from "./differ"
 export type {ProcessedScene} from "./process"
-export {processScene, profileLineHeightPx} from "./process"
+export {normalizeListItems, processScene, profileLineHeightPx} from "./process"
 export type {DegradedScene} from "./degrade"
 export {degradeScene} from "./degrade"
 export {SceneStore} from "./store"

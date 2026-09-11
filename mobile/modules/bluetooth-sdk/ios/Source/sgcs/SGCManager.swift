@@ -16,11 +16,16 @@ struct SceneElement {
     let radius: Int32
     let change: String // "created" | "updated" | "moved" | "unchanged"
     let contentHash: String
+    /// "list" elements only: the rows, in order (host-capped to the device's row limit).
+    var items: [String]? = nil
+    /// "list" elements only: outline the highlighted row (firmware default on).
+    var selectionBorder: Bool = true
 
     func with(change: String) -> SceneElement {
         SceneElement(
             id: id, type: type, x: x, y: y, w: w, h: h, text: text, data: data,
-            border: border, radius: radius, change: change, contentHash: contentHash
+            border: border, radius: radius, change: change, contentHash: contentHash,
+            items: items, selectionBorder: selectionBorder
         )
     }
 }
@@ -123,6 +128,12 @@ protocol SGCManager {
         base64ImageData: String, x: Int32, y: Int32, width: Int32, height: Int32,
         elementId: String, layoutId: String?
     ) async -> Bool
+    /// Retained-mode native selectable list (G2 ListContainer). Default: rows as text.
+    func drawLayoutList(
+        _ items: [String], x: Int32, y: Int32, width: Int32, height: Int32,
+        borderWidth: Int32, borderRadius: Int32, selectionBorder: Bool,
+        elementId: String, layoutId: String?
+    ) async
     func removeLayoutElement(_ elementId: String, layoutId: String?) async
     /// Apply a whole host-diffed scene frame (default: paint-then-sweep over the verbs above).
     func applySceneFrame(_ frame: SceneFrame) async
@@ -273,6 +284,21 @@ extension SGCManager {
         await displayBitmap(base64ImageData: base64ImageData, x: x, y: y, width: width, height: height)
     }
 
+    /// Default: the host only emits "list" elements to devices whose capabilities declare a
+    /// native list widget; this keeps a misrouted frame readable by drawing the rows as text
+    /// (no selection semantics).
+    func drawLayoutList(
+        _ items: [String], x: Int32, y: Int32, width: Int32, height: Int32,
+        borderWidth: Int32, borderRadius: Int32, selectionBorder _: Bool,
+        elementId: String, layoutId: String?
+    ) async {
+        await drawLayoutText(
+            items.joined(separator: "\n"), x: x, y: y, width: width, height: height,
+            borderWidth: borderWidth, borderRadius: borderRadius,
+            elementId: elementId, layoutId: layoutId
+        )
+    }
+
     /// Default: no-op (SGC has no retained elements).
     func removeLayoutElement(_: String, layoutId _: String?) async {}
 
@@ -328,6 +354,15 @@ extension SGCManager {
                 if let data = el.data {
                     _ = await drawLayoutBitmap(
                         base64ImageData: data, x: el.x, y: el.y, width: el.w, height: el.h,
+                        elementId: el.id, layoutId: frame.appId
+                    )
+                }
+            case "list":
+                if let items = el.items {
+                    await drawLayoutList(
+                        items, x: el.x, y: el.y, width: el.w, height: el.h,
+                        borderWidth: el.border, borderRadius: el.radius,
+                        selectionBorder: el.selectionBorder,
                         elementId: el.id, layoutId: frame.appId
                     )
                 }

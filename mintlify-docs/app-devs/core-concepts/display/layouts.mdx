@@ -34,6 +34,7 @@ so the miniapp only installs on glasses that can show anything.
 | `{type: "text", box, text, style?, id?}` | `style`: `border`, `radius`, `overflow`, `breakMode` | Wrapped text inside the box. |
 | `{type: "image", box, data, id?}` | `data`: base64 PNG/JPEG | A bitmap, converted to the glasses' native format by the phone. |
 | `{type: "rect", box, style?, id?}` | `style`: `border`, `radius` | An empty bordered box. |
+| `{type: "list", box, items, style?, id?}` | `items`: one string per row; `style`: `border`, `radius`, `selectionBorder` | A glasses-native selectable list. See [Lists](#lists). |
 
 ## Screen sizes
 
@@ -79,6 +80,37 @@ In practice a text-first miniapp works everywhere with zero branching: a
 caption app's single full-canvas text element reads the same on every device.
 If your layout leans on positioning or images, like a HUD with a minimap,
 check `canPosition` and render a text-only variant for these devices.
+
+## Lists
+
+A `list` element is a menu the glasses run themselves: the firmware scrolls it
+and highlights the current row, and each tap reaches your miniapp as a touch
+event that says which row it landed on (`selectedItemIndex`, zero-based, and
+`selectedItemName`). You never redraw the list to move the highlight.
+
+```typescript
+const rows = ["Weather", "Timer", "Messages"];
+session.display.render([
+  {type: "list", id: "menu", box: {x: 24, y: 16, w: 528, h: 256}, items: rows, style: {border: 1, radius: 8}},
+]);
+session.input.onTouch("single_tap", (touch) => {
+  if (touch.selectedItemIndex === undefined) return; // a tap outside the list
+  open(rows[touch.selectedItemIndex]);
+});
+```
+
+Rows are single lines, in order. Re-rendering the same `id` with different rows
+rebuilds the list with the first row highlighted again; re-rendering identical
+rows leaves the glasses' scroll position alone. `style.selectionBorder` (default
+`true`) outlines the highlighted row.
+
+Budgets come from `session.capabilities.display`: `maxListElements` is how many
+lists a frame can hold (one on the Even Realities G2, up to `maxListItems` rows
+each). Extra rows are dropped tail-first, and a list past the budget, or any
+list on glasses without a native list widget, renders as plain text rows; both
+are reported as `degraded`. A miniapp that listens for touches keeps the G2's
+double-tap for itself while it runs, so the glasses' native dashboard shortcut
+does not open over its list.
 
 ## Updating and clearing
 

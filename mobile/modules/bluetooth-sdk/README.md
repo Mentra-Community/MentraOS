@@ -405,6 +405,8 @@ iOS G2 receives notifications directly through ANCS. Authorization is reported f
 await BluetoothSdk.clearDisplay()
 await BluetoothSdk.showDashboard()
 await BluetoothSdk.setDashboardPosition(4, 2)
+// A phone-side consumer owns double-tap: G2 stops opening its native dashboard on it.
+await BluetoothSdk.setDoubleTapClaimed(true)
 
 const networks = await BluetoothSdk.requestWifiScan()
 console.log(networks.map((network) => network.ssid))

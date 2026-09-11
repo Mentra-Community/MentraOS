@@ -116,6 +116,7 @@ export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
   setDashboardPosition: bindPublicMethod("setDashboardPosition"),
   setHeadUpAngle: bindPublicMethod("setHeadUpAngle"),
   setImuEnabled: bindPublicMethod("setImuEnabled"),
+  setDoubleTapClaimed: bindPublicMethod("setDoubleTapClaimed"),
   setScreenDisabled: bindPublicMethod("setScreenDisabled"),
   ping: bindPublicMethod("ping"),
   requestWifiScan: bindPublicMethod("requestWifiScan"),

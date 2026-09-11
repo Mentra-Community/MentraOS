@@ -632,6 +632,9 @@ class LocalMiniappRuntime {
     this.initialized = true
     console.log(`${LOG_TAG}: initialize()`)
     this.ensurePingLoop()
+    // Native keeps the double-tap claim across a JS restart (dev reload, MentraJS
+    // crash recovery); a fresh runtime has no subscribers, so resync it unconditionally.
+    this.recomputeDoubleTapClaim(true)
   }
 
   /**
@@ -982,6 +985,8 @@ class LocalMiniappRuntime {
     this.recomputeHeadingSubscription()
     // Same for the IMU/accelerometer stream.
     this.recomputeImuSubscription()
+    // And release double-tap back to the glasses' native dashboard shortcut.
+    this.recomputeDoubleTapClaim()
 
     // Drop this app's location-tier request before recomputing so the
     // aggregate falls back down if it was the strictest. Done before
@@ -1777,6 +1782,7 @@ class LocalMiniappRuntime {
     this.updateCloudSubscriptions()
     this.recomputeHeadingSubscription()
     this.recomputeImuSubscription()
+    this.recomputeDoubleTapClaim()
     // Persist this app's requested rate (or clear it if SUBSCRIBE didn't
     // include `location_stream` this time), then ask the host for the
     // strictest rate across all connected apps.
@@ -2759,6 +2765,25 @@ class LocalMiniappRuntime {
     if (wantsImu === this.imuEnabled) return
     this.imuEnabled = wantsImu
     void BluetoothSdk.setImuEnabled(wantsImu)
+  }
+
+  /**
+   * Double-tap is shared between miniapps and the glasses' native dashboard
+   * shortcut (G2 opens its dashboard on double-tap when `use_native_dashboard`
+   * is on). A miniapp that listens for touches — every gesture, or double_tap
+   * specifically — claims the gesture; the claim is pushed to native as
+   * runtime state so the shortcut decision stays on the glasses side (it keeps
+   * working while JS is suspended) instead of round-tripping every gesture
+   * through the phone. Mirrors the IMU pattern above.
+   */
+  private doubleTapClaimed = false
+  private recomputeDoubleTapClaim(force = false): void {
+    const claimed =
+      this.streamSubscribers.has(MiniappStreamType.TOUCH_EVENT) ||
+      this.streamSubscribers.has(`${MiniappStreamType.TOUCH_EVENT}:double_tap`)
+    if (!force && claimed === this.doubleTapClaimed) return
+    this.doubleTapClaimed = claimed
+    void BluetoothSdk.setDoubleTapClaimed(claimed)
   }
 
   /**
@@ -4892,6 +4917,7 @@ class LocalMiniappRuntime {
     this.pendingCloudRequests.clear()
     const hadButtonPressSubscribers = this.getButtonPressSubscribers().length > 0
     this.streamSubscribers.clear()
+    this.recomputeDoubleTapClaim()
     if (hadButtonPressSubscribers) {
       for (const listener of this.buttonPressSubscriberListeners) {
         try {
