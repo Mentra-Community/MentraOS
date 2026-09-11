@@ -73,7 +73,7 @@ class MentraBluetoothSdk private constructor(
     private var pendingWifiStatus: PendingWifiStatusRequest? = null
     private var pendingWifiForget: PendingWifiForgetRequest? = null
     private var pendingHotspotStatus: PendingHotspotStatusRequest? = null
-    private var pendingVersionInfo: PendingResponse<VersionInfoResult>? = null
+    private var pendingVersionInfo: PendingVersionInfoRequest? = null
     private val wifiSessionCapabilities = WifiSessionCapabilities()
     @Volatile private var configuredOtaVersionUrl: String? = null
 
@@ -180,6 +180,12 @@ class MentraBluetoothSdk private constructor(
         var stoppedEvent: VideoRecordingStatusEvent? = null,
         var uploadSucceeded: Boolean = false,
     )
+
+    private class PendingVersionInfoRequest(
+        val pending: PendingResponse<VersionInfoResult>,
+        val accumulator: VersionInfoResponseAccumulator,
+    ) {
+    }
 
     private data class PendingWifiScan(
         val pending: PendingResponse<List<WifiScanResult>>,
@@ -1282,7 +1288,13 @@ class MentraBluetoothSdk private constructor(
     }
 
     suspend fun requestVersionInfo(): VersionInfoResult {
+        val requestId = UUID.randomUUID().toString()
         val pending = PendingResponse<VersionInfoResult>("version info request")
+        val request =
+            PendingVersionInfoRequest(
+                pending = pending,
+                accumulator = VersionInfoResponseAccumulator(requestId),
+            )
         synchronized(oneShotLock) {
             if (pendingVersionInfo != null) {
                 throw BluetoothSdkException(
@@ -1290,14 +1302,14 @@ class MentraBluetoothSdk private constructor(
                     "A version info request is already waiting for a glasses response.",
                 )
             }
-            pendingVersionInfo = pending
+            pendingVersionInfo = request
         }
         try {
-            deviceManager.requestVersionInfo()
+            deviceManager.requestVersionInfo(requestId)
             return pending.await()
         } finally {
             synchronized(oneShotLock) {
-                if (pendingVersionInfo === pending) {
+                if (pendingVersionInfo === request) {
                     pendingVersionInfo = null
                 }
             }
@@ -1698,6 +1710,22 @@ class MentraBluetoothSdk private constructor(
         }
     }
 
+    private fun handleVersionInfoForRequest(data: Map<String, Any>) {
+        synchronized(oneShotLock) {
+            val request = pendingVersionInfo ?: return
+            when (val outcome = request.accumulator.accept(data)) {
+                VersionInfoAccumulatorOutcome.Ignored -> Unit
+                VersionInfoAccumulatorOutcome.Waiting -> Unit
+                is VersionInfoAccumulatorOutcome.Complete -> {
+                    if (pendingVersionInfo === request) {
+                        pendingVersionInfo = null
+                        request.pending.resolve(outcome.result)
+                    }
+                }
+            }
+        }
+    }
+
     private fun dispatchBridgeEvent(eventName: String, data: Map<String, Any>) {
         when (eventName) {
             "log" -> dispatchToListeners { it.onLog(data["message"] as? String ?: data.toString()) }
@@ -1888,9 +1916,7 @@ class MentraBluetoothSdk private constructor(
                     applyWifiProtocolCapabilities(data)
                 }
                 val event = VersionInfoResult.fromMap(data)
-                synchronized(oneShotLock) {
-                    pendingVersionInfo?.resolve(event)
-                }
+                handleVersionInfoForRequest(data)
                 dispatchToListeners { it.onVersionInfo(event) }
             }
             "mic_pcm" -> {

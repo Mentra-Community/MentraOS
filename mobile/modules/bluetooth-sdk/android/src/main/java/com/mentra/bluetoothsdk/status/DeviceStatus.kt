@@ -204,9 +204,8 @@ data class VersionInfoResult(
             systemTimeMs?.let { put("systemTimeMs", it) }
             put("otaVersionUrl", otaVersionUrl)
             put("appVersion", appVersion)
-            // Only when known. requestVersionInfo() resolves from ANY version_info chunk, and
-            // only chunk 1 carries package_name — emitting "" from a chunk-3 resolution would
-            // overwrite a known identity with "absent", which the OTA guard reads as stock.
+            // Only when known: per-chunk events may omit package identity. Emitting an empty
+            // value would overwrite a known identity, which the OTA guard uses to identify stock.
             if (packageName.isNotEmpty()) {
                 put("packageName", packageName)
             }

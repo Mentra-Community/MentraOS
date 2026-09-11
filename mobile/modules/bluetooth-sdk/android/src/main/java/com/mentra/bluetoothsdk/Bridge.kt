@@ -476,11 +476,24 @@ public class Bridge private constructor() {
         }
 
         @JvmStatic
-        fun sendVersionInfo(values: Map<String, Any>) {
+        @JvmOverloads
+        fun sendVersionInfo(values: Map<String, Any>, responseChunk: String = "version_info") {
             fun stringField(vararg keys: String): String =
                     keys.firstNotNullOfOrNull { key -> values[key] as? String } ?: ""
             val body = HashMap<String, Any>()
             body["type"] = "version_info"
+            body[VersionInfoResponseAccumulator.RESPONSE_CHUNK_KEY] = responseChunk
+            mapOf(
+                "chunkIndex" to VersionInfoResponseAccumulator.RESPONSE_INDEX_KEY,
+                "chunkCount" to VersionInfoResponseAccumulator.RESPONSE_COUNT_KEY,
+                "final" to VersionInfoResponseAccumulator.RESPONSE_FINAL_KEY,
+                "sid" to VersionInfoResponseAccumulator.RESPONSE_SID_KEY,
+            ).forEach { (wireKey, internalKey) -> values[wireKey]?.let { body[internalKey] = it } }
+            (values["requestId"] as? String ?: values["request_id"] as? String)
+                    ?.takeIf { it.isNotEmpty() }
+                    ?.let {
+                        body[VersionInfoResponseAccumulator.RESPONSE_REQUEST_ID_KEY] = it
+                    }
             body["versionInfoType"] = stringField("versionInfoType", "version_info_type")
             body["sid"] = stringField("sid")
             body["androidVersion"] = stringField("androidVersion", "android_version")
