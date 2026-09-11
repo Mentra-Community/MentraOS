@@ -129,4 +129,20 @@ public class PublisherReconnectLifecycleTest {
     @Test public void srtCleanupFailurePreservesOwnership() throws Exception { cleanupFailure(true); }
     @Test public void rtmpDuplicateFailureSchedulesOneRetry() throws Exception { duplicateFailure(false); }
     @Test public void srtDuplicateFailureSchedulesOneRetry() throws Exception { duplicateFailure(true); }
+
+    @Test public void cameraDeviceLossIsTerminalForBothStreamPackPublishers() throws Exception {
+        for (boolean srt : new boolean[] {false, true}) {
+            Object service = service(srt, new StreamCallbackScope(Runnable::run));
+            Method classify = service.getClass().getDeclaredMethod("isRetryableError",
+                    io.github.thibaultbee.streampack.error.StreamPackError.class);
+            classify.setAccessible(true);
+            for (String message : new String[] {"Camera device has crashed", "Camera has been disconnected",
+                    "Camera Connection failed"}) {
+                assertEquals(false, classify.invoke(service,
+                        new io.github.thibaultbee.streampack.error.CameraError(message)));
+            }
+            assertEquals(true, classify.invoke(service,
+                    new io.github.thibaultbee.streampack.error.StreamPackError("Connection reset")));
+        }
+    }
 }

@@ -121,11 +121,17 @@ same gate. An unchanged crop never restarts the HAL. A changed crop is rejected 
 while a publisher is pending, live, or reconnecting; while a photo/video or warm-camera service
 owns the camera; or while USB webcam capture is active. Busy persistent changes are not saved.
 Override release/expiry retains ownership until the saved crop can be restored safely.
+On miniapp exit the phone orders release after its capture cleanup, stops renewing a rejected
+release, and retries release on reconnect. The existing ASG lease TTL bounds abandoned ownership;
+expiry waits for camera-idle rather than resetting the HAL during another app's capture.
 
 Miniapps observe publisher recovery rather than creating a second stop/restart loop from Wi-Fi
 or BLE observations. Retry intent survives forwarding through the phone. Terminal publisher
 failures require fresh user intent to start another session. Stream teardown attempts camera,
 microphone, encoder, muxer, and endpoint cleanup independently, even after a camera HAL error.
+Camera-device loss after opening is a terminal device failure, not a network reconnect.
+Its callback reaches the stream owner off the Camera2 callback thread, and callbacks from a
+closed or replaced camera session cannot terminate the current publisher.
 
 The OS-1937 streaming lifecycle is owned by the phone's explicit start/stop commands, not by
 cloud-era per-stream keep-alives. A stream may otherwise end on terminal publisher or device
