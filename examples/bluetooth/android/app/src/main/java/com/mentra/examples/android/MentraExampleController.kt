@@ -2019,8 +2019,8 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         requireConnected("forget Wi-Fi network")
         val wifi = connectedWifiStatus(state.glassesStatus)
             ?: throw IllegalStateException("No connected Wi-Fi network to forget.")
-        val status = withContext(Dispatchers.IO) { mentraBluetoothSdk.forgetWifiNetwork(wifi.ssid) }
-        addEvent("LIVE", "Wi-Fi ${summarize(status.values)}")
+        val result = withContext(Dispatchers.IO) { mentraBluetoothSdk.forgetWifiNetwork(wifi.ssid) }
+        addEvent("LIVE", "Wi-Fi forget ${result.outcome.wireValue}: ${result.ssid}")
     }
 
     fun toggleHotspot() = runAction(if (state.hotspotEnabled) "Disable hotspot" else "Enable hotspot") {
