@@ -198,6 +198,13 @@ The MTK↔BES UART always starts at 460800 baud. Firmware that supports the nego
 
 ### Diagnostics and reporting
 
+Requested version information is returned as a correlated, explicitly complete
+snapshot: both chunks echo the request ID and process `sid`, and include their
+index, total count, and final marker. The phone waits for all declared chunks;
+it never reports partial version data as complete because the transport went quiet.
+Older firmware's `version_info_3` remains the immediate terminal boundary for a
+legacy sequence that began with `version_info_1`.
+
 Mentra Live's canonical product serial is provisioned by the Android firmware in
 `ro.serialno`. `asg_client` reads that property directly and forwards a valid
 value to the phone as `serial_number` in `version_info_3`. It must not substitute
