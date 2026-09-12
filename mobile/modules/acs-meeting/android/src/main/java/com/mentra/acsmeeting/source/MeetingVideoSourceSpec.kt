@@ -1,5 +1,8 @@
 package com.mentra.acsmeeting.source
 
+import com.mentra.glassesmedia.source.SourceConfig
+import com.mentra.glassesmedia.source.SourceKind
+
 /**
  * Where the meeting's glasses video comes from, as sent by the host.
  *

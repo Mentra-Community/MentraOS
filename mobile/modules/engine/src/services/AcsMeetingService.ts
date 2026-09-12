@@ -325,7 +325,7 @@ type NativeModule = {
   restartVideoSource?(): Promise<void>
   /**
    * Join the glasses hotspot as a scoped, internet-less network; resolves with this phone's
-   * address on it. Absent on natives that predate SoftAP, and rejects on iOS.
+   * address on it. Absent on natives that predate SoftAP.
    */
   joinScopedNetwork?(ssid: string, passphrase: string): Promise<string>
   beginTrace?(traceId: string): Promise<void>

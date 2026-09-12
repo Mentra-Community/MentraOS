@@ -1,6 +1,6 @@
-package com.mentra.acsmeeting.telemetry
+package com.mentra.glassesmedia.telemetry
 
-import com.mentra.acsmeeting.telemetry.VideoQuality.Band
+import com.mentra.glassesmedia.telemetry.VideoQuality.Band
 import com.mentra.acsmeeting.video.VideoProfile
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.within

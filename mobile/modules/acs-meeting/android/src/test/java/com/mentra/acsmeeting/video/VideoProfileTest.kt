@@ -1,6 +1,6 @@
 package com.mentra.acsmeeting.video
 
-import com.mentra.acsmeeting.source.AcsInvestigation
+import com.mentra.glassesmedia.source.MediaDiagnostics
 import org.assertj.core.api.Assertions.assertThat
 import org.junit.Test
 
@@ -34,7 +34,7 @@ class VideoProfileTest {
    */
   @Test
   fun declaredRateMatchesTheSyntheticEmitRate() {
-    assertThat(VideoProfile.DEFAULT.fps).isEqualTo(AcsInvestigation.syntheticFps)
+    assertThat(VideoProfile.DEFAULT.fps).isEqualTo(MediaDiagnostics.syntheticFps)
   }
 
   /**

@@ -61,26 +61,26 @@ import com.mentra.acsmeeting.audio.PcmBridge
 import com.mentra.acsmeeting.audio.PhoneMicCapturer
 import com.mentra.acsmeeting.audio.UplinkPacer
 import com.mentra.acsmeeting.audio.UplinkSender
-import com.mentra.acsmeeting.source.AcsInvestigation
-import com.mentra.acsmeeting.source.CloudflareWhepSource
-import com.mentra.acsmeeting.source.DecoderMode
-import com.mentra.acsmeeting.source.OutgoingRateArm
-import com.mentra.acsmeeting.source.PixelFormatArm
-import com.mentra.acsmeeting.source.GlassesMediaController
-import com.mentra.acsmeeting.network.ScopedSoftApNetwork
-import com.mentra.acsmeeting.source.GlassesMediaSourceFactory
-import com.mentra.acsmeeting.source.LocalWhipIngestSource
+import com.mentra.glassesmedia.source.MediaDiagnostics
+import com.mentra.glassesmedia.source.CloudflareWhepSource
+import com.mentra.glassesmedia.source.DecoderMode
+import com.mentra.glassesmedia.source.OutgoingRateArm
+import com.mentra.glassesmedia.source.PixelFormatArm
+import com.mentra.glassesmedia.source.GlassesMediaController
+import com.mentra.glassesmedia.network.ScopedSoftApNetwork
+import com.mentra.glassesmedia.source.GlassesMediaSourceFactory
+import com.mentra.glassesmedia.source.LocalWhipIngestSource
 import com.mentra.acsmeeting.source.MeetingVideoSourceSpec
-import com.mentra.acsmeeting.source.SourceConfig
-import com.mentra.acsmeeting.source.SourceKind
-import com.mentra.acsmeeting.source.SourceState
-import com.mentra.acsmeeting.source.SyntheticI420Source
-import com.mentra.acsmeeting.source.TargetSize
-import com.mentra.acsmeeting.source.VideoSourceArm
-import com.mentra.acsmeeting.telemetry.AvSyncProbe
-import com.mentra.acsmeeting.telemetry.PipelineStats
-import com.mentra.acsmeeting.telemetry.PipelineTicker
-import com.mentra.acsmeeting.trace.SoftApTrace
+import com.mentra.glassesmedia.source.SourceConfig
+import com.mentra.glassesmedia.source.SourceKind
+import com.mentra.glassesmedia.source.SourceState
+import com.mentra.glassesmedia.source.SyntheticI420Source
+import com.mentra.glassesmedia.source.TargetSize
+import com.mentra.glassesmedia.source.VideoSourceArm
+import com.mentra.glassesmedia.telemetry.AvSyncProbe
+import com.mentra.glassesmedia.telemetry.PipelineStats
+import com.mentra.glassesmedia.telemetry.PipelineTicker
+import com.mentra.glassesmedia.trace.SoftApTrace
 import com.mentra.acsmeeting.video.AcsFrameSender
 import com.mentra.acsmeeting.video.VideoProfile
 import java.util.concurrent.CountDownLatch
@@ -131,7 +131,7 @@ class AcsMeetingSession(
   private val resolvedFactory = mediaSourceFactory ?: GlassesMediaSourceFactory { video, pcm, config ->
     // The synthetic diagnostic arm overrides everything; otherwise the requested kind decides.
     when {
-      AcsInvestigation.videoArm == VideoSourceArm.SYNTHETIC ->
+      MediaDiagnostics.videoArm == VideoSourceArm.SYNTHETIC ->
         SyntheticI420Source(video, stats, frameSender::isReady)
 
       config.kind == SourceKind.SOFTAP ->
@@ -207,7 +207,7 @@ class AcsMeetingSession(
   @Volatile private var phase = "idle"
   @Volatile private var lastError: String? = null
   @Volatile private var audioSource = "glasses"
-  @Volatile private var configuredAudioDelayMs = AcsInvestigation.acsAudioDelayMs
+  @Volatile private var configuredAudioDelayMs = MediaDiagnostics.acsAudioDelayMs
   @Volatile private var lastSafety = AudioSafety.DEGRADED
   // Health of the glasses WHEP feed, reported alongside the ACS phase so the host
   // can tell "call is up, glasses video is dead" from a healthy call.
@@ -382,7 +382,7 @@ class AcsMeetingSession(
         // moves it runs on this executor, so the value is stable for the rest of this join.
         val generation = joinGeneration.get()
         val requested = video
-        this.profile = when (AcsInvestigation.outgoingRate) {
+        this.profile = when (MediaDiagnostics.outgoingRate) {
           OutgoingRateArm.CLAMP_TO_SOFTWARE_CEILING -> requested.forSoftwareEncoder()
           OutgoingRateArm.ADVERTISE_REQUESTED -> requested
         }
@@ -396,7 +396,7 @@ class AcsMeetingSession(
         } else {
           Log.i(
             TAG,
-            "ACS rate arm=${AcsInvestigation.outgoingRate} advertising " +
+            "ACS rate arm=${MediaDiagnostics.outgoingRate} advertising " +
               "${this.profile.width}x${this.profile.height}@${this.profile.fps} unclamped; " +
               "P7 rate names what binds",
           )
@@ -410,7 +410,7 @@ class AcsMeetingSession(
         emit("connecting")
         val bridge = PcmBridge(context.cacheDir, dumpWav)
         pcmBridge = bridge
-        val delayMs = (audioDelayMs ?: AcsInvestigation.acsAudioDelayMs)
+        val delayMs = (audioDelayMs ?: MediaDiagnostics.acsAudioDelayMs)
           .coerceIn(0, AudioUplinkChain.MAX_DELAY_MS)
         configuredAudioDelayMs = delayMs
         val headroom = if (videoSource.kind == SourceKind.SOFTAP && parsed != AudioSourceKind.PHONE) {
@@ -458,7 +458,7 @@ class AcsMeetingSession(
           applyAudioPolicy("virtual-stream-state")
         }
 
-        val synthetic = AcsInvestigation.videoArm == VideoSourceArm.SYNTHETIC
+        val synthetic = MediaDiagnostics.videoArm == VideoSourceArm.SYNTHETIC
         if (synthetic) muted.set(true)
         val desired = desiredKind()
         val plan = if (synthetic) {
@@ -489,7 +489,7 @@ class AcsMeetingSession(
           Log.i(TAG, "raw incoming audio state=${incoming.state}")
         }
         incoming.addOnMixedAudioBufferReceivedListener { event: IncomingMixedAudioEvent ->
-          if (AcsInvestigation.videoArm == VideoSourceArm.SYNTHETIC) return@addOnMixedAudioBufferReceivedListener
+          if (MediaDiagnostics.videoArm == VideoSourceArm.SYNTHETIC) return@addOnMixedAudioBufferReceivedListener
           try {
             val data = event.audioBuffer?.buffer ?: return@addOnMixedAudioBufferReceivedListener
             val bytes = ByteArray(data.remaining())
@@ -535,14 +535,14 @@ class AcsMeetingSession(
           videoSource is MeetingVideoSourceSpec.SoftAp -> "softap"
           else -> "whep"
         }
-        stats.pathMode = if (AcsInvestigation.decoderMode == DecoderMode.BYTE_BUFFER) "bytebuf" else "texture"
+        stats.pathMode = if (MediaDiagnostics.decoderMode == DecoderMode.BYTE_BUFFER) "bytebuf" else "texture"
         stats.pathCopy = when {
-          AcsInvestigation.pixelFormat == PixelFormatArm.NV12 -> "nv12"
-          AcsInvestigation.zeroCopy -> "zerocopy"
+          MediaDiagnostics.pixelFormat == PixelFormatArm.NV12 -> "nv12"
+          MediaDiagnostics.zeroCopy -> "zerocopy"
           else -> "planes"
         }
-        stats.pix = AcsInvestigation.pixelFormat.name.lowercase()
-        stats.zcOn = if (AcsInvestigation.zeroCopy) 1 else 0
+        stats.pix = MediaDiagnostics.pixelFormat.name.lowercase()
+        stats.zcOn = if (MediaDiagnostics.zeroCopy) 1 else 0
         mediaRestartAttempts = 0
         currentSourceKind = if (synthetic) SourceKind.DIRECT else videoSource.kind
         media.setStateListener { state, reason ->
@@ -599,12 +599,12 @@ class AcsMeetingSession(
         applyAudioPolicy("join")
         Log.i(
           TAG,
-          "ACS join started arm=${AcsInvestigation.videoArm.name.lowercase()} " +
+          "ACS join started arm=${MediaDiagnostics.videoArm.name.lowercase()} " +
             "profile=${profile.width}x${profile.height}@${profile.fps} " +
             "maxBitrate=${profile.maxBitrateBps} bitsPerFrame=${profile.bitsPerFrame()} " +
-            "syntheticFps=${AcsInvestigation.syntheticFps} entropy=${AcsInvestigation.syntheticEntropy} " +
-            "decoderMode=${AcsInvestigation.decoderMode} zeroCopy=${AcsInvestigation.zeroCopy} " +
-            "pixelFormat=${AcsInvestigation.pixelFormat} " +
+            "syntheticFps=${MediaDiagnostics.syntheticFps} entropy=${MediaDiagnostics.syntheticEntropy} " +
+            "decoderMode=${MediaDiagnostics.decoderMode} zeroCopy=${MediaDiagnostics.zeroCopy} " +
+            "pixelFormat=${MediaDiagnostics.pixelFormat} " +
             "source=${this.audioSource} audio=${if (synthetic) "off" else "on"} " +
             "armVirtual=${plan.armVirtual} transportMuted=${plan.transportMuted}",
         )
@@ -748,7 +748,7 @@ class AcsMeetingSession(
   }
 
   fun setMuted(next: Boolean): Map<String, Any> {
-    if (AcsInvestigation.videoArm == VideoSourceArm.SYNTHETIC) {
+    if (MediaDiagnostics.videoArm == VideoSourceArm.SYNTHETIC) {
       muted.set(true)
       return snapshot()
     }
@@ -988,7 +988,7 @@ class AcsMeetingSession(
     Log.i(
       TAG,
       "P8 audio-up config configuredDelayMs=$configuredAudioDelayMs " +
-        "audioTimestamps=${AcsInvestigation.acsAudioTimestamps}",
+        "audioTimestamps=${MediaDiagnostics.acsAudioTimestamps}",
     )
   }
 

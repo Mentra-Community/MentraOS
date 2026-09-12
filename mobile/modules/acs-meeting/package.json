@@ -1,7 +1,7 @@
 {
   "name": "@mentra/acs-meeting",
   "version": "3.2.0",
-  "description": "MentraOS native ACS Teams meeting module (WHEP decode → ACS raw media)",
+  "description": "MentraOS native ACS Teams meeting module (WHEP decode \u2192 ACS raw media)",
   "main": "build/index.js",
   "react-native": "src/index.ts",
   "types": "src/index.ts",
@@ -13,7 +13,12 @@
     "prepublishOnly": "expo-module prepublishOnly",
     "expo-module": "expo-module"
   },
-  "keywords": ["react-native", "expo", "acs", "teams"],
+  "keywords": [
+    "react-native",
+    "expo",
+    "acs",
+    "teams"
+  ],
   "repository": {
     "type": "git",
     "url": "git+https://github.com/Mentra-Community/MentraOS.git",
@@ -26,7 +31,8 @@
     "access": "public"
   },
   "dependencies": {
-    "@expo/config-plugins": "~55.0.10"
+    "@expo/config-plugins": "~55.0.10",
+    "@mentra/glasses-media": "workspace:*"
   },
   "devDependencies": {
     "expo-module-scripts": "^55.0.2",

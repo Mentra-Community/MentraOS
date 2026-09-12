@@ -25,7 +25,7 @@ module from a debug screen).
 SDK-playback experiment (optional): do **not** set `IncomingAudioOptions.stream`.
 Pass only if A2DP media route at media quality without SCO/voice mode.
 
-iOS: re-run P3–P6; Android routing does not transfer. Foreground-only in V1.
+iOS: re-run P3–P6; Android routing does not transfer. The original V1 spike was foreground-only; current local transport and qualification notes are in [glasses-media](../../glasses-media/README.md).
 
 ## E1 — `OutgoingAudioOptions.setMuted(true)` vs a `RawOutgoingAudioStream`
 
