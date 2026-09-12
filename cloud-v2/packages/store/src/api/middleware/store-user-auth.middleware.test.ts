@@ -1,5 +1,5 @@
 import crypto from "node:crypto"
-import {beforeAll, describe, expect, test} from "bun:test"
+import {afterAll, beforeAll, describe, expect, test} from "bun:test"
 import {Hono} from "hono"
 import * as jose from "jose"
 
@@ -13,6 +13,14 @@ import type {AppEnv} from "../../types/hono.types"
  * still there, and would not guard the boundary at all.
  */
 let coreAccessToken: string
+const originalPublicKey = process.env.MENTRA_JWT_PUBLIC_KEY
+
+// Other suites in this process verify Core tokens against their own key, so
+// leave the environment exactly as it was found.
+afterAll(() => {
+  if (originalPublicKey === undefined) delete process.env.MENTRA_JWT_PUBLIC_KEY
+  else process.env.MENTRA_JWT_PUBLIC_KEY = originalPublicKey
+})
 
 beforeAll(async () => {
   const {privateKey, publicKey} = crypto.generateKeyPairSync("ed25519")
