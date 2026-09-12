@@ -14,6 +14,15 @@ data class MicPcmEvent(
     val channels: Int,
     val encoding: String,
     val voiceActivityDetectionEnabled: Boolean,
+    /**
+     * Which microphone produced this buffer, as [MicTypes]: `"glasses"`, `"phone"`, `"bluetooth"`.
+     *
+     * Carried per frame rather than inferred, because the SDK can move the source mid-stream when
+     * one becomes unavailable. A consumer that promised the far end a specific microphone — an ACS
+     * call, for instance — has no other way to tell that the audio it is forwarding is still the
+     * one it advertised. Empty when the SDK has not selected a microphone.
+     */
+    val source: String,
 ) {
     constructor(values: Map<String, Any>) : this(
         pcm = values["pcm"] as? ByteArray ?: ByteArray(0),
@@ -24,6 +33,7 @@ data class MicPcmEvent(
         voiceActivityDetectionEnabled =
             boolValue(values, "voiceActivityDetectionEnabled")
                 ?: BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED,
+        source = stringValue(values, "source") ?: "",
     )
 
     fun toMap(): Map<String, Any> =
@@ -35,6 +45,7 @@ data class MicPcmEvent(
             "channels" to channels,
             "encoding" to encoding,
             "voiceActivityDetectionEnabled" to voiceActivityDetectionEnabled,
+            "source" to source,
         )
 
     companion object {

@@ -13,7 +13,8 @@ import kotlin.math.min
  *
  * - sustained depth above [HIGH_MS] (producer fast) discards a [CORRECTION_MS] slice
  * - sustained depth below [LOW_MS] (producer slow) inserts a [CORRECTION_MS] slice of silence
- * - depth above [EMERGENCY_CAP_MS] drops oldest down to target immediately
+ * - depth above [EMERGENCY_CAP_MS] shears only the peak above the cap — not back to target.
+ *   Shearing to target was a 150 ms hole every time the SoftAP delay line released a burst.
  *
  * Corrections read an EMA over roughly two seconds and are rate limited to one
  * per [CORRECTION_INTERVAL_MS], so ordinary jitter never triggers one; only
@@ -28,7 +29,10 @@ import kotlin.math.min
  * [push] runs on the WebRTC audio thread and [tick] on the pacing thread, so
  * every entry point is synchronized on this instance.
  */
-class UplinkPacer(private val targetMs: Int = TARGET_MS) {
+class UplinkPacer(
+  private var targetMs: Int = TARGET_MS,
+  private val log: ((String) -> Unit)? = null,
+) {
   enum class State { PREROLLING, RUNNING, STARVED }
 
   /** One [FRAME_MS] frame. [silence] marks a frame the pacer manufactured. */
@@ -72,6 +76,15 @@ class UplinkPacer(private val targetMs: Int = TARGET_MS) {
   private var driftCorrections = 0L
   private var driftDroppedBytes = 0L
   private var driftInsertedBytes = 0L
+  private var lastUnderrunLogNanos = 0L
+
+  /** Select headroom for the producer before starting a call; discard the previous call's PCM. */
+  @Synchronized
+  fun configureTarget(ms: Int) {
+    require(ms in FRAME_MS..EMERGENCY_CAP_MS)
+    targetMs = ms
+    reset()
+  }
 
   /** Appends 48 kHz mono PCM16 from the producer thread. */
   @Synchronized
@@ -83,12 +96,12 @@ class UplinkPacer(private val targetMs: Int = TARGET_MS) {
       // A single burst larger than the whole ring: keep only the newest audio.
       offset = len - CAPACITY_BYTES
       len = CAPACITY_BYTES
-      overflowDroppedBytes += offset
+      noteDrop("overflow-push", offset)
     }
     val overflow = used + len - CAPACITY_BYTES
     if (overflow > 0) {
       dropOldest(overflow)
-      overflowDroppedBytes += overflow
+      noteDrop("overflow-push", overflow)
     }
     write(pcm16Le, offset, len)
   }
@@ -164,6 +177,7 @@ class UplinkPacer(private val targetMs: Int = TARGET_MS) {
     driftCorrections = 0
     driftDroppedBytes = 0
     driftInsertedBytes = 0
+    lastUnderrunLogNanos = 0
   }
 
   @Synchronized
@@ -201,9 +215,14 @@ class UplinkPacer(private val targetMs: Int = TARGET_MS) {
     val since = starvingSinceNanos
     if (since == null) {
       starvingSinceNanos = nowNanos
-    } else if (nowNanos - since >= STARVE_MS * 1_000_000L) {
+      if (lastUnderrunLogNanos == 0L || nowNanos - lastUnderrunLogNanos >= 1_000_000_000L) {
+        lastUnderrunLogNanos = nowNanos
+        log?.invoke("P8 audio-up drop reason=underrun depthMs=0 state=$state")
+      }
+    } else if (nowNanos - since >= STARVE_MS * 1_000_000L && state != State.STARVED) {
       state = State.STARVED
       depthEmaBytes = -1.0
+      log?.invoke("P8 audio-up drop reason=starved depthMs=0 silentMs=$STARVE_MS")
     }
     return silence()
   }
@@ -211,9 +230,9 @@ class UplinkPacer(private val targetMs: Int = TARGET_MS) {
   private fun enforceCap() {
     val cap = EMERGENCY_CAP_MS * BYTES_PER_MS
     if (used <= cap) return
-    val excess = used - targetMs * BYTES_PER_MS
+    val excess = used - cap
     dropOldest(excess)
-    overflowDroppedBytes += excess
+    noteDrop("overflow-cap", excess)
     depthEmaBytes = used.toDouble()
   }
 
@@ -224,11 +243,11 @@ class UplinkPacer(private val targetMs: Int = TARGET_MS) {
     val emaMs = depthEmaBytes / BYTES_PER_MS
     val slice = CORRECTION_MS * BYTES_PER_MS
     when {
-      emaMs > HIGH_MS -> {
+      emaMs > targetMs + (HIGH_MS - TARGET_MS) -> {
         dropOldest(slice)
         driftDroppedBytes += slice
       }
-      emaMs < LOW_MS -> {
+      emaMs < targetMs - (TARGET_MS - LOW_MS) -> {
         if (used + slice > CAPACITY_BYTES) return
         write(SILENCE_SLICE, 0, slice)
         driftInsertedBytes += slice
@@ -238,6 +257,15 @@ class UplinkPacer(private val targetMs: Int = TARGET_MS) {
     driftCorrections += 1
     lastCorrectionNanos = nowNanos
     depthEmaBytes = used.toDouble()
+  }
+
+  private fun noteDrop(reason: String, bytes: Int) {
+    if (bytes <= 0) return
+    overflowDroppedBytes += bytes
+    log?.invoke(
+      "P8 audio-up drop reason=$reason droppedMs=${bytes / BYTES_PER_MS} " +
+        "depthMs=${used / BYTES_PER_MS} state=$state",
+    )
   }
 
   private fun dropOldest(bytes: Int) {
@@ -285,9 +313,16 @@ class UplinkPacer(private val targetMs: Int = TARGET_MS) {
     const val FRAME_BYTES = FRAME_MS * BYTES_PER_MS
 
     const val TARGET_MS = 60
+    // Device traces contain 90–130 ms BLE delivery gaps. Preserve enough real PCM for those gaps.
+    const val LC3_TARGET_MS = 160
     const val LOW_MS = 40
     const val HIGH_MS = 100
-    const val EMERGENCY_CAP_MS = 200
+    /**
+     * Peak the ring may hold. SoftAP+LC3 parks ~170 ms in the delay line and then
+     * releases it as a burst; 200 ms used to shear that dump back to [TARGET_MS]
+     * and punch a hole the wearer hears as a dropout.
+     */
+    const val EMERGENCY_CAP_MS = 400
 
     const val CORRECTION_MS = 10
     const val CORRECTION_INTERVAL_MS = 500L

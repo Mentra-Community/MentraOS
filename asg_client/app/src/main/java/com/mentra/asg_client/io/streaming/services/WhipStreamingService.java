@@ -24,8 +24,11 @@ import com.mentra.asg_client.camera.CameraNeoService;
 import com.mentra.asg_client.io.hardware.core.HardwareManagerFactory;
 import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
 import com.mentra.asg_client.io.network.utils.HotspotAwareNetworkChangeDetector;
+import com.mentra.asg_client.io.streaming.config.IcePostPolicy;
 import com.mentra.asg_client.io.streaming.config.WhipStreamConfig;
 import com.mentra.asg_client.io.streaming.interfaces.StreamingStatusCallback;
+import com.mentra.asg_client.io.streaming.telemetry.WhipPipelineStats;
+import com.mentra.asg_client.io.streaming.trace.SoftApTrace;
 import com.mentra.asg_client.service.core.constants.BatteryConstants;
 import com.mentra.asg_client.service.system.core.SystemControllerFactory;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
@@ -63,6 +66,7 @@ import org.webrtc.VideoTrack;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.Map;
 
 import okhttp3.Call;
 import okhttp3.Callback;
@@ -147,6 +151,10 @@ public class WhipStreamingService extends Service {
   private static final long ICE_GATHER_POST_TIMEOUT_MS = 1500L;
   private static final long ICE_CONNECT_TIMEOUT_MS = 8000L;
   private volatile boolean mWhipOfferPosted = false;
+  /** ICE mode for the current negotiation; HOST_ONLY on the SoftAP path. */
+  private volatile IcePostPolicy.Mode mIceMode = IcePostPolicy.Mode.STUN;
+  /** Set once a private-subnet {@code typ host} candidate is gathered. */
+  private volatile boolean mHasHotspotHostCandidate = false;
   private volatile boolean mWhipStreamingNotified = false;
   /** Bumped on each new PeerConnection so queued ICE/HTTP callbacks cannot act on a later negotiation. */
   private volatile int mNegotiationGeneration = 0;
@@ -184,12 +192,22 @@ public class WhipStreamingService extends Service {
   private long mLastAudioBytesSent = 0;
   private long mLastStatsAtMs = 0;
   private long mStreamStartedAtMs = 0;
+  /** Previous sweep's cumulative WebRTC counters, so the diagnosis prints deltas not totals. */
+  private WhipPipelineStats.Sample mLastPipelineSample = null;
+  /** Last adaptation verdict, so a change is logged loudly instead of scrolling past at 1Hz. */
+  private String mLastPipelineVerdict = null;
+  private long mLastPipelineAtMs = 0;
   private final Runnable mStatsRunnable = new Runnable() {
     @Override
     public void run() {
-      if (!AsgConstants.ENABLE_PIPELINE_FPS_TELEMETRY) return;
+      if (!statsSweepEnabled()) return;
       if (mPeerConnection == null) return;
       mPeerConnection.getStats(report -> {
+        reportPipelineDiagnosis(report);
+        if (!AsgConstants.ENABLE_PIPELINE_FPS_TELEMETRY) {
+          rescheduleStatsSweep(this);
+          return;
+        }
         long videoBytesTotal = 0, audioBytesTotal = 0;
         long videoPackets = 0, audioPackets = 0;
         long droppedFrames = 0;
@@ -261,15 +279,91 @@ public class WhipStreamingService extends Service {
             elapsedMs > 0 ? videoDelta * 1000 / elapsedMs : 0, videoPackets,
             elapsedMs > 0 ? audioDelta * 1000 / elapsedMs : 0, audioPackets));
 
-        synchronized (mStateLock) {
-          if (mStreamState != StreamState.STREAMING || mPeerConnection == null) {
-            return;
-          }
-        }
-        mMainHandler.postDelayed(this, AsgConstants.STREAM_METRICS_INTERVAL_MS);
+        rescheduleStatsSweep(this);
       });
     }
   };
+
+  /**
+   * Whether the 1Hz {@code getStats} sweep should run at all.
+   *
+   * <p>Either consumer is reason enough: the diagnosis needs the report even when the BLE-facing
+   * metrics fanout is off, which is its normal state in production.
+   */
+  private static boolean statsSweepEnabled() {
+    return AsgConstants.ENABLE_PIPELINE_FPS_TELEMETRY
+        || AsgConstants.ENABLE_CALL_PIPELINE_DIAGNOSTICS;
+  }
+
+  /** Re-arms the sweep only while the stream is genuinely up, so teardown ends the loop. */
+  private void rescheduleStatsSweep(Runnable sweep) {
+    synchronized (mStateLock) {
+      if (mStreamState != StreamState.STREAMING || mPeerConnection == null) {
+        return;
+      }
+    }
+    mMainHandler.postDelayed(sweep, AsgConstants.STREAM_METRICS_INTERVAL_MS);
+  }
+
+  /**
+   * Emits the send-side bottleneck verdict for one sweep.
+   *
+   * <p>The configured size is passed in rather than read from the report because that comparison is
+   * the whole point: libwebrtc reports the resolution it settled on, and only the delta against
+   * what we asked for reveals that it silently adapted away most of the picture.
+   */
+  private void reportPipelineDiagnosis(RTCStatsReport report) {
+    if (!AsgConstants.ENABLE_CALL_PIPELINE_DIAGNOSTICS || report == null) {
+      return;
+    }
+    try {
+      List<WhipPipelineStats.Entry> entries = new ArrayList<>();
+      for (RTCStats stats : report.getStatsMap().values()) {
+        entries.add(new WhipPipelineStats.Entry() {
+          @Override
+          public String type() {
+            return stats.getType();
+          }
+
+          @Override
+          public Map<String, Object> members() {
+            return stats.getMembers();
+          }
+        });
+      }
+
+      WhipPipelineStats.Sample sample = WhipPipelineStats.parse(entries);
+      sample.configuredWidth = mStreamConfig.getVideoWidth();
+      sample.configuredHeight = mStreamConfig.getVideoHeight();
+      sample.configuredFps = mStreamConfig.getVideoFps();
+      long now = SystemClock.elapsedRealtime();
+      sample.elapsedMs = mLastPipelineAtMs > 0
+          ? now - mLastPipelineAtMs
+          : AsgConstants.STREAM_METRICS_INTERVAL_MS;
+      mLastPipelineAtMs = now;
+
+      WhipPipelineStats.Sample cumulative = WhipPipelineStats.copyCumulative(sample);
+      sample = WhipPipelineStats.delta(sample, mLastPipelineSample);
+      mLastPipelineSample = cumulative;
+
+      Log.i(TAG, WhipPipelineStats.format(mCurrentStreamId, sample));
+
+      String verdict = WhipPipelineStats.verdict(sample);
+      if (!verdict.equals(mLastPipelineVerdict)) {
+        mLastPipelineVerdict = verdict;
+        Log.w(
+            TAG,
+            "[STREAM_PIPELINE] verdict changed to " + verdict
+                + " streamId=" + mCurrentStreamId
+                + " encoded=" + sample.encodedWidth + "x" + sample.encodedHeight
+                + " configured=" + sample.configuredWidth + "x" + sample.configuredHeight
+                + " pixels=" + WhipPipelineStats.encodedPixelPercent(sample) + "%"
+                + " limit=" + sample.qualityLimitation);
+      }
+    } catch (Exception e) {
+      Log.w(TAG, "Pipeline diagnosis failed", e);
+    }
+  }
 
   // -----------------------------------------------------------------------
   // Android Service lifecycle
@@ -602,6 +696,9 @@ public class WhipStreamingService extends Service {
     }
 
     mIceCandidateCount = 0;
+    mIceMode = IcePostPolicy.modeForStunServer(stunServer);
+    mHasHotspotHostCandidate = false;
+    SoftApTrace.stage("ice_configured", "mode", mIceMode, "stunServers", iceServers.size());
 
     PeerConnection.RTCConfiguration rtcConfig =
         new PeerConnection.RTCConfiguration(iceServers);
@@ -642,6 +739,13 @@ public class WhipStreamingService extends Service {
           public void onSetSuccess() {
             mMainHandler.post(() -> {
             if (generation != mNegotiationGeneration) return;
+            if (!IcePostPolicy.schedulesGatherTimeout(mIceMode)) {
+              // Host-only: the cap would post before GATHERING_COMPLETE and could ship an
+              // offer missing the hotspot candidate. Local gathering is fast, so wait.
+              Log.d(TAG, "Local description set, host-only ICE: posting on gathering complete");
+              SoftApTrace.stage("local_description_set", "postTrigger", "gathering_complete");
+              return;
+            }
             Log.d(TAG, "Local description set, posting WHIP offer after first srflx or "
                 + ICE_GATHER_POST_TIMEOUT_MS + "ms");
             mPostOfferTimeoutRunnable = () -> {
@@ -806,16 +910,49 @@ public class WhipStreamingService extends Service {
     Log.i(TAG, label + " video section:\n" + section);
   }
 
+  /** Map the human-readable trigger string onto the policy enum. */
+  private static IcePostPolicy.Trigger triggerFor(String reason) {
+    if ("srflx".equals(reason)) return IcePostPolicy.Trigger.SRFLX;
+    if ("timeout".equals(reason)) return IcePostPolicy.Trigger.TIMEOUT;
+    return IcePostPolicy.Trigger.GATHERING_COMPLETE;
+  }
+
   /**
-   * POST the local SDP once. Triggered by first srflx, the gather timeout, or
-   * GATHERING COMPLETE — whichever wins. Later triggers are no-ops.
+   * POST the local SDP once. In the default STUN path this is triggered by first srflx, the
+   * gather timeout, or GATHERING COMPLETE — whichever wins. In host-only (SoftAP) mode only
+   * GATHERING COMPLETE posts, and only once a hotspot host candidate exists. Later triggers
+   * are no-ops.
    */
   private void postOfferIfReady(String reason, int generation) {
     if (Looper.myLooper() != Looper.getMainLooper()) {
       mMainHandler.post(() -> postOfferIfReady(reason, generation));
       return;
     }
+    // The WebRTC callback may have been current before posting to the main thread, then
+    // overtaken by stop/rejoin. Reject it before the policy can fail the current stream.
+    synchronized (mStateLock) {
+      if (generation != mNegotiationGeneration || mWhipOfferPosted
+          || mPeerConnection == null || mStreamState == StreamState.STOPPING
+          || mStreamState == StreamState.IDLE) {
+        return;
+      }
+    }
     PeerConnection peerConnection;
+    IcePostPolicy.Decision decision =
+        IcePostPolicy.decide(mIceMode, triggerFor(reason), mHasHotspotHostCandidate);
+    if (decision == IcePostPolicy.Decision.WAIT) {
+      SoftApTrace.stage("whip_post_deferred", "trigger", reason, "mode", mIceMode);
+      return;
+    }
+    if (decision == IcePostPolicy.Decision.FAIL_NO_HOTSPOT_CANDIDATE) {
+      SoftApTrace.stage("whip_post_blocked",
+          "reason", IcePostPolicy.REASON_NO_HOTSPOT_CANDIDATE,
+          "candidates", mIceCandidateCount);
+      handleStartupFailure(IcePostPolicy.REASON_NO_HOTSPOT_CANDIDATE,
+          "ICE gathering completed without a hotspot host candidate");
+      return;
+    }
+
     synchronized (mStateLock) {
       if (generation != mNegotiationGeneration) {
         return;
@@ -879,7 +1016,12 @@ public class WhipStreamingService extends Service {
     if (!mIsReconnecting || mStreamStartedAtMs == 0) {
       mStreamStartedAtMs = mLastStatsAtMs;
     }
-    if (AsgConstants.ENABLE_PIPELINE_FPS_TELEMETRY) {
+    // A rebuilt peer connection restarts every cumulative counter, so carrying the previous
+    // sample across would print one sweep of negative deltas clamped to zero.
+    mLastPipelineSample = null;
+    mLastPipelineVerdict = null;
+    mLastPipelineAtMs = 0;
+    if (statsSweepEnabled()) {
       mMainHandler.postDelayed(mStatsRunnable, AsgConstants.STREAM_METRICS_INTERVAL_MS);
     }
     startBatteryMonitoring();
@@ -923,11 +1065,86 @@ public class WhipStreamingService extends Service {
     handleStartupFailure("ice_timeout", "ICE did not connect; WHIP media path failed");
   }
 
+  /**
+   * SoftAP only: can these glasses reach the phone the WHIP URL points at? Runs `ip neigh`,
+   * one ping and `ip route get` against the URL host and returns a one-line summary. Called off
+   * the main thread — it blocks for up to ~3s when the host is silent.
+   *
+   * Read the result like this: `arp=FAILED/INCOMPLETE` means the phone never answered ARP, so
+   * L2 is the problem (phone asleep, wrong SSID, AP isolation); `arp=REACHABLE ping=0/1` means
+   * L2 is fine and something drops IP; `ping=1/1` with a TCP connect timeout means a firewall or
+   * the listener itself.
+   */
+  static String probeWhipHost(String whipUrl) {
+    String host;
+    try {
+      host = java.net.URI.create(whipUrl).getHost();
+    } catch (Exception e) {
+      return "probe skipped: bad url";
+    }
+    if (host == null || host.isEmpty()) return "probe skipped: no host";
+    String neigh = runShell("ip neigh show " + host, 2_000);
+    String arp = "none";
+    if (!neigh.isEmpty()) {
+      String[] parts = neigh.split("\\s+");
+      arp = parts[parts.length - 1];
+    }
+    String ping = runShell("ping -c 1 -W 2 " + host, 4_000);
+    String pingSummary = ping.contains("1 received") ? "1/1" : ping.contains("0 received") ? "0/1" : "err";
+    String route = runShell("ip route get " + host, 2_000);
+    String dev = "?";
+    int devAt = route.indexOf(" dev ");
+    if (devAt >= 0) {
+      String[] parts = route.substring(devAt + 5).trim().split("\\s+");
+      if (parts.length > 0) dev = parts[0];
+    }
+    return "glasses->phone " + host + " arp=" + arp + " ping=" + pingSummary + " via=" + dev;
+  }
+
+  private static String runShell(String command, long timeoutMs) {
+    try {
+      Process process = new ProcessBuilder("sh", "-c", command).redirectErrorStream(true).start();
+      java.io.InputStream stream = process.getInputStream();
+      java.io.ByteArrayOutputStream buffer = new java.io.ByteArrayOutputStream();
+      long deadline = SystemClock.elapsedRealtime() + timeoutMs;
+      byte[] chunk = new byte[1024];
+      while (SystemClock.elapsedRealtime() < deadline) {
+        if (stream.available() > 0) {
+          int read = stream.read(chunk);
+          if (read < 0) break;
+          buffer.write(chunk, 0, read);
+        } else if (!process.isAlive()) {
+          int read;
+          while ((read = stream.read(chunk)) > 0) buffer.write(chunk, 0, read);
+          break;
+        } else {
+          Thread.sleep(25);
+        }
+      }
+      if (process.isAlive()) process.destroy();
+      return buffer.toString("UTF-8").trim();
+    } catch (Exception e) {
+      return "";
+    }
+  }
+
   private void postOfferToWhip(SessionDescription offer, int generation) {
     final String requestUrl = mWhipUrl;
     logStartupStage("whip_request_started");
     Log.d(TAG, "POSTing SDP offer to WHIP URL: " + mWhipUrl);
     logSdpVideoSection("Offer", offer.description);
+    if (mIceMode == IcePostPolicy.Mode.HOST_ONLY) {
+      // Pre-flight in parallel with the POST so it costs no startup time: by the time a connect
+      // timeout fires the verdict is already in the trace, and the failure below appends a fresh one.
+      final String probeUrl = mWhipUrl;
+      Thread probe = new Thread(() -> {
+        String verdict = probeWhipHost(probeUrl);
+        SoftApTrace.stage("glasses_phone_probe", "verdict", verdict);
+        Log.i(TAG, "[STREAM_STARTUP] " + verdict);
+      }, "whip-host-probe");
+      probe.setDaemon(true);
+      probe.start();
+    }
 
     RequestBody body = RequestBody.create(
         offer.description, MediaType.parse("application/sdp"));
@@ -1053,10 +1270,20 @@ public class WhipStreamingService extends Service {
 
       @Override
       public void onFailure(Call call, IOException e) {
+        if (generation != mNegotiationGeneration) return;
+        Log.e(TAG, "WHIP request failed", e);
+        String message = "WHIP request failed: " + e.getMessage();
+        if (mIceMode == IcePostPolicy.Mode.HOST_ONLY) {
+          // OkHttp calls back on a worker thread, so a blocking probe here is fine. The verdict
+          // rides the error over BLE so the phone UI shows *why* the glasses could not reach it.
+          String verdict = probeWhipHost(mWhipUrl);
+          SoftApTrace.stage("whip_request_failed", "error", e.getMessage(), "verdict", verdict);
+          message = message + " [" + verdict + "]";
+        }
+        final String failureMessage = message;
         mMainHandler.post(() -> {
           if (generation != mNegotiationGeneration) return;
-          Log.e(TAG, "WHIP request failed", e);
-          handleStartupFailure("whip_request_failed", "WHIP request failed: " + e.getMessage());
+          handleStartupFailure("whip_request_failed", failureMessage);
         });
       }
     });
@@ -1193,6 +1420,10 @@ public class WhipStreamingService extends Service {
     public void onIceCandidate(IceCandidate candidate) {
       if (isStale()) return;
       mIceCandidateCount++;
+      if (IcePostPolicy.isHotspotHostCandidate(candidate.sdp)) {
+        mHasHotspotHostCandidate = true;
+        SoftApTrace.stage("ice_hotspot_candidate", "candidate", candidate.sdp);
+      }
       if (candidate.sdp != null && candidate.sdp.contains("typ srflx")) {
         mMainHandler.post(() -> {
           if (isStale()) return;
@@ -1269,6 +1500,9 @@ public class WhipStreamingService extends Service {
     mReconnectAttempts = 0;
     mStreamStartedAtMs = 0;
     mLastStatsAtMs = 0;
+    mLastPipelineSample = null;
+    mLastPipelineVerdict = null;
+    mLastPipelineAtMs = 0;
     WakeLockManager.release(WakeLockManager.WakeOwner.STREAMING);
     restoreEisDefault();
     resetState();

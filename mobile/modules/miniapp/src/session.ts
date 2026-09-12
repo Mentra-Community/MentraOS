@@ -46,7 +46,13 @@ import {SystemModule} from "./modules/system"
 import {MiniappsModule} from "./modules/miniapps"
 import {ActionsModule} from "./modules/actions"
 import {BlobModule} from "./modules/blob"
-import {MeetingModule, parseMeetingMediaSource, parseMeetingParticipants} from "./modules/meeting"
+import {
+  MeetingModule,
+  parseMeetingCapabilities,
+  parseMeetingMediaSource,
+  parseMeetingParticipants,
+  parseMeetingSoftApProgress,
+} from "./modules/meeting"
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -711,6 +717,8 @@ export class MiniappSession<TChannels extends object = any> {
           audioSafety: payload.audioSafety as import("./modules/meeting").MeetingState["audioSafety"],
           mediaSource: parseMeetingMediaSource(payload.mediaSource),
           participants: parseMeetingParticipants(payload.participants),
+          capabilities: parseMeetingCapabilities(payload.capabilities),
+          softap: parseMeetingSoftApProgress(payload.softap),
         }
         this.meeting._applyState(event)
         this.emitter.emit("meetingState", event)

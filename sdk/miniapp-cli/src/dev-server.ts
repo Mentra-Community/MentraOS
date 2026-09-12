@@ -28,6 +28,13 @@ export interface DevServerOptions {
   /** Suppress info console.log output. Default false. */
   silent?: boolean
   /**
+   * Watch the project and broadcast `{reload|respawn-bg}` to connected
+   * phones. Default true. When false the sidecar still forwards console
+   * logs and serves `bundle.zip`; it just does not remount the WebView
+   * or respawn the background JSContext on save.
+   */
+  hotReload?: boolean
+  /**
    * Hook run inside the debounced broadcast window, after the filesystem
    * settles but before the phone is notified. Two-layer projects use this
    * to rebuild the `dist/` snapshot so the next `bundle.zip` fetch ships
@@ -213,6 +220,7 @@ export function startDevSidecar(options: DevServerOptions): {stop: () => void; p
   let reloadTimer: ReturnType<typeof setTimeout> | null = null
   let pendingType: "reload" | "respawn-bg" | null = null
   let suppressEventsUntil = 0
+  const hotReload = options.hotReload !== false
   // True when a path either equals `name` or sits under `name/`. macOS
   // FSEvents under `recursive: true` emits the bare directory name when
   // the directory itself is rm-rf'd or renamed; matching only `name/`
@@ -220,7 +228,7 @@ export function startDevSidecar(options: DevServerOptions): {stop: () => void; p
   const isUnder = (filename: string, name: string): boolean =>
     filename === name || filename.startsWith(`${name}/`) || filename.includes(`/${name}/`)
 
-  const watcher = watch(options.watchDir, {recursive: true}, (_event, filename) => {
+  const onWatch = (_event: string, filename: string | null): void => {
     if (!filename) return
     if (Date.now() < suppressEventsUntil) return
     // macOS recursive FSEvents can report "." when the build removes and
@@ -287,7 +295,12 @@ export function startDevSidecar(options: DevServerOptions): {stop: () => void; p
         log(`${COLOR.cyan}${verb}${COLOR.reset} ${COLOR.dim}${filename}${COLOR.reset}`)
       }
     }, RELOAD_DEBOUNCE_MS)
-  })
+  }
+
+  const watcher = hotReload ? watch(options.watchDir, {recursive: true}, onWatch) : null
+  if (!hotReload) {
+    log(`${COLOR.dim}[__mentra_dev]${COLOR.reset} hot reload off — console bridge only`)
+  }
 
   log(`${COLOR.dim}[__mentra_dev]${COLOR.reset} sidecar listening on :${options.port}`)
 
@@ -295,7 +308,7 @@ export function startDevSidecar(options: DevServerOptions): {stop: () => void; p
     port: options.port,
     stop() {
       try {
-        watcher.close()
+        watcher?.close()
       } catch {
         /* ignore */
       }

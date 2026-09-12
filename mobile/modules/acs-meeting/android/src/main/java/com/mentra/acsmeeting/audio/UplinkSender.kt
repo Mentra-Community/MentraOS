@@ -3,7 +3,9 @@ package com.mentra.acsmeeting.audio
 import android.util.Log
 import com.azure.android.communication.calling.RawAudioBuffer
 import com.azure.android.communication.calling.RawOutgoingAudioStream
+import com.mentra.acsmeeting.source.AcsInvestigation
 import com.mentra.acsmeeting.telemetry.RingPercentile
+import com.mentra.acsmeeting.video.AcsTimestamp
 import java.nio.ByteBuffer
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
@@ -22,8 +24,28 @@ fun interface UplinkTransport {
   fun send(frame: ByteArray, onComplete: (Throwable?) -> Unit)
 }
 
-/** [UplinkTransport] over ACS's raw outgoing audio stream. */
-class AcsUplinkTransport(private val stream: RawOutgoingAudioStream) : UplinkTransport {
+/**
+ * [UplinkTransport] over ACS's raw outgoing audio stream.
+ *
+ * Every buffer is stamped on the same 100-nanosecond tick base the outgoing video uses
+ * ([AcsTimestamp]), because `System.nanoTime()` is the only reference the two streams share — the
+ * audio arrives over BLE and the video over the SoftAP peer, so submission order says nothing about
+ * capture order. Unlike `VirtualOutgoingVideoStream`, `RawOutgoingAudioStream` in 2.16.0 offers no
+ * stream clock to prefer, so the capture time is always the source.
+ *
+ * Whether ACS actually *uses* these ticks to lip-sync raw audio at the receiver is an open question
+ * that only a receiver-side recording answers. Stamping them is the precondition for asking it, not
+ * the answer, and it is separately worth doing: a run of zero timestamps is what makes the Teams
+ * jitter buffer hold. [AcsInvestigation.acsAudioTimestamps] turns it off so the question can be
+ * asked both ways on the same device.
+ */
+class AcsUplinkTransport(
+  private val stream: RawOutgoingAudioStream,
+  private val clock: () -> Long = System::nanoTime,
+  private val stamp: Boolean = AcsInvestigation.acsAudioTimestamps,
+) : UplinkTransport {
+  private var lastTicks = 0L
+
   override fun send(frame: ByteArray, onComplete: (Throwable?) -> Unit) {
     // Fresh direct storage per submission. Pooling is a valid follow-up, but
     // only if buffers return to the pool on completion rather than on return.
@@ -32,6 +54,11 @@ class AcsUplinkTransport(private val stream: RawOutgoingAudioStream) : UplinkTra
     direct.flip()
     val buffer = RawAudioBuffer()
     buffer.buffer = direct
+    if (stamp) {
+      val ticks = AcsTimestamp.resolve(streamTicks = 0L, captureNs = clock(), lastTicks = lastTicks)
+      lastTicks = ticks
+      buffer.timestampInTicks = ticks
+    }
     stream.sendRawAudioBuffer(buffer).whenComplete { _, error ->
       try {
         buffer.close()
@@ -60,6 +87,19 @@ class UplinkSender(
   private val pacer: UplinkPacer,
   private val transport: UplinkTransport,
   private val clock: () -> Long = System::nanoTime,
+  /**
+   * Read immediately before every submission, not once per period.
+   *
+   * The last gate on the path. The pacer pops a frame and the transport accepts it on the same
+   * thread but not at the same instant, and a mute that lands in between would otherwise put the
+   * wearer's last word on the call after they asked not to be heard.
+   */
+  private val muted: () -> Boolean = { false },
+  /**
+   * Latest 16-bit mean-abs from [PcmBridge]. Mute flags and a RUNNING pacer both look healthy on
+   * analog-silent LC3; this is what tells a soak that Teams is hearing the noise floor.
+   */
+  private val pcmMeanAbs: () -> Int = { -1 },
   private val log: (String) -> Unit = { Log.i(TAG, it) },
   private val logError: (String, Throwable?) -> Unit = { message, error -> Log.e(TAG, message, error) },
 ) {
@@ -70,6 +110,14 @@ class UplinkSender(
     val inFlight: Int,
     val sendFailures: Long,
     val backpressureDrops: Long,
+    /** Frames replaced by silence by the mute gate, i.e. voice that never reached Teams. */
+    val mutedFrames: Long,
+    /**
+     * How long after a mute the buffers ACS had already accepted took to drain, or null while no
+     * mute has completed. This is the honest measure of "when did Teams stop hearing the wearer";
+     * the gate itself is instantaneous, `sendRawAudioBuffer` is not.
+     */
+    val muteTailMs: Long?,
   )
 
   private val running = AtomicBoolean(false)
@@ -86,6 +134,11 @@ class UplinkSender(
   @Volatile private var backpressureDrops = 0L
   @Volatile private var lastLogNanos: Long? = null
   @Volatile private var lastFailureLogNanos: Long? = null
+  @Volatile private var mutedFrames = 0L
+  @Volatile private var mutedSinceNanos: Long? = null
+  @Volatile private var muteTailNanos: Long? = null
+  private var lastLoggedOverflowMs = 0L
+  private var lastLoggedSilence = 0L
 
   /** Idempotent: a second call is a no-op so a session can only ever pace once. */
   @Synchronized
@@ -96,6 +149,8 @@ class UplinkSender(
     }
     nextDeadlineNanos = null
     lastLogNanos = null
+    lastLoggedOverflowMs = 0
+    lastLoggedSilence = 0
     running.set(true)
     // Audio cadence: a late frame is an artifact, so outrank the RN and
     // decoder threads this competes with.
@@ -131,6 +186,8 @@ class UplinkSender(
     inFlight = inFlight.get(),
     sendFailures = sendFailures.get(),
     backpressureDrops = backpressureDrops,
+    mutedFrames = mutedFrames,
+    muteTailMs = muteTailNanos?.let { it / 1_000_000L },
   )
 
   private fun loop() {
@@ -166,6 +223,9 @@ class UplinkSender(
       deadline + PERIOD_NANOS
     }
     nextDeadlineNanos = next
+    // Before the submission, because this period's own frame is silence once muted and counting it
+    // as in flight would make the tail look like it never finished draining.
+    trackMuteTail(nowNanos)
     submit(pacer.tick(nowNanos))
     maybeLog(nowNanos)
     return next
@@ -177,11 +237,19 @@ class UplinkSender(
       backpressureDrops += 1
       return
     }
+    // Silence rather than nothing: the cadence ACS reads as a healthy stream has to continue, and
+    // a gap is a glitch on the far end rather than a mute.
+    val bytes = if (!frame.silence && muted()) {
+      mutedFrames += 1
+      SILENCE_FRAME
+    } else {
+      frame.bytes
+    }
     inFlight.incrementAndGet()
     framesSubmitted.incrementAndGet()
     val startedNanos = clock()
     try {
-      transport.send(frame.bytes) { error ->
+      transport.send(bytes) { error ->
         inFlight.decrementAndGet()
         completion.record(clock() - startedNanos)
         if (error != null) recordFailure(error)
@@ -189,6 +257,30 @@ class UplinkSender(
     } catch (error: Exception) {
       inFlight.decrementAndGet()
       recordFailure(error)
+    }
+  }
+
+  /**
+   * Time the drain of the buffers ACS accepted before the mute.
+   *
+   * Measured from the first period that observed the mute to the first period with nothing left in
+   * flight, which is the last moment any pre-mute voice can still be played out at the receiver.
+   */
+  private fun trackMuteTail(nowNanos: Long) {
+    if (!muted()) {
+      mutedSinceNanos = null
+      return
+    }
+    val since = mutedSinceNanos
+    if (since == null) {
+      mutedSinceNanos = nowNanos
+      muteTailNanos = null
+      return
+    }
+    if (muteTailNanos == null && inFlight.get() == 0) {
+      val tail = nowNanos - since
+      muteTailNanos = tail
+      log("P8 audio-up muteTailMs=${tail / 1_000_000L} mutedFrames=$mutedFrames")
     }
   }
 
@@ -207,15 +299,22 @@ class UplinkSender(
     lastLogNanos = nowNanos
     if (last == null) return
     val pace = pacer.snapshot(nowNanos)
+    val overflowDelta = pace.overflowDroppedMs - lastLoggedOverflowMs
+    val silenceDelta = pace.silenceFrames - lastLoggedSilence
+    lastLoggedOverflowMs = pace.overflowDroppedMs
+    lastLoggedSilence = pace.silenceFrames
     log(
       "P8 audio-up state=${pace.state} depthMs=${pace.depthMs} targetMs=${pace.targetMs} " +
         "sentFps=${"%.1f".format(pace.sentFps)} silenceFrames=${pace.silenceFrames} " +
-        "overflowDroppedMs=${pace.overflowDroppedMs} driftCorrections=${pace.driftCorrections} " +
+        "overflowDroppedMs=${pace.overflowDroppedMs} dropMs=$overflowDelta silenceDelta=$silenceDelta " +
+        "driftCorrections=${pace.driftCorrections} " +
         "driftDroppedMs=${pace.driftDroppedMs} driftInsertedMs=${pace.driftInsertedMs} " +
         "tickLateP95Ms=${lateness.p95()} tickLateMaxMs=${maxLateNanos / 1_000_000L} " +
         "skippedTicks=$skippedTicks inFlight=${inFlight.get()} " +
         "sendFailures=${sendFailures.get()} sendCompletionP95Ms=${completion.p95()} " +
-        "backpressureDrops=$backpressureDrops",
+        "backpressureDrops=$backpressureDrops mutedFrames=$mutedFrames " +
+        "muteTailMs=${muteTailNanos?.let { it / 1_000_000L } ?: -1} " +
+        "pcmMeanAbs=${pcmMeanAbs()}",
     )
   }
 
@@ -226,5 +325,11 @@ class UplinkSender(
     const val MAX_IN_FLIGHT = 10
     private const val JOIN_TIMEOUT_MS = 500L
     private const val LOG_INTERVAL_NANOS = 1_000_000_000L
+
+    /**
+     * Shared, and safe to share: [UplinkTransport] contracts to copy into its own storage before
+     * returning, so nothing downstream retains this array.
+     */
+    private val SILENCE_FRAME = ByteArray(UplinkPacer.FRAME_BYTES)
   }
 }

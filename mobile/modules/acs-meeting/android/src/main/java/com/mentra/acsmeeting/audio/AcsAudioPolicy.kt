@@ -82,6 +82,27 @@ object CapturePolicy {
   fun captureGlassesMic(source: AudioSourceKind): Boolean = source == AudioSourceKind.GLASSES
 }
 
+/**
+ * Which of the two possible sources of the wearer's voice this call listens to.
+ *
+ * SoftAP takes BLE LC3 from the host ([AcsMeetingSession.pushOutgoingPcm]) and ignores the WHIP
+ * track, which the glasses publish video-only (`captureAudio=false`). WHEP has no such flag: the
+ * wearer's voice is already mixed into the subscribed track, so that call takes the relay.
+ * Exactly one source is ever on.
+ *
+ * A previous revision routed SoftAP to the relay too, on a soak that read LC3 `meanAbs` ~15 as
+ * "analog-silent". Bench measurement of the same path puts the quiet-room floor at ~30–60, and
+ * that soak had already published with `captureAudio=false`, so neither the BES capture nor the
+ * SoC microphone was at fault. The JS gate `SOFTAP_BLE_LC3_UPLINK` and this routing move together.
+ */
+data class GlassesPcmRouting(val relayPcm: Boolean, val externalPcm: Boolean) {
+  companion object {
+    fun decide(softap: Boolean, enabled: Boolean): GlassesPcmRouting =
+      if (softap) GlassesPcmRouting(relayPcm = false, externalPcm = enabled)
+      else GlassesPcmRouting(relayPcm = enabled, externalPcm = false)
+  }
+}
+
 /** Null ACS call handles must fail, never report success via `call?.mute(); Unit`. */
 object CallGuard {
   fun <T : Any> require(value: T?): Result<T> =

@@ -63,6 +63,34 @@ data class StreamAudioConfig @JvmOverloads constructor(
     }
 }
 
+/** ICE overrides for a WHIP stream. Ignored by the RTMP and SRT paths. */
+data class StreamIceConfig @JvmOverloads constructor(
+    /**
+     * STUN server the glasses use while gathering candidates.
+     *
+     * Null and empty are different answers, and both have to survive the BLE round trip. Null
+     * leaves the glasses on their default Cloudflare STUN server; an empty string is SoftAP
+     * calling's explicit request for host-only gathering, because the phone's WHIP server sits on
+     * the glasses' own hotspot where a reflexive candidate is meaningless and unreachable.
+     */
+    val stun: String? = null,
+) {
+    fun toMap(): Map<String, Any> =
+        buildMap {
+            // Not filtered on blankness, unlike the other optional string fields here: "" is the
+            // host-only signal, so dropping it would silently restore the default STUN server.
+            stun?.let { put("stun", it) }
+        }
+
+    companion object {
+        @JvmStatic
+        fun fromMap(values: Map<String, Any>?): StreamIceConfig? {
+            values ?: return null
+            return StreamIceConfig(stun = stringValue(values, "stun", "s"))
+        }
+    }
+}
+
 /** Effective video settings reported by the glasses after defaults and clamps. */
 data class StreamResolvedVideoConfig @JvmOverloads constructor(
     /** Encoded output width sent to the stream endpoint. */
@@ -214,6 +242,12 @@ data class StreamRequest @JvmOverloads constructor(
     val audio: StreamAudioConfig? = null,
     val authToken: String? = null,
     val captureAudio: Boolean = true,
+    val ice: StreamIceConfig? = null,
+    /**
+     * Correlation id the glasses echo in every SOFTAP_TRACE line, so phone and glasses logs can be
+     * joined despite unsynchronised clocks.
+     */
+    val traceId: String? = null,
 ) {
     fun toMap(): Map<String, Any> =
         buildMap {
@@ -225,6 +259,8 @@ data class StreamRequest @JvmOverloads constructor(
             audio?.toMap()?.takeIf { it.isNotEmpty() }?.let { put("audio", it) }
             authToken?.takeIf { it.isNotEmpty() }?.let { put("authToken", it) }
             if (!captureAudio) put("captureAudio", false)
+            ice?.toMap()?.takeIf { it.isNotEmpty() }?.let { put("ice", it) }
+            traceId?.takeIf { it.isNotEmpty() }?.let { put("traceId", it) }
         }
 
     companion object {
@@ -240,6 +276,8 @@ data class StreamRequest @JvmOverloads constructor(
                 audio = StreamAudioConfig.fromMap(stringMapValue(values["audio"])),
                 authToken = values["authToken"] as? String ?: values["auth_token"] as? String,
                 captureAudio = boolValue(values, "captureAudio") ?: boolValue(values, "ca") ?: true,
+                ice = StreamIceConfig.fromMap(stringMapValue(values["ice"] ?: values["i"])),
+                traceId = stringValue(values, "traceId"),
             )
     }
 }

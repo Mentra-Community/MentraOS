@@ -36,6 +36,12 @@ export interface DevOptions {
   usb?: boolean;
   /** Target a specific `adb` device serial. Only meaningful with `usb`. */
   device?: string;
+  /**
+   * Watch source files and remount the phone WebView / respawn the
+   * background JSContext on save. Default true. `--no-hot-reload` sets
+   * this to false; the sidecar still forwards console logs.
+   */
+  hotReload?: boolean;
   signDevAttestation?: (
     input: DevAttestationInput,
   ) => string | Promise<string | null | undefined> | null | undefined;
@@ -236,6 +242,7 @@ export async function dev(options: DevOptions = {}): Promise<void> {
     sidecar = startDevSidecar({
       port: port + 1,
       watchDir: cwd,
+      hotReload: options.hotReload !== false,
       onBeforeBroadcast: async () => {
         try {
           await runBuild(cwd);
@@ -245,6 +252,9 @@ export async function dev(options: DevOptions = {}): Promise<void> {
       },
     });
     sidecarPort = sidecar.port;
+    if (options.hotReload === false) {
+      console.log('Hot reload off. Restart without --no-hot-reload to remount the miniapp on save.');
+    }
   } catch (err) {
     console.warn(
       `Warning: dev sidecar failed to start on port ${port + 1} (${(err as Error).message}). ` +

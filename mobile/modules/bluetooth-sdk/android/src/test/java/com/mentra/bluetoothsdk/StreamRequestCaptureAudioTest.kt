@@ -39,4 +39,48 @@ class StreamRequestCaptureAudioTest {
     val full = StreamRequest.fromMap(mapOf("streamUrl" to "https://example.com/whip", "captureAudio" to false))
     assertThat(full.captureAudio).isFalse()
   }
+
+  @Test
+  fun hostOnlyIceSurvivesBridgeAndWireSerialization() {
+    val request = StreamRequest.fromMap(mapOf(
+      "streamUrl" to "http://192.168.43.79:8080/whip",
+      "ice" to mapOf("stun" to ""),
+    ))
+    assertThat(request.ice?.stun).isEqualTo("")
+
+    // The empty string is the host-only request. Dropping it as "blank" is what silently left the
+    // glasses gathering against the default Cloudflare STUN server on an internet-less hotspot.
+    @Suppress("UNCHECKED_CAST")
+    val ice = request.toMap()["ice"] as Map<String, Any>
+    assertThat(ice).containsEntry("stun", "")
+  }
+
+  @Test
+  fun absentIceStaysAbsentSoGlassesKeepTheirDefault() {
+    val request = StreamRequest.fromMap(mapOf("streamUrl" to "https://example.com/whip"))
+    assertThat(request.ice).isNull()
+    assertThat(request.toMap()).doesNotContainKey("ice")
+  }
+
+  @Test
+  fun compactIceKeysParse() {
+    val request = StreamRequest.fromMap(mapOf(
+      "streamUrl" to "http://192.168.43.79:8080/whip",
+      "i" to mapOf("s" to "stun:stun.example.com:3478"),
+    ))
+    assertThat(request.ice?.stun).isEqualTo("stun:stun.example.com:3478")
+  }
+
+  @Test
+  fun traceIdSurvivesBridgeAndWireSerialization() {
+    val request = StreamRequest.fromMap(mapOf(
+      "streamUrl" to "http://192.168.43.79:8080/whip",
+      "traceId" to "d34eeb11",
+    ))
+    assertThat(request.traceId).isEqualTo("d34eeb11")
+    assertThat(request.toMap()).containsEntry("traceId", "d34eeb11")
+
+    assertThat(StreamRequest(streamUrl = "https://example.com/whip").toMap())
+      .doesNotContainKey("traceId")
+  }
 }

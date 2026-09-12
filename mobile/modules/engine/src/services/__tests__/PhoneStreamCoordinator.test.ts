@@ -21,15 +21,15 @@ const setCameraFovOverride = mock(async (request: {fov: number}) => ({
 const releaseCameraFovOverride = mock(async () => {})
 const sendExternallyManagedStreamKeepAlive = mock(async (_req: unknown) => {})
 
-mock.module("@mentra/bluetooth-sdk/internal", () => ({
-  default: {
-    startStream,
-    stopStream,
-    setCameraFovOverride,
-    releaseCameraFovOverride,
-    sendExternallyManagedStreamKeepAlive,
-  },
-}))
+import {bluetoothSdk} from "./bluetoothSdkTestMock"
+
+Object.assign(bluetoothSdk, {
+  startStream,
+  stopStream,
+  setCameraFovOverride,
+  releaseCameraFovOverride,
+  sendExternallyManagedStreamKeepAlive,
+})
 
 const provisionManagedStream = mock(async (_destinations?: unknown) => ({
   liveInputId: "cf-input-test",
@@ -87,7 +87,13 @@ mock.module("../../utils/timers", () => ({
 let hlsHeadResponder: () => Response = () => new Response(null, {status: 200})
 const realFetch = globalThis.fetch
 beforeEach(() => {
-  startStream.mockClear()
+  Object.assign(bluetoothSdk, {
+    startStream,
+    stopStream,
+    setCameraFovOverride,
+    releaseCameraFovOverride,
+    sendExternallyManagedStreamKeepAlive,
+  })
   startStream.mockClear()
   stopStream.mockClear()
   setCameraFovOverride.mockClear()

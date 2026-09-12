@@ -145,6 +145,102 @@ class UplinkSenderTest {
       .contains("skippedTicks=0")
       .contains("sendFailures=0")
       .contains("backpressureDrops=0")
+      .contains("pcmMeanAbs=-1")
+  }
+
+  /**
+   * The gate exists for the gap between `pacer.tick` and `transport.send`. A mute that lands in it
+   * would otherwise put the wearer's last word on the call after they asked not to be heard, and no
+   * amount of clearing upstream buffers can catch a frame that has already been popped.
+   */
+  @Test
+  fun aMuteBetweenTickAndSendIsStillHonoured() {
+    val pacer = UplinkPacer()
+    val transport = FakeTransport()
+    var muted = false
+    val sender = UplinkSender(pacer, transport, clock = { 0L }, muted = { muted }, log = {})
+    pacer.push(tone(UplinkPacer.TARGET_MS * 2))
+
+    sender.pumpOnce(0)
+    assertThat(transport.sent.last().any { it != 0.toByte() }).isTrue()
+
+    muted = true
+    sender.pumpOnce(UplinkSender.PERIOD_NANOS)
+
+    // Silence, not a gap: the cadence ACS reads as a healthy stream has to continue.
+    assertThat(transport.sent).hasSize(2)
+    assertThat(transport.sent.last()).hasSize(UplinkPacer.FRAME_BYTES)
+    assertThat(transport.sent.last().all { it == 0.toByte() }).isTrue()
+    assertThat(sender.stats().mutedFrames).isEqualTo(1L)
+  }
+
+  /**
+   * Silence the pacer produced itself is not the mute gate's work, and counting it as such would
+   * make `mutedFrames` read as suppressed speech during every preroll.
+   */
+  @Test
+  fun pacerSilenceIsNotCountedAsMutedVoice() {
+    val pacer = UplinkPacer()
+    val sender = UplinkSender(pacer, FakeTransport(), clock = { 0L }, muted = { true }, log = {})
+
+    // Nothing pushed, so the pacer is still prerolling and emits its own silence.
+    sender.pumpOnce(0)
+
+    assertThat(sender.stats().mutedFrames).isEqualTo(0L)
+  }
+
+  /**
+   * Mute is instantaneous at the gate and is not instantaneous at the far end: `sendRawAudioBuffer`
+   * cannot be recalled, so whatever ACS already accepted still plays out. That drain is the tail the
+   * wearer perceives, so it is measured rather than assumed.
+   */
+  @Test
+  fun muteTailIsMeasuredFromTheDrainOfAlreadySubmittedBuffers() {
+    val pacer = UplinkPacer()
+    val transport = FakeTransport().apply { autoComplete = false }
+    var muted = false
+    val logs = mutableListOf<String>()
+    val sender = UplinkSender(pacer, transport, clock = { 0L }, muted = { muted }, log = { logs.add(it) })
+    pacer.push(tone(UplinkPacer.TARGET_MS))
+
+    // Five frames ACS has accepted and not completed.
+    pump(sender, pacer, 5)
+    assertThat(sender.stats().inFlight).isEqualTo(5)
+    assertThat(sender.stats().muteTailMs).isNull()
+
+    muted = true
+    sender.pumpOnce(5 * UplinkSender.PERIOD_NANOS)
+    // Still in flight, so the tail is not over and must not be reported as zero.
+    assertThat(sender.stats().muteTailMs).isNull()
+
+    transport.completeAll()
+    sender.pumpOnce(8 * UplinkSender.PERIOD_NANOS)
+
+    assertThat(sender.stats().muteTailMs).isEqualTo(60L)
+    assertThat(sender.stats().muteTailMs!!).isLessThanOrEqualTo(UplinkSender.MAX_IN_FLIGHT * UplinkPacer.FRAME_MS.toLong())
+    assertThat(logs).anySatisfy { assertThat(it).contains("muteTailMs=60") }
+  }
+
+  @Test
+  fun unmutingArmsTheNextMuteTailMeasurement() {
+    val pacer = UplinkPacer()
+    val transport = FakeTransport()
+    var muted = false
+    val sender = UplinkSender(pacer, transport, clock = { 0L }, muted = { muted }, log = {})
+    pacer.push(tone(UplinkPacer.TARGET_MS))
+
+    muted = true
+    pump(sender, pacer, 2)
+    assertThat(sender.stats().muteTailMs).isEqualTo(20L)
+
+    muted = false
+    pump(sender, pacer, 2, from = 2)
+    muted = true
+    sender.pumpOnce(4 * UplinkSender.PERIOD_NANOS)
+    sender.pumpOnce(9 * UplinkSender.PERIOD_NANOS)
+
+    // Measured from the second mute, not carried over from the first.
+    assertThat(sender.stats().muteTailMs).isEqualTo(100L)
   }
 
   @Test

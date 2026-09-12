@@ -30,11 +30,12 @@ advertise and send biplanar NV12 and read `codec=` on the ladder. Revert unless
 `codecName` leaves `h264 sw`.
 
 Mentra Call's persisted default is `720p15` (`VideoProfile.DEFAULT = HD`,
-1280×720@15 / 2.5 Mbps). `540p15` (960×540@15 / 1.5 Mbps) is a user-selectable
+1280×720@15 / 3 Mbps). `540p15` (960×540@15 / 3 Mbps) is a user-selectable
 preset on the Home settings picker. It is not migrated onto existing installs
 and is not the native default. Miniapp joins pass width, height, fps, and
 `maxBitrateBps` through to native, so a selected `540p15` reaches both glasses
-WHIP and ACS without changing `VideoProfile.DEFAULT`.
+WHIP and ACS without changing `VideoProfile.DEFAULT`. The ACS ceiling sits
+above the glasses→phone WHIP default (2.5 Mbps) so Teams is not the bottleneck.
 
 ## The pipeline in one picture
 
@@ -94,6 +95,7 @@ android/src/main/java/com/mentra/acsmeeting/
 └── telemetry/               The measurement ladder
     ├── PipelineStats.kt         Every counter, and the 1 Hz "P6 ladder" line
     ├── PipelineTicker.kt        Emits that line on a timer
+    ├── AvSyncProbe.kt           Clap correlator: audio lead vs video luma at ingest
     ├── RingPercentile.kt        p50/p95 over a fixed ring of samples
     └── ChromaProbe.kt           Plane averages, to catch a mis-packed frame
 ```

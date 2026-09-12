@@ -318,8 +318,25 @@ See [features/rtmp-streaming.md](features/rtmp-streaming.md) for stream lifecycl
 | `streamId`  | string  | ""       | Used to validate keep-alives and ACKs                                                                                         |
 | `video`     | object  | defaults | `width`, `height`, `fps`, `bitrate`. Compact alias: `v`. Parsed by `RtmpStreamConfig.fromJson` / `WhipStreamConfig.fromJson`. |
 | `audio`     | object  | defaults | `sample_rate`, `bitrate`. Compact alias: `a`.                                                                                 |
+| `ice`       | object  | defaults | WHIP only. `stun` (compact alias `s`). Compact alias for the block: `i`. See below.                                           |
 | `flash`     | boolean | `true`   | Privacy LED during stream                                                                                                     |
 | `sound`     | boolean | `true`   | Start/stop tones                                                                                                              |
+| `traceId`   | string  | ""       | Correlation id echoed in every `SOFTAP_TRACE` log line. Temporary diagnostic.                                                 |
+
+**`ice.stun`** controls candidate gathering for WHIP streams:
+
+| Value                       | Behavior                                                                                     |
+| --------------------------- | -------------------------------------------------------------------------------------------- |
+| absent                      | Default Cloudflare STUN server. Offer is POSTed on first srflx, a 1500 ms cap, or gather complete. |
+| `""`                        | Host-only mode (SoftAP). No STUN server. Offer is POSTed **only** on gather complete, and only once a private-subnet `typ host` candidate exists; otherwise the stream fails with `no_hotspot_candidate`. |
+| `"stun:host:port"`          | Use that STUN server instead of the default.                                                 |
+| anything else               | Ignored; the default is preserved so a malformed override cannot silently disable ICE.       |
+
+Host-only mode waits for gather completion because there is no WHIP `PATCH` trickle on either side: the offer that is POSTed is the only one the server will ever see, and local gathering is fast enough that waiting costs nothing.
+
+```json
+{"type": "start_stream", "whipUrl": "http://192.168.43.20:8790/whip", "ice": {"stun": ""}}
+```
 
 **Constraints:** battery ≥ 10%, and either STA WiFi is connected or the stream endpoint is on the active glasses-hosted hotspot subnet. WHIP streams whose requested resolution exceeds the camera's supported output are rejected (`WhipCameraFormatSelector`).
 

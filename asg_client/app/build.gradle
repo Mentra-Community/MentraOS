@@ -502,18 +502,42 @@ def resolveAdbExecutable() {
     return new File(sdk, "platform-tools/adb.exe")
 }
 
-def listConnectedAdbDeviceLines() {
-    def out = new ByteArrayOutputStream()
-    def err = new ByteArrayOutputStream()
-    exec {
-        commandLine resolveAdbExecutable(), "devices", "-l"
-        standardOutput = out
-        errorOutput = err
-        ignoreExitValue = true
+def runAdb(List args, long timeoutMs = 8000) {
+    def command = [resolveAdbExecutable().toString()] + args
+    def proc = new ProcessBuilder(command).redirectErrorStream(true).start()
+    def out = new StringBuffer()
+    proc.consumeProcessOutput(out, new StringBuffer())
+    if (!proc.waitFor(timeoutMs, java.util.concurrent.TimeUnit.MILLISECONDS)) {
+        proc.destroyForcibly()
+        return [timedOut: true, text: out.toString(), exitCode: -1]
     }
-    return out.toString().readLines().findAll { line ->
+    return [timedOut: false, text: out.toString(), exitCode: proc.exitValue()]
+}
+
+def listConnectedAdbDeviceLines() {
+    return runAdb(["devices", "-l"]).text.readLines().findAll { line ->
         line ==~ /.*\s+device(\s+.*)?$/ && !line.startsWith("List of devices")
     }
+}
+
+def adbSerialOf(String line) {
+    return line.split(/\s+/)[0]
+}
+
+def lineForSerial(List<String> connected, String serial) {
+    return connected.find { it.startsWith(serial + "\t") || it.startsWith(serial + " ") }
+}
+
+def isWirelessSerial(String serial) {
+    return serial != null && serial.contains(":")
+}
+
+def glassesAdbCacheFile() {
+    return new File(rootProject.projectDir, ".glasses-adb")
+}
+
+def rememberGlassesAdbSerial(String serial) {
+    glassesAdbCacheFile().text = serial + "\n"
 }
 
 def isMentraLiveAdbLine(String line) {
@@ -521,28 +545,133 @@ def isMentraLiveAdbLine(String line) {
     return lower.contains("mentra") || lower.contains("k900") || lower.contains("xy_smart")
 }
 
+def deviceHasAsgClient(String serial) {
+    def prod = runAdb(["-s", serial, "shell", "pm", "path", "com.mentra.asg_client"], 5000)
+    if (prod.text.contains("package:")) {
+        return true
+    }
+    def fork = runAdb(["-s", serial, "shell", "pm", "path", "com.mentra.asg_client.thirdparty"], 5000)
+    return fork.text.contains("package:")
+}
+
+def isMentraLiveTarget(String line) {
+    return isMentraLiveAdbLine(line) || deviceHasAsgClient(adbSerialOf(line))
+}
+
+def adbConnectWireless(String target) {
+    logger.lifecycle("Trying Wi-Fi ADB connect ${target}")
+    def result = runAdb(["connect", target], 5000)
+    if (result.timedOut) {
+        logger.warn("adb connect ${target} timed out")
+        return false
+    }
+    def text = result.text.toLowerCase()
+    return text.contains("connected to") || text.contains("already connected")
+}
+
+def extractGlassesWifiAdbTargets(String text) {
+    def targets = [] as LinkedHashSet
+    text.eachMatch(/wifiLocalIp["\s:=]+(\d{1,3}(?:\.\d{1,3}){3})/) { m ->
+        targets << "${m[1]}:5555"
+    }
+    text.eachMatch(/"localIp"\s*:\s*"(\d{1,3}(?:\.\d{1,3}){3})"/) { m ->
+        targets << "${m[1]}:5555"
+    }
+    return targets as List
+}
+
+def discoverWirelessGlassesTargets(List<String> connected) {
+    def targets = [] as LinkedHashSet
+    [System.getenv("ANDROID_SERIAL"), System.getenv("MENTRA_LIVE_ADB")].each { value ->
+        if (isWirelessSerial(value)) {
+            targets << value
+        }
+    }
+    def cache = glassesAdbCacheFile()
+    if (cache.exists()) {
+        def cached = cache.getText("UTF-8").trim()
+        if (!cached.isEmpty()) {
+            targets << cached
+        }
+    }
+    connected.findAll { !isMentraLiveAdbLine(it) }.each { line ->
+        def serial = adbSerialOf(line)
+        def dump = runAdb([
+                "-s", serial, "logcat", "-d", "-t", "800", "-s", "ReactNativeJS:I", "MentraJS:I"
+        ], 6000)
+        extractGlassesWifiAdbTargets(dump.text).each { targets << it }
+    }
+    return targets as List
+}
+
+def ensureWirelessGlassesConnected(List<String> connected) {
+    def already = connected.collect { adbSerialOf(it) } as Set
+    discoverWirelessGlassesTargets(connected).each { target ->
+        if (!already.contains(target)) {
+            if (adbConnectWireless(target)) {
+                already << target
+            }
+        }
+    }
+    return listConnectedAdbDeviceLines()
+}
+
+def diagnosePhoneGlassesLink(List<String> connected) {
+    def hints = []
+    connected.findAll { !isMentraLiveAdbLine(it) }.each { line ->
+        def dump = runAdb([
+                "-s", adbSerialOf(line), "logcat", "-d", "-t", "200", "-s", "ReactNativeJS:I"
+        ], 4000).text
+        if (dump.contains("K900 SOC not ready")) {
+            hints << "Phone BLE sees Mentra Live, but the glasses Android SoC is still ready=0 so adbd is not up"
+        } else if (dump.contains("K900 SOC ready") || dump.contains("wifiLocalIp")) {
+            hints << "Glasses BLE is up - enable Wi-Fi ADB on the glasses screen, then adb connect <GLASSES_IP>:5555"
+        }
+    }
+    return hints
+}
+
+def noGlassesInstallError(List<String> connected) {
+    def serials = connected.collect { adbSerialOf(it) }.join(", ")
+    def hints = diagnosePhoneGlassesLink(connected)
+    def lead = hints.isEmpty()
+            ? "No Mentra Live on adb (only ${serials}; Play Protect blocks phone installs)"
+            : hints[0] + " (only ${serials} on adb)"
+    return lead + "\n"
+            + "Wait until the glasses Android UI is up, snap the Infinity Cable onto the glasses, or run:\n"
+            + "adb connect <GLASSES_IP>:5555 && ANDROID_SERIAL=<GLASSES_IP>:5555 ./gradlew installDebug\n"
+            + connected.join("\n")
+}
+
 def resolveAsgInstallSerials() {
     def connected = listConnectedAdbDeviceLines()
+    def requested = System.getenv("ANDROID_SERIAL")
+    if (isWirelessSerial(requested) && lineForSerial(connected, requested) == null) {
+        adbConnectWireless(requested)
+        connected = listConnectedAdbDeviceLines()
+    }
+    if (connected.findAll { isMentraLiveTarget(it) }.isEmpty()) {
+        connected = ensureWirelessGlassesConnected(connected)
+    }
     if (connected.isEmpty()) {
         throw new GradleException(
                 "No connected devices. Plug Mentra Live in with the Infinity Cable (or Wi-Fi ADB) and retry.")
     }
-    def requested = System.getenv("ANDROID_SERIAL")
     if (requested) {
-        def match = connected.find { it.startsWith(requested + "\t") || it.startsWith(requested + " ") }
+        def match = lineForSerial(connected, requested)
         if (match == null) {
             throw new GradleException("ANDROID_SERIAL=${requested} is not connected.\n" + connected.join("\n"))
         }
+        if (!isMentraLiveTarget(match)) {
+            throw new GradleException(noGlassesInstallError(connected))
+        }
         return [requested]
     }
-    def glasses = connected.findAll { isMentraLiveAdbLine(it) }
+    def glasses = connected.findAll { isMentraLiveTarget(it) }
     if (glasses.isEmpty()) {
-        throw new GradleException(
-                "No Mentra Live connected. asg_client will not install onto a phone (Play Protect rejects it).\n"
-                        + "Connect the glasses, or set ANDROID_SERIAL to the glasses serial.\n"
-                        + connected.join("\n"))
+        throw new GradleException(noGlassesInstallError(connected))
     }
-    return glasses.collect { it.split(/\s+/)[0] }
+    return glasses.collect { adbSerialOf(it) }
 }
 
 // Disable Sentry upload on local installs. Target Mentra Live only so a
@@ -580,6 +709,7 @@ afterEvaluate {
                 exec {
                     commandLine resolveAdbExecutable(), "-s", serial, "install", "-r", "-d", "--no-incremental", apkFile
                 }
+                rememberGlassesAdbSerial(serial)
             }
         }
     }

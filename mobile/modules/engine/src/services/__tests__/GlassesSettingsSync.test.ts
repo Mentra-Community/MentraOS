@@ -3,6 +3,7 @@
 import {afterAll, beforeEach, describe, expect, mock, spyOn, test} from "bun:test"
 
 import {updateBluetoothSettings} from "./audioTestMocks"
+import {bluetoothSdk} from "./bluetoothSdkTestMock"
 
 /**
  * The on-connect device-settings replay includes the persistent `camera_fov`,
@@ -60,6 +61,7 @@ beforeEach(() => {
   glassesListeners.clear()
   order.length = 0
   connection = {state: "disconnected"}
+  bluetoothSdk.updateBluetoothSettings = updateBluetoothSettings
   updateBluetoothSettings.mockReset()
   updateBluetoothSettings.mockImplementation(async () => {
     order.push("push")
@@ -82,8 +84,10 @@ describe("GlassesSettingsSync on-connect camera FOV re-apply", () => {
     await settle()
 
     expect(order).toEqual(["push", "reapply"])
+    const patch = updateBluetoothSettings.mock.calls[0]![0] as Record<string, unknown>
+    expect(patch).toMatchObject({camera_fov: 118})
     // Identity is native-authoritative and stays out of the replay.
-    expect(updateBluetoothSettings.mock.calls[0]![0]).toEqual({camera_fov: 118})
+    expect(patch).not.toHaveProperty("default_wearable")
   })
 
   test("re-applies even when the replay fails, since it may still have written camera_fov", async () => {

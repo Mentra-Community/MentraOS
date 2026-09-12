@@ -196,6 +196,8 @@ export {
 } from "./utils/devMiniappSnapshot"
 export {HardwareCompatibility, type CompatibilityResult} from "./utils/hardware"
 export {BgTimer, throttle, debounce} from "./utils/timers"
+export {default as glassesMicProbe, parseMicProbeParams} from "./services/GlassesMicProbe"
+export type {MicProbeA2dpMode, MicProbeOptions, MicProbeSample} from "./services/GlassesMicProbe"
 
 // Hardware types and capability profiles.
 export {

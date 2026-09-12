@@ -136,7 +136,10 @@ function LocalMiniappView({
       }
       mj.uiRouter.notifyReopen(packageName)
       if (probeBackground) {
-        mj.router.probeForegroundLiveness(packageName, reason)
+        // Returning from the Wi-Fi panel (or any system overlay) during a SoftAP join
+        // often takes the WebView longer than 2.5s to pong. Killing Mentra-Call then
+        // respawns it into a Cloudflare restore that tears the SoftAP listener down.
+        mj.router.probeForegroundLiveness(packageName, reason, reason === "app-active" ? 12_000 : undefined)
       }
     },
     [packageName],

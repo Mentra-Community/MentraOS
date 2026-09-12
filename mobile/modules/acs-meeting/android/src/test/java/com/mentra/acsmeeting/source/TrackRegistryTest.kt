@@ -33,4 +33,13 @@ class TrackRegistryTest {
     assertThat(registry.claim("track-a")).isTrue()
     assertThat(registry.size()).isEqualTo(1)
   }
+
+  @Test
+  fun softapWhipReconnectCanReclaimVideo0() {
+    val registry = TrackRegistry()
+    assertThat(registry.claim("video0")).isTrue()
+    assertThat(registry.claim("video0")).isFalse()
+    registry.reset()
+    assertThat(registry.claim("video0")).isTrue()
+  }
 }

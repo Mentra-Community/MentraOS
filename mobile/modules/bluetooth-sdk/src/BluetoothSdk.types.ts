@@ -714,6 +714,20 @@ export type StreamAudioConfig = {
   noiseSuppression?: boolean
 }
 
+/** ICE overrides for a WHIP stream. Ignored by the RTMP and SRT paths. */
+export type StreamIceConfig = {
+  /**
+   * STUN server the glasses should use while gathering candidates.
+   *
+   * Omit to keep the default Cloudflare STUN server. Pass an empty string to force host-only
+   * gathering, which is what SoftAP calling needs: the WHIP server runs on the phone across the
+   * glasses' own hotspot, so a server-reflexive candidate is meaningless and there is no route to
+   * a STUN server anyway. A value that is not a `stun:`/`stuns:` URI is ignored and the default is
+   * kept, so a malformed override cannot silently disable ICE.
+   */
+  stun?: string
+}
+
 export type StreamStartRequest = {
   type?: "start_stream"
   streamUrl: string
@@ -721,8 +735,16 @@ export type StreamStartRequest = {
   sound?: boolean
   video?: StreamVideoConfig
   audio?: StreamAudioConfig
+  ice?: StreamIceConfig
   /** When false, glasses skip mic capture. Defaults to true. */
   captureAudio?: boolean
+  /**
+   * Correlation id echoed by the glasses in every SOFTAP_TRACE log line, so phone and glasses
+   * logs can be joined despite having unsynchronised clocks.
+   *
+   * TEMPORARY: part of the SoftAP diagnostic trace layer.
+   */
+  traceId?: string
 }
 
 export type StreamKeepAliveRequest = {
@@ -791,6 +813,12 @@ export type MicPcmEvent = {
   channels: 1
   encoding: "pcm_s16le"
   voiceActivityDetectionEnabled: boolean
+  /**
+   * The microphone this buffer came from (`"glasses"`, `"phone"`, `"bluetooth"`, or `""` when none
+   * is selected). Stamped per frame because the SDK can move the source mid-stream, so a consumer
+   * that told a remote party which microphone it is sending can check rather than assume.
+   */
+  source: string
 }
 
 export type MicLc3Event = {

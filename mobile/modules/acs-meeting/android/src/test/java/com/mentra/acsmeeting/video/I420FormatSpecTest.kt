@@ -54,6 +54,11 @@ class AcsFrameSenderFormatTest {
   fun parseOrNullAllowsDocumentedVirtualCameraSizesOnly() {
     assertThat(I420FormatSpec.parseOrNull(1280, 720, 15f)).isNotNull()
     assertThat(I420FormatSpec.parseOrNull(960, 540, 30f)).isNotNull()
+    for (fps in listOf(15f, 24f, 30f)) {
+      val spec = I420FormatSpec.parseOrNull(858, 480, fps)!!
+      assertThat(spec.namedResolution()).isEqualTo(AcsNamedResolution.P480)
+      assertThat(spec.packedSize()).isEqualTo(I420Packer.packedSize(858, 480))
+    }
     assertThat(I420FormatSpec.parseOrNull(540, 960, 30f)).isNull()
     assertThat(I420FormatSpec.parseOrNull(854, 480, 15f)).isNull()
   }

@@ -4,9 +4,9 @@ import android.content.Context;
 import android.hardware.camera2.CameraAccessException;
 import android.hardware.camera2.CameraCharacteristics;
 import android.hardware.camera2.CameraManager;
-import android.os.SystemClock;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
 import android.util.Log;
 import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager;
@@ -16,7 +16,6 @@ import com.mentra.asg_client.io.streaming.StreamControllerLease;
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
 import com.mentra.asg_client.utils.WakeLockManager;
 import com.mentra.asg_client.io.hardware.core.HardwareManagerFactory;
-
 import com.mentra.asg_client.io.media.core.MediaCaptureService;
 import com.mentra.asg_client.io.network.interfaces.INetworkManager;
 import com.mentra.asg_client.io.network.utils.HotspotNetworkUtils;
@@ -28,6 +27,7 @@ import com.mentra.asg_client.io.streaming.services.SrtStreamingService;
 import com.mentra.asg_client.io.streaming.services.WhipCameraCapturer;
 import com.mentra.asg_client.io.streaming.services.WhipCameraFormatSelector;
 import com.mentra.asg_client.io.streaming.services.WhipStreamingService;
+import com.mentra.asg_client.io.streaming.trace.SoftApTrace;
 import com.mentra.asg_client.service.core.constants.BatteryConstants;
 import com.mentra.asg_client.service.legacy.interfaces.ICommandHandler;
 import com.mentra.asg_client.service.media.interfaces.IMediaManager;
@@ -35,13 +35,10 @@ import com.mentra.asg_client.service.system.core.SystemControllerFactory;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
 import com.mentra.asg_client.service.utils.ServiceConstants;
 import com.mentra.asg_client.service.utils.ServiceUtils;
-
 import io.github.thibaultbee.streampack.internal.sources.camera.CameraController;
-
+import java.util.Set;
 import org.json.JSONException;
 import org.json.JSONObject;
-
-import java.util.Set;
 
 /**
  * Handler for streaming commands (RTMP, SRT, WHIP). Routes to the appropriate streaming service
@@ -94,7 +91,8 @@ public class StreamCommandHandler implements ICommandHandler {
         this.context = context;
         this.stateManager = stateManager;
         this.streamingManager = streamingManager;
-        this.mHotspotActivityTracker = new HotspotStreamActivityTracker(networkManager);
+        this.mHotspotActivityTracker =
+                new HotspotStreamActivityTracker(networkManager, new Handler(Looper.getMainLooper()));
         this.mServiceManager = serviceManager;
         streamingManager.setStreamStatusListener(status -> mLifecycleHandler.post(() -> {
             if (status.optBoolean("terminal", false)
@@ -178,6 +176,8 @@ public class StreamCommandHandler implements ICommandHandler {
         boolean streamStarted = false;
         String streamId = data.optString("streamId", "");
         if (streamId.isEmpty()) streamId = "asg-" + java.util.UUID.randomUUID();
+        // SOFTAP_TRACE: adopt the phone-minted id so both devices stamp the same trace.
+        SoftApTrace.begin(data.optString("traceId", ""));
         try {
             if (!Integer.valueOf(1).equals(data.opt("controllerProbeVersion"))
                     || !(data.opt("controllerId") instanceof String)
@@ -196,6 +196,8 @@ public class StreamCommandHandler implements ICommandHandler {
             if (streamUrl.isEmpty()) streamUrl = data.optString("rtmpUrl", "");
             if (streamUrl.isEmpty()) streamUrl = data.optString("srtUrl", "");
             if (streamUrl.isEmpty()) streamUrl = data.optString("whipUrl", "");
+            SoftApTrace.stage(
+                    "start_stream_received", "streamId", streamId, "streamUrl", streamUrl);
 
             if (streamUrl.isEmpty()) {
                 Log.e(TAG, "Cannot start stream - missing stream URL");
@@ -237,8 +239,15 @@ public class StreamCommandHandler implements ICommandHandler {
             // report it as a connected STA WiFi network.
             boolean hasStaWifi = stateManager == null || stateManager.isConnectedToWifi();
             boolean hasLocalHotspotRoute = HotspotNetworkUtils.isEndpointOnActiveHotspot(streamUrl);
+            SoftApTrace.stage(
+                    "route_checked",
+                    "staWifi",
+                    hasStaWifi,
+                    "localHotspotRoute",
+                    hasLocalHotspotRoute);
             if (!hasStaWifi && !hasLocalHotspotRoute) {
                 Log.e(TAG, "Cannot start stream - no WiFi or local hotspot route");
+                SoftApTrace.stage("start_stream_rejected", "reason", "no_wifi_or_hotspot_route");
                 sendStreamErrorStatus(streamId, ServiceConstants.ERROR_NO_WIFI_CONNECTION);
                 return false;
             }
@@ -261,6 +270,9 @@ public class StreamCommandHandler implements ICommandHandler {
             if (videoJson == null) videoJson = data.optJSONObject("v");
             JSONObject audioJson = data.optJSONObject("audio");
             if (audioJson == null) audioJson = data.optJSONObject("a");
+            // SoftAP calling sends ice.stun="" to force host-only gathering (WHIP only).
+            JSONObject iceJson = data.optJSONObject("ice");
+            if (iceJson == null) iceJson = data.optJSONObject("i");
             Boolean captureAudioOverride = null;
             if (data.has("captureAudio")) {
                 captureAudioOverride = data.optBoolean("captureAudio", true);
@@ -307,10 +319,13 @@ public class StreamCommandHandler implements ICommandHandler {
                     }
                 case WHIP:
                     {
-                        WhipStreamConfig config = WhipStreamConfig.fromJson(videoJson, audioJson);
+                        WhipStreamConfig config =
+                                WhipStreamConfig.fromJson(videoJson, audioJson, iceJson);
                         if (captureAudioOverride != null) {
                             config.setCaptureAudio(captureAudioOverride);
                         }
+                        SoftApTrace.stage(
+                                "whip_config_resolved", "hostOnlyIce", config.isHostOnlyIce());
                         Log.i(TAG, "[VideoQuality] parsed WHIP config " + config);
                         if (!preflightCameraCaptureForWhip(config, streamId)) {
                             return false;
@@ -357,8 +372,8 @@ public class StreamCommandHandler implements ICommandHandler {
     }
 
     /**
-     * Arm livestream EIS only under the 500k pixel gate. Mentra Call 540p/720p stay
-     * off. WHIP also applies {@code EisController} on its own repeating request.
+     * Arm livestream EIS only under the 500k pixel gate. Mentra Call 540p/720p stay off. WHIP also
+     * applies {@code EisController} on its own repeating request.
      */
     private void applyEisForStreaming(int width, int height) {
         boolean enable = LivestreamEisPolicy.logDecision(TAG, "stream-start", width, height);
@@ -502,8 +517,7 @@ public class StreamCommandHandler implements ICommandHandler {
     /** Send a stopping stream status carrying the id of the stream being stopped. */
     private void sendStreamStoppingStatus(String streamId) {
         if (streamId == null || streamId.isEmpty()) {
-            streamingManager.sendStreamStatusResponse(
-                    true, ServiceConstants.STATUS_STOPPING, null);
+            streamingManager.sendStreamStatusResponse(true, ServiceConstants.STATUS_STOPPING, null);
             return;
         }
         try {

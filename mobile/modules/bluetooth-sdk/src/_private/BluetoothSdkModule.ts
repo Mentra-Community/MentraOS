@@ -209,6 +209,15 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   // Microphone Commands
   setMicState(enabled: boolean, useGlassesMic?: boolean, sendTranscript?: boolean, sendLc3Data?: boolean): Promise<void>
   setPreferredMic(preferredMic: MicPreference): Promise<void>
+  /**
+   * Lock microphone selection to one source (`"glasses"`) until released with `null`.
+   *
+   * Stronger than [setPreferredMic]: a preference is a ranking the SDK falls through when a source
+   * is unavailable, while a pin has no fallback and reports `mic_health` with
+   * `reason: "pinned-source-unavailable"` instead. Android only; the iOS implementation is a no-op,
+   * so a caller that depends on the guarantee must gate on platform.
+   */
+  setMicSourcePin(source: string | null): Promise<void>
   restartTranscriber(): Promise<void>
 
   // Audio Playback Monitoring
@@ -220,8 +229,21 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   // ? 16-bit LE PCM chunks into a streaming AudioTrack (USAGE_MEDIA, so it
   // follows the phone's media route, e.g. A2DP to glasses). Implemented with
   // AudioTrack on Android and AVAudioEngine on iOS.
-  /** Open a PCM stream session. One AudioTrack per id; caller manages ids. */
-  pcmStreamOpen(streamId: string, sampleRate: number, channels: number, volume: number): Promise<void>
+  /**
+   * Open a PCM stream session. One AudioTrack per id; caller manages ids.
+   *
+   * `jitterMs` sizes the playout buffer and is therefore also the stream's floor latency, since a
+   * streaming track fills to its buffer and stays there. Omit it for one-way media, where the
+   * default cushion is inaudible; pass a small value for conversational audio, where the same
+   * cushion is delay before the far end is heard. Android only — iOS accepts and ignores it.
+   */
+  pcmStreamOpen(
+    streamId: string,
+    sampleRate: number,
+    channels: number,
+    volume: number,
+    jitterMs?: number,
+  ): Promise<void>
   /**
    * Append base64 PCM. Resolves with the queued-but-unplayed backlog in ms;
    * blocks (on a background dispatcher) while the backlog is above the

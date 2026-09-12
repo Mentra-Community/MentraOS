@@ -1,6 +1,8 @@
 package com.mentra.acsmeeting
 
 import android.content.Context
+import android.os.SystemClock
+import android.util.Base64
 import android.util.Log
 import com.azure.android.communication.calling.AudioStreamBufferDuration
 import com.azure.android.communication.calling.AudioStreamChannelMode
@@ -8,12 +10,16 @@ import com.azure.android.communication.calling.AudioStreamFormat
 import com.azure.android.communication.calling.AudioStreamSampleRate
 import com.azure.android.communication.calling.AudioStreamState
 import com.azure.android.communication.calling.AudioStreamType
+import com.azure.android.communication.calling.CapabilitiesCallFeature
+import com.azure.android.communication.calling.CapabilitiesChangedListener
 import com.azure.android.communication.calling.Call
 import com.azure.android.communication.calling.CallAgent
 import com.azure.android.communication.calling.CallAgentOptions
 import com.azure.android.communication.calling.CallClient
 import com.azure.android.communication.calling.CallState
 import com.azure.android.communication.calling.Features
+import com.azure.android.communication.calling.HangUpOptions
+import com.azure.android.communication.calling.ParticipantCapabilityType
 import com.azure.android.communication.calling.DiagnosticFlagChangedListener
 import com.azure.android.communication.calling.DiagnosticQualityChangedListener
 import com.azure.android.communication.calling.LocalUserDiagnosticsCallFeature
@@ -44,8 +50,10 @@ import com.mentra.acsmeeting.audio.AudioPolicyApplier
 import com.mentra.acsmeeting.audio.AudioSafety
 import com.mentra.acsmeeting.audio.AudioSourceKind
 import com.mentra.acsmeeting.audio.AudioStreamController
+import com.mentra.acsmeeting.audio.AudioUplinkChain
 import com.mentra.acsmeeting.audio.CallGuard
 import com.mentra.acsmeeting.audio.ExecutorPolicyScheduler
+import com.mentra.acsmeeting.audio.GlassesPcmRouting
 import com.mentra.acsmeeting.audio.AcsUplinkTransport
 import com.mentra.acsmeeting.audio.IncomingAudioPump
 import com.mentra.acsmeeting.audio.IncomingRateProbe
@@ -56,23 +64,33 @@ import com.mentra.acsmeeting.audio.UplinkSender
 import com.mentra.acsmeeting.source.AcsInvestigation
 import com.mentra.acsmeeting.source.CloudflareWhepSource
 import com.mentra.acsmeeting.source.DecoderMode
+import com.mentra.acsmeeting.source.OutgoingRateArm
 import com.mentra.acsmeeting.source.PixelFormatArm
 import com.mentra.acsmeeting.source.GlassesMediaController
+import com.mentra.acsmeeting.network.ScopedSoftApNetwork
 import com.mentra.acsmeeting.source.GlassesMediaSourceFactory
+import com.mentra.acsmeeting.source.LocalWhipIngestSource
+import com.mentra.acsmeeting.source.MeetingVideoSourceSpec
 import com.mentra.acsmeeting.source.SourceConfig
 import com.mentra.acsmeeting.source.SourceKind
 import com.mentra.acsmeeting.source.SourceState
 import com.mentra.acsmeeting.source.SyntheticI420Source
 import com.mentra.acsmeeting.source.TargetSize
 import com.mentra.acsmeeting.source.VideoSourceArm
+import com.mentra.acsmeeting.telemetry.AvSyncProbe
 import com.mentra.acsmeeting.telemetry.PipelineStats
 import com.mentra.acsmeeting.telemetry.PipelineTicker
+import com.mentra.acsmeeting.trace.SoftApTrace
 import com.mentra.acsmeeting.video.AcsFrameSender
 import com.mentra.acsmeeting.video.VideoProfile
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
+import java.util.concurrent.Future
 import java.util.concurrent.ScheduledExecutorService
 import java.util.concurrent.ScheduledFuture
 import java.util.concurrent.TimeUnit
+import java.util.concurrent.TimeoutException
+import java.util.concurrent.atomic.AtomicReference
 import java.util.concurrent.atomic.AtomicBoolean
 import java.util.concurrent.atomic.AtomicInteger
 import kotlin.math.roundToInt
@@ -82,29 +100,66 @@ class AcsMeetingSession(
   private val onState: (Map<String, Any>) -> Unit,
   private val onIncomingPcm: (String, Int, Int) -> Unit,
   mediaSourceFactory: GlassesMediaSourceFactory? = null,
+  /**
+   * The joined glasses hotspot, when the call is a SoftAP call. Held so libwebrtc can be shown a
+   * network Android hides from it; null for every Cloudflare call.
+   */
+  private val scopedNetwork: ScopedSoftApNetwork? = null,
 ) {
   internal val stats = PipelineStats()
-  private val ticker = PipelineTicker(stats) {
+  private val avSync = AvSyncProbe()
+  private val ticker = PipelineTicker(stats, avSync) {
     Log.i(TAG, it)
   }
   private val executor: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor()
+
+  /**
+   * How long a task sat on [executor] before it started running.
+   *
+   * Everything here is serialized onto one thread, so a `join` that appears to take 40 s may have
+   * spent 38 of them queued behind the previous call's `leaveLocked`. Without this there is no way
+   * to tell that apart from a slow ACS, and the two have opposite fixes.
+   */
+  private fun traceQueued(stage: String, submittedAt: Long, vararg fields: Pair<String, Any?>) {
+    SoftApTrace.stage(stage, *fields, "queuedMs" to (SystemClock.elapsedRealtime() - submittedAt))
+  }
   private val scheduler = ExecutorPolicyScheduler(executor)
   private val outgoingReady = AtomicBoolean(false)
   private val muted = AtomicBoolean(false)
-  private val frameSender = AcsFrameSender(stats)
+  private val frameSender = AcsFrameSender(stats, avSync)
   private var profile = VideoProfile.DEFAULT
-  private val resolvedFactory = mediaSourceFactory ?: GlassesMediaSourceFactory { video, pcm ->
-    when (AcsInvestigation.videoArm) {
-      VideoSourceArm.SYNTHETIC -> SyntheticI420Source(video, stats, frameSender::isReady)
-      VideoSourceArm.WHEP -> CloudflareWhepSource(context, video, pcm, stats)
+  private val resolvedFactory = mediaSourceFactory ?: GlassesMediaSourceFactory { video, pcm, config ->
+    // The synthetic diagnostic arm overrides everything; otherwise the requested kind decides.
+    when {
+      AcsInvestigation.videoArm == VideoSourceArm.SYNTHETIC ->
+        SyntheticI420Source(video, stats, frameSender::isReady)
+
+      config.kind == SourceKind.SOFTAP ->
+        LocalWhipIngestSource(context, video, pcm, stats, scopedNetwork)
+
+      else -> CloudflareWhepSource(context, video, pcm, stats)
     }
   }
   @Volatile private var lastGatedLogMs = 0L
   private var pcmBridge: PcmBridge? = null
+  /**
+   * Ingest, delay, resample and pacing behind one lock, so mute means the same thing at every
+   * stage. Built by [join] alongside the bridge it owns.
+   */
+  @Volatile private var uplinkChain: AudioUplinkChain? = null
+  /**
+   * Whether the *host* is feeding this call's outgoing audio, rather than the decoded glasses
+   * track. Set by the audio policy for a SoftAP call on the glasses microphone: the wearer's voice
+   * arrives over BLE LC3 through [pushOutgoingPcm], and the WHIP peer publishes video only.
+   *
+   * Also a drop gate. Without it a host that pushes PCM at a call which is taking audio from the
+   * media relay would put the same room on the call twice.
+   */
+  private val externalPcmEnabled = AtomicBoolean(false)
   private val incomingProbe = IncomingRateProbe()
   // Clock-domain adapter: the WebRTC audio thread only ever fills the pacer,
   // and a dedicated monotonic-deadline thread drains it into ACS.
-  private val pacer = UplinkPacer()
+  private val pacer = UplinkPacer(log = { Log.i(TAG, it) })
   @Volatile private var uplinkSender: UplinkSender? = null
   private val phoneMic = PhoneMicCapturer { pcm, rate, channels -> feedOutgoingPcm(pcm, rate, channels) }
   // Emits already-normalized 16 kHz mono; the host opens its PCM player with
@@ -126,7 +181,16 @@ class AcsMeetingSession(
   private val media = GlassesMediaController(resolvedFactory)
   private var mediaStatsListener: MediaStatisticsReportReceivedListener? = null
   private var mediaStatsFeature: MediaStatisticsCallFeature? = null
+  private var capabilitiesFeature: CapabilitiesCallFeature? = null
+  private var capabilitiesListener: CapabilitiesChangedListener? = null
+  /**
+   * Whether this participant may end the meeting for everyone. Teams grants it to presenters only,
+   * and ACS can deliver it after admission, so it is a live value rather than a join-time fact.
+   */
+  @Volatile private var hangUpForEveryone = CapabilityStatus()
   private val mediaStatsReports = AtomicInteger(0)
+  /** Last wire size reported by ACS, so adaptation is logged on transition rather than every 1 Hz report. */
+  @Volatile private var lastWireSizeKey: String? = null
   private var netDiagnostics: NetworkDiagnostics? = null
   private var sendQualityListener: DiagnosticQualityChangedListener? = null
   private var reconnectListener: DiagnosticQualityChangedListener? = null
@@ -143,12 +207,37 @@ class AcsMeetingSession(
   @Volatile private var phase = "idle"
   @Volatile private var lastError: String? = null
   @Volatile private var audioSource = "glasses"
+  @Volatile private var configuredAudioDelayMs = AcsInvestigation.acsAudioDelayMs
   @Volatile private var lastSafety = AudioSafety.DEGRADED
   // Health of the glasses WHEP feed, reported alongside the ACS phase so the host
   // can tell "call is up, glasses video is dead" from a healthy call.
   @Volatile private var mediaSource = SourceState.IDLE
+  // The transport of the active call. A SoftAP source must not be auto-rebuilt: its URL is an
+  // output of binding, so a rebuild rebinds a new port and strands the glasses on the old one.
+  @Volatile private var currentSourceKind = SourceKind.WHEP
   private var mediaRestartAttempts = 0
   private var mediaRestartTask: ScheduledFuture<*>? = null
+
+  /**
+   * Bumped by every join and every leave, so a bounded ACS operation that completes late cannot
+   * attach its result to a session that has already moved on.
+   *
+   * Same pattern as the ingest source's generation. It exists because `createCallAgent` is a future
+   * with no timeout of its own: on device it stalled for 30 s while cellular was still validating,
+   * and a cancelled join that later succeeds would otherwise leave a live agent nobody owns.
+   */
+  private val joinGeneration = AtomicInteger(0)
+  /**
+   * `createCallAgent` Future we stopped waiting on. ACS still finishes signing in; this is the only
+   * handle that can dispose that leftover agent before the next join.
+   */
+  private var abandonedAgent: Future<CallAgent>? = null
+  /**
+   * Agent signed in before the glasses hotspot came up. SoftAP DNS cannot resolve ACS hosts, so
+   * `createCallAgent` after the scoped join stalls until the hotspot is torn down. Join reuses this
+   * instead of signing in again on the broken resolver.
+   */
+  @Volatile private var agentPrepared = false
   private val controller = SessionAudioController()
   private val applier = AudioPolicyApplier(controller, scheduler) { Log.i(TAG, it) }
 
@@ -162,23 +251,101 @@ class AcsMeetingSession(
       "audioSafety" to lastSafety.name.lowercase(),
       "mediaSource" to mediaSource.name.lowercase(),
       "participants" to roster.snapshot(),
+      // Nullable members inside, so the miniapp can tell "denied" from "not known yet" and only
+      // offer End when it is actually allowed.
+      "capabilities" to mapOf("hangUpForEveryone" to hangUpForEveryone.toMap()),
     )
     meetingUrl?.let { result["meetingUrl"] = it }
     lastError?.let { result["error"] = it }
+    media.ingestUrl?.let { result["ingestUrl"] = it }
     describeEndReason(call).forEach { (key, value) ->
       if (value != null) result["endReason_$key"] = value
     }
     return result
   }
 
+  /**
+   * Sign in to ACS before the glasses hotspot exists.
+   *
+   * On device, `createCallAgent` after the scoped join sat for the full 20 s deadline and only
+   * completed once SoftAP was released. Token mint already proved the internet works *before* that
+   * join. Doing this step on that same network is what makes the later SoftAP join a media bind
+   * plus a Teams meeting join, not another sign-in through glasses dnsmasq.
+   *
+   * Waits [PREPARE_AGENT_WAIT_MS], not [CALL_AGENT_WAIT_MS]. The tight budget only ever existed
+   * because sign-in used to run inside the SoftAP join, where overrunning cost the wearer the
+   * hotspot too. Here nothing is torn down while we wait, and a cold sign-in on a slow AP measured
+   * 35 s on device — under the old 20 s cap that agent arrived just in time to be thrown away.
+   */
+  fun prepareAgent(token: String, displayName: String?) {
+    val done = CountDownLatch(1)
+    val error = AtomicReference<Exception?>(null)
+    phase = "connecting"
+    lastError = null
+    val submittedAt = SystemClock.elapsedRealtime()
+    executor.execute {
+      traceQueued("session_prepare_agent_begin", submittedAt)
+      val startedAt = SystemClock.elapsedRealtime()
+      try {
+        leaveLocked(emitIdle = false)
+        val generation = joinGeneration.get()
+        lastError = null
+        emit("connecting")
+        val credential = CommunicationTokenCredential(token)
+        callClient = CallClient()
+        val agentOptions = CallAgentOptions()
+        agentOptions.displayName = displayName ?: "Mentra Call"
+        callAgent = obtainCallAgent(callClient!!, credential, agentOptions, generation, PREPARE_AGENT_WAIT_MS)
+        agentPrepared = true
+        Log.i(TAG, "ACS call agent prepared before SoftAP")
+        SoftApTrace.stage(
+          "session_prepare_agent_end",
+          "durationMs" to (SystemClock.elapsedRealtime() - startedAt),
+        )
+      } catch (failed: Exception) {
+        agentPrepared = false
+        lastError = formatAcsError(failed)
+        Log.e(TAG, "prepare agent failed $lastError", failed)
+        SoftApTrace.failure(
+          "session_prepare_agent_failed",
+          "durationMs" to (SystemClock.elapsedRealtime() - startedAt),
+          "reason" to lastError,
+        )
+        leaveLocked(emitIdle = false)
+        emit("error")
+        error.set(failed)
+      } finally {
+        done.countDown()
+      }
+    }
+    if (!done.await(PREPARE_AGENT_WAIT_MS + ABANDONED_AGENT_REJOIN_WAIT_MS + 5_000L, TimeUnit.MILLISECONDS)) {
+      SoftApTrace.failure(
+        "session_prepare_agent_stuck",
+        "waitedMs" to (SystemClock.elapsedRealtime() - submittedAt),
+      )
+      throw IllegalStateException(
+        "ACS_AGENT_TIMEOUT: Teams did not finish signing this phone in within " +
+          "${PREPARE_AGENT_WAIT_MS / 1000}s.",
+      )
+    }
+    error.get()?.let { throw it }
+  }
+
   fun join(
     token: String,
     teamsUrl: String,
-    whepUrl: String,
+    videoSource: MeetingVideoSourceSpec,
     displayName: String?,
     dumpWav: Boolean,
     audioSource: String = "glasses",
     video: VideoProfile = VideoProfile.DEFAULT,
+    audioDelayMs: Int? = null,
+    /**
+     * Runs the WHIP listener bind, and exists so the caller can lift a process-wide network pin
+     * across exactly that call. Takes the block rather than being a pair of before/after hooks so
+     * the pin cannot be left off if the bind throws. See [network.InternetHold.bindProcessToCellular].
+     */
+    bindIngestUnpinned: (() -> Unit) -> Unit = { bind -> bind() },
   ): Map<String, Any> {
     // Both glasses and phone feed RawOutgoingAudioStream so ACS never owns
     // the phone audio route (no MODE_IN_COMMUNICATION, no forced speaker).
@@ -194,23 +361,80 @@ class AcsMeetingSession(
     phase = "connecting"
     lastError = null
     meetingUrl = teamsUrl
+    // SoftAP needs the WHIP listener bound before this method returns: the JS
+    // orchestrator reads ingestUrl off the join result and tears the scoped
+    // network down if it is missing. ACS join itself stays on the executor.
+    val softApReady = if (videoSource is MeetingVideoSourceSpec.SoftAp) CountDownLatch(1) else null
+    val softApBindError = AtomicReference<Exception?>(null)
+    val submittedAt = SystemClock.elapsedRealtime()
     executor.execute {
+      traceQueued("session_join_begin", submittedAt, "transport" to videoSource.kind)
+      val startedAt = SystemClock.elapsedRealtime()
       try {
         // Tear down any previous call without announcing idle: the caller already
         // holds a "connecting" snapshot, and an idle event landing after it made
         // the host and miniapp flash out of "joining" on every join.
-        leaveLocked(emitIdle = false)
-        this.profile = video
+        // A SoftAP join that already signed in on cellular must keep that agent:
+        // recreating it on the glasses hotspot is the ACS_AGENT_TIMEOUT we just hit.
+        val reuseAgent = agentPrepared && callAgent != null
+        leaveLocked(emitIdle = false, keepAgent = reuseAgent)
+        // After the teardown, because that teardown bumps the generation itself. Everything that
+        // moves it runs on this executor, so the value is stable for the rest of this join.
+        val generation = joinGeneration.get()
+        val requested = video
+        this.profile = when (AcsInvestigation.outgoingRate) {
+          OutgoingRateArm.CLAMP_TO_SOFTWARE_CEILING -> requested.forSoftwareEncoder()
+          OutgoingRateArm.ADVERTISE_REQUESTED -> requested
+        }
+        if (this.profile.fps != requested.fps) {
+          Log.i(
+            TAG,
+            "ACS software-encoder clamp ${requested.width}x${requested.height}@${requested.fps} -> " +
+              "@${this.profile.fps} (h264 sw holds ~${VideoProfile.SOFTWARE_ENCODER_FPS} fps; " +
+              "advertising faster starves the wire)",
+          )
+        } else {
+          Log.i(
+            TAG,
+            "ACS rate arm=${AcsInvestigation.outgoingRate} advertising " +
+              "${this.profile.width}x${this.profile.height}@${this.profile.fps} unclamped; " +
+              "P7 rate names what binds",
+          )
+        }
+        // Read by the 1 Hz verdict, which scores the wire against what we declared.
+        stats.advertisedFps = this.profile.fps.toDouble()
+        stats.budgetBps = this.profile.maxBitrateBps
         this.audioSource = if (parsed == AudioSourceKind.PHONE) "phone" else "glasses"
         meetingUrl = teamsUrl
         lastError = null
         emit("connecting")
-        pcmBridge = PcmBridge(context.cacheDir, dumpWav)
-        val credential = CommunicationTokenCredential(token)
-        callClient = CallClient()
-        val agentOptions = CallAgentOptions()
-        agentOptions.displayName = displayName ?: "Mentra Call"
-        callAgent = callClient!!.createCallAgent(context, credential, agentOptions).get()
+        val bridge = PcmBridge(context.cacheDir, dumpWav)
+        pcmBridge = bridge
+        val delayMs = (audioDelayMs ?: AcsInvestigation.acsAudioDelayMs)
+          .coerceIn(0, AudioUplinkChain.MAX_DELAY_MS)
+        configuredAudioDelayMs = delayMs
+        val headroom = if (videoSource.kind == SourceKind.SOFTAP && parsed != AudioSourceKind.PHONE) {
+          UplinkPacer.LC3_TARGET_MS
+        } else UplinkPacer.TARGET_MS
+        pacer.configureTarget(headroom)
+        avSync.reset()
+        uplinkChain = AudioUplinkChain(
+          bridge,
+          pacer,
+          // Move delay into a jitter buffer that can absorb BLE bursts, rather than adding latency.
+          (delayMs - (headroom - UplinkPacer.TARGET_MS)).coerceAtLeast(0),
+          onIngest = { pcm, nowNs -> avSync.onAudio(pcm, nowNs) },
+        )
+        if (reuseAgent) {
+          Log.i(TAG, "reusing call agent prepared before SoftAP")
+          agentPrepared = false
+        } else {
+          val credential = CommunicationTokenCredential(token)
+          callClient = CallClient()
+          val agentOptions = CallAgentOptions()
+          agentOptions.displayName = displayName ?: "Mentra Call"
+          callAgent = obtainCallAgent(callClient!!, credential, agentOptions, generation)
+        }
 
         val videoOptions = RawOutgoingVideoStreamOptions()
         videoOptions.formats = listOf(AcsFrameSender.outgoingFormat(profile))
@@ -306,6 +530,44 @@ class AcsMeetingSession(
           .setMuted(false)
         joinOptions.setIncomingAudioOptions(ia)
 
+        stats.arm = when {
+          synthetic -> "synthetic"
+          videoSource is MeetingVideoSourceSpec.SoftAp -> "softap"
+          else -> "whep"
+        }
+        stats.pathMode = if (AcsInvestigation.decoderMode == DecoderMode.BYTE_BUFFER) "bytebuf" else "texture"
+        stats.pathCopy = when {
+          AcsInvestigation.pixelFormat == PixelFormatArm.NV12 -> "nv12"
+          AcsInvestigation.zeroCopy -> "zerocopy"
+          else -> "planes"
+        }
+        stats.pix = AcsInvestigation.pixelFormat.name.lowercase()
+        stats.zcOn = if (AcsInvestigation.zeroCopy) 1 else 0
+        mediaRestartAttempts = 0
+        currentSourceKind = if (synthetic) SourceKind.DIRECT else videoSource.kind
+        media.setStateListener { state, reason ->
+          // Fired from WebRTC/OkHttp threads; hop to the session executor so it
+          // serializes with join/leave/policy like everything else.
+          executor.execute { onMediaSourceState(state, reason) }
+        }
+        // SoftAP: bind the listener before the Teams join so the Expo promise can
+        // return an ingest URL while 192.168.43.x is still assigned. WHEP still
+        // attaches after the call exists — it has a URL going in, not coming out.
+        if (videoSource is MeetingVideoSourceSpec.SoftAp) {
+          // Unpinned for the bind only: this socket is a ServerSocket on 192.168.43.79 and cannot
+          // be re-scoped afterwards, so a cellular mark here leaves the glasses' SYN unanswered.
+          // The pin is back on by the time the Teams join below runs.
+          bindIngestUnpinned {
+            media.attach(
+              video = { planes ->
+                frameSender.sendPlanes(planes)
+              },
+              pcm = { pcm, rate, channels -> feedOutgoingPcm(pcm, rate, channels) },
+              config = videoSource.toConfig(),
+            )
+          }
+        }
+
         val locator = TeamsMeetingLinkLocator(teamsUrl)
         val joined = callAgent!!.join(context, locator, joinOptions)
         call = joined
@@ -317,31 +579,15 @@ class AcsMeetingSession(
         }
         pushCallState(joined.state)
 
-        stats.arm = if (synthetic) "synthetic" else "whep"
-        stats.pathMode = if (AcsInvestigation.decoderMode == DecoderMode.BYTE_BUFFER) "bytebuf" else "texture"
-        stats.pathCopy = when {
-          AcsInvestigation.pixelFormat == PixelFormatArm.NV12 -> "nv12"
-          AcsInvestigation.zeroCopy -> "zerocopy"
-          else -> "planes"
+        if (videoSource !is MeetingVideoSourceSpec.SoftAp) {
+          media.attach(
+            video = { planes ->
+              frameSender.sendPlanes(planes)
+            },
+            pcm = { pcm, rate, channels -> feedOutgoingPcm(pcm, rate, channels) },
+            config = if (synthetic) SourceConfig("", SourceKind.DIRECT) else videoSource.toConfig(),
+          )
         }
-        stats.pix = AcsInvestigation.pixelFormat.name.lowercase()
-        stats.zcOn = if (AcsInvestigation.zeroCopy) 1 else 0
-        mediaRestartAttempts = 0
-        media.setStateListener { state, reason ->
-          // Fired from WebRTC/OkHttp threads; hop to the session executor so it
-          // serializes with join/leave/policy like everything else.
-          executor.execute { onMediaSourceState(state, reason) }
-        }
-        media.attach(
-          video = { planes ->
-            frameSender.sendPlanes(planes)
-          },
-          pcm = { pcm, rate, channels -> feedOutgoingPcm(pcm, rate, channels) },
-          config = SourceConfig(
-            url = whepUrl,
-            kind = if (synthetic) SourceKind.DIRECT else SourceKind.WHEP,
-          ),
-        )
         media.setTargetSize(TargetSize(profile.width, profile.height))
         ticker.start()
         Log.i(
@@ -362,22 +608,61 @@ class AcsMeetingSession(
             "source=${this.audioSource} audio=${if (synthetic) "off" else "on"} " +
             "armVirtual=${plan.armVirtual} transportMuted=${plan.transportMuted}",
         )
+        SoftApTrace.stage(
+          "session_join_end",
+          "durationMs" to (SystemClock.elapsedRealtime() - startedAt),
+          "reusedAgent" to reuseAgent,
+          "ingestUrl" to (media.ingestUrl ?: "none"),
+        )
+        if (generation != joinGeneration.get()) {
+          throw IllegalStateException("The meeting was cancelled before it finished joining")
+        }
+        softApReady?.countDown()
       } catch (error: Exception) {
         val message = formatAcsError(error)
         Log.e(TAG, "join failed $message", error)
+        SoftApTrace.failure(
+          "session_join_failed",
+          "durationMs" to (SystemClock.elapsedRealtime() - startedAt),
+          "reason" to message,
+          "ingestUrl" to (media.ingestUrl ?: "none"),
+        )
         // A step after a successful ACS join (e.g. WHEP start) can throw. Record
         // the failure before tearing the call down: lastError makes pushCallState
         // ignore the hang-up's async disconnected callbacks, and emitIdle=false
         // keeps the terminal state as error instead of resetting to idle. Either
         // would otherwise let Mentra Call treat the failed join as a clean end.
         lastError = message
+        softApBindError.compareAndSet(null, error)
         leaveLocked(emitIdle = false)
         emit("error")
+        softApReady?.countDown()
+      }
+    }
+    if (softApReady != null) {
+      if (!softApReady.await(SOFTAP_JOIN_WAIT_MS, TimeUnit.MILLISECONDS)) {
+        // The executor never got far enough to bind the listener. It is still running, so this
+        // failure leaves work in flight that the next join's barrier has to wait out.
+        SoftApTrace.failure(
+          "session_join_bind_timeout",
+          "waitedMs" to (SystemClock.elapsedRealtime() - submittedAt),
+          "timeoutMs" to SOFTAP_JOIN_WAIT_MS,
+        )
+        throw IllegalStateException("SoftAP ingest listener did not bind in ${SOFTAP_JOIN_WAIT_MS}ms")
+      }
+      softApBindError.get()?.let { throw it }
+      if (media.ingestUrl == null) {
+        throw IllegalStateException("SoftAP ingest listener bound but produced no URL")
       }
     }
     return snapshot()
   }
 
+  /**
+   * Point the subscriber at a different WHEP URL. WHEP only: a SoftAP listener has no URL to
+   * update, since the URL is an output of binding, and its recovery is a full rebuild through
+   * [restartVideoSource].
+   */
   fun updateVideoSource(whepUrl: String) {
     executor.execute {
       // The host has a fresher opinion about where the glasses publish; drop
@@ -388,12 +673,28 @@ class AcsMeetingSession(
   }
 
   /**
+   * The URL the glasses must POST their offer to, for a SoftAP call. Null until the listener has
+   * bound, and null for every other transport. The orchestrator reads this after join and sends it
+   * to the glasses in `start_stream`.
+   */
+  fun softApIngestUrl(): String? = media.ingestUrl
+
+  /**
    * Rebuild the WHEP subscription on the current URL even when it looks healthy.
    * The host calls this when the phone changed networks: ICE may not have noticed
    * yet, but the old candidate pair is dead.
    */
   fun restartVideoSource() {
     executor.execute {
+      // A SoftAP source cannot be rebuilt in place: forceRestart() rebinds a new OS-chosen port and
+      // mints a fresh ingestUrl, but the glasses keep POSTing to the old port and nothing re-pushes
+      // the new URL, which permanently strands the call in CONNECTING. Leaving the listener bound on
+      // its stable port instead lets the glasses' own WHIP reconnect recover against the same URL;
+      // a network-level recovery is the orchestrator's job (re-run the SoftapCallTransport sequence).
+      if (currentSourceKind == SourceKind.SOFTAP) {
+        Log.w(TAG, "restartVideoSource ignored for SoftAP; a rebuild would strand the glasses on a dead port")
+        return@execute
+      }
       cancelMediaRestart()
       media.forceRestart()
     }
@@ -416,6 +717,14 @@ class AcsMeetingSession(
    */
   private fun scheduleMediaRestart(reason: String?) {
     if (call == null || phase == "idle" || phase == "disconnected" || phase == "error") return
+    // SoftAP recovery must never rebuild the source from here: forceRestart() rebinds a new port and
+    // ingestUrl the glasses are never told about, so the call would strand in CONNECTING. The
+    // FAILED state is still surfaced to the host (onMediaSourceState emits a snapshot), and the
+    // still-bound listener lets the glasses' own WHIP reconnect recover on the unchanged URL.
+    if (currentSourceKind == SourceKind.SOFTAP) {
+      Log.w(TAG, "SoftAP media source failed ($reason); session-level rebuild suppressed, listener left bound for glasses reconnect")
+      return
+    }
     if (mediaRestartTask?.isDone == false) return
     val attempt = mediaRestartAttempts++
     val delayMs = minOf(MEDIA_RESTART_BASE_MS shl minOf(attempt, 4), MEDIA_RESTART_MAX_MS)
@@ -444,6 +753,9 @@ class AcsMeetingSession(
       return snapshot()
     }
     muted.set(next)
+    // Before the executor hop, not after it. Muting is the one audio operation whose latency the
+    // wearer can hear as a mistake, and the policy queue can be several ACS round trips deep.
+    if (next) uplinkChain?.mute() else uplinkChain?.unmute()
     executor.execute { applyAudioPolicy("set-muted") }
     val snap = snapshot()
     onState(snap)
@@ -461,8 +773,130 @@ class AcsMeetingSession(
   }
 
   fun leave() {
-    executor.execute { leaveLocked() }
+    val submittedAt = SystemClock.elapsedRealtime()
+    // Invalidate before queueing: leaveLocked cannot run until the executor finishes the current
+    // join/hang-up, and without this bump a Cancel sits behind an unbounded ACS Future.
+    joinGeneration.incrementAndGet()
+    // Queued and unwaited, so the only evidence this leave ever ran is the line the task logs
+    // when it starts. A `leave` with no matching begin means the executor never reached it.
+    SoftApTrace.stage("session_leave_queued")
+    executor.execute {
+      traceQueued("session_leave_begin", submittedAt)
+      leaveLocked()
+    }
   }
+
+  /**
+   * Leave, and do not return until the cleanup has actually finished.
+   *
+   * [leave] hands the work to [executor] and returns straight away, so a caller that awaits it and
+   * then starts the next call is racing this one's hang-up, agent disposal, and media teardown
+   * through the same hardware. That race is what turned a quick Stop/Start into a hotspot the
+   * previous call switched off underneath the new one.
+   *
+   * Failures that [leaveLocked] otherwise only logs are captured and rethrown here: reporting a
+   * clean teardown that did not happen is exactly what lets the next call build on leaked state.
+   *
+   * @param timeoutMs how long the cleanup may take before it is reported as stuck
+   * @throws IllegalStateException when the cleanup did not finish in time
+   */
+  fun leaveAndAwait(timeoutMs: Long): Boolean {
+    val done = CountDownLatch(1)
+    val failure = AtomicReference<Exception?>(null)
+    val submittedAt = SystemClock.elapsedRealtime()
+    joinGeneration.incrementAndGet()
+    executor.execute {
+      traceQueued("session_leave_and_await_begin", submittedAt)
+      val startedAt = SystemClock.elapsedRealtime()
+      try {
+        leaveLocked(failures = failure)
+        SoftApTrace.stage(
+          "session_leave_and_await_end",
+          "durationMs" to (SystemClock.elapsedRealtime() - startedAt),
+          // Recorded rather than only logged: this is the one the host rethrows and turns into a
+          // refusal for the next call.
+          "recordedFailure" to (failure.get()?.let { "${it.javaClass.simpleName}: ${it.message ?: ""}" } ?: "none"),
+        )
+      } catch (error: Exception) {
+        SoftApTrace.failure(
+          "session_leave_and_await_failed",
+          "durationMs" to (SystemClock.elapsedRealtime() - startedAt),
+          "reason" to "${error.javaClass.simpleName}: ${error.message ?: ""}",
+        )
+        failure.compareAndSet(null, error)
+      } finally {
+        done.countDown()
+      }
+    }
+    if (!done.await(timeoutMs, TimeUnit.MILLISECONDS)) {
+      // The cleanup is still running. Nothing is abandoned and nothing is safe to restart yet,
+      // which is why this is reported rather than treated as a finished teardown.
+      SoftApTrace.failure("session_leave_and_await_timeout", "timeoutMs" to timeoutMs)
+      throw IllegalStateException("acs_leave_timeout")
+    }
+    failure.get()?.let { throw it }
+    return true
+  }
+
+  /**
+   * End the Teams group call for everyone, then tear this device down.
+   *
+   * Blocking, unlike [leave], because the caller has to know whether the meeting actually died: the
+   * miniapp shows different terminal copy for "ended" and "you left, but the meeting may still be
+   * active", and inventing the first would be a lie the wearer cannot check.
+   *
+   * Local teardown is queued whatever the hang-up did. A refused or failed End must still get the
+   * wearer out of the call — the only thing at stake in the failure is what we claim happened.
+   *
+   * @throws IllegalStateException when there is no call, when the capability is known to be denied,
+   *   or when ACS rejects the hang-up
+   */
+  fun endForEveryone(): Map<String, Any> {
+    val done = CountDownLatch(1)
+    val failure = AtomicReference<Exception?>(null)
+    val submittedAt = SystemClock.elapsedRealtime()
+    executor.execute {
+      traceQueued("session_end_for_everyone_begin", submittedAt)
+      val startedAt = SystemClock.elapsedRealtime()
+      try {
+        val active = call ?: throw IllegalStateException("no_active_call")
+        // Re-read rather than trusting the cached value: capabilities arrive asynchronously and the
+        // last event may predate admission.
+        val capability = readHangUpForEveryone()
+        EndForEveryonePolicy.refusalFor(capability)?.let { throw IllegalStateException(it) }
+        Log.i(TAG, "end for everyone: hangUp(forEveryone=true) allowed=${capability.allowed}")
+        active.hangUp(HangUpOptions().setForEveryone(true)).get()
+        Log.i(TAG, "end for everyone: ACS accepted the hang-up")
+        SoftApTrace.stage(
+          "session_end_for_everyone_end",
+          "durationMs" to (SystemClock.elapsedRealtime() - startedAt),
+        )
+      } catch (error: Exception) {
+        Log.w(TAG, "end for everyone failed", error)
+        SoftApTrace.failure(
+          "session_end_for_everyone_failed",
+          "durationMs" to (SystemClock.elapsedRealtime() - startedAt),
+          "reason" to "${error.javaClass.simpleName}: ${error.message ?: ""}",
+        )
+        failure.set(error)
+      } finally {
+        done.countDown()
+      }
+    }
+    val settled = done.await(END_FOR_EVERYONE_WAIT_MS, TimeUnit.MILLISECONDS)
+    if (!settled) {
+      SoftApTrace.failure("session_end_for_everyone_timeout", "timeoutMs" to END_FOR_EVERYONE_WAIT_MS)
+    }
+    // Queued unconditionally, and after the await so it cannot dispose the agent out from under the
+    // hang-up. A timed-out End still leaves this device.
+    executor.execute { leaveLocked() }
+    if (!settled) throw IllegalStateException("end_for_everyone_timeout")
+    failure.get()?.let { throw it }
+    return snapshot()
+  }
+
+  /** Latest capability read, for a host that wants to enable or hide End before the user taps it. */
+  fun hangUpForEveryoneCapability(): CapabilityStatus = hangUpForEveryone
 
   fun getState(): Map<String, Any> = snapshot()
 
@@ -508,17 +942,54 @@ class AcsMeetingSession(
     if (!outgoingReady.get()) return
     // Resample here, but do not touch ACS: sending straight from this thread
     // hands ACS the glasses' audio clock in bursts. The pacer decides when.
-    val frames = pcmBridge?.ingest(pcm, sampleRate, channels) ?: return
-    for (frame in frames) pacer.push(frame)
+    uplinkChain?.ingest(pcm, sampleRate, channels)
+  }
+
+  /**
+   * Accept one buffer of microphone PCM from the host.
+   *
+   * The BLE LC3 path: the glasses encode their microphone, the Bluetooth SDK decodes it on the
+   * phone, and the host forwards it here rather than the wearer's voice riding the WHIP track. It
+   * is deliberately a hard drop rather than a buffer when there is no call to feed — a frame kept
+   * for a session that is going away is a frame played into the *next* call.
+   *
+   * @return true when the buffer entered the uplink
+   */
+  fun pushOutgoingPcm(base64: String, sampleRate: Int, channels: Int): Boolean {
+    if (!externalPcmEnabled.get()) return false
+    if (phase == "idle" || phase == "disconnected" || phase == "error") return false
+    val pcm = try {
+      Base64.decode(base64, Base64.DEFAULT)
+    } catch (error: IllegalArgumentException) {
+      Log.w(TAG, "pushOutgoingPcm got undecodable base64 len=${base64.length}", error)
+      return false
+    }
+    if (pcm.isEmpty()) return false
+    feedOutgoingPcm(pcm, sampleRate, channels)
+    return true
   }
 
   @Synchronized
   private fun startUplink(stream: RawOutgoingAudioStream) {
     if (uplinkSender != null) return
     pacer.reset()
-    val sender = UplinkSender(pacer, AcsUplinkTransport(stream))
+    val sender = UplinkSender(
+      pacer,
+      AcsUplinkTransport(stream),
+      muted = { muted.get() },
+      pcmMeanAbs = { pcmBridge?.lastMeanAbs ?: -1 },
+    )
     uplinkSender = sender
     sender.start()
+    // The A/V configuration this call ran with, stated once at the top so a receiver recording can
+    // be attributed to it. The measured ingest offset is a separate `AVSYNC clap audioLeadMs`
+    // line. Never print the two as one number: a delay that is configured is not an offset that
+    // was observed, and conflating them is how a calibration gets believed.
+    Log.i(
+      TAG,
+      "P8 audio-up config configuredDelayMs=$configuredAudioDelayMs " +
+        "audioTimestamps=${AcsInvestigation.acsAudioTimestamps}",
+    )
   }
 
   @Synchronized
@@ -537,16 +1008,24 @@ class AcsMeetingSession(
       CallState.CONNECTING -> "connecting"
       CallState.IN_LOBBY -> "lobby"
       CallState.CONNECTED -> "connected"
-      CallState.DISCONNECTING -> "disconnected"
+      CallState.DISCONNECTING -> phase
       CallState.DISCONNECTED -> "disconnected"
       else -> phase
     }
     val end = describeEndReason(call)
+    // A failed connection is recoverable; do not tell the wearer the remote meeting ended.
+    // Wait for DISCONNECTED because DISCONNECTING may not yet carry the final reason.
+    if (state == CallState.DISCONNECTED && (end["code"] as? Number)?.toInt()?.let { it != 0 } == true) {
+      phase = "error"
+      lastError = "ACS_CONNECTION_LOST: The Teams connection was lost. Check mobile data and rejoin. " +
+        "(code=${end["code"]}, subcode=${end["subcode"]})"
+    }
     Log.i(TAG, "ACS call state=$state phase=$phase previous=$previous end=$end")
     if (phase == "connected" && previous != "connected") {
       call?.let {
         attachMediaStats(it)
         attachDiagnostics(it)
+        attachCapabilities(it)
       }
       applyAudioPolicy("call-connected")
     } else {
@@ -562,6 +1041,7 @@ class AcsMeetingSession(
   private fun attachMediaStats(joined: Call) {
     detachMediaStats()
     mediaStatsReports.set(0)
+    lastWireSizeKey = null
     try {
       val feature = joined.feature(Features.MEDIA_STATISTICS)
       val listener = MediaStatisticsReportReceivedListener { event ->
@@ -581,11 +1061,13 @@ class AcsMeetingSession(
         stats.wireWidth = video?.frameWidth
         stats.wireHeight = video?.frameHeight
         stats.wireBitrateBps = video?.bitrateInBps?.toLong()
+        stats.wirePacketCount = video?.packetCount
         val codec = video?.codecName.orEmpty()
         if (codec.isNotBlank() && codec != stats.codecName) {
           Log.i(TAG, "P6 wire codec=$codec ${video?.frameWidth}x${video?.frameHeight} fps=${video?.frameRate}")
         }
         stats.codecName = codec
+        reportWireAdaptation(video?.frameWidth, video?.frameHeight, video?.frameRate)
         val width = video?.frameWidth
         val height = video?.frameHeight
         if (width != null && height != null && width > 0 && height > 0) {
@@ -602,6 +1084,35 @@ class AcsMeetingSession(
       Log.i(TAG, "P6 wire hop attached")
     } catch (error: Exception) {
       Log.w(TAG, "MEDIA_STATISTICS attach failed", error)
+    }
+  }
+
+  /**
+   * Logs a change in what ACS is actually putting on the wire versus the profile we asked for.
+   *
+   * ACS runs its own rate controller and will trade resolution for frames inside the budget it was
+   * given, so the negotiated 1280x720 is a ceiling, not a promise. Without this the ladder prints
+   * the adapted size once per second and a permanent downscale reads exactly like a healthy call —
+   * the number is right there and nothing ever calls it out. Logged on transition only, because at
+   * 1 Hz a warning per report is noise nobody reads.
+   */
+  private fun reportWireAdaptation(width: Int?, height: Int?, fps: Float?) {
+    if (width == null || height == null || width <= 0 || height <= 0) return
+    val key = "${width}x$height"
+    if (key == lastWireSizeKey) return
+    lastWireSizeKey = key
+    val askedPixels = profile.width.toLong() * profile.height
+    val gotPixels = width.toLong() * height
+    if (gotPixels < askedPixels) {
+      val percent = (gotPixels * 100 / askedPixels).toInt()
+      Log.w(
+        TAG,
+        "P6 wire ADAPTED_DOWN acs=$key (${percent}% of ${profile.width}x${profile.height}) " +
+          "fps=${fps ?: "na"} codec=${stats.codecName.ifBlank { "na" }} " +
+          "budget=${profile.maxBitrateBps} bitsPerFrame=${profile.bitsPerFrame()}",
+      )
+    } else {
+      Log.i(TAG, "P6 wire size=$key at or above profile ${profile.width}x${profile.height}")
     }
   }
 
@@ -635,7 +1146,10 @@ class AcsMeetingSession(
       val feature = joined.feature(Features.LOCAL_USER_DIAGNOSTICS) as LocalUserDiagnosticsCallFeature
       val network = feature.networkDiagnostics
       val onSend = DiagnosticQualityChangedListener { args ->
-        logDiagnostic("networkSendQuality", args.value?.name ?: "null")
+        val quality = args.value?.name ?: "null"
+        // Latched so `P9 quality` can reprint it every tick; this fires on change only.
+        stats.sendQuality = quality
+        logDiagnostic("networkSendQuality", quality)
       }
       val onReconnect = DiagnosticQualityChangedListener { args ->
         logDiagnostic("networkReconnectionQuality", args.value?.name ?: "null")
@@ -663,6 +1177,68 @@ class AcsMeetingSession(
 
   private fun logDiagnostic(name: String, value: String) {
     Log.i(TAG, "P7 diag $name=$value")
+  }
+
+  /**
+   * Subscribe to participant capabilities so End can be offered honestly.
+   *
+   * The capability that matters is `HANG_UP_FOR_EVERYONE`. It can flip mid-call — a presenter role
+   * granted or removed — so the listener stays attached rather than reading once at connect.
+   */
+  private fun attachCapabilities(joined: Call) {
+    detachCapabilities()
+    try {
+      val feature = joined.feature(Features.CAPABILITIES)
+      val listener = CapabilitiesChangedListener { event ->
+        val changed = event.changedCapabilities.orEmpty()
+          .any { it.type == ParticipantCapabilityType.HANG_UP_FOR_EVERYONE }
+        if (!changed) return@CapabilitiesChangedListener
+        val next = readHangUpForEveryone(feature)
+        if (next == hangUpForEveryone) return@CapabilitiesChangedListener
+        hangUpForEveryone = next
+        Log.i(TAG, "capability hangUpForEveryone allowed=${next.allowed} reason=${next.reason} (changed)")
+        onState(snapshot())
+      }
+      feature.addOnCapabilitiesChangedListener(listener)
+      capabilitiesFeature = feature
+      capabilitiesListener = listener
+      hangUpForEveryone = readHangUpForEveryone(feature)
+      Log.i(
+        TAG,
+        "capability hangUpForEveryone allowed=${hangUpForEveryone.allowed} reason=${hangUpForEveryone.reason}",
+      )
+    } catch (error: Exception) {
+      // Unknown, not denied: an End is still attempted and ACS gets to answer.
+      Log.w(TAG, "CAPABILITIES attach failed", error)
+      hangUpForEveryone = CapabilityStatus(reason = "capabilities_unavailable")
+    }
+  }
+
+  private fun readHangUpForEveryone(
+    feature: CapabilitiesCallFeature? = capabilitiesFeature,
+  ): CapabilityStatus {
+    val current = feature ?: return CapabilityStatus(reason = "capabilities_unavailable")
+    return try {
+      val capability = current.capabilities.orEmpty()
+        .firstOrNull { it.type == ParticipantCapabilityType.HANG_UP_FOR_EVERYONE }
+        ?: return CapabilityStatus(reason = "not_reported")
+      CapabilityStatus(capability.isAllowed, capability.reason?.name?.lowercase())
+    } catch (error: Exception) {
+      Log.w(TAG, "capabilities read failed", error)
+      CapabilityStatus(reason = "capabilities_unavailable")
+    }
+  }
+
+  private fun detachCapabilities() {
+    val feature = capabilitiesFeature
+    val listener = capabilitiesListener
+    capabilitiesFeature = null
+    capabilitiesListener = null
+    if (feature == null || listener == null) return
+    try {
+      feature.removeOnCapabilitiesChangedListener(listener)
+    } catch (_: Exception) {
+    }
   }
 
   private fun detachDiagnostics() {
@@ -694,51 +1270,275 @@ class AcsMeetingSession(
     }
   }
 
-  private fun leaveLocked(emitIdle: Boolean = true) {
+  /**
+   * Sign in to ACS with a deadline, and make sure nothing survives a missed one.
+   *
+   * `createCallAgent` returns a future with no timeout of its own, and it is the first thing after
+   * the hotspot join that needs the internet. Unbounded, a cellular route that had not validated
+   * yet turned into a 30 s stall followed by the join step's own timeout — one opaque failure
+   * covering a specific, nameable cause.
+   *
+   * Do not cancel that future. Cancel marks it done without a value, so the sweeper can no longer
+   * recover the native agent ACS still creates. The next join then dies with "CallAgent associated
+   * with this identity already exists".
+   */
+  private fun obtainCallAgent(
+    client: CallClient,
+    credential: CommunicationTokenCredential,
+    options: CallAgentOptions,
+    generation: Int,
+    waitMs: Long = CALL_AGENT_WAIT_MS,
+  ): CallAgent {
+    disposeAbandonedAgent(waitMs = ABANDONED_AGENT_REJOIN_WAIT_MS)
+    return try {
+      awaitCallAgent(client, credential, options, generation, waitMs)
+    } catch (error: Exception) {
+      if (!AbandonedCallAgent.isExistingAgentError(error)) throw error
+      Log.w(TAG, "createCallAgent hit leftover identity; disposing abandoned agent and retrying")
+      disposeAbandonedAgent(waitMs = ABANDONED_AGENT_REJOIN_WAIT_MS)
+      awaitCallAgent(client, credential, options, generation, waitMs)
+    }
+  }
+
+  private fun awaitCallAgent(
+    client: CallClient,
+    credential: CommunicationTokenCredential,
+    options: CallAgentOptions,
+    generation: Int,
+    waitMs: Long,
+  ): CallAgent {
+    val startedAt = SystemClock.elapsedRealtime()
+    SoftApTrace.stage("session_call_agent_wait", "waitMs" to waitMs, "generation" to generation)
+    val pending = client.createCallAgent(context, credential, options)
+    val agent = try {
+      pending.get(waitMs, TimeUnit.MILLISECONDS)
+    } catch (timeout: TimeoutException) {
+      abandonedAgent = pending
+      sweepLateAgent(pending, 0)
+      // The sign-in is still running and still owns the identity. Named here because the next
+      // join's "identity already exists" failure is otherwise the first sign of this one.
+      SoftApTrace.failure(
+        "session_call_agent_abandoned",
+        "waitedMs" to (SystemClock.elapsedRealtime() - startedAt),
+        "waitMs" to waitMs,
+      )
+      throw IllegalStateException(
+        "ACS_AGENT_TIMEOUT: Teams did not finish signing this phone in within " +
+          "${waitMs / 1000}s. This step needs the internet, so it usually means mobile " +
+          "data had not taken over yet after joining the glasses hotspot.",
+        timeout,
+      )
+    }
+    // Leave now bumps generation off this executor, so a Cancel during `createCallAgent` can
+    // land while we are blocked above. That is the case this check exists for.
+    if (generation != joinGeneration.get()) {
+      runCatching { agent.dispose() }
+      SoftApTrace.failure(
+        "session_call_agent_stale",
+        "waitedMs" to (SystemClock.elapsedRealtime() - startedAt),
+        "generation" to generation,
+        "current" to joinGeneration.get(),
+      )
+      throw IllegalStateException("ACS_AGENT_STALE: the call was torn down before Teams signed in")
+    }
+    SoftApTrace.stage("session_call_agent_ready", "waitedMs" to (SystemClock.elapsedRealtime() - startedAt))
+    return agent
+  }
+
+  /**
+   * Dispose an agent that turns up after its wait was abandoned.
+   *
+   * Polls rather than chaining a completion callback because the SDK hands back a bare [Future].
+   * Gives up after a bounded number of sweeps: by then the process has either got the agent or the
+   * future is never completing, and an endless timer is its own leak.
+   */
+  private fun sweepLateAgent(pending: Future<CallAgent>, sweep: Int) {
+    if (sweep >= LATE_AGENT_SWEEPS) {
+      Log.w(TAG, "abandoned call agent never completed; stopping sweep")
+      // Giving up on the sweep is giving up on disposing that agent. It is a bounded leak by
+      // design, but it is a leak, and the next sign-in is where it will be felt.
+      SoftApTrace.failure("session_late_agent_abandoned", "sweeps" to sweep)
+      return
+    }
+    executor.schedule({
+      if (abandonedAgent !== pending) return@schedule
+      val late = AbandonedCallAgent.takeIfDone(pending)
+      if (late == null) {
+        if (!pending.isDone) sweepLateAgent(pending, sweep + 1)
+        return@schedule
+      }
+      abandonedAgent = null
+      Log.w(TAG, "disposing call agent that arrived after its join was abandoned")
+      SoftApTrace.stage("session_late_agent_disposed", "sweep" to sweep)
+      runCatching { late.dispose() }
+    }, LATE_AGENT_SWEEP_MS, TimeUnit.MILLISECONDS)
+  }
+
+  /**
+   * Best-effort dispose of a leftover agent before the next `createCallAgent`.
+   *
+   * [waitMs] is for rejoin: the previous sign-in may still be finishing, and that is the only
+   * handle that can free the identity ACS refuses to share.
+   */
+  private fun disposeAbandonedAgent(waitMs: Long) {
+    val pending = abandonedAgent ?: return
+    val startedAt = SystemClock.elapsedRealtime()
+    val late = AbandonedCallAgent.take(pending, waitMs)
+    if (late != null) {
+      abandonedAgent = null
+      Log.w(TAG, "disposing abandoned call agent before the next join")
+      SoftApTrace.stage(
+        "session_abandoned_agent_disposed",
+        "waitedMs" to (SystemClock.elapsedRealtime() - startedAt),
+      )
+      runCatching { late.dispose() }
+      return
+    }
+    // Still not finished. The identity stays taken, so the `createCallAgent` about to run may be
+    // refused — which is the retry [obtainCallAgent] exists for, not an unexplained join failure.
+    SoftApTrace.failure(
+      "session_abandoned_agent_unclaimed",
+      "waitedMs" to (SystemClock.elapsedRealtime() - startedAt),
+      "done" to pending.isDone,
+    )
+    if (pending.isDone) abandonedAgent = null
+  }
+
+  /**
+   * @param failures when present, the first cleanup exception is recorded here instead of only
+   *   being logged, so [leaveAndAwait] can tell its caller the teardown did not really succeed
+   */
+  private fun leaveLocked(
+    emitIdle: Boolean = true,
+    keepAgent: Boolean = false,
+    failures: AtomicReference<Exception?>? = null,
+  ) {
+    // Invalidate first: a bounded ACS operation still in flight has to find a stale generation
+    // rather than attach an agent to a session that is being torn down.
+    joinGeneration.incrementAndGet()
+    val startedAt = SystemClock.elapsedRealtime()
+    SoftApTrace.stage(
+      "session_cleanup_begin",
+      "emitIdle" to emitIdle,
+      "keepAgent" to keepAgent,
+      "hasCall" to (call != null),
+      "hasAgent" to (callAgent != null),
+      "recordsFailures" to (failures != null),
+    )
+    // A dozen releases share one `try`, so the catch below cannot name the one that threw — and
+    // the first throw skips every release after it. The breadcrumb is what turns "leave cleanup
+    // failed" into a location; it is coarse on purpose, one name per group of related releases.
+    var releasing = "telemetry"
     try {
       ticker.stop()
       detachDiagnostics()
       detachMediaStats()
+      detachCapabilities()
       roster.detach()
+      releasing = "audio"
       phoneMic.setEnabled(false)
       stopUplink()
       incomingPump.reset()
       incomingProbe.reset()
       applier.reset()
       scheduler.cancelPending()
+      // Drop buffered voice before the dump: whatever is still in the chain belongs to a call that
+      // is over, and the next call builds its own chain rather than inheriting this one.
+      uplinkChain?.reset()
+      uplinkChain = null
+      externalPcmEnabled.set(false)
       pcmBridge?.finishDump()
       // Detach before stop so the teardown's own IDLE transition does not emit a
       // snapshot (or schedule a rebuild) for a call that is going away.
+      releasing = "media"
       cancelMediaRestart()
       media.setStateListener(null)
       mediaSource = SourceState.IDLE
+      currentSourceKind = SourceKind.WHEP
       media.stop()
       frameSender.detach()
+      releasing = "none"
     } catch (error: Exception) {
       Log.w(TAG, "leave cleanup failed", error)
+      // Whether this was recorded decides whether the host refuses the next call or never hears
+      // about it, so the trace says which of the two happened.
+      SoftApTrace.failure(
+        "session_cleanup_failed",
+        "releasing" to releasing,
+        "reason" to "${error.javaClass.simpleName}: ${error.message ?: ""}",
+        "recorded" to (failures != null),
+      )
+      failures?.compareAndSet(null, error)
     }
     // Hang up and dispose must be independent: a failed hang-up must not skip
     // dispose, or the ACS agent leaks and the guest stays in the Teams roster.
-    try {
-      call?.hangUp()?.get()
-    } catch (error: Exception) {
-      Log.w(TAG, "leave hangUp failed", error)
+    if (!keepAgent) {
+      val hangUpStartedAt = SystemClock.elapsedRealtime()
+      try {
+        val pending = call?.hangUp()
+        if (pending != null) {
+          // Bounded on purpose: an unbounded `get()` on this Future is what parked Leave behind
+          // the previous call on the single session executor, so Cancel never came back.
+          pending.get(HANGUP_WAIT_MS, TimeUnit.MILLISECONDS)
+        }
+        SoftApTrace.stage(
+          "session_hangup",
+          "hadCall" to (call != null),
+          "durationMs" to (SystemClock.elapsedRealtime() - hangUpStartedAt),
+        )
+      } catch (timeout: TimeoutException) {
+        Log.w(TAG, "leave hangUp timed out after ${HANGUP_WAIT_MS}ms")
+        SoftApTrace.failure(
+          "session_hangup_timeout",
+          "durationMs" to (SystemClock.elapsedRealtime() - hangUpStartedAt),
+          "timeoutMs" to HANGUP_WAIT_MS,
+          "recorded" to (failures != null),
+        )
+        failures?.compareAndSet(null, IllegalStateException("acs_hangup_timeout"))
+      } catch (error: Exception) {
+        Log.w(TAG, "leave hangUp failed", error)
+        SoftApTrace.failure(
+          "session_hangup_failed",
+          "durationMs" to (SystemClock.elapsedRealtime() - hangUpStartedAt),
+          "reason" to "${error.javaClass.simpleName}: ${error.message ?: ""}",
+          "recorded" to (failures != null),
+        )
+        failures?.compareAndSet(null, error)
+      }
+      val disposeStartedAt = SystemClock.elapsedRealtime()
+      try {
+        callAgent?.dispose()
+        SoftApTrace.stage(
+          "session_agent_disposed",
+          "hadAgent" to (callAgent != null),
+          "durationMs" to (SystemClock.elapsedRealtime() - disposeStartedAt),
+        )
+      } catch (error: Exception) {
+        Log.w(TAG, "leave dispose failed", error)
+        // A leaked agent keeps the identity ACS refuses to share, so the next sign-in fails with
+        // "CallAgent associated with this identity already exists" rather than here.
+        SoftApTrace.failure(
+          "session_agent_dispose_failed",
+          "durationMs" to (SystemClock.elapsedRealtime() - disposeStartedAt),
+          "reason" to "${error.javaClass.simpleName}: ${error.message ?: ""}",
+          "recorded" to (failures != null),
+        )
+        failures?.compareAndSet(null, error)
+      }
+      disposeAbandonedAgent(waitMs = 0)
+      callClient = null
+      call = null
+      callAgent = null
+      agentPrepared = false
     }
-    try {
-      callAgent?.dispose()
-    } catch (error: Exception) {
-      Log.w(TAG, "leave dispose failed", error)
-    }
-    callClient = null
     media.stop()
-    call = null
-    callAgent = null
     audioOut = null
     localOut = null
     audioIn = null
     videoOut = null
     outgoingReady.set(false)
     muted.set(false)
+    hangUpForEveryone = CapabilityStatus()
     audioSource = "glasses"
     lastSafety = AudioSafety.DEGRADED
     meetingUrl = null
@@ -749,6 +1549,12 @@ class AcsMeetingSession(
       lastError = null
       emit("idle")
     }
+    SoftApTrace.stage(
+      "session_cleanup_end",
+      "durationMs" to (SystemClock.elapsedRealtime() - startedAt),
+      "keptAgent" to keepAgent,
+      "recordedFailure" to (failures?.get()?.let { "${it.javaClass.simpleName}: ${it.message ?: ""}" } ?: "none"),
+    )
   }
 
   private inner class SessionAudioController : AudioStreamController {
@@ -765,7 +1571,9 @@ class AcsMeetingSession(
     override fun isPhysicallyMuted(): Boolean? = call?.isOutgoingAudioMuted
 
     override fun setGlassesPcmEnabled(enabled: Boolean) {
-      media.setPcmDeliveryEnabled(enabled)
+      val routing = GlassesPcmRouting.decide(softap = currentSourceKind == SourceKind.SOFTAP, enabled = enabled)
+      externalPcmEnabled.set(routing.externalPcm)
+      media.setPcmDeliveryEnabled(routing.relayPcm)
     }
 
     override fun setPhonePcmEnabled(enabled: Boolean) {
@@ -796,6 +1604,51 @@ class AcsMeetingSession(
     private const val ROSTER_COALESCE_MS = 150L
     private const val MEDIA_RESTART_BASE_MS = 1_000L
     private const val MEDIA_RESTART_MAX_MS = 10_000L
+    /** SoftAP join() blocks until the WHIP listener is bound and ACS join is queued. */
+    private const val SOFTAP_JOIN_WAIT_MS = 45_000L
+
+    /**
+     * How long End waits for ACS to accept the hang-up before reporting it unconfirmed. Local
+     * teardown runs either way; this only bounds how long the wearer stares at a confirm sheet.
+     */
+    /**
+     * How long Leave waits for ACS `hangUp()` before disposing the agent anyway.
+     *
+     * This Future has no timeout of its own. On the single session executor an unbounded `get()`
+     * is the hang that made Cancel sit on "Leaving the meeting" while the next join queued behind
+     * the same stuck hang-up.
+     */
+    private const val HANGUP_WAIT_MS = 8_000L
+
+    private const val END_FOR_EVERYONE_WAIT_MS = 15_000L
+
+    /**
+     * How long to wait for ACS to hand back a call agent.
+     *
+     * Well inside [SOFTAP_JOIN_WAIT_MS] on purpose: this step needs the internet, and the hotspot
+     * join just changed which network provides it. On device it stalled 30 s here and then blew the
+     * whole join budget, so the wearer got one useless timeout instead of a nameable failure.
+     */
+    private const val CALL_AGENT_WAIT_MS = 20_000L
+
+    /**
+     * How long [prepareAgent] waits, which is longer than [CALL_AGENT_WAIT_MS] and does not need to
+     * fit any other budget: nothing is joined or held while it runs, so overrunning costs a slower
+     * join rather than a hotspot the wearer then has to leave.
+     *
+     * Sized off a cold sign-in measured at ~35 s on a 544 ms-RTT AP.
+     */
+    private const val PREPARE_AGENT_WAIT_MS = 60_000L
+
+    /** How long to keep sweeping for an agent that arrives after its wait was abandoned. */
+    private const val LATE_AGENT_SWEEP_MS = 5_000L
+    private const val LATE_AGENT_SWEEPS = 12
+    /**
+     * How long a rejoin waits for the abandoned sign-in to finish so we can dispose it. Shorter
+     * than [CALL_AGENT_WAIT_MS]: the leftover agent is usually already done, and blocking the
+     * wearer again for a full sign-in would hide a stuck Future.
+     */
+    private const val ABANDONED_AGENT_REJOIN_WAIT_MS = 8_000L
 
     fun sampleRateHz(rate: AudioStreamSampleRate?): Int? = when (rate) {
       AudioStreamSampleRate.HZ_16000 -> 16000

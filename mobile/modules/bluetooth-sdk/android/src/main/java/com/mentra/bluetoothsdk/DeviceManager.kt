@@ -28,6 +28,7 @@ import com.mentra.bluetoothsdk.sgcs.Simulated
 import com.mentra.bluetoothsdk.utils.ControllerTypes
 import com.mentra.bluetoothsdk.utils.DeviceTypes
 import com.mentra.bluetoothsdk.utils.MicMap
+import com.mentra.bluetoothsdk.utils.MicSourcePin
 import com.mentra.bluetoothsdk.utils.MicTypes
 import com.mentra.bluetoothsdk.utils.PhoneAudioMonitor
 import com.mentra.lc3Lib.Lc3Cpp
@@ -850,6 +851,9 @@ class DeviceManager {
             }
         }
         if (pcmData != null && pcmData.isNotEmpty()) {
+            // #region agent log — per-second RX window: LC3 bytes in, fingerprint, decoded PCM level (H-E)
+            micDbgLc3Window(rawLC3Data, sequenceNumber, pcmData)
+            // #endregion
             // Re-encode to canonical LC3 via handlePcm (outside lock to avoid deadlock)
             recordMicPcmProduced()
             handlePcm(pcmData)
@@ -858,6 +862,72 @@ class DeviceManager {
             recordMicDecodeFailure()
         }
     }
+
+    // #region agent log — glasses LC3 RX diagnostics (debug session 828181)
+    private var micDbgWindowStart = 0L
+    private var micDbgPkts = 0
+    private var micDbgLc3Bytes = 0L
+    private var micDbgPcmBytes = 0L
+    private var micDbgSumAbs = 0L
+    private var micDbgSamples = 0L
+    private var micDbgPeak = 0
+    private var micDbgDcSum = 0L
+    private var micDbgDistinctFrames = HashSet<Int>()
+    private var micDbgFirstSeq = -1
+    private var micDbgLastSeq = -1
+    private var micDbgSeqGaps = 0
+
+    private fun micDbgLc3Window(lc3: ByteArray, seq: Int?, pcm: ByteArray) {
+        val now = System.currentTimeMillis()
+        if (micDbgWindowStart == 0L) micDbgWindowStart = now
+        micDbgPkts++
+        micDbgLc3Bytes += lc3.size
+        micDbgPcmBytes += pcm.size
+        var i = 0
+        while (i + 1 < pcm.size) {
+            val v = ((pcm[i + 1].toInt() shl 8) or (pcm[i].toInt() and 0xff)).toShort().toInt()
+            val a = if (v < 0) -v else v
+            micDbgSumAbs += a
+            micDbgDcSum += v
+            if (a > micDbgPeak) micDbgPeak = a
+            micDbgSamples++
+            i += 2
+        }
+        var off = 0
+        while (off + 40 <= lc3.size) {
+            var h = 17
+            for (k in off until off + 40) h = h * 31 + lc3[k]
+            micDbgDistinctFrames.add(h)
+            off += 40
+        }
+        if (seq != null) {
+            if (micDbgFirstSeq < 0) micDbgFirstSeq = seq
+            if (micDbgLastSeq >= 0 && ((micDbgLastSeq + 1) and 0xff) != seq) micDbgSeqGaps++
+            micDbgLastSeq = seq
+        }
+        if (now - micDbgWindowStart >= 1000) {
+            val meanAbs = if (micDbgSamples > 0) micDbgSumAbs / micDbgSamples else 0
+            val dc = if (micDbgSamples > 0) micDbgDcSum / micDbgSamples else 0
+            val head = lc3.take(8).joinToString("") { String.format("%02x", it.toInt() and 0xff) }
+            Bridge.log(
+                "MICDBG-RX pkts=$micDbgPkts lc3B=$micDbgLc3Bytes pcmB=$micDbgPcmBytes samples=$micDbgSamples " +
+                    "meanAbs=$meanAbs peak=$micDbgPeak dc=$dc distinctLc3Frames=${micDbgDistinctFrames.size} " +
+                    "seq=$micDbgFirstSeq..$micDbgLastSeq gaps=$micDbgSeqGaps frameSizeArg=40 lastLen=${lc3.size} head=$head"
+            )
+            micDbgWindowStart = now
+            micDbgPkts = 0
+            micDbgLc3Bytes = 0
+            micDbgPcmBytes = 0
+            micDbgSumAbs = 0
+            micDbgSamples = 0
+            micDbgPeak = 0
+            micDbgDcSum = 0
+            micDbgDistinctFrames = HashSet()
+            micDbgFirstSeq = -1
+            micDbgSeqGaps = 0
+        }
+    }
+    // #endregion
 
     fun handlePcm(pcmData: ByteArray) {
         // Audio always flows. The previous phone-side Silero VAD gate was a
@@ -909,11 +979,13 @@ class DeviceManager {
 
         // allow the sgc to make changes to the micRanking:
         micRanking = sgc?.sortMicRanking(micRanking) ?: micRanking
-        Bridge.log("MAN: updateMicState() micRanking: $micRanking")
+        val pin = micSourcePin
+        val ranking: List<String> = MicSourcePin.selectionOrder(micRanking, pin)
+        Bridge.log("MAN: updateMicState() micRanking: $micRanking pin: $pin")
 
         if (micEnabled) {
 
-            for (micMode in micRanking) {
+            for (micMode in ranking) {
                 if (micMode == MicTypes.PHONE_INTERNAL ||
                     micMode == MicTypes.BLUETOOTH_CLASSIC ||
                     micMode == MicTypes.BLUETOOTH
@@ -961,9 +1033,55 @@ class DeviceManager {
 
         if (micUsed == "" && micEnabled) {
             Bridge.log("MAN: No available mic found!")
+            if (pin == null) return
+            // A pin taken while another microphone was already recording must still close it:
+            // leaving it open would keep feeding PCM that the pinned consumer will reject, with
+            // the phone's indicator lit for audio nobody uses.
+            stopMicsExcept(micUsed)
+            reportPinnedSourceUnavailable(pin)
             return
         }
 
+        stopMicsExcept(micUsed)
+    }
+
+    /**
+     * Call-scoped microphone source lock, or null for the normal ranking.
+     *
+     * Only [MicTypes.GLASSES_CUSTOM] is supported today: it exists so an ACS call can promise that
+     * the wearer's own microphone — and nothing else — is what reaches the far end.
+     */
+    @Volatile private var micSourcePin: String? = null
+
+    /**
+     * Restrict microphone selection to one source for the duration of a call, or release it.
+     *
+     * Releasing re-runs selection so every other consumer (cloud LC3, miniapp `audio_chunk`,
+     * on-device STT) gets the source its own preference asks for back. A `preferred_mic` change
+     * made while the pin is held is stored but not applied until this releases.
+     */
+    fun setMicSourcePin(source: String?) {
+        val normalized = MicSourcePin.normalize(source)
+        if (micSourcePin == normalized) return
+        micSourcePin = normalized
+        Bridge.log("MAN: setMicSourcePin($normalized)")
+        updateMicState()
+    }
+
+    /** The microphone the SDK is currently recording from, for consumers that must verify it. */
+    fun activeMicSource(): String = currentMic
+
+    /**
+     * Report a pinned source that cannot be opened. Emitted rather than silently fixed, because the
+     * fix — opening a different microphone — is the thing the pin exists to forbid.
+     */
+    private fun reportPinnedSourceUnavailable(pin: String) {
+        Bridge.log("MAN: pinned mic source '$pin' is unavailable; no fallback will be started")
+        val health = synchronized(micHealthLock) { micHealthSnapshotLocked() }
+        Bridge.sendMicHealth(health, "pinned-source-unavailable")
+    }
+
+    private fun stopMicsExcept(micUsed: String) {
         // go through and disable all mics after the first used one:
         val allMics = micRanking
         // add any missing mics to the list:

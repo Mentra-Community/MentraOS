@@ -137,6 +137,10 @@ class Bridge {
             "channels": micChannels,
             "encoding": "pcm_s16le",
             "voiceActivityDetectionEnabled": voiceActivityDetectionEnabled,
+            // Stamped per frame so a consumer that asked for a specific microphone can verify it
+            // rather than assume it. Read now, not captured: the point is which microphone is
+            // selected for this buffer. Empty when the SDK has not selected one.
+            "source": DeviceStore.shared.get("bluetooth", "currentMic") as? String ?? "",
         ]
     }
 

@@ -20,12 +20,9 @@ mock.module("../DisplayProcessor", () => ({
   },
 }))
 
-mock.module("@mentra/bluetooth-sdk/internal", () => ({
-  __esModule: true,
-  default: {
-    displayEvent: displayEventMock,
-  },
-}))
+import {bluetoothSdk} from "./bluetoothSdkTestMock"
+
+bluetoothSdk.displayEvent = displayEventMock
 
 // The store ports (SceneRenderer reads settings/glasses; attachToRuntime
 // subscribes to the glasses store) pull native modules bun can't parse —
@@ -93,6 +90,7 @@ describe("LocalDisplayManager", () => {
   }
 
   beforeEach(() => {
+    bluetoothSdk.displayEvent = displayEventMock
     jest.useFakeTimers()
     displayEventMock.mockClear()
     now = 1_000_000

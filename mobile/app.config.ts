@@ -126,6 +126,8 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
         "ACCESS_NETWORK_STATE",
         "CHANGE_WIFI_STATE",
         "CHANGE_NETWORK_STATE",
+        // Local-network access is implicit through INTERNET while targeting SDK 36.
+        // Declare and request ACCESS_LOCAL_NETWORK when moving to target SDK 37+.
       ],
       // The Google Navigation SDK manifest merges in ACCESS_BACKGROUND_LOCATION,
       // but navigation runs in a location foreground service and works with
