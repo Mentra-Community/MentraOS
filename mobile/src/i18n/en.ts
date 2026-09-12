@@ -502,6 +502,8 @@ const en = {
     errorFirmwareVerifyFailed: "Firmware verification failed — please try again or contact support",
     errorApkVerifyFailed: "Update verification failed — please try again or contact support",
     errorInstallFailed: "Install failed — please try again",
+    errorApkRestartGuardNotPersisted:
+      "Your glasses could not save the update before restarting. Restart your glasses and try again.",
     errorDowngradeHandoffRefused:
       "Your glasses could not start the version change. Restart your glasses and try again.",
     errorDowngradeHandoffFailed:

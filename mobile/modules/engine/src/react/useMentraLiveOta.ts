@@ -61,13 +61,14 @@ export type MentraLiveOtaError = {
   /**
    * Copy key for `message` when the failure maps to known copy, so localized hosts can
    * translate it. Null for phone-side watchdog and preflight messages, which are English-only.
+   * Optional so host code that builds this type by hand keeps compiling; the hook always sets it.
    */
-  copyKey: string | null
+  copyKey?: string | null
   /**
    * Raw failure code reported by the glasses (`ota_status.error`), for support. Null when the
-   * failure originated on the phone.
+   * failure originated on the phone. Optional for the same source-compatibility reason.
    */
-  glassesCode: string | null
+  glassesCode?: string | null
 }
 
 export type MentraLiveOtaTransport = "wifi" | "hotspot"

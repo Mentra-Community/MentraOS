@@ -21,6 +21,7 @@ export const OTA_GLASSES_ERROR_COPY_KEYS: Readonly<Record<string, string>> = {
   firmware_verify_failed: "ota:errorFirmwareVerifyFailed",
   apk_verify_failed: "ota:errorApkVerifyFailed",
   install_failed: "ota:errorInstallFailed",
+  apk_restart_guard_not_persisted: "ota:errorApkRestartGuardNotPersisted",
   downgrade_handoff_refused: "ota:errorDowngradeHandoffRefused",
   downgrade_handoff_failed: "ota:errorDowngradeHandoffFailed",
   downgrade_transaction_stalled: "ota:errorDowngradeTransactionStalled",
@@ -41,6 +42,8 @@ export const OTA_ERROR_ENGLISH_COPY: Readonly<Record<string, string>> = {
   "ota:errorFirmwareVerifyFailed": "Firmware verification failed — please try again or contact support",
   "ota:errorApkVerifyFailed": "Update verification failed — please try again or contact support",
   "ota:errorInstallFailed": "Install failed — please try again",
+  "ota:errorApkRestartGuardNotPersisted":
+    "Your glasses could not save the update before restarting. Restart your glasses and try again.",
   "ota:errorDowngradeHandoffRefused":
     "Your glasses could not start the version change. Restart your glasses and try again.",
   "ota:errorDowngradeHandoffFailed":
@@ -61,7 +64,15 @@ export const BES_INSTALL_RESTART_MESSAGE = OTA_ERROR_ENGLISH_COPY[OTA_ERROR_BES_
  */
 export function otaErrorCopyKey(error?: string | null): string {
   if (!error) return OTA_ERROR_GENERIC_COPY_KEY
-  return OTA_GLASSES_ERROR_COPY_KEYS[error] ?? OTA_ERROR_UNKNOWN_GLASSES_COPY_KEY
+  // Own-property lookup: a code that happens to name an inherited Object member
+  // ("constructor", "toString", ...) is unknown, not a mapped key.
+  return hasOwn(OTA_GLASSES_ERROR_COPY_KEYS, error)
+    ? OTA_GLASSES_ERROR_COPY_KEYS[error]
+    : OTA_ERROR_UNKNOWN_GLASSES_COPY_KEY
+}
+
+function hasOwn(table: Readonly<Record<string, string>>, key: string): boolean {
+  return Object.prototype.hasOwnProperty.call(table, key)
 }
 
 function isDownloadPhaseSnapshot(

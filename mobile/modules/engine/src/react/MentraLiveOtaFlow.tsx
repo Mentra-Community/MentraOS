@@ -164,7 +164,7 @@ function failureMessage(error: MentraLiveOtaError | null, translate: MentraLiveO
 }
 
 function defaultTranslate(key: string, options?: Record<string, string>): string {
-  let value = ENGLISH_COPY[key] ?? key
+  let value = Object.prototype.hasOwnProperty.call(ENGLISH_COPY, key) ? ENGLISH_COPY[key] : key
   for (const [name, replacement] of Object.entries(options ?? {})) {
     value = value.replaceAll(`{{${name}}}`, replacement)
   }
