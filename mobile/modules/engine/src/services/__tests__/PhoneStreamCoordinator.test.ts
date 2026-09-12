@@ -118,8 +118,37 @@ afterEach(() => {
   ;(globalThis as {fetch: typeof fetch}).fetch = realFetch
 })
 
-const {PhoneStreamCoordinator, StreamConflictError, LINK_STATUS} = await import("../PhoneStreamCoordinator")
+const {
+  PhoneStreamCoordinator: BaseCoordinator,
+  StreamConflictError,
+  LINK_STATUS,
+} = await import("../PhoneStreamCoordinator")
 const {PhoneCameraFovCoordinator} = await import("../PhoneCameraFovCoordinator")
+const {ManagedWebRtcRelay} = await import("../ManagedWebRtcRelay")
+const relayPrepare = mock(async (_options: unknown) => "http://192.168.43.2:8080/whip")
+const relayStop = mock(async (_id: string) => {})
+class PhoneStreamCoordinator extends BaseCoordinator {
+  constructor(...[timings, deps]: ConstructorParameters<typeof BaseCoordinator>) {
+    super(timings, {
+      relayFactory: (options, status, failure, connected, deferredStop) =>
+        new ManagedWebRtcRelay(options, status, failure, {
+          native: {prepare: relayPrepare, stop: relayStop, addListener: () => ({remove() {}})},
+          hotspot: async (enabled) => ({
+            state: enabled ? "enabled" : "disabled",
+            ssid: "glasses",
+            password: "password",
+          }),
+          startGlasses: (request) => startStream(request) as never,
+          stopGlasses: stopStream,
+          connected,
+          deferredStop,
+          sleep: async () => {},
+          acquire: () => () => {},
+        }),
+      ...deps,
+    })
+  }
+}
 
 /** Drivable stand-in for the glasses store's BLE connection state. */
 function fakeLink(initial = true) {
@@ -537,7 +566,8 @@ describe("PhoneStreamCoordinator", () => {
       )
       expect(startStream).toHaveBeenCalledTimes(1)
       const arg = startStream.mock.calls[0]![0] as {streamUrl: string}
-      expect(arg.streamUrl).toBe("https://ingest.test/abc/whip")
+      expect(arg.streamUrl).toBe("http://192.168.43.2:8080/whip")
+      expect(relayPrepare).toHaveBeenCalled()
     })
 
     test("startManaged provisions Cloudflare and resolves when HLS is ready", async () => {
@@ -912,5 +942,64 @@ describe("PhoneStreamCoordinator", () => {
       await Promise.all([startP, stopP])
       expect(order).toEqual(["start-begin", "start-end", "stop"])
     })
+  })
+})
+
+describe("managed relay ownership", () => {
+  test("two WHIP subscribers share one receiver and last stop releases it", async () => {
+    const coord = new PhoneStreamCoordinator()
+    const beforeStart = relayPrepare.mock.calls.length
+    const beforeStop = relayStop.mock.calls.length
+    const first = await coord.startManaged("com.a", {ingest: "whip"})
+    const second = await coord.startManaged("com.b", {ingest: "whip"})
+    expect(second.streamId).toBe(first.streamId)
+    expect(relayPrepare.mock.calls.length - beforeStart).toBe(1)
+    await coord.stop("com.a")
+    expect(relayStop.mock.calls.length - beforeStop).toBe(0)
+    await coord.stop("com.b")
+    expect(relayStop.mock.calls.length - beforeStop).toBe(1)
+  })
+
+  test("failed relay cleanup blocks subscribers until stop succeeds", async () => {
+    const coord = new PhoneStreamCoordinator()
+    await coord.startManaged("com.a", {ingest: "whip"})
+    relayStop.mockRejectedValueOnce(new Error("still draining"))
+    await expect(coord.stop("com.a")).rejects.toThrow("still draining")
+    await expect(coord.startManaged("com.b", {ingest: "whip"})).rejects.toThrow("cleanup has not completed")
+    await coord.stop("com.a")
+    expect(coord.getDiagnosticSnapshot().active).toBe(false)
+  })
+
+  test("WHIP does not fall back to glasses internet Wi-Fi when provisioning omits its endpoint", async () => {
+    const coord = new PhoneStreamCoordinator()
+    provisionManagedStream.mockImplementationOnce(async () => ({
+      liveInputId: "no-whip",
+      rtmpUrl: "rtmp://test",
+      srtUrl: "srt://test",
+      hlsUrl: "https://test/hls",
+      dashUrl: "https://test/dash",
+      webrtcUrl: "",
+      webrtcPublishUrl: "",
+      outputs: [],
+    }))
+    await expect(coord.startManaged("com.a", {ingest: "whip"})).rejects.toThrow("no usable ingest")
+    expect(startStream).not.toHaveBeenCalled()
+    expect(teardownManagedStream).toHaveBeenCalledWith("no-whip")
+  })
+
+  test("stop without BLE releases phone resources and disables the hotspot when BLE returns", async () => {
+    const link = fakeLink()
+    const setHotspotState = mock(async () => ({state: "disabled"}))
+    bluetoothSdk.setHotspotState = setHotspotState
+    const coord = new PhoneStreamCoordinator({}, {linkSource: link.source})
+    await coord.startManaged("com.a", {ingest: "whip"})
+    link.set(false)
+    await coord.stop("com.a")
+    expect(stopStream).not.toHaveBeenCalled()
+    link.set(true)
+    await settle()
+    expect(stopStream).toHaveBeenCalledTimes(1)
+    expect(setHotspotState).toHaveBeenCalledWith(false)
+    expect(link.listenerCount()).toBe(0)
   })
 })

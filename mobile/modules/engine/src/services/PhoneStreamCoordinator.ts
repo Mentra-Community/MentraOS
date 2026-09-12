@@ -35,10 +35,12 @@
 
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import type {StreamResolvedConfig, StreamStartRequest, StreamStatusEvent} from "@mentra/bluetooth-sdk/internal"
+import {createManagedWebRtcRelay, type ManagedRelay} from "./ManagedWebRtcRelay"
 import {isGlassesConnected} from "./GlassesReadiness"
 import {phoneCameraFovCoordinator} from "./PhoneCameraFovCoordinator"
 import {useGlassesStore} from "../stores/glasses"
 
+import {BgTimer} from "../utils/timers"
 import {slimStreamStatusEvent, streamStatusSignature} from "./slimStreamStatus"
 import {
   getManagedStreamStatus,
@@ -176,13 +178,15 @@ interface ManagedEntry {
   hlsUrl: string
   dashUrl: string
   webrtcUrl?: string
+  stopping?: boolean
+  relay?: ManagedRelay
   publisherStart?: StreamPublisherStartResult
   subscribers: Set<string>
   hlsReady: boolean
   hlsReadyResolvers: Array<(result: ManagedStartResult) => void>
   hlsReadyRejecters: Array<(err: Error) => void>
-  cloudflareTimer?: ReturnType<typeof setTimeout>
-  hlsTimer?: ReturnType<typeof setInterval>
+  cloudflareTimer?: ReturnType<typeof BgTimer.setTimeout>
+  hlsTimer?: ReturnType<typeof BgTimer.setInterval>
   hlsAttempts: number
   /** Cloudflare status probes made during this stream session. */
   cloudflareAttempts: number
@@ -208,7 +212,7 @@ export class StreamConflictError extends Error {
 
 interface SuspendedState {
   since: number
-  graceTimer: ReturnType<typeof setTimeout>
+  graceTimer: ReturnType<typeof BgTimer.setTimeout>
   /** Consecutive Cloudflare probes that saw no publisher during this suspension. */
   publisherGoneProbes: number
 }
@@ -218,6 +222,7 @@ export class PhoneStreamCoordinator {
   private statusSubscriber: StatusSubscriber | null = null
   private idCounter = 0
   private readonly timings: TimingConfig
+  private readonly relayFactory: typeof createManagedWebRtcRelay
   private readonly linkSource: GlassesLinkSource
   private readonly pendingCameraChanges: () => Promise<void>
   private unsubscribeLink: (() => void) | null = null
@@ -228,7 +233,7 @@ export class PhoneStreamCoordinator {
    * the slot) so a publisher that outlived its input does not keep pushing
    * until its own watchdog fires.
    */
-  private pendingBleStop: {streamId: string} | null = null
+  private pendingBleStop: {streamId: string; hotspot?: boolean} | null = null
   /**
    * Serializes state transitions (start, stop, teardown). Without it, a
    * second `start*` racing with the first can pass the `this.current === null`
@@ -245,8 +250,13 @@ export class PhoneStreamCoordinator {
 
   constructor(
     timings: CoordinatorTimings = {},
-    deps: {linkSource?: GlassesLinkSource; pendingCameraChanges?: () => Promise<void>} = {},
+    deps: {
+      linkSource?: GlassesLinkSource
+      pendingCameraChanges?: () => Promise<void>
+      relayFactory?: typeof createManagedWebRtcRelay
+    } = {},
   ) {
+    this.relayFactory = deps.relayFactory ?? createManagedWebRtcRelay
     this.timings = {...DEFAULT_TIMINGS, ...timings}
     this.linkSource = deps.linkSource ?? storeLinkSource
     this.pendingCameraChanges = deps.pendingCameraChanges ?? (() => phoneCameraFovCoordinator.whenSettled())
@@ -300,7 +310,10 @@ export class PhoneStreamCoordinator {
    * check covers the multi-subscriber case.
    */
   owns(streamId: string): boolean {
-    return this.current !== null && this.current.streamId === streamId
+    return (
+      this.current !== null &&
+      (this.current.streamId === streamId || (this.current.kind === "managed" && !!this.current.relay?.owns(streamId)))
+    )
   }
 
   /** Report-safe stream ownership snapshot for incident diagnostics. */
@@ -342,6 +355,7 @@ export class PhoneStreamCoordinator {
     return this.runExclusive(async () => {
       await cameraReady
       this.assertGlassesConnected()
+      await this.flushPendingBleStop()
       if (this.current) {
         throw new StreamConflictError(
           "STREAM_ALREADY_ACTIVE",
@@ -407,6 +421,7 @@ export class PhoneStreamCoordinator {
     const decision = await this.runExclusive(async (): Promise<JoinDecision> => {
       await cameraReady
       this.assertGlassesConnected()
+      await this.flushPendingBleStop()
       if (this.current && this.current.kind === "unmanaged") {
         throw new StreamConflictError(
           "STREAM_ALREADY_ACTIVE",
@@ -417,6 +432,17 @@ export class PhoneStreamCoordinator {
       // Join an existing managed stream if one is already running.
       if (this.current && this.current.kind === "managed") {
         const existing = this.current
+        if (existing.stopping)
+          throw new StreamConflictError(
+            "STREAM_CLEANUP_PENDING",
+            "Previous stream cleanup has not completed; retry stop first",
+          )
+        if (opts.ingest !== undefined && (opts.ingest === "whip") !== (existing.mode === "webrtc")) {
+          throw new StreamConflictError(
+            "STREAM_MODE_CONFLICT",
+            "Stop the existing stream before switching playback modes",
+          )
+        }
         // Restream destinations are immutable after provision — a second
         // caller trying to dictate destinations on an already-live stream
         // is a likely bug or a feature we don't yet support.
@@ -436,7 +462,13 @@ export class PhoneStreamCoordinator {
       // and joins instead of double-provisioning.
       const provision = await provisionManagedStream(opts.restreamDestinations)
       const streamId = this.mintId("m")
-      const ingestUrl = pickIngestUrl(provision, opts.ingest)
+      let ingestUrl: string
+      try {
+        ingestUrl = pickIngestUrl(provision, opts.ingest)
+      } catch (error) {
+        await teardownManagedStream(provision.liveInputId).catch(() => undefined)
+        throw error
+      }
       const mode: ManagedEntry["mode"] = ingestUrl === provision.webrtcPublishUrl ? "webrtc" : "hls"
 
       const entry: ManagedEntry = {
@@ -466,17 +498,40 @@ export class PhoneStreamCoordinator {
       })
 
       try {
-        const event = await BluetoothSdk.startStream({
-          type: "start_stream",
-          streamUrl: ingestUrl,
-          streamId,
-          sound: opts.sound ?? true,
-          // See startUnmanaged: the native bridge rejects explicit `undefined`.
-          ...(opts.video !== undefined ? {video: opts.video} : {}),
-          ...(opts.audio !== undefined ? {audio: opts.audio} : {}),
-          ...(typeof opts.captureAudio === "boolean" ? {captureAudio: opts.captureAudio} : {}),
-        })
-        entry.publisherStart = publisherStartResult(streamId, event)
+        if (mode === "webrtc") {
+          entry.relay = this.relayFactory(
+            {streamId, ingestUrl, ...opts},
+            (status, reason) => {
+              if (this.current === entry)
+                this.fanout({streamId, source: "coordinator", status, data: {reason, transport: "softap_relay"}})
+            },
+            (error) => {
+              void this.runExclusive(async () => {
+                if (this.current !== entry) return
+                this.fanout({streamId, source: "coordinator", status: "error", data: {reason: error.message}})
+                await this.teardownLocked("relay_failed")
+              }).catch((cleanupError) => console.warn("[STREAM] relay cleanup failed", cleanupError))
+            },
+            () => this.linkSource.isConnected(),
+            () => {
+              this.pendingBleStop = {streamId, hotspot: true}
+              this.attachLink()
+            },
+          )
+        }
+        const event = entry.relay
+          ? await entry.relay.start()
+          : await BluetoothSdk.startStream({
+              type: "start_stream",
+              streamUrl: ingestUrl,
+              streamId,
+              sound: opts.sound ?? true,
+              // See startUnmanaged: the native bridge rejects explicit `undefined`.
+              ...(opts.video !== undefined ? {video: opts.video} : {}),
+              ...(opts.audio !== undefined ? {audio: opts.audio} : {}),
+              ...(typeof opts.captureAudio === "boolean" ? {captureAudio: opts.captureAudio} : {}),
+            })
+        entry.publisherStart = {...publisherStartResult(streamId, event), streamId}
         console.info("[STREAM_STARTUP]", {
           streamId,
           stage: "publisher_ready",
@@ -484,8 +539,14 @@ export class PhoneStreamCoordinator {
           elapsedMs: Date.now() - startupStartedAtMs,
         })
       } catch (err) {
-        this.current = null
-        await teardownManagedStream(provision.liveInputId).catch(() => undefined)
+        entry.stopping = true
+        try {
+          await entry.relay?.stop()
+          this.current = null
+          await this.flushPendingBleStop()
+        } finally {
+          await teardownManagedStream(provision.liveInputId).catch(() => undefined)
+        }
         throw err
       }
 
@@ -520,6 +581,15 @@ export class PhoneStreamCoordinator {
   }
 
   async stop(packageName: string, streamId?: string): Promise<void> {
+    // Cancel in-flight native preparation immediately; cleanup remains serialized below.
+    const pending = this.current
+    if (
+      pending?.kind === "managed" &&
+      (!streamId || pending.streamId === streamId) &&
+      pending.subscribers.size === 1 &&
+      pending.subscribers.has(packageName)
+    )
+      pending.relay?.cancel()
     await this.runExclusive(async () => {
       if (!this.current) return
 
@@ -549,6 +619,10 @@ export class PhoneStreamCoordinator {
    */
   handleGlassesStatus(event: StreamStatusEvent): void {
     if (!this.current) return
+    if (this.current.kind === "managed" && this.current.relay) {
+      this.current.relay.handleGlassesStatus(event)
+      return
+    }
     if (event.streamId && event.streamId !== this.current.streamId) return
 
     const includeResolvedConfig = !this.resolvedConfigForwarded && !!event.resolvedConfig
@@ -608,7 +682,9 @@ export class PhoneStreamCoordinator {
       if (this.current && this.suspended) {
         this.resumeLocked()
       } else if (!this.current && this.pendingBleStop) {
-        this.flushPendingBleStop()
+        void this.runExclusive(() => this.flushPendingBleStop()).catch((error) =>
+          console.warn("[STREAM] deferred cleanup failed", error),
+        )
       }
       return
     }
@@ -619,7 +695,7 @@ export class PhoneStreamCoordinator {
     const entry = this.current
     if (!entry) return
     const since = Date.now()
-    const graceTimer = setTimeout(() => this.onGraceExpired(entry.streamId), this.timings.glassesGraceMs)
+    const graceTimer = BgTimer.setTimeout(() => this.onGraceExpired(entry.streamId), this.timings.glassesGraceMs)
     this.suspended = {since, graceTimer, publisherGoneProbes: 0}
     console.warn("[STREAM] BLE link lost; stream suspended", {
       streamId: entry.streamId,
@@ -637,7 +713,7 @@ export class PhoneStreamCoordinator {
     const entry = this.current
     const suspended = this.suspended
     if (!entry || !suspended) return
-    clearTimeout(suspended.graceTimer)
+    BgTimer.clearTimeout(suspended.graceTimer)
     this.suspended = null
     const suspendedMs = Date.now() - suspended.since
     console.info("[STREAM] BLE link back; stream resumed", {streamId: entry.streamId, suspendedMs})
@@ -674,14 +750,17 @@ export class PhoneStreamCoordinator {
     })
   }
 
-  private flushPendingBleStop(): void {
+  private async flushPendingBleStop(): Promise<void> {
     const pending = this.pendingBleStop
-    if (!pending) return
-    this.pendingBleStop = null
+    if (!pending || this.current || !this.linkSource.isConnected()) return
     console.info("[STREAM] BLE link back; sending deferred stopStream", pending)
-    void BluetoothSdk.stopStream()
-      .catch((err) => console.warn("[STREAM] deferred stopStream failed:", err))
-      .finally(() => this.detachLinkIfIdle())
+    await BluetoothSdk.stopStream()
+    if (pending.hotspot) {
+      const result = await BluetoothSdk.setHotspotState(false)
+      if (result.state !== "disabled") throw new Error("Deferred hotspot shutdown was not confirmed")
+    }
+    if (this.pendingBleStop === pending) this.pendingBleStop = null
+    this.detachLinkIfIdle()
   }
 
   // ===========================================================================
@@ -717,7 +796,7 @@ export class PhoneStreamCoordinator {
         this.timings.cloudflareStartupPollInitialMs * 2 ** Math.min(Math.max(0, entry.cloudflareAttempts - 1), 10),
       )
       const delayMs = waitingForWebRtc ? Math.min(startupDelayMs, remainingMs) : this.timings.cloudflareStatusPollMs
-      entry.cloudflareTimer = setTimeout(() => void poll(), delayMs)
+      entry.cloudflareTimer = BgTimer.setTimeout(() => void poll(), delayMs)
     }
 
     const poll = async () => {
@@ -727,6 +806,7 @@ export class PhoneStreamCoordinator {
       entry.cloudflareAttempts += 1
       try {
         const status: CloudflareStatus = await getManagedStreamStatus(entry.liveInputId)
+        if (this.current !== entry) return
         console.debug("[STREAM_STARTUP]", {
           streamId: entry.streamId,
           stage: "cloudflare_probe",
@@ -844,7 +924,7 @@ export class PhoneStreamCoordinator {
             elapsedMs: Date.now() - entry.startupStartedAtMs,
           })
           if (entry.hlsTimer) {
-            clearInterval(entry.hlsTimer)
+            BgTimer.clearInterval(entry.hlsTimer)
             entry.hlsTimer = undefined
           }
           const result = managedStartResult(entry)
@@ -864,7 +944,7 @@ export class PhoneStreamCoordinator {
       }
       if (entry.hlsAttempts >= this.timings.hlsReadinessMaxAttempts) {
         if (entry.hlsTimer) {
-          clearInterval(entry.hlsTimer)
+          BgTimer.clearInterval(entry.hlsTimer)
           entry.hlsTimer = undefined
         }
         const err = new Error(
@@ -886,10 +966,10 @@ export class PhoneStreamCoordinator {
         })
       }
     }
-    setTimeout(() => {
+    BgTimer.setTimeout(() => {
       // Guard: stream may have been torn down during the initial delay.
       if (this.current !== entry) return
-      entry.hlsTimer = setInterval(tick, this.timings.hlsReadinessPollMs)
+      entry.hlsTimer = BgTimer.setInterval(tick, this.timings.hlsReadinessPollMs)
     }, this.timings.hlsReadinessInitialDelayMs)
   }
 
@@ -921,7 +1001,7 @@ export class PhoneStreamCoordinator {
     this.resolvedConfigForwarded = false
 
     if (this.suspended) {
-      clearTimeout(this.suspended.graceTimer)
+      BgTimer.clearTimeout(this.suspended.graceTimer)
       this.suspended = null
     }
 
@@ -929,7 +1009,7 @@ export class PhoneStreamCoordinator {
     // lock for the native timeout). Defer it to the next reconnect instead.
     const linkUp = this.linkSource.isConnected()
     if (sendBleStop && !linkUp) {
-      this.pendingBleStop = {streamId: entry.streamId}
+      this.pendingBleStop = {streamId: entry.streamId, hotspot: entry.kind === "managed" && !!entry.relay}
       console.warn("[STREAM] BLE link down during teardown; stopStream deferred", {
         streamId: entry.streamId,
         reason,
@@ -937,8 +1017,9 @@ export class PhoneStreamCoordinator {
     }
 
     if (entry.kind === "managed") {
-      if (entry.cloudflareTimer) clearTimeout(entry.cloudflareTimer)
-      if (entry.hlsTimer) clearInterval(entry.hlsTimer)
+      entry.stopping = true
+      if (entry.cloudflareTimer) BgTimer.clearTimeout(entry.cloudflareTimer)
+      if (entry.hlsTimer) BgTimer.clearInterval(entry.hlsTimer)
       // Reject any still-pending HLS readiness waiters.
       const pendingErr = new Error(`Stream torn down: ${reason}`)
       for (const reject of entry.hlsReadyRejecters) reject(pendingErr)
@@ -946,8 +1027,11 @@ export class PhoneStreamCoordinator {
       entry.hlsReadyRejecters = []
     }
 
+    // Relay stop owns the BLE publisher, native peers and hotspot. Keep the entry on failure
+    // so another start cannot acquire resources whose teardown has not been confirmed.
+    if (entry.kind === "managed" && entry.relay) await entry.relay.stop()
     try {
-      if (sendBleStop && linkUp) {
+      if (sendBleStop && linkUp && !(entry.kind === "managed" && entry.relay)) {
         await BluetoothSdk.stopStream()
       }
     } catch (err) {
@@ -958,8 +1042,6 @@ export class PhoneStreamCoordinator {
       // Only clear if we're still the active entry (defensive — runExclusive
       // serializes us, so this should always be true).
       if (this.current === entry) this.current = null
-      this.detachLinkIfIdle()
-
       if (entry.kind === "managed") {
         // Start remote cleanup only after the publisher has stopped, but do not
         // hold the local transition lock on an unbounded network request. The
@@ -969,6 +1051,9 @@ export class PhoneStreamCoordinator {
           console.warn("[STREAM] teardownManagedStream failed:", err)
         })
       }
+      // BLE can recover while native cleanup is draining; no second link event is required.
+      await this.flushPendingBleStop()
+      this.detachLinkIfIdle()
     }
   }
 }
@@ -976,7 +1061,7 @@ export class PhoneStreamCoordinator {
 function pickIngestUrl(p: ProvisionResult, preference?: "srt" | "whip" | "rtmp"): string {
   // Glasses' StreamCommandHandler detects protocol from URL prefix.
   //
-  // Default priority: SRT > RTMP > WHIP. SRT first: Cloudflare's WebRTC (WHIP)
+  // Default priority: SRT > RTMP. WHIP is explicit. SRT first: Cloudflare's WebRTC (WHIP)
   // ingest does NOT feed HLS/DASH playback or recording — a WHIP-ingested
   // managed stream reports "connected" while its hlsUrl serves 204 forever,
   // which breaks the managed contract (subscribers share HLS playback). SRT
@@ -991,11 +1076,7 @@ function pickIngestUrl(p: ProvisionResult, preference?: "srt" | "whip" | "rtmp")
   // Throw if none resolved so the caller's Promise rejects with a clear
   // message rather than the glasses' "unknown protocol" error.
   const url =
-    preference === "whip"
-      ? p.webrtcPublishUrl || p.srtUrl || p.rtmpUrl
-      : preference === "rtmp"
-      ? p.rtmpUrl || p.srtUrl || p.webrtcPublishUrl
-      : p.srtUrl || p.rtmpUrl || p.webrtcPublishUrl
+    preference === "whip" ? p.webrtcPublishUrl : preference === "rtmp" ? p.rtmpUrl || p.srtUrl : p.srtUrl || p.rtmpUrl
   if (!url) {
     throw new Error("Cloudflare provision returned no usable ingest URL")
   }

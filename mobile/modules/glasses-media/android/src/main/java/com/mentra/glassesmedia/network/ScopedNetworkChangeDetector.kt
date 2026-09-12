@@ -142,7 +142,7 @@ internal constructor(
             )
         }
 
-        val merged = mergeScopedNetwork(stock, scoped)
+        val merged = mergeScopedNetwork(stock, scoped, relayNetwork != null)
         lastPublished = snapshotOf(merged)
         SoftApTrace.stage(
             "webrtc_network_inventory",
@@ -235,12 +235,27 @@ internal constructor(
             context: Context,
             scoped: () -> ScopedInterface?,
         ): Wired {
-            val filter = ScopedNetworkObserver(downstream, scoped)
+            val filter = ScopedNetworkObserver(downstream, scoped) { relayNetwork != null }
             return Wired(NetworkMonitorAutoDetect(filter, context), scoped, filter)
         }
 
         @JvmStatic
         fun install(scopedNetworkSupplier: () -> ScopedSoftApNetwork?) {
+            acsNetworkSupplier = scopedNetworkSupplier
+            installMonitor()
+        }
+
+        @Volatile private var acsNetworkSupplier: () -> ScopedSoftApNetwork? = { null }
+        @Volatile private var relayNetwork: ScopedSoftApNetwork? = null
+
+        /** Keep real internet handles visible for the outgoing peer; each factory masks its leg. */
+        @JvmStatic
+        fun setRelayNetwork(network: ScopedSoftApNetwork?) {
+            relayNetwork = network
+            installMonitor()
+        }
+
+        private fun installMonitor() {
             val monitor = NetworkMonitor.getInstance()
             // A live detector was built by an earlier factory (or the stock one) and will not be
             // replaced until monitoring restarts; say so in the trace so a missing host candidate
@@ -252,7 +267,7 @@ internal constructor(
             monitor.setNetworkChangeDetectorFactory { observer, context ->
                 val wired =
                     wire(observer, context) {
-                        scopedNetworkSupplier()?.let { resolveScopedInterface(context, it) }
+                        (relayNetwork ?: acsNetworkSupplier())?.let { resolveScopedInterface(context, it) }
                     }
                 ScopedNetworkChangeDetector(wired.delegate, wired.scoped, wired.observer)
             }
@@ -300,9 +315,12 @@ internal constructor(
         fun mergeScopedNetwork(
             detected: List<NetworkChangeDetector.NetworkInformation>?,
             scoped: ScopedInterface?,
+            includeInternet: Boolean = false,
         ): List<NetworkChangeDetector.NetworkInformation> {
             val hotspot = scoped?.let { toNetworkInformation(it) } ?: return detected.orEmpty()
-            return listOf(hotspot)
+            return if (includeInternet) {
+                detected.orEmpty().filter { it.handle != hotspot.handle && it.name != hotspot.name } + hotspot
+            } else listOf(hotspot)
         }
 
         /** Dotted-quad for the inventory trace. */

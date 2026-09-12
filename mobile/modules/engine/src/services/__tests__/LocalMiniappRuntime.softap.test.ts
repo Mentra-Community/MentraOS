@@ -65,6 +65,7 @@ function fixture() {
     },
   }
   const Host = new Function(
+    "acquireGlassesHotspot",
     "softapTrace",
     "softapTraceFailure",
     "SOFTAP_CLEANUP_STALL_LOG_MS",
@@ -78,6 +79,7 @@ function fixture() {
     "console",
     `${compiled}; return Host`,
   )(
+    () => () => {},
     () => {},
     () => {},
     10_000,

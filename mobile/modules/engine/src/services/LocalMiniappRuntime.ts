@@ -9,6 +9,7 @@
  * management (connect/disconnect/ping).
  */
 
+import {acquireGlassesHotspot} from "./GlassesHotspotLease"
 import {AppState, Linking} from "react-native"
 import Share from "react-native-share"
 import * as Battery from "expo-battery"
@@ -68,7 +69,12 @@ import {
 } from "../runtime/config"
 import {getAnalytics, getMiniappConfiguration, getUiSeams, isFeatureEnabled} from "../runtime/bootstrap"
 import {invokeScanQrSeam} from "../runtime/scanQrSeam"
-import {normalizeStreamAudioConfig, normalizeStreamVideoConfig, resolveCaptureAudio} from "../runtime/streamConfig"
+import {
+  normalizeStreamAudioConfig,
+  normalizeStreamVideoConfig,
+  normalizeCaptureAudio,
+  resolveCaptureAudio,
+} from "../runtime/streamConfig"
 import {toLanguageHint} from "@mentra/cloud-protocol/languages"
 import type {AudioSubscription, LanguageSource, TranscriptionData, TranslationData} from "@mentra/cloud-protocol"
 import {buildMiniappManifestSnapshot, type MiniappRuntimeDiagnosticSnapshot} from "../utils/miniappDiagnostics"
@@ -399,6 +405,7 @@ type SoftapAttempt = {
   /** Set by leave, end, or a superseding join. Checked after every await the join performs. */
   cancelled: boolean
   /** Set only after the preceding attempt has fully settled. */
+  releaseHotspot?: () => void
   ownsResources: boolean
   transport: SoftapCallTransport | null
   /** The checklist as the miniapp last saw it; preflight rows live here until `start()` takes over. */
@@ -2327,11 +2334,11 @@ class LocalMiniappRuntime {
       typeof rawText === "string"
         ? [rawText.trim()].filter(Boolean)
         : Array.isArray(rawText)
-        ? rawText
-            .filter((sentence): sentence is string => typeof sentence === "string")
-            .map((sentence) => sentence.trim())
-            .filter(Boolean)
-        : []
+          ? rawText
+              .filter((sentence): sentence is string => typeof sentence === "string")
+              .map((sentence) => sentence.trim())
+              .filter(Boolean)
+          : []
     const enableSanitization = payload.enableSanitization !== false
     const sentences = prepareTtsSentences(rawSentences, enableSanitization)
     if (sentences.length === 0) {
@@ -3627,13 +3634,18 @@ class LocalMiniappRuntime {
       return
     }
     try {
+      if (payload.ingest === "whip" && !(await permissions.check(PermissionFeatures.LOCAL_WIFI))) {
+        if (!(await permissions.request(PermissionFeatures.LOCAL_WIFI))) {
+          throw new Error("Nearby devices permission is required to join the glasses hotspot")
+        }
+      }
       const result = await streaming.startManaged(packageName, {
         restreamDestinations: payload.restreamDestinations as Array<string | {url: string; name?: string}> | undefined,
         video: normalizeStreamVideoConfig(payload.video),
         audio: normalizeStreamAudioConfig(payload.audio),
         sound: payload.sound as boolean | undefined,
-        ingest: payload.ingest as "srt" | "whip" | undefined,
-        captureAudio: resolveCaptureAudio(payload.captureAudio, resolveAcsAudioSource().source),
+        ingest: payload.ingest as "srt" | "whip" | "rtmp" | undefined,
+        captureAudio: normalizeCaptureAudio(payload.captureAudio),
       })
       this.sendResult(packageName, requestId, true, result)
     } catch (err) {
@@ -3949,6 +3961,7 @@ class LocalMiniappRuntime {
       softapTraceFailure("softap_join_refused", {packageName, reason: cleanupError})
       throw new Error(`Previous call cleanup failed: ${cleanupError}. Power-cycle the glasses hotspot and try again.`)
     }
+    attempt.releaseHotspot = acquireGlassesHotspot()
     attempt.ownsResources = true
     this.narrateSoftapPreflight(attempt, "Checking the Nearby devices permission…")
     const permissionStartedAt = Date.now()
@@ -4310,6 +4323,8 @@ class LocalMiniappRuntime {
       failures: failures.join("; "),
       endRefused: Boolean(endFailure),
     })
+    attempt.releaseHotspot?.()
+    attempt.releaseHotspot = undefined
     if (endFailure) throw endFailure
   }
 
@@ -4437,7 +4452,7 @@ class LocalMiniappRuntime {
     requestId?: string,
   ): Promise<void> {
     const videoSource = payload.videoSource as {type?: string; url?: string} | undefined
-    const whepUrl = videoSource?.type === "whep" ? videoSource.url ?? "" : ""
+    const whepUrl = videoSource?.type === "whep" ? (videoSource.url ?? "") : ""
     if (!whepUrl) {
       this.sendResult(packageName, requestId, false, undefined, {
         code: MiniappErrorCode.INVALID_ARGUMENT,

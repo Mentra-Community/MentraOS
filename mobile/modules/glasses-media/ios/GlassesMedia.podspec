@@ -11,6 +11,7 @@ Pod::Spec.new do |s|
   s.platforms = { :ios => '15.1' }
   s.swift_version = '5.9'
   s.static_framework = true
+  s.dependency 'ExpoModulesCore'
   s.dependency 'WebRTC-SDK', '137.7151.09'
   s.frameworks = 'AVFoundation', 'CoreMedia', 'CoreVideo', 'Network', 'NetworkExtension'
   s.source_files = '*.{swift,h,m,mm}', 'CoreKit/Sources/GlassesMediaCore/*.swift'
