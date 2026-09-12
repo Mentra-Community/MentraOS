@@ -14,6 +14,19 @@ MentraOS is an open source operating system, app store, and development framewor
 - Android-based smart glasses client: `asg_client` (uses `android_core` as a library)
 - Mentra Miniapp Store and Developer Console: `cloud-v2/websites/`
 
+### Established iOS behavior
+
+- The Mentra App already supports screen-off and background operation using its
+  Bluetooth background mode infrastructure. See `UIBackgroundModes` in
+  `mobile/app.config.ts`.
+- Bulk gallery transfers over the glasses' SoftAP already work in the background
+  on iOS. Reuse the existing gallery and local network transport paths, including
+  `mobile/modules/engine/src/services/asg/localNetworkTransport.ts`.
+- Treat these as established product behavior when planning streaming features.
+  Do not infer that iOS SoftAP or background operation is structurally impossible
+  from generic platform restrictions or older spike notes. Investigate the new
+  media pipeline and its routing requirements against the existing implementation.
+
 ## Monorepo Structure
 
 This is a monorepo with module-specific guidance:
@@ -25,6 +38,16 @@ Consult module-specific AGENTS.md when working within that module.
 ## Project Structure & Module Organization
 
 Core client app lives in `mobile/` (Expo React Native). Backend services, the Cloud Client, protocol package, CLI, web portals, and cloud tests live in `cloud-v2/`. The local Mentra Miniapp SDK is `mobile/modules/miniapp/`; developer tooling is in `sdk/`. Platform SDKs are in `mobile/modules/bluetooth-sdk/` and `sdk_ios/`; hardware tooling lives in `mcu_client/`. Public Mintlify docs live in `mintlify-docs/`; notes and plans live in `agents/` and `notes/` — see [`notes/README.md`](notes/README.md) for the specs/plans convention.
+
+First-party miniapps and their backends also live in `miniapps/`. All of those
+miniapps are part of this repository's source scope. For example,
+`com.mentra.merge` is owned by this monorepo: its client is in
+`miniapps/merge/miniapp/` and its backend is in `miniapps/merge/backend/`.
+Package identifiers can be found in `miniapps/**/miniapp.json`; the surrounding
+component directories contain backend and deployment files. A separate backend
+hostname does not imply a separate repository or third-party ownership.
+The external first-party miniapp repositories are listed under
+"Related Miniapp Repositories" below; their source can be private.
 
 ## Build Commands
 
@@ -164,6 +187,7 @@ Automated ransomware scanners actively target exposed MongoDB instances. Use Mon
 ### Related Miniapp Repositories
 
 - [Mentra Notes Miniapp](https://github.com/Mentra-Community/Mentra-Notes-Miniapp)
+- [Mentra Call Miniapp](https://github.com/Mentra-Community/Mentra-Call)
 - [Livestreamer Miniapp](https://github.com/Mentra-Community/Livestreamer-Miniapp)
 - [Mentra AI Miniapp](https://github.com/Mentra-Community/Mentra-AI-Miniapp)
 - [Mentra Enterprise Miniapp](https://github.com/Mentra-Community/Mentra-Enterprise-Miniapp)

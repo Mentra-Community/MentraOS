@@ -15,17 +15,6 @@ class Bridge {
     private static let micChannels = 1
     private static let lc3FrameDurationMs = 10
     private static let defaultLc3FrameSizeBytes = 60
-    private static let audioTraceMetadataKeys = [
-        "sampleRate",
-        "bitsPerSample",
-        "channels",
-        "encoding",
-        "frameDurationMs",
-        "frameSizeBytes",
-        "bitrate",
-        "packetizedFromGlasses",
-        "voiceActivityDetectionEnabled",
-    ]
     private static let eventSinkLock = NSLock()
     private static let defaultEventSinkId = "default"
     private static var eventSinks: [String: (String, [String: Any]) -> Void] = [:]
@@ -74,6 +63,9 @@ class Bridge {
     }
 
     static func log(_ message: String) {
+        // Native diagnostics and the JS console share this event. Do not capture
+        // stdout: React Native can write the forwarded message back to stdout.
+        NSLog("%@", message)
         let data = ["message": message]
         Bridge.sendTypedMessage("log", body: data)
     }
@@ -145,6 +137,10 @@ class Bridge {
             "channels": micChannels,
             "encoding": "pcm_s16le",
             "voiceActivityDetectionEnabled": voiceActivityDetectionEnabled,
+            // Stamped per frame so a consumer that asked for a specific microphone can verify it
+            // rather than assume it. Read now, not captured: the point is which microphone is
+            // selected for this buffer. Empty when the SDK has not selected one.
+            "source": DeviceStore.shared.get("bluetooth", "currentMic") as? String ?? "",
         ]
     }
 
@@ -363,9 +359,12 @@ class Bridge {
         Bridge.sendTypedMessage(type, body: body)
     }
 
-    static func sendVersionInfo(_ values: [String: Any]) {
+    static func sendVersionInfo(_ values: [String: Any], responseChunk: String = "version_info") {
         var body: [String: Any] = [
             "type": "version_info",
+            VersionInfoResponseAccumulator.responseChunkKey: responseChunk,
+            "versionInfoType": stringValue(values, "versionInfoType", "version_info_type") ?? "",
+            "sid": stringValue(values, "sid") ?? "",
             "androidVersion": stringValue(values, "androidVersion", "android_version") ?? "",
             "firmwareVersion": stringValue(values, "firmwareVersion", "firmware_version") ?? "",
             "besFirmwareVersion": stringValue(values, "besFirmwareVersion", "bes_fw_version") ?? "",
@@ -374,6 +373,19 @@ class Bridge {
             "otaVersionUrl": stringValue(values, "otaVersionUrl", "ota_version_url") ?? "",
             "appVersion": stringValue(values, "appVersion", "app_version") ?? "",
         ]
+        for (wireKey, internalKey) in [
+            "chunkIndex": VersionInfoResponseAccumulator.responseIndexKey,
+            "chunkCount": VersionInfoResponseAccumulator.responseCountKey,
+            "final": VersionInfoResponseAccumulator.responseFinalKey,
+            "sid": VersionInfoResponseAccumulator.responseSidKey,
+        ] {
+            body[internalKey] = values[wireKey]
+        }
+        if let responseRequestId = stringValue(values, "requestId", "request_id"),
+           !responseRequestId.isEmpty
+        {
+            body[VersionInfoResponseAccumulator.responseRequestIdKey] = responseRequestId
+        }
         if let systemTimeMs = intValue(values["systemTimeMs"]) ?? intValue(values["system_time_ms"]) {
             body["systemTimeMs"] = systemTimeMs
         }
@@ -381,6 +393,21 @@ class Bridge {
             ?? intValue(values["hotspot_ota_version"])
         {
             body["hotspotOtaVersion"] = hotspotOtaVersion
+        }
+        // Only when present: this event fires per version_info chunk and only chunk 1 carries
+        // package_name, so an unconditional "" would clobber a known identity.
+        if let packageName = stringValue(values, "packageName", "package_name"), !packageName.isEmpty {
+            body["packageName"] = packageName
+        }
+        if let version = values["wifiForgetResultVersion"]
+            ?? values["wifi_forget_result_version"]
+        {
+            body["wifiForgetResultVersion"] = version
+        }
+        if let version = values["savedWifiNetworksVersion"]
+            ?? values["saved_wifi_networks_version"]
+        {
+            body["savedWifiNetworksVersion"] = version
         }
         Bridge.sendTypedMessage("version_info", body: body)
     }
@@ -464,6 +491,57 @@ class Bridge {
             body["error"] = error
         }
         Bridge.sendTypedMessage("wifi_status_change", body: body)
+    }
+
+    static func sendWifiForgetResult(
+        requestId: String,
+        sid: String,
+        ssid: String,
+        protocolVersion: Int,
+        outcome: String,
+        legacyDispatched: Bool?,
+        connected: Bool?,
+        currentSsid: String,
+        localIp: String,
+        error: String?
+    ) {
+        guard let body = normalizeWifiForgetResultEvent(
+            requestId: requestId,
+            sid: sid,
+            ssid: ssid,
+            protocolVersion: protocolVersion,
+            outcome: outcome,
+            legacyDispatched: legacyDispatched,
+            connected: connected,
+            currentSsid: currentSsid,
+            localIp: localIp,
+            error: error
+        ) else {
+            log("Dropping malformed wifi_forget_result without modern or legacy fields")
+            return
+        }
+        Bridge.sendTypedMessage("wifi_forget_result", body: body)
+    }
+
+    static func sendSavedWifiNetworks(
+        requestId: String,
+        sid: String,
+        protocolVersion: Int,
+        outcome: String,
+        networks: [String],
+        error: String?
+    ) {
+        var body: [String: Any] = [
+            "requestId": requestId,
+            "sid": sid,
+            "protocolVersion": protocolVersion,
+            "outcome": outcome,
+            "networks": networks,
+        ]
+        if let error {
+            body["error"] = error
+        }
+        Bridge.sendTypedMessage("saved_wifi_networks", body: body)
     }
 
     /// Claim the WiFi scan-results store for a newly requested scan. Called by the
@@ -561,7 +639,8 @@ class Bridge {
         overallPercent: Int,
         status: String,
         errorMessage: String?,
-        glassesTimeMs: Int64? = nil
+        glassesTimeMs: Int64? = nil,
+        bytesDownloaded: Int64? = nil
     ) {
         var eventBody: [String: Any] = [
             "session_id": sessionId,
@@ -578,6 +657,9 @@ class Bridge {
         }
         if let glassesTimeMs, glassesTimeMs > 0 {
             eventBody["glasses_time_ms"] = glassesTimeMs
+        }
+        if let bytesDownloaded {
+            eventBody["bytes_downloaded"] = bytesDownloaded
         }
         Bridge.sendTypedMessage("ota_status", body: eventBody)
     }
@@ -611,12 +693,17 @@ class Bridge {
         dispatchEvent(type, body)
     }
 
+    /// Returns nil for events that must not be traced.
+    ///
+    /// "log" is excluded so tracing never recurses back through the log event. Audio payload
+    /// events are excluded because they arrive at frame rate, which made every microphone
+    /// frame emit a second bridge event. On Android that overflowed the JNI global reference
+    /// table and aborted the process; here it is wasted work on the audio path. Audio faults
+    /// (sequence gaps, decode failures) are still reported through "mic_health", and healthy
+    /// frames need no trace.
     private static func tracePayloadForTypedMessage(_ type: String, body: [String: Any]) -> [String: Any]? {
-        if type == "log" {
+        if type == "log" || isAudioPayloadEvent(type) {
             return nil
-        }
-        if isAudioPayloadEvent(type) {
-            return audioTracePayload(type, body: body)
         }
         return body
     }
@@ -624,37 +711,4 @@ class Bridge {
     private static func isAudioPayloadEvent(_ type: String) -> Bool {
         type == "mic_pcm" || type == "mic_lc3"
     }
-
-    private static func audioTracePayload(_ type: String, body: [String: Any]) -> [String: Any] {
-        var payload: [String: Any] = [
-            "type": type,
-            "timestamp": Int(Date().timeIntervalSince1970 * 1000),
-            "payloadOmitted": true,
-            "payloadOmittedReason": "audio",
-        ]
-
-        switch type {
-        case "mic_pcm":
-            if let data = body["pcm"] as? Data {
-                payload["audioBytes"] = data.count
-            }
-        case "mic_lc3":
-            if let data = body["lc3"] as? Data {
-                payload["audioBytes"] = data.count
-            }
-        default:
-            break
-        }
-
-        for key in audioTraceMetadataKeys {
-            if let value = body[key] {
-                payload[key] = value
-            }
-        }
-
-        return payload
-    }
 }
-
-
-

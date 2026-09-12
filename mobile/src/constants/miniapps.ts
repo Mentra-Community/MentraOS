@@ -36,4 +36,5 @@ export const GLASSES_MENU_EXCLUDED_APPS = [
   mentraAiPackageName,
   notifyPackageName,
   feedbackPackageName,
+  miniappDeveloperPackageName,
 ]

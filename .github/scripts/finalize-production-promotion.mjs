@@ -3,7 +3,7 @@ import {readFileSync, writeFileSync} from "node:fs"
 import path from "node:path"
 import {fileURLToPath} from "node:url"
 
-import {promotionAssetName, validatePromotionRecord} from "./production-promotion-state.mjs"
+import {hasCompatibilityLab, promotionAssetName, validatePromotionRecord} from "./production-promotion-state.mjs"
 import {releaseRecordSha256, requirePublicHttpsUrl, serializeReleaseRecord} from "./release-family.mjs"
 
 function fail(message) {
@@ -47,9 +47,13 @@ export function finalizeProductionPromotion({plan, record, checkpointUrl}) {
   }
   requirePublicHttpsUrl(checkpointUrl, "promotion checkpoint URL")
   const evidenceKinds = new Set(record.evidence.map(({kind}) => kind))
+  // A store-observed current app has no Phase 2, so its chain legitimately
+  // carries no staging Mobile N evidence; every later gate is unconditional.
+  const phaseTwoKinds = hasCompatibilityLab(record)
+    ? ["staging-mobile-n-compatibility-lab", "staging-mobile-n-compatibility"]
+    : []
   for (const kind of [
-    "staging-mobile-n-compatibility-lab",
-    "staging-mobile-n-compatibility",
+    ...phaseTwoKinds,
     "production-cloud-config-preflight",
     "production-cloud-v2-deployment",
     "production-mobile-n-compatibility",
@@ -80,10 +84,6 @@ export function finalizeProductionPromotion({plan, record, checkpointUrl}) {
     artifactContainerName: plan.artifactContainerName,
     applications: {
       mentraApp: record.coordinates.candidates.mentraApp,
-      starterKit: {
-        sourceCommit: record.source.starterKitCommit,
-        ...record.coordinates.candidates.starterKit,
-      },
     },
     releaseFamily: {
       members: Object.fromEntries(

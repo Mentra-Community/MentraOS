@@ -1,8 +1,15 @@
+import {readFileSync} from "fs"
+import {resolve} from "path"
+
 import type {OtaProgress, OtaStatus} from "@mentra/bluetooth-sdk-internal"
 
 import {
   BES_INSTALL_RESTART_MESSAGE,
+  OTA_ERROR_ENGLISH_COPY,
+  OTA_ERROR_UNKNOWN_GLASSES_COPY_KEY,
+  OTA_GLASSES_ERROR_COPY_KEYS,
   getOtaErrorMessage,
+  otaErrorCopyKey,
   shouldRequireGlassesRebootForBesFailure,
   shouldShowChangeWifiForOtaDownloadFailure,
 } from "@/utils/otaErrorMapping"
@@ -34,6 +41,12 @@ function baseOtaProgress(overrides: Partial<OtaProgress> = {}): OtaProgress {
 }
 
 describe("getOtaErrorMessage", () => {
+  it("reports insufficient storage without suggesting a WiFi change", () => {
+    expect(getOtaErrorMessage("insufficient_storage")).toContain("free up space")
+    expect(shouldShowChangeWifiForOtaDownloadFailure(baseOtaStatus({error: "insufficient_storage"}), null, "")).toBe(
+      false,
+    )
+  })
   it("maps no_internet to WiFi message", () => {
     expect(getOtaErrorMessage("no_internet")).toBe("Glasses WiFi has no internet connection")
   })
@@ -80,16 +93,121 @@ describe("getOtaErrorMessage", () => {
     )
   })
 
+  it("maps the downgrade handoff codes to recovery-service copy", () => {
+    expect(getOtaErrorMessage("downgrade_handoff_failed")).toBe(
+      "The recovery service on your glasses did not respond. Restart your glasses and try again.",
+    )
+    expect(getOtaErrorMessage("downgrade_handoff_refused")).toBe(
+      "Your glasses could not start the version change. Restart your glasses and try again.",
+    )
+    expect(getOtaErrorMessage("downgrade_transaction_stalled")).toBe(
+      "The version change on your glasses did not finish. Restart your glasses and try again.",
+    )
+  })
+
   it("returns generic message for undefined error", () => {
     expect(getOtaErrorMessage(undefined)).toBe("Update failed")
   })
 
-  it("passes through arbitrary error strings", () => {
-    expect(getOtaErrorMessage("some_custom_error")).toBe("some_custom_error")
+  it("never echoes an unknown glasses code as the message", () => {
+    expect(getOtaErrorMessage("some_custom_error")).toBe(
+      "Your glasses reported an unexpected error. Restart your glasses and try again.",
+    )
   })
 
   it("returns generic message for empty string", () => {
     expect(getOtaErrorMessage("")).toBe("Update failed")
+  })
+
+  it("treats codes that name inherited Object members as unknown", () => {
+    for (const code of ["constructor", "toString", "__proto__", "hasOwnProperty"]) {
+      expect(getOtaErrorMessage(code)).toBe(
+        "Your glasses reported an unexpected error. Restart your glasses and try again.",
+      )
+    }
+  })
+})
+
+describe("otaErrorCopyKey", () => {
+  it("resolves every known glasses code to a key with English copy", () => {
+    for (const [code, key] of Object.entries(OTA_GLASSES_ERROR_COPY_KEYS)) {
+      expect(otaErrorCopyKey(code)).toBe(key)
+      expect(OTA_ERROR_ENGLISH_COPY[key]).toEqual(expect.any(String))
+    }
+  })
+
+  it("resolves the downgrade handoff failure to its own key", () => {
+    expect(otaErrorCopyKey("downgrade_handoff_failed")).toBe("ota:errorDowngradeHandoffFailed")
+  })
+
+  it("falls back to the unknown-glasses-error key for unmapped codes", () => {
+    expect(otaErrorCopyKey("some_custom_error")).toBe(OTA_ERROR_UNKNOWN_GLASSES_COPY_KEY)
+    expect(otaErrorCopyKey("some_custom_error")).toBe("ota:errorGlassesUnknown")
+  })
+
+  it("falls back to the plain generic key without a code", () => {
+    expect(otaErrorCopyKey(undefined)).toBe("ota:errorGeneric")
+    expect(otaErrorCopyKey(null)).toBe("ota:errorGeneric")
+    expect(otaErrorCopyKey("")).toBe("ota:errorGeneric")
+  })
+
+  it("never resolves an inherited Object member name to a mapped key", () => {
+    expect(otaErrorCopyKey("constructor")).toBe(OTA_ERROR_UNKNOWN_GLASSES_COPY_KEY)
+    expect(otaErrorCopyKey("__proto__")).toBe(OTA_ERROR_UNKNOWN_GLASSES_COPY_KEY)
+  })
+})
+
+describe("glasses-side producer coverage", () => {
+  // Every code the ASG client can attach to a FAILED ota_status must have its own copy, so
+  // scan the producers rather than only the codes already in the table. Producers: literal
+  // codes passed to sendProgressToPhone(..., "FAILED", code), the downgrade watchdog codes,
+  // classifyDownloadError's return values, FirmwareDownloadException's CODE_* constants, and
+  // AsgConstants' OTA_* codes.
+  const asgJavaRoot = resolve(__dirname, "../../../../asg_client/app/src/main/java/com/mentra/asg_client")
+  const otaHelper = readFileSync(resolve(asgJavaRoot, "io/ota/helpers/OtaHelper.java"), "utf8")
+  const downloadException = readFileSync(resolve(asgJavaRoot, "io/ota/utils/FirmwareDownloadException.java"), "utf8")
+  const asgConstants = readFileSync(resolve(asgJavaRoot, "AsgConstants.java"), "utf8")
+
+  function matchAll(source: string, pattern: RegExp): string[] {
+    return Array.from(source.matchAll(pattern), (match) => match[1])
+  }
+
+  const classifyDownloadErrorBody = otaHelper.slice(otaHelper.indexOf("private String classifyDownloadError("))
+  const producedCodes = new Set<string>([
+    ...matchAll(otaHelper, /"FAILED",\s*"([a-z_]+)"/g),
+    ...matchAll(otaHelper, /armHandoffWatchdog\(\s*[\w.]+,\s*"([a-z_]+)"/g),
+    ...matchAll(
+      classifyDownloadErrorBody.slice(0, classifyDownloadErrorBody.indexOf("\n    }\n")),
+      /return "([a-z_]+)";/g,
+    ),
+    ...matchAll(downloadException, /CODE_[A-Z_]+\s*=\s*"([a-z_]+)"/g),
+    ...matchAll(asgConstants, /\bOTA_[A-Z_]+\s*=\s*"([a-z_]+)"/g),
+  ])
+
+  it("finds the producers it scans for", () => {
+    for (const code of [
+      "download_failed",
+      "install_failed",
+      "no_internet",
+      "apk_verify_failed",
+      "insufficient_storage",
+      "downgrade_handoff_refused",
+      "downgrade_handoff_failed",
+      "apk_restart_guard_not_persisted",
+    ]) {
+      expect(producedCodes.has(code)).toBe(true)
+    }
+  })
+
+  it("maps every code the glasses can report", () => {
+    const unmapped = Array.from(producedCodes).filter((code) => !(code in OTA_GLASSES_ERROR_COPY_KEYS))
+    expect(unmapped).toEqual([])
+  })
+
+  it("has English copy for every mapped key", () => {
+    for (const key of Object.values(OTA_GLASSES_ERROR_COPY_KEYS)) {
+      expect(typeof OTA_ERROR_ENGLISH_COPY[key]).toBe("string")
+    }
   })
 })
 

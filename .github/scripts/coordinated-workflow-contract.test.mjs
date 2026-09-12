@@ -1,5 +1,8 @@
 import assert from "node:assert/strict"
-import {existsSync, readFileSync} from "node:fs"
+import {existsSync, readFileSync, mkdtempSync, rmSync} from "node:fs"
+import {spawnSync} from "node:child_process"
+import {tmpdir} from "node:os"
+import path from "node:path"
 import test from "node:test"
 
 function workflow(name) {
@@ -8,6 +11,14 @@ function workflow(name) {
 
 function mobileScript(name) {
   return readFileSync(new URL(`../../mobile/scripts/${name}`, import.meta.url), "utf8")
+}
+
+function mobileFastfile(name) {
+  return readFileSync(new URL(`../../mobile/ci/${name}/Fastfile`, import.meta.url), "utf8")
+}
+
+function repositoryScript(name) {
+  return readFileSync(new URL(`../../scripts/${name}`, import.meta.url), "utf8")
 }
 
 function jobBlock(source, name) {
@@ -87,10 +98,16 @@ test("production promotion is resumable and keeps irreversible actions behind se
   assert.match(mobile, /backend_environment: prod/)
   assert.match(mobile, /play_track: internal/)
   assert.match(mobile, /Mentra Production Candidates/)
-  assert.match(mobile, /Mentra SDK Example Production Candidates/)
+  for (const source of [prepare, mobile, submit, release, status]) {
+    assert.doesNotMatch(source, /com\.mentra\.bluetoothsdkexample|starterKitCommit/)
+  }
+  assert.doesNotMatch(mobile, /starter-kit-ios:|starter-kit-android:|reusable-production-starter-kit-android/)
+  assert.match(mobile, /needs: \[load, mentra-app\]/)
+  const androidFastfile = mobileFastfile("fastlane-android")
+  assert.match(androidFastfile, /version_name: ENV\["GOOGLE_PLAY_RELEASE_NAME"\]/)
+  assert.doesNotMatch(androidFastfile, /release_name:/)
   assert.match(mobile, /release_id: \$\{\{ needs\.load\.outputs\.promotion_release_id \}\}/)
   assert.match(mobile, /artifact_container_tag: \$\{\{ needs\.load\.outputs\.candidate_container_tag \}\}/)
-  assert.match(mobile, /candidate_release_id: \$\{\{ needs\.load\.outputs\.promotion_release_id \}\}/)
   assert.doesNotMatch(mobile, /allocate stable artifact container/i)
   assert.match(submit, /GOOGLE_PLAY_RELEASE_STATUS=draft/)
   assert.doesNotMatch(submit, /automatic_release: true/)
@@ -114,16 +131,83 @@ test("production promotion is resumable and keeps irreversible actions behind se
   assert.match(release, /validate-google-play-release\.mjs/)
   assert.match(release, /--required-state public/)
   assert.doesNotMatch(release, /\.tracks\.production \| map\(tonumber\)/)
-  const starterAndroid = workflow("reusable-production-starter-kit-android.yml")
-  assert.match(starterAndroid, /Persist and verify the exact App Bundle before Play upload/)
-  assert.match(starterAndroid, /publish-immutable-release-asset\.mjs/)
-  assert.match(starterAndroid, /GOOGLE_PLAY_AAB: \$\{\{ steps\.staged\.outputs\.aab \}\}/)
-  assert.match(
-    starterAndroid,
-    /Google Play contains this version code without this attempt's previously persisted App Bundle/,
-  )
   assert.equal(existsSync(new URL("../workflows/coordinated-production-promotion.yml", import.meta.url)), false)
   assert.equal(existsSync(new URL("../workflows/reusable-coordinated-mobile-promotion.yml", import.meta.url)), false)
+})
+
+test("stable packages publish from the frozen beta source independently of the mobile path", () => {
+  const packages = workflow("production-release-packages.yml")
+  const rollout = workflow("production-release-rollout.yml")
+  const sdkNative = workflow("reusable-coordinated-sdk-native.yml")
+
+  assert.match(packages, /workflow_dispatch:/)
+  assert.doesNotMatch(packages, /pull_request:/)
+  assert.match(packages, /ref: main/)
+  assert.match(packages, /beta_identity:/)
+  assert.match(packages, /options:\n\s+- publish\n\s+- release/)
+  // Keyed on the beta plan, built from its exact source, only once main contains it.
+  assert.match(packages, /git merge-base --is-ancestor "\$source_commit" origin\/main/)
+  assert.match(packages, /ref: \$\{\{ steps\.beta\.outputs\.source_commit \}\}/)
+  assert.match(packages, /production-packages\.mjs plan \\\n\s+--root release-source/)
+  assert.match(packages, /source_commit: \$\{\{ needs\.load\.outputs\.source_commit \}\}/)
+  // The promotion state machine is read only, to refuse a conflicting frozen beta.
+  assert.match(packages, /download-latest-attempt/)
+  assert.match(packages, /production-promotion-state\.mjs packages-guard/)
+  assert.doesNotMatch(packages, /production-promotion-state\.mjs (transition|append|attest-transition)/)
+  assert.doesNotMatch(packages, /publish-record|--to [a-z-]+/)
+  assert.doesNotMatch(
+    packages,
+    /stores-approved|store-review-approved|production-store-release|production-cloud|reusable-coordinated-cloud-v2|reusable-coordinated-mobile/,
+  )
+  assert.match(packages, /group: production-release-packages\n/)
+  // Every target is checked before the first irreversible mutation.
+  const releaseJob = jobBlock(packages, "release")
+  const firstMutation = releaseJob.indexOf("Move npm latest to the staged plain versions")
+  for (const preflight of [
+    "Preflight npm without moving any dist-tag",
+    "Preflight the validated Sonatype deployment",
+    "Preflight the staged SwiftPM commit against its archived export",
+  ]) {
+    const index = releaseJob.indexOf(preflight)
+    assert.notEqual(index, -1, preflight)
+    assert.ok(index < firstMutation, `${preflight} must precede the npm latest flip`)
+  }
+  assert.match(releaseJob, /--dry-run true/)
+  assert.match(releaseJob, /git get-tar-commit-id/)
+  assert.doesNotMatch(releaseJob, /cmp /)
+  // Staging and public release are separate protected approvals.
+  assert.match(packages, /name: production-packages\n/)
+  assert.match(packages, /name: production-packages-release\n/)
+  assert.match(packages, /npm_tag: \$\{\{ needs\.load\.outputs\.npm_tag \}\}/)
+  assert.match(packages, /promote-npm-latest\.mjs/)
+  assert.match(packages, /sonatype-central-deployment\.mjs publish/)
+  assert.match(packages, /git push origin "refs\/tags\/\$VERSION"/)
+  assert.match(packages, /release_id: \$\{\{ needs\.load\.outputs\.stable_release_id \}\}/)
+  // Both workflows must recognize the same stable draft container.
+  assert.match(
+    rollout,
+    /body: "Canonical production release records\. Publish manually only after the completed promotion and final public-availability checks\."/,
+  )
+  assert.match(packages, /production-packages\.mjs ensure-container/)
+  // The reusable native job stages production without publishing, using
+  // registry tooling from the workflow revision rather than the frozen source.
+  assert.match(sdkNative, /publishing_type=USER_MANAGED/)
+  assert.match(sdkNative, /ref: \$\{\{ github\.sha \}\}\n\s+path: release-tooling/)
+  assert.match(sdkNative, /release-tooling\/\.github\/scripts\/sonatype-central-deployment\.mjs upload/)
+  assert.match(sdkNative, /release-tooling\/\.github\/scripts\/sonatype-central-deployment\.mjs inspect/)
+  assert.doesNotMatch(sdkNative, /node \.github\/scripts\/sonatype-central-deployment\.mjs/)
+  assert.match(sdkNative, /--publishing-type "\$PUBLISHING_TYPE"/)
+  assert.match(sdkNative, /\.publishingType native-result\/maven\/sonatype-deployment\.json\)" == "\$PUBLISHING_TYPE"/)
+  assert.match(sdkNative, /sonatype-central-deployment\.mjs wait-validated/)
+  assert.match(sdkNative, /staging_ref="release\/\$version"/)
+  assert.match(
+    sdkNative,
+    /steps\.release\.outputs\.channel != 'production' && steps\.existing\.outputs\.exists != 'true'/,
+  )
+  assert.match(
+    sdkNative,
+    /git push origin "\$\{\{ steps\.selected\.outputs\.mirror_sha \}\}:refs\/heads\/\$STAGING_REF"/,
+  )
 })
 
 test("Cloud V2 deploys once per coordinated environment before mobile publication", () => {
@@ -163,6 +247,61 @@ test("Cloud V2 deploys once per coordinated environment before mobile publicatio
   }
 })
 
+test("Private Deployment is release-matched and recorded by the dev coordinator", () => {
+  const coordinator = workflow("coordinated-release.yml")
+  const runtimeImage = workflow("reusable-coordinated-runtime-image.yml")
+  const privateDeployment = workflow("private-deployment-dev.yml")
+  const runtimeImageJob = jobBlock(coordinator, "runtime-image")
+  const privateDeploymentJob = jobBlock(coordinator, "private-deployment")
+  const finalize = jobBlock(coordinator, "finalize")
+  const notify = jobBlock(coordinator, "notify-slack")
+
+  assert.match(runtimeImageJob, /^    needs: plan$/m)
+  assert.match(runtimeImageJob, /reusable-coordinated-runtime-image\.yml/)
+  assert.match(runtimeImage, /ghcr\.io\/mentra-community\/mentra-cloud/)
+  assert.match(runtimeImage, /docker\/build-push-action@/)
+  assert.match(runtimeImage, /anchore\/sbom-action@/)
+  assert.equal((runtimeImage.match(/uses: actions\/attest@/g) || []).length, 2)
+  assert.match(runtimeImage, /tags: \$\{\{ steps\.coordinates\.outputs\.temporary_tag \}\}/)
+  assert.match(runtimeImage, /provenance: false/)
+  assert.ok(
+    runtimeImage.indexOf("- name: Attest new build provenance") <
+      runtimeImage.indexOf("- name: Publish immutable release and source tags"),
+  )
+  assert.match(runtimeImage, /- name: Verify reused image provenance/)
+  assert.match(runtimeImage, /--predicate-type https:\/\/spdx\.dev\/Document\/v2\.3/)
+  assert.match(runtimeImage, /coordinated-runtime-image-records\.mjs create/)
+  assert.match(privateDeploymentJob, /^    needs: \[plan, runtime-image\]$/m)
+  assert.match(privateDeploymentJob, /needs\.plan\.outputs\.cloud_environment == 'dev'/)
+  assert.match(privateDeploymentJob, /source_commit: \$\{\{ needs\.plan\.outputs\.source_commit \}\}/)
+  assert.match(privateDeploymentJob, /release_plan_artifact: \$\{\{ needs\.plan\.outputs\.plan_artifact \}\}/)
+  assert.match(
+    privateDeploymentJob,
+    /runtime_image_artifact: \$\{\{ needs\.runtime-image\.outputs\.result_artifact \}\}/,
+  )
+  assert.match(privateDeployment, /workflow_call:/)
+  assert.doesNotMatch(privateDeployment, /push:/)
+  assert.doesNotMatch(privateDeployment, /workflow_dispatch:/)
+  assert.match(privateDeployment, /group: coordinated-private-deployment-dev/)
+  assert.match(privateDeployment, /\[\[ "\$source_commit" == "\$\{\{ inputs\.source_commit \}\}" \]\]/)
+  assert.match(privateDeployment, /coordinated-private-deployment-records\.mjs create/)
+  assert.match(privateDeployment, /az acr import/)
+  assert.doesNotMatch(privateDeployment, /az acr build/)
+  assert.match(privateDeployment, /ghcr\.io\/mentra-community\/mentra-cloud/)
+  assert.match(privateDeployment, /coreApiClientId:\{value:\$coreApiClientId\}/)
+  assert.match(privateDeployment, /MENTRA_JWT_PRIVATE_KEY/)
+  assert.match(privateDeployment, /source_digest.*image_digest|image_digest.*source_digest/s)
+  assert.match(privateDeployment, /--arg workspaceHostname "enterprisedev\.mentraglass\.com"/)
+  assert.match(privateDeployment, /az acr manifest show-metadata/)
+  assert.match(privateDeployment, /latestReadyRevisionName/)
+  assert.match(finalize, /needs\.private-deployment\.result == 'success'/)
+  assert.match(finalize, /needs\.runtime-image\.result == 'success'/)
+  assert.match(finalize, /--runtime-image release-input\/runtime-image\/runtime-image-publication\.json/)
+  assert.match(finalize, /--private-deployment release-input\/private-deployment\/private-deployment\.json/)
+  assert.match(notify, /PRIVATE_DEPLOYMENT_RESULT: \$\{\{ needs\.private-deployment\.result \}\}/)
+  assert.match(notify, /RUNTIME_IMAGE_RESULT: \$\{\{ needs\.runtime-image\.result \}\}/)
+})
+
 test("mobile destinations use real TestFlight groups without changing the release channel", () => {
   const coordinator = workflow("coordinated-release.yml")
   const mobile = workflow("reusable-coordinated-mobile.yml")
@@ -191,15 +330,16 @@ test("mobile destinations use real TestFlight groups without changing the releas
   assert.match(example, /bundle exec fastlane sigh/)
   assert.match(example, /--app_identifier "\$EXAMPLE_BUNDLE_ID"/)
   assert.match(example, /--cert_id "\$certificate_id"/)
-  assert.match(example, /CODE_SIGN_STYLE=Manual/)
-  assert.match(example, /CODE_SIGN_IDENTITY="\$MENTRA_CI_CODE_SIGN_IDENTITY"/)
-  assert.match(example, /PROVISIONING_PROFILE_SPECIFIER="\$MENTRA_CI_PROVISIONING_PROFILE_NAME"/)
+  assert.match(example, /configure-example-ios-signing\.rb/)
+  assert.doesNotMatch(example, /PROVISIONING_PROFILE_SPECIFIER=/)
+  assert.doesNotMatch(example, /CODE_SIGN_STYLE=Manual/)
   assert.match(example, /OTHER_CODE_SIGN_FLAGS="--keychain \$MENTRA_CI_KEYCHAIN"/)
   assert.match(example, /provisioningProfiles: \{\(\$bundle_id\): \$profile\}/)
   assert.match(example, /PlistBuddy -c 'Print :com\.apple\.developer\.networking\.HotspotConfiguration'/)
   assert.equal([...example.matchAll(/--app-id "\$EXAMPLE_APP_ID"/g)].length, 5)
   assert.match(example, /starterKit\.releaseCommit/)
-  assert.match(example, /runs-on: \[self-hosted, macOS, ARM64\]/)
+  assert.match(jobBlock(example, "ios"), /runs-on: macos-15/)
+  assert.match(jobBlock(example, "ios"), /DEVELOPER_DIR: \/Applications\/Xcode_26\.2\.app\/Contents\/Developer/)
   assert.match(example, /app-store-connect-build\.mjs upload/)
   assert.match(mobile, /app-store-connect-build\.mjs upload/)
   assert.match(example, /app-store-connect-build\.mjs assign/)
@@ -224,18 +364,71 @@ test("mobile destinations use real TestFlight groups without changing the releas
 
 test("coordinated docs publish only after finalization to the matching channel", () => {
   const coordinator = workflow("coordinated-release.yml")
+  const plan = jobBlock(coordinator, "plan")
   const starterKit = jobBlock(coordinator, "starter-kit")
   const engineConsumer = jobBlock(coordinator, "engine-consumer")
   const exampleTestflight = jobBlock(coordinator, "example-testflight")
   const docs = jobBlock(coordinator, "docs")
   const notify = jobBlock(coordinator, "notify-slack")
 
-  assert.match(starterKit, /^    needs: \[plan, ota\]$/m)
+  const finalize = jobBlock(coordinator, "finalize")
+  const finalizeExample = jobBlock(coordinator, "finalize-example")
+
+  // The Mentra beta (Cloud V2, Mentra App, Engine, Bluetooth SDK) is complete
+  // on its own; the Bluetooth example is built against the finalized beta and
+  // finalized as a separate record, so it can never make the beta incomplete.
+  assert.match(
+    finalize,
+    /^    needs: \[plan, cloud-v2, runtime-image, private-deployment, ota, npm, sdk-native, mobile, engine-consumer\]$/m,
+  )
+  assert.doesNotMatch(finalize, /starter-kit|example-testflight|example-google-play/)
+  assert.match(starterKit, /^    needs: \[plan, ota, npm, sdk-native, finalize\]$/m)
   assert.match(engineConsumer, /^    needs: \[plan, npm\]$/m)
   assert.match(starterKit, /coordinated-example-release\.yml/)
-  assert.match(starterKit, /event_type: "coordinated_example_release"/)
-  assert.match(starterKit, /--event repository_dispatch/)
-  assert.doesNotMatch(starterKit, /gh workflow run coordinated-example-release\.yml/)
+  assert.doesNotMatch(coordinator, /Freeze the Starter Kit channel source/)
+  assert.doesNotMatch(coordinator, /--starter-kit-source|starterKitSource|Starter-Kit-Source/)
+  assert.match(
+    finalizeExample,
+    /^    needs: \[plan, finalize, starter-kit, example-testflight, example-google-play\]$/m,
+  )
+  assert.match(finalizeExample, /needs\.finalize\.result == 'success'/)
+  assert.match(finalizeExample, /needs\.plan\.outputs\.dry_run != 'true'/)
+  assert.match(finalizeExample, /name: coordinated-release-result-\$\{\{ needs\.plan\.outputs\.release_set_id \}\}/)
+  assert.match(finalizeExample, /example-release-records\.mjs/)
+  assert.match(finalizeExample, /--beta-manifest "\$beta_manifest"/)
+  assert.match(finalizeExample, /record_name="mentra-example-release-\$identity\.json"/)
+  assert.match(finalizeExample, /publish-immutable-release-asset\.mjs/)
+  assert.match(finalizeExample, /verify-public-release-asset\.mjs/)
+  // Retries are idempotent: the Starter Kit head the earlier attempt used is
+  // recovered from its candidate (or release tag), and an already-published
+  // example record is reproduced byte-for-byte instead of re-minted.
+  assert.match(
+    starterKit,
+    /candidate_parent=\$\(gh api "repos\/\$STARTER_KIT_REPOSITORY\/commits\/coordinated\/\$identity" --jq '\.parents\[0\]\.sha'/,
+  )
+  assert.match(starterKit, /commits\/sdk-\$identity" --jq '\.parents\[0\]\.sha'/)
+  assert.match(finalizeExample, /--output existing-record\.json/)
+  assert.match(finalizeExample, /completed_at=\$\(jq -er \.completedAt existing-record\.json\)/)
+  assert.match(finalizeExample, /cmp existing-record\.json "finalized-example\/\$record_name"/)
+  assert.match(finalizeExample, /--completed-at "\$completed_at"/)
+  assert.match(plan, /Restore the release plan selected by an earlier attempt/)
+  assert.match(plan, /actions\/runs\/\$GITHUB_RUN_ID\/artifacts/)
+  assert.match(plan, /gh run download "\$GITHUB_RUN_ID"/)
+  assert.match(plan, /output=release-plan\.verify\.json/)
+  assert.match(plan, /cmp release-plan\.json "\$output"/)
+  assert.equal([...plan.matchAll(/if: steps\.restore-plan\.outputs\.restored != 'true'/g)].length, 1)
+  assert.doesNotMatch(plan, /source_timestamp/)
+  assert.match(
+    starterKit,
+    /expected_head=\$\(git ls-remote "https:\/\/github\.com\/\$STARTER_KIT_REPOSITORY\.git" "refs\/heads\/\$target_branch"/,
+  )
+  assert.doesNotMatch(starterKit, /expected_head=\$\(gh api/)
+  assert.doesNotMatch(starterKit, /event_type: "coordinated_example_release"/)
+  assert.doesNotMatch(starterKit, /--event repository_dispatch/)
+  assert.match(starterKit, /gh workflow run coordinated-example-release\.yml/)
+  assert.match(starterKit, /--ref "\$target_branch"/)
+  assert.match(starterKit, /--event workflow_dispatch/)
+  assert.equal([...starterKit.matchAll(/--branch "\$target_branch"/g)].length, 2)
   assert.match(starterKit, /starter-kit-release-\$identity\.json/)
   assert.match(starterKit, /select\(\.displayTitle == [^\n]+ and \.status != \\"completed\\"\)/)
   assert.match(starterKit, /encoded_candidate_branch=\$\(jq -rn[^\n]+'\$value \| @uri'\)/)
@@ -258,7 +451,7 @@ test("coordinated docs publish only after finalization to the matching channel",
   assert.match(starterKit, /private-key: \$\{\{ secrets\.STARTER_KIT_COORDINATOR_APP_PRIVATE_KEY \}\}/)
   assert.match(starterKit, /continue-on-error: true/)
   assert.doesNotMatch(starterKit, /STARTER_KIT_APP_PRIVATE_KEY:/)
-  assert.match(starterKit, /permission-actions: read/)
+  assert.match(starterKit, /permission-actions: write/)
   assert.match(starterKit, /permission-contents: write/)
   assert.doesNotMatch(starterKit, /permission-pull-requests: write/)
   assert.match(starterKit, /permission-contents: read/)
@@ -276,12 +469,11 @@ test("coordinated docs publish only after finalization to the matching channel",
   )
   assert.match(exampleTestflight, /^    needs: \[plan, starter-kit\]$/m)
   assert.match(exampleTestflight, /reusable-coordinated-example-testflight\.yml/)
-  assert.match(jobBlock(coordinator, "finalize"), /needs\.starter-kit\.result == 'success'/)
-  assert.match(jobBlock(coordinator, "finalize"), /needs\.example-testflight\.result == 'success'/)
-  assert.match(jobBlock(coordinator, "finalize"), /needs\.engine-consumer\.result == 'success'/)
-  assert.match(docs, /^    needs: \[plan, starter-kit, example-testflight, finalize\]$/m)
+  assert.match(finalize, /needs\.engine-consumer\.result == 'success'/)
+  assert.match(docs, /^    needs: \[plan, starter-kit, example-testflight, finalize, finalize-example\]$/m)
   assert.match(docs, /needs\.starter-kit\.result == 'success'/)
   assert.match(docs, /needs\.finalize\.result == 'success'/)
+  assert.match(docs, /needs\.finalize-example\.result == 'success'/)
   assert.match(docs, /needs\.plan\.outputs\.dry_run != 'true'/)
   assert.match(docs, /project=mentraos-docs-dev/)
   assert.match(docs, /docs_url=https:\/\/docs-dev\.mentraglass\.com/)
@@ -290,19 +482,36 @@ test("coordinated docs publish only after finalization to the matching channel",
   assert.match(docs, /render-coordinated-docs\.mjs/)
   assert.match(docs, /--starter-kit/)
   assert.match(docs, /--example-testflight/)
+  assert.match(docs, /Cache-Control: public, max-age=0, must-revalidate/)
   assert.match(docs, /X-Robots-Tag: noindex/)
+  const purge = docs.slice(
+    docs.indexOf("- name: Purge release-sensitive"),
+    docs.indexOf("- name: Verify the published custom domain"),
+  )
+  const verify = docs.slice(docs.indexOf("- name: Verify the published custom domain"))
+  assert.match(purge, /continue-on-error: true/)
+  assert.match(purge, /timeout-minutes: 1/)
+  assert.doesNotMatch(verify, /continue-on-error: true/)
+  assert.match(verify, /exit 1/)
+  assert.match(docs, /CLOUDFLARE_ZONE_ID: \$\{\{ vars\.CLOUDFLARE_ZONE_ID \}\}/)
+  assert.match(docs, /zones\/\$CLOUDFLARE_ZONE_ID\/purge_cache/)
+  assert.match(docs, /\$DOCS_URL\/mentra-live\/software-update\//)
   assert.match(docs, /grep --fixed-strings --quiet "\$RELEASE_IDENTITY" "\$body"/)
   assert.match(docs, /grep --fixed-strings --quiet "href=\\"\$EXAMPLE_APK_URL\\"" "\$body"/)
   assert.match(docs, /grep --fixed-strings --quiet "href=\\"\$EXAMPLE_IOS_URL\\"" "\$body"/)
   assert.match(docs, /%7b%7b\[a-z0-9_-\]\+%7d%7d/)
   assert.match(
     notify,
-    /^    needs:\n      \[plan, cloud-v2, ota, npm, sdk-native, mobile, engine-consumer, starter-kit, example-testflight, finalize, docs\]$/m,
+    /^    needs:\n      \[\n        plan,\n        cloud-v2,\n        runtime-image,\n        private-deployment,\n        ota,\n        npm,\n        sdk-native,\n        mobile,\n        engine-consumer,\n        starter-kit,\n        example-testflight,\n        example-google-play,\n        finalize,\n        finalize-example,\n        docs,\n      \]$/m,
   )
+  assert.match(notify, /FINALIZE_EXAMPLE_RESULT: \$\{\{ needs\.finalize-example\.result \}\}/)
   assert.match(notify, /STARTER_KIT_RESULT: \$\{\{ needs\.starter-kit\.result \}\}/)
   assert.match(notify, /EXAMPLE_TESTFLIGHT_RESULT: \$\{\{ needs\.example-testflight\.result \}\}/)
   assert.match(notify, /EXAMPLE_TESTFLIGHT_INSTALL_URL: \$\{\{ needs\.example-testflight\.outputs\.install_url \}\}/)
   assert.match(notify, /EXAMPLE_TESTFLIGHT_BUILD_NUMBER: \$\{\{ needs\.example-testflight\.outputs\.build_number \}\}/)
+  assert.match(notify, /EXAMPLE_GOOGLE_PLAY_RESULT: \$\{\{ needs\.example-google-play\.result \}\}/)
+  assert.match(notify, /EXAMPLE_GOOGLE_PLAY_TRACK: \$\{\{ needs\.plan\.outputs\.example_play_track \}\}/)
+  assert.match(notify, /EXAMPLE_GOOGLE_PLAY_INSTALL_URL: \$\{\{ needs\.example-google-play\.outputs\.install_url \}\}/)
   assert.match(notify, /STARTER_KIT_RUN_URL: \$\{\{ needs\.starter-kit\.outputs\.run_url \}\}/)
   assert.match(notify, /DOCS_RESULT: \$\{\{ needs\.docs\.result \}\}/)
   const example = workflow("reusable-coordinated-example-testflight.yml")
@@ -311,11 +520,53 @@ test("coordinated docs publish only after finalization to the matching channel",
   assert.match(example, /continue-on-error: true/)
   assert.doesNotMatch(example, /STARTER_KIT_APP_PRIVATE_KEY:/)
   assert.match(example, /permission-contents: read/)
-  assert.match(example, /^      group: mentra-ios-signing-runner$/m)
+  assert.doesNotMatch(example, /group: mentra-ios-signing-runner/)
   assert.match(
     example,
     /token: \$\{\{ steps\.starter-kit-app-token\.outputs\.token \|\| secrets\.STARTER_KIT_COORDINATOR_TOKEN/,
   )
+})
+
+test("release-family promotion orders both repositories and reconciles Starter Kit ancestry", () => {
+  const script = repositoryScript("promote-release-family.mjs")
+  const start = script.indexOf('if (command === "start")')
+  const starterPromotion = script.indexOf("repository: STARTER_KIT_REPOSITORY", start)
+  const mentraosPromotion = script.indexOf("repository: MENTRAOS_REPOSITORY", starterPromotion)
+  const finish = script.indexOf("requireSuccessfulBetaRun(options.run)", mentraosPromotion)
+  const starterReconciliation = script.indexOf("repository: STARTER_KIT_REPOSITORY", finish)
+  const preparation = script.indexOf("scripts/prepare-next-release-family.mjs", starterReconciliation)
+
+  assert.ok(start >= 0)
+  assert.ok(starterPromotion > start)
+  assert.ok(mentraosPromotion > starterPromotion)
+  assert.ok(finish > mentraosPromotion)
+  assert.ok(starterReconciliation > finish)
+  assert.ok(preparation > starterReconciliation)
+  assert.match(script, /--match-head-commit", promotionHead/)
+  assert.match(script, /mergeBody: `Starter-Kit-Source: \$\{starterKitStagingHead\}`/)
+  assert.match(script, /run\.path !== "\.github\/workflows\/coordinated-release\.yml"/)
+  assert.match(script, /run\.head_sha !== stagingHead/)
+  assert.match(script, /expectedIdentity = `\$\{plan\.familyBaseVersion\}-beta\.\$\{run\.run_number\}`/)
+  assert.match(script, /plan\.sourceCommit !== stagingHead/)
+  assert.doesNotMatch(script, /plan\.starterKitSource|Starter-Kit-Source trailer/)
+  assert.match(script, /createMetadataCommit\(repository, targetHead, family, mergeBody\)/)
+  assert.match(script, /release\/promote-\$\{family\}-refresh-pin-\$\{marker\}/)
+  assert.match(script, /promotionBranchHead\(repository, branch\) \|\|/)
+  assert.match(script, /resumingPreparation = checkoutVersion === options\.next/)
+  assert.match(script, /requireDevCheckout\(\{allowDirty: resumingPreparation\}\)/)
+  assert.match(script, /there is no interrupted preparation to resume/)
+  assert.match(script, /requireNextVersion\(currentVersion, nextVersion\)/)
+})
+
+test("next-family preparation validates license inventory before mutating files", () => {
+  const script = repositoryScript("prepare-next-release-family.mjs")
+  const licensePreflight = script.indexOf("prepareLicenseInventory(currentVersion, nextVersion, family)")
+  const firstManifestWrite = script.indexOf("updateManifests({currentVersion, nextVersion, family})", licensePreflight)
+  const licenseWrite = script.indexOf("licenseInventory.output", firstManifestWrite)
+
+  assert.ok(licensePreflight >= 0)
+  assert.ok(firstManifestWrite > licensePreflight)
+  assert.ok(licenseWrite > firstManifestWrite)
 })
 
 test("external example review replacements are manual and exact-build only", () => {
@@ -400,4 +651,61 @@ test("Android release keeps the GitHub APK arm64-only and the Play AAB multi-ABI
   )
   assert.match(mobileAndroid, /GitHub APK ABIs '\$\{apk_abis:-<none>\}' do not match required arm64-v8a/)
   assert.match(mobileAndroid, /Google Play AAB ABIs '\$\{aab_abis:-<none>\}' do not match required \$expected_aab_abis/)
+})
+
+test("iOS publishes the signed artifact before submitting those same bytes to Apple", () => {
+  const source = workflow("reusable-coordinated-mobile.yml")
+  const build = jobBlock(source, "ios")
+  const publish = jobBlock(source, "ios-publish")
+  const upload = jobBlock(source, "ios-upload")
+  const store = jobBlock(source, "ios-store")
+  assert.doesNotMatch(build, /publish-immutable-release-asset\.mjs|app-store-connect-build\.mjs upload/)
+  assert.match(build, /actions\/upload-artifact@v4/)
+  assert.match(publish, /needs: \[prepare, ios\]/)
+  assert.match(publish, /runs-on: ubuntu-latest/)
+  assert.match(publish, /timeout-minutes: 5/)
+  assert.match(publish, /needs\.ios\.outputs\.upload_artifact/)
+  assert.match(publish, /publish-immutable-release-asset\.mjs/)
+  assert.match(
+    publish,
+    /inputs\.dry_run != true && inputs\.compatibility_lab != true && needs\.prepare\.outputs\.ios_asset_exists != 'true'/,
+  )
+  assert.match(upload, /needs: \[prepare, ios, ios-publish\]/)
+  assert.match(upload, /needs\.ios\.outputs\.upload_artifact/)
+  assert.match(upload, /app-store-connect-build\.mjs upload/)
+  assert.match(store, /needs: \[prepare, ios, ios-upload\]/)
+  assert.match(store, /needs\.ios-upload\.outputs\.upload_status/)
+})
+
+test("iOS status reports the failed phase instead of downstream skips", (t) => {
+  const dir = mkdtempSync(path.join(tmpdir(), "ios-status-"))
+  t.after(() => rmSync(dir, {recursive: true, force: true}))
+  const status = jobBlock(workflow("reusable-coordinated-mobile.yml"), "status")
+  const script = status.split("        run: |\n")[1].replace(/^          /gm, "")
+  for (const [build, publish, upload, store, expected] of [
+    ["success", "success", "success", "success", "success"],
+    ["failure", "skipped", "skipped", "skipped", "failure"],
+    ["success", "failure", "skipped", "skipped", "failure"],
+    ["success", "success", "cancelled", "skipped", "cancelled"],
+    ["success", "success", "success", "failure", "failure"],
+  ]) {
+    const output = path.join(dir, `${build}-${publish}-${upload}-${store}`)
+    const result = spawnSync("bash", ["-eu", "-c", script], {
+      encoding: "utf8",
+      env: {
+        ...process.env,
+        GITHUB_OUTPUT: output,
+        ANDROID_RESULT: "success",
+        IOS_BUILD_RESULT: build,
+        IOS_PUBLISH_RESULT: publish,
+        IOS_UPLOAD_RESULT: upload,
+        IOS_STORE_RESULT: store,
+        APK_NAME: "app.apk",
+        IPA_NAME: "app.ipa",
+        ASSET_BASE_URL: "https://example.com",
+      },
+    })
+    assert.equal(result.status, 0, result.stderr)
+    assert.match(readFileSync(output, "utf8"), new RegExp(`^ios_result=${expected}$`, "m"))
+  }
 })

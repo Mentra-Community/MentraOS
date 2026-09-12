@@ -24,11 +24,17 @@ import com.mentra.asg_client.camera.CameraNeoService;
 import com.mentra.asg_client.io.hardware.core.HardwareManagerFactory;
 import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
 import com.mentra.asg_client.io.network.utils.HotspotAwareNetworkChangeDetector;
+import com.mentra.asg_client.io.streaming.config.IcePostPolicy;
 import com.mentra.asg_client.io.streaming.config.WhipStreamConfig;
 import com.mentra.asg_client.io.streaming.interfaces.StreamingStatusCallback;
+import com.mentra.asg_client.io.streaming.telemetry.WhipPipelineStats;
+import com.mentra.asg_client.io.streaming.trace.SoftApTrace;
 import com.mentra.asg_client.service.core.constants.BatteryConstants;
+import com.mentra.asg_client.service.system.core.SystemControllerFactory;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
 import com.mentra.asg_client.utils.WakeLockManager;
+
+import org.json.JSONObject;
 
 import org.webrtc.RTCStats;
 import org.webrtc.RTCStatsCollectorCallback;
@@ -60,14 +66,14 @@ import org.webrtc.VideoTrack;
 import java.io.IOException;
 import java.util.ArrayList;
 import java.util.List;
-import java.util.Timer;
-import java.util.TimerTask;
+import java.util.Map;
 
 import okhttp3.Call;
 import okhttp3.Callback;
 import okhttp3.MediaType;
 import okhttp3.OkHttpClient;
 import okhttp3.Request;
+import io.github.thibaultbee.streampack.internal.sources.camera.CameraController;
 import okhttp3.RequestBody;
 import okhttp3.Response;
 import org.json.JSONObject;
@@ -99,6 +105,8 @@ public class WhipStreamingService extends Service {
   // Static instance so static helper methods can reach the running service
   private static final Object sConfigLock = new Object();
   private static volatile WhipStreamingService sInstance;
+  private static long sStartRequestGeneration;
+  private static boolean sStartRequested;
   private static StreamingStatusCallback sStatusCallback;
   private static WhipStreamConfig sPendingStreamConfig = null;
 
@@ -143,13 +151,19 @@ public class WhipStreamingService extends Service {
   private static final long ICE_GATHER_POST_TIMEOUT_MS = 1500L;
   private static final long ICE_CONNECT_TIMEOUT_MS = 8000L;
   private volatile boolean mWhipOfferPosted = false;
+  /** ICE mode for the current negotiation; HOST_ONLY on the SoftAP path. */
+  private volatile IcePostPolicy.Mode mIceMode = IcePostPolicy.Mode.STUN;
+  /** Set once a private-subnet {@code typ host} candidate is gathered. */
+  private volatile boolean mHasHotspotHostCandidate = false;
   private volatile boolean mWhipStreamingNotified = false;
   /** Bumped on each new PeerConnection so queued ICE/HTTP callbacks cannot act on a later negotiation. */
   private volatile int mNegotiationGeneration = 0;
+  private volatile long mSessionGeneration;
   private Runnable mPostOfferTimeoutRunnable = () -> {};
   private Runnable mIceConnectTimeoutRunnable = this::failIceConnectTimeout;
 
   private IHardwareManager mHardwareManager;
+  private final Object mPrivacyLightOwner = new Object();
 
   // ---- State management ----
   private enum StreamState { IDLE, STARTING, STREAMING, STOPPING, RECONNECTING }
@@ -157,8 +171,6 @@ public class WhipStreamingService extends Service {
   private final Object mStateLock = new Object();
 
   // ---- Stream timeout (keep-alive) ----
-  private static final long STREAM_TIMEOUT_MS = 60000; // 60 seconds
-  private Timer mStreamTimeoutTimer;
 
   // ---- Battery monitoring ----
   private static IStateManager sStateManager;
@@ -180,12 +192,22 @@ public class WhipStreamingService extends Service {
   private long mLastAudioBytesSent = 0;
   private long mLastStatsAtMs = 0;
   private long mStreamStartedAtMs = 0;
+  /** Previous sweep's cumulative WebRTC counters, so the diagnosis prints deltas not totals. */
+  private WhipPipelineStats.Sample mLastPipelineSample = null;
+  /** Last adaptation verdict, so a change is logged loudly instead of scrolling past at 1Hz. */
+  private String mLastPipelineVerdict = null;
+  private long mLastPipelineAtMs = 0;
   private final Runnable mStatsRunnable = new Runnable() {
     @Override
     public void run() {
-      if (!AsgConstants.ENABLE_PIPELINE_FPS_TELEMETRY) return;
+      if (!statsSweepEnabled()) return;
       if (mPeerConnection == null) return;
       mPeerConnection.getStats(report -> {
+        reportPipelineDiagnosis(report);
+        if (!AsgConstants.ENABLE_PIPELINE_FPS_TELEMETRY) {
+          rescheduleStatsSweep(this);
+          return;
+        }
         long videoBytesTotal = 0, audioBytesTotal = 0;
         long videoPackets = 0, audioPackets = 0;
         long droppedFrames = 0;
@@ -257,15 +279,91 @@ public class WhipStreamingService extends Service {
             elapsedMs > 0 ? videoDelta * 1000 / elapsedMs : 0, videoPackets,
             elapsedMs > 0 ? audioDelta * 1000 / elapsedMs : 0, audioPackets));
 
-        synchronized (mStateLock) {
-          if (mStreamState != StreamState.STREAMING || mPeerConnection == null) {
-            return;
-          }
-        }
-        mMainHandler.postDelayed(this, AsgConstants.STREAM_METRICS_INTERVAL_MS);
+        rescheduleStatsSweep(this);
       });
     }
   };
+
+  /**
+   * Whether the 1Hz {@code getStats} sweep should run at all.
+   *
+   * <p>Either consumer is reason enough: the diagnosis needs the report even when the BLE-facing
+   * metrics fanout is off, which is its normal state in production.
+   */
+  private static boolean statsSweepEnabled() {
+    return AsgConstants.ENABLE_PIPELINE_FPS_TELEMETRY
+        || AsgConstants.ENABLE_CALL_PIPELINE_DIAGNOSTICS;
+  }
+
+  /** Re-arms the sweep only while the stream is genuinely up, so teardown ends the loop. */
+  private void rescheduleStatsSweep(Runnable sweep) {
+    synchronized (mStateLock) {
+      if (mStreamState != StreamState.STREAMING || mPeerConnection == null) {
+        return;
+      }
+    }
+    mMainHandler.postDelayed(sweep, AsgConstants.STREAM_METRICS_INTERVAL_MS);
+  }
+
+  /**
+   * Emits the send-side bottleneck verdict for one sweep.
+   *
+   * <p>The configured size is passed in rather than read from the report because that comparison is
+   * the whole point: libwebrtc reports the resolution it settled on, and only the delta against
+   * what we asked for reveals that it silently adapted away most of the picture.
+   */
+  private void reportPipelineDiagnosis(RTCStatsReport report) {
+    if (!AsgConstants.ENABLE_CALL_PIPELINE_DIAGNOSTICS || report == null) {
+      return;
+    }
+    try {
+      List<WhipPipelineStats.Entry> entries = new ArrayList<>();
+      for (RTCStats stats : report.getStatsMap().values()) {
+        entries.add(new WhipPipelineStats.Entry() {
+          @Override
+          public String type() {
+            return stats.getType();
+          }
+
+          @Override
+          public Map<String, Object> members() {
+            return stats.getMembers();
+          }
+        });
+      }
+
+      WhipPipelineStats.Sample sample = WhipPipelineStats.parse(entries);
+      sample.configuredWidth = mStreamConfig.getVideoWidth();
+      sample.configuredHeight = mStreamConfig.getVideoHeight();
+      sample.configuredFps = mStreamConfig.getVideoFps();
+      long now = SystemClock.elapsedRealtime();
+      sample.elapsedMs = mLastPipelineAtMs > 0
+          ? now - mLastPipelineAtMs
+          : AsgConstants.STREAM_METRICS_INTERVAL_MS;
+      mLastPipelineAtMs = now;
+
+      WhipPipelineStats.Sample cumulative = WhipPipelineStats.copyCumulative(sample);
+      sample = WhipPipelineStats.delta(sample, mLastPipelineSample);
+      mLastPipelineSample = cumulative;
+
+      Log.i(TAG, WhipPipelineStats.format(mCurrentStreamId, sample));
+
+      String verdict = WhipPipelineStats.verdict(sample);
+      if (!verdict.equals(mLastPipelineVerdict)) {
+        mLastPipelineVerdict = verdict;
+        Log.w(
+            TAG,
+            "[STREAM_PIPELINE] verdict changed to " + verdict
+                + " streamId=" + mCurrentStreamId
+                + " encoded=" + sample.encodedWidth + "x" + sample.encodedHeight
+                + " configured=" + sample.configuredWidth + "x" + sample.configuredHeight
+                + " pixels=" + WhipPipelineStats.encodedPixelPercent(sample) + "%"
+                + " limit=" + sample.qualityLimitation);
+      }
+    } catch (Exception e) {
+      Log.w(TAG, "Pipeline diagnosis failed", e);
+    }
+  }
 
   // -----------------------------------------------------------------------
   // Android Service lifecycle
@@ -300,6 +398,10 @@ public class WhipStreamingService extends Service {
   @Override
   public int onStartCommand(Intent intent, int flags, int startId) {
     startForeground(NOTIFICATION_ID, createNotification("Ready to stream"));
+    if (intent == null || intent.getLongExtra("stream_request_generation", -1) != sStartRequestGeneration) {
+      if (!sStartRequested) stopSelf(startId);
+      return START_NOT_STICKY;
+    }
 
     if (intent != null) {
       String whipUrl = intent.getStringExtra("whip_url");
@@ -309,6 +411,7 @@ public class WhipStreamingService extends Service {
       mAuthToken = intent.getStringExtra("auth_token");
 
       if (whipUrl != null && !whipUrl.isEmpty()) {
+        final long session = ++mSessionGeneration;
         mWhipUrl = whipUrl;
         if (streamId != null && !streamId.isEmpty()) {
           mCurrentStreamId = streamId;
@@ -316,11 +419,13 @@ public class WhipStreamingService extends Service {
         mStartupStartedAtMs = SystemClock.elapsedRealtime();
         logStartupStage("service_command_received");
         // Defer until onStartCommand returns, without adding a fixed delay.
-        mMainHandler.post(this::startStreaming);
+        mMainHandler.post(() -> {
+          if (session == mSessionGeneration) startStreaming();
+        });
       }
     }
 
-    return START_STICKY;
+    return START_NOT_STICKY;
   }
 
   @Nullable
@@ -360,6 +465,12 @@ public class WhipStreamingService extends Service {
       }
       mStreamState = StreamState.STARTING;
     }
+    // Recheck here too: a reconnect can outlive the command's battery evidence.
+    if (mHardwareManager != null && BatteryConstants.isCameraBatteryLow(
+        mHardwareManager.getBatteryLevel(), mHardwareManager)) {
+      handleStartupFailure("battery_low", "Battery too low to start streaming");
+      return;
+    }
     if (!mIsReconnecting && mStartupStartedAtMs == 0) {
       mStartupStartedAtMs = SystemClock.elapsedRealtime();
     }
@@ -382,8 +493,13 @@ public class WhipStreamingService extends Service {
       logStartupStage("peer_connection_factory_ready");
       setupCamera();
       logStartupStage("camera_started");
-      setupAudio();
-      logStartupStage("audio_started");
+      if (mStreamConfig.isCaptureAudio()) {
+        setupAudio();
+        logStartupStage("audio_started");
+      } else {
+        Log.i(TAG, "Skipping glasses mic capture (captureAudio=false)");
+        logStartupStage("audio_skipped");
+      }
       createPeerConnectionAndOffer();
       logStartupStage("offer_requested");
     } catch (Exception e) {
@@ -398,6 +514,7 @@ public class WhipStreamingService extends Service {
   }
 
   private void stopStreaming(boolean forReconnect) {
+    if (!forReconnect) mSessionGeneration++;
     boolean hasWebRtcResources = hasWebRtcResources();
     synchronized (mStateLock) {
       if (mStreamState == StreamState.STOPPING) {
@@ -410,7 +527,6 @@ public class WhipStreamingService extends Service {
     }
 
     mMainHandler.removeCallbacks(mStatsRunnable);
-    cancelStreamTimeout();
     stopBatteryMonitoring();
     Log.d(TAG, "Stopping WHIP streaming (forReconnect=" + forReconnect + ")");
 
@@ -426,8 +542,8 @@ public class WhipStreamingService extends Service {
         mStreamState = StreamState.RECONNECTING;
       }
     } else {
-      if (mLedEnabled && mHardwareManager != null && mHardwareManager.supportsRecordingLed()) {
-        mHardwareManager.setRecordingLedOff();
+      if (mHardwareManager != null && mHardwareManager.supportsRecordingLed()) {
+        mHardwareManager.releaseRecordingLed(mPrivacyLightOwner);
       }
       if (mSoundEnabled && mHardwareManager != null && mHardwareManager.supportsAudioPlayback()) {
         mHardwareManager.playAudioAsset(AudioAssets.VIDEO_RECORDING_STOP);
@@ -435,11 +551,30 @@ public class WhipStreamingService extends Service {
       mIsReconnecting = false;
       mReconnectAttempts = 0;
       WakeLockManager.release(WakeLockManager.WakeOwner.STREAMING);
+      restoreEisDefault();
       resetState();
       notifyStopped();
       updateNotification("Stream stopped");
     }
     Log.d(TAG, "WHIP streaming stopped");
+  }
+
+  /**
+   * Livestream EIS is armed by StreamCommandHandler at start and restored there only on an
+   * explicit stop command. Stops that originate inside this service (keep-alive timeout,
+   * battery cutoff, reconnect give-up) never passed through the handler, so the vendor EIS
+   * property and the capture-request flag stayed armed for the next photo/video. Every
+   * terminal stop now restores the boot default (off); the handler's own restore is idempotent.
+   */
+  private void restoreEisDefault() {
+    if (!CameraController.enablePixsmartEisOnRequest) return;
+    Log.i(TAG, "EIS stage=stream-stop enable=false reason=service-terminal-stop");
+    CameraController.enablePixsmartEisOnRequest = false;
+    try {
+      SystemControllerFactory.get(getApplicationContext()).setEisEnabled(false);
+    } catch (Exception e) {
+      Log.w(TAG, "Failed to restore EIS default after stream stop", e);
+    }
   }
 
   /** Attempt to reconnect after a connection failure. */
@@ -460,7 +595,9 @@ public class WhipStreamingService extends Service {
 
     stopStreaming(true);
 
+    final long session = mSessionGeneration;
     mMainHandler.postDelayed(() -> {
+      if (session != mSessionGeneration || !mIsReconnecting) return;
       Log.d(TAG, "WHIP executing reconnect attempt " + mReconnectAttempts);
       startStreaming();
     }, RECONNECT_DELAY_MS);
@@ -559,6 +696,9 @@ public class WhipStreamingService extends Service {
     }
 
     mIceCandidateCount = 0;
+    mIceMode = IcePostPolicy.modeForStunServer(stunServer);
+    mHasHotspotHostCandidate = false;
+    SoftApTrace.stage("ice_configured", "mode", mIceMode, "stunServers", iceServers.size());
 
     PeerConnection.RTCConfiguration rtcConfig =
         new PeerConnection.RTCConfiguration(iceServers);
@@ -574,7 +714,9 @@ public class WhipStreamingService extends Service {
     }
 
     mPeerConnection.addTrack(mVideoTrack);
-    mPeerConnection.addTrack(mAudioTrack);
+    if (mAudioTrack != null) {
+      mPeerConnection.addTrack(mAudioTrack);
+    }
 
     for (RtpTransceiver transceiver : mPeerConnection.getTransceivers()) {
       transceiver.setDirection(RtpTransceiver.RtpTransceiverDirection.SEND_ONLY);
@@ -590,11 +732,20 @@ public class WhipStreamingService extends Service {
     mPeerConnection.createOffer(new SdpObserver() {
       @Override
       public void onCreateSuccess(SessionDescription offer) {
+        mMainHandler.post(() -> {
         if (generation != mNegotiationGeneration || mPeerConnection == null) return;
         mPeerConnection.setLocalDescription(new SdpObserver() {
           @Override
           public void onSetSuccess() {
+            mMainHandler.post(() -> {
             if (generation != mNegotiationGeneration) return;
+            if (!IcePostPolicy.schedulesGatherTimeout(mIceMode)) {
+              // Host-only: the cap would post before GATHERING_COMPLETE and could ship an
+              // offer missing the hotspot candidate. Local gathering is fast, so wait.
+              Log.d(TAG, "Local description set, host-only ICE: posting on gathering complete");
+              SoftApTrace.stage("local_description_set", "postTrigger", "gathering_complete");
+              return;
+            }
             Log.d(TAG, "Local description set, posting WHIP offer after first srflx or "
                 + ICE_GATHER_POST_TIMEOUT_MS + "ms");
             mPostOfferTimeoutRunnable = () -> {
@@ -602,23 +753,29 @@ public class WhipStreamingService extends Service {
               postOfferIfReady("timeout", generation);
             };
             mMainHandler.postDelayed(mPostOfferTimeoutRunnable, ICE_GATHER_POST_TIMEOUT_MS);
+            });
           }
 
           @Override
           public void onSetFailure(String error) {
-            if (generation != mNegotiationGeneration) return;
-            handleStartupFailure("set_local_description_failed", "setLocalDescription failed: " + error);
+            mMainHandler.post(() -> {
+              if (generation != mNegotiationGeneration) return;
+              handleStartupFailure("set_local_description_failed", "setLocalDescription failed: " + error);
+            });
           }
 
           @Override public void onCreateSuccess(SessionDescription sdp) {}
           @Override public void onCreateFailure(String error) {}
         }, offer);
+        });
       }
 
       @Override
       public void onCreateFailure(String error) {
-        if (generation != mNegotiationGeneration) return;
-        handleStartupFailure("create_offer_failed", "createOffer failed: " + error);
+        mMainHandler.post(() -> {
+          if (generation != mNegotiationGeneration) return;
+          handleStartupFailure("create_offer_failed", "createOffer failed: " + error);
+        });
       }
 
       @Override public void onSetSuccess() {}
@@ -671,7 +828,10 @@ public class WhipStreamingService extends Service {
    */
   private void applyBitrateConstraints() {
     int maximumBitrateBps = mStreamConfig.getVideoBitrate();
-    int initialBitrateBps = WhipBitratePolicy.initialBitrateBps(maximumBitrateBps);
+    int initialBitrateBps = WhipBitratePolicy.initialBitrateBps(
+        mStreamConfig.getVideoInitialBitrateBps(), mStreamConfig.getVideoMinBitrateBps(), maximumBitrateBps);
+    Integer minimumBitrateBps = WhipBitratePolicy.minimumBitrateBps(
+        mStreamConfig.getVideoMinBitrateBps(), maximumBitrateBps);
 
     for (RtpSender sender : mPeerConnection.getSenders()) {
       if (sender.track() == null) continue;
@@ -683,6 +843,7 @@ public class WhipStreamingService extends Service {
       params.degradationPreference = RtpParameters.DegradationPreference.MAINTAIN_FRAMERATE;
 
       for (RtpParameters.Encoding encoding : params.encodings) {
+        encoding.minBitrateBps = minimumBitrateBps;
         encoding.maxBitrateBps = maximumBitrateBps;
       }
 
@@ -690,11 +851,14 @@ public class WhipStreamingService extends Service {
     }
 
     boolean bitratePreferencesApplied =
-        WhipBitratePolicy.applyTo(mPeerConnection, maximumBitrateBps);
+        WhipBitratePolicy.applyTo(mPeerConnection, mStreamConfig.getVideoMinBitrateBps(),
+            mStreamConfig.getVideoInitialBitrateBps(), maximumBitrateBps);
     if (!bitratePreferencesApplied) {
-      Log.w(TAG, "Failed to apply WHIP initial/max bitrate preferences");
+      Log.w(TAG, "Failed to apply WHIP min/initial/max bitrate preferences");
     }
-    Log.i(TAG, "Applied video bitrate constraints: start=" + (initialBitrateBps / 1000)
+    Log.i(TAG, "Applied video bitrate constraints: min="
+        + (minimumBitrateBps == null ? "unset" : minimumBitrateBps / 1000)
+        + " kbps, start=" + (initialBitrateBps / 1000)
         + " kbps, max=" + (maximumBitrateBps / 1000)
         + " kbps, degradation=MAINTAIN_FRAMERATE");
   }
@@ -746,12 +910,49 @@ public class WhipStreamingService extends Service {
     Log.i(TAG, label + " video section:\n" + section);
   }
 
+  /** Map the human-readable trigger string onto the policy enum. */
+  private static IcePostPolicy.Trigger triggerFor(String reason) {
+    if ("srflx".equals(reason)) return IcePostPolicy.Trigger.SRFLX;
+    if ("timeout".equals(reason)) return IcePostPolicy.Trigger.TIMEOUT;
+    return IcePostPolicy.Trigger.GATHERING_COMPLETE;
+  }
+
   /**
-   * POST the local SDP once. Triggered by first srflx, the gather timeout, or
-   * GATHERING COMPLETE — whichever wins. Later triggers are no-ops.
+   * POST the local SDP once. In the default STUN path this is triggered by first srflx, the
+   * gather timeout, or GATHERING COMPLETE — whichever wins. In host-only (SoftAP) mode only
+   * GATHERING COMPLETE posts, and only once a hotspot host candidate exists. Later triggers
+   * are no-ops.
    */
   private void postOfferIfReady(String reason, int generation) {
+    if (Looper.myLooper() != Looper.getMainLooper()) {
+      mMainHandler.post(() -> postOfferIfReady(reason, generation));
+      return;
+    }
+    // The WebRTC callback may have been current before posting to the main thread, then
+    // overtaken by stop/rejoin. Reject it before the policy can fail the current stream.
+    synchronized (mStateLock) {
+      if (generation != mNegotiationGeneration || mWhipOfferPosted
+          || mPeerConnection == null || mStreamState == StreamState.STOPPING
+          || mStreamState == StreamState.IDLE) {
+        return;
+      }
+    }
     PeerConnection peerConnection;
+    IcePostPolicy.Decision decision =
+        IcePostPolicy.decide(mIceMode, triggerFor(reason), mHasHotspotHostCandidate);
+    if (decision == IcePostPolicy.Decision.WAIT) {
+      SoftApTrace.stage("whip_post_deferred", "trigger", reason, "mode", mIceMode);
+      return;
+    }
+    if (decision == IcePostPolicy.Decision.FAIL_NO_HOTSPOT_CANDIDATE) {
+      SoftApTrace.stage("whip_post_blocked",
+          "reason", IcePostPolicy.REASON_NO_HOTSPOT_CANDIDATE,
+          "candidates", mIceCandidateCount);
+      handleStartupFailure(IcePostPolicy.REASON_NO_HOTSPOT_CANDIDATE,
+          "ICE gathering completed without a hotspot host candidate");
+      return;
+    }
+
     synchronized (mStateLock) {
       if (generation != mNegotiationGeneration) {
         return;
@@ -798,6 +999,9 @@ public class WhipStreamingService extends Service {
       }
       mWhipStreamingNotified = true;
       mStreamState = StreamState.STREAMING;
+      if (mLedEnabled && mHardwareManager != null && mHardwareManager.supportsRecordingLed()) {
+        mHardwareManager.acquireRecordingLed(mPrivacyLightOwner);
+      }
     }
     if (mMainHandler != null) {
       mMainHandler.removeCallbacks(mIceConnectTimeoutRunnable);
@@ -812,16 +1016,17 @@ public class WhipStreamingService extends Service {
     if (!mIsReconnecting || mStreamStartedAtMs == 0) {
       mStreamStartedAtMs = mLastStatsAtMs;
     }
-    if (AsgConstants.ENABLE_PIPELINE_FPS_TELEMETRY) {
+    // A rebuilt peer connection restarts every cumulative counter, so carrying the previous
+    // sample across would print one sweep of negative deltas clamped to zero.
+    mLastPipelineSample = null;
+    mLastPipelineVerdict = null;
+    mLastPipelineAtMs = 0;
+    if (statsSweepEnabled()) {
       mMainHandler.postDelayed(mStatsRunnable, AsgConstants.STREAM_METRICS_INTERVAL_MS);
     }
-    scheduleStreamTimeout(mCurrentStreamId);
     startBatteryMonitoring();
     Log.i(TAG, "Streaming started via WHIP, negotiated video codec: "
         + firstVideoCodecFromSdp(answerSdp));
-    if (mLedEnabled && mHardwareManager != null && mHardwareManager.supportsRecordingLed()) {
-      mHardwareManager.setRecordingLedOn();
-    }
     if (mSoundEnabled && mHardwareManager != null && mHardwareManager.supportsAudioPlayback()) {
       mHardwareManager.playAudioAsset(AudioAssets.VIDEO_RECORDING_START);
     }
@@ -860,10 +1065,86 @@ public class WhipStreamingService extends Service {
     handleStartupFailure("ice_timeout", "ICE did not connect; WHIP media path failed");
   }
 
+  /**
+   * SoftAP only: can these glasses reach the phone the WHIP URL points at? Runs `ip neigh`,
+   * one ping and `ip route get` against the URL host and returns a one-line summary. Called off
+   * the main thread — it blocks for up to ~3s when the host is silent.
+   *
+   * Read the result like this: `arp=FAILED/INCOMPLETE` means the phone never answered ARP, so
+   * L2 is the problem (phone asleep, wrong SSID, AP isolation); `arp=REACHABLE ping=0/1` means
+   * L2 is fine and something drops IP; `ping=1/1` with a TCP connect timeout means a firewall or
+   * the listener itself.
+   */
+  static String probeWhipHost(String whipUrl) {
+    String host;
+    try {
+      host = java.net.URI.create(whipUrl).getHost();
+    } catch (Exception e) {
+      return "probe skipped: bad url";
+    }
+    if (host == null || host.isEmpty()) return "probe skipped: no host";
+    String neigh = runShell("ip neigh show " + host, 2_000);
+    String arp = "none";
+    if (!neigh.isEmpty()) {
+      String[] parts = neigh.split("\\s+");
+      arp = parts[parts.length - 1];
+    }
+    String ping = runShell("ping -c 1 -W 2 " + host, 4_000);
+    String pingSummary = ping.contains("1 received") ? "1/1" : ping.contains("0 received") ? "0/1" : "err";
+    String route = runShell("ip route get " + host, 2_000);
+    String dev = "?";
+    int devAt = route.indexOf(" dev ");
+    if (devAt >= 0) {
+      String[] parts = route.substring(devAt + 5).trim().split("\\s+");
+      if (parts.length > 0) dev = parts[0];
+    }
+    return "glasses->phone " + host + " arp=" + arp + " ping=" + pingSummary + " via=" + dev;
+  }
+
+  private static String runShell(String command, long timeoutMs) {
+    try {
+      Process process = new ProcessBuilder("sh", "-c", command).redirectErrorStream(true).start();
+      java.io.InputStream stream = process.getInputStream();
+      java.io.ByteArrayOutputStream buffer = new java.io.ByteArrayOutputStream();
+      long deadline = SystemClock.elapsedRealtime() + timeoutMs;
+      byte[] chunk = new byte[1024];
+      while (SystemClock.elapsedRealtime() < deadline) {
+        if (stream.available() > 0) {
+          int read = stream.read(chunk);
+          if (read < 0) break;
+          buffer.write(chunk, 0, read);
+        } else if (!process.isAlive()) {
+          int read;
+          while ((read = stream.read(chunk)) > 0) buffer.write(chunk, 0, read);
+          break;
+        } else {
+          Thread.sleep(25);
+        }
+      }
+      if (process.isAlive()) process.destroy();
+      return buffer.toString("UTF-8").trim();
+    } catch (Exception e) {
+      return "";
+    }
+  }
+
   private void postOfferToWhip(SessionDescription offer, int generation) {
+    final String requestUrl = mWhipUrl;
     logStartupStage("whip_request_started");
     Log.d(TAG, "POSTing SDP offer to WHIP URL: " + mWhipUrl);
     logSdpVideoSection("Offer", offer.description);
+    if (mIceMode == IcePostPolicy.Mode.HOST_ONLY) {
+      // Pre-flight in parallel with the POST so it costs no startup time: by the time a connect
+      // timeout fires the verdict is already in the trace, and the failure below appends a fresh one.
+      final String probeUrl = mWhipUrl;
+      Thread probe = new Thread(() -> {
+        String verdict = probeWhipHost(probeUrl);
+        SoftApTrace.stage("glasses_phone_probe", "verdict", verdict);
+        Log.i(TAG, "[STREAM_STARTUP] " + verdict);
+      }, "whip-host-probe");
+      probe.setDaemon(true);
+      probe.start();
+    }
 
     RequestBody body = RequestBody.create(
         offer.description, MediaType.parse("application/sdp"));
@@ -878,15 +1159,24 @@ public class WhipStreamingService extends Service {
     mHttpClient.newCall(request).enqueue(new Callback() {
       @Override
       public void onResponse(Call call, Response response) throws IOException {
+        final String answerSdp;
+        try {
+          answerSdp = response.body() != null ? response.body().string() : "";
+        } catch (IOException error) {
+          onFailure(call, error);
+          return;
+        } finally {
+          response.close();
+        }
+        mMainHandler.post(() -> {
         if (generation != mNegotiationGeneration) {
           String location = response.header("Location");
           if (location != null) {
             String staleUrl = location.startsWith("http")
                 ? location
-                : buildAbsoluteUrl(mWhipUrl, location);
+                : buildAbsoluteUrl(requestUrl, location);
             deleteWhipResource(staleUrl);
           }
-          response.close();
           return;
         }
         if (response.code() != 201) {
@@ -900,10 +1190,9 @@ public class WhipStreamingService extends Service {
         if (location != null) {
           resourceUrl = location.startsWith("http")
               ? location
-              : buildAbsoluteUrl(mWhipUrl, location);
+              : buildAbsoluteUrl(requestUrl, location);
         }
 
-        String answerSdp = response.body() != null ? response.body().string() : "";
         if (answerSdp.isEmpty()) {
           handleStartupFailure("empty_answer_sdp", "WHIP server returned empty SDP answer");
           return;
@@ -967,20 +1256,35 @@ public class WhipStreamingService extends Service {
 
           @Override
           public void onSetFailure(String error) {
-            if (generation != mNegotiationGeneration) return;
-            handleStartupFailure("set_remote_description_failed", "setRemoteDescription failed: " + error);
+            mMainHandler.post(() -> {
+              if (generation != mNegotiationGeneration) return;
+              handleStartupFailure("set_remote_description_failed", "setRemoteDescription failed: " + error);
+            });
           }
 
           @Override public void onCreateSuccess(SessionDescription sdp) {}
           @Override public void onCreateFailure(String error) {}
         }, answer);
+        });
       }
 
       @Override
       public void onFailure(Call call, IOException e) {
         if (generation != mNegotiationGeneration) return;
         Log.e(TAG, "WHIP request failed", e);
-        handleStartupFailure("whip_request_failed", "WHIP request failed: " + e.getMessage());
+        String message = "WHIP request failed: " + e.getMessage();
+        if (mIceMode == IcePostPolicy.Mode.HOST_ONLY) {
+          // OkHttp calls back on a worker thread, so a blocking probe here is fine. The verdict
+          // rides the error over BLE so the phone UI shows *why* the glasses could not reach it.
+          String verdict = probeWhipHost(mWhipUrl);
+          SoftApTrace.stage("whip_request_failed", "error", e.getMessage(), "verdict", verdict);
+          message = message + " [" + verdict + "]";
+        }
+        final String failureMessage = message;
+        mMainHandler.post(() -> {
+          if (generation != mNegotiationGeneration) return;
+          handleStartupFailure("whip_request_failed", failureMessage);
+        });
       }
     });
   }
@@ -1017,6 +1321,7 @@ public class WhipStreamingService extends Service {
 
   private class WhipPeerConnectionObserver implements PeerConnection.Observer {
     private final int generation;
+    private boolean publisherDisconnected;
 
     WhipPeerConnectionObserver(int generation) {
       this.generation = generation;
@@ -1054,17 +1359,28 @@ public class WhipStreamingService extends Service {
       } else if (newState == PeerConnection.PeerConnectionState.CONNECTED) {
         mMainHandler.post(() -> {
           if (isStale()) return;
+          if (publisherDisconnected) {
+            publisherDisconnected = false;
+            notifyReconnected(mWhipUrl, mReconnectAttempts);
+          }
           completeWhipStartupIfNeeded();
         });
       } else if (newState == PeerConnection.PeerConnectionState.DISCONNECTED) {
         Log.w(TAG, "PeerConnection disconnected — waiting before reconnect");
-        mMainHandler.postDelayed(() -> {
+        mMainHandler.post(() -> {
           if (isStale()) return;
           synchronized (mStateLock) {
             if (mStreamState != StreamState.STREAMING) return;
           }
-          attemptReconnect("PeerConnection disconnected");
-        }, 2000);
+          if (publisherDisconnected) return;
+          publisherDisconnected = true;
+          notifyReconnecting(mReconnectAttempts, MAX_RECONNECT_ATTEMPTS, "Publisher disconnected");
+          mMainHandler.postDelayed(() -> {
+            if (isStale() || !publisherDisconnected || mPeerConnection == null
+                || mPeerConnection.connectionState() != PeerConnection.PeerConnectionState.DISCONNECTED) return;
+            attemptReconnect("PeerConnection disconnected");
+          }, AsgConstants.WHIP_PUBLISHER_DISCONNECT_GRACE_MS);
+        });
       }
     }
 
@@ -1104,6 +1420,10 @@ public class WhipStreamingService extends Service {
     public void onIceCandidate(IceCandidate candidate) {
       if (isStale()) return;
       mIceCandidateCount++;
+      if (IcePostPolicy.isHotspotHostCandidate(candidate.sdp)) {
+        mHasHotspotHostCandidate = true;
+        SoftApTrace.stage("ice_hotspot_candidate", "candidate", candidate.sdp);
+      }
       if (candidate.sdp != null && candidate.sdp.contains("typ srflx")) {
         mMainHandler.post(() -> {
           if (isStale()) return;
@@ -1167,21 +1487,24 @@ public class WhipStreamingService extends Service {
 
   private void cleanupFailedStartup() {
     mMainHandler.removeCallbacks(mStatsRunnable);
-    cancelStreamTimeout();
     stopBatteryMonitoring();
     if (mWhipResourceUrl != null) {
       deleteWhipResource(mWhipResourceUrl);
       mWhipResourceUrl = null;
     }
     releaseWebRtc();
-    if (mLedEnabled && mHardwareManager != null && mHardwareManager.supportsRecordingLed()) {
-      mHardwareManager.setRecordingLedOff();
+    if (mHardwareManager != null && mHardwareManager.supportsRecordingLed()) {
+      mHardwareManager.releaseRecordingLed(mPrivacyLightOwner);
     }
     mIsReconnecting = false;
     mReconnectAttempts = 0;
     mStreamStartedAtMs = 0;
     mLastStatsAtMs = 0;
+    mLastPipelineSample = null;
+    mLastPipelineVerdict = null;
+    mLastPipelineAtMs = 0;
     WakeLockManager.release(WakeLockManager.WakeOwner.STREAMING);
+    restoreEisDefault();
     resetState();
     updateNotification("Stream failed");
   }
@@ -1211,46 +1534,43 @@ public class WhipStreamingService extends Service {
   // -----------------------------------------------------------------------
 
   private void notifyStarting(String url) {
-    if (sStatusCallback != null) mMainHandler.post(() -> sStatusCallback.onStreamStarting(url, mCurrentStreamId));
+    deliverStatus((callback, id) -> callback.onStreamStarting(url, id));
   }
 
   private void notifyStarted(String url) {
-    if (sStatusCallback != null) mMainHandler.post(() -> sStatusCallback.onStreamStarted(url, mCurrentStreamId));
+    deliverStatus((callback, id) -> callback.onStreamStarted(url, id));
   }
 
   private void notifyStopped() {
-    StreamingStatusCallback callback = sStatusCallback;
-    if (callback != null) {
-      // Capture now: by the time the posted runnable runs, a newer start may
-      // already have overwritten mCurrentStreamId.
-      String streamId = mCurrentStreamId;
-      mMainHandler.post(() -> callback.onStreamStopped(streamId));
-    }
+    deliverStatus((callback, id) -> callback.onStreamStopped(id));
   }
 
   private void notifyReconnecting(int attempt, int maxAttempts, String reason) {
-    if (sStatusCallback != null) mMainHandler.post(() -> sStatusCallback.onReconnecting(attempt, maxAttempts, reason, mCurrentStreamId));
+    deliverStatus((callback, id) -> callback.onReconnecting(attempt, maxAttempts, reason, id));
   }
 
   private void notifyReconnected(String url, int attempt) {
-    if (sStatusCallback != null) mMainHandler.post(() -> sStatusCallback.onReconnected(url, attempt, mCurrentStreamId));
+    deliverStatus((callback, id) -> callback.onReconnected(url, attempt, id));
   }
 
   private void notifyReconnectFailed(int maxAttempts) {
-    if (sStatusCallback != null) mMainHandler.post(() -> sStatusCallback.onReconnectFailed(maxAttempts, mCurrentStreamId));
+    deliverStatus((callback, id) -> callback.onReconnectFailed(maxAttempts, id));
+  }
+
+  private void deliverStatus(java.util.function.BiConsumer<StreamingStatusCallback, String> delivery) {
+    StreamingStatusCallback callback = sStatusCallback;
+    String streamId = mCurrentStreamId;
+    long session = mSessionGeneration;
+    if (callback == null) return;
+    Runnable notify = () -> {
+      if (session == mSessionGeneration && callback == sStatusCallback) delivery.accept(callback, streamId);
+    };
+    if (Looper.myLooper() == Looper.getMainLooper()) notify.run();
+    else mMainHandler.post(notify);
   }
 
   private void notifyError(String error) {
-    StreamingStatusCallback callback = sStatusCallback;
-    if (callback != null) {
-      String streamId = mCurrentStreamId;
-      Runnable notify = () -> callback.onStreamError(error, streamId);
-      if (Looper.myLooper() == Looper.getMainLooper()) {
-        notify.run();
-      } else {
-        mMainHandler.post(notify);
-      }
-    }
+    deliverStatus((callback, id) -> callback.onStreamError(error, id));
   }
 
   private void notifyMetrics(
@@ -1354,37 +1674,6 @@ public class WhipStreamingService extends Service {
   // Stream timeout (keep-alive)
   // -----------------------------------------------------------------------
 
-  private void scheduleStreamTimeout(String streamId) {
-    cancelStreamTimeout();
-
-    if (AsgConstants.DISABLE_STREAM_KEEP_ALIVE_TIMEOUT) {
-      Log.i(TAG, "Keep-alive timeout disabled; stream will not auto-stop: " + streamId);
-      return;
-    }
-
-    mStreamTimeoutTimer = new Timer("WhipStreamTimeout-" + streamId);
-    mStreamTimeoutTimer.schedule(new TimerTask() {
-      @Override
-      public void run() {
-        mMainHandler.post(() -> {
-          synchronized (mStateLock) {
-            if (mStreamState != StreamState.STREAMING) return;
-          }
-          Log.w(TAG, "Stream timed out - no keep-alive received within " + STREAM_TIMEOUT_MS + "ms");
-          notifyError("Stream timed out - no keep-alive from cloud");
-          stopStreaming();
-        });
-      }
-    }, STREAM_TIMEOUT_MS);
-  }
-
-  private void cancelStreamTimeout() {
-    if (mStreamTimeoutTimer != null) {
-      mStreamTimeoutTimer.cancel();
-      mStreamTimeoutTimer = null;
-    }
-  }
-
   // -----------------------------------------------------------------------
   // Battery monitoring
   // -----------------------------------------------------------------------
@@ -1401,6 +1690,7 @@ public class WhipStreamingService extends Service {
       public void run() {
         boolean shouldStop = false;
         boolean shouldReschedule = false;
+        int stopBatteryLevel = -1;
 
         synchronized (mStateLock) {
           if (mStreamState == StreamState.IDLE || mStreamState == StreamState.STOPPING) {
@@ -1413,10 +1703,11 @@ public class WhipStreamingService extends Service {
           } else if (mStreamState == StreamState.STREAMING) {
             int batteryLevel = mHardwareManager.getBatteryLevel();
 
-            if (batteryLevel >= 0 && batteryLevel < BatteryConstants.MIN_BATTERY_LEVEL) {
+            if (BatteryConstants.isCameraBatteryLow(batteryLevel, mHardwareManager)) {
               Log.w(TAG, "Battery dropped to " + batteryLevel
                   + "% during WHIP streaming - stopping");
               shouldStop = true;
+              stopBatteryLevel = batteryLevel;
 
               if (mHardwareManager.supportsAudioPlayback()) {
                 mHardwareManager.playAudioAsset(AudioAssets.BATTERY_LOW);
@@ -1436,6 +1727,11 @@ public class WhipStreamingService extends Service {
         }
 
         if (shouldStop) {
+          // Name the reason before the stop. A bare `stopped` looks like a clean end to the
+          // phone, so Mentra Call kept trying to restart a stream the glasses would only
+          // reject again and the wearer never learned the battery was the problem.
+          notifyError("Battery too low (" + stopBatteryLevel + "%) - streaming stopped; minimum "
+              + BatteryConstants.MIN_BATTERY_LEVEL + "% required");
           stopStreaming();
         }
       }
@@ -1473,9 +1769,17 @@ public class WhipStreamingService extends Service {
    */
   public static void startStreaming(Context context, String whipUrl, String streamId,
       boolean enableLed, boolean enableSound, WhipStreamConfig config, String authToken) {
+    if (Looper.myLooper() != Looper.getMainLooper()) {
+      new Handler(Looper.getMainLooper()).post(() -> startStreaming(context, whipUrl, streamId, enableLed, enableSound, config, authToken));
+      return;
+    }
+    final long requestGeneration = ++sStartRequestGeneration;
+    sStartRequested = true;
     setStreamConfig(config);
 
     if (sInstance != null) {
+      if (sInstance.mCurrentStreamId != null) sInstance.stopStreaming();
+      sInstance.mSessionGeneration++;
       sInstance.mWhipUrl = whipUrl;
       sInstance.mAuthToken = authToken;
       sInstance.mCurrentStreamId = streamId;
@@ -1486,6 +1790,7 @@ public class WhipStreamingService extends Service {
       sInstance.startStreaming();
     } else {
       Intent intent = new Intent(context, WhipStreamingService.class);
+      intent.putExtra("stream_request_generation", requestGeneration);
       intent.putExtra("whip_url", whipUrl);
       if (streamId != null) intent.putExtra("stream_id", streamId);
       intent.putExtra("enable_led", enableLed);
@@ -1510,8 +1815,18 @@ public class WhipStreamingService extends Service {
    * Stop the active WHIP stream.
    */
   public static void stopStreaming(Context context) {
-    if (sInstance != null) sInstance.stopStreaming();
-    context.stopService(new Intent(context, WhipStreamingService.class));
+    if (Looper.myLooper() != Looper.getMainLooper()) {
+      new Handler(Looper.getMainLooper()).post(() -> stopStreaming(context));
+      return;
+    }
+    sStartRequestGeneration++;
+    sStartRequested = false;
+    if (sInstance != null) {
+      sInstance.stopStreaming();
+    } else {
+      // Cancel a start intent that Android has not delivered yet.
+      context.stopService(new Intent(context, WhipStreamingService.class));
+    }
   }
 
   /** @return true if a WHIP stream is currently active */
@@ -1563,19 +1878,13 @@ public class WhipStreamingService extends Service {
   }
 
   /**
-   * Reset the stream timeout timer (called by keep-alive commands).
+   * Validate a legacy keep-alive id without changing stream lifetime or wake ownership.
    * @return true if the streamId matches the current stream
    */
-  public static boolean resetStreamTimeout(String streamId) {
-    if (sInstance == null) return false;
-    boolean matches = streamId != null && streamId.equals(sInstance.mCurrentStreamId);
-    if (matches) {
-      sInstance.scheduleStreamTimeout(streamId);
-      // Re-acquire wake lock on keep-alive
-      WakeLockManager.acquireFullWakeLockAndBringToForeground(
-          sInstance.getApplicationContext(), WakeLockManager.WakeOwner.STREAMING, 2180000, 5000);
-    }
-    return matches;
+  public static boolean isCurrentStream(String streamId) {
+    WhipStreamingService instance = sInstance;
+    return instance != null && streamId != null && streamId.equals(instance.mCurrentStreamId)
+        && (isStreaming() || isReconnecting());
   }
 
   public static void setStreamConfig(WhipStreamConfig config) {

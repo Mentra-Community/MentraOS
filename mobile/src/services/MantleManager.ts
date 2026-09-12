@@ -1,3 +1,4 @@
+import {Platform} from "react-native"
 import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
 import CrustModule from "@mentra/crust"
 import {Asset} from "expo-asset"
@@ -6,6 +7,7 @@ import {router} from "expo-router"
 
 import {bootstrapMentraJS} from "@/services/mentraJsBootstrap"
 import {storeUpdateScheduler} from "@/services/miniapps/storeUpdateScheduler"
+import {deploymentManagedMiniappSync} from "@/services/miniapps/deploymentManagedMiniappSync"
 import builtInMiniappCatalog from "@/services/miniapps/BuiltInMiniappCatalog"
 import {
   BUNDLED_MINIAPPS,
@@ -15,7 +17,7 @@ import {
 import {CHINA_HIDDEN_APPS, isChinaBuild, notifyPackageName} from "@/constants/miniapps"
 import {migrate} from "@/services/Migrations"
 import {buildSpokenNotification} from "@/services/notifications/spokenNotification"
-import {cloudConfigValues} from "@/services/cloudClient"
+import {deploymentCloudConfigValues} from "@/services/cloudClient"
 import {requestPhoneQrScan} from "@/services/qrScanRequest"
 import {engine, BgTimer, isSystemMiniappPackage, SETTINGS} from "@mentra/engine"
 import {
@@ -41,7 +43,9 @@ import {ensureDevModeForUser} from "@/utils/dev/devModeAllowlist"
 import mentraAuth from "@/utils/auth/authClient"
 import {showAlert} from "@/utils/AlertUtils"
 import type {GlassesMenuItem} from "@/utils/glassesMenu"
+import {translate} from "@/i18n"
 import {Buffer} from "@craftzdog/react-native-buffer"
+import {createDeploymentAuthProvider, deploymentStore} from "@/services/deployment"
 
 // Build-time Store trust table. OEM builds may add Store packages here and
 // assign SYSTEM bundle ownership below; the same list configures install
@@ -360,60 +364,85 @@ class MantleManager {
     // Island front door: hand island the host's auth provider and config, then
     // start the runtime. The remaining work below is Mentra-app UI/v1-cloud
     // startup, not an island configuration seam.
+    const deployment = deploymentStore.getActive()
+    const workspaceAuth = deployment.kind === "workspace" ? createDeploymentAuthProvider(deployment) : null
     engine.configure({
-      auth: {
-        getSubjectToken: async () => {
-          // Cloud V2 (issue 019): the provider mints a fresh `mentra` OEM subject
-          // token which cloud-client exchanges at /api/client/auth/exchange.
-          const res = await mentraAuth.getSubjectToken()
-          if (res.is_error() || !res.value.token) {
-            throw new Error("engine.configure: no subject token available")
-          }
-          return {token: res.value.token, type: res.value.type}
-        },
-        // Hand back a synchronous handle with a real unsubscribe.
-        //
-        // mentraAuth is a lazy Proxy whose every method returns a Promise, so
-        // this call resolves to the Result rather than being one. The engine
-        // (CloudClientService.ensureAuthWatch) inspects the return value
-        // synchronously, finds no `unsubscribe` on a Promise, and keeps its
-        // no-op placeholder — so stopAuthWatch() never removed the listener.
-        //
-        // That used to be invisible: the provider held one callback slot, so
-        // the orphan was overwritten by whoever registered next. Now that every
-        // listener is retained, each engine.start() would stack another one, and
-        // a later SIGNED_IN would have several callbacks calling reconnect() on
-        // the same client. Resolve the real unsubscribe out of the promise, and
-        // honour an unsubscribe that arrives before it settles.
-        onStateChange: (callback) => {
-          const pending = Promise.resolve(
-            mentraAuth.onAuthStateChange((event: string, session: any) => callback(event, session)),
-          )
-          let resolved: (() => void) | null = null
-          let cancelled = false
-
-          void pending
-            .then((res: any) => {
-              const handle = res?.value ?? res
-              resolved = typeof handle?.unsubscribe === "function" ? handle.unsubscribe : null
-              if (cancelled) resolved?.()
-            })
-            .catch(() => {
-              resolved = null
-            })
-
-          return {
-            unsubscribe: () => {
-              cancelled = true
-              resolved?.()
+      auth: workspaceAuth
+        ? {
+            getSubjectToken: async () => ({
+              token: await workspaceAuth.getAccessToken({
+                scopes:
+                  deployment.kind === "workspace" && deployment.manifest.auth.mode === "microsoft-entra"
+                    ? deployment.manifest.auth.sessionScopes
+                    : [],
+              }),
+              type: "oidc",
+            }),
+            getUserId: async () => {
+              const current = await workspaceAuth.getSession()
+              if (!current) throw new Error("engine.configure: no workspace identity available")
+              const {identity} = current
+              return `workspace:${identity.deploymentId}:${encodeURIComponent(identity.issuer)}:${identity.subject}`
             },
+            onStateChange: (callback) => ({
+              unsubscribe: workspaceAuth.onStateChange((session) =>
+                callback(session ? "SIGNED_IN" : "SIGNED_OUT", session ? {token: session.accessToken ?? null} : null),
+              ),
+            }),
           }
-        },
-      },
+        : {
+            getSubjectToken: async () => {
+              // Cloud V2 (issue 019): the provider mints a fresh `mentra` OEM subject
+              // token which cloud-client exchanges at /api/client/auth/exchange.
+              const res = await mentraAuth.getSubjectToken()
+              if (res.is_error() || !res.value.token) {
+                throw new Error("engine.configure: no subject token available")
+              }
+              return {token: res.value.token, type: res.value.type}
+            },
+            // Hand back a synchronous handle with a real unsubscribe.
+            //
+            // mentraAuth is a lazy Proxy whose every method returns a Promise, so
+            // this call resolves to the Result rather than being one. The engine
+            // (CloudClientService.ensureAuthWatch) inspects the return value
+            // synchronously, finds no `unsubscribe` on a Promise, and keeps its
+            // no-op placeholder — so stopAuthWatch() never removed the listener.
+            //
+            // That used to be invisible: the provider held one callback slot, so
+            // the orphan was overwritten by whoever registered next. Now that every
+            // listener is retained, each engine.start() would stack another one, and
+            // a later SIGNED_IN would have several callbacks calling reconnect() on
+            // the same client. Resolve the real unsubscribe out of the promise, and
+            // honour an unsubscribe that arrives before it settles.
+            onStateChange: (callback) => {
+              const pending = Promise.resolve(
+                mentraAuth.onAuthStateChange((event: string, session: any) => callback(event, session)),
+              )
+              let resolved: (() => void) | null = null
+              let cancelled = false
+
+              void pending
+                .then((res: any) => {
+                  const handle = res?.value ?? res
+                  resolved = typeof handle?.unsubscribe === "function" ? handle.unsubscribe : null
+                  if (cancelled) resolved?.()
+                })
+                .catch(() => {
+                  resolved = null
+                })
+
+              return {
+                unsubscribe: () => {
+                  cancelled = true
+                  resolved?.()
+                },
+              }
+            },
+          },
       // Resolved cloud endpoints + LC3 frame size. island builds its cloud
       // client from these; the host keeps the dev/settings URL resolution.
       config: {
-        ...cloudConfigValues(),
+        ...deploymentCloudConfigValues(deployment),
         bundledSystemMiniappPackages: BUNDLED_SYSTEM_MINIAPP_PACKAGES,
         bundledStoreMiniappPackages: BUNDLED_STORE_MINIAPP_PACKAGES,
         bundledSystemMiniappStoreOwners: BUNDLED_SYSTEM_MINIAPP_STORE_OWNERS,
@@ -424,6 +453,18 @@ class MantleManager {
       ui: {
         requestWifiSetup: (reason?: string, packageName?: string) =>
           new Promise<void>((resolve) => {
+            // Wi-Fi setup drives the glasses over Bluetooth (scan, credentials,
+            // status), so with the link down the wizard cannot succeed and the
+            // reconnecting overlay would cover it anyway. Tell the user the real
+            // blocker instead of sending them into a flow that ends at Home.
+            if (engine.glasses.status().state !== "connected") {
+              showAlert(
+                translate("glasses:wifiSetupNeedsGlassesTitle"),
+                translate("glasses:wifiSetupNeedsGlassesMessage"),
+                [{text: translate("common:ok"), onPress: resolve}],
+              )
+              return
+            }
             showAlert("Connect to Wi-Fi", reason || "This miniapp needs your glasses to be connected to Wi-Fi.", [
               {text: "Cancel", style: "cancel", onPress: resolve},
               {
@@ -479,12 +520,16 @@ class MantleManager {
     // Settings are local-first until a V2 sync lands (tracked in the ripout
     // issue; island's per-change server write is the island-side cleanup).
 
-    const userRes = await mentraAuth.getUser()
-    if (userRes.is_ok()) {
-      await ensureDevModeForUser(userRes.value.email)
+    if (deployment.kind === "consumer") {
+      const userRes = await mentraAuth.getUser()
+      if (userRes.is_ok()) {
+        await ensureDevModeForUser(userRes.value.email)
+      }
     }
 
-    offlineSpeechModelService.startBackgroundDownloads()
+    if (deployment.manifest.features.onDeviceSpeech) {
+      offlineSpeechModelService.startBackgroundDownloads()
+    }
 
     // Spacing only, not a correctness barrier: engine.start() already awaited
     // the device-store hydration (the persisted-settings seed to native), so the
@@ -578,6 +623,10 @@ class MantleManager {
     // already-installed check below sees the real on-disk state.
     await this.installBundledMiniapps()
 
+    // Reconcile customer-owned userland bundles independently from SYSTEM
+    // miniapps embedded in the Mentra App binary.
+    await deploymentManagedMiniappSync.sync(deploymentStore.getActive())
+
     // The Store ships as a real build-owned SYSTEM miniapp so its trust and
     // update paths are exercised before launch, but it is a host-gated preview:
     // normal users get no Home tile, running-tray entry, catalog traffic, or
@@ -643,10 +692,16 @@ class MantleManager {
    * installs it.
    */
   private async installBundledMiniapps() {
+    const deployment = deploymentStore.getActive()
+    const approved = deployment.manifest.systemMiniapps.approvedPackageNamesOverride
     for (const module of BUNDLED_MINIAPPS) {
       try {
         const asset = Asset.fromModule(module)
         const parsed = parseBundledMiniappName(asset.name)
+        if (parsed && approved !== null && !approved.includes(parsed.packageName)) {
+          console.log(`MANTLE: skipping bundled miniapp outside workspace allowlist: ${parsed.packageName}`)
+          continue
+        }
         if (!parsed) {
           console.warn(`MANTLE: bundled miniapp asset name "${asset.name}" is not <packageName>-<version>`)
           continue
@@ -782,6 +837,7 @@ class MantleManager {
       localDisplayManager.onCoreAppChange(coreApp?.packageName ?? null)
 
       const notifyIsRunning = apps.some((app) => app.packageName === notifyPackageName && app.running)
+      engine.phoneNotifications.setPresentationActive(notifyIsRunning)
       if (notifyWasRunning && !notifyIsRunning) {
         this.stopPhoneNotificationPresentation()
       }
@@ -790,6 +846,11 @@ class MantleManager {
     syncAppPresentationState()
     const unsubscribeAppPresentationState = engine.miniapps.onChanged(syncAppPresentationState)
     this.subs.push({remove: unsubscribeAppPresentationState})
+    this.subs.push({
+      remove: engine.settings.onChanged(SETTINGS.native_notifications_enabled.key, () => {
+        this.stopPhoneNotificationPresentation()
+      }),
+    })
 
     // A remembered speaker-capable model survives disconnects, but its audio
     // route does not. Tear down queued and active Notify speech on the
@@ -812,12 +873,8 @@ class MantleManager {
 
     // Subscribe to individual Bluetooth SDK events.
     {
-      this.subs.push(
-        BluetoothSdk.addListener("log", (event) => {
-          if (event.message?.startsWith("MAN: displayEvent ")) return
-          console.log("CORE:", event.message)
-        }),
-      )
+      // The Bluetooth SDK forwards native diagnostics to the JS console itself,
+      // including for external hosts. A second listener here would duplicate them.
 
       // wifi_status_change / glasses_wifi / hotspot_status_change:
       // moved to island DeviceEventRouter (started by engine.start())
@@ -910,10 +967,22 @@ class MantleManager {
 
         // Capture/forwarding is independent from presentation. Notify is the
         // user-controlled presentation surface: if it is not running, no card
-        // and no speech may interrupt the wearer. This also keeps presentation
-        // intentionally unavailable on iOS while Notify is omitted from the
-        // built-in catalog there.
+        // and no speech may interrupt the wearer on either platform.
         if (!this.isNotifyRunning()) return
+        // One presentation owner: firmware history/popups replace the Mentra card.
+        // Miniapp forwarding above stays independent. A failed native upload must
+        // not fall back to a second overlay whose delivery cannot be correlated.
+        if (engine.phoneNotifications.usesNativePresentation()) {
+          try {
+            await engine.phoneNotifications.presentNative(event)
+          } catch (error) {
+            console.warn("MANTLE: native notification delivery failed", error)
+          }
+          return
+        }
+        // iOS Notify currently supports firmware presentation on G2. Metadata-only
+        // relay must not be rendered as a pretend full-content notification.
+        if (Platform.OS === "ios" && !title && !content) return
 
         // Cloud V1 used to relay this event to the Notify miniapp, which then
         // painted the glasses. Notify is now an offline built-in, so render the

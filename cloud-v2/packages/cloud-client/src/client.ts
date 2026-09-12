@@ -153,7 +153,10 @@ export class CloudClient {
     const authHttp = coreUrl
       ? createHttpClient({baseUrl: coreUrl, logger, fetch: config.transports.http, timers})
       : undefined
-    const store = new TokenStore({storage: config.transports.storage})
+    const store = new TokenStore({
+      storage: config.transports.storage,
+      storageKey: config.authStorageKey,
+    })
     const auth = new Auth({
       http: authHttp,
       store,
@@ -163,6 +166,7 @@ export class CloudClient {
       // requests, but still use the host's injected HTTP transport.
       baseUrl: coreUrl,
       fetch: config.transports.http,
+      timers,
     })
 
     const getRuntimeToken = (): Promise<string> => auth.getRuntimeToken()
@@ -252,6 +256,7 @@ export class CloudClient {
       forceRefreshToken: () => auth.getRuntimeToken({forceRefresh: true}),
     })
 
+    // Core is last: stateless REST on the core service, Bearer from auth.
     const core = coreHttp ? new Core({http: coreHttp}) : undefined
 
     this.auth = auth

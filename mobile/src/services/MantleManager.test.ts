@@ -1,6 +1,8 @@
+import {Platform} from "react-native"
 import {waitFor} from "@testing-library/react-native"
 import {router} from "expo-router"
 
+import {initI18n} from "@/i18n"
 import mantle from "@/services/MantleManager"
 import {storeUpdateScheduler} from "@/services/miniapps/storeUpdateScheduler"
 import {
@@ -108,7 +110,17 @@ let syncCoreDisplayOwner: () => void
 let syncGlassesPresentationState: (status: {state: string}) => void
 
 describe("MantleManager", () => {
+  const originalPlatform = Platform.OS
+  beforeAll(() => {
+    Object.defineProperty(Platform, "OS", {configurable: true, value: "android"})
+  })
+  afterAll(() => {
+    Object.defineProperty(Platform, "OS", {configurable: true, value: originalPlatform})
+  })
   beforeAll(async () => {
+    // Alerts surface translated copy (e.g. the Wi-Fi-needs-glasses blocker), so
+    // initialize i18n before init(); otherwise translate() returns raw keys.
+    await initI18n()
     routerPushSpy = jest.spyOn(router, "push").mockImplementation(() => {})
     jest.useFakeTimers()
     resetBluetoothSdkMock()
@@ -469,6 +481,70 @@ describe("MantleManager", () => {
     await Promise.resolve()
   })
 
+  it("uses native presentation without duplicating the Mentra card or miniapp event", async () => {
+    useAppStatusStore.setState({
+      apps: [{packageName: "cloud.augmentos.notify", type: "background", running: true}] as any,
+    })
+    syncCoreDisplayOwner()
+    expect(engine.phoneNotifications.setPresentationActive).toHaveBeenLastCalledWith(true)
+    ;(engine.phoneNotifications.usesNativePresentation as jest.Mock).mockReturnValueOnce(true)
+    ;(engine.phoneNotifications.presentNative as jest.Mock).mockResolvedValueOnce(true)
+    const forward = jest.spyOn(localMiniappRuntime, "forwardEvent")
+    emitCrustEvent("phone_notification", {
+      notificationId: "native-1",
+      app: "Calendar",
+      title: "Meeting",
+      content: "Soon",
+      packageName: "com.calendar",
+    })
+    await Promise.resolve()
+    expect(engine.phoneNotifications.presentNative).toHaveBeenCalledTimes(1)
+    expect(forward).toHaveBeenCalledWith("phone_notification", expect.objectContaining({notificationId: "native-1"}))
+    expect(localDisplayManager.request).not.toHaveBeenCalled()
+    expect(audioPlaybackService.play).not.toHaveBeenCalled()
+  })
+
+  it("does not fabricate an iOS card from G2's app-only relay", () => {
+    Object.defineProperty(Platform, "OS", {configurable: true, value: "ios"})
+    try {
+      useAppStatusStore.setState({
+        apps: [{packageName: "cloud.augmentos.notify", type: "background", running: true}] as any,
+      })
+      emitBluetoothSdkEvent("phone_notification", {
+        notificationId: "ancs-metadata",
+        app: "Messages",
+        title: "",
+        content: "",
+        packageName: "com.apple.MobileSMS",
+      })
+      expect(localDisplayManager.request).not.toHaveBeenCalled()
+    } finally {
+      Object.defineProperty(Platform, "OS", {configurable: true, value: "android"})
+    }
+  })
+
+  it("preserves full-content iOS notification presentation", () => {
+    Object.defineProperty(Platform, "OS", {configurable: true, value: "ios"})
+    try {
+      useAppStatusStore.setState({
+        apps: [{packageName: "cloud.augmentos.notify", type: "background", running: true}] as any,
+      })
+      emitBluetoothSdkEvent("phone_notification", {
+        notificationId: "full-ios",
+        app: "Messages",
+        title: "Alice",
+        content: "Hello",
+        packageName: "com.apple.MobileSMS",
+      })
+      expect(localDisplayManager.request).toHaveBeenCalledWith(
+        "cloud.augmentos.notify",
+        expect.objectContaining({layout: expect.objectContaining({text: "Hello"})}),
+      )
+    } finally {
+      Object.defineProperty(Platform, "OS", {configurable: true, value: "android"})
+    }
+  })
+
   it("tracks OTA status without allowing backward progress or stale terminal update hints", async () => {
     useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
     useGlassesStore.getState().setOtaUpdateAvailable({
@@ -515,7 +591,28 @@ describe("MantleManager", () => {
     expect(useGlassesStore.getState().otaInProgress).toBe(false)
   })
 
+  it("refuses Wi-Fi setup while the glasses are off Bluetooth and says why", async () => {
+    ;(engine.glasses.status as jest.Mock).mockReturnValue({state: "disconnected"})
+
+    const request = requestWifiSetup("Streaming needs Wi-Fi", "com.mentra.call")
+    const [title, message, buttons] = mockShowAlert.mock.calls.at(-1)!
+
+    expect(title).toBe("Reconnect your glasses")
+    expect(message).toBe(
+      "Wi-Fi setup needs your glasses connected over Bluetooth. Turn them on and wait for them to reconnect, then try again.",
+    )
+    expect(buttons).toHaveLength(1)
+    expect(buttons[0].text).toBe("OK")
+    buttons[0].onPress()
+    await request
+
+    // The miniapp stays in the foreground and no Wi-Fi route is pushed.
+    expect(engine.miniapps.clearForeground).not.toHaveBeenCalled()
+    expect(routerPushSpy).not.toHaveBeenCalled()
+  })
+
   it("prompts before opening Wi-Fi setup and backgrounds the requesting miniapp", async () => {
+    ;(engine.glasses.status as jest.Mock).mockReturnValue({state: "connected"})
     const cancelRequest = requestWifiSetup("Streaming needs Wi-Fi")
     const [, message, cancelButtons] = mockShowAlert.mock.calls.at(-1)!
 

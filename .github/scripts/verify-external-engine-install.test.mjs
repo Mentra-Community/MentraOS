@@ -17,11 +17,13 @@ const plan = createReleasePlan({
   nativeBuildNumber: 310000057,
 })
 const expectedClosure = [
+  "@mentra/acs-meeting",
   "@mentra/bluetooth-sdk",
   "@mentra/cloud-client",
   "@mentra/cloud-protocol",
   "@mentra/crust",
   "@mentra/engine",
+  "@mentra/glasses-media",
   "@mentra/jspolyfill",
   "@mentra/miniapp",
 ]
@@ -30,7 +32,7 @@ function fixture(lockPackages) {
   const root = mkdtempSync(path.join(os.tmpdir(), "mentra-engine-install-"))
   writeFileSync(
     path.join(root, "package.json"),
-    JSON.stringify({dependencies: {"@mentra/engine": plan.releaseIdentity, react: "19.2.0"}}),
+    JSON.stringify({dependencies: {"@mentra/engine": plan.releaseIdentity, "react": "19.2.0"}}),
   )
   writeFileSync(path.join(root, "package-lock.json"), JSON.stringify({packages: lockPackages}))
   return root
@@ -41,14 +43,21 @@ function registry(version) {
 }
 
 function validLock() {
-  return Object.fromEntries(
-    expectedClosure.map((name) => [`node_modules/${name}`, registry(plan.releaseIdentity)]),
-  )
+  return Object.fromEntries(expectedClosure.map((name) => [`node_modules/${name}`, registry(plan.releaseIdentity)]))
 }
 
 test("accepts one exact registry-backed Engine closure", () => {
   const root = fixture(validLock())
   assert.deepEqual(verifyExternalEngineInstall({fixtureDir: root, plan}), expectedClosure)
+})
+
+test("rejects an Engine install missing ACS's shared native media dependency", () => {
+  const lock = validLock()
+  delete lock["node_modules/@mentra/glasses-media"]
+  assert.throws(
+    () => verifyExternalEngineInstall({fixtureDir: fixture(lock), plan}),
+    /@mentra\/glasses-media resolved 0 physical copies/,
+  )
 })
 
 test("rejects duplicate or workspace-resolved native modules", () => {

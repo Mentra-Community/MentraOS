@@ -128,6 +128,68 @@ export type WifiStatusChangeEvent = WifiStatus & {
   error?: string
 }
 
+export type WifiForgetOutcome =
+  | "confirmed"
+  | "dispatched"
+  | "not_found"
+  | "unsupported"
+  | "failed"
+  | "legacy_unverified"
+
+export type WifiForgetResult = {
+  ssid: string
+  outcome: WifiForgetOutcome
+  connected?: boolean
+  currentSsid?: string
+  localIp?: string
+  error?: string
+}
+
+export type ModernWifiForgetResultEvent = {
+  type: "wifi_forget_result"
+  mode: "modern"
+  requestId: string
+  sid: string
+  ssid: string
+  protocolVersion: number
+  outcome: Exclude<WifiForgetOutcome, "legacy_unverified">
+  connected?: boolean
+  currentSsid?: string
+  localIp?: string
+  error?: string
+}
+
+export type LegacyWifiForgetResultEvent = {
+  type: "wifi_forget_result"
+  mode: "legacy"
+  ssid: string
+  dispatched: boolean
+  connected?: boolean
+  currentSsid?: string
+  localIp?: string
+  error?: string
+}
+
+export type WifiForgetResultEvent = ModernWifiForgetResultEvent | LegacyWifiForgetResultEvent
+
+export type SavedWifiNetworksOutcome = "confirmed" | "unsupported" | "failed"
+
+export type SavedWifiNetworksResult = {
+  outcome: SavedWifiNetworksOutcome
+  networks: string[]
+  error?: string
+}
+
+export type SavedWifiNetworksEvent = {
+  type: "saved_wifi_networks"
+  requestId: string
+  sid: string
+  protocolVersion: number
+  outcome: SavedWifiNetworksOutcome
+  networks: string[]
+  error?: string
+}
+
 export type HotspotStatus = {state: "disabled"} | {state: "enabled"; ssid: string; password: string; localIp: string}
 
 export type EnabledHotspotStatus = Extract<HotspotStatus, {state: "enabled"}>
@@ -147,6 +209,8 @@ export type HotspotErrorEvent = {
 }
 
 export type VersionInfoResult = {
+  versionInfoType?: string
+  sid?: string
   androidVersion: string
   firmwareVersion: string
   besFirmwareVersion: string
@@ -155,8 +219,24 @@ export type VersionInfoResult = {
   systemTimeMs?: number
   otaVersionUrl: string
   appVersion: string
+  /**
+   * Package the glasses client actually runs as, from `version_info_1`.
+   * `"com.mentra.asg_client"` is the stock client; anything else is a sideloaded build (Android
+   * forces a distinct package on any build not signed with Mentra's release key) that coexists
+   * with the stock app and must not be driven by OTA.
+   *
+   * Omitted — not empty — whenever this result carries no identity: either the glasses predate
+   * the field, or the response resolved from a `version_info` chunk that does not carry it (only
+   * chunk 1 does). Omission is what keeps a response from overwriting an identity an earlier
+   * chunk established, so treat `undefined` as "unknown", never as "stock".
+   */
+  packageName?: string
   /** Phone-served hotspot OTA protocol version; 0 means unsupported/legacy glasses. */
   hotspotOtaVersion: number
+  /** Session-correlated WiFi forget result protocol; absent/0 means unsupported. */
+  wifiForgetResultVersion?: number
+  /** Session-correlated saved-network listing protocol; absent/0 means unsupported. */
+  savedWifiNetworksVersion?: number
 }
 
 export type VersionInfoEvent = VersionInfoResult & {
@@ -620,6 +700,10 @@ export type StreamVideoConfig = {
   width?: number
   height?: number
   bitrate?: number
+  /** WHIP minimum target in bps; omitted leaves it unset. Clamped to the maximum. */
+  minBitrateBps?: number
+  /** WHIP startup bitrate in bps, clamped to the requested bounds. */
+  initialBitrateBps?: number
   fps?: number
 }
 
@@ -630,6 +714,20 @@ export type StreamAudioConfig = {
   noiseSuppression?: boolean
 }
 
+/** ICE overrides for a WHIP stream. Ignored by the RTMP and SRT paths. */
+export type StreamIceConfig = {
+  /**
+   * STUN server the glasses should use while gathering candidates.
+   *
+   * Omit to keep the default Cloudflare STUN server. Pass an empty string to force host-only
+   * gathering, which is what SoftAP calling needs: the WHIP server runs on the phone across the
+   * glasses' own hotspot, so a server-reflexive candidate is meaningless and there is no route to
+   * a STUN server anyway. A value that is not a `stun:`/`stuns:` URI is ignored and the default is
+   * kept, so a malformed override cannot silently disable ICE.
+   */
+  stun?: string
+}
+
 export type StreamStartRequest = {
   type?: "start_stream"
   streamUrl: string
@@ -637,6 +735,16 @@ export type StreamStartRequest = {
   sound?: boolean
   video?: StreamVideoConfig
   audio?: StreamAudioConfig
+  ice?: StreamIceConfig
+  /** When false, glasses skip mic capture. Defaults to true. */
+  captureAudio?: boolean
+  /**
+   * Correlation id echoed by the glasses in every SOFTAP_TRACE log line, so phone and glasses
+   * logs can be joined despite having unsynchronised clocks.
+   *
+   * TEMPORARY: part of the SoftAP diagnostic trace layer.
+   */
+  traceId?: string
 }
 
 export type StreamKeepAliveRequest = {
@@ -705,6 +813,12 @@ export type MicPcmEvent = {
   channels: 1
   encoding: "pcm_s16le"
   voiceActivityDetectionEnabled: boolean
+  /**
+   * The microphone this buffer came from (`"glasses"`, `"phone"`, `"bluetooth"`, or `""` when none
+   * is selected). Stamped per frame because the SDK can move the source mid-stream, so a consumer
+   * that told a remote party which microphone it is sending can check rather than assume.
+   */
+  source: string
 }
 
 export type MicLc3Event = {
@@ -778,6 +892,11 @@ export type StreamLiveStats = {
 type StreamStatusCommon = {
   type: "stream_status"
   streamId?: string
+  /** ASG process identity and monotonic revision for reconnect reconciliation. */
+  sid?: string
+  revision?: number
+  terminal?: boolean
+  errorDetails?: string
   timestamp?: number
   resolvedConfig?: StreamResolvedConfig
   stats?: StreamLiveStats
@@ -812,7 +931,7 @@ export type StreamStatusEvent =
     })
   | (StreamStatusCommon & {
       kind: "snapshot"
-      status: "streaming" | "reconnecting" | "stopped"
+      status: StreamStatusState
       streaming: boolean
       reconnecting: boolean
       attempt?: number
@@ -866,6 +985,8 @@ export type OtaStatusEvent = {
   step_type: "apk" | "mtk" | "bes"
   phase: "download" | "install"
   step_percent: number
+  /** Real bytes received in the current download; absent on older glasses. */
+  bytes_downloaded?: number
   overall_percent: number
   status: "in_progress" | "step_complete" | "complete" | "failed" | "idle"
   error_message?: string
@@ -904,10 +1025,14 @@ export type BluetoothSdkModuleEvents = {
   speaking_status: (event: SpeakingStatusEvent) => void
   battery_status: (event: BatteryStatusEvent) => void
   local_transcription: (event: LocalTranscriptionEvent) => void
+  native_notification_status: (event: NativeNotificationStatus) => void
+  native_notification_delivery: (event: NativeNotificationDelivery) => void
   phone_notification: (event: PhoneNotificationEvent) => void
   phone_notification_dismissed: (event: PhoneNotificationDismissedEvent) => void
   wifi_status_change: (event: WifiStatusChangeEvent) => void
   wifi_scan_result: (event: WifiScanResultEvent) => void
+  wifi_forget_result: (event: WifiForgetResultEvent) => void
+  saved_wifi_networks: (event: SavedWifiNetworksEvent) => void
   hotspot_status_change: (event: HotspotStatusChangeEvent) => void
   hotspot_error: (event: HotspotErrorEvent) => void
   photo_response: (event: PhotoResponseEvent) => void
@@ -984,6 +1109,54 @@ export interface PhoneNotificationDismissedEvent {
   timestamp: number
 }
 
+/**
+ * Outbound payload for `sendPhoneNotification` — a notification pushed INTO the glasses' own
+ * notification centre. The inverse of {@link PhoneNotificationEvent}, which reports
+ * notifications the glasses relayed TO the phone (iOS/ANCS). Drivers map these keys onto
+ * whatever their firmware expects.
+ */
+export interface NativeNotificationConfig {
+  enabled: boolean
+  autoDisplay: boolean
+  durationSeconds: number
+  doNotDisturb: boolean
+  /** Android package names. iOS rejects nonempty lists; its ANCS filter is firmware-owned. */
+  blockedApps: string[]
+}
+
+export interface NativeNotificationStatus {
+  supported: boolean
+  source: "phone" | "ancs" | "unsupported"
+  authorization: "system" | "authorized" | "not_authorized" | "unknown"
+  /** `submitted` is not a firmware-confirmed acknowledgement. */
+  state: "unavailable" | "disabled" | "configuring" | "submitted" | "needs_reconnect" | "failed"
+  config: NativeNotificationConfig
+  error: string
+}
+
+export interface NativeNotificationDelivery {
+  notificationId: string
+  status: "delivered" | "failed" | "cancelled" | "dropped"
+  reason: string
+}
+
+export interface NativePhoneNotification {
+  /** Stable id from the phone's notification listener; parsed to an int where firmware needs one. */
+  notificationId: string
+  /** Reverse-DNS package id of the originating app. */
+  packageName: string
+  /** Human app name (e.g. "Messages"). */
+  appName: string
+  title: string
+  /** Android `android.subText`. Empty when the listener didn't capture one. */
+  subtitle: string
+  body: string
+  /** Unix ms post time. */
+  timestampMs: number
+  /** Posted or updated. Removal is not supported by the verified protocol. */
+  action: 0
+}
+
 export type PublicGlassesStatus = Omit<
   GlassesStatus,
   "otaUpdateAvailable" | "otaProgress" | "otaInProgress" | "otaVersionUrl"
@@ -1004,6 +1177,8 @@ export type PublicBluetoothStatus = Pick<
 >
 
 export type BluetoothSdkEventMap = {
+  native_notification_status: NativeNotificationStatus
+  native_notification_delivery: NativeNotificationDelivery
   log: LogEvent
   device_discovered: Device
   default_device_changed: {device?: Device}
@@ -1018,6 +1193,8 @@ export type BluetoothSdkEventMap = {
   local_transcription: LocalTranscriptionEvent
   wifi_status_change: WifiStatusChangeEvent
   wifi_scan_result: WifiScanResultEvent
+  wifi_forget_result: WifiForgetResultEvent
+  saved_wifi_networks: SavedWifiNetworksEvent
   hotspot_status_change: HotspotStatusChangeEvent
   hotspot_error: HotspotErrorEvent
   photo_response: PhotoResponseEvent
@@ -1067,6 +1244,8 @@ export type BluetoothSdkSubscription = {
 export type BluetoothSdkEvent = BluetoothSdkEventMap[BluetoothSdkEventName]
 
 export interface BluetoothSdkPublicModule {
+  configureNativeNotifications(config: NativeNotificationConfig): Promise<void>
+  getNativeNotificationStatus(): Promise<NativeNotificationStatus>
   addListener<EventName extends BluetoothSdkEventName>(
     eventName: EventName,
     listener: BluetoothSdkEventListener<EventName>,
@@ -1097,6 +1276,8 @@ export interface BluetoothSdkPublicModule {
 
   displayText(text: string, x?: number, y?: number, size?: number): Promise<void>
   clearDisplay(): Promise<void>
+  /** Set session-only content below the dashboard status header. Pass an empty string to reset it. */
+  setDashboardContent(content: string): Promise<void>
   showDashboard(): Promise<void>
   setDashboardPosition(height: number, depth: number): Promise<void>
   setHeadUpAngle(angleDegrees: number): Promise<void>
@@ -1106,8 +1287,11 @@ export interface BluetoothSdkPublicModule {
   ping(): Promise<void>
 
   requestWifiScan(): Promise<WifiSearchResult[]>
+  /** List exact WiFi SSIDs from glasses that support reliable saved-network enumeration. */
+  getSavedWifiNetworks(): Promise<SavedWifiNetworksResult>
   sendWifiCredentials(ssid: string, password: string): Promise<WifiStatusChangeEvent>
-  forgetWifiNetwork(ssid: string): Promise<WifiStatusChangeEvent>
+  /** Forget a saved network and return its correlated semantic outcome. */
+  forgetWifiNetwork(ssid: string): Promise<WifiForgetResult>
   setHotspotState(enabled: boolean): Promise<HotspotStatusChangeEvent>
   /** Set the glasses clock from the phone after an OTA clock-skew failure. */
   setSystemTime(timestampMs: number): Promise<void>
@@ -1265,6 +1449,8 @@ export interface OtaStatus {
   stepType: "apk" | "mtk" | "bes"
   phase: "download" | "install"
   stepPercent: number
+  /** Real bytes received in the current download; independent of rounded percent. */
+  bytesDownloaded?: number
   overallPercent: number
   status: "in_progress" | "step_complete" | "complete" | "failed" | "idle"
   error?: string
@@ -1324,6 +1510,13 @@ export interface GlassesStatus {
   systemTimeMs?: number
   otaVersionUrl: string
   appVersion: string
+  /**
+   * Package the glasses client actually runs as, from `version_info_1`. Empty string on glasses
+   * whose client predates the field. `"com.mentra.asg_client"` is the stock client; anything else
+   * is a sideloaded build (Android forces a distinct package on any build not signed with Mentra's
+   * release key) that coexists with the stock app and must not be driven by OTA.
+   */
+  packageName: string
   /** Phone-served hotspot OTA protocol version; 0 means unsupported/legacy glasses. */
   hotspotOtaVersion: number
   bluetoothName: string
@@ -1400,9 +1593,22 @@ export interface Device {
 export interface ConnectOptions {
   saveAsDefault?: boolean
   cancelExistingConnectionAttempt?: boolean
+  /**
+   * iOS Mentra Live only. When true, CoreBluetooth requires ANCS authorization
+   * as part of the connection. Set false when the app does not use notification
+   * relay and must avoid the system ANCS authorization flow. Defaults to true.
+   * Android accepts this option as a no-op.
+   */
+  requiresAncs?: boolean
 }
 
 export type ScanResultsCallback = (devices: Device[]) => void
+
+/** Advisory for an empty scan. System connection state does not identify an owning app. */
+export interface ScanDiagnostic {
+  code: string
+  message: string
+}
 
 export interface ScanOptions {
   model: DeviceModel
@@ -1412,6 +1618,8 @@ export interface ScanOptions {
   timeout?: number
   /** Called every time the discovered device list changes during the scan. */
   onResults?: ScanResultsCallback
+  /** Optional non-fatal hint before an empty scan resolves, on Android and iOS. */
+  onDiagnostic?: (diagnostic: ScanDiagnostic) => void
 }
 
 export type ScanModelOptions = Omit<ScanOptions, "model">

@@ -19,9 +19,15 @@ for (const key of requiredEnv) {
   }
 }
 
+// Coordinated releases label the manifest with their release identity. Pull
+// request builds (mentra-asg-client-build.yml) label it pr-<number>-<sha>; the
+// app treats that as "no coordinated release" and shows the ASG versionName.
 const releaseVersion = process.env.RELEASE_VERSION.trim();
-if (!/^\d+\.\d+\.\d+(?:-(?:dev|beta)\.[1-9]\d*)?$/.test(releaseVersion)) {
-  throw new Error(`Invalid coordinated release version: ${releaseVersion}`);
+if (
+  !/^\d+\.\d+\.\d+(?:-(?:dev|beta)\.[1-9]\d*)?$/.test(releaseVersion) &&
+  !/^pr-[1-9]\d*-[0-9a-f]{7,40}$/.test(releaseVersion)
+) {
+  throw new Error(`Invalid release version (expected X.Y.Z[-dev.N|-beta.N] or pr-<number>-<sha>): ${releaseVersion}`);
 }
 
 const versionCode = Number(process.env.ASG_VERSION_CODE);
@@ -54,6 +60,7 @@ const manifest = {
     },
   },
   mtk_patches: firmware.mtk_patches,
+  ...(firmware.mtk_full_ota ? {mtk_full_ota: firmware.mtk_full_ota} : {}),
   bes_firmware: firmware.bes_firmware,
 };
 

@@ -19,6 +19,8 @@ on:
       - "mobile/ci/fastlane-*/**"
       - "mobile/scripts/app-store-connect-build.mjs"
       - "scripts/production-release*.mjs"
+      - "mobile/modules/acs-meeting/package.json"
+      - "mobile/modules/glasses-media/package.json"
       - "mobile/modules/bluetooth-sdk/package.json"
       - "mobile/modules/bluetooth-sdk/scripts/*.mjs"
       - "mobile/modules/bluetooth-sdk/src/generated/changelogCatalog.ts"
@@ -74,7 +76,6 @@ jobs:
             --branch dev \
             --sequence 1 \
             --source-commit "$(git rev-parse HEAD)" \
-            --native-build-number 310000001 \
             --ota-inputs "$ota_inputs" \
             --require-version-mirrors true \
             --output "$release_plan"

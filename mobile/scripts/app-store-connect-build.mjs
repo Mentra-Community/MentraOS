@@ -59,7 +59,13 @@ export function createAppStoreConnectClient({
         return body ? JSON.parse(body) : null
       } catch (error) {
         lastError = error
-        if (!canRetry || !isTransientAppStoreConnectError(error) || attempt === attempts) throw error
+        if (
+          !canRetry ||
+          !(isTransientAppStoreConnectError(error) || isSpuriousAuthenticationError(error)) ||
+          attempt === attempts
+        ) {
+          throw error
+        }
         console.warn(
           `App Store Connect temporarily failed ${method} ${resource} (${transientAppStoreConnectErrorLabel(error)}); retrying`,
         )
@@ -175,6 +181,16 @@ function isTransientAppStoreConnectError(error) {
     TRANSIENT_NETWORK_ERROR_CODES.has(error?.code) ||
     TRANSIENT_NETWORK_ERROR_CODES.has(error?.cause?.code)
   )
+}
+
+// App Store Connect intermittently answers a correctly signed request with
+// HTTP 401 "Authentication credentials are missing or invalid" and accepts the
+// next one. Every attempt above signs a fresh token, so a read is retried
+// through the same bounded budget as a network failure. Only the request loop
+// treats it that way: a 401 that survives every attempt is a real credential
+// problem and must not keep a long polling loop alive.
+function isSpuriousAuthenticationError(error) {
+  return error?.status === 401
 }
 
 function transientAppStoreConnectErrorLabel(error) {

@@ -8,7 +8,11 @@ public struct BluetoothSdkAnalyticsConfiguration {
 
     public init(enabled: Bool = true) {
         self.enabled = enabled
+        #if os(macOS)
+        surface = "macos"
+        #else
         surface = "ios"
+        #endif
     }
 
     var isReady: Bool {
@@ -35,11 +39,22 @@ final class BluetoothSdkAnalytics {
     private static let defaultPostHogApiKey = "phc_FCweXVAxVgU7wZK4Fk3okOx4RmyNqVHJf62YpZSfJt5"
     private static let defaultPostHogHost = "https://us.i.posthog.com"
     private let stateQueue = DispatchQueue(label: "com.mentra.bluetoothsdk.analytics.state")
-    private let transportQueue = DispatchQueue(label: "com.mentra.bluetoothsdk.analytics.transport")
+    // Delivery is process-wide (see BluetoothSdkAnalyticsTransport); this instance only tracks its connection.
+    private let transportQueue = BluetoothSdkAnalyticsTransport.queue
     private let configuration: BluetoothSdkAnalyticsConfiguration
+    private var tracker = BluetoothSdkAnalyticsTracker(simulatedModel: DeviceTypes.SIMULATED)
     private var startedCaptured = false
-    private var lastConnected = false
-    private var identifiedCapturedForConnection = false
+    // Touched only on transportQueue, which serializes access.
+    private var resolvedHostProperties: [String: Any]?
+    private var retryQueue: BluetoothSdkAnalyticsQueue? {
+        BluetoothSdkAnalyticsTransport.retryQueue
+    }
+
+    private let isoFormatter: ISO8601DateFormatter = {
+        let formatter = ISO8601DateFormatter()
+        formatter.formatOptions = [.withInternetDateTime, .withFractionalSeconds]
+        return formatter
+    }()
 
     init(configuration: BluetoothSdkAnalyticsConfiguration) {
         self.configuration = configuration.resolvedForApp()
@@ -47,71 +62,27 @@ final class BluetoothSdkAnalytics {
 
     func initializeGlassesStatus(_ status: GlassesStatus) {
         stateQueue.sync {
-            lastConnected = status.analyticsConnected
-            // Only treat identification as already captured when a valid serial is
-            // present at init. If the glasses are connected but the serial has not
-            // arrived yet (Mentra Live fills it via version_info after connect), leave
-            // this false so the identify event still fires once the serial arrives.
-            identifiedCapturedForConnection =
-                status.analyticsConnected && status.serialNumber.validManufacturingSerial != nil
+            tracker.initialize(status.analyticsSnapshot, reportingDay: BluetoothSdkAnalyticsTracker.reportingDay())
         }
     }
 
     func captureStarted() {
         stateQueue.sync {
-            captureStartedLocked()
+            guard !startedCaptured, configuration.isReady else { return }
+            startedCaptured = true
+            capture(event: "bluetooth_sdk_started", properties: ["event_kind": "sdk_started"], configuration: configuration)
+            // A fresh runtime is the natural moment to retry what an earlier one could not deliver.
+            transportQueue.async { self.drainRetryQueue(now: Date()) }
         }
-    }
-
-    private func captureStartedLocked() {
-        guard !startedCaptured, configuration.isReady else { return }
-        startedCaptured = true
-        capture(
-            event: "bluetooth_sdk_started",
-            properties: ["event_kind": "sdk_started"],
-            configuration: configuration
-        )
     }
 
     func observeGlassesStatus(_ status: GlassesStatus) {
         stateQueue.sync {
-            let isConnected = status.analyticsConnected
-            let wasConnected = lastConnected
-            lastConnected = isConnected
+            let events = tracker.observe(status.analyticsSnapshot, reportingDay: BluetoothSdkAnalyticsTracker.reportingDay())
             guard configuration.isReady else { return }
-            guard isConnected else {
-                identifiedCapturedForConnection = false
-                return
+            for event in events {
+                capture(event: event.name, properties: event.properties, configuration: configuration)
             }
-            if isConnected, !wasConnected {
-                identifiedCapturedForConnection = false
-                var properties: [String: Any] = [
-                    "event_kind": "glasses_connected",
-                    "fully_booted": status.fullyBooted,
-                ]
-                if !status.deviceModel.isEmpty {
-                    properties["glasses_model"] = status.deviceModel
-                }
-                capture(event: "bluetooth_sdk_glasses_connected", properties: properties, configuration: configuration)
-                // Fall through: a serial already present at connect time (G1/Ar99
-                // report it in the advertisement) should be identified now rather than
-                // waiting for some later, unrelated glasses-store update to run.
-            }
-
-            guard !identifiedCapturedForConnection,
-                  let serialNumber = status.serialNumber.validManufacturingSerial
-            else { return }
-            identifiedCapturedForConnection = true
-            var properties: [String: Any] = [
-                "event_kind": "glasses_identified",
-                "fully_booted": status.fullyBooted,
-                "glasses_device_id": serialNumber,
-                "glasses_device_id_type": "manufacturing_serial",
-            ]
-            if !status.deviceModel.isEmpty {
-                properties["glasses_model"] = status.deviceModel
-            }
-            capture(event: "bluetooth_sdk_glasses_identified", properties: properties, configuration: configuration)
         }
     }
 
@@ -121,40 +92,100 @@ final class BluetoothSdkAnalytics {
         configuration activeConfiguration: BluetoothSdkAnalyticsConfiguration
     ) {
         guard activeConfiguration.isReady else { return }
+        // Identity and time are fixed at capture, not at (re)send, so a retried
+        // event neither double counts nor drifts into a later week.
+        let uuid = UUID().uuidString.lowercased()
+        let capturedAt = Date()
 
         transportQueue.async {
+            // Host facts are resolved once, on the transport queue: Bundle lookups
+            // must not run on the caller (often the Bluetooth status thread).
+            let host = self.transportQueueHostProperties()
             let payload: [String: Any] = [
                 "api_key": Self.defaultPostHogApiKey,
+                "uuid": uuid,
                 "event": event,
                 "distinct_id": self.distinctId(),
-                "properties": self.baseProperties(configuration: activeConfiguration).merging(properties) { _, new in new },
+                "timestamp": self.isoFormatter.string(from: capturedAt),
+                "properties": self.baseProperties(configuration: activeConfiguration)
+                    .merging(host) { _, new in new }
+                    .merging(properties) { _, new in new },
             ]
-            guard let body = try? JSONSerialization.data(withJSONObject: payload) else { return }
-            guard let captureURL = self.captureURL() else { return }
-            var request = URLRequest(url: captureURL)
-            request.httpMethod = "POST"
-            request.timeoutInterval = 4
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.httpBody = body
-            URLSession.shared.dataTask(with: request).resume()
+            switch self.send(payload) {
+            case .delivered: self.drainRetryQueue(now: capturedAt)
+            case .retry: self.retryQueue?.enqueue(payload, now: capturedAt)
+            case .discard: break
+            }
         }
     }
 
+    /// Only ever called from `transportQueue`.
+    private func drainRetryQueue(now: Date) {
+        retryQueue?.drain(now: now) { payload in self.send(payload) }
+    }
+
+    /// Synchronous on purpose: it runs on the transport queue, and one request in
+    /// flight at a time keeps retry ordering trivial. The completion handler owns the
+    /// outcome; if it has not fired by the deadline the task is cancelled and the
+    /// payload is treated as retryable (its uuid makes a late duplicate harmless).
+    private func send(_ payload: [String: Any]) -> SendOutcome {
+        guard JSONSerialization.isValidJSONObject(payload),
+              let body = try? JSONSerialization.data(withJSONObject: payload),
+              let captureURL = captureURL()
+        else { return .discard }
+        var request = URLRequest(url: captureURL)
+        request.httpMethod = "POST"
+        request.timeoutInterval = 4
+        request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+        request.httpBody = body
+
+        let result = SendResult()
+        let task = URLSession.shared.dataTask(with: request) { _, response, error in
+            let outcome: SendOutcome
+            if error != nil {
+                outcome = .retry
+            } else if let http = response as? HTTPURLResponse {
+                outcome = SendOutcome.fromHTTPStatus(http.statusCode)
+            } else {
+                outcome = .retry
+            }
+            result.complete(outcome)
+        }
+        task.resume()
+        if result.wait(timeout: .now() + 6) == .timedOut {
+            task.cancel()
+        }
+        return result.outcome
+    }
+
     private func baseProperties(configuration: BluetoothSdkAnalyticsConfiguration) -> [String: Any] {
+        #if os(macOS)
+        let platform = "macos"
+        #else
+        let platform = "ios"
+        #endif
         var properties: [String: Any] = [
             "$process_person_profile": false,
             "event_source": "mentra_bluetooth_sdk",
-            "sdk_platform": "ios",
+            "sdk_platform": platform,
             "sdk_surface": configuration.surface,
             "app_identifier": Bundle.main.bundleIdentifier ?? "",
             "app_bundle_identifier": Bundle.main.bundleIdentifier ?? "",
-            "os_platform": "ios",
+            "os_platform": platform,
             "os_version": ProcessInfo.processInfo.operatingSystemVersionString,
         ]
-        if let sdkVersion = BluetoothSdkDefaults.sdkVersion {
-            properties["sdk_version"] = sdkVersion
-        }
+        // Always present so version cohorts never collapse into a null bucket. The
+        // placeholder shows up only for unstamped source builds (plain SwiftPM checkout).
+        properties["sdk_version"] = BluetoothSdkDefaults.sdkVersion ?? "unknown"
         return properties
+    }
+
+    /// Only ever called from `transportQueue`, which serializes access.
+    private func transportQueueHostProperties() -> [String: Any] {
+        if let resolvedHostProperties { return resolvedHostProperties }
+        let resolved = BluetoothSdkAnalyticsHost.resolve().properties
+        resolvedHostProperties = resolved
+        return resolved
     }
 
     private func distinctId() -> String {
@@ -173,17 +204,46 @@ final class BluetoothSdkAnalytics {
     }
 }
 
-private extension GlassesStatus {
-    var analyticsConnected: Bool {
-        connectionState.isConnected || connected || fullyBooted
+/// Completion-owned send result: the outcome is written once, under a lock, and
+/// read only after the semaphore says it is settled (or after a timeout, in which
+/// case it stays `.retry`).
+private final class SendResult {
+    private let lock = NSLock()
+    private let semaphore = DispatchSemaphore(value: 0)
+    private var settled: SendOutcome = .retry
+
+    var outcome: SendOutcome {
+        lock.lock()
+        defer { lock.unlock() }
+        return settled
+    }
+
+    func complete(_ outcome: SendOutcome) {
+        lock.lock()
+        settled = outcome
+        lock.unlock()
+        semaphore.signal()
+    }
+
+    func wait(timeout: DispatchTime) -> DispatchTimeoutResult {
+        semaphore.wait(timeout: timeout)
     }
 }
 
-private extension String {
-    var validManufacturingSerial: String? {
-        let normalized = trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !normalized.isEmpty, normalized.contains(where: { $0 != "0" }) else { return nil }
-        return normalized
+private extension GlassesStatus {
+    var analyticsSnapshot: AnalyticsGlassesSnapshot {
+        AnalyticsGlassesSnapshot(
+            connected: connectionState.isConnected || connected || fullyBooted,
+            fullyBooted: fullyBooted,
+            model: deviceModel,
+            serialNumber: serialNumber,
+            firmwareVersion: firmwareVersion,
+            besFirmwareVersion: besFirmwareVersion,
+            mtkFirmwareVersion: mtkFirmwareVersion,
+            androidVersion: androidVersion,
+            appVersion: appVersion,
+            buildNumber: buildNumber
+        )
     }
 }
 

@@ -41,6 +41,13 @@ final class BluetoothAvailability: NSObject, CBCentralManagerDelegate {
         listeners[id] = nil
     }
 
+    /// Read-only system lookup. It neither connects nor claims ownership.
+    func connectedPeripherals(withServices services: [CBUUID]) -> [CBPeripheral] {
+        dispatchPrecondition(condition: .onQueue(.main))
+        guard let centralManager, centralManager.state == .poweredOn, !services.isEmpty else { return [] }
+        return centralManager.retrieveConnectedPeripherals(withServices: services)
+    }
+
     func requirePoweredOn(operation: String) throws {
         if let current = centralManager?.state {
             state = current

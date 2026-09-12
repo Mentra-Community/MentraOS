@@ -1,8 +1,43 @@
-import {checkCurrentGlassesForUpdate} from "../../modules/engine/src/services/OtaUpdateCheckService"
+import {checkCurrentGlassesForUpdate, selectMtkUpdate} from "../../modules/engine/src/services/OtaUpdateCheckService"
 import {useGlassesStore} from "../../modules/engine/src/stores/glasses"
 import {SETTINGS} from "@mentra/engine"
 import {useSettingsStore} from "@mentra/engine-host-internal"
 import {bluetoothSdkMock, resetBluetoothSdkMock} from "@/test-utils/mockBluetoothSdk"
+
+describe("MTK full fallback", () => {
+  const full = {
+    end_firmware: "MentraLive_20260908.10",
+    url: "https://cdn/full.zip",
+    sha256: "a".repeat(64),
+    size: 640341205,
+  }
+  const patch = {start_firmware: "20260709", end_firmware: "20260908.10", url: "https://cdn/delta.zip"}
+  const manifest = {mtk_patches: [patch], mtk_full_ota: full}
+
+  it("prefers the exact-base delta even when a full image exists", () => {
+    expect(selectMtkUpdate(manifest, "MentraLive_20260709")).toBe(patch)
+  })
+  it.each(["20260908.9", "MentraLive_20260907.20", "20260101"])("offers full to older %s", (current) => {
+    expect(selectMtkUpdate(manifest, current)).toBe(full)
+  })
+  it.each([undefined, "", "unknown", "20260908.10", "MentraLive_20260908.11", "20260909"])(
+    "does not offer full to %s",
+    (current) => {
+      expect(selectMtkUpdate(manifest, current)).toBeNull()
+    },
+  )
+  it("handles full-only, legacy-only, and date-only revision zero", () => {
+    expect(selectMtkUpdate({mtk_full_ota: full}, "20260709")).toBe(full)
+    expect(selectMtkUpdate({mtk_patches: [patch]}, "20260101")).toBeNull()
+    expect(selectMtkUpdate({mtk_full_ota: {...full, end_firmware: "20260908.0"}}, "20260908")).toBeNull()
+  })
+  it.each([{sha256: ""}, {size: 0}, {size: 2 ** 31}, {url: "file:///tmp/full.zip"}, {end_firmware: "unknown"}])(
+    "refuses malformed full metadata %j",
+    (invalid) => {
+      expect(selectMtkUpdate({mtk_full_ota: {...full, ...invalid}}, "20260101")).toBeNull()
+    },
+  )
+})
 
 describe("OtaUpdateCheckService", () => {
   const originalFetch = global.fetch
@@ -49,6 +84,152 @@ describe("OtaUpdateCheckService", () => {
     expect(result.skippedReason).toBe("dev_build")
     expect(result.updateAvailable).toBe(false)
     // An unpinned phone build must not fetch or apply an automatic OTA manifest.
+    expect(global.fetch).not.toHaveBeenCalled()
+  })
+
+  it("skips the check when the glasses run a sideloaded client package", async () => {
+    useGlassesStore.getState().setGlassesInfo({
+      buildNumber: "120",
+      packageName: "com.mentra.asg_client.thirdparty",
+    })
+    global.fetch = jest.fn() as unknown as typeof fetch
+
+    const result = await checkCurrentGlassesForUpdate({
+      refreshVersionInfo: false,
+      fixClockBeforeCheck: false,
+      waitForBesVersionMs: 0,
+      waitForMtkVersionMs: 0,
+    })
+
+    expect(result.skippedReason).toBe("unofficial_client")
+    expect(result.packageName).toBe("com.mentra.asg_client.thirdparty")
+    expect(result.updateAvailable).toBe(false)
+    // Installing the manifest APK would replace a package this client is not, so the
+    // manifest must not even be fetched: the prompt could never be satisfied.
+    expect(global.fetch).not.toHaveBeenCalled()
+  })
+
+  it("checks normally when the glasses report the stock client package", async () => {
+    useGlassesStore.getState().setGlassesInfo({buildNumber: "40", packageName: "com.mentra.asg_client"})
+    global.fetch = jest.fn(() =>
+      Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({apps: {"com.mentra.asg_client": {versionCode: 10}}}),
+      } as unknown as Response),
+    ) as unknown as typeof fetch
+
+    const result = await checkCurrentGlassesForUpdate({
+      refreshVersionInfo: false,
+      fixClockBeforeCheck: false,
+      waitForBesVersionMs: 0,
+      waitForMtkVersionMs: 0,
+    })
+
+    expect(result.skippedReason).toBeUndefined()
+    expect(result.hasCheckCompleted).toBe(true)
+  })
+
+  it("checks normally when the glasses predate the package_name field", async () => {
+    // Fielded glasses report no package_name at all; they must keep getting OTA.
+    useGlassesStore.getState().setGlassesInfo({buildNumber: "40"})
+    global.fetch = jest.fn(() =>
+      Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({apps: {"com.mentra.asg_client": {versionCode: 10}}}),
+      } as unknown as Response),
+    ) as unknown as typeof fetch
+
+    const result = await checkCurrentGlassesForUpdate({
+      refreshVersionInfo: false,
+      fixClockBeforeCheck: false,
+      waitForBesVersionMs: 0,
+      waitForMtkVersionMs: 0,
+    })
+
+    expect(result.skippedReason).toBeUndefined()
+    expect(result.hasCheckCompleted).toBe(true)
+  })
+
+  it("keeps identity paired with the build number across a disconnect", async () => {
+    // Regression: clearing packageName on disconnect while buildNumber survived left a stale
+    // sideloaded build paired with a blank package. A blank package reads as stock, so the
+    // reconnect would compare the leftover sideloaded build to the stock pin and prompt forever
+    // — the original loop. Identity may only be cleared together with the build number, which
+    // the native session boundary does atomically.
+    useGlassesStore.getState().setGlassesInfo({
+      buildNumber: "120",
+      packageName: "com.mentra.asg_client.thirdparty",
+    })
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
+    expect(useGlassesStore.getState().packageName).toBe("com.mentra.asg_client.thirdparty")
+    expect(useGlassesStore.getState().buildNumber).toBe("120")
+
+    // Reconnect before version_info_1 lands: stale build + stale identity is fail-closed.
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
+    global.fetch = jest.fn() as unknown as typeof fetch
+    const stale = await checkCurrentGlassesForUpdate({
+      refreshVersionInfo: false,
+      fixClockBeforeCheck: false,
+      waitForBesVersionMs: 0,
+      waitForMtkVersionMs: 0,
+    })
+    expect(stale.skippedReason).toBe("unofficial_client")
+    expect(global.fetch).not.toHaveBeenCalled()
+
+    // The native boundary clears both together, so the next session starts clean.
+    useGlassesStore.getState().setGlassesInfo({buildNumber: "", packageName: ""})
+    useGlassesStore.getState().setGlassesInfo({
+      connection: {state: "connected", fullyBooted: true},
+      buildNumber: "40",
+    })
+    global.fetch = jest.fn(() =>
+      Promise.resolve({
+        ok: true,
+        json: () => Promise.resolve({apps: {"com.mentra.asg_client": {versionCode: 10}}}),
+      } as unknown as Response),
+    ) as unknown as typeof fetch
+
+    const result = await checkCurrentGlassesForUpdate({
+      refreshVersionInfo: false,
+      fixClockBeforeCheck: false,
+      waitForBesVersionMs: 0,
+      waitForMtkVersionMs: 0,
+    })
+
+    expect(result.skippedReason).toBeUndefined()
+    expect(result.hasCheckCompleted).toBe(true)
+  })
+
+  it("keeps a known package when a version_info response omits the field", async () => {
+    // requestVersionInfo() resolves from ANY version_info chunk, and only chunk 1 carries
+    // package_name. The bridges therefore omit the key unless it is known; if they emitted ""
+    // instead, the raw-spread apply below would blank a known identity, and a blank package
+    // reads as stock — failing OPEN on the exact client the guard just identified.
+    useGlassesStore.getState().setGlassesInfo({
+      buildNumber: "120",
+      packageName: "com.mentra.asg_client.thirdparty",
+    })
+
+    const chunkWithoutIdentity = await bluetoothSdkMock.requestVersionInfo()
+    // The omission is the contract under test, not an accident of the fixture.
+    expect(Object.prototype.hasOwnProperty.call(chunkWithoutIdentity, "packageName")).toBe(false)
+    useGlassesStore.getState().setGlassesInfo(chunkWithoutIdentity)
+
+    expect(useGlassesStore.getState().packageName).toBe("com.mentra.asg_client.thirdparty")
+
+    // That same apply does blank buildNumber, which is pre-existing behaviour for every field
+    // the responding chunk omits and is out of scope here; restore it so the guard is reached.
+    useGlassesStore.getState().setGlassesInfo({buildNumber: "120"})
+
+    global.fetch = jest.fn() as unknown as typeof fetch
+    const result = await checkCurrentGlassesForUpdate({
+      refreshVersionInfo: false,
+      fixClockBeforeCheck: false,
+      waitForBesVersionMs: 0,
+      waitForMtkVersionMs: 0,
+    })
+
+    expect(result.skippedReason).toBe("unofficial_client")
     expect(global.fetch).not.toHaveBeenCalled()
   })
 
@@ -132,7 +313,9 @@ describe("OtaUpdateCheckService", () => {
         waitForMtkVersionMs: 0,
       })
 
-    global.fetch = jest.fn(() => Promise.resolve({ok: false, status: 404} as unknown as Response)) as unknown as typeof fetch
+    global.fetch = jest.fn(() =>
+      Promise.resolve({ok: false, status: 404} as unknown as Response),
+    ) as unknown as typeof fetch
     let result = await check()
     expect(result.hasCheckCompleted).toBe(false)
     expect(result.checkFailureReason).toBe("pin_unavailable")
@@ -142,7 +325,9 @@ describe("OtaUpdateCheckService", () => {
     expect(result.hasCheckCompleted).toBe(false)
     expect(result.checkFailureReason).toBe("network")
 
-    global.fetch = jest.fn(() => Promise.resolve({ok: false, status: 503} as unknown as Response)) as unknown as typeof fetch
+    global.fetch = jest.fn(() =>
+      Promise.resolve({ok: false, status: 503} as unknown as Response),
+    ) as unknown as typeof fetch
     result = await check()
     expect(result.checkFailureReason).toBe("network")
   })
@@ -212,8 +397,34 @@ describe("OtaUpdateCheckService", () => {
     expect(useGlassesStore.getState().buildNumber).toBe("10")
   })
 
+  it.each([
+    [51518113, false],
+    [51518114, true],
+    [51518115, true],
+    [100000095, false],
+  ])("uses the shipped downgrade floor for target %i", async (versionCode, available) => {
+    useGlassesStore.getState().setGlassesInfo({buildNumber: "100000095"})
+    global.fetch = jest.fn(
+      async () =>
+        ({
+          ok: true,
+          json: async () => ({apps: {"com.mentra.asg_client": {versionCode}}}),
+        }) as Response,
+    ) as unknown as typeof fetch
+
+    const result = await checkCurrentGlassesForUpdate({
+      refreshVersionInfo: false,
+      fixClockBeforeCheck: false,
+      waitForBesVersionMs: 0,
+      waitForMtkVersionMs: 0,
+    })
+    expect(result.updateAvailable).toBe(available)
+    expect(result.isApkDowngrade).toBe(available)
+    expect(useGlassesStore.getState().otaUpdateAvailable?.isDowngrade ?? false).toBe(available)
+  })
+
   it("downgrades default to skippable; explicit isRequired forces them", async () => {
-    // Enable downgrades with a floor at/below the pin (production ships floor 0 = disabled).
+    // Use a small test-only floor for this synthetic manifest.
     const check = () =>
       checkCurrentGlassesForUpdate({
         refreshVersionInfo: false,
@@ -223,7 +434,17 @@ describe("OtaUpdateCheckService", () => {
         floorVersionCode: 9,
       })
     const manifestWith = (extra: object) => ({
-      apps: {"com.mentra.asg_client": {versionCode: 9, versionName: "9", downloadUrl: "u", apkSize: 1, sha256: "s", releaseNotes: "", ...extra}},
+      apps: {
+        "com.mentra.asg_client": {
+          versionCode: 9,
+          versionName: "9",
+          downloadUrl: "u",
+          apkSize: 1,
+          sha256: "s",
+          releaseNotes: "",
+          ...extra,
+        },
+      },
     })
 
     // Glasses newer than the pin -> downgrade; absent isRequired -> skippable.
@@ -245,14 +466,26 @@ describe("OtaUpdateCheckService", () => {
     global.fetch = jest.fn(() =>
       Promise.resolve({
         ok: true,
-        json: () => Promise.resolve({apps: {"com.mentra.asg_client": {versionCode: 999999, versionName: "n", downloadUrl: "u", apkSize: 1, sha256: "s", releaseNotes: ""}}}),
+        json: () =>
+          Promise.resolve({
+            apps: {
+              "com.mentra.asg_client": {
+                versionCode: 999999,
+                versionName: "n",
+                downloadUrl: "u",
+                apkSize: 1,
+                sha256: "s",
+                releaseNotes: "",
+              },
+            },
+          }),
       } as unknown as Response),
     ) as unknown as typeof fetch
     result = await check()
     expect(result.isApkDowngrade).toBe(false)
     expect(result.isRequired).toBe(true)
 
-    // Floor 0 (production default) disables downgrades entirely: the same lower pin is not offered.
+    // An explicit floor 0 disables downgrades entirely: the same lower pin is not offered.
     global.fetch = jest.fn(() =>
       Promise.resolve({ok: true, json: () => Promise.resolve(manifestWith({}))} as unknown as Response),
     ) as unknown as typeof fetch

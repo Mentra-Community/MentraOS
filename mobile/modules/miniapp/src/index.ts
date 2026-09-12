@@ -21,12 +21,15 @@ export type {
   ConnectAckPayload,
   DisplayCapabilities,
   GlassesCapabilities,
+  HostFeatures,
   MiniappAuthState,
   MiniappRequestError,
   MiniappSessionOptions,
   MiniappVisibility,
 } from "./session"
 export type {AuthFetchOptions, AuthModule} from "./modules/auth"
+export {MiniappConfigurationError} from "./modules/configuration"
+export type {ConfigurationModule} from "./modules/configuration"
 
 export {makeRequestId, parseEnvelope, serializeEnvelope} from "./envelope"
 export type {MiniappEnvelope} from "./envelope"
@@ -189,6 +192,33 @@ export type {PhoneModule, PhoneNotificationsModule, PhoneCalendarModule} from ".
 export type {TranscriptionModule, TranscriptionConfig, TranscriptionOptions} from "./modules/transcription"
 export type {TranslationModule} from "./modules/translation"
 export type {SpeakerModule} from "./modules/speaker"
+export type {
+  MeetingModule,
+  MeetingJoinOptions,
+  MeetingState,
+  MeetingPhase,
+  MeetingProvider,
+  MeetingVideoSource,
+  MeetingWhepVideoSource,
+  MeetingSoftApVideoSource,
+  MeetingParticipant,
+  MeetingParticipantState,
+  MeetingMediaSource,
+  MeetingCapability,
+  MeetingCapabilities,
+  MeetingSoftApProgress,
+  MeetingSoftApStep,
+  MeetingSoftApStepState,
+  MeetingSoftApStepStatus,
+} from "./modules/meeting"
+export {
+  MEETING_HOST_UPDATE_MESSAGE,
+  parseMeetingCapabilities,
+  parseMeetingMediaSource,
+  parseMeetingParticipants,
+  parseMeetingSoftApProgress,
+  validateMeetingVideoSource,
+} from "./modules/meeting"
 
 // Permission types
 export type {PermissionType, PermissionRecord} from "./session"

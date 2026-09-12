@@ -2,6 +2,7 @@
 import {readFileSync, writeFileSync} from "node:fs"
 import path from "node:path"
 
+import {nativeBuildNumberForFamily} from "./native-build-numbers.mjs"
 import {channelForBranch, createReleasePlan, loadReleaseFamily, serializeReleaseRecord} from "./release-family.mjs"
 
 function parseArgs(args) {
@@ -27,8 +28,12 @@ const plan = createReleasePlan({
   channel,
   sequence,
   sourceCommit: args["source-commit"],
-  nativeBuildNumber: Number(args["native-build-number"]),
+  nativeBuildNumber:
+    args["native-build-number"] === undefined
+      ? nativeBuildNumberForFamily(family.familyBaseVersion, sequence)
+      : Number(args["native-build-number"]),
   otaInputs,
+  publicBetaTestflight: args["public-beta-testflight"] === "true",
 })
 const output = path.resolve(args.output || "release-plan.json")
 writeFileSync(output, serializeReleaseRecord(plan))

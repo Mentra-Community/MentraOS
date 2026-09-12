@@ -29,7 +29,53 @@ export function releaseAssetUploadUrl(repository, releaseId, name) {
   return `https://uploads.github.com/repos/${repository}/releases/${releaseId}/assets?name=${encodeURIComponent(name)}`
 }
 
-function main() {
+export function findReleaseAsset(repository, releaseId, name, run = gh) {
+  // Filter inside gh so a growing release cannot overflow Node's output buffer.
+  // Keep all matching assets across pages so duplicate detection still fails closed.
+  const output = run(
+    [
+      "api",
+      "--paginate",
+      `repos/${repository}/releases/${releaseId}/assets?per_page=100`,
+      "--jq",
+      `.[] | select(.name == ${JSON.stringify(name)}) | {id, name} | tojson`,
+    ],
+    {encoding: "utf8"},
+  )
+  const assets = output.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line))
+  return matchingAsset(assets, name)
+}
+
+// Sends the whole asset as a Buffer, so the request always carries an exact
+// Content-Length rather than depending on how the installed `gh` build streams
+// `--input`, and reports the status and body when GitHub refuses.
+//
+// uploads.github.com answers a refused upload with an HTML "Whoa there!" page
+// instead of a JSON API error, so without that reporting the only signal is an
+// exit code. The ~110 MB Mentra Live APK uploaded in 10.7s on 2026-09-04 and
+// has since taken ~4 minutes before returning HTTP 400 from the same host, so
+// the remaining failure is the runner's upload path, not this request: a small
+// asset still uploads to the same release and token in under a second.
+export async function uploadReleaseAsset({repository, releaseId, name, body, token, fetchImpl = fetch}) {
+  if (!token) throw new Error("GH_TOKEN is required to upload a release asset")
+  const response = await fetchImpl(releaseAssetUploadUrl(repository, releaseId, name), {
+    method: "POST",
+    headers: {
+      "accept": "application/vnd.github+json",
+      "authorization": `Bearer ${token}`,
+      "content-length": String(body.byteLength),
+      "content-type": "application/octet-stream",
+      "x-github-api-version": "2022-11-28",
+    },
+    body,
+  })
+  if (!response.ok) {
+    const detail = (await response.text()).replace(/\s+/g, " ").trim().slice(0, 300)
+    throw new Error(`Uploading ${name} failed with HTTP ${response.status}: ${detail}`)
+  }
+}
+
+async function main() {
   const args = parseArgs(process.argv.slice(2))
   const file = path.resolve(args.file)
   const name = args.name
@@ -39,27 +85,15 @@ function main() {
     throw new Error("--file, --name, --release-id, and --repository are required")
   }
   if (path.basename(file) !== name) throw new Error("Immutable asset name must equal the source file basename")
-  const pages = JSON.parse(
-    gh(["api", "--paginate", "--slurp", `repos/${repository}/releases/${releaseId}/assets?per_page=100`], {
-      encoding: "utf8",
-    }),
-  )
-  const assets = pages.flat()
-  const existing = matchingAsset(assets, name)
+  const existing = findReleaseAsset(repository, releaseId, name)
   if (!existing) {
-    gh(
-      [
-        "api",
-        "--method",
-        "POST",
-        "-H",
-        "Content-Type: application/octet-stream",
-        "--input",
-        file,
-        releaseAssetUploadUrl(repository, releaseId, name),
-      ],
-      {stdio: "inherit"},
-    )
+    await uploadReleaseAsset({
+      repository,
+      releaseId,
+      name,
+      body: readFileSync(file),
+      token: process.env.GH_TOKEN || process.env.GITHUB_TOKEN,
+    })
     console.log(`Published immutable release asset ${name}`)
   } else {
     const downloaded = gh(
@@ -73,4 +107,4 @@ function main() {
   }
 }
 
-if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) main()
+if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) await main()

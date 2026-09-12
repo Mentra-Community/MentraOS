@@ -16,88 +16,21 @@ import {cloudClientService} from "@mentra/engine-host-internal"
 import Constants from "expo-constants"
 
 import {SETTINGS, engine} from "@mentra/engine"
-import {devServerHost, METRO_AUTO} from "@/utils/cloudClient/devHost"
-import {selectStoreUrl} from "@/utils/cloudClient/storeUrl"
+import {devServerHost} from "@/utils/cloudClient/devHost"
+import {deriveStoreUrl} from "@/utils/cloudClient/storeUrl"
+import {deploymentStore, type ActiveDeployment} from "@/services/deployment"
+import {deploymentDebugScope, resolveDeploymentManifest} from "@/services/deployment/debugOverrides"
 
 type Lc3FrameSizeBytes = 20 | 40 | 60
 
-// Team-friendly defaults for dev builds. Point every build at the Cloud V2 Dev
-// environment by default so a local build with no EXPO_PUBLIC_CLOUD_* env (see
-// .env.example) matches the deployed `dev` cloud, which auto-deploys from the
-// dev branch. Local Cloud V2 is still one tap away via the METRO_AUTO
-// dev-settings preset; it should not be the invisible default because it
-// depends on a local stack plus adb reverse/LAN reachability.
-const DEFAULT_CORE_URL = "https://core.dev.us-west-2.mentraglass.com"
-const DEFAULT_RUNTIME_URL = "https://runtime.dev.us-west-2.mentraglass.com"
-const CORE_PORT = 3000
-const RUNTIME_PORT = 3001
-const STORE_PORT = 3003
-
-function metroUrl(port: number): string | undefined {
-  const host = devServerHost()
-  return host ? `http://${host}:${port}` : undefined
-}
-
-/**
- * Resolve an endpoint URL. Precedence (the user's in-app choice always wins):
- *   1. store override: explicit URL or METRO_AUTO resolved to the current Metro host;
- *   2. env (EXPO_PUBLIC_CLOUD_*): for CI/staging builds, never personal IPs;
- *   3. Cloud Dev: the default shared backend for team testing.
- */
-function resolvedEndpointOverride(settingKey: string, port: number): string | undefined {
-  const override = engine.settings.get(settingKey)
-  if (typeof override === "string" && override.trim().length > 0) {
-    const trimmed = override.trim()
-    if (trimmed !== METRO_AUTO) return trimmed
-
-    const auto = metroUrl(port)
-    if (auto) return auto
-  }
-
-  return undefined
-}
-
-function resolveUrl(settingKey: string, envValue: string | undefined, port: number, defaultUrl: string): string {
-  const override = resolvedEndpointOverride(settingKey, port)
-  if (override) return override
-
-  const envUrl = envValue?.trim()
-  if (envUrl) return envUrl
-
-  return defaultUrl
-}
-
-function coreUrl(): string {
-  return resolveUrl(
-    SETTINGS.cloud_core_url.key,
-    process.env.EXPO_PUBLIC_CLOUD_CORE_URL as string | undefined,
-    CORE_PORT,
-    DEFAULT_CORE_URL,
-  )
-}
-
-function runtimeUrl(): string {
-  return resolveUrl(
-    SETTINGS.cloud_runtime_url.key,
-    process.env.EXPO_PUBLIC_CLOUD_RUNTIME_URL as string | undefined,
-    RUNTIME_PORT,
-    DEFAULT_RUNTIME_URL,
-  )
-}
-
-function storeUrl(): string {
-  return selectStoreUrl({
-    storeOverrideUrl: resolvedEndpointOverride(SETTINGS.cloud_store_url.key, STORE_PORT),
-    coreOverrideUrl: resolvedEndpointOverride(SETTINGS.cloud_core_url.key, CORE_PORT),
-    envStoreUrl: (process.env.EXPO_PUBLIC_CLOUD_STORE_URL as string | undefined)?.trim() || undefined,
-    resolvedCoreUrl: coreUrl(),
-  })
-}
-
-/** The endpoint URLs the client would use right now, every layer applied. */
+/** The selected manifest with its deployment-scoped debug overrides applied. */
 export function resolvedEndpoints(): {core: string; store: string; runtime: string} {
-  return {core: coreUrl(), store: storeUrl(), runtime: runtimeUrl()}
+  const manifest = resolveDeploymentManifest(deploymentStore.getActive())
+  const core = manifest.services.coreUrl!
+  return {core, store: manifest.services.storeUrl || deriveStoreUrl(core), runtime: manifest.services.runtimeUrl!}
 }
+
+export const activeDeploymentEndpoints = resolvedEndpoints
 
 /** The LC3 frame size (bytes) the phone's encoder currently emits. */
 export function lc3FrameSizeBytes(): Lc3FrameSizeBytes {
@@ -110,19 +43,89 @@ export function lc3FrameSizeBytes(): Lc3FrameSizeBytes {
  * resolved endpoints + the live LC3 frame size.
  */
 export function cloudConfigValues(): {
-  coreUrl: string
-  storeUrl: string
-  runtimeUrl: string
-  audioFrameSizeBytes: number
-  devServerHost: () => string | undefined
+  coreUrl: string | null
+  storeUrl: string | null
+  runtimeUrl: string | null
   hostVersion: string
   supportedMiniappSdkRange: string
+  audioFrameSizeBytes: number
+  devServerHost: () => string | undefined
+  runtimeRealtimeSession?: boolean
+  localMiniappAllowlist?: string[] | null
+  localMiniappPolicy?: {
+    systemPackageNames: string[] | null
+    managed: Array<{
+      packageName: string
+      version: string
+      sha256: string
+      deploymentId: string
+      deploymentOrigin: string
+    }>
+  }
+  miniappConfiguration?: Readonly<Record<string, Readonly<Record<string, string>>>>
+  cloudDebugScope?: string
+  resolveCloudEndpoints?: () => {core: string; runtime: string}
+  cloudAuthStorageKey?: string
+  otaManifestUrl?: string | null
+  allowLegacyOtaFallback?: boolean
+  features?: {
+    managedStreams: boolean
+    nativeMeetings: boolean
+    cloudSpeech: boolean
+    onDeviceSpeech: boolean
+    navigation: boolean
+  }
 } {
-  const endpoints = resolvedEndpoints()
+  return deploymentCloudConfigValues(deploymentStore.getActive())
+}
+
+export function deploymentCloudConfigValues(deployment: ActiveDeployment): ReturnType<typeof cloudConfigValues> {
+  const manifest = resolveDeploymentManifest(deployment)
+  const systemAllowlist = manifest.systemMiniapps.approvedPackageNamesOverride
+  const authStorageKey =
+    deployment.kind === "workspace"
+      ? `mentra.cloud-client.${manifest.deploymentId}.${encodeURIComponent(deployment.workspaceOrigin)}.refreshToken`
+      : undefined
   return {
-    coreUrl: endpoints.core,
-    storeUrl: endpoints.store,
-    runtimeUrl: endpoints.runtime,
+    coreUrl: manifest.services.coreUrl,
+    // Null derives the conventional Store for whichever Core this deployment names.
+    storeUrl: manifest.services.storeUrl ?? null,
+    runtimeUrl: manifest.services.runtimeUrl,
+    runtimeRealtimeSession: manifest.features.runtimeRealtimeSession,
+    // Island's local registry contains both embedded SYSTEM miniapps and
+    // manifest-managed userland miniapps. Keep the manifest concepts separate,
+    // then combine them only at this internal registry boundary.
+    localMiniappAllowlist:
+      systemAllowlist === null
+        ? null
+        : [...new Set([...systemAllowlist, ...manifest.miniapps.managed.map((entry) => entry.packageName)])],
+    localMiniappPolicy:
+      deployment.kind === "workspace"
+        ? {
+            systemPackageNames: systemAllowlist,
+            managed: manifest.miniapps.managed.map((entry) => ({
+              packageName: entry.packageName,
+              version: entry.version,
+              sha256: entry.sha256.toLowerCase(),
+              deploymentId: manifest.deploymentId,
+              deploymentOrigin: deployment.workspaceOrigin,
+            })),
+          }
+        : undefined,
+    miniappConfiguration: manifest.miniapps.configuration,
+    cloudAuthStorageKey: authStorageKey,
+    // Preserve official legacy-glasses/embedded-engine OTA fallback semantics.
+    otaManifestUrl: manifest.artifacts.mentraLiveOtaManifestUrl,
+    allowLegacyOtaFallback: deployment.kind === "consumer",
+    cloudDebugScope: deploymentDebugScope(deployment),
+    resolveCloudEndpoints: resolvedEndpoints,
+    features: {
+      managedStreams: manifest.features.managedStreams,
+      nativeMeetings: manifest.features.nativeMeetings,
+      cloudSpeech: manifest.features.cloudSpeech,
+      onDeviceSpeech: manifest.features.onDeviceSpeech,
+      navigation: manifest.features.navigation,
+    },
     audioFrameSizeBytes: lc3FrameSizeBytes(),
     devServerHost,
     hostVersion: Constants.expoConfig?.version ?? process.env.EXPO_PUBLIC_MENTRAOS_VERSION ?? "0.0.0",
@@ -134,11 +137,17 @@ export function cloudConfigValues(): {
  * Host-facing handle to island's cloud client. Construction and live runtime
  * methods live in island (`cloudClientService`); this delegates so existing consumers
  * (PhonePhotoCoordinator, cloudStreamApi, the dev Cloud-URL switcher) are
- * untouched. `reconnect()` re-resolves the host endpoints before rebuilding.
+ * untouched. `reconnect()` re-resolves the active deployment's endpoints before
+ * rebuilding. Overrides apply equally to official and workspace deployments.
  */
 export const cloudClient = {
+  clearAuthSession: (): Promise<void> => cloudClientService.clearAuthSession(),
   init: (): void => cloudClientService.init(),
-  reconnect: (): void => cloudClientService.reconnect(resolvedEndpoints()),
+  reconnect: (): void => {
+    // Use the live host resolver instead of freezing today's Metro address as
+    // an explicit engine reconnect pin.
+    cloudClientService.reconnect(null)
+  },
   getCoreDownloadAuthorization: () => cloudClientService.getCoreDownloadAuthorization(),
   getMiniappAuthToken: (packageName: string, opts?: {minTtlMs?: number; devAttestation?: string}) =>
     cloudClientService.getMiniappAuthToken(packageName, opts),

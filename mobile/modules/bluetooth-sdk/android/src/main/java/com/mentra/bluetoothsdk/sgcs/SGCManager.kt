@@ -257,6 +257,17 @@ abstract class SGCManager {
     // Notification Panel (default no-op — only G2 supports this)
     open suspend fun showNotificationsPanel() {}
 
+    /** Enqueue supported phone notification content; unsupported drivers fail explicitly. */
+    open fun sendPhoneNotification(notification: Map<String, Any>) {
+        throw UnsupportedOperationException("Phone notification upload is not supported")
+    }
+
+    open fun configureNativeNotifications(config: com.mentra.bluetoothsdk.NativeNotificationConfig) {
+        throw UnsupportedOperationException("Native notifications are not supported")
+    }
+
+    open fun getNativeNotificationStatus() = com.mentra.bluetoothsdk.NativeNotificationStatus()
+
     // Controller bridging (default no-op — only G2 supports pairing with a ring controller)
     open fun connectController() {}
     open fun disconnectController() {}
@@ -302,8 +313,10 @@ abstract class SGCManager {
 
     // Network Management
     abstract fun requestWifiScan(scanId: String?)
+    open fun requestSavedWifiNetworks(requestId: String, sid: String): Boolean = false
     abstract fun sendWifiCredentials(ssid: String, password: String)
     abstract fun forgetWifiNetwork(ssid: String)
+    open fun forgetWifiNetwork(ssid: String, requestId: String?, sid: String?): Boolean = false
     abstract fun sendHotspotState(enabled: Boolean)
 
     /** Set glasses system clock (Mentra Live and G2; no-op on other devices). */

@@ -16,6 +16,7 @@ import com.mentra.asg_client.camera.CameraNeoService;
 import com.mentra.asg_client.camera.feedback.PhotoFeedbackController;
 import com.mentra.asg_client.camera.feedback.PhotoLightController;
 import com.mentra.asg_client.camera.lifecycle.PhotoExifMetadataWriter;
+import com.mentra.asg_client.camera.lifecycle.VideoRecordingSession;
 import com.mentra.asg_client.camera.model.CameraOperationError;
 import com.mentra.asg_client.camera.model.CapturedPhoto;
 import com.mentra.asg_client.camera.model.PhotoCaptureSettings;
@@ -104,8 +105,8 @@ public class MediaCaptureService {
     // captureId key, while written on the start/callback threads — needs cross-thread visibility.
     private volatile String currentVideoPath = null;
     private long recordingStartTime = 0;
-    private boolean currentVideoLedEnabled =
-            false; // Track if LED was enabled for current recording
+    private final Object mVideoPrivacyLightLock = new Object();
+    @Nullable private Object currentVideoPrivacyLightOwner;
     private boolean currentVideoSoundEnabled =
             false; // Track if sound was enabled for current recording
 
@@ -881,26 +882,18 @@ public class MediaCaptureService {
             @Nullable PhotoCaptureSettings captureSettings) {
         boolean cameraWarm =
                 CameraNeoService.isCameraWarm(size, isFromSdk, exposureTimeNs, captureSettings);
-        return photoFeedbackController.start(requestId, cameraWarm);
-    }
-
-    /** Flash privacy LED synchronized with shutter sound for photo capture */
-    private void flashPrivacyLedForPhoto() {
-        if (hardwareManager == null) {
-            Log.w(TAG, "⚠️ hardwareManager is null, cannot flash privacy LED");
-            return;
-        }
-
-        if (!hardwareManager.supportsRecordingLed()) {
-            Log.w(TAG, "⚠️ Privacy LED not supported on this device");
-            return;
-        }
-
-        Log.d(TAG, "📸 Flashing privacy LED synchronized with shutter sound at 50% brightness");
-        // TODO: RESTORE LOWER LED BRIGHTNESS LATER
-        // hardwareManager.setRecordingLedBrightness(50, 1000); // 50% brightness, 1000ms flash
-        // duration
-        hardwareManager.flashRecordingLed(1000);
+        // Warm says "no cold ISP start, so no hold-still cue". Ready says "this capture should
+        // start now rather than queueing", the stricter fact the request-time shutter needs.
+        //
+        // Both are predictions, not guarantees: each takes SERVICE_LOCK on its own, and the LED
+        // work below runs before enqueuePhotoRequest() takes it again, so another request can
+        // start a capture in between and leave shutterNow stale-true. Closing that would mean
+        // deciding the feedback inside the same lock acquisition the enqueue uses, which is a
+        // wider change to this boundary than the audio fix warrants. The residual case degrades
+        // to the old behaviour — a snap slightly ahead of its frame — rather than a wrong or
+        // missing sound, and the common rapid-press case it does catch is the one users hit.
+        boolean shutterNow = cameraWarm && CameraNeoService.isCameraReadyForImmediateCapture();
+        return photoFeedbackController.start(requestId, cameraWarm, shutterNow);
     }
 
     /** Trigger solid white LED for video recording duration (default brightness) */
@@ -984,8 +977,7 @@ public class MediaCaptureService {
         // Check if battery is too low to start recording (query current level for accuracy)
         if (mStateManager != null) {
             int currentBatteryLevel = mStateManager.getBatteryLevel();
-            if (currentBatteryLevel >= 0
-                    && currentBatteryLevel < BatteryConstants.MIN_BATTERY_LEVEL) {
+            if (BatteryConstants.isCameraBatteryLow(currentBatteryLevel, hardwareManager)) {
                 Log.w(
                         TAG,
                         "🚫 Battery too low to start recording: "
@@ -1217,6 +1209,21 @@ public class MediaCaptureService {
             boolean enableSound,
             int maxRecordingTimeMinutes,
             boolean save) {
+        // Both button and command starts arrive here after recorder teardown.
+        // Queue admission cannot authorize a later capture using expired evidence.
+        int batteryLevel = mStateManager != null ? mStateManager.getBatteryLevel() : -1;
+        if (BatteryConstants.isCameraBatteryLow(batteryLevel, hardwareManager)) {
+            VideoRecordingSession.deleteCorruptCapture(videoFilePath);
+            videoRecordingLifecycle.startFailed();
+            playBatteryLowSound();
+            if (mMediaCaptureListener != null) {
+                mMediaCaptureListener.onMediaError(
+                        requestId, "Battery too low for video capture",
+                        MediaUploadQueueManager.MEDIA_TYPE_VIDEO);
+            }
+            return;
+        }
+
         // Check if any streaming is active - videos cannot interrupt streams
         if (RtmpStreamingService.isStreaming()
                 || SrtStreamingService.isStreaming()
@@ -1262,8 +1269,11 @@ public class MediaCaptureService {
         // Save info for the current recording session
         currentVideoId = requestId;
         currentVideoPath = videoFilePath;
-        currentVideoLedEnabled = enableFlash; // Track LED state for this recording
         currentVideoSoundEnabled = enableSound; // Track sound state for this recording
+        final Object videoPrivacyLightOwner = enableFlash ? new Object() : null;
+        synchronized (mVideoPrivacyLightLock) {
+            currentVideoPrivacyLightOwner = videoPrivacyLightOwner;
+        }
         final String captureIdAtStart = captureIdFromVideoAbsPath(videoFilePath);
         if (captureIdAtStart != null) {
             videoCaptureIdsInFlight.add(captureIdAtStart);
@@ -1293,21 +1303,34 @@ public class MediaCaptureService {
                             isRecordingVideo = true;
                             recordingStartTime = System.currentTimeMillis();
 
+                            // cleanup() can race this background callback after the camera service
+                            // has already started. A recording that cannot enter this service's
+                            // active lifecycle must be stopped, not merely denied LED ownership.
+                            if (isCleaningUp.get()) {
+                                Log.w(TAG, "Stopping video that started during cleanup");
+                                stopVideoRecording(StopReason.ERROR);
+                                return;
+                            }
+
                             // Start battery monitoring on main thread (callback runs on background
                             // thread)
                             new Handler(Looper.getMainLooper())
                                     .post(() -> startBatteryMonitoring());
 
                             // Turn on recording flash LED if enabled with controlled brightness
-                            if (enableFlash && hardwareManager.supportsLedBrightness()) {
+                            if (videoPrivacyLightOwner != null
+                                    && hardwareManager.supportsLedBrightness()) {
                                 // TODO: RESTORE LOWER LED BRIGHTNESS LATER
                                 // hardwareManager.setRecordingLedBrightness(50); // 50% brightness
                                 // for video
-                                hardwareManager.setRecordingLedOn();
-                                Log.d(TAG, "Recording flash LED turned ON at 50% brightness");
-                            } else if (enableFlash && hardwareManager.supportsRecordingLed()) {
-                                hardwareManager.setRecordingLedOn();
-                                Log.d(TAG, "Recording flash LED turned ON (full brightness)");
+                                if (acquireVideoPrivacyLight(videoPrivacyLightOwner)) {
+                                    Log.d(TAG, "Recording flash LED turned ON at 50% brightness");
+                                }
+                            } else if (videoPrivacyLightOwner != null
+                                    && hardwareManager.supportsRecordingLed()) {
+                                if (acquireVideoPrivacyLight(videoPrivacyLightOwner)) {
+                                    Log.d(TAG, "Recording flash LED turned ON (full brightness)");
+                                }
                             }
 
                             // Notify listener
@@ -1376,8 +1399,8 @@ public class MediaCaptureService {
                             // synchronized with sound
 
                             // Turn off recording LED if it was enabled
-                            if (enableFlash && hardwareManager.supportsRecordingLed()) {
-                                hardwareManager.setRecordingLedOff();
+                            if (videoPrivacyLightOwner != null) {
+                                releaseVideoPrivacyLight(videoPrivacyLightOwner);
                                 Log.d(TAG, "Recording LED turned OFF");
                             }
 
@@ -1624,8 +1647,8 @@ public class MediaCaptureService {
                             stopVideoRecordingLed();
 
                             // Turn off recording LED on error if it was enabled
-                            if (enableFlash && hardwareManager.supportsRecordingLed()) {
-                                hardwareManager.setRecordingLedOff();
+                            if (videoPrivacyLightOwner != null) {
+                                releaseVideoPrivacyLight(videoPrivacyLightOwner);
                                 Log.d(TAG, "Recording LED turned OFF (due to error)");
                             }
 
@@ -1661,6 +1684,7 @@ public class MediaCaptureService {
 
             // Turn off RGB white LED if error occurred during start
             stopVideoRecordingLed();
+            releaseVideoPrivacyLight(videoPrivacyLightOwner);
 
             if (mMediaCaptureListener != null) {
                 mMediaCaptureListener.onMediaError(
@@ -1835,12 +1859,38 @@ public class MediaCaptureService {
                 uploadTargetsByCaptureId.remove(captureId);
             }
 
-            // Ensure LED is turned off even if stop fails (if it was enabled)
-            if (currentVideoLedEnabled && hardwareManager.supportsRecordingLed()) {
-                hardwareManager.setRecordingLedOff();
+            // Ensure the privacy light is released even if stop dispatch fails.
+            final Object videoPrivacyLightOwner;
+            synchronized (mVideoPrivacyLightLock) {
+                videoPrivacyLightOwner = currentVideoPrivacyLightOwner;
+            }
+            if (videoPrivacyLightOwner != null) {
+                releaseVideoPrivacyLight(videoPrivacyLightOwner);
                 Log.d(TAG, "Recording LED turned OFF (stop error recovery)");
             }
             completeVideoTermination();
+        }
+    }
+
+    private boolean acquireVideoPrivacyLight(Object owner) {
+        synchronized (mVideoPrivacyLightLock) {
+            if (isCleaningUp.get() || currentVideoPrivacyLightOwner != owner) {
+                return false;
+            }
+            hardwareManager.acquireRecordingLed(owner);
+            return true;
+        }
+    }
+
+    private void releaseVideoPrivacyLight(Object owner) {
+        if (owner == null) {
+            return;
+        }
+        synchronized (mVideoPrivacyLightLock) {
+            if (currentVideoPrivacyLightOwner == owner) {
+                currentVideoPrivacyLightOwner = null;
+            }
+            hardwareManager.releaseRecordingLed(owner);
         }
     }
 
@@ -1976,7 +2026,7 @@ public class MediaCaptureService {
         // BATTERY CHECK: Reject if battery too low
         if (mStateManager != null) {
             int batteryLevel = mStateManager.getBatteryLevel();
-            if (batteryLevel >= 0 && batteryLevel < BatteryConstants.MIN_BATTERY_LEVEL) {
+            if (BatteryConstants.isCameraBatteryLow(batteryLevel, hardwareManager)) {
                 Log.w(TAG, "🚫 Photo rejected - battery too low (" + batteryLevel + "%)");
                 playBatteryLowSound();
                 if (mMediaCaptureListener != null) {
@@ -2088,9 +2138,6 @@ public class MediaCaptureService {
                 feedbackToken =
                         startPhotoFeedback(requestId, size, false, null, captureSettings);
             }
-            if (enableFlash) {
-                flashPrivacyLedForPhoto(); // Flash privacy LED
-            }
         }
         final PhotoFeedbackController.Token captureFeedbackToken = feedbackToken;
 
@@ -2198,8 +2245,7 @@ public class MediaCaptureService {
                                 null,
                                 captureMetadata);
 
-                        // LED is now managed by CameraNeoService and will turn off when camera
-                        // closes
+                        // PhotoSession owns the privacy LED through final JPEG arrival.
 
                         // Notify through standard capture listener if set up
                         if (mMediaCaptureListener != null) {
@@ -2227,8 +2273,7 @@ public class MediaCaptureService {
                         Log.e(TAG, "Failed to capture offline photo: " + error.message());
                         sendPhotoStatus(requestId, "failed", null, error.code(), error.message());
 
-                        // LED is now managed by CameraNeoService and will turn off when camera
-                        // closes
+                        // PhotoSession owns the privacy LED through final JPEG arrival.
 
                         if (mMediaCaptureListener != null) {
                             mMediaCaptureListener.onMediaError(
@@ -2348,9 +2393,6 @@ public class MediaCaptureService {
                                 true,
                                 exposureTimeNs,
                                 captureSettings);
-            }
-            if (enableFlash) {
-                flashPrivacyLedForPhoto();
             }
         }
         final PhotoFeedbackController.Token captureFeedbackToken = feedbackToken;
@@ -2672,7 +2714,7 @@ public class MediaCaptureService {
         // Check battery level before proceeding
         if (mStateManager != null) {
             int batteryLevel = mStateManager.getBatteryLevel();
-            if (batteryLevel >= 0 && batteryLevel < BatteryConstants.MIN_BATTERY_LEVEL) {
+            if (BatteryConstants.isCameraBatteryLow(batteryLevel, hardwareManager)) {
                 Log.w(TAG, "🚫 Photo rejected - battery too low (" + batteryLevel + "%)");
                 playBatteryLowSound();
                 sendPhotoErrorResponse(
@@ -2764,9 +2806,6 @@ public class MediaCaptureService {
                                     true,
                                     exposureTimeNs,
                                     captureSettings);
-                }
-                if (enableFlash) {
-                    flashPrivacyLedForPhoto();
                 }
             }
             final PhotoFeedbackController.Token captureFeedbackToken = feedbackToken;
@@ -2891,8 +2930,7 @@ public class MediaCaptureService {
                                     null,
                                     captureMetadata);
 
-                            // LED is now managed by CameraNeoService and will turn off when camera
-                            // closes
+                            // PhotoSession owns the privacy LED through final JPEG arrival.
 
                             // Notify that we've captured the photo
                             if (mMediaCaptureListener != null) {
@@ -3022,8 +3060,7 @@ public class MediaCaptureService {
                             Log.e(TAG, "Failed to capture photo: " + error.message());
                             sendPhotoErrorResponse(requestId, error.code(), error.message());
 
-                            // LED is now managed by CameraNeoService and will turn off when camera
-                            // closes
+                            // PhotoSession owns the privacy LED through final JPEG arrival.
 
                             dumpTimings(requestId);
 
@@ -4922,7 +4959,7 @@ public class MediaCaptureService {
         // Check battery level before proceeding (defense-in-depth)
         if (mStateManager != null) {
             int batteryLevel = mStateManager.getBatteryLevel();
-            if (batteryLevel >= 0 && batteryLevel < BatteryConstants.MIN_BATTERY_LEVEL) {
+            if (BatteryConstants.isCameraBatteryLow(batteryLevel, hardwareManager)) {
                 Log.w(TAG, "🚫 Photo rejected - battery too low (" + batteryLevel + "%)");
                 playBatteryLowSound();
                 sendPhotoErrorResponse(
@@ -5060,7 +5097,7 @@ public class MediaCaptureService {
         logBlePhotoStep(requestId, "battery_check", "checking minimum battery requirement");
         if (mStateManager != null) {
             int batteryLevel = mStateManager.getBatteryLevel();
-            if (batteryLevel >= 0 && batteryLevel < BatteryConstants.MIN_BATTERY_LEVEL) {
+            if (BatteryConstants.isCameraBatteryLow(batteryLevel, hardwareManager)) {
                 Log.w(TAG, "🚫 Photo rejected - battery too low (" + batteryLevel + "%)");
                 playBatteryLowSound();
                 sendPhotoErrorResponse(
@@ -5161,9 +5198,6 @@ public class MediaCaptureService {
                                 true,
                                 exposureTimeNs,
                                 captureSettings);
-            }
-            if (enableFlash) {
-                flashPrivacyLedForPhoto();
             }
         }
         final PhotoFeedbackController.Token captureFeedbackToken = feedbackToken;
@@ -5317,8 +5351,7 @@ public class MediaCaptureService {
                                     null,
                                     captureMetadata);
 
-                            // LED is now managed by CameraNeoService and will turn off when camera
-                            // closes
+                            // PhotoSession owns the privacy LED through final JPEG arrival.
 
                             // Notify that we've captured the photo
                             if (mMediaCaptureListener != null) {
@@ -5351,8 +5384,7 @@ public class MediaCaptureService {
 
                             Log.e(TAG, "Failed to capture photo for BLE: " + error.message());
 
-                            // LED is now managed by CameraNeoService and will turn off when camera
-                            // closes
+                            // PhotoSession owns the privacy LED through final JPEG arrival.
 
                             dumpTimings(requestId);
                             sendPhotoErrorResponse(requestId, error.code(), error.message());
@@ -6972,8 +7004,7 @@ public class MediaCaptureService {
 
                             int batteryLevel = hardwareManager.getBatteryLevel();
 
-                            if (batteryLevel >= 0
-                                    && batteryLevel < BatteryConstants.MIN_BATTERY_LEVEL) {
+                            if (BatteryConstants.isCameraBatteryLow(batteryLevel, hardwareManager)) {
                                 Log.w(
                                         TAG,
                                         "🔋⚠️ Battery dropped to "

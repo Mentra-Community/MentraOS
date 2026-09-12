@@ -89,9 +89,10 @@ export function planArtifacts(result: OtaCheckCurrentGlassesResult): OtaArtifact
   }
 
   if (result.updates.includes("mtk") && result.mtkPatch) {
-    const raw = (manifest.mtk_patches ?? []).find(
-      (patch) => firmwareUrl(patch) === firmwareUrl(result.mtkPatch!),
-    ) as unknown as Record<string, unknown> | undefined
+    const candidates = [...(manifest.mtk_patches ?? []), ...(manifest.mtk_full_ota ? [manifest.mtk_full_ota] : [])]
+    const raw = candidates.find((entry) => firmwareUrl(entry) === firmwareUrl(result.mtkPatch!)) as unknown as
+      | Record<string, unknown>
+      | undefined
     const url = firmwareUrl(raw) ?? firmwareUrl(result.mtkPatch)
     if (!url) {
       throw new OtaArtifactError("manifest_invalid", "Manifest has no URL for the pending MTK patch")
@@ -139,6 +140,16 @@ export async function prepareArtifacts(
   const prepared: PreparedOtaArtifact[] = []
   for (let index = 0; index < plan.length; index++) {
     const entry = plan[index]
+    // Announce each file before cache verification or native download callbacks,
+    // so the previous file's 100% cannot linger under the next file's label.
+    onProgress?.({
+      kind: entry.kind,
+      index,
+      totalCount: plan.length,
+      artifactPercent: 0,
+      bytesWritten: 0,
+      contentLength: 0,
+    })
 
     const cachedPath = `${directory}/${entry.sha256}`
     if (await RNFS.exists(cachedPath)) {
@@ -238,6 +249,9 @@ export function rewriteManifestForLocalServer(
 
   for (const patch of manifest.mtk_patches ?? []) {
     rewriteFirmwareEntry(patch as unknown as Record<string, unknown>, byUrl, localUrl)
+  }
+  if (manifest.mtk_full_ota) {
+    rewriteFirmwareEntry(manifest.mtk_full_ota as unknown as Record<string, unknown>, byUrl, localUrl)
   }
   if (manifest.bes_firmware) {
     rewriteFirmwareEntry(manifest.bes_firmware as unknown as Record<string, unknown>, byUrl, localUrl)

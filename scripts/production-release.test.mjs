@@ -3,10 +3,15 @@ import test from "node:test"
 
 import {
   advanceConfirmationMessage,
+  branchPromotionState,
+  packagesConfirmationMessage,
   parseCliArgs,
+  parseJsonLines,
+  releaseBranchSources,
   requireCommandState,
   statusSummary,
   validateAdvanceOptions,
+  validatePackagesOptions,
 } from "./production-release.mjs"
 
 const baseRecord = {
@@ -27,9 +32,10 @@ const baseRecord = {
     manifestUrl: "https://example.com/beta.json",
     manifestSha256: "b".repeat(64),
   },
-  source: {mentraosCommit: "a".repeat(40), starterKitCommit: "c".repeat(40)},
+  source: {mentraosCommit: "a".repeat(40)},
   coordinates: {
     currentMentraApp: {
+      provenance: "coordinated",
       sourceCommit: "f".repeat(40),
       provenanceUrl: "https://github.com/Mentra-Community/MentraOS/releases/tag/mentra-v3.0.0",
       ios: {marketingVersion: "3.0.0", buildNumber: 1},
@@ -44,10 +50,6 @@ const baseRecord = {
         ios: {marketingVersion: "3.1.0", buildNumber: 3},
         android: {marketingVersion: "3.1.0", buildNumber: 4},
       },
-      starterKit: {
-        ios: {marketingVersion: "3.1.0", buildNumber: 5},
-        android: {marketingVersion: "3.1.0", buildNumber: 6},
-      },
     },
   },
   evidence: [],
@@ -59,6 +61,45 @@ test("parses value and boolean options without shell sourcing", () => {
     options: {release: "3.1.0", attempt: "2", refresh: true, json: true},
     positionals: [],
   })
+})
+
+test("reads exact branch sources from a completed coordinated beta", () => {
+  assert.deepEqual(
+    releaseBranchSources(
+      {
+        schemaVersion: 1,
+        releaseIdentity: "3.1.0-beta.105",
+        channel: "beta",
+        completedAt: "2026-08-31T18:40:40.000Z",
+        sourceCommit: "a".repeat(40),
+      },
+      "3.1.0-beta.105",
+    ),
+    {mentraosCommit: "a".repeat(40)},
+  )
+})
+
+test("accepts ready and already-complete branch promotion retries", () => {
+  assert.equal(branchPromotionState({behind_by: 5}, {behind_by: 0}), "ready")
+  assert.equal(branchPromotionState({behind_by: 0}, {behind_by: 5}), "complete")
+  assert.equal(branchPromotionState({behind_by: 0}, {behind_by: 0}), "complete")
+  assert.equal(branchPromotionState({behind_by: 2}, {behind_by: 3}), "diverged")
+})
+
+test("rejects incomplete or mismatched beta branch sources", () => {
+  const result = {
+    schemaVersion: 1,
+    releaseIdentity: "3.1.0-beta.105",
+    channel: "beta",
+    completedAt: "2026-08-31T18:40:40.000Z",
+    sourceCommit: "a".repeat(40),
+  }
+  assert.throws(() => releaseBranchSources(result, "3.1.0-beta.106"), /does not describe completed beta/)
+  assert.throws(() => releaseBranchSources({...result, completedAt: undefined}, result.releaseIdentity), /not complete/)
+  assert.throws(
+    () => releaseBranchSources({...result, sourceCommit: "short"}, result.releaseIdentity),
+    /no valid MentraOS source commit/,
+  )
 })
 
 test("reserves 100 percent for the completion command", () => {
@@ -116,4 +157,34 @@ test("prevents commands from skipping promotion states", () => {
   assert.throws(() => requireCommandState("release", baseRecord), /requires stores-approved/)
   assert.equal(requireCommandState("attest", labReadyRecord, {check: "staging-mobile-n-compatibility"}).kind, "attest")
   assert.equal(requireCommandState("advance", {...baseRecord, state: "finalizing"}).command, "advance")
+})
+
+test("dispatches stable package phases from the promoted beta without a promotion state", () => {
+  assert.deepEqual(validatePackagesOptions({beta: "3.1.0-beta.192", phase: "publish"}), {
+    beta_identity: "3.1.0-beta.192",
+    phase: "publish",
+  })
+  assert.deepEqual(validatePackagesOptions({beta: "3.1.0-beta.192", phase: "release"}).phase, "release")
+  assert.throws(() => validatePackagesOptions({beta: "3.1.0", phase: "publish"}), /--beta X\.Y\.Z-beta\.N/)
+  assert.throws(
+    () => validatePackagesOptions({beta: "3.1.0-beta.192", phase: "latest"}),
+    /--phase publish or --phase release/,
+  )
+  assert.match(
+    packagesConfirmationMessage({beta_identity: "3.1.0-beta.192", phase: "publish"}),
+    /candidate npm dist-tag/,
+  )
+  assert.match(
+    packagesConfirmationMessage({beta_identity: "3.1.0-beta.192", phase: "release"}),
+    /moves npm latest.*3\.1\.0/,
+  )
+})
+
+test("parses line-delimited gh projections and ignores blank lines", () => {
+  assert.deepEqual(parseJsonLines('{"id":1,"tag_name":"a"}\n\n{"id":2,"tag_name":"b"}\n'), [
+    {id: 1, tag_name: "a"},
+    {id: 2, tag_name: "b"},
+  ])
+  assert.deepEqual(parseJsonLines(""), [])
+  assert.throws(() => parseJsonLines("{not json}"), SyntaxError)
 })

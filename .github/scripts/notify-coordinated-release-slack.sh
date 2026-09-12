@@ -107,11 +107,21 @@ if [[ -n "${EXAMPLE_TESTFLIGHT_INSTALL_URL:-}" ]]; then
   example_testflight_detail+=" - <${EXAMPLE_TESTFLIGHT_INSTALL_URL}|Open TestFlight>"
 fi
 docs_detail="<${run_url}|View run logs>"
+example_play_detail="$(label "${EXAMPLE_GOOGLE_PLAY_RESULT:-unknown}") - ${EXAMPLE_GOOGLE_PLAY_TRACK:-unknown}"
+if [[ "${EXAMPLE_GOOGLE_PLAY_RESULT:-}" == success ]]; then
+  example_play_detail="submitted - ${EXAMPLE_GOOGLE_PLAY_TRACK:-unknown} (review and availability may be pending)"
+  if [[ -n "${EXAMPLE_GOOGLE_PLAY_INSTALL_URL:-}" ]]; then
+    example_play_detail+=" - <${EXAMPLE_GOOGLE_PLAY_INSTALL_URL}|Open Google Play>"
+  fi
+fi
 if [[ -n "${DOCS_URL:-}" ]]; then
   docs_detail="<${DOCS_URL}|Open docs>"
 fi
 
-if [[ "${FINALIZE_RESULT:-}" == "success" && "${DOCS_RESULT:-}" == "success" ]]; then
+# The Mentra release (Cloud V2, Mentra App, Engine, Bluetooth SDK) is complete
+# when finalize succeeds. The Bluetooth example is its own release notion and
+# is reported separately below; it never makes the Mentra release incomplete.
+if [[ "${FINALIZE_RESULT:-}" == "success" ]]; then
   header_icon=":white_check_mark:"
   header_text="$channel_label release complete"
 elif [[ "$android_result" == "success" || "$ios_result" == "success" || "${OTA_RESULT:-}" == "success" ]]; then
@@ -125,10 +135,23 @@ fi
 newline=$'\n'
 android_line="*$(icon "$android_result") Android* - $(label "$android_result") - ${android_detail}${newline}Google Play: ${PLAY_TRACK:-unknown}"
 ios_line="*$(icon "$ios_result") iOS* - $(label "$ios_result") - ${ios_detail}${newline}TestFlight: ${TESTFLIGHT_GROUP:-unknown}"
+if [[ -n "${TESTFLIGHT_DISTRIBUTION_STATUS:-}" ]]; then
+  ios_line+=" - ${TESTFLIGHT_DISTRIBUTION_STATUS}"
+fi
+if [[ -n "${TESTFLIGHT_REVIEW_STATE:-}" ]]; then
+  ios_line+=" (${TESTFLIGHT_REVIEW_STATE})"
+fi
+if [[ -n "${TESTFLIGHT_INSTALL_URL:-}" ]]; then
+  ios_line+=" - <${TESTFLIGHT_INSTALL_URL}|Join TestFlight>"
+fi
 asg_line="*$(icon "${OTA_RESULT:-unknown}") ASG + OTA* - $(label "${OTA_RESULT:-unknown}") - ${asg_detail}"
-starter_line="*$(icon "${STARTER_KIT_RESULT:-unknown}") Starter Kit* - $(label "${STARTER_KIT_RESULT:-unknown}") - ${starter_detail}${newline}React Native iOS TestFlight: ${example_testflight_icon} ${example_testflight_detail}"
+starter_line="*$(icon "${FINALIZE_EXAMPLE_RESULT:-unknown}") Bluetooth example* - $(label "${FINALIZE_EXAMPLE_RESULT:-unknown}") - Starter Kit build: $(icon "${STARTER_KIT_RESULT:-unknown}") $(label "${STARTER_KIT_RESULT:-unknown}") - ${starter_detail}${newline}React Native iOS TestFlight: ${example_testflight_icon} ${example_testflight_detail}"
+starter_line+="${newline}React Native Android Google Play: $(icon "${EXAMPLE_GOOGLE_PLAY_RESULT:-unknown}") ${example_play_detail}"
 docs_line="*$(icon "${DOCS_RESULT:-unknown}") Docs* - $(label "${DOCS_RESULT:-unknown}") - ${docs_detail}"
-checks_line="*Release checks*${newline}Plan: $(icon "${PLAN_RESULT:-unknown}") $(label "${PLAN_RESULT:-unknown}") | Cloud V2: $(icon "${CLOUD_V2_RESULT:-unknown}") $(label "${CLOUD_V2_RESULT:-unknown}") | Packages: $(icon "${NPM_RESULT:-unknown}") $(label "${NPM_RESULT:-unknown}") | Native SDK: $(icon "${SDK_NATIVE_RESULT:-unknown}") $(label "${SDK_NATIVE_RESULT:-unknown}") | Engine consumer: $(icon "${ENGINE_RESULT:-unknown}") $(label "${ENGINE_RESULT:-unknown}") | Examples: $(icon "${STARTER_KIT_RESULT:-unknown}") $(label "${STARTER_KIT_RESULT:-unknown}") | Example TestFlight: $(icon "${EXAMPLE_TESTFLIGHT_RESULT:-unknown}") $(label "${EXAMPLE_TESTFLIGHT_RESULT:-unknown}") | Finalize: $(icon "${FINALIZE_RESULT:-unknown}") $(label "${FINALIZE_RESULT:-unknown}")"
+checks_line="*Release checks*${newline}Plan: $(icon "${PLAN_RESULT:-unknown}") $(label "${PLAN_RESULT:-unknown}") | Cloud V2: $(icon "${CLOUD_V2_RESULT:-unknown}") $(label "${CLOUD_V2_RESULT:-unknown}") | Mentra Cloud image: $(icon "${RUNTIME_IMAGE_RESULT:-unknown}") $(label "${RUNTIME_IMAGE_RESULT:-unknown}") | Private deployment: $(icon "${PRIVATE_DEPLOYMENT_RESULT:-skipped}") $(label "${PRIVATE_DEPLOYMENT_RESULT:-skipped}") | Packages: $(icon "${NPM_RESULT:-unknown}") $(label "${NPM_RESULT:-unknown}") | Native SDK: $(icon "${SDK_NATIVE_RESULT:-unknown}") $(label "${SDK_NATIVE_RESULT:-unknown}") | Engine consumer: $(icon "${ENGINE_RESULT:-unknown}") $(label "${ENGINE_RESULT:-unknown}") | Examples: $(icon "${STARTER_KIT_RESULT:-unknown}") $(label "${STARTER_KIT_RESULT:-unknown}") | Example TestFlight: $(icon "${EXAMPLE_TESTFLIGHT_RESULT:-unknown}") $(label "${EXAMPLE_TESTFLIGHT_RESULT:-unknown}") | Finalize: $(icon "${FINALIZE_RESULT:-unknown}") $(label "${FINALIZE_RESULT:-unknown}")"
+
+checks_line+=" | Example Google Play: $(icon "${EXAMPLE_GOOGLE_PLAY_RESULT:-unknown}") $(label "${EXAMPLE_GOOGLE_PLAY_RESULT:-unknown}")"
+checks_line+=" | Example finalize: $(icon "${FINALIZE_EXAMPLE_RESULT:-unknown}") $(label "${FINALIZE_EXAMPLE_RESULT:-unknown}")"
 
 payload=$(jq -n \
   --arg header "$header_icon $header_text" \

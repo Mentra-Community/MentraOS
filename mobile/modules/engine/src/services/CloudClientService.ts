@@ -14,6 +14,7 @@
  * this service.
  */
 import {CloudClient, setNativeHttp, setNativeUdp, setSecureStorage} from "@mentra/cloud-client/react-native"
+import {DEFAULT_REFRESH_TOKEN_KEY} from "@mentra/cloud-client"
 import type {RuntimeSnapshot} from "@mentra/cloud-client/react-native"
 import type {SubjectTokenType} from "@mentra/cloud-client"
 import {Platform} from "react-native"
@@ -21,7 +22,7 @@ import type {AudioSubscription, TranscriptionData, TranslationData} from "@mentr
 
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import CrustModule from "@mentra/crust"
-import {getAuth, getConfigValues} from "../runtime/bootstrap"
+import {getAuth, getConfigValues, isFeatureEnabled} from "../runtime/bootstrap"
 import {useSettingsStore, SETTINGS} from "../stores/settings"
 import {type CloudClientStatusSnapshot, type MiniappAuthToken} from "../runtime/config"
 import {createCloudUdpSocket} from "../utils/cloudClient/RnUdpAdapter"
@@ -34,6 +35,7 @@ import {logCloudV2TranscriptMetric} from "./CloudTranscriptE2EMetrics"
 import {mintCoreDownloadAuthorization} from "./CoreDownloadAuthorization"
 import {LocalMiniappUserIdentity} from "./LocalMiniappUserIdentity"
 import {nativeHttpResponseBody} from "./NativeHttpResponse"
+import {type CloudEndpoints, resolveCloudEndpoints} from "./cloudEndpointPolicy"
 
 const LOG_TAG = "cloudClient"
 type CloudCore = NonNullable<CloudClient["core"]>
@@ -56,11 +58,6 @@ function clearPersistentFailureAlarm(): void {
 
 type Lc3FrameSizeBytes = 20 | 40 | 60
 
-// Neutral last-ditch fallbacks (reachable under `adb reverse`) for when the host
-// passes no endpoints. The host normally resolves the real URLs (dev override /
-// Metro host / env) and hands them in via `engine.configure({config})`.
-const FALLBACK_CORE_URL = "http://localhost:3000"
-const FALLBACK_RUNTIME_URL = "http://localhost:3001"
 const LOCAL_AUTH_PORT = 3002
 
 let client: CloudClient | null = null
@@ -70,7 +67,7 @@ let persistentFailureNotified = false
 let audioSubscriptions: AudioSubscription[] = []
 let transportsReady = false
 /** Endpoints to build with — seeded from config, overridable via reconnect(). */
-let endpointsOverride: {core: string; store?: string; runtime: string} | null = null
+let endpointsOverride: CloudEndpoints | null = null
 let runtimeStatusUnsubscribe: (() => void) | null = null
 let transcriptUnsubscribe: (() => void) | null = null
 let translationUnsubscribe: (() => void) | null = null
@@ -99,25 +96,8 @@ const translationListeners = new Set<(d: TranslationData) => void>()
 const statusListeners = new Set<(snapshot: CloudClientStatusSnapshot) => void>()
 const connectionListeners = new Set<(connected: boolean) => void>()
 
-function resolveEndpoints(): {core: string; store: string; runtime: string} {
-  if (endpointsOverride) {
-    return {...endpointsOverride, store: endpointsOverride.store ?? deriveStoreUrl(endpointsOverride.core)}
-  }
-  const cfg = getConfigValues()
-  const core = cfg.coreUrl?.trim() || FALLBACK_CORE_URL
-  return {
-    core,
-    store: cfg.storeUrl?.trim() || deriveStoreUrl(core),
-    runtime: cfg.runtimeUrl?.trim() || FALLBACK_RUNTIME_URL,
-  }
-}
-
-function deriveStoreUrl(core: string): string {
-  const url = new URL(core)
-  if (url.hostname === "core.mentraglass.com") return "https://store.mentraglass.com"
-  if (url.hostname.startsWith("core.")) url.hostname = url.hostname.replace(/^core\./, "store.")
-  else if (url.protocol === "http:" && url.port === "3000") url.port = "3003"
-  return url.origin
+function resolveEndpoints(): CloudEndpoints {
+  return resolveCloudEndpoints(getConfigValues(), endpointsOverride)
 }
 
 function getCoreClient(): CloudCore {
@@ -172,7 +152,7 @@ function frameSizeBytes(): Lc3FrameSizeBytes {
 
 async function getSubjectToken(): Promise<{token: string; type: SubjectTokenType}> {
   const a = getAuth()
-  if (!a) throw new Error("cloudClient: engine.configure({auth}) not called")
+  if (!a?.getSubjectToken) throw new Error("cloudClient: Core subject-token auth is not configured")
   const r = await a.getSubjectToken()
   // IslandAuth's SubjectTokenType is intentionally open (`string & {}`) so OEMs
   // can use other token kinds; cloud-client's is a closed union. The host's
@@ -421,13 +401,23 @@ function construct(): void {
   const endpoints = resolveEndpoints()
   console.log(`${LOG_TAG}: endpoints ${JSON.stringify(endpoints)}`)
 
-  const coreAuth = {getSubjectToken}
-  const auth = shouldUseLocalDevRuntimeToken(endpoints)
+  const configuredAuth = getAuth()
+  if (!configuredAuth) throw new Error("cloudClient: engine.configure({auth}) not called")
+  const coreAuth = configuredAuth.getSubjectToken ? {getSubjectToken} : undefined
+  const auth = configuredAuth.getRuntimeToken
     ? {
-        core: coreAuth,
-        runtime: {getToken: (opts?: {forceRefresh?: boolean}) => getLocalDevRuntimeToken(endpoints.runtime, opts)},
+        ...(coreAuth && endpoints.core ? {core: coreAuth} : {}),
+        runtime: {getToken: configuredAuth.getRuntimeToken},
       }
-    : {core: coreAuth, runtime: {source: "core" as const}}
+    : shouldUseLocalDevRuntimeToken(endpoints)
+      ? {
+          ...(coreAuth ? {core: coreAuth} : {}),
+          runtime: {getToken: (opts?: {forceRefresh?: boolean}) => getLocalDevRuntimeToken(endpoints.runtime, opts)},
+        }
+      : coreAuth && endpoints.core
+        ? {core: coreAuth, runtime: {source: "core" as const}}
+        : null
+  if (!auth) throw new Error("cloudClient: no Runtime authentication mode is configured")
 
   client = new CloudClient({
     endpoints,
@@ -435,6 +425,7 @@ function construct(): void {
     // LC3 at 16 kHz with the frame size the encoder emits.
     audio: {codec: "lc3", sampleRate: 16000, frameSizeBytes: frameSizeBytes()},
     auth,
+    authStorageKey: getConfigValues().cloudAuthStorageKey,
     timers: {
       setTimeout: (callback, delayMs) => BgTimer.setTimeout(callback, delayMs),
       clearTimeout: (handle) => BgTimer.clearTimeout(handle as number),
@@ -508,17 +499,22 @@ function construct(): void {
     console.warn(`${LOG_TAG}: runtime error: ${err.code}`)
   })
 
-  // Best-effort connect. Do not crash the app if the dev cloud is unreachable.
-  c.runtime
-    .connect()
-    .then(() => console.log(`${LOG_TAG}: connect() resolved`))
-    .catch((err) => console.warn(`${LOG_TAG}: connect() failed: ${err?.message ?? err}`))
+  if (getConfigValues().runtimeRealtimeSession !== false) {
+    // Best-effort connect. Do not crash the app if the dev cloud is unreachable.
+    c.runtime
+      .connect()
+      .then(() => console.log(`${LOG_TAG}: connect() resolved`))
+      .catch((err) => console.warn(`${LOG_TAG}: connect() failed: ${err?.message ?? err}`))
+    startLc3FrameSizeWatcher()
+  } else {
+    console.log(`${LOG_TAG}: Runtime live session disabled; REST capabilities remain available`)
+  }
 
-  syncCoreAccessTokenToBluetooth().catch((err) =>
-    console.warn(`${LOG_TAG}: initial Bluetooth core_token sync failed: ${(err as Error)?.message ?? err}`),
-  )
-
-  startLc3FrameSizeWatcher()
+  if (c.core) {
+    syncCoreAccessTokenToBluetooth().catch((err) =>
+      console.warn(`${LOG_TAG}: initial Bluetooth core_token sync failed: ${(err as Error)?.message ?? err}`),
+    )
+  }
 }
 
 /**
@@ -526,6 +522,14 @@ function construct(): void {
  * and the runtime-hook wiring.
  */
 export const cloudClientService = {
+  async clearAuthSession(): Promise<void> {
+    if (client) {
+      await client.auth.clearSession()
+      return
+    }
+    await cloudSecureStore.delete(getConfigValues().cloudAuthStorageKey ?? DEFAULT_REFRESH_TOKEN_KEY)
+  },
+
   /**
    * Construct (once) + connect the client. Idempotent. Best-effort connect — a
    * failure is logged and the app keeps running. Requires
@@ -539,10 +543,10 @@ export const cloudClientService = {
 
   /**
    * Tear down + rebuild. Pass new endpoints to switch URLs; pass `null` to CLEAR
-   * a prior override and fall back to the boot config (so cleared/default cloud
+   * a prior override and resume the host resolver or boot config (so cleared/default cloud
    * URLs don't keep reconnecting to a stale override); omit to keep the current.
    */
-  reconnect(endpoints?: {core: string; store?: string; runtime: string} | null): void {
+  reconnect(endpoints?: CloudEndpoints | null): void {
     if (endpoints !== undefined) endpointsOverride = endpoints
     try {
       client?.runtime.close()
@@ -567,10 +571,12 @@ export const cloudClientService = {
     if (!client) this.init()
     return mintCoreDownloadAuthorization(() => {
       const c = client
-      if (!c) return null
+      const origin = resolveEndpoints().core
+      // A Core-free deployment has no identity to authorize a download with.
+      if (!c || !origin) return null
       return {
         client: c,
-        origin: resolveEndpoints().core,
+        origin,
         getBearerToken: () => c.auth.getCoreToken(),
       }
     })
@@ -587,6 +593,8 @@ export const cloudClientService = {
    */
   async resolveMentraUserId(): Promise<string> {
     return localMiniappUserIdentity.resolve(async () => {
+      const hostIdentity = getAuth()?.getUserId
+      if (hostIdentity) return await hostIdentity()
       if (!client) this.init()
       const c = client
       if (!c) throw new Error("cloud client not initialized")
@@ -614,10 +622,12 @@ export const cloudClientService = {
 
     const {token, expiresAt} = await c.auth.getMiniappToken(packageName, opts)
     const identity = c.auth.identity
+    const coreUrl = resolveEndpoints().core
+    if (!coreUrl) throw new Error("cloud client core is unavailable")
     return {
       mentraUserId: identity.mentraUserId,
       tenantId: identity.tenantId,
-      coreUrl: resolveEndpoints().core,
+      coreUrl,
       token,
       expiresAt: normalizeExpiresAt(expiresAt),
     }
@@ -659,14 +669,17 @@ export const cloudClientService = {
 
   /** Managed stream (cloud-v2): provision ingest+playback on the runtime. */
   startManagedStream(opts: Record<string, unknown> = {}) {
+    if (!isFeatureEnabled("managedStreams")) throw new Error("managed streams are disabled by this deployment")
     if (!client) throw new Error("cloud client not connected")
     return client.runtime.startManagedStream(opts)
   },
   getManagedStreamStatus(streamId: string) {
+    if (!isFeatureEnabled("managedStreams")) throw new Error("managed streams are disabled by this deployment")
     if (!client) throw new Error("cloud client not connected")
     return client.runtime.getManagedStreamStatus(streamId)
   },
   stopManagedStream(streamId: string) {
+    if (!isFeatureEnabled("managedStreams")) throw new Error("managed streams are disabled by this deployment")
     if (!client) throw new Error("cloud client not connected")
     return client.runtime.stopManagedStream(streamId)
   },
@@ -718,11 +731,19 @@ export const cloudClientService = {
   },
 
   getCoreUrl(): string {
-    return resolveEndpoints().core
+    const core = resolveEndpoints().core
+    if (!core) throw new Error("cloud client core is unavailable")
+    return core
+  },
+
+  hasCore(): boolean {
+    return Boolean(client?.core)
   },
 
   getStoreUrl(): string {
-    return resolveEndpoints().store
+    const store = resolveEndpoints().store
+    if (!store) throw new Error("cloud client store is unavailable")
+    return store
   },
 
   syncCoreTokenToBluetooth(): Promise<string> {
@@ -738,6 +759,7 @@ export const cloudClientService = {
 
   tts: {
     speak(text: string, options?: Parameters<CloudClient["runtime"]["tts"]["speak"]>[1]) {
+      if (!isFeatureEnabled("cloudSpeech")) throw new Error("cloud speech is disabled by this deployment")
       if (!client) throw new Error("cloud client not connected")
       return client.runtime.tts.speak(text, options)
     },
@@ -745,18 +767,22 @@ export const cloudClientService = {
 
   maps: {
     directions(req: Parameters<CloudClient["runtime"]["maps"]["directions"]>[0]) {
+      if (!isFeatureEnabled("navigation")) throw new Error("navigation is disabled by this deployment")
       if (!client) throw new Error("cloud client not connected")
       return client.runtime.maps.directions(req)
     },
     reverseGeocode(coord: Parameters<CloudClient["runtime"]["maps"]["reverseGeocode"]>[0]) {
+      if (!isFeatureEnabled("navigation")) throw new Error("navigation is disabled by this deployment")
       if (!client) throw new Error("cloud client not connected")
       return client.runtime.maps.reverseGeocode(coord)
     },
     placeAutocomplete(req: Parameters<CloudClient["runtime"]["maps"]["placeAutocomplete"]>[0]) {
+      if (!isFeatureEnabled("navigation")) throw new Error("navigation is disabled by this deployment")
       if (!client) throw new Error("cloud client not connected")
       return client.runtime.maps.placeAutocomplete(req)
     },
     placeDetails(req: Parameters<CloudClient["runtime"]["maps"]["placeDetails"]>[0]) {
+      if (!isFeatureEnabled("navigation")) throw new Error("navigation is disabled by this deployment")
       if (!client) throw new Error("cloud client not connected")
       return client.runtime.maps.placeDetails(req)
     },

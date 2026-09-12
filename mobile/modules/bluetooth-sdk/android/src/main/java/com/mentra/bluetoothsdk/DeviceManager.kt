@@ -28,6 +28,7 @@ import com.mentra.bluetoothsdk.sgcs.Simulated
 import com.mentra.bluetoothsdk.utils.ControllerTypes
 import com.mentra.bluetoothsdk.utils.DeviceTypes
 import com.mentra.bluetoothsdk.utils.MicMap
+import com.mentra.bluetoothsdk.utils.MicSourcePin
 import com.mentra.bluetoothsdk.utils.MicTypes
 import com.mentra.bluetoothsdk.utils.PhoneAudioMonitor
 import com.mentra.lc3Lib.Lc3Cpp
@@ -664,7 +665,7 @@ class DeviceManager {
                 " ",
                 " ",
                 "text_wall",
-                "\$TIME12$ \$DATE$ \$GBATT$ \$CONNECTION_STATUS$",
+                DashboardContentFormatter.template(""),
                 null,
                 null
             )
@@ -676,7 +677,7 @@ class DeviceManager {
                 " ",
                 " ",
                 "text_wall",
-                "\$TIME12$ \$DATE$ \$GBATT$ \$CONNECTION_STATUS$",
+                DashboardContentFormatter.template(""),
                 null,
                 null
             )
@@ -722,6 +723,8 @@ class DeviceManager {
     // native re-dispatch coherent (dashboard exit re-applies a complete scene,
     // not whatever element happened to arrive last).
     private val sceneStates = arrayOfNulls<SceneFrame>(2)
+    private var dashboardSceneCleanupPending = false
+    private val pendingDashboardSceneElementIds = linkedSetOf<String>()
     // MARK: - End Unique
 
     // MARK: - Voice Data Handling
@@ -848,6 +851,9 @@ class DeviceManager {
             }
         }
         if (pcmData != null && pcmData.isNotEmpty()) {
+            // #region agent log — per-second RX window: LC3 bytes in, fingerprint, decoded PCM level (H-E)
+            micDbgLc3Window(rawLC3Data, sequenceNumber, pcmData)
+            // #endregion
             // Re-encode to canonical LC3 via handlePcm (outside lock to avoid deadlock)
             recordMicPcmProduced()
             handlePcm(pcmData)
@@ -856,6 +862,72 @@ class DeviceManager {
             recordMicDecodeFailure()
         }
     }
+
+    // #region agent log — glasses LC3 RX diagnostics (debug session 828181)
+    private var micDbgWindowStart = 0L
+    private var micDbgPkts = 0
+    private var micDbgLc3Bytes = 0L
+    private var micDbgPcmBytes = 0L
+    private var micDbgSumAbs = 0L
+    private var micDbgSamples = 0L
+    private var micDbgPeak = 0
+    private var micDbgDcSum = 0L
+    private var micDbgDistinctFrames = HashSet<Int>()
+    private var micDbgFirstSeq = -1
+    private var micDbgLastSeq = -1
+    private var micDbgSeqGaps = 0
+
+    private fun micDbgLc3Window(lc3: ByteArray, seq: Int?, pcm: ByteArray) {
+        val now = System.currentTimeMillis()
+        if (micDbgWindowStart == 0L) micDbgWindowStart = now
+        micDbgPkts++
+        micDbgLc3Bytes += lc3.size
+        micDbgPcmBytes += pcm.size
+        var i = 0
+        while (i + 1 < pcm.size) {
+            val v = ((pcm[i + 1].toInt() shl 8) or (pcm[i].toInt() and 0xff)).toShort().toInt()
+            val a = if (v < 0) -v else v
+            micDbgSumAbs += a
+            micDbgDcSum += v
+            if (a > micDbgPeak) micDbgPeak = a
+            micDbgSamples++
+            i += 2
+        }
+        var off = 0
+        while (off + 40 <= lc3.size) {
+            var h = 17
+            for (k in off until off + 40) h = h * 31 + lc3[k]
+            micDbgDistinctFrames.add(h)
+            off += 40
+        }
+        if (seq != null) {
+            if (micDbgFirstSeq < 0) micDbgFirstSeq = seq
+            if (micDbgLastSeq >= 0 && ((micDbgLastSeq + 1) and 0xff) != seq) micDbgSeqGaps++
+            micDbgLastSeq = seq
+        }
+        if (now - micDbgWindowStart >= 1000) {
+            val meanAbs = if (micDbgSamples > 0) micDbgSumAbs / micDbgSamples else 0
+            val dc = if (micDbgSamples > 0) micDbgDcSum / micDbgSamples else 0
+            val head = lc3.take(8).joinToString("") { String.format("%02x", it.toInt() and 0xff) }
+            Bridge.log(
+                "MICDBG-RX pkts=$micDbgPkts lc3B=$micDbgLc3Bytes pcmB=$micDbgPcmBytes samples=$micDbgSamples " +
+                    "meanAbs=$meanAbs peak=$micDbgPeak dc=$dc distinctLc3Frames=${micDbgDistinctFrames.size} " +
+                    "seq=$micDbgFirstSeq..$micDbgLastSeq gaps=$micDbgSeqGaps frameSizeArg=40 lastLen=${lc3.size} head=$head"
+            )
+            micDbgWindowStart = now
+            micDbgPkts = 0
+            micDbgLc3Bytes = 0
+            micDbgPcmBytes = 0
+            micDbgSumAbs = 0
+            micDbgSamples = 0
+            micDbgPeak = 0
+            micDbgDcSum = 0
+            micDbgDistinctFrames = HashSet()
+            micDbgFirstSeq = -1
+            micDbgSeqGaps = 0
+        }
+    }
+    // #endregion
 
     fun handlePcm(pcmData: ByteArray) {
         // Audio always flows. The previous phone-side Silero VAD gate was a
@@ -907,11 +979,13 @@ class DeviceManager {
 
         // allow the sgc to make changes to the micRanking:
         micRanking = sgc?.sortMicRanking(micRanking) ?: micRanking
-        Bridge.log("MAN: updateMicState() micRanking: $micRanking")
+        val pin = micSourcePin
+        val ranking: List<String> = MicSourcePin.selectionOrder(micRanking, pin)
+        Bridge.log("MAN: updateMicState() micRanking: $micRanking pin: $pin")
 
         if (micEnabled) {
 
-            for (micMode in micRanking) {
+            for (micMode in ranking) {
                 if (micMode == MicTypes.PHONE_INTERNAL ||
                     micMode == MicTypes.BLUETOOTH_CLASSIC ||
                     micMode == MicTypes.BLUETOOTH
@@ -959,9 +1033,55 @@ class DeviceManager {
 
         if (micUsed == "" && micEnabled) {
             Bridge.log("MAN: No available mic found!")
+            if (pin == null) return
+            // A pin taken while another microphone was already recording must still close it:
+            // leaving it open would keep feeding PCM that the pinned consumer will reject, with
+            // the phone's indicator lit for audio nobody uses.
+            stopMicsExcept(micUsed)
+            reportPinnedSourceUnavailable(pin)
             return
         }
 
+        stopMicsExcept(micUsed)
+    }
+
+    /**
+     * Call-scoped microphone source lock, or null for the normal ranking.
+     *
+     * Only [MicTypes.GLASSES_CUSTOM] is supported today: it exists so an ACS call can promise that
+     * the wearer's own microphone — and nothing else — is what reaches the far end.
+     */
+    @Volatile private var micSourcePin: String? = null
+
+    /**
+     * Restrict microphone selection to one source for the duration of a call, or release it.
+     *
+     * Releasing re-runs selection so every other consumer (cloud LC3, miniapp `audio_chunk`,
+     * on-device STT) gets the source its own preference asks for back. A `preferred_mic` change
+     * made while the pin is held is stored but not applied until this releases.
+     */
+    fun setMicSourcePin(source: String?) {
+        val normalized = MicSourcePin.normalize(source)
+        if (micSourcePin == normalized) return
+        micSourcePin = normalized
+        Bridge.log("MAN: setMicSourcePin($normalized)")
+        updateMicState()
+    }
+
+    /** The microphone the SDK is currently recording from, for consumers that must verify it. */
+    fun activeMicSource(): String = currentMic
+
+    /**
+     * Report a pinned source that cannot be opened. Emitted rather than silently fixed, because the
+     * fix — opening a different microphone — is the thing the pin exists to forbid.
+     */
+    private fun reportPinnedSourceUnavailable(pin: String) {
+        Bridge.log("MAN: pinned mic source '$pin' is unavailable; no fallback will be started")
+        val health = synchronized(micHealthLock) { micHealthSnapshotLocked() }
+        Bridge.sendMicHealth(health, "pinned-source-unavailable")
+    }
+
+    private fun stopMicsExcept(micUsed: String) {
         // go through and disable all mics after the first used one:
         val allMics = micRanking
         // add any missing mics to the list:
@@ -1019,6 +1139,8 @@ class DeviceManager {
             Bridge.log("MAN: DeviceManager.sendCurrentState(): sgc not ready")
             return
         }
+
+        clearPendingDashboardSceneElements(currentStateIndex)
 
         // Cancel any pending clear display work item
         // sendStateWorkItem?.let { mainHandler.removeCallbacks(it) }
@@ -1519,6 +1641,45 @@ class DeviceManager {
         sgc?.clearDisplay()
     }
 
+    internal fun setDashboardContent(content: String) {
+        val nextState =
+            ViewState(
+                " ",
+                " ",
+                " ",
+                "text_wall",
+                DashboardContentFormatter.template(content),
+                null,
+                null,
+            )
+        val previousScene = sceneStates[1]
+        if (previousScene == null && viewStates[1] == nextState) {
+            return
+        }
+
+        previousScene?.let { frame ->
+            dashboardSceneCleanupPending = true
+            pendingDashboardSceneElementIds.addAll(frame.elements.map { it.id })
+        }
+        sceneStates[1] = null
+        viewStates[1] = nextState
+
+        if (headUp && contextualDashboard) {
+            sendCurrentState()
+        }
+    }
+
+    private fun clearPendingDashboardSceneElements(stateIndex: Int) {
+        if (stateIndex != 1 || !dashboardSceneCleanupPending) return
+
+        dashboardSceneCleanupPending = false
+        val elementIds = pendingDashboardSceneElementIds.toList()
+        pendingDashboardSceneElementIds.clear()
+        if (elementIds.isNotEmpty()) {
+            sgc?.clearSceneElements(elementIds)
+        }
+    }
+
     fun displayEvent(event: Map<String, Any>) {
         val view = event["view"] as? String
         if (view == null) {
@@ -1549,7 +1710,9 @@ class DeviceManager {
         // wipes everything anyway.
         sceneStates[stateIndex]?.let { prevFrame ->
             sceneStates[stateIndex] = null
-            if (layoutType != "clear_view") {
+            if (stateIndex == 1 && dashboardSceneCleanupPending) {
+                pendingDashboardSceneElementIds.addAll(prevFrame.elements.map { it.id })
+            } else if (layoutType != "clear_view") {
                 sgc?.clearSceneElements(prevFrame.elements.map { it.id })
             }
         }
@@ -1614,7 +1777,13 @@ class DeviceManager {
             // clearDisplay is the per-device "wipe what's there" (blank-in-place
             // on G2 — no page rebuild).
             val prevLegacyType = viewStates[stateIndex].layoutType
-            if (prevLegacyType.isNotEmpty() && prevLegacyType != "clear_view" && prevLegacyType != "scene") {
+            val cleanupDeferred = stateIndex == 1 && dashboardSceneCleanupPending
+            if (
+                !cleanupDeferred &&
+                    prevLegacyType.isNotEmpty() &&
+                    prevLegacyType != "clear_view" &&
+                    prevLegacyType != "scene"
+            ) {
                 sgc?.clearDisplay()
             }
         } else if (prevFrame.appId != frame.appId) {
@@ -1624,7 +1793,11 @@ class DeviceManager {
             // them), then paint the new frame from scratch. In practice the
             // boot message interposes between apps, so this isn't visible as a
             // blank.
-            sgc?.clearSceneElements(prevFrame.elements.map { it.id })
+            if (stateIndex == 1 && dashboardSceneCleanupPending) {
+                pendingDashboardSceneElementIds.addAll(prevFrame.elements.map { it.id })
+            } else {
+                sgc?.clearSceneElements(prevFrame.elements.map { it.id })
+            }
             frame = frame.copy(replay = true, elements = frame.elements.map { it.copy(change = "created") })
         }
 
@@ -1637,18 +1810,19 @@ class DeviceManager {
 
         val hUp = headUp && contextualDashboard
         if ((stateIndex == 0 && !hUp) || (stateIndex == 1 && hUp)) {
-            dispatchSceneFrame(frame)
+            dispatchSceneFrame(stateIndex, frame)
         }
     }
 
     /** Guarded scene dispatch — mirrors sendCurrentState's send conditions. */
-    private fun dispatchSceneFrame(frame: SceneFrame) {
+    private fun dispatchSceneFrame(stateIndex: Int, frame: SceneFrame) {
         if (screenDisabled) return
         if (sgc?.type?.contains(DeviceTypes.SIMULATED) == true) return
         if (sgc?.fullyBooted != true) {
             Bridge.log("MAN: dispatchSceneFrame(): sgc not ready")
             return
         }
+        clearPendingDashboardSceneElements(stateIndex)
         sgc?.applySceneFrame(frame)
     }
 
@@ -1728,9 +1902,20 @@ class DeviceManager {
         sgc?.requestWifiScan(scanId)
     }
 
+    fun requestSavedWifiNetworks(requestId: String, sid: String): Boolean =
+        sgc?.requestSavedWifiNetworks(requestId, sid) ?: false
+
     fun sendIncidentId(incidentId: String, apiBaseUrl: String? = null) {
         Bridge.log("MAN: Sending incidentId to glasses for log upload: $incidentId")
         sgc?.sendIncidentId(incidentId, apiBaseUrl)
+    }
+
+    /** Push a notification into the glasses' own notification centre; rejects unsupported or disconnected devices. */
+    fun sendPhoneNotification(notification: Map<String, Any>) {
+        // Package only - never the notification text.
+        Bridge.log("MAN: sendPhoneNotification from ${notification["packageName"]}")
+        val driver = sgc ?: throw IllegalStateException("Glasses are not connected")
+        driver.sendPhoneNotification(notification)
     }
 
     fun sendWifiCredentials(ssid: String, password: String) {
@@ -1738,10 +1923,8 @@ class DeviceManager {
         sgc?.sendWifiCredentials(ssid, password)
     }
 
-    fun forgetWifiNetwork(ssid: String) {
-        Bridge.log("MAN: Forgetting wifi network: $ssid")
-        sgc?.forgetWifiNetwork(ssid)
-    }
+    fun forgetWifiNetwork(ssid: String, requestId: String? = null, sid: String? = null): Boolean =
+        sgc?.forgetWifiNetwork(ssid, requestId, sid) ?: false
 
     fun setHotspotState(enabled: Boolean) {
         Bridge.log("MAN: Setting glasses hotspot state: $enabled")
@@ -1952,9 +2135,14 @@ class DeviceManager {
      * Request version info from glasses. Glasses will respond with version_info message containing
      * build number, firmware version, etc.
      */
-    fun requestVersionInfo() {
+    fun requestVersionInfo(requestId: String? = null) {
         Bridge.log("MAN: 📱 Requesting version info from glasses")
-        sgc?.requestVersionInfo()
+        val controller = sgc
+        if (controller is MentraLive) {
+            controller.requestVersionInfo(requestId)
+        } else {
+            controller?.requestVersionInfo()
+        }
     }
 
     /** Send shutdown command to glasses. This will initiate a graceful shutdown of the device. */

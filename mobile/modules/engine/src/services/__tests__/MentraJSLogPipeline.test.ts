@@ -3,6 +3,8 @@
 import {beforeEach, describe, expect, test} from "bun:test"
 
 import {
+  DIAGNOSTIC_LOG_BUDGETS,
+  DIAGNOSTIC_RING_CAPACITY,
   MentraJSLogRingBuffer,
   MentraJSLogThrottle,
   redactSecrets,
@@ -150,6 +152,71 @@ describe("MentraJSLogThrottle", () => {
   })
 })
 
+describe("MentraJSLogThrottle diagnostic budgets", () => {
+  let clock: number
+  let throttle: MentraJSLogThrottle
+
+  beforeEach(() => {
+    clock = 1_000_000
+    throttle = new MentraJSLogThrottle({tokensPerSecond: 10, bucketCapacity: 5, now: () => clock})
+  })
+
+  /**
+   * The point of the override. A miniapp under instrumentation emits several hundred lines in
+   * the first seconds of a call; on the shared ceiling everything after the burst is dropped,
+   * and the drops land on exactly the window someone is trying to read.
+   */
+  test("a package with a raised budget outlives the shared ceiling", () => {
+    throttle.setPackageBudget("com.mentra.call", {tokensPerSecond: 200, bucketCapacity: 50})
+
+    for (let i = 0; i < 50; i++) {
+      expect(throttle.consume("com.mentra.call")).toEqual({allowed: true})
+    }
+    expect(throttle.consume("com.mentra.call")).toEqual({allowed: false})
+  })
+
+  /** Widening one package must not widen the rest; the default exists to protect the host. */
+  test("an unlisted package keeps the protective default", () => {
+    throttle.setPackageBudget("com.mentra.call", {tokensPerSecond: 200, bucketCapacity: 50})
+
+    for (let i = 0; i < 5; i++) expect(throttle.consume("other")).toEqual({allowed: true})
+    expect(throttle.consume("other")).toEqual({allowed: false})
+  })
+
+  /**
+   * A bucket caches its capacity, so raising the budget of a package that has already been
+   * logging has to discard the old bucket — otherwise the new ceiling only takes effect
+   * whenever the stale one happens to refill, which is the sort of thing nobody debugs twice.
+   */
+  test("raising a budget takes effect immediately for a package already throttled", () => {
+    for (let i = 0; i < 5; i++) throttle.consume("late.arrival")
+    expect(throttle.consume("late.arrival")).toEqual({allowed: false})
+
+    throttle.setPackageBudget("late.arrival", {tokensPerSecond: 200, bucketCapacity: 50})
+
+    expect(throttle.consume("late.arrival")).toEqual({allowed: true})
+  })
+
+  test("a budget can be withdrawn, returning the package to the default", () => {
+    throttle.setPackageBudget("com.mentra.call", null)
+
+    for (let i = 0; i < 5; i++) expect(throttle.consume("com.mentra.call")).toEqual({allowed: true})
+    expect(throttle.consume("com.mentra.call")).toEqual({allowed: false})
+  })
+
+  test("the shipped table covers Mentra Call, which is the instrumented one", () => {
+    const budget = DIAGNOSTIC_LOG_BUDGETS["com.mentra.call"]
+    expect(budget).toBeDefined()
+    expect(budget.bucketCapacity).toBeGreaterThan(500)
+    // A default throttle honours the table with no setup, which is what makes it useful on a
+    // device someone is holding rather than only in a test.
+    const shipped = new MentraJSLogThrottle()
+    for (let i = 0; i < 1_000; i++) {
+      expect(shipped.consume("com.mentra.call")).toEqual({allowed: true})
+    }
+  })
+})
+
 describe("MentraJSLogRingBuffer", () => {
   test("retains the last N lines per package", () => {
     const buf = new MentraJSLogRingBuffer(3)
@@ -181,5 +248,35 @@ describe("MentraJSLogRingBuffer", () => {
     const snap = buf.snapshot("a")
     snap.push("oops")
     expect(buf.snapshot("a")).toEqual(["1"])
+  })
+
+  /**
+   * This buffer is what a crash report carries as the miniapp's last words, and the default
+   * window is a couple of seconds for an instrumented miniapp — so the report would arrive
+   * holding the aftermath and none of the cause.
+   */
+  test("a diagnostic package gets a window long enough to hold the cause of a crash", () => {
+    const buf = new MentraJSLogRingBuffer(3)
+    for (let i = 0; i < 500; i++) buf.push("com.mentra.call", String(i))
+
+    const snap = buf.snapshot("com.mentra.call")
+    expect(snap).toHaveLength(500)
+    expect(snap[0]).toBe("0")
+    expect(DIAGNOSTIC_RING_CAPACITY).toBeGreaterThan(3)
+  })
+
+  test("the wide window does not apply to other packages", () => {
+    const buf = new MentraJSLogRingBuffer(3)
+    for (let i = 0; i < 500; i++) buf.push("other", String(i))
+
+    expect(buf.snapshot("other")).toEqual(["497", "498", "499"])
+  })
+
+  /** An explicitly larger host capacity must win; the diagnostic value is a floor, not a cap. */
+  test("a configured capacity above the diagnostic floor is respected", () => {
+    const buf = new MentraJSLogRingBuffer(DIAGNOSTIC_RING_CAPACITY + 10)
+    for (let i = 0; i < DIAGNOSTIC_RING_CAPACITY + 50; i++) buf.push("com.mentra.call", String(i))
+
+    expect(buf.snapshot("com.mentra.call")).toHaveLength(DIAGNOSTIC_RING_CAPACITY + 10)
   })
 })

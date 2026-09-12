@@ -112,6 +112,16 @@ function contentFor(url: string): string {
 }
 
 describe("planArtifacts", () => {
+  test("plans and rewrites the selected full OTA for hotspot serving", () => {
+    const full = {end_firmware: "20260908.0", url: MTK_URL, sha256: hashes.mtk, size: 640341205}
+    const body = JSON.stringify({mtk_patches: [], mtk_full_ota: full})
+    const plan = planArtifacts(checkResult({updates: ["mtk"], mtkPatch: full, manifestBody: body}))
+    expect(plan).toEqual([{kind: "mtk", url: MTK_URL, sha256: hashes.mtk}])
+    const rewritten = JSON.parse(
+      rewriteManifestForLocalServer(body, [{...plan[0], filePath: "/full.zip"}], "http://phone:8791"),
+    )
+    expect(rewritten.mtk_full_ota).toEqual({...full, url: `http://phone:8791/artifacts/${hashes.mtk}`})
+  })
   test("plans every pending artifact from the raw manifest", () => {
     const plan = planArtifacts(checkResult())
     expect(plan).toEqual([
@@ -154,6 +164,26 @@ describe("planArtifacts", () => {
 })
 
 describe("prepareArtifacts", () => {
+  test("announces every file before its download, including an unknown-length transfer", async () => {
+    const progress = mock((_event: import("../OtaArtifactDownloader").OtaArtifactDownloadProgress) => {})
+    await prepareArtifacts(planArtifacts(checkResult()), progress, async (entry, destination, report) => {
+      expect(progress.mock.calls.at(-1)?.[0]).toMatchObject({kind: entry.kind, artifactPercent: 0, contentLength: 0})
+      report?.(100, entry.kind === "mtk" ? 0 : 100)
+      files.set(destination, entry.kind)
+      return {statusCode: 200}
+    })
+    expect(
+      progress.mock.calls.map(([event]) => [event.kind, event.index, event.totalCount, event.artifactPercent]),
+    ).toEqual([
+      ["apk", 0, 3, 0],
+      ["apk", 0, 3, 100],
+      ["mtk", 1, 3, 0],
+      ["mtk", 1, 3, 0],
+      ["bes", 2, 3, 0],
+      ["bes", 2, 3, 100],
+    ])
+  })
+
   test("downloads, verifies, and stores by hash", async () => {
     const plan = [{kind: "bes" as const, url: BES_URL, sha256: hashes.bes}]
     const prepared = await prepareArtifacts(plan)

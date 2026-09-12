@@ -27,9 +27,10 @@ const record = {
     manifestUrl: "https://example.com/beta.json",
     manifestSha256: digest("b"),
   },
-  source: {mentraosCommit: commit("c"), starterKitCommit: commit("d")},
+  source: {mentraosCommit: commit("c")},
   coordinates: {
     currentMentraApp: {
+      provenance: "coordinated",
       sourceCommit: currentSource,
       provenanceUrl: "https://example.com/current.json",
       ios: {marketingVersion: currentVersion, buildNumber: 100},
@@ -43,10 +44,6 @@ const record = {
       mentraApp: {
         ios: {marketingVersion: "99.0.0", buildNumber: 102},
         android: {marketingVersion: "99.0.0", buildNumber: 102},
-      },
-      starterKit: {
-        ios: {marketingVersion: "99.0.0", buildNumber: 103},
-        android: {marketingVersion: "99.0.0", buildNumber: 103},
       },
     },
   },

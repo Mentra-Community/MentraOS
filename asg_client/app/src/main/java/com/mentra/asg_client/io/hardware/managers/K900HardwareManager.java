@@ -1,6 +1,7 @@
 package com.mentra.asg_client.io.hardware.managers;
 
 import android.content.Context;
+import android.os.SystemClock;
 import android.util.Log;
 
 import com.mentra.asg_client.AsgConstants;
@@ -11,6 +12,7 @@ import com.mentra.asg_client.io.bluetooth.interfaces.ICompanionTransport;
 import com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager;
 import com.mentra.asg_client.io.hardware.core.BaseHardwareManager;
 import com.mentra.asg_client.io.hardware.interfaces.Capability;
+import com.mentra.asg_client.service.core.constants.BatteryConstants;
 
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -43,6 +45,8 @@ public class K900HardwareManager extends BaseHardwareManager {
     // Battery cache
     private int cachedBatteryLevel = -1;
     private boolean cachedChargingStatus = false;
+    private boolean cachedActiveCharging = false;
+    private long activeChargeReceivedAtElapsedMs = -1;
     private long lastBatteryQueryTime = 0;
     private long lastBatteryRefreshRequestTime = 0;
     private boolean batteryRefreshQueued = false;
@@ -494,15 +498,48 @@ public class K900HardwareManager extends BaseHardwareManager {
                 && (System.currentTimeMillis() - lastBatteryQueryTime) < BATTERY_CACHE_DURATION_MS;
     }
 
+    @Override
+    public boolean allowsLowBatteryCamera(int batteryLevel) {
+        long now = SystemClock.elapsedRealtime();
+        boolean allowed;
+        boolean refresh;
+        long receivedAt;
+        synchronized (batteryLock) {
+            receivedAt = activeChargeReceivedAtElapsedMs;
+            long age = now - activeChargeReceivedAtElapsedMs;
+            boolean received = activeChargeReceivedAtElapsedMs >= 0 && age >= 0;
+            // Match the caller's SOC to the same reply as the charger evidence. Neither
+            // phone battery_status nor the legacy voltage heuristic can grant this exception.
+            allowed =
+                    batteryLevel > AsgConstants.CAMERA_CHARGING_BATTERY_FLOOR
+                            && batteryLevel < BatteryConstants.MIN_BATTERY_LEVEL
+                            && batteryLevel == cachedBatteryLevel
+                            && cachedActiveCharging
+                            && received
+                            && age < AsgConstants.CAMERA_ACTIVE_CHARGE_MAX_AGE_MS;
+            refresh = !received || age >= AsgConstants.CAMERA_BATTERY_REFRESH_MS;
+        }
+        if (refresh) {
+            requestBatteryRefresh(true);
+        }
+        return allowed
+                && bluetoothManager != null
+                && bluetoothManager.isCurrentUartEvidence(receivedAt);
+    }
+
     /** Queue at most one best-effort refresh without blocking a getter caller. */
     private void requestBatteryRefresh() {
+        requestBatteryRefresh(false);
+    }
+
+    private void requestBatteryRefresh(boolean refreshCharger) {
         if (bluetoothManager == null || !bluetoothManager.isConnected()) {
             return;
         }
 
         long now = System.currentTimeMillis();
         synchronized (batteryLock) {
-            if (isBatteryCacheFreshLocked()
+            if ((!refreshCharger && isBatteryCacheFreshLocked())
                     || batteryRefreshQueued
                     || batteryResponseLatch != null
                     || (now - lastBatteryRefreshRequestTime) < BATTERY_REFRESH_RETRY_MS) {
@@ -644,9 +681,22 @@ public class K900HardwareManager extends BaseHardwareManager {
      * @deprecated Use {@link #notifyBatteryReading(int, int)} via {@link IHardwareManager}.
      */
     public void onBatteryResponse(int batteryLevel, int batteryVoltage) {
+        notifyBatteryReading(batteryLevel, batteryVoltage, false, SystemClock.elapsedRealtime());
+    }
+
+    @Override
+    public void notifyBatteryReading(
+            int batteryLevel, int batteryVoltage, boolean activeCharging, long receivedAtElapsedMs) {
         synchronized (batteryLock) {
+            if (receivedAtElapsedMs < 0
+                    || receivedAtElapsedMs > SystemClock.elapsedRealtime()
+                    || receivedAtElapsedMs < activeChargeReceivedAtElapsedMs) {
+                return; // A queued older positive reply must not overwrite newer charger loss.
+            }
             cachedBatteryLevel = batteryLevel;
             cachedChargingStatus = batteryVoltage > 3900;
+            cachedActiveCharging = activeCharging;
+            activeChargeReceivedAtElapsedMs = receivedAtElapsedMs;
             lastBatteryQueryTime = System.currentTimeMillis();
             batteryRefreshQueued = false;
 

@@ -5,20 +5,23 @@ import Toast from "react-native-toast-message"
 
 import {Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useAuth} from "@/contexts/AuthContext"
 import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {translate} from "@/i18n"
-import {engine} from "@mentra/engine"
-import {SETTINGS, useSetting} from "@mentra/engine"
+import {resolvedEndpoints} from "@/services/cloudClient"
+import {engine, SETTINGS, useSetting} from "@mentra/engine"
 import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
-import mentraAuth from "@/utils/auth/authClient"
 
 export const VersionInfo = () => {
   const {themed} = useAppTheme()
+  const {user} = useAuth()
   const [debugMode, setDebugMode] = useSetting(SETTINGS.debug_mode.key)
   const [_superMode, setSuperMode] = useSetting(SETTINGS.super_mode.key)
-  const [coreUrl] = useSetting(SETTINGS.cloud_core_url.key)
-  const [storeUrl] = useSetting(SETTINGS.cloud_store_url.key)
+  // Subscribe to the raw overrides so the resolved values below re-render.
+  useSetting(SETTINGS.cloud_core_url.key)
+  useSetting(SETTINGS.cloud_store_url.key)
+  const {core: coreUrl, store: storeUrl} = resolvedEndpoints()
   const audioTransport = useEngineSnapshot(engine.session.status, (onChange) =>
     engine.session.onStatus(onChange),
   ).audioTransport
@@ -66,18 +69,14 @@ export const VersionInfo = () => {
   }
 
   const copyVersionInfo = async () => {
-    const res = await mentraAuth.getUser()
-    let user = null
-    if (res.is_ok()) {
-      user = res.value
-    }
     const info = [
       `version: ${process.env.EXPO_PUBLIC_MENTRAOS_VERSION}`,
       `branch: ${process.env.EXPO_PUBLIC_BUILD_BRANCH}`,
       `time: ${process.env.EXPO_PUBLIC_BUILD_TIME}`,
       `commit: ${process.env.EXPO_PUBLIC_BUILD_COMMIT}`,
-      `cloud_core_url: ${coreUrl || "(default)"}`,
-      `cloud_store_url: ${storeUrl || "(default)"}`,
+      `cloud_core_url: ${resolvedEndpoints().core}`,
+      `cloud_store_url: ${resolvedEndpoints().store}`,
+      `cloud_runtime_url: ${resolvedEndpoints().runtime}`,
       `audio: ${audioTransport}`,
     ]
 
@@ -137,10 +136,10 @@ export const VersionInfo = () => {
             <Text style={themed($buildInfo)} text={`${process.env.EXPO_PUBLIC_BUILD_COMMIT}`} />
           </View>
           <View className="flex-row gap-2">
-            <Text style={themed($buildInfo)} text={`${coreUrl || "(default cloud)"}`} />
+            <Text style={themed($buildInfo)} text={`${coreUrl}`} />
           </View>
           <View className="flex-row gap-2">
-            <Text style={themed($buildInfo)} text={`${storeUrl || "(default Store)"}`} />
+            <Text style={themed($buildInfo)} text={`${storeUrl}`} />
           </View>
           <View className="flex-row gap-2">
             <Text style={themed($buildInfo)} text={`audio: ${audioTransport}`} />

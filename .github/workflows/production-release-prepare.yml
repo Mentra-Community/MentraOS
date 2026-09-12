@@ -26,8 +26,6 @@ jobs:
     timeout-minutes: 30
     environment:
       name: production-store-status
-    env:
-      STARTER_KIT_REPOSITORY: Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit
     steps:
       - uses: actions/checkout@v4
         with:
@@ -86,11 +84,22 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
-          latest=$(gh release list --exclude-drafts --exclude-pre-releases --limit 100 \
-            --json tagName,publishedAt \
-            --jq '[.[] | select(.tagName | test("^mentra-v[0-9]+\\.[0-9]+\\.[0-9]+$"))] | sort_by(.publishedAt) | last')
-          tag=$(jq -er .tagName <<< "$latest")
-          identity="${tag#mentra-v}"
+          # Walks every release page: a truncated listing could hide an older
+          # mentra-vX.Y.Z and wrongly skip Phase 2.
+          node .github/scripts/production-promotion-assets.mjs latest-production-release \
+            --repository "$GITHUB_REPOSITORY" \
+            --github-output promotion-input/latest-production.env
+          if ! grep -qx 'found=true' promotion-input/latest-production.env; then
+            # First coordinated promotion. The public app predates this system,
+            # so it is frozen from the store inventories instead and has no
+            # compatibility lab; see "Phase 1" in the runbook.
+            echo "Warning: no published mentra-vX.Y.Z release exists; freezing the current Mentra App from the stores." >&2
+            echo "found=false" >> "$GITHUB_OUTPUT"
+            exit 0
+          fi
+          tag=$(sed -n 's/^tag=//p' promotion-input/latest-production.env)
+          identity=$(sed -n 's/^identity=//p' promotion-input/latest-production.env)
+          [[ "$tag" == "mentra-v$identity" ]]
           name="mentra-release-$identity.json"
           plan_name="mentra-release-plan-$identity.json"
           mkdir -p promotion-input/current
@@ -103,21 +112,11 @@ jobs:
             --file promotion-input/current/release-manifest.json \
             --url "$url"
           {
+            echo "found=true"
             echo "tag=$tag"
             echo "identity=$identity"
             echo "manifest_url=$url"
           } >> "$GITHUB_OUTPUT"
-
-      - name: Resolve exact stable Starter Kit source
-        id: starter-kit
-        env:
-          GH_TOKEN: ${{ github.token }}
-          RELEASE_IDENTITY: ${{ steps.identity.outputs.release_identity }}
-        run: |
-          set -euo pipefail
-          commit=$(gh api "repos/$STARTER_KIT_REPOSITORY/commits/sdk-$RELEASE_IDENTITY" --jq .sha)
-          [[ "$commit" =~ ^[0-9a-f]{40}$ ]]
-          echo "commit=$commit" >> "$GITHUB_OUTPUT"
 
       - name: Inject read-only store credentials
         uses: ./.github/actions/inject-signing
@@ -147,13 +146,6 @@ jobs:
             --key-path "${{ steps.asc.outputs.key_path }}" \
             --bundle-id com.mentra.mentra \
             --output promotion-input/stores/mentra-apple.json
-          node mobile/scripts/app-store-connect-build.mjs inventory \
-            --issuer-id "${{ secrets.ASC_API_ISSUER_ID }}" \
-            --key-id "${{ secrets.ASC_API_KEY_ID }}" \
-            --key-path "${{ steps.asc.outputs.key_path }}" \
-            --app-id 6792839366 \
-            --bundle-id com.mentra.bluetoothsdkexample \
-            --output promotion-input/stores/starter-apple.json
 
       - name: Install pinned Google Play inventory tooling
         run: |
@@ -171,15 +163,9 @@ jobs:
           APP_PACKAGE_NAME=com.mentra.mentra \
             GOOGLE_PLAY_INVENTORY_OUTPUT=../stores/mentra-google.json \
             bundle exec fastlane google_play_inventory
-          APP_PACKAGE_NAME=com.mentra.bluetoothsdkexample \
-            GOOGLE_PLAY_INVENTORY_OUTPUT=../stores/starter-google.json \
-            bundle exec fastlane google_play_inventory
           jq -s '{apple: .[0], google: .[1]}' \
             ../stores/mentra-apple.json ../stores/mentra-google.json \
             > ../stores/mentra-inventory.json
-          jq -s '{apple: .[0], google: .[1]}' \
-            ../stores/starter-apple.json ../stores/starter-google.json \
-            > ../stores/starter-inventory.json
 
       - name: Fingerprint every frozen preparation input
         id: selection
@@ -187,18 +173,25 @@ jobs:
           BETA_IDENTITY: ${{ inputs.beta_identity }}
           BETA_TAG: ${{ steps.identity.outputs.beta_tag }}
           GH_TOKEN: ${{ github.token }}
-        run: >-
-          node .github/scripts/production-promotion-assets.mjs selection-digest
-          --beta-plan promotion-input/beta/release-plan.json
-          --beta-manifest promotion-input/beta/release-manifest.json
-          --beta-manifest-url "https://github.com/${GITHUB_REPOSITORY}/releases/download/$BETA_TAG/mentra-release-$BETA_IDENTITY.json"
-          --previous-plan promotion-input/current/release-plan.json
-          --previous-manifest promotion-input/current/release-manifest.json
-          --previous-manifest-url "${{ steps.previous.outputs.manifest_url }}"
-          --mentra-inventory promotion-input/stores/mentra-inventory.json
-          --starter-kit-inventory promotion-input/stores/starter-inventory.json
-          --starter-kit-commit "${{ steps.starter-kit.outputs.commit }}"
-          --github-output "$GITHUB_OUTPUT"
+          PREVIOUS_FOUND: ${{ steps.previous.outputs.found }}
+          PREVIOUS_MANIFEST_URL: ${{ steps.previous.outputs.manifest_url }}
+        run: |
+          set -euo pipefail
+          previous=()
+          if [[ "$PREVIOUS_FOUND" == "true" ]]; then
+            previous=(
+              --previous-plan promotion-input/current/release-plan.json
+              --previous-manifest promotion-input/current/release-manifest.json
+              --previous-manifest-url "$PREVIOUS_MANIFEST_URL"
+            )
+          fi
+          node .github/scripts/production-promotion-assets.mjs selection-digest \
+            --beta-plan promotion-input/beta/release-plan.json \
+            --beta-manifest promotion-input/beta/release-manifest.json \
+            --beta-manifest-url "https://github.com/${GITHUB_REPOSITORY}/releases/download/$BETA_TAG/mentra-release-$BETA_IDENTITY.json" \
+            "${previous[@]}" \
+            --mentra-inventory promotion-input/stores/mentra-inventory.json \
+            --github-output "$GITHUB_OUTPUT"
 
       - name: Allocate append-only promotion container
         id: container
@@ -219,20 +212,26 @@ jobs:
           BETA_IDENTITY: ${{ inputs.beta_identity }}
           BETA_TAG: ${{ steps.identity.outputs.beta_tag }}
           GH_TOKEN: ${{ github.token }}
+          PREVIOUS_FOUND: ${{ steps.previous.outputs.found }}
+          PREVIOUS_MANIFEST_URL: ${{ steps.previous.outputs.manifest_url }}
         run: |
           set -euo pipefail
           beta_manifest_name="mentra-release-$BETA_IDENTITY.json"
           beta_manifest_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/$BETA_TAG/$beta_manifest_name"
+          previous=()
+          if [[ "$PREVIOUS_FOUND" == "true" ]]; then
+            previous=(
+              --previous-manifest promotion-input/current/release-manifest.json
+              --previous-manifest-url "$PREVIOUS_MANIFEST_URL"
+            )
+          fi
           mkdir -p promotion-output
           node .github/scripts/prepare-production-promotion.mjs \
             --beta-plan promotion-input/beta/release-plan.json \
             --beta-manifest promotion-input/beta/release-manifest.json \
             --beta-manifest-url "$beta_manifest_url" \
-            --previous-manifest promotion-input/current/release-manifest.json \
-            --previous-manifest-url "${{ steps.previous.outputs.manifest_url }}" \
+            "${previous[@]}" \
             --mentra-inventory promotion-input/stores/mentra-inventory.json \
-            --starter-kit-inventory promotion-input/stores/starter-inventory.json \
-            --starter-kit-commit "${{ steps.starter-kit.outputs.commit }}" \
             --attempt "${{ steps.container.outputs.attempt }}" \
             --actor "$GITHUB_ACTOR" \
             --created-at "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" \
@@ -255,14 +254,21 @@ jobs:
             --name "$plan_name" \
             --release-id "${{ steps.container.outputs.release_id }}" \
             --repository "$GITHUB_REPOSITORY"
+          if [[ "${{ steps.previous.outputs.found }}" == "true" ]]; then
+            node .github/scripts/publish-immutable-release-asset.mjs \
+              --file promotion-input/current/release-plan.json \
+              --name current-production-release-plan.json \
+              --release-id "${{ steps.container.outputs.release_id }}" \
+              --repository "$GITHUB_REPOSITORY"
+            node .github/scripts/publish-immutable-release-asset.mjs \
+              --file promotion-input/current/release-manifest.json \
+              --name current-production-release-manifest.json \
+              --release-id "${{ steps.container.outputs.release_id }}" \
+              --repository "$GITHUB_REPOSITORY"
+          fi
           node .github/scripts/publish-immutable-release-asset.mjs \
-            --file promotion-input/current/release-plan.json \
-            --name current-production-release-plan.json \
-            --release-id "${{ steps.container.outputs.release_id }}" \
-            --repository "$GITHUB_REPOSITORY"
-          node .github/scripts/publish-immutable-release-asset.mjs \
-            --file promotion-input/current/release-manifest.json \
-            --name current-production-release-manifest.json \
+            --file promotion-input/stores/mentra-inventory.json \
+            --name current-production-store-inventory.json \
             --release-id "${{ steps.container.outputs.release_id }}" \
             --repository "$GITHUB_REPOSITORY"
           node .github/scripts/production-promotion-assets.mjs publish-record \
@@ -280,8 +286,12 @@ jobs:
             echo "- Attempt: \`${{ steps.container.outputs.attempt }}\`"
             echo "- Selected beta: \`${{ inputs.beta_identity }}\`"
             echo "- MentraOS source: \`$(jq -er .source.mentraosCommit "$record")\`"
-            echo "- Starter Kit source: \`$(jq -er .source.starterKitCommit "$record")\`"
-            echo "- State: \`selected\`"
+            echo "- State: \`$(jq -er .state "$record")\`"
+            echo "- Current Mentra App: \`$(jq -er '.coordinates.currentMentraApp | "\(.provenance) \(.ios.marketingVersion) (iOS \(.ios.buildNumber), Android \(.android.buildNumber))"' "$record")\`"
             echo
-            echo "No Cloud or app-store state was changed. The next action builds non-promotable Mobile N compatibility-lab apps."
+            if [[ "$(jq -er .coordinates.currentMentraApp.provenance "$record")" == "coordinated" ]]; then
+              echo "No Cloud or app-store state was changed. The next action builds non-promotable Mobile N compatibility-lab apps."
+            else
+              echo "No Cloud or app-store state was changed. The current Mentra App predates coordinated releases, so there is no compatibility lab; the next action is the Cloud configuration preflight."
+            fi
           } >> "$GITHUB_STEP_SUMMARY"

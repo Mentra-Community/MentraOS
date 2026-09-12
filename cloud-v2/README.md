@@ -29,6 +29,7 @@ cloud-v2/
 ## Quick start
 
 Prerequisites:
+
 - Bun >= 1.3.0 (`curl -fsSL https://bun.sh/install | bash`) — 1.2.x has a node:tls bug that breaks MongoDB Atlas's SNI handshake (the production image pins 1.3.x for the same reason)
 - Docker (for local Mongo + Redis)
 - Doppler CLI with access to the `cloud-v2` project / `dev` config
@@ -60,6 +61,8 @@ Iteration: save a file, Bun restarts the affected package in well under a second
 
 ## Where to read more
 
+- [Mentra Private Deployment contract](./deploy/private-deployment.md) —
+  portable OCI image, configuration, manifest, health, and verification contract
 - [`docs/issues/`](./docs/issues/) — spec + design per work item
   - [001-oem-auth](./docs/issues/001-oem-auth/) — runtime OEM auth (JWT exchange)
   - [002-oem-portal](./docs/issues/002-oem-portal/) — OEM admin portal (planning)

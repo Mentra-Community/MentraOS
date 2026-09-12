@@ -133,6 +133,7 @@ private inline fun <
 class BluetoothSdkModule : Module() {
     private var sdk: MentraBluetoothSdk? = null
     private var deviceManager: DeviceManager? = null
+    private val logForwarding = LogForwardingBudget()
     private val sdkListener =
             object : MentraBluetoothSdkListener {
                 override fun onGlassesChanged(glasses: GlassesRuntimeState) {
@@ -295,6 +296,16 @@ class BluetoothSdkModule : Module() {
                 }
 
                 override fun onLog(message: String) {
+                    // Each event pins a JNI global reference until JavaScript drains it. The
+                    // log stream is the one source whose rate is unbounded, so it is budgeted.
+                    val withheld = logForwarding.admit() ?: return
+                    if (withheld > 0) {
+                        val notice =
+                                "[W/BluetoothSdkModule] withheld $withheld native log line(s) from " +
+                                        "JavaScript to stay under ${logForwarding.maxPerWindow}/s; " +
+                                        "logcat has them all"
+                        sendEvent("log", mapOf("message" to notice))
+                    }
                     sendEvent("log", mapOf("message" to message))
                 }
 
@@ -339,6 +350,8 @@ class BluetoothSdkModule : Module() {
             "local_transcription",
             "wifi_status_change",
             "wifi_scan_result",
+            "wifi_forget_result",
+            "saved_wifi_networks",
             "hotspot_status_change",
             "hotspot_error",
             "photo_response",
@@ -367,6 +380,8 @@ class BluetoothSdkModule : Module() {
             "audio_disconnected",
             "save_setting",
             "phone_notification",
+            "native_notification_status",
+            "native_notification_delivery",
             "phone_notification_dismissed",
             "ws_text",
             "ws_bin",
@@ -499,6 +514,10 @@ class BluetoothSdkModule : Module() {
 
         SdkAsyncFunction("clearDisplay") { -> sdk?.clearDisplay() }
 
+        SdkAsyncFunction("setDashboardContent") { content: String ->
+            sdk?.setDashboardContent(content)
+        }
+
         // MARK: - Connection Commands
 
         SdkAsyncFunction("connectDefault") { -> sdk?.connectDefault() }
@@ -537,6 +556,12 @@ class BluetoothSdkModule : Module() {
             sdk?.startScan(DeviceModel.fromDeviceType(model))
         }
 
+        SdkAsyncFunction("getScanDiagnostic") { model: String ->
+            sdk?.connectedDeviceScanDiagnostic(DeviceModel.fromDeviceType(model))?.let {
+                mapOf("code" to it.code, "message" to it.message)
+            }
+        }
+
         SdkAsyncFunction("stopScan") { -> sdk?.stopScan() }
 
         SdkAsyncFunction("cancelConnectionAttempt") { -> sdk?.cancelConnectionAttempt() }
@@ -563,16 +588,31 @@ class BluetoothSdkModule : Module() {
             sdk?.sendIncidentId(incidentId, apiBaseUrl)
         }
 
+        // MARK: - Native Notification Centre
+
+        // Public controls use the SDK facade; phone payload delivery uses DeviceManager.
+        SdkAsyncFunction("configureNativeNotifications") { config: Map<String, Any> ->
+            requireSdk().configureNativeNotifications(NativeNotificationConfig.fromMap(config))
+        }
+        SdkAsyncFunction("getNativeNotificationStatus") { ->
+            requireSdk().getNativeNotificationStatus().toMap()
+        }
+        AsyncFunction("sendPhoneNotification") { notification: Map<String, Any> ->
+            deviceManager?.sendPhoneNotification(notification)
+        }
+
         // MARK: - WiFi Commands
 
         SdkCoroutineFunction("requestWifiScan") { -> requireSdk().requestWifiScan().map { it.toMap() } }
+
+        SdkCoroutineFunction("getSavedWifiNetworks") { -> requireSdk().getSavedWifiNetworks().toMap() }
 
         SdkCoroutineFunction("sendWifiCredentials") { ssid: String, password: String ->
             requireSdk().sendWifiCredentials(ssid, password).values
         }
 
         SdkCoroutineFunction("forgetWifiNetwork") { ssid: String ->
-            requireSdk().forgetWifiNetwork(ssid).values
+            requireSdk().forgetWifiNetwork(ssid).toMap()
         }
 
         SdkCoroutineFunction("setHotspotState") { enabled: Boolean ->
@@ -778,15 +818,7 @@ class BluetoothSdkModule : Module() {
             requireSdk().startStream(StreamRequest.fromMap(params)).values
         }
 
-        SdkCoroutineFunction("startExternallyManagedStream") { params: Map<String, Any> ->
-            requireSdk().startExternallyManagedStream(StreamRequest.fromMap(params)).values
-        }
-
         SdkCoroutineFunction("stopStream") { -> requireSdk().stopStream().values }
-
-        SdkAsyncFunction("sendExternallyManagedStreamKeepAlive") { params: Map<String, Any> ->
-            sdk?.sendExternallyManagedStreamKeepAlive(StreamKeepAliveRequest.fromMap(params))
-        }
 
         // MARK: - Microphone Commands
 
@@ -801,6 +833,10 @@ class BluetoothSdkModule : Module() {
                     sendTranscript = sendTranscript ?: false,
                     sendLc3Data = sendLc3Data ?: false,
             )
+        }
+
+        SdkAsyncFunction("setMicSourcePin") { source: String? ->
+            sdk?.setMicSourcePin(source)
         }
 
         // Runs on Dispatchers.IO, not the shared Expo AsyncFunctionQueue: restart()
@@ -825,8 +861,14 @@ class BluetoothSdkModule : Module() {
         // close blocks until the backlog drains — either would otherwise stall
         // every other native call queued behind them.
 
-        AsyncFunction("pcmStreamOpen") { streamId: String, sampleRate: Int, channels: Int, volume: Double ->
-            PcmStreamManager.open(streamId, sampleRate, channels, volume.toFloat())
+        AsyncFunction("pcmStreamOpen") {
+            streamId: String,
+            sampleRate: Int,
+            channels: Int,
+            volume: Double,
+            jitterMs: Int?,
+            ->
+            PcmStreamManager.open(streamId, sampleRate, channels, volume.toFloat(), jitterMs)
         }
 
         AsyncFunction("pcmStreamWrite") Coroutine { streamId: String, base64: String ->

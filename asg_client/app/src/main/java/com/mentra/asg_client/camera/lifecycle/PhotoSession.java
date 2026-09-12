@@ -37,6 +37,7 @@ import com.mentra.asg_client.camera.request.HdrBurstBuilder;
 import com.mentra.asg_client.camera.request.StillCaptureBuilder;
 import com.mentra.asg_client.camera.request.StillCaptureCallback;
 import com.mentra.asg_client.io.media.core.BlePhotoTimingLog;
+import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
 import com.mentra.asg_client.sensors.ImuRecorder;
 
 import org.json.JSONException;
@@ -146,6 +147,10 @@ public final class PhotoSession {
     @Nullable private Handler stillCaptureCallbackHandler;
 
     private final HdrBurstCapture hdrBurstCapture = new HdrBurstCapture();
+
+    // The submitted still (not queueing, AE warmup, or persistence) owns the privacy indicator.
+    @Nullable private ActivePhotoCapture submittedCapture;
+    @Nullable private Runnable captureTimeout;
 
     /** True from HDR dispatch through its terminal frame/error, including late JPEG delivery. */
     private volatile boolean mCurrentShotUsesHdrBurst;
@@ -449,7 +454,59 @@ public final class PhotoSession {
      * session.
      */
     private void clearActiveCapture() {
+        finishStillCapture();
         activeCapture = null;
+    }
+
+    /** Called immediately before submitting the single frame or HDR burst to Camera2. */
+    void beginStillCapture() {
+        synchronized (hooks.serviceLock()) {
+            if (activeCapture == null) {
+                throw new IllegalStateException("Still capture has no active request");
+            }
+            final ActivePhotoCapture capture = activeCapture;
+            submittedCapture = capture;
+            IHardwareManager hardware = hooks.hardwareManager();
+            if (capture.ledEnabled && hardware != null && hardware.supportsRecordingLed()
+                    && !hardware.acquireRecordingLed(capture)) {
+                throw new IllegalStateException("Could not enable photo privacy LED");
+            }
+            // One camera watchdog, independent of whether the user enabled the indicator.
+            // It stops a stalled capture; the LED has no cancellation policy of its own.
+            captureTimeout = () -> {
+                synchronized (hooks.serviceLock()) {
+                    if (submittedCapture != capture) {
+                        return;
+                    }
+                    cancelActiveCapture("Timed out waiting for photo JPEG");
+                    hooks.closeCamera();
+                    hooks.stopService();
+                }
+            };
+            Handler handler = hooks.backgroundHandler();
+            if (handler != null) {
+                handler.postDelayed(captureTimeout, AsgConstants.PHOTO_CAPTURE_TIMEOUT_MS);
+            }
+        }
+    }
+
+    /** Ends sensor/JPEG work, without waiting for metadata, persistence, or upload. */
+    private void finishStillCapture() {
+        synchronized (hooks.serviceLock()) {
+            if (captureTimeout != null) {
+                Handler handler = hooks.backgroundHandler();
+                if (handler != null) {
+                    handler.removeCallbacks(captureTimeout);
+                }
+                captureTimeout = null;
+            }
+            ActivePhotoCapture capture = submittedCapture;
+            submittedCapture = null;
+            IHardwareManager hardware = hooks.hardwareManager();
+            if (capture != null && capture.ledEnabled && hardware != null) {
+                hardware.releaseRecordingLed(capture);
+            }
+        }
     }
 
     private void rememberConfiguredCamera(QueuedPhotoRequest pr) {
@@ -501,6 +558,7 @@ public final class PhotoSession {
 
     /** Clears the configured-camera snapshot when the HAL session is torn down. */
     public void onCameraClosed() {
+        finishStillCapture();
         configuredCameraConfig = null;
         quitStillCaptureCallbackThread();
     }
@@ -1759,6 +1817,7 @@ public final class PhotoSession {
     }
 
     private void notifyPhotoError(CameraOperationError error) {
+        finishStillCapture();
         resetCaptureMetadataState();
         CameraNeoService.PhotoCaptureCallback callback =
                 activeCapture != null ? activeCapture.callback : null;
@@ -1878,6 +1937,7 @@ public final class PhotoSession {
 
     /** Deliver ImageReader arrival inline, before buffer extraction or persistence. */
     private void notifyPhotoFrameAvailable(long sensorTimestampNs) {
+        finishStillCapture();
         CameraNeoService.PhotoCaptureCallback callback =
                 activeCapture != null ? activeCapture.callback : null;
         if (callback != null) {
@@ -2226,6 +2286,12 @@ public final class PhotoSession {
             return;
         }
 
+        // Queueing and cold-camera preparation can outlive charging evidence.
+        if (hooks.isCameraBatteryLow()) {
+            finishFailedPhotoCapture("Battery too low for photo capture");
+            return;
+        }
+
         if (wouldCaptureHdrBurst()) {
             captureHdrBurst();
             return;
@@ -2480,6 +2546,7 @@ public final class PhotoSession {
                             String.valueOf(reqZsl),
                             reqNr != null ? reqNr.toString() : "?",
                             mStillMfnrRequested));
+            beginStillCapture();
             activeSession.capture(
                     captureRequest,
                     new StillCaptureCallback(
@@ -2618,6 +2685,7 @@ public final class PhotoSession {
             boolean zsl = resolveZslForCapture();
             boolean mfnr = resolveMfnrForCapture();
 
+            beginStillCapture();
             hdrBurstCapture.start(
                     hooks.coordinator().session(),
                     hooks.coordinator().device(),
@@ -2856,7 +2924,13 @@ public final class PhotoSession {
 
     /** Service-level bridge for threading, wake, camera open, and shared builders. */
     public interface Hooks {
+        /** Evaluate current battery policy, not the value at queue admission. */
+        boolean isCameraBatteryLow();
+
         Object serviceLock();
+
+        @Nullable
+        IHardwareManager hardwareManager();
 
         void openCameraInternal(String filePath, boolean forVideo);
 

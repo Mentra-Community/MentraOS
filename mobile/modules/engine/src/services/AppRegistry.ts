@@ -13,6 +13,7 @@
  *   - uninstall(packageName, version?)      remove one or all versions
  *   - getInstalledMiniapps()                ClientApp[] derived from disk
  *   - getActiveVersion(packageName)         active version string for a package
+ *   - getLatestDevSnapshotVersion(pkg)      newest on-disk `dev-*` snapshot
  *   - getBundleDir / getMiniappManifest     filesystem helpers used by hosts
  *   - subscribe(fn)                         register a refresh listener
  */
@@ -23,7 +24,7 @@ import {unzip} from "react-native-zip-archive"
 import semver from "semver"
 import {AsyncResult, Result, result as Res} from "typesafe-ts"
 
-import {getConfigValues} from "../runtime/bootstrap"
+import {getConfigValues, isInstalledMiniappAllowed, isOfflineSystemMiniappAllowed} from "../runtime/bootstrap"
 import type {AppletPermission, AppPermissionType, AppletType, ClientApp} from "../types/applet"
 import {type Capabilities, HardwareRequirement, HardwareRequirementLevel, HardwareType} from "../types"
 import {readBoundedByteStream} from "../utils/boundedByteStream"
@@ -47,6 +48,7 @@ import {checkMiniappInstallCompatibility} from "./miniappInstallCompatibility"
 import {normalizeManifestActions} from "./manifestActions"
 import {selectReleaseVersionsForGarbageCollection} from "./releaseVersionGc"
 import {assertPublisherIdentityPolicy} from "./publisherIdentityPolicy"
+import {miniappInstallIdentityError, type MiniappInstallExpectations} from "./miniappInstallIdentity"
 import {miniappRunningRegistry} from "./MiniappRunningRegistry"
 import {canInstallMiniappRelease, isSystemMiniappPackage, requiresConnectedGlasses} from "./SystemMiniappPolicy"
 import {validateInstallBundleArchive} from "./validateInstallBundle"
@@ -164,11 +166,14 @@ interface InstalledLma {
 }
 
 export interface MiniappReleaseIdentity {
-  source: "direct_download" | "bundled_asset" | "dev_snapshot" | "store" | "system_store"
+  source: "direct_download" | "bundled_asset" | "deployment_manifest" | "dev_snapshot" | "store" | "system_store"
   releaseId?: string
   bundleSha256?: string
   channel?: string
   storePackageName?: string
+  /** Workspace/private deployment that owns this release, when one does. */
+  deploymentId?: string
+  deploymentOrigin?: string
   /** Verified Ed25519 publisher identity embedded in the production ZIP. */
   publisherKeyFingerprint?: string
 }
@@ -179,6 +184,8 @@ export interface InstallBundleOptions {
   expectedPackageName?: string
   expectedVersion?: string
   expectedBundleSha256?: string
+  /** Refuse to overwrite a version that is already installed. */
+  rejectExistingVersion?: boolean
   compatibilityPolicy?: {
     hostVersion: string
     supportedSdkRange: string
@@ -444,7 +451,7 @@ async function downloadMiniAppZip(
 async function unpackMiniApp(
   zipPath: string,
   versionOverride: string | undefined,
-  expected: {packageName?: string; version?: string} | undefined,
+  expected: MiniappInstallExpectations | undefined,
   onProgress: InstallBundleOptions["onProgress"] | undefined,
   finalize: (
     installed: {packageName: string; version: string},
@@ -460,7 +467,7 @@ async function unpackMiniApp(
 async function unpackMiniAppExclusive(
   zipPath: string,
   versionOverride?: string,
-  expected?: {packageName?: string; version?: string},
+  expected?: MiniappInstallExpectations,
   onProgress?: InstallBundleOptions["onProgress"],
 ): Promise<ActivatedInstall<{packageName: string; version: string}>> {
   const operationId = nextInstallOperationId()
@@ -495,7 +502,7 @@ async function unpackMiniAppFromScratchDirectory(
   unzipDir: Directory,
   operationId: string,
   versionOverride?: string,
-  expected?: {packageName?: string; version?: string},
+  expected?: MiniappInstallExpectations,
   onProgress?: InstallBundleOptions["onProgress"],
 ): Promise<ActivatedInstall<{packageName: string; version: string}>> {
   try {
@@ -525,13 +532,9 @@ async function unpackMiniAppFromScratchDirectory(
     console.error("Error reading miniapp.json from zip:", error)
     throw "READ_MANIFEST_FAILED"
   }
-  if (expected?.packageName && packageName !== expected.packageName) {
-    throw new Error(`bundle package mismatch: expected ${expected.packageName}, got ${packageName}`)
-  }
-  if (expected?.version && manifestVersion !== expected.version) {
-    throw new Error(`bundle version mismatch: expected ${expected.version}, got ${manifestVersion}`)
-  }
   const version = versionOverride ?? manifestVersion
+  const identityError = miniappInstallIdentityError({packageName, version: manifestVersion}, expected)
+  if (identityError) throw new Error(identityError)
   console.log(`ZIP: installing ${packageName} as version ${version}`)
 
   const basePackageDir = new Directory(Paths.document, "lmas", packageName)
@@ -548,6 +551,9 @@ async function unpackMiniAppFromScratchDirectory(
   const stagingName = `.staging-${version}-${operationId}`
   const backupName = `.backup-${version}-${operationId}`
   const hadExisting = directory(version).exists
+  if (expected?.rejectExistingVersion && hadExisting) {
+    throw new Error(`Miniapp ${packageName}@${version} is already installed`)
+  }
   const activationKind = hadExisting ? "existing" : "new"
   const pendingName = `.pending-${activationKind}-${version}-${operationId}`
   const committedName = `.committed-${activationKind}-${version}-${operationId}`
@@ -694,6 +700,7 @@ async function downloadAndInstallMiniApp(
       {
         packageName: opts?.expectedPackageName,
         version: opts?.expectedVersion,
+        rejectExistingVersion: opts?.rejectExistingVersion,
       },
       opts?.onProgress,
       ({packageName, version}, activation) =>
@@ -1005,6 +1012,7 @@ class AppRegistry {
         {
           packageName: opts?.expectedPackageName,
           version: opts?.expectedVersion,
+          rejectExistingVersion: opts?.rejectExistingVersion,
         },
         opts?.onProgress,
         ({packageName, version}, activation) =>
@@ -1105,6 +1113,22 @@ class AppRegistry {
   public getPublisherKeyFingerprint(packageName: string): string | null {
     const result = storage.load<string>(publisherIdentityKey(packageName))
     return result.is_ok() ? result.value : null
+  }
+
+  /** Enumerate installed releases carrying deployment ownership metadata. */
+  public getDeploymentOwnedReleases(): Array<{
+    packageName: string
+    version: string
+    identity: MiniappReleaseIdentity
+  }> {
+    const releases: Array<{packageName: string; version: string; identity: MiniappReleaseIdentity}> = []
+    for (const packageName of this.getPackageNames()) {
+      for (const version of this.getInstalledVersions(packageName)) {
+        const identity = this.getReleaseIdentity(packageName, version)
+        if (identity?.source === "deployment_manifest") releases.push({packageName, version, identity})
+      }
+    }
+    return releases
   }
 
   public installFromJsonUrl(baseUrl: string): AsyncResult<{packageName: string; version: string; name: string}, Error> {
@@ -1351,6 +1375,28 @@ class AppRegistry {
     return storage.save(`${packageName}_active_version`, version)
   }
 
+  /**
+   * Newest `dev-*` snapshot that still has a resolvable UI or background
+   * entry. Semver store installs are ignored — a live-dev tile must not
+   * silently fall back to a released store bundle when the laptop drops.
+   */
+  public getLatestDevSnapshotVersion(packageName: string): string | null {
+    const versions = this.getInstalledVersions(packageName)
+      .filter((v) => v.startsWith("dev-"))
+      .sort()
+      .reverse()
+    for (const version of versions) {
+      const paths = this.getMiniappEntryPaths(packageName, version)
+      if (paths?.background || paths?.ui) return version
+    }
+    return null
+  }
+
+  /** True iff {@link getLatestDevSnapshotVersion} finds a usable snapshot. */
+  public hasDevSnapshot(packageName: string): boolean {
+    return this.getLatestDevSnapshotVersion(packageName) != null
+  }
+
   public getMetadata(packageName: string, version: string): InstalledInfo {
     try {
       const lmaDir = new Directory(Paths.document, "lmas", packageName, version)
@@ -1385,12 +1431,21 @@ class AppRegistry {
    * registration in finalizeInstall. Native offline apps keep top priority.
    */
   private mergeProjectedApps(diskApps: ClientApp[]): ClientApp[] {
-    const offline = this.projectOfflineApps()
+    const offline = this.projectOfflineApps().filter((app) => isOfflineSystemMiniappAllowed(app.packageName))
     const offlinePackages = new Set(offline.map((app) => app.packageName))
-    const dev = this.projectDevApps().filter((app) => !offlinePackages.has(app.packageName))
+    const dev = this.projectDevApps().filter(
+      (app) => isInstalledMiniappAllowed(app.packageName, undefined, null) && !offlinePackages.has(app.packageName),
+    )
     const devPackages = new Set(dev.map((app) => app.packageName))
     const installed = diskApps.filter(
-      (app) => !offlinePackages.has(app.packageName) && !devPackages.has(app.packageName),
+      (app) =>
+        isInstalledMiniappAllowed(
+          app.packageName,
+          app.version,
+          app.version ? this.getReleaseIdentity(app.packageName, app.version) : null,
+        ) &&
+        !offlinePackages.has(app.packageName) &&
+        !devPackages.has(app.packageName),
     )
     return [...installed, ...dev, ...offline]
   }

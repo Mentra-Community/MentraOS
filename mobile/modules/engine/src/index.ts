@@ -34,6 +34,8 @@ export type {
   ScanQrOptions,
   ScanQrResult,
   SubjectTokenType,
+  LocalMiniappPolicy,
+  ManagedMiniappPolicyEntry,
 } from "./runtime/bootstrap"
 
 // Settings contract: the typed key registry (schema descriptors — the same
@@ -117,7 +119,13 @@ export {
 export type {OtaAutoChainAdvanceResult} from "./services/OtaAutoChain"
 export {
   BES_INSTALL_RESTART_MESSAGE,
+  OTA_ERROR_BES_RESTART_REQUIRED_COPY_KEY,
+  OTA_ERROR_ENGLISH_COPY,
+  OTA_ERROR_GENERIC_COPY_KEY,
+  OTA_ERROR_UNKNOWN_GLASSES_COPY_KEY,
+  OTA_GLASSES_ERROR_COPY_KEYS,
   getOtaErrorMessage,
+  otaErrorCopyKey,
   shouldRequireGlassesRebootForBesFailure,
   shouldShowChangeWifiForOtaDownloadFailure,
 } from "./services/OtaErrorMapping"
@@ -182,11 +190,17 @@ export {
   type DevLaunchResult,
   type DevManifest,
 } from "./utils/devMiniappLaunch"
+export {
+  decideDevOpenRoute,
+  type DevOpenDecision,
+} from "./utils/devMiniappSnapshot"
 export {HardwareCompatibility, type CompatibilityResult} from "./utils/hardware"
 // Build-owned miniapp identity is a pure host policy. Host UI uses the same
 // predicate as AppRegistry so SYSTEM actions cannot drift from enforcement.
 export {isSystemMiniappPackage} from "./services/SystemMiniappPolicy"
 export {BgTimer, throttle, debounce} from "./utils/timers"
+export {default as glassesMicProbe, parseMicProbeParams} from "./services/GlassesMicProbe"
+export type {MicProbeA2dpMode, MicProbeOptions, MicProbeSample} from "./services/GlassesMicProbe"
 
 // Hardware types and capability profiles.
 export {

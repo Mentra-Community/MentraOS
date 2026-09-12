@@ -48,6 +48,14 @@ class MicStateCoordinator {
   // Local miniapp requirements (set when miniapps subscribe to audio streams)
   private localWantsPcm = false
   private localWantsLc3 = false
+  /**
+   * A live ACS call taking the wearer's voice off the glasses over BLE LC3.
+   *
+   * Tracked separately from the miniapp requirement because the two have independent lifetimes:
+   * the call miniapp does not subscribe to `audio_chunk`, and a captions miniapp that stops mid-call
+   * must not take the call's microphone with it.
+   */
+  private callWantsPcm = false
   private configuredVad: boolean | undefined
   private configuredLoudnessGate: boolean | undefined
   private readonly miniappVadOverrides = new Map<string, GateOverride>()
@@ -73,6 +81,29 @@ class MicStateCoordinator {
     this.rememberConfiguredGates(req)
     console.log(`${LOG_TAG}: local requirements updated — pcm=${req.pcm} lc3=${req.lc3}`)
     this.applyUnion()
+  }
+
+  /**
+   * Claim or release raw PCM on behalf of an active call.
+   *
+   * Called by AcsMeetingService around a call whose uplink is the glasses microphone over BLE LC3.
+   * Releasing is a claim release, not a mic shutdown: if a captions miniapp still wants PCM the
+   * microphone stays on, which is the whole reason this is a separate flag rather than a setter on
+   * the local requirement.
+   */
+  public setCallRequirement(pcm: boolean): void {
+    if (this.callWantsPcm === pcm) return
+    this.callWantsPcm = pcm
+    console.log(`${LOG_TAG}: call requirement updated — pcm=${pcm}`)
+    this.applyUnion()
+  }
+
+  /**
+   * Whether anything on this device needs a continuous raw-PCM timeline. Also the condition that
+   * forces hardware VAD off: a gate that drops silence turns a call into clipped half-words.
+   */
+  private get wantsRawPcm(): boolean {
+    return this.localWantsPcm || this.callWantsPcm
   }
 
   /**
@@ -159,7 +190,7 @@ class MicStateCoordinator {
     const vadOverride = this.latestOverride(this.miniappVadOverrides)
     const loudnessOverride = this.latestOverride(this.miniappLoudnessGateOverrides)
 
-    if (this.localWantsPcm) {
+    if (this.wantsRawPcm) {
       runtimeSettings.voice_activity_detection_enabled = false
     } else if (vadOverride) {
       runtimeSettings.voice_activity_detection_enabled = vadOverride.enabled
@@ -176,7 +207,7 @@ class MicStateCoordinator {
    * on-device PCM consumers; cloud audio uses LC3 through AudioCloudUplink.
    */
   private applyUnion(): void {
-    const shouldSendPcm = this.localWantsPcm
+    const shouldSendPcm = this.wantsRawPcm
     const shouldSendLc3 = this.localWantsLc3
 
     // console.log(
@@ -225,7 +256,7 @@ class MicStateCoordinator {
 
     // Hardware VAD suppresses silence. Raw-audio consumers need a continuous
     // timeline, so their requirement wins over both OS and miniapp VAD values.
-    if (this.localWantsPcm) patch.voice_activity_detection_enabled = false
+    if (this.wantsRawPcm) patch.voice_activity_detection_enabled = false
     else if (vadOverride) patch.voice_activity_detection_enabled = vadOverride.enabled
     else if (this.configuredVad !== undefined) patch.voice_activity_detection_enabled = this.configuredVad
 
@@ -243,6 +274,7 @@ class MicStateCoordinator {
   public reset(): void {
     this.localWantsPcm = false
     this.localWantsLc3 = false
+    this.callWantsPcm = false
     this.applyUnion()
   }
 

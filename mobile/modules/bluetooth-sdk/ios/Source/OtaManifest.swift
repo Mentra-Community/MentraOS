@@ -33,22 +33,50 @@ struct BesFirmware: Decodable {
     let version: String?
 }
 
+struct MtkFullOta: Decodable {
+    let endFirmware: String?
+    let hasStartFirmware: Bool
+    let url: String?
+    let sha256: String?
+    let size: Int64?
+
+    enum CodingKeys: String, CodingKey {
+        case endFirmware = "end_firmware"
+        case startFirmware = "start_firmware"
+        case url, sha256, size
+    }
+
+    init(from decoder: Decoder) throws {
+        let fields = try decoder.container(keyedBy: CodingKeys.self)
+        hasStartFirmware = fields.contains(.startFirmware)
+        endFirmware = try fields.decodeIfPresent(String.self, forKey: .endFirmware)
+        url = try fields.decodeIfPresent(String.self, forKey: .url)
+        sha256 = try fields.decodeIfPresent(String.self, forKey: .sha256)
+        size = try fields.decodeIfPresent(Int64.self, forKey: .size)
+    }
+}
+
 struct OtaManifest: Decodable {
     let apps: [String: OtaManifestApp]?
     let mtkPatches: [MtkPatch]?
+    let mtkFullOta: MtkFullOta?
     let besFirmware: BesFirmware?
     let versionCode: Int?
 
     enum CodingKeys: String, CodingKey {
         case apps
         case mtkPatches = "mtk_patches"
+        case mtkFullOta = "mtk_full_ota"
         case besFirmware = "bes_firmware"
         case versionCode
     }
 }
 
 enum OtaManifestChecker {
-    private static let asgClientPackage = "com.mentra.asg_client"
+    /// Package the stock Mentra glasses client installs as, and the key every apps-shaped
+    /// manifest is pinned under. A client reporting any other package is a sideloaded build that
+    /// this manifest cannot describe.
+    static let asgClientPackage = "com.mentra.asg_client"
 
     static func normalizeHttpUrl(_ value: String) throws -> String {
         let trimmed = value.trimmingCharacters(in: .whitespacesAndNewlines)
@@ -87,23 +115,24 @@ enum OtaManifestChecker {
         currentMtkVersion: String,
         currentBesVersion: String,
         manifest: OtaManifest,
-        // Downgrade floor: a non-positive value (the default) disables downgrades entirely,
-        // matching ASG's fail-closed DowngradeGate and the engine. OEM SDK consumers that do not
-        // set a floor get upgrade-only behavior and are never told a downgrade is available that
-        // the glasses would refuse.
-        downgradeFloorVersionCode: Int = 0
+        // Mentra 3.0 is the oldest downgrade-safe target, matching Engine, ASG, and recovery.
+        // Coordinated releases guarantee higher supported ASG builds can downgrade; no source gate is needed.
+        // The shipped floor may increase, never decrease, and must stay aligned across all checkers.
+        // See asg_client/docs/mentra-live-spec.md#ota-and-updates.
+        // An explicit non-positive override still disables downgrades.
+        downgradeFloorVersionCode: Int = 51518114
     ) throws -> Bool {
         try hasApkUpdate(
             currentBuildNumber: currentBuildNumber,
             manifest: manifest,
             downgradeFloorVersionCode: downgradeFloorVersionCode
         ) ||
-            hasMtkUpdate(patches: manifest.mtkPatches, currentVersion: currentMtkVersion) ||
+            hasMtkUpdate(patches: manifest.mtkPatches, full: manifest.mtkFullOta, currentVersion: currentMtkVersion) ||
             hasBesUpdate(besFirmware: manifest.besFirmware, currentVersion: currentBesVersion)
     }
 
     static func hasMtkPatches(_ manifest: OtaManifest) -> Bool {
-        !(manifest.mtkPatches?.isEmpty ?? true)
+        !(manifest.mtkPatches?.isEmpty ?? true) || manifest.mtkFullOta != nil
     }
 
     static func hasBesFirmware(_ manifest: OtaManifest) -> Bool {
@@ -167,19 +196,29 @@ enum OtaManifestChecker {
         return downgradeFloorVersionCode > 0 && serverVersion >= downgradeFloorVersionCode
     }
 
-    private static func hasMtkUpdate(patches: [MtkPatch]?, currentVersion: String) throws -> Bool {
-        guard let patches, !patches.isEmpty else { return false }
-        guard !currentVersion.isEmpty else { return false }
-
-        return patches.contains { patch in
-            if patch.startFirmware == currentVersion {
-                return true
-            }
-            let serverDate = patch.startFirmware.contains("_")
-                ? String(patch.startFirmware.split(separator: "_").last ?? "")
-                : patch.startFirmware
-            return serverDate == currentVersion
+    private static func hasMtkUpdate(patches: [MtkPatch]?, full: MtkFullOta?, currentVersion: String) -> Bool {
+        func normalize(_ value: String) -> String {
+            value.trimmingCharacters(in: .whitespacesAndNewlines).components(separatedBy: "_").last ?? ""
         }
+        let current = normalize(currentVersion)
+        guard !current.isEmpty else { return false }
+        if (patches ?? []).contains(where: { normalize($0.startFirmware) == current }) { return true }
+        guard let full, let endFirmware = full.endFirmware else { return false }
+        let target = normalize(endFirmware)
+        let pattern = "^[0-9]{8}(\\.[0-9]{1,9})?$"
+        guard current.range(of: pattern, options: .regularExpression) != nil,
+              target.range(of: pattern, options: .regularExpression) != nil,
+              !full.hasStartFirmware,
+              let url = full.url, url.range(of: "^https?://[^/\\s]+/.*$", options: .regularExpression) != nil,
+              let hash = full.sha256, hash.range(of: "^[a-fA-F0-9]{64}$", options: .regularExpression) != nil,
+              let size = full.size, size > 0, size <= 1024 * 1024 * 1024
+        else { return false }
+        let currentParts = current.split(separator: ".").compactMap { Int64($0) }
+        let targetParts = target.split(separator: ".").compactMap { Int64($0) }
+        let currentRevision = currentParts.count == 2 ? currentParts[1] : 0
+        let targetRevision = targetParts.count == 2 ? targetParts[1] : 0
+        return targetParts[0] > currentParts[0] ||
+            (targetParts[0] == currentParts[0] && targetRevision > currentRevision)
     }
 
     private static func hasBesUpdate(besFirmware: BesFirmware?, currentVersion: String) throws -> Bool {

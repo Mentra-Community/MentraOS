@@ -30,6 +30,20 @@ function validateInventory(inventory, {bundleId, allowNoCurrent}) {
 }
 
 function validateCurrentMentraApp(previousManifest, inventory) {
+  if (previousManifest === null) {
+    // First coordinated promotion: no mentra-vX.Y.Z release describes the public
+    // app, so freeze exactly what both stores serve today. The app cannot be
+    // rebuilt for the compatibility lab, but Phase 5 still verifies it against
+    // production Cloud N+1 using these coordinates.
+    const {marketingVersion, buildNumber} = inventory.apple.current
+    return {
+      provenance: "store-observed",
+      sourceCommit: null,
+      provenanceUrl: null,
+      ios: {marketingVersion, buildNumber},
+      android: {marketingVersion, buildNumber: inventory.google.currentVersionCode},
+    }
+  }
   const expected = previousManifest.native
   if (
     !expected ||
@@ -43,6 +57,7 @@ function validateCurrentMentraApp(previousManifest, inventory) {
     throw new Error("Previous production manifest has no full source commit")
   }
   return {
+    provenance: "coordinated",
     sourceCommit: previousManifest.sourceCommit,
     provenanceUrl: previousManifest.url,
     ios: {marketingVersion: expected.marketingVersion, buildNumber: expected.buildNumber},
@@ -50,21 +65,10 @@ function validateCurrentMentraApp(previousManifest, inventory) {
   }
 }
 
-export function prepareProductionPromotion({
-  family,
-  betaPlan,
-  betaManifest,
-  betaManifestUrl,
-  betaManifestSha256,
-  previousManifest,
-  mentraInventory,
-  starterKitInventory,
-  starterKitCommit,
-  attempt,
-  actor,
-  createdAt,
-  provenanceUrl,
-}) {
+// Shared by promotion preparation and stable package publication: the selected
+// beta must be complete, internally consistent, pinned to an immutable OTA
+// manifest, and belong to the checked-out release family.
+export function validateSelectedBeta({family, betaPlan, betaManifest}) {
   if (
     betaPlan.channel !== "beta" ||
     betaManifest.channel !== "beta" ||
@@ -85,25 +89,33 @@ export function prepareProductionPromotion({
   ) {
     throw new Error("Selected beta has no immutable OTA manifest pin")
   }
-  const betaStarterKitCommit = betaManifest.starterKit?.starterKit?.releaseCommit
-  if (!COMMIT_PATTERN.test(betaStarterKitCommit || "")) {
-    throw new Error("Selected beta has no exact Starter Kit release commit")
-  }
-  if (!COMMIT_PATTERN.test(starterKitCommit || "")) {
-    throw new Error("Stable Starter Kit tag has no exact release commit")
-  }
+  return betaPlan
+}
+
+export function prepareProductionPromotion({
+  family,
+  betaPlan,
+  betaManifest,
+  betaManifestUrl,
+  betaManifestSha256,
+  previousManifest,
+  mentraInventory,
+  attempt,
+  actor,
+  createdAt,
+  provenanceUrl,
+}) {
+  validateSelectedBeta({family, betaPlan, betaManifest})
   validateInventory(mentraInventory, {bundleId: "com.mentra.mentra", allowNoCurrent: false})
-  validateInventory(starterKitInventory, {bundleId: "com.mentra.bluetoothsdkexample", allowNoCurrent: true})
   const currentMentraApp = validateCurrentMentraApp(previousManifest, mentraInventory)
   const lastMentraBuildNumber = Math.max(
     mentraInventory.apple.maxBuildNumber,
     mentraInventory.google.maxVersionCode,
     betaPlan.native.buildNumber,
   )
-  const compatibilityLabBuildNumber = lastMentraBuildNumber + 1
-  const mentraBuildNumber = lastMentraBuildNumber + 2
-  const starterKitBuildNumber =
-    Math.max(starterKitInventory.apple.maxBuildNumber, starterKitInventory.google.maxVersionCode, mentraBuildNumber) + 1
+  const hasCompatibilityLab = currentMentraApp.provenance === "coordinated"
+  const compatibilityLabBuildNumber = hasCompatibilityLab ? lastMentraBuildNumber + 1 : null
+  const mentraBuildNumber = lastMentraBuildNumber + (hasCompatibilityLab ? 2 : 1)
   const productionPlan = createReleasePlan({
     family,
     channel: "production",
@@ -126,24 +138,22 @@ export function prepareProductionPromotion({
       manifestUrl: betaManifestUrl,
       manifestSha256: betaManifestSha256,
     },
-    source: {mentraosCommit: betaPlan.sourceCommit, starterKitCommit},
+    source: {mentraosCommit: betaPlan.sourceCommit},
     coordinates: {
       currentMentraApp,
-      compatibilityLab: {
-        ios: {marketingVersion: currentMentraApp.ios.marketingVersion, buildNumber: compatibilityLabBuildNumber},
-        android: {
-          marketingVersion: currentMentraApp.android.marketingVersion,
-          buildNumber: compatibilityLabBuildNumber,
-        },
-      },
+      compatibilityLab: hasCompatibilityLab
+        ? {
+            ios: {marketingVersion: currentMentraApp.ios.marketingVersion, buildNumber: compatibilityLabBuildNumber},
+            android: {
+              marketingVersion: currentMentraApp.android.marketingVersion,
+              buildNumber: compatibilityLabBuildNumber,
+            },
+          }
+        : null,
       candidates: {
         mentraApp: {
           ios: {marketingVersion: productionPlan.native.marketingVersion, buildNumber: mentraBuildNumber},
           android: {marketingVersion: productionPlan.native.marketingVersion, buildNumber: mentraBuildNumber},
-        },
-        starterKit: {
-          ios: {marketingVersion: productionPlan.native.marketingVersion, buildNumber: starterKitBuildNumber},
-          android: {marketingVersion: productionPlan.native.marketingVersion, buildNumber: starterKitBuildNumber},
         },
       },
     },
@@ -180,8 +190,11 @@ function readJson(file) {
 function main() {
   const args = parseArgs(process.argv.slice(2))
   const betaManifestPath = path.resolve(args["beta-manifest"])
-  const previousManifest = readJson(args["previous-manifest"])
-  previousManifest.url = args["previous-manifest-url"]
+  let previousManifest = null
+  if (args["previous-manifest"] || args["previous-manifest-url"]) {
+    previousManifest = readJson(args["previous-manifest"])
+    previousManifest.url = args["previous-manifest-url"]
+  }
   const result = prepareProductionPromotion({
     family: loadReleaseFamily({rootDir: path.resolve(args.root || process.cwd()), requireVersionMirrors: true}),
     betaPlan: readJson(args["beta-plan"]),
@@ -190,8 +203,6 @@ function main() {
     betaManifestSha256: sha256File(betaManifestPath),
     previousManifest,
     mentraInventory: readJson(args["mentra-inventory"]),
-    starterKitInventory: readJson(args["starter-kit-inventory"]),
-    starterKitCommit: args["starter-kit-commit"],
     attempt: Number(args.attempt),
     actor: args.actor,
     createdAt: args["created-at"],

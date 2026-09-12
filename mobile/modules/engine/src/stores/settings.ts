@@ -1,4 +1,5 @@
 import {getTimeZone} from "react-native-localize"
+import {useCallback} from "react"
 import {AsyncResult, result as Res, Result} from "typesafe-ts"
 import {create} from "zustand"
 import {subscribeWithSelector} from "zustand/middleware"
@@ -172,6 +173,36 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: false,
     persist: true,
   },
+  // Select firmware-owned presentation instead of the Mentra card. Notify still
+  // controls whether presentation is running on either phone platform.
+  native_notifications_enabled: {
+    key: "native_notifications_enabled",
+    defaultValue: () => false,
+    writable: true,
+    saveOnServer: false,
+    persist: true,
+  },
+  native_notifications_auto_display: {
+    key: "native_notifications_auto_display",
+    defaultValue: () => true,
+    writable: true,
+    saveOnServer: false,
+    persist: true,
+  },
+  native_notifications_duration: {
+    key: "native_notifications_duration",
+    defaultValue: () => 5,
+    writable: true,
+    saveOnServer: false,
+    persist: true,
+  },
+  native_notifications_do_not_disturb: {
+    key: "native_notifications_do_not_disturb",
+    defaultValue: () => false,
+    writable: true,
+    saveOnServer: false,
+    persist: true,
+  },
   china_deployment: {
     key: "china_deployment",
     defaultValue: () => (process.env.EXPO_PUBLIC_DEPLOYMENT_REGION === "china" ? true : false),
@@ -204,6 +235,14 @@ export const SETTINGS: Record<string, Setting> = {
   },
   cloud_runtime_url: {
     key: "cloud_runtime_url",
+    defaultValue: () => "",
+    writable: true,
+    saveOnServer: false,
+    persist: true,
+    resetOnBuildEnvChange: true,
+  },
+  cloud_url_deployment: {
+    key: "cloud_url_deployment",
     defaultValue: () => "",
     writable: true,
     saveOnServer: false,
@@ -425,10 +464,10 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: true,
     persist: true,
   },
-  // Mentra Live center-mic loudness / "Barrier" gate (cs_swit type 10). Default on.
+  // Mentra Live center-mic loudness / "Barrier" gate (cs_swit type 10). Opt-in.
   loudness_gate_enabled: {
     key: "loudness_gate_enabled",
-    defaultValue: () => true,
+    defaultValue: () => false,
     writable: true,
     saveOnServer: true,
     persist: true,
@@ -807,13 +846,10 @@ export interface SettingsState {
 }
 
 const getDefaultSettings = () =>
-  Object.keys(SETTINGS).reduce(
-    (acc, key) => {
-      acc[key] = SETTINGS[key].defaultValue()
-      return acc
-    },
-    {} as Record<string, any>,
-  )
+  Object.keys(SETTINGS).reduce((acc, key) => {
+    acc[key] = SETTINGS[key].defaultValue()
+    return acc
+  }, {} as Record<string, any>)
 
 // Single-flight for loadAllSettings: the host fires it at module load and
 // engine.start()'s device-store hydration awaits it — without the memo the
@@ -915,12 +951,13 @@ export const useSettingsStore = create<SettingsState>()(
         }
         // console.log("SETTINGS: SET MANY LOCALLY: ", settingsToLoad)
 
-        set((state) => ({
-          settings: {...state.settings, ...settingsToLoad},
-        }))
-
-        // save to storage:
-        await Promise.all(Object.entries(settingsToLoad).map(([key, value]) => storage.save(key, value)))
+        // MMKV writes are synchronous Results, not rejecting Promises. Check
+        // each result before publishing the new in-memory settings.
+        for (const [key, value] of Object.entries(settingsToLoad)) {
+          const saved = storage.save(key, value)
+          if (saved.is_error()) throw saved.error
+        }
+        set((state) => ({settings: {...state.settings, ...settingsToLoad}}))
       })
     },
     // loads any preferences that have been changed from the default and saved to DISK!
@@ -1063,6 +1100,21 @@ export const useSettingsStore = create<SettingsState>()(
           }
         }
 
+        // Reset existing installs once; later user/app opt-ins remain available.
+        const LOUDNESS_GATE_MIGRATION_KEY = "migration:loudness_gate_default_off_v1"
+        const loudnessGateMigrationDone = storage.load<boolean>(LOUDNESS_GATE_MIGRATION_KEY)
+        if (loudnessGateMigrationDone.is_error() || !loudnessGateMigrationDone.value) {
+          // updateServer: true, matching the android_blur / camera_fov migrations. The flag is
+          // inert until the Cloud V2 settings sync lands, but this setting is saveOnServer, so
+          // the intent recorded here is the one that should carry over.
+          const result = await get().setSetting(SETTINGS.loudness_gate_enabled.key, false, true)
+          if (result.is_error()) {
+            console.log("SETTINGS: loudness gate migration failed:", result.error)
+          } else {
+            storage.save(LOUDNESS_GATE_MIGRATION_KEY, true)
+          }
+        }
+
         const NOTIFICATION_LISTENER_MIGRATION_KEY = "migration:android_notification_listener_default_on_v1"
         const notificationListenerMigrationDone = storage.load<boolean>(NOTIFICATION_LISTENER_MIGRATION_KEY)
         if (notificationListenerMigrationDone.is_error() || !notificationListenerMigrationDone.value) {
@@ -1165,5 +1217,6 @@ export const useSettingsStore = create<SettingsState>()(
 export const useSetting = <T = any>(key: string): [T, (value: T) => AsyncResult<void, Error>] => {
   const value = useSettingsStore((state) => state.getSetting(key))
   const setSetting = useSettingsStore((state) => state.setSetting)
-  return [value, (newValue: T) => setSetting(key, newValue)]
+  const setValue = useCallback((newValue: T) => setSetting(key, newValue), [key, setSetting])
+  return [value, setValue]
 }

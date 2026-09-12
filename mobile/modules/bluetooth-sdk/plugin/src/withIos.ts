@@ -5,10 +5,12 @@ import path from "path"
 import {IOSConfig, type ConfigPlugin, withDangerousMod, withInfoPlist, withPodfile} from "expo/config-plugins"
 
 import {type BluetoothSdkPluginProps} from "./index"
+import {resolveAnalyticsProps} from "./analyticsProps"
 
 const BLUETOOTH_SDK_EXPO_ADAPTER_ENV = "MENTRA_BLUETOOTH_SDK_INCLUDE_EXPO_ADAPTER"
 const BLUETOOTH_SDK_EXPO_ADAPTER_LINE = `ENV['${BLUETOOTH_SDK_EXPO_ADAPTER_ENV}'] ||= '1'`
 const INFO_ANALYTICS_DISABLED = "MentraBluetoothSdkAnalyticsDisabled"
+export const INFO_ANALYTICS_ENVIRONMENT = "MentraBluetoothSdkAnalyticsEnvironment"
 export const INFO_SDK_VERSION = "MentraBluetoothSdkVersion"
 const STALE_INFO_POSTHOG_API_KEY = "MentraBluetoothSdkPostHogApiKey"
 const STALE_INFO_POSTHOG_HOST = "MentraBluetoothSdkPostHogHost"
@@ -60,22 +62,6 @@ const withXcodeEnvLocal: ConfigPlugin = (config) => {
   ])
 }
 
-function resolveAnalyticsProps(props: BluetoothSdkPluginProps | undefined) {
-  const analytics = props?.analytics
-  let disabled: boolean | undefined
-  if (analytics === false) {
-    disabled = true
-  } else if (analytics === true) {
-    disabled = false
-  } else if (typeof analytics === "object" && analytics.enabled !== undefined) {
-    disabled = !analytics.enabled
-  }
-
-  return {
-    disabled,
-  }
-}
-
 export function applyBluetoothSdkInfoPlist(
   infoPlist: IOSConfig.InfoPlist,
   props: BluetoothSdkPluginProps | undefined,
@@ -89,12 +75,16 @@ export function applyBluetoothSdkInfoPlist(
   const analytics = resolveAnalyticsProps(props)
 
   delete infoPlist[INFO_ANALYTICS_DISABLED]
+  delete infoPlist[INFO_ANALYTICS_ENVIRONMENT]
   delete infoPlist[STALE_INFO_POSTHOG_API_KEY]
   delete infoPlist[STALE_INFO_POSTHOG_HOST]
 
   infoPlist[INFO_SDK_VERSION] = sdkVersion
   if (analytics.disabled !== undefined) {
     infoPlist[INFO_ANALYTICS_DISABLED] = analytics.disabled
+  }
+  if (analytics.environment !== undefined) {
+    infoPlist[INFO_ANALYTICS_ENVIRONMENT] = analytics.environment
   }
 
   return infoPlist

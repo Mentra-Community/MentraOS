@@ -1,15 +1,12 @@
 /// <reference types="bun-types" />
 
-import {beforeEach, describe, expect, mock, test} from "bun:test"
+import {afterAll, beforeEach, describe, expect, mock, test} from "bun:test"
 
 const mockUpdateBluetoothSettings = mock(() => Promise.resolve())
 
-mock.module("@mentra/bluetooth-sdk/internal", () => ({
-  __esModule: true,
-  default: {
-    updateBluetoothSettings: mockUpdateBluetoothSettings,
-  },
-}))
+import {bluetoothSdk} from "./bluetoothSdkTestMock"
+
+bluetoothSdk.updateBluetoothSettings = mockUpdateBluetoothSettings
 
 // Import AFTER the mock is registered
 const MicStateCoordinator = require("../MicStateCoordinator").default
@@ -19,6 +16,7 @@ const flushMicWrite = () => new Promise((r) => setTimeout(r, 320))
 
 describe("MicStateCoordinator", () => {
   beforeEach(async () => {
+    bluetoothSdk.updateBluetoothSettings = mockUpdateBluetoothSettings
     for (const packageName of ["com.a", "com.b", "com.voice"]) {
       MicStateCoordinator.clearMiniappGateOverrides(packageName)
     }
@@ -244,6 +242,101 @@ describe("MicStateCoordinator", () => {
     )
   })
 
+  /**
+   * A call's microphone claim and a miniapp's are separate lifetimes on purpose.
+   *
+   * The call miniapp never subscribes to `audio_chunk`, so without its own flag the ACS uplink
+   * would depend on some *other* miniapp happening to want PCM — and a captions miniapp stopping
+   * mid-meeting would take the wearer's voice off the call with it.
+   */
+  test("a call claim turns raw PCM on with VAD off, the same as a local one", async () => {
+    MicStateCoordinator.setCallRequirement(true)
+    await flushMicWrite()
+
+    expect(mockUpdateBluetoothSettings).toHaveBeenLastCalledWith(
+      expect.objectContaining({
+        should_send_pcm: true,
+        should_send_lc3: false,
+        voice_activity_detection_enabled: false,
+      }),
+    )
+    MicStateCoordinator.setCallRequirement(false)
+    await flushMicWrite()
+  })
+
+  test("releasing the call claim leaves a miniapp's PCM subscription running", async () => {
+    MicStateCoordinator.setLocalRequirements({pcm: true, lc3: false, vadEnabled: true})
+    MicStateCoordinator.setCallRequirement(true)
+    await flushMicWrite()
+    mockUpdateBluetoothSettings.mockClear()
+
+    MicStateCoordinator.setCallRequirement(false)
+    await flushMicWrite()
+
+    expect(mockUpdateBluetoothSettings).toHaveBeenLastCalledWith(
+      expect.objectContaining({should_send_pcm: true, voice_activity_detection_enabled: false}),
+    )
+    MicStateCoordinator.setLocalRequirements({pcm: false, lc3: false})
+    await flushMicWrite()
+  })
+
+  test("a miniapp unsubscribing mid-call does not take the microphone with it", async () => {
+    MicStateCoordinator.setLocalRequirements({pcm: true, lc3: false, vadEnabled: true})
+    MicStateCoordinator.setCallRequirement(true)
+    await flushMicWrite()
+    mockUpdateBluetoothSettings.mockClear()
+
+    MicStateCoordinator.setLocalRequirements({pcm: false, lc3: false, vadEnabled: true})
+    await flushMicWrite()
+
+    expect(mockUpdateBluetoothSettings).toHaveBeenLastCalledWith(
+      expect.objectContaining({should_send_pcm: true, voice_activity_detection_enabled: false}),
+    )
+    MicStateCoordinator.setCallRequirement(false)
+    await flushMicWrite()
+  })
+
+  test("both claims released turns raw PCM off and restores the VAD preference", async () => {
+    MicStateCoordinator.setLocalRequirements({pcm: true, lc3: false, vadEnabled: true})
+    MicStateCoordinator.setCallRequirement(true)
+    await flushMicWrite()
+
+    MicStateCoordinator.setCallRequirement(false)
+    MicStateCoordinator.setLocalRequirements({pcm: false, lc3: false, vadEnabled: true})
+    await flushMicWrite()
+
+    expect(mockUpdateBluetoothSettings).toHaveBeenLastCalledWith(
+      expect.objectContaining({should_send_pcm: false, voice_activity_detection_enabled: true}),
+    )
+  })
+
+  test("a call claim keeps VAD off through a settings replay", async () => {
+    // Hardware VAD drops silence, which on a call is heard as clipped first syllables.
+    MicStateCoordinator.setCallRequirement(true)
+
+    expect(
+      MicStateCoordinator.applyRuntimeOverrides({
+        brightness: 50,
+        voice_activity_detection_enabled: true,
+      }),
+    ).toEqual({brightness: 50, voice_activity_detection_enabled: false})
+
+    MicStateCoordinator.setCallRequirement(false)
+    await flushMicWrite()
+  })
+
+  test("reset clears a call claim that a crashed call would otherwise leave behind", async () => {
+    MicStateCoordinator.setCallRequirement(true)
+    await flushMicWrite()
+
+    MicStateCoordinator.reset()
+    await flushMicWrite()
+
+    expect(mockUpdateBluetoothSettings).toHaveBeenLastCalledWith(
+      expect.objectContaining({should_send_pcm: false}),
+    )
+  })
+
   test("raw PCM keeps VAD disabled over a miniapp override", async () => {
     MicStateCoordinator.setLocalRequirements({pcm: true, lc3: false, vadEnabled: true})
     await MicStateCoordinator.setMiniappGateOverride("com.voice", "vad", true)
@@ -258,5 +351,14 @@ describe("MicStateCoordinator", () => {
     ).toEqual({
       voice_activity_detection_enabled: false,
     })
+  })
+})
+
+afterAll(() => {
+  MicStateCoordinator.setLocalRequirements({
+    pcm: false,
+    lc3: false,
+    vadEnabled: true,
+    loudnessGateEnabled: true,
   })
 })

@@ -22,6 +22,7 @@ import {Transport} from "./transport/types"
 import {CameraModule} from "./modules/camera"
 import {AuthModule} from "./modules/auth"
 import {CloudModule} from "./modules/cloud"
+import {ConfigurationModule} from "./modules/configuration"
 import {DashboardAPI} from "./modules/dashboard"
 import {DisplayManager} from "./modules/display"
 import {EventManager, type TranscriptionEventRoute, type UnsubscribeFn} from "./modules/events"
@@ -45,6 +46,13 @@ import {SystemModule} from "./modules/system"
 import {MiniappsModule} from "./modules/miniapps"
 import {ActionsModule} from "./modules/actions"
 import {BlobModule} from "./modules/blob"
+import {
+  MeetingModule,
+  parseMeetingCapabilities,
+  parseMeetingMediaSource,
+  parseMeetingParticipants,
+  parseMeetingSoftApProgress,
+} from "./modules/meeting"
 
 // ---------------------------------------------------------------------------
 // Public types
@@ -105,6 +113,15 @@ export interface ConnectAckPayload {
   permissions?: PermissionRecord
   /** Miniapp-scoped backend auth. Never a Core or runtime token. */
   auth?: MiniappAuthState
+  /** Optional read-only configuration supplied to this exact package by the host. */
+  configuration?: Readonly<Record<string, string>>
+  /** Host-advertised optional features. Absent on older Mentra Apps. */
+  hostFeatures?: HostFeatures
+}
+
+export interface HostFeatures {
+  /** Host honors `startStream({captureAudio})` for the lifetime of a WHIP session. */
+  captureAudio?: boolean
 }
 
 export interface MiniappAuthState {
@@ -193,6 +210,7 @@ type SessionEmitterEvents = {
   colorScheme: (scheme: MiniappColorScheme) => void
   permissions: (perms: PermissionRecord) => void
   speakerState: (event: import("./modules/speaker").SpeakerStateEvent) => void
+  meetingState: (event: import("./modules/meeting").MeetingState) => void
   auth: (auth: MiniappAuthState) => void
 }
 
@@ -202,6 +220,7 @@ type SessionEmitterEvents = {
 
 export class MiniappSession<TChannels extends object = any> {
   public readonly auth: AuthModule
+  public readonly configuration: ConfigurationModule
   public readonly display: DisplayManager
   /**
    * Internal subscription registry + escape hatch.
@@ -213,6 +232,7 @@ export class MiniappSession<TChannels extends object = any> {
    */
   public readonly events: EventManager
   public readonly speaker: SpeakerModule
+  public readonly meeting: MeetingModule
   public readonly camera: CameraModule
   public readonly cloud: CloudModule
   public readonly dashboard: DashboardAPI
@@ -258,6 +278,11 @@ export class MiniappSession<TChannels extends object = any> {
 
   /** Phone-declared glasses capabilities. Null until CONNECT_ACK arrives. */
   public capabilities: GlassesCapabilities | null = null
+  /**
+   * Host-advertised optional features. Null until CONNECT_ACK. Older Mentra Apps
+   * omit this, so miniapps must not assume `captureAudio` is honored.
+   */
+  public hostFeatures: HostFeatures | null = null
   public userId = ""
   public packageName = ""
   public visibility: MiniappVisibility = "foreground"
@@ -271,6 +296,7 @@ export class MiniappSession<TChannels extends object = any> {
   private readonly connectTimeoutMs: number
   private readonly emitter = new EventEmitter<SessionEmitterEvents>()
   private authState: MiniappAuthState | null = null
+  private configurationState: Readonly<Record<string, string>> = {}
   private readonly authWaiters = new Set<{
     minTtlMs: number
     resolve: (auth: MiniappAuthState) => void
@@ -308,8 +334,10 @@ export class MiniappSession<TChannels extends object = any> {
     }
 
     this.auth = new AuthModule(this)
+    this.configuration = new ConfigurationModule(this)
     this.events = new EventManager(this)
     this.speaker = new SpeakerModule(this)
+    this.meeting = new MeetingModule(this)
     this.camera = new CameraModule(this)
     this.cloud = new CloudModule(this)
     this.dashboard = new DashboardAPI(this)
@@ -363,6 +391,11 @@ export class MiniappSession<TChannels extends object = any> {
   /** @internal — current miniapp-scoped backend auth, if the host provided one. */
   _getAuth(): MiniappAuthState | null {
     return this.authState ? {...this.authState} : null
+  }
+
+  /** @internal — immutable package configuration received in CONNECT_ACK. */
+  _getConfiguration(): Readonly<Record<string, string>> {
+    return {...this.configurationState}
   }
 
   /**
@@ -621,6 +654,7 @@ export class MiniappSession<TChannels extends object = any> {
         this.userId = ack.userId ?? ""
         if (ack.packageName) this.packageName = ack.packageName
         this.capabilities = ack.capabilities ?? null
+        this.hostFeatures = ack.hostFeatures ?? null
         if (ack.visibility) this.visibility = ack.visibility
         if (ack.colorScheme === "light" || ack.colorScheme === "dark") {
           this.colorScheme = ack.colorScheme
@@ -629,6 +663,7 @@ export class MiniappSession<TChannels extends object = any> {
           this.applyAuth(ack.auth)
           if (!this.userId) this.userId = ack.auth.mentraUserId
         }
+        this.configurationState = Object.freeze({...ack.configuration})
         // Populate the manifest-declared permission cache. Older runtimes
         // that don't send `permissions` leave the all-false default in place
         // — `hasPermission` getters will simply return false.
@@ -666,6 +701,29 @@ export class MiniappSession<TChannels extends object = any> {
         }
         this.speaker._applyState(event)
         this.emitter.emit("speakerState", event)
+        return
+      }
+
+      case MiniappResponseType.MEETING_STATE: {
+        const state = payload.state as import("./modules/meeting").MeetingPhase | undefined
+        if (!state) return
+        const event: import("./modules/meeting").MeetingState = {
+          state,
+          muted: Boolean(payload.muted),
+          error: payload.error as string | undefined,
+          meetingUrl: payload.meetingUrl as string | undefined,
+          provider: payload.provider as import("./modules/meeting").MeetingProvider | undefined,
+          audioSource: payload.audioSource as import("./modules/meeting").MeetingState["audioSource"],
+          audioSourceReason: payload.audioSourceReason as import("./modules/meeting").MeetingState["audioSourceReason"],
+          activeStream: payload.activeStream as import("./modules/meeting").MeetingState["activeStream"],
+          audioSafety: payload.audioSafety as import("./modules/meeting").MeetingState["audioSafety"],
+          mediaSource: parseMeetingMediaSource(payload.mediaSource),
+          participants: parseMeetingParticipants(payload.participants),
+          capabilities: parseMeetingCapabilities(payload.capabilities),
+          softap: parseMeetingSoftApProgress(payload.softap),
+        }
+        this.meeting._applyState(event)
+        this.emitter.emit("meetingState", event)
         return
       }
 

@@ -1,8 +1,15 @@
 /// <reference types="bun-types" />
 
-import React from "react"
+import {createRequire} from "node:module"
+
 import TestRenderer, {act} from "react-test-renderer"
 import {beforeEach, describe, expect, mock, test} from "bun:test"
+
+// Engine is a workspace member of both mobile/ and sdk/, so a bare `react`
+// import here is the sdk copy while react-test-renderer binds the mobile copy.
+// Load the hook against the renderer's React or every hook throws.
+const rendererRequire = createRequire(require.resolve("react-test-renderer"))
+mock.module("react", () => rendererRequire("react"))
 
 import type {OtaInstallSnapshot} from "../../services/OtaInstallCoordinator"
 import type {OtaCheckCurrentGlassesResult} from "../../services/OtaUpdateCheckService"
@@ -61,6 +68,7 @@ let installSnapshot: OtaInstallSnapshot = {
   versionChangePhase: null,
   hotspotPhase: "downloading" as const,
   hotspotArtifactPercent: 45,
+  hotspotArtifact: {kind: "mtk", index: 1, totalCount: 3, artifactPercent: 45, bytesWritten: 45, contentLength: 100},
   transport: "hotspot" as const,
 }
 
@@ -142,7 +150,9 @@ mock.module("../../services/OtaAutoChain", () => ({
 }))
 mock.module("../../services/OtaErrorMapping", () => ({
   BES_INSTALL_RESTART_MESSAGE: "Restart the glasses",
-  getOtaErrorMessage: (error?: string) => error || "Install failed",
+  OTA_ERROR_BES_RESTART_REQUIRED_COPY_KEY: "ota:errorBesRestartRequired",
+  getOtaErrorMessage: (error?: string | null) => (error ? `mapped:${error}` : "Install failed"),
+  otaErrorCopyKey: (error?: string | null) => (error ? `ota:key:${error}` : "ota:errorGeneric"),
   shouldRequireGlassesRebootForBesFailure: () => false,
   shouldShowChangeWifiForOtaDownloadFailure: () => false,
 }))
@@ -201,8 +211,31 @@ describe("useMentraLiveOta", () => {
       versionChangePhase: null,
       hotspotPhase: "downloading",
       hotspotArtifactPercent: 45,
+      hotspotArtifact: {
+        kind: "mtk",
+        index: 1,
+        totalCount: 3,
+        artifactPercent: 45,
+        bytesWritten: 45,
+        contentLength: 100,
+      },
       transport: "hotspot",
     }
+  })
+
+  test("reports no artifact while runtime initialization is pending", async () => {
+    fakeOta.initialize.mockImplementationOnce(() => new Promise<void>(() => {}))
+    function InitializingProbe() {
+      latestController = useMentraLiveOta({initializeRuntime: true})
+      return null
+    }
+    let renderer: TestRenderer.ReactTestRenderer
+    await act(async () => {
+      renderer = TestRenderer.create(<InitializingProbe />)
+    })
+    expect(latestController.state.screen).toBe("initializing")
+    expect(latestController.state.hotspotArtifact).toBeNull()
+    await act(async () => renderer!.unmount())
   })
 
   test("projects hotspot staging and unified install progress without exposing stores", async () => {
@@ -214,6 +247,7 @@ describe("useMentraLiveOta", () => {
       hotspotPhase: "downloading",
       hotspotArtifactPercent: 45,
     })
+    expect(latestController.state.hotspotArtifact).toEqual({kind: "mtk", index: 1, totalCount: 3})
 
     installSnapshot = {
       ...installSnapshot,
@@ -255,10 +289,46 @@ describe("useMentraLiveOta", () => {
     expect(latestController.state).toMatchObject({
       screen: "failed",
       canRetry: true,
-      error: {code: "install_failed", message: "Network lost"},
+      // Phone-side watchdog copy is English-only: no copy key, and no glasses code to show.
+      error: {code: "install_failed", message: "Network lost", copyKey: null, glassesCode: null},
     })
     latestController.retryInstall()
     expect(retry).toHaveBeenCalledTimes(1)
+    await act(async () => renderer.unmount())
+  })
+
+  test("maps a glasses failure code to copy and keeps the raw code for support", async () => {
+    const renderer = await renderProbe()
+    installSnapshot = {
+      ...installSnapshot,
+      displayState: "failed",
+      errorMsg: "",
+      otaStatus: {
+        sessionId: "s1",
+        totalSteps: 1,
+        currentStep: 1,
+        stepType: "apk",
+        phase: "install",
+        stepPercent: 0,
+        overallPercent: 0,
+        status: "failed",
+        error: "downgrade_handoff_failed",
+      },
+    }
+    await act(async () => {
+      installListeners.forEach((listener) => listener())
+    })
+
+    expect(latestController.state).toMatchObject({
+      screen: "failed",
+      canRetry: true,
+      error: {
+        code: "install_failed",
+        message: "mapped:downgrade_handoff_failed",
+        copyKey: "ota:key:downgrade_handoff_failed",
+        glassesCode: "downgrade_handoff_failed",
+      },
+    })
     await act(async () => renderer.unmount())
   })
 
@@ -285,6 +355,7 @@ describe("useMentraLiveOta", () => {
 
   test("treats an active pass completion as a continuation check", async () => {
     const renderer = await renderProbe("check")
+    expect(latestController.state.hotspotArtifact).toBeNull()
     await act(async () => {
       await new Promise((resolve) => setTimeout(resolve, 1_150))
     })

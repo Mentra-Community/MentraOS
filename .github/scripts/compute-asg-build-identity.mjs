@@ -12,6 +12,19 @@ const BUILD_INPUT_PATHS = [
 ]
 const EXCLUDED_PREFIXES = ["asg_client/ota_manifests/"]
 const BUILD_CONTRACT = {androidBuildVariant: "release", javaVersion: "17"}
+// The ASG client is named after the family base version (root package.json),
+// never after the beta or dev identity that first built it: every coordinated
+// release of one family, and the production release promoted from it, ship an
+// ASG client whose versionName is that plain X.Y.Z. The name is part of the
+// build fingerprint because it is baked into the APK.
+const BASE_VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/
+
+export function requireAsgVersionName(versionName) {
+  if (typeof versionName !== "string" || !BASE_VERSION_PATTERN.test(versionName)) {
+    throw new Error(`ASG versionName ${JSON.stringify(versionName)} must be the plain X.Y.Z family base version`)
+  }
+  return versionName
+}
 
 function canonicalize(value) {
   if (Array.isArray(value)) return value.map(canonicalize)
@@ -25,8 +38,14 @@ function canonicalize(value) {
   return value
 }
 
-export function computeAsgBuildFingerprint({entries, latestInputCommitTimestamp, contract = BUILD_CONTRACT}) {
+export function computeAsgBuildFingerprint({
+  entries,
+  latestInputCommitTimestamp,
+  versionName,
+  contract = BUILD_CONTRACT,
+}) {
   if (!Array.isArray(entries) || entries.length === 0) throw new Error("ASG build inputs must not be empty")
+  requireAsgVersionName(versionName)
   if (!Number.isSafeInteger(latestInputCommitTimestamp) || latestInputCommitTimestamp <= 0) {
     throw new Error("latestInputCommitTimestamp must be a positive integer")
   }
@@ -38,7 +57,7 @@ export function computeAsgBuildFingerprint({entries, latestInputCommitTimestamp,
       return {mode, object, path: entryPath}
     })
     .sort((left, right) => left.path.localeCompare(right.path))
-  const payload = canonicalize({schemaVersion: 1, contract, entries: normalizedEntries})
+  const payload = canonicalize({schemaVersion: 1, contract, versionName, entries: normalizedEntries})
   const fingerprint = createHash("sha256")
     .update(`${JSON.stringify(payload)}\n`)
     .digest("hex")
@@ -47,6 +66,7 @@ export function computeAsgBuildFingerprint({entries, latestInputCommitTimestamp,
     fingerprint,
     latestInputCommitTimestamp,
     contract,
+    versionName,
     entries: normalizedEntries,
   }
 }
@@ -57,7 +77,12 @@ export function finalizeAsgBuildIdentity({buildFingerprint, versionCode, version
   if (!Number.isSafeInteger(versionCode) || versionCode <= 0 || versionCode > 2_100_000_000) {
     throw new Error(`Allocated ASG versionCode ${versionCode} is outside the Android-safe range`)
   }
-  if (!versionName) throw new Error("ASG versionName is required")
+  requireAsgVersionName(versionName)
+  if (versionName !== buildFingerprint.versionName) {
+    throw new Error(
+      `ASG versionName ${versionName} does not match the fingerprinted name ${buildFingerprint.versionName}`,
+    )
+  }
   return {
     ...buildFingerprint,
     versionCode,
@@ -67,9 +92,15 @@ export function finalizeAsgBuildIdentity({buildFingerprint, versionCode, version
   }
 }
 
-export function computeAsgBuildIdentity({entries, latestInputCommitTimestamp, versionCode, versionName, contract = BUILD_CONTRACT}) {
+export function computeAsgBuildIdentity({
+  entries,
+  latestInputCommitTimestamp,
+  versionCode,
+  versionName,
+  contract = BUILD_CONTRACT,
+}) {
   return finalizeAsgBuildIdentity({
-    buildFingerprint: computeAsgBuildFingerprint({entries, latestInputCommitTimestamp, contract}),
+    buildFingerprint: computeAsgBuildFingerprint({entries, latestInputCommitTimestamp, versionName, contract}),
     versionCode,
     versionName,
   })
@@ -79,8 +110,9 @@ function git(repoRoot, args) {
   return execFileSync("git", args, {cwd: repoRoot, encoding: "utf8"}).trim()
 }
 
-export function computeAsgBuildFingerprintFromGit({repoRoot, sourceCommit}) {
+export function computeAsgBuildFingerprintFromGit({repoRoot, sourceCommit, versionName}) {
   if (!/^[0-9a-f]{40}$/.test(sourceCommit)) throw new Error("sourceCommit must be a full lowercase Git SHA")
+  requireAsgVersionName(versionName)
   const tree = git(repoRoot, ["ls-tree", "-r", sourceCommit, "--", ...BUILD_INPUT_PATHS])
   const entries = tree
     .split("\n")
@@ -102,7 +134,7 @@ export function computeAsgBuildFingerprintFromGit({repoRoot, sourceCommit}) {
       ...EXCLUDED_PREFIXES.map((prefix) => `:(exclude)${prefix}**`),
     ]),
   )
-  return computeAsgBuildFingerprint({entries, latestInputCommitTimestamp})
+  return computeAsgBuildFingerprint({entries, latestInputCommitTimestamp, versionName})
 }
 
 function parseArgs(args) {
@@ -121,7 +153,11 @@ function main() {
   const repoRoot = path.resolve(args["repo-root"] || process.cwd())
   const sourceCommit = args["source-commit"] || git(repoRoot, ["rev-parse", "HEAD"])
   const output = path.resolve(repoRoot, args.output || "asg-build-identity.json")
-  const buildFingerprint = computeAsgBuildFingerprintFromGit({repoRoot, sourceCommit})
+  const buildFingerprint = computeAsgBuildFingerprintFromGit({
+    repoRoot,
+    sourceCommit,
+    versionName: args["version-name"],
+  })
   const identity = args["version-code"]
     ? finalizeAsgBuildIdentity({
         buildFingerprint,

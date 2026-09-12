@@ -3,7 +3,6 @@ package com.mentra.bluetoothsdk
 import java.net.HttpURLConnection
 import java.net.URI
 import java.net.URL
-import org.json.JSONArray
 import org.json.JSONObject
 
 internal object OtaManifestDefaults {
@@ -24,7 +23,12 @@ internal object OtaManifestDefaults {
 }
 
 internal object OtaManifestChecker {
-    private const val ASG_CLIENT_PACKAGE = "com.mentra.asg_client"
+    /**
+     * Package the stock Mentra glasses client installs as, and the key every apps-shaped manifest
+     * is pinned under. A client reporting any other package is a sideloaded build that this
+     * manifest cannot describe.
+     */
+    internal const val ASG_CLIENT_PACKAGE = "com.mentra.asg_client"
 
     fun normalizeHttpUrl(value: String): String {
         val trimmed = value.trim()
@@ -68,18 +72,19 @@ internal object OtaManifestChecker {
         currentMtkVersion: String,
         currentBesVersion: String,
         manifest: JSONObject,
-        // Downgrade floor: a non-positive value (the default) disables downgrades entirely,
-        // matching ASG's fail-closed DowngradeGate and the engine. OEM SDK consumers that do
-        // not set a floor therefore get upgrade-only behavior and are never told a downgrade is
-        // available that the glasses would refuse.
-        downgradeFloorVersionCode: Long = 0L,
+        // Mentra 3.0 is the oldest downgrade-safe target, matching Engine, ASG, and recovery.
+        // Coordinated releases guarantee higher supported ASG builds can downgrade; no source gate is needed.
+        // The shipped floor may increase, never decrease, and must stay aligned across all checkers.
+        // See asg_client/docs/mentra-live-spec.md#ota-and-updates.
+        // An explicit non-positive override still disables downgrades.
+        downgradeFloorVersionCode: Long = 51518114L,
     ): Boolean =
         hasApkUpdate(currentBuildNumber, manifest, downgradeFloorVersionCode) ||
-            hasMtkUpdate(manifest.optJSONArray("mtk_patches"), currentMtkVersion) ||
+            hasMtkUpdate(manifest, currentMtkVersion) ||
             hasBesUpdate(manifest.optJSONObject("bes_firmware"), currentBesVersion)
 
     fun hasMtkPatches(manifest: JSONObject): Boolean =
-        (manifest.optJSONArray("mtk_patches")?.length() ?: 0) > 0
+        (manifest.optJSONArray("mtk_patches")?.length() ?: 0) > 0 || manifest.optJSONObject("mtk_full_ota") != null
 
     fun hasBesFirmware(manifest: JSONObject): Boolean =
         manifest.optJSONObject("bes_firmware") != null
@@ -144,18 +149,28 @@ internal object OtaManifestChecker {
         return downgradeFloorVersionCode > 0 && serverVersion >= downgradeFloorVersionCode
     }
 
-    private fun hasMtkUpdate(patches: JSONArray?, currentVersion: String): Boolean {
-        if (patches == null || patches.length() == 0) return false
+    private fun hasMtkUpdate(manifest: JSONObject, currentVersion: String): Boolean {
         if (currentVersion.isBlank()) return false
-
-        for (index in 0 until patches.length()) {
-            val patch = patches.optJSONObject(index) ?: continue
+        val current = currentVersion.trim().substringAfterLast('_')
+        val patches = manifest.optJSONArray("mtk_patches")
+        for (index in 0 until (patches?.length() ?: 0)) {
+            val patch = patches?.optJSONObject(index) ?: continue
             val startFirmware = patch.optString("start_firmware", "")
-            if (startFirmware == currentVersion) return true
-            val serverDate = if (startFirmware.contains("_")) startFirmware.substringAfterLast("_") else startFirmware
-            if (serverDate == currentVersion) return true
+            if (startFirmware.trim().substringAfterLast('_') == current) return true
         }
-        return false
+        val full = manifest.optJSONObject("mtk_full_ota") ?: return false
+        val target = (full.opt("end_firmware") as? String)?.trim()?.substringAfterLast('_') ?: return false
+        val pattern = Regex("[0-9]{8}(\\.[0-9]{1,9})?")
+        if (!pattern.matches(current) || !pattern.matches(target)) return false
+        val currentParts = current.split('.').map { it.toLong() }
+        val targetParts = target.split('.').map { it.toLong() }
+        val newer = targetParts[0] > currentParts[0] ||
+            (targetParts[0] == currentParts[0] && targetParts.getOrElse(1) { 0 } > currentParts.getOrElse(1) { 0 })
+        return newer && !full.has("start_firmware") &&
+            Regex("https?://[^/\\s]+/.*").matches(full.optString("url", "")) &&
+            Regex("[a-fA-F0-9]{64}").matches(full.optString("sha256", "")) &&
+            (full.opt("size") is Int || full.opt("size") is Long) &&
+            full.optLong("size", 0) in 1..(1024L * 1024 * 1024)
     }
 
     private fun hasBesUpdate(besFirmware: JSONObject?, currentVersion: String): Boolean {

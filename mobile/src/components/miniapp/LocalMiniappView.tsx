@@ -136,7 +136,10 @@ function LocalMiniappView({
       }
       mj.uiRouter.notifyReopen(packageName)
       if (probeBackground) {
-        mj.router.probeForegroundLiveness(packageName, reason)
+        // Returning from the Wi-Fi panel (or any system overlay) during a SoftAP join
+        // often takes the WebView longer than 2.5s to pong. Killing Mentra-Call then
+        // respawns it into a Cloudflare restore that tears the SoftAP listener down.
+        mj.router.probeForegroundLiveness(packageName, reason, reason === "app-active" ? 12_000 : undefined)
       }
     },
     [packageName],
@@ -270,8 +273,9 @@ function LocalMiniappView({
 
       setLabel(undefined)
       // Already-registered packages never throw from ensureRunning — a dropped
-      // dev server returns {uiUri: null} instead. Route those reopens to the
-      // offline recovery screen the same way as first-launch resolve failures.
+      // dev server with no on-disk snapshot returns {uiUri: null}. Route those
+      // reopens to the offline recovery screen. A prior live load leaves a
+      // snapshot, so this only hits when the miniapp was never opened live.
       if (devUrl && !result.uiUri) {
         console.warn(`LocalMiniappView: ${packageName} already running but UI unresolved, routing to dev-offline`)
         engine.miniapps.clearForeground()

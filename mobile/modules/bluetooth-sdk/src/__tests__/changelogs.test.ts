@@ -11,6 +11,6 @@ describe("getReleaseChangelogs", () => {
 
   it("rejects malformed and unauthored target versions", () => {
     expect(() => getReleaseChangelogs("old", "3.1.0")).toThrow(/fromVersion must be a semantic version/)
-    expect(() => getReleaseChangelogs("3.1.0", "3.2.0")).toThrow(/No changelog is bundled/)
+    expect(() => getReleaseChangelogs("3.1.0", "999999.0.0")).toThrow(/No changelog is bundled/)
   })
 })

@@ -3,7 +3,6 @@
 import {afterEach, beforeEach, describe, expect, mock, test} from "bun:test"
 
 // Mock module dependencies BEFORE importing the coordinator.
-const startStream = mock(async (_req: unknown) => {})
 const streamStatusFor = (req: unknown) => ({
   type: "stream_status",
   kind: "lifecycle",
@@ -11,13 +10,26 @@ const streamStatusFor = (req: unknown) => ({
   streamId: (req as {streamId?: string}).streamId,
   resolvedConfig: {audio: {sampleRate: 16_000}},
 })
-const startExternallyManagedStream = mock(async (req: unknown) => streamStatusFor(req))
+const startStream = mock(async (req: unknown) => streamStatusFor(req))
 const stopStream = mock(async () => {})
+const setCameraFovOverride = mock(async (request: {fov: number}) => ({
+  ...request,
+  roiPosition: "center",
+  requestId: "fov-ack",
+  timestamp: 1,
+}))
+const releaseCameraFovOverride = mock(async () => {})
 const sendExternallyManagedStreamKeepAlive = mock(async (_req: unknown) => {})
 
-mock.module("@mentra/bluetooth-sdk/internal", () => ({
-  default: {startStream, startExternallyManagedStream, stopStream, sendExternallyManagedStreamKeepAlive},
-}))
+import {bluetoothSdk} from "./bluetoothSdkTestMock"
+
+Object.assign(bluetoothSdk, {
+  startStream,
+  stopStream,
+  setCameraFovOverride,
+  releaseCameraFovOverride,
+  sendExternallyManagedStreamKeepAlive,
+})
 
 const provisionManagedStream = mock(async (_destinations?: unknown) => ({
   liveInputId: "cf-input-test",
@@ -45,20 +57,47 @@ mock.module("../cloudStreamApi", () => ({
 // isGlassesConnected. Mock both (the real store transitively drags react-native,
 // which bun can't parse) so the precheck passes deterministically.
 mock.module("../../stores/glasses", () => ({
-  useGlassesStore: {getState: () => ({connection: {state: "connected"}})},
+  useGlassesStore: {
+    getState: () => ({connection: {state: "connected"}}),
+    subscribe: () => () => {},
+  },
 }))
 mock.module("../GlassesReadiness", () => ({
   isGlassesConnected: () => true,
 }))
 
+mock.module("../utils/timers", () => ({
+  BgTimer: {
+    setInterval: (callback: () => void, delay: number) => setInterval(callback, delay) as unknown as number,
+    clearInterval: (intervalId: number) => clearInterval(intervalId),
+    setTimeout: (callback: () => void, delay: number) => setTimeout(callback, delay) as unknown as number,
+    clearTimeout: (timeoutId: number) => clearTimeout(timeoutId),
+  },
+}))
+mock.module("../../utils/timers", () => ({
+  BgTimer: {
+    setInterval: (callback: () => void, delay: number) => setInterval(callback, delay) as unknown as number,
+    clearInterval: (intervalId: number) => clearInterval(intervalId),
+    setTimeout: (callback: () => void, delay: number) => setTimeout(callback, delay) as unknown as number,
+    clearTimeout: (timeoutId: number) => clearTimeout(timeoutId),
+  },
+}))
 
 // Patch global fetch so the HLS readiness HEAD probe is deterministic.
 let hlsHeadResponder: () => Response = () => new Response(null, {status: 200})
 const realFetch = globalThis.fetch
 beforeEach(() => {
+  Object.assign(bluetoothSdk, {
+    startStream,
+    stopStream,
+    setCameraFovOverride,
+    releaseCameraFovOverride,
+    sendExternallyManagedStreamKeepAlive,
+  })
   startStream.mockClear()
-  startExternallyManagedStream.mockClear()
   stopStream.mockClear()
+  setCameraFovOverride.mockClear()
+  releaseCameraFovOverride.mockClear()
   sendExternallyManagedStreamKeepAlive.mockClear()
   provisionManagedStream.mockClear()
   getManagedStreamStatus.mockClear()
@@ -79,16 +118,290 @@ afterEach(() => {
   ;(globalThis as {fetch: typeof fetch}).fetch = realFetch
 })
 
-const {PhoneStreamCoordinator, StreamConflictError} = await import("../PhoneStreamCoordinator")
+const {PhoneStreamCoordinator, StreamConflictError, LINK_STATUS} = await import("../PhoneStreamCoordinator")
+const {PhoneCameraFovCoordinator} = await import("../PhoneCameraFovCoordinator")
+
+/** Drivable stand-in for the glasses store's BLE connection state. */
+function fakeLink(initial = true) {
+  let connected = initial
+  const listeners = new Set<(connected: boolean) => void>()
+  return {
+    source: {
+      isConnected: () => connected,
+      subscribe: (listener: (connected: boolean) => void) => {
+        listeners.add(listener)
+        return () => {
+          listeners.delete(listener)
+        }
+      },
+    },
+    listenerCount: () => listeners.size,
+    set(next: boolean) {
+      if (connected === next) return
+      connected = next
+      for (const listener of [...listeners]) listener(next)
+    },
+  }
+}
+
+const settle = (ms = 5) => new Promise((r) => setTimeout(r, ms))
 
 describe("PhoneStreamCoordinator", () => {
+  test("respawn waits for old capture cleanup, FOV restoration, and its new crop", async () => {
+    const fov = new PhoneCameraFovCoordinator()
+    const coord = new PhoneStreamCoordinator({}, {pendingCameraChanges: () => fov.whenSettled()})
+    await fov.setOverride("com.a", {fov: 82})
+    await coord.startUnmanaged("com.a", {streamUrl: "rtmp://x"})
+    startStream.mockImplementationOnce(async (request) => {
+      expect(releaseCameraFovOverride).toHaveBeenCalledTimes(1)
+      expect(fov.getDiagnosticSnapshot().owners).toMatchObject([{packageName: "com.a", fov: 102}])
+      return streamStatusFor(request)
+    })
+    let completeStop!: () => void
+    stopStream.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          completeStop = resolve
+        }),
+    )
+    const stopped = coord.stop("com.a")
+    const released = fov.releaseForApp("com.a", stopped)
+    const crop = fov.setOverride("com.a", {fov: 102})
+    const restarted = coord.startUnmanaged("com.a", {streamUrl: "rtmp://x"})
+    await settle()
+    expect(startStream).toHaveBeenCalledTimes(1)
+    expect(setCameraFovOverride).toHaveBeenCalledTimes(1)
+    expect(releaseCameraFovOverride).not.toHaveBeenCalled()
+
+    completeStop()
+    await Promise.all([released, crop, restarted])
+    expect(startStream).toHaveBeenCalledTimes(2)
+    expect(setCameraFovOverride.mock.calls[1]![0]).toMatchObject({fov: 102})
+    await coord.stop("com.a")
+    await fov.releaseForApp("com.a")
+  })
+
+  test("managed start waits for pending camera changes before provisioning", async () => {
+    let ready!: () => void
+    const barrier = new Promise<void>((resolve) => {
+      ready = resolve
+    })
+    const coord = new PhoneStreamCoordinator(
+      {hlsReadinessInitialDelayMs: 1, hlsReadinessPollMs: 1},
+      {pendingCameraChanges: () => barrier},
+    )
+    const started = coord.startManaged("com.a", {})
+    await settle()
+    expect(provisionManagedStream).not.toHaveBeenCalled()
+    expect(startStream).not.toHaveBeenCalled()
+    ready()
+    await started
+    await coord.stop("com.a")
+  })
+
+  test("start does not wait for a later FOV release that depends on its queued stop", async () => {
+    let barrier = Promise.resolve()
+    const coord = new PhoneStreamCoordinator({}, {pendingCameraChanges: () => barrier})
+    const started = coord.startUnmanaged("com.a", {streamUrl: "rtmp://x"})
+    const stopped = coord.stop("com.a")
+    barrier = stopped
+    await Promise.all([started, stopped])
+    expect(startStream).toHaveBeenCalledTimes(1)
+    expect(stopStream).toHaveBeenCalledTimes(1)
+  }, 1000)
+
+  describe("BLE link suspension", () => {
+    const timings = {
+      hlsReadinessInitialDelayMs: 5,
+      hlsReadinessPollMs: 5,
+      cloudflareStatusPollMs: 1000,
+      glassesGraceMs: 60,
+    }
+
+    test("link drop suspends without a JavaScript heartbeat watchdog", async () => {
+      const link = fakeLink()
+      const coord = new PhoneStreamCoordinator(timings, {linkSource: link.source})
+      const updates: Array<{status: string; data?: Record<string, unknown>}> = []
+      coord.setStatusSubscriber((_pkg, u) => updates.push({status: u.status, data: u.data}))
+      const {streamId} = await coord.startUnmanaged("com.a", {streamUrl: "rtmp://x"})
+      await settle(35)
+      expect(sendExternallyManagedStreamKeepAlive).not.toHaveBeenCalled()
+
+      link.set(false)
+      const sentAtSuspend = sendExternallyManagedStreamKeepAlive.mock.calls.length
+      await settle(35)
+
+      expect(coord.isSuspended()).toBe(true)
+      expect(coord.owns(streamId)).toBe(true)
+      expect(sendExternallyManagedStreamKeepAlive.mock.calls.length).toBe(sentAtSuspend)
+      const suspended = updates.find((u) => u.status === LINK_STATUS.suspended)
+      expect(suspended?.data).toMatchObject({reason: "glasses_disconnected", graceMs: 60})
+      expect(coord.getDiagnosticSnapshot()).toMatchObject({active: true, suspended: true})
+      link.set(true)
+      await coord.stop("com.a")
+    })
+
+    test("link back within grace resumes the SAME stream without heartbeats", async () => {
+      const link = fakeLink()
+      const coord = new PhoneStreamCoordinator({...timings, glassesGraceMs: 10_000}, {linkSource: link.source})
+      const updates: string[] = []
+      coord.setStatusSubscriber((_pkg, u) => updates.push(u.status))
+      const {streamId} = await coord.startUnmanaged("com.a", {streamUrl: "rtmp://x"})
+      expect(sendExternallyManagedStreamKeepAlive).not.toHaveBeenCalled()
+
+      link.set(false)
+      await settle()
+      link.set(true)
+      await settle()
+
+      expect(coord.isSuspended()).toBe(false)
+      expect(coord.owns(streamId)).toBe(true)
+      expect(updates).toEqual([LINK_STATUS.suspended, LINK_STATUS.resumed])
+      // Native receive callbacks own controller liveness; JS sends no heartbeat.
+      expect(sendExternallyManagedStreamKeepAlive).not.toHaveBeenCalled()
+      expect(stopStream).not.toHaveBeenCalled()
+      expect(startStream).toHaveBeenCalledTimes(1)
+      await coord.stop("com.a")
+    })
+
+    test("grace expiry tears down with glasses_disconnected and defers the BLE stop to reconnect", async () => {
+      const link = fakeLink()
+      const coord = new PhoneStreamCoordinator(timings, {linkSource: link.source})
+      const errors: Array<Record<string, unknown> | undefined> = []
+      coord.setStatusSubscriber((_pkg, u) => {
+        if (u.status === "error") errors.push(u.data)
+      })
+      const {streamId} = await coord.startUnmanaged("com.a", {streamUrl: "rtmp://x"})
+
+      link.set(false)
+      await settle(90)
+
+      expect(coord.owns(streamId)).toBe(false)
+      expect(errors).toHaveLength(1)
+      expect(errors[0]).toMatchObject({
+        reason: "glasses_disconnected",
+        teardownReason: "glasses_disconnected",
+        publisherGone: false,
+      })
+      // No BLE write while the link is down…
+      expect(stopStream).not.toHaveBeenCalled()
+      expect(coord.getDiagnosticSnapshot()).toMatchObject({active: false, pendingBleStop: streamId})
+      // …but the glasses get their stop as soon as the link returns.
+      link.set(true)
+      await settle()
+      expect(stopStream).toHaveBeenCalledTimes(1)
+      expect(coord.getDiagnosticSnapshot()).toMatchObject({active: false, pendingBleStop: null})
+      // Nothing left listening once the deferred stop is flushed.
+      expect(link.listenerCount()).toBe(0)
+    })
+
+    test("two consecutive Cloudflare 'publisher gone' probes end the grace early", async () => {
+      const link = fakeLink()
+      getManagedStreamStatus.mockImplementation(async () => ({isConnected: true, viewerCount: 0}))
+      const coord = new PhoneStreamCoordinator(
+        {...timings, cloudflareStatusPollMs: 10, glassesGraceMs: 10_000, suspendedPublisherGoneProbes: 2},
+        {linkSource: link.source},
+      )
+      const errors: Array<Record<string, unknown> | undefined> = []
+      coord.setStatusSubscriber((_pkg, u) => {
+        if (u.status === "error") errors.push(u.data)
+      })
+      const {streamId} = await coord.startManaged("com.a", {ingest: "whip"})
+
+      link.set(false)
+      // Glasses powered off: Cloudflare stops seeing the publisher.
+      getManagedStreamStatus.mockImplementation(async () => ({isConnected: false, viewerCount: 0}))
+      await settle(60)
+
+      expect(coord.owns(streamId)).toBe(false)
+      expect(errors.at(-1)).toMatchObject({reason: "glasses_disconnected", publisherGone: true})
+      expect(teardownManagedStream).toHaveBeenCalledWith("cf-input-test")
+      link.set(true)
+      await settle()
+    })
+
+    test("a single 'publisher gone' probe between connected probes does not end the grace", async () => {
+      const link = fakeLink()
+      let probe = 0
+      getManagedStreamStatus.mockImplementation(async () => {
+        probe += 1
+        // Alternate: one miss, then seen again — a wobble, not a power-off.
+        return {isConnected: probe % 2 === 1, viewerCount: 0}
+      })
+      const coord = new PhoneStreamCoordinator(
+        {...timings, cloudflareStatusPollMs: 10, glassesGraceMs: 10_000, suspendedPublisherGoneProbes: 2},
+        {linkSource: link.source},
+      )
+      const {streamId} = await coord.startManaged("com.a", {ingest: "whip"})
+      link.set(false)
+      await settle(80)
+      expect(coord.owns(streamId)).toBe(true)
+      expect(coord.isSuspended()).toBe(true)
+      link.set(true)
+      await coord.stop("com.a")
+    })
+
+    test("explicit stop while the link is down skips the BLE write and defers it", async () => {
+      const link = fakeLink()
+      const coord = new PhoneStreamCoordinator({...timings, glassesGraceMs: 10_000}, {linkSource: link.source})
+      const {streamId} = await coord.startUnmanaged("com.a", {streamUrl: "rtmp://x"})
+      link.set(false)
+      await settle()
+      await coord.stop("com.a", streamId)
+      expect(coord.owns(streamId)).toBe(false)
+      expect(stopStream).not.toHaveBeenCalled()
+      link.set(true)
+      await settle()
+      expect(stopStream).toHaveBeenCalledTimes(1)
+    })
+
+    test("a new stream started after reconnect supersedes the deferred stop", async () => {
+      const link = fakeLink()
+      const coord = new PhoneStreamCoordinator(timings, {linkSource: link.source})
+      const first = await coord.startUnmanaged("com.a", {streamUrl: "rtmp://x"})
+      link.set(false)
+      await settle(90)
+      expect(coord.owns(first.streamId)).toBe(false)
+      // Deferred stop is flushed on reconnect, before any start can run.
+      link.set(true)
+      await settle()
+      expect(stopStream).toHaveBeenCalledTimes(1)
+      const second = await coord.startUnmanaged("com.a", {streamUrl: "rtmp://y"})
+      expect(coord.owns(second.streamId)).toBe(true)
+      expect(coord.getDiagnosticSnapshot()).toMatchObject({active: true, suspended: false})
+      await coord.stop("com.a")
+      expect(stopStream).toHaveBeenCalledTimes(2)
+    })
+
+    test("start is refused while the link is down, with the GLASSES_NOT_CONNECTED code", async () => {
+      const link = fakeLink(false)
+      const coord = new PhoneStreamCoordinator(timings, {linkSource: link.source})
+      const err = await coord.startUnmanaged("com.a", {streamUrl: "rtmp://x"}).catch((e) => e)
+      expect(err).toBeInstanceOf(StreamConflictError)
+      expect((err as InstanceType<typeof StreamConflictError>).code).toBe("GLASSES_NOT_CONNECTED")
+      expect(startStream).not.toHaveBeenCalled()
+    })
+
+    test("link events while idle are ignored (no listener attached)", async () => {
+      const link = fakeLink()
+      const coord = new PhoneStreamCoordinator(timings, {linkSource: link.source})
+      expect(link.listenerCount()).toBe(0)
+      link.set(false)
+      link.set(true)
+      expect(coord.isSuspended()).toBe(false)
+      const {streamId} = await coord.startUnmanaged("com.a", {streamUrl: "rtmp://x"})
+      expect(link.listenerCount()).toBe(1)
+      await coord.stop("com.a", streamId)
+      expect(link.listenerCount()).toBe(0)
+    })
+  })
+
   describe("unmanaged", () => {
     test("startUnmanaged commands glasses and returns a phone-minted streamId", async () => {
       const coord = new PhoneStreamCoordinator({
         hlsReadinessInitialDelayMs: 5,
         hlsReadinessPollMs: 5,
         cloudflareStatusPollMs: 1000,
-        keepAliveIntervalMs: 10_000,
       })
       const result = await coord.startUnmanaged("com.a", {
         streamUrl: "rtmp://my.server/key",
@@ -98,8 +411,8 @@ describe("PhoneStreamCoordinator", () => {
       expect(streamId).toMatch(/^phone-u-/)
       expect(result.status).toBe("streaming")
       expect(result.resolvedConfig).toEqual({audio: {sampleRate: 16_000}})
-      expect(startExternallyManagedStream).toHaveBeenCalledTimes(1)
-      const arg = startExternallyManagedStream.mock.calls[0]![0] as {
+      expect(startStream).toHaveBeenCalledTimes(1)
+      const arg = startStream.mock.calls[0]![0] as {
         sound: boolean
         streamUrl: string
         streamId: string
@@ -117,12 +430,9 @@ describe("PhoneStreamCoordinator", () => {
         hlsReadinessInitialDelayMs: 5,
         hlsReadinessPollMs: 5,
         cloudflareStatusPollMs: 1000,
-        keepAliveIntervalMs: 10_000,
       })
       await coord.startUnmanaged("com.a", {streamUrl: "rtmp://x"})
-      await expect(
-        coord.startUnmanaged("com.b", {streamUrl: "rtmp://y"}),
-      ).rejects.toBeInstanceOf(StreamConflictError)
+      await expect(coord.startUnmanaged("com.b", {streamUrl: "rtmp://y"})).rejects.toBeInstanceOf(StreamConflictError)
     })
 
     test("stop tears down the stream and reverses owns()", async () => {
@@ -130,7 +440,6 @@ describe("PhoneStreamCoordinator", () => {
         hlsReadinessInitialDelayMs: 5,
         hlsReadinessPollMs: 5,
         cloudflareStatusPollMs: 1000,
-        keepAliveIntervalMs: 10_000,
       })
       const {streamId} = await coord.startUnmanaged("com.a", {streamUrl: "rtmp://x"})
       await coord.stop("com.a", streamId)
@@ -143,7 +452,6 @@ describe("PhoneStreamCoordinator", () => {
         hlsReadinessInitialDelayMs: 5,
         hlsReadinessPollMs: 5,
         cloudflareStatusPollMs: 1000,
-        keepAliveIntervalMs: 10_000,
       })
       const {streamId} = await coord.startUnmanaged("com.a", {streamUrl: "rtmp://x"})
       await coord.stop("com.b")
@@ -151,20 +459,17 @@ describe("PhoneStreamCoordinator", () => {
       expect(coord.owns(streamId)).toBe(true)
     })
 
-    test("start rolls back state if BluetoothSdk.startExternallyManagedStream rejects", async () => {
-      startExternallyManagedStream.mockRejectedValueOnce(new Error("BLE down"))
+    test("start rolls back state if BluetoothSdk.startStream rejects", async () => {
+      startStream.mockRejectedValueOnce(new Error("BLE down"))
       const coord = new PhoneStreamCoordinator({
         hlsReadinessInitialDelayMs: 5,
         hlsReadinessPollMs: 5,
         cloudflareStatusPollMs: 1000,
-        keepAliveIntervalMs: 10_000,
       })
-      await expect(coord.startUnmanaged("com.a", {streamUrl: "rtmp://x"})).rejects.toThrow(
-        "BLE down",
-      )
+      await expect(coord.startUnmanaged("com.a", {streamUrl: "rtmp://x"})).rejects.toThrow("BLE down")
       // Should be able to start another stream after the failure.
       await coord.startUnmanaged("com.a", {streamUrl: "rtmp://y"})
-      expect(startExternallyManagedStream).toHaveBeenCalledTimes(2)
+      expect(startStream).toHaveBeenCalledTimes(2)
     })
   })
 
@@ -179,7 +484,6 @@ describe("PhoneStreamCoordinator", () => {
         cloudflareStatusPollMs: 1000,
         hlsReadinessPollMs: 1000,
         hlsReadinessMaxAttempts: 5,
-        keepAliveIntervalMs: 10_000,
       })
       const result = await coord.startManaged("com.a", {ingest: "whip"})
 
@@ -193,7 +497,6 @@ describe("PhoneStreamCoordinator", () => {
       const coord = new PhoneStreamCoordinator({
         cloudflareStartupPollInitialMs: 5,
         cloudflareStatusPollMs: 1000,
-        keepAliveIntervalMs: 10_000,
       })
 
       const result = await coord.startManaged("com.a", {ingest: "whip"})
@@ -204,22 +507,19 @@ describe("PhoneStreamCoordinator", () => {
     })
 
     test("WHIP BLE start timeout does not fall back to RTMP", async () => {
-      startExternallyManagedStream.mockRejectedValueOnce(
-        new Error("Request timed out waiting for glasses response."),
-      )
+      startStream.mockRejectedValueOnce(new Error("Request timed out waiting for glasses response."))
       const coord = new PhoneStreamCoordinator({
         cloudflareStartupPollInitialMs: 1,
         cloudflareStatusPollMs: 5,
         hlsReadinessInitialDelayMs: 5,
         hlsReadinessPollMs: 5,
-        keepAliveIntervalMs: 10_000,
       })
 
       await expect(coord.startManaged("com.a", {ingest: "whip"})).rejects.toThrow(
         /timed out waiting for glasses response/,
       )
       expect(provisionManagedStream).toHaveBeenCalledTimes(1)
-      expect(startExternallyManagedStream).toHaveBeenCalledTimes(1)
+      expect(startStream).toHaveBeenCalledTimes(1)
     })
 
     test("WHIP startup fails when Cloudflare never reports the publisher", async () => {
@@ -230,14 +530,13 @@ describe("PhoneStreamCoordinator", () => {
         hlsReadinessInitialDelayMs: 5,
         hlsReadinessPollMs: 5,
         hlsReadinessMaxAttempts: 1,
-        keepAliveIntervalMs: 10_000,
       })
 
       await expect(coord.startManaged("com.a", {ingest: "whip"})).rejects.toThrow(
         /WebRTC ingest never reached Cloudflare/,
       )
-      expect(startExternallyManagedStream).toHaveBeenCalledTimes(1)
-      const arg = startExternallyManagedStream.mock.calls[0]![0] as {streamUrl: string}
+      expect(startStream).toHaveBeenCalledTimes(1)
+      const arg = startStream.mock.calls[0]![0] as {streamUrl: string}
       expect(arg.streamUrl).toBe("https://ingest.test/abc/whip")
     })
 
@@ -246,7 +545,6 @@ describe("PhoneStreamCoordinator", () => {
         hlsReadinessInitialDelayMs: 5,
         hlsReadinessPollMs: 5,
         cloudflareStatusPollMs: 1000,
-        keepAliveIntervalMs: 10_000,
       })
       const result = await coord.startManaged("com.a", {
         audio: {bitrate: 64_000},
@@ -260,7 +558,7 @@ describe("PhoneStreamCoordinator", () => {
       expect(result.hlsUrl).toBe("https://playback.test/abc/manifest/video.m3u8")
       expect(result.webrtcUrl).toBe("https://playback.test/abc/whep")
       expect(provisionManagedStream).toHaveBeenCalledTimes(1)
-      const arg = startExternallyManagedStream.mock.calls[0]![0] as {
+      const arg = startStream.mock.calls[0]![0] as {
         audio: unknown
         sound: boolean
         streamUrl: string
@@ -276,16 +574,26 @@ describe("PhoneStreamCoordinator", () => {
       expect("keepAliveIntervalSeconds" in arg).toBe(false)
     })
 
+    test("startManaged forwards captureAudio=false onto the BLE start_stream payload", async () => {
+      const coord = new PhoneStreamCoordinator({
+        hlsReadinessInitialDelayMs: 5,
+        hlsReadinessPollMs: 5,
+        cloudflareStatusPollMs: 1000,
+      })
+      await coord.startManaged("com.a", {ingest: "whip", captureAudio: false})
+      const arg = startStream.mock.calls[0]![0] as {captureAudio?: boolean}
+      expect(arg.captureAudio).toBe(false)
+    })
+
     test("RTMP preference publishes to the RTMP ingest URL", async () => {
       const coord = new PhoneStreamCoordinator({
         hlsReadinessInitialDelayMs: 5,
         hlsReadinessPollMs: 5,
         cloudflareStatusPollMs: 1000,
-        keepAliveIntervalMs: 10_000,
       })
       const result = await coord.startManaged("com.a", {ingest: "rtmp"})
       expect(result.mode).toBe("hls")
-      const arg = startExternallyManagedStream.mock.calls[0]![0] as {streamUrl: string}
+      const arg = startStream.mock.calls[0]![0] as {streamUrl: string}
       expect(arg.streamUrl).toBe("rtmp://ingest.test/abc")
       await coord.stop("com.a")
     })
@@ -295,7 +603,6 @@ describe("PhoneStreamCoordinator", () => {
         hlsReadinessInitialDelayMs: 5,
         hlsReadinessPollMs: 5,
         cloudflareStatusPollMs: 1000,
-        keepAliveIntervalMs: 10_000,
       })
       const a = await coord.startManaged("com.a", {})
       const b = await coord.startManaged("com.b", {})
@@ -310,7 +617,6 @@ describe("PhoneStreamCoordinator", () => {
         hlsReadinessInitialDelayMs: 5,
         hlsReadinessPollMs: 5,
         cloudflareStatusPollMs: 1000,
-        keepAliveIntervalMs: 10_000,
       })
       await coord.startManaged("com.a", {})
       await expect(
@@ -325,7 +631,6 @@ describe("PhoneStreamCoordinator", () => {
         hlsReadinessInitialDelayMs: 5,
         hlsReadinessPollMs: 5,
         cloudflareStatusPollMs: 1000,
-        keepAliveIntervalMs: 10_000,
       })
       const a = await coord.startManaged("com.a", {})
       await coord.startManaged("com.b", {})
@@ -349,7 +654,6 @@ describe("PhoneStreamCoordinator", () => {
         hlsReadinessInitialDelayMs: 5,
         hlsReadinessPollMs: 5,
         cloudflareStatusPollMs: 1000,
-        keepAliveIntervalMs: 10_000,
       })
 
       const stream = await coord.startManaged("com.a", {})
@@ -370,7 +674,6 @@ describe("PhoneStreamCoordinator", () => {
         hlsReadinessInitialDelayMs: 5,
         hlsReadinessPollMs: 5,
         cloudflareStatusPollMs: 1000,
-        keepAliveIntervalMs: 10_000,
       })
 
       const first = await coord.startManaged("com.a", {})
@@ -387,7 +690,6 @@ describe("PhoneStreamCoordinator", () => {
         hlsReadinessInitialDelayMs: 5,
         hlsReadinessPollMs: 5,
         cloudflareStatusPollMs: 1000,
-        keepAliveIntervalMs: 10_000,
       })
       await coord.startUnmanaged("com.a", {streamUrl: "rtmp://x"})
       await expect(coord.startManaged("com.b", {})).rejects.toBeInstanceOf(StreamConflictError)
@@ -399,7 +701,6 @@ describe("PhoneStreamCoordinator", () => {
         hlsReadinessInitialDelayMs: 5,
         hlsReadinessPollMs: 5,
         cloudflareStatusPollMs: 1000,
-        keepAliveIntervalMs: 10_000,
       })
       await expect(coord.startManaged("com.a", {})).rejects.toThrow("cf 502")
       // Coordinator should be ready to accept a new stream.
@@ -414,7 +715,6 @@ describe("PhoneStreamCoordinator", () => {
         hlsReadinessInitialDelayMs: 5,
         hlsReadinessPollMs: 5,
         cloudflareStatusPollMs: 1000,
-        keepAliveIntervalMs: 10_000,
       })
       const updates: Array<{pkg: string; status: string}> = []
       coord.setStatusSubscriber((pkg, update) => updates.push({pkg, status: update.status}))
@@ -435,7 +735,6 @@ describe("PhoneStreamCoordinator", () => {
         hlsReadinessInitialDelayMs: 5,
         hlsReadinessPollMs: 5,
         cloudflareStatusPollMs: 1000,
-        keepAliveIntervalMs: 10_000,
       })
       let telemetry: Record<string, unknown> | undefined
       coord.setStatusSubscriber((_pkg, update) => {
@@ -460,7 +759,6 @@ describe("PhoneStreamCoordinator", () => {
         hlsReadinessInitialDelayMs: 5,
         hlsReadinessPollMs: 5,
         cloudflareStatusPollMs: 1000,
-        keepAliveIntervalMs: 10_000,
       })
       const {streamId} = await coord.startUnmanaged("com.a", {streamUrl: "rtmp://x"})
       coord.handleGlassesStatus({
@@ -478,12 +776,50 @@ describe("PhoneStreamCoordinator", () => {
       await coord.stop("com.a")
     })
 
+    test("terminal publisher error settles ownership and preserves details", async () => {
+      const coord = new PhoneStreamCoordinator()
+      let errorData: Record<string, unknown> | undefined
+      coord.setStatusSubscriber((_pkg, update) => {
+        if (update.status === "error") errorData = update.data
+      })
+      const {streamId} = await coord.startUnmanaged("com.a", {streamUrl: "rtmp://x"})
+      coord.handleGlassesStatus({
+        type: "stream_status",
+        kind: "error",
+        status: "error",
+        streamId,
+        terminal: true,
+        errorDetails: "Controller stopped responding",
+      })
+      await settle()
+      expect(coord.owns(streamId)).toBe(false)
+      expect(errorData?.errorDetails).toBe("Controller stopped responding")
+      expect(stopStream).not.toHaveBeenCalled()
+    })
+
+    test("ASG restart stopped snapshot without a stream ID clears phone ownership", async () => {
+      const coord = new PhoneStreamCoordinator()
+      const {streamId} = await coord.startUnmanaged("com.a", {streamUrl: "rtmp://x"})
+      coord.handleGlassesStatus({
+        type: "stream_status",
+        kind: "snapshot",
+        status: "stopped",
+        sid: "restarted",
+        revision: 0,
+        terminal: true,
+        streaming: false,
+        reconnecting: false,
+      })
+      await settle()
+      expect(coord.owns(streamId)).toBe(false)
+      expect(stopStream).not.toHaveBeenCalled()
+    })
+
     test("glasses reconnect_failed (gave up) triggers teardown", async () => {
       const coord = new PhoneStreamCoordinator({
         hlsReadinessInitialDelayMs: 5,
         hlsReadinessPollMs: 5,
         cloudflareStatusPollMs: 1000,
-        keepAliveIntervalMs: 10_000,
       })
       const {streamId} = await coord.startUnmanaged("com.a", {streamUrl: "rtmp://x"})
       coord.handleGlassesStatus({
@@ -521,20 +857,16 @@ describe("PhoneStreamCoordinator", () => {
         hlsReadinessInitialDelayMs: 5,
         hlsReadinessPollMs: 5,
         cloudflareStatusPollMs: 1000,
-        keepAliveIntervalMs: 10_000,
       })
-      const [a, b] = await Promise.all([
-        coord.startManaged("com.a", {}),
-        coord.startManaged("com.b", {}),
-      ])
+      const [a, b] = await Promise.all([coord.startManaged("com.a", {}), coord.startManaged("com.b", {})])
       expect(a.streamId).toBe(b.streamId)
       expect(provisionManagedStream).toHaveBeenCalledTimes(1)
-      expect(startExternallyManagedStream).toHaveBeenCalledTimes(1)
+      expect(startStream).toHaveBeenCalledTimes(1)
     })
 
     test("concurrent startUnmanaged calls — second rejects, first wins", async () => {
       // Slow the first BLE start so the two callers overlap.
-      startExternallyManagedStream.mockImplementationOnce(async (req: unknown) => {
+      startStream.mockImplementationOnce(async (req: unknown) => {
         await new Promise((r) => setTimeout(r, 30))
         return streamStatusFor(req)
       })
@@ -542,7 +874,6 @@ describe("PhoneStreamCoordinator", () => {
         hlsReadinessInitialDelayMs: 5,
         hlsReadinessPollMs: 5,
         cloudflareStatusPollMs: 1000,
-        keepAliveIntervalMs: 10_000,
       })
       const results = await Promise.allSettled([
         coord.startUnmanaged("com.a", {streamUrl: "rtmp://a"}),
@@ -553,13 +884,13 @@ describe("PhoneStreamCoordinator", () => {
       expect(fulfilled).toHaveLength(1)
       expect(rejected).toHaveLength(1)
       expect((rejected[0] as PromiseRejectedResult).reason).toBeInstanceOf(StreamConflictError)
-      expect(startExternallyManagedStream).toHaveBeenCalledTimes(1)
+      expect(startStream).toHaveBeenCalledTimes(1)
     })
 
     test("stop waits for an in-flight start to finish before calling stopStream", async () => {
       // Slow the BLE start; the stop should queue behind it.
       const order: string[] = []
-      startExternallyManagedStream.mockImplementationOnce(async (req: unknown) => {
+      startStream.mockImplementationOnce(async (req: unknown) => {
         order.push("start-begin")
         await new Promise((r) => setTimeout(r, 30))
         order.push("start-end")
@@ -572,7 +903,6 @@ describe("PhoneStreamCoordinator", () => {
         hlsReadinessInitialDelayMs: 5,
         hlsReadinessPollMs: 5,
         cloudflareStatusPollMs: 1000,
-        keepAliveIntervalMs: 10_000,
       })
       const startP = coord.startUnmanaged("com.a", {streamUrl: "rtmp://x"})
       // Fire stop before start has resolved. Without the lock, stop would

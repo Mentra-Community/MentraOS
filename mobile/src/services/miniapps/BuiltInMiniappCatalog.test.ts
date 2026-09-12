@@ -34,6 +34,22 @@ describe("BuiltInMiniappCatalog", () => {
     )
   })
 
+  it("provides the same Notify owner on iOS without requesting Android capture access", () => {
+    Object.defineProperty(Platform, "OS", {configurable: true, value: "ios"})
+    try {
+      const apps = (
+        builtInMiniappCatalog as unknown as {
+          buildOfflineApps: () => Array<{packageName: string; type: string; permissions: unknown[]}>
+        }
+      ).buildOfflineApps()
+      expect(apps.find((app) => app.packageName === notifyPackageName)).toEqual(
+        expect.objectContaining({type: "background", permissions: []}),
+      )
+    } finally {
+      Object.defineProperty(Platform, "OS", {configurable: true, value: "android"})
+    }
+  })
+
   it("registers the Miniapp Developer launcher hidden by default and follows its home-screen setting", () => {
     const developerCall = (appRegistry.installOfflineApp as jest.Mock).mock.calls.find(
       ([app]) => app.packageName === miniappDeveloperPackageName,

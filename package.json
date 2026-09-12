@@ -1,6 +1,6 @@
 {
   "name": "@mentra/release-family",
-  "version": "3.1.0",
+  "version": "3.2.0",
   "private": true,
   "workspaces": [
     "cloud-v2/packages/*",
@@ -39,6 +39,8 @@
     "prepare": "husky",
     "release:validate-family": "node .github/scripts/release-family-cli.mjs validate",
     "release:test-family": "node --test .github/scripts/release-family.test.mjs",
+    "release:prepare-next-family": "bun scripts/prepare-next-release-family.mjs",
+    "release:promote-family": "node scripts/promote-release-family.mjs",
     "release:create-plan": "node .github/scripts/create-release-plan.mjs",
     "release:finalize-manifest": "node .github/scripts/finalize-release-manifest.mjs",
     "generate-licenses": "bun mintlify-docs/generate-licenses.ts",

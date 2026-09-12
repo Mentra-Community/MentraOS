@@ -4,6 +4,9 @@ import static org.assertj.core.api.Assertions.assertThat;
 import static org.mockito.Mockito.mock;
 import static org.mockito.Mockito.mockStatic;
 import static org.mockito.Mockito.when;
+import static org.mockito.Mockito.verify;
+import static org.mockito.Mockito.times;
+import static org.mockito.Mockito.never;
 
 import android.content.Context;
 import com.dev.api.DevApi;
@@ -15,6 +18,7 @@ import com.mentra.asg_client.service.system.interfaces.ISystemController;
 import com.mentra.asg_client.settings.AsgSettings;
 import java.util.ArrayList;
 import java.util.List;
+import java.util.concurrent.atomic.AtomicBoolean;
 import org.json.JSONObject;
 import org.junit.Before;
 import org.junit.Test;
@@ -46,6 +50,47 @@ public class SettingsCommandHandlerFovLeaseTest {
         handler =
                 new SettingsCommandHandler(
                         serviceManager, communicationManager, mock(IResponseBuilder.class));
+    }
+
+    @Test
+    public void reconnectSyncIsIdempotentAndBusyChangesPreservePreferencesAndLease() throws Exception {
+        Context context = mock(Context.class);
+        ISystemController systemController = mock(ISystemController.class);
+        AsgSettings settings = mock(AsgSettings.class);
+        when(serviceManager.getContext()).thenReturn(context);
+        when(serviceManager.getAsgSettings()).thenReturn(settings);
+        when(settings.getCameraFov()).thenReturn(118);
+        when(settings.getCameraRoiPosition()).thenReturn(0);
+        AtomicBoolean busy = new AtomicBoolean(false);
+        handler = new SettingsCommandHandler(serviceManager, communicationManager,
+                mock(IResponseBuilder.class), busy::get);
+        JSONObject sync = new JSONObject().put("request_id", "sync")
+                .put("params", new JSONObject().put("fov", 118).put("roi_position", 0));
+        try (MockedStatic<DevApi> hardware = mockStatic(DevApi.class);
+                MockedStatic<SystemControllerFactory> controllers = mockStatic(SystemControllerFactory.class)) {
+            controllers.when(() -> SystemControllerFactory.get(context)).thenReturn(systemController);
+            assertThat(handler.handleCommand("camera_fov_setting", sync)).isTrue();
+            busy.set(true);
+            assertThat(handler.handleCommand("camera_fov_setting", sync)).isTrue();
+            verify(systemController, times(1)).restartCameraHal();
+            hardware.verify(() -> DevApi.setCameraFov(118, 0), times(1));
+
+            JSONObject changed = new JSONObject().put("request_id", "changed")
+                    .put("params", new JSONObject().put("fov", 90).put("roi_position", 1));
+            assertThat(handler.handleCommand("camera_fov_setting", changed)).isFalse();
+            verify(settings, never()).setCameraFov(90, 1);
+            assertThat(responses.get(responses.size() - 1).getString("error_code")).isEqualTo("camera_busy");
+            assertThat(handler.handleCommand("camera_fov_override", overrideRequest("lease-1"))).isFalse();
+
+            busy.set(false);
+            assertThat(handler.handleCommand("camera_fov_override", overrideRequest("lease-1"))).isTrue();
+            busy.set(true);
+            assertThat(handler.handleCommand("camera_fov_override_release", releaseRequest("lease-1"))).isFalse();
+            verify(systemController, times(2)).restartCameraHal();
+            busy.set(false);
+            assertThat(handler.handleCommand("camera_fov_override_release", releaseRequest("lease-1"))).isTrue();
+            verify(systemController, times(3)).restartCameraHal();
+        }
     }
 
     @Test

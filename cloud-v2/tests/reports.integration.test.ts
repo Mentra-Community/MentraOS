@@ -41,9 +41,13 @@ const STORAGE_DIR = join(tmpdir(), `mentra-reports-test-${process.pid}`);
   process.env.SUPABASE_URL = "https://testproj.supabase.co";
   process.env.CLOUD_CORE_LOCAL_STORAGE_DIR = STORAGE_DIR;
   // Only the Slack notification tests opt in to a (mocked) webhook; everything
-  // else must run with the notifier disabled, whatever the shell env says.
+  // else must run with the notifier disabled, whatever the shell env says. The
+  // bot-token transport is a second way to switch it on, so it is cleared too.
   delete process.env.CLOUD_REPORTS_SLACK_WEBHOOK_URL;
   delete process.env.CLOUD_REPORTS_SLACK_WEBHOOK_AUTOMATIC_URL;
+  delete process.env.CLOUD_REPORTS_SLACK_BOT_TOKEN;
+  delete process.env.CLOUD_REPORTS_SLACK_CHANNEL_ID;
+  delete process.env.CLOUD_REPORTS_SLACK_CHANNEL_ID_AUTOMATIC;
 }
 
 // eslint-disable-next-line import/first

@@ -14,10 +14,12 @@ import {useMarkdown, type MarkedStyles, type useMarkdownHookOptions} from "react
 import {SafeAreaView} from "react-native-safe-area-context"
 import Svg, {Path, Rect} from "react-native-svg"
 
+import {OTA_ERROR_ENGLISH_COPY} from "../services/OtaErrorMapping"
 import {
   MINIMUM_OTA_BATTERY_LEVEL,
   useMentraLiveOta,
   type MentraLiveOtaController,
+  type MentraLiveOtaError,
   type MentraLiveOtaFlowPage,
 } from "./useMentraLiveOta"
 
@@ -70,6 +72,20 @@ const DEFAULT_THEME: MentraLiveOtaFlowTheme = {
 }
 
 const ENGLISH_COPY: Record<string, string> = {
+  "ota:downloadingToPhone": "Downloading update to phone...",
+  "ota:startingGlassesHotspot": "Starting glasses hotspot...",
+  "ota:connectingPhoneToGlasses": "Connecting phone to glasses...",
+  "ota:startingHotspotUpdate": "Starting update...",
+  "ota:transferringToGlasses": "Transferring update to glasses...",
+  "ota:installingOnGlasses": "Installing update on glasses...",
+  "ota:componentApk": "Glasses software",
+  "ota:componentMtk": "System firmware",
+  "ota:componentBes": "Bluetooth firmware",
+  "ota:updateFile": "File {{current}} of {{total}} · {{component}}",
+  "ota:updatePart": "Update {{current}} of {{total}} · {{component}}",
+  "ota:phoneFileProgress": "Each file downloads separately. Progress is for the current file.",
+  "ota:transferFileProgress": "Progress is for this file’s transfer from your phone.",
+
   "common:continue": "Continue",
   "common:done": "Done",
   "ota:checkingForUpdates": "Checking for updates",
@@ -103,6 +119,11 @@ const ENGLISH_COPY: Record<string, string> = {
   "ota:devBuild": "Development Build",
   "ota:devBuildNoOta":
     "This mobile app is a development build, so automatic glasses updates are disabled. Use the developer settings manifest override to update them manually.",
+  "ota:unofficialClient": "Updates Blocked",
+  "ota:unofficialClientNoOta":
+    "Your glasses are running a sideloaded client, so updates are blocked. Restore the stock client to update them.",
+  "ota:unofficialClientNoOtaNamed":
+    "Your glasses are running a sideloaded client ({{packageName}}), so updates are blocked. Restore the stock client to update them.",
   "ota:noUpdatesAvailable": "Your glasses are running the latest version.",
   "ota:checkFailed": "Check Failed",
   "ota:checkFailedMessage": "Couldn't check for updates. Please check your connection and try again.",
@@ -123,10 +144,27 @@ const ENGLISH_COPY: Record<string, string> = {
   "ota:versionChangeFirmwarePassComplete": "Firmware updated",
   "ota:versionChangeFirmwarePassCompleteMessage":
     "Your glasses restarted with new firmware. One more step: they'll now continue to the required version.",
+  "ota:updateFailed": "Update Failed",
+  ...OTA_ERROR_ENGLISH_COPY,
+}
+
+const componentCopyKey = {
+  apk: "ota:componentApk",
+  mtk: "ota:componentMtk",
+  bes: "ota:componentBes",
+} as const
+
+/**
+ * Copy for the failed screen: the translated copy key when the failure maps to one,
+ * otherwise the engine's English message (phone-side watchdog and preflight text).
+ */
+function failureMessage(error: MentraLiveOtaError | null, translate: MentraLiveOtaFlowTranslate): string {
+  if (!error) return translate("ota:errorGeneric")
+  return error.copyKey ? translate(error.copyKey) : error.message
 }
 
 function defaultTranslate(key: string, options?: Record<string, string>): string {
-  let value = ENGLISH_COPY[key] ?? key
+  let value = Object.prototype.hasOwnProperty.call(ENGLISH_COPY, key) ? ENGLISH_COPY[key] : key
   for (const [name, replacement] of Object.entries(options ?? {})) {
     value = value.replaceAll(`{{${name}}}`, replacement)
   }
@@ -302,6 +340,22 @@ function OtaFlowContent({
     )
   }
 
+  if (state.screen === "unofficial_client") {
+    return (
+      <FlowPage
+        actions={<FlowButton colors={colors} label={translate("common:continue")} onPress={controller.finish} />}
+        colors={colors}
+        icon="settings"
+        title={translate("ota:unofficialClient")}>
+        <BodyText colors={colors}>
+          {state.glassesPackageName
+            ? translate("ota:unofficialClientNoOtaNamed", {packageName: state.glassesPackageName})
+            : translate("ota:unofficialClientNoOta")}
+        </BodyText>
+      </FlowPage>
+    )
+  }
+
   if (state.screen === "up_to_date") {
     return (
       <FlowPage
@@ -374,28 +428,65 @@ function OtaFlowContent({
   }
 
   if (state.screen === "starting" || state.screen === "preparing_hotspot") {
-    const title =
+    const title = translate(
       state.hotspotPhase === "downloading"
-        ? "Downloading update to phone..."
+        ? "ota:downloadingToPhone"
         : state.hotspotPhase === "starting_hotspot"
-          ? "Starting glasses hotspot..."
+          ? "ota:startingGlassesHotspot"
           : state.hotspotPhase === "joining_hotspot"
-            ? "Connecting phone to glasses..."
-            : "Starting update..."
+            ? "ota:connectingPhoneToGlasses"
+            : "ota:startingHotspotUpdate",
+    )
+    const artifact = state.hotspotPhase === "downloading" ? state.hotspotArtifact : null
     return (
       <FlowPage colors={colors} icon="download" title={title}>
+        {artifact ? (
+          <BodyText colors={colors}>
+            {translate("ota:updateFile", {
+              current: String(artifact.index + 1),
+              total: String(artifact.totalCount),
+              component: translate(componentCopyKey[artifact.kind]),
+            })}
+          </BodyText>
+        ) : null}
         {state.hotspotPhase === "downloading" && state.hotspotArtifactPercent !== null ? (
           <PercentText colors={colors} percent={state.hotspotArtifactPercent} />
         ) : null}
         <ActivityIndicator size="large" color={colors.foreground} />
+        {state.hotspotPhase === "downloading" ? (
+          <BodyText colors={colors}>{translate("ota:phoneFileProgress")}</BodyText>
+        ) : null}
         <BodyText colors={colors}>Do not disconnect your glasses</BodyText>
       </FlowPage>
     )
   }
 
   if (state.screen === "updating") {
+    const hotspot = state.transport === "hotspot"
+    const title = hotspot
+      ? translate(state.phase === "download" ? "ota:transferringToGlasses" : "ota:installingOnGlasses")
+      : state.phase === "download"
+        ? "Downloading..."
+        : "Installing..."
+    const component = state.step ? translate(componentCopyKey[state.step]) : null
+    const hasStepCount =
+      state.currentStep !== null &&
+      state.totalSteps !== null &&
+      state.currentStep > 0 &&
+      state.currentStep <= state.totalSteps
     return (
-      <FlowPage colors={colors} icon="download" title={state.phase === "download" ? "Downloading..." : "Installing..."}>
+      <FlowPage colors={colors} icon="download" title={title}>
+        {hotspot && component ? (
+          <BodyText colors={colors}>
+            {hasStepCount
+              ? translate("ota:updatePart", {
+                  current: String(state.currentStep),
+                  total: String(state.totalSteps),
+                  component,
+                })
+              : component}
+          </BodyText>
+        ) : null}
         {state.installingApkOnly ? (
           <ActivityIndicator size="large" color={colors.foreground} />
         ) : (
@@ -409,6 +500,9 @@ function OtaFlowContent({
           </>
         )}
         <BodyText colors={colors}>Do not disconnect your glasses</BodyText>
+        {hotspot && state.phase === "download" ? (
+          <BodyText colors={colors}>{translate("ota:transferFileProgress")}</BodyText>
+        ) : null}
         {state.versionChange && state.phase === "install" ? (
           <BodyText colors={colors}>{translate("ota:downgradeDuration")}</BodyText>
         ) : null}
@@ -478,8 +572,13 @@ function OtaFlowContent({
         }
         colors={colors}
         icon="alert"
-        title="Update Failed">
-        <BodyText colors={colors}>{state.error?.message}</BodyText>
+        title={translate("ota:updateFailed")}>
+        <BodyText colors={colors}>{failureMessage(state.error, translate)}</BodyText>
+        {state.error?.glassesCode ? (
+          <Text style={[styles.errorCode, {color: colors.textDim}]} testID="ota-error-code">
+            {translate("ota:errorCode", {code: state.error.glassesCode})}
+          </Text>
+        ) : null}
       </FlowPage>
     )
   }
@@ -512,11 +611,15 @@ type FlowPageProps = {
 function FlowPage({actions, children, colors, contentAlignment = "center", icon, title}: FlowPageProps) {
   return (
     <View style={styles.page} testID="mentra-live-ota-flow">
-      <View style={[styles.centerContent, contentAlignment === "top" && styles.topContent]}>
+      <ScrollView
+        contentContainerStyle={[styles.centerContent, contentAlignment === "top" && styles.topContent]}
+        nestedScrollEnabled
+        style={styles.contentScroll}
+        testID="ota-page-scroll">
         <FlowIcon colors={colors} name={icon} />
         <Text style={[styles.title, {color: colors.foreground}]}>{title}</Text>
         {children}
-      </View>
+      </ScrollView>
       {actions ? <View style={styles.actions}>{actions}</View> : <View style={styles.actionSpacer} />}
     </View>
   )
@@ -628,12 +731,14 @@ export function ChangelogList({
   title: string
 }) {
   if (changelogs.length === 0) return null
+
   return (
     <View style={[styles.changelogCard, {borderColor: colors.border}]} testID="ota-changelog-card">
       <Text style={[styles.changelogTitle, {color: colors.foreground}]}>{title}</Text>
       <ScrollView
         contentContainerStyle={styles.changelogContent}
         nestedScrollEnabled
+        persistentScrollbar
         showsVerticalScrollIndicator
         style={styles.changelogList}
         testID="ota-changelog-scroll">
@@ -715,29 +820,32 @@ const styles = StyleSheet.create({
     paddingHorizontal: 20,
   },
   page: {flex: 1, paddingBottom: 24, paddingHorizontal: 24},
-  centerContent: {alignItems: "center", flex: 1, gap: 16, justifyContent: "center"},
-  topContent: {justifyContent: "flex-start", paddingTop: 12},
+  contentScroll: {flex: 1},
+  centerContent: {alignItems: "center", flexGrow: 1, gap: 16, justifyContent: "center"},
+  topContent: {justifyContent: "flex-start", paddingBottom: 16, paddingTop: 12},
   actionSpacer: {height: 48},
   actions: {gap: 12},
   icon: {fontSize: 64, fontWeight: "500", lineHeight: 72, textAlign: "center"},
   title: {fontSize: 20, fontWeight: "600", textAlign: "center"},
   body: {fontSize: 14, lineHeight: 20, maxWidth: 420, textAlign: "center"},
+  errorCode: {fontSize: 12, fontVariant: ["tabular-nums"], lineHeight: 16, opacity: 0.7, textAlign: "center"},
   percent: {fontSize: 30, fontVariant: ["tabular-nums"], fontWeight: "700"},
   progressTrack: {borderRadius: 4, height: 8, maxWidth: 420, overflow: "hidden", width: "100%"},
   progressFill: {borderRadius: 4, height: 8},
   changelogCard: {
     borderRadius: 16,
     borderWidth: 1,
-    flexShrink: 1,
+    flexGrow: 1,
     gap: 12,
-    maxHeight: 300,
     maxWidth: 420,
+    minHeight: 200,
     padding: 16,
     width: "100%",
   },
   changelogTitle: {fontSize: 16, fontWeight: "700"},
-  changelogList: {flexShrink: 1, maxHeight: 232, width: "100%"},
-  changelogContent: {gap: 20, paddingBottom: 2},
+  // Bound the notes themselves so the card can grow for its title, but not for all of the Markdown.
+  changelogList: {flexGrow: 1, height: 120, width: "100%"},
+  changelogContent: {gap: 20, paddingBottom: 4},
   changelogEntry: {gap: 8},
   changelogEntryDivider: {borderTopWidth: StyleSheet.hairlineWidth, paddingTop: 20},
   changelogVersion: {fontSize: 14, fontWeight: "600"},

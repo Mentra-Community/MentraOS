@@ -22,6 +22,7 @@ import GlobalEventEmitter from "../utils/GlobalEventEmitter"
 import {isGlassesConnected, useGlassesStore} from "../stores/glasses"
 import {resolveOtaManifestUrl} from "./otaManifestUrl"
 import {hotspotOtaTransport, type HotspotOtaPhase} from "./HotspotOtaTransport"
+import type {OtaArtifactDownloadProgress} from "./OtaArtifactDownloader"
 import type {OtaCheckCurrentGlassesResult} from "./OtaUpdateCheckService"
 import {deriveDisplayState, type DisplayState} from "./otaDisplayState"
 import {
@@ -139,8 +140,10 @@ function latestPercentForStuck(otaStatus: OtaStatus | null, otaProgress: OtaProg
  * reply that cancels the fallback.
  */
 function hasRecoveringOtaReply(otaStatus: OtaStatus | null, otaProgress: OtaProgress | null): boolean {
-  if (otaProgress) return true
-  return !!otaStatus && otaStatus.status !== "idle"
+  // OtaService projects status into legacy progress too: idle becomes STARTED.
+  // Neither that projection nor progress retained across reboot proves activity.
+  if (otaStatus) return otaStatus.status !== "idle"
+  return !!otaProgress
 }
 
 /** Read model the host progress screen renders from. */
@@ -171,6 +174,7 @@ export interface OtaInstallSnapshot {
   /** Pre-ota_start phone staging/join state for a hotspot attempt. */
   hotspotPhase: HotspotOtaPhase
   hotspotArtifactPercent: number | null
+  hotspotArtifact: OtaArtifactDownloadProgress | null
   /** Transport selected from the checked glasses capabilities and Wi-Fi state. */
   transport: "wifi" | "hotspot"
 }
@@ -189,6 +193,7 @@ class OtaInstallCoordinator {
   private hotspotManifestUrl: string | null = null
   private hotspotPhase: HotspotOtaPhase = "idle"
   private hotspotArtifactPercent: number | null = null
+  private hotspotArtifact: OtaArtifactDownloadProgress | null = null
 
   // Genuinely session-local state (was component state/refs).
   private errorMsg = ""
@@ -261,7 +266,7 @@ class OtaInstallCoordinator {
   // command as permission to start a second OTA transaction.
   private otaStartOwnership: OtaStartOwnership | null = null
   private hasFirstActivity = false
-  // Stuck-at-zero watchdog clears only on first NON-ZERO progress; "first activity"
+  // Stuck-at-zero watchdog clears only on real byte/percent progress; "first activity"
   // alone (e.g. ota_status with stepPercent=0) used to clear it too eagerly.
   private hasFirstNonZeroProgress = false
   private retryCount = 0
@@ -276,6 +281,8 @@ class OtaInstallCoordinator {
   private lastBuildNumber = ""
   private lastDisplayState: DisplayState | null = null
   private lastStallSig = ""
+  private downloadStepKey = ""
+  private downloadByteHighWater = 0
 
   // Reaction pass re-entrancy guard (mirrors React deferring a setState-during-
   // effects re-render until the current effect batch finished).
@@ -303,6 +310,7 @@ class OtaInstallCoordinator {
     this.hotspotManifestUrl = null
     this.hotspotPhase = "idle"
     this.hotspotArtifactPercent = null
+    this.hotspotArtifact = null
     return this.selectedTransport
   }
 
@@ -510,6 +518,7 @@ class OtaInstallCoordinator {
       versionChangePhase: this.deriveVersionChangePhase(connected),
       hotspotPhase: this.hotspotPhase,
       hotspotArtifactPercent: this.hotspotArtifactPercent,
+      hotspotArtifact: this.hotspotArtifact ? {...this.hotspotArtifact} : null,
       transport: this.selectedTransport,
     }
   }
@@ -586,6 +595,8 @@ class OtaInstallCoordinator {
     this.lastBuildNumber = ""
     this.lastDisplayState = null
     this.lastStallSig = ""
+    this.downloadStepKey = ""
+    this.downloadByteHighWater = 0
     this.reactQueued = false
   }
 
@@ -596,6 +607,8 @@ class OtaInstallCoordinator {
       return false
     }
     this.otaStartOwnership = null
+    this.downloadStepKey = ""
+    this.downloadByteHighWater = 0
     this.hasFirstActivity = false
     this.hasFirstNonZeroProgress = false
     this.setApkCompletedViaBuildIncrease(false)
@@ -752,6 +765,18 @@ class OtaInstallCoordinator {
       versionChangeSession: this.versionChangeSession,
     })
     const stallSig = buildProgressStalenessSignature(otaStatus, otaProgress, displayState)
+    // Percent is a UI projection, not transfer liveness. Repeated status replies (including
+    // older replies without bytes) must not keep a stalled download alive.
+    const downloadKey =
+      otaStatus?.phase === "download" ? `${otaStatus.sessionId}|${otaStatus.currentStep}|${otaStatus.stepType}` : ""
+    if (downloadKey !== this.downloadStepKey) {
+      this.downloadStepKey = downloadKey
+      this.downloadByteHighWater = 0
+    }
+    const receivedBytes = otaStatus?.bytesDownloaded ?? 0
+    const downloadAdvanced =
+      downloadKey !== "" && Number.isSafeInteger(receivedBytes) && receivedBytes > this.downloadByteHighWater
+    if (downloadAdvanced) this.downloadByteHighWater = receivedBytes
     const stallDuration = progressTimeoutDurationMs(otaStatus, otaProgress, legacySession)
 
     const displayStateChanged = isMount || displayState !== this.lastDisplayState
@@ -828,7 +853,12 @@ class OtaInstallCoordinator {
       // suppress ota_start and hang the fresh downgrade until the global timeout).
       this.otaStartOwnership?.outcome === "acknowledged" &&
       otaStatus?.stepType === "apk" &&
-      otaStatus.phase === "install"
+      otaStatus.phase === "install" &&
+      // Only a live install arms the latch. A terminal failed status keeps stepType/phase
+      // apk/install and stays in the store, so without this gate every later pass (any
+      // unrelated store change) would re-arm the latch and the non-ownership block below
+      // would release it again, flooding the log with paired enter/release lines.
+      otaStatus.status === "in_progress"
     ) {
       console.log("[OTA_PROGRESS] version-change: apk install started — entering detour wait")
       this.versionChangeInstallStarted = true
@@ -962,7 +992,7 @@ class OtaInstallCoordinator {
       this.onFirstActivity()
     }
 
-    // The stuck-at-zero watchdog clears only on the FIRST real (>0%) progress.
+    // The stuck-at-zero watchdog clears only on real byte or percent progress.
     // Without this distinction, an ota_status reply with stepPercent=0 would
     // disable the watchdog before any download had actually started, hiding
     // wedged downloads from the user.
@@ -970,7 +1000,7 @@ class OtaInstallCoordinator {
       const stepPct = otaStatus?.stepPercent ?? 0
       const overallPct = otaStatus?.overallPercent ?? 0
       const legacyPct = otaProgress?.progress ?? 0
-      if (stepPct > 0 || overallPct > 0 || legacyPct > 0) {
+      if (downloadAdvanced || stepPct > 0 || overallPct > 0 || legacyPct > 0) {
         this.onFirstNonZeroProgress()
       }
     }
@@ -979,7 +1009,7 @@ class OtaInstallCoordinator {
     // Keyed on the staleness SIGNATURE string (not the object refs) so a store
     // update that doesn't change the signature keeps the same timer running
     // instead of forever re-extending the deadline.
-    if (stallSigChanged || displayStateChanged) {
+    if (stallSigChanged || displayStateChanged || downloadAdvanced) {
       if (this.isInVersionChangeDetour()) {
         // Recovery worker owns the transaction; there are no progress events to stall on.
         this.clearProgressTimeout()
@@ -1372,7 +1402,7 @@ class OtaInstallCoordinator {
   /**
    * "Glasses are talking to us" — suppresses retry if the native request later rejects.
    * Important: this does NOT clear the stuck-at-zero watchdog; that one fires
-   * on real progress > 0% (see {@link onFirstNonZeroProgress}).
+   * on real byte/percent progress (see {@link onFirstNonZeroProgress}).
    */
   private onFirstActivity(): void {
     if (this.hasFirstActivity) return
@@ -1385,10 +1415,8 @@ class OtaInstallCoordinator {
 
   /**
    * "Real download progress arrived" — clears the stuck-at-zero watchdog. We
-   * deliberately wait for non-zero progress before clearing this so that an
-   * ota_status reply with stepPercent: 0 (which is "first activity" but not
-   * "real progress") doesn't disable the only watchdog that catches a wedged
-   * download.
+   * require advancing bytes or non-zero percent, so an ordinary status reply
+   * cannot disable the watchdog that catches a wedged download.
    */
   private onFirstNonZeroProgress(): void {
     if (this.hasFirstNonZeroProgress) return
@@ -1501,7 +1529,9 @@ class OtaInstallCoordinator {
           }
           this.hotspotManifestUrl = await hotspotOtaTransport.prepare(this.preparedCheckResult, (progress) => {
             this.hotspotPhase = progress.phase
-            this.hotspotArtifactPercent = progress.artifact?.artifactPercent ?? null
+            this.hotspotArtifact = progress.artifact ? {...progress.artifact} : null
+            this.hotspotArtifactPercent =
+              progress.artifact && progress.artifact.contentLength > 0 ? progress.artifact.artifactPercent : null
             this.emitInternalChange()
           })
         }
@@ -1581,6 +1611,7 @@ class OtaInstallCoordinator {
     this.hotspotManifestUrl = null
     this.hotspotPhase = "idle"
     this.hotspotArtifactPercent = null
+    this.hotspotArtifact = null
     this.emitInternalChange()
   }
 

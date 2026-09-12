@@ -8,10 +8,38 @@ The package includes:
 - React hooks under `@mentra/bluetooth-sdk/react` for common scan,
   connection, status, and event lifecycles.
 - Native Android code published as `com.mentraglass:bluetooth-sdk`.
-- Native iOS code available as the `MentraBluetoothSDK` Swift package.
+- Native iOS and macOS code available as the `MentraBluetoothSDK` Swift package.
+- Native macOS Expo Modules adapter for `react-native-macos` hosts.
 - An Expo config plugin that wires the native dependencies into generated Android and iOS projects.
 
 Use a development build or production native build. Expo Go cannot load this package because the SDK contains native code.
+
+## Diagnostics
+
+After importing the SDK, native Android and iOS SDK diagnostics are forwarded
+automatically to the JavaScript console, alongside your app's JS logs. Entries
+are prefixed with `[native:android]` or `[native:ios]`. You do not need to add a
+`log` listener just to print them; doing so would print them twice. The existing
+`log` event remains available for custom consumers.
+
+Credential-bearing messages are redacted before console output, and individual
+messages are capped at 16,384 characters. The Mentra App's incident reports
+capture this same combined console stream in the phone log attachment, subject
+to its existing retention limits. Native diagnostics are also kept in the native
+console. Forwarding covers SDK-owned diagnostics while the JS runtime is active,
+not arbitrary OS or third-party native logs or logs from before subscription.
+
+On Android, forwarding to JavaScript is capped at 100 messages per second. Each
+forwarded message holds a JNI global reference until the JavaScript thread drains
+it, so an unbounded log source can exhaust the process-wide reference table and
+abort the app rather than merely slow it down. Messages above the cap are withheld
+from the JavaScript stream only — they are still written to the native console —
+and the next forwarded message is preceded by a notice saying how many were
+withheld. Per-frame microphone payload events are not traced at all; audio faults
+are still reported through the `mic_health` event.
+
+Rebuild the native app after updating the SDK to pick up both platforms' logging
+changes. Adding this JS package alone cannot reroute logs in an older binary.
 
 ## Requirements
 
@@ -19,6 +47,9 @@ Use a development build or production native build. Expo Go cannot load this pac
 - Expo `49+` when using Expo.
 - Android min SDK `28+`.
 - iOS deployment target `15.1+`.
+- Native macOS deployment target `13+`. The Starter Kit's separate
+  `react-native-macos` host requires macOS `14+` and a matching React Native / Expo
+  Modules toolchain; the iOS/Android config plugin does not generate a Mac host.
 - A physical phone for real Bluetooth testing.
 - Bluetooth permissions, plus Android location permission where BLE scanning requires it.
 
@@ -93,6 +124,24 @@ Android apps should request the permissions required by the features they use:
 
 Some Android 12+ devices require Location permission and Location services before BLE scan callbacks are delivered.
 
+### Android Foreground Service Types
+
+The SDK service reads its allowed types from the merged Android manifest.
+The default manifest retains MentraOS's connected-device, microphone, location,
+media-playback and data-sync capabilities. A Bluetooth-only host can override
+`com.mentra.bluetoothsdk.services.ForegroundService` to use `connectedDevice`
+with `tools:replace="android:foregroundServiceType"`, and remove unused typed
+FGS permissions from its final manifest. Startup then uses `connectedDevice`
+instead of `dataSync`; the SDK's `CHANGE_WIFI_STATE` permission satisfies its
+startup prerequisite even before a Bluetooth runtime permission is granted.
+
+Only restrict types when the corresponding background features are unused.
+Receiving the glasses' BLE audio is distinct from selecting Android's phone or
+Bluetooth headset microphone. Hosts using Android microphone capture, location
+tracking or background media playback must retain the corresponding types and
+permissions, including those required by other native modules. At least
+`connectedDevice` or `dataSync` must remain for SDK service startup.
+
 iOS apps should include usage descriptions:
 
 ```json
@@ -112,26 +161,42 @@ iOS apps should include usage descriptions:
 Use `scan()` when your app needs to show a picker. It calls `onResults` every time the discovered list changes, then resolves with the final list after the timeout.
 
 ```ts
-import BluetoothSdk, {
-  DeviceModels,
-} from '@mentra/bluetooth-sdk'
+import BluetoothSdk, {DeviceModels} from "@mentra/bluetooth-sdk"
 
 const devices = await BluetoothSdk.scan(DeviceModels.MentraLive, {
   timeoutMs: 10_000,
   onResults: (nextDevices) => {
-    console.log('Nearby glasses:', nextDevices)
+    console.log("Nearby glasses:", nextDevices)
   },
+  onDiagnostic: (hint) => showScanHint(hint.message),
 })
 
 const device = await chooseDevice(devices)
 if (!device) {
-  throw new Error('No Mentra Live glasses selected')
+  throw new Error("No Mentra Live glasses selected")
 }
 
 await BluetoothSdk.connect(device)
 const versionInfo = await BluetoothSdk.requestVersionInfo()
 console.log(versionInfo.buildNumber)
 ```
+
+`onDiagnostic` optionally reports a matching phone connection after an empty scan
+on Android and iOS. It is advisory, does not identify another app, and leaves
+normal empty completion unchanged. React hooks expose it as `scan.diagnostic`
+on `useMentraBluetooth()`, or `diagnostic` on `useBluetoothScan()`. Clear the hint
+when retrying or connecting.
+
+On iOS, Mentra Live connections require Apple Notification Center Service
+(ANCS) authorization by default. Apps that do not use notification relay can
+skip that system authorization requirement for a connection:
+
+```ts
+await BluetoothSdk.connect(device, {requiresAncs: false})
+```
+
+The option defaults to `true` for backward compatibility and is an intentional
+no-op on Android.
 
 In multi-device environments, present an explicit picker instead of
 auto-connecting to the first nearby device.
@@ -158,10 +223,19 @@ enterprise device deployments:
 
 - `bluetooth_sdk_started`: sent once per app runtime after the native SDK starts.
 - `bluetooth_sdk_glasses_connected`: sent when SDK status transitions from not connected to connected.
-- `bluetooth_sdk_glasses_identified`: sent once per connection after the SDK receives a valid manufacturing serial from the glasses. This fires for every supported model that reports a serial. G1 and Ar99 decode the serial from the glasses' BLE advertisement. Mentra Live reports the product serial provisioned by its Android firmware through `asg_client`.
+- `bluetooth_sdk_glasses_identified`: sent once per connection after the SDK receives a valid manufacturing serial from the glasses, and again as a `glasses_heartbeat` on the first status update of each new reporting day (`America/Los_Angeles` calendar day, the calendar Mentra's weekly reporting is cut on) while that connection is still up, so a connection that spans a week boundary is visible in both weeks. Heartbeats ride on glasses status updates; a connection whose status never changes for a whole day produces none. This fires for every supported model that reports a serial. G1, G2, and Ar99 decode the serial from the glasses' BLE advertisement. Mentra Live reports the product serial provisioned by its Android firmware through `asg_client`.
 
-Analytics delivery is fire-and-forget: events are submitted asynchronously, do
-not block Bluetooth SDK behavior, and are not retried if delivery fails.
+The connected event waits for the glasses model when the model is not known at
+the moment the connection flag flips; if the connection ends first it is sent
+without a model and with `glasses_model_unresolved=true`.
+
+Analytics delivery never blocks Bluetooth SDK behavior: events are submitted
+asynchronously off the caller thread. An upload that fails (no network, non-2xx)
+is kept in a small on-device queue (at most 100 events, 7 days) and retried on
+the next successful send or the next SDK start; a payload PostHog rejects
+outright (4xx other than 408/429) is dropped rather than retried. Each event
+carries its own `uuid` and capture `timestamp`, so a retry neither double counts
+nor moves the event to a later week.
 
 React Native / Expo apps can disable these events before SDK startup through
 the config plugin:
@@ -187,6 +261,21 @@ Native Android apps can pass `BluetoothSdkAnalyticsConfig.disabled()` in
 Native iOS apps can pass `.disabled` in `MentraBluetoothSDKConfiguration` or set
 `MentraBluetoothSdkAnalyticsDisabled` to `true` in `Info.plist`.
 
+Hosts that ship the same package id through several lanes (dev, staging, store)
+can label the lane so Mentra can separate them. Pass
+`{"analytics": {"environment": "prod"}}` to the config plugin, or set the
+`com.mentra.bluetoothsdk.analytics.environment` Android metadata /
+`MentraBluetoothSdkAnalyticsEnvironment` `Info.plist` key directly. Values are
+trimmed and lowercased, must start with a letter or digit, may then contain
+`[a-z0-9_-]`, are at most 32 characters, and are reported as `app_environment`.
+
+Mentra counts an install as production only when `app_install_source` is
+`app_store` or `play_store`, `app_build_type` is `release`, and, for hosts that
+declare a lane, `app_environment` is `prod`. Play cannot distinguish its testing
+tracks from production (both report `play_store`), so the lane is what separates
+them for the Mentra App; hosts without a lane are reported as an unclassified
+store cohort rather than assumed production.
+
 Mentra's PostHog project API key is embedded in the SDK as a public analytics
 write token, not a private PostHog personal API key. Apps do not configure the
 analytics destination; these SDK usage events are always sent to Mentra's
@@ -195,11 +284,24 @@ PostHog project unless analytics are disabled.
 Captured properties include `event_source`, `sdk_platform`, `sdk_surface`,
 `sdk_version`, `app_identifier` (the Android package or iOS bundle identifier),
 the platform-specific `app_package` or `app_bundle_identifier`, OS
-platform/version, and `event_kind`. Connection events also include
-`fully_booted` and a glasses model value when known. The identification event
-intentionally includes the glasses manufacturing serial as `glasses_device_id`,
-with `glasses_device_id_type=manufacturing_serial`, so Mentra can correlate
-fleet deployments across supported models. This serial identifies the glasses
+platform/version, and `event_kind`. Every event also carries host build facts:
+`app_version`, `app_build`, `app_build_type` (`debug` / `release`),
+`app_install_source` (`play_store`, `app_store`, `testflight`, `adhoc_or_dev`,
+`simulator`, `sideload`, a named third-party store, `other_store`, or `unknown`
+when the platform gave no usable evidence), the raw Android
+`app_installer_package` when present, and `app_environment` when the host
+declares one. Connection and identification events include `fully_booted`,
+a glasses model value when known, and `glasses_is_simulated`. The identification
+event intentionally includes the glasses manufacturing serial as
+`glasses_device_id`, with `glasses_device_id_type=manufacturing_serial`, so
+Mentra can correlate fleet deployments across supported models, plus the
+glasses-side software versions the SDK already holds (`glasses_firmware_version`,
+`glasses_bes_firmware_version`, `glasses_mtk_firmware_version`,
+`glasses_android_version`, `glasses_app_version`, `glasses_build_number`) so
+identified glasses can be grouped by firmware. Glasses that never report a
+serial produce no identification event; that coverage gap is measured as
+connections without identification per model and SDK version, not from these
+fields. This serial identifies the glasses
 hardware, not the user or the host phone. Its source depends on the model:
 Mentra Live reports the serial provisioned in BES NV storage, while G1 and Ar99
 decode it from the glasses' BLE advertisement / manufacturer data.
@@ -217,9 +319,9 @@ subpath for common lifecycle plumbing. Use the root `BluetoothSdk` object for
 commands such as `requestPhoto()`, `startStream()`, and `setMicState()`.
 
 ```tsx
-import {Button, Text, View} from 'react-native'
-import {DeviceModels} from '@mentra/bluetooth-sdk'
-import {useBluetoothEvent, useMentraBluetooth} from '@mentra/bluetooth-sdk/react'
+import {Button, Text, View} from "react-native"
+import {DeviceModels} from "@mentra/bluetooth-sdk"
+import {useBluetoothEvent, useMentraBluetooth} from "@mentra/bluetooth-sdk/react"
 
 export function DeviceScreen() {
   const mentra = useMentraBluetooth({
@@ -227,13 +329,13 @@ export function DeviceScreen() {
     scanTimeoutMs: 10_000,
   })
 
-  useBluetoothEvent('button_press', (event) => {
-    console.log('Glasses button:', event.buttonId, event.pressType)
+  useBluetoothEvent("button_press", (event) => {
+    console.log("Glasses button:", event.buttonId, event.pressType)
   })
 
   return (
     <View>
-      <Text>{mentra.glasses.connected ? 'Connected' : 'Disconnected'}</Text>
+      <Text>{mentra.glasses.connected ? "Connected" : "Disconnected"}</Text>
       <Button disabled={mentra.busy} title="Scan" onPress={() => mentra.scan.start()} />
       {mentra.scan.devices.map((device) => (
         <Button key={device.id} title={device.name} onPress={() => mentra.connect(device)} />
@@ -256,11 +358,11 @@ The React hook exposes `glasses.connection` as a discriminated union:
 
 ```ts
 type GlassesConnectionStatus =
-  | {state: 'disconnected'}
-  | {state: 'scanning'}
-  | {state: 'connecting'}
-  | {state: 'bonding'}
-  | {state: 'connected'; fullyBooted: boolean}
+  | {state: "disconnected"}
+  | {state: "scanning"}
+  | {state: "connecting"}
+  | {state: "bonding"}
+  | {state: "connected"; fullyBooted: boolean}
 ```
 
 Use `connection.state` for link progress. `fullyBooted` only exists when `state === 'connected'`. Android and iOS native APIs also keep `connectionState`, `connected`, and `fullyBooted` as native status properties for Kotlin and Swift callers.
@@ -284,6 +386,28 @@ await BluetoothSdk.clearDefaultDevice()
 await saveDeviceToYourAppStorage(null)
 ```
 
+## Native notification controls
+
+G2 exposes firmware-owned notification history and popups. `getNativeNotificationStatus()` reports support, source (`phone` on Android or `ancs` on iOS), authorization, the desired controls, and submission/failure state. `submitted` means the controls were queued for the glasses, not that firmware acknowledged them. Unsupported drivers reject configuration instead of silently succeeding.
+
+```ts
+await BluetoothSdk.configureNativeNotifications({
+  enabled: true,
+  autoDisplay: true,       // false keeps history without automatic popups
+  durationSeconds: 5,     // 1–30
+  doNotDisturb: false,
+  blockedApps: [],        // Android package names; iOS requires an empty list
+})
+const status = await BluetoothSdk.getNativeNotificationStatus()
+const subscription = BluetoothSdk.addListener('native_notification_status', handleStatus)
+```
+
+The native SDKs expose the same configuration/status methods and `NativeNotificationConfig` type. Engine hosts should use the shared `engine.phoneNotifications` presentation policy and settings rather than competing with it through direct SDK configuration.
+
+Android content uploads use the existing phone listener and a bounded G2 file-transfer queue. `native_notification_delivery` reports delivered, failed, cancelled, or dropped notifications by id without their content. Delivered means all three file phases acknowledged success. Disable, settings changes, and disconnect invalidate pending work. An interrupted or timed-out upload requires reconnect before another upload because the verified ACK format has no transaction id.
+
+iOS G2 receives notifications directly through ANCS. Authorization is reported from the connected accessory and controls are reapplied after reconnect or authorization changes. No iOS content upload or full title/body relay is exposed. iOS keeps the firmware's existing app filter and rejects a nonempty `blockedApps` list. Phone dismissals are not yet synchronized to G2 history; the verified protocol does not establish a removal command.
+
 ## Common Commands
 
 ```ts
@@ -294,11 +418,14 @@ await BluetoothSdk.setDashboardPosition(4, 2)
 const networks = await BluetoothSdk.requestWifiScan()
 console.log(networks.map((network) => network.ssid))
 
-const wifiStatus = await BluetoothSdk.sendWifiCredentials('Office WiFi', 'secret')
+const savedResult = await BluetoothSdk.getSavedWifiNetworks()
+if (savedResult.outcome === "confirmed") console.log(savedResult.networks)
+
+const wifiStatus = await BluetoothSdk.sendWifiCredentials("Office WiFi", "secret")
 console.log(wifiStatus.state)
 
-const forgetStatus = await BluetoothSdk.forgetWifiNetwork('Office WiFi')
-console.log(forgetStatus.state)
+const forgetResult = await BluetoothSdk.forgetWifiNetwork("Office WiFi")
+console.log(forgetResult.outcome)
 
 const hotspotStatus = await BluetoothSdk.setHotspotState(true)
 console.log(hotspotStatus.state)
@@ -309,26 +436,58 @@ const galleryAck = await BluetoothSdk.setGalleryModeEnabled(true)
 console.log(galleryAck.status)
 await BluetoothSdk.setGalleryModeEnabled(false)
 
-await BluetoothSdk.setPreferredMic('auto')
+await BluetoothSdk.setPreferredMic("auto")
 await BluetoothSdk.setMicState(true)
 await BluetoothSdk.setOwnAppAudioPlaying(false)
 
-const ledAck = await BluetoothSdk.rgbLedControl(
-  `led-${Date.now()}`,
-  'com.example.app',
-  'on',
-  'green',
-  500,
-  500,
-  3,
-)
+const ledAck = await BluetoothSdk.rgbLedControl(`led-${Date.now()}`, "com.example.app", "on", "green", 500, 500, 3)
 console.log(ledAck.state)
+```
+
+## Dashboard Content
+
+`setDashboardContent(content)` keeps the standard `$TIME12$ $DATE$ $GBATT$
+$CONNECTION_STATUS$` status header and places non-empty content below it after a
+blank line. Pass the exact empty string to reset the dashboard to the status
+header only. The template is held in memory for the SDK process/session, and its
+status placeholders are refreshed each time the dashboard renders. Calling this
+method does not open the dashboard; it updates an active contextual dashboard
+immediately or appears on the next head-up. Repeating the same content is a
+no-op.
+
+React Native / Expo:
+
+```ts
+await BluetoothSdk.setDashboardContent('Next meeting at 2 PM')
+await BluetoothSdk.setDashboardContent('')
+```
+
+Kotlin:
+
+```kotlin
+sdk.setDashboardContent("Next meeting at 2 PM")
+sdk.setDashboardContent("")
+```
+
+Swift (iOS and macOS):
+
+```swift
+await sdk.setDashboardContent("Next meeting at 2 PM")
+await sdk.setDashboardContent("")
 ```
 
 Settings commands that return `SettingsAckSuccessEvent` reject when the ASG reports an error ack. The SDK updates its local settings store only after that ASG ack resolves successfully, so observed SDK state reflects the acknowledged glasses state rather than a queued request. Raw `settings_ack` listener events still use `SettingsAckEvent` because they can include both success and failure statuses. `rgbLedControl(...)` resolves from a successful ASG `rgb_led_control_response` and rejects when the ASG reports `state: "error"`; raw `settings_ack` and `rgb_led_control_response` events remain available through listeners.
 
 WiFi, hotspot, and version-info commands resolve from the ASG response path, not local dispatch:
-`requestWifiScan()` resolves from the ASG `wifi_scan_result` completion response with the updated scan list, including `[]` when no networks are found. Intermediate `wifi_scan_result` events can arrive with `scanComplete: false` while the glasses stream discovered networks; the final event uses `scanComplete: true`. If older glasses stream non-empty scan results but never send the completion event, the request resolves with the accumulated scan list when the request times out. `sendWifiCredentials()` resolves when the requested SSID is connected, `forgetWifiNetwork()` resolves when that SSID is no longer connected, `setHotspotState()` resolves when the requested hotspot state is reported, and `requestVersionInfo()` resolves from the ASG `version_info` response instead of local store changes.
+`requestWifiScan()` resolves from the ASG `wifi_scan_result` completion response with the updated scan list, including `[]` when no networks are found. Intermediate `wifi_scan_result` events can arrive with `scanComplete: false` while the glasses stream discovered networks; the final event uses `scanComplete: true`. If older glasses stream non-empty scan results but never send the completion event, the request resolves with the accumulated scan list when the request times out. `sendWifiCredentials()` resolves when the requested SSID is connected, `forgetWifiNetwork()` returns a semantic `WifiForgetResult`, `getSavedWifiNetworks()` returns a semantic `SavedWifiNetworksResult`, `setHotspotState()` resolves when the requested hotspot state is reported, and `requestVersionInfo()` waits for all chunks declared by the correlated response's `chunkCount`, `chunkIndex`, and `final` metadata. Legacy single-message responses complete immediately; legacy chunked responses complete on `version_info_3` after `version_info_1`. Missing final chunks time out rather than returning partial data after a quiet period.
+
+Current Mentra Live builds advertise `wifiForgetResultVersion` and `savedWifiNetworksVersion` in `version_info_1`. Native queues calls while those capabilities are unknown, sharing one 15-second deadline for negotiation and response. A discovery timeout rejects and never guesses that the glasses are legacy. Only version 1 is supported: modern commands carry `protocolVersion: 1`, a nonempty request ID, and the glasses process session ID; legacy forget commands omit all three fields. Unknown or malformed versions fail closed. Correlated results must match the complete tuple and (for forget) exact SSID; unrelated `wifi_status` events never settle a modern request. Session changes and disconnects reject pending WiFi work instead of allowing stale responses to cross sessions.
+
+`WifiForgetResult.outcome` is `confirmed`, `dispatched`, `not_found`, `unsupported`, `failed`, or `legacy_unverified`. K900 returns `dispatched`: ASG queued its asynchronous SystemUI broadcast, but the vendor API provides no completion callback and credential removal is not verified. `connected`, `currentSsid`, and `localIp` are best-effort diagnostic snapshot fields; `connected` is omitted when ASG cannot read the link state and must not be interpreted as `false`. Older firmware without the capability advertisement uses the isolated legacy path; accepted native dispatch immediately returns `legacy_unverified`, with no invented link-state snapshot. `getSavedWifiNetworks()` preserves exact SSID identity. It returns `confirmed` only for a backend with reliable enumeration, while K900 and legacy firmware return a typed `unsupported` result because the vendor credential store has no reliable list response.
+
+Promise results expose semantic outcomes and optional link snapshots, not `mode`, `capabilityVersion`, `requestId`, or `sid`. A legacy result returns `legacy_unverified` immediately after actual native transport acceptance; no active or compatible glasses transport rejects with `dispatch_failed`.
+
+Raw `wifi_forget_result` listeners receive a discriminated event union. `mode: "modern"` carries `requestId`, `sid`, `protocolVersion`, and semantic `outcome`; `mode: "legacy"` preserves the older uncorrelated wire frame's `dispatched` boolean. Partial tuples are rejected. Terminal Wi-Fi events use at-least-once BLE delivery, so raw listeners can observe retries; deduplicate modern events by `(requestId, sid)`. Promise coordinators accept only the first matching terminal frame.
 
 The SDK automatically sends the phone wall clock once shortly after a glasses connection becomes ready. It waits for the initial command burst to drain before timestamping the command so startup queue delay does not become clock skew. The once-per-connection guard resets after disconnect, so every successful reconnect synchronizes again. The SDK does not periodically verify or correct clock skew during a long-lived connection; apps that require periodic reconciliation can compare `requestVersionInfo().systemTimeMs` with the phone clock.
 
@@ -341,7 +500,7 @@ React Native narrows returned values to success shapes where the raw listener ev
 | `stopVideoRecording(...)` | `VideoRecordingStoppedStatusEvent` with `success: true` and `status: "recording_stopped"`. When a webhook URL is supplied, resolves after the video upload succeeds. | Rejects on `success: false` statuses such as `not_recording`, webhook upload failure, send failure, or timeout. |
 | `queryVideoRecordingStatus(requestId)` | `VideoRecordingStatusEvent` with the current `recording` state and elapsed `duration_ms` when available. | Rejects when disconnected, another video command uses the same request ID, or the response times out. |
 | `rgbLedControl(...)` | `RgbLedControlSuccessResponseEvent` with `state: "success"`. | Rejects when raw `rgb_led_control_response.state === "error"` or the response times out. |
-| `checkForOtaUpdate()` | `boolean`, true when the configured OTA manifest has an ASG APK, MTK, or BES update for the connected glasses; false only when the manifest was checked successfully and no update is available. | Rejects when the glasses are disconnected, version info is unavailable, the manifest cannot be fetched, or the manifest response is invalid/missing required ASG app version fields. |
+| `checkForOtaUpdate()` | `boolean`, true when the configured OTA manifest has an ASG APK, MTK, or BES update for the connected glasses; false only when the manifest was checked successfully and no update is available. | Rejects when the glasses are disconnected, version info is unavailable, the glasses report an unofficial client package (`unofficial_client`), the manifest cannot be fetched, or the manifest response is invalid/missing required ASG app version fields. |
 
 Android and iOS async APIs use `BluetoothSdkException` / `BluetoothSdkError` for the same error paths. Their returned event structs are the successful response in normal `try`/`await` code, while raw listener/delegate events still include both success and error payloads.
 
@@ -407,25 +566,21 @@ automatically.
 
 OTA requires Mentra Live glasses firmware that supports the ASG OTA protocol and network access from the glasses. During install, normal BLE traffic can be interrupted and the glasses may restart; keep the app connected and avoid sending unrelated commands until `ota_status.status` is `complete` or `failed`.
 
-For release selection, bundle verification, analytics opt-out, internal server
-requirements, and disconnected validation, see the
-[air-gapped deployment guide](https://docs.mentraglass.com/bluetooth-sdk/air-gapped-deployment).
-
 Mentra Live also rejects `ota_start` before acknowledgement when its known battery level is below 5%, emitting a failed `ota_status` with `error_message: "battery_low"`. Unknown battery state remains fail-open, so apps should keep their own (typically stricter) user-facing battery policy.
 
 ## Photo Upload
 
 ```ts
 const photo = await BluetoothSdk.requestPhoto({
-  size: 'medium',
-  webhookUrl: 'https://api.example.com/mentra/photo',
-  authToken: 'optional-token',
-  compress: 'medium',
+  size: "medium",
+  webhookUrl: "https://api.example.com/mentra/photo",
+  authToken: "optional-token",
+  compress: "medium",
   sound: true,
   exposureTimeNs: null, // auto exposure; pass a positive nanosecond value for manual exposure
   iso: null, // auto ISO; pass a positive ISO only with manual exposureTimeNs
 })
-console.log('photo delivered', photo.photoUrl ?? photo.uploadUrl, photo.fileSizeBytes)
+console.log("photo delivered", photo.photoUrl ?? photo.uploadUrl, photo.fileSizeBytes)
 ```
 
 `requestPhoto(...)` resolves only after the full photo action reaches terminal success: capture completed and the photo was delivered to the webhook, either directly from the glasses over Wi-Fi or through the phone's Bluetooth fallback relay. If you omit `requestId`, the SDK generates one and the terminal response includes it. It rejects if the ASG reports `state: "error"`, if phone-side fallback upload fails, if the SDK cannot send the command, or if no terminal `photo_response` arrives within 30 seconds. Photo requests use this longer operation-specific deadline because max-quality BLE fallback can legitimately exceed the 15-second deadline used by ordinary commands. Use `photo_status` for intermediate stages such as `accepted`, `configuring`, `capturing`, `captured`, `uploading`, `ble_fallback_compression`, `ready_for_transfer`, and `transferring`; `photo_status` is progress, while `photo_response` is terminal success/error. The raw `photo_response` event stream still includes both success and error events for subscribers. The webhook should accept multipart form data with a `photo` file and `requestId`. If `authToken` is provided, the uploader adds `Authorization: Bearer <token>`. The camera light is always enabled for photo capture.
@@ -446,8 +601,8 @@ The missing/factory persistent FOV base is 102 degrees with centered ROI; existi
 const streamId = `stream-${Date.now()}`
 
 await BluetoothSdk.startStream({
-  type: 'start_stream',
-  streamUrl: 'http://192.168.1.42:8889/mentra-live/whip',
+  type: "start_stream",
+  streamUrl: "http://192.168.1.42:8889/mentra-live/whip",
   streamId,
   video: {fps: 15},
 })
@@ -463,19 +618,19 @@ Use `rtmp://` or `rtmps://` for RTMP, `srt://` for SRT, and `http://` or `https:
 React Native components should use `useBluetoothEvent()` for hardware events:
 
 ```tsx
-import {useBluetoothEvent} from '@mentra/bluetooth-sdk/react'
+import {useBluetoothEvent} from "@mentra/bluetooth-sdk/react"
 
 export function HardwareEventLogger() {
-  useBluetoothEvent('button_press', (event) => console.log(event))
-  useBluetoothEvent('touch_event', (event) => console.log(event))
-  useBluetoothEvent('photo_status', (event) => console.log(event.status, event.resolvedConfig, event.captureMetadata))
-  useBluetoothEvent('stream_status', (event) => console.log(event))
-  useBluetoothEvent('speaking_status', (event) => console.log(event.speaking))
-  useBluetoothEvent('mic_pcm', (event) => {
+  useBluetoothEvent("button_press", (event) => console.log(event))
+  useBluetoothEvent("touch_event", (event) => console.log(event))
+  useBluetoothEvent("photo_status", (event) => console.log(event.status, event.resolvedConfig, event.captureMetadata))
+  useBluetoothEvent("stream_status", (event) => console.log(event))
+  useBluetoothEvent("speaking_status", (event) => console.log(event.speaking))
+  useBluetoothEvent("mic_pcm", (event) => {
     console.log(event.sampleRate, event.bitsPerSample, event.channels, event.encoding)
     console.log(event.pcm)
   })
-  useBluetoothEvent('mic_health', (event) => {
+  useBluetoothEvent("mic_health", (event) => {
     console.log(event.reason, event.sequenceGapEvents, event.decodeFailures)
   })
 
@@ -526,13 +681,15 @@ project, not the local Gradle entrypoint. The check script prepares
 `mobile/android` and uses its Gradle wrapper with `-PmentraPublicSdk=true`,
 matching the CI release workflow's public SDK dependency mode.
 
-For bare native iOS apps, use the public SwiftPM repository:
+For bare native iOS or macOS apps, use the public SwiftPM repository:
 
 ```text
 https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios.git
 ```
 
-Select version `0.1.20`, then add the `MentraBluetoothSDK` product to your app target.
+Select a coordinated SDK version that includes your target platform, then add
+the `MentraBluetoothSDK` product to your app target. Native macOS support is new
+on `dev`; use the local source override until a supporting release is published.
 
 For local SDK development, add this package folder directly in Xcode:
 
@@ -541,6 +698,14 @@ For local SDK development, add this package folder directly in Xcode:
 ```
 
 The core Swift package intentionally excludes optional local STT, Nex/SwiftProtobuf, Vuzix/Ultralite, and tar.bz2 extraction code paths.
+
+Native Mac hosts need Bluetooth and local-network usage descriptions, and
+sandbox entitlements for Bluetooth and outbound networking. Add microphone
+permission/audio-input capability for host microphone capture and network-server
+capability for local SDK servers. macOS uses CoreAudio instead of
+`AVAudioSession`; it does not provide iOS background modes or ANCS relay. See
+[the macOS integration guide](../../../mintlify-docs/bluetooth-sdk/macos.mdx)
+and the Starter Kit's `examples/macos` and `examples/react-native-macos` hosts.
 
 Maintainers publishing the public SwiftPM mirror should follow
 [RELEASING_IOS_SPM.md](./RELEASING_IOS_SPM.md).

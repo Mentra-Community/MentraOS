@@ -95,19 +95,12 @@ jobs:
           ASC_API_KEY_PATH: ${{ steps.asc.outputs.key_path }}
         run: |
           set -euo pipefail
-          for product in mentraApp starterKit; do
-            if [[ "$product" == mentraApp ]]; then
-              bundle_id=com.mentra.mentra
-            else
-              bundle_id=com.mentra.bluetoothsdkexample
-            fi
-            build=$(jq -er ".coordinates.candidates.$product.ios.buildNumber" "$GITHUB_WORKSPACE/promotion-input/current.json")
-            APP_IDENTIFIER="$bundle_id" \
-              MENTRA_MARKETING_VERSION="${{ inputs.release_identity }}" \
-              MENTRA_BUILD_NUMBER="$build" \
-              MENTRA_PHASED_RELEASE=true \
-              bundle exec fastlane promote_app_store
-          done
+          build=$(jq -er .coordinates.candidates.mentraApp.ios.buildNumber "$GITHUB_WORKSPACE/promotion-input/current.json")
+          APP_IDENTIFIER=com.mentra.mentra \
+            MENTRA_MARKETING_VERSION="${{ inputs.release_identity }}" \
+            MENTRA_BUILD_NUMBER="$build" \
+            MENTRA_PHASED_RELEASE=true \
+            bundle exec fastlane promote_app_store
 
       - name: Create or reconcile Google Play production drafts
         run: |
@@ -117,33 +110,22 @@ jobs:
           cp mobile/Gemfile mobile/Gemfile.lock play-tools/
           cd play-tools
           bundle install
-          for product in mentraApp starterKit; do
-            if [[ "$product" == mentraApp ]]; then
-              package=com.mentra.mentra
-              output=../promotion-output/play/mentra.json
-              observed=../promotion-output/play/mentra-observed.json
-            else
-              package=com.mentra.bluetoothsdkexample
-              output=../promotion-output/play/starter.json
-              observed=../promotion-output/play/starter-observed.json
-            fi
-            build=$(jq -er ".coordinates.candidates.$product.android.buildNumber" ../promotion-input/current.json)
-            APP_PACKAGE_NAME="$package" \
-              GOOGLE_PLAY_SOURCE_TRACK=internal \
-              GOOGLE_PLAY_TARGET_TRACK=production \
-              GOOGLE_PLAY_VERSION_CODE="$build" \
-              GOOGLE_PLAY_RELEASE_STATUS=draft \
-              GOOGLE_PLAY_PROMOTION_OUTPUT="$output" \
-              bundle exec fastlane promote_google_play
-            APP_PACKAGE_NAME="$package" \
-              GOOGLE_PLAY_INVENTORY_OUTPUT="$product-inventory.json" \
-              bundle exec fastlane google_play_inventory
-            node ../.github/scripts/validate-google-play-release.mjs \
-              --inventory "$product-inventory.json" \
-              --version-code "$build" \
-              --required-state draft \
-              --output "$observed"
-          done
+          build=$(jq -er .coordinates.candidates.mentraApp.android.buildNumber ../promotion-input/current.json)
+          APP_PACKAGE_NAME=com.mentra.mentra \
+            GOOGLE_PLAY_SOURCE_TRACK=internal \
+            GOOGLE_PLAY_TARGET_TRACK=production \
+            GOOGLE_PLAY_VERSION_CODE="$build" \
+            GOOGLE_PLAY_RELEASE_STATUS=draft \
+            GOOGLE_PLAY_PROMOTION_OUTPUT=../promotion-output/play/mentra.json \
+            bundle exec fastlane promote_google_play
+          APP_PACKAGE_NAME=com.mentra.mentra \
+            GOOGLE_PLAY_INVENTORY_OUTPUT=mentraApp-inventory.json \
+            bundle exec fastlane google_play_inventory
+          node ../.github/scripts/validate-google-play-release.mjs \
+            --inventory mentraApp-inventory.json \
+            --version-code "$build" \
+            --required-state draft \
+            --output ../promotion-output/play/mentra-observed.json
 
       - name: Read back exact submitted coordinates and append state
         id: next
@@ -154,19 +136,15 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p promotion-output/apple
-          for product in mentraApp starterKit; do
-            if [[ "$product" == mentraApp ]]; then bundle_id=com.mentra.mentra; else bundle_id=com.mentra.bluetoothsdkexample; fi
-            build=$(jq -er ".coordinates.candidates.$product.ios.buildNumber" promotion-input/current.json)
-            GITHUB_OUTPUT="promotion-output/apple/$product.outputs" node mobile/scripts/app-store-connect-build.mjs production-status \
-              --issuer-id "$ASC_API_ISSUER_ID" --key-id "$ASC_API_KEY_ID" --key-path "$ASC_API_KEY_PATH" \
-              --bundle-id "$bundle_id" --build-number "$build" --app-version "${{ inputs.release_identity }}"
-            grep -q '^promoted=true$' "promotion-output/apple/$product.outputs"
-          done
+          build=$(jq -er .coordinates.candidates.mentraApp.ios.buildNumber promotion-input/current.json)
+          GITHUB_OUTPUT=promotion-output/apple/mentraApp.outputs node mobile/scripts/app-store-connect-build.mjs production-status \
+            --issuer-id "$ASC_API_ISSUER_ID" --key-id "$ASC_API_KEY_ID" --key-path "$ASC_API_KEY_PATH" \
+            --bundle-id com.mentra.mentra --build-number "$build" --app-version "${{ inputs.release_identity }}"
+          grep -q '^promoted=true$' promotion-output/apple/mentraApp.outputs
           jq -n \
             --arg url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
             --slurpfile mentra promotion-output/play/mentra-observed.json \
-            --slurpfile starter promotion-output/play/starter-observed.json \
-            '{schemaVersion: 1, kind: "production-store-submissions", provenanceUrl: $url, apple: {mentraApp: "submitted-manual-release", starterKit: "submitted-manual-release"}, google: {mentraApp: $mentra[0], starterKit: $starter[0]}, publicReleasePerformed: false}' \
+            '{schemaVersion: 1, kind: "production-store-submissions", provenanceUrl: $url, apple: {mentraApp: "submitted-manual-release"}, google: {mentraApp: $mentra[0]}, publicReleasePerformed: false}' \
             > promotion-output/store-submissions.json
           node .github/scripts/production-promotion-assets.mjs prepare-evidence \
             --file promotion-output/store-submissions.json \

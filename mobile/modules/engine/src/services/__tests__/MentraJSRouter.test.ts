@@ -83,7 +83,7 @@ function buildMockRuntime() {
   }> = []
   const handleRawCalls: Array<{packageName: string; raw: string}> = []
   const unregisterCalls: string[] = []
-  const probeCalls: Array<{packageName: string; reason?: string}> = []
+  const probeCalls: Array<{packageName: string; reason?: string; timeoutMs?: number}> = []
   const setManifestCalls: Array<{packageName: string; installedManifest: unknown}> = []
   const resetHandshakeCalls: string[] = []
   const runtime = {
@@ -102,8 +102,8 @@ function buildMockRuntime() {
     unregisterApp(packageName: string) {
       unregisterCalls.push(packageName)
     },
-    probeForegroundLiveness(packageName: string, reason?: string) {
-      probeCalls.push({packageName, reason})
+    probeForegroundLiveness(packageName: string, reason?: string, timeoutMs?: number) {
+      probeCalls.push({packageName, reason, timeoutMs})
     },
     setInstalledManifest(packageName: string, installedManifest: unknown) {
       setManifestCalls.push({packageName, installedManifest})
@@ -261,6 +261,19 @@ describe("MentraJSRouter", () => {
     expect(logger.error).toHaveBeenCalledTimes(1)
   })
 
+  test("ready_nack is a warn, not an error — the context is busy, not dead", () => {
+    router.start()
+    crust.emit("mentrajs_message", {
+      packageName: "com.mentra.call",
+      iface: "__error",
+      method: "ready_nack",
+      argsJson: '{"phase":"steady-state","timeoutMs":3000}',
+    })
+    expect(logger.warn).toHaveBeenCalledTimes(1)
+    expect(logger.warn.mock.calls[0]![0]).toContain("ready_nack")
+    expect(logger.error).not.toHaveBeenCalled()
+  })
+
   test("unknown iface logs a debug line but does NOT crash", () => {
     router.start()
     crust.emit("mentrajs_message", {
@@ -355,7 +368,10 @@ describe("MentraJSRouter", () => {
     await router.spawnAndRegister("com.foo", "console.log(1)")
     router.probeForegroundLiveness("com.foo", "foreground-open")
 
-    expect(runtimeMock.probeCalls).toEqual([{packageName: "com.foo", reason: "foreground-open"}])
+    expect(runtimeMock.probeCalls).toEqual([{packageName: "com.foo", reason: "foreground-open", timeoutMs: undefined}])
+
+    router.probeForegroundLiveness("com.foo", "app-active", 12_000)
+    expect(runtimeMock.probeCalls[1]).toEqual({packageName: "com.foo", reason: "app-active", timeoutMs: 12_000})
   })
 
   test("spawnAndRegister returns false when native spawn fails", async () => {

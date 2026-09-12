@@ -14,7 +14,9 @@ import {
 } from "../services/OtaAutoChain"
 import {
   BES_INSTALL_RESTART_MESSAGE,
+  OTA_ERROR_BES_RESTART_REQUIRED_COPY_KEY,
   getOtaErrorMessage,
+  otaErrorCopyKey,
   shouldRequireGlassesRebootForBesFailure,
   shouldShowChangeWifiForOtaDownloadFailure,
 } from "../services/OtaErrorMapping"
@@ -34,6 +36,7 @@ export type MentraLiveOtaScreen =
   | "wifi_required"
   | "up_to_date"
   | "dev_build"
+  | "unofficial_client"
   | "check_failed"
   | "update_info_unavailable"
   | "starting"
@@ -53,7 +56,19 @@ export type MentraLiveOtaErrorCode =
 
 export type MentraLiveOtaError = {
   code: MentraLiveOtaErrorCode
+  /** English copy for hosts without localization. */
   message: string
+  /**
+   * Copy key for `message` when the failure maps to known copy, so localized hosts can
+   * translate it. Null for phone-side watchdog and preflight messages, which are English-only.
+   * Optional so host code that builds this type by hand keeps compiling; the hook always sets it.
+   */
+  copyKey?: string | null
+  /**
+   * Raw failure code reported by the glasses (`ota_status.error`), for support. Null when the
+   * failure originated on the phone. Optional for the same source-compatibility reason.
+   */
+  glassesCode?: string | null
 }
 
 export type MentraLiveOtaTransport = "wifi" | "hotspot"
@@ -82,6 +97,11 @@ export type MentraLiveOtaState = {
   hotspotSupported: boolean
   hotspotPhase: MentraLiveOtaHotspotPhase
   hotspotArtifactPercent: number | null
+  /**
+   * Current phone download context. Index is zero-based; percent applies to this file only.
+   * Optional for source compatibility; this hook returns null when no file is active.
+   */
+  hotspotArtifact?: {kind: MentraLiveOtaStep; index: number; totalCount: number} | null
   phase: MentraLiveOtaInstallPhase | null
   step: MentraLiveOtaStep | null
   currentStep: number | null
@@ -103,6 +123,8 @@ export type MentraLiveOtaState = {
   releaseTransition: MentraLiveOtaReleaseTransition | null
   /** Release notes crossed by this update, newest first. Populated on completion. */
   changelogs: ReleaseChangelog[]
+  /** Sideloaded glasses client package, set only on the `unofficial_client` screen. */
+  glassesPackageName: string | null
 }
 
 export type UseMentraLiveOtaOptions = {
@@ -129,7 +151,7 @@ export type MentraLiveOtaController = {
   openWifiSetup: () => void
 }
 
-type CheckState = "checking" | "update_available" | "no_update" | "dev_build" | "error"
+type CheckState = "checking" | "update_available" | "no_update" | "dev_build" | "unofficial_client" | "error"
 
 const AUTO_CHAIN_NETWORK_RETRY_DELAY_MS = 5000
 const AUTO_CHAIN_COMPLETE_DELAY_MS = 750
@@ -216,6 +238,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
   const [isUpdateRequired, setIsUpdateRequired] = useState(true)
   const [isVersionChange, setIsVersionChange] = useState(false)
   const [errorKind, setErrorKind] = useState<"network" | "pin_unavailable">("network")
+  const [unofficialClientPackage, setUnofficialClientPackage] = useState<string | null>(null)
   const [updateFingerprint, setUpdateFingerprint] = useState<string | null>(null)
   const [offeredReleaseTransition, setOfferedReleaseTransition] = useState<MentraLiveOtaReleaseTransition | null>(null)
   const [completedReleaseTransition, setCompletedReleaseTransition] = useState<MentraLiveOtaReleaseTransition | null>(
@@ -377,6 +400,14 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
           checkCompletedRef.current = true
           ota.clearUpdateAvailable()
           setCheckState("dev_build")
+          return
+        }
+        if (result.skippedReason === "unofficial_client") {
+          stopOtaAutoChain()
+          checkCompletedRef.current = true
+          ota.clearUpdateAvailable()
+          setUnofficialClientPackage(result.packageName ?? null)
+          setCheckState("unofficial_client")
           return
         }
         if (!result.hasCheckCompleted) {
@@ -624,6 +655,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
         hotspotSupported,
         hotspotPhase: "idle",
         hotspotArtifactPercent: null,
+        hotspotArtifact: null,
         phase: null,
         step: null,
         currentStep: null,
@@ -642,6 +674,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
         completedUpdate: false,
         releaseTransition: null,
         changelogs: [],
+        glassesPackageName: null,
       }
     }
 
@@ -653,6 +686,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
         screen = wifiRequired ? "wifi_required" : batteryBlocked ? "battery_required" : "update_available"
       } else if (checkState === "no_update") screen = "up_to_date"
       else if (checkState === "dev_build") screen = "dev_build"
+      else if (checkState === "unofficial_client") screen = "unofficial_client"
       else screen = errorKind === "pin_unavailable" ? "update_info_unavailable" : "check_failed"
 
       let error: MentraLiveOtaError | null = null
@@ -660,9 +694,16 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
         error = {
           code: "check_failed",
           message: "Couldn't check for updates. Please check your connection and try again.",
+          copyKey: "ota:checkFailedMessage",
+          glassesCode: null,
         }
       } else if (screen === "update_info_unavailable") {
-        error = {code: "update_info_unavailable", message: "Update information for this app version is unavailable."}
+        error = {
+          code: "update_info_unavailable",
+          message: "Update information for this app version is unavailable.",
+          copyKey: "ota:updateInfoUnavailableMessage",
+          glassesCode: null,
+        }
       }
       return {
         screen,
@@ -678,6 +719,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
         hotspotSupported,
         hotspotPhase: "idle",
         hotspotArtifactPercent: null,
+        hotspotArtifact: null,
         phase: null,
         step: null,
         currentStep: null,
@@ -688,7 +730,11 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
         error,
         canInstall: screen === "update_available" && canInstall,
         canRetry: screen === "check_failed",
-        canFinish: screen === "up_to_date" || screen === "dev_build" || screen === "update_info_unavailable",
+        canFinish:
+          screen === "up_to_date" ||
+          screen === "dev_build" ||
+          screen === "unofficial_client" ||
+          screen === "update_info_unavailable",
         canDismiss:
           (screen === "update_available" || screen === "wifi_required" || screen === "battery_required") &&
           !isUpdateRequired &&
@@ -706,6 +752,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
               ? completedReleaseTransition
               : null,
         changelogs: screen === "up_to_date" ? completedChangelogs : [],
+        glassesPackageName: screen === "unofficial_client" ? unofficialClientPackage : null,
       }
     }
 
@@ -719,19 +766,37 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
       installSnapshot.otaProgress,
       installSnapshot.errorMsg,
     )
-    const displayedError = requiresGlassesReboot
-      ? BES_INSTALL_RESTART_MESSAGE
-      : installSnapshot.errorMsg || getOtaErrorMessage(installSnapshot.otaStatus?.error)
+    // The raw code the glasses attached to their failure report, kept for support even when
+    // phone-side copy outranks it. Only a failed ota_status carries a current code.
+    const glassesCode = installSnapshot.otaStatus?.status === "failed" ? installSnapshot.otaStatus.error || null : null
+    // Precedence mirrors the legacy screen: the BES restart instruction, then a phone-side
+    // watchdog/preflight message (English-only, no copy key), then the glasses code mapped to
+    // copy (unknown codes get the generic glasses-error copy rather than the raw code).
+    let displayedError: string
+    let copyKey: string | null
+    if (requiresGlassesReboot) {
+      displayedError = BES_INSTALL_RESTART_MESSAGE
+      copyKey = OTA_ERROR_BES_RESTART_REQUIRED_COPY_KEY
+    } else if (installSnapshot.errorMsg) {
+      displayedError = installSnapshot.errorMsg
+      copyKey = null
+    } else {
+      displayedError = getOtaErrorMessage(glassesCode)
+      copyKey = otaErrorCopyKey(glassesCode)
+    }
     const progressState = progressScreen(installSnapshot)
     const screen = progressState === "complete" && autoChainActive ? "finishing" : progressState
-    const error =
+    const error: MentraLiveOtaError | null =
       screen === "failed"
         ? {
-            code: requiresGlassesReboot ? ("bes_restart_required" as const) : ("install_failed" as const),
+            code: requiresGlassesReboot ? "bes_restart_required" : "install_failed",
             message: displayedError,
+            copyKey,
+            glassesCode,
           }
         : null
     const totalSteps = installSnapshot.otaStatus?.totalSteps ?? null
+    const artifact = installSnapshot.hotspotArtifact
     const changelogs = screen === "complete" ? releaseChangelogsForActiveChain() : []
     return {
       screen,
@@ -747,6 +812,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
       hotspotSupported,
       hotspotPhase: installSnapshot.hotspotPhase,
       hotspotArtifactPercent: installSnapshot.hotspotArtifactPercent,
+      hotspotArtifact: artifact ? {kind: artifact.kind, index: artifact.index, totalCount: artifact.totalCount} : null,
       phase: installSnapshot.otaStatus?.phase ?? installSnapshot.otaProgress?.stage ?? null,
       step: installSnapshot.otaStatus?.stepType ?? null,
       currentStep: installSnapshot.otaStatus?.currentStep ?? null,
@@ -768,8 +834,10 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
       completedUpdate: false,
       releaseTransition: releaseTransitionFromRange(otaAutoChainReleaseRange()),
       changelogs,
+      glassesPackageName: null,
     }
   }, [
+    unofficialClientPackage,
     checkState,
     batteryBlocked,
     completedChangelogs,

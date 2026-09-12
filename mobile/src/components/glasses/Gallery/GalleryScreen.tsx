@@ -195,6 +195,16 @@ export function GalleryScreen() {
             {cancelable: false},
           )
           break
+        case "location_permission_required":
+          showAlert(
+            "Location Access Required",
+            "The app needs Location access to verify it joined your glasses WiFi network. Enable it in Settings, then try syncing again.",
+            [
+              {text: "Cancel", style: "cancel"},
+              {text: "Open Settings", onPress: () => void SettingsNavigationUtils.openAppSettings()},
+            ],
+          )
+          break
         case "camera_roll_permission_required":
           showAlert(
             "Camera Roll Access Required",

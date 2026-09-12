@@ -40,6 +40,13 @@ derives `X.Y.Z-dev.N` or `X.Y.Z-beta.N` identities without source edits.
   `EXPO_PUBLIC_ASG_OTA_VERSION_URL` release pin. Local and compile-only builds
   without a pin fail closed; a Super Mode manifest override remains available
   for deliberate local OTA testing.
+- Pull request Android APKs are pinned to `ota-pr-<n>-<head sha>.json` on the
+  `pr-builds` GitHub release, published by the `MentraOS ASG Client Build`
+  workflow for the same PR head. It points at the coordinated ASG artifact
+  whose source fingerprint matches the PR (no ASG build needed) or, when none
+  exists, at an ASG client built from the PR. Installing a PR ASG over a
+  coordinated build is a version-code downgrade that the exact-pin OTA flow
+  handles through the uninstall-then-reinstall detour.
 
 ### Testing
 

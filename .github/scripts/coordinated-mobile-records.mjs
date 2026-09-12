@@ -5,6 +5,7 @@ import path from "node:path"
 import {fileURLToPath} from "node:url"
 
 import {serializeReleaseRecord} from "./release-family.mjs"
+import {validateMentraosTestflightDistribution} from "./mentraos-testflight-distribution.mjs"
 
 const STATUSES = new Set(["built", "published", "reused"])
 
@@ -82,21 +83,27 @@ export function createAndroidRecord({plan, apk, apkUrl, aab, aabUrl, playTrack, 
   }
 }
 
-export function createIosRecord({plan, ipa, ipaUrl, testflightGroup, storeStatus, provenanceUrl}) {
+export function createIosRecord({plan, ipa, ipaUrl, testflightGroup, storeStatus, provenanceUrl, testflight}) {
   validatePlan(plan)
   if (!testflightGroup) throw new Error("TestFlight group is required")
+  if (storeStatus !== "built" && (plan.native.testflight || testflight)) {
+    validateMentraosTestflightDistribution(plan, testflightGroup, testflight)
+  }
   return {
     schemaVersion: 1,
     releaseSetId: plan.releaseSetId,
     publications: {
       mentraos: {
-        "app-store-connect": publication({
-          status: storeStatus,
-          coordinate: `com.mentra.mentra:${plan.native.marketingVersion}:${plan.native.buildNumber}:${testflightGroup}`,
-          url: "https://appstoreconnect.apple.com/apps",
-          provenanceUrl,
-          file: ipa,
-        }),
+        "app-store-connect": {
+          ...publication({
+            status: storeStatus,
+            coordinate: `com.mentra.mentra:${plan.native.marketingVersion}:${plan.native.buildNumber}:${testflightGroup}`,
+            url: "https://appstoreconnect.apple.com/apps",
+            provenanceUrl,
+            file: ipa,
+          }),
+          ...(testflight ? {testflight} : {}),
+        },
       },
     },
     artifacts: [
@@ -159,6 +166,11 @@ function main() {
       ipa: path.resolve(args.ipa),
       ipaUrl: args["ipa-url"],
       testflightGroup: args["testflight-group"],
+      testflight: args["distribution-status"] ? {
+        group: args["testflight-group"], audience: args.audience,
+        status: args["distribution-status"], buildId: args["build-id"],
+        installUrl: args["install-url"], reviewState: args["review-state"] || "", skipReason: args["skip-reason"] || "",
+      } : undefined,
       storeStatus: args.status,
       provenanceUrl: args["provenance-url"],
     })

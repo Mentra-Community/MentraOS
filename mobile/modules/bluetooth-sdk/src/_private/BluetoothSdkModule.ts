@@ -1,4 +1,8 @@
+import {createScanSession} from "./scanSession"
 import {NativeModule, requireNativeModule} from "expo"
+import {Platform} from "react-native"
+
+import {installNativeLogConsole} from "./nativeLogConsole"
 
 import {
   BluetoothSettingsUpdate,
@@ -26,6 +30,9 @@ import {
   GalleryStatusEvent,
   HotspotStatusChangeEvent,
   MicPreference,
+  NativePhoneNotification,
+  NativeNotificationConfig,
+  NativeNotificationStatus,
   ObservableStoreCategory,
   OtaQueryResult,
   OtaStartAckEvent,
@@ -35,10 +42,10 @@ import {
   RgbLedAction,
   RgbLedColor,
   RgbLedControlSuccessResponseEvent,
+  ScanDiagnostic,
   ScanModelOptions,
   ScanOptions,
   SettingsAckSuccessEvent,
-  StreamKeepAliveRequest,
   StreamStartRequest,
   StreamStatusEvent,
   VideoRecordingStartedStatusEvent,
@@ -47,6 +54,8 @@ import {
   VideoRecordingStatusEvent,
   VersionInfoResult,
   WarmUpCameraParams,
+  SavedWifiNetworksResult,
+  WifiForgetResult,
   WifiSearchResult,
   WifiStatusChangeEvent,
 } from "../BluetoothSdk.types"
@@ -77,6 +86,7 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   displayEvent(params: Record<string, unknown>): Promise<void>
   displayText(text: string, x?: number, y?: number, size?: number): Promise<void>
   clearDisplay(): Promise<void>
+  setDashboardContent(content: string): Promise<void>
 
   // Connection Commands
   requestStatus(): Promise<void>
@@ -84,6 +94,7 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   connectDefaultWithOptions(options: Required<ConnectOptions>): Promise<void>
   setDefaultDevice(device: Device | null): Promise<void>
   clearDefaultDevice(): Promise<void>
+  getScanDiagnostic?: (model: DeviceModel) => Promise<ScanDiagnostic | null>
   startScan(model: DeviceModel): Promise<void>
   stopScan(): Promise<void>
   scan(options: ScanOptions): Promise<Device[]>
@@ -115,8 +126,9 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
 
   // WiFi Commands
   requestWifiScan(): Promise<WifiSearchResult[]>
+  getSavedWifiNetworks(): Promise<SavedWifiNetworksResult>
   sendWifiCredentials(ssid: string, password: string): Promise<WifiStatusChangeEvent>
-  forgetWifiNetwork(ssid: string): Promise<WifiStatusChangeEvent>
+  forgetWifiNetwork(ssid: string): Promise<WifiForgetResult>
   setHotspotState(enabled: boolean): Promise<HotspotStatusChangeEvent>
   /** Enable or disable Wi-Fi ADB on Mentra Live (no-op on other devices). */
   setWifiAdbState(enabled: boolean): Promise<void>
@@ -165,7 +177,13 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   startAr99OtaFromFile(path: string): Promise<boolean>
   cancelAr99Ota(): Promise<void>
   sendAr99FactoryReset(): Promise<void>
-  buildAr99OtaSignature(secret: string, appName: string, currentVersion: string, serialNumber: string, nonce: string): string
+  buildAr99OtaSignature(
+    secret: string,
+    appName: string,
+    currentVersion: string,
+    serialNumber: string,
+    nonce: string,
+  ): string
 
   // Version Info Commands
   requestVersionInfo(): Promise<VersionInfoResult>
@@ -186,13 +204,20 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
 
   // Stream Commands
   startStream(params: StreamStartRequest): Promise<StreamStatusEvent>
-  startExternallyManagedStream(params: StreamStartRequest): Promise<StreamStatusEvent>
   stopStream(): Promise<StreamStatusEvent>
-  sendExternallyManagedStreamKeepAlive(params: StreamKeepAliveRequest): Promise<void>
 
   // Microphone Commands
   setMicState(enabled: boolean, useGlassesMic?: boolean, sendTranscript?: boolean, sendLc3Data?: boolean): Promise<void>
   setPreferredMic(preferredMic: MicPreference): Promise<void>
+  /**
+   * Lock microphone selection to one source (`"glasses"`) until released with `null`.
+   *
+   * Stronger than [setPreferredMic]: a preference is a ranking the SDK falls through when a source
+   * is unavailable, while a pin has no fallback and reports `mic_health` with
+   * `reason: "pinned-source-unavailable"` instead. Android only; the iOS implementation is a no-op,
+   * so a caller that depends on the guarantee must gate on platform.
+   */
+  setMicSourcePin(source: string | null): Promise<void>
   restartTranscriber(): Promise<void>
 
   // Audio Playback Monitoring
@@ -204,8 +229,21 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   // ? 16-bit LE PCM chunks into a streaming AudioTrack (USAGE_MEDIA, so it
   // follows the phone's media route, e.g. A2DP to glasses). Implemented with
   // AudioTrack on Android and AVAudioEngine on iOS.
-  /** Open a PCM stream session. One AudioTrack per id; caller manages ids. */
-  pcmStreamOpen(streamId: string, sampleRate: number, channels: number, volume: number): Promise<void>
+  /**
+   * Open a PCM stream session. One AudioTrack per id; caller manages ids.
+   *
+   * `jitterMs` sizes the playout buffer and is therefore also the stream's floor latency, since a
+   * streaming track fills to its buffer and stays there. Omit it for one-way media, where the
+   * default cushion is inaudible; pass a small value for conversational audio, where the same
+   * cushion is delay before the far end is heard. Android only — iOS accepts and ignores it.
+   */
+  pcmStreamOpen(
+    streamId: string,
+    sampleRate: number,
+    channels: number,
+    volume: number,
+    jitterMs?: number,
+  ): Promise<void>
   /**
    * Append base64 PCM. Resolves with the queued-but-unplayed backlog in ms;
    * blocks (on a background dispatcher) while the backlog is above the
@@ -254,6 +292,11 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
     speed: number,
   ): Promise<boolean>
 
+  /** Android G2 content upload. iOS receives ANCS directly and rejects uploads. */
+  sendPhoneNotification(notification: NativePhoneNotification): Promise<void>
+  configureNativeNotifications(config: NativeNotificationConfig): Promise<void>
+  getNativeNotificationStatus(): Promise<NativeNotificationStatus>
+
   // Helper methods for type-safe observable store access
   updateGlasses(values: Partial<GlassesStatus>): Promise<void>
   updateBluetoothSettings(values: BluetoothSettingsUpdate): Promise<void>
@@ -269,10 +312,12 @@ export type BluetoothSdkInternalModule = BluetoothSdkNativeModule
 // This call loads the native module object from the JSI.
 // NativeModule<BluetoothSdkModuleEvents> already extends EventEmitter<BluetoothSdkModuleEvents>
 const NativeBluetoothSdkModule = requireNativeModule<BluetoothSdkNativeModule>("BluetoothSdk")
+installNativeLogConsole(NativeBluetoothSdkModule, Platform.OS)
 
 const DEFAULT_CONNECT_OPTIONS: Required<ConnectOptions> = {
   saveAsDefault: true,
   cancelExistingConnectionAttempt: true,
+  requiresAncs: true,
 }
 
 const DEFAULT_SCAN_TIMEOUT_MS = 15_000
@@ -580,65 +625,38 @@ NativeBluetoothSdkModule.connect = function (device: Device, options?: ConnectOp
   return this.connectWithOptions(device, {...DEFAULT_CONNECT_OPTIONS, ...options})
 }
 
+const nativeStopScan = NativeBluetoothSdkModule.stopScan.bind(NativeBluetoothSdkModule)
+const activeScanCancellations = new Set<() => Promise<void>>()
+NativeBluetoothSdkModule.stopScan = async function () {
+  if (activeScanCancellations.size === 0) return nativeStopScan()
+  await Promise.all([...activeScanCancellations].map(cancel => cancel()))
+}
+
 NativeBluetoothSdkModule.scan = async function (modelOrOptions: DeviceModel | ScanOptions, options?: ScanModelOptions) {
+  if (activeScanCancellations.size > 0) await this.stopScan()
   const scanOptions = normalizeScanArgs(modelOrOptions, options)
   const timeoutMs = normalizeTimeoutMs(scanOptions.timeoutMs ?? scanOptions.timeout, DEFAULT_SCAN_TIMEOUT_MS)
-  let latestResults: Device[] = []
-
-  return new Promise<Device[]>((resolve, reject) => {
-    let timeout: ReturnType<typeof setTimeout> | null = null
-    let removeBluetoothListener = () => {}
-    let settled = false
-    let scanStarted = false
-
-    const emitResults = (devices: Device[]) => {
-      latestResults = devices
-      scanOptions.onResults?.([...devices])
-    }
-
-    const cleanup = () => {
-      if (timeout) {
-        clearTimeout(timeout)
-      }
-      removeBluetoothListener()
-      if (scanStarted) {
-        void Promise.resolve(this.stopScan()).catch(() => undefined)
-      }
-    }
-
-    const settle = (error?: Error) => {
-      if (settled) {
-        return
-      }
-      settled = true
-      cleanup()
-      if (error) {
-        reject(error)
-      } else {
-        resolve([...latestResults])
-      }
-    }
-
-    const handleBluetoothStatus = (status: Partial<BluetoothStatus>) => {
-      if (!Array.isArray(status.searchResults)) {
-        return
-      }
-      emitResults(searchResultsForModel(status, scanOptions.model))
-    }
-
-    removeBluetoothListener = this.onBluetoothStatus(handleBluetoothStatus)
-    emitResults([])
-
-    timeout = setTimeout(() => settle(), timeoutMs)
-
-    Promise.resolve(this.startScan(scanOptions.model))
-      .then(() => {
-        scanStarted = true
-        return this.getBluetoothStatus()
-      })
-      .then(handleBluetoothStatus)
-      .catch((error) => settle(error instanceof Error ? error : new Error(String(error))))
-  })
+  const session = createScanSession(
+    {
+      start: (model) => this.startScan(model),
+      stop: nativeStopScan,
+      subscribe: (onResults) =>
+        this.onBluetoothStatus((status) => {
+          if (Array.isArray(status.searchResults)) onResults(searchResultsForModel(status, scanOptions.model))
+        }),
+      getResults: async () => searchResultsForModel(await this.getBluetoothStatus(), scanOptions.model),
+      // Older native binaries simply omit diagnostics until the host is rebuilt.
+      getDiagnostic:
+        typeof this.getScanDiagnostic === "function" ? () => this.getScanDiagnostic!(scanOptions.model) : undefined,
+    },
+    {...scanOptions, timeoutMs},
+  )
+  activeScanCancellations.add(session.cancel)
+  try {
+    return await session.result
+  } finally {
+    activeScanCancellations.delete(session.cancel)
+  }
 }
 
 const nativeRequestPhoto = NativeBluetoothSdkModule.requestPhoto.bind(NativeBluetoothSdkModule)

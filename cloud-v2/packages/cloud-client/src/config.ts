@@ -34,6 +34,8 @@ export interface CloudClientConfig {
    */
   timers?: CloudClientTimers
   logger?: Logger
+  /** Override the persisted refresh-token key to isolate deployment sessions. */
+  authStorageKey?: string
   // backoff tuning for the live socket; one place so a host can match its fleet
   reconnect?: {baseMs: number; maxMs: number; jitter: boolean}
   /**
@@ -51,7 +53,7 @@ export interface CloudClientConfig {
  * The cloud's `/exchange` endpoint needs to know how to verify the incoming
  * token, so the type travels alongside the token itself.
  */
-export type SubjectTokenType = "oem-jwt" | "mentra-core" | "supabase"
+export type SubjectTokenType = "oidc" | "oem-jwt" | "mentra-core" | "supabase"
 
 /**
  * The three ways a host can give the client its credentials.

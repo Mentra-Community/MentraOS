@@ -50,6 +50,10 @@ jobs:
         working-directory: sdk
         run: bun install --frozen-lockfile --ignore-scripts
 
+      - name: Test enterprise deployment helpers
+        working-directory: cloud-v2
+        run: node --test deploy/azure/enterprise-reference/scripts/*.test.mjs
+
       - name: Test Miniapp CLI
         working-directory: sdk
         run: bun test miniapp-cli/src

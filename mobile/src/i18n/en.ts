@@ -97,6 +97,9 @@ const en = {
       "Could not connect to the custom server. Please try using the default server or check your connection.",
     upToDateTitle: "Up to Date",
     upToDateDescription: "MentraOS is up to date. Returning to home...",
+    managedUpdateDescription:
+      "This version of the Mentra App is no longer supported by {{name}}. Updates are delivered by your organization's device management. Contact your IT administrator to update.",
+    contactSupport: "Contact support",
   },
   simulatedGlasses: {
     showDashboard: "Show Dashboard",
@@ -166,6 +169,9 @@ const en = {
     liveChooseGlassesTitle: "Choose your glasses",
     scanAgain: "Scan Again",
     noGlassesFound: "No glasses found",
+    connectedOnPhoneTitle: "Glasses may be in use",
+    connectedOnPhoneHint:
+      "Matching glasses are already connected to this phone. If another app is using them, disconnect them there, then scan again.",
     noGlassesFoundHint: "Make sure you pressed the power button 3 times quickly, then try again.",
     nearbyNotInPairingModeHint:
       "Nearby Mentra Live glasses were found, but they are not in pairing mode. Press the power button 3 times quickly, then try again.",
@@ -404,6 +410,19 @@ const en = {
     },
   },
   ota: {
+    startingHotspotUpdate: "Starting update...",
+    downloadingToPhone: "Downloading update to phone...",
+    startingGlassesHotspot: "Starting glasses hotspot...",
+    connectingPhoneToGlasses: "Connecting phone to glasses...",
+    transferringToGlasses: "Transferring update to glasses...",
+    installingOnGlasses: "Installing update on glasses...",
+    componentApk: "Glasses software",
+    componentMtk: "System firmware",
+    componentBes: "Bluetooth firmware",
+    updateFile: "File {{current}} of {{total}} · {{component}}",
+    updatePart: "Update {{current}} of {{total}} · {{component}}",
+    phoneFileProgress: "Each file downloads separately. Progress is for the current file.",
+    transferFileProgress: "Progress is for this file’s transfer from your phone.",
     checkingForUpdates: "Checking for updates",
     checkingForUpdatesMessage:
       "Connected devices will perform automatic updates. Automatic updates can be disabled in Device Settings",
@@ -436,6 +455,11 @@ const en = {
     devBuild: "Development Build",
     devBuildNoOta:
       "This mobile app is a development build, so automatic glasses updates are disabled. Use the developer settings manifest override to update them manually.",
+    unofficialClient: "Updates Blocked",
+    unofficialClientNoOta:
+      "Your glasses are running a sideloaded client, so updates are blocked. Restore the stock client to update them.",
+    unofficialClientNoOtaNamed:
+      "Your glasses are running a sideloaded client ({{packageName}}), so updates are blocked. Restore the stock client to update them.",
     noUpdatesAvailable: "Your glasses are running the latest version.",
     checkFailed: "Check Failed",
     checkFailedMessage: "Couldn't check for updates. Please check your connection and try again.",
@@ -467,6 +491,29 @@ const en = {
     whatsNew: "What's new",
     updateFailed: "Update Failed",
     updateFailedMessage: "The update could not be completed. You can try again later from Settings.",
+    // Glasses-reported OTA failure codes. Keys mirror OTA_ERROR_ENGLISH_COPY in the engine's
+    // OtaErrorMapping; the raw code is shown under the message via errorCode.
+    errorNoInternet: "Glasses WiFi has no internet connection",
+    errorClockSkew: "Glasses clock is wrong — syncing time from your phone, then retrying update check",
+    errorSslError: "Secure connection failed — try a different WiFi network",
+    errorDownloadFailed: "Download failed — check glasses WiFi connection",
+    errorInsufficientStorage: "Not enough storage on your glasses — free up space before trying again",
+    errorFirmwareTooLarge: "Firmware file is unexpectedly large — please contact support",
+    errorFirmwareVerifyFailed: "Firmware verification failed — please try again or contact support",
+    errorApkVerifyFailed: "Update verification failed — please try again or contact support",
+    errorInstallFailed: "Install failed — please try again",
+    errorApkRestartGuardNotPersisted:
+      "Your glasses could not save the update before restarting. Restart your glasses and try again.",
+    errorDowngradeHandoffRefused:
+      "Your glasses could not start the version change. Restart your glasses and try again.",
+    errorDowngradeHandoffFailed:
+      "The recovery service on your glasses did not respond. Restart your glasses and try again.",
+    errorDowngradeTransactionStalled:
+      "The version change on your glasses did not finish. Restart your glasses and try again.",
+    errorGlassesUnknown: "Your glasses reported an unexpected error. Restart your glasses and try again.",
+    errorGeneric: "Update failed",
+    errorBesRestartRequired: "Restart your glasses to safely exit firmware update mode before trying again",
+    errorCode: "Error code: {{code}}",
     glassesDisconnected: "Glasses Disconnected",
     glassesDisconnectedMessage: "Your glasses disconnected during the update. Please reconnect and try again.",
   },
@@ -599,6 +646,9 @@ const en = {
     storageInfo: "Storage Info",
     glassesAreReconnecting: "Reconnecting...",
     glassesAreReconnectingMessage: "Make sure your glasses are turned on.",
+    wifiSetupNeedsGlassesTitle: "Reconnect your glasses",
+    wifiSetupNeedsGlassesMessage:
+      "Wi-Fi setup needs your glasses connected over Bluetooth. Turn them on and wait for them to reconnect, then try again.",
     // Gallery sync WiFi explanation
     connectToGlassesTitle: "Connect to Glasses",
     wifiJoinExplanationIos: 'When prompted, tap "Join" to connect to "{{ssid}}".',
@@ -647,6 +697,24 @@ const en = {
     notificationsFailedUpdate: "Failed to update setting",
     notificationsNoAppsFound: "No apps found",
     notificationsNoAppsFoundSearch: "No apps found matching your search",
+    nativeNotificationsTitle: "Use G2 notifications",
+    nativeNotificationsDescription: "Show notifications in G2's notification centre. Notify must be running.",
+    nativeNotificationsPopups: "Show popups",
+    nativeNotificationsHistory: "When off, notifications stay in history without a popup.",
+    nativeNotificationsDuration: "Popup duration (seconds)",
+    nativeNotificationsDnd: "Do not disturb",
+    nativeNotificationsRequiresG2: "Native notifications on iPhone currently require Even Realities G2.",
+    nativeNotificationsConnect: "Connect your G2 to apply these settings.",
+    nativeNotificationsReconnect: "The last transfer was interrupted. Reconnect your G2 to resume notifications.",
+    nativeNotificationsFailed:
+      "G2 could not apply the notification settings or receive a notification. Try reconnecting.",
+    nativeNotificationsIosContent: "Notifications appear on G2. Mentra miniapps cannot read their message text.",
+    nativeNotificationsAncs:
+      "Allow notification sharing for your G2 in iPhone Settings → Bluetooth, then reconnect if needed.",
+    nativeNotificationsIosFilters:
+      "G2 keeps its existing app filter. Per-app filters cannot be changed here on iPhone yet.",
+    nativeNotificationsGrantAccess: "Allow notification access",
+    nativeNotificationsRemoval: "Dismissing a notification on your phone does not yet remove it from G2 history.",
     notificationsIosTitle: "iOS Notification Settings",
     notificationsIosMessage: "Notification settings are not implemented yet in iOS.",
     dashboardSettings: "Dashboard",
@@ -798,6 +866,9 @@ const en = {
   },
   profileSettings: {
     title: "Profile Settings",
+    workspaceName: "Name",
+    workspaceUrl: "Workspace URL",
+    mentraWorkspace: "Mentra",
     noProfilePicture: "No profile picture available.",
     name: "Name",
     email: "Email",
@@ -990,6 +1061,42 @@ const en = {
       resending: "Resending...",
       resentSuccess: "Verification email sent!",
     },
+  },
+  workspace: {
+    or: "or",
+    title: "Organization sign-in",
+    heading: "Connect to your organization",
+    description: "Enter the address provided by your IT administrator.",
+    connectAction: "Sign in to your organization",
+    urlLabel: "Organization address",
+    urlPlaceholder: "company.example.com",
+    urlHelper: "Example: company.example.com",
+    unknownResolutionError: "We couldn't load this workspace. Try again.",
+    notFoundError:
+      "We couldn't find a Mentra workspace at that address. Check the address or ask your IT administrator.",
+    configurationError: "This workspace couldn't be verified. Ask your IT administrator to check its configuration.",
+    confirmTitle: "Confirm organization",
+    candidateExpired: "This confirmation expired. Enter your organization address again.",
+    enterAnotherUrl: "Enter organization address",
+    connectTo: "Connect to {{name}}",
+    continueTo: "Continue to {{name}}",
+    workspaceLabel: "Workspace",
+    cloudOverridesDescription:
+      "Override cloud URLs for {{name}}. Reset restores its defaults. Overrides are cleared when you log out or switch organizations.",
+    cloudDefault: "Default: {{url}}",
+    cloudReset: "Restored the selected deployment's cloud URLs.",
+    signInLabel: "Sign-in",
+    microsoftOrganizationAccount: "Microsoft organization account",
+    mentraAccount: "Mentra account",
+    confirmDescription:
+      "Continuing makes this organization your active Mentra deployment. Its services and policies apply before sign-in.",
+    signInDescription: "Continue with the organization account configured for this workspace.",
+    continueWithMicrosoft: "Continue with Microsoft",
+    returnToMentra: "Return to Mentra",
+    change: "Change",
+    noActiveWorkspace: "No organization workspace is active.",
+    signInFailedTitle: "Sign-in failed",
+    signInFailedDescription: "Microsoft could not sign you in to this workspace. Try again or contact your IT team.",
   },
   warning: {
     nonProdBackend: "You are using a non-production backend.",

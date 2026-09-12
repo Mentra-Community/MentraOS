@@ -48,6 +48,47 @@ describe("DeviceEventRouter", () => {
     expect(useGlassesStore.getState().wifi).toMatchObject({state: "connected", ssid: "Net"})
   })
 
+  describe("glasses_wifi forward carries the BLE leg separately", () => {
+    const wifiForwards = (spy: jest.SpyInstance) =>
+      spy.mock.calls.filter(([stream]) => stream === "glasses_wifi").map(([, data]) => data)
+
+    it("BLE drop flips connected=false but reports linkConnected=false so miniapps can tell it apart", () => {
+      const store = useGlassesStore.getState()
+      store.setGlassesInfo({connection: {state: "connected"} as never, wifi: {state: "connected", ssid: "Net"} as never})
+      const fwdSpy = jest.spyOn(localMiniappRuntime, "forwardEvent")
+      fwdSpy.mockClear()
+
+      useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"} as never})
+
+      expect(wifiForwards(fwdSpy).at(-1)).toEqual(
+        expect.objectContaining({connected: false, linkConnected: false, ssid: undefined}),
+      )
+    })
+
+    it("Wi-Fi drop with BLE up reports connected=false and linkConnected=true", () => {
+      const store = useGlassesStore.getState()
+      store.setGlassesInfo({connection: {state: "connected"} as never, wifi: {state: "connected", ssid: "Net"} as never})
+      const fwdSpy = jest.spyOn(localMiniappRuntime, "forwardEvent")
+      fwdSpy.mockClear()
+
+      emitBluetoothSdkEvent("wifi_status_change", {type: "wifi_status_change", state: "disconnected"})
+
+      expect(wifiForwards(fwdSpy).at(-1)).toEqual(expect.objectContaining({connected: false, linkConnected: true}))
+    })
+
+    it("both up reports connected=true with ssid", () => {
+      useGlassesStore.getState().setGlassesInfo({connection: {state: "connected"} as never})
+      const fwdSpy = jest.spyOn(localMiniappRuntime, "forwardEvent")
+      fwdSpy.mockClear()
+
+      emitBluetoothSdkEvent("wifi_status_change", {type: "wifi_status_change", state: "connected", ssid: "Net"})
+
+      expect(wifiForwards(fwdSpy).at(-1)).toEqual(
+        expect.objectContaining({connected: true, linkConnected: true, ssid: "Net"}),
+      )
+    })
+  })
+
   it("projects battery_status into the store and local miniapp stream", () => {
     const fwdSpy = jest.spyOn(localMiniappRuntime, "forwardEvent")
     emitBluetoothSdkEvent("battery_status", {

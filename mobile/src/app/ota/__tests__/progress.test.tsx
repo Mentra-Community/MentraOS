@@ -7,6 +7,8 @@ import {useNavigationStore} from "@/stores/navigation"
 import {useConnectionOverlayConfig} from "@/contexts/ConnectionOverlayContext"
 import GlobalEventEmitter from "@/utils/GlobalEventEmitter"
 
+import {initI18n} from "@/i18n"
+
 import OtaProgressScreen from "@/app/ota/progress"
 import {BES_RESTART_TIMEOUT_MS, MINIMUM_OTA_STATUS_BUILD, OtaProgressMessages} from "@mentra/engine"
 import {BES_INSTALL_RESTART_MESSAGE} from "@/utils/otaErrorMapping"
@@ -22,6 +24,7 @@ import {useSettingsStore} from "../../../../modules/engine/src/stores/settings"
 const setSuperMode = (enabled: boolean) => useSettingsStore.getState().setSetting("super_mode", enabled, false)
 
 jest.mock("@/contexts/NavigationHistoryContext", () => ({
+  focusEffectLockScreen: jest.fn(),
   focusEffectPreventBack: jest.fn(),
   useNavigationHistory: () => ({replace: mockReplace}),
 }))
@@ -80,6 +83,10 @@ function setGlassesConnected() {
 function setGlassesDisconnected() {
   useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
 }
+
+beforeAll(async () => {
+  await initI18n()
+})
 
 beforeEach(() => {
   jest.useFakeTimers()
@@ -215,13 +222,13 @@ describe("progress.tsx display states", () => {
         })
       })
 
-      expect(getByText("ota:finishingUpdate")).toBeDefined()
+      expect(getByText("Finishing your update")).toBeDefined()
       expect(queryByText("Update complete!")).toBeNull()
       expect(replaceSpy).not.toHaveBeenCalledWith("/ota/check-for-updates")
       await act(async () => {
         await jest.advanceTimersByTimeAsync(750)
       })
-      expect(getByText("ota:finishingUpdate")).toBeDefined()
+      expect(getByText("Finishing your update")).toBeDefined()
       expect(useConnectionOverlayConfig.getState().suppressOverlay).toBe(false)
       expect(replaceSpy).not.toHaveBeenCalledWith("/ota/check-for-updates")
     } finally {
@@ -257,7 +264,7 @@ describe("progress.tsx display states", () => {
       await act(async () => {
         await jest.advanceTimersByTimeAsync(750)
       })
-      expect(getByText("ota:finishingUpdate")).toBeDefined()
+      expect(getByText("Finishing your update")).toBeDefined()
       expect(replaceSpy).not.toHaveBeenCalledWith("/ota/check-for-updates")
     } finally {
       replaceSpy.mockRestore()
@@ -300,7 +307,7 @@ describe("progress.tsx display states", () => {
       await act(async () => {
         await jest.advanceTimersByTimeAsync(750)
       })
-      expect(getByText("ota:finishingUpdate")).toBeDefined()
+      expect(getByText("Finishing your update")).toBeDefined()
       expect(replaceSpy).not.toHaveBeenCalledWith("/ota/check-for-updates")
     } finally {
       replaceSpy.mockRestore()
@@ -325,9 +332,13 @@ describe("progress.tsx display states", () => {
       })
     })
 
-    expect(getByText("ota:restartingGlasses")).toBeDefined()
-    expect(getByText("ota:restartingGlassesMessage")).toBeDefined()
-    expect(getByText("ota:restartingGlassesAutomatic")).toBeDefined()
+    expect(getByText(/^Restarting .+…$/)).toBeDefined()
+    expect(
+      getByText(
+        "The update is installed. Keep your glasses nearby and leave this screen open while they finish starting.",
+      ),
+    ).toBeDefined()
+    expect(getByText("We'll continue automatically when they're ready.")).toBeDefined()
     expect(queryByTestId("button-Continue")).toBeNull()
 
     await act(async () => {
@@ -443,6 +454,56 @@ describe("progress.tsx display states", () => {
     expect(getByText(BES_INSTALL_RESTART_MESSAGE)).toBeDefined()
     expect(getByText("Done")).toBeDefined()
     expect(queryByText("Retry")).toBeNull()
+  })
+
+  it("explains a failed downgrade handoff instead of echoing the glasses code", () => {
+    setGlassesConnected()
+    const {getByText, getByTestId, queryByText} = render(<OtaProgressScreen />)
+
+    act(() => {
+      useGlassesStore.getState().setOtaStatus({
+        sessionId: "s1",
+        totalSteps: 1,
+        currentStep: 1,
+        stepType: "apk",
+        phase: "install",
+        stepPercent: 0,
+        overallPercent: 0,
+        status: "failed",
+        error: "downgrade_handoff_failed",
+      })
+    })
+
+    expect(getByText("Update Failed")).toBeDefined()
+    expect(
+      getByText("The recovery service on your glasses did not respond. Restart your glasses and try again."),
+    ).toBeDefined()
+    // The raw code stays visible for support, but only in the subdued secondary line.
+    expect(getByTestId("ota-error-code").props.children).toBe("Error code: downgrade_handoff_failed")
+    expect(queryByText("downgrade_handoff_failed")).toBeNull()
+    expect(getByText("Retry")).toBeDefined()
+  })
+
+  it("falls back to generic glasses-error copy for an unknown code and keeps the code visible", () => {
+    setGlassesConnected()
+    const {getByText, getByTestId} = render(<OtaProgressScreen />)
+
+    act(() => {
+      useGlassesStore.getState().setOtaStatus({
+        sessionId: "s1",
+        totalSteps: 1,
+        currentStep: 1,
+        stepType: "apk",
+        phase: "install",
+        stepPercent: 0,
+        overallPercent: 0,
+        status: "failed",
+        error: "brand_new_code",
+      })
+    })
+
+    expect(getByText("Your glasses reported an unexpected error. Restart your glasses and try again.")).toBeDefined()
+    expect(getByTestId("ota-error-code").props.children).toBe("Error code: brand_new_code")
   })
 
   it("shows disconnected state when not connected and not terminal", () => {

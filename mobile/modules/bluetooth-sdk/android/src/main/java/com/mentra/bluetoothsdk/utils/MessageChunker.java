@@ -1,6 +1,6 @@
 package com.mentra.bluetoothsdk.utils;
 
-import android.util.Log;
+import com.mentra.bluetoothsdk.utils.NativeLog;
 
 import org.json.JSONException;
 import org.json.JSONObject;
@@ -52,7 +52,7 @@ public class MessageChunker {
         boolean needsChunking = messageBytes > MESSAGE_SIZE_THRESHOLD;
 
         if (needsChunking) {
-            Log.d(TAG, "Message size " + messageBytes + " exceeds threshold " + MESSAGE_SIZE_THRESHOLD + ", will chunk");
+            NativeLog.d(TAG, "Message size " + messageBytes + " exceeds threshold " + MESSAGE_SIZE_THRESHOLD + ", will chunk");
         }
 
         return needsChunking;
@@ -83,7 +83,7 @@ public class MessageChunker {
         for (int chunkSize = INITIAL_CHUNK_DATA_SIZE; chunkSize >= MIN_CHUNK_DATA_SIZE; chunkSize--) {
             List<JSONObject> chunks = buildChunks(messageBytes, chunkId, messageId, chunkSize);
             if (allChunksFit(chunks, wakeup)) {
-                Log.d(TAG, "Creating " + chunks.size() + " chunks for message of size " + totalBytes
+                NativeLog.d(TAG, "Creating " + chunks.size() + " chunks for message of size " + totalBytes
                         + " bytes using " + chunkSize + "-byte UTF-8 slices");
                 return chunks;
             }
@@ -115,7 +115,7 @@ public class MessageChunker {
 
             chunks.add(chunk);
 
-            Log.d(TAG, "Created chunk " + i + "/" + (totalChunks - 1) + " with " + chunkData.getBytes(StandardCharsets.UTF_8).length + " bytes");
+            NativeLog.d(TAG, "Created chunk " + i + "/" + (totalChunks - 1) + " with " + chunkData.getBytes(StandardCharsets.UTF_8).length + " bytes");
         }
 
         return chunks;
@@ -125,7 +125,7 @@ public class MessageChunker {
         for (int i = 0; i < chunks.size(); i++) {
             byte[] packed = K900ProtocolUtils.packJsonToK900(chunks.get(i).toString(), wakeup && i == 0);
             if (packed == null || packed.length > MAX_PACKED_CHUNK_SIZE) {
-                Log.d(TAG, "Chunk " + i + " packed to " + (packed != null ? packed.length : 0)
+                NativeLog.d(TAG, "Chunk " + i + " packed to " + (packed != null ? packed.length : 0)
                         + " bytes, exceeding " + MAX_PACKED_CHUNK_SIZE);
                 return false;
             }
@@ -261,7 +261,7 @@ public class MessageChunker {
             fragments.add(new BinaryFragment(flags, msgId, i, fragCount, fragPayload));
         }
 
-        Log.d(TAG, "Created " + fragments.size() + " binary fragments for "
+        NativeLog.d(TAG, "Created " + fragments.size() + " binary fragments for "
                 + payload.length + " byte payload");
         return fragments;
     }

@@ -19,6 +19,7 @@ const REPOSITORY = "Mentra-Community/MentraOS"
 const DEFAULT_REF = "main"
 const VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/
 const BETA_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)-beta\.([1-9]\d*)$/
+const SHA_PATTERN = /^[0-9a-f]{40}$/
 
 function commandError(message) {
   const error = new Error(message)
@@ -53,6 +54,7 @@ function usage() {
   return `Usage: scripts/production-release.mjs <command> [options]
 
 Commands:
+  promote  --beta X.Y.Z-beta.N [--yes]
   start    --beta X.Y.Z-beta.N
   status   --release X.Y.Z [--attempt N] [--refresh] [--json]
   next     --release X.Y.Z [--attempt N] [--yes]
@@ -60,6 +62,7 @@ Commands:
   release  --release X.Y.Z [--attempt N] [--yes]
   advance  --release X.Y.Z [--attempt N] [--android-percent N | --complete] [--yes]
   abort    --release X.Y.Z [--attempt N] --reason TEXT [--yes]
+  packages --beta X.Y.Z-beta.N --phase publish|release [--yes]
   watch    --run RUN_ID
 
 This CLI dispatches protected GitHub workflows. It never reads production
@@ -67,16 +70,234 @@ credentials or directly calls Porter, App Store Connect, or Google Play.
 See .github/production-release/README.md for the complete procedure.`
 }
 
+// Node's default spawn buffer is 1 MB. GitHub listings for this repository
+// already exceed it (the release list is several megabytes and the builds
+// release alone has hundreds of assets), so every gh call gets a generous
+// buffer AND the listings below ask gh to project only the fields used.
+const GH_MAX_BUFFER = 64 * 1024 * 1024
+const RELEASE_FIELDS = "{id, tag_name, name, draft, prerelease, body, target_commitish}"
+const ASSET_FIELDS = "{id, name, digest, size, url, browser_download_url}"
+
 function execGh(args, options = {}) {
-  return execFileSync("gh", args, {encoding: "utf8", stdio: ["ignore", "pipe", "inherit"], ...options})
+  return execFileSync("gh", args, {
+    encoding: "utf8",
+    stdio: ["ignore", "pipe", "inherit"],
+    maxBuffer: GH_MAX_BUFFER,
+    ...options,
+  })
 }
 
 function ghJson(args) {
   return JSON.parse(execGh(args))
 }
 
+export function parseJsonLines(output) {
+  return output
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => JSON.parse(line))
+}
+
+// `gh api --paginate` cannot combine --slurp with --jq, so page through with a
+// projection that emits one JSON object per line and parse those lines.
+function ghPaginated(endpoint, projection) {
+  return parseJsonLines(execGh(["api", "--paginate", endpoint, "--jq", `.[] | ${projection} | tojson`]))
+}
+
+function branchHead(repository, branch) {
+  return execGh(["api", `repos/${repository}/branches/${branch}`, "--jq", ".commit.sha"]).trim()
+}
+
+function compareCommits(repository, base, head) {
+  // Only the relationship is needed. The full compare payload lists commits
+  // and file patches, which for a whole release cycle exceeds the spawn buffer
+  // (spawnSync gh ENOBUFS), so trim it in gh before it reaches this process.
+  return ghJson([
+    "api",
+    `repos/${repository}/compare/${base}...${head}?per_page=1`,
+    "--jq",
+    "{status: .status, ahead_by: .ahead_by, behind_by: .behind_by}",
+  ])
+}
+
+function ensureCommitIsOnBranch(repository, commit, branch) {
+  const head = branchHead(repository, branch)
+  const comparison = compareCommits(repository, commit, head)
+  if (comparison.behind_by !== 0) {
+    throw new Error(`${repository}:${commit} is not contained in ${branch}`)
+  }
+}
+
+export function branchPromotionState(sourceToTarget, targetToSource) {
+  if (sourceToTarget.behind_by === 0) return "complete"
+  if (targetToSource.behind_by === 0) return "ready"
+  return "diverged"
+}
+
+function requirePromotionRelationship(repository, target, sourceCommit) {
+  const targetHead = branchHead(repository, target)
+  const sourceToTarget = compareCommits(repository, sourceCommit, targetHead)
+  if (sourceToTarget.behind_by === 0) return {state: "complete", targetHead}
+  const targetToSource = compareCommits(repository, targetHead, sourceCommit)
+  const state = branchPromotionState(sourceToTarget, targetToSource)
+  if (state === "diverged") {
+    throw new Error(
+      `${repository}:${sourceCommit} does not contain ${target} at ${targetHead}; back-merge ${target} into staging and complete a new coordinated beta before promotion`,
+    )
+  }
+  return {state, targetHead}
+}
+
+function promotionBranchHead(repository, branch) {
+  const encoded = encodeURIComponent(`heads/${branch}`)
+  try {
+    return execFileSync("gh", ["api", `repos/${repository}/git/ref/${encoded}`, "--jq", ".object.sha"], {
+      encoding: "utf8",
+      stdio: ["ignore", "pipe", "pipe"],
+    }).trim()
+  } catch (error) {
+    if (!String(error.stderr || error.message).includes("HTTP 404")) throw error
+    return undefined
+  }
+}
+
+function ensurePromotionBranch(repository, branch, commit) {
+  const existing = promotionBranchHead(repository, branch)
+  if (existing) {
+    if (existing !== commit) throw new Error(`${repository}:${branch} points to ${existing}, expected ${commit}`)
+    return
+  }
+  execGh([
+    "api",
+    "--method",
+    "POST",
+    `repos/${repository}/git/refs`,
+    "-f",
+    `ref=refs/heads/${branch}`,
+    "-f",
+    `sha=${commit}`,
+  ])
+}
+
+function promoteExactCommit({repository, sourceCommit, target, releaseIdentity, mergeBody}) {
+  ensureCommitIsOnBranch(repository, sourceCommit, "staging")
+  const relationship = requirePromotionRelationship(repository, target, sourceCommit)
+  const {targetHead} = relationship
+  if (relationship.state === "complete") {
+    console.log(`${repository}:${target} already contains ${sourceCommit}`)
+    return targetHead
+  }
+
+  const branch = `release/promote-${releaseIdentity}-staging-to-${target}-${sourceCommit.slice(0, 8)}`
+  ensurePromotionBranch(repository, branch, sourceCommit)
+  const pulls = ghJson([
+    "pr",
+    "list",
+    "--repo",
+    repository,
+    "--head",
+    branch,
+    "--base",
+    target,
+    "--state",
+    "all",
+    "--json",
+    "url,state,headRefOid,mergeCommit",
+  ])
+  if (pulls.length > 1) throw new Error(`${repository}:${branch} has more than one promotion pull request`)
+  let pull = pulls[0]
+  if (pull && pull.headRefOid !== sourceCommit) {
+    throw new Error(`${pull.url} head is ${pull.headRefOid}, expected ${sourceCommit}`)
+  }
+  if (pull?.state === "MERGED") {
+    ensureCommitIsOnBranch(repository, sourceCommit, target)
+    return pull.mergeCommit.oid
+  }
+  if (!pull) {
+    const body = [
+      `Promote the exact coordinated beta source \`${sourceCommit}\` from \`staging\` into \`${target}\`.`,
+      "",
+      "This pull request was created by `production-release promote` and must retain the exact recorded head.",
+    ].join("\n")
+    const url = execGh([
+      "pr",
+      "create",
+      "--repo",
+      repository,
+      "--base",
+      target,
+      "--head",
+      branch,
+      "--title",
+      `Promote staging to ${target} for ${releaseIdentity}`,
+      "--body",
+      body,
+    ]).trim()
+    pull = {url, state: "OPEN", headRefOid: sourceCommit}
+  }
+  if (pull.state !== "OPEN") throw new Error(`${pull.url} is ${pull.state.toLowerCase()}`)
+
+  console.log(`Waiting for ${pull.url}`)
+  execFileSync("gh", ["pr", "checks", pull.url, "--repo", repository, "--watch", "--fail-fast"], {
+    stdio: "inherit",
+  })
+  const currentTargetHead = branchHead(repository, target)
+  if (currentTargetHead !== targetHead) {
+    throw new Error(
+      `${repository}:${target} moved from ${targetHead} to ${currentTargetHead} while checks ran; rerun promotion`,
+    )
+  }
+  const mergeArgs = ["pr", "merge", pull.url, "--repo", repository, "--merge", "--match-head-commit", sourceCommit]
+  if (mergeBody) mergeArgs.push("--body", mergeBody)
+  execGh(mergeArgs)
+  const merged = ghJson(["pr", "view", pull.url, "--repo", repository, "--json", "state,mergeCommit"])
+  if (merged.state !== "MERGED" || !merged.mergeCommit?.oid) throw new Error(`${pull.url} did not merge`)
+  ensureCommitIsOnBranch(repository, sourceCommit, target)
+  return merged.mergeCommit.oid
+}
+
+export function releaseBranchSources(result, betaIdentity) {
+  if (result?.schemaVersion !== 1 || result.releaseIdentity !== betaIdentity || result.channel !== "beta") {
+    throw new Error(`The coordinated release result does not describe completed beta ${betaIdentity}`)
+  }
+  const mentraosCommit = result.sourceCommit
+  if (!SHA_PATTERN.test(mentraosCommit || "")) throw new Error("The beta result has no valid MentraOS source commit")
+  if (!result.completedAt) throw new Error("The beta result is not complete")
+  return {mentraosCommit}
+}
+
+function loadReleaseBranchSources(betaIdentity) {
+  const family = betaIdentity.slice(0, betaIdentity.indexOf("-beta."))
+  const assetName = `mentra-release-${betaIdentity}.json`
+  const matches = parseJsonLines(
+    execGh([
+      "release",
+      "view",
+      `mentra-builds-v${family}`,
+      "--repo",
+      REPOSITORY,
+      "--json",
+      "assets",
+      "--jq",
+      `.assets[] | select(.name == ${JSON.stringify(assetName)}) | {name, apiUrl, digest} | tojson`,
+    ]),
+  )
+  if (matches.length > 1) throw new Error(`Release contains duplicate asset ${assetName}`)
+  const asset = matches[0]
+  if (!asset) throw new Error(`Completed release asset ${assetName} was not found`)
+  const contents = execGh(["api", "-H", "Accept: application/octet-stream", asset.apiUrl], {
+    maxBuffer: 20 * 1024 * 1024,
+  })
+  if (asset.digest) {
+    const digest = `sha256:${createHash("sha256").update(contents).digest("hex")}`
+    if (digest !== asset.digest) throw new Error(`${assetName} digest is ${digest}, expected ${asset.digest}`)
+  }
+  return releaseBranchSources(JSON.parse(contents), betaIdentity)
+}
+
 function listReleases() {
-  return ghJson(["api", "--paginate", "--slurp", `repos/${REPOSITORY}/releases?per_page=100`]).flat()
+  return ghPaginated(`repos/${REPOSITORY}/releases?per_page=100`, RELEASE_FIELDS)
 }
 
 function resolveAttempt(releases, releaseIdentity, requestedAttempt) {
@@ -95,12 +316,7 @@ function loadLatestRecord(releaseIdentity, requestedAttempt) {
   const releases = listReleases()
   const attempt = resolveAttempt(releases, releaseIdentity, requestedAttempt)
   const release = requirePromotionContainer(releases, releaseIdentity, attempt)
-  const assets = ghJson([
-    "api",
-    "--paginate",
-    "--slurp",
-    `repos/${REPOSITORY}/releases/${release.id}/assets?per_page=100`,
-  ]).flat()
+  const assets = ghPaginated(`repos/${REPOSITORY}/releases/${release.id}/assets?per_page=100`, ASSET_FIELDS)
   const states = stateAssets(assets, releaseIdentity, attempt)
   if (states.length === 0) throw new Error(`Promotion ${releaseIdentity} attempt ${attempt} has no state record`)
   const entries = states.map((state) => {
@@ -181,6 +397,28 @@ function verifyCheckoutForStart() {
   if (dirty) throw new Error("start requires a clean checkout; commit or move local changes first")
 }
 
+function verifyCheckoutForPromotion() {
+  verifyCheckoutForStart()
+  const root = execFileSync("git", ["rev-parse", "--show-toplevel"], {encoding: "utf8"}).trim()
+  const branch = execFileSync("git", ["branch", "--show-current"], {cwd: root, encoding: "utf8"}).trim()
+  if (branch !== "staging") throw new Error(`promote requires a staging checkout, not ${branch || "detached HEAD"}`)
+  const localHead = execFileSync("git", ["rev-parse", "HEAD"], {cwd: root, encoding: "utf8"}).trim()
+  const remoteHead = branchHead(REPOSITORY, "staging")
+  if (localHead !== remoteHead) throw new Error(`local staging is ${localHead}, but remote staging is ${remoteHead}`)
+}
+
+async function confirmBranchPromotion(betaIdentity, options) {
+  if (options.yes) return
+  if (!process.stdin.isTTY || !process.stdout.isTTY) {
+    throw new Error("Refusing branch promotion without an interactive terminal; rerun with --yes after reviewing it")
+  }
+  console.log(`This promotes the exact ${betaIdentity} MentraOS source from staging to main.`)
+  const reader = createInterface({input: process.stdin, output: process.stdout})
+  const answer = await reader.question("Type the beta identity to continue: ")
+  reader.close()
+  if (answer !== betaIdentity) throw new Error("Confirmation did not match the beta identity")
+}
+
 function uploadAttestation({release, record, check, evidenceFile}) {
   const original = path.resolve(evidenceFile)
   const contents = readFileSync(original)
@@ -250,6 +488,24 @@ export function validateAdvanceOptions(record, options) {
   return {action: options.complete ? "complete" : "advance", androidPercent: percent || "100"}
 }
 
+// Stable packages (npm latest, Maven Central, SwiftPM) are keyed on the
+// promoted beta, not on a promotion attempt, so they can ship before, during,
+// or after store review.
+export const PACKAGE_PHASES = Object.freeze(["publish", "release"])
+
+export function validatePackagesOptions(options) {
+  if (!BETA_PATTERN.test(options.beta || "")) throw commandError("packages requires --beta X.Y.Z-beta.N")
+  if (!PACKAGE_PHASES.includes(options.phase))
+    throw commandError("packages requires --phase publish or --phase release")
+  return {beta_identity: options.beta, phase: options.phase}
+}
+
+export function packagesConfirmationMessage(request) {
+  return request.phase === "publish"
+    ? `This publishes the plain ${request.beta_identity.replace(/-beta\.\d+$/, "")} package versions under a candidate npm dist-tag and stages Maven Central and SwiftPM. GitHub will still require production-packages approval.`
+    : `This moves npm latest, publishes Maven Central, and pushes the public SwiftPM tag for ${request.beta_identity.replace(/-beta\.\d+$/, "")}. GitHub will still require production-packages-release approval.`
+}
+
 export function advanceConfirmationMessage(request) {
   return request.action === "complete"
     ? "This requests final verification and completion of the public release."
@@ -270,10 +526,37 @@ async function main(argv = process.argv.slice(2)) {
     return
   }
 
+  if (command === "promote") {
+    if (!BETA_PATTERN.test(options.beta || "")) throw commandError("promote requires --beta X.Y.Z-beta.N")
+    verifyCheckoutForPromotion()
+    const sources = loadReleaseBranchSources(options.beta)
+    ensureCommitIsOnBranch(REPOSITORY, sources.mentraosCommit, "staging")
+    requirePromotionRelationship(REPOSITORY, "main", sources.mentraosCommit)
+    await confirmBranchPromotion(options.beta, options)
+    promoteExactCommit({
+      repository: REPOSITORY,
+      sourceCommit: sources.mentraosCommit,
+      target: "main",
+      releaseIdentity: options.beta,
+    })
+    console.log(`Branch promotion for ${options.beta} is complete. Continue from a clean, up-to-date main checkout.`)
+    return
+  }
+
   if (command === "start") {
     if (!BETA_PATTERN.test(options.beta || "")) throw commandError("start requires --beta X.Y.Z-beta.N")
     verifyCheckoutForStart()
     dispatch("production-release-prepare.yml", {beta_identity: options.beta})
+    return
+  }
+
+  if (command === "packages") {
+    const request = validatePackagesOptions(options)
+    await confirmEffect(packagesConfirmationMessage(request), {
+      ...options,
+      release: request.beta_identity.replace(/-beta\.\d+$/, ""),
+    })
+    dispatch("production-release-packages.yml", request)
     return
   }
 

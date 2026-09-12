@@ -13,7 +13,8 @@ export const RELEASE_BUNDLE_ENV_KEYS = [
   "EXPO_PUBLIC_AUTHING_APP_ID",
   "EXPO_PUBLIC_BUILD_BRANCH",
   "EXPO_PUBLIC_BUILD_COMMIT",
-  "EXPO_PUBLIC_BUILD_TIME",
+  // BUILD_TIME is excluded from Metro's cacheVersion (see metro-cache-version.cjs)
+  // so a reused transform may carry a prior timestamp. COMMIT is the identity.
   "EXPO_PUBLIC_BUILD_USER",
   "EXPO_PUBLIC_CLOUD_CORE_URL",
   "EXPO_PUBLIC_CLOUD_STORE_URL",
@@ -21,7 +22,6 @@ export const RELEASE_BUNDLE_ENV_KEYS = [
   "EXPO_PUBLIC_DEPLOYMENT_REGION",
   "EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN",
   "EXPO_PUBLIC_MENTRAOS_VERSION",
-  "EXPO_PUBLIC_POSTHOG_API_KEY",
   "EXPO_PUBLIC_SENTRY_DSN",
 ]
 
@@ -76,6 +76,23 @@ export function assertBundleEnvironment(bundle, env, platform) {
   }
 }
 
+// Glasses usage analytics live in the Bluetooth SDK's native code, not in the
+// JS bundle. The app has no PostHog client of its own any more, so a PostHog
+// project token in the bundle means a dependency or a stray key crept back in.
+const POSTHOG_PROJECT_TOKEN_PATTERN = /phc_[A-Za-z0-9]{20,}/
+
+export function assertNoAppAnalyticsToken(bundle, platform) {
+  const match = bundle.toString("latin1").match(POSTHOG_PROJECT_TOKEN_PATTERN)
+  if (match) {
+    throw new Error(
+      `${platform} release JS bundle embeds a PostHog project token (${match[0].slice(
+        0,
+        8,
+      )}…); app-level PostHog was removed, glasses analytics ship in the Bluetooth SDK`,
+    )
+  }
+}
+
 export function validateReleaseArchive(archivePath, platform, env = process.env) {
   const entry = platform === "iOS" ? "Payload/*.app/main.jsbundle" : "assets/index.android.bundle"
   let bundle
@@ -93,4 +110,5 @@ export function validateReleaseArchive(archivePath, platform, env = process.env)
     throw new Error(`${platform} release JS bundle is empty in ${archivePath}`)
   }
   assertBundleEnvironment(bundle, env, platform)
+  assertNoAppAnalyticsToken(bundle, platform)
 }

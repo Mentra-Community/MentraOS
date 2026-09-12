@@ -10,7 +10,7 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import showAlert from "@/utils/AlertUtils"
-import {decideDevLaunchRoute, engine} from "@mentra/engine"
+import {decideDevOpenRoute, engine} from "@mentra/engine"
 import {registerDevApp, type DevAppRecord} from "@mentra/engine-host-internal"
 import {askPermissionsUI, checkPermissionsUI, PERMISSION_CONFIG} from "@/utils/PermissionsUtils"
 import {storage} from "@/utils/storage/storage"
@@ -71,13 +71,18 @@ export default function MiniappDeveloperUrlScreen() {
   const launchDevMiniapp = async (entry: RecentDevApp) => {
     // One round trip: reachability + manifest. Avoids a second fetch
     // for the permission-gate input.
-    const launchResult = await decideDevLaunchRoute(entry.packageName, entry.url)
+    const launchResult = await decideDevOpenRoute(entry.packageName, entry.url)
 
     if (launchResult.decision === "offline") {
       push("/applet/dev-offline", {
         packageName: entry.packageName,
         name: entry.name,
       })
+      return
+    }
+
+    if (launchResult.decision === "cached") {
+      await engine.miniapps.setForeground(entry.packageName)
       return
     }
 
@@ -151,8 +156,8 @@ export default function MiniappDeveloperUrlScreen() {
     try {
       // Single fetch; serves as both validation that the URL points at a
       // real miniapp dev server AND the manifest source for the launch.
-      const launchResult = await decideDevLaunchRoute("", trimmed)
-      if (launchResult.decision === "offline") {
+      const launchResult = await decideDevOpenRoute("", trimmed)
+      if (launchResult.decision !== "live") {
         showAlert(
           translate("debugSettings:miniappUrlFetchErrorTitle"),
           translate("debugSettings:miniappUrlFetchErrorBody", {url: trimmed}),

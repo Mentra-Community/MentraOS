@@ -3,6 +3,9 @@ import {createHash} from "node:crypto"
 import path from "node:path"
 
 import {validateCloudV2DeploymentRecord} from "./coordinated-cloud-v2-records.mjs"
+import {validatePrivateDeploymentRecord} from "./coordinated-private-deployment-records.mjs"
+import {validateRuntimeImageRecord} from "./coordinated-runtime-image-records.mjs"
+import {validateMentraosTestflightDistribution} from "./mentraos-testflight-distribution.mjs"
 
 const STABLE_VERSION_PATTERN = /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)$/
 const COMMIT_PATTERN = /^[0-9a-f]{40}$/
@@ -243,7 +246,15 @@ export function loadReleaseFamily({rootDir = process.cwd(), requireVersionMirror
   }
 }
 
-export function createReleasePlan({family, channel, sequence, sourceCommit, nativeBuildNumber, otaInputs = {}}) {
+export function createReleasePlan({
+  family,
+  channel,
+  sequence,
+  sourceCommit,
+  nativeBuildNumber,
+  otaInputs = {},
+  publicBetaTestflight = false,
+}) {
   if (!family?.members || !family?.familyBaseVersion) throw new Error("A validated release family is required")
   const changelog = validateChangelog(family.changelog, family.familyBaseVersion)
   if (!CHANNELS.has(channel)) throw new Error(`Unknown release channel ${JSON.stringify(channel)}`)
@@ -285,6 +296,9 @@ export function createReleasePlan({family, channel, sequence, sourceCommit, nati
     native: {
       marketingVersion: family.familyBaseVersion,
       buildNumber: nativeBuildNumber,
+      ...(channel === "beta" && publicBetaTestflight
+        ? {testflight: {group: "Mentra Staging Public", audience: "external"}}
+        : {}),
     },
     products: Object.fromEntries(family.products.map((product) => [product, releaseIdentity])),
     members,
@@ -367,7 +381,14 @@ function expectedPublicationCoordinate(plan, memberName, target) {
   if (!selected) throw new Error(`Unknown release channel ${JSON.stringify(plan.channel)}`)
   if (target === "google-play") return `com.mentra.mentra:${plan.native.buildNumber}:${selected.play}`
   if (target === "app-store-connect") {
-    return `com.mentra.mentra:${plan.native.marketingVersion}:${plan.native.buildNumber}:${selected.appStore}`
+    const group = plan.native.testflight?.group || selected.appStore
+    if (
+      plan.native.testflight &&
+      (plan.channel !== "beta" || group !== "Mentra Staging Public" || plan.native.testflight.audience !== "external")
+    ) {
+      throw new Error("Invalid MentraOS public TestFlight policy")
+    }
+    return `com.mentra.mentra:${plan.native.marketingVersion}:${plan.native.buildNumber}:${group}`
   }
   throw new Error(`Unknown publication target ${JSON.stringify(target)}`)
 }
@@ -384,122 +405,6 @@ function requiredArtifactCoordinates(plan) {
     }
     return coordinate
   })
-}
-
-function validateStarterKitEvidence(plan, starterKit, artifacts) {
-  if (starterKit === undefined) return undefined
-  if (
-    starterKit?.schemaVersion !== 1 ||
-    starterKit.releaseSetId !== plan.releaseSetId ||
-    starterKit.releaseIdentity !== plan.releaseIdentity ||
-    starterKit.familyBaseVersion !== plan.familyBaseVersion ||
-    starterKit.channel !== plan.channel ||
-    starterKit.mentraos?.sourceCommit !== plan.sourceCommit ||
-    !Array.isArray(starterKit.artifacts) ||
-    ![3, 4].includes(starterKit.artifacts.length)
-  ) {
-    throw new Error("Starter Kit evidence does not match the release plan")
-  }
-  requirePublicHttpsUrl(starterKit.resultUrl, "starterKit.resultUrl")
-  requirePublicHttpsUrl(starterKit.starterKit?.releaseUrl, "starterKit.starterKit.releaseUrl")
-  requirePublicHttpsUrl(starterKit.starterKit?.pullRequestUrl, "starterKit.starterKit.pullRequestUrl")
-  requirePublicHttpsUrl(starterKit.starterKit?.validationRunUrl, "starterKit.starterKit.validationRunUrl")
-
-  const artifactByCoordinate = new Map(artifacts.map((artifact) => [artifact.coordinate, artifact]))
-  for (const example of starterKit.artifacts) {
-    const artifact = artifactByCoordinate.get(example.name)
-    if (
-      !artifact ||
-      artifact.url !== example.url ||
-      artifact.sha256 !== example.sha256 ||
-      artifact.size !== example.size
-    ) {
-      throw new Error(`Starter Kit artifact ${example.name || "<unknown>"} differs from publication evidence`)
-    }
-  }
-  const expectedGroup = plan.channel === "dev" ? "Mentra Dev" : "Mentra Staging Public"
-  const expectedAudience = plan.channel === "dev" ? "internal" : "external"
-  const testflight = starterKit.testflight
-  if (
-    testflight?.schemaVersion !== 1 ||
-    testflight.releaseSetId !== plan.releaseSetId ||
-    testflight.releaseIdentity !== plan.releaseIdentity ||
-    testflight.channel !== plan.channel ||
-    testflight.mentraosSourceCommit !== plan.sourceCommit ||
-    testflight.starterKitReleaseCommit !== starterKit.starterKit?.releaseCommit ||
-    testflight.app?.id !== "6792839366" ||
-    testflight.app?.bundleId !== "com.mentra.bluetoothsdkexample" ||
-    testflight.version?.marketingVersion !== plan.native.marketingVersion ||
-    testflight.version?.buildNumber !== plan.native.buildNumber ||
-    testflight.build?.processingState !== "VALID" ||
-    !["published", "reused"].includes(testflight.build?.uploadStatus) ||
-    typeof testflight.build?.id !== "string" ||
-    testflight.build.id.length === 0 ||
-    testflight.group?.name !== expectedGroup ||
-    typeof testflight.group?.id !== "string" ||
-    testflight.group.id.length === 0 ||
-    testflight.distribution?.audience !== expectedAudience ||
-    !["available", "submitted", "skipped"].includes(testflight.distribution?.status) ||
-    !/^https:\/\//.test(testflight.distribution?.installUrl || "")
-  ) {
-    throw new Error("Starter Kit TestFlight evidence does not match the release plan")
-  }
-  if (plan.channel === "dev" && testflight.distribution.status !== "available") {
-    throw new Error("Internal Starter Kit TestFlight distribution must be available")
-  }
-  if (
-    expectedAudience === "external" &&
-    !/^https:\/\/testflight\.apple\.com\/join\//.test(testflight.distribution.installUrl)
-  ) {
-    throw new Error("External Starter Kit TestFlight distribution must use a public invitation link")
-  }
-  if (testflight.distribution.status === "skipped" && !testflight.distribution.skipReason) {
-    throw new Error("Skipped Starter Kit TestFlight distribution must identify its reason")
-  }
-  if (
-    testflight.ipa !== undefined &&
-    (!SHA256_PATTERN.test(testflight.ipa.sha256 || "") ||
-      !Number.isSafeInteger(testflight.ipa.size) ||
-      testflight.ipa.size < 1)
-  ) {
-    throw new Error("Starter Kit TestFlight IPA evidence is invalid")
-  }
-  requirePublicHttpsUrl(testflight.provenanceUrl, "starterKit.testflight.provenanceUrl")
-  return starterKit
-}
-
-function validateProductionExampleTestflight(plan, testflight) {
-  if (plan.channel !== "production") return undefined
-  if (
-    testflight?.schemaVersion !== 1 ||
-    testflight.releaseSetId !== plan.releaseSetId ||
-    testflight.releaseIdentity !== plan.releaseIdentity ||
-    testflight.channel !== "production" ||
-    testflight.selectedBetaReleaseSetId !== plan.promotion?.selectedBetaReleaseSetId ||
-    testflight.selectedBetaIdentity !== plan.promotion?.selectedBetaIdentity ||
-    testflight.app?.id !== "6792839366" ||
-    testflight.app?.bundleId !== "com.mentra.bluetoothsdkexample" ||
-    testflight.version?.marketingVersion !== plan.native?.marketingVersion ||
-    testflight.version?.buildNumber !== plan.native?.buildNumber ||
-    testflight.build?.processingState !== "VALID" ||
-    testflight.group?.name !== "Mentra Production Public" ||
-    testflight.distribution?.audience !== "external" ||
-    testflight.distribution?.status !== "available" ||
-    testflight.distribution?.reviewState !== "APPROVED"
-  ) {
-    throw new Error("Production example TestFlight evidence does not match the release plan")
-  }
-  requireString(testflight.build.id, "exampleTestflight.build.id")
-  requireString(testflight.group.id, "exampleTestflight.group.id")
-  requirePublicHttpsUrl(
-    testflight.build.sourceTestflightProvenanceUrl,
-    "exampleTestflight.build.sourceTestflightProvenanceUrl",
-  )
-  requirePublicHttpsUrl(testflight.provenanceUrl, "exampleTestflight.provenanceUrl")
-  if (!/^https:\/\/testflight\.apple\.com\/join\//.test(testflight.distribution.installUrl || "")) {
-    throw new Error("Production example TestFlight distribution must use a public invitation link")
-  }
-  return testflight
 }
 
 export function finalizeReleaseManifest({plan, results, completedAt}) {
@@ -532,6 +437,9 @@ export function finalizeReleaseManifest({plan, results, completedAt}) {
       if (publication.coordinate !== expected) {
         throw new Error(`${label}.coordinate must be ${expected}`)
       }
+      if (memberName === "mentraos" && target === "app-store-connect" && plan.native.testflight) {
+        validateMentraosTestflightDistribution(plan, plan.native.testflight.group, publication.testflight)
+      }
       publications[memberName][target] = publication
     }
   }
@@ -555,9 +463,17 @@ export function finalizeReleaseManifest({plan, results, completedAt}) {
   for (const coordinate of requiredArtifactCoordinates(plan)) {
     if (!artifactCoordinates.has(coordinate)) throw new Error(`Missing required artifact ${coordinate}`)
   }
-  const starterKit = validateStarterKitEvidence(plan, results.starterKit, artifacts)
-  const exampleTestflight = validateProductionExampleTestflight(plan, results.exampleTestflight)
   const cloud = validateCloudV2DeploymentRecord({plan, record: results.cloud})
+  const runtimeImage =
+    plan.channel === "production" ? undefined : validateRuntimeImageRecord({plan, record: results.runtimeImage})
+  const privateDeployment =
+    plan.channel === "dev"
+      ? validatePrivateDeploymentRecord({
+          plan,
+          record: results.privateDeployment,
+          runtimeImage,
+        })
+      : undefined
 
   let promotion
   if (plan.channel === "production") {
@@ -592,8 +508,8 @@ export function finalizeReleaseManifest({plan, results, completedAt}) {
     otaManifest,
     artifacts,
     cloud,
-    ...(starterKit ? {starterKit} : {}),
-    ...(exampleTestflight ? {exampleTestflight} : {}),
+    ...(runtimeImage ? {runtimeImage} : {}),
+    ...(privateDeployment ? {privateDeployment} : {}),
     ...(promotion ? {promotion} : {}),
   }
 }

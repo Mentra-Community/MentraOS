@@ -1,0 +1,22 @@
+{
+  "name": "@mentra/entra-auth",
+  "version": "3.2.0",
+  "description": "Native Microsoft Entra authentication for the Mentra App",
+  "main": "src/index.ts",
+  "types": "src/index.ts",
+  "scripts": {
+    "build": "expo-module build",
+    "clean": "expo-module clean",
+    "prepare": "expo-module prepare"
+  },
+  "license": "MIT",
+  "devDependencies": {
+    "expo-module-scripts": "^55.0.2",
+    "typescript": "~5.9.2"
+  },
+  "peerDependencies": {
+    "expo": "*",
+    "react": "*",
+    "react-native": "*"
+  }
+}

@@ -33,6 +33,22 @@ public interface IHardwareManager {
      */
     boolean supportsRecordingLed();
 
+    /**
+     * Acquire shared ownership of the recording/privacy LED. The LED remains on until every owner
+     * releases it.
+     *
+     * @param owner identity token for one camera user
+     * @return false if the LED is unsupported or enabling it failed; no owner is retained on failure
+     */
+    boolean acquireRecordingLed(Object owner);
+
+    /**
+     * Release shared ownership of the recording/privacy LED.
+     *
+     * @param owner the same identity token passed to {@link #acquireRecordingLed(Object)}
+     */
+    void releaseRecordingLed(Object owner);
+
     /** Turn the recording LED on (solid) */
     void setRecordingLedOn();
 
@@ -223,6 +239,17 @@ public interface IHardwareManager {
      * Capability#MCU_BATTERY} is not supported.
      */
     void notifyBatteryReading(int percent, int voltageMv);
+
+    /** Receive device-reported active charging, timestamped at UART receipt (elapsed realtime). */
+    default void notifyBatteryReading(
+            int percent, int voltageMv, boolean activeCharging, long receivedAtElapsedMs) {
+        notifyBatteryReading(percent, voltageMv);
+    }
+
+    /** Grant only a known above-floor battery sample with fresh, verified active charging. */
+    default boolean allowsLowBatteryCamera(int batteryLevel) {
+        return false;
+    }
 
     // ============================================
     // MTK LED Brightness Control

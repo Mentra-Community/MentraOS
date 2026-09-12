@@ -274,6 +274,8 @@ dependencies {
   testImplementation 'junit:junit:4.13.2'
   testImplementation 'org.robolectric:robolectric:4.11.1'
   testImplementation 'org.assertj:assertj-core:3.24.2'
+  // The Android SDK jar stubs org.json in JVM unit tests; the queue serializes real JSON.
+  testImplementation 'org.json:json:20240303'
   testImplementation 'androidx.test:core:1.5.0'
 
   // Local photo upload receiver
@@ -357,8 +359,8 @@ afterEvaluate {
           url = 'https://github.com/Mentra-Community/MentraOS'
           licenses {
             license {
-              name = 'MIT License'
-              url = 'https://opensource.org/licenses/MIT'
+              name = 'Apache License, Version 2.0'
+              url = 'https://www.apache.org/licenses/LICENSE-2.0.txt'
             }
           }
           developers {
