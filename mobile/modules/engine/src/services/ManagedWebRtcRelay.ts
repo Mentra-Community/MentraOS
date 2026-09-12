@@ -37,6 +37,7 @@ export interface RelayDependencies {
   deferredStop(): void
   connected(): boolean
   sleep(ms: number): Promise<void>
+  now(): number
   acquire(): () => void
 }
 
@@ -63,6 +64,7 @@ export class ManagedWebRtcRelay implements ManagedRelay {
   private operation: Promise<unknown> = Promise.resolve()
   private restarting = false
   private retries = 0
+  private readyAt: number | null = null
   private stopping: Promise<void> | null = null
 
   constructor(
@@ -140,12 +142,16 @@ export class ManagedWebRtcRelay implements ManagedRelay {
       ...(this.options.audio !== undefined ? {audio: this.options.audio} : {}),
     })
     this.checkpoint()
+    this.readyAt = this.deps.now()
     return result
   }
 
   private failed(error: Error): void {
     if (this.cancelled || this.attemptError) return
     this.attemptError = error
+    // Bound consecutive trouble, not the lifetime number of recoveries in a long stream.
+    if (this.readyAt !== null && this.deps.now() - this.readyAt >= 60_000) this.retries = 0
+    this.readyAt = null
     if (this.restarting) return
     this.restarting = true
     // Await startup before cleanup: late native/BLE success still belongs to this attempt.
@@ -263,6 +269,7 @@ export function createManagedWebRtcRelay(
     stopGlasses: () => BluetoothSdk.stopStream(),
     connected,
     deferredStop,
+    now: Date.now,
     sleep: (ms) => new Promise((resolve) => BgTimer.setTimeout(resolve, ms)),
     acquire: acquireGlassesHotspot,
   })

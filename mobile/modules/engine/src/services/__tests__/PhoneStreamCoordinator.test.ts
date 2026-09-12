@@ -143,6 +143,7 @@ class PhoneStreamCoordinator extends BaseCoordinator {
           connected,
           deferredStop,
           sleep: async () => {},
+          now: Date.now,
           acquire: () => () => {},
         }),
       ...deps,

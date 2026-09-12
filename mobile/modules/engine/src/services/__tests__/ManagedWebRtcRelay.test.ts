@@ -51,6 +51,7 @@ function harness(overrides: Partial<RelayDependencies> = {}) {
     connected: () => true,
     deferredStop: () => calls.push("deferred-stop"),
     sleep: async () => {},
+    now: Date.now,
     acquire: () => () => calls.push("release"),
     ...overrides,
   }
@@ -178,6 +179,20 @@ describe("ManagedWebRtcRelay", () => {
     }
     expect(h.native.prepare).toHaveBeenCalledTimes(4)
     expect(h.failure).toHaveBeenCalledTimes(1)
+    await h.relay.stop()
+  })
+
+  test("a minute of stable streaming renews the reconnect budget", async () => {
+    let now = 0
+    const h = harness({now: () => now})
+    await h.relay.start()
+    for (let attempt = 1; attempt <= 5; attempt++) {
+      now += 60_000
+      h.emit(attempt)
+      await tick()
+    }
+    expect(h.native.prepare).toHaveBeenCalledTimes(6)
+    expect(h.failure).not.toHaveBeenCalled()
     await h.relay.stop()
   })
 
