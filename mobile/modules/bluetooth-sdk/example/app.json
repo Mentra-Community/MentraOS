@@ -14,7 +14,10 @@
     },
     "ios": {
       "supportsTablet": true,
-      "bundleIdentifier": "com.mentra.bluetoothsdk.example"
+      "bundleIdentifier": "com.mentra.bluetoothsdk.example",
+      "infoPlist": {
+        "NSPhotoLibraryAddUsageDescription": "Saves photos delivered from your glasses to your photo library when you enable camera roll export."
+      }
     },
     "android": {
       "adaptiveIcon": {

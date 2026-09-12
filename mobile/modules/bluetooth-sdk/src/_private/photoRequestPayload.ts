@@ -41,8 +41,10 @@ export function photoRequestParamsForNative(params: PhotoRequestParams): Record<
     mode: params.mode ?? "photo",
     transferMethod: photoTransferMethodForNative(params.transferMethod),
     webhookUrl: params.webhookUrl ?? "",
-    compress: params.compress,
     sound: params.sound,
+  }
+  if (params.compress != null) {
+    payload.compress = params.compress
   }
   const requestId = nonBlankString(params.requestId)
   if (requestId != null) {

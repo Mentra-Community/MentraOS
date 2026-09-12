@@ -59,8 +59,9 @@ import {
   WifiSearchResult,
   WifiStatusChangeEvent,
 } from "../BluetoothSdk.types"
+// eslint-disable-next-line no-restricted-imports -- standalone npm package; the @/ alias is mobile-app-only
+import {normalizePhotoRequestParams} from "../photoRequest"
 import {warmUpCameraParamsForNative} from "./cameraRequestPayload"
-import {photoRequestParamsForNative} from "./photoRequestPayload"
 
 /**
  * Private React Native native-module facade.
@@ -661,7 +662,7 @@ NativeBluetoothSdkModule.scan = async function (modelOrOptions: DeviceModel | Sc
 
 const nativeRequestPhoto = NativeBluetoothSdkModule.requestPhoto.bind(NativeBluetoothSdkModule)
 NativeBluetoothSdkModule.requestPhoto = function (params: PhotoRequestParams) {
-  return nativeRequestPhoto(photoRequestParamsForNative(params) as unknown as PhotoRequestParams)
+  return nativeRequestPhoto(normalizePhotoRequestParams(params) as unknown as PhotoRequestParams)
 }
 
 const nativeWarmUpCamera = NativeBluetoothSdkModule.warmUpCamera.bind(NativeBluetoothSdkModule)

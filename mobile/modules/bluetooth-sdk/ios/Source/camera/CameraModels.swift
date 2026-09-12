@@ -66,6 +66,12 @@ public enum PhotoCompression: String {
     case heavy
 }
 
+public enum PhotoDestinationKind: String {
+    case webhook
+    case phone
+    case glasses
+}
+
 public struct PhotoCaptureDefaults {
     public let size: PhotoSize?
     public let mfnr: Bool?
@@ -263,6 +269,10 @@ public struct PhotoRequest {
     public let zsl: Bool?
     public let ispDigitalGain: Int?
     public let ispAnalogGain: String?
+    /// nil = legacy request shape (flat webhookUrl/save fields drive the routing).
+    public let destinationKind: PhotoDestinationKind?
+    /// Only meaningful for `destinationKind == .phone`.
+    public let saveToCameraRoll: Bool
 
     public init(
         requestId: String? = nil,
@@ -283,7 +293,9 @@ public struct PhotoRequest {
         ispDigitalGain: Int? = nil,
         ispAnalogGain: String? = nil,
         mode: PhotoMode = .photo,
-        transferMethod: String = "auto"
+        transferMethod: String = "auto",
+        destinationKind: PhotoDestinationKind? = nil,
+        saveToCameraRoll: Bool = false
     ) {
         self.requestId = nonBlankRequestId(requestId) ?? generatedCameraRequestId("photo")
         self.size = size
@@ -304,6 +316,8 @@ public struct PhotoRequest {
         self.ispAnalogGain = ispAnalogGain
         self.mode = mode
         self.transferMethod = transferMethod
+        self.destinationKind = destinationKind
+        self.saveToCameraRoll = saveToCameraRoll
     }
 
     public static func from(params: [String: Any]) throws -> PhotoRequest {
@@ -322,6 +336,20 @@ public struct PhotoRequest {
             transferMethod = rawString
         } else {
             transferMethod = "auto"
+        }
+        let destinationKind: PhotoDestinationKind?
+        if let rawValue = params["destinationKind"] {
+            guard let rawString = rawValue as? String,
+                  let kind = PhotoDestinationKind(rawValue: rawString)
+            else {
+                throw BluetoothSdkError(
+                    code: "invalid_photo_destination",
+                    message: "Invalid destinationKind \(String(describing: rawValue)). Expected webhook, phone, or glasses."
+                )
+            }
+            destinationKind = kind
+        } else {
+            destinationKind = nil
         }
         let exposureTimeNs: Double?
         switch params["exposureTimeNs"] {
@@ -386,7 +414,9 @@ public struct PhotoRequest {
             ispDigitalGain: optionalInt("ispDigitalGain"),
             ispAnalogGain: params["ispAnalogGain"] as? String,
             mode: PhotoMode(normalizedRawValue: params["mode"] as? String),
-            transferMethod: transferMethod
+            transferMethod: transferMethod,
+            destinationKind: destinationKind,
+            saveToCameraRoll: params["saveToCameraRoll"] as? Bool ?? false
         )
     }
 
@@ -437,7 +467,9 @@ public struct PhotoRequest {
             ispDigitalGain: ispDigitalGain,
             ispAnalogGain: ispAnalogGain,
             mode: mode,
-            transferMethod: transferMethod
+            transferMethod: transferMethod,
+            destinationKind: destinationKind,
+            saveToCameraRoll: saveToCameraRoll
         )
     }
 }
@@ -497,7 +529,7 @@ public struct VideoRecordingRequest {
     public let width: Int
     public let height: Int
     public let fps: Int
-    // Optional auto-stop timer in minutes; 0 = record until stopped/interrupted.
+    /// Optional auto-stop timer in minutes; 0 = record until stopped/interrupted.
     public let maxRecordingTimeMinutes: Int
 
     public init(
@@ -609,6 +641,11 @@ public enum PhotoResponse: CustomStringConvertible, Equatable {
         statusUrl: String?,
         contentType: String?,
         fileSizeBytes: Int?,
+        // Phone-delivery (destinationKind "phone") terminal metadata; nil for webhook/glasses.
+        fileUri: String?,
+        byteCount: Int?,
+        savedToCameraRoll: Bool?,
+        cameraRollError: String?,
         timestamp: Int
     )
     case error(requestId: String, errorCode: String?, errorMessage: String, timestamp: Int)
@@ -627,6 +664,10 @@ public enum PhotoResponse: CustomStringConvertible, Equatable {
                 contentType: stringValue(values, "contentType") ?? stringValue(values, "mimeType"),
                 fileSizeBytes: intValue(values["fileSizeBytes"]) ?? intValue(values["bytes"])
                     ?? intValue(values["size"]),
+                fileUri: stringValue(values, "fileUri"),
+                byteCount: intValue(values["byteCount"]),
+                savedToCameraRoll: boolValue(values, "savedToCameraRoll"),
+                cameraRollError: stringValue(values, "cameraRollError"),
                 timestamp: timestamp
             )
         } else {
@@ -651,21 +692,24 @@ public enum PhotoResponse: CustomStringConvertible, Equatable {
 
     public var requestId: String {
         switch self {
-        case let .success(requestId, _, _, _, _, _, _), let .error(requestId, _, _, _):
+        case let .success(requestId, _, _, _, _, _, _, _, _, _, _), let .error(requestId, _, _, _):
             requestId
         }
     }
 
     public var timestamp: Int {
         switch self {
-        case let .success(_, _, _, _, _, _, timestamp), let .error(_, _, _, timestamp):
+        case let .success(_, _, _, _, _, _, _, _, _, _, timestamp), let .error(_, _, _, timestamp):
             timestamp
         }
     }
 
     public var values: [String: Any] {
         switch self {
-        case let .success(requestId, uploadUrl, photoUrl, statusUrl, contentType, fileSizeBytes, timestamp):
+        case let .success(
+            requestId, uploadUrl, photoUrl, statusUrl, contentType, fileSizeBytes,
+            fileUri, byteCount, savedToCameraRoll, cameraRollError, timestamp
+        ):
             var values: [String: Any] = [
                 "state": State.success.rawValue,
                 "requestId": requestId,
@@ -683,6 +727,22 @@ public enum PhotoResponse: CustomStringConvertible, Equatable {
             }
             if let fileSizeBytes {
                 values["fileSizeBytes"] = fileSizeBytes
+            }
+            if let fileUri, !fileUri.isEmpty {
+                values["fileUri"] = fileUri
+                // The phone-delivery contract exposes the delivered type as `mimeType`.
+                if let contentType, !contentType.isEmpty {
+                    values["mimeType"] = contentType
+                }
+            }
+            if let byteCount {
+                values["byteCount"] = byteCount
+            }
+            if let savedToCameraRoll {
+                values["savedToCameraRoll"] = savedToCameraRoll
+            }
+            if let cameraRollError, !cameraRollError.isEmpty {
+                values["cameraRollError"] = cameraRollError
             }
             return values
         case let .error(requestId, errorCode, errorMessage, timestamp):

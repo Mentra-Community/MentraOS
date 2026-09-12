@@ -179,6 +179,24 @@ enum class PhotoMode(val value: String) {
     }
 }
 
+enum class PhotoDestinationKind(val value: String) {
+    WEBHOOK("webhook"),
+    PHONE("phone"),
+    GLASSES("glasses");
+
+    companion object {
+        /** Null input = legacy request without a destination union; keep today's routing. */
+        @JvmStatic
+        fun fromValue(value: String?): PhotoDestinationKind? {
+            if (value == null) return null
+            return values().firstOrNull { it.value == value }
+                ?: throw IllegalArgumentException(
+                    "Invalid destinationKind \"$value\". Expected webhook, phone, or glasses."
+                )
+        }
+    }
+}
+
 data class PhotoRequest @JvmOverloads constructor(
     val requestId: String = generatedCameraRequestId("photo"),
     val size: PhotoSize,
@@ -203,6 +221,10 @@ data class PhotoRequest @JvmOverloads constructor(
     val mode: PhotoMode = PhotoMode.PHOTO,
     /** `direct` disables BLE fallback; `ble` skips direct upload; `auto` tries both. */
     val transferMethod: String = "auto",
+    /** Delivery destination; null = legacy request (webhook when webhookUrl is set). */
+    val destinationKind: PhotoDestinationKind? = null,
+    /** Only meaningful for destinationKind PHONE: also export the delivered JPEG to the camera roll. */
+    val saveToCameraRoll: Boolean = false,
 ) {
     companion object {
         private fun transferMethodFromValue(value: Any?): String {
@@ -254,6 +276,8 @@ data class PhotoRequest @JvmOverloads constructor(
                 sound = boolValue(values, "sound") ?: true,
                 mode = PhotoMode.fromValue(stringValue(values, "mode")),
                 transferMethod = transferMethodFromValue(values["transferMethod"]),
+                destinationKind = PhotoDestinationKind.fromValue(stringValue(values, "destinationKind")),
+                saveToCameraRoll = boolValue(values, "saveToCameraRoll") ?: false,
                 exposureTimeNs = exposureTimeNs,
                 iso = iso,
                 aeExposureDivisor = aeDivisor,
@@ -396,6 +420,11 @@ sealed interface PhotoResponse {
         val contentType: String?,
         val fileSizeBytes: Long?,
         override val timestamp: Long,
+        // Phone-delivery (destinationKind "phone") terminal metadata; null for webhook/glasses.
+        val fileUri: String? = null,
+        val byteCount: Long? = null,
+        val savedToCameraRoll: Boolean? = null,
+        val cameraRollError: String? = null,
     ) : PhotoResponse {
         override val state: String = "success"
     }
@@ -428,6 +457,10 @@ sealed interface PhotoResponse {
                             ?: longValue(values, "bytes")
                             ?: longValue(values, "size"),
                     timestamp = timestamp,
+                    fileUri = stringValue(values, "fileUri"),
+                    byteCount = longValue(values, "byteCount"),
+                    savedToCameraRoll = boolValue(values, "savedToCameraRoll"),
+                    cameraRollError = stringValue(values, "cameraRollError"),
                 )
             } else {
                 Error(
@@ -450,6 +483,14 @@ private fun Map<String, Any>.withOptionalPhotoMetadata(
         success.statusUrl?.takeIf { it.isNotBlank() }?.let { this["statusUrl"] = it }
         success.contentType?.takeIf { it.isNotBlank() }?.let { this["contentType"] = it }
         success.fileSizeBytes?.let { this["fileSizeBytes"] = it }
+        success.fileUri?.takeIf { it.isNotBlank() }?.let {
+            this["fileUri"] = it
+            // The phone-delivery contract exposes the delivered type as `mimeType`.
+            success.contentType?.takeIf { ct -> ct.isNotBlank() }?.let { ct -> this["mimeType"] = ct }
+        }
+        success.byteCount?.let { this["byteCount"] = it }
+        success.savedToCameraRoll?.let { this["savedToCameraRoll"] = it }
+        success.cameraRollError?.takeIf { it.isNotBlank() }?.let { this["cameraRollError"] = it }
     }
 
 data class PhotoResponseEvent(
