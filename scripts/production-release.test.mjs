@@ -4,6 +4,7 @@ import test from "node:test"
 import {
   advanceConfirmationMessage,
   branchPromotionState,
+  deferralAttestation,
   exampleConfirmationMessage,
   packagesConfirmationMessage,
   parseCliArgs,
@@ -159,6 +160,44 @@ test("prevents commands from skipping promotion states", () => {
   assert.throws(() => requireCommandState("release", baseRecord), /requires stores-approved/)
   assert.equal(requireCommandState("attest", labReadyRecord, {check: "staging-mobile-n-compatibility"}).kind, "attest")
   assert.equal(requireCommandState("advance", {...baseRecord, state: "finalizing"}).command, "advance")
+})
+
+test("defers only the pre-submission human gates and blocks release until they are attested", () => {
+  const cloudDeployed = {...baseRecord, state: "cloud-deployed"}
+  assert.equal(requireCommandState("defer", cloudDeployed, {check: "production-mobile-n-compatibility"}).kind, "attest")
+  assert.throws(
+    () => requireCommandState("defer", cloudDeployed, {check: "production-mobile-candidate-acceptance"}),
+    /expects production-mobile-n-compatibility/,
+  )
+  assert.throws(
+    () => requireCommandState("defer", {...baseRecord, state: "stores-submitted"}, {check: "store-review-approved"}),
+    /can be deferred, not store-review-approved/,
+  )
+  const reference = (kind) => ({kind, url: "https://example.com/evidence.json", sha256: "c".repeat(64)})
+  const deferred = {
+    ...baseRecord,
+    state: "stores-approved",
+    evidence: [reference("production-mobile-n-compatibility-deferred")],
+  }
+  assert.equal(requireCommandState("attest", deferred, {check: "production-mobile-n-compatibility"}).kind, "command")
+  assert.throws(() => requireCommandState("release", deferred), /deferred human gates to be attested first/)
+  assert.deepEqual(statusSummary(deferred).deferredChecks, ["production-mobile-n-compatibility"])
+  const resolved = {...deferred, evidence: [...deferred.evidence, reference("production-mobile-n-compatibility")]}
+  assert.deepEqual(statusSummary(resolved).deferredChecks, [])
+  assert.throws(
+    () => requireCommandState("attest", resolved, {check: "production-mobile-n-compatibility"}),
+    /expects command, not production-mobile-n-compatibility/,
+  )
+  const attestation = deferralAttestation({
+    record: baseRecord,
+    check: "production-mobile-n-compatibility",
+    reason: "verify during store review",
+    githubLogin: "owner",
+    performedAt: "2026-09-12T01:00:00.000Z",
+  })
+  assert.equal(attestation.result, "deferred")
+  assert.equal(attestation.promotionId, "mentra-3.1.0-attempt-1")
+  assert.equal(attestation.tests, undefined)
 })
 
 test("dispatches stable package phases from the promoted beta without a promotion state", () => {

@@ -55,6 +55,36 @@ export const ATTESTATION_CHECKS = Object.freeze({
   },
 })
 
+// Human gates that guard nothing user-facing on their own: production Mobile N
+// against the new Cloud and candidate acceptance both precede store review,
+// which takes days. Either may be deferred so submission is not held back; a
+// deferral is resolved by the same passing attestation later, and public
+// release refuses to proceed while any deferral is unresolved.
+export const DEFERRABLE_CHECKS = Object.freeze([
+  "production-mobile-n-compatibility",
+  "production-mobile-candidate-acceptance",
+])
+
+export function deferralKind(check) {
+  return `${check}-deferred`
+}
+
+export function deferredChecks(record) {
+  return DEFERRABLE_CHECKS.filter((check) => {
+    const deferredAt = record.evidence.findIndex((item) => item.kind === deferralKind(check))
+    return deferredAt !== -1 && !record.evidence.slice(deferredAt + 1).some((item) => item.kind === check)
+  })
+}
+
+// A deferred check is resolved in place: the promotion has already moved past
+// the check's own transition, so the passing attestation appends evidence
+// without changing state. It must land before public release is approved.
+export function canResolveDeferredCheck(record, check) {
+  if (!deferredChecks(record).includes(check)) return false
+  const index = STATE_INDEX.get(record.state)
+  return index >= STATE_INDEX.get(ATTESTATION_CHECKS[check].to) && index < STATE_INDEX.get("public-release-approved")
+}
+
 export const NEXT_ACTIONS = Object.freeze({
   "staging-compatible": {kind: "workflow", workflow: "production-release-cloud.yml", phase: "preflight"},
   "production-config-ready": {kind: "workflow", workflow: "production-release-cloud.yml", phase: "deploy"},
@@ -297,8 +327,16 @@ export function validatePromotionChain(previous, next) {
     ) {
       fail("staging-compatible requires lab build evidence followed by Mobile N acceptance")
     }
-    if (!rolloutUpdate && !compatibilityLabUpdate && nextIndex !== previousIndex + 1) {
+    const resolvedCheck = next.evidence.at(-1)?.kind
+    const deferredResolution =
+      previous.state === next.state &&
+      DEFERRABLE_CHECKS.includes(resolvedCheck) &&
+      canResolveDeferredCheck(previous, resolvedCheck)
+    if (!rolloutUpdate && !compatibilityLabUpdate && !deferredResolution && nextIndex !== previousIndex + 1) {
       fail(`transition ${previous.state} -> ${next.state} is not contiguous`)
+    }
+    if (next.state === "public-release-approved" && deferredChecks(next).length > 0) {
+      fail(`public release requires the deferred human gates to be attested first: ${deferredChecks(next).join(", ")}`)
     }
   }
   return next
@@ -430,11 +468,20 @@ export function validateAttestation(attestation, record, expectedCheck) {
   ) {
     fail("staging Mobile N acceptance requires recorded compatibility-lab build evidence")
   }
-  if (record.state !== check.from) fail(`attestation ${attestation.check} cannot apply in state ${record.state}`)
-  if (attestation.result !== "pass") fail("only passing attestations can advance a promotion")
   requireIsoUtc(attestation.performedAt, "attestation.performedAt")
   requireString(attestation.tester?.githubLogin, "attestation.tester.githubLogin", 100)
   requireSafeText(attestation.notes, "attestation.notes", 2000)
+  if (attestation.result === "deferred") {
+    if (!DEFERRABLE_CHECKS.includes(attestation.check)) fail(`${attestation.check} cannot be deferred`)
+    if (record.state !== check.from) fail(`deferral of ${attestation.check} cannot apply in state ${record.state}`)
+    requireSafeText(attestation.reason, "attestation.reason", 1000)
+    if (attestation.tests !== undefined) fail("a deferral carries no test results")
+    return attestation
+  }
+  if (attestation.result !== "pass") fail("only passing attestations can advance a promotion")
+  if (record.state !== check.from && !canResolveDeferredCheck(record, attestation.check)) {
+    fail(`attestation ${attestation.check} cannot apply in state ${record.state}`)
+  }
   if (!Array.isArray(attestation.tests)) fail("attestation.tests must be an array")
   const observed = new Set()
   for (const [index, item] of attestation.tests.entries()) {
@@ -482,14 +529,21 @@ export function transitionWithAttestation({
   sha256,
 }) {
   validateAttestation(attestation, record, expectedCheck)
-  const target = ATTESTATION_CHECKS[attestation.check].to
+  const check = ATTESTATION_CHECKS[attestation.check]
+  const deferred = attestation.result === "deferred"
+  const target = deferred || record.state === check.from ? check.to : record.state
   return transitionPromotionRecord({
     record,
     to: target,
     actor,
     createdAt,
     provenanceUrl,
-    evidence: {kind: attestation.check, url: evidenceUrl, assetName, sha256},
+    evidence: {
+      kind: deferred ? deferralKind(attestation.check) : attestation.check,
+      url: evidenceUrl,
+      assetName,
+      sha256,
+    },
   })
 }
 

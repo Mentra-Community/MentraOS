@@ -128,6 +128,15 @@ Mutating commands require typing the release identity, or `--yes` in an already
 reviewed non-interactive procedure. The CLI never reads production credentials
 and never calls Porter or a store directly.
 
+Two human gates may be deferred with `defer --check NAME --reason TEXT`:
+`production-mobile-n-compatibility` (Phase 5) and
+`production-mobile-candidate-acceptance` (Phase 8). Both precede store review,
+which takes days, and neither guards anything user-facing on its own. A
+deferral records who deferred and why, moves the promotion on, and leaves the
+gate open: `attest` the same check later, at any state before public release
+approval, and `release` refuses to proceed while a deferral is unresolved.
+`status` lists the deferred gates still to attest.
+
 ## Phase 1 - select and freeze
 
 `start` dispatches `production-release-prepare.yml`. It only reads completed
@@ -261,6 +270,14 @@ Use `evidence/production-mobile-n.template.json` and attest:
 If either platform fails, stop. Choose an explicit Cloud rollback or forward
 fix, then repeat all invalidated evidence.
 
+To submit for store review before this verification is done, defer the gate
+and attest it during review:
+
+```bash
+./scripts/production-release.mjs defer --release X.Y.Z \
+  --check production-mobile-n-compatibility --reason "verify during store review"
+```
+
 ## Phases 6 through 8 - build, upload, and accept candidates
 
 Run:
@@ -347,7 +364,9 @@ When Apple and Google show review complete for both exact coordinates, fill
 
 ## Phases 11 and 12 - public release and rollout
 
-Request the protected two-person release approval:
+Every deferred human gate must be attested first; `release` refuses otherwise,
+and so does the promotion chain itself. Then request the protected two-person
+release approval:
 
 ```bash
 ./scripts/production-release.mjs release --release X.Y.Z
