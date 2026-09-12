@@ -254,10 +254,14 @@ export function createReleasePlan({
   nativeBuildNumber,
   otaInputs = {},
   publicBetaTestflight = false,
+  uploadGooglePlay = true,
 }) {
   if (!family?.members || !family?.familyBaseVersion) throw new Error("A validated release family is required")
   const changelog = validateChangelog(family.changelog, family.familyBaseVersion)
   if (!CHANNELS.has(channel)) throw new Error(`Unknown release channel ${JSON.stringify(channel)}`)
+  if (typeof uploadGooglePlay !== "boolean" || (!uploadGooglePlay && channel !== "dev")) {
+    throw new Error("Google Play uploads may only be disabled for dev releases")
+  }
   if (typeof sourceCommit !== "string" || !COMMIT_PATTERN.test(sourceCommit)) {
     throw new Error("sourceCommit must be a full lowercase Git commit SHA")
   }
@@ -273,7 +277,10 @@ export function createReleasePlan({
         version: releaseIdentity,
         kind: member.kind,
         manifest: member.manifest,
-        publishTargets: member.publishTargets,
+        publishTargets:
+          member.name === "mentraos" && !uploadGooglePlay
+            ? member.publishTargets.filter((target) => target !== "google-play")
+            : member.publishTargets,
         dependencies: Object.fromEntries(member.dependencies.map((dependency) => [dependency, releaseIdentity])),
         privateWorkspaceDependencies: member.privateWorkspaceDependencies,
       },
@@ -296,6 +303,7 @@ export function createReleasePlan({
     native: {
       marketingVersion: family.familyBaseVersion,
       buildNumber: nativeBuildNumber,
+      ...(!uploadGooglePlay ? {googlePlayUpload: false} : {}),
       ...(channel === "beta" && publicBetaTestflight
         ? {testflight: {group: "Mentra Staging Public", audience: "external"}}
         : {}),
