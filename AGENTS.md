@@ -14,6 +14,19 @@ MentraOS is an open source operating system, app store, and development framewor
 - Android-based smart glasses client: `asg_client` (uses `android_core` as a library)
 - Mentra Miniapp Store and Developer Console: `cloud-v2/websites/`
 
+### Established iOS behavior
+
+- The Mentra App already supports screen-off and background operation using its
+  Bluetooth background mode infrastructure. See `UIBackgroundModes` in
+  `mobile/app.config.ts`.
+- Bulk gallery transfers over the glasses' SoftAP already work in the background
+  on iOS. Reuse the existing gallery and local network transport paths, including
+  `mobile/modules/engine/src/services/asg/localNetworkTransport.ts`.
+- Treat these as established product behavior when planning streaming features.
+  Do not infer that iOS SoftAP or background operation is structurally impossible
+  from generic platform restrictions or older spike notes. Investigate the new
+  media pipeline and its routing requirements against the existing implementation.
+
 ## Monorepo Structure
 
 This is a monorepo with module-specific guidance:
