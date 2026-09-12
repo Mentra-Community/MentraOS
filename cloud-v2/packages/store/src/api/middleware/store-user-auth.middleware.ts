@@ -1,6 +1,5 @@
 import * as jose from "jose"
 import {createMentraAuth} from "@mentra/auth"
-import {verifyAccessTokenSignature} from "@mentra/cloud-shared"
 import {createMiddleware} from "hono/factory"
 import type {AppEnv} from "../../types/hono.types"
 
@@ -8,29 +7,26 @@ const MINIAPP_TOKEN_KID = "mentra-miniapp-1"
 const DEFAULT_STORE_PACKAGE = "com.mentra.store"
 
 /**
- * Authenticate either the Store miniapp itself or the Mentra App host.
- * Miniapp credentials use the public Core JWKS contract; host credentials use
- * the public Core access-token key. The Store never imports Core internals.
+ * Authenticate the Store miniapp, the only client of these routes.
+ *
+ * Exactly one credential is accepted: a miniapp token minted for a configured
+ * Store package, verified through the public Core JWKS contract. Core access
+ * tokens are deliberately refused — a service that honours another service's
+ * audience turns a leak anywhere into a leak everywhere, and that coupling is
+ * why the phone host once had to be told the Store's address at all.
  */
 export const storeUserAuth = createMiddleware<AppEnv>(async (c, next) => {
-  const token = bearerToken(c.req.header("authorization"))
   try {
-    const kid = jose.decodeProtectedHeader(token).kid
-    if (kid === MINIAPP_TOKEN_KID) {
-      const verified = await verifyStoreMiniappToken(token)
-      c.set("user", {
-        mentraUserId: verified.mentraUserId,
-        tenantId: verified.tenantId ?? "mentra",
-        sessionId: verified.tokenId ?? "store-miniapp",
-      })
-    } else {
-      const verified = await verifyAccessTokenSignature(token)
-      c.set("user", {
-        mentraUserId: verified.mentraUserId,
-        tenantId: verified.tenantId,
-        sessionId: verified.sessionId,
-      })
+    const token = bearerToken(c.req.header("authorization"))
+    if (jose.decodeProtectedHeader(token).kid !== MINIAPP_TOKEN_KID) {
+      throw new Error("not a Store miniapp token")
     }
+    const verified = await verifyStoreMiniappToken(token)
+    c.set("user", {
+      mentraUserId: verified.mentraUserId,
+      tenantId: verified.tenantId ?? "mentra",
+      sessionId: verified.tokenId ?? "store-miniapp",
+    })
   } catch {
     return c.json({error: "unauthorized", error_description: "Store credential rejected"}, 401)
   }
