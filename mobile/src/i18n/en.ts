@@ -491,6 +491,27 @@ const en = {
     whatsNew: "What's new",
     updateFailed: "Update Failed",
     updateFailedMessage: "The update could not be completed. You can try again later from Settings.",
+    // Glasses-reported OTA failure codes. Keys mirror OTA_ERROR_ENGLISH_COPY in the engine's
+    // OtaErrorMapping; the raw code is shown under the message via errorCode.
+    errorNoInternet: "Glasses WiFi has no internet connection",
+    errorClockSkew: "Glasses clock is wrong — syncing time from your phone, then retrying update check",
+    errorSslError: "Secure connection failed — try a different WiFi network",
+    errorDownloadFailed: "Download failed — check glasses WiFi connection",
+    errorInsufficientStorage: "Not enough storage on your glasses — free up space before trying again",
+    errorFirmwareTooLarge: "Firmware file is unexpectedly large — please contact support",
+    errorFirmwareVerifyFailed: "Firmware verification failed — please try again or contact support",
+    errorApkVerifyFailed: "Update verification failed — please try again or contact support",
+    errorInstallFailed: "Install failed — please try again",
+    errorDowngradeHandoffRefused:
+      "Your glasses could not start the version change. Restart your glasses and try again.",
+    errorDowngradeHandoffFailed:
+      "The recovery service on your glasses did not respond. Restart your glasses and try again.",
+    errorDowngradeTransactionStalled:
+      "The version change on your glasses did not finish. Restart your glasses and try again.",
+    errorGlassesUnknown: "Your glasses reported an unexpected error. Restart your glasses and try again.",
+    errorGeneric: "Update failed",
+    errorBesRestartRequired: "Restart your glasses to safely exit firmware update mode before trying again",
+    errorCode: "Error code: {{code}}",
     glassesDisconnected: "Glasses Disconnected",
     glassesDisconnectedMessage: "Your glasses disconnected during the update. Please reconnect and try again.",
   },

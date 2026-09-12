@@ -2,7 +2,11 @@ import type {OtaProgress, OtaStatus} from "@mentra/bluetooth-sdk-internal"
 
 import {
   BES_INSTALL_RESTART_MESSAGE,
+  OTA_ERROR_ENGLISH_COPY,
+  OTA_ERROR_UNKNOWN_GLASSES_COPY_KEY,
+  OTA_GLASSES_ERROR_COPY_KEYS,
   getOtaErrorMessage,
+  otaErrorCopyKey,
   shouldRequireGlassesRebootForBesFailure,
   shouldShowChangeWifiForOtaDownloadFailure,
 } from "@/utils/otaErrorMapping"
@@ -84,16 +88,54 @@ describe("getOtaErrorMessage", () => {
     )
   })
 
+  it("maps the downgrade handoff codes to recovery-service copy", () => {
+    expect(getOtaErrorMessage("downgrade_handoff_failed")).toBe(
+      "The recovery service on your glasses did not respond. Restart your glasses and try again.",
+    )
+    expect(getOtaErrorMessage("downgrade_handoff_refused")).toBe(
+      "Your glasses could not start the version change. Restart your glasses and try again.",
+    )
+    expect(getOtaErrorMessage("downgrade_transaction_stalled")).toBe(
+      "The version change on your glasses did not finish. Restart your glasses and try again.",
+    )
+  })
+
   it("returns generic message for undefined error", () => {
     expect(getOtaErrorMessage(undefined)).toBe("Update failed")
   })
 
-  it("passes through arbitrary error strings", () => {
-    expect(getOtaErrorMessage("some_custom_error")).toBe("some_custom_error")
+  it("never echoes an unknown glasses code as the message", () => {
+    expect(getOtaErrorMessage("some_custom_error")).toBe(
+      "Your glasses reported an unexpected error. Restart your glasses and try again.",
+    )
   })
 
   it("returns generic message for empty string", () => {
     expect(getOtaErrorMessage("")).toBe("Update failed")
+  })
+})
+
+describe("otaErrorCopyKey", () => {
+  it("resolves every known glasses code to a key with English copy", () => {
+    for (const [code, key] of Object.entries(OTA_GLASSES_ERROR_COPY_KEYS)) {
+      expect(otaErrorCopyKey(code)).toBe(key)
+      expect(OTA_ERROR_ENGLISH_COPY[key]).toEqual(expect.any(String))
+    }
+  })
+
+  it("resolves the downgrade handoff failure to its own key", () => {
+    expect(otaErrorCopyKey("downgrade_handoff_failed")).toBe("ota:errorDowngradeHandoffFailed")
+  })
+
+  it("falls back to the unknown-glasses-error key for unmapped codes", () => {
+    expect(otaErrorCopyKey("some_custom_error")).toBe(OTA_ERROR_UNKNOWN_GLASSES_COPY_KEY)
+    expect(otaErrorCopyKey("some_custom_error")).toBe("ota:errorGlassesUnknown")
+  })
+
+  it("falls back to the plain generic key without a code", () => {
+    expect(otaErrorCopyKey(undefined)).toBe("ota:errorGeneric")
+    expect(otaErrorCopyKey(null)).toBe("ota:errorGeneric")
+    expect(otaErrorCopyKey("")).toBe("ota:errorGeneric")
   })
 })
 

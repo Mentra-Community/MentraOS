@@ -143,7 +143,9 @@ mock.module("../../services/OtaAutoChain", () => ({
 }))
 mock.module("../../services/OtaErrorMapping", () => ({
   BES_INSTALL_RESTART_MESSAGE: "Restart the glasses",
-  getOtaErrorMessage: (error?: string) => error || "Install failed",
+  OTA_ERROR_BES_RESTART_REQUIRED_COPY_KEY: "ota:errorBesRestartRequired",
+  getOtaErrorMessage: (error?: string | null) => (error ? `mapped:${error}` : "Install failed"),
+  otaErrorCopyKey: (error?: string | null) => (error ? `ota:key:${error}` : "ota:errorGeneric"),
   shouldRequireGlassesRebootForBesFailure: () => false,
   shouldShowChangeWifiForOtaDownloadFailure: () => false,
 }))
@@ -280,10 +282,46 @@ describe("useMentraLiveOta", () => {
     expect(latestController.state).toMatchObject({
       screen: "failed",
       canRetry: true,
-      error: {code: "install_failed", message: "Network lost"},
+      // Phone-side watchdog copy is English-only: no copy key, and no glasses code to show.
+      error: {code: "install_failed", message: "Network lost", copyKey: null, glassesCode: null},
     })
     latestController.retryInstall()
     expect(retry).toHaveBeenCalledTimes(1)
+    await act(async () => renderer.unmount())
+  })
+
+  test("maps a glasses failure code to copy and keeps the raw code for support", async () => {
+    const renderer = await renderProbe()
+    installSnapshot = {
+      ...installSnapshot,
+      displayState: "failed",
+      errorMsg: "",
+      otaStatus: {
+        sessionId: "s1",
+        totalSteps: 1,
+        currentStep: 1,
+        stepType: "apk",
+        phase: "install",
+        stepPercent: 0,
+        overallPercent: 0,
+        status: "failed",
+        error: "downgrade_handoff_failed",
+      },
+    }
+    await act(async () => {
+      installListeners.forEach((listener) => listener())
+    })
+
+    expect(latestController.state).toMatchObject({
+      screen: "failed",
+      canRetry: true,
+      error: {
+        code: "install_failed",
+        message: "mapped:downgrade_handoff_failed",
+        copyKey: "ota:key:downgrade_handoff_failed",
+        glassesCode: "downgrade_handoff_failed",
+      },
+    })
     await act(async () => renderer.unmount())
   })
 

@@ -119,7 +119,13 @@ export {
 export type {OtaAutoChainAdvanceResult} from "./services/OtaAutoChain"
 export {
   BES_INSTALL_RESTART_MESSAGE,
+  OTA_ERROR_BES_RESTART_REQUIRED_COPY_KEY,
+  OTA_ERROR_ENGLISH_COPY,
+  OTA_ERROR_GENERIC_COPY_KEY,
+  OTA_ERROR_UNKNOWN_GLASSES_COPY_KEY,
+  OTA_GLASSES_ERROR_COPY_KEYS,
   getOtaErrorMessage,
+  otaErrorCopyKey,
   shouldRequireGlassesRebootForBesFailure,
   shouldShowChangeWifiForOtaDownloadFailure,
 } from "./services/OtaErrorMapping"
