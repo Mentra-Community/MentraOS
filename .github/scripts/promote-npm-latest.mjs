@@ -77,6 +77,14 @@ function run(command, args) {
   execFileSync(command, args, {stdio: "inherit"})
 }
 
+// npm acknowledges a dist-tag change before every read path serves it: the
+// first read-back after `npm dist-tag add` can still return the previous
+// latest (seen on the first 3.1.0 release, where the tag had moved but the
+// read-back failed the run). Poll for a bounded time before concluding that
+// the move did not take.
+export const NPM_TAG_READBACK_POLL_SECONDS = 5
+export const NPM_TAG_READBACK_ATTEMPTS = 61 // five minutes
+
 export function promoteNpmLatest({
   plan,
   npmTag,
@@ -85,6 +93,8 @@ export function promoteNpmLatest({
   view = npmView,
   exec = run,
   log = console.log,
+  readbackAttempts = NPM_TAG_READBACK_ATTEMPTS,
+  sleep = () => execFileSync("sleep", [String(NPM_TAG_READBACK_POLL_SECONDS)]),
 }) {
   if (plan?.channel !== "production") throw new Error("Only a production plan can move npm latest")
   const version = plan.releaseIdentity
@@ -110,9 +120,19 @@ export function promoteNpmLatest({
       log(`Dry run: would move ${name} latest from ${decision.previousLatest ?? "<unset>"} to ${version}`)
     } else if (decision.action === "published") {
       exec("npm", ["dist-tag", "add", coordinate, "latest"])
-      const observed = parseViewValue(view(name, "dist-tags")) || {}
-      if (observed.latest !== version) {
-        throw new Error(`${name} latest reads back as ${JSON.stringify(observed.latest ?? null)}, expected ${version}`)
+      for (let attempt = 1; ; attempt += 1) {
+        const observed = parseViewValue(view(name, "dist-tags")) || {}
+        if (observed.latest === version) break
+        if (attempt >= readbackAttempts) {
+          const waited = (attempt - 1) * NPM_TAG_READBACK_POLL_SECONDS
+          throw new Error(
+            `${name} latest reads back as ${JSON.stringify(observed.latest ?? null)} after ${waited}s, expected ${version}`,
+          )
+        }
+        if (attempt === 1 || attempt % 12 === 0) {
+          log(`${name} latest still reads back as ${JSON.stringify(observed.latest ?? null)}; waiting for npm`)
+        }
+        sleep()
       }
     }
     if (!dryRun) {

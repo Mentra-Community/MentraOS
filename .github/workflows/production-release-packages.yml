@@ -330,7 +330,7 @@ jobs:
     if: inputs.phase == 'release'
     needs: load
     runs-on: ubuntu-latest
-    timeout-minutes: 90
+    timeout-minutes: 120
     environment:
       name: production-packages-release
     steps:
