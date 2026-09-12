@@ -108,6 +108,76 @@ test("flips latest for every npm member, reads it back, and retires the candidat
   assert.equal(Object.keys(written.publications).length, members.length)
 })
 
+test("waits for npm to serve the moved latest before trusting the read-back", () => {
+  const members = npmMembersFromPlan(plan)
+  const initial = Object.fromEntries(
+    members.map((name) => [
+      name,
+      [
+        [candidateTag, version],
+        ["latest", "3.0.0"],
+      ],
+    ]),
+  )
+  // The registry acknowledges the move, but the next reads still serve the
+  // previous latest for a while, as npm does.
+  const staleReads = (count) => {
+    const fake = registry(initial)
+    const stale = new Map()
+    return {
+      fake,
+      view(spec, field) {
+        const fresh = fake.view(spec, field)
+        if (field !== "dist-tags" || !(stale.get(spec) > 0)) return fresh
+        stale.set(spec, stale.get(spec) - 1)
+        return JSON.stringify({...JSON.parse(fresh), latest: "3.0.0"})
+      },
+      exec(command, args) {
+        fake.exec(command, args)
+        if (args[1] === "add") stale.set(args[2].slice(0, args[2].lastIndexOf("@")), count)
+      },
+    }
+  }
+
+  const lagging = staleReads(2)
+  let sleeps = 0
+  const result = promoteNpmLatest({
+    plan,
+    npmTag: candidateTag,
+    outputDir: mkdtempSync(path.join(tmpdir(), "npm-latest-")),
+    view: lagging.view,
+    exec: lagging.exec,
+    log: () => {},
+    readbackAttempts: 4,
+    sleep: () => {
+      sleeps += 1
+    },
+  })
+  assert.equal(sleeps, 2 * members.length)
+  assert.ok(members.every((name) => result.publications[name].npm.status === "published"))
+  assert.ok(members.every((name) => lagging.fake.commands.includes(`npm dist-tag rm ${name} ${candidateTag}`)))
+
+  const stuck = staleReads(100)
+  let stuckSleeps = 0
+  assert.throws(
+    () =>
+      promoteNpmLatest({
+        plan,
+        npmTag: candidateTag,
+        outputDir: mkdtempSync(path.join(tmpdir(), "npm-latest-")),
+        view: stuck.view,
+        exec: stuck.exec,
+        log: () => {},
+        readbackAttempts: 3,
+        sleep: () => {
+          stuckSleeps += 1
+        },
+      }),
+    /latest reads back as "3\.0\.0" after 10s, expected/,
+  )
+  assert.equal(stuckSleeps, 2)
+})
+
 test("refuses unpublished versions and does nothing in a dry run", () => {
   const members = npmMembersFromPlan(plan)
   const fake = registry(Object.fromEntries(members.map((name) => [name, [[candidateTag, version]]])))
