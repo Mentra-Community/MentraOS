@@ -227,7 +227,7 @@ export class SoftapCallTransport {
    * cancelled and must refuse rather than build a call nobody is waiting for.
    */
   private cancelledBeforeStart = false
-  /** Steps whose undo threw during the last teardown. See [lastTeardownFailures]. */
+  /** Failed undos for this attempt, retained across repeated stops. See [lastTeardownFailures]. */
   private teardownFailures: SoftapStep[] = []
   /**
    * Raised the instant a teardown is decided, before any resource is touched.
@@ -507,7 +507,9 @@ export class SoftapCallTransport {
         // was slow" and "the leave was held by a native call that had not returned".
         softapTrace("softap_stop_step_settled", {step: running.step, waitedMs: Date.now() - waitStartedAt})
       }
-      const failures: SoftapStep[] = []
+      // The late step may have recorded a failed self-undo while we waited. Preserve it,
+      // and any earlier teardown result, until start() explicitly begins a new attempt.
+      const failures: SoftapStep[] = [...this.teardownFailures]
       for (const step of [...this.completed].reverse()) {
         const undoStartedAt = Date.now()
         try {
@@ -666,6 +668,7 @@ export class SoftapCallTransport {
     try {
       await this.undo(step)
     } catch (error) {
+      if (!this.teardownFailures.includes(step)) this.teardownFailures.push(step)
       softapTraceFailure("softap_step_undo_failed", {
         step,
         reason: error instanceof Error ? error.message : String(error),

@@ -270,6 +270,28 @@ describe("SoftapCallTransport teardown", () => {
     expect(transport.lastTeardownFailures()).toEqual(["publish", "scopedJoin"])
   })
 
+  test("the host's second stop preserves cleanup failures from a rejected join", async () => {
+    const {calls, transport} = recordingDeps((recorded) => ({
+      joinScopedNetwork: async () => {
+        throw new Error("SOFTAP_UNAVAILABLE")
+      },
+      stopHotspot: async () => {
+        recorded.push("stopHotspot")
+        throw new Error("hotspot shutdown timed out")
+      },
+    }))
+    await expect(transport.start()).rejects.toMatchObject({code: "SCOPED_JOIN_FAILED"})
+    expect(transport.lastTeardownFailures()).toEqual(["hotspot"])
+
+    // LocalMiniappRuntime retires a rejected join by calling stop() again before it
+    // reads the failures. No additional shutdown happened, so the error must survive.
+    await transport.stop()
+    await transport.stop()
+
+    expect(calls.filter((call) => call === "stopHotspot")).toEqual(["stopHotspot"])
+    expect(transport.lastTeardownFailures()).toEqual(["hotspot"])
+  })
+
   /** A clean teardown must not leave a stale accusation behind for the next call to trip over. */
   test("a clean teardown reports no failures, and a later one does not inherit an earlier one", async () => {
     let brokenHotspot = true
@@ -590,6 +612,54 @@ describe("SoftapCallTransport leave during every phase", () => {
         expect(calls.filter((entry) => entry === call)).toHaveLength(1)
       }
     })
+
+    if (step === "live") continue // Observing a frame does not acquire a resource.
+    for (const failEarlierHotspot of step === "scopedJoin" ? [false, true] : [false]) {
+      const detail = failEarlierHotspot ? " alongside failed hotspot cleanup" : ""
+      test(`reports failed late ${step} cleanup${detail}`, async () => {
+        let entered!: () => void
+        const running = new Promise<void>((resolve) => {
+          entered = resolve
+        })
+        let release!: () => void
+        const blocked = new Promise<void>((resolve) => {
+          release = resolve
+        })
+        const {calls, deps, transport} = recordingDeps()
+        const original = deps[override] as (...args: never[]) => Promise<unknown>
+        const lateUndo = released[0]
+        Object.assign(deps, {
+          [override]: async (...args: never[]) => {
+            entered()
+            await blocked
+            return original(...args)
+          },
+          [lateUndo]: async () => {
+            calls.push(lateUndo)
+            throw new Error(`${step} cleanup failed`)
+          },
+        })
+        if (failEarlierHotspot) {
+          deps.stopHotspot = async () => {
+            calls.push("stopHotspot")
+            throw new Error("hotspot cleanup failed")
+          }
+        }
+
+        const started = transport.start().catch((error: unknown) => error)
+        await running
+        const stopped = transport.stop()
+        release()
+        const [error] = await Promise.all([started, stopped])
+
+        const failures = failEarlierHotspot ? [step, "hotspot"] : [step]
+        expect(error).toMatchObject({code: "CANCELLED"})
+        expect(calls.filter((call) => released.includes(call))).toEqual(released)
+        expect(transport.lastTeardownFailures()).toEqual(failures)
+        await transport.stop()
+        expect(transport.lastTeardownFailures()).toEqual(failures)
+      })
+    }
   }
 
   test("a step that resolves after a leave does not leak its resource", async () => {
