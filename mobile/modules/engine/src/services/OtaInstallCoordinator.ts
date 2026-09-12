@@ -146,6 +146,9 @@ function hasRecoveringOtaReply(otaStatus: OtaStatus | null, otaProgress: OtaProg
   return !!otaProgress
 }
 
+/** Downgrade-detour sub-phase; see OtaInstallSnapshot.versionChangePhase. */
+export type VersionChangePhase = "installing" | "reinstalling" | "verifying"
+
 /** Read model the host progress screen renders from. */
 export interface OtaInstallSnapshot {
   displayState: DisplayState
@@ -166,11 +169,13 @@ export interface OtaInstallSnapshot {
   versionChangeConverged: boolean
   /**
    * Sub-phase of the downgrade detour for the progress narrative, or null when not
-   * in one: "installing" before the handoff, "restarting" while the glasses are dark
-   * (uninstall / factory flicker / target install), "verifying" once reconnected and
-   * checking the version. Completion is the "complete" displayState.
+   * in one: "installing" before the handoff, "reinstalling" while the recovery worker
+   * replaces the glasses software (uninstall / factory flicker / target install — it
+   * reports no progress, and the BES keeps the BLE link up, so `connected` says nothing
+   * about it), "verifying" only between a physical reconnect and the version report
+   * the phone then checks. Completion is the "complete" displayState.
    */
-  versionChangePhase: "installing" | "restarting" | "verifying" | null
+  versionChangePhase: VersionChangePhase | null
   /** Pre-ota_start phone staging/join state for a hotspot attempt. */
   hotspotPhase: HotspotOtaPhase
   hotspotArtifactPercent: number | null
@@ -237,6 +242,13 @@ class OtaInstallCoordinator {
   private versionChangeInstallStarted = false
   // Latched when a reconnect reports buildNumber === versionChangeTarget.
   private versionChangeConverged = false
+  // A physical BLE reconnect happened inside the detour and no build number has been
+  // reported since: the phone is about to check the version. Drives the "verifying"
+  // phase. NOT set by glasses_session_changed — the bridge detects the sid change inside
+  // the same version_info message that already applied the build number, so by the time
+  // that signal arrives the check has already run (and latching here would leave
+  // "verifying" stuck on for the target install that follows a factory-build flicker).
+  private versionChangeVerifyPending = false
   // Holds a legacy apk install FINISHED out of "complete" for the settle window.
   private legacyApkSettleHold = false
   // Display-only legacy MTK install stall simulation.
@@ -515,7 +527,7 @@ class OtaInstallCoordinator {
       mtkInstallStallSimulatedPercent: this.mtkSimulatedPercent,
       isVersionChange: this.versionChangeSession,
       versionChangeConverged: this.versionChangeConverged,
-      versionChangePhase: this.deriveVersionChangePhase(connected),
+      versionChangePhase: this.deriveVersionChangePhase(),
       hotspotPhase: this.hotspotPhase,
       hotspotArtifactPercent: this.hotspotArtifactPercent,
       hotspotArtifact: this.hotspotArtifact ? {...this.hotspotArtifact} : null,
@@ -535,10 +547,10 @@ class OtaInstallCoordinator {
   }
 
   /** Downgrade-detour sub-phase for the progress narrative (see OtaInstallSnapshot). */
-  private deriveVersionChangePhase(connected: boolean): "installing" | "restarting" | "verifying" | null {
+  private deriveVersionChangePhase(): VersionChangePhase | null {
     if (!this.versionChangeSession || this.versionChangeConverged) return null
     if (!this.versionChangeInstallStarted) return "installing"
-    return connected ? "verifying" : "restarting"
+    return this.versionChangeVerifyPending ? "verifying" : "reinstalling"
   }
 
   /**
@@ -580,6 +592,7 @@ class OtaInstallCoordinator {
     this.versionChangeTarget = null
     this.versionChangeInstallStarted = false
     this.versionChangeConverged = false
+    this.versionChangeVerifyPending = false
     this.legacyApkSettleHold = false
     this.mtkSimulatedPercent = null
     this.lastRealMtkProgress = 0
@@ -857,6 +870,7 @@ class OtaInstallCoordinator {
     ) {
       console.log("[OTA_PROGRESS] version-change: apk install started — entering detour wait")
       this.versionChangeInstallStarted = true
+      this.versionChangeVerifyPending = false
       this.emitInternalChange()
     }
 
@@ -881,6 +895,14 @@ class OtaInstallCoordinator {
         `[OTA_PROGRESS] version-change: no transaction owns the detour (${otaStatus.error}) — releasing latch`,
       )
       this.versionChangeInstallStarted = false
+      this.emitInternalChange()
+    }
+
+    // The reconnected glasses reported a version: the check the "verifying" phase
+    // announced runs right below. Whether it converges (target) or not (the passive
+    // factory build, which recovery is now replacing), the phone is no longer verifying.
+    if (this.versionChangeVerifyPending && buildNumberChanged && buildNumber) {
+      this.versionChangeVerifyPending = false
       this.emitInternalChange()
     }
 
@@ -1122,10 +1144,21 @@ class OtaInstallCoordinator {
       // queries durable status and re-arms the one permitted fallback.
       this.clearQueryReplyTimeout()
       this.clearRetryTimeout()
+      // Glasses went dark again before reporting a version: nothing to verify until
+      // the next physical reconnect (the detour narrative falls back to "reinstalling").
+      if (this.versionChangeVerifyPending) {
+        this.versionChangeVerifyPending = false
+        this.emitInternalChange()
+      }
       return
     }
 
     const becameConnected = prev === false && connected === true
+    if (becameConnected && this.isInVersionChangeDetour()) {
+      console.log("[OTA_PROGRESS] connect-edge: physical reconnect during version-change detour — verifying")
+      this.versionChangeVerifyPending = true
+      this.emitInternalChange()
+    }
     if (becameConnected && this.runReconnectArbitration("connect-edge")) {
       return
     }

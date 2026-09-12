@@ -308,6 +308,30 @@ describe("useMentraLiveOta", () => {
     await act(async () => renderer.unmount())
   })
 
+  test("keeps the downgrade reinstall wait on its own screen and blocks finish while connected", async () => {
+    installSnapshot = {
+      ...installSnapshot,
+      connected: true,
+      displayState: "updating",
+      isVersionChange: true,
+      versionChangePhase: "reinstalling",
+    }
+    const renderer = await renderProbe()
+
+    expect(latestController.state).toMatchObject({screen: "reinstalling", canFinish: false})
+    await act(async () => {
+      await latestController.finish()
+    })
+    expect(finish).not.toHaveBeenCalled()
+
+    installSnapshot = {...installSnapshot, versionChangePhase: "verifying"}
+    await act(async () => {
+      installListeners.forEach((listener) => listener())
+    })
+    expect(latestController.state.screen).toBe("verifying")
+    await act(async () => renderer.unmount())
+  })
+
   test("treats an active pass completion as a continuation check", async () => {
     const renderer = await renderProbe("check")
     expect(latestController.state.hotspotArtifact).toBeNull()

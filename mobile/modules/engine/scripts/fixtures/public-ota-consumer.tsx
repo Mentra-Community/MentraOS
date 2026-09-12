@@ -41,6 +41,8 @@ function screenLabel(screen: MentraLiveOtaScreen): string {
       return "Updating"
     case "restarting":
       return "Restarting"
+    case "reinstalling":
+      return "Reinstalling"
     case "verifying":
       return "Verifying"
     case "complete":

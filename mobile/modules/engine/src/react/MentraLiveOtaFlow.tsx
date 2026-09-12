@@ -129,9 +129,11 @@ const ENGLISH_COPY: Record<string, string> = {
   "ota:updateInfoUnavailableMessage":
     "Update information for this version of the app is unavailable. Please check the app store for a newer version of the Mentra App.",
   "ota:downgradeDuration": "Your glasses will restart twice — this may take up to 2 minutes.",
-  "ota:versionChangeRestarting": "Installing a different version…",
+  "ota:versionChangeReinstalling": "Reinstalling glasses software…",
+  "ota:versionChangeReinstallingMessage":
+    "This can take a few minutes and your glasses will restart on their own. Keep them nearby and leave this screen open.",
   "ota:versionChangeVerifying": "Verifying your glasses…",
-  "ota:versionChangeKeepNearby": "Keep your glasses nearby and connected. They will restart on their own.",
+  "ota:versionChangeVerifyingMessage": "Checking the installed version. Keep your glasses nearby and connected.",
   "ota:restartingGlasses": "Restarting {{deviceName}}…",
   "ota:restartingGlassesMessage":
     "The update is installed. Keep your glasses nearby and leave this screen open while they finish starting.",
@@ -399,17 +401,20 @@ function OtaFlowContent({
     )
   }
 
-  if (state.versionChangePhase === "restarting" || state.versionChangePhase === "verifying") {
+  if (state.versionChangePhase === "reinstalling" || state.versionChangePhase === "verifying") {
+    // The recovery worker reports no progress while it replaces the glasses software, so
+    // this page narrates the wait; "verifying" is only the moment after a physical
+    // reconnect, before the reported version has been checked.
+    const verifying = state.versionChangePhase === "verifying"
     return (
       <FlowPage
         colors={colors}
         icon="download"
-        title={translate(
-          state.versionChangePhase === "verifying" ? "ota:versionChangeVerifying" : "ota:versionChangeRestarting",
-        )}>
+        title={translate(verifying ? "ota:versionChangeVerifying" : "ota:versionChangeReinstalling")}>
         <ActivityIndicator size="large" color={colors.foreground} />
-        <BodyText colors={colors}>{translate("ota:versionChangeKeepNearby")}</BodyText>
-        <BodyText colors={colors}>{translate("ota:downgradeDuration")}</BodyText>
+        <BodyText colors={colors}>
+          {translate(verifying ? "ota:versionChangeVerifyingMessage" : "ota:versionChangeReinstallingMessage")}
+        </BodyText>
       </FlowPage>
     )
   }

@@ -19,7 +19,11 @@ import type {
 } from "@mentra/bluetooth-sdk"
 import {isGlassesConnected, isGlassesReady, useGlassesStore} from "../stores/glasses"
 import {resolveOtaManifestUrl} from "../services/otaManifestUrl"
-import {otaInstallCoordinator, type OtaInstallSnapshot} from "../services/OtaInstallCoordinator"
+import {
+  otaInstallCoordinator,
+  type OtaInstallSnapshot,
+  type VersionChangePhase,
+} from "../services/OtaInstallCoordinator"
 import {startGlassesStatusProjection} from "../services/GlassesStatusProjection"
 import {startOtaService} from "../services/OtaService"
 import {
@@ -59,6 +63,7 @@ export type {
   OtaUpdateInfo,
   ReleaseChangelog,
   OtaInstallSnapshot,
+  VersionChangePhase,
   OtaCheckCurrentGlassesOptions,
   OtaCheckCurrentGlassesResult,
 }

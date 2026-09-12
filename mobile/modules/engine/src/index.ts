@@ -104,6 +104,7 @@ export type {
   ReleaseChangelog,
   OtaSnapshot,
   OtaInstallSnapshot,
+  VersionChangePhase,
 } from "./facades/ota"
 export {
   beginOtaAutoChain,

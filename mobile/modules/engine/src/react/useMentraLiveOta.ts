@@ -18,7 +18,7 @@ import {
   shouldRequireGlassesRebootForBesFailure,
   shouldShowChangeWifiForOtaDownloadFailure,
 } from "../services/OtaErrorMapping"
-import type {OtaInstallSnapshot} from "../services/OtaInstallCoordinator"
+import type {OtaInstallSnapshot, VersionChangePhase} from "../services/OtaInstallCoordinator"
 import type {OtaCheckCurrentGlassesResult} from "../services/OtaUpdateCheckService"
 import type {ReleaseChangelog} from "../facades/ota"
 import {useEngineSnapshot} from "./useEngineSnapshot"
@@ -41,6 +41,7 @@ export type MentraLiveOtaScreen =
   | "preparing_hotspot"
   | "updating"
   | "restarting"
+  | "reinstalling"
   | "verifying"
   | "complete"
   | "failed"
@@ -77,7 +78,7 @@ export type MentraLiveOtaState = {
   updateRequired: boolean
   versionChange: boolean
   versionChangeConverged: boolean
-  versionChangePhase: "installing" | "restarting" | "verifying" | null
+  versionChangePhase: VersionChangePhase | null
   wifiConnected: boolean
   wifiStatusKnown: boolean
   hotspotSupported: boolean
@@ -185,7 +186,7 @@ function installProgress(snapshot: OtaInstallSnapshot): number | null {
 }
 
 function progressScreen(snapshot: OtaInstallSnapshot): MentraLiveOtaScreen {
-  if (snapshot.versionChangePhase === "restarting") return "restarting"
+  if (snapshot.versionChangePhase === "reinstalling") return "reinstalling"
   if (snapshot.versionChangePhase === "verifying") return "verifying"
   switch (snapshot.displayState) {
     case "starting":
@@ -492,8 +493,8 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
 
   const firmwareRestarting =
     page === "progress" &&
-    ((!installSnapshot.connected && installSnapshot.displayState === "restarting") ||
-      installSnapshot.versionChangePhase === "restarting")
+    !installSnapshot.connected &&
+    (installSnapshot.displayState === "restarting" || installSnapshot.versionChangePhase === "reinstalling")
 
   useEffect(() => {
     if (page !== "progress") return
@@ -597,7 +598,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
     }
     const restartStillInProgress =
       installSnapshot.displayState === "restarting" ||
-      installSnapshot.versionChangePhase === "restarting" ||
+      installSnapshot.versionChangePhase === "reinstalling" ||
       installSnapshot.versionChangePhase === "verifying"
     if (restartStillInProgress) return
     const requiresGlassesReboot = shouldRequireGlassesRebootForBesFailure(

@@ -720,6 +720,75 @@ describe("OtaInstallCoordinator version-change detour retry gate", () => {
   })
 })
 
+describe("OtaInstallCoordinator version-change detour phase narrative", () => {
+  const TARGET = 49000000
+
+  /** Downgrade session latched into the detour wait (recovery owns the transaction). */
+  function enterDetour() {
+    setGlassesConnected()
+    useGlassesStore.getState().setGlassesInfo({buildNumber: "51000000"})
+    useGlassesStore.getState().setOtaUpdateAvailable({
+      updateAvailable: true,
+      isDowngrade: true,
+      versionCode: TARGET,
+    } as never)
+    otaInstallCoordinator.attach()
+    expect(otaInstallCoordinator.snapshot().versionChangePhase).toBe("installing")
+    GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
+    useGlassesStore.getState().setOtaStatus(inProgressStatus({phase: "install", stepPercent: 100}))
+  }
+
+  it("narrates the detour wait as reinstalling while the BES keeps the link up (hardware 2026-09-11)", () => {
+    // The recovery worker uninstalls/reinstalls ASG without reporting progress and the
+    // BLE link never drops, so `connected` must not turn the wait into "verifying".
+    enterDetour()
+    expect(otaInstallCoordinator.snapshot().connected).toBe(true)
+    expect(otaInstallCoordinator.snapshot().versionChangePhase).toBe("reinstalling")
+  })
+
+  it("a glasses_session_changed signal does not enter verifying (its version report already landed)", () => {
+    enterDetour()
+    useGlassesStore.getState().setGlassesInfo({buildNumber: "45000000"})
+    GlobalEventEmitter.emit("glasses_session_changed", {previousSid: "old", sid: "new"})
+    expect(otaInstallCoordinator.snapshot().versionChangePhase).toBe("reinstalling")
+  })
+
+  it("verifies only between a physical reconnect and the version report, then converges", () => {
+    enterDetour()
+
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
+    expect(otaInstallCoordinator.snapshot().versionChangePhase).toBe("reinstalling")
+
+    // Passive factory build comes back on a fresh link: the phone is about to check it.
+    setGlassesConnected()
+    expect(otaInstallCoordinator.snapshot().versionChangePhase).toBe("verifying")
+
+    // Not the target: recovery is now installing it — back to the reinstall narrative.
+    useGlassesStore.getState().setGlassesInfo({buildNumber: "45000000"})
+    expect(otaInstallCoordinator.snapshot().versionChangePhase).toBe("reinstalling")
+    expect(otaInstallCoordinator.snapshot().versionChangeConverged).toBe(false)
+
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
+    setGlassesConnected()
+    expect(otaInstallCoordinator.snapshot().versionChangePhase).toBe("verifying")
+
+    useGlassesStore.getState().setGlassesInfo({buildNumber: String(TARGET)})
+    const snap = otaInstallCoordinator.snapshot()
+    expect(snap.versionChangeConverged).toBe(true)
+    expect(snap.versionChangePhase).toBeNull()
+    expect(snap.displayState).toBe("complete")
+  })
+
+  it("a reconnect that goes dark again before reporting a version drops back to reinstalling", () => {
+    enterDetour()
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
+    setGlassesConnected()
+    expect(otaInstallCoordinator.snapshot().versionChangePhase).toBe("verifying")
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
+    expect(otaInstallCoordinator.snapshot().versionChangePhase).toBe("reinstalling")
+  })
+})
+
 describe("OtaInstallCoordinator stuck-at-zero watchdog", () => {
   it("uses advancing bytes at 0%, but repeated or missing byte counts cannot mask a stall", async () => {
     setGlassesConnected()

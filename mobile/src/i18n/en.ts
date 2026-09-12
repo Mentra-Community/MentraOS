@@ -473,9 +473,11 @@ const en = {
     installing: "Installing Update",
     doNotDisconnect: "Please keep your glasses connected and do not close the app.",
     downgradeDuration: "Your glasses will restart twice \u2014 this may take up to 2 minutes.",
-    versionChangeRestarting: "Installing a different version\u2026",
+    versionChangeReinstalling: "Reinstalling glasses software\u2026",
+    versionChangeReinstallingMessage:
+      "This can take a few minutes and your glasses will restart on their own. Keep them nearby and leave this screen open.",
     versionChangeVerifying: "Verifying your glasses\u2026",
-    versionChangeKeepNearby: "Keep your glasses nearby and connected. They will restart on their own.",
+    versionChangeVerifyingMessage: "Checking the installed version. Keep your glasses nearby and connected.",
     restartingGlasses: "Restarting {{deviceName}}…",
     restartingGlassesMessage:
       "The update is installed. Keep your glasses nearby and leave this screen open while they finish starting.",
