@@ -11,6 +11,7 @@
     "../mobile/modules/engine",
     "../mobile/modules/bluetooth-sdk",
     "../mobile/modules/acs-meeting",
+    "../mobile/modules/glasses-media",
     "../miniapps/*"
   ],
   "scripts": {
