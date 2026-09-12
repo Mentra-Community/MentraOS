@@ -456,6 +456,56 @@ describe("progress.tsx display states", () => {
     expect(queryByText("Retry")).toBeNull()
   })
 
+  it("explains a failed downgrade handoff instead of echoing the glasses code", () => {
+    setGlassesConnected()
+    const {getByText, getByTestId, queryByText} = render(<OtaProgressScreen />)
+
+    act(() => {
+      useGlassesStore.getState().setOtaStatus({
+        sessionId: "s1",
+        totalSteps: 1,
+        currentStep: 1,
+        stepType: "apk",
+        phase: "install",
+        stepPercent: 0,
+        overallPercent: 0,
+        status: "failed",
+        error: "downgrade_handoff_failed",
+      })
+    })
+
+    expect(getByText("Update Failed")).toBeDefined()
+    expect(
+      getByText("The recovery service on your glasses did not respond. Restart your glasses and try again."),
+    ).toBeDefined()
+    // The raw code stays visible for support, but only in the subdued secondary line.
+    expect(getByTestId("ota-error-code").props.children).toBe("Error code: downgrade_handoff_failed")
+    expect(queryByText("downgrade_handoff_failed")).toBeNull()
+    expect(getByText("Retry")).toBeDefined()
+  })
+
+  it("falls back to generic glasses-error copy for an unknown code and keeps the code visible", () => {
+    setGlassesConnected()
+    const {getByText, getByTestId} = render(<OtaProgressScreen />)
+
+    act(() => {
+      useGlassesStore.getState().setOtaStatus({
+        sessionId: "s1",
+        totalSteps: 1,
+        currentStep: 1,
+        stepType: "apk",
+        phase: "install",
+        stepPercent: 0,
+        overallPercent: 0,
+        status: "failed",
+        error: "brand_new_code",
+      })
+    })
+
+    expect(getByText("Your glasses reported an unexpected error. Restart your glasses and try again.")).toBeDefined()
+    expect(getByTestId("ota-error-code").props.children).toBe("Error code: brand_new_code")
+  })
+
   it("shows disconnected state when not connected and not terminal", () => {
     setGlassesDisconnected()
     const {getByText} = render(<OtaProgressScreen />)
