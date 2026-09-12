@@ -42,8 +42,8 @@ internal class LogForwardingBudget(
 
     companion object {
         /**
-         * Far above the SDK's steady-state diagnostic rate, and low enough that even a
-         * JavaScript thread stalled for minutes cannot exhaust the reference table.
+         * Far above the SDK's steady-state diagnostic rate, and low enough that a
+         * JavaScript thread has to stay stalled for minutes before the table could fill.
          */
         const val DEFAULT_MAX_PER_SECOND = 100
     }

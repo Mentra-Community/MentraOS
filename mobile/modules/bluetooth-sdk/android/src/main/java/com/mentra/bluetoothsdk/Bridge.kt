@@ -939,8 +939,8 @@ public class Bridge private constructor() {
          * microphone frame into a second bridge event, and each of those pins a JNI global
          * reference until JavaScript drains it. A JavaScript thread busy with call audio
          * cannot keep up, so the references accumulated until the process-wide table
-         * overflowed and the runtime aborted. Audio flow is reported by "mic_health" instead,
-         * which is emitted at a rate that does not scale with the frame rate.
+         * overflowed and the runtime aborted. Audio faults (sequence gaps, decode failures)
+         * are still reported through "mic_health", and healthy frames need no trace.
          */
         private fun tracePayloadForTypedMessage(
                 type: String,

@@ -694,8 +694,9 @@ class Bridge {
     /// "log" is excluded so tracing never recurses back through the log event. Audio payload
     /// events are excluded because they arrive at frame rate, which made every microphone
     /// frame emit a second bridge event. On Android that overflowed the JNI global reference
-    /// table and aborted the process; here it is wasted work on the audio path. Audio flow is
-    /// reported by "mic_health" instead, at a rate that does not scale with the frame rate.
+    /// table and aborted the process; here it is wasted work on the audio path. Audio faults
+    /// (sequence gaps, decode failures) are still reported through "mic_health", and healthy
+    /// frames need no trace.
     private static func tracePayloadForTypedMessage(_ type: String, body: [String: Any]) -> [String: Any]? {
         if type == "log" || isAudioPayloadEvent(type) {
             return nil
