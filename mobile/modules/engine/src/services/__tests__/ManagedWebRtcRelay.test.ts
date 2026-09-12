@@ -43,7 +43,7 @@ function harness(overrides: Partial<RelayDependencies> = {}) {
     startGlasses,
     hotspot: mock(async (on) => {
       calls.push(on ? "hotspot-on" : "hotspot-off")
-      return {state: on ? "enabled" : "disabled", ssid: "glasses", password: "password"}
+      return {state: on ? "enabled" : "disabled", ssid: "glasses", password: "password", localIp: "192.168.43.1"}
     }),
     stopGlasses: mock(async () => {
       calls.push("glasses-stop")
@@ -72,6 +72,7 @@ describe("ManagedWebRtcRelay", () => {
     await h.relay.start()
     expect(h.native.prepare.mock.calls[0][0]).toMatchObject({
       ingestUrl: "https://cloudflare.test/whip",
+      gatewayAddress: "192.168.43.1",
       captureAudio: true,
     })
     expect(h.startGlasses.mock.calls[0][0]).toMatchObject({

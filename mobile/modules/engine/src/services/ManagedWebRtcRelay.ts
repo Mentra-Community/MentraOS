@@ -22,6 +22,7 @@ interface NativeRelay {
     ingestUrl: string
     ssid: string
     password: string
+    gatewayAddress?: string
     captureAudio: boolean
     bitrate: number
   }): Promise<string>
@@ -31,7 +32,7 @@ interface NativeRelay {
 
 export interface RelayDependencies {
   native: NativeRelay
-  hotspot(enabled: boolean): Promise<{state: string; ssid?: string; password?: string}>
+  hotspot(enabled: boolean): Promise<{state: string; ssid?: string; password?: string; localIp?: string}>
   startGlasses(request: StreamStartRequest): Promise<StreamStatusEvent | undefined>
   stopGlasses(): Promise<unknown>
   deferredStop(): void
@@ -126,6 +127,7 @@ export class ManagedWebRtcRelay implements ManagedRelay {
       ingestUrl: this.options.ingestUrl,
       ssid: hotspot.ssid,
       password: hotspot.password,
+      gatewayAddress: hotspot.localIp,
       captureAudio: this.options.captureAudio !== false,
       bitrate: this.options.video?.bitrate ?? 2_000_000,
     })

@@ -94,6 +94,7 @@ export interface MeetingState {
   activeStream?: ActiveStream
   audioSafety?: AudioSafety
   mediaSource?: MediaSourceState
+  mediaSourceReason?: string
   participants?: MeetingParticipant[]
   /** Runtime capabilities. Omitted by natives that predate them; read that as unknown. */
   capabilities?: MeetingCapabilities
@@ -328,6 +329,7 @@ type NativeModule = {
    * address on it. Absent on natives that predate SoftAP.
    */
   joinScopedNetwork?(ssid: string, passphrase: string): Promise<string>
+  joinScopedNetworkWithGateway?(ssid: string, passphrase: string, gateway: string): Promise<string>
   beginTrace?(traceId: string): Promise<void>
   leaveScopedNetwork?(): Promise<void>
   /**
@@ -578,7 +580,7 @@ class AcsMeetingService {
    * A host without the native function is not a host that silently skips the join — the SoftAP call
    * has no network to run on, so this reports the reason instead.
    */
-  async joinScopedNetwork(ssid: string, passphrase: string): Promise<string | undefined> {
+  async joinScopedNetwork(ssid: string, passphrase: string, gateway?: string): Promise<string | undefined> {
     const native = getNative()
     if (!native?.joinScopedNetwork) {
       throw new Error("This host cannot join the glasses hotspot; SoftAP calling is unavailable")
@@ -586,6 +588,10 @@ class AcsMeetingService {
     this.scopedTerminating = false
     this.bindScopedNetworkLost(native)
     await native.beginTrace?.(softapTraceId())
+    if (native.joinScopedNetworkWithGateway) {
+      if (!gateway) throw new Error("The glasses did not report a hotspot gateway")
+      return await native.joinScopedNetworkWithGateway(ssid, passphrase, gateway)
+    }
     return await native.joinScopedNetwork(ssid, passphrase)
   }
 
@@ -1306,6 +1312,7 @@ class AcsMeetingService {
         }
         const participants = parseMeetingParticipants(event.participants)
         const mediaSource = parseMediaSource(event.mediaSource)
+        const mediaSourceReason = typeof event.mediaSourceReason === "string" ? event.mediaSourceReason : undefined
         const capabilities = parseMeetingCapabilities(event.capabilities)
         const state: MeetingState = {
           state: (event.state as MeetingPhase) ?? "idle",
@@ -1319,6 +1326,7 @@ class AcsMeetingService {
           audioSafety,
           micTransport: this.micTransport,
           ...(mediaSource ? {mediaSource} : {}),
+          ...(mediaSourceReason ? {mediaSourceReason} : {}),
           ...(participants ? {participants} : {}),
           // Absent means unknown, so keep the last known verdict rather than clearing it.
           ...((capabilities ?? this.lastState.capabilities) ? {capabilities: capabilities ?? this.lastState.capabilities} : {}),
@@ -1332,6 +1340,7 @@ class AcsMeetingService {
           activeStream: state.activeStream,
           audioSafety: state.audioSafety,
           mediaSource: state.mediaSource,
+          mediaSourceReason: state.mediaSourceReason,
           micTransport: state.micTransport,
           participants: participants?.length,
         })

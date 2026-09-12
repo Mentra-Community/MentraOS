@@ -381,10 +381,17 @@ describe("AcsMeetingService", () => {
       token: "tok",
       videoSource: {type: "whep", url: "https://example.com/whep"},
     })
-    native.emit("onState", {state: "connected", muted: false, mediaSource: "failed"})
+    native.emit("onState", {
+      state: "connected",
+      muted: false,
+      mediaSource: "failed",
+      mediaSourceReason: "No host ICE candidate on the glasses hotspot",
+    })
     expect(acsMeetingService.getState().mediaSource).toBe("failed")
+    expect(acsMeetingService.getState().mediaSourceReason).toBe("No host ICE candidate on the glasses hotspot")
     native.emit("onState", {state: "connected", muted: false, mediaSource: "bogus"})
     expect(acsMeetingService.getState().mediaSource).toBeUndefined()
+    expect(acsMeetingService.getState().mediaSourceReason).toBeUndefined()
   })
 
   test("the call microphone follows ACS_CALL_MIC and ignores preferred_mic", () => {
@@ -1185,6 +1192,21 @@ describe("scoped network passthrough", () => {
 
     await expect(acsMeetingService.joinScopedNetwork("MentraLive-1234", "hunter2!")).resolves.toBe("192.168.43.20")
     expect(native.joinScopedNetwork).toHaveBeenCalledWith("MentraLive-1234", "hunter2!")
+  })
+
+  test("iOS verifies DHCP against the gateway from the glasses instead of using the legacy join", async () => {
+    const native = fakeNative()
+    const joinScopedNetworkWithGateway = mock(
+      async (_ssid: string, _password: string, _gateway: string) => "192.168.43.142",
+    )
+    setAcsMeetingNativeForTests({...native, joinScopedNetworkWithGateway})
+    await expect(acsMeetingService.joinScopedNetwork("MentraLive-1234", "pw", "192.168.43.1")).resolves.toBe(
+      "192.168.43.142",
+    )
+    expect(joinScopedNetworkWithGateway).toHaveBeenCalledWith("MentraLive-1234", "pw", "192.168.43.1")
+    expect(native.joinScopedNetwork).not.toHaveBeenCalled()
+    await expect(acsMeetingService.joinScopedNetwork("MentraLive-1234", "pw")).rejects.toThrow("hotspot gateway")
+    expect(joinScopedNetworkWithGateway).toHaveBeenCalledTimes(1)
   })
 
   test("a host that cannot join the hotspot says so instead of skipping the join", async () => {

@@ -12,7 +12,8 @@ public final class GlassesMediaRelayModule: Module {
         AsyncFunction("prepare") { (options: [String: Any], promise: Promise) in
             guard let id = options["attemptId"] as? String,
                   let ingest = options["ingestUrl"] as? String, let url = URL(string: ingest), url.scheme == "https",
-                  let ssid = options["ssid"] as? String, let password = options["password"] as? String
+                  let ssid = options["ssid"] as? String, let password = options["password"] as? String,
+                  let gateway = options["gatewayAddress"] as? String
             else {
                 throw LocalMediaError("Invalid relay options")
             }
@@ -20,7 +21,7 @@ public final class GlassesMediaRelayModule: Module {
                 guard self.session == nil else { promise.reject(LocalMediaError("Previous relay has not stopped")); return }
                 let session = ManagedRelaySession(id: id, queue: self.queue)
                 self.session = session
-                session.start(ssid: ssid, password: password, endpoint: url,
+                session.start(ssid: ssid, password: password, gateway: gateway, endpoint: url,
                               captureAudio: options["captureAudio"] as? Bool ?? true,
                               bitrate: options["bitrate"] as? Int ?? 2_000_000,
                               onState: { [weak self] state, reason in
@@ -68,12 +69,12 @@ private final class ManagedRelaySession {
         self.id = id; self.queue = queue
     }
 
-    func start(ssid: String, password: String, endpoint: URL, captureAudio: Bool, bitrate: Int,
+    func start(ssid: String, password: String, gateway: String, endpoint: URL, captureAudio: Bool, bitrate: Int,
                onState: @escaping (String, String) -> Void, completion: @escaping (Result<String, Error>) -> Void)
     {
         ready = completion
         hotspot.onLost = { reason in onState("failed", reason) }
-        hotspot.join(ssid: ssid, passphrase: password) { result in
+        hotspot.join(ssid: ssid, passphrase: password, gateway: gateway) { result in
             self.queue.async {
                 guard !self.stopped else { return }
                 switch result {

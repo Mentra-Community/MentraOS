@@ -3993,11 +3993,12 @@ class LocalMiniappRuntime {
           setHotspotState: async (enabled) => {
             const status = await BluetoothSdk.setHotspotState(enabled)
             if (status.state === "enabled") {
-              return {state: status.state, ssid: status.ssid, password: status.password}
+              return {state: status.state, ssid: status.ssid, password: status.password, localIp: status.localIp}
             }
             return {state: status.state}
           },
-          joinScopedNetwork: (ssid, passphrase) => acsMeetingService.joinScopedNetwork(ssid, passphrase),
+          joinScopedNetwork: (ssid, passphrase, gateway) =>
+            acsMeetingService.joinScopedNetwork(ssid, passphrase, gateway),
           leaveScopedNetwork: () => acsMeetingService.leaveScopedNetwork(),
           probeGateway: async () => {
             const verdict = await acsMeetingService.probeScopedGateway()
