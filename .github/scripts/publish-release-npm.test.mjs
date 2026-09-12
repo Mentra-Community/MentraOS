@@ -56,7 +56,19 @@ test("selects the complete npm family in dependency order", () => {
   const selected = npmMembersInOrder(family, ["all"])
   assert.equal(selected.length, family.members.filter((member) => member.publishTargets.includes("npm")).length)
   assert.equal(selected.includes("@mentra/types"), false)
+  assert.ok(selected.includes("@mentra/glasses-media"))
+  assert.ok(selected.indexOf("@mentra/glasses-media") < selected.indexOf("@mentra/acs-meeting"))
   assert.equal(selected.at(-1), "@mentra/engine")
+})
+
+test("all npm release members have public publication and valid provenance metadata", () => {
+  const family = loadReleaseFamily({rootDir: repositoryRoot})
+  for (const member of family.members.filter((member) => member.publishTargets.includes("npm"))) {
+    const manifest = JSON.parse(readFileSync(path.join(repositoryRoot, member.manifest), "utf8"))
+    assert.notEqual(manifest.private, true, member.name)
+    assert.equal(manifest.publishConfig?.access, "public", member.name)
+    requireNpmProvenanceSource(manifest, member.manifest)
+  }
 })
 
 test("admits Engine only as the final selected npm package", () => {
@@ -282,19 +294,20 @@ test("keeps bounded attempts and the publish error when every recovery read fail
   let pauses = 0
   const publishError = new Error("publish connection reset")
   assert.throws(
-    () => publishWithRetry("@mentra/engine@3.2.0-dev.157", "sha512-abc", {
-      attempts: 3,
-      publish: () => {
-        publishes += 1
-        throw publishError
-      },
-      registryIntegrityOf: () => {
-        throw new Error("registry unavailable")
-      },
-      sleep: () => {
-        pauses += 1
-      },
-    }),
+    () =>
+      publishWithRetry("@mentra/engine@3.2.0-dev.157", "sha512-abc", {
+        attempts: 3,
+        publish: () => {
+          publishes += 1
+          throw publishError
+        },
+        registryIntegrityOf: () => {
+          throw new Error("registry unavailable")
+        },
+        sleep: () => {
+          pauses += 1
+        },
+      }),
     (error) => error === publishError,
   )
   assert.equal(publishes, 3)
