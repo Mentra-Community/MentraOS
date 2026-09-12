@@ -186,6 +186,12 @@ export interface InstallBundleOptions {
   expectedBundleSha256?: string
   /** Refuse to overwrite a version that is already installed. */
   rejectExistingVersion?: boolean
+  /**
+   * Accept a bundle whose authority is a caller-verified pinned hash rather than
+   * an embedded publisher signature. Only the deployment-manifest path sets this;
+   * everything else must present a signature.
+   */
+  requirePublisherSignature?: boolean
   compatibilityPolicy?: {
     hostVersion: string
     supportedSdkRange: string
@@ -684,7 +690,7 @@ async function downloadAndInstallMiniApp(
     const manifest = await validateInstallBundleArchive(await downloadedZip.bytes(), {
       packageName: opts?.expectedPackageName,
       version: opts?.expectedVersion,
-      requirePublisherSignature: !opts?.versionOverride?.startsWith("dev-"),
+      requirePublisherSignature: opts?.requirePublisherSignature ?? !opts?.versionOverride?.startsWith("dev-"),
     })
     if (opts?.compatibilityPolicy) assertInstallCompatibility(manifest, opts.compatibilityPolicy)
     const releaseIdentity = {
@@ -1000,6 +1006,7 @@ class AppRegistry {
       const manifest = await validateInstallBundleArchive(await new File(zipPath).bytes(), {
         packageName: opts?.expectedPackageName,
         version: opts?.expectedVersion,
+        requirePublisherSignature: opts?.requirePublisherSignature,
       })
       if (opts?.compatibilityPolicy) assertInstallCompatibility(manifest, opts.compatibilityPolicy)
       const releaseIdentity = resolvedReleaseIdentity(opts?.versionOverride ?? manifest.version, opts, true)

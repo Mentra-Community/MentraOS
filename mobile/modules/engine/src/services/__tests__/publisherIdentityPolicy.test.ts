@@ -43,6 +43,32 @@ describe("publisher identity policy", () => {
     ).toThrow("does not match this Mentra App build")
   })
 
+  test("accepts a hash-pinned workspace release but never lets it displace a signed one", () => {
+    expect(() =>
+      assertPublisherIdentityPolicy({
+        packageName: "com.customer.app",
+        source: "deployment_manifest",
+        system: false,
+      }),
+    ).not.toThrow()
+    expect(() =>
+      assertPublisherIdentityPolicy({
+        packageName: "com.customer.app",
+        source: "deployment_manifest",
+        installedFingerprint: "sha256:one",
+        system: false,
+      }),
+    ).toThrow("no verified publisher signature")
+    expect(() =>
+      assertPublisherIdentityPolicy({
+        packageName: "com.mentra.notes",
+        source: "deployment_manifest",
+        buildPinnedFingerprint: "sha256:expected",
+        system: true,
+      }),
+    ).toThrow("no verified publisher signature")
+  })
+
   test("keeps unsigned development snapshots outside production identity", () => {
     expect(() =>
       assertPublisherIdentityPolicy({packageName: "com.example.app", source: "dev_snapshot", system: false}),
