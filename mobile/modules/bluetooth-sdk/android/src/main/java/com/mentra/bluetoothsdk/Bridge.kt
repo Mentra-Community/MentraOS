@@ -30,18 +30,6 @@ public class Bridge private constructor() {
         private const val MIC_CHANNELS = 1
         private const val LC3_FRAME_DURATION_MS = 10
         private const val DEFAULT_LC3_FRAME_SIZE_BYTES = 60
-        private val AUDIO_TRACE_METADATA_KEYS =
-                listOf(
-                        "sampleRate",
-                        "bitsPerSample",
-                        "channels",
-                        "encoding",
-                        "frameDurationMs",
-                        "frameSizeBytes",
-                        "bitrate",
-                        "packetizedFromGlasses",
-                        "voiceActivityDetectionEnabled",
-                )
 
         @Volatile private var instance: Bridge? = null
 
@@ -943,43 +931,29 @@ public class Bridge private constructor() {
             }
         }
 
+        /**
+         * Returns null for events that must not be traced.
+         *
+         * "log" is excluded so tracing never recurses back through NativeLog. Audio payload
+         * events are excluded because they arrive at frame rate: tracing them turned every
+         * microphone frame into a second bridge event, and each of those pins a JNI global
+         * reference until JavaScript drains it. A JavaScript thread busy with call audio
+         * cannot keep up, so the references accumulated until the process-wide table
+         * overflowed and the runtime aborted. Audio faults (sequence gaps, decode failures)
+         * are still reported through "mic_health", and healthy frames need no trace.
+         */
         private fun tracePayloadForTypedMessage(
                 type: String,
                 body: Map<String, Any>
         ): Map<String, Any>? =
                 when {
                     type == "log" -> null
-                    isAudioPayloadEvent(type) -> audioTracePayload(type, body)
+                    isAudioPayloadEvent(type) -> null
                     else -> body
                 }
 
         private fun isAudioPayloadEvent(type: String): Boolean =
                 type == "mic_pcm" || type == "mic_lc3"
-
-        private fun audioTracePayload(type: String, body: Map<String, Any>): Map<String, Any> {
-            val payload = HashMap<String, Any>()
-            payload["type"] = type
-            payload["timestamp"] = System.currentTimeMillis()
-            payload["payloadOmitted"] = true
-            payload["payloadOmittedReason"] = "audio"
-
-            val audioBytes =
-                    when (type) {
-                        "mic_pcm" -> (body["pcm"] as? ByteArray)?.size
-                        "mic_lc3" -> (body["lc3"] as? ByteArray)?.size
-                        else -> null
-                    }
-            audioBytes?.let { payload["audioBytes"] = it }
-
-            AUDIO_TRACE_METADATA_KEYS.forEach { key ->
-                val value = body[key]
-                if (value != null) {
-                    payload[key] = value
-                }
-            }
-
-            return payload
-        }
     }
 
     init {

@@ -133,6 +133,7 @@ private inline fun <
 class BluetoothSdkModule : Module() {
     private var sdk: MentraBluetoothSdk? = null
     private var deviceManager: DeviceManager? = null
+    private val logForwarding = LogForwardingBudget()
     private val sdkListener =
             object : MentraBluetoothSdkListener {
                 override fun onGlassesChanged(glasses: GlassesRuntimeState) {
@@ -295,6 +296,16 @@ class BluetoothSdkModule : Module() {
                 }
 
                 override fun onLog(message: String) {
+                    // Each event pins a JNI global reference until JavaScript drains it. The
+                    // log stream is the one source whose rate is unbounded, so it is budgeted.
+                    val withheld = logForwarding.admit() ?: return
+                    if (withheld > 0) {
+                        val notice =
+                                "[W/BluetoothSdkModule] withheld $withheld native log line(s) from " +
+                                        "JavaScript to stay under ${logForwarding.maxPerWindow}/s; " +
+                                        "logcat has them all"
+                        sendEvent("log", mapOf("message" to notice))
+                    }
                     sendEvent("log", mapOf("message" to message))
                 }
 
