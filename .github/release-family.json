@@ -26,11 +26,18 @@
       "dependencies": ["@mentra/jspolyfill"]
     },
     {
+      "name": "@mentra/glasses-media",
+      "manifest": "mobile/modules/glasses-media/package.json",
+      "kind": "package",
+      "publishTargets": ["npm"],
+      "dependencies": []
+    },
+    {
       "name": "@mentra/acs-meeting",
       "manifest": "mobile/modules/acs-meeting/package.json",
       "kind": "package",
       "publishTargets": ["npm"],
-      "dependencies": []
+      "dependencies": ["@mentra/glasses-media"]
     },
     {
       "name": "@mentra/cloud-client",

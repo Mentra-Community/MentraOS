@@ -43,7 +43,7 @@ test("accepts only credential-free public HTTPS URLs without fragments", () => {
 })
 
 test("loads the repository release family and derives dependency-first publication order", () => {
-  const family = loadReleaseFamily({rootDir: repositoryRoot})
+  const family = loadReleaseFamily({rootDir: repositoryRoot, requireVersionMirrors: true})
   const repositoryVersion = JSON.parse(readFileSync(path.join(repositoryRoot, "package.json"), "utf8")).version
 
   assert.equal(family.familyBaseVersion, repositoryVersion)
@@ -51,7 +51,10 @@ test("loads the repository release family and derives dependency-first publicati
   assert.equal(family.changelog.path, `changelogs/${repositoryVersion}.md`)
   assert.match(family.changelog.sha256, /^[0-9a-f]{64}$/)
   assert.deepEqual(family.products, ["mentraos", "@mentra/engine", "@mentra/bluetooth-sdk"])
-  assert.equal(family.members.length, 9)
+  assert.equal(family.members.length, 10)
+  assert.ok(
+    family.publicationOrder.indexOf("@mentra/glasses-media") < family.publicationOrder.indexOf("@mentra/acs-meeting"),
+  )
   assert.ok(family.publicationOrder.indexOf("@mentra/jspolyfill") < family.publicationOrder.indexOf("@mentra/crust"))
   assert.ok(
     family.publicationOrder.indexOf("@mentra/bluetooth-sdk") < family.publicationOrder.indexOf("@mentra/engine"),
