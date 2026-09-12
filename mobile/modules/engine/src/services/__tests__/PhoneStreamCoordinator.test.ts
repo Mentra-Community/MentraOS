@@ -1004,3 +1004,65 @@ describe("managed relay ownership", () => {
     expect(link.listenerCount()).toBe(0)
   })
 })
+
+describe("relay stop while playback is warming up", () => {
+  test("stop between entry setup and readiness registration rejects the start", async () => {
+    const coord = new PhoneStreamCoordinator()
+    let stopping: Promise<void> | undefined
+    getManagedStreamStatus.mockImplementationOnce(async () => {
+      stopping = coord.stop("com.a")
+      return {isConnected: false, viewerCount: 0}
+    })
+    await expect(coord.startManaged("com.a", {ingest: "whip"})).rejects.toThrow("stopped before playback readiness")
+    await stopping
+  })
+
+  test("an in-flight cloud probe cannot announce readiness during slow native cleanup", async () => {
+    const coord = new PhoneStreamCoordinator()
+    const updates: string[] = []
+    coord.setStatusSubscriber((_pkg, update) => updates.push(update.status))
+    let reply!: (status: {isConnected: boolean; viewerCount: number}) => void
+    getManagedStreamStatus.mockImplementationOnce(
+      () =>
+        new Promise((resolve) => {
+          reply = resolve
+        }),
+    )
+    const starting = coord.startManaged("com.a", {ingest: "whip"}).catch((error) => error)
+    await settle()
+    let cleaned!: () => void
+    relayStop.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          cleaned = resolve
+        }),
+    )
+    const stopping = coord.stop("com.a")
+    await settle()
+    reply({isConnected: true, viewerCount: 0})
+    await settle()
+    expect(updates).not.toContain("webrtc_ready")
+    expect(await starting).toBeInstanceOf(Error)
+    cleaned()
+    await stopping
+  })
+})
+
+test("automatic timeout reports native cleanup failure and keeps its owner until stop succeeds", async () => {
+  const coord = new PhoneStreamCoordinator({
+    cloudflareStartupPollInitialMs: 1,
+    cloudflareStatusPollMs: 1,
+    hlsReadinessMaxAttempts: 2,
+    hlsReadinessPollMs: 2,
+  })
+  const reasons: unknown[] = []
+  coord.setStatusSubscriber((_pkg, update) => reasons.push(update.data?.reason))
+  getManagedStreamStatus.mockImplementation(async () => ({isConnected: false, viewerCount: 0}))
+  relayStop.mockRejectedValueOnce(new Error("native still draining"))
+  await expect(coord.startManaged("com.a", {ingest: "whip"})).rejects.toThrow("never reached Cloudflare")
+  await settle(10)
+  expect(reasons).toContain("cleanup_failed")
+  expect(coord.getDiagnosticSnapshot().active).toBe(true)
+  await coord.stop("com.a")
+  expect(coord.getDiagnosticSnapshot().active).toBe(false)
+})

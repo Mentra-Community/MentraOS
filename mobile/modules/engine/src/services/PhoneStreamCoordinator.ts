@@ -502,7 +502,7 @@ export class PhoneStreamCoordinator {
           entry.relay = this.relayFactory(
             {streamId, ingestUrl, ...opts},
             (status, reason) => {
-              if (this.current === entry)
+              if (this.current === entry && !entry.stopping)
                 this.fanout({streamId, source: "coordinator", status, data: {reason, transport: "softap_relay"}})
             },
             (error) => {
@@ -561,6 +561,9 @@ export class PhoneStreamCoordinator {
       return {kind: "fresh", entry}
     })
 
+    if (this.current !== decision.entry || decision.entry.stopping) {
+      throw new Error("Stream stopped before playback readiness")
+    }
     if (decision.kind === "join" && decision.immediate) {
       return decision.immediate
     }
@@ -653,12 +656,7 @@ export class PhoneStreamCoordinator {
     if (event.terminal === true || isGiveUp || isStopped) {
       const reason = isGiveUp ? "glasses_gave_up" : event.status === "error" ? "glasses_error" : "glasses_stopped"
       const targetStreamId = this.current.streamId
-      void this.runExclusive(async () => {
-        // The stream we wanted to tear down may already be gone (e.g. another
-        // teardown won the lock and unwound it). Guard before acting.
-        if (this.current?.streamId !== targetStreamId) return
-        await this.teardownLocked(reason, {sendBleStop: false})
-      })
+      this.requestTeardown(targetStreamId, reason, {sendBleStop: false})
     }
   }
 
@@ -744,9 +742,19 @@ export class PhoneStreamCoordinator {
       status: "error",
       data: {reason: LINK_STATUS.reason, teardownReason: reason, ...detail},
     })
+    this.requestTeardown(streamId, reason)
+  }
+
+  /** Event/timer failures have no awaiting caller; retain and report cleanup errors locally. */
+  private requestTeardown(streamId: string, reason: string, options: {sendBleStop?: boolean} = {}): void {
     void this.runExclusive(async () => {
       if (this.current?.streamId !== streamId) return
-      await this.teardownLocked(reason)
+      await this.teardownLocked(reason, options)
+    }).catch((error) => {
+      console.warn("[STREAM] cleanup failed", error)
+      if (this.current?.streamId === streamId) {
+        this.fanout({streamId, source: "coordinator", status: "error", data: {reason: "cleanup_failed"}})
+      }
     })
   }
 
@@ -787,7 +795,7 @@ export class PhoneStreamCoordinator {
     const pollingStartedAtMs = Date.now()
 
     const scheduleNext = () => {
-      if (this.current !== entry) return
+      if (this.current !== entry || entry.stopping) return
       const waitingForWebRtc = entry.mode === "webrtc" && !entry.hlsReady
       const elapsedMs = Date.now() - pollingStartedAtMs
       const remainingMs = Math.max(0, connectTimeoutMs - elapsedMs)
@@ -800,13 +808,13 @@ export class PhoneStreamCoordinator {
     }
 
     const poll = async () => {
-      if (this.current !== entry) return
+      if (this.current !== entry || entry.stopping) return
       const requestStartedAtMs = Date.now()
       let keepPolling = true
       entry.cloudflareAttempts += 1
       try {
         const status: CloudflareStatus = await getManagedStreamStatus(entry.liveInputId)
-        if (this.current !== entry) return
+        if (this.current !== entry || entry.stopping) return
         console.debug("[STREAM_STARTUP]", {
           streamId: entry.streamId,
           stage: "cloudflare_probe",
@@ -871,15 +879,13 @@ export class PhoneStreamCoordinator {
                 data: {reason: "webrtc_not_connected"},
               })
               const targetStreamId = entry.streamId
-              void this.runExclusive(async () => {
-                if (this.current?.streamId !== targetStreamId) return
-                await this.teardownLocked("webrtc_not_connected")
-              })
+              this.requestTeardown(targetStreamId, "webrtc_not_connected")
               keepPolling = false
             }
           }
         }
       } catch (err) {
+        if (this.current !== entry || entry.stopping) return
         console.warn("[STREAM] cloudflare status poll failed:", err)
         if (entry.mode === "webrtc" && !entry.hlsReady && Date.now() - pollingStartedAtMs >= connectTimeoutMs) {
           const timeoutErr = new Error(`WebRTC ingest status could not be confirmed after ${connectTimeoutMs}ms`)
@@ -887,10 +893,7 @@ export class PhoneStreamCoordinator {
           entry.hlsReadyResolvers = []
           entry.hlsReadyRejecters = []
           const targetStreamId = entry.streamId
-          void this.runExclusive(async () => {
-            if (this.current?.streamId !== targetStreamId) return
-            await this.teardownLocked("webrtc_status_unavailable")
-          })
+          this.requestTeardown(targetStreamId, "webrtc_status_unavailable")
           keepPolling = false
         }
       } finally {
@@ -907,13 +910,14 @@ export class PhoneStreamCoordinator {
     // Skip the first few seconds — Cloudflare doesn't have first-frame yet,
     // and the HEAD requests would all 404 and burn battery.
     const tick = async () => {
-      if (this.current !== entry) return
+      if (this.current !== entry || entry.stopping) return
       entry.hlsAttempts += 1
       try {
         // Require a real manifest (200 with a body), not just res.ok — the
         // playback edge returns 204 No Content while the input has no
         // HLS-capable frames (e.g. WebRTC ingest), and 204 is "ok".
         const res = await fetch(entry.hlsUrl, {method: "HEAD"})
+        if (this.current !== entry || entry.stopping) return
         if (res.status === 200) {
           entry.hlsReady = true
           console.info("[STREAM_STARTUP]", {
@@ -960,15 +964,12 @@ export class PhoneStreamCoordinator {
           data: {reason: "hls_not_ready"},
         })
         const targetStreamId = entry.streamId
-        void this.runExclusive(async () => {
-          if (this.current?.streamId !== targetStreamId) return
-          await this.teardownLocked("hls_not_ready")
-        })
+        this.requestTeardown(targetStreamId, "hls_not_ready")
       }
     }
     BgTimer.setTimeout(() => {
       // Guard: stream may have been torn down during the initial delay.
-      if (this.current !== entry) return
+      if (this.current !== entry || entry.stopping) return
       entry.hlsTimer = BgTimer.setInterval(tick, this.timings.hlsReadinessPollMs)
     }, this.timings.hlsReadinessInitialDelayMs)
   }
