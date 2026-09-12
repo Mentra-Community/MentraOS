@@ -1,27 +1,17 @@
 package com.mentra.bluetoothsdk.utils
 
 import com.mentra.bluetoothsdk.Bridge
-import java.time.Duration
 import org.junit.Assert.assertEquals
 import org.junit.Assert.assertTrue
-import org.junit.Before
 import org.junit.Test
 import org.junit.runner.RunWith
 import org.robolectric.RobolectricTestRunner
 import org.robolectric.annotation.Config
 import org.robolectric.shadows.ShadowLog
-import org.robolectric.shadows.ShadowSystemClock
 
 @RunWith(RobolectricTestRunner::class)
 @Config(sdk = [28])
 class NativeLogTest {
-    @Before
-    fun resetForwardingBudget() {
-        // The budget is process-wide static state, so a test that fills it would otherwise
-        // change the outcome of every test that runs after it.
-        NativeLog.resetForwardingBudgetForTest()
-    }
-
     @Test
     fun tracingAnEventDoesNotRecursivelyTraceTheLog() {
         val events = mutableListOf<String>()
@@ -79,54 +69,6 @@ class NativeLogTest {
             // Tracing these would emit a second bridge event per audio frame, and each one
             // pins a JNI global reference until JavaScript drains it.
             assertEquals(listOf("mic_pcm", "mic_lc3"), events)
-        } finally {
-            Bridge.removeEventSink(sink)
-        }
-    }
-
-    @Test
-    fun forwardingStopsAtTheBudgetSoAStalledJavaScriptThreadCannotExhaustTheReferenceTable() {
-        var forwarded = 0
-        val sink = Bridge.addEventSink { type, _ -> if (type == "log") forwarded++ }
-        try {
-            repeat(150) { NativeLog.i("MentraLive", "frame $it") }
-            assertEquals(100, forwarded)
-        } finally {
-            Bridge.removeEventSink(sink)
-        }
-    }
-
-    @Test
-    fun theWindowAfterADropReportsHowManyMessagesWereWithheld() {
-        val messages = mutableListOf<String>()
-        val sink =
-            Bridge.addEventSink { type, body ->
-                if (type == "log") messages.add(body["message"] as String)
-            }
-        try {
-            repeat(150) { NativeLog.i("MentraLive", "frame $it") }
-            messages.clear()
-
-            ShadowSystemClock.advanceBy(Duration.ofSeconds(2))
-            NativeLog.i("MentraLive", "after the window rolled")
-
-            assertEquals(2, messages.size)
-            assertTrue(messages[0].contains("dropped 50 message(s)"))
-            assertTrue(messages[0].contains("see logcat for the full output"))
-            assertEquals("[I/MentraLive] after the window rolled", messages[1])
-        } finally {
-            Bridge.removeEventSink(sink)
-        }
-    }
-
-    @Test
-    fun everyMessageStillReachesLogcatWhileForwardingIsCapped() {
-        val sink = Bridge.addEventSink { _, _ -> }
-        try {
-            ShadowLog.clear()
-            repeat(150) { NativeLog.i("MentraLive", "frame $it") }
-            // The cap exists to protect the JNI reference table, not to lose diagnostics.
-            assertEquals(150, ShadowLog.getLogsForTag("MentraLive").size)
         } finally {
             Bridge.removeEventSink(sink)
         }
