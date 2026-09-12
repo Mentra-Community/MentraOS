@@ -88,7 +88,13 @@ public class AcsMeetingModule: Module {
             }
         }
 
-        AsyncFunction("leave") { self.session?.leave() }
+        AsyncFunction("leave") { (promise: Promise) in
+            guard let session = self.session else { promise.resolve(nil); return }
+            session.leaveAndAwait(timeout: 30) { completed in
+                if completed { promise.resolve(nil) }
+                else { promise.reject(AcsMeetingError("Previous call cleanup is still pending")) }
+            }
+        }
 
         AsyncFunction("leaveAndAwait") { (options: [String: Any], promise: Promise) in
             guard let session = self.session else { promise.resolve(["completed": true]); return }
@@ -254,7 +260,7 @@ final class AcsMeetingSession {
 
     func prepareAgent(token: String, displayName: String?, completion: @escaping (Result<[String: Any], Error>) -> Void) {
         queue.async {
-            guard self.cleanup.wait(timeout: .now()) == .success, self.call == nil, self.media == nil else {
+            guard self.cleanup.wait(timeout: .now()) == .success, self.pendingPrepare == nil, self.pendingJoin == nil, self.call == nil, self.media == nil else {
                 completion(.failure(AcsMeetingError("Previous call cleanup is still pending"))); return
             }
             self.leaveLocked()
@@ -266,10 +272,8 @@ final class AcsMeetingSession {
                 let credential = try CommunicationTokenCredential(token: token)
                 let options = CallAgentOptions()
                 options.displayName = displayName ?? "Mentra Call"
-                self.cleanup.enter()
                 client.createCallAgent(userCredential: credential, options: options) { agent, error in
                     self.queue.async {
-                        defer { self.cleanup.leave() }
                         guard self.joinGeneration == generation, self.pendingPrepare != nil else { agent?.dispose(); return }
                         let reply = self.pendingPrepare
                         self.pendingPrepare = nil
@@ -301,7 +305,7 @@ final class AcsMeetingSession {
               completion: @escaping (Result<[String: Any], Error>) -> Void)
     {
         queue.async {
-            guard self.cleanup.wait(timeout: .now()) == .success, self.call == nil, self.media == nil else {
+            guard self.cleanup.wait(timeout: .now()) == .success, self.pendingPrepare == nil, self.pendingJoin == nil, self.call == nil, self.media == nil else {
                 completion(.failure(AcsMeetingError("Previous call cleanup is still pending"))); return
             }
             let prepared = self.preparedToken == token ? self.preparedAgent : nil
@@ -329,10 +333,8 @@ final class AcsMeetingSession {
                     self.callClient = client
                     let options = CallAgentOptions()
                     options.displayName = displayName ?? "Mentra Call"
-                    self.cleanup.enter()
                     client.createCallAgent(userCredential: credential, options: options) { agent, error in
                         self.queue.async {
-                            defer { self.cleanup.leave() }
                             guard self.joinGeneration == generation else { agent?.dispose(); return }
                             guard let agent, error == nil else {
                                 agent?.dispose()
@@ -426,15 +428,14 @@ final class AcsMeetingSession {
         joinOptions.incomingAudioOptions = incomingAudio
 
         let locator = TeamsMeetingLinkLocator(meetingLink: meetingUrl)
-        cleanup.enter()
+        // Acquisition is generation-scoped, not a teardown barrier. On cancellation the
+        // owning agent is disposed synchronously, even if ACS never returns this callback.
         agent.join(with: locator, joinCallOptions: joinOptions) { call, error in
             self.queue.async {
-                defer { self.cleanup.leave() }
                 guard self.callAgent === agent, self.joinGeneration == generation else {
-                    if let call {
-                        self.cleanup.enter()
-                        call.hangUp(options: nil) { _ in agent.dispose(); self.cleanup.leave() }
-                    } else { agent.dispose() }
+                    // leaveLocked already disposed this attempt's agent. A late call must
+                    // never enter the current attempt's cleanup group or install media.
+                    call?.hangUp(options: nil) { _ in }
                     return
                 }
                 if let error {
@@ -786,16 +787,19 @@ final class AcsMeetingSession {
         let leavingCall = call
         let leavingAgent = callAgent
         leavingCall?.delegate = nil
-        if leavingCall != nil { cleanup.enter() }
-        leavingCall?.hangUp(options: nil) { error in
-            if let error {
-                NSLog("ACS-SPIKE leave hangUp failed: \(error)")
+        if let leavingCall {
+            // CallAgent.dispose releases all local SDK resources. The retirement deadline
+            // also disposes the agent if hangUp loses its callback, before opening the barrier.
+            let retirement = CallAgentRetirement(group: cleanup, queue: queue) { leavingAgent?.dispose() }
+            leavingCall.hangUp(options: nil) { error in
+                self.queue.async {
+                    if let error { NSLog("ACS-SPIKE leave hangUp failed: \(error)") }
+                    retirement.finish()
+                }
             }
-            leavingAgent?.dispose()
-            self.cleanup.leave()
-        }
-        // A join that never produced a call still owns an agent that must be released.
-        if leavingCall == nil {
+        } else {
+            // Also cancels a join whose callback has not arrived. Agent creation itself has
+            // no call to retire; its generation-checked callback disposes any late agent.
             leavingAgent?.dispose()
         }
         callAgent = nil
