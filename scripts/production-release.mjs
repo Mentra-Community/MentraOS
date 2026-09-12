@@ -1,7 +1,7 @@
 #!/usr/bin/env node
 import {execFileSync} from "node:child_process"
 import {createHash} from "node:crypto"
-import {copyFileSync, mkdtempSync, readFileSync} from "node:fs"
+import {copyFileSync, mkdtempSync, readFileSync, writeFileSync} from "node:fs"
 import {tmpdir} from "node:os"
 import path from "node:path"
 import {fileURLToPath} from "node:url"
@@ -13,7 +13,14 @@ import {
   stateAssets,
   validateStateRecordChain,
 } from "../.github/scripts/production-promotion-assets.mjs"
-import {ATTESTATION_CHECKS, nextAction, validateAttestation} from "../.github/scripts/production-promotion-state.mjs"
+import {
+  ATTESTATION_CHECKS,
+  DEFERRABLE_CHECKS,
+  canResolveDeferredCheck,
+  deferredChecks,
+  nextAction,
+  validateAttestation,
+} from "../.github/scripts/production-promotion-state.mjs"
 
 const REPOSITORY = "Mentra-Community/MentraOS"
 const DEFAULT_REF = "main"
@@ -59,6 +66,7 @@ Commands:
   status   --release X.Y.Z [--attempt N] [--refresh] [--json]
   next     --release X.Y.Z [--attempt N] [--yes]
   attest   --release X.Y.Z [--attempt N] --check NAME --evidence FILE [--yes]
+  defer    --release X.Y.Z [--attempt N] --check NAME --reason TEXT [--yes]
   release  --release X.Y.Z [--attempt N] [--yes]
   advance  --release X.Y.Z [--attempt N] [--android-percent N | --complete] [--yes]
   abort    --release X.Y.Z [--attempt N] --reason TEXT [--yes]
@@ -357,6 +365,7 @@ export function statusSummary(record) {
     sequence: record.sequence,
     sourceCommit: record.source.mentraosCommit,
     evidenceCount: record.evidence.length,
+    deferredChecks: deferredChecks(record),
     nextAction: action,
   }
 }
@@ -371,6 +380,9 @@ function printStatus(record, asJson) {
   console.log(`Selected beta: ${summary.selectedBeta}`)
   console.log(`MentraOS source: ${summary.sourceCommit}`)
   console.log(`Evidence records: ${summary.evidenceCount}`)
+  if (summary.deferredChecks.length > 0) {
+    console.log(`Deferred human gates still to attest before release: ${summary.deferredChecks.join(", ")}`)
+  }
   if (summary.nextAction.kind === "none") console.log("Next action: none")
   else if (summary.nextAction.kind === "attest") console.log(`Next action: attest ${summary.nextAction.check}`)
   else if (summary.nextAction.kind === "workflow") {
@@ -420,6 +432,20 @@ async function confirmBranchPromotion(betaIdentity, options) {
   if (answer !== betaIdentity) throw new Error("Confirmation did not match the beta identity")
 }
 
+export function deferralAttestation({record, check, reason, githubLogin, performedAt}) {
+  return {
+    schemaVersion: 1,
+    promotionId: record.promotionId,
+    releaseIdentity: record.releaseIdentity,
+    check,
+    result: "deferred",
+    performedAt,
+    tester: {githubLogin},
+    reason,
+    notes: `Deferred so store submission is not held back; must be attested before public release.`,
+  }
+}
+
 function uploadAttestation({release, record, check, evidenceFile}) {
   const original = path.resolve(evidenceFile)
   const contents = readFileSync(original)
@@ -455,12 +481,26 @@ export function requireCommandState(command, record, options = {}) {
     throw new Error(`Promotion state ${record.state} does not have an automated next phase`)
   }
   if (command === "attest") {
+    const expected = action.kind === "attest" && action.check === options.check
+    if (!expected && !canResolveDeferredCheck(record, options.check)) {
+      throw new Error(`Promotion state ${record.state} expects ${action.check || action.kind}, not ${options.check}`)
+    }
+  }
+  if (command === "defer") {
+    if (!DEFERRABLE_CHECKS.includes(options.check)) {
+      throw new Error(`Only ${DEFERRABLE_CHECKS.join(" and ")} can be deferred, not ${options.check}`)
+    }
     if (action.kind !== "attest" || action.check !== options.check) {
       throw new Error(`Promotion state ${record.state} expects ${action.check || action.kind}, not ${options.check}`)
     }
   }
   if (command === "release" && record.state !== "stores-approved") {
     throw new Error(`Public release requires stores-approved, not ${record.state}`)
+  }
+  if (command === "release" && deferredChecks(record).length > 0) {
+    throw new Error(
+      `Public release requires the deferred human gates to be attested first: ${deferredChecks(record).join(", ")}`,
+    )
   }
   if (command === "advance" && !new Set(["rolling-out", "finalizing"]).has(record.state)) {
     throw new Error(`Rollout advancement requires rolling-out or finalizing, not ${record.state}`)
@@ -630,6 +670,9 @@ async function main(argv = process.argv.slice(2)) {
     if (!options.evidence) throw commandError("attest requires --evidence FILE")
     requireCommandState(command, loaded.record, options)
     const attestation = JSON.parse(readFileSync(path.resolve(options.evidence), "utf8"))
+    if (attestation?.result !== "pass") {
+      throw commandError("attest records passing evidence only; use 'defer' to defer a human gate")
+    }
     validateAttestation(attestation, loaded.record, options.check)
     await confirmEffect(
       `This will append passing human evidence for ${options.check}. It does not deploy or publish anything.`,
@@ -640,6 +683,41 @@ async function main(argv = process.argv.slice(2)) {
       record: loaded.record,
       check: options.check,
       evidenceFile: options.evidence,
+    })
+    dispatch("production-release-attest.yml", {
+      release_identity: releaseIdentity,
+      attempt: loaded.record.attempt,
+      check: options.check,
+      evidence_asset: uploaded.name,
+      evidence_sha256: uploaded.sha256,
+    })
+    return
+  }
+
+  if (command === "defer") {
+    if (!options.check) throw commandError("defer requires --check NAME")
+    if (!options.reason) throw commandError("defer requires --reason TEXT")
+    requireCommandState(command, loaded.record, options)
+    const attestation = deferralAttestation({
+      record: loaded.record,
+      check: options.check,
+      reason: options.reason,
+      githubLogin: ghJson(["api", "user"]).login,
+      performedAt: new Date().toISOString(),
+    })
+    validateAttestation(attestation, loaded.record, options.check)
+    await confirmEffect(
+      `This defers the human gate ${options.check} so the promotion can continue towards store submission. Public release stays blocked until it is attested.`,
+      {...options, release: releaseIdentity},
+    )
+    const directory = mkdtempSync(path.join(tmpdir(), "mentra-production-deferral-"))
+    const evidenceFile = path.join(directory, `${options.check}-deferred.json`)
+    writeFileSync(evidenceFile, `${JSON.stringify(attestation, null, 2)}\n`)
+    const uploaded = uploadAttestation({
+      release: loaded.release,
+      record: loaded.record,
+      check: options.check,
+      evidenceFile,
     })
     dispatch("production-release-attest.yml", {
       release_identity: releaseIdentity,

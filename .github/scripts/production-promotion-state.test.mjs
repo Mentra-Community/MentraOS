@@ -6,7 +6,9 @@ import {
   ATTESTATION_CHECKS,
   PROMOTION_STATES,
   abortPromotionRecord,
+  canResolveDeferredCheck,
   createInitialPromotionRecord,
+  deferredChecks,
   nextAction,
   promotionAssetName,
   requirePromotionMatchesPackages,
@@ -339,6 +341,156 @@ test("binds every human gate to its check-specific frozen coordinates", () => {
     wrong.tests[0].appBuild += 1
     assert.throws(() => validateAttestation(wrong, record), /does not match frozen/)
   }
+})
+
+test("pre-submission human gates can be deferred and must be attested before public release", () => {
+  const initialRecord = initial()
+  const passing = (record, check, coordinates) => ({
+    schemaVersion: 1,
+    promotionId: record.promotionId,
+    releaseIdentity: record.releaseIdentity,
+    check,
+    result: "pass",
+    performedAt: now,
+    tester: {githubLogin: "qa-owner"},
+    tests: ATTESTATION_CHECKS[check].coverage.map((coverage) => {
+      const [product, platform] = coverage.split(":")
+      return {
+        product,
+        platform,
+        result: "pass",
+        appVersion: coordinates[platform].marketingVersion,
+        appBuild: coordinates[platform].buildNumber,
+        deviceModel: "release device",
+        osVersion: "release OS",
+      }
+    }),
+    evidenceUrls: [runUrl],
+  })
+  const deferral = (record, check) => ({
+    schemaVersion: 1,
+    promotionId: record.promotionId,
+    releaseIdentity: record.releaseIdentity,
+    check,
+    result: "deferred",
+    performedAt: now,
+    tester: {githubLogin: "release-owner"},
+    reason: "verify during store review",
+    notes: "deferred",
+  })
+  const attest = (record, attestation) =>
+    transitionWithAttestation({
+      record,
+      attestation,
+      actor: "release-owner",
+      createdAt: now,
+      provenanceUrl: runUrl,
+      evidenceUrl: runUrl,
+      assetName: `${attestation.check}-${attestation.result}.json`,
+      sha256: "e".repeat(64),
+    })
+  const resolvedOneOf = (record) =>
+    attest(record, passing(record, "production-mobile-n-compatibility", initialRecord.coordinates.currentMentraApp))
+  const advance = (record, to) =>
+    transitionPromotionRecord({
+      record,
+      to,
+      actor: "release-owner",
+      createdAt: now,
+      provenanceUrl: runUrl,
+      evidence: evidence(to),
+    })
+
+  // Only the two pre-submission gates, and only in their own state.
+  const cloudDeployed = atState("cloud-deployed")
+  assert.throws(
+    () =>
+      validateAttestation(deferral(atState("stores-submitted"), "store-review-approved"), atState("stores-submitted")),
+    /cannot be deferred/,
+  )
+  assert.throws(
+    () => validateAttestation(deferral(cloudDeployed, "production-mobile-candidate-acceptance"), cloudDeployed),
+    /cannot apply in state cloud-deployed/,
+  )
+  const withTests = {...deferral(cloudDeployed, "production-mobile-n-compatibility"), tests: []}
+  assert.throws(() => validateAttestation(withTests, cloudDeployed), /carries no test results/)
+  for (const reason of [undefined, "", "   ", "reason with key msk_abcdefghijklmnopqrstuvwxyz0123456789"]) {
+    const unreasoned = {...deferral(cloudDeployed, "production-mobile-n-compatibility"), reason}
+    assert.throws(() => validateAttestation(unreasoned, cloudDeployed), /attestation\.reason/)
+  }
+
+  // Deferring moves the promotion on and records the open gate.
+  const deferred = attest(cloudDeployed, deferral(cloudDeployed, "production-mobile-n-compatibility"))
+  assert.equal(deferred.state, "current-clients-accepted")
+  assert.equal(deferred.evidence.at(-1).kind, "production-mobile-n-compatibility-deferred")
+  assert.deepEqual(deferredChecks(deferred), ["production-mobile-n-compatibility"])
+  assert.equal(canResolveDeferredCheck(deferred, "production-mobile-n-compatibility"), true)
+  assert.deepEqual(nextAction(deferred), {kind: "workflow", workflow: "production-release-mobile.yml", phase: "build"})
+
+  // A second deferral at candidate acceptance, then the chain reaches stores-approved.
+  let record = advance(deferred, "mobile-candidates-uploaded")
+  record = attest(record, deferral(record, "production-mobile-candidate-acceptance"))
+  assert.equal(record.state, "mobile-candidates-accepted")
+  record = advance(record, "stores-submitted")
+  record = attest(record, passing(record, "store-review-approved", initialRecord.coordinates.candidates.mentraApp))
+  assert.equal(record.state, "stores-approved")
+  assert.deepEqual(deferredChecks(record), [
+    "production-mobile-n-compatibility",
+    "production-mobile-candidate-acceptance",
+  ])
+
+  // Public release is refused while any deferral is unresolved, including when
+  // the approval's own evidence reference is crafted to look like the resolution.
+  assert.throws(() => advance(record, "public-release-approved"), /deferred human gates to be attested first/)
+  assert.throws(
+    () =>
+      transitionPromotionRecord({
+        record: resolvedOneOf(record),
+        to: "public-release-approved",
+        actor: "release-owner",
+        createdAt: now,
+        provenanceUrl: runUrl,
+        evidence: evidence("production-mobile-candidate-acceptance"),
+      }),
+    /deferred human gates to be attested first: production-mobile-candidate-acceptance/,
+  )
+
+  // Resolving in place: same state, the check's own evidence kind appended.
+  const resolvedOne = attest(
+    record,
+    passing(record, "production-mobile-n-compatibility", initialRecord.coordinates.currentMentraApp),
+  )
+  assert.equal(resolvedOne.state, "stores-approved")
+  assert.equal(resolvedOne.evidence.at(-1).kind, "production-mobile-n-compatibility")
+  assert.deepEqual(deferredChecks(resolvedOne), ["production-mobile-candidate-acceptance"])
+  assert.throws(
+    () =>
+      attest(
+        resolvedOne,
+        passing(resolvedOne, "production-mobile-n-compatibility", initialRecord.coordinates.currentMentraApp),
+      ),
+    /cannot apply in state stores-approved/,
+  )
+  const resolvedBoth = attest(
+    resolvedOne,
+    passing(resolvedOne, "production-mobile-candidate-acceptance", initialRecord.coordinates.candidates.mentraApp),
+  )
+  assert.deepEqual(deferredChecks(resolvedBoth), [])
+  assert.equal(advance(resolvedBoth, "public-release-approved").state, "public-release-approved")
+
+  // A non-deferred check still cannot be attested out of its own state.
+  assert.throws(
+    () =>
+      attest(
+        atState("stores-approved"),
+        passing(
+          atState("stores-approved"),
+          "production-mobile-n-compatibility",
+          initialRecord.coordinates.currentMentraApp,
+        ),
+      ),
+    /cannot apply in state stores-approved/,
+  )
 })
 
 test("rejects Starter Kit fields from the Mentra-App-only production schema", () => {
