@@ -38,6 +38,7 @@ jobs:
       cloud_environment: ${{ steps.release.outputs.cloud_environment }}
       backend_environment: ${{ steps.release.outputs.backend_environment }}
       play_track: ${{ steps.release.outputs.play_track }}
+      upload_google_play: ${{ steps.release.outputs.upload_google_play }}
       example_play_track: ${{ steps.release.outputs.example_play_track }}
       testflight_group: ${{ steps.release.outputs.testflight_group }}
       testflight_audience: ${{ steps.release.outputs.testflight_audience }}
@@ -180,6 +181,7 @@ jobs:
             echo "cloud_environment=$CLOUD_ENVIRONMENT"
             echo "backend_environment=$BACKEND_ENVIRONMENT"
             echo "play_track=$PLAY_TRACK"
+            echo "upload_google_play=$(jq -r '.native.googlePlayUpload != false' release-plan.json)"
             echo "example_play_track=$EXAMPLE_PLAY_TRACK"
             echo "testflight_group=$TESTFLIGHT_GROUP"
             echo "testflight_audience=$TESTFLIGHT_AUDIENCE"
@@ -242,7 +244,11 @@ jobs:
             echo "- Source: \`${{ github.sha }}\`"
             echo "- Cloud deployment: \`${{ steps.release.outputs.cloud_environment }}\`"
             echo "- Mobile backend: \`${{ steps.release.outputs.backend_environment }}\`"
-            echo "- Google Play: \`${{ steps.release.outputs.play_track }}\`"
+            if [[ "${{ steps.release.outputs.upload_google_play }}" == "false" ]]; then
+              echo "- Google Play: dev uploads paused; APK/AAB downloads remain available"
+            else
+              echo "- Google Play: \`${{ steps.release.outputs.play_track }}\`"
+            fi
             echo "- Example Google Play: \`${{ steps.release.outputs.example_play_track }}\`"
             echo "- TestFlight: \`${{ steps.release.outputs.testflight_group }}\` (\`${{ steps.release.outputs.testflight_audience }}\`)"
             echo "- Example TestFlight: \`${{ steps.release.outputs.example_testflight_group }}\` (\`${{ steps.release.outputs.example_testflight_audience }}\`)"
@@ -1277,6 +1283,7 @@ jobs:
           COMMIT_AUTHOR: ${{ github.event.head_commit.author.name }}
           RELEASE_IDENTITY: ${{ needs.plan.outputs.release_identity }}
           PLAY_TRACK: ${{ needs.plan.outputs.play_track }}
+          UPLOAD_GOOGLE_PLAY: ${{ needs.plan.outputs.upload_google_play }}
           TESTFLIGHT_GROUP: ${{ needs.plan.outputs.testflight_group }}
           TESTFLIGHT_DISTRIBUTION_STATUS: ${{ needs.mobile.outputs.testflight_distribution_status }}
           TESTFLIGHT_INSTALL_URL: ${{ needs.mobile.outputs.testflight_install_url }}
