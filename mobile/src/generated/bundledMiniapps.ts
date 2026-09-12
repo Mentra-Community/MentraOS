@@ -24,6 +24,7 @@ export const BUNDLED_MINIAPPS: number[] = [
 // ZIP asset.
 export const BUNDLED_SYSTEM_MINIAPP_PACKAGES = [
   "com.mentra.ai",
+  "com.mentra.call",
   "com.mentra.captions",
   "com.mentra.livestreamer",
   "com.mentra.merge",
@@ -40,6 +41,7 @@ export const BUNDLED_SYSTEM_MINIAPP_PACKAGES = [
 // Store updates to retain this build-pinned identity.
 export const BUNDLED_SYSTEM_MINIAPP_PUBLISHER_KEYS = {
   "com.mentra.ai": "sha256:d2ceb878c0aa74f8dc509fbefe296280a09b9cffe2a988fe033629d8eb56ccc6",
+  "com.mentra.call": "sha256:9df0cf9b2bb486634598940417c7518c29d4d64f33b90dc84cf17ec4d17e4da0",
   "com.mentra.captions": "sha256:d4fdcf1f83a7efb5927c439ff964c056734f01007895f2acad6866afc8ccae5b",
   "com.mentra.livestreamer": "sha256:4c67331b89de826fcb0937f90489b3e7746449d94c3df0bcea3b2d42a22b6541",
   "com.mentra.merge": "sha256:74adad5ecbefd1d5b2af7bbef4290e1d9cc474787e13903a7b0682a96086c579",
