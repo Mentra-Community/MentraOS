@@ -32,7 +32,6 @@ import {useCloudClientStatusStore} from "../stores/cloudClientStatus"
 import {islandNotifications} from "./NotificationsEmitter"
 import {BgTimer} from "../utils/timers"
 import {logCloudV2TranscriptMetric} from "./CloudTranscriptE2EMetrics"
-import {mintCoreDownloadAuthorization} from "./CoreDownloadAuthorization"
 import {LocalMiniappUserIdentity} from "./LocalMiniappUserIdentity"
 import {nativeHttpResponseBody} from "./NativeHttpResponse"
 import {type CloudEndpoints, resolveCloudEndpoints} from "./cloudEndpointPolicy"
@@ -566,22 +565,6 @@ export const cloudClientService = {
     construct()
   },
 
-  /** Fresh Core credential for host-owned downloads; never exposed to a miniapp. */
-  async getCoreDownloadAuthorization(): Promise<{origin: string; bearerToken: string}> {
-    if (!client) this.init()
-    return mintCoreDownloadAuthorization(() => {
-      const c = client
-      const origin = resolveEndpoints().core
-      // A Core-free deployment has no identity to authorize a download with.
-      if (!c || !origin) return null
-      return {
-        client: c,
-        origin,
-        getBearerToken: () => c.auth.getCoreToken(),
-      }
-    })
-  },
-
   /**
    * Resolve the stable Core-owned Mentra user id.
    *
@@ -738,12 +721,6 @@ export const cloudClientService = {
 
   hasCore(): boolean {
     return Boolean(client?.core)
-  },
-
-  getStoreUrl(): string {
-    const store = resolveEndpoints().store
-    if (!store) throw new Error("cloud client store is unavailable")
-    return store
   },
 
   syncCoreTokenToBluetooth(): Promise<string> {

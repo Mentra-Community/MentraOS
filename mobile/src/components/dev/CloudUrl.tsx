@@ -10,31 +10,24 @@ import {translate} from "@/i18n"
 import {deploymentStore, useDeployment} from "@/services/deployment"
 import {deploymentDebugOverrides, saveDeploymentCloudOverrides} from "@/services/deployment/debugOverrides"
 import {devServerHost, METRO_AUTO} from "@/utils/cloudClient/devHost"
-import {deriveStoreUrl} from "@/utils/cloudClient/storeUrl"
 import showAlert from "@/utils/AlertUtils"
 
 const CLOUD_DEV_CORE_URL = "https://core.dev.us-west-2.mentraglass.com"
-const CLOUD_DEV_STORE_URL = "https://store.dev.us-west-2.mentraglass.com"
 const CLOUD_DEV_RUNTIME_URL = "https://runtime.dev.us-west-2.mentraglass.com"
 const CLOUD_DEBUG_CORE_URL = "https://core.debug.us-west-2.mentraglass.com"
-const CLOUD_DEBUG_STORE_URL = "https://store.debug.us-west-2.mentraglass.com"
 const CLOUD_DEBUG_RUNTIME_URL = "https://runtime.debug.us-west-2.mentraglass.com"
 const CLOUD_STAGING_CORE_URL = "https://core.staging.us-west-2.mentraglass.com"
-const CLOUD_STAGING_STORE_URL = "https://store.staging.us-west-2.mentraglass.com"
 const CLOUD_STAGING_RUNTIME_URL = "https://runtime.staging.us-west-2.mentraglass.com"
 const CLOUD_PROD_CORE_URL = "https://core.mentraglass.com"
-const CLOUD_PROD_STORE_URL = "https://store.mentraglass.com"
 const CLOUD_PROD_RUNTIME_URL = "https://runtime.mentraglass.com"
 
 const LOCAL_CORE_PORT = 3000
-const LOCAL_STORE_PORT = 3003
 const LOCAL_RUNTIME_PORT = 3001
 
-/** One bookmarked Cloud V2 endpoint set. */
+/** One bookmarked Cloud V2 endpoint set. Core + runtime are saved together. */
 interface SavedCloudPair {
   label: string
   coreUrl: string
-  storeUrl: string
   runtimeUrl: string
 }
 
@@ -77,38 +70,17 @@ async function testEndpoint(url: string): Promise<{ok: boolean; status?: number;
 export default function CloudUrl() {
   const {theme} = useAppTheme()
   useSetting(SETTINGS.cloud_core_url.key)
-  useSetting(SETTINGS.cloud_store_url.key)
   useSetting(SETTINGS.cloud_runtime_url.key)
   useSetting(SETTINGS.cloud_url_deployment.key)
   const {activeDeployment} = useDeployment()
-  const {core: coreUrl, store: storeUrl, runtime: runtimeUrl} = deploymentDebugOverrides(activeDeployment)
+  const {core: coreUrl, runtime: runtimeUrl} = deploymentDebugOverrides(activeDeployment)
   const [coreInput, setCoreInput] = useState("")
-  const [storeInput, setStoreInput] = useState("")
   const [runtimeInput, setRuntimeInput] = useState("")
   const [isSaving, setIsSaving] = useState(false)
   const [savedPairs, setSavedPairs] = useSetting(SETTINGS.saved_cloud_url_pairs.key)
 
   // Persisted setting is untyped; normalize to the bookmark array shape.
-  const bookmarks: SavedCloudPair[] = Array.isArray(savedPairs)
-    ? savedPairs.flatMap((pair) => {
-        if (
-          typeof pair !== "object" ||
-          pair === null ||
-          typeof pair.label !== "string" ||
-          typeof pair.coreUrl !== "string" ||
-          typeof pair.runtimeUrl !== "string"
-        ) {
-          return []
-        }
-        const store =
-          typeof pair.storeUrl === "string"
-            ? pair.storeUrl
-            : pair.coreUrl === METRO_AUTO
-            ? METRO_AUTO
-            : deriveStoreUrl(pair.coreUrl)
-        return [{label: pair.label, coreUrl: pair.coreUrl, storeUrl: store, runtimeUrl: pair.runtimeUrl}]
-      })
-    : []
+  const bookmarks: SavedCloudPair[] = Array.isArray(savedPairs) ? savedPairs : []
 
   // The dev laptop's live address (only present in Metro-served dev builds).
   // Drives the "Local (auto)" preset; when absent the preset is hidden.
@@ -123,25 +95,23 @@ export default function CloudUrl() {
 
   const handleSave = async () => {
     const core = coreInput.trim().replace(/\/+$/, "")
-    const store = storeInput.trim().replace(/\/+$/, "")
     const runtime = runtimeInput.trim().replace(/\/+$/, "")
 
-    if (!core || !store || !runtime) {
-      showAlert("Empty URL", "Please enter Core, Store, and Runtime URLs or reset to default.", [{text: "OK"}])
+    if (!core || !runtime) {
+      showAlert("Empty URL", "Please enter both Core and Runtime URLs or reset to default.", [{text: "OK"}])
       return
     }
 
     const isHttp = (u: string) => u.startsWith("http://") || u.startsWith("https://")
     const isValid = (u: string) => u === METRO_AUTO || isHttp(u)
-    if (!isValid(core) || !isValid(store) || !isValid(runtime)) {
-      showAlert("Invalid URL", `All URLs must start with http:// or https:// (or be "${METRO_AUTO}").`, [{text: "OK"}])
+    if (!isValid(core) || !isValid(runtime)) {
+      showAlert("Invalid URL", `Both URLs must start with http:// or https:// (or be "${METRO_AUTO}").`, [{text: "OK"}])
       return
     }
 
     const coreTestUrl = resolveForTest(core, LOCAL_CORE_PORT, metroHost)
-    const storeTestUrl = resolveForTest(store, LOCAL_STORE_PORT, metroHost)
     const runtimeTestUrl = resolveForTest(runtime, LOCAL_RUNTIME_PORT, metroHost)
-    if (!coreTestUrl || !storeTestUrl || !runtimeTestUrl) {
+    if (!coreTestUrl || !runtimeTestUrl) {
       showAlert("No Metro host", "metro-auto needs a Metro-served dev build (no dev server detected).", [{text: "OK"}])
       return
     }
@@ -160,18 +130,6 @@ export default function CloudUrl() {
         return
       }
 
-      const storeResult = await testEndpoint(storeTestUrl)
-      if (!storeResult.ok) {
-        showAlert(
-          "Store Failed",
-          `Could not verify Store at ${storeTestUrl}/healthz${
-            storeResult.status ? ` (status ${storeResult.status})` : storeResult.error ? `: ${storeResult.error}` : ""
-          }.`,
-          [{text: "OK"}],
-        )
-        return
-      }
-
       const runtimeResult = await testEndpoint(runtimeTestUrl)
       if (!runtimeResult.ok) {
         showAlert(
@@ -180,8 +138,8 @@ export default function CloudUrl() {
             runtimeResult.status
               ? ` (status ${runtimeResult.status})`
               : runtimeResult.error
-              ? `: ${runtimeResult.error}`
-              : ""
+                ? `: ${runtimeResult.error}`
+                : ""
           }.`,
           [{text: "OK"}],
         )
@@ -193,7 +151,7 @@ export default function CloudUrl() {
       // laptop's LAN IP changes — resolution happens live on every connect.
       // A health probe may finish after the user switches organizations.
       if (activeDeployment !== deploymentStore.getActive()) return
-      await saveDeploymentCloudOverrides(activeDeployment, {core, store, runtime})
+      await saveDeploymentCloudOverrides(activeDeployment, {core, runtime})
       cloudClient.reconnect()
 
       showAlert("Success", "Cloud V2 endpoints saved and verified. Reconnecting with the new URLs.", [{text: "OK"}])
@@ -207,9 +165,8 @@ export default function CloudUrl() {
   const handleReset = async () => {
     setIsSaving(true)
     try {
-      await saveDeploymentCloudOverrides(activeDeployment, {core: "", store: "", runtime: ""})
+      await saveDeploymentCloudOverrides(activeDeployment, {core: "", runtime: ""})
       setCoreInput("")
-      setStoreInput("")
       setRuntimeInput("")
       cloudClient.reconnect()
       showAlert("Success", translate("workspace:cloudReset"), [{text: "OK"}])
@@ -220,36 +177,34 @@ export default function CloudUrl() {
     }
   }
 
-  const applyPreset = (core: string, store: string, runtime: string) => {
+  const applyPreset = (core: string, runtime: string) => {
     setCoreInput(core)
-    setStoreInput(store)
     setRuntimeInput(runtime)
   }
 
-  // Save the current service inputs as one bookmark profile.
+  // Save the current core + runtime inputs as one bookmark pair.
   const handleBookmark = () => {
     const core = coreInput.trim().replace(/\/+$/, "")
-    const store = storeInput.trim().replace(/\/+$/, "")
     const runtime = runtimeInput.trim().replace(/\/+$/, "")
 
-    if (!core || !store || !runtime) {
-      showAlert("Empty URL", "Enter Core, Store, and Runtime URLs before bookmarking.", [{text: "OK"}])
+    if (!core || !runtime) {
+      showAlert("Empty URL", "Enter both Core and Runtime URLs before bookmarking.", [{text: "OK"}])
       return
     }
 
     const isValid = (u: string) => u === METRO_AUTO || u.startsWith("http://") || u.startsWith("https://")
-    if (!isValid(core) || !isValid(store) || !isValid(runtime)) {
-      showAlert("Invalid URL", `All URLs must start with http:// or https:// (or be "${METRO_AUTO}").`, [{text: "OK"}])
+    if (!isValid(core) || !isValid(runtime)) {
+      showAlert("Invalid URL", `Both URLs must start with http:// or https:// (or be "${METRO_AUTO}").`, [{text: "OK"}])
       return
     }
 
-    if (bookmarks.some((b) => b.coreUrl === core && b.storeUrl === store && b.runtimeUrl === runtime)) {
-      showAlert("Already Bookmarked", "This Cloud V2 endpoint set is already saved.", [{text: "OK"}])
+    if (bookmarks.some((b) => b.coreUrl === core && b.runtimeUrl === runtime)) {
+      showAlert("Already Bookmarked", "This Core + Runtime pair is already saved.", [{text: "OK"}])
       return
     }
 
     const label = pairLabel(core)
-    const updated = [...bookmarks, {label, coreUrl: core, storeUrl: store, runtimeUrl: runtime}]
+    const updated = [...bookmarks, {label, coreUrl: core, runtimeUrl: runtime}]
     setSavedPairs(updated)
     showAlert("Bookmarked", `Saved "${label}" to your Cloud V2 URLs.`, [{text: "OK"}])
   }
@@ -288,23 +243,6 @@ export default function CloudUrl() {
           placeholderTextColor={theme.colors.textDim}
           value={coreInput}
           onChangeText={setCoreInput}
-          autoCapitalize="none"
-          autoCorrect={false}
-          keyboardType="url"
-          editable={!isSaving}
-        />
-
-        <Text className="mt-3.5 text-[13px] font-semibold text-foreground">Store URL</Text>
-        <Text className="mt-1 flex-wrap text-xs text-muted-foreground">
-          Currently using: {active.store}
-          {describeOverride(storeUrl)}
-        </Text>
-        <TextInput
-          className="mt-1.5 mb-1 rounded-xl border border-primary bg-background px-3 py-2.5 text-sm text-foreground"
-          placeholder="e.g., http://192.168.1.100:3003"
-          placeholderTextColor={theme.colors.textDim}
-          value={storeInput}
-          onChangeText={setStoreInput}
           autoCapitalize="none"
           autoCorrect={false}
           keyboardType="url"
@@ -361,16 +299,16 @@ export default function CloudUrl() {
           />
         </View>
 
-        {/* Saved Cloud V2 bookmarks: tap a chip to fill all service inputs. */}
+        {/* Saved Cloud V2 bookmarks: tap a chip to fill both inputs at once. */}
         {bookmarks.length > 0 && (
           <View className="mt-3.5 mb-1">
             <Text className="mb-2 text-xs font-semibold text-muted-foreground">My Cloud V2 URLs</Text>
             <View className="flex-row flex-wrap gap-2">
               {bookmarks.map((bookmark, index) => (
                 <TouchableOpacity
-                  key={`${bookmark.coreUrl}-${bookmark.storeUrl}-${bookmark.runtimeUrl}-${index}`}
+                  key={`${bookmark.coreUrl}-${bookmark.runtimeUrl}-${index}`}
                   className="rounded-lg border border-primary bg-background px-3 py-1.5"
-                  onPress={() => applyPreset(bookmark.coreUrl, bookmark.storeUrl, bookmark.runtimeUrl)}
+                  onPress={() => applyPreset(bookmark.coreUrl, bookmark.runtimeUrl)}
                   onLongPress={() => handleDeleteBookmark(index)}
                   activeOpacity={0.7}>
                   <Text className="text-xs text-foreground">{bookmark.label}</Text>
@@ -381,20 +319,20 @@ export default function CloudUrl() {
           </View>
         )}
 
-        {/* Environment presets select all three services so they never drift. */}
+        {/* Paired env presets — a tap sets BOTH inputs so they never drift. */}
         <View className="mt-3 gap-3">
           <View className="flex-row gap-3">
             <Button
               compact
               text="Cloud Dev"
-              onPress={() => applyPreset(CLOUD_DEV_CORE_URL, CLOUD_DEV_STORE_URL, CLOUD_DEV_RUNTIME_URL)}
+              onPress={() => applyPreset(CLOUD_DEV_CORE_URL, CLOUD_DEV_RUNTIME_URL)}
               flexContainer={false}
               flex
             />
             <Button
               compact
               text="Cloud Debug"
-              onPress={() => applyPreset(CLOUD_DEBUG_CORE_URL, CLOUD_DEBUG_STORE_URL, CLOUD_DEBUG_RUNTIME_URL)}
+              onPress={() => applyPreset(CLOUD_DEBUG_CORE_URL, CLOUD_DEBUG_RUNTIME_URL)}
               flexContainer={false}
               flex
             />
@@ -403,14 +341,14 @@ export default function CloudUrl() {
             <Button
               compact
               text="Cloud Staging"
-              onPress={() => applyPreset(CLOUD_STAGING_CORE_URL, CLOUD_STAGING_STORE_URL, CLOUD_STAGING_RUNTIME_URL)}
+              onPress={() => applyPreset(CLOUD_STAGING_CORE_URL, CLOUD_STAGING_RUNTIME_URL)}
               flexContainer={false}
               flex
             />
             <Button
               compact
               text="Cloud Prod"
-              onPress={() => applyPreset(CLOUD_PROD_CORE_URL, CLOUD_PROD_STORE_URL, CLOUD_PROD_RUNTIME_URL)}
+              onPress={() => applyPreset(CLOUD_PROD_CORE_URL, CLOUD_PROD_RUNTIME_URL)}
               flexContainer={false}
               flex
             />
@@ -424,7 +362,7 @@ export default function CloudUrl() {
               <Button
                 compact
                 text={`Local (auto: ${metroHost})`}
-                onPress={() => applyPreset(METRO_AUTO, METRO_AUTO, METRO_AUTO)}
+                onPress={() => applyPreset(METRO_AUTO, METRO_AUTO)}
                 flexContainer={false}
                 flex
               />

@@ -17,17 +17,15 @@ import Constants from "expo-constants"
 
 import {SETTINGS, engine} from "@mentra/engine"
 import {devServerHost} from "@/utils/cloudClient/devHost"
-import {deriveStoreUrl} from "@/utils/cloudClient/storeUrl"
 import {deploymentStore, type ActiveDeployment} from "@/services/deployment"
 import {deploymentDebugScope, resolveDeploymentManifest} from "@/services/deployment/debugOverrides"
 
 type Lc3FrameSizeBytes = 20 | 40 | 60
 
 /** The selected manifest with its deployment-scoped debug overrides applied. */
-export function resolvedEndpoints(): {core: string; store: string; runtime: string} {
+export function resolvedEndpoints(): {core: string; runtime: string} {
   const manifest = resolveDeploymentManifest(deploymentStore.getActive())
-  const core = manifest.services.coreUrl!
-  return {core, store: manifest.services.storeUrl || deriveStoreUrl(core), runtime: manifest.services.runtimeUrl!}
+  return {core: manifest.services.coreUrl!, runtime: manifest.services.runtimeUrl!}
 }
 
 export const activeDeploymentEndpoints = resolvedEndpoints
@@ -44,7 +42,6 @@ export function lc3FrameSizeBytes(): Lc3FrameSizeBytes {
  */
 export function cloudConfigValues(): {
   coreUrl: string | null
-  storeUrl: string | null
   runtimeUrl: string | null
   hostVersion: string
   supportedMiniappSdkRange: string
@@ -88,8 +85,6 @@ export function deploymentCloudConfigValues(deployment: ActiveDeployment): Retur
       : undefined
   return {
     coreUrl: manifest.services.coreUrl,
-    // Null derives the conventional Store for whichever Core this deployment names.
-    storeUrl: manifest.services.storeUrl ?? null,
     runtimeUrl: manifest.services.runtimeUrl,
     runtimeRealtimeSession: manifest.features.runtimeRealtimeSession,
     // Island's local registry contains both embedded SYSTEM miniapps and
@@ -148,7 +143,6 @@ export const cloudClient = {
     // an explicit engine reconnect pin.
     cloudClientService.reconnect(null)
   },
-  getCoreDownloadAuthorization: () => cloudClientService.getCoreDownloadAuthorization(),
   getMiniappAuthToken: (packageName: string, opts?: {minTtlMs?: number; devAttestation?: string}) =>
     cloudClientService.getMiniappAuthToken(packageName, opts),
   startManagedPhoto: (opts: Record<string, unknown> = {}) => cloudClientService.startManagedPhoto(opts),

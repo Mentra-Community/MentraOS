@@ -7,25 +7,15 @@ describe("cloud endpoint selection", () => {
     let host = "192.0.2.10"
     const config = {resolveCloudEndpoints: () => ({core: `http://${host}:3000`, runtime: `http://${host}:3001`})}
     const pin = {core: "https://explicit.example", runtime: "https://explicit.example"}
-    expect(resolveCloudEndpoints(config, pin)).toEqual({...pin, store: "https://explicit.example"})
+    expect(resolveCloudEndpoints(config, pin)).toEqual(pin)
     host = "192.0.2.11"
     expect(resolveCloudEndpoints(config, null)).toEqual({
       core: "http://192.0.2.11:3000",
-      store: "http://192.0.2.11:3003",
       runtime: "http://192.0.2.11:3001",
     })
   })
 
-  test("derives Store from Core unless the caller names one", () => {
-    const config = {coreUrl: "https://core.example.test", runtimeUrl: "https://runtime.example.test"}
-    expect(resolveCloudEndpoints(config, null).store).toBe("https://store.example.test")
-    expect(resolveCloudEndpoints({...config, storeUrl: "https://pinned.example"}, null).store).toBe(
-      "https://pinned.example",
-    )
-  })
-
   test("retains boot defaults for engine hosts without a live resolver", () => {
-    // A Core-free deployment has no Store to derive either.
     expect(resolveCloudEndpoints({coreUrl: null, runtimeUrl: "https://runtime.example"}, null)).toEqual({
       runtime: "https://runtime.example",
     })

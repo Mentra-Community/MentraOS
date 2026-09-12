@@ -10,7 +10,6 @@ export function createOfficialManifest(): DeploymentManifest {
     displayName: "Mentra",
     services: {
       coreUrl: process.env.EXPO_PUBLIC_CLOUD_CORE_URL?.trim() || "https://core.dev.us-west-2.mentraglass.com",
-      storeUrl: process.env.EXPO_PUBLIC_CLOUD_STORE_URL?.trim() || null,
       runtimeUrl: process.env.EXPO_PUBLIC_CLOUD_RUNTIME_URL?.trim() || "https://runtime.dev.us-west-2.mentraglass.com",
     },
     auth: {mode: "mentra-account"},

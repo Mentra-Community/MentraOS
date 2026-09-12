@@ -40,7 +40,6 @@ export const deploymentManifestSchema = z
     services: z
       .object({
         coreUrl: nullableUrl,
-        storeUrl: nullableUrl.optional(),
         runtimeUrl: nullableUrl,
       })
       .strict(),

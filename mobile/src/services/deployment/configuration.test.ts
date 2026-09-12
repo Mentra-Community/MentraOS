@@ -4,7 +4,6 @@ import {result as Res} from "typesafe-ts"
 
 import {cloudClient, deploymentCloudConfigValues, resolvedEndpoints} from "@/services/cloudClient"
 import {devServerHost, METRO_AUTO} from "@/utils/cloudClient/devHost"
-import {deriveStoreUrl} from "@/utils/cloudClient/storeUrl"
 
 import {deploymentDebugOverrides, resolveDeploymentManifest, saveDeploymentCloudOverrides} from "./debugOverrides"
 import {createConsumerDeployment, createOfficialManifest} from "./officialManifest"
@@ -15,7 +14,6 @@ import type {ActiveDeployment, DeploymentCandidate} from "./types"
 jest.mock("@/utils/cloudClient/devHost", () => ({METRO_AUTO: "metro-auto", devServerHost: jest.fn()}))
 
 const originalCore = process.env.EXPO_PUBLIC_CLOUD_CORE_URL
-const originalStore = process.env.EXPO_PUBLIC_CLOUD_STORE_URL
 const originalRuntime = process.env.EXPO_PUBLIC_CLOUD_RUNTIME_URL
 const workspace: DeploymentCandidate = {
   workspaceOrigin: "https://organization.example",
@@ -48,7 +46,6 @@ const workspace: DeploymentCandidate = {
 beforeEach(async () => {
   jest.clearAllMocks()
   process.env.EXPO_PUBLIC_CLOUD_CORE_URL = "https://core.build.example"
-  process.env.EXPO_PUBLIC_CLOUD_STORE_URL = "https://store.build.example"
   process.env.EXPO_PUBLIC_CLOUD_RUNTIME_URL = "https://runtime.build.example"
   await deploymentStore.clearSelection()
   await deploymentStore.returnToMentra()
@@ -58,8 +55,6 @@ beforeEach(async () => {
 afterAll(async () => {
   if (originalCore === undefined) delete process.env.EXPO_PUBLIC_CLOUD_CORE_URL
   else process.env.EXPO_PUBLIC_CLOUD_CORE_URL = originalCore
-  if (originalStore === undefined) delete process.env.EXPO_PUBLIC_CLOUD_STORE_URL
-  else process.env.EXPO_PUBLIC_CLOUD_STORE_URL = originalStore
   if (originalRuntime === undefined) delete process.env.EXPO_PUBLIC_CLOUD_RUNTIME_URL
   else process.env.EXPO_PUBLIC_CLOUD_RUNTIME_URL = originalRuntime
   await deploymentStore.returnToMentra()
@@ -70,7 +65,6 @@ it("embeds a complete schema-v1 official manifest and respects build environment
   expect(deploymentManifestSchema.parse(manifest)).toEqual(manifest)
   expect(manifest.services).toEqual({
     coreUrl: "https://core.build.example",
-    storeUrl: "https://store.build.example",
     runtimeUrl: "https://runtime.build.example",
   })
   expect(manifest.auth).toEqual({mode: "mentra-account"})
@@ -81,12 +75,9 @@ it("embeds a complete schema-v1 official manifest and respects build environment
 
 it("uses shared dev defaults for missing or blank environment values", () => {
   delete process.env.EXPO_PUBLIC_CLOUD_CORE_URL
-  delete process.env.EXPO_PUBLIC_CLOUD_STORE_URL
   process.env.EXPO_PUBLIC_CLOUD_RUNTIME_URL = "   "
   expect(createOfficialManifest().services).toEqual({
     coreUrl: "https://core.dev.us-west-2.mentraglass.com",
-    // A null Store is derived from whichever Core the deployment names.
-    storeUrl: null,
     runtimeUrl: "https://runtime.dev.us-west-2.mentraglass.com",
   })
 })
@@ -97,19 +88,9 @@ it.each(["consumer", "workspace"])("uses one resolver for %s debug overrides, st
   const originalManifest = JSON.stringify(deployment.manifest)
   await saveDeploymentCloudOverrides(deployment, {core: "http://localhost:3000", runtime: "http://localhost:3001"})
   const config = deploymentCloudConfigValues(deployment)
-  const localEndpoints = {
-    core: "http://localhost:3000",
-    // Store has no override of its own, so it follows Core onto local.
-    store: "http://localhost:3003",
-    runtime: "http://localhost:3001",
-  }
-  expect(resolvedEndpoints()).toEqual(localEndpoints)
-  expect(config).toMatchObject({
-    coreUrl: "http://localhost:3000",
-    storeUrl: "http://localhost:3003",
-    runtimeUrl: "http://localhost:3001",
-  })
-  expect(config.resolveCloudEndpoints?.()).toEqual(localEndpoints)
+  expect(resolvedEndpoints()).toEqual({core: "http://localhost:3000", runtime: "http://localhost:3001"})
+  expect(config).toMatchObject({coreUrl: "http://localhost:3000", runtimeUrl: "http://localhost:3001"})
+  expect(config.resolveCloudEndpoints?.()).toEqual({core: "http://localhost:3000", runtime: "http://localhost:3001"})
   cloudClient.reconnect()
   expect(cloudClientService.reconnect).toHaveBeenCalledWith(null)
   expect(JSON.stringify(deployment.manifest)).toBe(originalManifest)
@@ -117,7 +98,6 @@ it.each(["consumer", "workspace"])("uses one resolver for %s debug overrides, st
   await saveDeploymentCloudOverrides(deployment, {core: "", runtime: ""})
   expect(resolvedEndpoints()).toEqual({
     core: deployment.manifest.services.coreUrl,
-    store: deployment.manifest.services.storeUrl ?? deriveStoreUrl(deployment.manifest.services.coreUrl!),
     runtime: deployment.manifest.services.runtimeUrl,
   })
   expect(deploymentStore.getActive()).toBe(deployment)
@@ -130,11 +110,7 @@ it.each(["consumer", "workspace"])(
     const deployment = deploymentStore.getActive()
     await saveDeploymentCloudOverrides(deployment, {core: METRO_AUTO, runtime: METRO_AUTO})
     jest.mocked(devServerHost).mockReturnValue("192.0.2.10")
-    expect(resolvedEndpoints()).toEqual({
-      core: "http://192.0.2.10:3000",
-      store: "http://192.0.2.10:3003",
-      runtime: "http://192.0.2.10:3001",
-    })
+    expect(resolvedEndpoints()).toEqual({core: "http://192.0.2.10:3000", runtime: "http://192.0.2.10:3001"})
     jest.mocked(devServerHost).mockReturnValue("192.0.2.11")
     expect(deploymentCloudConfigValues(deployment).resolveCloudEndpoints?.().runtime).toBe("http://192.0.2.11:3001")
     jest.mocked(devServerHost).mockReturnValue(undefined)
@@ -218,11 +194,7 @@ it("keeps consumer overrides when login reconfirms the active deployment", async
     runtime: "http://localhost:3001",
   })
   await deploymentStore.returnToMentra()
-  expect(resolvedEndpoints()).toEqual({
-    core: "http://localhost:3000",
-    store: "http://localhost:3003",
-    runtime: "http://localhost:3001",
-  })
+  expect(resolvedEndpoints()).toEqual({core: "http://localhost:3000", runtime: "http://localhost:3001"})
 })
 
 it("does not complete a deployment switch when clearing persisted settings fails, and can retry", async () => {

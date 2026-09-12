@@ -197,11 +197,12 @@ export interface InstallBundleOptions {
     supportedSdkRange: string
     hardwareCapabilities?: Capabilities
   }
-  /** Host-owned Core authorization. Never populate this from miniapp input. */
-  downloadAuthorization?: {
-    origin: string
-    bearerToken: string
-  }
+  /**
+   * Bearer the calling Store already holds for its own backend. The host
+   * attaches it verbatim and never mints, inspects, or reuses it — entitlement
+   * is the Store's business, so the host needs no Store address of its own.
+   */
+  bundleAuthorization?: string
   onProgress?: (phase: "downloading" | "verifying" | "extracting" | "activating") => void
 }
 
@@ -363,7 +364,7 @@ async function downloadMiniAppZip(
   url: string,
   expectedSha256?: string,
   onProgress?: InstallBundleOptions["onProgress"],
-  authorization?: InstallBundleOptions["downloadAuthorization"],
+  authorization?: InstallBundleOptions["bundleAuthorization"],
 ): Promise<string> {
   const downloadDir = new Directory(Paths.cache, "lma_downloads")
   try {
@@ -388,15 +389,11 @@ async function downloadMiniAppZip(
     // downloads without buffering an attacker-controlled response first.
     const requestUrl = new URL(url)
     let requestInit: Parameters<typeof expoFetch>[1] = {signal: abortController.signal}
-    if (authorization) {
-      const authorizedOrigin = new URL(authorization.origin).origin
-      if (requestUrl.origin !== authorizedOrigin || !authorization.bearerToken.trim()) {
-        throw new Error("bundle authorization is not valid for this origin")
-      }
+    if (authorization?.trim()) {
       requestInit = {
         ...requestInit,
-        headers: {Authorization: `Bearer ${authorization.bearerToken}`},
-        // Do not forward a Core bearer credential through redirects.
+        headers: {Authorization: `Bearer ${authorization.trim()}`},
+        // Never forward a caller's bearer credential through a redirect.
         redirect: "error",
       }
     }
@@ -683,7 +680,7 @@ async function downloadAndInstallMiniApp(
     url,
     opts?.expectedBundleSha256,
     opts?.onProgress,
-    opts?.downloadAuthorization,
+    opts?.bundleAuthorization,
   )
   const downloadedZip = new File(downloadedZipPath)
   try {

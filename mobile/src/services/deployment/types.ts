@@ -33,8 +33,6 @@ export interface DeploymentManifest {
   }
   services: {
     coreUrl: string | null
-    /** Miniapp Store backend. Omitted/null derives it from `coreUrl`. */
-    storeUrl?: string | null
     runtimeUrl: string | null
   }
   auth: DeploymentAuthConfig

@@ -18,10 +18,8 @@ export const VersionInfo = () => {
   const {user} = useAuth()
   const [debugMode, setDebugMode] = useSetting(SETTINGS.debug_mode.key)
   const [_superMode, setSuperMode] = useSetting(SETTINGS.super_mode.key)
-  // Subscribe to the raw overrides so the resolved values below re-render.
   useSetting(SETTINGS.cloud_core_url.key)
-  useSetting(SETTINGS.cloud_store_url.key)
-  const {core: coreUrl, store: storeUrl} = resolvedEndpoints()
+  const coreUrl = resolvedEndpoints().core
   const audioTransport = useEngineSnapshot(engine.session.status, (onChange) =>
     engine.session.onStatus(onChange),
   ).audioTransport
@@ -75,7 +73,6 @@ export const VersionInfo = () => {
       `time: ${process.env.EXPO_PUBLIC_BUILD_TIME}`,
       `commit: ${process.env.EXPO_PUBLIC_BUILD_COMMIT}`,
       `cloud_core_url: ${resolvedEndpoints().core}`,
-      `cloud_store_url: ${resolvedEndpoints().store}`,
       `cloud_runtime_url: ${resolvedEndpoints().runtime}`,
       `audio: ${audioTransport}`,
     ]
@@ -136,10 +133,7 @@ export const VersionInfo = () => {
             <Text style={themed($buildInfo)} text={`${process.env.EXPO_PUBLIC_BUILD_COMMIT}`} />
           </View>
           <View className="flex-row gap-2">
-            <Text style={themed($buildInfo)} text={`${coreUrl}`} />
-          </View>
-          <View className="flex-row gap-2">
-            <Text style={themed($buildInfo)} text={`${storeUrl}`} />
+            <Text style={themed($buildInfo)} text={`${coreUrl || "(default cloud)"}`} />
           </View>
           <View className="flex-row gap-2">
             <Text style={themed($buildInfo)} text={`audio: ${audioTransport}`} />

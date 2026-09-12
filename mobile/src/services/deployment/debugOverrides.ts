@@ -1,7 +1,6 @@
 import {engine, SETTINGS} from "@mentra/engine"
 
 import {devServerHost, METRO_AUTO} from "@/utils/cloudClient/devHost"
-import {deriveStoreUrl} from "@/utils/cloudClient/storeUrl"
 
 import type {ActiveDeployment, DeploymentManifest} from "./types"
 
@@ -11,11 +10,7 @@ export function deploymentDebugScope(deployment: ActiveDeployment): string {
     : `workspace:${deployment.manifest.deploymentId}:${deployment.workspaceOrigin}`
 }
 
-export function deploymentDebugOverrides(deployment: ActiveDeployment): {
-  core?: string
-  store?: string
-  runtime?: string
-} {
+export function deploymentDebugOverrides(deployment: ActiveDeployment): {core?: string; runtime?: string} {
   const scope = engine.settings.get(SETTINGS.cloud_url_deployment.key)
   // Existing consumer overrides predate scoping. Never apply these to a workspace.
   if (scope !== deploymentDebugScope(deployment) && !(deployment.kind === "consumer" && !scope)) return {}
@@ -23,11 +18,7 @@ export function deploymentDebugOverrides(deployment: ActiveDeployment): {
     const value = engine.settings.get(key)
     return typeof value === "string" ? value.trim() || undefined : undefined
   }
-  return {
-    core: read(SETTINGS.cloud_core_url.key),
-    store: read(SETTINGS.cloud_store_url.key),
-    runtime: read(SETTINGS.cloud_runtime_url.key),
-  }
+  return {core: read(SETTINGS.cloud_core_url.key), runtime: read(SETTINGS.cloud_runtime_url.key)}
 }
 
 export function resolveDeploymentManifest(deployment: ActiveDeployment): DeploymentManifest {
@@ -38,21 +29,10 @@ export function resolveDeploymentManifest(deployment: ActiveDeployment): Deploym
     const host = devServerHost()
     return host ? `http://${host}:${port}` : baseline
   }
-  const coreUrl = resolve(overrides.core, deployment.manifest.services.coreUrl, 3000)
-  // A Core override moves the whole identity environment, so Store follows it
-  // rather than stranding on the manifest baseline. A Store override still wins,
-  // and an override that resolved to nothing leaves the manifest untouched.
-  const coreMoved = Boolean(coreUrl) && coreUrl !== deployment.manifest.services.coreUrl
-  const storeUrl = overrides.store
-    ? resolve(overrides.store, deployment.manifest.services.storeUrl ?? null, 3003)
-    : coreMoved
-      ? deriveStoreUrl(coreUrl!)
-      : deployment.manifest.services.storeUrl
   return {
     ...deployment.manifest,
     services: {
-      coreUrl,
-      storeUrl,
+      coreUrl: resolve(overrides.core, deployment.manifest.services.coreUrl, 3000),
       runtimeUrl: resolve(overrides.runtime, deployment.manifest.services.runtimeUrl, 3001),
     },
   }
@@ -60,7 +40,6 @@ export function resolveDeploymentManifest(deployment: ActiveDeployment): Deploym
 
 const CLEARED_DEBUG_OVERRIDES = {
   [SETTINGS.cloud_core_url.key]: "",
-  [SETTINGS.cloud_store_url.key]: "",
   [SETTINGS.cloud_runtime_url.key]: "",
   [SETTINGS.cloud_url_deployment.key]: "",
   [SETTINGS.ota_version_url.key]: "",
@@ -98,12 +77,10 @@ export async function withClearedDeploymentDebugOverrides(commit: () => void): P
 
 export async function saveDeploymentCloudOverrides(
   deployment: ActiveDeployment,
-  urls: {core: string; store?: string; runtime: string},
+  urls: {core: string; runtime: string},
 ): Promise<void> {
   const result = await engine.settings.setManyLocal({
     [SETTINGS.cloud_core_url.key]: urls.core,
-    // Omitted means "follow Core", which is exactly what an empty override does.
-    [SETTINGS.cloud_store_url.key]: urls.store ?? "",
     [SETTINGS.cloud_runtime_url.key]: urls.runtime,
     [SETTINGS.cloud_url_deployment.key]: deploymentDebugScope(deployment),
     [SETTINGS.cached_required_version.key]: "",

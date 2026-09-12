@@ -26,12 +26,10 @@ export interface IslandAuth {
 export interface IslandConfigValues {
   /** cloud-v2 core service base URL (defaults resolved by the cloud client). */
   coreUrl?: string | null
-  /** Independently deployed Mentra Miniapp Store backend URL; derived from Core when omitted. */
-  storeUrl?: string | null
   /** cloud-v2 runtime service base URL. */
   runtimeUrl?: string | null
   /** Host's live manifest/override resolver, also used on automatic reconnects. */
-  resolveCloudEndpoints?: () => {core: string; store?: string; runtime: string}
+  resolveCloudEndpoints?: () => {core: string; runtime: string}
   /** Scope for debug settings written through engine.dev. */
   cloudDebugScope?: string
   /** Open Runtime's live WebSocket/audio session. Defaults to true. */

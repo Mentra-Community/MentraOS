@@ -454,6 +454,9 @@ export class StoreController {
         version: app.release.version,
         bundleUrl: app.release.bundleUrl,
         bundleSha256: app.release.bundleSha256,
+        // Our own Store credential. The host attaches it to the download and
+        // never mints one of its own, so it needs no Store address to trust.
+        bundleAuthorization: await this.session.auth.getToken(),
         ...(app.release.minHostVersion ? {minHostVersion: app.release.minHostVersion} : {}),
         ...(app.release.sdkVersion ? {sdkVersion: app.release.sdkVersion} : {}),
         hardwareRequirements: app.release.hardwareRequirements,

@@ -134,8 +134,6 @@ export function validateDeploymentManifest(
     throw new DeploymentResolutionError("This workspace does not configure Runtime.", "invalid-manifest")
   }
   secureServiceBaseUrl(manifest.services.coreUrl, allowInsecureLocalhost)
-  // Store is a Core-side service, so it may live off-origin like Core does.
-  if (manifest.services.storeUrl) secureServiceBaseUrl(manifest.services.storeUrl, allowInsecureLocalhost)
   const runtimeOrigin = secureServiceBaseUrl(manifest.services.runtimeUrl, allowInsecureLocalhost)
   if (runtimeOrigin !== workspaceOrigin) {
     throw new DeploymentResolutionError(
@@ -330,7 +328,6 @@ async function expoStreamingFetch(input: RequestInfo | URL, init?: RequestInit):
 function allConfiguredUrls(manifest: DeploymentManifest): string[] {
   return [
     manifest.services.coreUrl,
-    manifest.services.storeUrl ?? null,
     manifest.services.runtimeUrl,
     manifest.branding?.logoUrls.light ?? null,
     manifest.branding?.logoUrls.dark ?? null,

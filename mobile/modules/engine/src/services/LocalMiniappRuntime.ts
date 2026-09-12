@@ -46,7 +46,6 @@ import localSttFallbackCoordinator from "./LocalSttFallbackCoordinator"
 import micStateCoordinator from "./MicStateCoordinator"
 import {BlobStore} from "./BlobStore"
 import {CloudAudioSubscriptionSync} from "./CloudAudioSubscriptionSync"
-import {resolveCoreDownloadAuthorization} from "./CoreDownloadAuthorization"
 import {phoneCameraFovCoordinator} from "./PhoneCameraFovCoordinator"
 import {phonePhotoCoordinator} from "./PhonePhotoCoordinator"
 import {phoneStreamCoordinator} from "./PhoneStreamCoordinator"
@@ -5420,6 +5419,11 @@ class LocalMiniappRuntime {
     const version = typeof payload.version === "string" ? payload.version.trim() : ""
     const bundleUrl = typeof payload.bundleUrl === "string" ? payload.bundleUrl.trim() : ""
     const bundleSha256 = typeof payload.bundleSha256 === "string" ? payload.bundleSha256.toLowerCase() : ""
+    // The Store's own backend credential. The host forwards it untouched: it
+    // does not mint it, cannot read it, and keeps no Store address to check it
+    // against — entitlement belongs to the Store, integrity to the host.
+    const bundleAuthorization =
+      typeof payload.bundleAuthorization === "string" ? payload.bundleAuthorization.trim() : undefined
     const minHostVersion = typeof payload.minHostVersion === "string" ? payload.minHostVersion.trim() : undefined
     const sdkVersion = typeof payload.sdkVersion === "string" ? payload.sdkVersion.trim() : undefined
     const packageNamePattern = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/
@@ -5500,12 +5504,11 @@ class LocalMiniappRuntime {
         miniappLauncher,
         target,
         async () => {
-          const downloadAuthorization = await resolveCoreDownloadAuthorization(bundleUrl, cloudClientService)
           const installed = await appRegistry.installFromUrl(bundleUrl, {
             expectedPackageName: target,
             expectedVersion: version,
             expectedBundleSha256: bundleSha256,
-            downloadAuthorization,
+            ...(bundleAuthorization ? {bundleAuthorization} : {}),
             compatibilityPolicy: {
               hostVersion,
               supportedSdkRange: supportedMiniappSdkRange,

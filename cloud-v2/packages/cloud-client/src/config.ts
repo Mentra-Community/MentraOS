@@ -23,7 +23,7 @@ export interface CloudClientConfig {
   // `core` is optional only for runtime-only deployments. If `auth.core` is set,
   // or if `auth.runtime.source` is `"core"`, this must be present; Core/Auth
   // calls are never routed to Runtime.
-  endpoints: {core?: string; store?: string; runtime: string; proxy?: string}
+  endpoints: {core?: string; runtime: string; proxy?: string}
   auth: AuthConfig
   transports: CloudClientTransports
   /**

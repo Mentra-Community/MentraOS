@@ -188,6 +188,7 @@ describe("StoreController refresh serialization", () => {
         : []
     const session = {
       auth: {
+        getToken: async () => "store-token",
         getCoreUrl: async () => "https://core.dev.us-west-2.mentraglass.com",
         fetch: async (url: string) => {
           const parsed = new URL(url)
@@ -268,6 +269,7 @@ describe("StoreController refresh serialization", () => {
     })
     const loadCalls: Array<{clearOperation: boolean; query?: string}> = []
     const session = {
+      auth: {getToken: async () => "store-token"},
       miniapps: {
         install: async () => undefined,
       },
@@ -360,6 +362,7 @@ describe("StoreController refresh serialization", () => {
   test("carries beta through the host install descriptor", async () => {
     let descriptor: Record<string, unknown> | undefined
     const session = {
+      auth: {getToken: async () => "store-token"},
       miniapps: {
         install: async (input: Record<string, unknown>) => {
           descriptor = input
@@ -384,6 +387,8 @@ describe("StoreController refresh serialization", () => {
     } as unknown as StoreApp)
 
     expect(descriptor).toMatchObject({releaseId: "release-beta", channel: "beta"})
+    // The Store, not the host, authorizes its own downloads.
+    expect(descriptor).toMatchObject({bundleAuthorization: "store-token"})
   })
 
   test("rejects failed mutations after publishing the error snapshot", async () => {

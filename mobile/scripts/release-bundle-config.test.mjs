@@ -83,7 +83,6 @@ test("assertBundleEnvironment accepts expected nonempty runtime values", () => {
   const env = {
     EXPO_PUBLIC_ASG_OTA_VERSION_URL: "https://example.test/pin.json",
     EXPO_PUBLIC_BUILD_COMMIT: "abc1234",
-    EXPO_PUBLIC_CLOUD_STORE_URL: "https://store.example.test",
     EXPO_PUBLIC_SENTRY_DSN: "",
   }
   const bundle = Buffer.from("prefix https://example.test/pin.json abc1234 https://store.example.test suffix")

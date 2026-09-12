@@ -66,6 +66,13 @@ export interface InstallMiniappRequest {
   version: string
   bundleUrl: string
   bundleSha256: string
+  /**
+   * Bearer for `bundleUrl`, when the Store's backend requires one. The host
+   * forwards it untouched and keeps no Store address of its own: entitlement is
+   * settled between this miniapp and its backend, integrity by the SHA-256 and
+   * the bundle's publisher signature.
+   */
+  bundleAuthorization?: string
   /** Minimum Mentra App/host version declared by the release manifest. */
   minHostVersion?: string
   /** Mentra Miniapp SDK ABI version declared by the release manifest. */
