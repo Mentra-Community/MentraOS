@@ -11,7 +11,14 @@ const credentials = {
   storedAt: new Date(0).toISOString(),
 };
 
-afterEach(() => mock.restore());
+// `mock.restore()` only reverts spies; it leaves a plain `globalThis.fetch = ...`
+// assignment in place, so without this the mocked fetch below escapes into every
+// test file that happens to run after this one in the same process.
+const realFetch = globalThis.fetch;
+afterEach(() => {
+  mock.restore();
+  globalThis.fetch = realFetch;
+});
 
 describe("createRelease", () => {
   test("uploads the bundle as multipart instead of base64 JSON", async () => {
