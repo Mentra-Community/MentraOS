@@ -853,7 +853,12 @@ class OtaInstallCoordinator {
       // suppress ota_start and hang the fresh downgrade until the global timeout).
       this.otaStartOwnership?.outcome === "acknowledged" &&
       otaStatus?.stepType === "apk" &&
-      otaStatus.phase === "install"
+      otaStatus.phase === "install" &&
+      // Only a live install arms the latch. A terminal failed status keeps stepType/phase
+      // apk/install and stays in the store, so without this gate every later pass (any
+      // unrelated store change) would re-arm the latch and the non-ownership block below
+      // would release it again, flooding the log with paired enter/release lines.
+      otaStatus.status === "in_progress"
     ) {
       console.log("[OTA_PROGRESS] version-change: apk install started — entering detour wait")
       this.versionChangeInstallStarted = true

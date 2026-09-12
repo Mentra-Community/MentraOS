@@ -17,6 +17,7 @@ import org.greenrobot.eventbus.EventBus;
 import org.greenrobot.eventbus.Subscribe;
 import org.greenrobot.eventbus.ThreadMode;
 import com.mentra.asg_client.AsgConstants;
+import com.mentra.asg_client.RecoveryWorkerManager;
 import com.mentra.asg_client.events.BatteryStatusEvent;
 import com.mentra.asg_client.io.ota.events.DownloadProgressEvent;
 import com.mentra.asg_client.io.ota.events.InstallationProgressEvent;
@@ -1225,8 +1226,8 @@ public class OtaHelper {
             currentUpdateStage = "install";
             sendProgressToPhone("install", 0, 0, 0, "STARTED", null);
 
-            Intent handoff = new Intent(OtaConstants.RECOVERY_REQUEST_DOWNGRADE);
-            handoff.setPackage(OtaConstants.RECOVERY_PACKAGE);
+            Intent handoff =
+                    RecoveryWorkerManager.newRecoveryIntent(OtaConstants.RECOVERY_REQUEST_DOWNGRADE);
             handoff.putExtra(OtaConstants.EXTRA_DOWNGRADE_TARGET_VERSION, targetVersion);
             handoff.putExtra(OtaConstants.EXTRA_DOWNGRADE_APK_PATH, apkFile.getAbsolutePath());
             handoff.putExtra(OtaConstants.EXTRA_DOWNGRADE_APK_SHA256, expectedSha);
@@ -1530,15 +1531,15 @@ public class OtaHelper {
         if (!isAsgClientApk(pm, apkPath)) {
             return;
         }
-        Intent intent = new Intent(OtaConstants.RECOVERY_INSTALL_IN_PROGRESS);
-        intent.setPackage(OtaConstants.RECOVERY_PACKAGE);
+        Intent intent =
+                RecoveryWorkerManager.newRecoveryIntent(OtaConstants.RECOVERY_INSTALL_IN_PROGRESS);
         context.sendBroadcast(intent, OtaConstants.RECOVERY_CONTROL_PERMISSION);
         Log.d(TAG, "Notified recovery worker: install in progress");
     }
 
     public static void notifyRecoveryInstallCompleted(Context context) {
-        Intent intent = new Intent(OtaConstants.RECOVERY_INSTALL_COMPLETED);
-        intent.setPackage(OtaConstants.RECOVERY_PACKAGE);
+        Intent intent =
+                RecoveryWorkerManager.newRecoveryIntent(OtaConstants.RECOVERY_INSTALL_COMPLETED);
         context.sendBroadcast(intent, OtaConstants.RECOVERY_CONTROL_PERMISSION);
         Log.d(TAG, "Notified recovery worker: install completed");
     }

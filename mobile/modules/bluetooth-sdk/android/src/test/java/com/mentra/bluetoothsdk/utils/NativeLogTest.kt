@@ -58,4 +58,19 @@ class NativeLogTest {
             Bridge.removeEventSink(healthy)
         }
     }
+
+    @Test
+    fun audioPayloadEventsAreNotTracedIntoTheLogStream() {
+        val events = mutableListOf<String>()
+        val sink = Bridge.addEventSink { type, _ -> events.add(type) }
+        try {
+            Bridge.sendTypedMessage("mic_pcm", mapOf("pcm" to ByteArray(320)))
+            Bridge.sendTypedMessage("mic_lc3", mapOf("lc3" to ByteArray(60)))
+            // Tracing these would emit a second bridge event per audio frame, and each one
+            // pins a JNI global reference until JavaScript drains it.
+            assertEquals(listOf("mic_pcm", "mic_lc3"), events)
+        } finally {
+            Bridge.removeEventSink(sink)
+        }
+    }
 }

@@ -14,10 +14,12 @@ import {useMarkdown, type MarkedStyles, type useMarkdownHookOptions} from "react
 import {SafeAreaView} from "react-native-safe-area-context"
 import Svg, {Path, Rect} from "react-native-svg"
 
+import {OTA_ERROR_ENGLISH_COPY} from "../services/OtaErrorMapping"
 import {
   MINIMUM_OTA_BATTERY_LEVEL,
   useMentraLiveOta,
   type MentraLiveOtaController,
+  type MentraLiveOtaError,
   type MentraLiveOtaFlowPage,
 } from "./useMentraLiveOta"
 
@@ -142,6 +144,8 @@ const ENGLISH_COPY: Record<string, string> = {
   "ota:versionChangeFirmwarePassComplete": "Firmware updated",
   "ota:versionChangeFirmwarePassCompleteMessage":
     "Your glasses restarted with new firmware. One more step: they'll now continue to the required version.",
+  "ota:updateFailed": "Update Failed",
+  ...OTA_ERROR_ENGLISH_COPY,
 }
 
 const componentCopyKey = {
@@ -150,8 +154,17 @@ const componentCopyKey = {
   bes: "ota:componentBes",
 } as const
 
+/**
+ * Copy for the failed screen: the translated copy key when the failure maps to one,
+ * otherwise the engine's English message (phone-side watchdog and preflight text).
+ */
+function failureMessage(error: MentraLiveOtaError | null, translate: MentraLiveOtaFlowTranslate): string {
+  if (!error) return translate("ota:errorGeneric")
+  return error.copyKey ? translate(error.copyKey) : error.message
+}
+
 function defaultTranslate(key: string, options?: Record<string, string>): string {
-  let value = ENGLISH_COPY[key] ?? key
+  let value = Object.prototype.hasOwnProperty.call(ENGLISH_COPY, key) ? ENGLISH_COPY[key] : key
   for (const [name, replacement] of Object.entries(options ?? {})) {
     value = value.replaceAll(`{{${name}}}`, replacement)
   }
@@ -559,8 +572,13 @@ function OtaFlowContent({
         }
         colors={colors}
         icon="alert"
-        title="Update Failed">
-        <BodyText colors={colors}>{state.error?.message}</BodyText>
+        title={translate("ota:updateFailed")}>
+        <BodyText colors={colors}>{failureMessage(state.error, translate)}</BodyText>
+        {state.error?.glassesCode ? (
+          <Text style={[styles.errorCode, {color: colors.textDim}]} testID="ota-error-code">
+            {translate("ota:errorCode", {code: state.error.glassesCode})}
+          </Text>
+        ) : null}
       </FlowPage>
     )
   }
@@ -810,6 +828,7 @@ const styles = StyleSheet.create({
   icon: {fontSize: 64, fontWeight: "500", lineHeight: 72, textAlign: "center"},
   title: {fontSize: 20, fontWeight: "600", textAlign: "center"},
   body: {fontSize: 14, lineHeight: 20, maxWidth: 420, textAlign: "center"},
+  errorCode: {fontSize: 12, fontVariant: ["tabular-nums"], lineHeight: 16, opacity: 0.7, textAlign: "center"},
   percent: {fontSize: 30, fontVariant: ["tabular-nums"], fontWeight: "700"},
   progressTrack: {borderRadius: 4, height: 8, maxWidth: 420, overflow: "hidden", width: "100%"},
   progressFill: {borderRadius: 4, height: 8},

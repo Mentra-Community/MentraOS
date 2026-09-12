@@ -14,7 +14,9 @@ import {
 } from "../services/OtaAutoChain"
 import {
   BES_INSTALL_RESTART_MESSAGE,
+  OTA_ERROR_BES_RESTART_REQUIRED_COPY_KEY,
   getOtaErrorMessage,
+  otaErrorCopyKey,
   shouldRequireGlassesRebootForBesFailure,
   shouldShowChangeWifiForOtaDownloadFailure,
 } from "../services/OtaErrorMapping"
@@ -54,7 +56,19 @@ export type MentraLiveOtaErrorCode =
 
 export type MentraLiveOtaError = {
   code: MentraLiveOtaErrorCode
+  /** English copy for hosts without localization. */
   message: string
+  /**
+   * Copy key for `message` when the failure maps to known copy, so localized hosts can
+   * translate it. Null for phone-side watchdog and preflight messages, which are English-only.
+   * Optional so host code that builds this type by hand keeps compiling; the hook always sets it.
+   */
+  copyKey?: string | null
+  /**
+   * Raw failure code reported by the glasses (`ota_status.error`), for support. Null when the
+   * failure originated on the phone. Optional for the same source-compatibility reason.
+   */
+  glassesCode?: string | null
 }
 
 export type MentraLiveOtaTransport = "wifi" | "hotspot"
@@ -680,9 +694,16 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
         error = {
           code: "check_failed",
           message: "Couldn't check for updates. Please check your connection and try again.",
+          copyKey: "ota:checkFailedMessage",
+          glassesCode: null,
         }
       } else if (screen === "update_info_unavailable") {
-        error = {code: "update_info_unavailable", message: "Update information for this app version is unavailable."}
+        error = {
+          code: "update_info_unavailable",
+          message: "Update information for this app version is unavailable.",
+          copyKey: "ota:updateInfoUnavailableMessage",
+          glassesCode: null,
+        }
       }
       return {
         screen,
@@ -745,16 +766,33 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
       installSnapshot.otaProgress,
       installSnapshot.errorMsg,
     )
-    const displayedError = requiresGlassesReboot
-      ? BES_INSTALL_RESTART_MESSAGE
-      : installSnapshot.errorMsg || getOtaErrorMessage(installSnapshot.otaStatus?.error)
+    // The raw code the glasses attached to their failure report, kept for support even when
+    // phone-side copy outranks it. Only a failed ota_status carries a current code.
+    const glassesCode = installSnapshot.otaStatus?.status === "failed" ? installSnapshot.otaStatus.error || null : null
+    // Precedence mirrors the legacy screen: the BES restart instruction, then a phone-side
+    // watchdog/preflight message (English-only, no copy key), then the glasses code mapped to
+    // copy (unknown codes get the generic glasses-error copy rather than the raw code).
+    let displayedError: string
+    let copyKey: string | null
+    if (requiresGlassesReboot) {
+      displayedError = BES_INSTALL_RESTART_MESSAGE
+      copyKey = OTA_ERROR_BES_RESTART_REQUIRED_COPY_KEY
+    } else if (installSnapshot.errorMsg) {
+      displayedError = installSnapshot.errorMsg
+      copyKey = null
+    } else {
+      displayedError = getOtaErrorMessage(glassesCode)
+      copyKey = otaErrorCopyKey(glassesCode)
+    }
     const progressState = progressScreen(installSnapshot)
     const screen = progressState === "complete" && autoChainActive ? "finishing" : progressState
-    const error =
+    const error: MentraLiveOtaError | null =
       screen === "failed"
         ? {
-            code: requiresGlassesReboot ? ("bes_restart_required" as const) : ("install_failed" as const),
+            code: requiresGlassesReboot ? "bes_restart_required" : "install_failed",
             message: displayedError,
+            copyKey,
+            glassesCode,
           }
         : null
     const totalSteps = installSnapshot.otaStatus?.totalSteps ?? null
