@@ -198,6 +198,7 @@ final class AcsMeetingSession {
     private var preparedToken: String?
     private var pendingJoin: ((Result<[String: Any], Error>) -> Void)?
     private var pendingPrepare: ((Result<[String: Any], Error>) -> Void)?
+    private var cancelPendingCallJoin: (() -> Void)?
     private let cleanup = DispatchGroup()
     private let pcmSlots = DispatchSemaphore(value: 8)
     private var frameSender = AcsFrameSender()
@@ -428,16 +429,23 @@ final class AcsMeetingSession {
         joinOptions.incomingAudioOptions = incomingAudio
 
         let locator = TeamsMeetingLinkLocator(meetingLink: meetingUrl)
-        // Acquisition is generation-scoped, not a teardown barrier. On cancellation the
-        // owning agent is disposed synchronously, even if ACS never returns this callback.
+        // Cancellation reserves cleanup and retains the agent until the late join result
+        // can be hung up. The retirement deadline still handles an SDK callback that is lost.
+        let joinRetirement = CallJoinRetirement<Call>(group: cleanup, queue: queue, dispose: { agent.dispose() }) { call, finished in
+            call.hangUp(options: nil) { error in
+                if let error { NSLog("ACS-SPIKE cancelled join hangUp failed: \(error)") }
+                finished()
+            }
+        }
+        cancelPendingCallJoin = { joinRetirement.cancel() }
         agent.join(with: locator, joinCallOptions: joinOptions) { call, error in
             self.queue.async {
+                guard joinRetirement.receive(call) else { return }
                 guard self.callAgent === agent, self.joinGeneration == generation else {
-                    // leaveLocked already disposed this attempt's agent. A late call must
-                    // never enter the current attempt's cleanup group or install media.
                     call?.hangUp(options: nil) { _ in }
                     return
                 }
+                self.cancelPendingCallJoin = nil
                 if let error {
                     self.failJoinLocked(error, generation: generation)
                     return
@@ -786,6 +794,8 @@ final class AcsMeetingSession {
         frameSender.detach()
         let leavingCall = call
         let leavingAgent = callAgent
+        let cancelJoin = cancelPendingCallJoin
+        cancelPendingCallJoin = nil
         leavingCall?.delegate = nil
         if let leavingCall {
             // CallAgent.dispose releases all local SDK resources. The retirement deadline
@@ -797,9 +807,11 @@ final class AcsMeetingSession {
                     retirement.finish()
                 }
             }
+        } else if let cancelJoin {
+            // Keep the agent alive while awaiting the cancelled join and its hang-up.
+            cancelJoin()
         } else {
-            // Also cancels a join whose callback has not arrived. Agent creation itself has
-            // no call to retire; its generation-checked callback disposes any late agent.
+            // Agent creation has no call to retire; its callback disposes any late agent.
             leavingAgent?.dispose()
         }
         callAgent = nil

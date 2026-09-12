@@ -3,6 +3,61 @@ import Foundation
 import XCTest
 
 final class CallAgentRetirementTests: XCTestCase {
+  func testCancelledJoinWithNoCallbackStillRetiresAtDeadline() {
+    let queue = DispatchQueue(label: "retirement.missing-join")
+    let group = DispatchGroup()
+    var disposals = 0
+    queue.sync {
+      let join = CallJoinRetirement<Int>(group: group, queue: queue, timeout: 0.01, dispose: { disposals += 1 }) { _, _ in
+        XCTFail("No call was returned to hang up")
+      }
+      join.cancel()
+      XCTAssertEqual(group.wait(timeout: .now()), .timedOut)
+    }
+    XCTAssertEqual(group.wait(timeout: .now() + 1), .success)
+    queue.sync { XCTAssertEqual(disposals, 1) }
+  }
+
+  func testSuccessfulJoinTransfersOwnershipWithoutDisposal() {
+    let queue = DispatchQueue(label: "retirement.successful-join")
+    let group = DispatchGroup()
+    queue.sync {
+      let join = CallJoinRetirement<Int>(group: group, queue: queue, dispose: { XCTFail("Session owns this agent") }) { _, _ in
+        XCTFail("Session owns this call")
+      }
+      XCTAssertTrue(join.receive(42))
+      join.cancel()
+      XCTAssertEqual(group.wait(timeout: .now()), .success)
+    }
+  }
+
+  func testCancelledJoinRetainsAgentUntilLateCallFinishesHangingUp() {
+    let queue = DispatchQueue(label: "retirement.cancelled-join")
+    let group = DispatchGroup()
+    let joinReturned = expectation(description: "cancelled join returned a call")
+    var disposals = 0
+    var hangUpCompleted: (() -> Void)?
+    queue.sync {
+      let join = CallJoinRetirement<Int>(group: group, queue: queue, dispose: { disposals += 1 }) { call, finished in
+        XCTAssertEqual(call, 42)
+        XCTAssertEqual(disposals, 0)
+        hangUpCompleted = finished
+        joinReturned.fulfill()
+      }
+      join.cancel()
+      join.cancel()
+      XCTAssertFalse(join.receive(42))
+    }
+    wait(for: [joinReturned], timeout: 1)
+    queue.sync {
+      XCTAssertEqual(group.wait(timeout: .now()), .timedOut)
+      XCTAssertEqual(disposals, 0)
+      hangUpCompleted?()
+    }
+    XCTAssertEqual(group.wait(timeout: .now() + 1), .success)
+    queue.sync { XCTAssertEqual(disposals, 1) }
+  }
+
   func testMissingHangUpCallbackDisposesAgentBeforeUnblockingLeave() {
     let queue = DispatchQueue(label: "retirement.timeout")
     let group = DispatchGroup()
