@@ -1,0 +1,6 @@
+/android/.gradle/
+/android/build/
+/ios/build/
+/ios/Pods/
+/ios/CoreKit/.build/
+/ios/CoreKit/.swiftpm/

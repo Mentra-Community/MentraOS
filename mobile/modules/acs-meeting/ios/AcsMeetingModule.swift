@@ -3,60 +3,104 @@ import AzureCommunicationCalling
 import AzureCommunicationCommon
 import ExpoModulesCore
 import Foundation
+import GlassesMedia
 
 public class AcsMeetingModule: Module {
     private var session: AcsMeetingSession?
+    private let hotspot = GlassesHotspotNetwork()
+
+    private func meetingSession() -> AcsMeetingSession {
+        if let session { return session }
+        let session = AcsMeetingSession(
+            onState: { [weak self] state in self?.sendEvent("onState", state) },
+            onIncomingPcm: { [weak self] base64, rate, channels in
+                self?.sendEvent("onIncomingPcm", ["base64": base64, "sampleRate": rate, "channels": channels])
+            }
+        )
+        self.session = session
+        return session
+    }
 
     public func definition() -> ModuleDefinition {
         Name("MentraAcsMeeting")
-        Events("onState", "onIncomingPcm")
+        Events("onState", "onIncomingPcm", "onScopedNetworkLost")
 
-        AsyncFunction("join") { (options: [String: Any]) in
+        AsyncFunction("prepareAgent") { (options: [String: Any], promise: Promise) in
+            let token = try requireString(options, "token")
+            self.meetingSession().prepareAgent(token: token, displayName: options["displayName"] as? String) { result in
+                switch result {
+                case let .success(state): promise.resolve(state)
+                case let .failure(error): promise.reject(error)
+                }
+            }
+        }
+
+        AsyncFunction("join") { (options: [String: Any], promise: Promise) in
             let token = try requireString(options, "token")
             let meetingUrl = try requireString(options, "meetingUrl")
-            let whepUrl = try requireWhepUrl(options)
-            let displayName = options["displayName"] as? String
-            let dumpWav = options["dumpPcmWav"] as? Bool ?? false
-            let audioSource = options["audioSource"] as? String ?? "glasses"
+            let source = try parseMediaSource(options)
+            if source.kind == .softap, source.bindAddress != GlassesHotspotNetwork.wifiAddress() {
+                throw AcsMeetingError("The glasses hotspot address changed before join")
+            }
             let video = try parseAcsOutgoingVideo(options["video"])
-            let meeting = self.session ?? AcsMeetingSession(
-                onState: { [weak self] state in self?.sendEvent("onState", state) },
-                onIncomingPcm: { [weak self] base64, rate, channels in
-                    self?.sendEvent("onIncomingPcm", ["base64": base64, "sampleRate": rate, "channels": channels])
+            self.meetingSession().join(
+                token: token, meetingUrl: meetingUrl, sourceConfig: source,
+                displayName: options["displayName"] as? String,
+                dumpWav: options["dumpPcmWav"] as? Bool ?? false,
+                audioSource: options["audioSource"] as? String ?? "glasses", video: video
+            ) { result in
+                switch result {
+                case let .success(state): promise.resolve(state)
+                case let .failure(error): promise.reject(error)
                 }
-            )
-            self.session = meeting
-            try meeting.join(token: token, meetingUrl: meetingUrl, whepUrl: whepUrl, displayName: displayName, dumpWav: dumpWav, audioSource: audioSource, video: video)
-            return meeting.snapshot()
+            }
         }
 
-        /// Refuses rather than no-ops. A silent success here would let the orchestrator go on to an ACS
-        /// join and a glasses publish that have no network to meet on, which surfaces as a black tile
-        /// several steps later instead of as the unsupported transport it is.
-        AsyncFunction("joinScopedNetwork") { (_: String, _: String) -> String in
-            throw NSError(
-                domain: "MentraAcsMeeting",
-                code: 2,
-                userInfo: [
-                    NSLocalizedDescriptionKey:
-                        "NOT_IMPLEMENTED: SoftAP calling is Android-only; iOS cannot join the glasses hotspot as a scoped network",
-                ]
-            )
+        AsyncFunction("joinScopedNetwork") { (ssid: String, passphrase: String, promise: Promise) in
+            self.hotspot.onLost = { [weak self] reason in
+                self?.sendEvent("onScopedNetworkLost", ["code": "SOFTAP_LOST", "message": reason])
+            }
+            self.hotspot.join(ssid: ssid, passphrase: passphrase) { result in
+                switch result {
+                case let .success(address): promise.resolve(address)
+                case let .failure(error): promise.reject(error)
+                }
+            }
         }
 
-        AsyncFunction("leaveScopedNetwork") {
-            // Nothing was ever joined, so releasing is a no-op rather than an error: teardown must stay
-            // safe to run after a failed start.
+        AsyncFunction("leaveScopedNetwork") { (promise: Promise) in
+            self.hotspot.leave { promise.resolve(nil) }
         }
 
-        AsyncFunction("probeScopedGateway") { () -> [String: Any] in
-            // No scoped network exists on iOS, so there is nothing to probe. Report it as such rather
-            // than as unreachable, which the orchestrator would read as a live network failure.
-            ["reachable": false, "detail": "no scoped network on iOS"]
+        AsyncFunction("beginTrace") { (traceId: String) in
+            NSLog("SOFTAP_TRACE trace=\(traceId) stage=ios_begin")
         }
 
-        AsyncFunction("leave") {
-            self.session?.leave()
+        AsyncFunction("probeScopedGateway") { (promise: Promise) in
+            self.hotspot.probeGateway { reachable, detail in
+                promise.resolve(["reachable": reachable, "detail": detail])
+            }
+        }
+
+        AsyncFunction("awaitValidatedDefaultNetwork") { (promise: Promise) in
+            self.hotspot.awaitInternet { usable, detail in
+                promise.resolve(["usable": usable, "detail": detail, "transport": usable ? "cellular" : "unknown", "validated": usable, "present": usable])
+            }
+        }
+
+        AsyncFunction("leave") { (promise: Promise) in
+            guard let session = self.session else { promise.resolve(nil); return }
+            session.leaveAndAwait(timeout: 30) { completed in
+                if completed { promise.resolve(nil) }
+                else { promise.reject(AcsMeetingError("Previous call cleanup is still pending")) }
+            }
+        }
+
+        AsyncFunction("leaveAndAwait") { (options: [String: Any], promise: Promise) in
+            guard let session = self.session else { promise.resolve(["completed": true]); return }
+            session.leaveAndAwait(timeout: Double(options["timeoutMs"] as? Int ?? 30000) / 1000) { completed in
+                promise.resolve(["completed": completed])
+            }
         }
 
         AsyncFunction("endForEveryone") { (promise: Promise) in
@@ -79,11 +123,8 @@ public class AcsMeetingModule: Module {
             }
         }
 
-        AsyncFunction("scopedNetworkInfo") { () -> [String: Any?] in
-            // No scoped network on iOS, so there is no prefix for the ICE-path proof to check
-            // against. Reported as unavailable rather than as an empty prefix, which the proof
-            // would read as "could not describe the network" on a platform that has none.
-            ["available": false, "localIpv4": nil, "prefix": nil]
+        AsyncFunction("scopedNetworkInfo") { (promise: Promise) in
+            self.hotspot.info { promise.resolve($0) }
         }
 
         AsyncFunction("setMuted") { (muted: Bool) in
@@ -109,6 +150,8 @@ public class AcsMeetingModule: Module {
         OnDestroy {
             self.session?.leave()
             self.session = nil
+            self.hotspot.onLost = nil
+            self.hotspot.leave {}
         }
     }
 }
@@ -148,7 +191,16 @@ final class AcsMeetingSession {
     private var callClient: CallClient?
     private var callAgent: CallAgent?
     private var call: Call?
-    private var whep: WhepVideoSource?
+    private var media: DecodedGlassesMediaSource?
+    private var sourceConfig = SourceConfig(url: "")
+    private var preparedAgent: CallAgent?
+    private var preparedClient: CallClient?
+    private var preparedToken: String?
+    private var pendingJoin: ((Result<[String: Any], Error>) -> Void)?
+    private var pendingPrepare: ((Result<[String: Any], Error>) -> Void)?
+    private var cancelPendingCallJoin: (() -> Void)?
+    private let cleanup = DispatchGroup()
+    private let pcmSlots = DispatchSemaphore(value: 8)
     private var frameSender = AcsFrameSender()
     private var pcmBridge: PcmBridge?
     private var audioOut: RawOutgoingAudioStream?
@@ -201,68 +253,103 @@ final class AcsMeetingSession {
             hangUp["reason"] = capability.reason
         }
         result["capabilities"] = ["hangUpForEveryone": hangUp]
+        if let ingestUrl = media?.ingestUrl { result["ingestUrl"] = ingestUrl }
         if let meetingUrl { result["meetingUrl"] = meetingUrl }
         if let lastError { result["error"] = lastError }
         return result
     }
 
-    func join(token: String, meetingUrl: String, whepUrl: String, displayName: String?, dumpWav: Bool, audioSource: String = "glasses", video: AcsOutgoingVideo = .hd) throws {
-        // Both glasses and phone feed RawOutgoingAudioStream so ACS never owns the
-        // phone audio route. Phone PCM comes from AVAudioEngine; glasses via WHEP.
-        let parsed = AcsAudioPolicy.parseSource(audioSource) ?? .glasses
-        if parsed == .phone {
-            NSLog("ACS-SPIKE audioSource=phone: input tap → virtual outgoing; voice-chat session off")
-        }
-        self.audioSource = parsed == .phone ? "phone" : "glasses"
-        // The ACS work below is queued; reflect the intent synchronously so the
-        // resolved snapshot reads "connecting" rather than a stale idle.
-        phase = "connecting"
-        lastError = nil
-        self.meetingUrl = meetingUrl
-        queue.async { [weak self] in
-            guard let self else { return }
+    func prepareAgent(token: String, displayName: String?, completion: @escaping (Result<[String: Any], Error>) -> Void) {
+        queue.async {
+            guard self.cleanup.wait(timeout: .now()) == .success, self.pendingPrepare == nil, self.pendingJoin == nil, self.call == nil, self.media == nil else {
+                completion(.failure(AcsMeetingError("Previous call cleanup is still pending"))); return
+            }
+            self.leaveLocked()
+            let generation = self.joinGeneration
+            self.pendingPrepare = completion
             do {
-                self.leaveLocked(emitIdle: false)
-                let generation = self.joinGeneration
-                self.audioSource = parsed == .phone ? "phone" : "glasses"
-                self.meetingUrl = meetingUrl
-                self.lastError = nil
-                self.emit("connecting")
-                let credential = try CommunicationTokenCredential(token: token)
                 let client = CallClient()
-                self.callClient = client
+                self.preparedClient = client
+                let credential = try CommunicationTokenCredential(token: token)
                 let options = CallAgentOptions()
                 options.displayName = displayName ?? "Mentra Call"
-                client.createCallAgent(userCredential: credential, options: options) { [weak self, weak client] agent, error in
-                    self?.queue.async {
-                        guard let self, let client, self.callClient === client, self.joinGeneration == generation else {
+                client.createCallAgent(userCredential: credential, options: options) { agent, error in
+                    self.queue.async {
+                        guard self.joinGeneration == generation, self.pendingPrepare != nil else { agent?.dispose(); return }
+                        let reply = self.pendingPrepare
+                        self.pendingPrepare = nil
+                        if let agent, error == nil {
+                            self.preparedAgent = agent
+                            self.preparedToken = token
+                            reply?(.success(self.snapshot()))
+                        } else {
                             agent?.dispose()
-                            return
-                        }
-                        if let error {
-                            self.failJoinLocked(error, generation: generation)
-                            return
-                        }
-                        guard let agent else {
-                            self.failJoinLocked(AcsMeetingError("ACS returned no call agent"), generation: generation)
-                            return
-                        }
-                        do {
-                            try self.joinWithAgentLocked(
-                                agent,
-                                generation: generation,
-                                meetingUrl: meetingUrl,
-                                whepUrl: whepUrl,
-                                dumpWav: dumpWav,
-                                video: video
-                            )
-                        } catch {
-                            self.failJoinLocked(error, generation: generation)
+                            self.preparedClient = nil
+                            reply?(.failure(error ?? AcsMeetingError("ACS returned no call agent")))
                         }
                     }
                 }
+                self.queue.asyncAfter(deadline: .now() + 30) {
+                    guard self.joinGeneration == generation, self.pendingPrepare != nil else { return }
+                    self.leaveLocked()
+                }
             } catch {
-                self.failJoinLocked(error, generation: self.joinGeneration)
+                self.pendingPrepare = nil
+                self.preparedClient = nil
+                completion(.failure(error))
+            }
+        }
+    }
+
+    func join(token: String, meetingUrl: String, sourceConfig: SourceConfig, displayName: String?, dumpWav: Bool,
+              audioSource: String = "glasses", video: AcsOutgoingVideo = .hd,
+              completion: @escaping (Result<[String: Any], Error>) -> Void)
+    {
+        queue.async {
+            guard self.cleanup.wait(timeout: .now()) == .success, self.pendingPrepare == nil, self.pendingJoin == nil, self.call == nil, self.media == nil else {
+                completion(.failure(AcsMeetingError("Previous call cleanup is still pending"))); return
+            }
+            let prepared = self.preparedToken == token ? self.preparedAgent : nil
+            let preparedClient = self.preparedClient
+            if prepared != nil { self.preparedAgent = nil; self.preparedClient = nil; self.preparedToken = nil }
+            self.leaveLocked(emitIdle: false)
+            let generation = self.joinGeneration
+            self.pendingJoin = completion
+            self.sourceConfig = sourceConfig
+            self.audioSource = AcsAudioPolicy.parseSource(audioSource) == .phone ? "phone" : "glasses"
+            self.meetingUrl = meetingUrl
+            self.lastError = nil
+            self.emit("connecting")
+            let useAgent: (CallAgent) -> Void = { agent in
+                do { try self.joinWithAgentLocked(agent, generation: generation, meetingUrl: meetingUrl,
+                                                  sourceConfig: sourceConfig, dumpWav: dumpWav, video: video) } catch { self.failJoinLocked(error, generation: generation) }
+            }
+            if let prepared {
+                self.callClient = preparedClient
+                useAgent(prepared)
+            } else {
+                do {
+                    let credential = try CommunicationTokenCredential(token: token)
+                    let client = CallClient()
+                    self.callClient = client
+                    let options = CallAgentOptions()
+                    options.displayName = displayName ?? "Mentra Call"
+                    client.createCallAgent(userCredential: credential, options: options) { agent, error in
+                        self.queue.async {
+                            guard self.joinGeneration == generation else { agent?.dispose(); return }
+                            guard let agent, error == nil else {
+                                agent?.dispose()
+                                self.failJoinLocked(error ?? AcsMeetingError("ACS returned no call agent"), generation: generation)
+                                return
+                            }
+                            useAgent(agent)
+                        }
+                    }
+                } catch { self.failJoinLocked(error, generation: generation) }
+            }
+            self.queue.asyncAfter(deadline: .now() + 40) {
+                guard self.joinGeneration == generation, self.pendingJoin != nil else { return }
+                self.failJoinLocked(AcsMeetingError("ACS join timed out"), generation: generation)
             }
         }
     }
@@ -271,7 +358,7 @@ final class AcsMeetingSession {
         _ agent: CallAgent,
         generation: UInt64,
         meetingUrl: String,
-        whepUrl: String,
+        sourceConfig: SourceConfig,
         dumpWav: Bool,
         video: AcsOutgoingVideo
     ) throws {
@@ -285,6 +372,7 @@ final class AcsMeetingSession {
         let videoOptions = RawOutgoingVideoStreamOptions()
         videoOptions.formats = [videoFormat]
         let videoStream = VirtualOutgoingVideoStream(videoStreamOptions: videoOptions)
+        frameSender = AcsFrameSender()
         frameSender.attach(videoStream)
 
         let outAudioProperties = RawOutgoingAudioStreamProperties()
@@ -341,12 +429,23 @@ final class AcsMeetingSession {
         joinOptions.incomingAudioOptions = incomingAudio
 
         let locator = TeamsMeetingLinkLocator(meetingLink: meetingUrl)
-        agent.join(with: locator, joinCallOptions: joinOptions) { [weak self, weak agent] call, error in
-            self?.queue.async {
-                guard let self, let agent, self.callAgent === agent, self.joinGeneration == generation else {
+        // Cancellation reserves cleanup and retains the agent until the late join result
+        // can be hung up. The retirement deadline still handles an SDK callback that is lost.
+        let joinRetirement = CallJoinRetirement<Call>(group: cleanup, queue: queue, dispose: { agent.dispose() }) { call, finished in
+            call.hangUp(options: nil) { error in
+                if let error { NSLog("ACS-SPIKE cancelled join hangUp failed: \(error)") }
+                finished()
+            }
+        }
+        cancelPendingCallJoin = { joinRetirement.cancel() }
+        agent.join(with: locator, joinCallOptions: joinOptions) { call, error in
+            self.queue.async {
+                guard joinRetirement.receive(call) else { return }
+                guard self.callAgent === agent, self.joinGeneration == generation else {
                     call?.hangUp(options: nil) { _ in }
                     return
                 }
+                self.cancelPendingCallJoin = nil
                 if let error {
                     self.failJoinLocked(error, generation: generation)
                     return
@@ -358,7 +457,7 @@ final class AcsMeetingSession {
                 self.finishJoinLocked(
                     call,
                     generation: generation,
-                    whepUrl: whepUrl,
+                    sourceConfig: sourceConfig,
                     dumpWav: dumpWav,
                     video: video,
                     plan: plan
@@ -370,7 +469,7 @@ final class AcsMeetingSession {
     private func finishJoinLocked(
         _ call: Call,
         generation: UInt64,
-        whepUrl: String,
+        sourceConfig: SourceConfig,
         dumpWav: Bool,
         video: AcsOutgoingVideo,
         plan: JoinAudioPlan
@@ -386,25 +485,42 @@ final class AcsMeetingSession {
         let bridge = PcmBridge(dumpWav: dumpWav)
         pcmBridge = bridge
         phoneMic.onPcm = { [weak self] pcm, rate, channels in
-            self?.feedOutgoingPcm(pcm, sampleRate: rate, channels: channels)
+            self?.feedOutgoingPcm(pcm, sampleRate: rate, channels: channels, generation: generation)
         }
-        let source = WhepVideoSource()
-        source.onFrame = { [weak self] buffer in self?.frameSender.send(buffer) }
+        let source: DecodedGlassesMediaSource = sourceConfig.kind == .softap ? LocalWhipIngestSource() : WhepVideoSource()
+        source.onFrame = { [frameSender] buffer in frameSender.send(buffer) }
         source.onPcm = { [weak self] pcm, rate, channels in
-            self?.feedOutgoingPcm(pcm, sampleRate: rate, channels: channels)
+            self?.feedOutgoingPcm(pcm, sampleRate: rate, channels: channels, generation: generation)
         }
         mediaRestartAttempts = 0
         source.onStateChange = { [weak self, weak source] state, reason in
             // Fired from WebRTC/URLSession threads; hop to the session queue so it
             // serializes with join/leave/policy like everything else.
             self?.queue.async {
-                guard let self, let source, self.whep === source else { return }
+                guard let self, let source, self.media === source else { return }
                 self.onMediaSourceState(state, reason: reason)
             }
         }
-        source.start(config: SourceConfig(url: whepUrl))
-        whep = source
+        media = source
         applyAudioPolicyOnQueue("join")
+        let ready: (Result<String, Error>) -> Void = { result in
+            self.queue.async {
+                guard self.joinGeneration == generation, self.media === source else { return }
+                switch result {
+                case .success:
+                    let reply = self.pendingJoin
+                    self.pendingJoin = nil
+                    reply?(.success(self.snapshot()))
+                case let .failure(error): self.failJoinLocked(error, generation: generation)
+                }
+            }
+        }
+        if let local = source as? LocalWhipIngestSource {
+            local.prepare(config: sourceConfig, completion: ready)
+        } else {
+            source.start(config: sourceConfig)
+            ready(.success(""))
+        }
         NSLog("ACS-SPIKE iOS ACS join started source=\(audioSource) profile=\(video.width)x\(video.height)@\(video.fps) armVirtual=\(plan.armVirtual) transportMuted=\(plan.transportMuted)")
     }
 
@@ -412,17 +528,21 @@ final class AcsMeetingSession {
         guard joinGeneration == generation else { return }
         // Record failure before teardown: lastError makes late call callbacks no-ops,
         // and emitIdle=false preserves the terminal error rather than resetting idle.
+        let reply = pendingJoin
+        pendingJoin = nil
         lastError = error.localizedDescription
         leaveLocked(emitIdle: false)
         emit("error")
+        reply?(.failure(error))
     }
 
     func updateVideoSource(_ whepUrl: String) {
         queue.async {
             // The host has a fresher opinion about where the glasses publish; drop any
             // automatic retry against the old URL.
+            guard self.sourceConfig.kind == .whep else { return }
             self.cancelMediaRestart()
-            self.whep?.restart(config: SourceConfig(url: whepUrl))
+            self.media?.restart(config: SourceConfig(url: whepUrl))
         }
     }
 
@@ -430,8 +550,9 @@ final class AcsMeetingSession {
     /// The host calls this when the phone changed networks.
     func restartVideoSource() {
         queue.async {
+            guard self.sourceConfig.kind == .whep else { return }
             self.cancelMediaRestart()
-            self.whep?.forceRestart()
+            self.media?.forceRestart()
         }
     }
 
@@ -448,7 +569,7 @@ final class AcsMeetingSession {
     /// Teams call with a frozen last frame looks healthy from every other angle.
     /// Exponential backoff capped at mediaRestartMaxMs, for as long as the call is alive.
     private func scheduleMediaRestart(reason: String) {
-        guard call != nil, !["idle", "disconnected", "error"].contains(phase) else { return }
+        guard sourceConfig.kind == .whep, call != nil, !["idle", "disconnected", "error"].contains(phase) else { return }
         guard mediaRestartTask == nil else { return }
         let attempt = mediaRestartAttempts
         mediaRestartAttempts += 1
@@ -458,7 +579,7 @@ final class AcsMeetingSession {
             guard let self else { return }
             self.mediaRestartTask = nil
             guard self.call != nil, self.mediaSource == .failed else { return }
-            self.whep?.forceRestart()
+            self.media?.forceRestart()
         }
         mediaRestartTask = task
         queue.asyncAfter(deadline: .now() + .milliseconds(delayMs), execute: task)
@@ -489,6 +610,15 @@ final class AcsMeetingSession {
 
     func leave() {
         queue.async { self.leaveLocked() }
+    }
+
+    func leaveAndAwait(timeout: TimeInterval, completion: @escaping (Bool) -> Void) {
+        queue.async {
+            self.leaveLocked()
+            DispatchQueue.global(qos: .userInitiated).async {
+                completion(self.cleanup.wait(timeout: .now() + max(0, min(timeout, 60))) == .success)
+            }
+        }
     }
 
     /**
@@ -600,7 +730,16 @@ final class AcsMeetingSession {
         onState(snapshot())
     }
 
-    private func feedOutgoingPcm(_ pcm: Data, sampleRate: Int, channels: Int) {
+    private func feedOutgoingPcm(_ pcm: Data, sampleRate: Int, channels: Int, generation: UInt64) {
+        guard pcmSlots.wait(timeout: .now()) == .success else { return }
+        queue.async {
+            defer { self.pcmSlots.signal() }
+            guard self.joinGeneration == generation else { return }
+            self.feedOutgoingPcmLocked(pcm, sampleRate: sampleRate, channels: channels)
+        }
+    }
+
+    private func feedOutgoingPcmLocked(_ pcm: Data, sampleRate: Int, channels: Int) {
         guard !muted, outgoingReady, let stream = audioOut else { return }
         for frame in pcmBridge?.ingest(pcm16Le: pcm, sampleRate: sampleRate, channels: channels) ?? [] {
             guard let pcmBuffer = PcmBridge.audioBuffer(pcm16Le: frame, sampleRate: PcmBridge.targetRate, channels: 1) else {
@@ -625,6 +764,16 @@ final class AcsMeetingSession {
 
     private func leaveLocked(emitIdle: Bool = true) {
         joinGeneration &+= 1
+        let joinReply = pendingJoin
+        pendingJoin = nil
+        joinReply?(.failure(AcsMeetingError("Meeting join cancelled")))
+        let prepareReply = pendingPrepare
+        pendingPrepare = nil
+        prepareReply?(.failure(AcsMeetingError("Meeting preparation cancelled or timed out")))
+        preparedAgent?.dispose()
+        preparedAgent = nil
+        preparedClient = nil
+        preparedToken = nil
         phoneMic.setEnabled(false)
         phoneMic.onPcm = nil
         applier.reset()
@@ -634,27 +783,41 @@ final class AcsMeetingSession {
         // snapshot (or schedule a rebuild) for a call that is going away.
         cancelMediaRestart()
         detachCapabilities()
-        whep?.onStateChange = nil
+        media?.onStateChange = nil
+        media?.onFrame = nil
+        media?.onPcm = nil
         mediaSource = .idle
-        whep?.stop()
+        if let local = media as? LocalWhipIngestSource {
+            cleanup.enter()
+            local.stop { self.cleanup.leave() }
+        } else { media?.stop() }
         frameSender.detach()
         let leavingCall = call
         let leavingAgent = callAgent
+        let cancelJoin = cancelPendingCallJoin
+        cancelPendingCallJoin = nil
         leavingCall?.delegate = nil
-        leavingCall?.hangUp(options: nil) { error in
-            if let error {
-                NSLog("ACS-SPIKE leave hangUp failed: \(error)")
+        if let leavingCall {
+            // CallAgent.dispose releases all local SDK resources. The retirement deadline
+            // also disposes the agent if hangUp loses its callback, before opening the barrier.
+            let retirement = CallAgentRetirement(group: cleanup, queue: queue) { leavingAgent?.dispose() }
+            leavingCall.hangUp(options: nil) { error in
+                self.queue.async {
+                    if let error { NSLog("ACS-SPIKE leave hangUp failed: \(error)") }
+                    retirement.finish()
+                }
             }
-            leavingAgent?.dispose()
-        }
-        // A join that never produced a call still owns an agent that must be released.
-        if leavingCall == nil {
+        } else if let cancelJoin {
+            // Keep the agent alive while awaiting the cancelled join and its hang-up.
+            cancelJoin()
+        } else {
+            // Agent creation has no call to retire; its callback disposes any late agent.
             leavingAgent?.dispose()
         }
         callAgent = nil
         callClient = nil
         call = nil
-        whep = nil
+        media = nil
         audioOut = nil
         audioIn = nil
         localOut = nil
@@ -677,8 +840,8 @@ final class AcsMeetingSession {
         call
     }
 
-    fileprivate func currentWhep() -> WhepVideoSource? {
-        whep
+    fileprivate func currentWhep() -> DecodedGlassesMediaSource? {
+        media
     }
 
     fileprivate func setPhonePcmEnabled(_ enabled: Bool) {
@@ -866,35 +1029,8 @@ private func requireString(_ options: [String: Any], _ key: String) throws -> St
     return value
 }
 
-/// Resolves the WHEP URL from either the `videoSource` union or a legacy bare `whepUrl`.
-///
-/// SoftAP is refused here with `NOT_IMPLEMENTED` rather than allowed to fall through. Joining
-/// without a usable video source would produce a call that connects and shows the remote
-/// participant a black tile, with nothing in the logs to explain it. iOS cannot serve the local
-/// WHIP endpoint yet — see the SoftAP plan's iOS spike — so saying so plainly is the correct
-/// behaviour until it can.
-private func requireWhepUrl(_ options: [String: Any]) throws -> String {
-  guard let source = options["videoSource"] as? [String: Any] else {
-    return try requireString(options, "whepUrl")
-  }
-  let type = (source["type"] as? String)?.lowercased() ?? ""
-  switch type {
-  case "whep":
-    if let url = source["url"] as? String, !url.isEmpty { return url }
-    return try requireString(options, "whepUrl")
-  case "softap":
-    throw NSError(
-      domain: "MentraAcsMeeting",
-      code: 2,
-      userInfo: [NSLocalizedDescriptionKey: "NOT_IMPLEMENTED: SoftAP calling is Android-only"]
-    )
-  default:
-    throw NSError(
-      domain: "MentraAcsMeeting",
-      code: 1,
-      userInfo: [NSLocalizedDescriptionKey: "unsupported videoSource.type: \(type)"]
-    )
-  }
+private func parseMediaSource(_ options: [String: Any]) throws -> SourceConfig {
+    try SourceConfig.fromBridge(options["videoSource"] as? [String: Any], legacyWhepUrl: options["whepUrl"] as? String)
 }
 
 private func parseAcsOutgoingVideo(_ raw: Any?) throws -> AcsOutgoingVideo {

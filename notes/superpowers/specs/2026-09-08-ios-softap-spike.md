@@ -1,9 +1,15 @@
 ---
-status: completed
+status: superseded
 owner: mentra
 ---
 
 # iOS SoftAP + ACS spike
+
+> Superseded by the shared native transport in `mobile/modules/glasses-media`. The
+> structural-impossibility conclusion below was incorrect: iOS already joins the
+> glasses SoftAP for background gallery transfers, and the linked WebRTC SDK exposes
+> peer factories and receive renderers. The remaining work is media integration and
+> physical routing/background qualification. The original spike is retained as history.
 
 **Verdict: FAIL for the V2 increment.** iOS stays on the existing ACS + Cloudflare WHEP path.
 This is not a ship gate — the V2 SoftAP gate is Android only.

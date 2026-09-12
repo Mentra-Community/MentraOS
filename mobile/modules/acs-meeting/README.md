@@ -391,6 +391,15 @@ rollback; it takes effect on the next join.
 `scripts/acs-ladder.ts` in the Mentra-Call repo parses these lines and prints pass/fail
 over a trailing 10-second window, including the `recv`-vs-`dec` attribution.
 
+## Shared media transport
+
+The native receivers, decoded buffers, local WHIP server, and network helpers live in
+[`glasses-media`](../glasses-media/README.md). ACS consumes that library on both platforms.
+The iOS SoftAP path uses the existing persistent hotspot-join approach, receives WebRTC
+locally, and feeds the ACS raw outgoing streams. `join` resolves with `ingestUrl` only
+once the receiver is ready; `leaveAndAwait` waits for native cleanup. Physical routing,
+screen-off streaming, and thermal qualification remain device checks.
+
 ## iOS host setup
 
 Add `"@mentra/acs-meeting"` to the host's Expo `plugins` list, then run
@@ -406,7 +415,7 @@ The host's other pods retain their configured linkage.
 ## Tests
 
 ```bash
-cd mobile/android && ./gradlew :mentra-acs-meeting:testDebugUnitTest
+./scripts/check-android-compile.sh bluetooth-sdk :mentra-acs-meeting:testDebugUnitTest :mentra-glasses-media:testDebugUnitTest
 ```
 
 These are plain JVM tests with no Robolectric. That constrains what can be tested: ACS SDK
@@ -426,8 +435,10 @@ counter race that caused the false conservation failures.
   whether the glasses are actually producing 15 fps.
 - **Outgoing glasses PCM reads as silence** (`P4 pcm meanAbs=0`) and needs its own
   investigation.
-- **iOS is foreground-only.** The Swift side under `ios/` does not have the telemetry
-  ladder, and Android's audio-routing answers do not transfer — re-verify separately.
+- **iOS media qualification needs device coverage.** Screen-off operation and background
+  gallery transfers already work. Validate sustained local WebRTC reception and ACS
+  publishing on that existing background infrastructure. The Swift side does not yet
+  have the Android telemetry ladder.
   iOS also has no `RemoteRoster` yet (`participants` is never emitted) and does not apply
   `maxBitrateBps` to the outgoing stream.
 

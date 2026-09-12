@@ -325,7 +325,7 @@ type NativeModule = {
   restartVideoSource?(): Promise<void>
   /**
    * Join the glasses hotspot as a scoped, internet-less network; resolves with this phone's
-   * address on it. Absent on natives that predate SoftAP, and rejects on iOS.
+   * address on it. Absent on natives that predate SoftAP.
    */
   joinScopedNetwork?(ssid: string, passphrase: string): Promise<string>
   beginTrace?(traceId: string): Promise<void>
@@ -928,7 +928,7 @@ class AcsMeetingService {
   /**
    * Leave, and do not resolve until native reports its cleanup is finished.
    *
-   * The difference from [leave] is the whole point: native's `leave()` queues the hang-up, the
+   * Android native's `leave()` queues the hang-up, the
    * agent disposal, and the network releases on its session executor and returns straight away, so
    * a caller that awaits it and then starts the next call is racing the previous one's teardown.
    *

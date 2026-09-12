@@ -5,12 +5,12 @@ import android.content.Intent
 import android.os.Build
 import android.os.SystemClock
 import android.provider.Settings
-import com.mentra.acsmeeting.network.InternetHold
-import com.mentra.acsmeeting.network.ScopedNetworkChangeDetector
-import com.mentra.acsmeeting.network.ScopedNetworkError
-import com.mentra.acsmeeting.network.ScopedSoftApNetwork
+import com.mentra.glassesmedia.network.InternetHold
+import com.mentra.glassesmedia.network.ScopedNetworkChangeDetector
+import com.mentra.glassesmedia.network.ScopedNetworkError
+import com.mentra.glassesmedia.network.ScopedSoftApNetwork
 import com.mentra.acsmeeting.source.MeetingVideoSourceSpec
-import com.mentra.acsmeeting.trace.SoftApTrace
+import com.mentra.glassesmedia.trace.SoftApTrace
 import com.mentra.acsmeeting.video.VideoProfile
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
@@ -104,7 +104,7 @@ class AcsMeetingModule : Module() {
 
     AsyncFunction("beginTrace") { traceId: String ->
       require(traceId.matches(Regex("[A-Za-z0-9]*"))) { "invalid trace id" }
-      com.mentra.acsmeeting.trace.SoftApTrace.begin(traceId)
+      com.mentra.glassesmedia.trace.SoftApTrace.begin(traceId)
       Unit
     }
 
@@ -133,7 +133,7 @@ class AcsMeetingModule : Module() {
           override fun onAvailable(network: android.net.Network, localIpv4: String) = Unit
 
           override fun onLost(error: ScopedNetworkError) {
-            com.mentra.acsmeeting.trace.SoftApTrace.failure("scoped_network_lost_midcall", "code" to error.code)
+            com.mentra.glassesmedia.trace.SoftApTrace.failure("scoped_network_lost_midcall", "code" to error.code)
             sendEvent(
               "onScopedNetworkLost",
               mapOf("code" to error.code, "message" to (error.message ?: "The glasses hotspot went away")),
@@ -147,9 +147,9 @@ class AcsMeetingModule : Module() {
           // then a retry reminted ACS after the user turned Wi-Fi on — and Android often made
           // that new Wi-Fi the default route with no internet, so token mint hung on DNS.
           promptToEnableWifi()
-          com.mentra.acsmeeting.trace.SoftApTrace.stage("wifi_enable_wait", "timeoutMs" to ScopedSoftApNetwork.WIFI_ENABLE_WAIT_MS)
+          com.mentra.glassesmedia.trace.SoftApTrace.stage("wifi_enable_wait", "timeoutMs" to ScopedSoftApNetwork.WIFI_ENABLE_WAIT_MS)
           val enabled = scoped.awaitWifiEnabled()
-          com.mentra.acsmeeting.trace.SoftApTrace.stage(
+          com.mentra.glassesmedia.trace.SoftApTrace.stage(
             "wifi_enable_wait_done",
             "enabled" to enabled,
           )
@@ -161,7 +161,7 @@ class AcsMeetingModule : Module() {
           // AP). Samsung then assoc-rejects the glasses SoftAP (status 1025) and fires
           // onUnavailable. After that request dies the STA is idle — the same join from idle
           // is what succeeded at 17:43:20 after a failed switch.
-          com.mentra.acsmeeting.trace.SoftApTrace.stage(
+          com.mentra.glassesmedia.trace.SoftApTrace.stage(
             "scoped_join_unavailable_retry",
             "ssid" to ssid,
             "settleMs" to ScopedSoftApNetwork.UNAVAILABLE_RETRY_SETTLE_MS,

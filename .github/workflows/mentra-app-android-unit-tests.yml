@@ -1,14 +1,15 @@
 name: Mobile App Android Unit Tests
 
-# The acs-meeting and bluetooth-sdk modules carry substantial JVM test suites that
+# The acs-meeting, glasses-media, and bluetooth-sdk modules carry JVM suites that
 # ran nowhere in CI: mentra-app-android-build.yml builds with `-x test`, and the
 # mobile quality workflow is Jest/bun only. This job runs them on every PR that
-# touches either module.
+# touches any of these modules.
 
 on:
   pull_request:
     paths:
       - "mobile/modules/acs-meeting/**"
+      - "mobile/modules/glasses-media/**"
       - "mobile/modules/bluetooth-sdk/**"
       - "scripts/softap-call-proof*.mjs"
       - ".github/workflows/mentra-app-android-unit-tests.yml"
@@ -18,6 +19,7 @@ on:
       - dev
     paths:
       - "mobile/modules/acs-meeting/**"
+      - "mobile/modules/glasses-media/**"
       - "mobile/modules/bluetooth-sdk/**"
       - "scripts/softap-call-proof*.mjs"
       - ".github/workflows/mentra-app-android-unit-tests.yml"
@@ -89,7 +91,7 @@ jobs:
 
       - name: Run JVM unit tests
         working-directory: ./mobile/android
-        run: ./gradlew :mentra-acs-meeting:testDebugUnitTest :mentra-bluetooth-sdk:testDebugUnitTest --build-cache --parallel
+        run: ./gradlew :mentra-acs-meeting:testDebugUnitTest :mentra-glasses-media:testDebugUnitTest :mentra-bluetooth-sdk:testDebugUnitTest --build-cache --parallel
 
       # The device-proof analyzer decides whether a SoftAP hardware run passed, so an analyzer that
       # reports success on a broken capture would turn a real failure into recorded evidence that
@@ -104,7 +106,9 @@ jobs:
           name: android-unit-test-reports
           path: |
             mobile/modules/acs-meeting/android/build/reports/tests/
+            mobile/modules/glasses-media/android/build/reports/tests/
             mobile/modules/bluetooth-sdk/android/build/reports/tests/
             mobile/modules/acs-meeting/android/build/test-results/
+            mobile/modules/glasses-media/android/build/test-results/
             mobile/modules/bluetooth-sdk/android/build/test-results/
           retention-days: 7

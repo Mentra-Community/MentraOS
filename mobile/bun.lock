@@ -180,6 +180,7 @@
       "version": "3.2.0",
       "dependencies": {
         "@expo/config-plugins": "~55.0.10",
+        "@mentra/glasses-media": "workspace:*",
       },
       "devDependencies": {
         "expo-module-scripts": "^55.0.2",
@@ -302,6 +303,10 @@
         "react": "*",
         "react-native": "*",
       },
+    },
+    "modules/glasses-media": {
+      "name": "@mentra/glasses-media",
+      "version": "3.2.0",
     },
     "modules/jspolyfill": {
       "name": "@mentra/jspolyfill",
@@ -950,6 +955,8 @@
     "@mentra/engine-host-internal": ["@mentra/engine-host-internal@workspace:modules/engine-host-internal"],
 
     "@mentra/entra-auth": ["@mentra/entra-auth@workspace:modules/entra-auth"],
+
+    "@mentra/glasses-media": ["@mentra/glasses-media@workspace:modules/glasses-media"],
 
     "@mentra/jspolyfill": ["@mentra/jspolyfill@workspace:modules/jspolyfill"],
 
