@@ -66,6 +66,7 @@ class InternetHold(private val context: Context) {
 
     private val lock = Any()
     private var callback: ConnectivityManager.NetworkCallback? = null
+    private var closed = false
     private var processPinned = false
     private var pinnedNetwork: Network? = null
 
@@ -145,6 +146,7 @@ class InternetHold(private val context: Context) {
         val held =
             runCatching {
                 synchronized(lock) {
+                    if (closed) return CellularHold(false, false, 0)
                     releaseLocked(reason = "re-requesting cellular")
                     manager.requestNetwork(request, watcher)
                     callback = watcher
@@ -170,8 +172,13 @@ class InternetHold(private val context: Context) {
         // Re-pin: releaseLocked above dropped any existing pin, and the caller is about to leave
         // Wi-Fi. The one join that ever reached CONNECTED was pinned from here onwards, i.e. across
         // the hotspot join itself, not from just before the Teams join.
-        if (resolved) bindProcessToCellular()
-        return CellularHold(true, resolved, waitedMs)
+        synchronized(lock) {
+            // Module destruction or a newer request can overtake the wait above. A retired
+            // request must never pin the process again, even if its late callback validated.
+            if (closed || callback !== watcher) return CellularHold(false, false, waitedMs)
+            if (resolved) bindProcessToCellular()
+            return CellularHold(true, resolved, waitedMs)
+        }
     }
 
     /**
@@ -202,16 +209,17 @@ class InternetHold(private val context: Context) {
      *
      * Anything that pins must unpin — via [unbindProcess], or via [release] on teardown.
      */
-    fun bindProcessToCellular(): Boolean {
+    fun bindProcessToCellular(): Boolean = synchronized(lock) {
+        if (closed) return@synchronized false
         val manager = connectivityManager()
         if (manager == null) {
             SoftApTrace.failure("process_pinned_to_cellular", "ok" to false, "reason" to "no connectivity manager")
-            return false
+            return@synchronized false
         }
         val network = findValidatedCellular(manager)
         if (network == null) {
             SoftApTrace.failure("process_pinned_to_cellular", "ok" to false, "reason" to "no validated cellular")
-            return false
+            return@synchronized false
         }
         val alreadyPinned = synchronized(lock) { pinnedNetwork }
         val ok = runCatching { manager.bindProcessToNetwork(network) }.getOrDefault(false)
@@ -228,11 +236,12 @@ class InternetHold(private val context: Context) {
             "network" to network,
             "replaced" to (alreadyPinned?.toString() ?: "none"),
         )
-        return ok
+        return@synchronized ok
     }
 
     /** Undo [bindProcessToCellular]. Safe to call when nothing is pinned, and safe to call twice. */
-    fun unbindProcess() {
+    fun unbindProcess() = synchronized(lock) {
+        if (closed) return@synchronized
         val previous = synchronized(lock) { pinnedNetwork }
         val pinned = synchronized(lock) {
             processPinned.also {
@@ -245,7 +254,7 @@ class InternetHold(private val context: Context) {
             // sign-in never took one — which is the state in which that ServerSocket is fine and
             // ACS's own sockets are not. Different bug, same-looking log without this line.
             SoftApTrace.stage("process_unpinned", "ok" to true, "reason" to "nothing pinned")
-            return
+            return@synchronized
         }
         val ok = runCatching { connectivityManager()?.bindProcessToNetwork(null) }.isSuccess
         // The default route the process falls back onto is the whole risk of unpinning: a leftover
@@ -374,6 +383,14 @@ class InternetHold(private val context: Context) {
             "validated" to network.validated,
             "glassesHotspot" to network.glassesHotspot,
         )
+    }
+
+    /** Permanently retire a module-owned hold, including requests still waiting for validation. */
+    fun close() {
+        synchronized(lock) {
+            closed = true
+            releaseLocked(reason = "owner destroyed")
+        }
     }
 
     /** Drop the cellular request. Safe to call when nothing is held, and safe to call twice. */

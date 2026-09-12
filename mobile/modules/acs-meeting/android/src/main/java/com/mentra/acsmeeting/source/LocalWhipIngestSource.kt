@@ -113,42 +113,11 @@ class LocalWhipIngestSource(
     ensureFactory()
 
     val ingest = WhipIngestServer(this)
-    // #region agent log
-    com.mentra.acsmeeting.network.DebugTap.log(
-      "F",
-      "LocalWhipIngestSource.kt:112",
-      "whip server bind",
-      mapOf("bindAddress" to bindAddress, "scopedIpv4" to scopedNetwork?.localIpv4()),
-    )
-    // #endregion
     val endpoint = ingest.start(InetAddress.getByName(bindAddress))
     server = ingest
     boundUrl = "http://${endpoint.host}:${endpoint.port}${WhipIngestProtocol.BASE_PATH}"
     SoftApTrace.stage("ingest_source_listening", "url" to boundUrl)
     Log.i(TAG, "SoftAP ingest listening on $boundUrl")
-    // #region agent log
-    // Loopback self-connect proves the accept loop is alive; the routing dump is what the phone
-    // will use to answer the glasses' SYN. Both are the evidence a glasses-side connect timeout
-    // needs to be read correctly.
-    com.mentra.acsmeeting.network.DebugTap.log(
-      "F,G",
-      "LocalWhipIngestSource.kt:listening",
-      "whip listener self-check",
-      mapOf(
-        "url" to boundUrl,
-        "selfConnect" to
-          runCatching {
-            java.net.Socket().use {
-              it.connect(java.net.InetSocketAddress(endpoint.host, endpoint.port), 1_000)
-              "ok"
-            }
-          }.getOrElse { "failed: ${it.message}" },
-        "addrs" to com.mentra.acsmeeting.network.DebugTap.shell("ip -4 addr"),
-        "routes43" to com.mentra.acsmeeting.network.DebugTap.shell("ip -4 route show table all | grep -E '(192\\.168\\.4[0-9]|wlan)'"),
-        "rules" to com.mentra.acsmeeting.network.DebugTap.shell("ip rule"),
-      ),
-    )
-    // #endregion
   }
 
   /**

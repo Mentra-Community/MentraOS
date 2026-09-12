@@ -16,6 +16,7 @@ import android.content.ContextWrapper;
 import android.content.res.AssetManager;
 import android.content.res.AssetFileDescriptor;
 import android.media.MediaPlayer;
+import android.media.AudioManager;
 import android.os.Looper;
 import androidx.test.core.app.ApplicationProvider;
 import com.mentra.asg_client.service.core.AsgClientService;
@@ -212,6 +213,61 @@ public class I2SAudioControllerPlayFileTest {
             controller.stopOverlayPlayback(snap);
             assertThat(playingFlags(drainStartedServices())).containsExactly(false);
         }
+    }
+
+    @Test
+    public void externalMusicEndingDuringCue_releasesBridgeAfterCueAndReopensNextCue() throws Exception {
+        controller = controllerWithStubAssets();
+        I2SAudioController.setExternalAudioPlaying(true);
+        try (MockedConstruction<MediaPlayer> players = mockConstruction(MediaPlayer.class)) {
+            long snap = controller.playOverlayAssetTracked(AudioAssets.CAMERA_SNAP, 0.1f);
+            drainStartedServices();
+            receiveDuringMusic("stop", false);
+            assertThat(I2SAudioController.isExternalAudioPlaying()).isFalse();
+            assertThat(drainStartedServices()).isEmpty(); // Never cut off the cue itself.
+            controller.stopOverlayPlayback(snap);
+            assertThat(playingFlags(drainStartedServices())).containsExactly(false);
+            controller.playOverlayAssetTracked(AudioAssets.CAMERA_SNAP, 0.1f);
+            assertThat(playingFlags(drainStartedServices())).containsExactly(true);
+        }
+    }
+
+    @Test
+    public void cueStopBroadcast_doesNotReleaseMusicThatIsStillPlaying() throws Exception {
+        controller = controllerWithStubAssets();
+        I2SAudioController.setExternalAudioPlaying(true);
+        try (MockedConstruction<MediaPlayer> players = mockConstruction(MediaPlayer.class)) {
+            long snap = controller.playOverlayAssetTracked(AudioAssets.CAMERA_SNAP, 0.1f);
+            drainStartedServices();
+            receiveDuringMusic("stop", true);
+            controller.stopOverlayPlayback(snap);
+            assertThat(I2SAudioController.isExternalAudioPlaying()).isTrue();
+            assertThat(drainStartedServices()).isEmpty();
+        }
+    }
+
+    @Test
+    public void musicStartingDuringCue_keepsBridgeOpenWhenCueEnds() throws Exception {
+        controller = controllerWithStubAssets();
+        try (MockedConstruction<MediaPlayer> players = mockConstruction(MediaPlayer.class)) {
+            long snap = controller.playOverlayAssetTracked(AudioAssets.CAMERA_SNAP, 0.1f);
+            drainStartedServices();
+            receiveDuringMusic("start", true);
+            controller.stopOverlayPlayback(snap);
+            assertThat(I2SAudioController.isExternalAudioPlaying()).isTrue();
+            assertThat(drainStartedServices()).isEmpty();
+        }
+    }
+
+    private void receiveDuringMusic(String state, boolean playing) {
+        AudioManager audio = mock(AudioManager.class);
+        when(audio.isMusicActive()).thenReturn(playing);
+        Context context = new ContextWrapper(app) {
+            @Override public Object getSystemService(String name) {
+                return Context.AUDIO_SERVICE.equals(name) ? audio : super.getSystemService(name);
+            }
+        };
+        new I2SAudioBroadcastReceiver().onReceive(context, playStateIntent(state));
     }
 
     private static Intent playStateIntent(String state) {

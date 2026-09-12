@@ -928,6 +928,15 @@ public class WhipStreamingService extends Service {
       mMainHandler.post(() -> postOfferIfReady(reason, generation));
       return;
     }
+    // The WebRTC callback may have been current before posting to the main thread, then
+    // overtaken by stop/rejoin. Reject it before the policy can fail the current stream.
+    synchronized (mStateLock) {
+      if (generation != mNegotiationGeneration || mWhipOfferPosted
+          || mPeerConnection == null || mStreamState == StreamState.STOPPING
+          || mStreamState == StreamState.IDLE) {
+        return;
+      }
+    }
     PeerConnection peerConnection;
     IcePostPolicy.Decision decision =
         IcePostPolicy.decide(mIceMode, triggerFor(reason), mHasHotspotHostCandidate);

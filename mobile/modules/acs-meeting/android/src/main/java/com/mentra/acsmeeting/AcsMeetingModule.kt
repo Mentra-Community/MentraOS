@@ -78,14 +78,6 @@ class AcsMeetingModule : Module() {
         else Settings.ACTION_WIFI_SETTINGS,
       )
     val activity = appContext.currentActivity
-    // #region agent log
-    com.mentra.acsmeeting.network.DebugTap.log(
-      "A",
-      "AcsMeetingModule.kt:promptToEnableWifi",
-      "prompting user to enable wifi",
-      mapOf("hasActivity" to (activity != null), "sdkInt" to Build.VERSION.SDK_INT),
-    )
-    // #endregion
     runCatching {
       if (activity != null) {
         activity.startActivity(intent)
@@ -234,21 +226,6 @@ class AcsMeetingModule : Module() {
     AsyncFunction("probeScopedGateway") {
       val scoped = scopedNetwork ?: return@AsyncFunction mapOf("reachable" to false, "detail" to "no scoped network")
       val verdict = scoped.probeGateway()
-      // #region agent log
-      com.mentra.acsmeeting.network.DebugTap.log(
-        "G",
-        "AcsMeetingModule.kt:probeScopedGateway",
-        "gateway probe",
-        mapOf(
-          "reachable" to verdict.reachable,
-          "detail" to verdict.detail,
-          "localIpv4" to scoped.localIpv4(),
-          "gateway" to scoped.gatewayIpv4(),
-          "routes" to com.mentra.acsmeeting.network.DebugTap.shell("ip -4 route show table all"),
-          "rules" to com.mentra.acsmeeting.network.DebugTap.shell("ip rule"),
-        ),
-      )
-      // #endregion
       mapOf("reachable" to verdict.reachable, "detail" to verdict.detail)
     }
 
@@ -450,16 +427,9 @@ class AcsMeetingModule : Module() {
       session = null
       scopedNetwork?.release()
       scopedNetwork = null
-      val hold = internetHold
-      if (hold != null && hold.defaultNetwork().usable) {
-        hold.release()
-      } else if (hold != null) {
-        SoftApTrace.failure(
-          "cellular_hold_kept_on_destroy",
-          "reason" to "default network is leftover SoftAP; unpinning would strand the next teams:create",
-          "default" to hold.defaultNetwork().toString(),
-        )
-      }
+      // Destruction has no owner left to release a retained request later. Close permanently
+      // so a validation callback from the old module cannot re-pin a replacement module.
+      internetHold?.close()
       internetHold = null
     }
   }

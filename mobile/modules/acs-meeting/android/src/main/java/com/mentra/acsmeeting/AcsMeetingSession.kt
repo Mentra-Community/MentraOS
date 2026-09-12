@@ -554,18 +554,6 @@ class AcsMeetingSession(
         // return an ingest URL while 192.168.43.x is still assigned. WHEP still
         // attaches after the call exists — it has a URL going in, not coming out.
         if (videoSource is MeetingVideoSourceSpec.SoftAp) {
-          // #region agent log
-          com.mentra.acsmeeting.network.DebugTap.log(
-            "F",
-            "AcsMeetingSession.kt:softap-attach",
-            "binding whip listener before acs join",
-            mapOf(
-              "bindAddress" to (videoSource as MeetingVideoSourceSpec.SoftAp).bindAddress,
-              "scopedIpv4" to scopedNetwork?.localIpv4(),
-              "scopedAvailable" to (scopedNetwork?.isAvailable() == true),
-            ),
-          )
-          // #endregion
           // Unpinned for the bind only: this socket is a ServerSocket on 192.168.43.79 and cannot
           // be re-scoped afterwards, so a cellular mark here leaves the glasses' SYN unanswered.
           // The pin is back on by the time the Teams join below runs.
@@ -578,14 +566,6 @@ class AcsMeetingSession(
               config = videoSource.toConfig(),
             )
           }
-          // #region agent log
-          com.mentra.acsmeeting.network.DebugTap.log(
-            "F",
-            "AcsMeetingSession.kt:softap-bound",
-            "whip listener bound",
-            mapOf("ingestUrl" to media.ingestUrl),
-          )
-          // #endregion
         }
 
         val locator = TeamsMeetingLinkLocator(teamsUrl)
@@ -654,14 +634,6 @@ class AcsMeetingSession(
         // would otherwise let Mentra Call treat the failed join as a clean end.
         lastError = message
         softApBindError.compareAndSet(null, error)
-        // #region agent log
-        com.mentra.acsmeeting.network.DebugTap.log(
-          "F",
-          "AcsMeetingSession.kt:join-failed",
-          "join executor failed",
-          mapOf("message" to message, "ingestUrl" to media.ingestUrl),
-        )
-        // #endregion
         leaveLocked(emitIdle = false)
         emit("error")
         softApReady?.countDown()
@@ -683,18 +655,6 @@ class AcsMeetingSession(
         throw IllegalStateException("SoftAP ingest listener bound but produced no URL")
       }
     }
-    // #region agent log
-    com.mentra.acsmeeting.network.DebugTap.log(
-      "F",
-      "AcsMeetingSession.kt:join-return",
-      "join returning to js",
-      mapOf(
-        "softap" to (videoSource is MeetingVideoSourceSpec.SoftAp),
-        "ingestUrl" to media.ingestUrl,
-        "phase" to phase,
-      ),
-    )
-    // #endregion
     return snapshot()
   }
 

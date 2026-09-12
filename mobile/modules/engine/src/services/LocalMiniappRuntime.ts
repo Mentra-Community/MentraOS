@@ -398,6 +398,8 @@ type SoftapAttempt = {
   startedAt: number
   /** Set by leave, end, or a superseding join. Checked after every await the join performs. */
   cancelled: boolean
+  /** Set only after the preceding attempt has fully settled. */
+  ownsResources: boolean
   transport: SoftapCallTransport | null
   /** The checklist as the miniapp last saw it; preflight rows live here until `start()` takes over. */
   progress: SoftapProgress
@@ -1465,9 +1467,7 @@ class LocalMiniappRuntime {
     // Register if not already
     const existing = this.connectedApps.get(packageName)
     if (!existing) {
-      console.warn(
-        `${LOG_TAG}: CONNECT from unregistered app ${packageName}, dropping — isolate already torn down`,
-      )
+      console.warn(`${LOG_TAG}: CONNECT from unregistered app ${packageName}, dropping — isolate already torn down`)
       return
     }
 
@@ -3786,26 +3786,9 @@ class LocalMiniappRuntime {
     packageName: string,
     args: {meetingUrl: string; token: string; displayName?: string; video?: AcsOutgoingVideo},
   ): Promise<MeetingState> {
-    // Anything still running belongs to a call the wearer has moved on from.
+    // Reserve before awaiting retirement: a second Start or Cancel must see this request,
+    // including while it is waiting for its predecessor's native cleanup.
     const previous = this.softapAttempt
-    if (previous) {
-      softapTrace("softap_join_superseding", {
-        previousAttempt: previous.id,
-        previousAgeMs: Date.now() - previous.startedAt,
-        previousPhase: previous.progress.phase,
-        packageName,
-      })
-      await this.retireSoftapAttempt({attempt: previous}).catch(() => undefined)
-    }
-    const cleanupError = this.softapCleanupError
-    if (cleanupError) {
-      // Reported once, then cleared: after the wearer power-cycles the glasses the next attempt
-      // deserves to run.
-      this.softapCleanupError = null
-      softapTraceFailure("softap_join_refused", {packageName, reason: cleanupError})
-      throw new Error(`Previous call cleanup failed: ${cleanupError}. Power-cycle the glasses hotspot and try again.`)
-    }
-
     const attempt = this.createSoftapAttempt(packageName)
     this.softapAttempt = attempt
     const body = this.runSoftapAttempt(attempt, previous, args)
@@ -3843,6 +3826,7 @@ class LocalMiniappRuntime {
       packageName,
       startedAt: Date.now(),
       cancelled: false,
+      ownsResources: false,
       transport: null,
       progress: {
         traceId: `preflight-${id}`,
@@ -3940,11 +3924,14 @@ class LocalMiniappRuntime {
     args: {meetingUrl: string; token: string; displayName?: string; video?: AcsOutgoingVideo},
   ): Promise<MeetingState> {
     const packageName = attempt.packageName
-    // The barrier. The previous attempt's teardown has returned, but a native call it started may
-    // still be in flight; building a second hotspot on top of that is what turned a quick
-    // Stop/Start into "Cannot start glasses hotspot" and then a scoped join that never found the
-    // SSID. No deadline — a stalled cleanup holds this call back and says so.
     if (previous) {
+      softapTrace("softap_join_superseding", {
+        previousAttempt: previous.id,
+        previousAgeMs: Date.now() - previous.startedAt,
+        previousPhase: previous.progress.phase,
+        packageName,
+      })
+      await this.retireSoftapAttempt({attempt: previous}).catch(() => undefined)
       await awaitCleanupBarrier({
         settled: previous.settled,
         settledDone: previous.settledDone,
@@ -3953,8 +3940,16 @@ class LocalMiniappRuntime {
         attempt: attempt.id,
         waitingFor: `attempt ${previous.id} teardown`,
       })
-      this.checkpointSoftapAttempt(attempt, "cleanup barrier")
     }
+    this.checkpointSoftapAttempt(attempt, "cleanup barrier")
+    const cleanupError = this.softapCleanupError
+    if (cleanupError) {
+      // Report once, allowing a retry after the wearer power-cycles the glasses.
+      this.softapCleanupError = null
+      softapTraceFailure("softap_join_refused", {packageName, reason: cleanupError})
+      throw new Error(`Previous call cleanup failed: ${cleanupError}. Power-cycle the glasses hotspot and try again.`)
+    }
+    attempt.ownsResources = true
     this.narrateSoftapPreflight(attempt, "Checking the Nearby devices permission…")
     const permissionStartedAt = Date.now()
     if (!(await permissions.check(PermissionFeatures.LOCAL_WIFI))) {
@@ -4123,7 +4118,8 @@ class LocalMiniappRuntime {
       return
     }
     attempt.cancelled = true
-    if (this.softapAttempt === attempt) this.softapAttempt = null
+    // Keep the retiring attempt discoverable until both its join and cleanup settle.
+    // A newer reservation replaces it immediately, but must still wait on its barrier.
     softapTrace("softap_retire_begin", {
       attempt: attempt.id,
       mode: options.mode ?? "leave",
@@ -4147,6 +4143,7 @@ class LocalMiniappRuntime {
       void Promise.allSettled([attempt.teardown, attempt.body ?? Promise.resolve()]).then(() => {
         clearTimeout(stallWatchdog)
         attempt.markSettled()
+        if (this.softapAttempt === attempt) this.softapAttempt = null
       })
     }
     const awaitedFrom = Date.now()
@@ -4177,6 +4174,9 @@ class LocalMiniappRuntime {
    * is what lets the next call start on leaked state.
    */
   private async teardownSoftapAttempt(attempt: SoftapAttempt, mode?: SoftapTeardownMode): Promise<void> {
+    // A cancelled reservation waiting behind another call never acquired any shared resources.
+    // Its cleanup must not release the preceding call's native agent or network.
+    if (!attempt.ownsResources) return
     // Terminal intent before the first release, so the scoped network we are about to drop cannot
     // be reported as a hotspot that walked away.
     acsMeetingService.beginScopedTeardown()

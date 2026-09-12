@@ -3,6 +3,7 @@ package com.mentra.asg_client.audio;
 import android.content.BroadcastReceiver;
 import android.content.Context;
 import android.content.Intent;
+import android.media.AudioManager;
 import android.os.Build;
 import android.util.Log;
 
@@ -43,10 +44,16 @@ public class I2SAudioBroadcastReceiver extends BroadcastReceiver {
         final boolean start = STATE_START.equalsIgnoreCase(state);
         Log.i(TAG, "Firmware I2S broadcast: " + state + " (start=" + start + ")");
 
-        // If I2SAudioController is actively managing I2S, ignore firmware broadcasts
-        // to prevent reacting to our own MediaPlayer playback state changes
+        // Cues use STREAM_NOTIFICATION and must not forward their own firmware events as
+        // external bridge commands. Still reconcile music ownership: a song can end during
+        // a cue, and dropping that stop would leave externalAudioPlaying stuck forever.
         if (I2SAudioController.isControllingI2S()) {
-            Log.d(TAG, "Ignoring firmware broadcast - I2SAudioController is in control");
+            AudioManager audio = (AudioManager) context.getSystemService(Context.AUDIO_SERVICE);
+            boolean musicPlaying = audio != null && audio.isMusicActive();
+            if (!start || musicPlaying) {
+                I2SAudioController.setExternalAudioPlaying(musicPlaying);
+            }
+            Log.d(TAG, "Deferring firmware bridge command while a cue is playing");
             return;
         }
 

@@ -205,27 +205,6 @@ class ScopedSoftApNetwork(private val context: Context) {
             SoftApTrace.failure("scoped_join_permission_denied", "ssid" to ssid)
             throw ScopedNetworkError.PermissionDenied(ScopedNetworkError.LOCAL_NETWORK_PERMISSION)
         }
-        // #region agent log
-        DebugTap.log(
-            "A,C,D,E",
-            "ScopedSoftApNetwork.kt:92",
-            "join entry",
-            debugWifiSnapshot(ssid) +
-                mapOf(
-                    "passphraseLen" to passphrase.length,
-                    "sdkInt" to Build.VERSION.SDK_INT,
-                    "hasLocalNetworkPermission" to hasLocalNetworkPermission(),
-                    "nearbyWifiGranted" to
-                        (
-                            Build.VERSION.SDK_INT < 33 ||
-                                context.checkSelfPermission(
-                                    "android.permission.NEARBY_WIFI_DEVICES",
-                                ) == PackageManager.PERMISSION_GRANTED
-                        ),
-                    "callbackAlreadyActive" to (synchronized(lock) { callback } != null),
-                ),
-        )
-        // #endregion
 
         // A disabled radio makes WifiNetworkSpecifier fail as Unavailable in under 10ms, which is
         // indistinguishable from a hotspot that never came up. Report the real cause instead.
@@ -295,19 +274,6 @@ class ScopedSoftApNetwork(private val context: Context) {
                         "owner" to (resolvedIpv4?.let { NetworkFacts.ownerOf(it, table) } ?: "ABSENT"),
                         "gatherable" to NetworkFacts.render(NetworkFacts.gatherable(table)),
                     )
-                    // #region agent log
-                    DebugTap.log(
-                        "A,C,D,E",
-                        "ScopedSoftApNetwork.kt:126",
-                        "onAvailable",
-                        mapOf(
-                            "ssid" to ssid,
-                            "localIpv4" to resolvedIpv4,
-                            "joinMs" to (System.currentTimeMillis() - startedAtMs),
-                            "defaultNetworkIsCellular" to defaultNetworkIsCellular(manager),
-                        ),
-                    )
-                    // #endregion
                     if (readiness.callbacksSatisfied()) ready.countDown()
                 }
 
@@ -348,21 +314,6 @@ class ScopedSoftApNetwork(private val context: Context) {
                 }
 
                 override fun onUnavailable() {
-                    // #region agent log
-                    // elapsedMs is the discriminator: a sub-second failure means the framework
-                    // never even tried (no scan hit / no join dialog); a multi-second one means
-                    // association or DHCP failed.
-                    DebugTap.log(
-                        "A,C,D,E",
-                        "ScopedSoftApNetwork.kt:137",
-                        "onUnavailable",
-                        debugWifiSnapshot(ssid) +
-                            mapOf(
-                                "elapsedMs" to (System.currentTimeMillis() - startedAtMs),
-                                "requestTimeoutMs" to requestSpec.timeoutMs,
-                            ),
-                    )
-                    // #endregion
                     synchronized(lock) { if (!state.onUnavailable(generation)) return }
                     SoftApTrace.failure("scoped_network_unavailable", "ssid" to ssid)
                     ready.countDown()
@@ -395,18 +346,6 @@ class ScopedSoftApNetwork(private val context: Context) {
             synchronized(lock) { state.onRequestFailed(generation, permissionDenied = false) }
             clearCallback(networkCallback)
             SoftApTrace.failure("scoped_join_request_failed", "ssid" to ssid)
-            // #region agent log
-            DebugTap.log(
-                "E",
-                "ScopedSoftApNetwork.kt:166",
-                "requestNetwork threw",
-                mapOf(
-                    "ssid" to ssid,
-                    "errorClass" to error.javaClass.name,
-                    "errorMessage" to error.message,
-                ),
-            )
-            // #endregion
             throw ScopedNetworkError.RequestFailed(error.message ?: "unknown")
         }
 
@@ -432,22 +371,6 @@ class ScopedSoftApNetwork(private val context: Context) {
             val failure =
                 ScopedNetworkError.from(state.failure, ssid, requestSpec.timeoutMs)
                     ?: ScopedNetworkError.Timeout(ssid, requestSpec.timeoutMs)
-            // #region agent log
-            DebugTap.log(
-                "A,C,D,E",
-                "ScopedSoftApNetwork.kt:189",
-                "join resolved to failure",
-                mapOf(
-                    "ssid" to ssid,
-                    "phase" to state.phase.name,
-                    "failure" to state.failure.name,
-                    "resolvedCode" to failure.code,
-                    "awaitedLatch" to awaited,
-                    "wifiOnNow" to isWifiEnabled(),
-                    "totalMs" to (System.currentTimeMillis() - startedAtMs),
-                ),
-            )
-            // #endregion
             releaseLocked()
             failure
         }
@@ -572,28 +495,6 @@ class ScopedSoftApNetwork(private val context: Context) {
         }
 
 
-    // #region agent log
-    /**
-     * Snapshot of everything that decides whether `WifiNetworkSpecifier` can succeed: radio state
-     * and whether the target SSID is actually in the last scan (with its band and security).
-     */
-    private fun debugWifiSnapshot(ssid: String): Map<String, Any?> {
-        val wifi = context.applicationContext.getSystemService(Context.WIFI_SERVICE) as? WifiManager
-        val scans = runCatching { wifi?.scanResults.orEmpty() }.getOrElse { emptyList() }
-        val match = scans.firstOrNull { it.SSID == ssid }
-        return mapOf(
-            "ssid" to ssid,
-            "wifiEnabled" to (wifi?.isWifiEnabled == true),
-            "wifiState" to (wifi?.wifiState ?: -1),
-            "scanResultCount" to scans.size,
-            "ssidInScan" to (match != null),
-            "matchFrequency" to match?.frequency,
-            "matchLevel" to match?.level,
-            "matchCapabilities" to match?.capabilities,
-            "scanSsidSample" to scans.take(12).map { it.SSID }.filter { it.isNotEmpty() }.toString(),
-        )
-    }
-    // #endregion
 
     /** Translate the pure spec into the framework request. */
     private fun request(spec: ScopedNetworkRequestSpec): NetworkRequest {
