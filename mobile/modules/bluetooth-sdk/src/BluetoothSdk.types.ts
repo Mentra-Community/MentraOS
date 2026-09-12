@@ -19,6 +19,12 @@ export type TouchEvent = {
   deviceModel: DeviceModel
   gestureName: string
   timestamp: number
+  /** Input surface the gesture came from, when the device distinguishes them (G2: 2 = ring controller). */
+  source?: number
+  /** Zero-based row of the glasses-native list the gesture landed on (G2 ListContainer). */
+  selectedItemIndex?: number
+  /** Text of that row, as rendered on the glasses. */
+  selectedItemName?: string
 }
 
 export type AccelEvent = {
@@ -1282,6 +1288,12 @@ export interface BluetoothSdkPublicModule {
   setDashboardPosition(height: number, depth: number): Promise<void>
   setHeadUpAngle(angleDegrees: number): Promise<void>
   setImuEnabled(enabled: boolean): Promise<void>
+  /**
+   * Tell the glasses whether a phone-side consumer owns the double-tap gesture. While claimed,
+   * G2 stops opening its native dashboard on double-tap so the gesture reaches the consumer
+   * instead. Runtime state, not a persisted setting.
+   */
+  setDoubleTapClaimed(claimed: boolean): Promise<void>
   setScreenDisabled(disabled: boolean): Promise<void>
   /** Keep legacy Mentra Live OTA sessions awake. Modern sessions normally do not require this. */
   ping(): Promise<void>
@@ -1671,6 +1683,7 @@ export type BluetoothSettingsUpdate = Partial<{
   contextual_dashboard: boolean
   head_up_angle: number
   imu_enabled: boolean
+  double_tap_claimed: boolean
   brightness: number
   auto_brightness: boolean
   dashboard_height: number

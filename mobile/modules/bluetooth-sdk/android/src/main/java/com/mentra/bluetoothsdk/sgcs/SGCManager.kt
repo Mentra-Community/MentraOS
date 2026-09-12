@@ -23,7 +23,11 @@ data class SceneElement(
         val border: Int,
         val radius: Int,
         val change: String, // "created" | "updated" | "moved" | "unchanged"
-        val contentHash: String
+        val contentHash: String,
+        // "list" elements only: the rows, in order (host-capped to the device's row limit).
+        val items: List<String>? = null,
+        // "list" elements only: outline the highlighted row (firmware default on).
+        val selectionBorder: Boolean = true
 )
 
 /**
@@ -159,6 +163,24 @@ abstract class SGCManager {
             layoutId: String?
     ) = sendPositionedText(text, x, y, width, height, borderWidth, borderRadius)
 
+    /**
+     * Retained-mode layout element (native selectable list). The host only emits "list"
+     * elements to devices whose capabilities declare a native list widget; this default keeps a
+     * misrouted frame readable by drawing the rows as text (no selection semantics).
+     */
+    open fun drawLayoutList(
+            items: List<String>,
+            x: Int,
+            y: Int,
+            width: Int,
+            height: Int,
+            borderWidth: Int,
+            borderRadius: Int,
+            selectionBorder: Boolean,
+            elementId: String,
+            layoutId: String?
+    ) = drawLayoutText(items.joinToString("\n"), x, y, width, height, borderWidth, borderRadius, elementId, layoutId)
+
     /** Remove a retained layout element by id. Default: no-op (SGC doesn't support layouts). */
     open fun removeLayoutElement(elementId: String, layoutId: String?) {}
 
@@ -207,6 +229,10 @@ abstract class SGCManager {
                     drawLayoutText("", el.x, el.y, el.w, el.h, maxOf(1, el.border), el.radius, el.id, frame.appId)
                 "image" ->
                     el.data?.let { drawLayoutBitmap(it, el.x, el.y, el.w, el.h, el.id, frame.appId) }
+                "list" ->
+                    el.items?.let {
+                        drawLayoutList(it, el.x, el.y, el.w, el.h, el.border, el.radius, el.selectionBorder, el.id, frame.appId)
+                    }
                 else -> Bridge.log("SGC: applySceneFrame: unknown element type ${el.type}")
             }
         }

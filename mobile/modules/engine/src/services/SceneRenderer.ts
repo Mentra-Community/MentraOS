@@ -76,6 +76,8 @@ class SceneRenderer {
       maxTextElements: display.maxTextElements ?? 6,
       maxImageElements: display.maxImageElements ?? 0,
       maxImagePx: display.maxImagePx,
+      maxListElements: display.maxListElements ?? 0,
+      maxListItems: display.maxListItems ?? 0,
       shapes: display.shapes ?? [],
       intensityLevels: display.intensityLevels ?? 2,
       partialUpdate: display.partialUpdate ?? false,

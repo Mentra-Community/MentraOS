@@ -99,10 +99,20 @@ interface RenderRectStyle {
   radius?: number
 }
 
+interface RenderListStyle {
+  border?: number
+  radius?: number
+  selectionBorder?: boolean  // outline the highlighted row (default true)
+}
+
 type RenderElement =
   | {type: "text"; id?: string; box: RenderBox; text: string; style?: RenderTextStyle}
   | {type: "image"; id?: string; box: RenderBox; data: string}  // data: base64 PNG/JPEG
   | {type: "rect"; id?: string; box: RenderBox; style?: RenderRectStyle}
+  // Glasses-native selectable list: the firmware scrolls and highlights rows;
+  // taps arrive via session.input.onTouch with selectedItemIndex/Name. Devices
+  // without a native list widget render the rows as text (degraded: true).
+  | {type: "list"; id?: string; box: RenderBox; items: string[]; style?: RenderListStyle}
 
 interface RenderOptions {
   view?: ViewType

@@ -53,6 +53,10 @@ export interface DisplayCapabilities {
   maxImageElements?: number;
   /** Per-image dimension cap (box-level), when the firmware has one. */
   maxImagePx?: { width: number; height: number };
+  /** Native selectable lists per frame (firmware list widgets). 0/absent ⇒ lists render as text. */
+  maxListElements?: number;
+  /** Rows a native list holds; the host drops extra rows tail-first. */
+  maxListItems?: number;
   shapes?: "rect"[];
   intensityLevels?: number;
   partialUpdate?: boolean;

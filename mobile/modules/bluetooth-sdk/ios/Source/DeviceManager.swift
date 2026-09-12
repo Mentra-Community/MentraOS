@@ -1457,7 +1457,9 @@ struct ViewState {
                 border: ((style?["border"]) as? NSNumber)?.int32Value ?? 0,
                 radius: ((style?["radius"]) as? NSNumber)?.int32Value ?? 0,
                 change: el["change"] as? String ?? "created",
-                contentHash: el["contentHash"] as? String ?? ""
+                contentHash: el["contentHash"] as? String ?? "",
+                items: el["items"] as? [String],
+                selectionBorder: (style?["selectionBorder"] as? Bool) ?? true
             )
         }
         return SceneFrame(

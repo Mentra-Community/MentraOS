@@ -294,6 +294,36 @@ const GlassesDisplayMirror: React.FC<GlassesDisplayMirrorProps> = ({
                 return <Image key={key} source={{uri}} style={frameStyle} resizeMode="contain" />
               }
 
+              if (element?.type === "list") {
+                // Native list: the glasses own scrolling and the highlighted row and never
+                // report the scroll position back, so the mirror shows the rows as created,
+                // with the first row outlined (the firmware's initial highlight).
+                const rows: string[] = Array.isArray(element.items)
+                  ? element.items.map((row: unknown) => String(row))
+                  : []
+                const outlineFirstRow = elementStyle.selectionBorder !== false
+                const highlightStyle = {
+                  borderWidth: 1,
+                  borderColor: (textStyle?.color as string) ?? "#00ff88aa",
+                  borderRadius: 2 * scale,
+                }
+                return (
+                  <View key={key} style={frameStyle}>
+                    {rows.map((row: string, rowIndex: number) => (
+                      <Text
+                        key={rowIndex}
+                        style={[
+                          textStyle,
+                          styles.cardContent,
+                          rowIndex === 0 && outlineFirstRow ? highlightStyle : null,
+                        ]}>
+                        {row}
+                      </Text>
+                    ))}
+                  </View>
+                )
+              }
+
               if (element?.type === "text") {
                 const text = parseText(typeof element.text === "string" ? element.text : "")
                 return (

@@ -115,6 +115,53 @@ describe("MiniappSession queue-before-ACK", () => {
   })
 })
 
+describe("MiniappSession display.render", () => {
+  test("list elements ride the RENDER envelope unchanged", async () => {
+    const transport = new FakeTransport()
+    const session = new MiniappSession({transport, packageName: "com.test.list"})
+    const connectPromise = session.connect()
+    await Promise.resolve()
+    transport.deliverFromPhone({
+      type: MiniappResponseType.CONNECT_ACK,
+      userId: "user_abc",
+      packageName: "com.test.list",
+      capabilities: null,
+    })
+    await connectPromise
+
+    const before = transport.sent.length
+    void session.display.render(
+      [
+        {
+          type: "list",
+          id: "menu",
+          box: {x: 24, y: 16, w: 528, h: 256},
+          items: ["Weather", "Timer"],
+          style: {border: 1, radius: 8, selectionBorder: false},
+        },
+      ],
+      {durationMs: 5000},
+    )
+
+    expect(transport.sent.length).toBe(before + 1)
+    const outbound = parseEnvelope(transport.sent[transport.sent.length - 1]!)
+    expect(outbound).not.toBeNull()
+    const payload = outbound!.payload as Record<string, unknown>
+    expect(payload.type).toBe(MiniappRequestType.RENDER)
+    expect(payload.view).toBe("main")
+    expect(payload.durationMs).toBe(5000)
+    expect(payload.elements).toEqual([
+      {
+        type: "list",
+        id: "menu",
+        box: {x: 24, y: 16, w: 528, h: 256},
+        items: ["Weather", "Timer"],
+        style: {border: 1, radius: 8, selectionBorder: false},
+      },
+    ])
+  })
+})
+
 describe("MiniappSession auto-PONG", () => {
   test("session auto-replies to incoming PING requests", async () => {
     const transport = new FakeTransport()

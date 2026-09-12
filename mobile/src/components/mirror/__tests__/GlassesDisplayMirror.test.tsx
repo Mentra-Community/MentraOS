@@ -132,4 +132,35 @@ describe("GlassesDisplayMirror", () => {
     expect(getByText("Scene mirror text")).toBeTruthy()
     expect(queryByText(/Unknown layout type/i)).toBeNull()
   })
+
+  it("renders native list rows from scene frames", () => {
+    useDisplayStore.setState({
+      currentEvent: {
+        view: "main",
+        layout: {
+          layoutType: "scene",
+          width: 576,
+          height: 288,
+          elements: [
+            {
+              id: "menu",
+              type: "list",
+              box: {x: 24, y: 16, w: 528, h: 256},
+              items: ["Weather", "Timer", "Help"],
+              style: {border: 1, radius: 8},
+              change: "created",
+              contentHash: "list-hash",
+            },
+          ],
+        },
+      },
+    })
+
+    const {getByText, queryByText} = render(<GlassesDisplayMirror />)
+
+    expect(getByText("Weather")).toBeTruthy()
+    expect(getByText("Timer")).toBeTruthy()
+    expect(getByText("Help")).toBeTruthy()
+    expect(queryByText(/Unknown layout type/i)).toBeNull()
+  })
 })

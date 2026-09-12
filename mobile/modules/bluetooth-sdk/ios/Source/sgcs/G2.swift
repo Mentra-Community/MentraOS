@@ -360,15 +360,59 @@ private enum EvenHubProto {
         return w.data
     }
 
+    /// List_ItemContainerProperty — the rows of a `listContainerProperty`.
+    static func listItemContainerProperty(
+        itemNames: [String], itemWidth: Int32 = 0, isItemSelectBorderEn: Bool = true
+    ) -> Data {
+        var w = ProtobufWriter()
+        w.writeInt32Field(1, Int32(itemNames.count)) // Item_Count
+        w.writeInt32Field(2, itemWidth) // Item_Width (0 = firmware fills the container width)
+        w.writeInt32Field(3, isItemSelectBorderEn ? 1 : 0) // Is_Item_Select_Border_En
+        for name in itemNames {
+            w.writeStringField(4, name) // repeated Item_Name
+        }
+        return w.data
+    }
+
+    /// ListContainerProperty — a firmware-owned scrollable, selectable list. Fields 1-10 mirror
+    /// `textContainerProperty`; 11 = Item_Container, 12 = Is_event_capture. The firmware scrolls
+    /// and highlights rows itself and reports taps as List_ItemEvent (see the touch handler).
+    static func listContainerProperty(
+        x: Int32, y: Int32, width: Int32, height: Int32,
+        borderWidth: Int32, borderColor: Int32, borderRadius: Int32, paddingLength: Int32,
+        containerID: Int32, containerName: String? = nil,
+        itemContainer: Data, isEventCapture: Bool
+    ) -> Data {
+        var w = ProtobufWriter()
+        w.writeInt32Field(1, x)
+        w.writeInt32Field(2, y)
+        w.writeInt32Field(3, width)
+        w.writeInt32Field(4, height)
+        w.writeInt32Field(5, borderWidth)
+        w.writeInt32Field(6, borderColor)
+        w.writeInt32Field(7, borderRadius)
+        w.writeInt32Field(8, paddingLength)
+        w.writeInt32Field(9, containerID)
+        if let name = containerName {
+            w.writeStringField(10, name)
+        }
+        w.writeMessageField(11, itemContainer)
+        w.writeInt32Field(12, isEventCapture ? 1 : 0)
+        return w.data
+    }
+
     /// Build a CreateStartUpPageContainer message
     static func createStartupPageContainer(
         containerTotalNum: Int32,
+        listContainers: [Data] = [],
         textContainers: [Data] = [],
         imageContainers: [Data] = []
     ) -> Data {
         var w = ProtobufWriter()
         w.writeInt32Field(1, containerTotalNum) // ContainerTotalNum
-        // field 2 = repeated ListContainerProperty ListObject (not used here)
+        for lc in listContainers {
+            w.writeMessageField(2, lc) // field 2 = repeated ListObject
+        }
         for tc in textContainers {
             w.writeMessageField(3, tc) // field 3 = repeated TextObject
         }
@@ -432,12 +476,13 @@ private enum EvenHubProto {
 
     /// Convenience builders for full evenhub messages
     static func createPageMessage(
-        textContainers: [Data] = [], imageContainers: [Data] = [], magicRandom: Int32 = 0,
-        appId _: Int32? = nil
+        listContainers: [Data] = [], textContainers: [Data] = [], imageContainers: [Data] = [],
+        magicRandom: Int32 = 0, appId _: Int32? = nil
     ) -> Data {
-        let total = Int32(textContainers.count + imageContainers.count)
+        let total = Int32(listContainers.count + textContainers.count + imageContainers.count)
         let createMsg = createStartupPageContainer(
             containerTotalNum: total,
+            listContainers: listContainers,
             textContainers: textContainers,
             imageContainers: imageContainers
         )
@@ -449,14 +494,15 @@ private enum EvenHubProto {
 
     // RebuildPageContainer: same structure as CreateStartUpPageContainer, but cmd=7, field 7
     static func rebuildPageMessage(
-        textContainers: [Data] = [], imageContainers: [Data] = [], magicRandom: Int32 = 0,
-        appId: Int32? = nil
+        listContainers: [Data] = [], textContainers: [Data] = [], imageContainers: [Data] = [],
+        magicRandom: Int32 = 0, appId: Int32? = nil
     )
         -> Data
     {
-        let total = Int32(textContainers.count + imageContainers.count)
+        let total = Int32(listContainers.count + textContainers.count + imageContainers.count)
         let rebuildMsg = createStartupPageContainer(
             containerTotalNum: total,
+            listContainers: listContainers,
             textContainers: textContainers,
             imageContainers: imageContainers
         )
@@ -1638,6 +1684,30 @@ class G2: NSObject, SGCManager {
     private let imageContainerIDPool: [Int32] = [10, 11, 12, 13]
     private let textContainerIDPool: [Int32] = [1, 2, 3, 4, 5, 6]
 
+    /// A tracked native list container (scene "list" element). The firmware owns scrolling and
+    /// the highlighted row; there is no in-place row-update command, so any change to the rows
+    /// or the rect is structural (page rebuild) and resets the highlight to the first row.
+    private struct ListContainer: Equatable {
+        let id: Int32
+        let x: Int32
+        let y: Int32
+        let width: Int32
+        let height: Int32
+        let borderWidth: Int32
+        let borderRadius: Int32
+        let selectionBorder: Bool
+        let items: [String]
+        var name: String {
+            "list-\(id)"
+        }
+    }
+
+    /// The page holds at most ONE list: the firmware allows exactly one event-capture container
+    /// and a list only scrolls/selects while it is that container (the host budget mirrors this
+    /// with maxListElements = 1). Id 7 sits between the text (1-6) and image (10-13) pools.
+    private var listContainers: [ListContainer] = []
+    private static let listContainerID: Int32 = 7
+
     /// One firmware text line (hardware-calibrated 2026-07-03: 28px overflows,
     /// 40px clean). Text containers are silently grown to at least this.
     private static let minTextContainerHeight: Int32 = 40
@@ -1652,6 +1722,7 @@ class G2: NSObject, SGCManager {
     /// the previous app's elements on an app switch).
     private var sceneTextByElement: [String: Int32] = [:]
     private var sceneImageByElement: [String: [Int32]] = [:]
+    private var sceneListByElement: [String: Int32] = [:]
 
     /// Max image-container size the firmware accepts pixels for
     /// (hardware-verified 2026-07-03: 150x150 refused, 100x100 clean; 200x100
@@ -2360,12 +2431,30 @@ class G2: NSObject, SGCManager {
                         elementId: el.id, layoutId: frame.appId
                     )
                 }
+            case "list":
+                if let items = el.items {
+                    await drawLayoutList(
+                        items, x: el.x, y: el.y, width: el.w, height: el.h,
+                        borderWidth: el.border, borderRadius: el.radius,
+                        selectionBorder: el.selectionBorder,
+                        elementId: el.id, layoutId: frame.appId
+                    )
+                }
             default:
                 Bridge.log("G2: applySceneFrame: unknown element type \(el.type)")
             }
         }
         for id in frame.removed where !paintedIds.contains(id) {
             await removeLayoutElement(id, layoutId: frame.appId)
+        }
+        // A replay carries no `removed` list and forgot the element mapping above, so a list
+        // the retained scene no longer has would linger — and keep event capture. Drop it
+        // structurally.
+        if frame.replay, !listContainers.isEmpty, !frame.elements.contains(where: { $0.type == "list" }) {
+            Bridge.log("G2: applySceneFrame — replay without a list, dropping the stale list container")
+            listContainers.removeAll()
+            sceneListByElement.removeAll()
+            await requestPageRebuild()
         }
         sceneBatchDepth -= 1
         if sceneStructuralPending {
@@ -2380,6 +2469,38 @@ class G2: NSObject, SGCManager {
         // the element mapping so creates re-match/re-register cleanly.
         sceneTextByElement.removeAll()
         sceneImageByElement.removeAll()
+        sceneListByElement.removeAll()
+    }
+
+    func drawLayoutList(
+        _ items: [String], x: Int32, y: Int32, width: Int32, height: Int32,
+        borderWidth: Int32, borderRadius: Int32, selectionBorder: Bool,
+        elementId: String, layoutId _: String?
+    ) async {
+        // Scene list upsert — ALWAYS structural when anything differs (the firmware has no
+        // row-update command for list containers), through requestPageRebuild so a frame still
+        // rebuilds once. An identical repaint is a no-op on purpose: rebuilding would reset the
+        // firmware's scroll position and highlighted row under the user.
+        let next = ListContainer(
+            id: G2.listContainerID, x: x, y: y, width: width, height: height,
+            borderWidth: borderWidth, borderRadius: borderRadius,
+            selectionBorder: selectionBorder, items: items
+        )
+        // Match by content, not by the element mapping: a replay (dashboard close, reconnect)
+        // forgets the mapping while the page may already carry this exact list — rebinding it
+        // avoids a shutdown/rebuild that would reset the firmware's highlight mid-recovery.
+        if listContainers.first == next {
+            sceneListByElement = sceneListByElement.filter { $0.value != G2.listContainerID }
+            sceneListByElement[elementId] = G2.listContainerID
+            return
+        }
+        // One list per page: a new list element replaces whatever list was there.
+        listContainers.removeAll()
+        sceneListByElement = sceneListByElement.filter { $0.value != G2.listContainerID }
+        listContainers.append(next)
+        sceneListByElement[elementId] = G2.listContainerID
+        Bridge.log("G2: drawLayoutList '\(elementId)' \(items.count) row(s) at \(x),\(y) \(width)x\(height) — structural")
+        await requestPageRebuild()
     }
 
     func drawLayoutText(
@@ -2545,6 +2666,12 @@ class G2: NSObject, SGCManager {
         // from the tracked list (freeing the pool id), and mark the frame
         // structural — the batched frame-end rebuild recreates the page without
         // it. Never a per-remove shutdown (mic coupling).
+        if let id = sceneListByElement.removeValue(forKey: elementId),
+           let i = listContainers.firstIndex(where: { $0.id == id })
+        {
+            listContainers.remove(at: i)
+            await requestPageRebuild()
+        }
         if let id = sceneTextByElement.removeValue(forKey: elementId),
            let i = textContainers.firstIndex(where: { $0.id == id })
         {
@@ -2645,11 +2772,18 @@ class G2: NSObject, SGCManager {
                 && $0.height >= G2.defaultTextContainer.height
         }
         let huskIds = Set(textContainers.filter { !isFullCanvas($0) }.map { $0.id })
-        if !huskIds.isEmpty {
+        // A native list can't be blanked in place either (no row-update command); it leaves
+        // the page together with the husks.
+        let purgeList = !listContainers.isEmpty
+        if !huskIds.isEmpty || purgeList {
             textContainers.removeAll { huskIds.contains($0.id) }
             sceneTextByElement = sceneTextByElement.filter { !huskIds.contains($0.value) }
             sceneImageByElement.removeAll()
-            Bridge.log("G2: clearDisplay() — purging \(huskIds.count) positioned husk container(s), one rebuild")
+            listContainers.removeAll()
+            sceneListByElement.removeAll()
+            Bridge.log(
+                "G2: clearDisplay() — purging \(huskIds.count) positioned husk container(s)\(purgeList ? " + the list" : ""), one rebuild"
+            )
             Task { [weak self] in
                 await self?.coalescedPageRebuild()
             }
@@ -2855,7 +2989,9 @@ class G2: NSObject, SGCManager {
                 $0.pendingSends > 0 && $0.content.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty == false
             }
             let hasPendingImage = imageContainers.contains { $0.dirty && !$0.bmpData.isEmpty }
-            if (hasPendingText || hasPendingImage) && !(useNativeDashboard && dashboardShowing > 0) {
+            // A list is embedded in the page create, so a tracked list is always pending content.
+            let hasPendingList = !listContainers.isEmpty
+            if (hasPendingText || hasPendingImage || hasPendingList) && !(useNativeDashboard && dashboardShowing > 0) {
                 Bridge.log("G2: reconcileDisplay() - page down with pending content, rebuilding once")
                 await rebuildState()
             }
@@ -3448,7 +3584,9 @@ class G2: NSObject, SGCManager {
                 x: 0, y: 0, width: 1, height: 1,
                 borderWidth: 0, borderColor: 0, borderRadius: 0,
                 paddingLength: 0, containerID: 0,
-                containerName: "evt-0", isEventCapture: true,
+                // A list must be the event-capture container to scroll/select, and the
+                // firmware allows exactly one — hand the flag over while a list is up.
+                containerName: "evt-0", isEventCapture: listContainers.isEmpty,
                 content: ""
             ),
         ]
@@ -3475,6 +3613,19 @@ class G2: NSObject, SGCManager {
         for c in imageContainers {
             Bridge.log(
                 "G2: page-comp image id=\(c.id) rect=\(c.x),\(c.y) \(c.width)x\(c.height) bytes=\(c.bmpData.count)"
+            )
+        }
+        let listContainerProps: [Data] = listContainers.map { c in
+            Bridge.log("G2: page-comp list id=\(c.id) rect=\(c.x),\(c.y) \(c.width)x\(c.height) rows=\(c.items.count)")
+            return EvenHubProto.listContainerProperty(
+                x: c.x, y: c.y, width: c.width, height: c.height,
+                borderWidth: c.borderWidth, borderColor: G2.defaultTextContainer.borderColor,
+                borderRadius: c.borderRadius, paddingLength: G2.defaultTextContainer.paddingLength,
+                containerID: c.id, containerName: c.name,
+                itemContainer: EvenHubProto.listItemContainerProperty(
+                    itemNames: c.items, isItemSelectBorderEn: c.selectionBorder
+                ),
+                isEventCapture: true
             )
         }
 
@@ -3505,6 +3656,7 @@ class G2: NSObject, SGCManager {
         if !pageCreated {
             Bridge.log("G2: createPageWithContainers() - using createPageMessage (first time)")
             msg = EvenHubProto.createPageMessage(
+                listContainers: listContainerProps,
                 textContainers: textContainerProps,
                 imageContainers: imageContainerProps,
                 magicRandom: sendManager.nextMagicRandom(),
@@ -3513,6 +3665,7 @@ class G2: NSObject, SGCManager {
         } else {
             Bridge.log("G2: createPageWithContainers() - using rebuildPageMessage")
             msg = EvenHubProto.rebuildPageMessage(
+                listContainers: listContainerProps,
                 textContainers: textContainerProps,
                 imageContainers: imageContainerProps,
                 magicRandom: sendManager.nextMagicRandom(),
@@ -4764,29 +4917,7 @@ class G2: NSObject, SGCManager {
             }
 
             if eventType == .doubleClick {
-                // trigger dashboard:
-                let isHeadUp = DeviceStore.shared.get("glasses", "headUp") as? Bool ?? false
-
-                let useNativeDashboard =
-                    DeviceStore.shared.get("bluetooth", "use_native_dashboard") as? Bool ?? false
-                if useNativeDashboard {
-                    showDashboard()
-                } else {
-                    // toggle head up:
-                    DeviceStore.shared.apply("glasses", "headUp", !isHeadUp)
-                }
-
-                // if isHeadUp {
-                //     // Bridge.log("G2: going back to home, clearing display")
-                //     // clear the display after a delay:
-                //     DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) {
-                //         self.clearDisplay()
-                //     }
-                // }
-                // sendDashboardCommand(DashboardCommand.trigger)
-
-                // toggle head up:
-                // DeviceStore.shared.apply("glasses", "headUp", true)
+                onDoubleClickGesture()
             }
 
             // if eventType == .foregroundEnter {
@@ -4829,22 +4960,62 @@ class G2: NSObject, SGCManager {
             return
         }
 
-        // ListEvent (field 1) - interaction with list container
-        // if let listData = fields[1] as? Data {
-        //     var listReader = ProtobufReader(listData)
-        //     let listFields = listReader.parseFields()
-        //     if let eventTypeRaw = listFields[5] as? Int32,
-        //         let eventType = OsEventType(rawValue: eventTypeRaw)
-        //     {
-        //         let gestureName = mapEventTypeToGesture(eventType)
-        //         if let gestureName = gestureName {
-        //             Bridge.sendTouchEvent(
-        //                 deviceModel: DeviceTypes.G2, gestureName: gestureName, timestamp: timestamp
-        //             )
-        //             Bridge.log("G2: ListEvent → \(gestureName)")
-        //         }
-        //     }
-        // }
+        // List_ItemEvent (field 1) - a gesture on the native list container. The firmware
+        // already moved its highlight; we only relay which row the gesture landed on:
+        // 1=Container_ID, 2=Container_Name, 3=CurrentSelect_ItemName,
+        // 4=CurrentSelect_ItemIndex, 5=Event_Type (absent ⇒ click, like SysEvent).
+        if let listData = fields[1] as? Data {
+            var listReader = ProtobufReader(listData)
+            let listFields = listReader.parseFields()
+            let eventType: OsEventType?
+            if let eventTypeRaw = listFields[5] as? Int32 {
+                eventType = OsEventType(rawValue: eventTypeRaw)
+            } else {
+                eventType = .click
+            }
+            guard let eventType else {
+                Bridge.log("G2: unknown list event type: \(listFields)")
+                return
+            }
+            guard let gestureName = mapEventTypeToGesture(eventType) else {
+                Bridge.log("G2: no gesture mapping for \(eventType) \(listFields)")
+                return
+            }
+            let selectedItemName = (listFields[3] as? Data).flatMap { String(data: $0, encoding: .utf8) }
+            let selectedItemIndex = listFields[4] as? Int32
+
+            Bridge.sendTouchEvent(
+                deviceModel: DeviceTypes.G2, gestureName: gestureName, timestamp: timestamp,
+                selectedItemIndex: selectedItemIndex, selectedItemName: selectedItemName
+            )
+            Bridge.log("G2: ListEvent → \(gestureName) row=\(String(describing: selectedItemIndex)) '\(selectedItemName ?? "")'")
+
+            if eventType == .doubleClick {
+                onDoubleClickGesture()
+            }
+            return
+        }
+    }
+
+    /// Double-tap is shared with phone-side consumers: a local miniapp that listens for touches
+    /// claims it (the phone pushes `double_tap_claimed`; see LocalMiniappRuntime), and while
+    /// claimed the gesture is theirs alone — no native dashboard, no head-up toggle. Decided here
+    /// rather than on the phone so the shortcut keeps working while the app's JS is suspended.
+    private func onDoubleClickGesture() {
+        let claimed = DeviceStore.shared.get("bluetooth", "double_tap_claimed") as? Bool ?? false
+        if claimed {
+            Bridge.log("G2: double-tap claimed by a miniapp — skipping the dashboard shortcut")
+            return
+        }
+        let useNativeDashboard =
+            DeviceStore.shared.get("bluetooth", "use_native_dashboard") as? Bool ?? false
+        if useNativeDashboard {
+            showDashboard()
+        } else {
+            // toggle head up:
+            let isHeadUp = DeviceStore.shared.get("glasses", "headUp") as? Bool ?? false
+            DeviceStore.shared.apply("glasses", "headUp", !isHeadUp)
+        }
     }
 
     private func mapEventTypeToGesture(_ eventType: OsEventType) -> String? {

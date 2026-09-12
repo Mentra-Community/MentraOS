@@ -35,6 +35,11 @@ export const evenRealitiesG2: Capabilities = {
     canPosition: true,
     maxTextElements: 6, // firmware text-container pool (rects share it)
     maxImageElements: 4, // firmware image-container pool
+    // Firmware ListContainer: one event-capturing list per page, up to 20
+    // rows; scroll + highlight are firmware-owned, taps come back as touch
+    // events carrying the selected row.
+    maxListElements: 1,
+    maxListItems: 20,
     // No maxImagePx: the SGC tiles larger images across multiple firmware
     // containers (each ≤200x100 — the hardware-verified per-container transfer
     // envelope). Pathological sizes needing more than the 4-container pool are

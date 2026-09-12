@@ -29,6 +29,7 @@ import {
 import type {MiniappEnvelope} from "@mentra/miniapp"
 
 import {DeviceTypes, getModelCapabilities} from "../types"
+import {claimsDoubleTap} from "./DoubleTapClaim"
 import {storage as mmkvStorage} from "../utils/storage/storage"
 import {BgTimer} from "../utils/timers"
 import devServerBridge from "./DevServerBridge"
@@ -598,6 +599,11 @@ class LocalMiniappRuntime {
         }
       }
     }
+
+    // Every subscriber mutation (SUBSCRIBE, public subscribe(), respawn of a
+    // running app, unregister) goes through here, so this is the one place the
+    // double-tap claim can be derived from without missing a path.
+    this.recomputeDoubleTapClaim()
   }
 
   /**
@@ -699,6 +705,9 @@ class LocalMiniappRuntime {
     this.initialized = true
     console.log(`${LOG_TAG}: initialize()`)
     this.ensurePingLoop()
+    // Native keeps the double-tap claim across a JS restart (dev reload, MentraJS
+    // crash recovery); a fresh runtime has no subscribers, so resync it unconditionally.
+    this.recomputeDoubleTapClaim(true)
   }
 
   /**
@@ -2817,6 +2826,22 @@ class LocalMiniappRuntime {
     if (wantsImu === this.imuEnabled) return
     this.imuEnabled = wantsImu
     void BluetoothSdk.setImuEnabled(wantsImu)
+  }
+
+  /**
+   * Push the double-tap claim (see DoubleTapClaim.ts) to native as runtime
+   * state, so the shortcut decision stays on the glasses side — it keeps
+   * working while JS is suspended — instead of round-tripping every gesture
+   * through the phone. Mirrors the IMU pattern above. Called from
+   * replaceStreamSubscribers (every subscriber mutation), initialize (force
+   * resync) and cleanup.
+   */
+  private doubleTapClaimed = false
+  private recomputeDoubleTapClaim(force = false): void {
+    const claimed = claimsDoubleTap(this.streamSubscribers.keys())
+    if (!force && claimed === this.doubleTapClaimed) return
+    this.doubleTapClaimed = claimed
+    void BluetoothSdk.setDoubleTapClaimed(claimed)
   }
 
   /**
@@ -5625,6 +5650,7 @@ class LocalMiniappRuntime {
     this.pendingCloudRequests.clear()
     const hadButtonPressSubscribers = this.getButtonPressSubscribers().length > 0
     this.streamSubscribers.clear()
+    this.recomputeDoubleTapClaim()
     if (hadButtonPressSubscribers) {
       for (const listener of this.buttonPressSubscriberListeners) {
         try {

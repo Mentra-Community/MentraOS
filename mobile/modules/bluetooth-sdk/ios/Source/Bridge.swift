@@ -288,7 +288,16 @@ class Bridge {
         Bridge.sendTypedMessage("button_press", body: body)
     }
 
-    static func sendTouchEvent(deviceModel: String, gestureName: String, timestamp: Int64, source: Int32? = nil) {
+    /// Touch gesture from the glasses. `selectedItemIndex` / `selectedItemName` identify the row of
+    /// a native list the gesture landed on (G2 List_ItemEvent); absent for plain touchpad gestures.
+    static func sendTouchEvent(
+        deviceModel: String,
+        gestureName: String,
+        timestamp: Int64,
+        source: Int32? = nil,
+        selectedItemIndex: Int32? = nil,
+        selectedItemName: String? = nil
+    ) {
         var body: [String: Any] = [
             "type": "touch_event",
             "deviceModel": deviceModel,
@@ -297,6 +306,12 @@ class Bridge {
         ]
         if let source {
             body["source"] = source
+        }
+        if let selectedItemIndex {
+            body["selectedItemIndex"] = selectedItemIndex
+        }
+        if let selectedItemName {
+            body["selectedItemName"] = selectedItemName
         }
         Bridge.sendTypedMessage("touch_event", body: body)
     }
