@@ -571,7 +571,7 @@ function compareVersionStrings(left, right) {
   return 0
 }
 
-export async function appStoreInventory(client, {app}) {
+export async function appStoreInventory(client, {app, marketingVersion}) {
   const builds = await collectPaginatedData(
     client,
     query("/v1/builds", {"filter[app]": app.id, "sort": "-uploadedDate", "limit": "200"}),
@@ -603,11 +603,32 @@ export async function appStoreInventory(client, {app}) {
       state: currentVersion.attributes?.appStoreState || currentVersion.attributes?.appVersionState,
     }
   }
+  const maxBuildNumbersByMarketingVersion = {}
+  if (marketingVersion) {
+    // iOS build ordering is per marketing version. A newer development train
+    // must not force an older production train into its numeric namespace.
+    for (const version of new Set([marketingVersion, current?.marketingVersion].filter(Boolean))) {
+      const scopedBuilds = await collectPaginatedData(
+        client,
+        query("/v1/builds", {
+          "filter[app]": app.id,
+          "filter[preReleaseVersion.version]": version,
+          "limit": "200",
+        }),
+      )
+      const scopedNumbers = scopedBuilds.map((build) => Number(build.attributes?.version))
+      if (scopedNumbers.some((number) => !Number.isSafeInteger(number) || number < 1)) {
+        throw new Error(`App Store version ${version} contains a non-integer build number`)
+      }
+      maxBuildNumbersByMarketingVersion[version] = scopedNumbers.length ? Math.max(...scopedNumbers) : 0
+    }
+  }
   return {
     appId: app.id,
     bundleId: app.attributes?.bundleId,
     current,
     maxBuildNumber: buildNumbers.length === 0 ? 0 : Math.max(...buildNumbers),
+    ...(marketingVersion ? {maxBuildNumbersByMarketingVersion} : {}),
   }
 }
 
@@ -867,7 +888,7 @@ async function main() {
     return
   }
   if (command === "inventory") {
-    const inventory = await appStoreInventory(client, {app})
+    const inventory = await appStoreInventory(client, {app, marketingVersion: args["marketing-version"]})
     if (args.output) {
       const {writeFileSync} = await import("node:fs")
       writeFileSync(path.resolve(args.output), `${JSON.stringify(inventory, null, 2)}\n`)

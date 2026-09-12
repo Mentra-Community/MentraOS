@@ -2,6 +2,8 @@ import {existsSync, readFileSync} from "node:fs"
 import {createHash} from "node:crypto"
 import path from "node:path"
 
+import {validateNativeReservation} from "./native-build-numbers.mjs"
+
 import {validateCloudV2DeploymentRecord} from "./coordinated-cloud-v2-records.mjs"
 import {validatePrivateDeploymentRecord} from "./coordinated-private-deployment-records.mjs"
 import {validateRuntimeImageRecord} from "./coordinated-runtime-image-records.mjs"
@@ -254,6 +256,8 @@ export function createReleasePlan({
   nativeBuildNumber,
   otaInputs = {},
   publicBetaTestflight = false,
+  nativeReservation,
+  googlePlayTrack,
 }) {
   if (!family?.members || !family?.familyBaseVersion) throw new Error("A validated release family is required")
   const changelog = validateChangelog(family.changelog, family.familyBaseVersion)
@@ -265,6 +269,16 @@ export function createReleasePlan({
     throw new Error("nativeBuildNumber must be a positive safe integer")
   }
 
+  if (nativeReservation) {
+    validateNativeReservation(nativeReservation, {
+      baseVersion: family.familyBaseVersion,
+      sourceCommit,
+      count: nativeReservation.buildNumbers?.length,
+    })
+    if (!nativeReservation.buildNumbers.includes(nativeBuildNumber))
+      throw new Error("Build number is not reserved for this release")
+  }
+  if (googlePlayTrack && !/^[a-z][a-z0-9-]*$/.test(googlePlayTrack)) throw new Error("Invalid Google Play track")
   const releaseIdentity = deriveReleaseIdentity(family.familyBaseVersion, channel, sequence)
   const members = Object.fromEntries(
     family.members.map((member) => [
@@ -296,6 +310,8 @@ export function createReleasePlan({
     native: {
       marketingVersion: family.familyBaseVersion,
       buildNumber: nativeBuildNumber,
+      ...(nativeReservation ? {reservation: nativeReservation} : {}),
+      ...(googlePlayTrack ? {googlePlayTrack} : {}),
       ...(channel === "beta" && publicBetaTestflight
         ? {testflight: {group: "Mentra Staging Public", audience: "external"}}
         : {}),
@@ -379,7 +395,8 @@ function expectedPublicationCoordinate(plan, memberName, target) {
   }
   const selected = channels[plan.channel]
   if (!selected) throw new Error(`Unknown release channel ${JSON.stringify(plan.channel)}`)
-  if (target === "google-play") return `com.mentra.mentra:${plan.native.buildNumber}:${selected.play}`
+  if (target === "google-play")
+    return `com.mentra.mentra:${plan.native.buildNumber}:${plan.native.googlePlayTrack || selected.play}`
   if (target === "app-store-connect") {
     const group = plan.native.testflight?.group || selected.appStore
     if (
@@ -420,6 +437,15 @@ export function finalizeReleaseManifest({plan, results, completedAt}) {
     plan.native.buildNumber < 1
   ) {
     throw new Error("Release plan has invalid native build identity")
+  }
+  if (plan.native.reservation) {
+    validateNativeReservation(plan.native.reservation, {
+      baseVersion: plan.familyBaseVersion,
+      sourceCommit: plan.sourceCommit,
+      count: plan.native.reservation.buildNumbers?.length,
+    })
+    if (!plan.native.reservation.buildNumbers.includes(plan.native.buildNumber))
+      throw new Error("Release plan build number is outside its reservation")
   }
   const changelog = validateChangelog(plan.changelog, plan.familyBaseVersion)
 

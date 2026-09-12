@@ -131,12 +131,12 @@ test("verifies package and both native versions from the actual bundle", () => {
   )
 })
 
-test("coordinator preserves MentraOS tracks and separates example audiences", () => {
+test("coordinator selects MentraOS tracks from policy and separates example audiences", () => {
   const workflow = readFileSync(new URL("../workflows/coordinated-release.yml", import.meta.url), "utf8")
   const channelBlock = workflow.slice(workflow.indexOf('case "$BRANCH"'), workflow.indexOf("Restore the release plan"))
   const devBlock = channelBlock.slice(channelBlock.indexOf("dev)"), channelBlock.indexOf("staging)"))
   const stagingBlock = channelBlock.slice(channelBlock.indexOf("staging)"))
-  assert.match(devBlock, /echo "play_track=internal"/)
+  assert.match(devBlock, /native-build-policy\.json.*play\.dev/)
   assert.match(stagingBlock, /echo "play_track=beta"/)
   assert.doesNotMatch(devBlock, /echo "play_track=beta"/)
   assert.doesNotMatch(stagingBlock, /echo "play_track=internal"/)

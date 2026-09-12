@@ -112,7 +112,7 @@ jobs:
           bundle install
           build=$(jq -er .coordinates.candidates.mentraApp.android.buildNumber ../promotion-input/current.json)
           APP_PACKAGE_NAME=com.mentra.mentra \
-            GOOGLE_PLAY_SOURCE_TRACK=internal \
+            GOOGLE_PLAY_SOURCE_TRACK="$(jq -r '.coordinates.candidates.mentraApp.android.playTrack // "internal"' ../promotion-input/current.json)" \
             GOOGLE_PLAY_TARGET_TRACK=production \
             GOOGLE_PLAY_VERSION_CODE="$build" \
             GOOGLE_PLAY_RELEASE_STATUS=draft \

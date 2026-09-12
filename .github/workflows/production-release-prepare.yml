@@ -145,6 +145,7 @@ jobs:
             --key-id "${{ secrets.ASC_API_KEY_ID }}" \
             --key-path "${{ steps.asc.outputs.key_path }}" \
             --bundle-id com.mentra.mentra \
+            --marketing-version "${{ steps.identity.outputs.release_identity }}" \
             --output promotion-input/stores/mentra-apple.json
 
       - name: Install pinned Google Play inventory tooling
@@ -160,6 +161,7 @@ jobs:
         working-directory: promotion-input/play
         run: |
           set -euo pipefail
+          GOOGLE_PLAY_INVENTORY_TRACKS=$(node -p 'const p = require("../../.github/native-build-policy.json"); [...Object.values(p.play), ...p.retiredPlayTracks].join(",")') \
           APP_PACKAGE_NAME=com.mentra.mentra \
             GOOGLE_PLAY_INVENTORY_OUTPUT=../stores/mentra-google.json \
             bundle exec fastlane google_play_inventory
@@ -206,6 +208,22 @@ jobs:
           --target-commit "${{ steps.beta.outputs.source_commit }}"
           --github-output "$GITHUB_OUTPUT"
 
+      - name: Reserve production native build numbers
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          count=1
+          if [[ "${{ steps.previous.outputs.found }}" == "true" ]]; then count=2; fi
+          node .github/scripts/reserve-native-builds.mjs \
+            --repository "$GITHUB_REPOSITORY" \
+            --key "production:${{ steps.identity.outputs.release_identity }}:${{ steps.container.outputs.attempt }}" \
+            --source-commit "${{ steps.beta.outputs.source_commit }}" \
+            --beta-plan promotion-input/beta/release-plan.json \
+            --inventory promotion-input/stores/mentra-inventory.json \
+            --count "$count" \
+            --output promotion-input/native-build-reservation.json
+
       - name: Create frozen production plan and initial state
         id: record
         env:
@@ -236,6 +254,7 @@ jobs:
             --actor "$GITHUB_ACTOR" \
             --created-at "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" \
             --provenance-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+            --native-reservation promotion-input/native-build-reservation.json \
             --plan-output promotion-output/production-release-plan.json \
             --record-directory promotion-output
           record=$(find promotion-output -maxdepth 1 -name 'production-promotion-*.json' -print -quit)

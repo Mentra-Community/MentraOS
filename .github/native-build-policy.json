@@ -1,0 +1,10 @@
+{
+  "schemaVersion": 1,
+  "play": {
+    "dev": "dev",
+    "beta": "beta",
+    "productionCandidates": "production-candidates",
+    "production": "production"
+  },
+  "retiredPlayTracks": ["internal"]
+}

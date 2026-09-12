@@ -357,6 +357,34 @@ jobs:
           upload-key-alias: ${{ secrets.MENTRAOS_UPLOAD_KEY_ALIAS }}
           google-play-key-json: ${{ secrets.GOOGLE_PLAY_KEY_JSON }}
 
+      - name: Prepare Google Play upload tooling
+        if: inputs.dry_run != true
+        run: |
+          set -euo pipefail
+          mkdir -p mobile-play/fastlane
+          cp mobile/ci/fastlane-android/Fastfile mobile-play/fastlane/Fastfile
+          cp mobile/ci/fastlane-android/Appfile mobile-play/fastlane/Appfile
+          cp mobile/Gemfile mobile-play/Gemfile
+          cp mobile/Gemfile.lock mobile-play/Gemfile.lock
+
+      - name: Install Google Play upload tooling
+        if: inputs.dry_run != true
+        working-directory: mobile-play
+        run: bundle install
+
+      - name: Check Android upgrade before building
+        if: inputs.dry_run != true && inputs.compatibility_lab != true
+        working-directory: mobile-play
+        env:
+          GOOGLE_PLAY_TRACK: ${{ inputs.play_track }}
+          EXPECTED_BUILD: ${{ needs.prepare.outputs.build_number }}
+          IMMUTABLE_ARTIFACTS_EXIST: ${{ needs.prepare.outputs.android_assets_exist }}
+          GOOGLE_PLAY_VERSION_CODES_OUTPUT: ${{ runner.temp }}/mentra-play-version-codes.json
+        run: |
+          set -euo pipefail
+          bundle exec fastlane track_version_codes
+          node ../.github/scripts/check-play-build-number.mjs
+
       - name: Build signed coordinated APK and AAB
         if: inputs.dry_run == true || needs.prepare.outputs.android_assets_exist != 'true'
         working-directory: mobile
@@ -461,36 +489,19 @@ jobs:
             --file "mobile-release/android/${{ needs.prepare.outputs.aab_name }}" \
             --name "${{ needs.prepare.outputs.aab_name }}"
 
-      - name: Prepare Google Play upload tooling
-        if: inputs.dry_run != true
-        run: |
-          set -euo pipefail
-          mkdir -p mobile-play/fastlane
-          cp mobile/ci/fastlane-android/Fastfile mobile-play/fastlane/Fastfile
-          cp mobile/ci/fastlane-android/Appfile mobile-play/fastlane/Appfile
-          cp mobile/Gemfile mobile-play/Gemfile
-          cp mobile/Gemfile.lock mobile-play/Gemfile.lock
-
-      - name: Install Google Play upload tooling
-        if: inputs.dry_run != true
-        working-directory: mobile-play
-        run: bundle install
-
       - name: Check selected Google Play track
         id: play
         if: inputs.dry_run != true && inputs.compatibility_lab != true
         working-directory: mobile-play
         env:
           GOOGLE_PLAY_TRACK: ${{ inputs.play_track }}
+          EXPECTED_BUILD: ${{ needs.prepare.outputs.build_number }}
+          IMMUTABLE_ARTIFACTS_EXIST: ${{ needs.prepare.outputs.android_assets_exist }}
           GOOGLE_PLAY_VERSION_CODES_OUTPUT: ${{ runner.temp }}/mentra-play-version-codes.json
         run: |
           set -euo pipefail
           bundle exec fastlane track_version_codes
-          if jq -e --argjson expected "${{ needs.prepare.outputs.build_number }}" 'map(tonumber) | index($expected) != null' "$GOOGLE_PLAY_VERSION_CODES_OUTPUT" >/dev/null; then
-            echo "exists=true" >> "$GITHUB_OUTPUT"
-          else
-            echo "exists=false" >> "$GITHUB_OUTPUT"
-          fi
+          node ../.github/scripts/check-play-build-number.mjs
 
       - name: Upload exact AAB to Google Play
         if: inputs.dry_run != true && inputs.compatibility_lab != true && steps.play.outputs.exists != 'true'
