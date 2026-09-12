@@ -126,12 +126,8 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
         "ACCESS_NETWORK_STATE",
         "CHANGE_WIFI_STATE",
         "CHANGE_NETWORK_STATE",
-        // SoftAP calling runs a WHIP server on the glasses' hotspot subnet: it accepts
-        // inbound TCP and exchanges UDP on a private LAN address. Android 17 enforces this
-        // permission for apps targeting SDK 37+; targetSdkVersion is 36 today so access is
-        // still implicit, but declaring it now avoids the architecture breaking silently on
-        // the targetSdk bump.
-        "ACCESS_LOCAL_NETWORK",
+        // Local-network access is implicit through INTERNET while targeting SDK 36.
+        // Declare and request ACCESS_LOCAL_NETWORK when moving to target SDK 37+.
       ],
       // The Google Navigation SDK manifest merges in ACCESS_BACKGROUND_LOCATION,
       // but navigation runs in a location foreground service and works with

@@ -101,10 +101,8 @@ sealed class ScopedNetworkError(val code: String, message: String) : Exception(m
             }
 
         /**
-         * Enforced for apps targeting SDK 37+. `targetSdkVersion` is 35 today, so access is still
-         * implicit, but the WHIP ingest server accepts inbound TCP and exchanges UDP on a private
-         * LAN address — exactly the operations this permission governs — so it is declared now
-         * rather than discovered on the targetSdk bump.
+         * Enforced on Android 17+ for apps targeting SDK 37+. Hosts targeting older SDKs
+         * retain implicit access through INTERNET and must not request this permission.
          */
         const val LOCAL_NETWORK_PERMISSION = "android.permission.ACCESS_LOCAL_NETWORK"
     }
