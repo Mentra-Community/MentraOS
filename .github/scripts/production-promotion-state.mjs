@@ -335,8 +335,13 @@ export function validatePromotionChain(previous, next) {
     if (!rolloutUpdate && !compatibilityLabUpdate && !deferredResolution && nextIndex !== previousIndex + 1) {
       fail(`transition ${previous.state} -> ${next.state} is not contiguous`)
     }
-    if (next.state === "public-release-approved" && deferredChecks(next).length > 0) {
-      fail(`public release requires the deferred human gates to be attested first: ${deferredChecks(next).join(", ")}`)
+    // Judged on the previous record: the approval's own evidence must not be
+    // what resolves the last deferral, or one crafted reference would collapse
+    // the required resolution into the approval.
+    if (next.state === "public-release-approved" && deferredChecks(previous).length > 0) {
+      fail(
+        `public release requires the deferred human gates to be attested first: ${deferredChecks(previous).join(", ")}`,
+      )
     }
   }
   return next
@@ -474,6 +479,7 @@ export function validateAttestation(attestation, record, expectedCheck) {
   if (attestation.result === "deferred") {
     if (!DEFERRABLE_CHECKS.includes(attestation.check)) fail(`${attestation.check} cannot be deferred`)
     if (record.state !== check.from) fail(`deferral of ${attestation.check} cannot apply in state ${record.state}`)
+    requireString(attestation.reason, "attestation.reason", 1000)
     requireSafeText(attestation.reason, "attestation.reason", 1000)
     if (attestation.tests !== undefined) fail("a deferral carries no test results")
     return attestation

@@ -670,6 +670,9 @@ async function main(argv = process.argv.slice(2)) {
     if (!options.evidence) throw commandError("attest requires --evidence FILE")
     requireCommandState(command, loaded.record, options)
     const attestation = JSON.parse(readFileSync(path.resolve(options.evidence), "utf8"))
+    if (attestation?.result !== "pass") {
+      throw commandError("attest records passing evidence only; use 'defer' to defer a human gate")
+    }
     validateAttestation(attestation, loaded.record, options.check)
     await confirmEffect(
       `This will append passing human evidence for ${options.check}. It does not deploy or publish anything.`,

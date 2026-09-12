@@ -389,6 +389,8 @@ test("pre-submission human gates can be deferred and must be attested before pub
       assetName: `${attestation.check}-${attestation.result}.json`,
       sha256: "e".repeat(64),
     })
+  const resolvedOneOf = (record) =>
+    attest(record, passing(record, "production-mobile-n-compatibility", initialRecord.coordinates.currentMentraApp))
   const advance = (record, to) =>
     transitionPromotionRecord({
       record,
@@ -412,6 +414,10 @@ test("pre-submission human gates can be deferred and must be attested before pub
   )
   const withTests = {...deferral(cloudDeployed, "production-mobile-n-compatibility"), tests: []}
   assert.throws(() => validateAttestation(withTests, cloudDeployed), /carries no test results/)
+  for (const reason of [undefined, "", "   ", "reason with key msk_abcdefghijklmnopqrstuvwxyz0123456789"]) {
+    const unreasoned = {...deferral(cloudDeployed, "production-mobile-n-compatibility"), reason}
+    assert.throws(() => validateAttestation(unreasoned, cloudDeployed), /attestation\.reason/)
+  }
 
   // Deferring moves the promotion on and records the open gate.
   const deferred = attest(cloudDeployed, deferral(cloudDeployed, "production-mobile-n-compatibility"))
@@ -433,8 +439,21 @@ test("pre-submission human gates can be deferred and must be attested before pub
     "production-mobile-candidate-acceptance",
   ])
 
-  // Public release is refused while any deferral is unresolved.
+  // Public release is refused while any deferral is unresolved, including when
+  // the approval's own evidence reference is crafted to look like the resolution.
   assert.throws(() => advance(record, "public-release-approved"), /deferred human gates to be attested first/)
+  assert.throws(
+    () =>
+      transitionPromotionRecord({
+        record: resolvedOneOf(record),
+        to: "public-release-approved",
+        actor: "release-owner",
+        createdAt: now,
+        provenanceUrl: runUrl,
+        evidence: evidence("production-mobile-candidate-acceptance"),
+      }),
+    /deferred human gates to be attested first: production-mobile-candidate-acceptance/,
+  )
 
   // Resolving in place: same state, the check's own evidence kind appended.
   const resolvedOne = attest(
