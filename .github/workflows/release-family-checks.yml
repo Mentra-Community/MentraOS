@@ -5,7 +5,6 @@ on:
     branches: [dev, staging, main]
     paths:
       - ".github/release-family.json"
-      - ".github/native-build-policy.json"
       - ".github/production-release/**"
       - ".github/scripts/*.mjs"
       - ".github/workflows/coordinated-*.yml"
@@ -75,7 +74,6 @@ jobs:
             --branch dev \
             --sequence 1 \
             --source-commit "$(git rev-parse HEAD)" \
-            --native-build-number 310000001 \
             --ota-inputs "$ota_inputs" \
             --require-version-mirrors true \
             --output "$release_plan"

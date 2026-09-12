@@ -96,7 +96,7 @@ test("production promotion is resumable and keeps irreversible actions behind se
   assert.match(rollout, /name: production-store-release/)
   assert.match(status, /permissions:\n  contents: read/)
   assert.match(mobile, /backend_environment: prod/)
-  assert.match(mobile, /play_track: \$\{\{ needs\.load\.outputs\.play_track \}\}/)
+  assert.match(mobile, /play_track: internal/)
   assert.match(mobile, /Mentra Production Candidates/)
   for (const source of [prepare, mobile, submit, release, status]) {
     assert.doesNotMatch(source, /com\.mentra\.bluetoothsdkexample|starterKitCommit/)

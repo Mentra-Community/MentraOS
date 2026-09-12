@@ -2,8 +2,7 @@
 import {readFileSync, writeFileSync} from "node:fs"
 import path from "node:path"
 
-import {readNativeBuildPolicy} from "./native-build-numbers.mjs"
-
+import {nativeBuildNumberForFamily} from "./native-build-numbers.mjs"
 import {channelForBranch, createReleasePlan, loadReleaseFamily, serializeReleaseRecord} from "./release-family.mjs"
 
 function parseArgs(args) {
@@ -24,17 +23,15 @@ const channel = args.channel || channelForBranch(args.branch)
 const sequence = channel === "production" ? undefined : Number(args.sequence)
 const otaInputs = args["ota-inputs"] ? JSON.parse(readFileSync(path.resolve(args["ota-inputs"]), "utf8")) : {}
 const family = loadReleaseFamily({requireVersionMirrors: args["require-version-mirrors"] === "true"})
-const nativeReservation = args["native-reservation"]
-  ? JSON.parse(readFileSync(args["native-reservation"], "utf8"))
-  : undefined
 const plan = createReleasePlan({
   family,
   channel,
   sequence,
   sourceCommit: args["source-commit"],
-  nativeBuildNumber: nativeReservation?.buildNumbers[0] ?? Number(args["native-build-number"]),
-  nativeReservation,
-  googlePlayTrack: nativeReservation ? readNativeBuildPolicy().play[channel] : undefined,
+  nativeBuildNumber:
+    args["native-build-number"] === undefined
+      ? nativeBuildNumberForFamily(family.familyBaseVersion, sequence)
+      : Number(args["native-build-number"]),
   otaInputs,
   publicBetaTestflight: args["public-beta-testflight"] === "true",
 })

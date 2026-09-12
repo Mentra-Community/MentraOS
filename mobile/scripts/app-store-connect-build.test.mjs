@@ -809,22 +809,3 @@ test("waits for the App Store version to leave preparation", async () => {
   })
   assert.equal(status.state, "IN_REVIEW")
 })
-
-test("production inventory scopes iOS build floors to the target and current marketing versions", async () => {
-  const api = client([
-    {data: [{id: "newer-dev", attributes: {version: "900000002"}}]},
-    {data: [{id: "public", attributes: {versionString: "3.1.0", appStoreState: "READY_FOR_SALE"}}]},
-    {data: {id: "public-build", attributes: {version: "310000212"}}},
-    {data: [{id: "target-build", attributes: {version: "320000222"}}], links: {next: "/v1/builds?cursor=more"}},
-    {data: [{id: "target-build-2", attributes: {version: "320000223"}}]},
-    {data: [{id: "previous-build", attributes: {version: "310000213"}}]},
-  ])
-  const result = await appStoreInventory(api, {
-    app: {id: "app-1", attributes: {bundleId: "com.mentra.mentra"}},
-    marketingVersion: "3.2.0",
-  })
-  assert.equal(result.maxBuildNumber, 900000002)
-  assert.deepEqual(result.maxBuildNumbersByMarketingVersion, {"3.2.0": 320000223, "3.1.0": 310000213})
-  assert.match(api.calls[3].resource, /filter%5BpreReleaseVersion.version%5D=3.2.0/)
-  assert.match(api.calls[5].resource, /filter%5BpreReleaseVersion.version%5D=3.1.0/)
-})

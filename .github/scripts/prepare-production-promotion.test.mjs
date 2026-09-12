@@ -10,7 +10,7 @@ const betaPlan = createReleasePlan({
   channel: "beta",
   sequence: 57,
   sourceCommit: "a".repeat(40),
-  nativeBuildNumber: 320000057,
+  nativeBuildNumber: 310000057,
 })
 const betaManifest = {
   schemaVersion: 1,
@@ -33,26 +33,11 @@ const previousManifest = {
 
 function inventory(bundleId, current, appleMax, googleMax) {
   return {
-    apple: {
-      bundleId,
-      current,
-      maxBuildNumber: appleMax,
-      maxBuildNumbersByMarketingVersion: {
-        [family.familyBaseVersion]: appleMax,
-        [current?.marketingVersion]: current?.buildNumber ?? 0,
-      },
-    },
+    apple: {bundleId, current, maxBuildNumber: appleMax},
     google: {
       packageName: bundleId,
       currentVersionCode: current?.buildNumber ?? null,
       maxVersionCode: googleMax,
-      tracks: {
-        "dev": [googleMax],
-        "beta": [],
-        "production-candidates": [],
-        "production": current ? [current.buildNumber] : [],
-        "internal": [900000002],
-      },
     },
   }
 }
@@ -68,15 +53,9 @@ function prepare(overrides = {}) {
     mentraInventory: inventory(
       "com.mentra.mentra",
       {marketingVersion: "3.0.0", buildNumber: 300000100},
-      320000060,
-      320000059,
+      310000060,
+      310000059,
     ),
-    nativeReservation: {
-      key: "production:test:1",
-      baseVersion: family.familyBaseVersion,
-      sourceCommit: betaPlan.sourceCommit,
-      buildNumbers: [320000061, 320000062],
-    },
     attempt: 1,
     actor: "release-owner",
     createdAt: "2026-08-28T20:00:00.000Z",
@@ -88,9 +67,9 @@ function prepare(overrides = {}) {
 test("freezes selected source and allocates new store build numbers", () => {
   const {productionPlan, record} = prepare()
   assert.equal(productionPlan.channel, "production")
-  assert.equal(record.coordinates.compatibilityLab.ios.buildNumber, 320000061)
-  assert.equal(productionPlan.native.buildNumber, 320000062)
-  assert.equal(record.coordinates.candidates.mentraApp.ios.buildNumber, 320000062)
+  assert.equal(record.coordinates.compatibilityLab.ios.buildNumber, 310000061)
+  assert.equal(productionPlan.native.buildNumber, 310000062)
+  assert.equal(record.coordinates.candidates.mentraApp.ios.buildNumber, 310000062)
   assert.deepEqual(Object.keys(record.coordinates.candidates), ["mentraApp"])
   assert.deepEqual(Object.keys(record.source), ["mentraosCommit"])
   assert.deepEqual(productionPlan.promotion.otaManifest, betaManifest.otaManifest)
@@ -102,31 +81,13 @@ test("freezes selected source and allocates new store build numbers", () => {
 test("first promotion freezes the store-observed public app and skips the compatibility lab", () => {
   const {productionPlan, record} = prepare({
     previousManifest: null,
-    nativeReservation: {
-      key: "production:first:1",
-      baseVersion: family.familyBaseVersion,
-      sourceCommit: betaPlan.sourceCommit,
-      buildNumbers: [320000061],
-    },
     mentraInventory: {
       apple: {
         bundleId: "com.mentra.mentra",
         current: {marketingVersion: "3.0", buildNumber: 51180073},
-        maxBuildNumber: 900000002,
-        maxBuildNumbersByMarketingVersion: {[family.familyBaseVersion]: 320000060},
+        maxBuildNumber: 310000060,
       },
-      google: {
-        packageName: "com.mentra.mentra",
-        currentVersionCode: 51180031,
-        maxVersionCode: 900000002,
-        tracks: {
-          "dev": [320000059],
-          "beta": [],
-          "production-candidates": [],
-          "production": [51180031],
-          "internal": [900000002],
-        },
-      },
+      google: {packageName: "com.mentra.mentra", currentVersionCode: 51180031, maxVersionCode: 310000059},
     },
   })
   assert.equal(record.state, "staging-compatible")
@@ -138,8 +99,8 @@ test("first promotion freezes the store-observed public app and skips the compat
     android: {marketingVersion: "3.0", buildNumber: 51180031},
   })
   assert.equal(record.coordinates.compatibilityLab, null)
-  assert.equal(productionPlan.native.buildNumber, 320000061)
-  assert.equal(record.coordinates.candidates.mentraApp.android.buildNumber, 320000061)
+  assert.equal(productionPlan.native.buildNumber, 310000061)
+  assert.equal(record.coordinates.candidates.mentraApp.android.buildNumber, 310000061)
 })
 
 test("first promotion still requires a public app in both stores", () => {
@@ -147,7 +108,7 @@ test("first promotion still requires a public app in both stores", () => {
     () =>
       prepare({
         previousManifest: null,
-        mentraInventory: inventory("com.mentra.mentra", null, 320000060, 320000059),
+        mentraInventory: inventory("com.mentra.mentra", null, 310000060, 310000059),
       }),
     /has no current public store release/,
   )
@@ -160,8 +121,8 @@ test("rejects store state that does not match current production provenance", ()
         mentraInventory: inventory(
           "com.mentra.mentra",
           {marketingVersion: "3.0.0", buildNumber: 300000099},
-          320000060,
-          320000059,
+          310000060,
+          310000059,
         ),
       }),
     /do not match the previous production manifest/,

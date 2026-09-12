@@ -4,8 +4,6 @@ import {mkdirSync, readFileSync, writeFileSync} from "node:fs"
 import path from "node:path"
 import {fileURLToPath} from "node:url"
 
-import {productionBuildFloor, readNativeBuildPolicy, validateNativeReservation} from "./native-build-numbers.mjs"
-
 import {createInitialPromotionRecord, promotionAssetName} from "./production-promotion-state.mjs"
 import {createReleasePlan, loadReleaseFamily, releaseRecordSha256, serializeReleaseRecord} from "./release-family.mjs"
 
@@ -102,7 +100,6 @@ export function prepareProductionPromotion({
   betaManifestSha256,
   previousManifest,
   mentraInventory,
-  nativeReservation,
   attempt,
   actor,
   createdAt,
@@ -111,30 +108,19 @@ export function prepareProductionPromotion({
   validateSelectedBeta({family, betaPlan, betaManifest})
   validateInventory(mentraInventory, {bundleId: "com.mentra.mentra", allowNoCurrent: false})
   const currentMentraApp = validateCurrentMentraApp(previousManifest, mentraInventory)
+  const lastMentraBuildNumber = Math.max(
+    mentraInventory.apple.maxBuildNumber,
+    mentraInventory.google.maxVersionCode,
+    betaPlan.native.buildNumber,
+  )
   const hasCompatibilityLab = currentMentraApp.provenance === "coordinated"
-  const reservation = validateNativeReservation(nativeReservation, {
-    baseVersion: family.familyBaseVersion,
-    sourceCommit: betaPlan.sourceCommit,
-    count: hasCompatibilityLab ? 2 : 1,
-  })
-  const floor = productionBuildFloor({
-    inventory: mentraInventory,
-    betaBuildNumber: betaPlan.native.buildNumber,
-    baseVersion: family.familyBaseVersion,
-    includeCompatibilityLab: hasCompatibilityLab,
-  })
-  if (reservation.buildNumbers[0] <= floor)
-    throw new Error("Reserved production build does not upgrade the frozen store inventory")
-  const compatibilityLabBuildNumber = hasCompatibilityLab ? reservation.buildNumbers[0] : null
-  const mentraBuildNumber = reservation.buildNumbers.at(-1)
-  const policy = readNativeBuildPolicy()
+  const compatibilityLabBuildNumber = hasCompatibilityLab ? lastMentraBuildNumber + 1 : null
+  const mentraBuildNumber = lastMentraBuildNumber + (hasCompatibilityLab ? 2 : 1)
   const productionPlan = createReleasePlan({
     family,
     channel: "production",
     sourceCommit: betaPlan.sourceCommit,
     nativeBuildNumber: mentraBuildNumber,
-    nativeReservation: reservation,
-    googlePlayTrack: policy.play.production,
     otaInputs: betaPlan.otaInputs,
   })
   productionPlan.promotion = {
@@ -167,11 +153,7 @@ export function prepareProductionPromotion({
       candidates: {
         mentraApp: {
           ios: {marketingVersion: productionPlan.native.marketingVersion, buildNumber: mentraBuildNumber},
-          android: {
-            marketingVersion: productionPlan.native.marketingVersion,
-            buildNumber: mentraBuildNumber,
-            playTrack: policy.play.productionCandidates,
-          },
+          android: {marketingVersion: productionPlan.native.marketingVersion, buildNumber: mentraBuildNumber},
         },
       },
     },
@@ -221,7 +203,6 @@ function main() {
     betaManifestSha256: sha256File(betaManifestPath),
     previousManifest,
     mentraInventory: readJson(args["mentra-inventory"]),
-    nativeReservation: readJson(args["native-reservation"]),
     attempt: Number(args.attempt),
     actor: args.actor,
     createdAt: args["created-at"],

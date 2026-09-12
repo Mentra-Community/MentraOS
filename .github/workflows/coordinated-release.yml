@@ -63,7 +63,7 @@ jobs:
             dev)
               echo "cloud_environment=dev" >> "$GITHUB_OUTPUT"
               echo "backend_environment=dev" >> "$GITHUB_OUTPUT"
-              echo "play_track=$(node -p 'require("./.github/native-build-policy.json").play.dev')" >> "$GITHUB_OUTPUT"
+              echo "play_track=internal" >> "$GITHUB_OUTPUT"
               echo "example_play_track=internal" >> "$GITHUB_OUTPUT"
               echo "testflight_group=Mentra Dev" >> "$GITHUB_OUTPUT"
               echo "testflight_audience=internal" >> "$GITHUB_OUTPUT"
@@ -121,19 +121,6 @@ jobs:
       - name: Verify generated changelog catalogs
         run: node .github/scripts/generate-changelog-catalog.mjs --check
 
-      - name: Reserve shared native build number
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: >-
-          node .github/scripts/reserve-native-builds.mjs
-          --repository "$GITHUB_REPOSITORY"
-          --key "coordinated:${GITHUB_RUN_ID}"
-          --source-commit "${{ github.sha }}"
-          --minimum-sequence "${{ github.run_number }}"
-          --dry-run "${{ inputs.dry_run == true }}"
-          --restored-plan "${{ steps.restore-plan.outputs.restored == 'true' && 'release-plan.json' || '' }}"
-          --output native-build-reservation.json
-
       - name: Create deterministic release plan
         run: |
           set -euo pipefail
@@ -146,7 +133,6 @@ jobs:
             --branch "${{ github.ref_name }}" \
             --sequence "${{ github.run_number }}" \
             --source-commit "${{ github.sha }}" \
-            --native-reservation native-build-reservation.json \
             --ota-inputs ota-release-inputs.json \
             --require-version-mirrors true \
             --public-beta-testflight true \
@@ -160,7 +146,6 @@ jobs:
             --branch "${{ github.ref_name }}" \
             --sequence "${{ github.run_number }}" \
             --source-commit "${{ github.sha }}" \
-            --native-reservation native-build-reservation.json \
             --ota-inputs ota-release-inputs.json \
             --require-version-mirrors true \
             --public-beta-testflight true \
