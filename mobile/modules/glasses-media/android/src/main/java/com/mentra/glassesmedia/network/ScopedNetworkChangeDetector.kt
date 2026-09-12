@@ -142,7 +142,7 @@ internal constructor(
             )
         }
 
-        val merged = mergeScopedNetwork(stock, scoped, relayNetwork != null)
+        val merged = mergeScopedNetwork(stock, scoped, registry.includesInternet())
         lastPublished = snapshotOf(merged)
         SoftApTrace.stage(
             "webrtc_network_inventory",
@@ -235,25 +235,37 @@ internal constructor(
             context: Context,
             scoped: () -> ScopedInterface?,
         ): Wired {
-            val filter = ScopedNetworkObserver(downstream, scoped) { relayNetwork != null }
+            val filter = ScopedNetworkObserver(downstream, scoped) { registry.includesInternet() }
             return Wired(NetworkMonitorAutoDetect(filter, context), scoped, filter)
         }
 
         @JvmStatic
         fun install(scopedNetworkSupplier: () -> ScopedSoftApNetwork?) {
-            acsNetworkSupplier = scopedNetworkSupplier
+            registry.registerAcs(scopedNetworkSupplier)
             installMonitor()
         }
 
-        @Volatile private var acsNetworkSupplier: () -> ScopedSoftApNetwork? = { null }
-        @Volatile private var relayNetwork: ScopedSoftApNetwork? = null
+        private val registry = ScopedNetworkRegistry<ScopedSoftApNetwork>()
+
+        /** Receiver fallback for standalone users; never replaces ACS's live supplier. */
+        @JvmStatic
+        fun registerReceiverNetwork(network: ScopedSoftApNetwork) {
+            registry.registerReceiver(network)
+            installMonitor()
+        }
+
+        @JvmStatic
+        fun releaseReceiverNetwork(network: ScopedSoftApNetwork) { registry.releaseReceiver(network) }
 
         /** Keep real internet handles visible for the outgoing peer; each factory masks its leg. */
         @JvmStatic
-        fun setRelayNetwork(network: ScopedSoftApNetwork?) {
-            relayNetwork = network
+        fun registerRelayNetwork(network: ScopedSoftApNetwork) {
+            registry.registerRelay(network)
             installMonitor()
         }
+
+        @JvmStatic
+        fun releaseRelayNetwork(network: ScopedSoftApNetwork) { registry.releaseRelay(network) }
 
         private fun installMonitor() {
             val monitor = NetworkMonitor.getInstance()
@@ -267,7 +279,7 @@ internal constructor(
             monitor.setNetworkChangeDetectorFactory { observer, context ->
                 val wired =
                     wire(observer, context) {
-                        (relayNetwork ?: acsNetworkSupplier())?.let { resolveScopedInterface(context, it) }
+                        registry.current()?.let { resolveScopedInterface(context, it) }
                     }
                 ScopedNetworkChangeDetector(wired.delegate, wired.scoped, wired.observer)
             }

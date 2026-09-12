@@ -58,7 +58,7 @@ class GlassesMediaRelayModule : Module() {
             Thread.sleep(ScopedSoftApNetwork.UNAVAILABLE_RETRY_SETTLE_MS)
             scoped.join(ssid, password, listener)
           }
-          ScopedNetworkChangeDetector.setRelayNetwork(scoped)
+          ScopedNetworkChangeDetector.registerRelayNetwork(scoped)
           val outgoing = PhoneWhipPublisher(context, endpoint, options["captureAudio"] != false,
             (options["bitrate"] as? Number)?.toInt() ?: 2_000_000) { state, reason -> emit(id, state, reason) }
           publisher = outgoing
@@ -102,9 +102,9 @@ class GlassesMediaRelayModule : Module() {
     // Try every cleanup even if one fails. Keep the slot occupied on any failure.
     var failure: Exception? = null
     fun step(action: () -> Unit) { try { action() } catch (e: Exception) { failure = failure ?: e } }
-    step { source?.stop(); source = null }
+    step { source?.close(); source = null }
     step { publisher?.close(); publisher = null }
-    step { network?.release(); network = null; ScopedNetworkChangeDetector.setRelayNetwork(null) }
+    step { network?.let { it.release(); ScopedNetworkChangeDetector.releaseRelayNetwork(it) }; network = null }
     step { internet?.close(); internet = null }
     step { wakeLock?.let { if (it.isHeld) it.release() }; wakeLock = null }
     failure?.let { throw it }

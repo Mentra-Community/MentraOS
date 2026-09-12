@@ -18,56 +18,26 @@ final class RelayAudioDevice: NSObject, RTCAudioDevice {
     private(set) var isRecording = false
     let isPlayoutInitialized = false
     let isPlaying = false
-    private let condition = NSCondition()
-    private var quitting = false
-    private var exited = true
-    private var recording = false
+    private let clock = RelayAudioClock()
 
     func initialize(with delegate: RTCAudioDeviceDelegate) -> Bool {
-        condition.lock(); quitting = false; recording = false; exited = false; condition.unlock()
+        let storage = UnsafeMutablePointer<Int16>.allocate(capacity: 480)
+        let pcm = pcm
+        clock.start(render: { sampleTime in
+            pcm.read(into: UnsafeMutableBufferPointer(start: storage, count: 480))
+            var flags = AudioUnitRenderActionFlags()
+            var stamp = AudioTimeStamp()
+            stamp.mSampleTime = sampleTime
+            stamp.mFlags = .sampleTimeValid
+            var buffers = AudioBufferList(mNumberBuffers: 1, mBuffers: AudioBuffer(mNumberChannels: 1, mDataByteSize: 960, mData: storage))
+            _ = delegate.deliverRecordedData(&flags, &stamp, 0, 480, &buffers, nil, nil)
+        }, finish: { storage.deallocate() })
         isInitialized = true
-        let thread = Thread { [self, delegate] in
-            let storage = UnsafeMutablePointer<Int16>.allocate(capacity: 480)
-            defer {
-                storage.deallocate()
-                condition.lock(); exited = true; condition.broadcast(); condition.unlock()
-            }
-            var sampleTime: Double = 0
-            var next = ProcessInfo.processInfo.systemUptime
-            while true {
-                condition.lock()
-                while !recording && !quitting {
-                    condition.wait(); next = ProcessInfo.processInfo.systemUptime
-                }
-                let stop = quitting
-                condition.unlock()
-                if stop { return }
-                pcm.read(into: UnsafeMutableBufferPointer(start: storage, count: 480))
-                var flags = AudioUnitRenderActionFlags()
-                var stamp = AudioTimeStamp()
-                stamp.mSampleTime = sampleTime
-                stamp.mFlags = .sampleTimeValid
-                var buffers = AudioBufferList(mNumberBuffers: 1, mBuffers: AudioBuffer(mNumberChannels: 1, mDataByteSize: 960, mData: storage))
-                _ = delegate.deliverRecordedData(&flags, &stamp, 0, 480, &buffers, nil, nil)
-                sampleTime += 480
-                next += 0.01
-                let now = ProcessInfo.processInfo.systemUptime
-                if next > now { Thread.sleep(forTimeInterval: next - now) }
-                else if now - next > 0.1 { next = now }
-            }
-        }
-        thread.name = "Mentra glasses audio publish"
-        thread.qualityOfService = .userInitiated
-        thread.start()
         return true
     }
 
     func terminateDevice() -> Bool {
-        condition.lock(); quitting = true; recording = false; condition.broadcast()
-        while !exited {
-            condition.wait()
-        }
-        condition.unlock()
+        clock.stop()
         isInitialized = false; isRecording = false; isRecordingInitialized = false
         return true
     }
@@ -77,12 +47,12 @@ final class RelayAudioDevice: NSObject, RTCAudioDevice {
     }
 
     func startRecording() -> Bool {
-        condition.lock(); recording = true; condition.broadcast(); condition.unlock()
+        clock.setEnabled(true)
         isRecording = true; return true
     }
 
     func stopRecording() -> Bool {
-        condition.lock(); recording = false; condition.unlock()
+        clock.setEnabled(false)
         isRecording = false; return true
     }
 

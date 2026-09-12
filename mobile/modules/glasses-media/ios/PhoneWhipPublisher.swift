@@ -154,7 +154,10 @@ final class PhoneWhipPublisher: NSObject {
         queue.async {
             if !self.stopped {
                 self.stopped = true
-                self.peer?.close(); self.peer = nil
+                self.peer?.close()
+                // Drain the external audio callback while its native delegate/factory is still alive.
+                _ = self.audioDevice.terminateDevice()
+                self.peer = nil
                 self.videoSource = nil; self.capturer = nil; self.factory = nil
                 if let resource = self.resource { self.delete(resource); self.resource = nil; self.http.finishTasksAndInvalidate() }
                 else if !self.posted { self.http.finishTasksAndInvalidate() }

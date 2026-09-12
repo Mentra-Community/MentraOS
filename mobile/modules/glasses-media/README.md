@@ -12,7 +12,7 @@ The publisher owns its outgoing encoders, audio policy, and destination. Receive
 
 The host signs in, enables the glasses hotspot, joins it, prepares the receiver and publisher, then tells the glasses to publish to the returned `ingestUrl`. A successful listener bind is not a live stream: `live` requires a decoded video frame. iOS waits for full ICE gathering and returns only actual host candidates on the hotspot interface. Requests and queued media are bounded.
 
-Stop the glasses publisher before stopping the receiver and releasing the network. Await `LocalWhipIngestSource.stop(completion:)` before reusing resources. It cancels pending offers, closes the peer and HTTP listener, and drains teardown before completing. A local source must not silently restart onto a new port; the host must coordinate any new URL with the glasses. WHEP can rebuild its existing URL.
+Stop the glasses publisher before stopping the receiver and releasing the network. Await `LocalWhipIngestSource.stop(completion:)` before reusing resources on iOS. Android owners discarding a receiver use `close()` to drain HTTP negotiation and release its retained factory and EGL resources. It cancels pending offers, closes the peer and HTTP listener, and drains teardown before completing. A local source must not silently restart onto a new port; the host must coordinate any new URL with the glasses. WHEP can rebuild its existing URL.
 
 ## Verification
 
