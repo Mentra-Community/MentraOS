@@ -235,6 +235,12 @@ test("Cloud V2 deploys once per coordinated environment before mobile publicatio
   // verifies the observed image tag against the source, so the tag is explicit.
   assert.match(cloud, /PORTER_TAG: \$\{\{ steps\.source\.outputs\.tag \}\}/)
   assert.match(cloud, /--tag "\$PORTER_TAG" \\/)
+  // The frozen source may predate tooling fixes on main; scripts run from the
+  // workflow revision, which is the same revision the workflow file came from.
+  assert.match(cloud, /ref: \$\{\{ github\.sha \}\}\n\s+path: release-tooling/)
+  assert.doesNotMatch(cloud, /node \.github\/scripts\//)
+  assert.match(cloud, /node release-tooling\/\.github\/scripts\/coordinated-cloud-v2-records\.mjs resolve/)
+  assert.match(cloud, /node release-tooling\/\.github\/scripts\/coordinated-cloud-v2-records\.mjs create/)
   assert.match(cloud, /getent hosts "\$host"/)
   assert.match(cloud, /for probe in healthz ready/)
   assert.match(cloud, /porter kubectl -- get pods/)

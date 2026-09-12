@@ -54,6 +54,16 @@ jobs:
         with:
           ref: ${{ inputs.source_commit }}
 
+      # The release tooling runs from the workflow's own revision, not from the
+      # frozen source: a production deploy checks out an older commit whose
+      # scripts predate fixes merged to main, while the workflow file itself
+      # already comes from main.
+      - name: Check out the release tooling at the workflow revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: release-tooling
+
       - uses: actions/download-artifact@v4
         with:
           name: ${{ inputs.release_plan_artifact }}
@@ -70,7 +80,7 @@ jobs:
       - name: Resolve and validate the guarded deployment target
         id: target
         run: >-
-          node .github/scripts/coordinated-cloud-v2-records.mjs resolve
+          node release-tooling/.github/scripts/coordinated-cloud-v2-records.mjs resolve
           --plan release-input/plan/release-plan.json
           --environment "${{ inputs.deployment_environment }}"
           --source-commit "${{ inputs.source_commit }}"
@@ -183,7 +193,7 @@ jobs:
       - name: Record validation-only evidence
         if: inputs.dry_run
         run: >-
-          node .github/scripts/coordinated-cloud-v2-records.mjs create
+          node release-tooling/.github/scripts/coordinated-cloud-v2-records.mjs create
           --plan release-input/plan/release-plan.json
           --environment "${{ inputs.deployment_environment }}"
           --source-commit "${{ inputs.source_commit }}"
@@ -196,7 +206,7 @@ jobs:
       - name: Record observed deployment evidence
         if: inputs.dry_run != true
         run: >-
-          node .github/scripts/coordinated-cloud-v2-records.mjs create
+          node release-tooling/.github/scripts/coordinated-cloud-v2-records.mjs create
           --plan release-input/plan/release-plan.json
           --environment "${{ inputs.deployment_environment }}"
           --source-commit "${{ inputs.source_commit }}"
