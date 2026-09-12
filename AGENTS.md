@@ -187,6 +187,7 @@ Automated ransomware scanners actively target exposed MongoDB instances. Use Mon
 ### Related Miniapp Repositories
 
 - [Mentra Notes Miniapp](https://github.com/Mentra-Community/Mentra-Notes-Miniapp)
+- [Mentra Call Miniapp](https://github.com/Mentra-Community/Mentra-Call)
 - [Livestreamer Miniapp](https://github.com/Mentra-Community/Livestreamer-Miniapp)
 - [Mentra AI Miniapp](https://github.com/Mentra-Community/Mentra-AI-Miniapp)
 - [Mentra Enterprise Miniapp](https://github.com/Mentra-Community/Mentra-Enterprise-Miniapp)
