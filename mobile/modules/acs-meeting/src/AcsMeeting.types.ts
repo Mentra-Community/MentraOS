@@ -30,6 +30,8 @@ export type AcsMeetingState = {
   activeStream?: AcsActiveStream
   audioSafety?: AcsAudioSafety
   mediaSource?: AcsMediaSourceState
+  /** Local WHIP endpoint, available after a SoftAP join. */
+  ingestUrl?: string
   /** Remote roster (Android emits this; iOS does not yet). */
   participants?: AcsMeetingParticipant[]
 }
@@ -44,7 +46,8 @@ export type AcsOutgoingVideo = {
 export type AcsMeetingJoinOptions = {
   meetingUrl: string
   token: string
-  whepUrl: string
+  whepUrl?: string
+  videoSource?: {type: "whep"; url: string} | {type: "softap"; bindAddress: string}
   displayName?: string
   /** "glasses" sends WHEP PCM. "phone" uses the ACS local mic (handset or BT). */
   audioSource?: AcsAudioSource

@@ -1,5 +1,8 @@
 package com.mentra.acsmeeting.source
 
+import com.mentra.glassesmedia.source.SourceConfig
+import com.mentra.glassesmedia.source.SourceKind
+
 import org.assertj.core.api.Assertions.assertThat
 import org.assertj.core.api.Assertions.assertThatThrownBy
 import org.junit.Test

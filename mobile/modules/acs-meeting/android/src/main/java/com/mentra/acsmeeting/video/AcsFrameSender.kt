@@ -1,5 +1,7 @@
 package com.mentra.acsmeeting.video
 
+import com.mentra.glassesmedia.video.I420Packer
+
 import android.util.Log
 import com.azure.android.communication.calling.RawOutgoingVideoStream
 import com.azure.android.communication.calling.RawVideoFrameBuffer
@@ -10,13 +12,13 @@ import com.azure.android.communication.calling.VideoStreamResolution
 import com.azure.android.communication.calling.VideoStreamState
 import com.azure.android.communication.calling.VideoStreamStateChangedListener
 import com.azure.android.communication.calling.VirtualOutgoingVideoStream
-import com.mentra.acsmeeting.source.AcsInvestigation
-import com.mentra.acsmeeting.source.I420Planes
-import com.mentra.acsmeeting.source.PixelFormatArm
-import com.mentra.acsmeeting.source.TargetSize
-import com.mentra.acsmeeting.telemetry.AvSyncProbe
-import com.mentra.acsmeeting.telemetry.ChromaProbe
-import com.mentra.acsmeeting.telemetry.PipelineStats
+import com.mentra.glassesmedia.source.MediaDiagnostics
+import com.mentra.glassesmedia.source.I420Planes
+import com.mentra.glassesmedia.source.PixelFormatArm
+import com.mentra.glassesmedia.source.TargetSize
+import com.mentra.glassesmedia.telemetry.AvSyncProbe
+import com.mentra.glassesmedia.telemetry.ChromaProbe
+import com.mentra.glassesmedia.telemetry.PipelineStats
 import java.nio.ByteBuffer
 import java.util.concurrent.ConcurrentHashMap
 import java.util.concurrent.ConcurrentLinkedQueue
@@ -297,12 +299,12 @@ class AcsFrameSender(
     return try {
       negotiated.pixelFormat == VideoStreamPixelFormat.NV12
     } catch (_: Exception) {
-      AcsInvestigation.pixelFormat == PixelFormatArm.NV12
+      MediaDiagnostics.pixelFormat == PixelFormatArm.NV12
     }
   }
 
   private fun tryZeroCopy(planes: I420Planes): Boolean {
-    if (!AcsInvestigation.zeroCopy) return false
+    if (!MediaDiagnostics.zeroCopy) return false
     if (planes.retain == null || planes.release == null) {
       stats.onZcFell()
       return false
@@ -407,7 +409,7 @@ class AcsFrameSender(
     private const val ZC_GRACE_MS = 1_000L
 
     fun outgoingFormat(profile: VideoProfile = VideoProfile.DEFAULT): VideoStreamFormat =
-      when (AcsInvestigation.pixelFormat) {
+      when (MediaDiagnostics.pixelFormat) {
         PixelFormatArm.NV12 -> nv12Format(profile)
         PixelFormatArm.I420 -> i420Format(profile)
       }

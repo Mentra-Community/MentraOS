@@ -3,8 +3,8 @@ package com.mentra.acsmeeting.audio
 import android.util.Log
 import com.azure.android.communication.calling.RawAudioBuffer
 import com.azure.android.communication.calling.RawOutgoingAudioStream
-import com.mentra.acsmeeting.source.AcsInvestigation
-import com.mentra.acsmeeting.telemetry.RingPercentile
+import com.mentra.glassesmedia.source.MediaDiagnostics
+import com.mentra.glassesmedia.telemetry.RingPercentile
 import com.mentra.acsmeeting.video.AcsTimestamp
 import java.nio.ByteBuffer
 import java.util.concurrent.atomic.AtomicBoolean
@@ -36,13 +36,13 @@ fun interface UplinkTransport {
  * Whether ACS actually *uses* these ticks to lip-sync raw audio at the receiver is an open question
  * that only a receiver-side recording answers. Stamping them is the precondition for asking it, not
  * the answer, and it is separately worth doing: a run of zero timestamps is what makes the Teams
- * jitter buffer hold. [AcsInvestigation.acsAudioTimestamps] turns it off so the question can be
+ * jitter buffer hold. [MediaDiagnostics.acsAudioTimestamps] turns it off so the question can be
  * asked both ways on the same device.
  */
 class AcsUplinkTransport(
   private val stream: RawOutgoingAudioStream,
   private val clock: () -> Long = System::nanoTime,
-  private val stamp: Boolean = AcsInvestigation.acsAudioTimestamps,
+  private val stamp: Boolean = MediaDiagnostics.acsAudioTimestamps,
 ) : UplinkTransport {
   private var lastTicks = 0L
 

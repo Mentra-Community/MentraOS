@@ -10,8 +10,9 @@ let package = Package(
   products: [
     .library(name: "AcsAudioPolicy", targets: ["AcsAudioPolicy"]),
   ],
+  dependencies: [.package(path: "../../../glasses-media/ios/CoreKit")],
   targets: [
-    .target(name: "AcsAudioPolicy"),
+    .target(name: "AcsAudioPolicy", dependencies: [.product(name: "GlassesMediaCore", package: "CoreKit")]),
     .testTarget(name: "AcsAudioPolicyTests", dependencies: ["AcsAudioPolicy"]),
   ]
 )

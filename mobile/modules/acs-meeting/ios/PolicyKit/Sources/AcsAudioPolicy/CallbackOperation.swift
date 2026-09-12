@@ -49,3 +49,63 @@ public enum CallbackOperationError: Error {
   case missingResult
   case timedOut
 }
+
+/// Retires one call agent when hang-up completes or its deadline expires. The
+/// session invokes finish on its serial queue; disposal must precede opening the
+/// barrier, and a late SDK callback must not release a newer call's reservation.
+final class CallAgentRetirement {
+  private let group: DispatchGroup
+  private var dispose: (() -> Void)?
+
+  init(group: DispatchGroup, queue: DispatchQueue, timeout: TimeInterval = 10, dispose: @escaping () -> Void) {
+    self.group = group
+    self.dispose = dispose
+    group.enter()
+    queue.asyncAfter(deadline: .now() + timeout) { self.finish() }
+  }
+
+  func finish() {
+    guard let dispose else { return }
+    self.dispose = nil
+    dispose()
+    group.leave()
+  }
+}
+
+/// Keeps an in-flight join's agent alive after cancellation until its returned
+/// call is hung up. All methods run on the session queue, as do hang-up callbacks.
+final class CallJoinRetirement<Call> {
+  private let group: DispatchGroup
+  private let queue: DispatchQueue
+  private let timeout: TimeInterval
+  private let dispose: () -> Void
+  private let hangUp: (Call, @escaping () -> Void) -> Void
+  private var retirement: CallAgentRetirement?
+  private var completed = false
+
+  init(group: DispatchGroup, queue: DispatchQueue, timeout: TimeInterval = 10,
+       dispose: @escaping () -> Void, hangUp: @escaping (Call, @escaping () -> Void) -> Void)
+  {
+    self.group = group
+    self.queue = queue
+    self.timeout = timeout
+    self.dispose = dispose
+    self.hangUp = hangUp
+  }
+
+  func cancel() {
+    guard !completed, retirement == nil else { return }
+    retirement = CallAgentRetirement(group: group, queue: queue, timeout: timeout, dispose: dispose)
+  }
+
+  /// Returns true only when the session may adopt this join result.
+  func receive(_ call: Call?) -> Bool {
+    guard !completed else { return false }
+    completed = true
+    guard let retirement else { return true }
+    if let call {
+      hangUp(call) { self.queue.async { retirement.finish() } }
+    } else { retirement.finish() }
+    return false
+  }
+}

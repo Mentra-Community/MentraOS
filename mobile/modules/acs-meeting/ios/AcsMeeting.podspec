@@ -18,7 +18,7 @@ Pod::Spec.new do |s|
   s.dependency 'AzureCommunicationCalling', '~> 2.15'
   s.dependency 'AzureCommunicationCommon', '~> 1.1'
   # Pin to the same WebRTC-SDK the Mentra App already links via LiveKit.
-  s.dependency 'WebRTC-SDK', '137.7151.09'
+  s.dependency 'GlassesMedia'
   s.frameworks = 'AVFoundation', 'AudioToolbox', 'CoreMedia', 'CoreVideo', 'UIKit'
   s.pod_target_xcconfig = {
     'DEFINES_MODULE' => 'YES',

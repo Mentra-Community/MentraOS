@@ -1,0 +1,31 @@
+name: Glasses Media Swift Tests
+
+on:
+  pull_request:
+    paths:
+      - "mobile/modules/glasses-media/ios/**"
+      - "mobile/modules/acs-meeting/ios/PolicyKit/**"
+      - ".github/workflows/mentra-glasses-media-swift-tests.yml"
+  push:
+    branches: [main, dev]
+    paths:
+      - "mobile/modules/glasses-media/ios/**"
+      - "mobile/modules/acs-meeting/ios/PolicyKit/**"
+      - ".github/workflows/mentra-glasses-media-swift-tests.yml"
+  workflow_dispatch:
+
+concurrency:
+  group: glasses-media-swift-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  swift-tests:
+    runs-on: macos-15
+    steps:
+      - uses: actions/checkout@v4
+      # These exercise the real HTTP listener on loopback and the source/audio policies.
+      # Physical SoftAP routing and WebRTC media still require an iPhone and glasses.
+      - name: Test local WHIP protocol and lifecycle
+        run: swift test --package-path mobile/modules/glasses-media/ios/CoreKit
+      - name: Test ACS audio policy
+        run: swift test --package-path mobile/modules/acs-meeting/ios/PolicyKit
