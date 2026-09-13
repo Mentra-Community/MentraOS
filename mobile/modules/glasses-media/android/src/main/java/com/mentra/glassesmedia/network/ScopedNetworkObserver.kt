@@ -33,6 +33,7 @@ import org.webrtc.NetworkChangeDetector
 internal class ScopedNetworkObserver(
     private val downstream: NetworkChangeDetector.Observer,
     private val scoped: () -> ScopedNetworkChangeDetector.ScopedInterface?,
+    private val includeInternet: () -> Boolean = { false },
 ) : NetworkChangeDetector.Observer() {
 
     private val lock = Any()
@@ -114,17 +115,20 @@ internal class ScopedNetworkObserver(
     }
 
     override fun onConnectionTypeChanged(connectionType: NetworkChangeDetector.ConnectionType) {
-        if (scoped() != null) {
+        if (scoped() != null && !includeInternet()) {
             downstream.onConnectionTypeChanged(NetworkChangeDetector.ConnectionType.CONNECTION_WIFI)
             return
         }
-        restore()
+        if (scoped() == null) restore()
         downstream.onConnectionTypeChanged(connectionType)
     }
 
     override fun onNetworkConnect(networkInfo: NetworkChangeDetector.NetworkInformation) {
         if (scoped() != null) {
-            synchronized(lock) { stock[networkInfo.handle] = networkInfo }
+            synchronized(lock) {
+                stock[networkInfo.handle] = networkInfo
+                if (includeInternet()) publish(ScopedNetworkChangeDetector.mergeScopedNetwork(stock.values.toList(), scoped(), true))
+            }
             SoftApTrace.stage(
                 "webrtc_stock_connect_suppressed",
                 "name" to networkInfo.name,
@@ -141,7 +145,10 @@ internal class ScopedNetworkObserver(
 
     override fun onNetworkDisconnect(networkHandle: Long) {
         if (scoped() != null) {
-            synchronized(lock) { stock.remove(networkHandle) }
+            synchronized(lock) {
+                stock.remove(networkHandle)
+                if (includeInternet()) publish(ScopedNetworkChangeDetector.mergeScopedNetwork(stock.values.toList(), scoped(), true))
+            }
             return
         }
         restore()

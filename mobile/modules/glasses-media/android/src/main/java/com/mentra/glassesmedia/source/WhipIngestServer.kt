@@ -69,6 +69,7 @@ class WhipIngestServer(
   private val connections = Executors.newCachedThreadPool { runnable ->
     Thread(runnable, "whip-ingest-conn").apply { isDaemon = true }
   }
+  private val activeSockets = java.util.concurrent.ConcurrentHashMap.newKeySet<Socket>()
   private val accepted = AtomicInteger()
 
   /** Bound endpoint, or null before [start]. This is the URL the glasses must be told to POST to. */
@@ -141,6 +142,13 @@ class WhipIngestServer(
     closeListener()
   }
 
+  /** Hard teardown barrier: no request may still create a peer after this returns. */
+  fun closeAndAwait(timeoutMs: Long = 15_000): Boolean {
+    closeNow()
+    connections.shutdownNow()
+    return connections.awaitTermination(timeoutMs, TimeUnit.MILLISECONDS)
+  }
+
   private fun closeListener() {
     val socket = synchronized(lock) {
       val current = server
@@ -149,6 +157,7 @@ class WhipIngestServer(
       current
     } ?: return
     runCatching { socket.close() }
+    activeSockets.forEach { runCatching { it.close() } }
     connections.shutdownNow()
     SoftApTrace.stage("whip_listener_closed", "accepted" to accepted.get())
   }
@@ -163,6 +172,10 @@ class WhipIngestServer(
         Log.w(TAG, "accept failed", error)
         return
       }
+      val registered = synchronized(lock) {
+        if (server !== socket) false else { activeSockets.add(connection); true }
+      }
+      if (!registered) { runCatching { connection.close() }; return }
       accepted.incrementAndGet()
       // Each connection on its own thread: a negotiation blocks for the length of an ICE gather,
       // and a DELETE arriving during one must not queue behind it.
@@ -170,28 +183,31 @@ class WhipIngestServer(
         connections.execute { serve(connection) }
       } catch (_: java.util.concurrent.RejectedExecutionException) {
         runCatching { connection.close() }
+        activeSockets.remove(connection)
       }
     }
   }
 
   private fun serve(connection: Socket) {
-    connection.use { socket ->
-      socket.soTimeout = READ_TIMEOUT_MS
-      val output = BufferedOutputStream(socket.getOutputStream())
-      try {
-        val request = readRequest(socket.getInputStream())
-        if (request == null) {
-          write(output, WhipIngestProtocol.Response(400, "Bad Request", body = "malformed request"))
-          return
-        }
-        write(output, handle(request))
-      } catch (error: Exception) {
-        Log.w(TAG, "connection failed", error)
-        runCatching {
-          write(output, WhipIngestProtocol.Response(400, "Bad Request", body = "read failed"))
+    try {
+      connection.use { socket ->
+        socket.soTimeout = READ_TIMEOUT_MS
+        val output = BufferedOutputStream(socket.getOutputStream())
+        try {
+          val request = readRequest(socket.getInputStream())
+          if (request == null) {
+            write(output, WhipIngestProtocol.Response(400, "Bad Request", body = "malformed request"))
+            return
+          }
+          write(output, handle(request))
+        } catch (error: Exception) {
+          Log.w(TAG, "connection failed", error)
+          runCatching {
+            write(output, WhipIngestProtocol.Response(400, "Bad Request", body = "read failed"))
+          }
         }
       }
-    }
+    } finally { activeSockets.remove(connection) }
   }
 
   private fun handle(request: WhipIngestProtocol.Request): WhipIngestProtocol.Response {

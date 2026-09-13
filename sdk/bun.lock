@@ -332,6 +332,7 @@
         "@mentra/cloud-client": "3.2.0",
         "@mentra/cloud-protocol": "3.2.0",
         "@mentra/crust": "3.2.0",
+        "@mentra/glasses-media": "3.2.0",
         "@mentra/miniapp": "3.2.0",
         "buffer": "^6.0.3",
         "events": "^3.3.0",

@@ -1136,6 +1136,39 @@ describe("createSoftapCallDeps", () => {
     ])
   })
 
+  test("the reported gateway follows hotspot enable and a retry that changes subnets", async () => {
+    const base = subsystems()
+    const gateways: Array<string | undefined> = []
+    let enables = 0
+    const real = createSoftapCallDeps({
+      packageName: "com.mentra.call",
+      meetingUrl: "https://teams.microsoft.com/l/meetup-join/x",
+      token: "tok",
+      awaitFirstFrame: async () => {},
+      hotspotBroadcastWaitMs: 0,
+      subsystems: {
+        ...base.subsystems,
+        setHotspotState: async (enabled) =>
+          enabled
+            ? {
+                state: "enabled",
+                ssid: "MentraLive-1234",
+                password: "pw",
+                localIp: ++enables === 1 ? "192.168.43.1" : "10.5.6.1",
+              }
+            : {state: "disabled"},
+        joinScopedNetwork: async (_ssid, _password, gateway) => {
+          gateways.push(gateway)
+          if (gateways.length === 1) throw new Error("ScopedNetworkError$Unavailable: Could not join")
+          return "10.5.6.8"
+        },
+      },
+    })
+    await real.startHotspot()
+    await expect(real.joinScopedNetwork("MentraLive-1234", "pw")).resolves.toBe("10.5.6.8")
+    expect(gateways).toEqual(["192.168.43.1", "10.5.6.1"])
+  })
+
   test("the join waits for the phone's internet to come back before asking ACS for anything", async () => {
     // Joining the hotspot takes this phone off Wi-Fi, and signing in to ACS is the very next thing
     // that needs the internet. On device that ordering cost a 30s stall plus the join step's own

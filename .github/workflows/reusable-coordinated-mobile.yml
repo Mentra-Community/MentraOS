@@ -123,6 +123,7 @@ jobs:
       release_set_id: ${{ steps.release.outputs.release_set_id }}
       marketing_version: ${{ steps.release.outputs.marketing_version }}
       build_number: ${{ steps.release.outputs.build_number }}
+      upload_google_play: ${{ steps.release.outputs.upload_google_play }}
       apk_name: ${{ steps.release.outputs.apk_name }}
       aab_name: ${{ steps.release.outputs.aab_name }}
       ipa_name: ${{ steps.release.outputs.ipa_name }}
@@ -156,6 +157,10 @@ jobs:
           identity=$(jq -er .releaseIdentity release-intent/release-plan.json)
           release_set_id=$(jq -er .releaseSetId release-intent/release-plan.json)
           plan_tag=$(jq -er .artifactContainerTag release-intent/release-plan.json)
+          upload_google_play=$(jq -r '.native.googlePlayUpload != false' release-intent/release-plan.json)
+          if [[ "$upload_google_play" == "false" ]]; then
+            [[ "$(jq -er .channel release-intent/release-plan.json)" == "dev" ]]
+          fi
           if [[ -n "$ARTIFACT_CONTAINER_TAG" || -n "$ARTIFACT_CONTAINER_NAME" ]]; then
             [[ -n "$ARTIFACT_CONTAINER_TAG" && -n "$ARTIFACT_CONTAINER_NAME" ]]
             [[ "$(jq -er .channel release-intent/release-plan.json)" == "production" ]]
@@ -169,6 +174,7 @@ jobs:
             echo "release_set_id=$release_set_id"
             echo "marketing_version=$(jq -er .native.marketingVersion release-intent/release-plan.json)"
             echo "build_number=$(jq -er .native.buildNumber release-intent/release-plan.json)"
+            echo "upload_google_play=$upload_google_play"
             echo "apk_name=$(jq -er .artifactNames.androidApp release-intent/release-plan.json)"
             echo "aab_name=$(jq -er .artifactNames.androidStoreApp release-intent/release-plan.json)"
             echo "ipa_name=$(jq -er .artifactNames.iosApp release-intent/release-plan.json)"
@@ -350,7 +356,7 @@ jobs:
         uses: ./.github/actions/inject-signing
         with:
           mobile: ${{ inputs.dry_run == true || needs.prepare.outputs.android_assets_exist != 'true' }}
-          play: "true"
+          play: ${{ needs.prepare.outputs.upload_google_play == 'true' || inputs.compatibility_lab == true }}
           upload-keystore-b64: ${{ secrets.UPLOAD_KEYSTORE_B64 }}
           upload-store-password: ${{ secrets.MENTRAOS_UPLOAD_STORE_PASSWORD }}
           upload-key-password: ${{ secrets.MENTRAOS_UPLOAD_KEY_PASSWORD }}
@@ -462,7 +468,7 @@ jobs:
             --name "${{ needs.prepare.outputs.aab_name }}"
 
       - name: Prepare Google Play upload tooling
-        if: inputs.dry_run != true
+        if: inputs.dry_run != true && needs.prepare.outputs.upload_google_play == 'true'
         run: |
           set -euo pipefail
           mkdir -p mobile-play/fastlane
@@ -472,13 +478,13 @@ jobs:
           cp mobile/Gemfile.lock mobile-play/Gemfile.lock
 
       - name: Install Google Play upload tooling
-        if: inputs.dry_run != true
+        if: inputs.dry_run != true && needs.prepare.outputs.upload_google_play == 'true'
         working-directory: mobile-play
         run: bundle install
 
       - name: Check selected Google Play track
         id: play
-        if: inputs.dry_run != true && inputs.compatibility_lab != true
+        if: inputs.dry_run != true && inputs.compatibility_lab != true && needs.prepare.outputs.upload_google_play == 'true'
         working-directory: mobile-play
         env:
           GOOGLE_PLAY_TRACK: ${{ inputs.play_track }}
@@ -493,7 +499,7 @@ jobs:
           fi
 
       - name: Upload exact AAB to Google Play
-        if: inputs.dry_run != true && inputs.compatibility_lab != true && steps.play.outputs.exists != 'true'
+        if: inputs.dry_run != true && inputs.compatibility_lab != true && needs.prepare.outputs.upload_google_play == 'true' && steps.play.outputs.exists != 'true'
         working-directory: mobile-play
         env:
           GOOGLE_PLAY_AAB: ${{ github.workspace }}/mobile-release/android/${{ needs.prepare.outputs.aab_name }}

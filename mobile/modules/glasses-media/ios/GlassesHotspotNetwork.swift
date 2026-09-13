@@ -8,6 +8,7 @@ public final class GlassesHotspotNetwork {
     private let queue = DispatchQueue(label: "com.mentra.glassesmedia.hotspot")
     private var ssid: String?
     private var localAddress: String?
+    private var gatewayAddress: String?
     private var generation = 0
     private var applying = false
     private var cancelled = false
@@ -17,12 +18,16 @@ public final class GlassesHotspotNetwork {
     public var onLost: ((String) -> Void)?
     public init() {}
 
-    public func join(ssid: String, passphrase: String, completion: @escaping (Result<String, Error>) -> Void) {
+    public func join(ssid: String, passphrase: String, gateway: String? = nil, completion: @escaping (Result<String, Error>) -> Void) {
         queue.async {
             guard self.ssid == nil, !self.applying else { completion(.failure(LocalMediaError("Previous hotspot session has not finished cleaning up"))); return }
+            if let gateway, !LocalMediaPolicy.isPrivate(gateway) {
+                completion(.failure(LocalMediaError("The glasses reported an invalid hotspot gateway"))); return
+            }
             self.generation += 1
             let gen = self.generation
             self.ssid = ssid
+            self.gatewayAddress = gateway
             self.cancelled = false
             self.applying = true
             self.joinReply = completion
@@ -75,7 +80,7 @@ public final class GlassesHotspotNetwork {
     public func probeGateway(completion: @escaping (Bool, String) -> Void) {
         queue.async {
             guard let address = self.localAddress else { completion(false, "No joined hotspot"); return }
-            let gateway = address.split(separator: ".").prefix(3).joined(separator: ".") + ".1"
+            let gateway = self.gatewayAddress ?? address.split(separator: ".").prefix(3).joined(separator: ".") + ".1"
             let parameters = NWParameters.tcp
             parameters.requiredInterfaceType = .wifi
             let connection = NWConnection(host: NWEndpoint.Host(gateway), port: 8089, using: parameters)
@@ -122,7 +127,9 @@ public final class GlassesHotspotNetwork {
         NEHotspotNetwork.fetchCurrent { [weak self] network in
             self?.queue.async {
                 guard let self, gen == self.generation, !self.cancelled else { return }
-                if network?.ssid == ssid, let address = Self.wifiAddress() {
+                if network?.ssid == ssid, let address = Self.wifiAddress(),
+                   self.gatewayAddress.map({ LocalMediaPolicy.isHotspotClientAddress(address, gateway: $0) }) ?? true
+                {
                     self.localAddress = address
                     self.startMonitor(generation: gen)
                     self.finishJoin(.success(address))
@@ -160,6 +167,7 @@ public final class GlassesHotspotNetwork {
         if let ssid { NEHotspotConfigurationManager.shared.removeConfiguration(forSSID: ssid) }
         ssid = nil
         localAddress = nil
+        gatewayAddress = nil
         let replies = leaveReplies
         leaveReplies.removeAll()
         replies.forEach { $0() }

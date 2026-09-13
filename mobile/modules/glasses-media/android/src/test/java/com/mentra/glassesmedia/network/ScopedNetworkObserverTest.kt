@@ -34,7 +34,26 @@ class ScopedNetworkObserverTest {
             ) = Unit
         }
 
-    private val observer = ScopedNetworkObserver(downstream) { scoped }
+    private val observer = ScopedNetworkObserver(downstream, { scoped })
+
+    @Test
+    fun `relay mode keeps cellular connects and disconnects visible beside the hotspot`() {
+        val relay = ScopedNetworkObserver(downstream, { scoped }, { true })
+        relay.onNetworkConnect(info("rmnet_data0", 7L))
+        assertThat(connected).contains(7L, 99L)
+        assertThat(disconnected).doesNotContain(7L)
+        connected.clear()
+        relay.onNetworkDisconnect(7L)
+        assertThat(disconnected).contains(7L)
+        assertThat(connected).containsExactly(99L)
+    }
+
+    @Test
+    fun `relay inventory replaces stale wifi on the same interface without hiding internet`() {
+        val merged = ScopedNetworkChangeDetector.mergeScopedNetwork(
+            listOf(info("wlan0", 8L), info("rmnet_data0", 7L)), scoped, true)
+        assertThat(merged.map { it.handle }).containsExactly(7L, 99L)
+    }
 
     private fun ipv4(a: Int, b: Int, c: Int, d: Int) =
         byteArrayOf(a.toByte(), b.toByte(), c.toByte(), d.toByte())

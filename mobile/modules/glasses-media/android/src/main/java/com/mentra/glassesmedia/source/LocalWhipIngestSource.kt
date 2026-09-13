@@ -161,6 +161,18 @@ class LocalWhipIngestSource(
     server?.let { runCatching { it.stop() } }
     server = null
     disposePeer()
+    scopedNetwork?.let { ScopedNetworkChangeDetector.releaseReceiverNetwork(it) }
+  }
+
+  /** Terminal teardown for owners that discard this receiver instead of reusing its factory. */
+  fun close() {
+    generation++
+    check(server?.closeAndAwait() != false) { "Local WHIP requests are still draining" }
+    stop()
+    factory?.dispose()
+    factory = null
+    egl?.release()
+    egl = null
   }
 
   // -----------------------------------------------------------------
@@ -226,9 +238,11 @@ class LocalWhipIngestSource(
     peer.setRemoteDescription(
       object : SdpAdapter() {
         override fun onSetSuccess() {
+          if (gen != generation) { answered.countDown(); return }
           peer.createAnswer(
             object : SdpAdapter() {
               override fun onCreateSuccess(sdp: SessionDescription) {
+                if (gen != generation) { answered.countDown(); return }
                 peer.setLocalDescription(
                   object : SdpAdapter() {
                     override fun onSetSuccess() = answered.countDown()
@@ -404,10 +418,9 @@ class LocalWhipIngestSource(
   }
 
   private fun ensureFactory() {
+    // Standalone receivers can supply a fallback without replacing the owner's live registration.
+    scopedNetwork?.let { ScopedNetworkChangeDetector.registerReceiverNetwork(it) }
     if (factory != null) return
-    // Normally already installed by the module at creation; repeating it here is idempotent and
-    // covers a factory built from a code path that bypassed the module (tests, future callers).
-    scopedNetwork?.let { scoped -> ScopedNetworkChangeDetector.install { scoped } }
     PeerConnectionFactory.initialize(
       PeerConnectionFactory.InitializationOptions.builder(context).createInitializationOptions(),
     )

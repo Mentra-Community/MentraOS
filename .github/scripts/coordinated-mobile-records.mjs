@@ -49,20 +49,24 @@ function publication({status, coordinate, url, provenanceUrl, file}) {
 
 export function createAndroidRecord({plan, apk, apkUrl, aab, aabUrl, playTrack, storeStatus, provenanceUrl}) {
   validatePlan(plan)
-  if (!playTrack) throw new Error("Google Play track is required")
+  const uploadGooglePlay = plan.native.googlePlayUpload !== false
+  if (!uploadGooglePlay && plan.channel !== "dev") throw new Error("Only dev may skip Google Play publication")
+  if (uploadGooglePlay && !playTrack) throw new Error("Google Play track is required")
   return {
     schemaVersion: 1,
     releaseSetId: plan.releaseSetId,
     publications: {
-      mentraos: {
-        "google-play": publication({
-          status: storeStatus,
-          coordinate: `com.mentra.mentra:${plan.native.buildNumber}:${playTrack}`,
-          url: "https://play.google.com/console/",
-          provenanceUrl,
-          file: aab,
-        }),
-      },
+      mentraos: uploadGooglePlay
+        ? {
+            "google-play": publication({
+              status: storeStatus,
+              coordinate: `com.mentra.mentra:${plan.native.buildNumber}:${playTrack}`,
+              url: "https://play.google.com/console/",
+              provenanceUrl,
+              file: aab,
+            }),
+          }
+        : {},
     },
     artifacts: [
       publication({
@@ -166,11 +170,17 @@ function main() {
       ipa: path.resolve(args.ipa),
       ipaUrl: args["ipa-url"],
       testflightGroup: args["testflight-group"],
-      testflight: args["distribution-status"] ? {
-        group: args["testflight-group"], audience: args.audience,
-        status: args["distribution-status"], buildId: args["build-id"],
-        installUrl: args["install-url"], reviewState: args["review-state"] || "", skipReason: args["skip-reason"] || "",
-      } : undefined,
+      testflight: args["distribution-status"]
+        ? {
+            group: args["testflight-group"],
+            audience: args.audience,
+            status: args["distribution-status"],
+            buildId: args["build-id"],
+            installUrl: args["install-url"],
+            reviewState: args["review-state"] || "",
+            skipReason: args["skip-reason"] || "",
+          }
+        : undefined,
       storeStatus: args.status,
       provenanceUrl: args["provenance-url"],
     })

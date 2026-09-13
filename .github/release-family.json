@@ -67,6 +67,7 @@
       "publishTargets": ["npm"],
       "dependencies": [
         "@mentra/acs-meeting",
+        "@mentra/glasses-media",
         "@mentra/bluetooth-sdk",
         "@mentra/crust",
         "@mentra/cloud-client",
