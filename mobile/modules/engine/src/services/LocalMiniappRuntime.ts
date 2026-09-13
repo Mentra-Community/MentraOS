@@ -3665,6 +3665,9 @@ class LocalMiniappRuntime {
 
   private ensureMeetingStateBridge(): void {
     acsMeetingService.setStateHandler((owner, state) => {
+      const attempt = this.softapAttempt
+      // While a replacement waits for cleanup, native events still describe its predecessor.
+      if (attempt?.packageName === owner && !attempt.ownsResources) return
       this.sendToMiniapp(owner, {
         type: MiniappResponseType.MEETING_STATE,
         ...state,
