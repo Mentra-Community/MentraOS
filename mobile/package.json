@@ -214,7 +214,8 @@
     "expo-speech-transcriber@0.1.9": "patches/expo-speech-transcriber@0.1.9.patch",
     "react-native-inner-shadow@2.4.0": "patches/react-native-inner-shadow@2.4.0.patch",
     "react-native-webview@13.16.0": "patches/react-native-webview@13.16.0.patch",
-    "expo-audio@55.0.14": "patches/expo-audio@55.0.14.patch"
+    "expo-audio@55.0.14": "patches/expo-audio@55.0.14.patch",
+    "@livekit/react-native-webrtc@137.0.3": "patches/@livekit%2Freact-native-webrtc@137.0.3.patch"
   },
   "trustedDependencies": [
     "@sentry/cli",
