@@ -190,7 +190,6 @@ async function installEntry(
       // downloadVerifiedBundle already matched the SHA-256 the deployment
       // manifest pins, which is this path's authority instead of a publisher
       // signature (customer-built bundles carry no Mentra publisher key).
-      requirePublisherSignature: false,
       releaseIdentity: {
         source: "deployment_manifest",
         deploymentId,

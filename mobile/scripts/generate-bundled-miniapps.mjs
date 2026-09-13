@@ -36,7 +36,10 @@ export async function generateBundledMiniapps() {
     zips.map(async (name, index) => {
       const archive = await JSZip.loadAsync(await readFile(path.join(miniappsDir, name)))
       const entry = archive.file("META-INF/MENTRA.SIG")
-      if (!entry) throw new Error(`Bundled miniapp ${name} has no META-INF/MENTRA.SIG`)
+      // Publisher identity is opt-in. An unsigned bundle pins nothing, so the
+      // host accepts any later update for it; a signed one is verified here and
+      // then pinned for the life of the build.
+      if (!entry) return [packageNames[index], null]
       const envelope = JSON.parse(await entry.async("string"))
       const x = envelope?.publicKeyJwk?.x
       if (envelope?.schemaVersion !== 1 || envelope?.algorithm !== "Ed25519" || typeof x !== "string") {
@@ -93,6 +96,7 @@ export async function generateBundledMiniapps() {
   const requires = zips.map((name) => `  require("@assets/miniapps/${name}"),`).join("\n")
   const systemPackages = packageNames.map((packageName) => `  "${packageName}",`).join("\n")
   const publisherKeys = publisherFingerprints
+    .filter(([, fingerprint]) => fingerprint !== null)
     .map(([packageName, fingerprint]) => `  "${packageName}": "${fingerprint}",`)
     .join("\n")
 
@@ -114,12 +118,11 @@ export const BUNDLED_SYSTEM_MINIAPP_PACKAGES = [
 ${systemPackages}
 ] as const
 
-// Publisher identities are extracted from the signed ZIPs at build time. The
-// host verifies the embedded signature again before activation and requires
-// Store updates to retain this build-pinned identity.
-export const BUNDLED_SYSTEM_MINIAPP_PUBLISHER_KEYS = {
-${publisherKeys}
-} as const
+// Publisher identities extracted from any SIGNED bundled ZIP. Signing is opt-in
+// per package: an entry here pins that package's publisher for this build, and
+// a package absent from this map accepts any update. Empty is expected while no
+// bundled miniapp ships signed.
+export const BUNDLED_SYSTEM_MINIAPP_PUBLISHER_KEYS = {${publisherKeys ? `\n${publisherKeys}\n` : ""}} as const
 `
 
   // Avoid rewriting (and dirtying git / triggering a Metro reload) when unchanged.

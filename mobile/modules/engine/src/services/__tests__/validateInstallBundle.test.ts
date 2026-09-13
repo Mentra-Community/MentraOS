@@ -42,17 +42,17 @@ describe("validateInstallBundleArchive", () => {
     )
   })
 
-  test("requires signed production bundles but permits unsigned development snapshots", async () => {
+  test("validates an unsigned bundle and reports no publisher for it", async () => {
+    // Whether an unsigned bundle may install is an identity decision made by
+    // assertPublisherIdentityPolicy; this layer only reports what it found.
     const zip = new JSZip()
     zip.file("miniapp.json", JSON.stringify({packageName: "com.example.app", version: "1.0.0"}))
     zip.file("background/index.js", "export {}")
     const unsigned = await zip.generateAsync({type: "uint8array"})
 
-    await expect(validateInstallBundleArchive(unsigned)).rejects.toThrow("META-INF/MENTRA.SIG")
-    await expect(validateInstallBundleArchive(unsigned, {requirePublisherSignature: false})).resolves.toMatchObject({
-      packageName: "com.example.app",
-      version: "1.0.0",
-    })
+    const manifest = await validateInstallBundleArchive(unsigned)
+    expect(manifest).toMatchObject({packageName: "com.example.app", version: "1.0.0"})
+    expect(manifest.publisherKeyFingerprint).toBeUndefined()
   })
 
   test("rejects executable content changed after publisher signing", async () => {

@@ -24,7 +24,7 @@ const AUTHOR_DECLARABLE_PERMISSION_TYPES = new Set([
 
 export async function validateInstallBundleArchive(
   bytes: Uint8Array,
-  expected?: {packageName?: string; version?: string; requirePublisherSignature?: boolean},
+  expected?: {packageName?: string; version?: string},
 ): Promise<{
   packageName: string
   version: string
@@ -115,13 +115,12 @@ export async function validateInstallBundleArchive(
       }
     }
   }
-  const requirePublisherSignature = expected?.requirePublisherSignature !== false
+  // A signature is verified whenever one is present, and never demanded.
+  // Whether an unsigned bundle may install is an identity question, decided by
+  // assertPublisherIdentityPolicy against what this package already carries.
   const publisherKeyFingerprint = signatureBytes
     ? await verifyPublisherSignature({signatureBytes, signedFiles, manifest, packageName, version})
     : undefined
-  if (requirePublisherSignature && !publisherKeyFingerprint) {
-    throw new Error(`bundle must contain exactly one ${MENTRA_BUNDLE_SIGNATURE_PATH}`)
-  }
   return {
     packageName,
     version,
