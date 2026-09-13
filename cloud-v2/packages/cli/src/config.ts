@@ -18,6 +18,24 @@ export function getConfig(): CliConfig {
   }
 }
 
+/**
+ * The Store a stored login belongs to.
+ *
+ * CLI credentials are scoped per Core, so the Store must follow the credential's
+ * own Core rather than whatever Core this process defaults to — otherwise a
+ * staging login sends its token to the production Store, and signing keys
+ * (stored per Store) miss the slot they were saved under. An explicit
+ * MENTRA_STORE_URL is operator intent for this run and still wins; a value
+ * already persisted with the login beats re-deriving, so a deployment whose
+ * Store is named unconventionally keeps working.
+ */
+export function resolveStoreUrlForCore(coreUrl: string, persistedStoreUrl?: string): string {
+  const override = process.env.MENTRA_STORE_URL?.trim()
+  if (override) return normalizeUrl(override)
+  if (persistedStoreUrl) return persistedStoreUrl
+  return deriveStoreUrl(coreUrl)
+}
+
 export function deriveStoreUrl(coreUrl: string): string {
   const url = new URL(coreUrl)
   if (url.hostname === "core.mentraglass.com") {

@@ -1,4 +1,5 @@
 import {afterEach, describe, expect, test} from "bun:test"
+import {resolveStoreUrlForCore} from "./config"
 import {loadCredentials} from "./credentials"
 
 const saved = {
@@ -57,6 +58,36 @@ describe("environment credentials", () => {
       coreUrl: "https://identity.example.test/cloud",
       storeUrl: "https://identity.example.test/cloud",
     })
+  })
+})
+
+describe("stored logins resolve their own Store", () => {
+  test("follow the credential's Core, not whatever Core this process defaults to", () => {
+    // A staging login loaded while no MENTRA_CORE_URL is set must not be
+    // retargeted at the production Store: that sends its token to the wrong
+    // host and looks up signing keys under a slot it never saved.
+    delete process.env.MENTRA_CORE_URL
+    delete process.env.MENTRA_STORE_URL
+
+    expect(resolveStoreUrlForCore("https://core.staging.us-west-2.mentraglass.com")).toBe(
+      "https://store.staging.us-west-2.mentraglass.com",
+    )
+  })
+
+  test("prefer the Store persisted with the login over re-deriving it", () => {
+    delete process.env.MENTRA_STORE_URL
+
+    expect(resolveStoreUrlForCore("https://identity.example.test", "https://catalog.example.test")).toBe(
+      "https://catalog.example.test",
+    )
+  })
+
+  test("let an explicit Store URL override a persisted one for this run", () => {
+    process.env.MENTRA_STORE_URL = "https://override.example.test"
+
+    expect(resolveStoreUrlForCore("https://identity.example.test", "https://catalog.example.test")).toBe(
+      "https://override.example.test",
+    )
   })
 })
 

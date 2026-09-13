@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { getConfig } from "./config";
+import { getConfig, resolveStoreUrlForCore } from "./config";
 
 const SERVICE = "mentra-cli-v2";
 const LEGACY_NAME = "credentials";
@@ -71,7 +71,7 @@ export async function loadCredentials(coreUrl?: string): Promise<CliCredentials 
       organizationId: process.env.MENTRA_CLI_ORGANIZATION_ID,
       developerOrgId: process.env.MENTRA_CLI_DEVELOPER_ORG_ID,
       coreUrl: targetCoreUrl || getConfig().coreUrl,
-      storeUrl: getConfig().storeUrl,
+      storeUrl: resolveStoreUrlForCore(targetCoreUrl || getConfig().coreUrl),
       storedAt: new Date().toISOString(),
     };
   }
@@ -197,7 +197,7 @@ async function loadScopedCredentials(coreUrl: string): Promise<CliCredentials | 
 }
 
 function withCurrentStoreUrl(credentials: CliCredentials): CliCredentials {
-  return {...credentials, storeUrl: getConfig().storeUrl};
+  return {...credentials, storeUrl: resolveStoreUrlForCore(credentials.coreUrl, credentials.storeUrl)};
 }
 
 function credentialName(coreUrl: string): string {
