@@ -12,6 +12,13 @@ then makes Network.framework report that interface as cellular on subsequent
 default-path updates. It does not modify the Mac's interfaces, routes, sockets,
 or SDP. The production HTTP listener and receiver negotiate the offer.
 
+Each process first makes a warm-up request, then negotiates again on the same
+receiver. WebRTC's monitor temporarily allows every interface until its first
+asynchronous path update; warming its shared network manager keeps that startup
+race from letting the control gather a Wi-Fi candidate before the simulated
+cellular path is known. The final control assertion still requires HTTP 500 with
+the missing phone-answer candidate, and the production assertion requires 201.
+
 Two separate processes run against the same SDK:
 
 - The control compiles a temporary copy of `GlassesPeerFactory` with its

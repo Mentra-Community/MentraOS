@@ -58,6 +58,10 @@ import WebRTC
             print("PROBE default internet path now omits Wi-Fi")
         } else { finish("FAIL network shim missing", 1); return }
         print("PROBE offer has hotspot candidate: \(sender.localDescription!.sdp.contains(address))")
+        postOffer(warmup: true)
+    }
+
+    static func postOffer(warmup: Bool) {
         var request = URLRequest(url: URL(string: endpoint)!)
         request.httpMethod = "POST"
         request.setValue("application/sdp", forHTTPHeaderField: "Content-Type")
@@ -65,14 +69,36 @@ import WebRTC
         URLSession.shared.dataTask(with: request) { data, response, error in
             let code = (response as? HTTPURLResponse)?.statusCode ?? 0
             let result = code == 201 ? "OK" : (data.flatMap { String(data: $0, encoding: .utf8) } ?? String(describing: error))
-            print("PROBE HTTP \(code): \(result)")
+            print("PROBE \(warmup ? "warmup" : "assertion") HTTP \(code): \(result)")
             let expected = ProcessInfo.processInfo.environment["WHIP_TEST_EXPECT_FAILURE"] == "1"
+            // ObjCNetworkMonitor initially allows all interfaces until its asynchronous
+            // first path update. Warm the receiver's shared network manager before the
+            // assertion, so a fast first gathering cannot win that initialization race.
+            // Reusing this receiver preserves the monitor's populated interface cache.
+            if warmup, code == 201 || (expected && code == 500 && result.contains("Phone answer has no host ICE candidate")) {
+                DispatchQueue.global().asyncAfter(deadline: .now() + 0.25) {
+                    if code == 201 { deleteWarmup(response as! HTTPURLResponse) }
+                    else { postOffer(warmup: false) }
+                }
+                return
+            }
             let passed = expected
                 ? code == 500 && result.contains("Phone answer has no host ICE candidate")
                 : code == 201 && (data.flatMap { String(data: $0, encoding: .utf8) }?.contains(address) == true)
             sender.close()
             existingPeer.close()
             source.stop { finish(passed ? "PASS stop complete" : "FAIL negotiation", passed ? 0 : 1) }
+        }.resume()
+    }
+
+    static func deleteWarmup(_ response: HTTPURLResponse) {
+        guard let location = response.value(forHTTPHeaderField: "Location"),
+              let url = URL(string: location, relativeTo: URL(string: endpoint)) else { finish("FAIL warmup Location missing", 1); return }
+        var request = URLRequest(url: url)
+        request.httpMethod = "DELETE"
+        URLSession.shared.dataTask(with: request) { _, response, error in
+            guard (response as? HTTPURLResponse)?.statusCode == 204, error == nil else { finish("FAIL warmup DELETE", 1); return }
+            postOffer(warmup: false)
         }.resume()
     }
 
