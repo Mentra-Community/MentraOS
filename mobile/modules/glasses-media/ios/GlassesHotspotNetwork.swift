@@ -123,7 +123,7 @@ public final class GlassesHotspotNetwork {
                 if !requireCellular, path.status == .satisfied, path.usesInterfaceType(.wifi) {
                     NEHotspotNetwork.fetchCurrent { network in
                         self.queue.async {
-                            guard let network, network.ssid != self.lastHotspotSSID else { return }
+                            guard let network, !network.ssid.isEmpty, network.ssid != self.lastHotspotSSID else { return }
                             finish(true, "wifi")
                         }
                     }
