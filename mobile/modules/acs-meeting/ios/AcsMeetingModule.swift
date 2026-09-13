@@ -21,6 +21,18 @@ public class AcsMeetingModule: Module {
         return session
     }
 
+    private func joinHotspot(ssid: String, passphrase: String, gateway: String?, promise: Promise) {
+        hotspot.onLost = { [weak self] reason in
+            self?.sendEvent("onScopedNetworkLost", ["code": "SOFTAP_LOST", "message": reason])
+        }
+        hotspot.join(ssid: ssid, passphrase: passphrase, gateway: gateway) { result in
+            switch result {
+            case let .success(address): promise.resolve(address)
+            case let .failure(error): promise.reject(error)
+            }
+        }
+    }
+
     public func definition() -> ModuleDefinition {
         Name("MentraAcsMeeting")
         Events("onState", "onIncomingPcm", "onScopedNetworkLost")
@@ -57,16 +69,13 @@ public class AcsMeetingModule: Module {
         }
 
         AsyncFunction("joinScopedNetwork") { (ssid: String, passphrase: String, promise: Promise) in
-            self.hotspot.onLost = { [weak self] reason in
-                self?.sendEvent("onScopedNetworkLost", ["code": "SOFTAP_LOST", "message": reason])
-            }
-            self.hotspot.join(ssid: ssid, passphrase: passphrase) { result in
-                switch result {
-                case let .success(address): promise.resolve(address)
-                case let .failure(error): promise.reject(error)
-                }
-            }
+            self.joinHotspot(ssid: ssid, passphrase: passphrase, gateway: nil, promise: promise)
         }
+
+        AsyncFunction("joinScopedNetworkWithGateway") { (ssid: String, passphrase: String, gateway: String, promise: Promise) in
+            self.joinHotspot(ssid: ssid, passphrase: passphrase, gateway: gateway, promise: promise)
+        }
+
 
         AsyncFunction("leaveScopedNetwork") { (promise: Promise) in
             self.hotspot.leave { promise.resolve(nil) }
@@ -75,7 +84,6 @@ public class AcsMeetingModule: Module {
         AsyncFunction("beginTrace") { (traceId: String) in
             NSLog("SOFTAP_TRACE trace=\(traceId) stage=ios_begin")
         }
-
         AsyncFunction("probeScopedGateway") { (promise: Promise) in
             self.hotspot.probeGateway { reachable, detail in
                 promise.resolve(["reachable": reachable, "detail": detail])
@@ -213,6 +221,7 @@ final class AcsMeetingSession {
     // Health of the glasses WHEP feed, reported alongside the ACS phase so the host
     // can tell "call is up, glasses video is dead" from a healthy call.
     private var mediaSource: SourceState = .idle
+    private var mediaSourceReason: String?
     private var mediaRestartAttempts = 0
     private var mediaRestartTask: DispatchWorkItem?
     private static let mediaRestartBaseMs = 1000
@@ -254,6 +263,7 @@ final class AcsMeetingSession {
         }
         result["capabilities"] = ["hangUpForEveryone": hangUp]
         if let ingestUrl = media?.ingestUrl { result["ingestUrl"] = ingestUrl }
+        if let mediaSourceReason { result["mediaSourceReason"] = mediaSourceReason }
         if let meetingUrl { result["meetingUrl"] = meetingUrl }
         if let lastError { result["error"] = lastError }
         return result
@@ -559,6 +569,7 @@ final class AcsMeetingSession {
     private func onMediaSourceState(_ state: SourceState, reason: String) {
         let previous = mediaSource
         mediaSource = state
+        mediaSourceReason = reason
         if state == .live { mediaRestartAttempts = 0 }
         if state == .failed { scheduleMediaRestart(reason: reason) }
         // start() emits idle then connecting back to back; one snapshot per real change.
@@ -787,6 +798,7 @@ final class AcsMeetingSession {
         media?.onFrame = nil
         media?.onPcm = nil
         mediaSource = .idle
+        mediaSourceReason = nil
         if let local = media as? LocalWhipIngestSource {
             cleanup.enter()
             local.stop { self.cleanup.leave() }

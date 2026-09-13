@@ -30,6 +30,8 @@ export type AcsMeetingState = {
   activeStream?: AcsActiveStream
   audioSafety?: AcsAudioSafety
   mediaSource?: AcsMediaSourceState
+  /** Native receiver diagnostic, including the reason a local WHIP offer was rejected. */
+  mediaSourceReason?: string
   /** Local WHIP endpoint, available after a SoftAP join. */
   ingestUrl?: string
   /** Remote roster (Android emits this; iOS does not yet). */

@@ -4,9 +4,13 @@
     "android"
   ],
   "apple": {
-    "modules": []
+    "modules": [
+      "GlassesMediaRelayModule"
+    ]
   },
   "android": {
-    "modules": []
+    "modules": [
+      "com.mentra.glassesmedia.GlassesMediaRelayModule"
+    ]
   }
 }

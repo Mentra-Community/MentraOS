@@ -351,6 +351,29 @@ class WhipIngestServerLoopbackTest {
     assertThat(ingest.boundEndpoint).isNull()
   }
 
+  @Test
+  fun `hard close interrupts negotiation and waits before the factory can be released`() {
+    val negotiator = StubNegotiator().apply { block = CountDownLatch(1) }
+    val endpoint = start(negotiator)
+    val client = Thread { runCatching { request(endpoint.port, postOffer()) } }.apply { start() }
+    assertThat(negotiator.entered.await(1, TimeUnit.SECONDS)).isTrue()
+    assertThat(server!!.closeAndAwait(1_000)).isTrue()
+    client.join(1_000)
+    assertThat(client.isAlive).isFalse()
+    assertThat(server!!.closeAndAwait(1_000)).isTrue()
+  }
+
+  @Test
+  fun `hard close releases partial HTTP readers without waiting for socket timeout`() {
+    val endpoint = start(StubNegotiator())
+    Socket(loopback, endpoint.port).use { socket ->
+      socket.getOutputStream().write("POST /whip HTTP/1.1\r\n".toByteArray())
+      assertThat(server!!.closeAndAwait(1_000)).isTrue()
+      socket.soTimeout = 1_000
+      assertThat(runCatching { socket.getInputStream().read() }.getOrDefault(-1)).isEqualTo(-1)
+    }
+  }
+
   // -----------------------------------------------------------------
   // Wire helpers
   // -----------------------------------------------------------------

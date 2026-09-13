@@ -142,7 +142,7 @@ internal constructor(
             )
         }
 
-        val merged = mergeScopedNetwork(stock, scoped)
+        val merged = mergeScopedNetwork(stock, scoped, registry.includesInternet())
         lastPublished = snapshotOf(merged)
         SoftApTrace.stage(
             "webrtc_network_inventory",
@@ -235,12 +235,39 @@ internal constructor(
             context: Context,
             scoped: () -> ScopedInterface?,
         ): Wired {
-            val filter = ScopedNetworkObserver(downstream, scoped)
+            val filter = ScopedNetworkObserver(downstream, scoped) { registry.includesInternet() }
             return Wired(NetworkMonitorAutoDetect(filter, context), scoped, filter)
         }
 
         @JvmStatic
         fun install(scopedNetworkSupplier: () -> ScopedSoftApNetwork?) {
+            registry.registerAcs(scopedNetworkSupplier)
+            installMonitor()
+        }
+
+        private val registry = ScopedNetworkRegistry<ScopedSoftApNetwork>()
+
+        /** Receiver fallback for standalone users; never replaces ACS's live supplier. */
+        @JvmStatic
+        fun registerReceiverNetwork(network: ScopedSoftApNetwork) {
+            registry.registerReceiver(network)
+            installMonitor()
+        }
+
+        @JvmStatic
+        fun releaseReceiverNetwork(network: ScopedSoftApNetwork) { registry.releaseReceiver(network) }
+
+        /** Keep real internet handles visible for the outgoing peer; each factory masks its leg. */
+        @JvmStatic
+        fun registerRelayNetwork(network: ScopedSoftApNetwork) {
+            registry.registerRelay(network)
+            installMonitor()
+        }
+
+        @JvmStatic
+        fun releaseRelayNetwork(network: ScopedSoftApNetwork) { registry.releaseRelay(network) }
+
+        private fun installMonitor() {
             val monitor = NetworkMonitor.getInstance()
             // A live detector was built by an earlier factory (or the stock one) and will not be
             // replaced until monitoring restarts; say so in the trace so a missing host candidate
@@ -252,7 +279,7 @@ internal constructor(
             monitor.setNetworkChangeDetectorFactory { observer, context ->
                 val wired =
                     wire(observer, context) {
-                        scopedNetworkSupplier()?.let { resolveScopedInterface(context, it) }
+                        registry.current()?.let { resolveScopedInterface(context, it) }
                     }
                 ScopedNetworkChangeDetector(wired.delegate, wired.scoped, wired.observer)
             }
@@ -300,9 +327,12 @@ internal constructor(
         fun mergeScopedNetwork(
             detected: List<NetworkChangeDetector.NetworkInformation>?,
             scoped: ScopedInterface?,
+            includeInternet: Boolean = false,
         ): List<NetworkChangeDetector.NetworkInformation> {
             val hotspot = scoped?.let { toNetworkInformation(it) } ?: return detected.orEmpty()
-            return listOf(hotspot)
+            return if (includeInternet) {
+                detected.orEmpty().filter { it.handle != hotspot.handle && it.name != hotspot.name } + hotspot
+            } else listOf(hotspot)
         }
 
         /** Dotted-quad for the inventory trace. */

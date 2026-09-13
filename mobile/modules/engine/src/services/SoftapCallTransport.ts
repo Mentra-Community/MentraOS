@@ -707,8 +707,8 @@ export function createSoftapCallDeps(args: {
   /** Resolves when the meeting reports a frame reached ACS; rejects on a failed feed. */
   awaitFirstFrame: () => Promise<void>
   subsystems: {
-    setHotspotState: (enabled: boolean) => Promise<{state: string; ssid?: string; password?: string}>
-    joinScopedNetwork: (ssid: string, passphrase: string) => Promise<string | undefined>
+    setHotspotState: (enabled: boolean) => Promise<{state: string; ssid?: string; password?: string; localIp?: string}>
+    joinScopedNetwork: (ssid: string, passphrase: string, gateway?: string) => Promise<string | undefined>
     leaveScopedNetwork: () => Promise<void>
     joinMeeting: (
       packageName: string,
@@ -767,6 +767,7 @@ export function createSoftapCallDeps(args: {
 }): SoftapCallDeps {
   const {packageName, subsystems} = args
   const hotspotBroadcastWaitMs = args.hotspotBroadcastWaitMs ?? HOTSPOT_BROADCAST_WAIT_MS
+  let gatewayAddress: string | undefined
   return {
     startHotspot: async (report) => {
       const enable = async () => {
@@ -778,6 +779,7 @@ export function createSoftapCallDeps(args: {
           throw new Error("the glasses hotspot reported no password")
         }
         report?.(`Glasses report hotspot ${status.ssid} enabled`)
+        gatewayAddress = status.localIp
         return {ssid: status.ssid, passphrase: status.password}
       }
       try {
@@ -808,7 +810,9 @@ export function createSoftapCallDeps(args: {
     },
     joinScopedNetwork: async (ssid, passphrase, report) => {
       const joinOnce = (nextSsid: string, nextPassphrase: string) =>
-        subsystems.joinScopedNetwork(nextSsid, nextPassphrase)
+        gatewayAddress
+          ? subsystems.joinScopedNetwork(nextSsid, nextPassphrase, gatewayAddress)
+          : subsystems.joinScopedNetwork(nextSsid, nextPassphrase)
       let address: string | undefined
       try {
         address = await joinOnce(ssid, passphrase)
@@ -821,6 +825,7 @@ export function createSoftapCallDeps(args: {
         await subsystems.setHotspotState(false)
         const status = await subsystems.setHotspotState(true)
         if (status.state !== "enabled" || !status.ssid || !status.password) throw error
+        gatewayAddress = status.localIp
         if (hotspotBroadcastWaitMs > 0) {
           report?.(
             `Giving the hotspot ${Math.round(hotspotBroadcastWaitMs / 1000)}s to start broadcasting`,
