@@ -133,7 +133,11 @@ else
 fi
 
 newline=$'\n'
-android_line="*$(icon "$android_result") Android* - $(label "$android_result") - ${android_detail}${newline}Google Play: ${PLAY_TRACK:-unknown}"
+play_detail="${PLAY_TRACK:-unknown}"
+if [[ "${UPLOAD_GOOGLE_PLAY:-true}" == "false" ]]; then
+  play_detail="dev uploads paused; APK/AAB downloads remain available"
+fi
+android_line="*$(icon "$android_result") Android* - $(label "$android_result") - ${android_detail}${newline}Google Play: ${play_detail}"
 ios_line="*$(icon "$ios_result") iOS* - $(label "$ios_result") - ${ios_detail}${newline}TestFlight: ${TESTFLIGHT_GROUP:-unknown}"
 if [[ -n "${TESTFLIGHT_DISTRIBUTION_STATUS:-}" ]]; then
   ios_line+=" - ${TESTFLIGHT_DISTRIBUTION_STATUS}"

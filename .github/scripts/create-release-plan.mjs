@@ -33,6 +33,8 @@ const plan = createReleasePlan({
       ? nativeBuildNumberForFamily(family.familyBaseVersion, sequence)
       : Number(args["native-build-number"]),
   otaInputs,
+  // Keep dev APK/AAB downloads while dev uploads to internal Play are paused.
+  uploadGooglePlay: channel !== "dev",
   publicBetaTestflight: args["public-beta-testflight"] === "true",
 })
 const output = path.resolve(args.output || "release-plan.json")

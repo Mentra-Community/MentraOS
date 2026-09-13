@@ -62,6 +62,8 @@ test("CLI derives dev and beta native pins from root package.json and preserves 
     const plan = createPlan(branch)
     assert.equal(plan.native.marketingVersion, version)
     assert.equal(plan.native.buildNumber, nativeBuildNumberForFamily(version, 222))
+    assert.equal(plan.native.googlePlayUpload !== false, channel !== "dev")
+    assert.equal(plan.members.mentraos.publishTargets.includes("google-play"), channel !== "dev")
     assert.deepEqual(createPlan(branch), plan, "the same run must produce the same plan on retry")
     const env = prepareMobileReleaseEnvironment({
       plan,
@@ -76,4 +78,7 @@ test("CLI derives dev and beta native pins from root package.json and preserves 
   }
   assert.equal(createPlan("dev", ["--native-build-number", "900000003"]).native.buildNumber, 900000003)
   assert.equal(createPlan("main", ["--native-build-number", "900000004"]).native.buildNumber, 900000004)
+  assert.ok(
+    createPlan("main", ["--native-build-number", "900000004"]).members.mentraos.publishTargets.includes("google-play"),
+  )
 })
