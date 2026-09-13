@@ -27,20 +27,25 @@ const coreUrls: Record<Environment, string> = {
   staging: "https://core.staging.us-west-2.mentraglass.com",
   prod: "https://core.mentraglass.com",
 };
+const storeUrls: Record<Environment, string> = {
+  dev: "https://store.dev.us-west-2.mentraglass.com",
+  staging: "https://store.staging.us-west-2.mentraglass.com",
+  prod: "https://store.mentraglass.com",
+};
 
 for (const site of selectedSites) {
   const project = `${sites[site]}-${env}`;
   run(["bun", "--cwd", `websites/${site}`, "build"]);
-  run([
-    "bunx",
-    "wrangler",
-    "pages",
-    "secret",
-    "put",
-    "CORE_URL",
-    "--project-name",
-    project,
-  ], { cwd: `websites/${site}`, input: coreUrls[env] });
+  if (site === "portal") {
+    run([
+      "bunx", "wrangler", "pages", "secret", "put", "CORE_URL", "--project-name", project,
+    ], { cwd: `websites/${site}`, input: coreUrls[env] });
+  }
+  if (site !== "portal") {
+    run([
+      "bunx", "wrangler", "pages", "secret", "put", "STORE_URL", "--project-name", project,
+    ], { cwd: `websites/${site}`, input: storeUrls[env] });
+  }
   run([
     "bunx",
     "wrangler",

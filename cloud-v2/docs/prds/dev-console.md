@@ -236,7 +236,7 @@ API key creation belongs in the console.
 - Fake usage analytics.
 - Public store marketing pages.
 - Enterprise/OEM issuer management.
-- Internal review queue or preinstall registry controls.
+- Internal review queue controls.
 - In-app switching between MentraOS infrastructure environments.
 
 ## Designer Questions

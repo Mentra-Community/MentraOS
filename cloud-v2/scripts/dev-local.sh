@@ -7,7 +7,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 cd "$ROOT_DIR"
 
 echo "[dev-local] stopping stale Cloud V2 listeners…"
-for port in 3000 3001 3002 3102; do
+for port in 3000 3001 3002 3003 3102; do
   pids="$(lsof -tiTCP:"$port" -sTCP:LISTEN 2>/dev/null || true)"
   if [[ -n "$pids" ]]; then
     kill $pids
@@ -28,7 +28,7 @@ if ! command -v doppler >/dev/null 2>&1; then
   exit 1
 fi
 
-echo "[dev-local] starting Core, Runtime, and Test OEM with mock audio…"
+echo "[dev-local] starting Core, Store, Runtime, and Test OEM with mock audio…"
 exec doppler run \
   --project cloud-v2 \
   --config dev \

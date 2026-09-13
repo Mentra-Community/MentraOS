@@ -127,6 +127,8 @@ export interface HostFeatures {
 export interface MiniappAuthState {
   mentraUserId: string
   oemId?: string
+  /** Cloud Core endpoint selected and vouched for by the host. */
+  coreUrl?: string
   token: string
   expiresAt: number
 }
@@ -215,7 +217,7 @@ type SessionEmitterEvents = {
 // The default preserves the pre-channel-registry behavior for code that creates
 // or accepts a bare MiniappSession. `registerMiniapp<Channels>` supplies the
 // concrete mapping for scaffolded miniapps.
-// eslint-disable-next-line @typescript-eslint/no-explicit-any
+
 export class MiniappSession<TChannels extends object = any> {
   public readonly auth: AuthModule
   public readonly configuration: ConfigurationModule
@@ -785,6 +787,24 @@ export class MiniappSession<TChannels extends object = any> {
         if (next === "light" || next === "dark") {
           this.colorScheme = next
           this.emitter.emit("colorScheme", next)
+        }
+        return
+      }
+
+      case MiniappResponseType.MINIAPPS_INSTALL_PROGRESS: {
+        const packageName = payload.packageName
+        const version = payload.version
+        const phase = payload.phase
+        if (
+          typeof packageName === "string" &&
+          typeof version === "string" &&
+          ["downloading", "verifying", "extracting", "activating", "complete"].includes(String(phase))
+        ) {
+          this.miniapps._deliverInstallProgress({
+            packageName,
+            version,
+            phase: phase as "downloading" | "verifying" | "extracting" | "activating" | "complete",
+          })
         }
         return
       }

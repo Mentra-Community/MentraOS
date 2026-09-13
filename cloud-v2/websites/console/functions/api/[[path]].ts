@@ -1,19 +1,19 @@
 export async function onRequest(context: {
   request: Request;
-  env: { CORE_URL?: string; BUN_PUBLIC_CORE_URL?: string };
+  env: { STORE_URL?: string; BUN_PUBLIC_STORE_URL?: string };
 }): Promise<Response> {
-  const coreUrl = context.env.CORE_URL ?? context.env.BUN_PUBLIC_CORE_URL;
-  if (!coreUrl) {
+  const storeUrl = context.env.STORE_URL ?? context.env.BUN_PUBLIC_STORE_URL;
+  if (!storeUrl) {
     return Response.json(
-      { error: "server_error", error_description: "CORE_URL is not configured" },
+      { error: "server_error", error_description: "STORE_URL is not configured" },
       { status: 500 },
     );
   }
 
   const sourceUrl = new URL(context.request.url);
-  // Preserve any path prefix configured on CORE_URL by resolving a relative
+  // Preserve any path prefix configured on STORE_URL by resolving a relative
   // path (strip the leading "/") against a normalized base ending in "/".
-  const base = new URL(coreUrl);
+  const base = new URL(storeUrl);
   base.pathname = base.pathname.endsWith("/") ? base.pathname : `${base.pathname}/`;
   const upstreamUrl = new URL(`.${sourceUrl.pathname}${sourceUrl.search}`, base);
   const headers = new Headers(context.request.headers);
@@ -29,7 +29,7 @@ export async function onRequest(context: {
   });
 }
 
-// Client-supplied forwarding/hop-by-hop headers must never reach CORE_URL: they
+// Client-supplied forwarding/hop-by-hop headers must never reach STORE_URL: they
 // would let a request spoof trusted proxy metadata (client IP, protocol, host).
 // The edge sets its own trusted values (e.g. x-mentra-public-origin) after this.
 const FORWARDING_AND_HOP_BY_HOP_HEADERS = [

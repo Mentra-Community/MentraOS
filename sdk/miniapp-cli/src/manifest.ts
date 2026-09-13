@@ -95,6 +95,14 @@ export interface ManifestAction {
   parameters?: ManifestActionParameters;
   /** JSON-Schema descriptor for the structured value returned by the handler. */
   outputSchema?: Record<string, unknown>;
+  /**
+   * Runtime lifecycle after a headless invocation. `persistent` starts normal,
+   * user-visible miniapp activity; `transient` keeps the wake invisible and
+   * tears it down after the invocation settles. Defaults to `persistent`.
+   */
+  lifecycle?: 'persistent' | 'transient';
+  /** Restrict an internal action to direct host invocation. Defaults to `system`. */
+  audience?: 'system' | 'host';
 }
 
 export interface MiniappManifestV1 {
@@ -327,6 +335,12 @@ export function validateManifest(manifest: unknown): { valid: boolean; errors: s
           (typeof a.outputSchema !== 'object' || a.outputSchema === null || Array.isArray(a.outputSchema))
         ) {
           errors.push(`actions[${i}].outputSchema must be a JSON-Schema object when set`);
+        }
+        if (a.lifecycle !== undefined && a.lifecycle !== 'persistent' && a.lifecycle !== 'transient') {
+          errors.push(`actions[${i}].lifecycle must be "persistent" or "transient" when set`);
+        }
+        if (a.audience !== undefined && a.audience !== 'system' && a.audience !== 'host') {
+          errors.push(`actions[${i}].audience must be "system" or "host" when set`);
         }
       });
     }

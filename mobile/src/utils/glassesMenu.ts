@@ -8,7 +8,7 @@
 
 import {sortAppsByLastOpenTime, type ClientApp} from "@mentra/engine"
 
-import {SYSTEM_APPS} from "@/constants/miniapps"
+import {GLASSES_MENU_EXCLUDED_APPS} from "@/constants/miniapps"
 
 export interface GlassesMenuItem {
   packageName: string
@@ -34,7 +34,10 @@ export function buildMenuItems(apps: {packageName: string; name: string}[]): Gla
  */
 export async function getDefaultMenuApps(allApps: ClientApp[]): Promise<GlassesMenuItem[]> {
   const candidates = allApps.filter(
-    (app) => !app.hidden && app.compatibility?.isCompatible !== false && !SYSTEM_APPS.includes(app.packageName),
+    (app) =>
+      !app.hidden &&
+      app.compatibility?.isCompatible !== false &&
+      !GLASSES_MENU_EXCLUDED_APPS.includes(app.packageName),
   )
 
   // sortAppsByLastOpenTime returns ascending (oldest first), reverse for most recent first

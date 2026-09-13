@@ -67,7 +67,7 @@ import {
   type MiniappAuthToken,
   type TtsSynthesisResult,
 } from "../runtime/config"
-import {getAnalytics, getMiniappConfiguration, getUiSeams, isFeatureEnabled} from "../runtime/bootstrap"
+import {getAnalytics, getConfigValues, getMiniappConfiguration, getUiSeams, isFeatureEnabled} from "../runtime/bootstrap"
 import {invokeScanQrSeam} from "../runtime/scanQrSeam"
 import {
   normalizeStreamAudioConfig,
@@ -87,6 +87,16 @@ import {resolveForegroundLocationPermission} from "./ForegroundLocationPermissio
 import {advanceMiniappPingLiveness} from "./MiniappLiveness"
 import {listPhoneCalendarEvents, PhoneCalendarError} from "./PhoneCalendarService"
 import {LocalMiniappStorage} from "./LocalMiniappStorage"
+import {
+  canStoreUpdateSystemMiniapp,
+  isStoreMiniappPackage,
+  isSystemMiniappPackage,
+  systemMiniappStoreOwner,
+} from "./SystemMiniappPolicy"
+import {installWithRuntimeReload} from "../utils/storeInstallRuntime"
+import {checkMiniappInstallCompatibility} from "./miniappInstallCompatibility"
+import {TransientActionWakeCoordinator} from "./TransientActionWakeCoordinator"
+import {projectSystemActions} from "./manifestActions"
 import acsMeetingService, {
   parseAcsOutgoingVideo,
   parseAcsVideoSource,
@@ -123,7 +133,14 @@ export interface InstalledMiniappManifest {
   entry?: {background?: string; ui?: string}
   permissions?: Array<{type: string; required?: boolean; description?: string}>
   hardwareRequirements?: Array<{type: string; level: string; description?: string}>
-  actions?: Array<{id?: unknown; description?: unknown; parameters?: unknown; outputSchema?: unknown}>
+  actions?: Array<{
+    id?: unknown
+    description?: unknown
+    parameters?: unknown
+    outputSchema?: unknown
+    lifecycle?: unknown
+    audience?: unknown
+  }>
 }
 
 type SpeakerStateValue = "idle" | "loading" | "playing" | "stopped" | "error"
@@ -138,6 +155,8 @@ interface ConnectedMiniapp {
   lastPongAt: number
   unansweredPingRounds: number
   installedManifest?: InstalledMiniappManifest
+  /** Host-derived provenance bit; never sourced from miniapp.json. */
+  hostTrustedSystem: boolean
   authRefreshTimerId: number | null
   /**
    * Backoff timer for re-attempting the INITIAL miniapp-token mint after it
@@ -196,18 +215,6 @@ const LOG_TAG = "LOCAL_MINIAPP"
 const DIAGNOSTIC_MAX_LIST_ITEMS = 100
 const DIAGNOSTIC_MAX_STRING_LENGTH = 512
 
-const SYSTEM_MINIAPP_PACKAGE_SET = new Set([
-  "com.mentra.camera",
-  "com.mentra.gallery",
-  "com.mentra.settings",
-  "com.mentra.simulated",
-  "com.mentra.mirror",
-  "com.mentra.ai",
-  "cloud.augmentos.notify",
-  "com.mentra.feedback",
-  "com.mentra.miniappdev",
-])
-
 function diagnosticStringList(values: Iterable<string>): string[] {
   return [...values]
     .map((value) => value.slice(0, DIAGNOSTIC_MAX_STRING_LENGTH))
@@ -235,6 +242,7 @@ const FOREGROUND_LIVENESS_PROBE_TIMEOUT_MS = 2_500
  */
 const SOFTAP_FIRST_FRAME_MS = 20_000
 const REQUEST_WIFI_SETUP_TYPE = "miniapp_request_wifi_setup"
+const HOST_ACTION_CALLER = "__mentra_host__"
 // Unregister after this many missed pongs. Generous on purpose: a busy
 // context (heavy interim translation traffic) or OS scheduling while idle can
 // delay pongs well past one interval, and killing a healthy-but-busy script
@@ -513,6 +521,14 @@ class LocalMiniappRuntime {
   private usedTokens = new Set<string>()
 
   private constructor() {}
+
+  private readonly transientActionWakes = new TransientActionWakeCoordinator({
+    isContextRunning: (packageName) => miniappLauncher.isRunning(packageName),
+    isProjectedRunning: (packageName) => miniappLauncher.isProjectedRunning(packageName),
+    ensureConnectedHidden: (packageName) =>
+      miniappLauncher.ensureConnected(packageName, 10_000, undefined, {projectRunning: false}),
+    stopContext: (packageName) => miniappLauncher.stop(packageName),
+  })
 
   /** Snapshot of miniapps actively subscribed to hardware button events. */
   public getButtonPressSubscribers(): string[] {
@@ -800,6 +816,8 @@ class LocalMiniappRuntime {
     packageName: string,
     sendFn: (raw: string) => void,
     installedManifest?: InstalledMiniappManifest,
+    hostTrustedSystem = false,
+    userVisible = true,
   ): void {
     console.log(`${LOG_TAG}: registerApp(${packageName})`)
     this.clearForegroundProbe(packageName)
@@ -860,6 +878,7 @@ class LocalMiniappRuntime {
       lastPongAt: Date.now(),
       unansweredPingRounds: 0,
       installedManifest,
+      hostTrustedSystem,
       authRefreshTimerId: null,
       authRetryTimerId: null,
       authDelivered: false,
@@ -878,7 +897,14 @@ class LocalMiniappRuntime {
     // window ends early once this app pushes its first display (see
     // LocalDisplayManager.request), or after ~1.5s. Fires once per spawn —
     // including a crash-respawn, since each spawn is a fresh "app is starting".
-    localDisplayManager.onMount(packageName, installedManifest?.name ?? packageName)
+    if (userVisible) localDisplayManager.onMount(packageName, installedManifest?.name ?? packageName)
+  }
+
+  /** A transiently-woken context became normal user-visible activity. */
+  public onUserActivated(packageName: string): void {
+    const app = this.connectedApps.get(packageName)
+    if (!app) return
+    localDisplayManager.onMount(packageName, app.installedManifest?.name ?? packageName)
   }
 
   /**
@@ -979,6 +1005,16 @@ class LocalMiniappRuntime {
 
   public unregisterApp(packageName: string): void {
     console.log(`${LOG_TAG}: unregisterApp(${packageName})`)
+    this.transientActionWakes.forget(packageName)
+    for (const [callId, pending] of this.actionCalls) {
+      if (pending.targetPackageName !== packageName) continue
+      void this.finalizeActionCall(
+        callId,
+        false,
+        undefined,
+        this.actionError(MiniappErrorCode.WAKE_FAILED, `${packageName} disconnected during action execution`),
+      )
+    }
     const releasedMicGateOverride = micStateCoordinator.clearMiniappGateOverrides(packageName)
     this.clearForegroundProbe(packageName)
     this.clearMiniappAuthRefresh(packageName)
@@ -1426,6 +1462,15 @@ class LocalMiniappRuntime {
         break
       case MiniappRequestType.MINIAPPS_STOP:
         void this.handleMiniappsStop(packageName, payload, requestId)
+        break
+      case MiniappRequestType.MINIAPPS_INSTALL:
+        void this.handleMiniappsInstall(packageName, payload, requestId)
+        break
+      case MiniappRequestType.MINIAPPS_INSTALL_CHECK:
+        this.handleMiniappsInstallCheck(packageName, payload, requestId)
+        break
+      case MiniappRequestType.MINIAPPS_UNINSTALL:
+        void this.handleMiniappsUninstall(packageName, payload, requestId)
         break
       case MiniappRequestType.ACTION_INVOKE:
         void this.handleActionInvoke(packageName, payload, requestId)
@@ -5117,30 +5162,31 @@ class LocalMiniappRuntime {
   /** Outstanding action invocations, keyed by host-generated callId. */
   private actionCalls = new Map<
     string,
-    {callerPackageName: string; targetPackageName: string; callerRequestId?: string; timer: number}
+    {
+      targetPackageName: string
+      timer: number
+      resolve: (value: unknown) => void
+      reject: (error: Error & {code?: string}) => void
+      releaseWake?: () => Promise<void>
+    }
   >()
   private actionCallSeq = 0
+  private storeMutationInFlight: string | null = null
 
   private interopApps(): ClientApp[] {
     return useAppStatusStore.getState().apps
   }
 
   private isSystemPackage(packageName: string): boolean {
-    const app = this.interopApps().find((candidate) => candidate.packageName === packageName)
-    if (SYSTEM_MINIAPP_PACKAGE_SET.has(packageName)) {
-      if (app?.offline) return true
-      if (app?.local && app.version) {
-        return appRegistry.getReleaseIdentity(packageName, app.version)?.source === "bundled_asset"
-      }
-      return false
-    }
-    return app?.isMiniappDev === true
+    return isSystemMiniappPackage(packageName) && this.connectedApps.get(packageName)?.hostTrustedSystem === true
   }
 
   private async startInteropApp(packageName: string): Promise<boolean> {
     const app = this.interopApps().find((a) => a.packageName === packageName)
     if (!app) return false
     if (app.local) {
+      const started = await useAppStatusStore.getState().start(app, {skipNavigation: true})
+      if (!started) return false
       await miniappLauncher.ensureConnected(packageName)
       return true
     }
@@ -5149,10 +5195,6 @@ class LocalMiniappRuntime {
 
   private stopInteropApp(packageName: string): Promise<void> {
     return useAppStatusStore.getState().stop(packageName)
-  }
-
-  private wakeInteropApp(packageName: string): Promise<void> {
-    return miniappLauncher.ensureConnected(packageName)
   }
 
   /** Emit an interop audit event (best-effort — never let telemetry break a call). */
@@ -5195,13 +5237,24 @@ class LocalMiniappRuntime {
       missingOptional: [],
       warnings: [],
     }
+    const releaseIdentity =
+      app.local && app.version ? appRegistry.getReleaseIdentity(app.packageName, app.version) : null
+    const systemStoreOwnerPackageName = systemMiniappStoreOwner(app.packageName)
     return {
       packageName: app.packageName,
       name: app.name,
       version: app.version ?? "",
       running: app.running,
       compatibility,
-      actions: app.actions ?? [],
+      system: isSystemMiniappPackage(app.packageName),
+      ...(systemStoreOwnerPackageName ? {systemStoreOwnerPackageName} : {}),
+      // A bundled Store hidden by the host's prelaunch gate must not leak its
+      // system-callable actions to Mentra AI or another SYSTEM miniapp.
+      actions: projectSystemActions(app.actions ?? [], !(isStoreMiniappPackage(app.packageName) && app.hidden)),
+      ...((releaseIdentity?.source === "store" || releaseIdentity?.source === "system_store") &&
+      releaseIdentity.storePackageName
+        ? {storeOwnerPackageName: releaseIdentity.storePackageName}
+        : {}),
     }
   }
 
@@ -5271,6 +5324,9 @@ class LocalMiniappRuntime {
       // launch or the background context failed to spawn — don't report success.
       const started = await this.startInteropApp(target)
       if (started) {
+        if (payload.foreground === true && app.local) {
+          await useAppStatusStore.getState().setForeground(target)
+        }
         this.sendResult(packageName, requestId, true)
         this.auditInterop({caller: packageName, op: "start", target, ok: true})
       } else {
@@ -5327,6 +5383,286 @@ class LocalMiniappRuntime {
     }
   }
 
+  private currentInstallHardwareCapabilities() {
+    const defaultWearable = useSettingsStore.getState().getSetting(ISLAND_SETTINGS_KEYS.defaultWearable) as
+      | DeviceTypes
+      | undefined
+    return getModelCapabilities(defaultWearable || DeviceTypes.NONE)
+  }
+
+  private evaluateInstallCompatibility(
+    payload: Record<string, unknown>,
+  ): {compatible: true} | {compatible: false; blocker: "host" | "sdk" | "hardware"; reason: string} {
+    const {hostVersion, supportedMiniappSdkRange} = getConfigValues()
+    if (!hostVersion || !supportedMiniappSdkRange) {
+      return {compatible: false, blocker: "host", reason: "Host miniapp compatibility policy is not configured"}
+    }
+    return checkMiniappInstallCompatibility(
+      {
+        minHostVersion: typeof payload.minHostVersion === "string" ? payload.minHostVersion.trim() : undefined,
+        sdkVersion: typeof payload.sdkVersion === "string" ? payload.sdkVersion.trim() : undefined,
+        hardwareRequirements: payload.hardwareRequirements,
+      },
+      {
+        hostVersion,
+        supportedSdkRange: supportedMiniappSdkRange,
+        hardwareCapabilities: this.currentInstallHardwareCapabilities(),
+      },
+    )
+  }
+
+  private async handleMiniappsInstall(
+    storePackageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    const target = typeof payload.packageName === "string" ? payload.packageName : undefined
+    if (!isStoreMiniappPackage(storePackageName) || !this.connectedApps.get(storePackageName)?.hostTrustedSystem) {
+      this.sendResult(storePackageName, requestId, false, undefined, {
+        code: MiniappErrorCode.NOT_PERMITTED,
+        message: "Installing miniapps is restricted to bundled system Stores",
+      })
+      this.auditInterop({
+        caller: storePackageName,
+        op: "install",
+        target,
+        ok: false,
+        errorCode: MiniappErrorCode.NOT_PERMITTED,
+      })
+      return
+    }
+
+    const version = typeof payload.version === "string" ? payload.version.trim() : ""
+    const bundleUrl = typeof payload.bundleUrl === "string" ? payload.bundleUrl.trim() : ""
+    const bundleSha256 = typeof payload.bundleSha256 === "string" ? payload.bundleSha256.toLowerCase() : ""
+    // The Store's own backend credential. The host forwards it untouched: it
+    // does not mint it, cannot read it, and keeps no Store address to check it
+    // against — entitlement belongs to the Store, integrity to the host.
+    const bundleAuthorization =
+      typeof payload.bundleAuthorization === "string" ? payload.bundleAuthorization.trim() : undefined
+    const minHostVersion = typeof payload.minHostVersion === "string" ? payload.minHostVersion.trim() : undefined
+    const sdkVersion = typeof payload.sdkVersion === "string" ? payload.sdkVersion.trim() : undefined
+    const packageNamePattern = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/
+    const versionPattern =
+      /^(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)(?:-[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?(?:\+[0-9A-Za-z-]+(?:\.[0-9A-Za-z-]+)*)?$/
+    if (
+      !target ||
+      !packageNamePattern.test(target) ||
+      !versionPattern.test(version) ||
+      !bundleUrl ||
+      !/^[a-f0-9]{64}$/.test(bundleSha256)
+    ) {
+      this.sendResult(storePackageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INVALID_ARGUMENT,
+        message: "install requires packageName, version, bundleUrl, and a SHA-256 hash",
+      })
+      return
+    }
+    if (isStoreMiniappPackage(target)) {
+      this.sendResult(storePackageName, requestId, false, undefined, {
+        code: MiniappErrorCode.NOT_PERMITTED,
+        message: "A Store cannot replace a Store package while handling its own update request",
+      })
+      return
+    }
+    if (isSystemMiniappPackage(target) && !canStoreUpdateSystemMiniapp(storePackageName, target)) {
+      this.sendResult(storePackageName, requestId, false, undefined, {
+        code: MiniappErrorCode.STORE_OWNERSHIP_CONFLICT,
+        message: `${target} is assigned to another bundled Store by this host build`,
+      })
+      return
+    }
+    if (this.storeMutationInFlight) {
+      this.sendResult(storePackageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INSTALL_IN_PROGRESS,
+        message: `Another Store operation is already in progress for ${this.storeMutationInFlight}`,
+      })
+      return
+    }
+    this.storeMutationInFlight = target
+    try {
+      const parsedUrl = new URL(bundleUrl)
+      const developmentHttp = __DEV__ && parsedUrl.protocol === "http:"
+      if (parsedUrl.protocol !== "https:" && !developmentHttp) {
+        throw new Error("bundleUrl must use HTTPS")
+      }
+      const {hostVersion, supportedMiniappSdkRange} = getConfigValues()
+      if (!hostVersion || !supportedMiniappSdkRange) {
+        throw new Error("Host miniapp compatibility policy is not configured")
+      }
+      const compatibility = this.evaluateInstallCompatibility({
+        minHostVersion,
+        sdkVersion,
+        hardwareRequirements: payload.hardwareRequirements,
+      })
+      if (!compatibility.compatible) {
+        this.sendResult(storePackageName, requestId, false, undefined, {
+          code: MiniappErrorCode.APP_NOT_COMPATIBLE,
+          message: compatibility.reason,
+        })
+        return
+      }
+      const activeVersion = await appRegistry.getActiveVersion(target)
+      const currentIdentity = activeVersion ? appRegistry.getReleaseIdentity(target, activeVersion) : null
+      if (
+        (currentIdentity?.source === "store" || currentIdentity?.source === "system_store") &&
+        currentIdentity.storePackageName &&
+        currentIdentity.storePackageName !== storePackageName
+      ) {
+        this.sendResult(storePackageName, requestId, false, undefined, {
+          code: MiniappErrorCode.STORE_OWNERSHIP_CONFLICT,
+          message: `${target} is managed by ${currentIdentity.storePackageName}`,
+        })
+        return
+      }
+
+      await installWithRuntimeReload(
+        miniappLauncher,
+        target,
+        async () => {
+          const installed = await appRegistry.installFromUrl(bundleUrl, {
+            expectedPackageName: target,
+            expectedVersion: version,
+            expectedBundleSha256: bundleSha256,
+            ...(bundleAuthorization ? {bundleAuthorization} : {}),
+            compatibilityPolicy: {
+              hostVersion,
+              supportedSdkRange: supportedMiniappSdkRange,
+              hardwareCapabilities: this.currentInstallHardwareCapabilities(),
+            },
+            onProgress: (phase) =>
+              this.sendToMiniapp(storePackageName, {
+                type: MiniappResponseType.MINIAPPS_INSTALL_PROGRESS,
+                packageName: target,
+                version,
+                phase,
+              }),
+            releaseIdentity: {
+              source: isSystemMiniappPackage(target) ? "system_store" : "store",
+              storePackageName,
+              bundleSha256,
+              ...(typeof payload.releaseId === "string" ? {releaseId: payload.releaseId} : {}),
+              ...(typeof payload.channel === "string" ? {channel: payload.channel} : {}),
+            },
+          })
+          if (installed.is_error()) throw installed.error
+          return installed
+        },
+        {
+          restorePreviousVersion: () => {
+            if (!activeVersion) throw new Error(`No prior active version is available for ${target}`)
+            const restored = appRegistry.setActiveVersion(target, activeVersion)
+            if (restored.is_error()) throw restored.error
+          },
+          onRecoveryError: (recoveryError) => {
+            console.warn(
+              `${LOG_TAG}: failed to restore ${target} after Store install: ${
+                (recoveryError as Error)?.message ?? recoveryError
+              }`,
+            )
+          },
+        },
+      )
+      appRegistry.gcReleaseVersions(target, [version, ...(activeVersion ? [activeVersion] : [])])
+      this.sendToMiniapp(storePackageName, {
+        type: MiniappResponseType.MINIAPPS_INSTALL_PROGRESS,
+        packageName: target,
+        version,
+        phase: "complete",
+      })
+      await useAppStatusStore.getState().refresh()
+      this.sendResult(storePackageName, requestId, true, {
+        packageName: target,
+        version,
+        installedByStore: storePackageName,
+      })
+      this.auditInterop({caller: storePackageName, op: "install", target, ok: true})
+    } catch (error) {
+      this.sendResult(storePackageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INSTALL_FAILED,
+        message: (error as Error)?.message ?? "miniapp installation failed",
+      })
+      this.auditInterop({
+        caller: storePackageName,
+        op: "install",
+        target,
+        ok: false,
+        errorCode: MiniappErrorCode.INSTALL_FAILED,
+      })
+    } finally {
+      this.storeMutationInFlight = null
+    }
+  }
+
+  private handleMiniappsInstallCheck(
+    storePackageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): void {
+    if (!isStoreMiniappPackage(storePackageName) || !this.connectedApps.get(storePackageName)?.hostTrustedSystem) {
+      this.sendResult(storePackageName, requestId, false, undefined, {
+        code: MiniappErrorCode.NOT_PERMITTED,
+        message: "Install compatibility checks are restricted to bundled system Stores",
+      })
+      return
+    }
+    this.sendResult(storePackageName, requestId, true, this.evaluateInstallCompatibility(payload))
+  }
+
+  private async handleMiniappsUninstall(
+    storePackageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    const target = typeof payload.packageName === "string" ? payload.packageName : undefined
+    if (!isStoreMiniappPackage(storePackageName) || !this.connectedApps.get(storePackageName)?.hostTrustedSystem) {
+      this.sendResult(storePackageName, requestId, false, undefined, {
+        code: MiniappErrorCode.NOT_PERMITTED,
+        message: "Uninstalling miniapps is restricted to bundled system Stores",
+      })
+      return
+    }
+    if (!target || isSystemMiniappPackage(target)) {
+      this.sendResult(storePackageName, requestId, false, undefined, {
+        code: MiniappErrorCode.NOT_PERMITTED,
+        message: "A Store cannot uninstall a bundled system miniapp",
+      })
+      return
+    }
+    if (this.storeMutationInFlight) {
+      this.sendResult(storePackageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INSTALL_IN_PROGRESS,
+        message: `Another Store operation is already in progress for ${this.storeMutationInFlight}`,
+      })
+      return
+    }
+    this.storeMutationInFlight = target
+    try {
+      const activeVersion = await appRegistry.getActiveVersion(target)
+      const identity = activeVersion ? appRegistry.getReleaseIdentity(target, activeVersion) : null
+      if (identity?.source !== "store" || identity.storePackageName !== storePackageName) {
+        this.sendResult(storePackageName, requestId, false, undefined, {
+          code: MiniappErrorCode.STORE_OWNERSHIP_CONFLICT,
+          message: `${target} is managed by ${identity?.storePackageName ?? "another Store"}`,
+        })
+        return
+      }
+      const app = this.interopApps().find((candidate) => candidate.packageName === target)
+      if (app?.running) await this.stopInteropApp(target)
+      const result = await useAppStatusStore.getState().uninstall(target)
+      if (result.is_error()) throw result.error
+      this.sendResult(storePackageName, requestId, true)
+      this.auditInterop({caller: storePackageName, op: "uninstall", target, ok: true})
+    } catch (error) {
+      this.sendResult(storePackageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: (error as Error)?.message ?? "miniapp uninstall failed",
+      })
+    } finally {
+      this.storeMutationInFlight = null
+    }
+  }
+
   /** True iff `value` serializes larger than the action payload cap. */
   private actionPayloadTooLarge(value: unknown): boolean {
     try {
@@ -5337,58 +5673,33 @@ class LocalMiniappRuntime {
     }
   }
 
+  private actionError(code: string, message: string): Error & {code: string} {
+    return Object.assign(new Error(message), {code})
+  }
+
   /**
-   * session.actions.invoke → wake the target headlessly, deliver an ACTION_CALL,
-   * and correlate its ACTION_RESULT back to the caller's pending request.
+   * Shared action broker used by both session.actions.invoke and direct host
+   * scheduling. Transient declarations receive an invisible invocation lease;
+   * normal declarations use the ordinary user-start lifecycle.
    */
-  private async handleActionInvoke(
+  private async invokeDeclaredAction(
     callerPackageName: string,
-    payload: Record<string, unknown>,
-    requestId?: string,
-  ): Promise<void> {
-    const targetForGate = payload.targetPackageName as string | undefined
-    if (!this.requireSystemCaller(callerPackageName, requestId, "invoke", targetForGate)) return
-
-    const target = payload.targetPackageName as string | undefined
-    const actionId = payload.actionId as string | undefined
-    const params = (payload.params as Record<string, unknown> | undefined) ?? {}
-    // Floor the timeout at 6s so the host never rejects with ACTION_TIMEOUT before
-    // the target SDK's handler-registration window closes. A freshly-woken miniapp
-    // buffers an undelivered ACTION_CALL for HANDLER_WAIT_MS (5s in @mentra/miniapp's
-    // actions module) waiting for session.actions.handle; a shorter host timeout
-    // could fire while the target is still registering, then the action would run
-    // with no caller left to receive its result. 6s = that 5s buffer + 1s for the
-    // ACTION_RESULT/NO_ACTION_HANDLER reply to travel back. Keep these in sync.
-    const timeoutMs = Math.min(Math.max(Number(payload.timeoutMs) || 30_000, 6_000), 120_000)
-
+    target: string,
+    actionId: string,
+    params: Record<string, unknown>,
+    timeoutMs: number,
+    allowHostAudience: boolean,
+  ): Promise<unknown> {
     if (this.actionPayloadTooLarge(params)) {
-      this.sendResult(callerPackageName, requestId, false, undefined, {
-        code: MiniappErrorCode.PAYLOAD_TOO_LARGE,
-        message: "action params exceeded the 256 KB cap",
-      })
-      return
+      throw this.actionError(MiniappErrorCode.PAYLOAD_TOO_LARGE, "action params exceeded the 256 KB cap")
     }
 
-    const app = target ? this.interopApps().find((a) => a.packageName === target) : undefined
-    if (!target || !app) {
-      this.sendResult(callerPackageName, requestId, false, undefined, {
-        code: MiniappErrorCode.APP_NOT_FOUND,
-        message: `Miniapp not found: ${target ?? "(missing targetPackageName)"}`,
-      })
-      return
-    }
-    if (!actionId) {
-      this.sendResult(callerPackageName, requestId, false, undefined, {
-        code: MiniappErrorCode.ACTION_NOT_FOUND,
-        message: "invoke requires an actionId",
-      })
-      return
+    const app = this.interopApps().find((candidate) => candidate.packageName === target)
+    if (!app) throw this.actionError(MiniappErrorCode.APP_NOT_FOUND, `Miniapp not found: ${target}`)
+    if (!allowHostAudience && isStoreMiniappPackage(target) && app.hidden) {
+      throw this.actionError(MiniappErrorCode.ACTION_NOT_FOUND, `${target} is not available`)
     }
     if (app.compatibility && app.compatibility.isCompatible === false) {
-      this.sendResult(callerPackageName, requestId, false, undefined, {
-        code: MiniappErrorCode.APP_NOT_COMPATIBLE,
-        message: `${target} is not compatible with the connected glasses`,
-      })
       islandNotifications.emit({
         kind: "version_incompatible",
         packageName: target,
@@ -5396,99 +5707,162 @@ class LocalMiniappRuntime {
         metadata: {missingRequired: app.compatibility.missingRequired ?? [], via: "miniapps.invoke"},
         timestamp: Date.now(),
       })
-      return
-    }
-    // Declared-action gate — only once the host populates app.actions (Phase 2);
-    // until then app.actions is undefined and we fall through to NO_ACTION_HANDLER.
-    if (!(app.actions ?? []).some((a) => a.id === actionId)) {
-      this.sendResult(callerPackageName, requestId, false, undefined, {
-        code: MiniappErrorCode.ACTION_NOT_FOUND,
-        message: `${target} does not declare action "${actionId}"`,
-      })
-      return
+      throw this.actionError(
+        MiniappErrorCode.APP_NOT_COMPATIBLE,
+        `${target} is not compatible with the connected glasses`,
+      )
     }
 
-    // Headless wake + wait for CONNECT (idempotent / fast if already connected).
+    const action = (app.actions ?? []).find((candidate) => candidate.id === actionId)
+    if (!action || (action.audience === "host" && !allowHostAudience)) {
+      throw this.actionError(MiniappErrorCode.ACTION_NOT_FOUND, `${target} does not declare action "${actionId}"`)
+    }
+
+    let releaseWake: (() => Promise<void>) | undefined
     try {
-      await this.wakeInteropApp(target)
-    } catch (e) {
-      this.sendResult(callerPackageName, requestId, false, undefined, {
-        code: MiniappErrorCode.WAKE_FAILED,
-        message: (e as Error)?.message ?? `failed to wake ${target}`,
-      })
-      return
+      if (action.lifecycle === "transient") {
+        if (!app.local) {
+          throw this.actionError(
+            MiniappErrorCode.WAKE_FAILED,
+            `transient action wake is unavailable for non-local miniapp ${target}`,
+          )
+        }
+        releaseWake = await this.transientActionWakes.acquire(target)
+      } else {
+        const started = await this.startInteropApp(target)
+        if (!started) {
+          throw this.actionError(MiniappErrorCode.WAKE_FAILED, `failed to start ${target}`)
+        }
+      }
+    } catch (error) {
+      if ((error as {code?: string}).code) throw error
+      throw this.actionError(MiniappErrorCode.WAKE_FAILED, (error as Error)?.message ?? `failed to wake ${target}`)
     }
 
-    // The wake waited for CONNECT, but the target could have dropped in the gap
-    // before delivery — fail fast rather than arming a timer for a call that
-    // sendToMiniapp would silently drop (the caller would otherwise wait the
-    // full invoke timeout for an ACTION_CALL that was never delivered).
     if (!this.connectedApps.has(target)) {
-      this.sendResult(callerPackageName, requestId, false, undefined, {
-        code: MiniappErrorCode.WAKE_FAILED,
-        message: `${target} disconnected before the action could be delivered`,
-      })
-      this.auditInterop({
-        caller: callerPackageName,
-        op: "invoke",
-        target,
-        actionId,
-        ok: false,
-        errorCode: MiniappErrorCode.WAKE_FAILED,
-      })
-      return
+      await releaseWake?.()
+      throw this.actionError(
+        MiniappErrorCode.WAKE_FAILED,
+        `${target} disconnected before the action could be delivered`,
+      )
     }
 
-    // Deliver the call and arm the handler timeout; ACTION_RESULT resolves it.
     const callId = `act-${Date.now().toString(36)}-${this.actionCallSeq++}`
-    const timer = BgTimer.setTimeout(() => {
-      this.actionCalls.delete(callId)
-      this.sendResult(callerPackageName, requestId, false, undefined, {
-        code: MiniappErrorCode.ACTION_TIMEOUT,
-        message: `action "${actionId}" timed out after ${timeoutMs}ms`,
+    return new Promise<unknown>((resolve, reject) => {
+      const timer = BgTimer.setTimeout(() => {
+        void this.finalizeActionCall(
+          callId,
+          false,
+          undefined,
+          this.actionError(MiniappErrorCode.ACTION_TIMEOUT, `action "${actionId}" timed out after ${timeoutMs}ms`),
+        )
+      }, timeoutMs)
+      this.actionCalls.set(callId, {targetPackageName: target, timer, resolve, reject, releaseWake})
+      this.sendToMiniapp(target, {
+        type: MiniappResponseType.ACTION_CALL,
+        callId,
+        actionId,
+        params,
+        callerPackageName,
       })
-    }, timeoutMs)
-    this.actionCalls.set(callId, {callerPackageName, targetPackageName: target, callerRequestId: requestId, timer})
-    this.sendToMiniapp(target, {
-      type: MiniappResponseType.ACTION_CALL,
-      callId,
-      actionId,
-      params,
-      callerPackageName,
     })
-    this.auditInterop({caller: callerPackageName, op: "invoke", target, actionId, ok: true})
   }
 
-  /** Target → host: forward an ACTION_RESULT back to the caller's pending invoke. */
+  /** Host-owned scheduler entry. The host is not represented as a fake miniapp. */
+  public invokeActionFromHost(
+    targetPackageName: string,
+    actionId: string,
+    params: Record<string, unknown> = {},
+    timeoutMs = 10 * 60_000,
+  ): Promise<unknown> {
+    const boundedTimeout = Math.min(Math.max(timeoutMs, 6_000), 15 * 60_000)
+    return this.invokeDeclaredAction(HOST_ACTION_CALLER, targetPackageName, actionId, params, boundedTimeout, true)
+  }
+
+  /** session.actions.invoke adapter around the shared broker. */
+  private async handleActionInvoke(
+    callerPackageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    const target = payload.targetPackageName as string | undefined
+    if (!this.requireSystemCaller(callerPackageName, requestId, "invoke", target)) return
+    const actionId = payload.actionId as string | undefined
+    if (!target || !actionId) {
+      this.sendResult(callerPackageName, requestId, false, undefined, {
+        code: !target ? MiniappErrorCode.APP_NOT_FOUND : MiniappErrorCode.ACTION_NOT_FOUND,
+        message: !target ? "invoke requires a targetPackageName" : "invoke requires an actionId",
+      })
+      return
+    }
+    // Keep this in sync with the SDK's 5-second handler registration buffer.
+    const timeoutMs = Math.min(Math.max(Number(payload.timeoutMs) || 30_000, 6_000), 120_000)
+    const params = (payload.params as Record<string, unknown> | undefined) ?? {}
+    try {
+      const result = await this.invokeDeclaredAction(callerPackageName, target, actionId, params, timeoutMs, false)
+      this.sendResult(callerPackageName, requestId, true, result ?? null)
+      this.auditInterop({caller: callerPackageName, op: "invoke", target, actionId, ok: true})
+    } catch (error) {
+      const code = (error as {code?: string}).code ?? MiniappErrorCode.INTERNAL
+      this.sendResult(callerPackageName, requestId, false, undefined, {
+        code,
+        message: (error as Error)?.message ?? "action invocation failed",
+      })
+      this.auditInterop({caller: callerPackageName, op: "invoke", target, actionId, ok: false, errorCode: code})
+    }
+  }
+
+  private async finalizeActionCall(
+    callId: string,
+    ok: boolean,
+    result?: unknown,
+    error?: Error & {code?: string},
+  ): Promise<void> {
+    const pending = this.actionCalls.get(callId)
+    if (!pending) return
+    this.actionCalls.delete(callId)
+    BgTimer.clearTimeout(pending.timer)
+    try {
+      await pending.releaseWake?.()
+    } catch (releaseError) {
+      console.warn(`${LOG_TAG}: failed to release transient action wake`, releaseError)
+    }
+    if (ok) pending.resolve(result ?? null)
+    else pending.reject(error ?? this.actionError(MiniappErrorCode.INTERNAL, "action handler error"))
+  }
+
+  /** Target → host: resolve the correlated action invocation. */
   private handleActionResult(targetPackageName: string, payload: Record<string, unknown>): void {
     const callId = payload.callId as string | undefined
     if (!callId) return
     const pending = this.actionCalls.get(callId)
-    if (!pending) return
-    // Only the invoked target may resolve this call. callIds are guessable
-    // (timestamp + seq), so a different connected miniapp must not be able to
-    // spoof a result/error for someone else's invoke.
-    if (pending.targetPackageName !== targetPackageName) return
-    this.actionCalls.delete(callId)
-    BgTimer.clearTimeout(pending.timer)
+    if (!pending || pending.targetPackageName !== targetPackageName) return
 
     if (payload.ok === true) {
       const result = payload.result
       if (this.actionPayloadTooLarge(result)) {
-        this.sendResult(pending.callerPackageName, pending.callerRequestId, false, undefined, {
-          code: MiniappErrorCode.PAYLOAD_TOO_LARGE,
-          message: "action result exceeded the 256 KB cap",
-        })
+        void this.finalizeActionCall(
+          callId,
+          false,
+          undefined,
+          this.actionError(MiniappErrorCode.PAYLOAD_TOO_LARGE, "action result exceeded the 256 KB cap"),
+        )
         return
       }
-      this.sendResult(pending.callerPackageName, pending.callerRequestId, true, result ?? null)
-    } else {
-      const error = (payload.error as ({code: string; message: string} & Record<string, unknown>) | undefined) ?? {
-        code: MiniappErrorCode.INTERNAL,
-        message: "action handler error",
-      }
-      this.sendResult(pending.callerPackageName, pending.callerRequestId, false, undefined, error)
+      void this.finalizeActionCall(callId, true, result)
+      return
     }
+
+    const payloadError = payload.error as {code?: string; message?: string} | undefined
+    void this.finalizeActionCall(
+      callId,
+      false,
+      undefined,
+      this.actionError(
+        payloadError?.code ?? MiniappErrorCode.INTERNAL,
+        payloadError?.message ?? "action handler error",
+      ),
+    )
   }
 
   private sendResult(

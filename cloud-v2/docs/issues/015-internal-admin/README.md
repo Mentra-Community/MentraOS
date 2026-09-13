@@ -1,8 +1,8 @@
 # 015 - Internal Admin Site and Admin CLI
 
-**Status:** First admin site, release review queue, preinstalled-registry
-publisher, and mutation audit log are implemented locally. Incident workflows,
-admin CLI, and durable role mapping are still draft.
+**Status:** First admin site, release review queue, incident viewer, and mutation
+audit log are implemented locally. Admin CLI and durable role mapping are still
+draft.
 
 ## Problem
 
@@ -10,8 +10,7 @@ Cloud v2 needs an internal admin surface for Mentra operators. This should not
 live in Console2, because Console2 is developer-facing. It should also not live
 inside the enterprise portal, because portal users are external customer admins.
 
-Internal admin must replace the old dev console's review and incident workflows
-and add admin control over the preinstalled miniapp registry.
+Internal admin replaces the old dev console's review and incident workflows.
 
 ## Product Boundary
 
@@ -71,7 +70,6 @@ type AdminRole =
   | "admin_owner"
   | "app_reviewer"
   | "incident_responder"
-  | "registry_admin"
   | "support_viewer"
 ```
 
@@ -128,7 +126,7 @@ interface IncidentTimelineEvent {
 }
 ```
 
-Review data references the registry models in `011-miniapp-registry`.
+Review data references the release models in `011-miniapp-registry`.
 
 ## Admin Site Screens
 
@@ -136,13 +134,11 @@ Review data references the registry models in `011-miniapp-registry`.
 2. Review queue. Implemented as a queue/table with approve, reject, publish.
 3. Submission detail. Next; first slice uses inline row actions.
 4. Package/bundle inspector. Next.
-5. Preinstalled registry editor. Implemented.
-6. Preinstalled registry revision history. Implemented.
-7. Incident list. Next.
-8. Incident detail and timeline. Next.
-9. User/device/session lookup. Next.
-10. Enterprise/org/issuer lookup. Next.
-11. Audit log. Implemented.
+5. Incident list. Implemented.
+6. Incident detail. Implemented.
+7. User/device/session lookup. Next.
+8. Enterprise/org/issuer lookup. Next.
+9. Audit log. Implemented.
 
 ## Admin CLI Commands
 
@@ -153,9 +149,6 @@ mentra admin whoami
 mentra admin submissions list
 mentra admin submissions approve <submissionId>
 mentra admin submissions reject <submissionId>
-mentra admin registry list
-mentra admin registry draft <registryName>
-mentra admin registry promote <revisionId> --reason "..."
 mentra admin incidents list
 mentra admin incidents show <incidentId>
 mentra admin issuers disable <trustedIssuerId> --reason "..."
@@ -169,14 +162,11 @@ same audit logs.
 1. An app reviewer approves a submitted bundle.
 2. An app reviewer requests changes with notes visible to the developer in
    Console2.
-3. A registry admin promotes Local Captions to the dev preinstalled registry.
-4. A registry admin rolls back a bad preinstalled registry revision.
-5. An incident responder opens a report, sees linked logs/session/user/package,
+3. An incident responder opens a report, sees linked logs/session/user/package,
    and adds timeline notes.
-6. A support viewer can inspect incidents but cannot mutate package or registry
-   state.
-7. An admin disables a compromised trusted issuer.
-8. Every admin mutation is visible in the audit log.
+4. A support viewer can inspect incidents but cannot mutate package state.
+5. An admin disables a compromised trusted issuer.
+6. Every admin mutation is visible in the audit log.
 
 ## API Shape
 
@@ -186,19 +176,13 @@ GET  /api/admin/submissions
 POST /api/admin/submissions/:releaseId/approve
 POST /api/admin/submissions/:releaseId/reject
 POST /api/admin/submissions/:releaseId/publish
-GET  /api/admin/preinstalled/registries
-POST /api/admin/preinstalled/registries
-GET  /api/admin/preinstalled/releases
-GET  /api/admin/preinstalled/registries/:registryId/revisions
-POST /api/admin/preinstalled/registries/:registryId/revisions
-POST /api/admin/preinstalled/registries/:registryId/revisions/:revisionId/promote
 GET  /api/admin/incidents
 GET  /api/admin/incidents/:id
 POST /api/admin/incidents/:id/events
 GET  /api/admin/audit-log
 ```
 
-The incident routes remain planned; the release and preinstall routes above are
+The release, report proxy, support-profile proxy, and audit routes are
 implemented.
 
 ## Faults To Test
@@ -208,7 +192,6 @@ implemented.
 | `@mentraglass.com` user without role | Login allowed only if desired; admin APIs forbidden |
 | Admin role revoked | Existing session loses mutation permission after refresh/check |
 | Duplicate approval click | Idempotent decision or clear conflict |
-| Bad preinstalled registry revision | Roll back to prior revision |
 | Admin CLI mutation | Same auth, authorization, and audit log as admin site |
 | Incident log source unavailable | Incident page still opens with partial data |
 

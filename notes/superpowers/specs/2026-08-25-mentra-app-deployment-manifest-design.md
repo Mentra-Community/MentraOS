@@ -1118,8 +1118,7 @@ Core-backed, Runtime-REST-only startup still brings up:
 
 It creates the Core session and authenticated Runtime REST capability surface
 but does not start cloud audio uplink, the Runtime WebSocket, reconnect alarms,
-preinstalled registry sync, support-profile sync, cloud reports, or cloud
-speech. Core-backed miniapp token minting remains available.
+support-profile sync, cloud reports, or cloud speech. Core-backed miniapp token minting remains available.
 
 The Profile and debug surfaces read display identity from the selected auth
 provider and stable identity from the Core session. They do not call Mentra

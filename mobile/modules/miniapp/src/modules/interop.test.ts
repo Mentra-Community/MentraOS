@@ -38,6 +38,7 @@ describe("MiniappsModule (session.miniapps)", () => {
           {
             id: "add_todo",
             description: "Add a todo.",
+            lifecycle: "persistent",
             parameters: {type: "object"},
             outputSchema: {type: "object", properties: {added: {type: "string"}}},
           },
@@ -60,13 +61,15 @@ describe("MiniappsModule (session.miniapps)", () => {
     expect(requests[0]).toEqual({type: MiniappRequestType.MINIAPPS_LIST, includeIncompatible: true})
   })
 
-  test("start / stop send the lifecycle request with the packageName", async () => {
+  test("start / open / stop send lifecycle requests with the packageName", async () => {
     const {session, requests} = mockSession()
     const miniapps = new MiniappsModule(session)
     await miniapps.start("com.todo")
+    await miniapps.open("com.todo")
     await miniapps.stop("com.todo")
     expect(requests).toEqual([
       {type: MiniappRequestType.MINIAPPS_START, packageName: "com.todo"},
+      {type: MiniappRequestType.MINIAPPS_START, packageName: "com.todo", foreground: true},
       {type: MiniappRequestType.MINIAPPS_STOP, packageName: "com.todo"},
     ])
   })

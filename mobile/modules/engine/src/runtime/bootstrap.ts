@@ -50,6 +50,18 @@ export interface IslandConfigValues {
   features?: Partial<Record<IslandFeatureName, boolean>>
   /** OEM identifier (Mentra is OEM #0); reserved for OEM auth/telemetry. */
   oemId?: string
+  /** User-facing host version used to reject miniapps requiring a newer host. */
+  hostVersion?: string
+  /** Semver range of Mentra Miniapp SDK bundle ABIs this host can execute. */
+  supportedMiniappSdkRange?: string
+  /** Package identities backed by miniapp ZIPs shipped in this host build. */
+  bundledSystemMiniappPackages?: readonly string[]
+  /** Build-selected Store packages; each must also be a bundled SYSTEM package. */
+  bundledStoreMiniappPackages?: readonly string[]
+  /** Build-owned SYSTEM package -> bundled Store package allowed to update it. */
+  bundledSystemMiniappStoreOwners?: Readonly<Record<string, string>>
+  /** Build-pinned Ed25519 publisher fingerprint for every bundled SYSTEM package. */
+  bundledSystemMiniappPublisherKeys?: Readonly<Record<string, string>>
   /**
    * LC3 frame size (bytes) the phone's mic encoder emits — announced to the
    * cloud on connect (20 for G1, 40 for G2, …). Defaults to 20 if unset.

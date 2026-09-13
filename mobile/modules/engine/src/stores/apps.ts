@@ -25,6 +25,7 @@ import {islandNotifications} from "../services/NotificationsEmitter"
 import sttModelManager from "../services/STTModelManager"
 import {miniappLauncher} from "../services/MiniappLauncher"
 import {miniappRunningRegistry} from "../services/MiniappRunningRegistry"
+import {isStoreMiniappPackage} from "../services/SystemMiniappPolicy"
 import {resolveHiddenStatus} from "./appVisibility"
 import {SETTINGS, useSettingsStore} from "./settings"
 import BluetoothSdk from "@mentra/bluetooth-sdk"
@@ -363,7 +364,8 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
     // Foreground-only-one rule: stop other running standard apps.
     if (app.type === "standard") {
       const runningForeground = state.apps.filter(
-        (a) => a.running && a.type === "standard" && a.packageName !== packageName,
+        (a) =>
+          a.running && a.type === "standard" && a.packageName !== packageName && !isStoreMiniappPackage(a.packageName),
       )
       for (const r of runningForeground) {
         await get().stop(r.packageName)

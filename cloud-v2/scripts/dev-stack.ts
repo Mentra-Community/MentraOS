@@ -9,6 +9,7 @@
  *
  *   test-oem : http://127.0.0.1:3102   (mint OEM JWTs)
  *   core     : http://127.0.0.1:3000   (client auth, REST)
+ *   store    : http://127.0.0.1:3003   (catalog, releases, Console)
  *   auth     : http://127.0.0.1:3002   (local-dev runtime tokens)
  *   runtime  : ws://127.0.0.1:3001/ws/session   (+ UDP :8000)
  *
@@ -35,12 +36,14 @@
 import crypto from "node:crypto";
 import { Buffer } from "node:buffer";
 import { startCore } from "../packages/core/src/index";
+import { startStore } from "../packages/store/src/index";
 import { resolveUdpAdvertisedHost, startRuntime } from "../packages/runtime/src/index";
 import { startTestOem } from "../test/test-oem/src/index";
 import { OemModel } from "../packages/core/src/models/oem.model";
 import { signRuntimeToken } from "../packages/shared/src/auth";
 
 const PORT_CORE = Number(process.env.DEV_CORE_PORT ?? 3000);
+const PORT_STORE = Number(process.env.DEV_STORE_PORT ?? 3003);
 const PORT_RUNTIME_HTTP = Number(
   process.env.DEV_RUNTIME_HTTP_PORT ?? process.env.DEV_AUDIO_HTTP_PORT ?? 3001,
 );
@@ -135,10 +138,14 @@ if (provider === "soniox" && !process.env.SONIOX_API_KEY) {
 // Worker threads read AUDIO_PROVIDER from process.env. If the user relies on
 // the dev-stack default, make that default explicit before startRuntime().
 process.env.AUDIO_PROVIDER = provider;
-console.log("[dev-stack] booting test-oem, core, runtime…");
+console.log("[dev-stack] booting test-oem, core, store, runtime…");
 
 const testOem = await startTestOem({ port: PORT_TEST_OEM, tenantId: OEM_ID });
 const core = await startCore({ port: PORT_CORE });
+process.env.MENTRA_CORE_INTERNAL_URL = core.url;
+process.env.MENTRA_STORE_CORE_JWKS_URL = `${core.url}/.well-known/jwks.json`;
+const store = await startStore({ port: PORT_STORE });
+process.env.MENTRA_STORE_INTERNAL_URL = store.url;
 const localAuth = startLocalAuthIssuer(PORT_LOCAL_AUTH);
 const runtime = await startRuntime({
   httpPort: PORT_RUNTIME_HTTP,
@@ -161,6 +168,7 @@ console.log("");
 console.log("[dev-stack] cloud-v2 is up:");
 console.log(`  test-oem : ${testOem.url}`);
 console.log(`  core     : ${core.url}`);
+console.log(`  store    : ${store.url}`);
 console.log(`  auth     : ${localAuth.url}`);
 console.log(`  runtime WS : ws://${ADVERTISE_HOST}:${PORT_RUNTIME_HTTP}/ws/session`);
 console.log(`  runtime UDP: ${ADVERTISE_HOST}:${PORT_RUNTIME_UDP}`);

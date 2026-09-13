@@ -8,11 +8,11 @@ layering, and what changes when you `porter apply`.
 Cloud V2 deploys use one Porter app per environment in the AWS us-west-2
 cluster:
 
-| Release source                              | Coordinated owner              | Porter app      | Manifest              | Public hosts                                                                          |
-| ------------------------------------------- | ------------------------------ | --------------- | --------------------- | ------------------------------------------------------------------------------------- |
-| `dev`                                       | `coordinated-release.yml`      | `cloud-dev`     | `porter.dev.yaml`     | `core.dev.us-west-2.mentraglass.com`, `runtime.dev.us-west-2.mentraglass.com`         |
-| `staging`                                   | `coordinated-release.yml`      | `cloud-staging` | `porter.staging.yaml` | `core.staging.us-west-2.mentraglass.com`, `runtime.staging.us-west-2.mentraglass.com` |
-| selected release source contained in `main` | `production-release-cloud.yml` | `cloud-prod`    | `porter.prod.yaml`    | `core.mentraglass.com`, `runtime.mentraglass.com`                                     |
+| Release source                              | Coordinated owner              | Porter app      | Manifest              | Public hosts                                                                                                                     |
+| ------------------------------------------- | ------------------------------ | --------------- | --------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
+| `dev`                                       | `coordinated-release.yml`      | `cloud-dev`     | `porter.dev.yaml`     | `core.dev.us-west-2.mentraglass.com`, `store.dev.us-west-2.mentraglass.com`, `runtime.dev.us-west-2.mentraglass.com`             |
+| `staging`                                   | `coordinated-release.yml`      | `cloud-staging` | `porter.staging.yaml` | `core.staging.us-west-2.mentraglass.com`, `store.staging.us-west-2.mentraglass.com`, `runtime.staging.us-west-2.mentraglass.com` |
+| selected release source contained in `main` | `production-release-cloud.yml` | `cloud-prod`    | `porter.prod.yaml`    | `core.mentraglass.com`, `store.mentraglass.com`, `runtime.mentraglass.com`                                                       |
 
 Both release systems call `reusable-coordinated-cloud-v2.yml`, which is the single
 implementation owner for target resolution, Porter deployment, public health
@@ -41,6 +41,7 @@ image — each just runs a different process from it:
 | Service   | Run                                 | HTTP port | UDP port |
 | --------- | ----------------------------------- | --------- | -------- |
 | `core`    | `bun packages/core/src/index.ts`    | 3000      | —        |
+| `store`   | `bun packages/store/src/index.ts`   | 3003      | —        |
 | `runtime` | `bun packages/runtime/src/index.ts` | 3001      | 8000     |
 
 (The proxy service from `packages/proxy/` joins once it has real code.)
@@ -89,6 +90,7 @@ porter env pull --app cloud-dev --merged | grep MENTRA_JWT
 ```bash
 # Live logs from one service (Ctrl+C to stop)
 porter app logs cloud-dev --service core
+porter app logs cloud-dev --service store
 porter app logs cloud-dev --service runtime
 
 # Historical logs
@@ -170,7 +172,7 @@ just returns "ok" — no work — so liveness can't false-positive under load.
 (Lesson from v1 issue 057.)
 
 The coordinated deployer verifies both paths through every configured public
-Core and Runtime hostname after `porter apply -w`. Missing DNS, an unhealthy
+Core, Store, and Runtime hostname after `porter apply -w`. Missing DNS, an unhealthy
 dependency, or an unready pod fails the cloud job and prevents mobile
 publication. It then reads pod `imageID` values and the Porter pod revision back
 through read-only `porter kubectl`; those immutable observations are stored in

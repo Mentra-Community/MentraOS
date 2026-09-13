@@ -8,27 +8,31 @@ you're new; reference it when something doesn't make sense.
 ```
 phone (mobile SDK)
   │
-  ├─ REST → core           (token exchange, REST endpoints)
+  ├─ REST → core           (identity and token exchange)
+  ├─ REST → store          (catalog, releases, protected bundles)
   ├─ WS   → audio          (transcripts down, subscriptions up, audio fallback)
   └─ UDP  → audio NLB      (audio packets, primary path)
 
 core   ──→ MongoDB Atlas     (identity, sessions, OEM records)
+store  ──→ MongoDB Atlas/S3  (publishers, releases, access, artifacts)
 audio  ──→ AWS ElastiCache   (streams, ownership claims, session tags)
 audio  ──→ Soniox            (transcription provider; per active sub)
 ```
 
-## Three packages, three deployable services
+## Service packages
 
 We split the v1 monolith into three:
 
-| Package | Role | Deployable | Talks to |
-| --- | --- | --- | --- |
-| `@mentra/cloud-core` | OEM auth, REST endpoints, miniapp store backend | yes (`core` service in `porter.yaml`) | MongoDB Atlas |
-| `@mentra/cloud-audio` | UDP/WS audio ingress, workers, transcription | yes (`audio` service) | Redis (ElastiCache), Soniox |
-| `@mentra/cloud-proxy` | OEM forwarder / reverse proxy (stub) | yes (planned) | core, audio (downstream) |
-| `@mentra/cloud-shared` | Logger, health, JWT verifier | no (workspace dep) | — |
+| Package                         | Role                                                           | Deployable                            | Talks to                    |
+| ------------------------------- | -------------------------------------------------------------- | ------------------------------------- | --------------------------- |
+| `@mentra/cloud-core`            | Account/OEM identity, token exchange, reports                  | yes (`core` service in `porter.yaml`) | MongoDB Atlas               |
+| `@mentra/miniapp-store-backend` | Developer publishing, catalog, tracks, review, access, bundles | yes (`store` service)                 | MongoDB Atlas, S3/R2        |
+| `@mentra/cloud-audio`           | UDP/WS audio ingress, workers, transcription                   | yes (`audio` service)                 | Redis (ElastiCache), Soniox |
+| `@mentra/cloud-proxy`           | OEM forwarder / reverse proxy (stub)                           | yes (planned)                         | core, audio (downstream)    |
+| `@mentra/cloud-shared`          | Logger, health, JWT verifier                                   | no (workspace dep)                    | —                           |
 
 Why the split:
+
 - **Audio is the biggest workload.** Splitting lets us scale it independently
   (more replicas, bigger nodes) without dragging core along.
 - **OEM forwarder** (proxy) will eventually be deployable on a partner's
@@ -38,11 +42,11 @@ Why the split:
 
 ## Cluster topology
 
-| Cluster | Role | Datastores |
-| --- | --- | --- |
+| Cluster                          | Role                                                   | Datastores                                              |
+| -------------------------------- | ------------------------------------------------------ | ------------------------------------------------------- |
 | `aws-us-west-2` (Porter ID 5692) | **Currently hosting dev** + future prod for west coast | ElastiCache: `cloud-elasticache-us-west-2`. Atlas: TBD. |
-| `aws-us-east-2` (Porter ID 5690) | Reserved for future east-coast prod | None yet |
-| Various Azure clusters (v1) | v1 prod — **do not touch** | — |
+| `aws-us-east-2` (Porter ID 5690) | Reserved for future east-coast prod                    | None yet                                                |
+| Various Azure clusters (v1)      | v1 prod — **do not touch**                             | —                                                       |
 
 We've discussed splitting into a separate `aws-us-west-2-dev` cluster so
 prod clusters look identical and dev gets its own playground (preview
@@ -95,13 +99,13 @@ What Porter **doesn't** handle:
 
 Configs:
 
-| Config | Used for | URLs point at |
-| --- | --- | --- |
-| `dev` | local dev | localhost (MongoDB local, Redis local) |
-| `dev_aws` (branch of `dev`) | AWS dev cluster deploy | ElastiCache, Atlas |
-| `staging` | future AWS staging | TBD |
-| `prod` | future AWS prod | TBD |
-| `prod_<region>` | future per-region overrides | TBD |
+| Config                      | Used for                    | URLs point at                          |
+| --------------------------- | --------------------------- | -------------------------------------- |
+| `dev`                       | local dev                   | localhost (MongoDB local, Redis local) |
+| `dev_aws` (branch of `dev`) | AWS dev cluster deploy      | ElastiCache, Atlas                     |
+| `staging`                   | future AWS staging          | TBD                                    |
+| `prod`                      | future AWS prod             | TBD                                    |
+| `prod_<region>`             | future per-region overrides | TBD                                    |
 
 Branches **inherit** from their parent and override specific values. So
 `dev_aws` automatically picks up everything in `dev` except where it

@@ -2,14 +2,14 @@
  * MiniappRunningRegistry — module-level set of currently-running miniapp
  * packageNames.
  *
- * "Running" means the miniapp's **background JSContext is alive** in the
- * host process. The UI WebView open/close state is separate — that's
- * tracked by MentraUIRouter.isBound(). A miniapp can be "running"
- * (JSContext alive, processing glasses events) without any WebView
- * mounted, which is the steady-state.
+ * "Running" means the miniapp is projected as **user activity**. Its
+ * background JSContext is normally alive too, while invocation-scoped
+ * transient action contexts may be alive without entering this registry.
+ * UI WebView open/close state is separate and tracked by
+ * MentraUIRouter.isBound().
  *
- * MentraJSRouter is the single writer: `spawnAndRegister` adds,
- * `unregister` removes. Home tile / tray reads from here to project the
+ * MentraJSRouter is the single writer: visible spawn/promotion adds and
+ * unregister removes. Home tile / tray reads from here to project the
  * `running` field on local applets.
  */
 

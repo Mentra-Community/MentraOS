@@ -41,6 +41,32 @@ services:
       nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
     terminationGracePeriodSeconds: 10
 
+  - name: store
+    type: web
+    run: bun packages/store/src/index.ts
+    port: 3003
+    instances: 1
+    cpuCores: 0.25
+    ramMegabytes: 1024
+    domains:
+      - name: store.us-west-2.mentraglass.com
+      - name: store.mentraglass.com
+    env:
+      PORT: "3003"
+      MENTRA_CORE_INTERNAL_URL: "http://core:3000"
+      MENTRA_STORE_CORE_JWKS_URL: "http://core:3000/.well-known/jwks.json"
+    livenessCheck:
+      enabled: true
+      httpPath: /healthz
+      timeoutSeconds: 3
+      initialDelaySeconds: 15
+    readinessCheck:
+      enabled: true
+      httpPath: /ready
+      timeoutSeconds: 5
+      initialDelaySeconds: 15
+    terminationGracePeriodSeconds: 10
+
   - name: runtime
     type: web
     run: bun packages/runtime/src/index.ts

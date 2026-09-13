@@ -15,7 +15,7 @@
  */
 import {CloudClient, setNativeHttp, setNativeUdp, setSecureStorage} from "@mentra/cloud-client/react-native"
 import {DEFAULT_REFRESH_TOKEN_KEY} from "@mentra/cloud-client"
-import type {PreinstalledMiniappRegistry, RuntimeSnapshot} from "@mentra/cloud-client/react-native"
+import type {RuntimeSnapshot} from "@mentra/cloud-client/react-native"
 import type {SubjectTokenType} from "@mentra/cloud-client"
 import {Platform} from "react-native"
 import type {AudioSubscription, TranscriptionData, TranslationData} from "@mentra/cloud-protocol"
@@ -34,7 +34,7 @@ import {BgTimer} from "../utils/timers"
 import {logCloudV2TranscriptMetric} from "./CloudTranscriptE2EMetrics"
 import {LocalMiniappUserIdentity} from "./LocalMiniappUserIdentity"
 import {nativeHttpResponseBody} from "./NativeHttpResponse"
-import {resolveCloudEndpoints} from "./cloudEndpointPolicy"
+import {type CloudEndpoints, resolveCloudEndpoints} from "./cloudEndpointPolicy"
 
 const LOG_TAG = "cloudClient"
 type CloudCore = NonNullable<CloudClient["core"]>
@@ -66,7 +66,7 @@ let persistentFailureNotified = false
 let audioSubscriptions: AudioSubscription[] = []
 let transportsReady = false
 /** Endpoints to build with — seeded from config, overridable via reconnect(). */
-let endpointsOverride: {core?: string; runtime: string} | null = null
+let endpointsOverride: CloudEndpoints | null = null
 let runtimeStatusUnsubscribe: (() => void) | null = null
 let transcriptUnsubscribe: (() => void) | null = null
 let translationUnsubscribe: (() => void) | null = null
@@ -95,7 +95,7 @@ const translationListeners = new Set<(d: TranslationData) => void>()
 const statusListeners = new Set<(snapshot: CloudClientStatusSnapshot) => void>()
 const connectionListeners = new Set<(connected: boolean) => void>()
 
-function resolveEndpoints(): {core?: string; runtime: string} {
+function resolveEndpoints(): CloudEndpoints {
   return resolveCloudEndpoints(getConfigValues(), endpointsOverride)
 }
 
@@ -545,7 +545,7 @@ export const cloudClientService = {
    * a prior override and resume the host resolver or boot config (so cleared/default cloud
    * URLs don't keep reconnecting to a stale override); omit to keep the current.
    */
-  reconnect(endpoints?: {core?: string; runtime: string} | null): void {
+  reconnect(endpoints?: CloudEndpoints | null): void {
     if (endpoints !== undefined) endpointsOverride = endpoints
     try {
       client?.runtime.close()
@@ -563,13 +563,6 @@ export const cloudClientService = {
     if (wasConnected) notifyConnectionListeners(false)
 
     construct()
-  },
-
-  async getPreinstalledMiniappRegistry(): Promise<PreinstalledMiniappRegistry> {
-    if (!client) this.init()
-    const c = client
-    if (!c?.core) throw new Error("cloud client core is unavailable")
-    return c.core.miniapps.getRegistry()
   },
 
   /**
@@ -612,9 +605,12 @@ export const cloudClientService = {
 
     const {token, expiresAt} = await c.auth.getMiniappToken(packageName, opts)
     const identity = c.auth.identity
+    const coreUrl = resolveEndpoints().core
+    if (!coreUrl) throw new Error("cloud client core is unavailable")
     return {
       mentraUserId: identity.mentraUserId,
       tenantId: identity.tenantId,
+      coreUrl,
       token,
       expiresAt: normalizeExpiresAt(expiresAt),
     }

@@ -1,9 +1,8 @@
-import {appRegistry} from "@mentra/engine-host-internal"
+import {appRegistry, sha256Hex} from "@mentra/engine-host-internal"
 import {Directory, File, Paths} from "expo-file-system"
 
 import type {ActiveDeployment, DeploymentManagedMiniapp} from "@/services/deployment"
 
-import {sha256Hex} from "./preinstalledMiniappSync"
 import {preflightMiniappZip} from "./miniappZipPreflight"
 
 const LOG_TAG = "DeploymentManagedMiniappSync"
@@ -188,6 +187,9 @@ async function installEntry(
       expectedPackageName: entry.packageName,
       expectedVersion: entry.version,
       rejectExistingVersion: true,
+      // downloadVerifiedBundle already matched the SHA-256 the deployment
+      // manifest pins, which is this path's authority instead of a publisher
+      // signature (customer-built bundles carry no Mentra publisher key).
       releaseIdentity: {
         source: "deployment_manifest",
         deploymentId,

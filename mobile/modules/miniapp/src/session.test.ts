@@ -152,6 +152,7 @@ describe("MiniappSession auth", () => {
       auth: {
         mentraUserId: "user_123",
         oemId: "test-oem",
+        coreUrl: "https://core.oem.example.test",
         token: "miniapp-token",
         expiresAt: Date.now() + 60_000,
       },
@@ -159,6 +160,7 @@ describe("MiniappSession auth", () => {
     await connectPromise
 
     expect(await session.auth.getToken()).toBe("miniapp-token")
+    expect(await session.auth.getCoreUrl()).toBe("https://core.oem.example.test")
     expect(await session.auth.getAuthHeader()).toBe("Bearer miniapp-token")
     expect(session.auth.current?.mentraUserId).toBe("user_123")
   })

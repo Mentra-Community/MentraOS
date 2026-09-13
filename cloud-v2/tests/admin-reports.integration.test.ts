@@ -42,6 +42,8 @@ const savedAdminEmails = process.env.CLOUD_CORE_ADMIN_EMAILS;
   process.env.CLOUD_CORE_LOCAL_STORAGE_DIR = STORAGE_DIR;
   // Pin the API-key environment label so minted keys validate deterministically.
   process.env.CLOUD_CORE_ENVIRONMENT = "local";
+  process.env.WORKOS_API_KEY = "test-workos-service-secret";
+  process.env.MENTRA_CORE_INTERNAL_URL = "http://core.internal";
 }
 
 // eslint-disable-next-line import/first
@@ -51,19 +53,22 @@ import {
   mongoReadinessCheck,
 } from "../packages/core/src/connections/mongo.connection";
 import { createApp } from "../packages/core/src/api/app";
+import { createApp as createStoreApp } from "../packages/store/src/api/app";
 import { ReportModel } from "../packages/core/src/models/report.model";
 import { ReportAssetModel } from "../packages/core/src/models/report-asset.model";
 import { UserModel } from "../packages/core/src/models/user.model";
 import { RefreshTokenModel } from "../packages/core/src/models/refresh-token.model";
 import { SeenJtiModel } from "../packages/core/src/models/seen-jti.model";
 import { RevokedJtiModel } from "../packages/core/src/models/revoked-jti.model";
-import { DeveloperOrgApiKeyModel } from "../packages/core/src/models/developer-org-api-key.model";
-import { DeveloperApiKeyService } from "../packages/core/src/services/developer-orgs/developer-api-key.service";
+import { DeveloperOrgApiKeyModel } from "../packages/store/src/models/developer-org-api-key.model";
+import { DeveloperApiKeyService } from "../packages/store/src/services/developer-orgs/developer-api-key.service";
 
 const REPORTS_PATH = "http://localhost/api/client/reports";
 const ADMIN_REPORTS_PATH = "http://localhost/api/admin/reports";
 
 let coreApp: ReturnType<typeof createApp>;
+let storeApp: ReturnType<typeof createStoreApp>;
+const nativeFetch = globalThis.fetch;
 let userAccessToken: string;
 let adminBearer: string;
 let nonAdminBearer: string;
@@ -80,6 +85,14 @@ beforeAll(async () => {
     DeveloperOrgApiKeyModel.syncIndexes(),
   ]);
   coreApp = createApp({ readinessChecks: [mongoReadinessCheck] });
+  storeApp = createStoreApp({ readinessChecks: [mongoReadinessCheck] });
+  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
+    const url = input instanceof Request ? input.url : String(input);
+    if (url.startsWith("http://core.internal/")) {
+      return coreApp.fetch(input instanceof Request ? input : new Request(url, init));
+    }
+    return nativeFetch(input, init);
+  }) as typeof fetch;
 
   const exchanged = await exchange(mintSupabaseJwt("admin-reports-user-1"));
   expect(exchanged.status).toBe(200);
@@ -97,6 +110,7 @@ afterAll(async () => {
   if (savedAdminEmails === undefined) delete process.env.CLOUD_CORE_ADMIN_EMAILS;
   else process.env.CLOUD_CORE_ADMIN_EMAILS = savedAdminEmails;
   await DeveloperOrgApiKeyModel.deleteMany({ orgId: "org_admin_reports_test" });
+  globalThis.fetch = nativeFetch;
   await disconnectMongo();
   await rm(STORAGE_DIR, { recursive: true, force: true });
 });
@@ -110,10 +124,10 @@ beforeEach(async () => {
 
 describe("admin reports auth gate", () => {
   test("rejects requests without credentials and non-admin principals", async () => {
-    const anonymous = await coreApp.fetch(new Request(ADMIN_REPORTS_PATH));
+    const anonymous = await storeApp.fetch(new Request(ADMIN_REPORTS_PATH));
     expect(anonymous.status).toBe(401);
 
-    const forbidden = await coreApp.fetch(
+    const forbidden = await storeApp.fetch(
       new Request(ADMIN_REPORTS_PATH, { headers: { authorization: `Bearer ${nonAdminBearer}` } }),
     );
     expect(forbidden.status).toBe(403);
@@ -245,7 +259,7 @@ describe("admin reports read surface", () => {
 // === Helpers ===
 
 function adminGet(url: string): Promise<Response> {
-  return coreApp.fetch(new Request(url, { headers: { authorization: `Bearer ${adminBearer}` } }));
+  return storeApp.fetch(new Request(url, { headers: { authorization: `Bearer ${adminBearer}` } }));
 }
 
 /** Submit a bug report with one log bundle and one screenshot; returns the reportId. */

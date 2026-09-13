@@ -178,7 +178,6 @@ settings in v1.
 
 - Developer miniapp management.
 - Public store review.
-- Preinstalled miniapp registry.
 - Billing/contract management.
 - Runtime hosting mode configuration.
 - Approval of each trusted issuer after org approval.
