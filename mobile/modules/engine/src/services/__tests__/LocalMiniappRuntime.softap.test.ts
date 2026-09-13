@@ -11,6 +11,7 @@ import {awaitCleanupBarrier} from "../SoftapCleanupBarrier"
 // resource-ownership checks come directly from LocalMiniappRuntime's implementation.
 const source = readFileSync(new URL("../LocalMiniappRuntime.ts", import.meta.url), "utf8")
 const methods = [
+  "leaveMeetingForApp",
   "joinSoftapMeeting",
   "createSoftapAttempt",
   "checkpointSoftapAttempt",
@@ -44,14 +45,18 @@ function fixture() {
   const cleanup = deferred()
   let nativeReleases = 0
   let preflights = 0
+  const nativeLeaves: string[] = []
   const native = {
     beginScopedTeardown() {},
     async leaveScopedNetwork() {
       nativeReleases++
       if (nativeReleases === 1) await cleanup.promise
     },
-    async awaitValidatedDefaultNetwork() {
+    async awaitDefaultNetworkAfterHotspot() {
       return {usable: true, detail: "cellular"}
+    },
+    async leaveIfOwner(packageName: string) {
+      nativeLeaves.push(packageName)
     },
     async leaveAndAwait() {
       return {completed: true}
@@ -105,10 +110,32 @@ function fixture() {
       () => "unexpected success",
       (error: Error) => error.message,
     )
-  return {host, old, cleanup, join, preflights: () => preflights, nativeReleases: () => nativeReleases}
+  return {host, old, cleanup, join, nativeLeaves, preflights: () => preflights, nativeReleases: () => nativeReleases}
 }
 
 describe("SoftAP host attempt lifecycle", () => {
+  test("closing the miniapp retires startup even before native ACS has an owner", async () => {
+    const f = fixture()
+    const closed = f.host.leaveMeetingForApp("com.mentra.call")
+    expect(f.old.cancelled).toBe(true)
+    expect(f.nativeLeaves).toEqual([])
+    const retry = f.join()
+    await tick()
+    expect(f.preflights()).toBe(0)
+    f.cleanup.resolve()
+    await closed
+    expect(await retry).toBe("test preflight ended")
+    expect(f.preflights()).toBe(1)
+  })
+
+  test("closing a different miniapp does not retire the active hotspot owner", async () => {
+    const f = fixture()
+    await f.host.leaveMeetingForApp("com.mentra.other")
+    expect(f.old.cancelled).toBe(false)
+    expect(f.nativeReleases()).toBe(0)
+    expect(f.nativeLeaves).toEqual(["com.mentra.other"])
+  })
+
   test("a new join waits for an explicitly retiring call", async () => {
     const f = fixture()
     const leave = f.host.retireSoftapAttempt()

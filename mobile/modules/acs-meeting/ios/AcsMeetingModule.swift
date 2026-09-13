@@ -80,6 +80,16 @@ public class AcsMeetingModule: Module {
             self.hotspot.leave { promise.resolve(nil) }
         }
 
+        AsyncFunction("cancelScopedNetworkJoin") { (promise: Promise) in
+            self.hotspot.leave { promise.resolve(nil) }
+        }
+
+        AsyncFunction("awaitDefaultNetworkAfterHotspot") { (promise: Promise) in
+            self.hotspot.awaitInternet(requireCellular: false) { usable, detail in
+                promise.resolve(["usable": usable, "detail": detail, "transport": usable ? detail : "unknown", "validated": usable, "present": usable])
+            }
+        }
+
         AsyncFunction("beginTrace") { (traceId: String) in
             NSLog("SOFTAP_TRACE trace=\(traceId) stage=ios_begin")
         }

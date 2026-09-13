@@ -333,6 +333,8 @@ type NativeModule = {
   joinScopedNetworkWithGateway?(ssid: string, passphrase: string, gateway: string): Promise<string>
   beginTrace?(traceId: string): Promise<void>
   leaveScopedNetwork?(): Promise<void>
+  cancelScopedNetworkJoin?(): Promise<void>
+  awaitDefaultNetworkAfterHotspot?(): Promise<DefaultNetworkStatus>
   /**
    * TCP-probe the hotspot gateway over the scoped network. Absent on natives that predate it.
    * `detail` is a one-line human summary (address, port, latency or the failure).
@@ -589,6 +591,7 @@ class AcsMeetingService {
     this.scopedTerminating = false
     this.bindScopedNetworkLost(native)
     await native.beginTrace?.(softapTraceId())
+    if (this.scopedTerminating) throw new Error("Hotspot join cancelled")
     if (native.joinScopedNetworkWithGateway) {
       if (!gateway) throw new Error("The glasses did not report a hotspot gateway")
       return await native.joinScopedNetworkWithGateway(ssid, passphrase, gateway)
@@ -653,6 +656,19 @@ class AcsMeetingService {
     const native = getNative()
     if (!native?.awaitValidatedDefaultNetwork) return null
     return await native.awaitValidatedDefaultNetwork()
+  }
+
+  /** Cleanup may restore home Wi-Fi; only the live SoftAP leg requires cellular on iOS. */
+  async awaitDefaultNetworkAfterHotspot(): Promise<DefaultNetworkStatus | null> {
+    const native = getNative()
+    return native?.awaitDefaultNetworkAfterHotspot
+      ? await native.awaitDefaultNetworkAfterHotspot()
+      : await this.awaitValidatedDefaultNetwork()
+  }
+
+  async cancelScopedNetworkJoin(): Promise<void> {
+    this.scopedTerminating = true
+    await getNative()?.cancelScopedNetworkJoin?.()
   }
 
   /**

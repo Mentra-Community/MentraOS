@@ -138,6 +138,51 @@ function fakeNative() {
 }
 
 describe("AcsMeetingService", () => {
+  test("cleanup can wait for restored Wi-Fi without changing the live cellular requirement", async () => {
+    const cellular = {usable: true, detail: "cellular", transport: "cellular", present: true, validated: true}
+    const wifi = {...cellular, detail: "wifi", transport: "wifi"}
+    const live = mock(async () => cellular)
+    const restored = mock(async () => wifi)
+    setAcsMeetingNativeForTests({
+      ...fakeNative(),
+      awaitValidatedDefaultNetwork: live,
+      awaitDefaultNetworkAfterHotspot: restored,
+    })
+    expect(await acsMeetingService.awaitValidatedDefaultNetwork()).toEqual(cellular)
+    expect(await acsMeetingService.awaitDefaultNetworkAfterHotspot()).toEqual(wifi)
+    expect(live).toHaveBeenCalledTimes(1)
+    expect(restored).toHaveBeenCalledTimes(1)
+  })
+
+  test("older native builds keep their existing cleanup network wait", async () => {
+    const wifi = {usable: true, detail: "wifi", transport: "wifi", present: true, validated: true}
+    const live = mock(async () => wifi)
+    setAcsMeetingNativeForTests({...fakeNative(), awaitValidatedDefaultNetwork: live})
+    expect(await acsMeetingService.awaitDefaultNetworkAfterHotspot()).toEqual(wifi)
+    await acsMeetingService.cancelScopedNetworkJoin()
+    expect(live).toHaveBeenCalledTimes(1)
+  })
+
+  test("pending join cancellation calls the supported native barrier", async () => {
+    const cancel = mock(async () => {})
+    setAcsMeetingNativeForTests({...fakeNative(), cancelScopedNetworkJoin: cancel})
+    await acsMeetingService.cancelScopedNetworkJoin()
+    expect(cancel).toHaveBeenCalledTimes(1)
+  })
+
+  test("cancel during trace setup prevents a late native hotspot join", async () => {
+    const native = fakeNative()
+    let releaseTrace!: () => void
+    const trace = new Promise<void>((resolve) => { releaseTrace = resolve })
+    setAcsMeetingNativeForTests({...native, beginTrace: () => trace})
+    const joining = acsMeetingService.joinScopedNetwork("MentraLive-1234", "pw")
+    const rejected = expect(joining).rejects.toThrow("Hotspot join cancelled")
+    await acsMeetingService.cancelScopedNetworkJoin()
+    releaseTrace()
+    await rejected
+    expect(native.joinScopedNetwork).not.toHaveBeenCalled()
+  })
+
   beforeEach(() => {
     preferredMic = "glasses"
     currentMic = "glasses"

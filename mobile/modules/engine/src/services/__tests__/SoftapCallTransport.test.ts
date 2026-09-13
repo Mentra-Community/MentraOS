@@ -720,6 +720,62 @@ describe("SoftapCallTransport leave during every phase", () => {
 })
 
 describe("SoftapCallTransport stop waits for the step in flight", () => {
+  test("cancel interrupts address discovery and still waits for the native configuration release", async () => {
+    let rejectJoin!: (error: Error) => void
+    let releaseNative!: () => void
+    const join = new Promise<string>((_, reject) => {
+      rejectJoin = reject
+    })
+    const released = new Promise<void>((resolve) => {
+      releaseNative = resolve
+    })
+    const {transport, calls} = recordingDeps({
+      joinScopedNetwork: () => join,
+      cancelScopedNetworkJoin: async () => {
+        rejectJoin(new Error("Hotspot join cancelled"))
+        await released
+      },
+    })
+    const started = transport.start().catch((error: Error) => error)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    let stopped = false
+    const stopping = transport.stop().then(() => {
+      stopped = true
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(stopped).toBe(false)
+    expect(calls).not.toContain("stopHotspot")
+    releaseNative()
+    await stopping
+    expect(await started).toBeInstanceOf(SoftapCallError)
+    expect(calls).toContain("stopHotspot")
+    expect(calls.some((call) => call.startsWith("joinMeeting"))).toBe(false)
+    expect(transport.lastTeardownFailures()).toEqual([])
+  })
+
+  test("a failed native cancellation is retained while normal cleanup still runs", async () => {
+    let resolveJoin!: (address: string) => void
+    const join = new Promise<string>((resolve) => {
+      resolveJoin = resolve
+    })
+    const {transport, calls} = recordingDeps({
+      joinScopedNetwork: () => join,
+      cancelScopedNetworkJoin: async () => {
+        throw new Error("native cancel failed")
+      },
+    })
+    const started = transport.start().catch((error: Error) => error)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const stopping = transport.stop()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    resolveJoin("192.168.43.20")
+    await stopping
+    await started
+    expect(calls).toContain("leaveScopedNetwork")
+    expect(calls).toContain("stopHotspot")
+    expect(transport.lastTeardownFailures()).toEqual(["scopedJoin"])
+  })
+
   /**
    * The restart race, at the layer that can close it.
    *

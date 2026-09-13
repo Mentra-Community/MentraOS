@@ -107,6 +107,8 @@ export interface SoftapCallDeps {
   /** Join the hotspot without taking the phone's default route. Resolves to the phone's own IPv4. */
   joinScopedNetwork(ssid: string, passphrase: string, report?: SoftapStepReporter): Promise<string | undefined>
   leaveScopedNetwork(): Promise<void>
+  /** Interrupt a pending native join while retaining its cleanup barrier. Unsupported hosts wait. */
+  cancelScopedNetworkJoin?(): Promise<void>
   /**
    * Join the meeting. This is what binds the local WHIP listener and arms the ACS raw outputs, so
    * it must resolve before the glasses are told to publish.
@@ -500,9 +502,21 @@ export class SoftapCallTransport {
       // this call is still coming". Deliberately unbounded: a native call that never returns must
       // hold the next call back, never let it race this one's cleanup.
       if (running) {
+        const cancellation =
+          running.step === "scopedJoin" && this.deps.cancelScopedNetworkJoin
+            ? Promise.resolve()
+                .then(() => this.deps.cancelScopedNetworkJoin!())
+                .catch((error) => {
+                  if (!this.teardownFailures.includes("scopedJoin")) this.teardownFailures.push("scopedJoin")
+                  softapTraceFailure("softap_join_cancel_failed", {
+                    reason: error instanceof Error ? error.message : String(error),
+                  })
+                })
+            : undefined
         softapTrace("softap_stop_waiting_for_step", {step: running.step})
         const waitStartedAt = Date.now()
         await running.settled
+        await cancellation
         // This wait is unbounded by design, so its duration is the difference between "the leave
         // was slow" and "the leave was held by a native call that had not returned".
         softapTrace("softap_stop_step_settled", {step: running.step, waitedMs: Date.now() - waitStartedAt})
@@ -710,6 +724,7 @@ export function createSoftapCallDeps(args: {
     setHotspotState: (enabled: boolean) => Promise<{state: string; ssid?: string; password?: string; localIp?: string}>
     joinScopedNetwork: (ssid: string, passphrase: string, gateway?: string) => Promise<string | undefined>
     leaveScopedNetwork: () => Promise<void>
+    cancelScopedNetworkJoin?: () => Promise<void>
     joinMeeting: (
       packageName: string,
       options: {
@@ -853,6 +868,7 @@ export function createSoftapCallDeps(args: {
       return address
     },
     leaveScopedNetwork: () => subsystems.leaveScopedNetwork(),
+    cancelScopedNetworkJoin: subsystems.cancelScopedNetworkJoin,
     joinMeeting: async ({ssid, passphrase, bindAddress}, report) => {
       // The hotspot join just took this phone off Wi-Fi, so the route Teams needs is whatever
       // Android promoted in its place. Waiting for it to validate is what stopped the ACS join
