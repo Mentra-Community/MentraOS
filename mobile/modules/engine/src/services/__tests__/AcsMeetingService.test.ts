@@ -175,11 +175,12 @@ describe("AcsMeetingService", () => {
     let releaseTrace!: () => void
     const trace = new Promise<void>((resolve) => { releaseTrace = resolve })
     setAcsMeetingNativeForTests({...native, beginTrace: () => trace})
-    const joining = acsMeetingService.joinScopedNetwork("MentraLive-1234", "pw")
-    const rejected = expect(joining).rejects.toThrow("Hotspot join cancelled")
+    const joining = acsMeetingService.joinScopedNetwork("MentraLive-1234", "pw").catch((error: Error) => error)
     await acsMeetingService.cancelScopedNetworkJoin()
     releaseTrace()
-    await rejected
+    const error = await joining
+    expect(error).toBeInstanceOf(Error)
+    expect(error instanceof Error ? error.message : "").toBe("Hotspot join cancelled")
     expect(native.joinScopedNetwork).not.toHaveBeenCalled()
   })
 
