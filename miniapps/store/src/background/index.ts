@@ -532,6 +532,12 @@ export class StoreController {
   }
 }
 
+/** `URL.hostname` brackets IPv6 literals, so `[::1]` never equals `::1`. */
+function isLoopbackHostname(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, "")
+  return host === "localhost" || host === "127.0.0.1" || host === "::1"
+}
+
 export function resolveStoreBackendOrigin(
   coreValue: string | null | undefined,
   configuredValue?: string,
@@ -544,7 +550,7 @@ export function resolveStoreBackendOrigin(
   if (url.hostname.startsWith("core.") && url.hostname.endsWith(".mentraglass.com")) {
     return `${url.protocol}//${url.hostname.replace(/^core\./, "store.")}${url.port ? `:${url.port}` : ""}`
   }
-  if ((url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "::1") && url.port === "3000") {
+  if (isLoopbackHostname(url.hostname) && url.port === "3000") {
     url.port = "3003"
     return url.origin
   }

@@ -1,5 +1,5 @@
 import {afterEach, describe, expect, test} from "bun:test"
-import {resolveStoreUrlForCore} from "./config"
+import {deriveStoreUrl, resolveStoreUrlForCore} from "./config"
 import {loadCredentials} from "./credentials"
 
 const saved = {
@@ -88,6 +88,17 @@ describe("stored logins resolve their own Store", () => {
     expect(resolveStoreUrlForCore("https://identity.example.test", "https://catalog.example.test")).toBe(
       "https://override.example.test",
     )
+  })
+})
+
+describe("local Store derivation", () => {
+  test.each([
+    ["http://localhost:3000", "http://localhost:3003"],
+    ["http://127.0.0.1:3000", "http://127.0.0.1:3003"],
+    // URL.hostname brackets IPv6 literals, so a bare "::1" comparison never matches.
+    ["http://[::1]:3000", "http://[::1]:3003"],
+  ])("remaps %s to the local Store port", (core, expected) => {
+    expect(deriveStoreUrl(core)).toBe(expected)
   })
 })
 

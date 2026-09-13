@@ -36,16 +36,19 @@ export function resolveStoreUrlForCore(coreUrl: string, persistedStoreUrl?: stri
   return deriveStoreUrl(coreUrl)
 }
 
+/** `URL.hostname` brackets IPv6 literals, so `[::1]` never equals `::1`. */
+function isLoopbackHostname(hostname: string): boolean {
+  const host = hostname.toLowerCase().replace(/^\[|\]$/g, "")
+  return host === "localhost" || host === "127.0.0.1" || host === "::1"
+}
+
 export function deriveStoreUrl(coreUrl: string): string {
   const url = new URL(coreUrl)
   if (url.hostname === "core.mentraglass.com") {
     url.hostname = "store.mentraglass.com"
   } else if (url.hostname.startsWith("core.")) {
     url.hostname = url.hostname.replace(/^core\./, "store.")
-  } else if (
-    (url.hostname === "localhost" || url.hostname === "127.0.0.1" || url.hostname === "::1") &&
-    url.port === "3000"
-  ) {
+  } else if (isLoopbackHostname(url.hostname) && url.port === "3000") {
     url.port = "3003"
   }
   return normalizeUrl(url.toString())
