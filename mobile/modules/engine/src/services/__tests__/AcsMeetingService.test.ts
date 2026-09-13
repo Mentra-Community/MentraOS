@@ -1374,13 +1374,32 @@ describe("waitForFirstFrame", () => {
     return native
   }
 
-  test("resolves when the host reports a frame reached ACS", async () => {
+  test("resolves when the phone receives a glasses frame", async () => {
     const native = await joinedNative()
     const waiting = acsMeetingService.waitForFirstFrame(1_000)
 
     native.emit("onState", {state: "connected", muted: false, mediaSource: "live"})
 
     await expect(waiting).resolves.toBeUndefined()
+  })
+
+  test("local video readiness does not imply Teams admission", async () => {
+    const native = await joinedNative()
+    const waiting = acsMeetingService.waitForFirstFrame(1_000)
+    native.emit("onState", {state: "connecting", muted: false, mediaSource: "live"})
+
+    await expect(waiting).resolves.toBeUndefined()
+    expect(acsMeetingService.getState().state).toBe("connecting")
+  })
+
+  test("preserves the final ACS disconnect code for incident reports", async () => {
+    const native = await joinedNative()
+    native.emit("onState", {
+      state: "disconnected", muted: false, endReason_code: 403, endReason_subcode: 12345,
+    })
+    expect(acsMeetingService.getState().callEndReason).toEqual({code: 403, subcode: 12345})
+    native.emit("onState", {state: "idle", muted: false})
+    expect(acsMeetingService.getState().callEndReason).toBeUndefined()
   })
 
   test("rejects when the feed fails rather than waiting out the timeout", async () => {

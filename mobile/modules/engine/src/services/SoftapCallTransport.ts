@@ -411,7 +411,7 @@ export class SoftapCallTransport {
           throw new Error("the meeting reported no ingest URL")
         }
         this.ingestUrl = ingestUrl
-        softapTrace("acs_joined", {ingestUrl})
+        softapTrace("acs_receiver_ready", {ingestUrl})
         report(`Receiver ready at ${ingestUrl}`)
       })
 
@@ -424,10 +424,10 @@ export class SoftapCallTransport {
       })
 
       await this.step(generation, "live", "NO_FIRST_FRAME", async (report) => {
-        report("Waiting for the first video frame to reach Teams")
+        report("Waiting for the first glasses video frame on this phone")
         await this.deps.awaitFirstFrame(report)
-        softapTrace("first_frame_in_acs")
-        report("Video is live in the meeting")
+        softapTrace("first_glasses_frame_received")
+        report("Glasses video is reaching this phone")
       })
 
       if (generation !== this.generation) {

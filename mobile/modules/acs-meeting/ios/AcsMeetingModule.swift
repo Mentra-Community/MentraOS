@@ -76,7 +76,6 @@ public class AcsMeetingModule: Module {
             self.joinHotspot(ssid: ssid, passphrase: passphrase, gateway: gateway, promise: promise)
         }
 
-
         AsyncFunction("leaveScopedNetwork") { (promise: Promise) in
             self.hotspot.leave { promise.resolve(nil) }
         }
@@ -196,6 +195,7 @@ final class AcsMeetingSession {
     private var muted = false
     private var meetingUrl: String?
     private var lastError: String?
+    private var callEndReason: (code: Int, subcode: Int)?
     private var callClient: CallClient?
     private var callAgent: CallAgent?
     private var call: Call?
@@ -266,6 +266,10 @@ final class AcsMeetingSession {
         if let mediaSourceReason { result["mediaSourceReason"] = mediaSourceReason }
         if let meetingUrl { result["meetingUrl"] = meetingUrl }
         if let lastError { result["error"] = lastError }
+        if let callEndReason {
+            result["endReason_code"] = callEndReason.code
+            result["endReason_subcode"] = callEndReason.subcode
+        }
         return result
     }
 
@@ -329,6 +333,7 @@ final class AcsMeetingSession {
             self.audioSource = AcsAudioPolicy.parseSource(audioSource) == .phone ? "phone" : "glasses"
             self.meetingUrl = meetingUrl
             self.lastError = nil
+            self.callEndReason = nil
             self.emit("connecting")
             let useAgent: (CallAgent) -> Void = { agent in
                 do { try self.joinWithAgentLocked(agent, generation: generation, meetingUrl: meetingUrl,
@@ -518,6 +523,9 @@ final class AcsMeetingSession {
                 guard self.joinGeneration == generation, self.media === source else { return }
                 switch result {
                 case .success:
+                    // The SDK may have changed state before its delegate was attached.
+                    // Reading it here also makes the join result reflect admission already granted.
+                    self.refreshCallStateLocked(call)
                     let reply = self.pendingJoin
                     self.pendingJoin = nil
                     reply?(.success(self.snapshot()))
@@ -844,6 +852,7 @@ final class AcsMeetingSession {
         // carries it and the call delegate keeps ignoring late disconnected callbacks.
         if emitIdle {
             lastError = nil
+            callEndReason = nil
             emit("idle")
         }
     }
@@ -863,15 +872,33 @@ final class AcsMeetingSession {
     private func handleCallStateChange(_ changedCall: Call) {
         queue.async {
             guard self.call === changedCall, self.lastError == nil else { return }
-            switch changedCall.state {
-            case .connecting: self.emit("connecting")
-            case .inLobby: self.emit("lobby")
-            case .connected:
-                self.emit("connected")
-                self.applyAudioPolicyOnQueue("call-connected")
-            case .disconnecting, .disconnected: self.emit("disconnected")
-            default: break
+            self.refreshCallStateLocked(changedCall)
+        }
+    }
+
+    private func refreshCallStateLocked(_ changedCall: Call) {
+        switch changedCall.state {
+        case .connecting: emit("connecting")
+        case .inLobby: emit("lobby")
+        case .connected:
+            emit("connected")
+            applyAudioPolicyOnQueue("call-connected")
+        case .disconnected:
+            let reason = changedCall.callEndReason
+            callEndReason = (Int(reason.code), Int(reason.subcode))
+            if phase == "connecting" || phase == "lobby" {
+                let error = AcsMeetingError("The Teams call ended before admission (ACS \(reason.code)/\(reason.subcode))")
+                if pendingJoin != nil {
+                    failJoinLocked(error, generation: joinGeneration)
+                    return
+                }
+                lastError = error.localizedDescription
             }
+            emit("disconnected")
+        // The final reason is only available at disconnected. Reporting disconnecting as
+        // terminal makes the host dispose the call before that diagnostic can arrive.
+        case .disconnecting: break
+        default: break
         }
     }
 
