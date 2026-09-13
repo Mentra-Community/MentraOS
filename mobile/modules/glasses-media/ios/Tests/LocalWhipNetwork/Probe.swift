@@ -5,12 +5,19 @@ import WebRTC
     static let source = LocalWhipIngestSource()
     static var factory: RTCPeerConnectionFactory!
     static var sender: RTCPeerConnection!
+    static var existingFactory: RTCPeerConnectionFactory!
+    static var existingPeer: RTCPeerConnection!
     static var endpoint = ""
     static let address = ProcessInfo.processInfo.environment["WHIP_TEST_ADDRESS"]!
     static let constraints = RTCMediaConstraints(mandatoryConstraints: nil, optionalConstraints: nil)
     static func main() {
         RTCSetMinDebugLogLevel(.warning)
+        // Match LiveKit's initialization order: enable the legacy global trial and create
+        // a factory/peer before GlassesPeerFactory supplies its own M144 environment.
         RTCInitFieldTrialDictionary([kRTCFieldTrialUseNWPathMonitor: kRTCFieldTrialEnabledValue])
+        RTCInitializeSSL()
+        existingFactory = RTCPeerConnectionFactory(encoderFactory: RTCDefaultVideoEncoderFactory(), decoderFactory: RTCDefaultVideoDecoderFactory(), audioDevice: ReceiveOnlyAudioDevice())
+        existingPeer = existingFactory.peerConnection(with: RTCConfiguration(), constraints: constraints, delegate: nil)!
         source.onStateChange = { state, reason in print("SOURCE \(state): \(reason)") }
         source.prepare(config: SourceConfig(url: "", kind: .softap, bindAddress: address)) { result in
             switch result {
@@ -64,6 +71,7 @@ import WebRTC
                 ? code == 500 && result.contains("Phone answer has no host ICE candidate")
                 : code == 201 && (data.flatMap { String(data: $0, encoding: .utf8) }?.contains(address) == true)
             sender.close()
+            existingPeer.close()
             source.stop { finish(passed ? "PASS stop complete" : "FAIL negotiation", passed ? 0 : 1) }
         }.resume()
     }

@@ -21,6 +21,12 @@ Two separate processes run against the same SDK:
 - The production factory must return HTTP 201 with a real candidate on the
   bound interface and complete receiver cleanup.
 
+Both processes first enable LiveKit's legacy global trial and create a separate
+factory/peer before preparing the receiver. M144's `configureFieldTrials` supplies
+the environment for subsequent factories; it does not reinitialize the legacy
+global field-trial registry. This exercises initialization after another WebRTC
+consumer has already created its factory.
+
 This covers the failure in report `rep_01M2C5JGKV8JF0VSFN3J22TQS3`: the glasses
 could reach the phone and supplied valid SoftAP candidates, but the phone's
 default internet path was cellular. WebRTC M137 installed its default-path
