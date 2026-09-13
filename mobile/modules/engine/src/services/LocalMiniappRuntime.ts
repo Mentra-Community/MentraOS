@@ -998,13 +998,14 @@ class LocalMiniappRuntime {
     // remain active for another subscriber; a rejected FOV release then stops
     // renewing the departed owner's lease and ASG restores it once idle.
     const cameraCleanup = Promise.allSettled([
+      this.leaveMeetingForApp(packageName),
       phonePhotoCoordinator.stopWarmUpForApp(packageName),
       phoneStreamCoordinator.stop(packageName),
       phoneVideoCoordinator.stopForApp(packageName),
     ]).then((results) => {
       for (const result of results) {
         if (result.status === "rejected") {
-          console.warn(`${LOG_TAG}: failed to stop camera consumer for ${packageName} on unregister`, result.reason)
+          console.warn(`${LOG_TAG}: failed to stop miniapp resource for ${packageName} on unregister`, result.reason)
         }
       }
     })
@@ -1037,10 +1038,6 @@ class LocalMiniappRuntime {
     // Tear down this app's blob state: abort in-flight uploads + close readers
     // so a crashed/closed miniapp doesn't leak partial files or file handles.
     this.blobStore.onAppGone(packageName)
-
-    void acsMeetingService.leaveIfOwner(packageName).catch((error) => {
-      console.warn(`${LOG_TAG}: failed to leave ACS meeting for ${packageName} on unregister`, error)
-    })
 
     // Detach the per-app nav event forwarder but leave the native nav session
     // running. The user may have just closed the mini-app UI and will reopen
@@ -3668,11 +3665,24 @@ class LocalMiniappRuntime {
 
   private ensureMeetingStateBridge(): void {
     acsMeetingService.setStateHandler((owner, state) => {
+      const attempt = this.softapAttempt
+      // While a replacement waits for cleanup, native events still describe its predecessor.
+      if (attempt?.packageName === owner && !attempt.ownsResources) return
       this.sendToMiniapp(owner, {
         type: MiniappResponseType.MEETING_STATE,
         ...state,
       })
     })
+  }
+
+  /** Startup owns the hotspot before ACS has an owner. Closing the app must retire both. */
+  private async leaveMeetingForApp(packageName: string): Promise<void> {
+    const attempt = this.softapAttempt
+    if (attempt?.packageName === packageName) {
+      await this.retireSoftapAttempt({attempt})
+    } else {
+      await acsMeetingService.leaveIfOwner(packageName)
+    }
   }
 
   private async handleMeetingJoin(
@@ -3903,7 +3913,8 @@ class LocalMiniappRuntime {
       return
     }
     attempt.progress = progress
-    const current = acsMeetingService.getState()
+    // A reservation waiting behind another call must not inherit that call's connected state.
+    const current = attempt.transport ? acsMeetingService.getState() : {state: "connecting", muted: false}
     this.sendToMiniapp(attempt.packageName, {
       type: MiniappResponseType.MEETING_STATE,
       ...current,
@@ -3937,6 +3948,7 @@ class LocalMiniappRuntime {
   ): Promise<MeetingState> {
     const packageName = attempt.packageName
     if (previous) {
+      this.narrateSoftapPreflight(attempt, "Finishing the previous call’s cleanup…")
       softapTrace("softap_join_superseding", {
         previousAttempt: previous.id,
         previousAgeMs: Date.now() - previous.startedAt,
@@ -4000,6 +4012,7 @@ class LocalMiniappRuntime {
           joinScopedNetwork: (ssid, passphrase, gateway) =>
             acsMeetingService.joinScopedNetwork(ssid, passphrase, gateway),
           leaveScopedNetwork: () => acsMeetingService.leaveScopedNetwork(),
+          cancelScopedNetworkJoin: () => acsMeetingService.cancelScopedNetworkJoin(),
           probeGateway: async () => {
             const verdict = await acsMeetingService.probeScopedGateway()
             // No native probe means no verdict, and the orchestrator must not read that as "down".
@@ -4251,7 +4264,7 @@ class LocalMiniappRuntime {
     // Teams configuration problem.
     const defaultNetworkStartedAt = Date.now()
     try {
-      const network = await acsMeetingService.awaitValidatedDefaultNetwork()
+      const network = await acsMeetingService.awaitDefaultNetworkAfterHotspot()
       softapTrace("softap_teardown_step", {
         attempt: attempt.id,
         step: "awaitValidatedDefaultNetwork",

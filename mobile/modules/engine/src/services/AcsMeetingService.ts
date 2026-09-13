@@ -95,6 +95,7 @@ export interface MeetingState {
   audioSafety?: AudioSafety
   mediaSource?: MediaSourceState
   mediaSourceReason?: string
+  callEndReason?: {code: number; subcode: number}
   participants?: MeetingParticipant[]
   /** Runtime capabilities. Omitted by natives that predate them; read that as unknown. */
   capabilities?: MeetingCapabilities
@@ -332,6 +333,8 @@ type NativeModule = {
   joinScopedNetworkWithGateway?(ssid: string, passphrase: string, gateway: string): Promise<string>
   beginTrace?(traceId: string): Promise<void>
   leaveScopedNetwork?(): Promise<void>
+  cancelScopedNetworkJoin?(): Promise<void>
+  awaitDefaultNetworkAfterHotspot?(): Promise<DefaultNetworkStatus>
   /**
    * TCP-probe the hotspot gateway over the scoped network. Absent on natives that predate it.
    * `detail` is a one-line human summary (address, port, latency or the failure).
@@ -588,6 +591,7 @@ class AcsMeetingService {
     this.scopedTerminating = false
     this.bindScopedNetworkLost(native)
     await native.beginTrace?.(softapTraceId())
+    if (this.scopedTerminating) throw new Error("Hotspot join cancelled")
     if (native.joinScopedNetworkWithGateway) {
       if (!gateway) throw new Error("The glasses did not report a hotspot gateway")
       return await native.joinScopedNetworkWithGateway(ssid, passphrase, gateway)
@@ -654,6 +658,19 @@ class AcsMeetingService {
     return await native.awaitValidatedDefaultNetwork()
   }
 
+  /** Cleanup may restore home Wi-Fi; only the live SoftAP leg requires cellular on iOS. */
+  async awaitDefaultNetworkAfterHotspot(): Promise<DefaultNetworkStatus | null> {
+    const native = getNative()
+    return native?.awaitDefaultNetworkAfterHotspot
+      ? await native.awaitDefaultNetworkAfterHotspot()
+      : await this.awaitValidatedDefaultNetwork()
+  }
+
+  async cancelScopedNetworkJoin(): Promise<void> {
+    this.scopedTerminating = true
+    await getNative()?.cancelScopedNetworkJoin?.()
+  }
+
   /**
    * Can this phone reach the glasses over the hotspot it just joined? Null when the host cannot
    * tell (no native support), so the orchestrator narrates nothing rather than a guess.
@@ -678,18 +695,15 @@ class AcsMeetingService {
   }
 
   /**
-   * Resolves once the host reports a frame actually reached ACS, which is the only signal that
-   * remote participants can see the camera.
-   *
-   * Rejects if the feed fails first, and on timeout. A SoftAP call that connects but never paints
-   * is the failure this exists to catch: without it the orchestrator would report `live` on the
-   * strength of an ACS join that says nothing about video.
+   * Resolves when the phone decodes its first glasses frame. This confirms the local media leg;
+   * Teams admission is a separate call state and may still be connecting or in the lobby.
+   * Rejects if the feed fails first, and on timeout.
    *
    * @param timeoutMs how long to wait before treating the silence as a failure
    */
   waitForFirstFrame(timeoutMs: number): Promise<void> {
     if (this.lastState.mediaSource === "live") {
-      softapTrace("acs_first_frame_already_live", {mediaSource: this.lastState.mediaSource})
+      softapTrace("glasses_first_frame_already_received", {mediaSource: this.lastState.mediaSource})
       return Promise.resolve()
     }
     const startedAt = Date.now()
@@ -719,7 +733,7 @@ class AcsMeetingService {
       }
       let done = false
       const timer = setTimeout(
-        () => settle(new Error(`No glasses video reached the meeting within ${Math.round(timeoutMs / 1000)}s`)),
+        () => settle(new Error(`No glasses video reached the phone within ${Math.round(timeoutMs / 1000)}s`)),
         timeoutMs,
       )
       this.firstFrameWaiters.add(settle)
@@ -1313,6 +1327,10 @@ class AcsMeetingService {
         const participants = parseMeetingParticipants(event.participants)
         const mediaSource = parseMediaSource(event.mediaSource)
         const mediaSourceReason = typeof event.mediaSourceReason === "string" ? event.mediaSourceReason : undefined
+        const callEndReason =
+          Number.isInteger(event.endReason_code) && Number.isInteger(event.endReason_subcode)
+            ? {code: event.endReason_code as number, subcode: event.endReason_subcode as number}
+            : undefined
         const capabilities = parseMeetingCapabilities(event.capabilities)
         const state: MeetingState = {
           state: (event.state as MeetingPhase) ?? "idle",
@@ -1327,6 +1345,7 @@ class AcsMeetingService {
           micTransport: this.micTransport,
           ...(mediaSource ? {mediaSource} : {}),
           ...(mediaSourceReason ? {mediaSourceReason} : {}),
+          ...(callEndReason ? {callEndReason} : {}),
           ...(participants ? {participants} : {}),
           // Absent means unknown, so keep the last known verdict rather than clearing it.
           ...((capabilities ?? this.lastState.capabilities) ? {capabilities: capabilities ?? this.lastState.capabilities} : {}),
@@ -1341,6 +1360,7 @@ class AcsMeetingService {
           audioSafety: state.audioSafety,
           mediaSource: state.mediaSource,
           mediaSourceReason: state.mediaSourceReason,
+          callEndReason: state.callEndReason,
           micTransport: state.micTransport,
           participants: participants?.length,
         })

@@ -1,0 +1,8 @@
+diff --git a/livekit-react-native-webrtc.podspec b/livekit-react-native-webrtc.podspec
+--- a/livekit-react-native-webrtc.podspec
++++ b/livekit-react-native-webrtc.podspec
+@@ -20,3 +20,3 @@
+   s.framework           = 'AudioToolbox','AVFoundation', 'CoreAudio', 'CoreGraphics', 'CoreVideo', 'GLKit', 'VideoToolbox'
+   s.dependency          'React-Core'
+-  s.dependency          'WebRTC-SDK', '=137.7151.09'
++  s.dependency          'WebRTC-SDK', '=144.7559.15'

@@ -11,6 +11,8 @@ import {awaitCleanupBarrier} from "../SoftapCleanupBarrier"
 // resource-ownership checks come directly from LocalMiniappRuntime's implementation.
 const source = readFileSync(new URL("../LocalMiniappRuntime.ts", import.meta.url), "utf8")
 const methods = [
+  "ensureMeetingStateBridge",
+  "leaveMeetingForApp",
   "joinSoftapMeeting",
   "createSoftapAttempt",
   "checkpointSoftapAttempt",
@@ -44,14 +46,22 @@ function fixture() {
   const cleanup = deferred()
   let nativeReleases = 0
   let preflights = 0
+  const nativeLeaves: string[] = []
+  let stateHandler: ((owner: string, state: {state: string}) => void) | undefined
   const native = {
+    setStateHandler(handler: typeof stateHandler) {
+      stateHandler = handler
+    },
     beginScopedTeardown() {},
     async leaveScopedNetwork() {
       nativeReleases++
       if (nativeReleases === 1) await cleanup.promise
     },
-    async awaitValidatedDefaultNetwork() {
+    async awaitDefaultNetworkAfterHotspot() {
       return {usable: true, detail: "cellular"}
+    },
+    async leaveIfOwner(packageName: string) {
+      nativeLeaves.push(packageName)
     },
     async leaveAndAwait() {
       return {completed: true}
@@ -76,6 +86,7 @@ function fixture() {
     "acsMeetingService",
     "permissions",
     "PermissionFeatures",
+    "MiniappResponseType",
     "console",
     `${compiled}; return Host`,
   )(
@@ -90,9 +101,12 @@ function fixture() {
     native,
     permissions,
     {LOCAL_WIFI: "wifi"},
+    {MEETING_STATE: "meeting_state"},
     {log() {}, warn() {}},
   )
   const host = new Host()
+  const events: unknown[] = []
+  host.sendToMiniapp = (owner: string, state: unknown) => events.push({owner, state})
   host.softapAttemptSeq = 0
   host.softapCleanupError = null
   host.narrateSoftapPreflight = () => {}
@@ -105,10 +119,54 @@ function fixture() {
       () => "unexpected success",
       (error: Error) => error.message,
     )
-  return {host, old, cleanup, join, preflights: () => preflights, nativeReleases: () => nativeReleases}
+  return {
+    host,
+    old,
+    cleanup,
+    join,
+    nativeLeaves,
+    events,
+    emitNative: (state: string) => stateHandler?.("com.mentra.call", {state}),
+    preflights: () => preflights,
+    nativeReleases: () => nativeReleases,
+  }
 }
 
 describe("SoftAP host attempt lifecycle", () => {
+  test("a queued replacement does not receive the previous call's idle event", async () => {
+    const f = fixture()
+    f.host.ensureMeetingStateBridge()
+    const next = f.host.createSoftapAttempt("com.mentra.call")
+    f.host.softapAttempt = next
+    f.emitNative("idle")
+    expect(f.events).toEqual([])
+    next.ownsResources = true
+    f.emitNative("connecting")
+    expect(f.events).toEqual([{owner: "com.mentra.call", state: {type: "meeting_state", state: "connecting"}}])
+  })
+
+  test("closing the miniapp retires startup even before native ACS has an owner", async () => {
+    const f = fixture()
+    const closed = f.host.leaveMeetingForApp("com.mentra.call")
+    expect(f.old.cancelled).toBe(true)
+    expect(f.nativeLeaves).toEqual([])
+    const retry = f.join()
+    await tick()
+    expect(f.preflights()).toBe(0)
+    f.cleanup.resolve()
+    await closed
+    expect(await retry).toBe("test preflight ended")
+    expect(f.preflights()).toBe(1)
+  })
+
+  test("closing a different miniapp does not retire the active hotspot owner", async () => {
+    const f = fixture()
+    await f.host.leaveMeetingForApp("com.mentra.other")
+    expect(f.old.cancelled).toBe(false)
+    expect(f.nativeReleases()).toBe(0)
+    expect(f.nativeLeaves).toEqual(["com.mentra.other"])
+  })
+
   test("a new join waits for an explicitly retiring call", async () => {
     const f = fixture()
     const leave = f.host.retireSoftapAttempt()

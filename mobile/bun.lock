@@ -349,6 +349,7 @@
     "expo-audio@55.0.14": "patches/expo-audio@55.0.14.patch",
     "react-native-webview@13.16.0": "patches/react-native-webview@13.16.0.patch",
     "react-native-inner-shadow@2.4.0": "patches/react-native-inner-shadow@2.4.0.patch",
+    "@livekit/react-native-webrtc@137.0.3": "patches/@livekit%2Freact-native-webrtc@137.0.3.patch",
   },
   "packages": {
     "@babel/cli": ["@babel/cli@7.29.7", "", { "dependencies": { "@jridgewell/trace-mapping": "^0.3.28", "commander": "^6.2.0", "convert-source-map": "^2.0.0", "fs-readdir-recursive": "^1.1.0", "glob": "^7.2.0", "make-dir": "^2.1.0", "slash": "^2.0.0" }, "optionalDependencies": { "@nicolo-ribaudo/chokidar-2": "2.1.8-no-fsevents.3", "chokidar": "^3.6.0" }, "peerDependencies": { "@babel/core": "^7.0.0-0" }, "bin": { "babel": "./bin/babel.js", "babel-external-helpers": "./bin/babel-external-helpers.js" } }, "sha512-/75HwRbAYPqXv/Ax1h7Fg3IZfXgdU98jnA8H93/m/QBaPV3Hp5ICoLqzGYye1yHBCgpmXvtqgSUN8oOKX5tojQ=="],

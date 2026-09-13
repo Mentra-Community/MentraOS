@@ -67,7 +67,7 @@ public final class LocalWhipIngestSource: NSObject, DecodedGlassesMediaSource {
             let gen = self.generation
             self.transition(.connecting, "listening")
             RTCInitializeSSL()
-            let factory = RTCPeerConnectionFactory(encoderFactory: RTCDefaultVideoEncoderFactory(), decoderFactory: RTCDefaultVideoDecoderFactory(), audioDevice: ReceiveOnlyAudioDevice())
+            let factory = GlassesPeerFactory.make(audioDevice: ReceiveOnlyAudioDevice())
             let options = RTCPeerConnectionFactoryOptions()
             options.ignoreCellularNetworkAdapter = true
             options.ignoreVPNNetworkAdapter = true

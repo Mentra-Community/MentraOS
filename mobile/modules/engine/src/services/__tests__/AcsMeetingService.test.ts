@@ -138,6 +138,52 @@ function fakeNative() {
 }
 
 describe("AcsMeetingService", () => {
+  test("cleanup can wait for restored Wi-Fi without changing the live cellular requirement", async () => {
+    const cellular = {usable: true, detail: "cellular", transport: "cellular", present: true, validated: true}
+    const wifi = {...cellular, detail: "wifi", transport: "wifi"}
+    const live = mock(async () => cellular)
+    const restored = mock(async () => wifi)
+    setAcsMeetingNativeForTests({
+      ...fakeNative(),
+      awaitValidatedDefaultNetwork: live,
+      awaitDefaultNetworkAfterHotspot: restored,
+    })
+    expect(await acsMeetingService.awaitValidatedDefaultNetwork()).toEqual(cellular)
+    expect(await acsMeetingService.awaitDefaultNetworkAfterHotspot()).toEqual(wifi)
+    expect(live).toHaveBeenCalledTimes(1)
+    expect(restored).toHaveBeenCalledTimes(1)
+  })
+
+  test("older native builds keep their existing cleanup network wait", async () => {
+    const wifi = {usable: true, detail: "wifi", transport: "wifi", present: true, validated: true}
+    const live = mock(async () => wifi)
+    setAcsMeetingNativeForTests({...fakeNative(), awaitValidatedDefaultNetwork: live})
+    expect(await acsMeetingService.awaitDefaultNetworkAfterHotspot()).toEqual(wifi)
+    await acsMeetingService.cancelScopedNetworkJoin()
+    expect(live).toHaveBeenCalledTimes(1)
+  })
+
+  test("pending join cancellation calls the supported native barrier", async () => {
+    const cancel = mock(async () => {})
+    setAcsMeetingNativeForTests({...fakeNative(), cancelScopedNetworkJoin: cancel})
+    await acsMeetingService.cancelScopedNetworkJoin()
+    expect(cancel).toHaveBeenCalledTimes(1)
+  })
+
+  test("cancel during trace setup prevents a late native hotspot join", async () => {
+    const native = fakeNative()
+    let releaseTrace!: () => void
+    const trace = new Promise<void>((resolve) => { releaseTrace = resolve })
+    setAcsMeetingNativeForTests({...native, beginTrace: () => trace})
+    const joining = acsMeetingService.joinScopedNetwork("MentraLive-1234", "pw").catch((error: Error) => error)
+    await acsMeetingService.cancelScopedNetworkJoin()
+    releaseTrace()
+    const error = await joining
+    expect(error).toBeInstanceOf(Error)
+    expect(error instanceof Error ? error.message : "").toBe("Hotspot join cancelled")
+    expect(native.joinScopedNetwork).not.toHaveBeenCalled()
+  })
+
   beforeEach(() => {
     preferredMic = "glasses"
     currentMic = "glasses"
@@ -1374,13 +1420,32 @@ describe("waitForFirstFrame", () => {
     return native
   }
 
-  test("resolves when the host reports a frame reached ACS", async () => {
+  test("resolves when the phone receives a glasses frame", async () => {
     const native = await joinedNative()
     const waiting = acsMeetingService.waitForFirstFrame(1_000)
 
     native.emit("onState", {state: "connected", muted: false, mediaSource: "live"})
 
     await expect(waiting).resolves.toBeUndefined()
+  })
+
+  test("local video readiness does not imply Teams admission", async () => {
+    const native = await joinedNative()
+    const waiting = acsMeetingService.waitForFirstFrame(1_000)
+    native.emit("onState", {state: "connecting", muted: false, mediaSource: "live"})
+
+    await expect(waiting).resolves.toBeUndefined()
+    expect(acsMeetingService.getState().state).toBe("connecting")
+  })
+
+  test("preserves the final ACS disconnect code for incident reports", async () => {
+    const native = await joinedNative()
+    native.emit("onState", {
+      state: "disconnected", muted: false, endReason_code: 403, endReason_subcode: 12345,
+    })
+    expect(acsMeetingService.getState().callEndReason).toEqual({code: 403, subcode: 12345})
+    native.emit("onState", {state: "idle", muted: false})
+    expect(acsMeetingService.getState().callEndReason).toBeUndefined()
   })
 
   test("rejects when the feed fails rather than waiting out the timeout", async () => {
