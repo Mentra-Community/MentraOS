@@ -64,15 +64,18 @@ phone.
    error is ever translated into a hotspot loss. `quiesce` stops local media only. Destination
    lifetime is the adapter's, so closing a stream never leaves an ACS meeting and hotspot
    exhaustion never closes it either.
-4. **One absolute rebuild deadline shared by network and media work.** A stream's
-   `StreamRecoveryPolicy` has `returnBudgetMs` (waiting for the glasses to come back, spent only
-   during hotspot recovery) and `rebuildBudgetMs` (everything after the network is back:
-   rejoin, listener, receiver, attach, publish, first frame). The stream service starts the
-   rebuild deadline once per outage and passes the remaining time to the hotspot session as
-   that recovery's budget, so the two layers never hold independent 45 s clocks and a media
-   retry after a network rejoin cannot renew the deadline. Media-only recovery on a healthy
-   network uses the same `rebuildBudgetMs` and `maxAttempts`. Call's current 60 s return and
-   45 s rebuild become the defaults for `owner: "call"`.
+4. **One recovery context per outage, one rebuild clock, started when the glasses return.**
+   For a network outage the hotspot session owns the `RecoveryContext` (companion spec,
+   decision 7): the return deadline starts at loss, the rebuild deadline is created once when
+   the return wait completes, and the context reaches the stream service through `quiesce` and
+   `restore`. The stream service keeps that same context through attach, publish, first frame
+   and any media retries that follow the rejoin, so a 50 s absence that returns inside the 60 s
+   return budget still gets the full 45 s to rebuild, exactly as `SoftapCallTransport` waits
+   first and starts its rebuild clock afterwards today. For a media-only outage on a healthy
+   network the stream service creates its own context with the rebuild deadline set
+   immediately. Neither layer holds a second clock and no retry renews a deadline. The stream's
+   `returnBudgetMs` and `rebuildBudgetMs` are the values it hands to the hotspot session's
+   policy; Call's current 60 s and 45 s become the defaults for `owner: "call"`.
 5. **Adapters attach before the glasses publish, through an awaited hook.** `open` takes a
    `StreamAdapter` with `attach(media, signal)` and `detach(media)`. On the initial start and on
    every recovery the service starts the receiver, awaits `attach` for the new `MediaRef`, and
@@ -124,7 +127,7 @@ export class StreamError extends Error {
   readonly details?: {hotspot?: HotspotErrorCode; glassesError?: string; mediaGeneration?: number; hotspotGeneration?: number}
 }
 
-/** rebuildBudgetMs is one absolute deadline per outage, shared by hotspot rejoin and media rebuild; never renewed by a media retry. */
+/** Forwarded to the hotspot session's policy. The rebuild clock starts when the return wait completes (network outage) or at detection (media-only outage), once per outage. */
 export type StreamRecoveryPolicy = {returnBudgetMs: number; rebuildBudgetMs: number; maxAttempts: number; stallMs: number}
 
 export interface StreamAdapter {
@@ -154,7 +157,7 @@ export type StreamState = {
   media?: MediaRef                    // present from "listening" until the generation is invalidated
   hotspot: {sessionId: string; generation: number; phase: HotspotPhase} | null
   ingestUrl?: string                  // phone-local WHIP URL handed to the glasses
-  recovery?: {kind: "media" | "hotspot"; attempt: number; deadlineAt: number}
+  recovery?: {kind: "media" | "hotspot"} & RecoveryContext   // the hotspot's context for a network outage, the stream's own for a media outage
   stats?: StreamLiveStats             // from the glasses' stream_status
   error?: StreamError
 }
@@ -188,18 +191,21 @@ export interface GlassesPhoneStreamService {
 
 Two triggers, one orchestrator:
 
-- **Hotspot loss** arrives through the hotspot session's `quiesce`. The stream service
-  invalidates the media generation, awaits `adapter.detach`, stops the receiver and the glasses
-  publish, starts the outage's rebuild deadline, and hands the hotspot session that deadline.
-  When the hotspot `restore` runs it rebinds the listener and restarts the receiver, then
-  returns so the hotspot is `ready`. The stream lifecycle continues on its own: `attach` for the
-  new `MediaRef`, publish, first frame. The hotspot generation and the media generation both
-  advance.
+- **Hotspot loss** arrives through the hotspot session's `quiesce` with the outage's
+  `RecoveryContext` (return deadline set, rebuild deadline still null). The stream service
+  invalidates the media generation, awaits `adapter.detach`, and stops the receiver and the
+  glasses publish. The hotspot session waits for the glasses within the return budget and, when
+  they are reachable, fixes the rebuild deadline and rejoins. Its `restore` then rebinds the
+  listener and restarts the receiver and returns, so the hotspot is `ready`. The stream
+  lifecycle continues under the same context: `attach` for the new `MediaRef`, publish, first
+  frame, and any media retry, all bounded by `recovery.rebuildDeadlineAt`. The hotspot
+  generation and the media generation both advance.
 - **Media stall, receiver failure or first-frame timeout** with the hotspot `ready`, whether
-  on the initial start, after a rejoin, or mid-stream, invalidates the media generation, awaits
-  `detach`, rebuilds the receiver, awaits `attach`, and republishes on the same hotspot
-  generation. Only the media generation advances. The AP is never rejoined for a media
-  problem, and the hotspot session never learns about it.
+  on the initial start, after a rejoin, or mid-stream, creates a media context with the rebuild
+  deadline set at detection (or reuses the network outage's context if one is still open),
+  invalidates the media generation, awaits `detach`, rebuilds the receiver, awaits `attach`,
+  and republishes on the same hotspot generation. Only the media generation advances. The AP
+  is never rejoined for a media problem, and the hotspot session never learns about it.
 
 The order is always detach → rebuild → attach → publish → first frame, on both paths, so
 `live` is never waited for without an attached adapter. `mediaInvalidated` and `live` events
@@ -328,7 +334,10 @@ Depends on hotspot spec steps 1 and 2 (native core, reservation gate).
    attach, `adapter_attach_failed`, and close never touching a destination. Healthy-network
    first-frame timeout on the initial start and after a rejoin: only the media generation
    advances, no AP rejoin occurs, the rebuild deadline is not renewed, and the ACS adapter's
-   destination survives terminal media failure.
+   destination survives terminal media failure. Fake-clock cases: glasses return at 50 s of a
+   60 s return budget and the rebuild still gets its full 45 s; one expiry shared by the network
+   rejoin and the media retries that follow it; duplicate loss events inside one outage renew
+   neither deadline.
 2. **Managed WHIP** moves onto the service; `ManagedWebRtcRelay` becomes an adapter and its
    retry loop is deleted. Hardware: relay start, Wi-Fi loss, peer stall, stop.
 3. **Mentra Call** moves onto the service; ACS becomes a sink; the ACS native join and the JS

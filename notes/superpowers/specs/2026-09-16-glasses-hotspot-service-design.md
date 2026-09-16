@@ -84,7 +84,13 @@ consumers; the streaming service is.
    still pending and unretired.
 7. **Per-operation recovery policy**, `none` or `auto` with separate return and rebuild
    budgets (Call's current 60 s return, 45 s rebuild, at most three transient attempts). No
-   `manual` mode: a second lifecycle driver is not worth it.
+   `manual` mode: a second lifecycle driver is not worth it. Each outage gets one
+   `RecoveryContext`: the return deadline is set when loss is detected; the rebuild deadline is
+   set once, when the return wait completes (the glasses are reachable again), never earlier
+   and never renewed. The context is passed to `quiesce` and `restore` and shown in
+   `HotspotState.recovery`, so a client that continues work after `restore` (the streaming
+   service publishing and waiting for a frame) bounds that work by the same rebuild deadline.
+   Duplicate loss events within an outage do not create a new context.
 8. **Join hook on every join**, initial and rejoin, with the reason and a cancellation signal.
    Gallery keeps its one-time explanation and no-UI-listener fallback inside the hook.
 9. **Native core in the Bluetooth SDK.** Hotspot OTA is part of the published SDK, and the
@@ -184,13 +190,21 @@ export type HotspotRecoveryPolicy =
   | {mode: "none"}
   | {mode: "auto"; returnBudgetMs: number; rebuildBudgetMs: number; maxAttempts: number}
 
+/** One per outage. rebuildDeadlineAt is null until the return wait completes, then fixed for the outage. */
+export type RecoveryContext = {
+  outageId: string
+  attempt: number
+  returnDeadlineAt: number
+  rebuildDeadlineAt: number | null
+}
+
 export interface HotspotClient {
   /** Once, before the AP is enabled. Cancellable. */
   prepare?(signal: AbortSignal): Promise<void>
-  /** On loss: stop work bound to this generation, keep higher-level state (ACS meeting, download ledger). */
-  quiesce(binding: HotspotBinding, signal: AbortSignal): Promise<void>
-  /** Initial join and every successful rejoin. `ready` is reported only after this resolves. */
-  restore(binding: HotspotBinding, reason: "initial" | "rejoin", signal: AbortSignal): Promise<void>
+  /** On loss: stop work bound to this generation, keep higher-level state (ACS meeting, download ledger). recovery.rebuildDeadlineAt is still null here. */
+  quiesce(binding: HotspotBinding, recovery: RecoveryContext, signal: AbortSignal): Promise<void>
+  /** Initial join and every successful rejoin. `ready` is reported only after this resolves. On rejoin, recovery.rebuildDeadlineAt is set and bounds any work the client continues afterwards. */
+  restore(binding: HotspotBinding, reason: "initial" | "rejoin", recovery: RecoveryContext | null, signal: AbortSignal): Promise<void>
   /** Final teardown of consumer-owned work, including partial prepare/restore. Idempotent. Called only from release(), never on recovery exhaustion. */
   close(): Promise<void>
 }
@@ -216,7 +230,7 @@ export type HotspotState = {
   generation: number
   health: HotspotHealth
   binding?: HotspotBinding    // present only while the generation is usable
-  recovery?: {attempt: number; returnDeadlineAt: number; rebuildDeadlineAt?: number}
+  recovery?: RecoveryContext
   error?: HotspotError
 }
 
@@ -349,7 +363,7 @@ or detach is rejected with `stale_generation`.
 |---|---|
 | Gallery sync | `acquire({consumer: "gallery_sync", uplink: "none", recovery: auto, gatewayProbe: "required", beforeJoin: explainOnce})` → `start(client)`; `restore`: fetch manifest, continue unverified files with `fetch/download(ref)`; `quiesce`: cancel transfers, keep the ledger; `close`; `release`. Requests are not replayed transparently; gallery keeps ownership of acknowledgements and integrity. The two-minute queue age guard stays because the glasses idle-disable the AP. |
 | Hotspot OTA | Download artifacts over the normal network first → `acquire({consumer: "hotspot_ota", uplink: "none", recovery: auto, gatewayProbe: "required"})` → `restore` on `initial`: start `otaServer` bound to `binding.phoneIpv4`, publish the immutable manifest; `ota_start` once; on `rejoin` with a different `phoneIpv4`, throw so the restore fails explicitly and the coordinator reconciles; the ASG APK restart does not close the server or cycle the AP; `release` after the outcome is known. |
-| Video streaming (Mentra Call, managed WHIP, direct WHIP over the phone) | The streaming service is the hotspot client: `acquire({consumer: "video_streaming", owner, uplink: "cellular", recovery: {auto, 60 s return, 45 s rebuild, 3 attempts}, gatewayProbe: "advisory"})` → `prepare`: nothing (ACS agent setup happens in the call layer before the stream opens); `restore` on `initial` and `rejoin`: `Lease.bindListener` on `binding.phoneIpv4`, start the receiver, hand the `Network` to libwebrtc, then return, so the hotspot is `ready` once the network-bound setup is up; adapter attach, the glasses publish, the first frame and media retries run in the stream lifecycle afterwards and never fail this restore; the stream passes its remaining rebuild deadline as this recovery's budget; `quiesce`: stop local media only; `close`: stop the receiver. Destination adapters (ACS sink, Cloudflare republisher) attach to decoded media by `MediaRef` and never touch this session. See the companion streaming spec for the full contract. |
+| Video streaming (Mentra Call, managed WHIP, direct WHIP over the phone) | The streaming service is the hotspot client: `acquire({consumer: "video_streaming", owner, uplink: "cellular", recovery: {auto, 60 s return, 45 s rebuild, 3 attempts}, gatewayProbe: "advisory"})` → `prepare`: nothing (ACS agent setup happens in the call layer before the stream opens); `restore` on `initial` and `rejoin`: `Lease.bindListener` on `binding.phoneIpv4`, start the receiver, hand the `Network` to libwebrtc, then return, so the hotspot is `ready` once the network-bound setup is up; adapter attach, the glasses publish, the first frame and media retries run in the stream lifecycle afterwards, bounded by `recovery.rebuildDeadlineAt` from the same `RecoveryContext`, and never fail this restore; `quiesce`: stop local media only; `close`: stop the receiver. Destination adapters (ACS sink, Cloudflare republisher) attach to decoded media by `MediaRef` and never touch this session. See the companion streaming spec for the full contract. |
 
 ## Migration in small PRs
 
