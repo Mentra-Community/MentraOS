@@ -26,6 +26,7 @@ import {
   G1_PROFILE,
   Z100_PROFILE,
   NEX_PROFILE,
+  NIMO_PROFILE,
   type DisplayProfile,
   type TranscriptHistoryEntry,
 } from "../../core/CaptionsFormatter"
@@ -106,9 +107,10 @@ const STORAGE_KEYS = {
 } as const
 
 // ── Profile selection (verbatim from DisplayManager) ───────────────────────
-function getProfileForModel(modelName: string | null | undefined): DisplayProfile {
+export function getProfileForModel(modelName: string | null | undefined): DisplayProfile {
   if (!modelName) return G1_PROFILE
   const lower = modelName.toLowerCase()
+  if (/^nimo(?:$|[-\s])/i.test(modelName.trim())) return NIMO_PROFILE
   if (lower.includes("g1") || lower.includes("even realities") || lower.includes("even_g1")) {
     return G1_PROFILE
   }
@@ -186,18 +188,24 @@ export class TranslationController {
     this.currentMaxLines = this.currentProfile.maxLines
     this.createFormatter()
 
+    const refreshProfile = () => {
+      const newProfile = getProfileForModel(getModelName(this.session))
+      if (newProfile.id !== this.currentProfile.id) this.updateProfile(newProfile)
+    }
+
     // React to glasses model changes (re-pick profile).
     try {
-      this.unsubs.push(
-        this.session.onCapabilitiesChange(() => {
-          const newProfile = getProfileForModel(getModelName(this.session))
-          if (newProfile.id !== this.currentProfile.id) {
-            this.updateProfile(newProfile)
-          }
-        }),
-      )
+      this.unsubs.push(this.session.onCapabilitiesChange(refreshProfile))
     } catch {
       // capabilities change not available — keep default profile.
+    }
+
+    // CONNECT_ACK first populates capabilities through ready, not a
+    // capabilities-change event. The controller starts before that ACK.
+    try {
+      this.unsubs.push(this.session.on("ready", refreshProfile))
+    } catch {
+      // Older runtimes may not expose lifecycle subscriptions.
     }
 
     // Load persisted settings, then subscribe to translation accordingly.

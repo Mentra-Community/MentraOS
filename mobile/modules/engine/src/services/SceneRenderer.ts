@@ -192,7 +192,12 @@ class SceneRenderer {
    * through the existing DisplayProcessor path (which wraps it, keeping G1/Z100
    * output byte-identical to today).
    */
-  public emitScene(appId: string, view: "main" | "dashboard", elements: SceneElementInput[]): SceneEmitResult {
+  public emitScene(
+    appId: string,
+    view: "main" | "dashboard",
+    elements: SceneElementInput[],
+    replay = false,
+  ): SceneEmitResult {
     const caps = this.currentCapabilities()
     if (!caps) return {kind: "no-display"}
 
@@ -202,6 +207,9 @@ class SceneRenderer {
     }
 
     const processed = processScene(elements, caps, displayProcessor.getProfile())
+    // A newly restored payload replaces another app's frame on the device.
+    // Reset before diffing so the latest scene is sent once, all-created.
+    if (replay) this.store.bumpEpoch(appId, view)
     // A stale baseline means the glasses were cleared since the last commit —
     // diff from empty so everything repaints (the retained frame stays valid
     // as the replay source only).
@@ -219,6 +227,7 @@ class SceneRenderer {
       sceneEpoch: this.store.currentEpoch(appId, view),
       elements: diffed,
       removed,
+      ...(replay ? {replay: true} : {}),
     }
     this.sendFrame(frame)
     return {kind: "scene", degraded: processed.degraded, dropped: processed.dropped}

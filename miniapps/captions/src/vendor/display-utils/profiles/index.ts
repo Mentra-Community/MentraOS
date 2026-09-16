@@ -6,6 +6,8 @@
  */
 
 // Types
+export {NIMO_PROFILE} from "./nimo"
+
 export type {
   DisplayProfile,
   FontMetrics,

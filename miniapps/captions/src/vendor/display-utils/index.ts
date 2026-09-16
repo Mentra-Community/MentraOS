@@ -35,6 +35,8 @@
 // Profiles - Hardware configurations for different glasses
 // =============================================================================
 
+export {NIMO_PROFILE} from "./profiles";
+
 export type {
   DisplayProfile,
   FontMetrics,

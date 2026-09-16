@@ -780,6 +780,9 @@ class LocalMiniappRuntime {
   }
 
   private initialized = false
+  private visiblePackage: string | null = null
+  private visibilityUnsubscribe: (() => void) | null = null
+  private appStateSubscription: ReturnType<typeof AppState.addEventListener> | null = null
 
   /**
    * Initialize the runtime. Called from MantleManager.init().
@@ -789,7 +792,25 @@ class LocalMiniappRuntime {
     if (this.initialized) return
     this.initialized = true
     console.log(`${LOG_TAG}: initialize()`)
+    this.visiblePackage = this.currentVisiblePackage()
+    this.visibilityUnsubscribe = useAppStatusStore.subscribe(() => this.updateVisibility())
+    this.appStateSubscription = AppState.addEventListener("change", () => this.updateVisibility())
     this.ensurePingLoop()
+  }
+
+  private currentVisiblePackage(): string | null {
+    return AppState.currentState === "active" ? useAppStatusStore.getState().foregroundedPackage : null
+  }
+
+  private updateVisibility(): void {
+    const next = this.currentVisiblePackage()
+    if (next === this.visiblePackage) return
+    const previous = this.visiblePackage
+    this.visiblePackage = next
+    // UI_OPEN also fires during periodic foreground resync. Only the authoritative
+    // selection/host-activity edge should trigger a miniapp's foreground redraw.
+    if (previous && this.handshookApps.has(previous)) this.sendVisibilityChange(previous, "background")
+    if (next && this.handshookApps.has(next)) this.sendVisibilityChange(next, "foreground")
   }
 
   // ===========================================================================
@@ -1503,6 +1524,7 @@ class LocalMiniappRuntime {
         packageName,
         capabilities,
         permissions: declaredPermissions,
+        visibility: this.currentVisiblePackage() === packageName ? "foreground" : "background",
         configuration: getMiniappConfiguration(packageName),
         hostFeatures: {captureAudio: true},
       },
@@ -6080,6 +6102,12 @@ class LocalMiniappRuntime {
 
   public cleanup(): void {
     console.log(`${LOG_TAG}: cleanup()`)
+    this.visibilityUnsubscribe?.()
+    this.visibilityUnsubscribe = null
+    this.appStateSubscription?.remove()
+    this.appStateSubscription = null
+    this.visiblePackage = null
+    this.initialized = false
     this.stopPingLoop()
 
     // Copy keys since unregisterApp mutates the map

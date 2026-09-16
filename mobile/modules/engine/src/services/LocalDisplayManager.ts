@@ -59,6 +59,8 @@ interface ActiveDisplay {
   processedEvent: Record<string, unknown>
   /** Set when this display is a scene — restore goes through SceneRenderer replay. */
   scene?: SceneElementInput[]
+  /** Latest blocked core request; not yet processed or retained by SceneRenderer. */
+  pendingPayload?: DisplayPayload
   expiresAt: number | null
 }
 
@@ -348,6 +350,7 @@ class LocalDisplayManager {
         packageName,
         processedEvent: {}, // filled by sendNow
         scene: payload.scene,
+        pendingPayload: payload,
         expiresAt: payload.durationMs ? now + payload.durationMs : null,
       }
 
@@ -427,7 +430,12 @@ class LocalDisplayManager {
   // Internals — send
   // ===========================================================================
 
-  private sendNow(packageName: string, payload: DisplayPayload, resolve?: DisplayRequestResolver): void {
+  private sendNow(
+    packageName: string,
+    payload: DisplayPayload,
+    resolve?: DisplayRequestResolver,
+    replay = false,
+  ): void {
     const expiresAt = payload.durationMs ? this.now() + payload.durationMs : null
     const view = (payload.view === "dashboard" ? "dashboard" : "main") as "main" | "dashboard"
 
@@ -443,7 +451,7 @@ class LocalDisplayManager {
     }
 
     if (sceneElements) {
-      this.sendScene(packageName, view, sceneElements, expiresAt, resolve)
+      this.sendScene(packageName, view, sceneElements, expiresAt, resolve, replay)
     } else if (payload.layout) {
       // This layout bypasses the scene pipeline (clear_view, dashboard_card,
       // unknown types, or a non-positioning device). If this (app, view) had a
@@ -489,8 +497,9 @@ class LocalDisplayManager {
     elements: SceneElementInput[],
     expiresAt: number | null,
     resolve?: DisplayRequestResolver,
+    replay = false,
   ): void {
-    const result = sceneRenderer.emitScene(packageName, view, elements)
+    const result = sceneRenderer.emitScene(packageName, view, elements, replay)
 
     if (result.kind === "no-display") {
       resolve?.({status: "blocked", reason: "no display connected"})
@@ -653,6 +662,19 @@ class LocalDisplayManager {
    */
   private restoreDisplay(saved: ActiveDisplay): void {
     const remaining = saved.expiresAt !== null ? Math.max(0, saved.expiresAt - this.now()) : undefined
+
+    // Blocked requests never reached SceneRenderer. Process the latest payload
+    // now, preserving its original deadline, and replace the covered scene in
+    // one create-based replay rather than replaying an older retained frame.
+    if (saved.pendingPayload) {
+      // durationMs: 0 means persistent; an expired deadline must not become one.
+      if (remaining === 0) {
+        this.coreAppDisplay = null
+        return
+      }
+      this.sendNow(saved.packageName, {...saved.pendingPayload, durationMs: remaining}, undefined, true)
+      return
+    }
 
     // Scene restores must REPLAY (create-based, epoch-bumped): re-emitting the
     // scene through the normal diff would come back all-"unchanged" and the

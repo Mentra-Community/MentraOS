@@ -8,9 +8,41 @@
 
 import type {MiniappSession, RenderElement} from "@mentra/miniapp"
 import {borderTestImageBase64} from "../lib/bmp"
+import {readGlassesCapabilities} from "../lib/capabilities"
 
 export class DisplayManager {
   constructor(private readonly session: MiniappSession) {}
+
+  private get bitmapLimits() {
+    const display = this.session.capabilities?.display
+    const dimension = (value: unknown, fallback: number) =>
+      typeof value === "number" && Number.isInteger(value) && value > 0 ? value : fallback
+    const width = dimension(display?.width, 576)
+    const height = dimension(display?.height, 288)
+    return {
+      width,
+      height,
+      maxWidth: display?.maxImageElements === 0 ? 0 : Math.min(width, dimension(display?.maxImagePx?.width, width)),
+      maxHeight: display?.maxImageElements === 0 ? 0 : Math.min(height, dimension(display?.maxImagePx?.height, height)),
+    }
+  }
+
+  /** Choose raster dimensions before encoding, using the same limits as placement. */
+  getBitmapSize(width = 288, height = 140): {w: number; h: number} {
+    const {maxWidth, maxHeight} = this.bitmapLimits
+    const w = Math.min(width, maxWidth)
+    const h = Math.min(height, maxHeight)
+    this.bitmapBox(w, h)
+    return {w, h}
+  }
+
+  private bitmapBox(w: number, h: number): {x: number; y: number; w: number; h: number} {
+    const {width, height, maxWidth, maxHeight} = this.bitmapLimits
+    if (!Number.isInteger(w) || !Number.isInteger(h) || w <= 0 || h <= 0 || w > maxWidth || h > maxHeight) {
+      throw new RangeError(`Bitmap ${w}x${h} is unsupported; maximum image size is ${maxWidth}x${maxHeight}`)
+    }
+    return {x: Math.round((width - w) / 2), y: Math.round((height - h) / 2), w, h}
+  }
 
   // ── Navigation HUD layout ────────────────────────────────────────────
   // Boxes on the 500×220 Mentra canvas, from the nav HUD mockup: a map bitmap
@@ -62,7 +94,15 @@ export class DisplayManager {
         els.push({type: "text", id: "maneuver", box: DisplayManager.HUD.maneuver, text: this.maneuver})
       if (this.stats != null) els.push({type: "text", id: "stats", box: DisplayManager.HUD.stats, text: this.stats})
     } else if (this.mode === "message" && this.message != null) {
-      els.push({type: "text", id: "message", box: DisplayManager.HUD.message, text: this.message})
+      els.push({
+        type: "text",
+        id: "message",
+        box: DisplayManager.HUD.message,
+        text: this.message,
+        ...(readGlassesCapabilities(this.session.capabilities).canPosition
+          ? {style: {breakMode: "word" as const}}
+          : {}),
+      })
     }
     // The clock (top-left) and minimap ride along in both modes.
     if (this.clock != null) els.push({type: "text", id: "clock", box: DisplayManager.HUD.clock, text: this.clock})
@@ -133,11 +173,12 @@ export class DisplayManager {
    * after that long. Omit for a sticky message that persists until replaced.
    */
   showText(text: string, durationMs?: number): void {
+    const {width: w, height: h} = this.bitmapLimits
     this.enqueue(
       "wall",
       () =>
         void this.session.display.render(
-          [{type: "text", id: "wall", box: {x: 0, y: 0, w: 576, h: 288}, text}],
+          [{type: "text", id: "wall", box: {x: 0, y: 0, w, h}, text}],
           durationMs != null ? {durationMs} : undefined,
         ),
     )
@@ -181,39 +222,31 @@ export class DisplayManager {
   }
 
   /**
-   * Swipe test box: a plain bordered W×H bitmap centered on the 576×288 canvas.
-   * Clears EVERYTHING first, then draws the box immediately.
-   * Note widths >200 may not render on the G2 (single-container limit).
+   * Swipe test box centered on the advertised canvas. Reject unsupported
+   * sizes before clearing, so a diagnostic cannot silently blank the display.
    */
   showTestBox(width: number, height: number): void {
-    const w = Math.max(8, Math.min(width, 576))
-    const h = Math.max(8, Math.min(height, 288))
+    const {w, h} = this.bitmapBox(width, height)
     const base64Bmp = borderTestImageBase64(w, h)
-    const x = Math.round((576 - w) / 2)
-    const y = Math.round((288 - h) / 2)
     // Clear first, wait 1s so old containers tear down, THEN draw the box.
     this.safeCall(() => void this.session.display.render([]))
     setTimeout(() => {
-      this.renderCenteredBitmap(base64Bmp, x, y, w, h)
+      this.renderCenteredBitmap(base64Bmp, w, h)
     }, 1000)
   }
 
   /** One centered image element as the whole frame (test/large-map paths). */
-  private renderCenteredBitmap(data: string, x: number, y: number, w: number, h: number): void {
-    this.safeCall(() => void this.session.display.render([{type: "image", id: "bmp", box: {x, y, w, h}, data}]))
+  private renderCenteredBitmap(data: string, w: number, h: number): void {
+    const box = this.bitmapBox(w, h)
+    this.safeCall(() => void this.session.display.render([{type: "image", id: "bmp", box, data}]))
   }
 
   /**
-   * Large map shown on swipe-up: a W×H bitmap centered on the 576×288 canvas.
-   * Bounded only to the canvas (not the ~200px container limit) so the requested
-   * size — e.g. 288×140 — passes through as-is.
+   * Large map shown on swipe-up. Call getBitmapSize before rasterizing;
+   * silently clamping only the box would disagree with the encoded image.
    */
   showLargeBitmap(base64Bmp: string, width = 288, height = 140): void {
-    const w = Math.max(8, Math.min(width, 576))
-    const h = Math.max(8, Math.min(height, 288))
-    const x = Math.round((576 - w) / 2)
-    const y = Math.round((288 - h) / 2)
-    this.renderCenteredBitmap(base64Bmp, x, y, w, h)
+    this.renderCenteredBitmap(base64Bmp, width, height)
   }
 
   // ── Two stacked text containers ──────────────────────────────────────
@@ -277,54 +310,38 @@ export class DisplayManager {
   }
 
   /**
-   * Test-only: clear the view, then render a 288x288 bitmap centered on the
-   * 576x288 canvas (x=144). Used by the dev panel's "Send test bitmap" button
-   * to verify the bitmap pipeline in isolation — no maneuver text competing.
+   * Fixed 288x288 diagnostic asset. Reports an unsupported size on displays
+   * whose image or canvas limits cannot accommodate it; it is not resized.
    */
   showBitmapTest(base64Bmp: string): void {
     // render() replaces the whole frame — no separate clear needed.
-    this.renderCenteredBitmap(base64Bmp, 144, 0, 288, 288)
+    this.renderCenteredBitmap(base64Bmp, 288, 288)
   }
 
   /**
-   * Test-only: render a square gradient bitmap at `size`×`size` pixels, shown
-   * in a same-size container centered on the 576×288 canvas. Lets the dev panel
-   * compare how different bitmap sizes render — note the glasses flip into
-   * "quad mode" once width>200 or height>100 (see miniapp SDK display.ts).
+   * Test-only: render a bordered bitmap at the exact requested size, centered
+   * on the device canvas. Unsupported probes fail before clearing the frame.
    */
   showBitmapSize(size: number, height?: number): void {
-    // Pass the requested size through UNCLAMPED (only bounded to the 576×288
-    // canvas) so the dev panel can probe what the G2 actually renders past the
-    // ~200px single-container limit. >200 wide may render nothing (quad mode).
-    const w = Math.max(8, Math.min(size, 576))
-    const h = Math.max(8, Math.min(height ?? size, 288))
-    if (size > 200) {
-      console.log(`[NAV-MINI] bitmap width ${size} > 200 — G2 SGC tiles it across multiple containers`)
-    }
+    const {w, h} = this.bitmapBox(size, height ?? size)
     const base64Bmp = borderTestImageBase64(w, h)
-    const x = Math.round((576 - w) / 2)
-    const y = Math.round((288 - h) / 2)
     // Clear first, wait 3s so the old container fully tears down, THEN draw the
     // new bitmap — avoids the G2 reusing/overlapping a stale image container.
     this.safeCall(() => void this.session.display.render([]))
     setTimeout(() => {
-      this.renderCenteredBitmap(base64Bmp, x, y, w, h)
+      this.renderCenteredBitmap(base64Bmp, w, h)
     }, 3000)
   }
 
   /**
    * Test-only: show a pre-rendered base64 BMP at a given container size,
-   * centered and within the G2 ≤200px width limit. Used by the OSM line-map PoC.
+   * centered within device limits. Used by the OSM line-map PoC.
    */
   showRawBitmap(base64Bmp: string, width: number, height: number): void {
-    const w = Math.max(8, Math.min(width, 200))
-    const h = Math.max(8, Math.min(height, 288))
-    const x = Math.round((576 - w) / 2)
-    const y = Math.round((288 - h) / 2)
     // Stable id + unchanged rect ⇒ the differ marks this a content-only update
     // and the G2 swaps the bitmap into the existing container in place — the
     // same no-flicker behavior the old rect-keyed container reuse gave.
-    this.renderCenteredBitmap(base64Bmp, x, y, w, h)
+    this.renderCenteredBitmap(base64Bmp, width, height)
   }
 
   /** Wipe whatever's on the glasses (and forget the cached frame slots). */

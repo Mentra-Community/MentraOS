@@ -3,13 +3,14 @@
  * the captions miniapp uses, kept small and dependency-free.
  */
 
-import {G1_PROFILE, NEX_PROFILE, Z100_PROFILE} from "../../vendor/display-utils/profiles"
+import {G1_PROFILE, NEX_PROFILE, NIMO_PROFILE, Z100_PROFILE} from "../../vendor/display-utils/profiles"
 import type {DisplayProfile} from "../../vendor/display-utils/profiles"
 import type {MiniappSession} from "@mentra/miniapp/background"
 
 export function getProfileForModel(modelName: string | null | undefined): DisplayProfile {
   if (!modelName) return G1_PROFILE
   const lower = modelName.toLowerCase()
+  if (/^nimo(?:$|[-\s])/i.test(modelName.trim())) return NIMO_PROFILE
   if (lower.includes("g1") || lower.includes("even realities") || lower.includes("even_g1")) {
     return G1_PROFILE
   }

@@ -82,6 +82,8 @@ android {
 }
 
 dependencies {
+  testImplementation 'junit:junit:4.13.2'
+
   // Mapbox Navigation SDK v3 (replaces Google Navigation SDK).
   // Drives headless turn-by-turn nav in NavigationManager.kt: route
   // progress, off-route + automatic rerouting, enhanced (map-matched)

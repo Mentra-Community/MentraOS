@@ -48,6 +48,7 @@ import {
   G2_PROFILE,
   Z100_PROFILE,
   NEX_PROFILE,
+  NIMO_PROFILE,
   type DisplayProfile,
   type TranscriptHistoryEntry,
 } from "../../core/CaptionsFormatter"
@@ -102,9 +103,10 @@ const STORAGE_KEYS = {
 const TRANSCRIPT_TIMING_TELEMETRY = (globalThis as {__DEV__?: boolean}).__DEV__ === true
 
 // ── Profile selection (verbatim from DisplayManager) ───────────────────────
-function getProfileForModel(modelName: string | null | undefined): DisplayProfile {
+export function getProfileForModel(modelName: string | null | undefined): DisplayProfile {
   if (!modelName) return G1_PROFILE
   const lower = modelName.toLowerCase()
+  if (/^nimo(?:$|[-\s])/i.test(modelName.trim())) return NIMO_PROFILE
   if (lower.includes("g2") || lower.includes("even_g2")) {
     return G2_PROFILE
   }

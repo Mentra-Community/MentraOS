@@ -19,12 +19,14 @@ import {
   G2_PROFILE,
   Z100_PROFILE,
   NEX_PROFILE,
+  NIMO_PROFILE,
   type DisplayProfile,
   type WrapOptions,
   type WrapResult,
 } from "../vendor/display-utils";
 
 // Re-export profiles for convenience
+export {NIMO_PROFILE};
 export { G1_PROFILE, G1_PROFILE_LEGACY, G2_PROFILE, Z100_PROFILE, NEX_PROFILE };
 export type { DisplayProfile };
 
