@@ -221,3 +221,52 @@ describe("NIMO positioned scene routing", () => {
     expect(lastScene().removed).toEqual(["instruction", "outline", "maneuver"])
   })
 })
+
+describe("render text feedback and source replay", () => {
+  test("returns host line boundaries and only sends the selected tail", () => {
+    let result: DisplayRequestResult | undefined
+    localDisplayManager.request(
+      "com.app.text",
+      {
+        includeTextLayout: true,
+        scene: [
+          {
+            type: "text",
+            id: "caption",
+            box: {x: 0, y: 0, w: 500, h: 220},
+            text: "one\ntwo\nthree\nfour",
+            style: {maxLines: 2, textWindow: "end"},
+          },
+        ],
+      },
+      (value) => (result = value),
+    )
+    expect(lastScene().elements[0].text).toBe("three\nfour")
+    expect(result?.textLayout?.caption.lines.map((line) => line.start)).toEqual([8, 14])
+    expect(result?.textLayout?.caption.lineStarts).toEqual([0, 4, 8, 14])
+  })
+
+  test("replays original source through the current device profile", () => {
+    const source: SceneElementInput[] = [
+      {
+        type: "text",
+        id: "caption",
+        box: {x: 0, y: 0, w: 100, h: 220},
+        text: "one two three four five six seven eight nine ten eleven twelve",
+        style: {maxLines: 3, textWindow: "end"},
+      },
+    ]
+    localDisplayManager.request("com.app.text", {scene: source})
+    const nimoText = lastScene().elements[0].text
+    selectedModel = "Even Realities G2"
+    localDisplayManager.replayCurrent()
+    expect(lastScene().replay).toBe(true)
+    const g2Text = lastScene().elements[0].text
+    expect(g2Text).not.toBe(nimoText)
+    expect(g2Text).toEndWith("twelve")
+    selectedModel = "Even Realities G1"
+    localDisplayManager.replayCurrent()
+    expect(sent.at(-1)?.layout?.layoutType).toBe("text_wall")
+    expect(String(sent.at(-1)?.layout?.text).replace(/\n/g, "")).toEndWith("twelve")
+  })
+})

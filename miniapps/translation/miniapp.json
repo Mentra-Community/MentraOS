@@ -1,12 +1,12 @@
 {
   "$schema": "./node_modules/@mentra/miniapp-cli/schema/miniapp.schema.json",
   "packageName": "com.mentra.translation",
-  "version": "1.0.20",
+  "version": "1.0.21",
   "name": "Translation",
   "description": "Local cloud-v2 translation tester. Translates any detected source language into the selected target language and renders the result on the glasses display.",
   "type": "standard",
   "sdkVersion": "0.3.0",
-  "minHostVersion": "1.42.0",
+  "minHostVersion": "3.2.0",
   "port": 3110,
   "entry": {
     "background": "background/index.js",
@@ -47,10 +47,17 @@
       "outputSchema": {
         "type": "object",
         "properties": {
-          "targetLanguage": {"type": "string"},
-          "status": {"type": "string"}
+          "targetLanguage": {
+            "type": "string"
+          },
+          "status": {
+            "type": "string"
+          }
         },
-        "required": ["targetLanguage", "status"]
+        "required": [
+          "targetLanguage",
+          "status"
+        ]
       }
     }
   ]

@@ -30,7 +30,7 @@ That is an artifact identifier, not an assertion about firmware installed on a
 connected device. Earlier pre-canvas firmware is not compatible with this path.
 This change does not distribute or install firmware.
 
-Captions 1.0.17, Translation 1.0.20, Teleprompter 1.0.7, and Navigation 1.1.32 are
+Captions 1.0.18, Translation 1.0.21, Teleprompter 1.0.8, and Navigation 1.1.32 are
 rebuilt from this checkout in production mode, then installed in
 `mobile/assets/miniapps/` and included by the generated bundle manifest. Maps uses
 the workspace's `EXPO_PUBLIC_MAPBOX_ACCESS_TOKEN`; the development token from the
@@ -98,3 +98,27 @@ glasses firmware, and device logs. Use the exact unmodified dynamic-v1 firmware.
    NIMO model, which also does not advertise a speaker.
 
 No physical Android or iOS acceptance of this merged candidate is claimed.
+
+
+## Text rendering migration
+
+The handoff's per-miniapp NIMO profiles have been replaced by a migration to
+host-owned text fitting. Captions and Translation supply transcript history in
+one text element with `maxLines` and `textWindow: "end"`. Teleprompter uses
+optional render feedback (visible lines and source line starts) while retaining
+its own script, word cursor, voice matching, and replacement-frame behavior.
+All three copied display-utils trees are removed. They require host 3.2.0.
+
+The existing text element supports optional `maxLines`, `textWindow`, and
+`verticalAlign`. Defaults preserve existing callers. G1/Z100 compile the new
+controls using their text budgets and bypass a second legacy wrapping pass.
+Replays retain source text and recompile against the current device's metrics.
+G2 blank-row escaping is performed by the Android/iOS driver, not Teleprompter.
+Public API details are in the display documentation. The earlier display design
+notes' proposed public measurement helper is superseded; no helper or scroll
+API is added to the SDK.
+
+For acceptance, also check caption line-count/width/top-bottom settings with
+interim speech, transcript previews, Teleprompter voice-follow and timed play,
+manual forward/back steps, its timecode footer, final-page behavior, and changing
+glasses during a read. Automated checks do not replace these hardware tests.

@@ -27,6 +27,7 @@ function makeDisplayController() {
     display: {
       render: (els: Array<{text?: string}>) => {
         if (els.length > 0 && typeof els[0].text === "string") renders.push(els[0].text)
+        return Promise.resolve({status: "displayed"})
       },
     },
     storage: {
@@ -99,7 +100,7 @@ describe("TranslationController subscription replacement", () => {
 })
 
 describe("TranslationController glasses display mode", () => {
-  test("selects NIMO when CONNECT_ACK first supplies capabilities on ready", async () => {
+  test("accepts initial capabilities on ready without device-specific formatting", async () => {
     const {controller, renders, feed, session, ready} = makeDisplayController()
     await controller.start()
     session.capabilities = {modelName: "Nimo-7188", display: {width: 500, height: 220}}

@@ -2230,7 +2230,7 @@ class G2: NSObject, SGCManager {
         let borderColor = borderColor ?? G2.defaultTextContainer.borderColor
         let borderRadius = borderRadius ?? G2.defaultTextContainer.borderRadius
         let paddingLength = paddingLength ?? G2.defaultTextContainer.paddingLength
-        let content = text.isEmpty ? " " : text
+        let content = G2Text.containerContent(text)
 
         // Pure state mutation: update the container's content and schedule its sends; the reconcile
         // loop (`displayReconcileTask`) does the actual updateText writes. Reuse an existing container
@@ -2391,7 +2391,7 @@ class G2: NSObject, SGCManager {
         // y is clamped first so the height term can't go negative.
         let y = min(max(y, 0), 288 - G2.minTextContainerHeight)
         let height = min(max(height, G2.minTextContainerHeight), 288 - y)
-        let content = text.isEmpty ? " " : text
+        let content = G2Text.containerContent(text)
         if let existingId = sceneTextByElement[elementId] {
             if let i = textContainers.firstIndex(where: { $0.id == existingId }) {
                 let c = textContainers[i]

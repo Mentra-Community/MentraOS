@@ -2072,6 +2072,7 @@ class LocalMiniappRuntime {
         {
           view: (payload.view as DisplayPayload["view"]) ?? "main",
           scene: payload.elements as DisplayPayload["scene"],
+          includeTextLayout: payload.includeTextLayout === true,
           durationMs: payload.durationMs as number | undefined,
         },
         (result) => this.sendResult(packageName, requestId, true, result),
@@ -3998,12 +3999,14 @@ class LocalMiniappRuntime {
     })
   }
 
-  private softapRecoveryFields(attempt: SoftapAttempt | null | undefined): {recovery?: {
-    active: boolean
-    generation?: number
-    deadlineAt?: number
-    phase?: string
-  }} {
+  private softapRecoveryFields(attempt: SoftapAttempt | null | undefined): {
+    recovery?: {
+      active: boolean
+      generation?: number
+      deadlineAt?: number
+      phase?: string
+    }
+  } {
     if (!attempt?.recoveryDeadlineAt) return {}
     return {
       recovery: {
@@ -4093,8 +4096,7 @@ class LocalMiniappRuntime {
         token: args.token,
         displayName: args.displayName,
         video: args.video,
-        awaitFirstFrame: (_report, options) =>
-          acsMeetingService.waitForFirstFrame(SOFTAP_FIRST_FRAME_MS, options),
+        awaitFirstFrame: (_report, options) => acsMeetingService.waitForFirstFrame(SOFTAP_FIRST_FRAME_MS, options),
         waitUntilLive: (timeoutMs) => acsMeetingService.waitUntilMediaLive(timeoutMs),
         subsystems: {
           setHotspotState: async (enabled) => {
@@ -4349,7 +4351,10 @@ class LocalMiniappRuntime {
     while (!cancelled()) {
       const remaining = deadlineAt - Date.now()
       if (remaining <= 0) return false
-      if (!isGlassesReady(useGlassesStore.getState().connection) && !(await this.awaitGlassesReady(remaining, cancelled))) {
+      if (
+        !isGlassesReady(useGlassesStore.getState().connection) &&
+        !(await this.awaitGlassesReady(remaining, cancelled))
+      ) {
         return false
       }
       const settleMs = Math.min(GLASSES_LINK_SETTLE_MS, Math.max(0, deadlineAt - Date.now()))
