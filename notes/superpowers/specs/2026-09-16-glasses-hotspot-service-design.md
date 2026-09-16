@@ -63,9 +63,9 @@ consumers; the streaming service is.
    attachment takes a `NetworkRef {sessionId, generation}`. Loss invalidates the generation
    immediately, natively first, so late work can never attach to a successor network.
 3. **Awaited restoration callbacks plus observer events.** Consumers hand the session a
-   client with `prepare`, `quiesce`, `restore`, `close`. `ready` means the network is bound
-   *and* the consumer's `restore` completed; `networkReady` is reported separately for
-   observers. `whenReady` is snapshot-aware for callers that only observe.
+   client with `quiesce`, `restore`, `close`. `ready` means the network is bound *and* the
+   consumer's `restore` completed. Observers read the state snapshot, which carries the phase
+   and the binding; there is no second readiness channel.
 4. **Independent health dimensions.** BLE control path, local network, and cellular uplink
    are tracked separately. A BLE drop is not proof the Wi-Fi went away; the service waits for
    BLE only when the next required operation needs it (AP enable or disable).
@@ -128,12 +128,11 @@ consumers; the streaming service is.
 
 ```ts
 export type HotspotConsumer = "gallery_sync" | "hotspot_ota" | "video_streaming"
-/** Diagnostic owner metadata carried by the streaming service; never a reservation key. */
-export type HotspotOwnerTag = "call" | "managed_whip" | "local" | null
+// operationId convention: "<owner>:<id>", for example "call:abc123" or "managed_whip:s-42";
+// the owner prefix is diagnostic metadata only, never a reservation key.
 
 export type HotspotPhase =
   | "reserved"      // native reservation held, nothing sent to the glasses yet
-  | "preparing"     // client.prepare (for example ACS agent setup over the Internet)
   | "enabling"      // BLE setHotspotState(true) sent; waiting for credentials + broadcast
   | "joining"       // native scoped join in progress
   | "verifying"     // addresses resolved; gateway probe (required or advisory)
@@ -199,19 +198,16 @@ export type RecoveryContext = {
 }
 
 export interface HotspotClient {
-  /** Once, before the AP is enabled. Cancellable. */
-  prepare?(signal: AbortSignal): Promise<void>
   /** On loss: stop work bound to this generation, keep higher-level state (ACS meeting, download ledger). recovery.rebuildDeadlineAt is still null here. */
   quiesce(binding: HotspotBinding, recovery: RecoveryContext, signal: AbortSignal): Promise<void>
   /** Initial join and every successful rejoin. `ready` is reported only after this resolves. On rejoin, recovery.rebuildDeadlineAt is set and bounds any work the client continues afterwards. */
-  restore(binding: HotspotBinding, reason: "initial" | "rejoin", recovery: RecoveryContext | null, signal: AbortSignal): Promise<void>
-  /** Final teardown of consumer-owned work, including partial prepare/restore. Idempotent. Called only from release(), never on recovery exhaustion. */
+  restore(binding: HotspotBinding, recovery: RecoveryContext | null, signal: AbortSignal): Promise<void>   // recovery null = initial join
+  /** Final teardown of consumer-owned work, including a partial restore. Idempotent. Called only from release(), never on recovery exhaustion. */
   close(): Promise<void>
 }
 
 export type HotspotSessionOptions = {
   consumer: HotspotConsumer
-  owner?: HotspotOwnerTag
   operationId: string
   /** "cellular": hold an Internet route over cellular for the life of the session (Call). */
   uplink: "none" | "cellular"
@@ -236,7 +232,6 @@ export type HotspotState = {
 
 export type HotspotEvent =
   | {type: "state"; state: HotspotState}
-  | {type: "networkReady"; binding: HotspotBinding}       // before restore; for observers
   | {type: "downloadProgress"; jobId: string; bytesWritten: number; totalBytes?: number}
 
 export type ReleaseResult =
@@ -249,17 +244,12 @@ export interface HotspotSession {
   /** Delivers the current snapshot immediately, then ordered updates. */
   subscribe(listener: (event: HotspotEvent) => void): () => void
 
-  /** Runs prepare → enable → join → verify → restore. Resolves with the first ready binding. */
+  /** Runs enable → join → verify → restore. Resolves with the first ready binding; rejoins are delivered through client.restore. */
   start(client: HotspotClient): Promise<HotspotBinding>
-  /** Resolves on the next ready at or after `afterGeneration`; rejects on terminal failure. */
-  whenReady(opts?: {afterGeneration?: number; signal?: AbortSignal}): Promise<HotspotBinding>
 
   /** Network-bound HTTP to the glasses. Rejects with stale_generation if ref is not current. */
   fetch(ref: NetworkRef, url: string, init?: RequestInit & {timeoutMs?: number}): Promise<Response>
   download(ref: NetworkRef, opts: {jobId: string; url: string; destination: string; headers?: Record<string, string>; connectionTimeoutMs?: number; readTimeoutMs?: number; signal?: AbortSignal}): Promise<{statusCode: number; bytesWritten: number}>
-
-  /** A transport error asks the service to verify the network; it never cycles the AP directly. */
-  reportSuspectedLoss(ref: NetworkRef): void
 
   /**
    * Cancels start/recovery, drains the client, disables the AP with bounded retries, releases
@@ -285,7 +275,7 @@ export const glassesHotspotService: GlassesHotspotService
 ### State machine
 
 ```text
-reserved → preparing → enabling → joining → verifying → restoring → ready
+reserved → enabling → joining → verifying → restoring → ready
 ready → recovering → (wait for glasses if AP control is needed) → joining → verifying → restoring → ready
 any active phase → failed → releasing
 any active phase + cancel → releasing
@@ -363,7 +353,7 @@ or detach is rejected with `stale_generation`.
 |---|---|
 | Gallery sync | `acquire({consumer: "gallery_sync", uplink: "none", recovery: auto, gatewayProbe: "required", beforeJoin: explainOnce})` → `start(client)`; `restore`: fetch manifest, continue unverified files with `fetch/download(ref)`; `quiesce`: cancel transfers, keep the ledger; `close`; `release`. Requests are not replayed transparently; gallery keeps ownership of acknowledgements and integrity. The two-minute queue age guard stays because the glasses idle-disable the AP. |
 | Hotspot OTA | Download artifacts over the normal network first → `acquire({consumer: "hotspot_ota", uplink: "none", recovery: auto, gatewayProbe: "required"})` → `restore` on `initial`: start `otaServer` bound to `binding.phoneIpv4`, publish the immutable manifest; `ota_start` once; on `rejoin` with a different `phoneIpv4`, throw so the restore fails explicitly and the coordinator reconciles; the ASG APK restart does not close the server or cycle the AP; `release` after the outcome is known. |
-| Video streaming (Mentra Call, managed WHIP, direct WHIP over the phone) | The streaming service is the hotspot client: `acquire({consumer: "video_streaming", owner, uplink: "cellular", recovery: {auto, 60 s return, 45 s rebuild, 3 attempts}, gatewayProbe: "advisory"})` → `prepare`: nothing (ACS agent setup happens in the call layer before the stream opens); `restore` on `initial` and `rejoin`: `Lease.bindListener` on `binding.phoneIpv4`, start the receiver, hand the `Network` to libwebrtc, then return, so the hotspot is `ready` once the network-bound setup is up; adapter attach, the glasses publish, the first frame and media retries run in the stream lifecycle afterwards, bounded by `recovery.rebuildDeadlineAt` from the same `RecoveryContext`, and never fail this restore; `quiesce`: stop local media only; `close`: stop the receiver. Destination adapters (ACS sink, Cloudflare republisher) attach to decoded media by `MediaRef` and never touch this session. See the companion streaming spec for the full contract. |
+| Video streaming (Mentra Call, managed WHIP, direct WHIP over the phone) | The streaming service is the hotspot client: `acquire({consumer: "video_streaming", operationId: "call:<id>", uplink: "cellular", recovery: {auto, 60 s return, 45 s rebuild, 3 attempts}, gatewayProbe: "advisory"})` (ACS agent setup happens in the call layer before the stream opens) → `restore` on the initial join and on every rejoin: `Lease.bindListener` on `binding.phoneIpv4`, start the receiver, hand the `Network` to libwebrtc, then return, so the hotspot is `ready` once the network-bound setup is up; adapter attach, the glasses publish, the first frame and media retries run in the stream lifecycle afterwards, bounded by `recovery.rebuildDeadlineAt` from the same `RecoveryContext`, and never fail this restore; `quiesce`: stop local media only; `close`: stop the receiver. Destination adapters (ACS sink, Cloudflare republisher) attach to decoded media by `MediaRef` and never touch this session. See the companion streaming spec for the full contract. |
 
 ## Migration in small PRs
 

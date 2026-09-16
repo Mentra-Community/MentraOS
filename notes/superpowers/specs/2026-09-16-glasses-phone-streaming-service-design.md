@@ -144,7 +144,7 @@ export type StreamRecoveryPolicy = {returnBudgetMs: number; rebuildBudgetMs: num
 
 export interface StreamAdapter {
   /** Called once per media generation, before the glasses are told to publish. Borrow the media by ref and attach sinks. Cancellable. */
-  attach(media: MediaRef, reason: "initial" | "rejoin", signal: AbortSignal): Promise<void>
+  attach(media: MediaRef, signal: AbortSignal): Promise<void>   // media.mediaGeneration > 1 means a rebuild
   /** Called when a media generation is invalidated (media rebuild or hotspot loss). Release the lease; keep destination state. */
   detach(media: MediaRef): Promise<void>
 }
@@ -175,10 +175,7 @@ export type StreamState = {
   terminalCleanup?: {hotspot: ReleaseResult | null}   // set once terminal cleanup has run (failed or closed)
 }
 
-export type StreamEvent =
-  | {type: "state"; state: StreamState}
-  | {type: "live"; media: MediaRef}   // per media generation, after the first decoded frame
-  | {type: "mediaInvalidated"; media: MediaRef; reason: string}
+export type StreamEvent = {type: "state"; state: StreamState}
 
 export interface StreamSession {
   readonly id: string
@@ -186,10 +183,6 @@ export interface StreamSession {
   subscribe(listener: (event: StreamEvent) => void): () => void
   /** Runs hotspot acquire → listener bind → receiver → adapter.attach → glasses publish → first frame. Resolves on live. */
   start(): Promise<MediaRef>
-  /** Resolves on the next live at or after `afterMediaGeneration`. */
-  whenLive(opts?: {afterMediaGeneration?: number; signal?: AbortSignal}): Promise<MediaRef>
-  /** An adapter that lost frames asks for verification; the service decides media vs hotspot recovery. */
-  reportSuspectedStall(media: MediaRef): void
   /** Consumer-initiated end: detach, stop the glasses publish, close the receiver, release the hotspot session. Never touches the destination. Idempotent: concurrent calls share one cleanup; on a failed stream it returns the settled result or retries a blocked hotspot release. */
   close(): Promise<{hotspot: ReleaseResult | null}>
 }
@@ -221,8 +214,10 @@ Two triggers, one orchestrator:
   is never rejoined for a media problem, and the hotspot session never learns about it.
 
 The order is always detach → rebuild → attach → publish → first frame, on both paths, so
-`live` is never waited for without an attached adapter. `mediaInvalidated` and `live` events
-are informational for observers; the adapter's own hooks are the contract. Exhaustion of the
+`live` is never waited for without an attached adapter. The adapter's `attach` and `detach`
+hooks are the contract; observers read the state snapshot, whose `media` field and phase say
+which generation is current and whether it is live. Stall detection is the service's own
+(`stallMs` on the receiver's frame timer); adapters do not report losses. Exhaustion of the
 shared deadline or of `maxAttempts` fails the stream with `recovery_exhausted` and runs the
 terminal cleanup of decision 9 immediately: the hotspot is released without waiting for the
 consumer, the adapter decides what happens to its destination, and a terminal media failure
@@ -264,6 +259,10 @@ Adapters:
 - **Local preview** (future): borrows and renders; no network involvement.
 
 ## SDK surface
+
+Everything in this section is the last migration step and ships only after the streaming
+service exists and Mentra Call and managed WHIP run on it. It is recorded here so the service
+API is designed with it in mind, not to be built alongside it.
 
 ### Miniapp SDK (`mobile/modules/miniapp/src/modules/stream.ts`)
 
