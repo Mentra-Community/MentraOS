@@ -537,6 +537,9 @@ class MentraLive : SGCManager() {
     // cannot signal a restart - a CHANGED (or newly appearing) sid is the restart signal.
     // Null = no sid observed this BLE session (legacy glasses, or none seen yet).
     private var glassesSessionId: String? = null
+    // Last `glasses_ready.streamControlVersion`. Survives BluetoothSdkModule remounts
+    // so a new MentraBluetoothSdk can seed StreamSessionState without another ready.
+    private var streamControlVersion = 0
     // True once a glasses_ready completed on THIS physical BLE session; resets only with
     // the physical connection (never on heartbeat readiness flaps), so a first-seen sid
     // after an upgrade OTA is always detected as a restart.
@@ -1673,6 +1676,7 @@ class MentraLive : SGCManager() {
         connectedDevice = null
         glassesReady = false
         glassesSessionId = null
+        streamControlVersion = 0
         readinessCompletedThisBleSession = false
         glassesReadyReceived = false
         ctkdInitiatedThisGattSession = false
@@ -1947,6 +1951,7 @@ class MentraLive : SGCManager() {
         connectedDevice = null
         glassesReady = false
         glassesSessionId = null
+        streamControlVersion = 0
         readinessCompletedThisBleSession = false
         glassesReadyReceived = false
         ctkdInitiatedThisGattSession = false
@@ -2328,6 +2333,8 @@ class MentraLive : SGCManager() {
                             // Discover services
                             gatt.discoverServices()
 
+                            GlassesLinkDiagnostics.onSessionStart()
+
                             // Do NOT reset reconnectAttempts here — ephemeral GATT CONNECTED
                             // followed by status 19 was zeroing the counter every ~1s and
                             // preventing exponential backoff. Reset at ble_chars_ready instead.
@@ -2340,6 +2347,13 @@ class MentraLive : SGCManager() {
                             Bridge.log(
                                     "LIVE: 🔌 ⚠️ Disconnected from GATT server - Will attempt reconnection"
                             )
+                            Bridge.log(
+                                    "LIVE: " +
+                                            GlassesLinkDiagnostics.summary(
+                                                    "gatt_disconnected",
+                                                    status
+                                            )
+                            )
                             endPairingTiming(
                                     "gatt_disconnected",
                                     "queueSize=${sendQueue.size}"
@@ -2350,6 +2364,7 @@ class MentraLive : SGCManager() {
                             connectedDevice = null
                             glassesReady = false // Reset ready state on disconnect
                             glassesSessionId = null // Fresh BLE session starts with no sid known
+                            streamControlVersion = 0
                             readinessCompletedThisBleSession = false
 
                             // Reset audio pairing flags
@@ -2401,6 +2416,9 @@ class MentraLive : SGCManager() {
                                         status +
                                         ") - Will retry reconnection"
                         )
+                        Bridge.log(
+                                "LIVE: " + GlassesLinkDiagnostics.summary("gatt_error", status)
+                        )
                         endPairingTiming(
                                 "gatt_error",
                                 "status=$status queueSize=${sendQueue.size}"
@@ -2409,6 +2427,7 @@ class MentraLive : SGCManager() {
                         isConnecting = false
                         glassesReady = false
                         glassesSessionId = null
+                        streamControlVersion = 0
                         readinessCompletedThisBleSession = false
                         glassesReadyReceived = false
                         audioConnected = false
@@ -3970,6 +3989,7 @@ class MentraLive : SGCManager() {
             Log.d(TAG, "LIVE: Got some JSON from glasses: " + json.toString())
         }
         BleTraceLogger.logJson("glasses_to_phone", "sdk_ble_event", json, null)
+        GlassesLinkDiagnostics.recordInbound()
 
         if (MessageChunker.isChunkedMessage(json)) {
             processChunkedJsonMessage(json)
@@ -4571,6 +4591,7 @@ class MentraLive : SGCManager() {
                 // already runs this full remote-reset flow, so recording (not re-triggering)
                 // is correct here; version_info detection covers the restart case.
                 glassesSessionId = json.optString("sid", "").takeIf { it.isNotEmpty() }
+                streamControlVersion = json.optInt("streamControlVersion", 0)
                 Bridge.sendTypedMessage(
                         "wifi_protocol_session_ready",
                         mapOf("sid" to (glassesSessionId ?: "")),
@@ -4578,7 +4599,7 @@ class MentraLive : SGCManager() {
                 readinessCompletedThisBleSession = true
                 Bridge.sendTypedMessage("stream_control_ready", mapOf(
                     "sid" to json.optString("sid", ""),
-                    "streamControlVersion" to json.optInt("streamControlVersion", 0),
+                    "streamControlVersion" to streamControlVersion,
                 ))
 
                 // Set the ready flag to stop any future readiness checks
@@ -5519,6 +5540,7 @@ class MentraLive : SGCManager() {
                 glassesReady = false
                 glassesReadyReceived = false
                 glassesSessionId = null
+                streamControlVersion = 0
                 readinessCompletedThisBleSession = false
             }
             "sr_adota" -> {
@@ -6138,6 +6160,7 @@ class MentraLive : SGCManager() {
         val now = System.currentTimeMillis()
         DeviceStore.apply("glasses", "signalStrength", rssi)
         DeviceStore.apply("glasses", "signalStrengthUpdatedAt", now)
+        GlassesLinkDiagnostics.recordRssi(rssi, now)
         Bridge.log("LIVE: 📶 RSSI: " + rssi + " dBm")
     }
 
@@ -6819,6 +6842,19 @@ class MentraLive : SGCManager() {
         json.put("type", "camera_warm_up_stop")
         json.put("requestId", requestId)
         sendJson(json, true)
+    }
+
+    override fun replayStreamControlReady() {
+        val sid = glassesSessionId ?: return
+        if (streamControlVersion != 1) return
+        Bridge.log("LIVE: Replaying stream_control_ready sid=$sid version=$streamControlVersion")
+        Bridge.sendTypedMessage(
+            "stream_control_ready",
+            mapOf(
+                "sid" to sid,
+                "streamControlVersion" to streamControlVersion,
+            ),
+        )
     }
 
     override fun startStream(message: MutableMap<String, Any>) {

@@ -583,6 +583,39 @@ unclassified Cloud config, non-backward-compatible migration, Mobile N failure,
 wrong endpoint or OTA pin, store coordinate drift, rejected binary, missing
 reviewer access, and monitoring uncertainty during rollout.
 
+## Store rejection: resubmit with a corrected beta
+
+When App Review or Google Play rejects a candidate, the correction lands on
+`staging` like any other change and its coordinated run cuts a new beta of the
+same release identity. The promotion has no "rejected" state; a new attempt
+carries the corrected beta. One command does the whole walk, from a clean,
+up-to-date `staging` checkout:
+
+```bash
+./scripts/production-release.mjs resubmit --release X.Y.Z --beta X.Y.Z-beta.N --reason "what the store rejected and what changed"
+```
+
+It aborts the current attempt (recording the reason), promotes the beta into
+`main` (`--merge-admin` merges the exact head with administrator rights when
+the gate cannot complete), starts the next attempt, then dispatches each
+workflow in turn and waits for it: Cloud preflight, Cloud deploy, the
+candidate builds. If the rejected attempt had deferred
+`production-mobile-n-compatibility`, the deferral is carried over with a
+reason that names the earlier attempt; a gate the earlier attempt attested
+itself is not copied. It stops once the new candidates are uploaded, because
+candidate acceptance is the verification of the correction: install the exact
+builds, then `attest` (or `defer`) `production-mobile-candidate-acceptance` and
+run `next` to submit. Interrupted? Run the same command again; every step is
+decided from the latest promotion records, including a container that
+preparation allocated without a state record yet. Each dispatch carries a
+fresh id that the workflow shows in its run name, so the command waits on
+exactly the run it started, whatever else is running.
+
+On App Store Connect the rejected build stays attached to the version until the
+submission replaces it; nothing needs detaching by hand. On Google Play the new
+candidate arrives as a fresh draft on the production track and replaces the
+held one.
+
 ## UI-only GitHub fallback
 
 If the local CLI is unavailable, open Actions, select the workflow named by the

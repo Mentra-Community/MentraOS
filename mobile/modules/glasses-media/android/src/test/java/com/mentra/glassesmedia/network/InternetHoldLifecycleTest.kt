@@ -99,4 +99,13 @@ class InternetHoldLifecycleTest {
         f.hold.close()
         assertFalse(f.awaitCellular(0).held)
     }
+
+    @Test
+    fun `unvalidated cellular still holds the request`() {
+        val f = Fixture()
+        `when`(f.capabilities.hasCapability(NetworkCapabilities.NET_CAPABILITY_VALIDATED)).thenReturn(false)
+        val result = f.awaitCellular(0)
+        assertTrue(result.held)
+        assertFalse(result.validated)
+    }
 }

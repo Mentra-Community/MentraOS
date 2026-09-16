@@ -53,7 +53,7 @@ export type DisplayLayoutType =
   | "bitmap_view"
 
 /**
- * Raw display event from the cloud/WebSocket
+ * Raw local display event before device-specific processing
  */
 export interface DisplayEvent {
   view: "main" | "dashboard"

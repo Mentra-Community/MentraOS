@@ -35,7 +35,7 @@ import {storage as mmkvStorage} from "../utils/storage/storage"
 import {BgTimer} from "../utils/timers"
 import devServerBridge from "./DevServerBridge"
 import {islandNotifications} from "./NotificationsEmitter"
-import {isGlassesConnected} from "./GlassesReadiness"
+import {isGlassesConnected, isGlassesReady, waitForGlassesReady} from "./GlassesReadiness"
 import {toMiniappConnectionData} from "./GlassesStatusProjection"
 import audioPlaybackService from "./AudioPlaybackService"
 import {phoneLocationService} from "./PhoneLocationService"
@@ -85,7 +85,7 @@ import type {ClientApp} from "../types/applet"
 import {useAppStatusStore} from "../stores/apps"
 import appRegistry, {getDevAppAttestation, getDevAppSourcePackage} from "./AppRegistry"
 import {resolveForegroundLocationPermission} from "./ForegroundLocationPermission"
-import {advanceMiniappPingLiveness} from "./MiniappLiveness"
+import {advanceMiniappPingLiveness, shouldHoldMiniappPingLiveness} from "./MiniappLiveness"
 import {listPhoneCalendarEvents, PhoneCalendarError} from "./PhoneCalendarService"
 import {LocalMiniappStorage} from "./LocalMiniappStorage"
 import acsMeetingService, {
@@ -102,6 +102,7 @@ import {
   createSoftapCallDeps,
   SoftapCallError,
   SoftapCallTransport,
+  RETURN_DEADLINE_MS,
   SOFTAP_STEPS,
   type SoftapProgress,
   type SoftapTeardownMode,
@@ -237,6 +238,11 @@ const FOREGROUND_LIVENESS_PROBE_TIMEOUT_MS = 2_500
  * rather than sit in "connecting" while the wearer waits.
  */
 const SOFTAP_FIRST_FRAME_MS = 20_000
+/**
+ * How long the BLE link must stay up before SoftAP recovery trusts it. Covers the gap between
+ * the hotspot dying and the phone noticing the link died with it.
+ */
+const GLASSES_LINK_SETTLE_MS = 4_000
 const REQUEST_WIFI_SETUP_TYPE = "miniapp_request_wifi_setup"
 // Unregister after this many missed pongs. Generous on purpose: a busy
 // context (heavy interim translation traffic) or OS scheduling while idle can
@@ -415,6 +421,14 @@ type SoftapAttempt = {
   progress: SoftapProgress
   scopedLostUnsub: (() => void) | null
   /**
+   * Mid-call media rebuild. Single-flight while [recoveryActive] is true; the promise is
+   * cleared when that run settles so a later walk-away can start another. Joined to the
+   * attempt barrier so a late re-arm cannot resurrect resources after Leave/End.
+   */
+  recovery: Promise<void> | null
+  recoveryActive: boolean
+  recoveryDeadlineAt: number | null
+  /**
    * The join itself, settled either way. A native call still in flight owns state the teardown
    * cannot see — a `createCallAgent` mid-sign-in — so the barrier covers this as well.
    */
@@ -443,6 +457,27 @@ const SOFTAP_HOTSPOT_OFF_ACK_MS = 5_000
 
 /** After a forced close there is nothing left to wait for, so this only catches a real failure. */
 const SOFTAP_FORCED_VERIFY_MS = 500
+
+/**
+ * Rejection codes meaning the glasses replaced their Wi-Fi protocol session, not that the
+ * command failed.
+ *
+ * The glasses emit `wifi_protocol_session_ready` on every `glasses_ready`, which fires on BLE
+ * reconnects and ASG restarts — routine during a SoftAP teardown. The SDK cancels every pending
+ * Wi-Fi request when that lands, so a hotspot command in flight is lost even though nothing is
+ * actually wrong. `wifi_session_disconnected` is deliberately absent: that one is raised from the
+ * store update where the glasses went away, so there is nothing left to re-send to.
+ */
+const HOTSPOT_SESSION_REFRESH_CODES = new Set(["wifi_session_restarted", "wifi_session_changed"])
+
+/**
+ * Let the restarted ASG command path settle before re-sending.
+ *
+ * `handleSetHotspotState` returns false when its network manager is not up yet, which drops the
+ * command silently, so an immediate re-send would just race the same initialization. Mirrors the
+ * retry spacing `disableHotspotWithRetry` uses for the sibling ASG-replacement case.
+ */
+const HOTSPOT_SESSION_RETRY_DELAY_MS = 500
 
 /** Reject with [reason] if [work] has not settled in [ms]. The work itself is not cancellable. */
 function withTimeout<T>(work: Promise<T>, ms: number, reason: string): Promise<T> {
@@ -553,8 +588,6 @@ class LocalMiniappRuntime {
    */
   public onLivenessTimeout: ((packageName: string) => void) | null = null
 
-  /** Pending cloud requests: requestId → packageName that originated the request. */
-  private pendingCloudRequests: Map<string, {packageName: string; envelopeRequestId?: string}> = new Map()
   private speechRuns = new Map<string, SpeechRun>()
 
   // Browser fallback token auth — HMAC-signed blob with a phone-local
@@ -757,90 +790,6 @@ class LocalMiniappRuntime {
     this.initialized = true
     console.log(`${LOG_TAG}: initialize()`)
     this.ensurePingLoop()
-  }
-
-  /**
-   * Handle an incoming cloud message forwarded by SocketComms
-   * (phone_stream_status, phone_managed_stream_status).
-   *
-   * Routes the response back to the originating miniapp via the requestId
-   * that was stored when the miniapp first made the request.
-   */
-  public handleCloudMessage(msg: any): void {
-    const requestId = msg.requestId as string | undefined
-    const msgType = msg.type as string
-
-    console.log(`${LOG_TAG}: Cloud message: ${msgType}, requestId=${requestId ?? "none"}`)
-
-    if (!requestId) {
-      console.warn(`${LOG_TAG}: Cloud message ${msgType} has no requestId, cannot route`)
-      return
-    }
-
-    const pending = this.pendingCloudRequests.get(requestId)
-    if (!pending) {
-      console.warn(`${LOG_TAG}: No pending request for requestId=${requestId}`)
-      return
-    }
-
-    this.pendingCloudRequests.delete(requestId)
-
-    switch (msgType) {
-      case "phone_stream_status": {
-        // Unreachable for phone-orchestrated streams (the coordinator owns
-        // their lifecycle and never registers a pending cloud request).
-        // Retained as a safety net for any legacy registration path.
-        this.sendToMiniapp(pending.packageName, {
-          type: MiniappResponseType.EVENT,
-          streamType: "stream_status",
-          data: {
-            streamId: msg.streamId,
-            status: msg.status,
-            errorDetails: msg.errorDetails,
-          },
-        })
-        // Re-register for ongoing status updates (streams send multiple status messages)
-        this.pendingCloudRequests.set(requestId, pending)
-        break
-      }
-
-      case "phone_managed_stream_status": {
-        if (msg.status === "connected" || msg.status === "active") {
-          // Managed stream is ready — send back the playback URLs as the request result
-          this.sendResult(pending.packageName, pending.envelopeRequestId, true, {
-            streamId: msg.streamId,
-            hlsUrl: msg.hlsUrl,
-            dashUrl: msg.dashUrl,
-            webrtcUrl: msg.webrtcUrl,
-          })
-        }
-        // Forward all statuses as events too
-        this.sendToMiniapp(pending.packageName, {
-          type: MiniappResponseType.EVENT,
-          streamType: "stream_status",
-          data: {
-            streamId: msg.streamId,
-            status: msg.status,
-            hlsUrl: msg.hlsUrl,
-            dashUrl: msg.dashUrl,
-            webrtcUrl: msg.webrtcUrl,
-          },
-        })
-        // Re-register for ongoing updates
-        this.pendingCloudRequests.set(requestId, pending)
-        break
-      }
-
-      default:
-        console.warn(`${LOG_TAG}: Unknown cloud message type: ${msgType}`)
-    }
-  }
-
-  /**
-   * Register a pending cloud request so we can route the response back.
-   */
-  public registerPendingCloudRequest(requestId: string, packageName: string, envelopeRequestId?: string): void {
-    this.pendingCloudRequests.set(requestId, {packageName, envelopeRequestId})
   }
 
   // ===========================================================================
@@ -1112,13 +1061,6 @@ class LocalMiniappRuntime {
     // field is enough.
     app.requestedLocationRate = null
     this.recomputeLocationTier()
-
-    // Clean up any pending cloud requests from this app
-    for (const [reqId, pending] of this.pendingCloudRequests) {
-      if (pending.packageName === packageName) {
-        this.pendingCloudRequests.delete(reqId)
-      }
-    }
 
     // Release any display real estate this app held — if it owned the
     // current on-glasses frame, this clears the glasses (or restores the
@@ -3608,10 +3550,10 @@ class LocalMiniappRuntime {
   }
 
   /**
-   * Stream handlers — dispatched to the engine PhoneStreamCoordinator. For managed
-   * streams the coordinator additionally calls the v2 client REST route to
-   * provision Cloudflare. Cloud-SDK apps (third-party developers) use a
-   * separate cloud-side path that does not pass through here.
+   * Stream handlers — dispatched to PhoneStreamCoordinator on the phone.
+   * Managed streams also use Cloud V2 REST calls to provision resources,
+   * poll ingest status, and tear down the managed stream. Miniapp JavaScript
+   * runs locally in the Mentra App.
    */
   private async handleStreamStart(
     packageName: string,
@@ -3747,6 +3689,7 @@ class LocalMiniappRuntime {
       this.sendToMiniapp(owner, {
         type: MiniappResponseType.MEETING_STATE,
         ...state,
+        ...this.softapRecoveryFields(attempt?.packageName === owner ? attempt : null),
       })
       if (attempt?.ownsResources && attempt.transport?.shouldRepublish(state.mediaSource)) {
         void attempt.transport.republish(state.mediaSourceReason ?? "mediaSource failed")
@@ -3958,8 +3901,12 @@ class LocalMiniappRuntime {
         phase: "starting",
         steps: SOFTAP_STEPS.map((step) => ({step, status: "pending" as const})),
         elapsedMs: 0,
+        mediaGeneration: 0,
       },
       scopedLostUnsub: null,
+      recovery: null,
+      recoveryActive: false,
+      recoveryDeadlineAt: null,
       body: null,
       teardown: null,
       settled,
@@ -4025,7 +3972,25 @@ class LocalMiniappRuntime {
       // join *is* in progress, and `idle` would make the miniapp think the call ended.
       state: current.state === "idle" ? "connecting" : current.state,
       softap: progress,
+      ...this.softapRecoveryFields(attempt),
     })
+  }
+
+  private softapRecoveryFields(attempt: SoftapAttempt | null | undefined): {recovery?: {
+    active: boolean
+    generation?: number
+    deadlineAt?: number
+    phase?: string
+  }} {
+    if (!attempt?.recoveryDeadlineAt) return {}
+    return {
+      recovery: {
+        active: attempt.recoveryActive,
+        generation: attempt.transport?.currentMediaGeneration(),
+        deadlineAt: attempt.recoveryDeadlineAt,
+        phase: attempt.transport?.currentPhase(),
+      },
+    }
   }
 
   /**
@@ -4071,10 +4036,12 @@ class LocalMiniappRuntime {
     this.checkpointSoftapAttempt(attempt, "cleanup barrier")
     const cleanupError = this.softapCleanupError
     if (cleanupError) {
-      // Report once, allowing a retry after the wearer power-cycles the glasses.
+      // Cleared on read, so this refuses at most once and the next attempt always gets through —
+      // which is why the wearer is told to retry rather than to go power-cycle anything. The
+      // native reason stays in the trace: it names a leaked port, not something they can act on.
       this.softapCleanupError = null
       softapTraceFailure("softap_join_refused", {packageName, reason: cleanupError})
-      throw new Error(`Previous call cleanup failed: ${cleanupError}. Power-cycle the glasses hotspot and try again.`)
+      throw new Error("Previous call cleanup has not finished yet. Please try joining again.")
     }
     attempt.releaseHotspot = acquireGlassesHotspot()
     attempt.ownsResources = true
@@ -4104,7 +4071,8 @@ class LocalMiniappRuntime {
         token: args.token,
         displayName: args.displayName,
         video: args.video,
-        awaitFirstFrame: () => acsMeetingService.waitForFirstFrame(SOFTAP_FIRST_FRAME_MS),
+        awaitFirstFrame: (_report, options) =>
+          acsMeetingService.waitForFirstFrame(SOFTAP_FIRST_FRAME_MS, options),
         waitUntilLive: (timeoutMs) => acsMeetingService.waitUntilMediaLive(timeoutMs),
         subsystems: {
           setHotspotState: async (enabled) => {
@@ -4170,6 +4138,14 @@ class LocalMiniappRuntime {
           glassesLc3Uplink: () => acsMeetingService.glassesLc3UplinkActive(),
           startPublishing: (pkg, options) => phoneStreamCoordinator.startUnmanaged(pkg, options),
           stopPublishing: (pkg) => phoneStreamCoordinator.stop(pkg),
+          discardPendingBleStop: () => phoneStreamCoordinator.discardPendingBleStop(),
+          rebindIngest: async (report) => {
+            report?.("Rebinding the glasses video receiver on the hotspot")
+            const ingestUrl = await acsMeetingService.rebindSoftApIngest()
+            if (!ingestUrl) throw new Error("the rebound meeting reported no ingest URL")
+            report?.(`Receiver rebound at ${ingestUrl}`)
+            return {ingestUrl}
+          },
         },
       }),
     )
@@ -4202,14 +4178,7 @@ class LocalMiniappRuntime {
         reason: error.message,
         attemptAgeMs: Date.now() - attempt.startedAt,
       })
-      const current = acsMeetingService.getState()
-      this.sendToMiniapp(packageName, {
-        type: MiniappResponseType.MEETING_STATE,
-        ...current,
-        state: "error",
-        error: `SOFTAP_NETWORK_LOST: ${error.message}`,
-        softap: transport.progress(),
-      })
+      this.beginSoftapRecovery(attempt, transport, error)
     })
 
     // Sign in on the phone's current internet *before* the glasses hotspot takes DNS. On device,
@@ -4247,6 +4216,163 @@ class LocalMiniappRuntime {
       attemptAgeMs: Date.now() - attempt.startedAt,
     })
     return state
+  }
+
+  /**
+   * SoftAP loss is a media outage. Keep ACS, destroy generation N, wait for the glasses,
+   * then build generation N+1. Duplicate losses do not renew the deadline.
+   */
+  private beginSoftapRecovery(
+    attempt: SoftapAttempt,
+    transport: SoftapCallTransport,
+    error: {code: string; message: string},
+  ): void {
+    // Gate on the live flag, not the promise: a settled Promise is still truthy, so a second
+    // walk-away after a successful re-arm was dropped as "in-flight" and the glasses kept
+    // POSTing WHIP at a hotspot the phone had already left.
+    if (attempt.recoveryActive) {
+      softapTrace("softap_recovery_dropped", {attempt: attempt.id, cause: "in-flight"})
+      return
+    }
+    if (attempt.cancelled || this.softapAttempt !== attempt) {
+      softapTrace("softap_recovery_dropped", {
+        attempt: attempt.id,
+        cause: attempt.cancelled ? "retired" : "superseded",
+      })
+      return
+    }
+    const lostAt = Date.now()
+    attempt.recoveryDeadlineAt = lostAt + RETURN_DEADLINE_MS
+    attempt.recoveryActive = true
+    this.emitSoftapProgress(attempt, transport.progress())
+    softapTrace("softap_recovery_begin", {
+      attempt: attempt.id,
+      deadlineAt: attempt.recoveryDeadlineAt,
+      mediaGeneration: transport.currentMediaGeneration(),
+      reason: error.message,
+    })
+
+    let run!: Promise<void>
+    run = (async () => {
+      try {
+        await transport.recover(`${error.code}: ${error.message}`, {
+          wait: async () => {
+            const remaining = (attempt.recoveryDeadlineAt ?? 0) - Date.now()
+            if (remaining <= 0) {
+              throw new SoftapCallError("hotspot", "RETURN_DEADLINE", "The glasses did not return in time")
+            }
+            const ready = await this.waitForGlassesReturn(remaining, () => attempt.cancelled)
+            if (attempt.cancelled || this.softapAttempt !== attempt) {
+              throw new SoftapCallError("hotspot", "CANCELLED", "SoftAP recovery was cancelled")
+            }
+            if (!ready) {
+              throw new SoftapCallError("hotspot", "RETURN_DEADLINE", "The glasses did not return in time")
+            }
+          },
+        })
+        if (attempt.cancelled || this.softapAttempt !== attempt) return
+        this.emitSoftapProgress(attempt, transport.progress())
+        const current = acsMeetingService.getState()
+        this.sendToMiniapp(attempt.packageName, {
+          type: MiniappResponseType.MEETING_STATE,
+          ...current,
+          softap: transport.progress(),
+          ...this.softapRecoveryFields(attempt),
+        })
+        softapTrace("softap_recovery_live", {
+          attempt: attempt.id,
+          mediaGeneration: transport.currentMediaGeneration(),
+          elapsedMs: Date.now() - lostAt,
+        })
+      } catch (recoveryError) {
+        if (attempt.cancelled || this.softapAttempt !== attempt) return
+        const message = recoveryError instanceof Error ? recoveryError.message : String(recoveryError)
+        softapTraceFailure("softap_recovery_failed", {
+          attempt: attempt.id,
+          reason: message,
+          elapsedMs: Date.now() - lostAt,
+        })
+        const current = acsMeetingService.getState()
+        this.sendToMiniapp(attempt.packageName, {
+          type: MiniappResponseType.MEETING_STATE,
+          ...current,
+          state: "error",
+          error: `SOFTAP_NETWORK_LOST: ${error.message}`,
+          softap: transport.progress(),
+          recovery: {
+            active: false,
+            generation: transport.currentMediaGeneration(),
+            deadlineAt: attempt.recoveryDeadlineAt ?? undefined,
+            phase: transport.currentPhase(),
+          },
+        })
+      } finally {
+        attempt.recoveryActive = false
+        if (attempt.recovery === run) attempt.recovery = null
+      }
+    })()
+    attempt.recovery = run
+  }
+
+  /**
+   * Wait for a link the hotspot commands can actually use.
+   *
+   * The hotspot goes away a couple of seconds before the phone declares the BLE link dead, so the
+   * snapshot at loss time still reads "ready". Taking that at face value sent `set_hotspot_state`
+   * into a dying link twice, and each one burned its full timeout before the wearer was even back.
+   * Requiring the link to hold steady turns that into waiting, which is what the budget is for.
+   */
+  private async waitForGlassesReturn(timeoutMs: number, cancelled: () => boolean): Promise<boolean> {
+    const deadlineAt = Date.now() + timeoutMs
+    while (!cancelled()) {
+      const remaining = deadlineAt - Date.now()
+      if (remaining <= 0) return false
+      if (!isGlassesReady(useGlassesStore.getState().connection) && !(await this.awaitGlassesReady(remaining, cancelled))) {
+        return false
+      }
+      const settleMs = Math.min(GLASSES_LINK_SETTLE_MS, Math.max(0, deadlineAt - Date.now()))
+      if (await this.glassesLinkHoldsSteady(settleMs, cancelled)) return true
+    }
+    return false
+  }
+
+  private awaitGlassesReady(timeoutMs: number, cancelled: () => boolean): Promise<boolean> {
+    const controller = new AbortController()
+    const poll = setInterval(() => {
+      if (cancelled()) controller.abort()
+    }, 250)
+    return waitForGlassesReady({
+      getConnection: () => useGlassesStore.getState().connection,
+      subscribe: (listener) => useGlassesStore.subscribe((state) => state.connection, listener),
+      timeoutMs,
+      signal: controller.signal,
+    }).finally(() => clearInterval(poll))
+  }
+
+  /** True when the link stays ready for [ms]; false the moment it drops again. */
+  private glassesLinkHoldsSteady(ms: number, cancelled: () => boolean): Promise<boolean> {
+    if (ms <= 0) return Promise.resolve(isGlassesReady(useGlassesStore.getState().connection))
+    return new Promise<boolean>((resolve) => {
+      let done = false
+      const settle = (steady: boolean) => {
+        if (done) return
+        done = true
+        clearTimeout(timer)
+        clearInterval(poll)
+        unsubscribe()
+        resolve(steady)
+      }
+      const unsubscribe = useGlassesStore.subscribe(
+        (state) => state.connection,
+        (connection) => {
+          if (!isGlassesReady(connection)) settle(false)
+        },
+      )
+      const poll = setInterval(() => {
+        if (cancelled()) settle(false)
+      }, 250)
+      const timer = setTimeout(() => settle(true), ms)
+    })
   }
 
   /**
@@ -4291,7 +4417,11 @@ class LocalMiniappRuntime {
           afterMs: SOFTAP_CLEANUP_STALL_LOG_MS,
         })
       }, SOFTAP_CLEANUP_STALL_LOG_MS)
-      void Promise.allSettled([attempt.teardown, attempt.body ?? Promise.resolve()]).then(() => {
+      void Promise.allSettled([
+        attempt.teardown,
+        attempt.body ?? Promise.resolve(),
+        attempt.recovery ?? Promise.resolve(),
+      ]).then(() => {
         clearTimeout(stallWatchdog)
         attempt.markSettled()
         if (this.softapAttempt === attempt) this.softapAttempt = null
@@ -4375,7 +4505,16 @@ class LocalMiniappRuntime {
       // so this is the caller's business, not a reason to block the next call.
       endFailure = await releaseStep("transport.stop", () => transport.stop(mode ? {mode} : {}))
       const undoFailures = transport.lastTeardownFailures()
-      if (undoFailures.length > 0) failures.push(`could not release ${undoFailures.join(", ")}`)
+      // A hotspot that did not ACK off is leftover ON — the next join wants it on and will
+      // call setHotspotState(true). Refusing that join is how we got hotspot_off_ack_timeout
+      // as a wearer-facing "power-cycle the glasses" dead end.
+      const blockingUndos = undoFailures.filter((step) => step !== "hotspot")
+      if (blockingUndos.length > 0) failures.push(`could not release ${blockingUndos.join(", ")}`)
+      if (undoFailures.includes("hotspot")) {
+        console.warn("[LocalMiniappRuntime] glasses hotspot undo timed out; next join will raise it again", {
+          attempt: attempt.id,
+        })
+      }
     }
     const scopedFailure = await releaseStep("leaveScopedNetwork", () => acsMeetingService.leaveScopedNetwork())
     if (scopedFailure) {
@@ -4477,11 +4616,30 @@ class LocalMiniappRuntime {
     if (endFailure) throw endFailure
   }
 
+  /**
+   * Send one hotspot command, re-sending it once if a session refresh cancelled it.
+   *
+   * The retry lives inside the unit chained onto [glassesHotspotCommand] rather than around it,
+   * which is what holds the invariant: one logical hotspot operation issues at most two native
+   * commands, and no later operation runs between them. A retry outside the queue would let an
+   * `on` land between the two halves of an `off` and leave the glasses in the opposite state.
+   *
+   * Re-sending is free because ASG compares against current state first and answers a same-state
+   * command with its current status instead of cycling the AP.
+   */
   private setGlassesHotspotState(enabled: boolean) {
-    const run = this.glassesHotspotCommand.then(
-      () => BluetoothSdk.setHotspotState(enabled),
-      () => BluetoothSdk.setHotspotState(enabled),
-    )
+    const send = async () => {
+      try {
+        return await BluetoothSdk.setHotspotState(enabled)
+      } catch (error) {
+        const code = (error as {code?: string} | null | undefined)?.code
+        if (!code || !HOTSPOT_SESSION_REFRESH_CODES.has(code)) throw error
+        softapTrace("softap_hotspot_session_retry", {enabled, code})
+        await new Promise<void>((resolve) => setTimeout(resolve, HOTSPOT_SESSION_RETRY_DELAY_MS))
+        return await BluetoothSdk.setHotspotState(enabled)
+      }
+    }
+    const run = this.glassesHotspotCommand.then(send, send)
     this.glassesHotspotCommand = run.then(
       () => undefined,
       () => undefined,
@@ -4499,9 +4657,9 @@ class LocalMiniappRuntime {
    * failure — the listener was still inside its 3s tombstone and the glasses AP was still up.
    *
    * A bound that expires is not success. It means the resource is still held by a call nobody is
-   * in any more, so it is taken by force and re-verified. Only if *that* fails does the next join
-   * get refused, which is a worse outcome than a slow teardown and a better one than two calls
-   * sharing a port.
+   * in any more, so it is taken by force and re-verified. An ingest port that is still held
+   * refuses the next join. A glasses hotspot that missed its off-ack does not — the next join
+   * wants the AP up and will raise it again.
    *
    * @returns failures to record; a non-empty list refuses the next join.
    */
@@ -4594,9 +4752,17 @@ class LocalMiniappRuntime {
           SOFTAP_HOTSPOT_OFF_ACK_MS,
           "hotspot_off_ack_timeout",
         )
-        if (status.state !== "disabled") failures.push(`the glasses hotspot is still ${status.state}`)
+        if (status.state !== "disabled") {
+          console.warn("[LocalMiniappRuntime] glasses hotspot still reported after disable; next join will raise it", {
+            attempt: attempt.id,
+            state: status.state,
+          })
+        }
       } catch (error) {
-        failures.push(`glasses hotspot off: ${error instanceof Error ? error.message : String(error)}`)
+        console.warn("[LocalMiniappRuntime] glasses hotspot off ack missed; next join will raise it", {
+          attempt: attempt.id,
+          reason: error instanceof Error ? error.message : String(error),
+        })
       }
     }
     softapTrace("softap_teardown_forced_done", {
@@ -5128,11 +5294,11 @@ class LocalMiniappRuntime {
    * Forward a streamed event to all miniapps subscribed to the given stream.
    *
    * Event name translation:
-   * - Cloud sends "head_up" → miniapp protocol uses "head_position" (HEAD_POSITION)
-   * - Cloud sends "VAD" (uppercase) → miniapp protocol uses "vad" (lowercase)
+   * - Incoming "head_up" → miniapp protocol uses "head_position" (HEAD_POSITION)
+   * - Incoming "VAD" (uppercase) → miniapp protocol uses "vad" (lowercase)
    */
   public forwardEvent(streamType: string, data: unknown, transcriptionSource?: TranscriptionEventSource): void {
-    // Translate cloud event names to miniapp protocol stream types
+    // Normalize incoming event names to miniapp protocol stream types
     const normalizedStream = this.normalizeStreamType(streamType)
 
     // Collect all subscribers: exact match, plus wildcard matches for streams
@@ -5291,10 +5457,10 @@ class LocalMiniappRuntime {
   }
 
   /**
-   * Translate cloud event names to miniapp stream type values.
+   * Normalize incoming event names to miniapp stream type values.
    */
   private normalizeStreamType(cloudEventName: string): string {
-    // Cloud / Bluetooth SDK → miniapp protocol translations.
+    // Incoming event names → miniapp protocol translations.
     // Bluetooth SDK event names don't always match the miniapp wire values.
     switch (cloudEventName) {
       case "head_up":
@@ -5859,13 +6025,20 @@ class LocalMiniappRuntime {
     const toRemove: string[] = []
 
     for (const [packageName, app] of this.connectedApps) {
-      const liveness = advanceMiniappPingLiveness(app.unansweredPingRounds, PING_TIMEOUT_THRESHOLD)
-      if (liveness.shouldUnregister) {
-        console.warn(`${LOG_TAG}: ${packageName} missed ${PING_TIMEOUT_THRESHOLD} pings, unregistering`)
-        toRemove.push(packageName)
-        continue
+      const holdPingLiveness = shouldHoldMiniappPingLiveness({
+        packageName,
+        softapPackageName: this.softapAttempt?.packageName,
+        softapCancelled: this.softapAttempt?.cancelled,
+      })
+      if (!holdPingLiveness) {
+        const liveness = advanceMiniappPingLiveness(app.unansweredPingRounds, PING_TIMEOUT_THRESHOLD)
+        if (liveness.shouldUnregister) {
+          console.warn(`${LOG_TAG}: ${packageName} missed ${PING_TIMEOUT_THRESHOLD} pings, unregistering`)
+          toRemove.push(packageName)
+          continue
+        }
+        app.unansweredPingRounds = liveness.unansweredPingRounds
       }
-      app.unansweredPingRounds = liveness.unansweredPingRounds
 
       // Send PING — SDK auto-replies with PONG
       this.sendToMiniapp(packageName, {
@@ -5916,7 +6089,6 @@ class LocalMiniappRuntime {
     }
 
     // Belt-and-suspenders: clear any remaining state
-    this.pendingCloudRequests.clear()
     const hadButtonPressSubscribers = this.getButtonPressSubscribers().length > 0
     this.streamSubscribers.clear()
     if (hadButtonPressSubscribers) {

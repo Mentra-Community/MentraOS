@@ -61,6 +61,7 @@ import {
 } from "../BluetoothSdk.types"
 import {warmUpCameraParamsForNative} from "./cameraRequestPayload"
 import {photoRequestParamsForNative} from "./photoRequestPayload"
+import {streamRequestParamsForNative} from "./streamRequestPayload"
 
 /**
  * Private React Native native-module facade.
@@ -667,6 +668,14 @@ NativeBluetoothSdkModule.requestPhoto = function (params: PhotoRequestParams) {
 const nativeWarmUpCamera = NativeBluetoothSdkModule.warmUpCamera.bind(NativeBluetoothSdkModule)
 NativeBluetoothSdkModule.warmUpCamera = function (params: WarmUpCameraParams) {
   return nativeWarmUpCamera(warmUpCameraParamsForNative(params) as unknown as WarmUpCameraParams)
+}
+
+const nativeStartStream = bindNativeMethod<(params: StreamStartRequest) => Promise<StreamStatusEvent>>(
+  NativeBluetoothSdkModule as unknown as Record<string, unknown>,
+  "startStream",
+)
+NativeBluetoothSdkModule.startStream = function (params: StreamStartRequest) {
+  return nativeStartStream(streamRequestParamsForNative(params) as unknown as StreamStartRequest)
 }
 
 export default NativeBluetoothSdkModule

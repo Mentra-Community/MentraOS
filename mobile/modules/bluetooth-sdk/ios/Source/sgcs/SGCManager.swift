@@ -66,6 +66,8 @@ protocol SGCManager {
     func requestPhoto(_ request: PhotoRequest)
     func startStream(_ message: [String: Any])
     func stopStream()
+    /// Re-advertise glasses-owned stream control after the phone SDK remounts.
+    func replayStreamControlReady()
     func sendStreamKeepAlive(_ message: [String: Any])
     func startVideoRecording(requestId: String, save: Bool, sound: Bool)
     func queryVideoRecordingStatus(requestId: String)
@@ -237,6 +239,8 @@ extension SGCManager {
     var isMicSuspendedForAudio: Bool {
         false
     }
+
+    func replayStreamControlReady() {}
 
     @discardableResult func requestSavedWifiNetworks(requestId _: String, sid _: String) -> Bool {
         false

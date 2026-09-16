@@ -793,6 +793,25 @@ test("recognizes the exact build after App Store submission", async () => {
   assert.doesNotMatch(api.calls[0].resource, /filter%5Bapp%5D/)
 })
 
+test("reports an editable version attached to an earlier build as not yet promoted", async () => {
+  const api = client([
+    {data: [{id: "version-1", attributes: {appStoreState: "REJECTED"}}]},
+    {data: {type: "builds", id: "build-old"}},
+  ])
+  const status = await productionSubmissionStatus(api, {appId: "app-1", versionString: "3.1.1", buildId: "build-new"})
+  assert.equal(status.promoted, false)
+  assert.equal(status.state, "REJECTED")
+  assert.equal(status.attachedBuildId, "build-old")
+  const submitted = client([
+    {data: [{id: "version-1", attributes: {appStoreState: "IN_REVIEW"}}]},
+    {data: {type: "builds", id: "build-old"}},
+  ])
+  await assert.rejects(
+    productionSubmissionStatus(submitted, {appId: "app-1", versionString: "3.1.1", buildId: "build-new"}),
+    /attached to build build-old, not build-new/,
+  )
+})
+
 test("recognizes a build that App Store Connect is processing for distribution", async () => {
   const api = client([
     {data: [{id: "version-1", attributes: {appStoreState: "PROCESSING_FOR_DISTRIBUTION"}}]},

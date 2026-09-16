@@ -760,6 +760,8 @@ export type StreamStartRequest = {
    * TEMPORARY: part of the SoftAP diagnostic trace layer.
    */
   traceId?: string
+  authToken?: string
+  telemetry?: boolean
 }
 
 export type StreamKeepAliveRequest = {

@@ -343,10 +343,11 @@ export async function dev(options: DevOptions = {}): Promise<void> {
   const qrOutputPath = resolve(options.qrOutput ?? defaultQrPath);
   const cleanupQrOnExit = !options.qrOutput;
 
-  const emitQR = async (url: string): Promise<void> => {
+  const emitQR = async (url: string, host: string): Promise<void> => {
     await printQR(url);
     const wrote = await writeQRPng(url, qrOutputPath);
-    console.log(`\n${url}`);
+    console.log(`\nDev server URL: http://${host}:${port}`);
+    console.log(`${url}`);
     if (wrote) {
       console.log(`PNG QR: ${qrOutputPath}\n`);
     } else {
@@ -363,7 +364,7 @@ export async function dev(options: DevOptions = {}): Promise<void> {
   // tunnel came up.
   const devHost = usbActive ? USB_LOOPBACK_HOST : lanIp!;
   const devUrl = await buildDevUrl(devHost);
-  await emitQR(devUrl);
+  await emitQR(devUrl, devHost);
 
   // Confirm the reverse mappings survive. They are dropped on unplug, on
   // `adb kill-server`, and on device reboot, and nothing notifies us — the
@@ -419,7 +420,7 @@ export async function dev(options: DevOptions = {}): Promise<void> {
           console.log(`mDNS: ${mdnsHost}\n`);
         }
         const newDevUrl = await buildDevUrl(newIp);
-        await emitQR(newDevUrl);
+        await emitQR(newDevUrl, newIp);
       } finally {
         ipCheckInFlight = false;
       }

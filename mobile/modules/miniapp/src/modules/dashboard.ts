@@ -1,9 +1,9 @@
 /**
- * @fileoverview DashboardAPI — noop surface in v1.
+ * @fileoverview DashboardAPI — deferred dashboard rendering surface.
  *
- * The cloud DashboardManager owns widget rendering in OS-ranked
- * rotation. Keeping the API shape so miniapps compile, but calls are
- * noop + console.warn.
+ * setContent warns once per instance and sends a fire-and-forget message.
+ * The local runtime does not implement dashboard rendering. It sends no reply
+ * without a request ID; requests with an ID receive NOT_IMPLEMENTED.
  */
 
 import {MiniappRequestType} from "../protocol"
@@ -21,7 +21,7 @@ export class DashboardAPI {
       console.warn("[@mentra/miniapp] dashboard.setContent() is deferred in v1.")
       this.warned = true
     }
-    // Still forward so the phone can log/ignore consistently.
+    // No request ID: the runtime ignores this update without sending a result.
     this.session.sendOneShot({
       type: MiniappRequestType.DASHBOARD_CONTENT_UPDATE,
       mode,

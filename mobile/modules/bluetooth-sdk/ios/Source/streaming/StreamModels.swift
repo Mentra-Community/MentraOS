@@ -330,6 +330,7 @@ public struct StreamRequest {
     /// Correlation id the glasses echo in every SOFTAP_TRACE line, so phone and glasses logs can
     /// be joined despite unsynchronised clocks.
     public let traceId: String?
+    public let telemetry: Bool?
 
     public init(
         streamUrl: String,
@@ -340,7 +341,8 @@ public struct StreamRequest {
         authToken: String? = nil,
         captureAudio: Bool = true,
         ice: StreamIceConfig? = nil,
-        traceId: String? = nil
+        traceId: String? = nil,
+        telemetry: Bool? = nil
     ) {
         self.streamUrl = streamUrl
         self.streamId = streamId
@@ -351,9 +353,19 @@ public struct StreamRequest {
         self.captureAudio = captureAudio
         self.ice = ice
         self.traceId = traceId
+        self.telemetry = telemetry
     }
 
     init(values: [String: Any]) {
+        let telemetryValue: Bool?
+        if let telemetry = values["telemetry"] as? Bool {
+            telemetryValue = telemetry
+        } else if let tl = values["tl"] as? Bool {
+            telemetryValue = tl
+        } else {
+            telemetryValue = nil
+        }
+
         self.init(
             streamUrl: values["streamUrl"] as? String
                 ?? values["rtmpUrl"] as? String
@@ -369,7 +381,8 @@ public struct StreamRequest {
             ice: StreamIceConfig(
                 values: (values["ice"] as? [String: Any]) ?? (values["i"] as? [String: Any])
             ),
-            traceId: values["traceId"] as? String
+            traceId: values["traceId"] as? String,
+            telemetry: telemetryValue
         )
     }
 
@@ -396,6 +409,9 @@ public struct StreamRequest {
         }
         if let traceId, !traceId.isEmpty {
             values["traceId"] = traceId
+        }
+        if let telemetry {
+            values["telemetry"] = telemetry
         }
         return values
     }

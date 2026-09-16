@@ -748,6 +748,58 @@ class AcsMeetingSession(
   fun softApIngestUrl(): String? = media.ingestUrl
 
   /**
+   * Destroy the current SoftAP listener generation and bind a new one on the address the
+   * scoped network reports *now* — the caller rejoins first, then asks for this.
+   *
+   * Blocks on [executor] so it cannot race [join] / [leaveLocked]. Returns the new ingest URL
+   * the glasses must be told; throws rather than hand back a stale listener.
+   */
+  fun rebindSoftApIngest(bindIngestUnpinned: (() -> Unit) -> Unit = { bind -> bind() }): String {
+    val done = CountDownLatch(1)
+    val result = AtomicReference<String?>(null)
+    val failure = AtomicReference<Exception?>(null)
+    val submittedAt = SystemClock.elapsedRealtime()
+    executor.execute {
+      try {
+        traceQueued("session_rebind_ingest_begin", submittedAt)
+        if (!MediaDiagnostics.SOFTAP_RECOVERY_ENABLED) {
+          throw IllegalStateException("SoftAP ingest rebind is disabled")
+        }
+        if (currentSourceKind != SourceKind.SOFTAP) {
+          throw IllegalStateException("rebindSoftApIngest is only valid for a SoftAP call")
+        }
+        val address = scopedNetwork?.localIpv4()
+          ?: throw IllegalStateException("scoped network has no IPv4 address after rejoin")
+        // Same pin-lift as [join]: a listener bound while this UID is marked cellular
+        // never receives the glasses' TCP SYN, even though ping/ARP succeed.
+        lateinit var url: String
+        bindIngestUnpinned {
+          url = media.rebindIngest(
+            SourceConfig("", SourceKind.SOFTAP, address),
+            REBIND_INGEST_CLOSE_MS,
+          )
+        }
+        SoftApTrace.stage("session_rebind_ingest_end", "url" to url)
+        result.set(url)
+      } catch (error: Exception) {
+        SoftApTrace.failure(
+          "session_rebind_ingest_failed",
+          "reason" to "${error.javaClass.simpleName}: ${error.message ?: ""}",
+        )
+        failure.set(error)
+      } finally {
+        done.countDown()
+      }
+    }
+    if (!done.await(REBIND_INGEST_CLOSE_MS + 8_000L, TimeUnit.MILLISECONDS)) {
+      SoftApTrace.failure("session_rebind_ingest_timeout", "timeoutMs" to (REBIND_INGEST_CLOSE_MS + 8_000L))
+      throw IllegalStateException("SoftAP ingest rebind timed out")
+    }
+    failure.get()?.let { throw it }
+    return result.get() ?: throw IllegalStateException("SoftAP ingest rebind returned no URL")
+  }
+
+  /**
    * Rebuild the WHEP subscription on the current URL even when it looks healthy.
    * The host calls this when the phone changed networks: ICE may not have noticed
    * yet, but the old candidate pair is dead.
@@ -2000,6 +2052,12 @@ class AcsMeetingSession(
 
     /** SoftAP join() blocks until the WHIP listener is bound and ACS join is queued. */
     private const val SOFTAP_JOIN_WAIT_MS = 45_000L
+
+    /**
+     * How long [rebindSoftApIngest] waits for the parked listener to release its port after a
+     * force-close. Not a tombstone: the old generation is closed immediately.
+     */
+    private const val REBIND_INGEST_CLOSE_MS = 2_000L
 
 
     /**

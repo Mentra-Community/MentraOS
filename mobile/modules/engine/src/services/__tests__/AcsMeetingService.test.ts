@@ -1545,6 +1545,46 @@ describe("waitForFirstFrame", () => {
 
     await expect(acsMeetingService.waitForFirstFrame(0)).resolves.toBeUndefined()
   })
+
+  test("invalidateDecodedMedia forces a wait for a new frame", async () => {
+    const native = await joinedNative()
+    native.emit("onState", {state: "connected", muted: false, mediaSource: "live"})
+    acsMeetingService.invalidateDecodedMedia()
+
+    let settled = false
+    const waiting = acsMeetingService.waitForFirstFrame(60_000).then(() => {
+      settled = true
+    })
+    await flush()
+    expect(settled).toBe(false)
+    native.emit("onState", {state: "connected", muted: false, mediaSource: "live"})
+    await waiting
+    expect(settled).toBe(true)
+  })
+
+  test("fresh waits even when the last verdict was live", async () => {
+    const native = await joinedNative()
+    native.emit("onState", {state: "connected", muted: false, mediaSource: "live"})
+    acsMeetingService.invalidateDecodedMedia()
+    let settled = false
+    const waiting = acsMeetingService.waitForFirstFrame(60_000, {fresh: true}).then(() => {
+      settled = true
+    })
+    await flush()
+    expect(settled).toBe(false)
+    native.emit("onState", {state: "connected", muted: false, mediaSource: "live"})
+    await waiting
+    expect(settled).toBe(true)
+  })
+
+  test("fresh accepts a frame that arrived after rebind, before the wait started", async () => {
+    const native = await joinedNative()
+    native.emit("onState", {state: "connected", muted: false, mediaSource: "live"})
+    acsMeetingService.invalidateDecodedMedia()
+    native.emit("onState", {state: "connected", muted: false, mediaSource: "live"})
+
+    await expect(acsMeetingService.waitForFirstFrame(10, {fresh: true})).resolves.toBeUndefined()
+  })
 })
 
 describe("waitUntilMediaLive", () => {

@@ -98,7 +98,10 @@ public class AsgConstants {
     /**
      * 1Hz encoder FPS/bitrate/dropped-frame telemetry ({@code [STREAM_QUALITY]} and BLE {@code
      * stream_status.stats}). Lifecycle {@code stream_status} (started/stopped/error) is unaffected.
-     * Keep false in production; flip locally to debug the Mentra Call FPS ladder.
+     * Build-time DEFAULT only: the live switch is {@link
+     * com.mentra.asg_client.io.streaming.StreamTelemetryPolicy}, which the phone flips per stream
+     * via {@code start_stream.telemetry} (compact {@code tl}). Keep false here; opt in from the
+     * phone when the temperature / FPS ladder is needed.
      *
      * <p>Double gate: reporters are not scheduled, and {@code onStreamMetrics} returns immediately
      * so accidental emission cannot reach BLE. Manual acceptance with every layer false: join

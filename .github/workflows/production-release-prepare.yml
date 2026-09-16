@@ -1,8 +1,15 @@
 name: Production Release - Prepare
+# The dispatch id, when the CLI passes one, lets it recognise the run its own
+# dispatch started among this workflow's runs.
+run-name: ${{ inputs.beta_identity }} ${{ inputs.dispatch_id && format('[{0}]', inputs.dispatch_id) || '' }}
 
 on:
   workflow_dispatch:
     inputs:
+      dispatch_id:
+        description: Correlation id chosen by the dispatching CLI; shown in the run name
+        required: false
+        type: string
       beta_identity:
         description: Completed coordinated beta to select, for example 3.1.0-beta.57
         required: true

@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import {execFileSync, spawnSync} from "node:child_process"
-import {createHash} from "node:crypto"
+import {createHash, randomUUID} from "node:crypto"
 import {copyFileSync, mkdtempSync, readFileSync, writeFileSync} from "node:fs"
 import {tmpdir} from "node:os"
 import path from "node:path"
@@ -45,7 +45,7 @@ export function parseCliArgs(argv) {
       continue
     }
     const key = item.slice(2)
-    if (new Set(["yes", "json", "refresh", "complete"]).has(key)) {
+    if (new Set(["yes", "json", "refresh", "complete", "merge-admin"]).has(key)) {
       options[key] = true
       continue
     }
@@ -61,8 +61,9 @@ function usage() {
   return `Usage: scripts/production-release.mjs <command> [options]
 
 Commands:
-  promote  --beta X.Y.Z-beta.N [--yes]
+  promote  --beta X.Y.Z-beta.N [--merge-admin] [--yes]
   start    --beta X.Y.Z-beta.N
+  resubmit --release X.Y.Z --beta X.Y.Z-beta.N --reason TEXT [--merge-admin] [--yes]
   status   --release X.Y.Z [--attempt N] [--refresh] [--json]
   next     --release X.Y.Z [--attempt N] [--yes]
   attest   --release X.Y.Z [--attempt N] --check NAME --evidence FILE [--yes]
@@ -73,6 +74,12 @@ Commands:
   packages --beta X.Y.Z-beta.N --phase publish|release [--yes]
   example  --beta X.Y.Z-beta.N [--yes]
   watch    --run RUN_ID
+
+resubmit answers a store rejection: it aborts the current attempt, promotes
+the corrected beta, starts the next attempt and runs it, waiting for every
+workflow, until the new candidates are uploaded; the compatibility gate's
+deferral is carried over, candidate acceptance is not. Run it from a clean
+staging checkout; rerun it to resume after an interruption.
 
 This CLI dispatches protected GitHub workflows. It never reads production
 credentials or directly calls Porter, App Store Connect, or Google Play.
@@ -274,7 +281,7 @@ function waitForPromotionGate(url, repository) {
   }
 }
 
-function promoteExactCommit({repository, sourceCommit, target, releaseIdentity, mergeBody}) {
+function promoteExactCommit({repository, sourceCommit, target, releaseIdentity, mergeBody, mergeAdmin = false}) {
   ensureCommitIsOnBranch(repository, sourceCommit, "staging")
   const relationship = requirePromotionRelationship(repository, target, sourceCommit)
   const {targetHead} = relationship
@@ -332,8 +339,14 @@ function promoteExactCommit({repository, sourceCommit, target, releaseIdentity, 
   }
   if (pull.state !== "OPEN") throw new Error(`${pull.url} is ${pull.state.toLowerCase()}`)
 
-  console.log(`Waiting for ${pull.url}`)
-  waitForPromotionGate(pull.url, repository)
+  if (mergeAdmin) {
+    // The exact-head merge with administrator rights: for when the gate cannot
+    // complete (starved self-hosted runners) and the beta itself is the proof.
+    console.log(`Merging ${pull.url} with administrator rights, without waiting for the gate`)
+  } else {
+    console.log(`Waiting for ${pull.url}`)
+    waitForPromotionGate(pull.url, repository)
+  }
   const currentTargetHead = branchHead(repository, target)
   if (currentTargetHead !== targetHead) {
     throw new Error(
@@ -341,6 +354,7 @@ function promoteExactCommit({repository, sourceCommit, target, releaseIdentity, 
     )
   }
   const mergeArgs = ["pr", "merge", pull.url, "--repo", repository, "--merge", "--match-head-commit", sourceCommit]
+  if (mergeAdmin) mergeArgs.push("--admin")
   if (mergeBody) mergeArgs.push("--body", mergeBody)
   execGh(mergeArgs)
   const merged = ghJson(["pr", "view", pull.url, "--repo", repository, "--json", "state,mergeCommit"])
@@ -435,6 +449,110 @@ function dispatch(workflow, fields) {
   if (result.trim()) process.stdout.write(result)
   console.log(`Dispatched ${workflow} from ${DEFAULT_REF}.`)
   console.log(`https://github.com/${REPOSITORY}/actions/workflows/${workflow}`)
+}
+
+const RUN_POLL_SECONDS = 30
+const RUN_TIMEOUT_SECONDS = 3 * 60 * 60
+
+function sleepSeconds(seconds) {
+  execFileSync("sleep", [String(seconds)])
+}
+
+// Dispatch a workflow and wait for the run it starts. gh does not return the
+// run id, so the newest dispatch of that workflow created after the call is
+// taken as the run; the CLI never dispatches the same workflow twice at once.
+// Every dispatch carries a fresh id that the workflow puts in its run name,
+// so the run this dispatch started is the one whose name carries the id.
+export function selectDispatchedRun(runs, dispatchId) {
+  const matches = runs.filter((run) => (run.displayTitle ?? "").includes(`[${dispatchId}]`))
+  if (matches.length > 1) {
+    throw new Error(`Dispatch ${dispatchId} matches more than one run: ${matches.map((run) => run.url).join(", ")}`)
+  }
+  return matches[0] ?? null
+}
+
+function dispatchAndWait(workflow, fields) {
+  const dispatchId = randomUUID()
+  dispatch(workflow, {...fields, dispatch_id: dispatchId})
+  let run = null
+  for (let attempt = 0; attempt < 24 && !run; attempt += 1) {
+    sleepSeconds(5)
+    const runs = ghJson([
+      "run",
+      "list",
+      "--repo",
+      REPOSITORY,
+      "--workflow",
+      workflow,
+      "--event",
+      "workflow_dispatch",
+      "--limit",
+      "20",
+      "--json",
+      "databaseId,createdAt,url,displayTitle",
+    ])
+    run = selectDispatchedRun(runs, dispatchId)
+  }
+  if (!run) throw new Error(`${workflow} did not start within two minutes of the dispatch`)
+  console.log(`Waiting for ${run.url}`)
+  const deadline = Date.now() + RUN_TIMEOUT_SECONDS * 1_000
+  for (;;) {
+    const current = ghJson(["run", "view", String(run.databaseId), "--repo", REPOSITORY, "--json", "status,conclusion"])
+    if (current.status === "completed") {
+      if (current.conclusion !== "success") throw new Error(`${run.url} finished with ${current.conclusion}`)
+      console.log(`${run.url} succeeded`)
+      return run
+    }
+    if (Date.now() > deadline) throw new Error(`${run.url} did not finish within ${RUN_TIMEOUT_SECONDS / 3600} hours`)
+    sleepSeconds(RUN_POLL_SECONDS)
+  }
+}
+
+// The states resubmit drives on its own. Everything from the uploaded
+// candidates on is a human decision, whatever the state machine's next action.
+const RESUBMIT_WORKFLOW_STATES = new Set(["staging-compatible", "production-config-ready", "current-clients-accepted"])
+
+// What resubmit does next, from the latest promotion record of the release
+// and the record of the attempt before it (null when there is none). Every
+// invocation decides from these two durable records, so a rerun resumes.
+export function resubmitStep({record, previous = null, betaIdentity, mainHasBeta}) {
+  if (record.state === "completed") throw new Error(`${record.promotionId} is completed; nothing to resubmit`)
+  if (record.state === "aborted") return mainHasBeta ? {kind: "start"} : {kind: "promote"}
+  if (record.selectedBeta.identity === betaIdentity) {
+    // The replacement attempt already exists: resume it.
+    if (RESUBMIT_WORKFLOW_STATES.has(record.state)) {
+      const action = nextAction(record)
+      return {kind: "workflow", workflow: action.workflow, phase: action.phase}
+    }
+    if (record.state === "cloud-deployed") {
+      const check = "production-mobile-n-compatibility"
+      if (previous?.state === "aborted" && deferredChecks(previous).includes(check)) return {kind: "defer", check}
+      return {
+        kind: "stop",
+        reason: `${check} was not deferred by attempt ${previous?.attempt ?? "?"}; attest or defer it`,
+      }
+    }
+    if (record.state === "selected") {
+      return {
+        kind: "stop",
+        reason: `attempt ${record.attempt} needs the staging compatibility lab or its attestation first`,
+      }
+    }
+    return {
+      kind: "stop",
+      reason: `attempt ${record.attempt} is at ${record.state}; from the uploaded candidates on, the steps are yours`,
+    }
+  }
+  // Another beta: only an attempt the stores rejected is abandoned here.
+  if (record.state === "stores-submitted") return {kind: "abort", attempt: record.attempt}
+  if (record.state === "finalizing") throw new Error("Cannot resubmit after the 100 percent rollout checkpoint")
+  throw new Error(
+    `Attempt ${record.attempt} selected ${record.selectedBeta.identity} and is at ${record.state}, not a store rejection; abort it explicitly or resubmit that beta`,
+  )
+}
+
+export function carriedDeferralReason(previous, check, reason) {
+  return `Carried from attempt ${previous.attempt} (${check} was deferred there) after a store rejection: ${reason}`
 }
 
 export function statusSummary(record) {
@@ -650,6 +768,109 @@ export function advanceConfirmationMessage(request) {
     : `This requests increasing the Android production rollout to ${request.androidPercent}%.`
 }
 
+function deferCheck({loaded, releaseIdentity, check, reason, wait}) {
+  const attestation = deferralAttestation({
+    record: loaded.record,
+    check,
+    reason,
+    githubLogin: ghJson(["api", "user"]).login,
+    performedAt: new Date().toISOString(),
+  })
+  validateAttestation(attestation, loaded.record, check)
+  const directory = mkdtempSync(path.join(tmpdir(), "mentra-production-deferral-"))
+  const evidenceFile = path.join(directory, `${check}-deferred.json`)
+  writeFileSync(evidenceFile, `${JSON.stringify(attestation, null, 2)}\n`)
+  const uploaded = uploadAttestation({release: loaded.release, record: loaded.record, check, evidenceFile})
+  const fields = {
+    release_identity: releaseIdentity,
+    attempt: loaded.record.attempt,
+    check,
+    evidence_asset: uploaded.name,
+    evidence_sha256: uploaded.sha256,
+  }
+  return wait
+    ? dispatchAndWait("production-release-attest.yml", fields)
+    : dispatch("production-release-attest.yml", fields)
+}
+
+// Store rejection: abort, promote the corrected beta, start the next attempt
+// and run it up to the uploaded candidates. Every step is decided from the
+// latest promotion record, so an interrupted resubmit resumes where it was.
+async function resubmit({releaseIdentity, betaIdentity, reason, mergeAdmin}) {
+  const sources = loadReleaseBranchSources(betaIdentity)
+  ensureCommitIsOnBranch(REPOSITORY, sources.mentraosCommit, "staging")
+  for (let step = 0; step < 12; step += 1) {
+    let loaded
+    try {
+      loaded = loadLatestRecord(releaseIdentity)
+    } catch (error) {
+      // prepare allocated the container and stopped before its first record:
+      // the prepare workflow resumes such a container.
+      if (!/has no state record/.test(error.message)) throw error
+      console.log(`resubmit: ${error.message}; resuming preparation`)
+      dispatchAndWait("production-release-prepare.yml", {beta_identity: betaIdentity})
+      continue
+    }
+    const previous =
+      loaded.record.attempt > 1 ? loadLatestRecord(releaseIdentity, loaded.record.attempt - 1).record : null
+    const mainHasBeta = requirePromotionRelationship(REPOSITORY, "main", sources.mentraosCommit).state === "complete"
+    const next = resubmitStep({record: loaded.record, previous, betaIdentity, mainHasBeta})
+    console.log(
+      `resubmit: ${next.kind}${next.workflow ? ` ${next.workflow} ${next.phase}` : ""}${next.check ? ` ${next.check}` : ""}`,
+    )
+    if (next.kind === "abort") {
+      requireCommandState("abort", loaded.record)
+      dispatchAndWait("production-release-abort.yml", {
+        release_identity: releaseIdentity,
+        attempt: loaded.record.attempt,
+        reason: `Store rejection of attempt ${loaded.record.attempt}; ${betaIdentity} carries the correction. ${reason}`,
+      })
+      continue
+    }
+    if (next.kind === "promote") {
+      promoteExactCommit({
+        repository: REPOSITORY,
+        sourceCommit: sources.mentraosCommit,
+        target: "main",
+        releaseIdentity: betaIdentity,
+        mergeAdmin,
+      })
+      continue
+    }
+    if (next.kind === "start") {
+      dispatchAndWait("production-release-prepare.yml", {beta_identity: betaIdentity})
+      continue
+    }
+    if (next.kind === "workflow") {
+      dispatchAndWait(next.workflow, {
+        release_identity: releaseIdentity,
+        attempt: loaded.record.attempt,
+        phase: next.phase,
+      })
+      continue
+    }
+    if (next.kind === "defer") {
+      deferCheck({
+        loaded,
+        releaseIdentity,
+        check: next.check,
+        reason: carriedDeferralReason(previous, next.check, reason),
+        wait: true,
+      })
+      continue
+    }
+    console.log(`resubmit stopped: ${next.reason}`)
+    printStatus(loadLatestRecord(releaseIdentity).record, false)
+    return
+  }
+  throw new Error("resubmit took more steps than a promotion has; inspect the promotion record")
+}
+
+// Commands that load the latest promotion record before they run. resubmit
+// is not one of them: it decides from the records itself and resumes a
+// container that has no record yet.
+export const RECORD_COMMANDS = Object.freeze(["status", "next", "attest", "defer", "release", "advance", "abort"])
+
 async function main(argv = process.argv.slice(2)) {
   const {command, options, positionals} = parseCliArgs(argv)
   if (!command || command === "help" || command === "--help" || positionals.length > 0) {
@@ -676,6 +897,7 @@ async function main(argv = process.argv.slice(2)) {
       sourceCommit: sources.mentraosCommit,
       target: "main",
       releaseIdentity: options.beta,
+      mergeAdmin: Boolean(options["merge-admin"]),
     })
     console.log(`Branch promotion for ${options.beta} is complete. Continue from a clean, up-to-date main checkout.`)
     return
@@ -705,6 +927,29 @@ async function main(argv = process.argv.slice(2)) {
       release: request.beta_identity.replace(/-beta\.\d+$/, ""),
     })
     dispatch("production-release-example.yml", request)
+    return
+  }
+
+  if (command === "resubmit") {
+    // Decided from the promotion records inside resubmit itself: a container
+    // prepare allocated without a state record is one of its resume cases.
+    const releaseIdentity = requireVersion(options.release)
+    if (!BETA_PATTERN.test(options.beta || "")) throw commandError("resubmit requires --beta X.Y.Z-beta.N")
+    if (!options.reason) throw commandError("resubmit requires --reason TEXT")
+    if (!options.beta.startsWith(`${releaseIdentity}-beta.`)) {
+      throw commandError(`${options.beta} is not a beta of ${releaseIdentity}`)
+    }
+    verifyCheckoutForPromotion()
+    await confirmEffect(
+      `This aborts the current ${releaseIdentity} attempt, promotes ${options.beta} to main, starts the next attempt and runs it until the new candidates are uploaded. It stops before candidate acceptance and store submission.`,
+      {...options, release: releaseIdentity},
+    )
+    await resubmit({
+      releaseIdentity,
+      betaIdentity: options.beta,
+      reason: options.reason,
+      mergeAdmin: Boolean(options["merge-admin"]),
+    })
     return
   }
 
@@ -781,34 +1026,11 @@ async function main(argv = process.argv.slice(2)) {
     if (!options.check) throw commandError("defer requires --check NAME")
     if (!options.reason) throw commandError("defer requires --reason TEXT")
     requireCommandState(command, loaded.record, options)
-    const attestation = deferralAttestation({
-      record: loaded.record,
-      check: options.check,
-      reason: options.reason,
-      githubLogin: ghJson(["api", "user"]).login,
-      performedAt: new Date().toISOString(),
-    })
-    validateAttestation(attestation, loaded.record, options.check)
     await confirmEffect(
       `This defers the human gate ${options.check} so the promotion can continue towards store submission. Public release stays blocked until it is attested.`,
       {...options, release: releaseIdentity},
     )
-    const directory = mkdtempSync(path.join(tmpdir(), "mentra-production-deferral-"))
-    const evidenceFile = path.join(directory, `${options.check}-deferred.json`)
-    writeFileSync(evidenceFile, `${JSON.stringify(attestation, null, 2)}\n`)
-    const uploaded = uploadAttestation({
-      release: loaded.release,
-      record: loaded.record,
-      check: options.check,
-      evidenceFile,
-    })
-    dispatch("production-release-attest.yml", {
-      release_identity: releaseIdentity,
-      attempt: loaded.record.attempt,
-      check: options.check,
-      evidence_asset: uploaded.name,
-      evidence_sha256: uploaded.sha256,
-    })
+    deferCheck({loaded, releaseIdentity, check: options.check, reason: options.reason, wait: false})
     return
   }
 

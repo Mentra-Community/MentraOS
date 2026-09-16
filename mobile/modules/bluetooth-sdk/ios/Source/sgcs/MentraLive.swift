@@ -1056,6 +1056,7 @@ extension MentraLive: CBCentralManagerDelegate {
             self.fullyBooted = false
             self.connected = false
             self.glassesSessionId = nil // Fresh BLE session starts with no sid known
+            self.streamControlVersion = 0
             self.readinessCompletedThisBleSession = false
             self.updateConnectionState(ConnTypes.DISCONNECTED)
             self.rgbLedAuthorityClaimed = false
@@ -1702,6 +1703,9 @@ class MentraLive: NSObject, SGCManager {
     /// cannot signal a restart - a CHANGED (or newly appearing) sid is the restart signal.
     /// Nil = no sid observed this BLE session (legacy glasses, or none seen yet).
     private var glassesSessionId: String?
+    /// Last `glasses_ready.streamControlVersion`. Survives SDK remounts so a new
+    /// MentraBluetoothSDK can seed StreamSessionState without another ready.
+    private var streamControlVersion = 0
     // True once a glasses_ready completed on THIS physical BLE session. Unlike
     // fullyBooted, this never flaps on sr_hrt ready=0 heartbeats — it only resets with
     // the physical connection — so a first-seen sid after an upgrade OTA cannot be
@@ -1845,6 +1849,7 @@ class MentraLive: NSObject, SGCManager {
         connected = false
         fullyBooted = false
         glassesSessionId = nil
+        streamControlVersion = 0
         readinessCompletedThisBleSession = false
         rgbLedAuthorityClaimed = false
         stopAllTimers()
@@ -2150,6 +2155,15 @@ class MentraLive: NSObject, SGCManager {
             ["type": "camera_warm_up_stop", "requestId": requestId],
             wakeUp: true
         )
+    }
+
+    func replayStreamControlReady() {
+        guard let sid = glassesSessionId, streamControlVersion == 1 else { return }
+        Bridge.log("LIVE: Replaying stream_control_ready sid=\(sid) version=\(streamControlVersion)")
+        Bridge.sendTypedMessage("stream_control_ready", body: [
+            "sid": sid,
+            "streamControlVersion": streamControlVersion,
+        ])
     }
 
     func startStream(_ message: [String: Any]) {
@@ -2522,6 +2536,7 @@ class MentraLive: NSObject, SGCManager {
             connected = false
             fullyBooted = false
             glassesSessionId = nil
+            streamControlVersion = 0
             readinessCompletedThisBleSession = false
             readinessCompletedThisBleSession = false // Fresh BLE session starts with no sid known
             readinessCompletedThisBleSession = false
@@ -2801,6 +2816,7 @@ class MentraLive: NSObject, SGCManager {
             // already runs this full remote-reset flow, so recording (not re-triggering)
             // is correct here; version_info detection covers the restart case.
             glassesSessionId = (json["sid"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            streamControlVersion = json["streamControlVersion"] as? Int ?? 0
             Bridge.sendTypedMessage(
                 "wifi_protocol_session_ready",
                 body: ["sid": glassesSessionId ?? ""]
@@ -2808,7 +2824,7 @@ class MentraLive: NSObject, SGCManager {
             readinessCompletedThisBleSession = true
             Bridge.sendTypedMessage("stream_control_ready", body: [
                 "sid": json["sid"] as? String ?? "",
-                "streamControlVersion": json["streamControlVersion"] as? Int ?? 0,
+                "streamControlVersion": streamControlVersion,
             ])
             handleGlassesReady()
 
@@ -5653,6 +5669,7 @@ class MentraLive: NSObject, SGCManager {
         fullyBooted = false
         connected = false
         glassesSessionId = nil
+        streamControlVersion = 0
 
         Bridge.log("LIVE: 🔄 Starting glasses SOC readiness check loop")
 

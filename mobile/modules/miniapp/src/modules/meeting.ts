@@ -154,6 +154,11 @@ export interface MeetingState {
    * the native meeting client's own. Keep the last one you saw — absence is not a reset.
    */
   softap?: MeetingSoftApProgress
+  /**
+   * SoftAP mid-call recovery. Omitted by hosts that predate the field, and omitted on events
+   * that have no news. `active` means keep the ACS call — a lost hotspot is a media outage.
+   */
+  recovery?: MeetingSoftApRecovery
 }
 
 export type MeetingMediaSource = "idle" | "connecting" | "live" | "failed"
@@ -236,15 +241,30 @@ export interface MeetingSoftApStepState {
 export interface MeetingSoftApProgress {
   /** Correlates phone and glasses logs for this attempt. */
   traceId?: string
-  phase: "idle" | "starting" | "live" | "stopping" | "failed"
+  phase: "idle" | "starting" | "recovering" | "live" | "stopping" | "failed"
   steps: MeetingSoftApStepState[]
   /** ms since the host started the sequence. */
   elapsedMs: number
 }
 
+/** Host SoftAP mid-call recovery. Missing `recovery` is "no news", not "ended". */
+export interface MeetingSoftApRecovery {
+  active: boolean
+  generation?: number
+  deadlineAt?: number
+  phase?: string
+}
+
 const SOFTAP_STEPS: ReadonlySet<string> = new Set(["hotspot", "scopedJoin", "acsJoin", "publish", "live"])
 const SOFTAP_STEP_STATUSES: ReadonlySet<string> = new Set(["pending", "running", "done", "failed"])
-const SOFTAP_PHASES: ReadonlySet<string> = new Set(["idle", "starting", "live", "stopping", "failed"])
+const SOFTAP_PHASES: ReadonlySet<string> = new Set([
+  "idle",
+  "starting",
+  "recovering",
+  "live",
+  "stopping",
+  "failed",
+])
 
 /** Tolerant parse of a host `softap` payload. Unknown steps are dropped; a malformed payload reads as absent. */
 export function parseMeetingSoftApProgress(raw: unknown): MeetingSoftApProgress | undefined {
@@ -269,6 +289,24 @@ export function parseMeetingSoftApProgress(raw: unknown): MeetingSoftApProgress 
     phase: value.phase as MeetingSoftApProgress["phase"],
     steps,
     elapsedMs: typeof value.elapsedMs === "number" && Number.isFinite(value.elapsedMs) ? value.elapsedMs : 0,
+  }
+}
+
+/** Tolerant parse of a host `recovery` payload. A malformed payload reads as absent. */
+export function parseMeetingRecovery(raw: unknown): MeetingSoftApRecovery | undefined {
+  if (!raw || typeof raw !== "object") return undefined
+  const value = raw as Record<string, unknown>
+  if (typeof value.active !== "boolean") return undefined
+  const generation =
+    typeof value.generation === "number" && Number.isFinite(value.generation) ? value.generation : undefined
+  const deadlineAt =
+    typeof value.deadlineAt === "number" && Number.isFinite(value.deadlineAt) ? value.deadlineAt : undefined
+  const phase = typeof value.phase === "string" && value.phase ? value.phase : undefined
+  return {
+    active: value.active,
+    ...(generation !== undefined ? {generation} : {}),
+    ...(deadlineAt !== undefined ? {deadlineAt} : {}),
+    ...(phase ? {phase} : {}),
   }
 }
 
@@ -463,6 +501,8 @@ export class MeetingModule {
       // out of the UI on every native state event that does not carry capabilities.
       capabilities: parseMeetingCapabilities(event.capabilities) ?? this._state.capabilities,
       softap: parseMeetingSoftApProgress(event.softap),
+      // Absence is "no news", never "recovery ended". The host must send `active: false`.
+      recovery: parseMeetingRecovery(event.recovery) ?? this._state.recovery,
     }
   }
 }

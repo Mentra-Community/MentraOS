@@ -317,12 +317,9 @@ class MiniappLauncher {
   /**
    * Re-spawn local miniapps that were running when the app was last killed.
    *
-   * Cloud apps run on a remote server: the cloud persists which ones are
-   * running and resurrects them when the phone reconnects, so a host-app
-   * restart brings them back on its own. Local (phone-hosted) miniapps run in
-   * the phone's own JS engine — a host-process kill tears down their JSContext
-   * and there is no server to resurrect them, so without this they silently
-   * stay stopped on the next launch even though the user left them running.
+   * Every miniapp runs as local JavaScript in the Mentra App on the phone.
+   * A host-process kill tears down its JSContext, so without this restoration
+   * it stays stopped on the next launch even though the user left it running.
    *
    * Each local miniapp persists its running flag to disk on start/stop
    * (`saveLocalAppRunningState`, via the applet's `onStart`/`onStop`). We read
@@ -331,9 +328,9 @@ class MiniappLauncher {
    * tray/switcher project it as running, exactly as a normal start would. The
    * WebView, if any, re-attaches lazily when the user opens the app.
    *
-   * Idempotent and best-effort: skips already-spawned contexts, and clears the
-   * persisted flag for any app whose bundle can no longer be resolved
-   * (uninstalled, or dev server gone) so a dead entry doesn't retry every boot.
+   * Idempotent and best-effort: skips already-spawned contexts and clears the
+   * persisted running flag if ensureRunning fails (for example, bundle resolution,
+   * deployment policy, or context spawning) so it does not retry every boot.
    * Not compatibility-gated: a previously-running background app shouldn't be
    * dropped just because glasses are momentarily disconnected at boot — it
    * resumes when they reconnect, same as mid-session.

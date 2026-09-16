@@ -383,6 +383,11 @@ type NativeModule = {
   /** Force a WHEP rebuild on the current URL. Absent on natives that predate it. */
   restartVideoSource?(): Promise<void>
   /**
+   * SoftAP: destroy the current ingest listener and bind a new one. Resolves with
+   * the new URL. Absent on natives that predate rebind; disabled natives reject.
+   */
+  rebindSoftApIngest?(): Promise<string>
+  /**
    * Join the glasses hotspot as a scoped, internet-less network; resolves with this phone's
    * address on it. Absent on natives that predate SoftAP.
    */
@@ -569,6 +574,13 @@ class AcsMeetingService {
   private lastMediaRestartAt = 0
   /** Callers parked in [waitForFirstFrame], woken by the next `mediaSource` verdict. */
   private readonly firstFrameWaiters = new Set<(error?: Error) => void>()
+  /**
+   * Bumped by [invalidateDecodedMedia]. A `live` verdict only counts for the wait that
+   * started after that bump if [liveEpoch] matches.
+   */
+  private decodedMediaEpoch = 0
+  /** [decodedMediaEpoch] at the moment the phone last reported `mediaSource: live`. */
+  private liveEpoch = -1
   /** Mid-call republish waiters: live resolves true, leave/timeout resolves false. Failed is ignored. */
   private readonly mediaLiveWaiters = new Set<(live: boolean) => void>()
   private scopedLostSub: {remove: () => void} | null = null
@@ -655,6 +667,32 @@ class AcsMeetingService {
   /** Close the retiring WHIP listener now. No-op on natives without it. */
   async forceCloseIngest(): Promise<void> {
     await getNative()?.forceCloseIngest?.()
+  }
+
+  /**
+   * Destroy the current SoftAP ingest listener and bind a new one. The caller
+   * rejoins the hotspot first; native reads the current scoped address.
+   */
+  async rebindSoftApIngest(): Promise<string> {
+    const native = getNative()
+    if (!native?.rebindSoftApIngest) {
+      throw new Error("SoftAP ingest rebind is not available on this native")
+    }
+    this.invalidateDecodedMedia()
+    const url = await native.rebindSoftApIngest()
+    this.ingestUrl = url
+    return url
+  }
+
+  /**
+   * Forget a previously decoded first frame. Recovery must wait for a frame
+   * from the new ingest generation, not short-circuit on the last live verdict.
+   */
+  invalidateDecodedMedia(): void {
+    this.decodedMediaEpoch++
+    if (this.lastState.mediaSource === "live") {
+      this.lastState = {...this.lastState, mediaSource: "connecting", mediaSourceReason: "ingest_rebind"}
+    }
   }
 
   /**
@@ -795,9 +833,18 @@ class AcsMeetingService {
    *
    * @param timeoutMs how long to wait before treating the silence as a failure
    */
-  waitForFirstFrame(timeoutMs: number): Promise<void> {
-    if (this.lastState.mediaSource === "live") {
-      softapTrace("glasses_first_frame_already_received", {mediaSource: this.lastState.mediaSource})
+  waitForFirstFrame(timeoutMs: number, options: {fresh?: boolean} = {}): Promise<void> {
+    const liveThisGeneration =
+      this.lastState.mediaSource === "live" && this.liveEpoch === this.decodedMediaEpoch
+    // Join short-circuits on any live. Recovery (`fresh`) short-circuits only on a live
+    // from this ingest generation: the new WHIP first frame often lands during publish,
+    // before this wait starts. Waiting for a later `onState` then times out while video
+    // is already flowing, and the miniapp hangs up the ACS meeting.
+    if (liveThisGeneration) {
+      softapTrace(
+        options.fresh ? "glasses_first_frame_this_generation" : "glasses_first_frame_already_received",
+        {mediaSource: this.lastState.mediaSource, epoch: this.decodedMediaEpoch},
+      )
       return Promise.resolve()
     }
     const startedAt = Date.now()
@@ -1542,6 +1589,7 @@ class AcsMeetingService {
           participants: participants?.length,
           endReason: endReason ? `${endReason.code ?? "?"}/${endReason.subcode ?? "?"}` : undefined,
         })
+        if (mediaSource === "live") this.liveEpoch = this.decodedMediaEpoch
         this.settleFirstFrameWaiters(mediaSource)
         this.onState?.(packageName, state)
         // A remote hang-up, an ACS error or a dropped call never goes through `leave`, so without

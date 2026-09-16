@@ -2,10 +2,10 @@
   "mtk_patches": [
     {
       "start_firmware": "MentraLive_20260709",
-      "end_firmware": "MentraLive_20260908.0",
-      "url": "https://mtkfirmware.mentraglass.com/mtk_ota_update_20260709_20260908.0.zip",
-      "sha256": "4bc84c93080686751a7ab0d177af7a9d549b1e443ce2572a67c105869581f804",
-      "size": 34578024
+      "end_firmware": "MentraLive_20260915.0",
+      "url": "https://mtkfirmware.mentraglass.com/mtk_ota_update_20260709_20260915.0.zip",
+      "sha256": "2262bacd887a43f97a98e8801d16337f792b2bbd2546883bc3f1d2ae6c601724",
+      "size": 34758225
     },
     {
       "start_firmware": "MentraLive_20260113",
@@ -51,14 +51,14 @@
     }
   ],
   "mtk_full_ota": {
-    "end_firmware": "MentraLive_20260908.0",
-    "url": "https://mtkfirmware.mentraglass.com/mtk_ota_full_20260908.0.zip",
-    "sha256": "4b27d8fbb843b3cb55e3f03e6cea4e5400149a3ef1b963b6c6f3ba32466b6676",
-    "size": 640341205
+    "end_firmware": "MentraLive_20260915.0",
+    "url": "https://mtkfirmware.mentraglass.com/mtk_ota_full_20260915.0.zip",
+    "sha256": "edeca37eb942b60c1b67847b48267a00dd80457beff68e7638fa3602ff1705b5",
+    "size": 640341164
   },
   "bes_firmware": {
-    "version": "26.9.7.0",
-    "url": "https://firmwarecdn.mentraglass.com/bes_firmware_26.9.7.0.bin",
-    "sha256": "f3e8874164dd1fee06eaaacb60dfdf5caaabfd771e4d7b15ae7bb0c08c121995"
+    "version": "26.9.15.0",
+    "url": "https://firmwarecdn.mentraglass.com/bes_firmware_26.9.15.0.bin",
+    "sha256": "8f951db034e37cb8caa3e7884bd49dcd0ee98d0915eb383ea3819726f0c95229"
   }
 }

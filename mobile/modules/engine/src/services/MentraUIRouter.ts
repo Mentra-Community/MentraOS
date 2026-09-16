@@ -50,14 +50,13 @@ interface BoundWebView {
 }
 
 /**
- * NOTE: the WebView ↔ host heartbeat was removed when the lifecycle
- * inversion landed. The current model is **at most one WebView at a
- * time, foreground UI with an always-on background JSContext** (same
- * shape as the cloud-WebView miniapps). User navigation closes it
- * explicitly and `onContentProcessDidTerminate` catches OS-level
- * crashes, but the host may still re-announce UI_OPEN for an already
- * mounted WebView after app resume/dev respawn so the background can
- * push a fresh authoritative snapshot.
+ * The host mounts at most one miniapp UI WebView at a time. Its background
+ * JSContext runs separately on the phone and can remain alive after UI closure.
+ * UI closure unbinds the WebView and sends UI_CLOSE; on iOS the host also exits
+ * the UI when `onContentProcessDidTerminate` reports a content-process exit.
+ * The host may re-announce UI_OPEN after app resume or background dev respawn
+ * so the background can push a fresh snapshot. This router has no WebView
+ * heartbeat timeout.
  */
 
 export class MentraUIRouter {
@@ -85,9 +84,8 @@ export class MentraUIRouter {
   }
 
   /**
-   * Called when the WebView unmounts (user navigated away or the host
-   * tore it down on heartbeat timeout). Pushes UI_CLOSE to background
-   * so handlers can flush state, then drops the binding.
+   * Called when the host tears down the WebView. Drops the binding and
+   * sends UI_CLOSE to the background so handlers can flush state.
    */
   unbindWebView(packageName: string): void {
     if (!this.bindings.has(packageName)) return
@@ -123,7 +121,6 @@ export class MentraUIRouter {
    * Recognised envelope types from the WebView shim:
    *   - {type: "ready"}                              → fire UI_OPEN
    *   - {type: "msg", seq, channel, payload}         → fire UI_MESSAGE
-   *   - {type: "heartbeat", seq}                     → silently ack
    */
   routeFromWebView(packageName: string, rawJson: string): void {
     let env: {

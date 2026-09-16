@@ -2,12 +2,10 @@
  * @fileoverview Wire protocol for @mentra/miniapp.
  *
  * Fresh miniapp-naming enum values. No legacy tpa_/app_/applet_ prefixes.
- * These values are the contract between @mentra/miniapp (running in a WebView)
- * and LocalMiniappRuntime (running on the phone).
+ * These values are the contract between @mentra/miniapp and LocalMiniappRuntime,
+ * both running locally in the Mentra App on the phone.
  *
- * IMPORTANT: This file has no runtime dependency on the retired cloud SDK.
- * Its published wire-protocol enums are used only for compatibility with
- * existing cloud-hosted miniapps, not for phone↔miniapp communication.
+ * This file has no runtime dependency on the retired cloud SDK.
  */
 
 // ============================================================================

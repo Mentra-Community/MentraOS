@@ -54,6 +54,11 @@ abstract class SGCManager {
     abstract fun requestPhoto(request: PhotoRequest)
     abstract fun startStream(message: MutableMap<String, Any>)
     abstract fun stopStream()
+    /**
+     * Re-advertise glasses-owned stream control after the phone SDK remounts.
+     * Mentra Live overrides this; other devices stay on the no-op.
+     */
+    open fun replayStreamControlReady() {}
     abstract fun sendStreamKeepAlive(message: MutableMap<String, Any>)
     abstract fun startVideoRecording(requestId: String, save: Boolean, sound: Boolean)
     open fun queryVideoRecordingStatus(requestId: String) {

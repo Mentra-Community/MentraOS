@@ -19,6 +19,7 @@ import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
 
 import com.mentra.asg_client.AsgConstants;
+import com.mentra.asg_client.io.streaming.StreamTelemetryPolicy;
 import com.mentra.asg_client.audio.AudioAssets;
 import com.mentra.asg_client.camera.CameraNeoService;
 import com.mentra.asg_client.io.hardware.core.HardwareManagerFactory;
@@ -204,7 +205,7 @@ public class WhipStreamingService extends Service {
       if (mPeerConnection == null) return;
       mPeerConnection.getStats(report -> {
         reportPipelineDiagnosis(report);
-        if (!AsgConstants.ENABLE_PIPELINE_FPS_TELEMETRY) {
+        if (!StreamTelemetryPolicy.isEnabled()) {
           rescheduleStatsSweep(this);
           return;
         }
@@ -291,7 +292,7 @@ public class WhipStreamingService extends Service {
    * metrics fanout is off, which is its normal state in production.
    */
   private static boolean statsSweepEnabled() {
-    return AsgConstants.ENABLE_PIPELINE_FPS_TELEMETRY
+    return StreamTelemetryPolicy.isEnabled()
         || AsgConstants.ENABLE_CALL_PIPELINE_DIAGNOSTICS;
   }
 
@@ -1595,7 +1596,7 @@ public class WhipStreamingService extends Service {
       long droppedFrames,
       long durationSeconds,
       double temperatureC) {
-    if (!AsgConstants.ENABLE_PIPELINE_FPS_TELEMETRY) return;
+    if (!StreamTelemetryPolicy.isEnabled()) return;
     StreamingStatusCallback callback = sStatusCallback;
     String streamId = mCurrentStreamId;
     if (callback == null) return;
