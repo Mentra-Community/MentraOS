@@ -1,8 +1,15 @@
 name: Production Release - Abort Attempt
+# The dispatch id, when the CLI passes one, lets it recognise the run its own
+# dispatch started among this workflow's runs.
+run-name: ${{ inputs.release_identity }} attempt ${{ inputs.attempt }} ${{ inputs.dispatch_id && format('[{0}]', inputs.dispatch_id) || '' }}
 
 on:
   workflow_dispatch:
     inputs:
+      dispatch_id:
+        description: Correlation id chosen by the dispatching CLI; shown in the run name
+        required: false
+        type: string
       release_identity:
         required: true
         type: string

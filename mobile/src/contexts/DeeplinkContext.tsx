@@ -210,7 +210,9 @@ const deepLinkRoutes: DeepLinkRoute[] = [
       const query = new URLSearchParams(url.split("?")[1]?.split("#")[0] ?? "")
       const handoffCode = params.code ?? query.get("code")
       const handoffState = params.state ?? query.get("state")
-      if (handoffCode && handoffState && !url.includes("#")) {
+      // OAuth redirects may preserve an empty fragment (a trailing #). Query
+      // code/state identify the PKCE handoff independently of that fragment.
+      if (handoffCode && handoffState) {
         const res = await mentraAuth.completeOAuthHandoff({code: handoffCode, state: handoffState})
         try {
           WebBrowser.dismissBrowser()
