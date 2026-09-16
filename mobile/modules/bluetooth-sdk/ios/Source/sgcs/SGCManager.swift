@@ -68,8 +68,6 @@ protocol SGCManager {
     func stopStream()
     /// Re-advertise glasses-owned stream control after the phone SDK remounts.
     func replayStreamControlReady()
-    /// Re-advertise glasses-owned stream control after the phone SDK remounts.
-    func replayStreamControlReady()
     func sendStreamKeepAlive(_ message: [String: Any])
     func startVideoRecording(requestId: String, save: Bool, sound: Bool)
     func queryVideoRecordingStatus(requestId: String)
@@ -241,8 +239,6 @@ extension SGCManager {
     var isMicSuspendedForAudio: Bool {
         false
     }
-
-    func replayStreamControlReady() {}
 
     func replayStreamControlReady() {}
 

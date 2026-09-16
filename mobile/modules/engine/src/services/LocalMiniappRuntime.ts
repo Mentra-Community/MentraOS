@@ -102,7 +102,6 @@ import {
   createSoftapCallDeps,
   SoftapCallError,
   SoftapCallTransport,
-  REARM_BUDGET_MS,
   RETURN_DEADLINE_MS,
   SOFTAP_STEPS,
   type SoftapProgress,
