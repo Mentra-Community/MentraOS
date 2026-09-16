@@ -163,7 +163,7 @@ describe("MentraLiveOtaFlow", () => {
     await act(async () => {
       await jest.advanceTimersByTimeAsync(1_100)
     })
-    expect(getByText("Connect your Mentra Live to WiFi to install the update.")).toBeDefined()
+    expect(getByText("Connect your Mentra Live to Wi-Fi to install the update.")).toBeDefined()
 
     fireEvent.press(getByTestId("button-Later"))
     expect(onFinished).toHaveBeenCalledTimes(1)
