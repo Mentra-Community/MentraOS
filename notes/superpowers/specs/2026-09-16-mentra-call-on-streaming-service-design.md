@@ -30,7 +30,7 @@ settled teardown that races the ingest-closed and hotspot-off acks and force-cle
 
 ```text
 LocalMiniappRuntime (MEETING_* requests, MEETING_STATE fanout)
-  └─ SoftapCallSession            (was SoftapCallTransport; prepareAgent, then one stream)
+  └─ SoftapCallSession            (was SoftapCallTransport; open → prepareAgent → start → … → close → leave)
        ├─ AcsMeetingService       (meeting, audio, state)
        ├─ AcsMediaAdapter         (attach: ACS join on generation 1, then media; detach: media only)
        └─ GlassesPhoneStreamService.open({owner: "call", adapter: AcsMediaAdapter, ...})
@@ -39,26 +39,33 @@ LocalMiniappRuntime (MEETING_* requests, MEETING_STATE fanout)
 
 ## Decisions
 
-1. **Same order as today.** Today's sequence is `prepareAgent` → hotspot → scoped join (with
-   the cellular uplink held) → ACS join → publish → live, and it stays that way. The ACS agent
-   is prepared before the stream opens; the meeting is joined inside the adapter's initial
-   `attach`, which the streaming service awaits after the hotspot is `ready` and before the
-   glasses publish. The meeting is therefore established while cellular is already the Internet
-   route, exactly as now, and never has to survive the phone's Wi-Fi moving to the glasses AP.
-   On later generations `attach` only reattaches media. Meeting-first was considered and
-   rejected: it would join ACS over station Wi-Fi and then transition the live meeting to
-   cellular during the scoped join.
+1. **Same order as today, pin first.** Today the native module establishes the cellular hold
+   before the ACS agent is prepared, then enables the hotspot, joins it, joins ACS, publishes
+   and waits for the first frame. The sequence stays exactly that: `streamService.open(...)`
+   reserves the hotspot session and establishes the cellular hold without touching the glasses;
+   `prepareAgent` then runs over the pinned route; `stream.start()` enables and joins the
+   hotspot, and the meeting is joined inside the adapter's initial `attach`, after the hotspot
+   is `ready` and before the glasses publish. The meeting is never established over station
+   Wi-Fi and never has to survive the phone's Wi-Fi moving to the glasses AP. Cancellation or
+   failure at any point before `start` resolves runs `stream.close()`, which releases the
+   reservation and the hold; a meeting already joined is left by the call session afterwards.
+   Meeting-first was considered and rejected for the reason above.
 2. **The miniapp-facing contract does not change.** `MEETING_STATE` keeps `softap: {traceId,
    phase, steps[hotspot, scopedJoin, acsJoin, publish, live], elapsedMs, mediaGeneration}` and
    the `recovery: {active, generation, deadlineAt, phase}` fields, and join failures keep
    `{code, message, step}`. The five step names are no longer real steps; they are derived from
    the stream and hotspot state snapshots by a fixed mapping (below). Miniapp UIs that render
    the progress list keep working unchanged.
-3. **One media adapter, two hooks.** `AcsMediaAdapter` implements the streaming spec's
-   `StreamAdapter`. On media generation 1, `attach(media)` first joins the meeting
-   (`acsMeetingService.join`) and then borrows the decoded source from `GlassesMediaRegistry`
-   by `MediaRef` and wires `AcsFrameSender` and the glasses PCM path onto the existing outgoing
-   streams; on later generations it only reattaches media. `detach(media)` closes the lease and
+3. **One media adapter, two hooks, and confirmed meeting ownership.** `AcsMediaAdapter`
+   implements the streaming spec's `StreamAdapter` and keeps one flag, `meetingJoined`, that
+   is set only when `acsMeetingService.join` has resolved. `attach(media)` joins the meeting if
+   `meetingJoined` is false, then borrows the decoded source from `GlassesMediaRegistry` by
+   `MediaRef` and wires `AcsFrameSender` and the glasses PCM path onto the existing outgoing
+   streams. The media generation is not evidence of a join: a network loss during the first
+   attach can advance to generation 2 before ACS ever joined, and the second attach must join.
+   A join interrupted by the attach signal is awaited to its outcome: if it succeeds late the
+   adapter marks `meetingJoined` and keeps the meeting; if it fails the flag stays false and the
+   error surfaces as `ACS_JOIN_FAILED` on the next attach. `detach(media)` closes the lease and
    leaves the meeting untouched. The meeting is closed only by the call session's leave or end
    after `stream.close()`. ACS never sees an ingest URL, a network handle or a hotspot again.
 4. **Recovery is observed, not driven.** `beginSoftapRecovery`, `transport.recover`,
@@ -117,9 +124,9 @@ end each one, and `detail` from the hotspot or stream error message when a step 
 |---|---|---|---|
 | `hotspot` | hotspot phase `reserved` or `enabling` | hotspot phase `joining` or later | hotspot `failed` before `joining` |
 | `scopedJoin` | hotspot phase `joining` or `verifying` | hotspot phase `restoring` or later | hotspot `failed` at `joining` or `verifying` |
-| `acsJoin` | adapter attach on generation 1 has started and the ACS join promise is pending | ACS join resolved | ACS join rejected (`ACS_JOIN_FAILED`) |
-| `publish` | stream phase `listening` after the ACS join, or `publishing` | stream phase `live` | stream `failed` at those phases |
-| `live` | never running | stream phase `live` | stream `failed` after a first `live` |
+| `acsJoin` | an adapter attach has started with `meetingJoined` false and the ACS join promise is pending | ACS join resolved | ACS join rejected (`ACS_JOIN_FAILED`) |
+| `publish` | stream phase `listening` after the ACS join, until the glasses acknowledge `start_stream` | stream phase `publishing` (the glasses acknowledged; this is when today's `publish` step completes) | stream `failed` while `listening` (`listener_bind_failed`, `receiver_failed`, `adapter_attach_failed`) or `publish_rejected` |
+| `live` | stream phase `publishing` (waiting for the first frame, today's `awaitFirstFrame`) | stream phase `live` | stream `failed` while `publishing` (`first_frame_timeout`) or after a first `live` (`stalled`, `recovery_exhausted`) |
 
 On recovery the steps that are rebuilt (`hotspot` and `scopedJoin` for a hotspot outage,
 `publish` and `live` for both kinds) go back to `pending` and run again; `acsJoin` stays `done`
@@ -166,7 +173,7 @@ the miniapp while `details` carries the new code for logs and bug reports.
 | `recover`, `republish`, `shouldRepublish`, `mediaOnly`, `preserveMeeting`, `keepProgress`, `mediaGeneration` field | deleted; recovery is the stream's, progress keeps the last snapshot on failure by default |
 | `progress()`, `recoveryState()`, `currentPhase()`, `lastTeardownFailures()` | kept, computed from subscriptions |
 | `SoftapCallError(step, code, message, cause)` | kept as the miniapp-facing wrapper with the mapping above |
-| `createSoftapCallDeps(args).subsystems` | shrinks to `prepareAgent`, `joinMeeting`, `leaveMeeting`, `endMeeting`, `attachMedia`, `detachMedia`, `glassesLc3Uplink`, `onMeetingState`, plus `streamService` |
+| `createSoftapCallDeps(args).subsystems` | shrinks to `prepareAgent`, `joinMeeting`, `leaveMeeting`, `endMeeting`, `attachMedia`, `detachMedia`, `glassesLc3Uplink`, `onMeetingState`, plus `streamService`; `open` precedes `prepareAgent` so the cellular hold exists first |
 
 ### `LocalMiniappRuntime.ts` SoftAP section
 
@@ -252,10 +259,14 @@ first as the simpler consumer).
   recovery. The projection tables are the contract; test them against recorded state sequences
   from today's transport, including a hotspot outage, a media-only rebuild, exhaustion and a
   leave during recovery.
-- **Attach budget on generation 1.** The initial `attach` includes the ACS join, which can take
-  several seconds; the streaming service's initial start has no rebuild deadline, so this is
-  bounded only by the caller's signal. On rejoin `attach` is media only and fits the shared
-  deadline.
+- **Attach budget when joining.** An `attach` that has to join ACS can take several seconds.
+  On the initial start there is no rebuild deadline, so it is bounded only by the caller's
+  signal. On a rejoin where the first join never completed, the join runs inside the shared
+  rebuild deadline; if that is too tight in practice the adapter should join outside the
+  deadline and only the media reattach inside it. Test interrupted and late initial joins.
+- **Projection milestones.** `publish` completes when the glasses acknowledge `start_stream`,
+  before the first-frame wait, and a first-frame timeout is a `live` failure. Test the
+  projection for the wait, the timeout, a recovery and a cancellation during each.
 - **Audio through recovery.** With the stream detached during a rebuild, glasses PCM stops but
   BLE LC3 and phone mic continue; the meeting must not mute or switch source on its own.
 - **Old and new transport during the switch.** Both reserve the hotspot as `video_streaming`

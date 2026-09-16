@@ -114,7 +114,7 @@ phone.
 export type StreamOwner = "call" | "managed_whip" | "local"
 
 export type StreamPhase =
-  | "acquiring"     // hotspot session acquire + start
+  | "acquiring"     // after open(): hotspot reserved and uplink held; during start(): hotspot start in progress
   | "listening"     // listener bound, receiver up; adapter.attach running for this generation
   | "publishing"    // adapter attached, BLE start_stream acked; waiting for the first decoded frame
   | "live"          // a decoded frame reached the adapter attached for this media generation
@@ -184,13 +184,14 @@ export interface StreamSession {
   readonly id: string
   snapshot(): StreamState
   subscribe(listener: (event: StreamEvent) => void): () => void
-  /** Runs hotspot acquire → listener bind → receiver → adapter.attach → glasses publish → first frame. Resolves on live. */
+  /** Runs hotspot start → listener bind → receiver → adapter.attach → glasses publish → first frame. Resolves on live. */
   start(): Promise<MediaRef>
   /** Consumer-initiated end: detach, stop the glasses publish, close the receiver, release the hotspot session. Never touches the destination. Idempotent: concurrent calls share one cleanup; on a failed stream it returns the settled result or retries a blocked hotspot release. */
   close(): Promise<{hotspot: ReleaseResult | null}>
 }
 
 export interface GlassesPhoneStreamService {
+  /** Acquires the hotspot session (native reservation and, if requested, the cellular hold) and returns without touching the glasses. Rejects with `hotspot` busy. */
   open(options: OpenStreamOptions): Promise<StreamSession>
   current(): {owner: StreamOwner; operationId: string; streamSessionId: string; phase: StreamPhase} | null
 }
@@ -334,7 +335,7 @@ endpoint is on the active hotspot. Only additions: emit `route` in `stream_statu
 
 | Consumer | Sequence |
 |---|---|
-| Mentra Call | Runtime: `prepareAgent` (Internet) → `streamService.open({owner: "call", uplink: "cellular", captureAudio: false, recovery: callDefaults, adapter: acsAdapter})` → `await stream.start()` resolves on `live`, report ready. `acsAdapter.attach(media)` on generation 1 joins the ACS meeting (cellular already held) and then borrows the `MediaRef` and wires `AcsFrameSender` and PCM, all before the glasses publish; on later generations it only reattaches media; `detach` releases the lease and keeps the meeting. See the Call spec. On `recovery_exhausted` the stream has already released the hotspot; the meeting stays joined (audio continues) until Leave; Leave → `stream.close()` (settled: returns the recorded result; blocked: retries the release) → ACS leave. `SoftapCallTransport` keeps only meeting ordering (`acsJoin`, attach, `live`); `hotspot`, `scopedJoin`, `publish` and `preserveMeeting` disappear. |
+| Mentra Call | Runtime: `streamService.open({owner: "call", uplink: "cellular", captureAudio: false, recovery: callDefaults, adapter: acsAdapter})` (reserves the hotspot and pins cellular) → `prepareAgent` over the pinned route → `await stream.start()` resolves on `live`, report ready; if `prepareAgent` fails or is cancelled, `stream.close()` releases the reservation and the pin. `acsAdapter.attach(media)` on generation 1 joins the ACS meeting (cellular already held) and then borrows the `MediaRef` and wires `AcsFrameSender` and PCM, all before the glasses publish; on later generations it only reattaches media; `detach` releases the lease and keeps the meeting. See the Call spec. On `recovery_exhausted` the stream has already released the hotspot; the meeting stays joined (audio continues) until Leave; Leave → `stream.close()` (settled: returns the recorded result; blocked: retries the release) → ACS leave. `SoftapCallTransport` keeps only meeting ordering (`acsJoin`, attach, `live`); `hotspot`, `scopedJoin`, `publish` and `preserveMeeting` disappear. |
 | Managed WHIP | `PhoneStreamCoordinator.startManaged` with `ingest: "whip"`: provision Cloudflare → `streamService.open({owner: "managed_whip", uplink: "cellular", captureAudio, adapter: republisher})` → `republisher.attach(media)` borrows the `MediaRef` and starts `PhoneWhipPublisher` toward `webrtcPublishUrl` before the glasses publish → status fans out tagged `route: "phone"`. `ManagedWebRtcRelay`'s attempt/retry loop is replaced by the stream service's recovery. |
 | Direct WHIP over the phone (new for miniapps) | Same as managed WHIP with the caller's WHIP URL as the republisher destination and `owner: "local"`. |
 | Local preview (future) | `open({owner: "local", uplink: "none"})`, adapter renders. |

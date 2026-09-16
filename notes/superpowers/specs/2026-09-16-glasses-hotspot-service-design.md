@@ -56,8 +56,11 @@ consumers; the streaming service is.
 
 ## Decisions
 
-1. **The session is the reservation.** `acquire` is the only entry point and reserves
-   natively before any BLE command. Reservation is held until native cleanup settles, never
+1. **The session is the reservation.** `acquire` is the only entry point; it reserves
+   natively and, when `uplink: "cellular"` is requested, establishes the cellular hold, before
+   any BLE command and before `start`. A consumer can therefore do Internet work that must
+   already be routed over cellular (Mentra Call's ACS agent preparation) between `acquire` and
+   `start`. `release` drops the hold. Reservation is held until native cleanup settles, never
    freed by `failed` alone.
 2. **Explicit generation references.** Every network-bound operation and every native
    attachment takes a `NetworkRef {sessionId, generation}`. Loss invalidates the generation
