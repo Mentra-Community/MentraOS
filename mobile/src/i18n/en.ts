@@ -378,7 +378,7 @@ const en = {
     enterNetworkManually: "Enter network manually",
     enterNetworkDetails: "Enter network details",
     addNetwork: "Add your Wi-Fi network",
-    addNetworkDescription: "Add your network here to sync the media and software on your Mentra Live.",
+    addNetworkDescription: "Add your Wi-Fi network to sync photos and videos and install software updates on your Mentra Live.",
     rememberPassword: "Remember password",
     rememberPasswordDescription: "",
     wifiPassword: "Wi-Fi password",
@@ -543,7 +543,7 @@ const en = {
     completeOnboardingTitle: "Complete Onboarding",
     completeOnboardingMessage: "Please tap the Live Captions app to complete the onboarding process.",
     tryLiveCaptionsTitle: "Try Live Captions!",
-    tryLiveCaptionsMessage: "Start talking now to see your speech transcribed on your glasses in real-time!",
+    tryLiveCaptionsMessage: "Start talking now to see your speech transcribed on your glasses in real time!",
     permissionRequiredTitle: "Permission Required",
     permissionsRequiredTitle: "Permissions Required",
     permissionMessage: "Please grant the following permissions to continue: {{permissions}}",
@@ -735,7 +735,7 @@ const en = {
     cameraFovRoiTitle: "Camera field of view",
     cameraFovRoiExplanation:
       "FOV sets how wide the camera sees (62–118°). Values below 118° use ROI crop: the image is cropped to that angle, and ROI position (Center, Bottom, Top) chooses where the crop is taken from. 118° uses the full sensor with no crop.",
-    postProcessing: "Post Processing",
+    postProcessing: "Post-processing",
     postProcessingSubtitle: "Improves photo and video quality. Sync may take longer.",
     positionSettings: "Display position",
     screenSettings: "Screen settings",
@@ -855,7 +855,7 @@ const en = {
   miniappDevSettings: {
     title: "Miniapp Developer",
     headline: "Build a miniapp",
-    body: "Miniapps run on your glasses and are built with the Mentra Miniapp SDK. To learn how to get started, check out the documentation.",
+    body: "Miniapps run locally in the Mentra App, connect to your glasses, and are built with the Mentra Miniapp SDK. To learn how to get started, check out the documentation.",
     readDocs: "Read the docs",
     preferencesTitle: "Home screen",
     showOnHomeScreenLabel: "Show Miniapp Developer on Home Screen",
@@ -1192,8 +1192,8 @@ const en = {
   },
   emptyStateComponent: {
     generic: {
-      heading: "So empty… so sad",
-      content: "No data found yet. Try clicking the button to refresh or reload the app.",
+      heading: "Nothing here yet",
+      content: "No data found yet. Tap the button to refresh or reload the app.",
       button: "Let's try this again",
     },
   },
@@ -1263,7 +1263,7 @@ const en = {
   appSettings: {
     noDescription: "No description available.",
     noSettings: "No settings available for this app",
-    aboutThisApp: "About this App",
+    aboutThisApp: "About this app",
     appInfo: "App info",
     company: "Company",
     website: "Website",
