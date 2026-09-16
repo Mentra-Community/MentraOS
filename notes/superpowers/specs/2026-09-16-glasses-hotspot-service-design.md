@@ -19,12 +19,18 @@ and `hotspot_status_change`:
 
 This spec merges two independent proposals (Claude and local Codex, 2026-09-16) and the
 cross-review of each. Where they disagreed the decision is recorded with its reason.
-Related: `2026-09-08-ios-softap-spike.md`, the Mentra Call SoftAP recovery merged in #4074.
+Related: `2026-09-08-ios-softap-spike.md`, the Mentra Call SoftAP recovery merged in #4074,
+and the companion `2026-09-16-glasses-phone-streaming-service-design.md`, which owns the video
+stream that crosses the hotspot. Layering: hotspot service → glasses-to-phone streaming
+service → destination adapters (ACS for Mentra Call, the Cloudflare republisher for managed
+WHIP, local preview). Mentra Call and the managed relay are therefore not direct hotspot
+consumers; the streaming service is.
 
 ## Requirements
 
-- **Exclusive ownership across every consumer**: gallery sync, hotspot OTA, Mentra Call, the
-  managed relay. Fail fast on conflict naming the owner. No preemption, no sharing.
+- **Exclusive ownership across every consumer**: gallery sync, hotspot OTA, and video
+  streaming (which serves Mentra Call and the managed WHIP relay). Fail fast on conflict naming
+  the owner. No preemption, no sharing.
 - **Lifecycle owned in one place**: enable the AP over BLE and wait for credentials and
   broadcast; scoped join (one native `Network` on Android, `NEHotspotConfiguration` on iOS);
   address resolution (phone IPv4, glasses gateway, prefix, interface); readiness and gateway
@@ -40,11 +46,13 @@ Related: `2026-09-08-ios-softap-spike.md`, the Mentra Call SoftAP recovery merge
     must survive the intentional ASG APK restart (ASG preserves the AP during replacement,
     `OtaSessionManager.java`); glasses activity is refreshed by the existing ping heartbeat
     (`PingCommandHandler.java`), not by probing.
-  - Mentra Call: libwebrtc and ACS need the native `Network` handle in-process; the WHIP
-    listener binds on the phone address and the glasses publish to it; ingest rebinds on
-    recovery; the ACS meeting is preserved; recovery completes only after a fresh frame; the
-    gateway probe is advisory because Call needs glasses-to-phone connectivity; Internet
-    traffic for ACS keeps its cellular uplink while the phone is on the hotspot.
+  - video streaming (Mentra Call, managed WHIP): libwebrtc needs the native `Network` handle
+    in-process; the WHIP listener binds on the phone address and the glasses publish to it;
+    the receiver rebinds on recovery; recovery completes only after a fresh frame; the gateway
+    probe is advisory because the stream needs glasses-to-phone connectivity; Internet traffic
+    (ACS, Cloudflare) keeps its cellular uplink while the phone is on the hotspot. Destination
+    lifetime (the ACS meeting, the Cloudflare live input) is never the hotspot service's
+    concern; it belongs to the streaming service's adapters.
 
 ## Decisions
 
@@ -113,7 +121,9 @@ Related: `2026-09-08-ios-softap-spike.md`, the Mentra Call SoftAP recovery merge
 ## TypeScript API (engine, `mobile/modules/engine/src/services/hotspot/`)
 
 ```ts
-export type HotspotConsumer = "gallery_sync" | "hotspot_ota" | "call" | "relay"
+export type HotspotConsumer = "gallery_sync" | "hotspot_ota" | "video_streaming"
+/** Diagnostic owner metadata carried by the streaming service; never a reservation key. */
+export type HotspotOwnerTag = "call" | "managed_whip" | "local" | null
 
 export type HotspotPhase =
   | "reserved"      // native reservation held, nothing sent to the glasses yet
@@ -187,6 +197,7 @@ export interface HotspotClient {
 
 export type HotspotSessionOptions = {
   consumer: HotspotConsumer
+  owner?: HotspotOwnerTag
   operationId: string
   /** "cellular": hold an Internet route over cellular for the life of the session (Call). */
   uplink: "none" | "cellular"
@@ -274,6 +285,9 @@ is still enabled; rejoin, resolve addresses, probe, then `restore` with the new 
 On exhaustion the service tears down the hotspot and fails the session with
 `recovery_exhausted`; the client stays open and the consumer decides what to do with its
 higher-level state before calling `release`. Duplicate loss events do not renew budgets.
+Media-level failures (a stalled WebRTC peer, a receiver crash) are not hotspot losses: the
+streaming service handles them on the same hotspot generation and never asks this service to
+cycle a healthy AP.
 
 ## Native contract
 
@@ -335,8 +349,7 @@ or detach is rejected with `stale_generation`.
 |---|---|
 | Gallery sync | `acquire({consumer: "gallery_sync", uplink: "none", recovery: auto, gatewayProbe: "required", beforeJoin: explainOnce})` → `start(client)`; `restore`: fetch manifest, continue unverified files with `fetch/download(ref)`; `quiesce`: cancel transfers, keep the ledger; `close`; `release`. Requests are not replayed transparently; gallery keeps ownership of acknowledgements and integrity. The two-minute queue age guard stays because the glasses idle-disable the AP. |
 | Hotspot OTA | Download artifacts over the normal network first → `acquire({consumer: "hotspot_ota", uplink: "none", recovery: auto, gatewayProbe: "required"})` → `restore` on `initial`: start `otaServer` bound to `binding.phoneIpv4`, publish the immutable manifest; `ota_start` once; on `rejoin` with a different `phoneIpv4`, throw so the restore fails explicitly and the coordinator reconciles; the ASG APK restart does not close the server or cycle the AP; `release` after the outcome is known. |
-| Mentra Call | `acquire({consumer: "call", uplink: "cellular", recovery: {auto, 60 s return, 45 s rebuild, 3 attempts}, gatewayProbe: "advisory"})` → `prepare`: ACS agent; `restore` on `initial`: ACS borrows the network by `NetworkRef`, WHIP binds on `binding.phoneIpv4`, glasses are told to publish there, await a fresh frame; `quiesce`: stop local media only; `restore` on `rejoin`: rebind ingest through `Lease.bindListener`, republish, fresh frame; on `recovery_exhausted` the meeting stays joined (audio continues without glasses video) until the user leaves; `close`: leave ACS, dispose media; `release`. `SoftapCallTransport` keeps `acsJoin`, `publish`, `live` and drops `hotspot`, `scopedJoin`, `preserveMeeting`. |
-| Managed relay | `acquire({consumer: "relay", ...})`; `GlassesMediaRelayModule.prepare` takes a `NetworkRef` instead of credentials and borrows from the registry. |
+| Video streaming (Mentra Call, managed WHIP, direct WHIP over the phone) | The streaming service is the hotspot client: `acquire({consumer: "video_streaming", owner, uplink: "cellular", recovery: {auto, 60 s return, 45 s rebuild, 3 attempts}, gatewayProbe: "advisory"})` → `prepare`: nothing (ACS agent setup happens in the call layer before the stream opens); `restore` on `initial` and `rejoin`: `Lease.bindListener` on `binding.phoneIpv4`, start the receiver, hand the `Network` to libwebrtc, tell the glasses to publish, await a fresh frame; `quiesce`: stop local media only; `close`: stop the receiver. Destination adapters (ACS sink, Cloudflare republisher) attach to decoded media by `MediaRef` and never touch this session. See the companion streaming spec for the full contract. |
 
 ## Migration in small PRs
 
@@ -344,7 +357,8 @@ or detach is rejected with `stale_generation`.
    modules untouched. Tests: reservation, generation invalidation, late callbacks, settled
    cancellation, iOS pending-configuration fencing.
 2. **Shared reservation gate**: all four consumers reserve through the service before their
-   joins move, so old and new owners never mix. `GlassesHotspotLease` becomes a wrapper. In the
+   joins move, so old and new owners never mix. `GlassesHotspotLease` becomes a wrapper (Call and the relay reserve as
+   `video_streaming` with their owner tag until the streaming service exists). In the
    same PR, `PhoneStreamCoordinator`'s deferred `stopStream` / hotspot-off is keyed by the
    session that deferred it and retired when that session's release settles or when another
    session acquires; `ManagedWebRtcRelay.stop` releases only after the deferral is registered
@@ -356,10 +370,12 @@ or detach is rejected with `stale_generation`.
 4. **Hotspot OTA**: server borrows the binding; `HotspotShutdown.disableHotspotWithRetry` folds
    into `release`. Hardware qualification of the intentional APK restart with the same live
    endpoint, and of a real Wi-Fi loss separately, before merge.
-5. **Mentra Call and the managed relay**: native borrowing, media restoration, deletion of the
-   ACS native join and of `LocalMiniappRuntime.settleSoftapTeardown`. Keep the #4074 tests and
-   point them at the new seams: preserved meeting, fresh frame, cancellation at every step,
-   and recovery exhaustion leaving the meeting joined until explicit Leave.
+5. **Video streaming service** (companion spec, its steps 1 to 3): the streaming service
+   becomes the single video consumer of this service; Mentra Call and the managed WHIP relay
+   move onto it as adapters; the ACS native join, `LocalMiniappRuntime.settleSoftapTeardown`
+   and `ManagedWebRtcRelay`'s retry loop are deleted. Keep the #4074 tests and point them at the
+   new seams: preserved meeting, fresh frame, cancellation at every step, and recovery
+   exhaustion leaving the meeting joined until explicit Leave.
 6. **Delete** legacy ownership paths, adapters, `GlassesHotspotLease`, and the
    `react-native-wifi-reborn` join.
 
