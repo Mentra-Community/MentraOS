@@ -43,7 +43,10 @@ func attribute(_ element: AXUIElement, _ name: String) -> CFTypeRef? {
 
 func stringAttribute(_ element: AXUIElement, _ name: String) -> String {
   let value = attribute(element, name)
-  return value as? String ?? ""
+  if let text = value as? String { return text }
+  // WebKit exposes checked radio state as a number, while UIKit may use a string.
+  if let number = value as? NSNumber { return number.stringValue }
+  return ""
 }
 
 func frameOf(_ element: AXUIElement) -> CGRect? {

@@ -2,7 +2,7 @@
 
 Start with the [English coverage checklist](ROUTINE.md), [exact compiled routine](COMPILED-ROUTINE.md), [design and technology choices](../../notes/superpowers/specs/2026-09-15-mentra-app-e2e-harness.md), [accessibility contract](ACCESSIBILITY.md), and [Mac Mini setup](SETUP.md).
 
-The [Mentra Call English routine](MENTRA-CALL-ROUTINE.md) is in development against the real iOS app on this Mac. The integrated `codex/enable-mentra-call-ios` branch restores its launcher and migrates the old forced-hidden flag. The five-step `mentra-call-availability` routine verifies Home and All Apps search; it does **not** qualify the Call WebView or meetings. The supplied Mentra Live pair is awaiting Bluetooth audio pairing before real Call/browser verification.
+The [Mentra Call English routine](MENTRA-CALL-ROUTINE.md) targets the real iOS app on this Mac. Product branch `codex/enable-mentra-call-ios` restores availability and fixes Mac audio pairing; use that build for Call suites. The five-step `mentra-call-availability` verifies host search. The 13-step `mentra-call-ui` exercises paired settings, empty meeting forms and minimize/reopen. Pairing and camera/microphone permissions are complete. A real Teams meeting was created, but cloud video provisioning failed because the dev runtime's Cloudflare token lacks Stream access. Browser media and field editing remain unqualified.
 
 This harness drives the real iOS app on an Apple Silicon Mac. A Swift helper invokes native accessibility actions; Bun executes typed steps with zero model calls. Every executed step saves a screenshot, accessibility snapshot, English instruction and timestamp in a continuous MP4. The static report lets a person search descriptions and jump to the corresponding video moment.
 
@@ -44,6 +44,9 @@ bun run tools/mentra-e2e/run.ts run --suite lifecycle-proof
 # Call visibility/search on the enabled build; declare the actual fixture:
 bun run tools/mentra-e2e/run.ts run --suite mentra-call-availability --fixture pairing-incomplete --build-manifest mobile/build/ios-mac/build-manifest.json
 bun run tools/mentra-e2e/run.ts describe --suite mentra-call-availability
+# Paired Call UI; fixture preferences are listed in MENTRA-CALL-ROUTINE.md:
+bun run tools/mentra-e2e/run.ts run --suite mentra-call-ui --fixture mentra-live-03BE-paired --build-manifest mobile/build/ios-mac/build-manifest.json
+bun run tools/mentra-e2e/run.ts describe --suite mentra-call-ui
 # With a miniapp open, read-only capsule contract check:
 bun run tools/mentra-e2e/run.ts run --suite accessibility-preflight
 ```

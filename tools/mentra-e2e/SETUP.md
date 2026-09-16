@@ -238,4 +238,22 @@ Complete camera and microphone permissions on first Call launch. Call 2.1.14 mak
 
 Verify repository write access before publishing an external miniapp release (`gh api repos/Mentra-Community/Mentra-Call --jq .permissions.push`). On this initial machine the account could read Call but could not push; local source and packaging still worked. Resolve that access gate before treating the source commit as published.
 
+### Call cloud-relay diagnostics on a new Mac
+
+The first Mac's permissions are now granted. For the paired UI suite, set up the documented fixture once: name Mentra Live, Direct link on, 540p / 15 fps / Auto / 102° bottom; close Call and run `mentra-call-ui` with the actual paired fixture. This routine creates no meetings. A cloud/WHEP meeting test separately turns Direct link off and must restore it afterward. Record and restore all three Mac audio defaults (input, output and system alert); selecting the glasses is needed for the real call, not for inspecting forms.
+
+For backend diagnosis, install the Porter CLI and run `porter auth login`; complete its browser device authorization. Login may select an unrelated default cluster. Use explicit verified target flags rather than changing the user's global selection:
+
+```sh
+porter cluster list
+porter app list --cluster 5692
+porter app logs cloud-dev --cluster 5692 --target aws-us-west-2-default --service runtime --since 10m --limit 200
+```
+
+These IDs were verified in project 15081 on September 16; discover them again on the new machine. The local test host uses dev Core/Runtime while `pack:prod` selects the production Call miniapp backend. Record both endpoints as part of the fixture. Do not silently change environments when one fails.
+
+The first real join failed because Cloudflare accepted the configured token as active but rejected Stream access for its account (403). Check `CF_STREAM_ACCOUNT_ID` and `CF_STREAM_API_TOKEN` in Doppler `cloud-v2/dev_aws` and the merged Porter configuration without printing secrets. The token needs Stream Write for that account; an active-token check alone is insufficient. Porter and Doppler matched during this failure; root `cloud-v2/dev` also held the same account/token pair, so switching to it would not change this result. Ask the token owner to correct scope/account or replace the credential in Doppler, then use the matching coordinated deployment path from the [Porter runbook](../../cloud-v2/docs/runbooks/porter/deploys.md). Do not borrow production credentials or deploy an unrelated image as a workaround. This user's Porter Kubernetes role allowed reads but denied pod exec; that access boundary was retained.
+
+Server logs and generated meeting URLs are private run evidence. Keep sanitized error excerpts and operation results in the report, never commit raw tokens or meeting links. After an unsuccessful create-and-join, verify whether the created meeting object was retired; returning home alone did not do so in the first test.
+
 The recorder uses a fixed video canvas and explicitly scales frames up/down while preserving their aspect ratio. This was verified with Mentra on an external 1x display; earlier recordings that captured a quarter-size image remain unchanged as historical evidence. Keep the app window dimensions constant during a run.

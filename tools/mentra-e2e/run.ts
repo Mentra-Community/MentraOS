@@ -13,6 +13,7 @@ import {noGlasses, noGlassesExclusions} from "./flows/no-glasses"
 import {recoverUnpaired} from "./runner/recovery"
 import {failureProof} from "./flows/failure-proof"
 import {mentraCallAvailability} from "./flows/mentra-call-availability"
+import {mentraCallUi} from "./flows/mentra-call-ui"
 
 const {positionals, values} = parseArgs({
   args: process.argv.slice(2),
@@ -28,17 +29,20 @@ try {
   if (operation !== "describe") await buildDriver()
   if (operation === "describe") {
     const callAvailability = values.suite === "mentra-call-availability"
+    const callUi = values.suite === "mentra-call-ui"
     console.log(
-      callAvailability
-        ? "# Mentra Call iOS availability routine\n\nEnabled host visibility and search only; Call UI and real calling are not covered. Start signed in on English home and declare the actual device fixture. Each numbered action/check has its own screenshot and video chapter.\n"
-        : "# Compiled no-glasses routine\n\nGenerated from `flows/no-glasses.ts`. Start signed in on English, unpaired home. Credentials are requested at runtime. Each numbered action/check has its own screenshot and video chapter.\n",
+      callUi
+        ? "# Mentra Call paired UI routine\n\nStart on paired English home with permissions granted, saved name Mentra Live, Direct link on, and 540p / 15 fps / Auto / 102° bottom. This routine preserves preferences and creates no meeting. Text editing and connected media are not qualified.\n"
+        : callAvailability
+          ? "# Mentra Call iOS availability routine\n\nEnabled host visibility and search only; Call UI and real calling are not covered. Start signed in on English home and declare the actual device fixture. Each numbered action/check has its own screenshot and video chapter.\n"
+          : "# Compiled no-glasses routine\n\nGenerated from `flows/no-glasses.ts`. Start signed in on English, unpaired home. Credentials are requested at runtime. Each numbered action/check has its own screenshot and video chapter.\n",
     )
     console.log(
-      (callAvailability ? mentraCallAvailability : noGlasses)
+      (callUi ? mentraCallUi : callAvailability ? mentraCallAvailability : noGlasses)
         .map((step, index) => `${index + 1}. **${step.id}** ${step.instruction} Expected: ${step.expected}`)
         .join("\n"),
     )
-    if (!callAvailability) {
+    if (!callAvailability && !callUi) {
       console.log("\nDeclared exclusions:\n")
       console.log(
         noGlassesExclusions.map((step) => `- **${step.id} — ${step.instruction}:** ${step.reason}`).join("\n"),
@@ -62,14 +66,14 @@ try {
       "no-glasses": noGlasses,
       "failure-proof": failureProof,
       "mentra-call-availability": mentraCallAvailability,
+      "mentra-call-ui": mentraCallUi,
       "restore-unpaired": [],
     }
     const steps = suites[values.suite as keyof typeof suites]
     if (!steps) throw new Error(`Suite is not implemented: ${values.suite}`)
-    if (
-      ["no-glasses", "failure-proof", "restore-unpaired"].includes(values.suite!) &&
-      values.fixture !== "unpaired"
-    )
+    if (values.suite === "mentra-call-ui" && values.fixture === "unpaired")
+      throw new Error("The Call UI suite requires a declared paired Mentra Live fixture")
+    if (["no-glasses", "failure-proof", "restore-unpaired"].includes(values.suite!) && values.fixture !== "unpaired")
       throw new Error("This suite requires the declared unpaired fixture")
     const account = ["login", "no-glasses", "failure-proof", "restore-unpaired"].includes(values.suite!)
       ? await credentials()
@@ -114,15 +118,17 @@ try {
           await report.record({...excluded, expected: excluded.reason, status: "not-applicable", durationMs: 0})
       }
       const restored =
-        values.suite === "mentra-call-availability"
-          ? "Call launcher and search result verified; search cleared and home restored. Call UI and real calling were not exercised."
-          : values.suite === "driver-proof"
-            ? "Authentication start restored"
-            : values.suite === "accessibility-preflight"
-              ? "No UI changes; inspected the current miniapp"
-              : values.suite === "no-glasses"
-                ? "Signed-in unpaired home verified; test overlays closed; no preference changes made"
-                : "Authenticated app reached"
+        values.suite === "mentra-call-ui"
+          ? "Call settings, forms and minimize/reopen verified; preferences preserved and miniapp closed. No meeting created; text editing and media remain unqualified."
+          : values.suite === "mentra-call-availability"
+            ? "Call launcher and search result verified; search cleared and home restored. Call UI and real calling were not exercised."
+            : values.suite === "driver-proof"
+              ? "Authentication start restored"
+              : values.suite === "accessibility-preflight"
+                ? "No UI changes; inspected the current miniapp"
+                : values.suite === "no-glasses"
+                  ? "Signed-in unpaired home verified; test overlays closed; no preference changes made"
+                  : "Authenticated app reached"
       await report.finish(
         passed ? "passed" : "failed",
         passed

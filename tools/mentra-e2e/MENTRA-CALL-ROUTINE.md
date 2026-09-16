@@ -6,12 +6,12 @@ Status: Call UI and real-meeting coverage are in development. The user requested
 
 - Host: harness branch merged with `dev` at `c06ccbea30fd961a90253a1f3f46dbe68e77e2e6` on September 16, 2026.
 - Call source: [Mentra-Community/Mentra-Call](https://github.com/Mentra-Community/Mentra-Call), `main` at `6ab859d499321e7bc394f3113db8e024649e7faa`.
-- Bundled miniapp: `mobile/assets/miniapps/com.mentra.call-2.1.13.zip`, SHA-256 `9ade8cca63ddc31a63e337d03ba5026793be049d9e515860a187894aeaeb7987`.
-- The bundle and source manifest both identify version 2.1.13. This alone does not prove that all bundled code was built from that source commit.
+- Local source adds commit `92149df` (calendar optional), version 2.1.14. Publishing it to external `main` still requires repository write access.
+- Bundled miniapp: `mobile/assets/miniapps/com.mentra.call-2.1.14.zip`, SHA-256 `c1c3bf69bcdede1acbffe4c9238a4e463a310c484cbe65c317954cbd7b591c35`.
 
 Latest `dev` explicitly hides Call on iOS in `mobile/src/constants/miniapps.ts`. The host also requires the miniapp's declared camera and speaker capabilities before launch. An unpaired host uses the simulated-glasses profile, which has no camera. Inside Call, Join via Link and New Call are disabled while the Bluetooth link is unknown, disconnected, or reconnecting. Calendar is currently hidden (`SHOW_CALENDAR = false`).
 
-The selected target is the real iOS app on this Mac, with iOS availability restored on `codex/enable-mentra-call-ios`. The old host exclusion described above is the starting dev baseline. The enablement branch removes it and migrates the policy-forced hidden flag once. No hardware or connection-state override is used. The former `mentra-call-ios-availability` exclusion suite is retired. The replacement `mentra-call-availability` verifies the enabled host in five recorded steps; three replays passed on September 16. Call WebView and meeting qualification remain pending.
+The selected target is the real iOS app on this Mac, with iOS availability restored on `codex/enable-mentra-call-ios`. The old host exclusion described above is the starting dev baseline. The enablement branch removes it and migrates the policy-forced hidden flag once. No hardware or connection-state override is used. The former `mentra-call-ios-availability` exclusion suite is retired. The replacement `mentra-call-availability` verifies the enabled host in five recorded steps. The separate 13-step `mentra-call-ui` covers paired Call screens, settings inspection, empty forms and minimize/reopen. Real meeting and field-editing qualification remain pending.
 
 ## Routine in English
 
@@ -47,11 +47,11 @@ These steps require a host that permits opening Call. They preserve the miniapp'
 
 ### C. Additional coverage with an appropriate device fixture
 
-These steps require completed pairing. The supplied device is `Mentra_Live_03BE`, USB `ML396102B`. Pairing completed on September 16 after the iOS-on-Mac audio readiness fix. First-launch camera/microphone permission completion remains a separate setup prerequisite.
+These steps require completed pairing. The supplied device is `Mentra_Live_03BE`, USB `ML396102B`. Pairing completed on September 16 after the iOS-on-Mac audio readiness fix. The user granted camera/microphone permissions and the installed Call UI opened successfully.
 
 19. With a supported connected device and no active call, open Join via Link. Verify the empty form and disabled Join Meeting action.
 20. Enter a fixed invalid link and verify the local explanation. Repeat with a Teams-for-home link and a syntactically valid work/school Teams test link. Verify the expected validation state without pressing Join Meeting; clear the field and go back.
-21. Open New Call. Verify that an empty meeting name prevents Create & Join. Enter a temporary name, check the action's eligibility, then clear it and go back without creating a meeting.
+21. Open New Call. The observed default name is **Mentra Call**, with Create & Join enabled. Verify this initial state without submitting. In the editing extension, clear the name and verify the action is disabled; enter a temporary name, verify eligibility, restore the original name and go back. Editing is not yet qualified on this Mac.
 22. In a separate reversible-settings extension, save the original video preferences, change resolution/frame rate/crop/bitrate one at a time, verify each state through the UI and after reopening, then restore every original value. A failure must retain separate cleanup evidence.
 
 ### D. Authorized real Teams meeting with Mentra Live
@@ -83,4 +83,18 @@ The real native pairing flow reached **Success — Mentra Live connected** and r
 
 Call 2.1.13 required calendar access despite its hidden calendar feature. Local source commit `92149df` marks calendar optional in 2.1.14; the host regression passes with calendar denied. The bundle SHA-256 is `c1c3bf69bcdede1acbffe4c9238a4e463a310c484cbe65c317954cbd7b591c35`. Publishing this external source commit is pending repository write access; the signed local host rebuild uses the saved ZIP. Camera/microphone prompts remain required and must be completed by the user when the automation tool cannot access their system owner.
 
-Updated-build host qualification: `2026-09-16T20-38-10-217Z-mentra-call-availability-41c677`, `2026-09-16T20-38-17-138Z-mentra-call-availability-1412b7`, and `2026-09-16T20-38-23-929Z-mentra-call-availability-cd0b3e`: five steps each, 6.025 / 5.881667 / 5.906667 seconds, zero model calls, artifact/liveness checks passed. Screenshots visually fill the canvas. The installed 2.1.14 app remains at paired home; camera/microphone completion and real calling remain pending.
+Updated-build host qualification: `2026-09-16T20-38-10-217Z-mentra-call-availability-41c677`, `2026-09-16T20-38-17-138Z-mentra-call-availability-1412b7`, and `2026-09-16T20-38-23-929Z-mentra-call-availability-cd0b3e`: five steps each, 6.025 / 5.881667 / 5.906667 seconds, zero model calls, artifact/liveness checks passed. Screenshots visually fill the canvas. Camera/microphone permission completion was subsequently confirmed through the working Call UI.
+
+## Paired UI replay and first real join
+
+Print the exact compiled English checks with `bun tools/mentra-e2e/run.ts describe --suite mentra-call-ui`. Start on paired English host home with Call closed, name **Mentra Live**, Direct link on, and video profile **960×540 @ 15 · Auto · 102° bottom**. The suite inspects these preferences without changing them, opens both forms without submitting, and closes Call after minimize/reopen. Every action was observed on the installed app before compilation. This does not qualify the disconnected section above.
+
+Discovery `2026-09-16T21-05-39-830Z-discovery-6bcdc6` retains 18 executed steps and 390.796667 seconds of video, including failed expectations. Creating a Teams meeting succeeded at 21:09:40 UTC. The cloud/WHEP join then failed on three stream-provision attempts: the dev runtime returned `HTTP 500 on POST /api/camera/stream`. Porter runtime revision v202 logs identify the cause as `cloudflare live input create failed: Authentication error`. Read-only probes confirmed the configured token is active (200) but cannot list Stream live inputs for the configured account (403, code 10000). Porter and Doppler `cloud-v2/dev_aws` contain the same account/token pair. This is a server credential gate; ACS connection and remote media were never reached.
+
+Direct link and Mac input/output/system audio were restored. The meeting object survived Back to Home and Call closure; it was separately retired through Graph after verifying the exact creation log, ID, subject and start time (DELETE 204, then GET 404). `meeting-cleanup.json` retains this evidence. That manual cleanup does not qualify app-owned resource cleanup. No invitation was sent and no browser participant joined.
+
+Remaining accessibility/product findings: AXValue text entry reported success without changing the Teams-link field; pressing that field failed, so validation editing is excluded from the compiled pass. The Account row incorrectly displays an opaque `mu_…` ID as an email. All observed radio AXValues read zero, including selected options; the compiled suite verifies the visible profile summary, not individual radio selection. Keep these gaps explicit until owning-source fixes are exercised on the real app.
+
+Paired UI qualification: `2026-09-16T21-22-42-981Z-mentra-call-ui-a9b90f`, `2026-09-16T21-23-09-891Z-mentra-call-ui-613b4a`, and `2026-09-16T21-24-19-512Z-mentra-call-ui-4e9f73`: 13 steps each in 11.855 / 11.75 / 12.196667 seconds, zero model calls. All 39 screenshots/AX snapshots, videos, chapters and frame-liveness checks passed. The installed app, replay code and native driver were unchanged; intervening documentation edits changed the broader harness-directory hash. No step recorded Mentra as foreground. Representative Settings, Join and final-home screenshots were visually inspected. The Settings Teams-status text runs together at this narrow viewport; this is retained as a layout finding, not a visual approval. Ten runner/native checks and harness TypeScript pass.
+
+The exact 13 English steps are also saved in [COMPILED-MENTRA-CALL-ROUTINE.md](COMPILED-MENTRA-CALL-ROUTINE.md).
