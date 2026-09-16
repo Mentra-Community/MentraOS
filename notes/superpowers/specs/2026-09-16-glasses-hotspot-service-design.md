@@ -98,6 +98,17 @@ Related: `2026-09-08-ios-softap-spike.md`, the Mentra Call SoftAP recovery merge
     can be added later behind an option if a real flow needs it.
 13. **Join hook on both platforms.** Gallery's explanation is shown on Android and iOS today and
     keeps that behaviour inside `beforeJoin`.
+14. **Exhaustion does not close the client.** When recovery is exhausted or a non-recoverable
+    loss occurs, the service quiesces the client, tears down the hotspot, and moves the session
+    to `failed` with the error; it never calls `client.close`. `close` runs only from `release`.
+    Hotspot teardown and higher-level ownership are separate: Call keeps its ACS meeting after a
+    failed media rebuild, exactly as `SoftapCallTransport` does today with `stop({preserveMeeting})`
+    on budget exhaustion, until the user leaves and the runtime calls `release`.
+15. **Listener binding is a native helper, not a consumer concern.** Binding a local listener on
+    the hotspot address while the process is pinned to cellular requires lifting the pin for the
+    duration of the bind (today `AcsMeetingModule.withIngestUnpinned`, on join and on recovery
+    rebind). The core exposes a generation-validated `bindLocalListener` that serializes with
+    `detach`/`release` and restores the pin in `finally`; consumers never touch the process route.
 
 ## TypeScript API (engine, `mobile/modules/engine/src/services/hotspot/`)
 
@@ -113,7 +124,7 @@ export type HotspotPhase =
   | "restoring"     // client.restore running for this generation
   | "ready"         // network bound and restore completed
   | "recovering"    // loss detected; quiesce → wait → rejoin → verify → restore
-  | "failed"        // terminal error recorded; release still required to free ownership
+  | "failed"        // client quiesced, hotspot torn down, error recorded; client.close not called; release frees ownership
   | "releasing"
   | "release_blocked" // hotspot-off settled or unconfirmed, but native cleanup still pending
   | "released"
@@ -170,7 +181,7 @@ export interface HotspotClient {
   quiesce(binding: HotspotBinding, signal: AbortSignal): Promise<void>
   /** Initial join and every successful rejoin. `ready` is reported only after this resolves. */
   restore(binding: HotspotBinding, reason: "initial" | "rejoin", signal: AbortSignal): Promise<void>
-  /** Final teardown of consumer-owned work, including partial prepare/restore. Idempotent. */
+  /** Final teardown of consumer-owned work, including partial prepare/restore. Idempotent. Called only from release(), never on recovery exhaustion. */
   close(): Promise<void>
 }
 
@@ -259,8 +270,10 @@ releasing → released | release_blocked → (retry) → released | cleanup_pend
 Recovery on loss, in order: native invalidates the generation and notifies native borrowers;
 JS aborts that generation's fetches, downloads and any running restore; `quiesce` is awaited;
 the service waits for a BLE control path only if it must re-enable the AP, reusing an AP that
-is still enabled; rejoin, resolve addresses, probe, then `restore` with the new generation;
-on exhaustion, `close` the client and release. Duplicate loss events do not renew budgets.
+is still enabled; rejoin, resolve addresses, probe, then `restore` with the new generation.
+On exhaustion the service tears down the hotspot and fails the session with
+`recovery_exhausted`; the client stays open and the consumer decides what to do with its
+higher-level state before calling `release`. Duplicate loss events do not renew budgets.
 
 ## Native contract
 
@@ -278,6 +291,9 @@ suspend fun join(sessionId: String, ssid: String, passphrase: String, gateway: S
 suspend fun probe(ref: NetworkRefDto): ProbeDto                // TCP to gateway; refusal counts as reachable
 suspend fun detach(sessionId: String)                          // drain the generation, keep reservation + uplink
 suspend fun release(sessionId: String): NativeReleaseDto       // {settled: Boolean, pending: String?}
+/** Bind a local TCP listener on binding.phoneIpv4 for this generation. Lifts the cellular pin only
+ *  for the bind and restores it in finally; serialized with detach/release; rejects stale refs. */
+suspend fun bindLocalListener(ref: NetworkRefDto, req: ListenerDto): ListenerReplyDto   // {port, generation}
 suspend fun request(ref: NetworkRefDto, jobId: String, req: HttpRequestDto): HttpReplyDto
 suspend fun download(ref: NetworkRefDto, jobId: String, req: DownloadDto): DownloadReplyDto
 suspend fun cancelJob(sessionId: String, jobId: String)
@@ -288,7 +304,10 @@ suspend fun snapshot(): NativeStateDto?
 ```kotlin
 // In-process registry for libwebrtc and ACS, exported from the SDK AAR. Versioned.
 object GlassesHotspotRegistry {
-  class Lease(val binding: Binding, val network: android.net.Network) : AutoCloseable
+  class Lease(val binding: Binding, val network: android.net.Network) : AutoCloseable {
+    /** Same pin-lifting, generation-validated bind for in-process consumers (WHIP ingest). */
+    fun bindListener(port: Int, backlog: Int = 50): java.net.ServerSocket
+  }
   /** Atomically validates the generation; onInvalidated fires before JS learns of the loss. */
   fun borrow(sessionId: String, generation: Int, onInvalidated: () -> Unit): Lease
 }
@@ -303,8 +322,10 @@ final class GlassesHotspotRegistry {
 }
 ```
 
-The cellular pin that `AcsMeetingModule` applies and temporarily lifts around listener binding
-moves behind the same serialized native operation; consumers stop touching the process route.
+The cellular pin that `AcsMeetingModule` applies and lifts around listener binding moves behind
+`bindLocalListener` / `Lease.bindListener`; consumers stop touching the process route. Tests:
+initial bind, recovery rebind, bind failure restores the pin, bind racing a concurrent release
+or detach is rejected with `stale_generation`.
 `MentraOtaServer.start` takes the phone address from the binding instead of polling
 `waitForWifiAddress`.
 
@@ -314,7 +335,7 @@ moves behind the same serialized native operation; consumers stop touching the p
 |---|---|
 | Gallery sync | `acquire({consumer: "gallery_sync", uplink: "none", recovery: auto, gatewayProbe: "required", beforeJoin: explainOnce})` → `start(client)`; `restore`: fetch manifest, continue unverified files with `fetch/download(ref)`; `quiesce`: cancel transfers, keep the ledger; `close`; `release`. Requests are not replayed transparently; gallery keeps ownership of acknowledgements and integrity. The two-minute queue age guard stays because the glasses idle-disable the AP. |
 | Hotspot OTA | Download artifacts over the normal network first → `acquire({consumer: "hotspot_ota", uplink: "none", recovery: auto, gatewayProbe: "required"})` → `restore` on `initial`: start `otaServer` bound to `binding.phoneIpv4`, publish the immutable manifest; `ota_start` once; on `rejoin` with a different `phoneIpv4`, throw so the restore fails explicitly and the coordinator reconciles; the ASG APK restart does not close the server or cycle the AP; `release` after the outcome is known. |
-| Mentra Call | `acquire({consumer: "call", uplink: "cellular", recovery: {auto, 60 s return, 45 s rebuild, 3 attempts}, gatewayProbe: "advisory"})` → `prepare`: ACS agent; `restore` on `initial`: ACS borrows the network by `NetworkRef`, WHIP binds on `binding.phoneIpv4`, glasses are told to publish there, await a fresh frame; `quiesce`: stop local media only; `restore` on `rejoin`: rebind ingest, republish, fresh frame; `close`: leave ACS, dispose media; `release`. `SoftapCallTransport` keeps `acsJoin`, `publish`, `live` and drops `hotspot`, `scopedJoin`, `preserveMeeting`. |
+| Mentra Call | `acquire({consumer: "call", uplink: "cellular", recovery: {auto, 60 s return, 45 s rebuild, 3 attempts}, gatewayProbe: "advisory"})` → `prepare`: ACS agent; `restore` on `initial`: ACS borrows the network by `NetworkRef`, WHIP binds on `binding.phoneIpv4`, glasses are told to publish there, await a fresh frame; `quiesce`: stop local media only; `restore` on `rejoin`: rebind ingest through `Lease.bindListener`, republish, fresh frame; on `recovery_exhausted` the meeting stays joined (audio continues without glasses video) until the user leaves; `close`: leave ACS, dispose media; `release`. `SoftapCallTransport` keeps `acsJoin`, `publish`, `live` and drops `hotspot`, `scopedJoin`, `preserveMeeting`. |
 | Managed relay | `acquire({consumer: "relay", ...})`; `GlassesMediaRelayModule.prepare` takes a `NetworkRef` instead of credentials and borrows from the registry. |
 
 ## Migration in small PRs
@@ -337,7 +358,8 @@ moves behind the same serialized native operation; consumers stop touching the p
    endpoint, and of a real Wi-Fi loss separately, before merge.
 5. **Mentra Call and the managed relay**: native borrowing, media restoration, deletion of the
    ACS native join and of `LocalMiniappRuntime.settleSoftapTeardown`. Keep the #4074 tests and
-   point them at the new seams: preserved meeting, fresh frame, cancellation at every step.
+   point them at the new seams: preserved meeting, fresh frame, cancellation at every step,
+   and recovery exhaustion leaving the meeting joined until explicit Leave.
 6. **Delete** legacy ownership paths, adapters, `GlassesHotspotLease`, and the
    `react-native-wifi-reborn` join.
 
