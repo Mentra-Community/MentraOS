@@ -233,7 +233,7 @@ export type LedMode = 'Off' | 'Solid' | 'Pulse' | 'Blink';
 type RgbLedAction = 'on' | 'off';
 export type LedColor = 'red' | 'green' | 'blue' | 'orange' | 'white';
 export type PhotoSize = 'low' | 'medium' | 'high' | 'max';
-export type PhotoCompression = 'none' | 'medium' | 'heavy';
+export type PhotoCompression = NonNullable<PhotoRequestParams['compress']>;
 export type PhotoTransferMethod = 'auto' | 'direct' | 'ble';
 export type PhotoDestination = 'phone' | 'cloud' | 'glasses';
 export type PhotoAeExposureDivisor = 2 | 3 | 5;
@@ -266,7 +266,7 @@ type PersistedCloudUrls = {
 };
 export const RGB_LED_COLORS: LedColor[] = ['red', 'green', 'blue', 'orange', 'white'];
 export const PHOTO_SIZES: PhotoSize[] = ['low', 'medium', 'high', 'max'];
-export const PHOTO_COMPRESSIONS: PhotoCompression[] = ['none', 'medium', 'heavy'];
+export const PHOTO_COMPRESSIONS: PhotoCompression[] = ['none', 'low', 'medium', 'high'];
 export const PHOTO_TRANSFER_METHODS: PhotoTransferMethod[] = ['auto', 'direct', 'ble'];
 export const PHOTO_AE_EXPOSURE_DIVISOR_OPTIONS: PhotoAeExposureDivisor[] = [2, 3, 5];
 export const PHOTO_ISO_CAP_OPTIONS: PhotoIsoCap[] = [400, 800, 1600];

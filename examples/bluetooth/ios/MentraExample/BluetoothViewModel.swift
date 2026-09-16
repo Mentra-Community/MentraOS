@@ -987,7 +987,7 @@ final class BluetoothViewModel: NSObject, ObservableObject, MentraBluetoothSDKDe
             ispAnalogGain: photoIspAnalogGain,
             aeExposureDivisor: photoAeExposureDivisor,
             isoCap: photoIsoCap,
-            compress: photoCompression.rawValue,
+            compress: photoCompression,
             sound: true,
             resetCaptureTuning: shouldResetCaptureTuning()
         )

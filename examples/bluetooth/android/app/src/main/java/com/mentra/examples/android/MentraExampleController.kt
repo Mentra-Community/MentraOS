@@ -3763,7 +3763,7 @@ fun photoSizeToSdk(size: String): PhotoSize = when (size) {
 }
 
 val photoSizeOptions = listOf("low", "medium", "high", "max")
-val photoCompressionOptions = listOf("none", "medium", "heavy")
+val photoCompressionOptions = listOf("none", "low", "medium", "high")
 
 fun roiPositionLabel(roiPosition: Int): String =
     cameraRoiPositions.firstOrNull { it.second == roiPosition }?.first ?: "Center"
