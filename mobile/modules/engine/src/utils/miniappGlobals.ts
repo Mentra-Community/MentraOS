@@ -28,12 +28,14 @@ export interface CapsuleMenuRect {
  * The capsule menu bounding rect in the WebView's own coordinate space.
  *
  * Keep in sync with CapsuleMenu.tsx:
- *   - CapsuleButton height ≈ h-7.5 (30px), width ≈ 73px
- *   - Positioned at right-2 (8px), top = theme.spacing.s2 (8px) below insets.top
+ *   - CapsuleButton is `h-8 w-20` (32×80)
+ *   - Positioned at right = theme.spacing.s4 (16px), top = theme.spacing.s2 (8px)
+ *     below insets.top
  */
-const CAPSULE_MENU_HEIGHT = 30
-const CAPSULE_MENU_WIDTH = 73
-const CAPSULE_MENU_PADDING = 8
+const CAPSULE_MENU_HEIGHT = 32
+const CAPSULE_MENU_WIDTH = 80
+const CAPSULE_MENU_TOP = 8
+const CAPSULE_MENU_RIGHT = 16
 
 /**
  * @param topInsetOffset  extra top offset to add when the WebView container does
@@ -43,12 +45,12 @@ const CAPSULE_MENU_PADDING = 8
  */
 export function getCapsuleMenuRect(topInsetOffset = 0): CapsuleMenuRect {
   const screenWidth = Dimensions.get("window").width
-  const top = topInsetOffset + CAPSULE_MENU_PADDING
+  const top = topInsetOffset + CAPSULE_MENU_TOP
   return {
     top,
-    right: CAPSULE_MENU_PADDING,
+    right: CAPSULE_MENU_RIGHT,
     bottom: top + CAPSULE_MENU_HEIGHT,
-    left: screenWidth - CAPSULE_MENU_PADDING - CAPSULE_MENU_WIDTH,
+    left: screenWidth - CAPSULE_MENU_RIGHT - CAPSULE_MENU_WIDTH,
     width: CAPSULE_MENU_WIDTH,
     height: CAPSULE_MENU_HEIGHT,
   }
@@ -115,9 +117,9 @@ export function buildMiniappGlobalsScript(opts: BuildMiniappGlobalsOptions): str
     "--mentra-capsule-width": `${capsule.width}px`,
     "--mentra-capsule-height": `${capsule.height}px`,
     "--mentra-capsule-center-y": `${capsuleCenter}px`,
-    // Right-side gutter to reserve so content doesn't slide under the
-    // capsule: capsule width + 16px breathing room.
-    "--mentra-capsule-gutter": `${capsule.width + 16}px`,
+    // Right-side gutter so content doesn't slide under the capsule:
+    // host right offset + capsule width + 16px breathing room.
+    "--mentra-capsule-gutter": `${capsule.right + capsule.width + 16}px`,
   }
   const cssVarsBlock = Object.entries(cssVars)
     .map(([k, v]) => `${k}: ${v};`)

@@ -52,6 +52,7 @@ import {
   parseMeetingEndReason,
   parseMeetingMediaSource,
   parseMeetingParticipants,
+  parseMeetingRecovery,
   parseMeetingSoftApProgress,
 } from "./modules/meeting"
 
@@ -721,6 +722,7 @@ export class MiniappSession<TChannels extends object = any> {
           participants: parseMeetingParticipants(payload.participants),
           capabilities: parseMeetingCapabilities(payload.capabilities),
           softap: parseMeetingSoftApProgress(payload.softap),
+          recovery: parseMeetingRecovery(payload.recovery),
         }
         this.meeting._applyState(event)
         this.emitter.emit("meetingState", event)

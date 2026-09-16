@@ -2,7 +2,7 @@
 
 import {describe, expect, test} from "bun:test"
 
-import {advanceMiniappPingLiveness} from "../MiniappLiveness"
+import {advanceMiniappPingLiveness, shouldHoldMiniappPingLiveness} from "../MiniappLiveness"
 
 describe("advanceMiniappPingLiveness", () => {
   test("counts a ping round that has not answered yet", () => {
@@ -24,5 +24,42 @@ describe("advanceMiniappPingLiveness", () => {
       shouldUnregister: true,
       unansweredPingRounds: 6,
     })
+  })
+})
+
+describe("shouldHoldMiniappPingLiveness", () => {
+  test("holds while this miniapp has an in-flight SoftAP join", () => {
+    expect(
+      shouldHoldMiniappPingLiveness({
+        packageName: "com.mentra.call",
+        softapPackageName: "com.mentra.call",
+        softapCancelled: false,
+      }),
+    ).toBe(true)
+  })
+
+  test("does not hold after the SoftAP join is cancelled", () => {
+    expect(
+      shouldHoldMiniappPingLiveness({
+        packageName: "com.mentra.call",
+        softapPackageName: "com.mentra.call",
+        softapCancelled: true,
+      }),
+    ).toBe(false)
+  })
+
+  test("does not hold a different miniapp or when no SoftAP join is running", () => {
+    expect(
+      shouldHoldMiniappPingLiveness({
+        packageName: "com.mentra.call",
+        softapPackageName: "com.mentra.notes",
+        softapCancelled: false,
+      }),
+    ).toBe(false)
+    expect(
+      shouldHoldMiniappPingLiveness({
+        packageName: "com.mentra.call",
+      }),
+    ).toBe(false)
   })
 })

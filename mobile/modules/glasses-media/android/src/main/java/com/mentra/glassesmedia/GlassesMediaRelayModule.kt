@@ -38,7 +38,9 @@ class GlassesMediaRelayModule : Module() {
           val context = requireNotNull(appContext.reactContext).applicationContext
           activeId = id
           val hold = InternetHold(context).also { internet = it }
-          check(hold.awaitValidatedCellular().validated) { "Turn on phone mobile data to stream through the glasses hotspot" }
+          check(hold.awaitValidatedCellular().validated) {
+            "Turn on phone mobile data to stream through the glasses hotspot"
+          }
           val scoped = ScopedSoftApNetwork(context).also { network = it }
           if (!scoped.isWifiEnabled()) {
             Handler(Looper.getMainLooper()).post {

@@ -1,5 +1,7 @@
 package com.mentra.glassesmedia.source
 
+import com.mentra.glassesmedia.trace.SoftApTrace
+
 enum class SourceKind {
   /** Subscribe to a Cloudflare WHEP endpoint. The phone is the offerer. */
   WHEP,
@@ -83,6 +85,18 @@ interface GlassesMediaSource {
   fun setPcmDeliveryEnabled(enabled: Boolean)
   fun setTargetSize(size: TargetSize?) {}
   fun setStateListener(listener: SourceStateListener?) {}
+
+  /**
+   * Drop a retiring SoftAP listener now, skipping its tombstone. No-op for every other kind.
+   *
+   * After [restart], this is the previous listener generation — not the one that just bound.
+   */
+  fun forceCloseIngest() {}
+
+  /**
+   * Has the retiring SoftAP listener released its port? `true` when there is nothing to wait for.
+   */
+  fun awaitIngestClosed(timeoutMs: Long): Boolean = true
 }
 
 /**
@@ -106,8 +120,11 @@ class GlassesMediaController(
    * [stop] drops the source, but a WHIP listener answers `410` for a few seconds after that and
    * still holds its port. Losing the reference here is what made the port's release unobservable
    * from above, so the next call bound into it.
+   *
+   * After [rebindIngest], this is the current source: [GlassesMediaSource.restart] parks the
+   * previous listener on that object, so [forceCloseIngest] / [awaitIngestClosed] stay unambiguous.
    */
-  private var retiringIngest: LocalWhipIngestSource? = null
+  private var retiringIngest: GlassesMediaSource? = null
 
   val state: SourceState
     get() = source?.state ?: SourceState.IDLE
@@ -126,6 +143,48 @@ class GlassesMediaController(
 
   fun restart(config: SourceConfig) {
     source?.restart(config)
+  }
+
+  /**
+   * Destroy the current SoftAP listener generation and bind a new one.
+   *
+   * [GlassesMediaSource.restart] is [LocalWhipIngestSource.start]: it parks the old listener as
+   * retiring and binds a new OS-chosen port. This then force-closes that parked generation —
+   * no tombstone wait — and refuses a null or unchanged URL so a stale listener cannot be reused.
+   *
+   * Does not call [LocalWhipIngestSource.close], which would dispose the shared
+   * PeerConnectionFactory.
+   */
+  fun rebindIngest(config: SourceConfig, timeoutMs: Long): String {
+    if (!MediaDiagnostics.SOFTAP_RECOVERY_ENABLED) {
+      SoftApTrace.failure("ingest_rebind_disabled")
+      throw IllegalStateException("SoftAP ingest rebind is disabled")
+    }
+    val current = source ?: throw IllegalStateException("No media source to rebind")
+    val oldUrl = ingestUrl
+    current.restart(config)
+    val newUrl = ingestUrl
+    if (newUrl.isNullOrBlank() || newUrl == oldUrl) {
+      SoftApTrace.failure("ingest_rebind_stale", "oldUrl" to oldUrl, "newUrl" to newUrl)
+      throw IllegalStateException(
+        "SoftAP ingest rebind did not mint a new listener (old=$oldUrl new=$newUrl)",
+      )
+    }
+    // After restart the current source's retiring handle is the previous listener.
+    retiringIngest = current
+    forceCloseIngest()
+    val closed = awaitIngestClosed(timeoutMs)
+    SoftApTrace.stage(
+      "ingest_rebind",
+      "oldUrl" to oldUrl,
+      "newUrl" to newUrl,
+      "closed" to closed,
+    )
+    if (!closed) {
+      SoftApTrace.failure("ingest_rebind_close_failed", "oldUrl" to oldUrl, "newUrl" to newUrl)
+      throw IllegalStateException("SoftAP ingest rebind did not release the old listener")
+    }
+    return newUrl
   }
 
   fun forceRestart() {

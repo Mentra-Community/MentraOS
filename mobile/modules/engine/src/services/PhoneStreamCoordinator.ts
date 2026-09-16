@@ -230,9 +230,12 @@ export class PhoneStreamCoordinator {
    * A stream was torn down while the BLE link was down, so the glasses never
    * got `stopStream`. Sent on the next reconnect (if no new stream has claimed
    * the slot) so a publisher that outlived its input does not keep pushing
-   * until its own watchdog fires.
+   * until its own watchdog fires. `generation` belongs to the publisher that
+   * queued it; a later SoftAP media hop must not inherit this stop.
    */
-  private pendingBleStop: {streamId: string; hotspot?: boolean} | null = null
+  private pendingBleStop: {streamId: string; hotspot?: boolean; generation: number; discarded?: boolean} | null = null
+  /** Bumped each time an unmanaged/managed publisher claims the slot. */
+  private publisherGeneration = 0
   /**
    * Serializes state transitions (start, stop, teardown). Without it, a
    * second `start*` racing with the first can pass the `this.current === null`
@@ -363,6 +366,7 @@ export class PhoneStreamCoordinator {
       }
 
       const streamId = this.mintId("u")
+      ++this.publisherGeneration
       const entry: UnmanagedEntry = {
         kind: "unmanaged",
         streamId,
@@ -461,6 +465,7 @@ export class PhoneStreamCoordinator {
       // and joins instead of double-provisioning.
       const provision = await provisionManagedStream(opts.restreamDestinations)
       const streamId = this.mintId("m")
+      ++this.publisherGeneration
       let ingestUrl: string
       try {
         ingestUrl = pickIngestUrl(provision, opts.ingest)
@@ -513,7 +518,7 @@ export class PhoneStreamCoordinator {
             },
             () => this.linkSource.isConnected(),
             () => {
-              this.pendingBleStop = {streamId, hotspot: true}
+              this.pendingBleStop = {streamId, hotspot: true, generation: this.publisherGeneration}
               this.attachLink()
             },
           )
@@ -613,6 +618,22 @@ export class PhoneStreamCoordinator {
 
       await this.teardownLocked("explicit_stop")
     })
+  }
+
+  /**
+   * Drop a deferred BLE `stopStream` that belonged to a publisher that is gone.
+   *
+   * SoftAP recovery destroys generation N and rebuilds N+1. If failSuspended already
+   * tore the publisher down after `glassesGraceMs`, `stop()` is a no-op but a pending
+   * stop would still flush into the new hop on reconnect. Call this from SoftAP
+   * `stopPublishing` so the deferred command dies with its generation.
+   */
+  discardPendingBleStop(): void {
+    const pending = this.pendingBleStop
+    if (!pending) return
+    pending.discarded = true
+    this.pendingBleStop = null
+    this.detachLinkIfIdle()
   }
 
   /**
@@ -759,9 +780,10 @@ export class PhoneStreamCoordinator {
 
   private async flushPendingBleStop(): Promise<void> {
     const pending = this.pendingBleStop
-    if (!pending || this.current || !this.linkSource.isConnected()) return
+    if (!pending || pending.discarded || this.current || !this.linkSource.isConnected()) return
     console.info("[STREAM] BLE link back; sending deferred stopStream", pending)
     await BluetoothSdk.stopStream()
+    if (pending.discarded || this.pendingBleStop !== pending || this.current) return
     if (pending.hotspot) {
       const result = await BluetoothSdk.setHotspotState(false)
       if (result.state !== "disabled") throw new Error("Deferred hotspot shutdown was not confirmed")
@@ -1009,7 +1031,7 @@ export class PhoneStreamCoordinator {
     // lock for the native timeout). Defer it to the next reconnect instead.
     const linkUp = this.linkSource.isConnected()
     if (sendBleStop && !linkUp) {
-      this.pendingBleStop = {streamId: entry.streamId, hotspot: entry.kind === "managed" && !!entry.relay}
+      this.pendingBleStop = {streamId: entry.streamId, hotspot: entry.kind === "managed" && !!entry.relay, generation: this.publisherGeneration}
       console.warn("[STREAM] BLE link down during teardown; stopStream deferred", {
         streamId: entry.streamId,
         reason,

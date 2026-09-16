@@ -89,6 +89,9 @@ class MentraBluetoothSdk private constructor(
             activityLifecycleCallbacksRegistered = true
         }
         bridgeEventSinkId = Bridge.addEventSink { eventName, data -> dispatchBridgeEvent(eventName, data) }
+        // DeviceManager/MentraLive outlive Expo module remounts. glasses_ready already
+        // ran on this BLE session; replay it so startStream does not claim old firmware.
+        deviceManager.sgc?.replayStreamControlReady()
         // Baseline the analytics connection state before subscribing to the store:
         // store updates invoke listeners synchronously on the updating thread, so a
         // connected status observed before the baseline would be reported as a fresh

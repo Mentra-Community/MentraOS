@@ -199,6 +199,7 @@ export type {
   MeetingCapability,
   MeetingCapabilities,
   MeetingSoftApProgress,
+  MeetingSoftApRecovery,
   MeetingSoftApStep,
   MeetingSoftApStepState,
   MeetingSoftApStepStatus,
@@ -209,6 +210,7 @@ export {
   parseMeetingEndReason,
   parseMeetingMediaSource,
   parseMeetingParticipants,
+  parseMeetingRecovery,
   parseMeetingSoftApProgress,
   validateMeetingVideoSource,
 } from "./modules/meeting"
