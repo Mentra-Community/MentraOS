@@ -21,7 +21,9 @@ The user requested iOS enablement and fixes, will provide Mentra Live glasses fo
 - [ ] Retain failures and qualify deterministic repeatability. Document Mac Mini setup and which checks require a physical iPhone.
 - [ ] Publish the separate iOS PR with actual validation and outstanding hardware gates.
 
-Known platform distinction: the iOS hotspot helper currently waits specifically for cellular internet during direct-link calls. A Mac has no cellular interface; the existing cloud/WHEP path is a separate selectable transport. Do not infer iPhone SoftAP results from a Mac cloud-path run, silently switch transports, or disrupt the user's networking to manufacture a pass.
+The selected qualification path is Direct link: original glasses `Mentra_Live_03BE` → glasses Wi-Fi hotspot → Mac → Teams, with Ethernet carrying the Mac's internet. The user is preparing the Ethernet connection. Verify a wired default route before joining the hotspot; otherwise the Mac would lose its current Wi-Fi internet. Direct link is the default for the bundled ACS Teams build, and cloud relay is a manually selected alternative, not an automatic fallback. Do not infer iPhone SoftAP results from a Mac call or change transports to manufacture a pass.
+
+The native network check now recognizes a satisfied Ethernet or cellular route and reports which it found. Wi-Fi alone is accepted only after hotspot release and when its SSID differs from the glasses network. A satisfied path is routing evidence, not proof that Teams is reachable. The ACS join treats an unvalidated route as advisory and still attempts the join; the earlier description of this check as a mandatory cellular gate was too strong. The separate general-purpose hotspot relay does require the check to succeed. Actual Mac hotspot/media qualification remains pending.
 
 ## Current evidence
 

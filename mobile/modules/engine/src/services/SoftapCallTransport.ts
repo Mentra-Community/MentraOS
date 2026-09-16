@@ -1321,7 +1321,7 @@ export function createSoftapCallDeps(args: {
       // Android promoted in its place. Waiting for it to validate is what stopped the ACS join
       // from burning its whole timeout on DNS that could not resolve yet.
       if (subsystems.awaitValidatedDefaultNetwork) {
-        report?.("Waiting for this phone's mobile data to take over so Teams can connect")
+        report?.("Waiting for an internet route outside the glasses hotspot so Teams can connect")
         try {
           const network = await subsystems.awaitValidatedDefaultNetwork()
           if (network) {
@@ -1340,7 +1340,7 @@ export function createSoftapCallDeps(args: {
           })
         }
       }
-      report?.("Binding the video receiver and joining Teams over cellular")
+      report?.("Binding the video receiver and joining Teams")
       await subsystems.joinMeeting(packageName, {
         meetingUrl: args.meetingUrl,
         token: args.token,

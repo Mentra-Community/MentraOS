@@ -106,7 +106,7 @@ public final class GlassesHotspotNetwork {
         }
     }
 
-    public func awaitInternet(requireCellular: Bool = true, completion: @escaping (Bool, String) -> Void) {
+    public func awaitInternet(allowWifiAfterRelease: Bool = false, completion: @escaping (Bool, String) -> Void) {
         queue.async {
             let monitor = NWPathMonitor()
             var finished = false
@@ -117,21 +117,29 @@ public final class GlassesHotspotNetwork {
                 completion(usable, detail)
             }
             monitor.pathUpdateHandler = { path in
-                if path.status == .satisfied, path.usesInterfaceType(.cellular) { finish(true, "cellular") }
+                if let route = HotspotInternetPolicy.route(satisfied: path.status == .satisfied,
+                                                           cellular: path.usesInterfaceType(.cellular),
+                                                           ethernet: path.usesInterfaceType(.wiredEthernet))
+                {
+                    finish(true, route)
+                    return
+                }
                 // Once the hotspot is released, a return to the user's Wi-Fi is also valid.
                 // Do not mistake the departing glasses AP's local-only path for restored internet.
-                if !requireCellular, path.status == .satisfied, path.usesInterfaceType(.wifi) {
+                if allowWifiAfterRelease, path.status == .satisfied, path.usesInterfaceType(.wifi) {
                     NEHotspotNetwork.fetchCurrent { network in
                         self.queue.async {
-                            guard let network, !network.ssid.isEmpty, network.ssid != self.lastHotspotSSID else { return }
-                            finish(true, "wifi")
+                            guard let route = HotspotInternetPolicy.route(satisfied: true, cellular: false, ethernet: false,
+                                                                          restoredWifiSSID: network?.ssid, glassesSSID: self.lastHotspotSSID)
+                            else { return }
+                            finish(true, route)
                         }
                     }
                 }
             }
             monitor.start(queue: self.queue)
             self.queue.asyncAfter(deadline: .now() + 15) {
-                finish(false, requireCellular ? "Cellular internet did not become the default route" : "Internet did not return after leaving the glasses hotspot")
+                finish(false, allowWifiAfterRelease ? "Internet did not return after leaving the glasses hotspot" : "Cellular or Ethernet internet did not become the default route")
             }
         }
     }

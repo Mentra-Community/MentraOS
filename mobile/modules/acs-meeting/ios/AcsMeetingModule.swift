@@ -85,7 +85,7 @@ public class AcsMeetingModule: Module {
         }
 
         AsyncFunction("awaitDefaultNetworkAfterHotspot") { (promise: Promise) in
-            self.hotspot.awaitInternet(requireCellular: false) { usable, detail in
+            self.hotspot.awaitInternet(allowWifiAfterRelease: true) { usable, detail in
                 promise.resolve(["usable": usable, "detail": detail, "transport": usable ? detail : "unknown", "validated": usable, "present": usable])
             }
         }
@@ -101,7 +101,7 @@ public class AcsMeetingModule: Module {
 
         AsyncFunction("awaitValidatedDefaultNetwork") { (promise: Promise) in
             self.hotspot.awaitInternet { usable, detail in
-                promise.resolve(["usable": usable, "detail": detail, "transport": usable ? "cellular" : "unknown", "validated": usable, "present": usable])
+                promise.resolve(["usable": usable, "detail": detail, "transport": usable ? detail : "unknown", "validated": usable, "present": usable])
             }
         }
 
