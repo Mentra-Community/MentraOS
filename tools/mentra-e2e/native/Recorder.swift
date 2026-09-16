@@ -132,6 +132,10 @@ extension Driver {
     let configuration = SCStreamConfiguration()
     configuration.width = Int(target.frame.width * 2) / 2 * 2
     configuration.height = Int(target.frame.height * 2) / 2 * 2
+    // External displays can provide 1x frames for this fixed 2x canvas. Scale
+    // both up and down so moving displays cannot leave a quarter-sized image.
+    configuration.scalesToFit = true
+    configuration.preservesAspectRatio = true
     configuration.minimumFrameInterval = CMTime(value: 1, timescale: 15)
     configuration.capturesAudio = false
     configuration.captureMicrophone = false
