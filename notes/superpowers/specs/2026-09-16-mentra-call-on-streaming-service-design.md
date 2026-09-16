@@ -30,18 +30,24 @@ settled teardown that races the ingest-closed and hotspot-off acks and force-cle
 
 ```text
 LocalMiniappRuntime (MEETING_* requests, MEETING_STATE fanout)
-  └─ SoftapCallSession            (was SoftapCallTransport; two steps: acsJoin, stream)
-       ├─ AcsMeetingService       (meeting, audio, state) + AcsMediaAdapter (attach/detach by MediaRef)
+  └─ SoftapCallSession            (was SoftapCallTransport; prepareAgent, then one stream)
+       ├─ AcsMeetingService       (meeting, audio, state)
+       ├─ AcsMediaAdapter         (attach: ACS join on generation 1, then media; detach: media only)
        └─ GlassesPhoneStreamService.open({owner: "call", adapter: AcsMediaAdapter, ...})
              └─ GlassesHotspotService.acquire({consumer: "video_streaming", operationId: "call:<id>"})
 ```
 
 ## Decisions
 
-1. **Meeting first, stream second.** The ACS agent is prepared and the meeting joined before
-   the stream opens, on the Internet route. This is the order the runtime uses today
-   (`prepareAgent` then `joinMeeting` before the SoftAP media hop) and it is what lets the
-   meeting survive every stream failure.
+1. **Same order as today.** Today's sequence is `prepareAgent` → hotspot → scoped join (with
+   the cellular uplink held) → ACS join → publish → live, and it stays that way. The ACS agent
+   is prepared before the stream opens; the meeting is joined inside the adapter's initial
+   `attach`, which the streaming service awaits after the hotspot is `ready` and before the
+   glasses publish. The meeting is therefore established while cellular is already the Internet
+   route, exactly as now, and never has to survive the phone's Wi-Fi moving to the glasses AP.
+   On later generations `attach` only reattaches media. Meeting-first was considered and
+   rejected: it would join ACS over station Wi-Fi and then transition the live meeting to
+   cellular during the scoped join.
 2. **The miniapp-facing contract does not change.** `MEETING_STATE` keeps `softap: {traceId,
    phase, steps[hotspot, scopedJoin, acsJoin, publish, live], elapsedMs, mediaGeneration}` and
    the `recovery: {active, generation, deadlineAt, phase}` fields, and join failures keep
@@ -49,10 +55,12 @@ LocalMiniappRuntime (MEETING_* requests, MEETING_STATE fanout)
    the stream and hotspot state snapshots by a fixed mapping (below). Miniapp UIs that render
    the progress list keep working unchanged.
 3. **One media adapter, two hooks.** `AcsMediaAdapter` implements the streaming spec's
-   `StreamAdapter`. `attach(media)` borrows the decoded source from `GlassesMediaRegistry` by
-   `MediaRef` and wires `AcsFrameSender` and the glasses PCM path onto the existing outgoing
-   streams; `detach(media)` closes the lease and leaves the meeting untouched. ACS never sees an
-   ingest URL, a network handle or a hotspot again.
+   `StreamAdapter`. On media generation 1, `attach(media)` first joins the meeting
+   (`acsMeetingService.join`) and then borrows the decoded source from `GlassesMediaRegistry`
+   by `MediaRef` and wires `AcsFrameSender` and the glasses PCM path onto the existing outgoing
+   streams; on later generations it only reattaches media. `detach(media)` closes the lease and
+   leaves the meeting untouched. The meeting is closed only by the call session's leave or end
+   after `stream.close()`. ACS never sees an ingest URL, a network handle or a hotspot again.
 4. **Recovery is observed, not driven.** `beginSoftapRecovery`, `transport.recover`,
    `shouldRepublish` and `republish` are deleted. The stream service recovers under the shared
    `RecoveryContext` with Call's defaults (60 s return, 45 s rebuild, three attempts, fresh
@@ -83,21 +91,49 @@ LocalMiniappRuntime (MEETING_* requests, MEETING_STATE fanout)
    explicit no-restart rule for the SoftAP kind stay in ACS exactly as they are. They are
    destination-side video recovery, not hotspot ownership.
 
-## Step and error mapping
+## Progress projection and error mapping
 
-Progress steps are derived, in order, from the snapshots the call session subscribes to:
+The call session projects the hotspot and stream snapshots into the exact `SoftapProgress`
+shape the miniapp parser accepts today (`softap.phase` from the closed set `idle | starting |
+recovering | live | stopping | failed`, `steps[]` with `pending | running | done | failed`,
+`elapsedMs`, `mediaGeneration`) and into `recovery` (`active`, `generation`, `deadlineAt`,
+`phase`). One projection function, driven by every state event, produces all of it.
 
-| Miniapp step | Derived from |
+`softap.phase`:
+
+| Projected phase | When |
 |---|---|
-| `hotspot` | hotspot phase `reserved`, `enabling` (running); `joining` or later (done); hotspot `failed` before `joining` (failed) |
-| `scopedJoin` | hotspot phase `joining`, `verifying` (running); `restoring` or later (done); hotspot `failed` at those phases (failed) |
-| `acsJoin` | the call session's own ACS join promise |
-| `publish` | stream phase `listening` (running, adapter attaching), `publishing` (running); `live` (done) |
-| `live` | stream phase `live` for the current media generation |
+| `idle` | no stream session |
+| `starting` | from `open` until the first `live`, including the initial attach and publish |
+| `recovering` | stream phase `recovering` (media or hotspot recovery) |
+| `live` | stream phase `live` |
+| `stopping` | stream phase `closing`, and the ACS leave that follows |
+| `failed` | stream phase `failed`, or a join failure before the stream opened |
 
-`mediaGeneration` is the stream's `media.mediaGeneration`. `recovery.generation` is the same
-number; `recovery.deadlineAt` is `RecoveryContext.rebuildDeadlineAt` when set, otherwise
-`returnDeadlineAt`; `recovery.phase` is the derived step currently running.
+`steps[]`, in order, with `durationMs` from the timestamps of the transitions that start and
+end each one, and `detail` from the hotspot or stream error message when a step fails:
+
+| Step | running | done | failed |
+|---|---|---|---|
+| `hotspot` | hotspot phase `reserved` or `enabling` | hotspot phase `joining` or later | hotspot `failed` before `joining` |
+| `scopedJoin` | hotspot phase `joining` or `verifying` | hotspot phase `restoring` or later | hotspot `failed` at `joining` or `verifying` |
+| `acsJoin` | adapter attach on generation 1 has started and the ACS join promise is pending | ACS join resolved | ACS join rejected (`ACS_JOIN_FAILED`) |
+| `publish` | stream phase `listening` after the ACS join, or `publishing` | stream phase `live` | stream `failed` at those phases |
+| `live` | never running | stream phase `live` | stream `failed` after a first `live` |
+
+On recovery the steps that are rebuilt (`hotspot` and `scopedJoin` for a hotspot outage,
+`publish` and `live` for both kinds) go back to `pending` and run again; `acsJoin` stays `done`
+because the meeting is preserved. On failure the step running at that moment becomes `failed`
+and later steps stay `pending`. On stop the steps are retained as they were (today's
+`keepProgress` default); on a new join they start from `pending`.
+
+`recovery`: `active` is true while the stream phase is `recovering`; `generation` is the
+stream's `media.mediaGeneration`; `deadlineAt` is `RecoveryContext.rebuildDeadlineAt` when set,
+otherwise `returnDeadlineAt`; `phase` is the projected `softap.phase` above, which is what the
+field carries today (`SoftapRecoveryState.phase` is a `SoftapPhase`). When recovery ends in
+`live` the runtime sends one more `MEETING_STATE` with `recovery.active: false`; when it ends
+in `failed` with `recovery_exhausted` the state carries `state: "error"` and
+`error: "SOFTAP_NETWORK_LOST: …"` as today.
 
 Join failure codes keep their names and gain a precise source:
 
@@ -122,15 +158,15 @@ the miniapp while `details` carries the new code for logs and bug reports.
 | Member | Fate |
 |---|---|
 | steps `hotspot`, `scopedJoin`, `publish`, `live` | deleted as steps; derived for progress only |
-| step `acsJoin` | kept: `prepareAgent` + `join` before the stream, `leaveOrEnd` after `stream.close()` |
-| new step `stream` | `streamService.open(...)` + `start()`; `close()` on the way down |
+| step `acsJoin` | no longer a transport step: `join` runs inside the adapter's initial `attach`; `leaveOrEnd` runs after `stream.close()` |
+| the sequence | `prepareAgent` → `streamService.open(...)` + `start()` → (leave: `close()` then `leaveOrEnd`) |
 | `SoftapCallDeps.startHotspot`, `waitUntilHotspotJoinable`, `stopHotspot`, `joinScopedNetwork`, `leaveScopedNetwork`, `cancelScopedNetworkJoin`, `startPublishing`, `stopPublishing`, `awaitFirstFrame`, `waitUntilLive`, `rebindIngest`, `republishRetryDelayMs` | deleted |
 | `SoftapCallDeps.isWifiEnabled` | deleted; the hotspot service's preflight reports `wifi_disabled` |
-| `SoftapCallDeps.joinMeeting`, `leaveMeeting`, `endMeeting` | kept; `joinMeeting` no longer takes `bindAddress` or returns an `ingestUrl` |
+| `SoftapCallDeps.joinMeeting`, `leaveMeeting`, `endMeeting` | kept; `joinMeeting` is called by the adapter's initial `attach`, no longer takes `bindAddress` and no longer returns an `ingestUrl` |
 | `recover`, `republish`, `shouldRepublish`, `mediaOnly`, `preserveMeeting`, `keepProgress`, `mediaGeneration` field | deleted; recovery is the stream's, progress keeps the last snapshot on failure by default |
 | `progress()`, `recoveryState()`, `currentPhase()`, `lastTeardownFailures()` | kept, computed from subscriptions |
 | `SoftapCallError(step, code, message, cause)` | kept as the miniapp-facing wrapper with the mapping above |
-| `createSoftapCallDeps(args).subsystems` | shrinks to `prepareAgent`, `joinMeeting`, `leaveMeeting`, `endMeeting`, `glassesLc3Uplink`, `onMeetingState`, plus `streamService` |
+| `createSoftapCallDeps(args).subsystems` | shrinks to `prepareAgent`, `joinMeeting`, `leaveMeeting`, `endMeeting`, `attachMedia`, `detachMedia`, `glassesLc3Uplink`, `onMeetingState`, plus `streamService` |
 
 ### `LocalMiniappRuntime.ts` SoftAP section
 
@@ -211,9 +247,15 @@ first as the simpler consumer).
 
 ## Risks
 
-- **Progress fidelity.** Derived steps must not regress the timing miniapps see, in particular
-  `hotspot` finishing when the join starts, not when the AP is enabled. The derivation table is
-  the contract; test it against recorded state sequences from today's transport.
+- **Progress fidelity.** The projection must not regress what miniapps see: the phase set,
+  the step order, `hotspot` finishing when the join starts, `acsJoin` staying done through
+  recovery. The projection tables are the contract; test them against recorded state sequences
+  from today's transport, including a hotspot outage, a media-only rebuild, exhaustion and a
+  leave during recovery.
+- **Attach budget on generation 1.** The initial `attach` includes the ACS join, which can take
+  several seconds; the streaming service's initial start has no rebuild deadline, so this is
+  bounded only by the caller's signal. On rejoin `attach` is media only and fits the shared
+  deadline.
 - **Audio through recovery.** With the stream detached during a rebuild, glasses PCM stops but
   BLE LC3 and phone mic continue; the meeting must not mute or switch source on its own.
 - **Old and new transport during the switch.** Both reserve the hotspot as `video_streaming`
