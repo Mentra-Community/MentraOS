@@ -50,6 +50,8 @@ struct ViewState {
     private var cancellables = Set<AnyCancellable>()
     #if os(macOS)
     private var audioRouteObserver: MacAudioRouteObserver?
+    #else
+    private var audioRouteObservation: AudioRouteObservation?
     #endif
     var sendStateWorkItem: DispatchWorkItem?
     let sendStateQueue = DispatchQueue(label: "sendStateQueue", qos: .userInitiated)
@@ -365,6 +367,18 @@ struct ViewState {
     override init() {
         Bridge.log("MAN: init()")
         super.init()
+
+        #if !os(macOS)
+        // Pair Audio precedes BLE readiness and microphone capture. Its audio
+        // state must not depend on the lazily created PhoneMic singleton.
+        audioRouteObservation = AudioRouteObservation(names: [
+            AVAudioSession.routeChangeNotification,
+            UIApplication.didBecomeActiveNotification,
+        ]) { [weak self] in
+            self?.checkCurrentAudioDevice()
+            self?.updateMicState()
+        }
+        #endif
 
         // Start memory monitoring (logs every 30s to help detect leaks)
         // MemoryMonitor.start()
@@ -942,58 +956,12 @@ struct ViewState {
         glassesBluetoothClassicConnected = AudioSessionMonitor.isAudioDeviceConnected(devicePattern: audioDevicePattern)
         otherBtConnected = AudioSessionMonitor.isOtherAudioDeviceConnected(devicePattern: audioDevicePattern)
         #else
-        // check if the device disconnected:
-        let isConnected = AudioSessionMonitor.isAudioDeviceConnected(
-            devicePattern: audioDevicePattern
-        )
-
-        if !isConnected {
-            Bridge.log("MAN: Device '\(deviceName)' disconnected")
-            glassesBluetoothClassicConnected = false
-
-            let isOtherDeviceConnected = AudioSessionMonitor.isOtherAudioDeviceConnected(
-                devicePattern: audioDevicePattern
-            )
-            if isOtherDeviceConnected {
-                Bridge.log("MAN: Other device connected, returning")
-                otherBtConnected = true
-            }
-            return
-        }
-
-        let isPaired = AudioSessionMonitor.isDevicePaired(devicePattern: audioDevicePattern)
-        if isPaired {
-            Bridge.log("MAN: Successfully detected newly paired device '\(audioDevicePattern)'")
-            glassesBluetoothClassicConnected = true
-        } else {
-            glassesBluetoothClassicConnected = false
-        }
+        // A connected HFP input remains eligible even while another output is
+        // selected. Inspect available inputs as well as the active A2DP route.
+        glassesBluetoothClassicConnected = AudioSessionMonitor.isDevicePaired(devicePattern: audioDevicePattern)
+        otherBtConnected = AudioSessionMonitor.isOtherAudioDeviceConnected(devicePattern: audioDevicePattern)
         #endif
     }
-
-    #if !os(macOS)
-    func onRouteChange(
-        reason: AVAudioSession.RouteChangeReason, availableInputs: [AVAudioSessionPortDescription]
-    ) {
-        Bridge.log("MAN: onRouteChange: reason: \(reason)")
-        Bridge.log("MAN: onRouteChange: inputs: \(availableInputs)")
-
-        // check if our deviceName is connected:
-        // (return if deviceName is empty):
-        if deviceName.isEmpty {
-            Bridge.log("MAN: Device name is empty, returning")
-            return
-        }
-
-        // Add small delay to let iOS populate availableInputs
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
-            guard let self = self else { return }
-            checkCurrentAudioDevice()
-        }
-
-        updateMicState()
-    }
-    #endif
 
     func onInterruption(began: Bool) {
         Bridge.log("MAN: Interruption: \(began)")
