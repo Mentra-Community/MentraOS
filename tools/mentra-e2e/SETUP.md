@@ -180,6 +180,14 @@ Do not clear app storage, reset Keychain, or overwrite deployment/server setting
 
 ## 8. Operate and troubleshoot
 
+### Mac hotspot calling fixture
+
+For the selected Mentra Call direct-link routine, connect Ethernet with internet access and keep Wi-Fi enabled for the glasses hotspot. Before starting, use `networksetup -listallhardwareports`, `scutil --nwi` and `route -n get default` to verify the active internet interface is wired. An attached adapter without an active link/address is insufficient. Do not join the glasses hotspot while Wi-Fi is the Mac's only internet route.
+
+Confirm the agreed glasses name under the **connected** section of `system_profiler SPBluetoothDataType`; the initial pair is `Mentra_Live_03BE`. A saved or nearby device is insufficient. Verify the app's pairing and audio readiness separately. Start with Direct link on, record the original network/audio state, and capture the checklist and browser media evidence described in [the Call routine](MENTRA-CALL-ROUTINE.md). The updated iOS native path check recognizes Ethernet as well as cellular. This setup has not yet qualified an end-to-end Mac hotspot call.
+
+### Routine operation
+
 - Run one harness at a time. A per-user lock prevents two checkouts from driving the same app concurrently.
 - Keep the app window at the same size during a run. Capture targets the window independently of its desktop position. Before a normal relaunch, the recorder switches temporarily to an empty window allowlist; it then attaches the new Mentra window to the same video. Other applications stay excluded.
 - An assertion failure produces a nonzero exit and preserves the video, screenshots, accessibility snapshots, expected result, and timing. Inspect the failing step before rerunning.

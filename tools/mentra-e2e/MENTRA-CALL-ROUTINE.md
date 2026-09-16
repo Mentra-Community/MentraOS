@@ -13,6 +13,8 @@ Latest `dev` explicitly hides Call on iOS in `mobile/src/constants/miniapps.ts`.
 
 The selected target is the real iOS app on this Mac, with iOS availability restored on `codex/enable-mentra-call-ios`. The old host exclusion described above is the starting dev baseline. The enablement branch removes it and migrates the policy-forced hidden flag once. No hardware or connection-state override is used. The former `mentra-call-ios-availability` exclusion suite is retired. The replacement `mentra-call-availability` verifies the enabled host in five recorded steps. The separate 13-step `mentra-call-ui` covers paired Call screens, settings inspection, empty forms and minimize/reopen. Real meeting and field-editing qualification remain pending.
 
+The selected real-call path is **Direct link through the original 03BE glasses' hotspot**, with Ethernet supplying the Mac's internet. Verify the wired route before moving Wi-Fi onto the glasses hotspot. Direct link is on by default in these ACS Teams bundles; turning it off manually selects cloud relay. There is no automatic fallback between the two. A cloud-relay pass cannot satisfy this hotspot routine.
+
 ## Routine in English
 
 Start signed in to the designated test account, in English, with no active meeting. Record the host build, miniapp version/archive hash, OS, device fixture, and any local test-build allowance. Keep the window size fixed. Start the continuous recording before the first UI step; save a screenshot, accessibility tree, expected result, and video chapter for every executed step.
@@ -57,7 +59,7 @@ These steps require completed pairing. The supplied device is `Mentra_Live_03BE`
 ### D. Authorized real Teams meeting with Mentra Live
 
 23. Verify the connected device is the user's `Mentra_Live_03BE` (USB `ML396102B`), record firmware/app identity, and check Bluetooth audio and microphone readiness. Incomplete pairing is a setup failure.
-24. Record the selected call transport. For Direct link, capture every hotspot, local receiver and internet-route checklist stage. The iOS helper currently requires cellular during this path; a Mac cloud/WHEP call is a separate transport result. Do not silently fall back or label it an iPhone SoftAP pass.
+24. Verify **Direct link for Teams is on** and the Mac has a working Ethernet default route while Wi-Fi remains enabled. Stop before joining if the Mac still depends on Wi-Fi for internet. Capture every hotspot, local receiver and internet-route checklist stage. The updated native check recognizes Ethernet and cellular; its path result is advisory for ACS, whose actual connection must still succeed. Do not change to cloud relay or label a Mac hotspot pass as an iPhone SoftAP pass.
 25. Create one clearly named test meeting from Call. Record the actual generated Teams link and the meeting/join states. If joining fails, retain the checklist stage and original native/backend error, then verify cleanup before retrying.
 26. Open that exact link in a browser as a test participant. Join/admit through the observed UI and verify both sides report the same active meeting. Record browser evidence alongside the Mentra App evidence with corresponding English step IDs.
 27. Verify the remote participant receives changing video from the glasses. Capture browser media counters and visible frames; a local CONNECTED label or one frozen frame is insufficient.
