@@ -1,4 +1,5 @@
 import {result as Res} from "typesafe-ts"
+import {Platform} from "react-native"
 
 import {storage} from "@/utils/storage"
 import {SETTINGS, engine} from "@mentra/engine"
@@ -22,14 +23,20 @@ jest.mock("@mentra/engine", () => ({
     settings: {
       set: jest.fn(),
     },
+    miniapps: {
+      setHiddenStatus: jest.fn(),
+    },
   },
 }))
 
 const mockLoad = jest.mocked(storage.load)
 const mockSave = jest.mocked(storage.save)
 const mockSet = jest.mocked(engine.settings.set)
+const mockSetHidden = jest.mocked(engine.miniapps.setHiddenStatus)
 
 describe("mobile migrations", () => {
+  afterEach(() => jest.restoreAllMocks())
+
   beforeEach(() => {
     jest.clearAllMocks()
     mockSave.mockReturnValue(Res.ok(undefined))
@@ -46,11 +53,34 @@ describe("mobile migrations", () => {
   })
 
   it("does not reset MentraOS onboarding after the migration has run", async () => {
-    mockLoad.mockReturnValue(Res.ok(4))
+    mockLoad.mockReturnValue(Res.ok(5))
 
     await migrate()
 
     expect(mockSet).not.toHaveBeenCalled()
     expect(mockSave).not.toHaveBeenCalled()
+  })
+
+  it("restores a Call entry forcibly hidden by the old iOS policy", async () => {
+    jest.replaceProperty(Platform, "OS", "ios")
+    mockLoad.mockImplementation((key) => Res.ok(key === "migration_version" ? 4 : true))
+
+    await migrate()
+
+    expect(mockSetHidden).toHaveBeenCalledWith("com.mentra.call", false)
+    expect(mockSet).not.toHaveBeenCalled()
+    expect(mockSave).toHaveBeenCalledWith("migration_version", 5)
+  })
+
+  it("preserves Android hiding and an iOS user's choice after migration", async () => {
+    jest.replaceProperty(Platform, "OS", "android")
+    mockLoad.mockReturnValue(Res.ok(4))
+    await migrate()
+    expect(mockSetHidden).not.toHaveBeenCalled()
+
+    jest.replaceProperty(Platform, "OS", "ios")
+    mockLoad.mockReturnValue(Res.ok(5))
+    await migrate()
+    expect(mockSetHidden).not.toHaveBeenCalled()
   })
 })

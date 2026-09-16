@@ -1,13 +1,22 @@
 import {mentraCallPackageName, navigationPackageName, shouldHideMiniapp} from "@/constants/miniapps"
 
 describe("shouldHideMiniapp", () => {
-  it("hides Mentra Call on iOS and leaves it visible on Android", () => {
-    expect(shouldHideMiniapp(mentraCallPackageName, "ios")).toBe(true)
-    expect(shouldHideMiniapp(mentraCallPackageName, "android")).toBe(false)
+  const originalRegion = process.env.EXPO_PUBLIC_DEPLOYMENT_REGION
+  afterEach(() => {
+    if (originalRegion === undefined) delete process.env.EXPO_PUBLIC_DEPLOYMENT_REGION
+    else process.env.EXPO_PUBLIC_DEPLOYMENT_REGION = originalRegion
   })
 
-  it("does not hide other bundled miniapps on iOS", () => {
-    expect(shouldHideMiniapp(navigationPackageName, "ios")).toBe(false)
-    expect(shouldHideMiniapp("com.mentra.notes", "ios")).toBe(false)
+  it("makes Call available without a platform exclusion", () => {
+    delete process.env.EXPO_PUBLIC_DEPLOYMENT_REGION
+    expect(shouldHideMiniapp(mentraCallPackageName)).toBe(false)
+    expect(shouldHideMiniapp(navigationPackageName)).toBe(false)
+  })
+
+  it("retains the China distribution restrictions", () => {
+    process.env.EXPO_PUBLIC_DEPLOYMENT_REGION = "china"
+    expect(shouldHideMiniapp(navigationPackageName)).toBe(true)
+    expect(shouldHideMiniapp(mentraCallPackageName)).toBe(false)
+    expect(shouldHideMiniapp("com.mentra.notes")).toBe(false)
   })
 })

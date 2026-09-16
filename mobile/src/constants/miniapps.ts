@@ -1,5 +1,3 @@
-import {Platform} from "react-native"
-
 export const cameraPackageName = "com.mentra.camera"
 export const galleryPackageName = "com.mentra.gallery"
 export const settingsPackageName = "com.mentra.settings"
@@ -22,18 +20,9 @@ export const isChinaBuild = (): boolean => process.env.EXPO_PUBLIC_DEPLOYMENT_RE
  */
 export const CHINA_HIDDEN_APPS = [navigationPackageName, notifyPackageName, feedbackPackageName]
 
-/**
- * Mentra Call is Android-first (ACS SoftAP). The zip still ships in the
- * binary so Android users get it, but iOS must not install or surface it.
- */
-export const IOS_HIDDEN_APPS = [mentraCallPackageName]
-
-/** True when this build+OS must not install or show the given miniapp. */
-export const shouldHideMiniapp = (packageName: string, os: typeof Platform.OS = Platform.OS): boolean => {
-  if (isChinaBuild() && CHINA_HIDDEN_APPS.includes(packageName)) return true
-  if (os === "ios" && IOS_HIDDEN_APPS.includes(packageName)) return true
-  return false
-}
+/** True when this build must not install or show the given miniapp. */
+export const shouldHideMiniapp = (packageName: string): boolean =>
+  isChinaBuild() && CHINA_HIDDEN_APPS.includes(packageName)
 
 // these apps cannot be uninstalled:
 export const SYSTEM_APPS = [

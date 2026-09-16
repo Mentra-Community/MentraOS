@@ -1,5 +1,7 @@
 import {AsyncResult, result as Res} from "typesafe-ts"
+import {Platform} from "react-native"
 
+import {mentraCallPackageName} from "@/constants/miniapps"
 import {storage} from "@/utils/storage"
 import {SETTINGS, engine} from "@mentra/engine"
 
@@ -57,6 +59,19 @@ const migrations: Migration[] = [
       const res = await engine.settings.set(SETTINGS.onboarding_os_completed.key, false, false)
       if (res.is_error()) {
         throw res.error
+      }
+    },
+  },
+  {
+    version: 5,
+    run: async () => {
+      // The temporary iOS Call restriction forced the same persisted flag used
+      // by home-screen hiding. Remove it once when restoring iOS availability;
+      // a user can hide Call again after this migration without it being reset.
+      if (Platform.OS !== "ios") return
+      const hidden = storage.load<boolean>(`${mentraCallPackageName}_hidden`)
+      if (hidden.is_ok() && hidden.value === true) {
+        engine.miniapps.setHiddenStatus(mentraCallPackageName, false)
       }
     },
   },

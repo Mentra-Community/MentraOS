@@ -10,7 +10,7 @@ import {preinstalledMiniappSync} from "@/services/miniapps/preinstalledMiniappSy
 import {deploymentManagedMiniappSync} from "@/services/miniapps/deploymentManagedMiniappSync"
 import builtInMiniappCatalog from "@/services/miniapps/BuiltInMiniappCatalog"
 import {BUNDLED_MINIAPPS} from "@/generated/bundledMiniapps"
-import {CHINA_HIDDEN_APPS, IOS_HIDDEN_APPS, notifyPackageName, shouldHideMiniapp} from "@/constants/miniapps"
+import {CHINA_HIDDEN_APPS, notifyPackageName, shouldHideMiniapp} from "@/constants/miniapps"
 import {migrate} from "@/services/Migrations"
 import {buildSpokenNotification} from "@/services/notifications/spokenNotification"
 import {deploymentCloudConfigValues} from "@/services/cloudClient"
@@ -613,8 +613,7 @@ class MantleManager {
       await preinstalledMiniappSync.sync()
     }
 
-    // Mentra Call still ships in the binary, but iOS must not show a leftover
-    // copy (or a cloud-pushed one) on the home screen or autostart it.
+    // Region-restricted miniapps must not surface or autostart from an old install.
     this.hidePlatformBlockedMiniapps()
 
     // Re-spawn local miniapps that were running when the app was last killed.
@@ -656,7 +655,7 @@ class MantleManager {
         }
         const {packageName, version} = parsed
 
-        // China / iOS: don't install platform-hidden bundled miniapps.
+        // Don't install region-hidden bundled miniapps.
         if (shouldHideMiniapp(packageName)) {
           continue
         }
@@ -690,13 +689,10 @@ class MantleManager {
   }
 
   /**
-   * Hide (and stop) miniapps this platform must not surface. Bundled install
-   * already skips them, but iOS users may still have an older Mentra Call on
-   * disk from a previous build.
+   * Hide (and stop) miniapps this build must not surface, including leftover installs.
    */
   private hidePlatformBlockedMiniapps() {
-    const blocked = new Set([...CHINA_HIDDEN_APPS, ...IOS_HIDDEN_APPS])
-    for (const packageName of blocked) {
+    for (const packageName of CHINA_HIDDEN_APPS) {
       if (!shouldHideMiniapp(packageName)) continue
       engine.miniapps.setHiddenStatus(packageName, true)
       saveLocalAppRunningState(packageName, false)
