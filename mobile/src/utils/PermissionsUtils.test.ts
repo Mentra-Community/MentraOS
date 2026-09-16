@@ -118,6 +118,30 @@ describe("iOS miniapp microphone permission", () => {
     expect(showAlert).not.toHaveBeenCalled()
   })
 
+  it("allows Call to launch with optional calendar access denied", async () => {
+    ;(check as jest.Mock).mockResolvedValue(RESULTS.GRANTED)
+    ;(ExpoCalendar.getCalendarPermissionsAsync as jest.Mock).mockResolvedValue({
+      canAskAgain: false,
+      granted: false,
+      status: "denied",
+    })
+    const call = {
+      ...app,
+      name: "Mentra Call",
+      permissions: [
+        {type: "PHONE_CAMERA", required: true},
+        {type: "MICROPHONE", required: true},
+        {type: "CALENDAR", required: false},
+      ],
+    } as typeof app
+
+    await expect(askPermissionsUI(call, theme)).resolves.toBe(1)
+    expect(ExpoCalendar.getCalendarPermissionsAsync).not.toHaveBeenCalled()
+    expect(ExpoCalendar.requestCalendarPermissionsAsync).not.toHaveBeenCalled()
+    expect(request).not.toHaveBeenCalled()
+    expect(showAlert).not.toHaveBeenCalled()
+  })
+
   it("allows cancelling miniapp startup before the system prompt", async () => {
     ;(showAlert as jest.Mock).mockImplementation((_title, _message, buttons) => buttons[0].onPress())
     await expect(askPermissionsUI(app, theme)).resolves.toBe(-1)
