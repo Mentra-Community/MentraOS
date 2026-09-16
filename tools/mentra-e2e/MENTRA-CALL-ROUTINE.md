@@ -1,6 +1,6 @@
 # Mentra Call routine
 
-Status: Call UI and real-meeting coverage are in development. The user requested a separate iOS enablement branch, supplied Mentra Live glasses, and authorized opening the generated Teams link in a browser to verify the remote experience. See [the iOS work plan](../../notes/superpowers/plans/2026-09-16-mentra-call-ios.md). A host-policy or source-level test pass does not qualify the Call UI routine.
+Status: Call UI and real-meeting coverage are in development. The user requested a separate iOS enablement branch, supplied Mentra Live glasses, and authorized opening the generated Teams link in a browser to verify the remote experience. See [the iOS enablement PR](https://github.com/Mentra-Community/MentraOS/pull/4078). A host-policy or source-level test pass does not qualify the Call UI routine.
 
 ## Target and source
 
