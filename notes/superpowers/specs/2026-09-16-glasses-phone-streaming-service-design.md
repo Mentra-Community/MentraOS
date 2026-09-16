@@ -62,8 +62,13 @@ phone.
 4. **Media recovery is bounded per stream** with the same shape as hotspot recovery
    (`returnBudgetMs`, `rebuildBudgetMs`, `maxAttempts`), owned by the stream service. Call's
    current 60 s return and 45 s rebuild budgets become the defaults for `owner: "call"`.
-5. **First frame is the liveness signal** on every generation. `live` is reported only after a
-   decoded frame reached the attached adapter, matching native `LIVE` in `LocalWhipIngestSource`.
+5. **Adapters attach before the glasses publish, through an awaited hook.** `open` takes a
+   `StreamAdapter` with `attach(media, signal)` and `detach(media)`. On the initial start and on
+   every recovery the service starts the receiver, awaits `attach` for the new `MediaRef`, and
+   only then tells the glasses to publish and waits for the first frame. `live` therefore means a
+   decoded frame reached the adapter that is attached for that generation. Native `LIVE` in
+   `LocalWhipIngestSource` reports the receiver's frame callback; the adapter-level gate is the
+   service's, counted from the attached sink. Destination lifetime stays outside the adapter.
 6. **Audio is optional media, not audio policy.** The stream can carry glasses microphone audio
    (`captureAudio`), but microphone selection, mute and incoming meeting audio stay in the call
    layer. Call today can take glasses audio over BLE LC3 while WHIP carries video only.
@@ -81,9 +86,9 @@ export type StreamOwner = "call" | "managed_whip" | "local"
 
 export type StreamPhase =
   | "acquiring"     // hotspot session acquire + start
-  | "listening"     // listener bound, receiver up, glasses not yet publishing
-  | "publishing"    // BLE start_stream acked; waiting for the first decoded frame
-  | "live"          // a decoded frame reached the attached adapter for this media generation
+  | "listening"     // listener bound, receiver up; adapter.attach running for this generation
+  | "publishing"    // adapter attached, BLE start_stream acked; waiting for the first decoded frame
+  | "live"          // a decoded frame reached the adapter attached for this media generation
   | "recovering"    // media rebuild (peer stall / receiver failure) or hotspot recovery in progress
   | "failed"        // terminal error recorded; close() frees resources
   | "closing"
@@ -100,6 +105,7 @@ export type StreamErrorCode =
   | "stalled"               // frames stopped for longer than the stall budget
   | "recovery_exhausted"
   | "stale_media"           // an adapter used a MediaRef that is no longer current
+  | "adapter_attach_failed" // adapter.attach threw or timed out for this generation
   | "cancelled"
 
 export class StreamError extends Error {
@@ -109,9 +115,17 @@ export class StreamError extends Error {
 
 export type StreamRecoveryPolicy = {returnBudgetMs: number; rebuildBudgetMs: number; maxAttempts: number; stallMs: number}
 
+export interface StreamAdapter {
+  /** Called once per media generation, before the glasses are told to publish. Borrow the media by ref and attach sinks. Cancellable. */
+  attach(media: MediaRef, reason: "initial" | "rejoin", signal: AbortSignal): Promise<void>
+  /** Called when a media generation is invalidated (media rebuild or hotspot loss). Release the lease; keep destination state. */
+  detach(media: MediaRef): Promise<void>
+}
+
 export type OpenStreamOptions = {
   owner: StreamOwner
   operationId: string
+  adapter: StreamAdapter
   video: StreamVideoConfig            // reuses the Bluetooth SDK type
   audio?: StreamAudioConfig
   captureAudio?: boolean              // default false for "call", true for "managed_whip"
@@ -142,7 +156,7 @@ export interface StreamSession {
   readonly id: string
   snapshot(): StreamState
   subscribe(listener: (event: StreamEvent) => void): () => void
-  /** Runs hotspot acquire → listener bind → receiver → glasses publish → first frame. */
+  /** Runs hotspot acquire → listener bind → receiver → adapter.attach → glasses publish → first frame. Resolves on live. */
   start(): Promise<MediaRef>
   /** Resolves on the next live at or after `afterMediaGeneration`. */
   whenLive(opts?: {afterMediaGeneration?: number; signal?: AbortSignal}): Promise<MediaRef>
@@ -163,16 +177,20 @@ export interface GlassesPhoneStreamService {
 Two triggers, one orchestrator:
 
 - **Hotspot loss** arrives through the hotspot session's `quiesce`. The stream service
-  invalidates the media generation, stops the receiver and the glasses publish, and waits for
-  the hotspot `restore`, where it rebinds, restarts the receiver, republishes and waits for a
-  fresh frame. The hotspot generation and the media generation both advance.
-- **Media stall or receiver failure** with the hotspot still `ready` rebuilds the receiver and
-  republishes on the same hotspot generation. Only the media generation advances. The AP is
-  never cycled for a media problem.
+  invalidates the media generation, awaits `adapter.detach`, stops the receiver and the glasses
+  publish, and waits for the hotspot `restore`, where it rebinds, restarts the receiver, awaits
+  `adapter.attach` for the new `MediaRef`, republishes and waits for a fresh frame. The hotspot
+  generation and the media generation both advance.
+- **Media stall or receiver failure** with the hotspot still `ready` invalidates the media
+  generation, awaits `detach`, rebuilds the receiver, awaits `attach`, and republishes on the
+  same hotspot generation. Only the media generation advances. The AP is never cycled for a
+  media problem.
 
-Adapters see `mediaInvalidated` then `live` with a new `MediaRef`; they must not use the old
-reference. Exhaustion of either budget fails the stream with `recovery_exhausted`; the adapter
-decides what happens to its destination.
+The order is always detach → rebuild → attach → publish → first frame, on both paths, so
+`live` is never waited for without an attached adapter. `mediaInvalidated` and `live` events
+are informational for observers; the adapter's own hooks are the contract. Exhaustion of either
+budget fails the stream with `recovery_exhausted`; the adapter decides what happens to its
+destination.
 
 ## Native contract
 
@@ -278,8 +296,8 @@ endpoint is on the active hotspot. Only additions: emit `route` in `stream_statu
 
 | Consumer | Sequence |
 |---|---|
-| Mentra Call | Runtime: acquire ACS agent (Internet) → `streamService.open({owner: "call", uplink: "cellular", captureAudio: false, recovery: callDefaults})` → `acs.join(meeting)` → `acs.attachMedia(await stream.start())` → on `live`, report ready. On `mediaInvalidated`: ACS detaches; on the next `live`: reattach. On `recovery_exhausted` the meeting stays joined (audio continues) until Leave; Leave → `stream.close()` → ACS leave. `SoftapCallTransport` keeps only meeting ordering (`acsJoin`, attach, `live`); `hotspot`, `scopedJoin`, `publish` and `preserveMeeting` disappear. |
-| Managed WHIP | `PhoneStreamCoordinator.startManaged` with `ingest: "whip"`: provision Cloudflare → `streamService.open({owner: "managed_whip", uplink: "cellular", captureAudio})` → republisher borrows the `MediaRef` and publishes to `webrtcPublishUrl` → status fans out tagged `route: "phone"`. `ManagedWebRtcRelay`'s attempt/retry loop is replaced by the stream service's recovery. |
+| Mentra Call | Runtime: acquire ACS agent (Internet) → `acs.join(meeting)` → `streamService.open({owner: "call", uplink: "cellular", captureAudio: false, recovery: callDefaults, adapter: acsAdapter})` → `await stream.start()` resolves on `live`, report ready. `acsAdapter.attach(media)` borrows the `MediaRef` and wires `AcsFrameSender` and PCM before the glasses publish; `detach` releases the lease and keeps the meeting. On `recovery_exhausted` the meeting stays joined (audio continues) until Leave; Leave → `stream.close()` → ACS leave. `SoftapCallTransport` keeps only meeting ordering (`acsJoin`, attach, `live`); `hotspot`, `scopedJoin`, `publish` and `preserveMeeting` disappear. |
+| Managed WHIP | `PhoneStreamCoordinator.startManaged` with `ingest: "whip"`: provision Cloudflare → `streamService.open({owner: "managed_whip", uplink: "cellular", captureAudio, adapter: republisher})` → `republisher.attach(media)` borrows the `MediaRef` and starts `PhoneWhipPublisher` toward `webrtcPublishUrl` before the glasses publish → status fans out tagged `route: "phone"`. `ManagedWebRtcRelay`'s attempt/retry loop is replaced by the stream service's recovery. |
 | Direct WHIP over the phone (new for miniapps) | Same as managed WHIP with the caller's WHIP URL as the republisher destination and `owner: "local"`. |
 | Local preview (future) | `open({owner: "local", uplink: "none"})`, adapter renders. |
 
@@ -288,9 +306,10 @@ endpoint is on the active hotspot. Only additions: emit `route` in `stream_statu
 Depends on hotspot spec steps 1 and 2 (native core, reservation gate).
 
 1. **Media registry and stream service core** in glasses-media plus the engine service, wired
-   to the hotspot session; no consumer moves. Tests with fake hotspot and receiver: phases,
-   both recovery triggers, generation fencing, `live` per generation, close never touching a
-   destination.
+   to the hotspot session; no consumer moves. Tests with fake hotspot, receiver and adapter:
+   phases, both recovery triggers, generation fencing, `attach` awaited before publish on
+   initial start and on both recovery paths, `detach` before rebuild, `live` counted only after
+   attach, `adapter_attach_failed`, and close never touching a destination.
 2. **Managed WHIP** moves onto the service; `ManagedWebRtcRelay` becomes an adapter and its
    retry loop is deleted. Hardware: relay start, Wi-Fi loss, peer stall, stop.
 3. **Mentra Call** moves onto the service; ACS becomes a sink; the ACS native join and the JS
@@ -305,8 +324,9 @@ Depends on hotspot spec steps 1 and 2 (native core, reservation gate).
 
 - **ACS frame delivery threading.** Decoded callbacks run on libwebrtc threads and ACS sends on
   its own executor; the registry lease must preserve that boundary and never block the decoder.
-- **Two-generation bookkeeping.** Adapters that cache a `MediaRef` across a hotspot recovery
-  will hit `stale_media`; the ACS and republisher adapters need explicit detach/reattach tests.
+- **Two-generation bookkeeping.** Adapters that cache a `MediaRef` across a recovery will hit
+  `stale_media`; the ACS and republisher adapters need explicit attach/detach tests on the
+  initial start, a media rebuild and a hotspot rejoin.
 - **Call timing.** The 60 s return and 45 s rebuild budgets and the fresh-frame gate must map
   one to one onto the stream recovery policy; user-visible recovery timing must not change.
 - **Miniapp permission surface.** `route: "phone"` extends the LOCAL_WIFI requirement to direct
