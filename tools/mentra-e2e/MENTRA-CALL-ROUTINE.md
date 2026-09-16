@@ -47,7 +47,7 @@ These steps require a host that permits opening Call. They preserve the miniapp'
 
 ### C. Additional coverage with an appropriate device fixture
 
-These steps require completed pairing. The supplied device is `Mentra_Live_03BE`, USB `ML396102B`; the current pairing-incomplete fixture cannot reach them.
+These steps require completed pairing. The supplied device is `Mentra_Live_03BE`, USB `ML396102B`. Pairing completed on September 16 after the iOS-on-Mac audio readiness fix. First-launch camera/microphone permission completion remains a separate setup prerequisite.
 
 19. With a supported connected device and no active call, open Join via Link. Verify the empty form and disabled Join Meeting action.
 20. Enter a fixed invalid link and verify the local explanation. Repeat with a Teams-for-home link and a syntactically valid work/school Teams test link. Verify the expected validation state without pressing Join Meeting; clear the field and go back.
@@ -76,3 +76,11 @@ Use stable host `testID`s and Call's semantic labels/roles. Inspect the actual i
 For Call source changes, update its `main`, bump the canonical version in `miniapp/miniapp.json`, and package with the MentraOS sync script using `pack:prod`. Rebuild the host after changing its bundled ZIP. Preserve source commit, archive hash and actual host build identity with the run. If using Android instead, retain the same English expectations and artifact contract while implementing the device actions with the repository's Maestro lane.
 
 Output remains `.test-results/mentra-e2e/<timestamp>-<suite>-<suffix>/`: `routine.mp4`, searchable `index.html`, `chapters.json`, `screenshots/`, `accessibility/`, `run.json`, `events.jsonl`, and `checklist.md`. A routine becomes qualified only after real discovery, three successful deterministic replays on the same build, evidence checks, and verified cleanup.
+
+## September 16 pairing and launch findings
+
+The real native pairing flow reached **Success — Mentra Live connected** and returned to paired home. Run `2026-09-16T20-23-15-226Z-discovery-ba137e` retains 11 observed steps, screenshots/AX, and 405.571667 seconds of verified video. Its failed overall status preserves the tutorial-confirmation discovery miss and the Call permission gate. This is successful pairing evidence, not a qualified meeting routine.
+
+Call 2.1.13 required calendar access despite its hidden calendar feature. Local source commit `92149df` marks calendar optional in 2.1.14; the host regression passes with calendar denied. The bundle SHA-256 is `c1c3bf69bcdede1acbffe4c9238a4e463a310c484cbe65c317954cbd7b591c35`. Publishing this external source commit is pending repository write access; the signed local host rebuild uses the saved ZIP. Camera/microphone prompts remain required and must be completed by the user when the automation tool cannot access their system owner.
+
+Updated-build host qualification: `2026-09-16T20-38-10-217Z-mentra-call-availability-41c677`, `2026-09-16T20-38-17-138Z-mentra-call-availability-1412b7`, and `2026-09-16T20-38-23-929Z-mentra-call-availability-cd0b3e`: five steps each, 6.025 / 5.881667 / 5.906667 seconds, zero model calls, artifact/liveness checks passed. Screenshots visually fill the canvas. The installed 2.1.14 app remains at paired home; camera/microphone completion and real calling remain pending.

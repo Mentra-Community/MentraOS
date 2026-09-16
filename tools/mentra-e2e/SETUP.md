@@ -214,11 +214,17 @@ For independent artifact checks, install FFmpeg through your normal package mana
 
 ## Mentra Call source and target setup
 
-Clone `https://github.com/Mentra-Community/Mentra-Call` on its `main` branch when working on Call; its source is not the ZIP in this repository. Record the source commit, `miniapp/miniapp.json` version and bundled ZIP hash separately. See [the English Call routine](MENTRA-CALL-ROUTINE.md) for current fixture limitations.
+Clone `https://github.com/Mentra-Community/Mentra-Call` on its `main` branch and run `bun install` before packing Call; its source is not the ZIP in this repository. Record the source commit, `miniapp/miniapp.json` version and bundled ZIP hash separately. See [the English Call routine](MENTRA-CALL-ROUTINE.md) for current fixture limitations.
 
 The September 16 dev baseline hid Call on iOS. The separate `codex/enable-mentra-call-ios` branch restores availability and is integrated into the current harness checkout. Its normal hardware/pairing guards still apply: an unpaired host lacks the required camera capability. Run `mentra-call-availability` from signed-in home to verify the enabled launcher and search result, declaring the actual fixture with `--fixture`. The former `mentra-call-ios-availability` exclusion suite is retired; its recordings remain historical evidence. Neither suite qualifies a meeting.
 
 Mentra Live pairing has separate device-selection and Bluetooth audio steps. On this Mac, `blueutil` 2.14.0 (`brew install blueutil`) provides inquiry/pair/connect commands without mouse input. Put the exact target in pairing mode with three quick power-button presses, run `blueutil --inquiry 8 --format json`, and match the user-confirmed name/address before pairing. Use `blueutil --pair <verified-address>` and `blueutil --connect <verified-address>`, then require the app's pairing flow and audio readiness to advance. A CLI return code alone is insufficient. Do not reset Bluetooth globally or touch unrelated keyboard/mouse/headset bonds. An obsolete bond may need to be removed for that exact target, followed by fresh pairing; retain any failure and request pairing mode again if the target stops advertising.
+
+A new Classic bond can connect only HFP while A2DP fails. Require the exact glasses to appear as both an input and output in `system_profiler SPAudioDataType -json`; `blueutil` reporting `connected: true` alone does not prove usable audio. On September 16, reconnecting just 03BE once after successful bonding brought up HFP/AVRCP/A2DP and exposed both devices. Preserve a failed attempt and diagnose it before retrying; do not delete the bond repeatedly.
+
+For reproducible Mac audio setup, install `switchaudio-osx` (`brew install switchaudio-osx`, tested 1.2.2). Before connecting glasses, save each original default using `SwitchAudioSource -c -t input -f json`, then `output` and `system`. `SwitchAudioSource -a -f json` lists actual names and UIDs. If needed for the iOS-on-Mac route, select only the verified target with `SwitchAudioSource -t output -s '<verified glasses name>'` and the corresponding input. Connecting a headset may automatically change all three defaults. Restore all three original UIDs after the run, using `SwitchAudioSource -t <type> -u '<saved UID>'`, and re-read them to verify cleanup. Keep this host setup separate from an iPhone audio-route result.
+
+The observed iOS-on-Mac `AVAudioSession` port is named `Mentra_Live_03BE` with raw transport `Bluetooth`, whereas the iPhone profile types are `BluetoothHFP` and `BluetoothA2DPOutput`. The feature branch recognizes the generic type only when `isiOSAppOnMac` is true and the name matches the selected glasses. It also observes route/foreground changes independently of starting microphone capture. No fake connected flag is used.
 
 If Call source needs a release change, use the existing sync workflow from the MentraOS root, with the actual external checkout path because an isolated worktree may not have the normal sibling layout:
 
@@ -227,3 +233,9 @@ bun scripts/sync-miniapp.mjs --repo /absolute/path/to/Mentra-Call --pack-script 
 ```
 
 Follow the repository's external-miniapp version/commit/push requirements. Rebuild the Mentra App with `bun ios:mac` after updating its ZIP. A new run records the archives in the actual running binary in `run.json`; compare its current Call ZIP hash with the source-tree artifact. This identifies packaged bytes, not a running miniapp's extracted cache.
+
+Complete camera and microphone permissions on first Call launch. Call 2.1.14 makes calendar optional because its calendar UI is hidden; calendar denial must not block New Call or Join via Link. When Computer Use rejects access to the macOS system-dialog owner, stop automated handling and request the one-time manual grant; do not route around the tool restriction. Preserve that setup gate in the run evidence.
+
+Verify repository write access before publishing an external miniapp release (`gh api repos/Mentra-Community/Mentra-Call --jq .permissions.push`). On this initial machine the account could read Call but could not push; local source and packaging still worked. Resolve that access gate before treating the source commit as published.
+
+The recorder uses a fixed video canvas and explicitly scales frames up/down while preserving their aspect ratio. This was verified with Mentra on an external 1x display; earlier recordings that captured a quarter-size image remain unchanged as historical evidence. Keep the app window dimensions constant during a run.
