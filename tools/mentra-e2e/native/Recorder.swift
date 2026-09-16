@@ -122,9 +122,7 @@ extension Driver {
   @MainActor func recordVideo(path: String) async throws {
     guard CGPreflightScreenCaptureAccess() else { throw DriverFailure("Screen Recording permission is missing") }
     let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
-    let windows = content.windows.filter { $0.owningApplication?.processID == app.processIdentifier && $0.windowLayer == 0 && $0.title == "Mentra" }
-    guard windows.count == 1 else { throw DriverFailure("Cannot identify a unique Mentra recording window") }
-    let target = windows[0]
+    let target = try capturableWindow(in: content)
     // Window capture follows position/display changes and excludes other apps.
     // Before relaunch, park on an empty display allowlist so this stream survives
     // the old window disappearing, then attach the new window to the same MP4.
@@ -194,9 +192,9 @@ extension Driver {
         let restoreDeadline = Date().addingTimeInterval(8)
         while restoredWindow == nil, Date() < restoreDeadline {
           let fresh = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
-          let matches = fresh.windows.filter { $0.owningApplication?.bundleIdentifier == bundleID && $0.title == "Mentra" && $0.windowLayer == 0 }
-          if matches.count == 1 {
-            let candidate = matches[0]
+          if let running = try? Driver(bundleID: bundleID),
+             let candidate = try? running.capturableWindow(in: fresh)
+          {
             if abs(candidate.frame.width - target.frame.width) < 2, abs(candidate.frame.height - target.frame.height) < 2 { restoredWindow = candidate }
           }
           if restoredWindow == nil { try await Task.sleep(for: .milliseconds(100)) }

@@ -175,13 +175,17 @@ final class Driver {
     throw DriverFailure("Selector matched \(count) elements; expected exactly one within three seconds")
   }
 
-  func capture(_ path: String) async throws -> [String: Any] {
-    guard CGPreflightScreenCaptureAccess() else { throw DriverFailure("Screen Recording permission is missing for this runner") }
-    let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
+  func capturableWindow(in content: SCShareableContent) throws -> SCWindow {
     let title = try stringAttribute(window(), kAXTitleAttribute)
     let windows = content.windows.filter { $0.owningApplication?.processID == app.processIdentifier && $0.title == title && $0.windowLayer == 0 }
     guard windows.count == 1 else { throw DriverFailure("Expected one capturable target window, found \(windows.count)") }
-    let window = windows[0]
+    return windows[0]
+  }
+
+  func capture(_ path: String) async throws -> [String: Any] {
+    guard CGPreflightScreenCaptureAccess() else { throw DriverFailure("Screen Recording permission is missing for this runner") }
+    let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
+    let window = try capturableWindow(in: content)
     let filter = SCContentFilter(desktopIndependentWindow: window)
     let configuration = SCStreamConfiguration()
     let scale = Double(filter.pointPixelScale)

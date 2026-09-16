@@ -26,7 +26,7 @@ Start on English, signed-in, unpaired home. The routine verifies account identit
 
 Credentials are prompted without echo. For unattended use, inject `MENTRA_E2E_EMAIL` and `MENTRA_E2E_PASSWORD` through an existing secret manager. No credential is committed or passed as a command argument. Omit `--build-manifest` only for TestFlight, where the executable/JS identity is recorded but source provenance may be unknown.
 
-The driver uses no mouse/keyboard injection or foreground activation. Per-step evidence records the foreground app. Human focus changes are recorded without attributing them to automation. Keep Mentra open at the same size; window capture follows its position, so you may move it out of the way. Only one harness run can own Mentra at a time.
+The driver uses no mouse/keyboard injection or foreground activation. Per-step evidence records the foreground app. Human focus changes are recorded without attributing them to automation. Keep Mentra open at the same size; window capture follows its position, so you may move it out of the way. Only one harness run can own Mentra at a time. Screenshots and video resolve the actual standard window's title and owning process, including after relaunch; diagnostic builds with a different display name do not require a hard-coded title.
 
 Each recording automatically holds macOS keep-awake assertions through `caffeinate`, preventing idle system/display sleep and declaring user activity without injecting input. They are released on success, failure or runner exit, with a four-hour maximum. No persistent lock settings are changed. Start with the Mac unlocked; manually locking it still stops the run. `run.json` records the keep-awake process and normal cleanup.
 
