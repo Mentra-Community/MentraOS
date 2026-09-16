@@ -1,6 +1,6 @@
 # Mentra Call routine
 
-Status: planned Call UI coverage; its native discovery is pending the target decision below. The separate five-step `mentra-call-ios-availability` replay verifies only the existing host exclusion and search cleanup. Print its exact English steps with `bun tools/mentra-e2e/run.ts describe --suite mentra-call-ios-availability`. A host-policy or source-level test pass does not qualify the Call UI routine.
+Status: Call UI and real-meeting coverage are in development. The user requested a separate iOS enablement branch, supplied Mentra Live glasses, and authorized opening the generated Teams link in a browser to verify the remote experience. See [the iOS work plan](../../notes/superpowers/plans/2026-09-16-mentra-call-ios.md). A host-policy or source-level test pass does not qualify the Call UI routine.
 
 ## Target and source
 
@@ -11,7 +11,7 @@ Status: planned Call UI coverage; its native discovery is pending the target dec
 
 Latest `dev` explicitly hides Call on iOS in `mobile/src/constants/miniapps.ts`. The host also requires the miniapp's declared camera and speaker capabilities before launch. An unpaired host uses the simulated-glasses profile, which has no camera. Inside Call, Join via Link and New Call are disabled while the Bluetooth link is unknown, disconnected, or reconnecting. Calendar is currently hidden (`SHOW_CALENDAR = false`).
 
-The target decision is between Android with its supported product configuration and a deliberately identified local Mac test build that exposes Call. A Mac test build must document any host-only visibility/launch allowance; it must preserve Call's real disconnected state and disabled call actions. Results from such a build do not qualify normal iOS availability or real calling.
+The selected target is the real iOS app on this Mac, with iOS availability restored on `codex/enable-mentra-call-ios`. The old host exclusion described above is the starting dev baseline. The enablement branch removes it and migrates the policy-forced hidden flag once. No hardware or connection-state override is used. The former `mentra-call-ios-availability` exclusion suite is retired. The replacement `mentra-call-availability` verifies the enabled host in five recorded steps; three replays passed on September 16. Call WebView and meeting qualification remain pending.
 
 ## Routine in English
 
@@ -19,17 +19,19 @@ Start signed in to the designated test account, in English, with no active meeti
 
 ### A. Host availability
 
-1. Verify that the Mentra App is on its signed-in home page and that no miniapp or modal is open.
-2. Open All Apps. Search for **Call**.
-3. On an ordinary iOS build, verify that Call is absent, clear the search, and return home. Report the Call UI portion as unavailable on this target; do not count it as passed.
-4. On a target where Call is supported or explicitly enabled for local testing, verify that exactly one Mentra Call result is shown. Open it using its accessible launcher.
-5. If the host reports incompatible hardware, record the alert and dismiss it. Report the missing fixture. Do not replace this failure with a simulated successful call or skip ahead into the WebView.
+1. Verify signed-in home, exactly one **Mentra Call** launcher, and no open miniapp or All Apps sheet.
+2. Open **All Apps** and verify its search field and named Close button.
+3. Search for **Call**. Verify the query and exactly one result: **Mentra Call**.
+4. Clear the search using its named control. Verify the empty query and the return of both Settings and Mentra Call.
+5. Close All Apps. Verify home and its Call launcher return, with the search and sheet dismissed.
+
+These five steps are compiled in `flows/mentra-call-availability.ts`; print their exact assertions with `bun tools/mentra-e2e/run.ts describe --suite mentra-call-availability`. They preserve pairing and do not launch a meeting. If the launcher is absent on an older build, record a failure against this enabled-build expectation.
 
 ### B. Call without a Bluetooth connection
 
 These steps require a host that permits opening Call. They preserve the miniapp's actual disconnected state.
 
-6. Wait for Call's initial loading state to settle. Verify the Mentra Call home screen and its disconnected-glasses explanation. An unresolved “Looking for your glasses” state is a readiness failure, not a substitute for disconnected behavior.
+6. Open Call using its accessible launcher. If the host reports incompatible hardware, retain and dismiss the alert, then stop with a missing-fixture result. Otherwise wait for Call's initial loading state to settle. Verify the Mentra Call home screen and its disconnected-glasses explanation. An unresolved “Looking for your glasses” state is a readiness failure, not a substitute for disconnected behavior.
 7. Verify that **Join via Link** and **New Call** are present and disabled. Verify that no meeting is active.
 8. Open **Settings** using the button's “Open settings” accessibility label. Verify the Settings title and named Back control.
 9. Verify **Name in calls** and the test account identity. Record the existing name; do not edit it in the initial read-only routine.
@@ -45,14 +47,25 @@ These steps require a host that permits opening Call. They preserve the miniapp'
 
 ### C. Additional coverage with an appropriate device fixture
 
-These steps are a later extension, not steps that can be reached on the current unpaired fixture.
+These steps require completed pairing. The supplied device is `Mentra_Live_03BE`, USB `ML396102B`; the current pairing-incomplete fixture cannot reach them.
 
 19. With a supported connected device and no active call, open Join via Link. Verify the empty form and disabled Join Meeting action.
 20. Enter a fixed invalid link and verify the local explanation. Repeat with a Teams-for-home link and a syntactically valid work/school Teams test link. Verify the expected validation state without pressing Join Meeting; clear the field and go back.
 21. Open New Call. Verify that an empty meeting name prevents Create & Join. Enter a temporary name, check the action's eligibility, then clear it and go back without creating a meeting.
 22. In a separate reversible-settings extension, save the original video preferences, change resolution/frame rate/crop/bitrate one at a time, verify each state through the UI and after reopening, then restore every original value. A failure must retain separate cleanup evidence.
 
-Real Teams joins, meeting creation, QR camera use, invitations, microphone/camera transmission, SoftAP recovery and remote media quality require an explicitly provisioned call fixture and their own expected outcomes. They are not covered by the no-call routine.
+### D. Authorized real Teams meeting with Mentra Live
+
+23. Verify the connected device is the user's `Mentra_Live_03BE` (USB `ML396102B`), record firmware/app identity, and check Bluetooth audio and microphone readiness. Incomplete pairing is a setup failure.
+24. Record the selected call transport. For Direct link, capture every hotspot, local receiver and internet-route checklist stage. The iOS helper currently requires cellular during this path; a Mac cloud/WHEP call is a separate transport result. Do not silently fall back or label it an iPhone SoftAP pass.
+25. Create one clearly named test meeting from Call. Record the actual generated Teams link and the meeting/join states. If joining fails, retain the checklist stage and original native/backend error, then verify cleanup before retrying.
+26. Open that exact link in a browser as a test participant. Join/admit through the observed UI and verify both sides report the same active meeting. Record browser evidence alongside the Mentra App evidence with corresponding English step IDs.
+27. Verify the remote participant receives changing video from the glasses. Capture browser media counters and visible frames; a local CONNECTED label or one frozen frame is insufficient.
+28. Verify incoming glasses audio using an audible test stimulus and remote audio evidence. Check mute/unmute behavior. Packet counters alone do not prove intelligible audio or the glasses' return-audio path.
+29. Exercise the agreed disconnect/rejoin cases with distinct evidence for the failed interval and recovery. Keep the current pairing and call ownership explicit; do not count a different meeting or transport as recovery.
+30. Leave the controlled meeting on both sides. Verify Call returns home, camera/microphone publishing stops, the browser participant leaves, and temporary call resources are released. Restore any changed video/transport settings and finish with the glasses still paired.
+
+QR camera use, invitations to other people, iPhone background/screen-off behavior and sustained SoftAP/media recovery need additional explicit steps. Do not infer them from the Mac/browser call.
 
 ## Replay implementation
 

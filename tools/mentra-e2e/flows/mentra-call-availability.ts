@@ -1,18 +1,12 @@
 import type {Step} from "../runner/suite"
 
 // Host availability only. This does not exercise the Call WebView or a meeting.
-export const mentraCallIosAvailability: Step[] = [
+export const mentraCallAvailability: Step[] = [
   {
-    id: "CALL-IOS-01-home",
-    instruction: "Verify signed-in unpaired home and the absence of the Mentra Call launcher.",
-    expected: "Pair glasses and All Apps are available; no Call launcher or miniapp is open.",
+    id: "CALL-HOST-01-home",
+    instruction: "Verify signed-in home and the Mentra Call launcher.",
+    expected: "Exactly one Call launcher and All Apps are available; no miniapp or All Apps sheet is open.",
     checks: [
-      {
-        selector: {
-          role: "AXButton",
-          description: "Pair glasses",
-        },
-      },
       {
         selector: {
           identifier: "home.allApps.open",
@@ -23,7 +17,8 @@ export const mentraCallIosAvailability: Step[] = [
         selector: {
           identifier: "home.miniapp.com.mentra.call",
         },
-        absent: true,
+        count: 1,
+        action: "AXPress",
       },
       {
         selector: {
@@ -40,7 +35,7 @@ export const mentraCallIosAvailability: Step[] = [
     ],
   },
   {
-    id: "CALL-IOS-02-open",
+    id: "CALL-HOST-02-open",
     instruction: "Open All Apps from home.",
     expected: "The miniapp search field and named Close button are available.",
     action: {
@@ -65,9 +60,9 @@ export const mentraCallIosAvailability: Step[] = [
     ],
   },
   {
-    id: "CALL-IOS-03-search",
+    id: "CALL-HOST-03-search",
     instruction: "Search All Apps for Call.",
-    expected: "The search reads Call and shows no Call entry or other miniapp results under the current iOS policy.",
+    expected: "The search reads Call and shows exactly one miniapp result: Mentra Call.",
     action: {
       op: "type",
       method: "ax-value",
@@ -87,13 +82,14 @@ export const mentraCallIosAvailability: Step[] = [
         selector: {
           identifier: "allApps.miniapp.com.mentra.call",
         },
-        absent: true,
+        count: 1,
+        action: "AXPress",
       },
       {
         selector: {
           identifierPrefix: "allApps.miniapp.",
         },
-        absent: true,
+        count: 1,
       },
       {
         selector: {
@@ -104,9 +100,9 @@ export const mentraCallIosAvailability: Step[] = [
     ],
   },
   {
-    id: "CALL-IOS-04-clear",
+    id: "CALL-HOST-04-clear",
     instruction: "Clear the Call search using its named control.",
-    expected: "The query is empty and the Settings result returns; Call remains excluded.",
+    expected: "The query is empty; Settings and Mentra Call are both listed.",
     action: {
       op: "press",
       selector: {
@@ -129,7 +125,7 @@ export const mentraCallIosAvailability: Step[] = [
         selector: {
           identifier: "allApps.miniapp.com.mentra.call",
         },
-        absent: true,
+        count: 1,
       },
       {
         selector: {
@@ -140,9 +136,9 @@ export const mentraCallIosAvailability: Step[] = [
     ],
   },
   {
-    id: "CALL-IOS-05-home",
+    id: "CALL-HOST-05-home",
     instruction: "Close All Apps and restore the Mentra App home page.",
-    expected: "The search and sheet disappear; signed-in unpaired home returns with no foreground miniapp.",
+    expected: "The search and sheet disappear; home and its Call launcher return with no foreground miniapp.",
     action: {
       op: "press",
       selector: {
@@ -170,9 +166,9 @@ export const mentraCallIosAvailability: Step[] = [
       },
       {
         selector: {
-          role: "AXButton",
-          description: "Pair glasses",
+          identifier: "home.miniapp.com.mentra.call",
         },
+        count: 1,
       },
       {
         selector: {

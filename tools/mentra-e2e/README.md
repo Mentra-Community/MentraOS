@@ -2,7 +2,7 @@
 
 Start with the [English coverage checklist](ROUTINE.md), [exact compiled routine](COMPILED-ROUTINE.md), [design and technology choices](../../notes/superpowers/specs/2026-09-15-mentra-app-e2e-harness.md), [accessibility contract](ACCESSIBILITY.md), and [Mac Mini setup](SETUP.md).
 
-The [Mentra Call English routine](MENTRA-CALL-ROUTINE.md) is being developed separately. Latest `dev` hides Call on iOS, and the unpaired host lacks its required camera capability. `mentra-call-ios-availability` checks that existing host policy through Home and All Apps; it does **not** qualify the Call UI or meetings. The target for the Call UI routine is still pending.
+The [Mentra Call English routine](MENTRA-CALL-ROUTINE.md) is in development against the real iOS app on this Mac. The integrated `codex/enable-mentra-call-ios` branch restores its launcher and migrates the old forced-hidden flag. The five-step `mentra-call-availability` routine verifies Home and All Apps search; it does **not** qualify the Call WebView or meetings. The supplied Mentra Live pair is awaiting Bluetooth audio pairing before real Call/browser verification.
 
 This harness drives the real iOS app on an Apple Silicon Mac. A Swift helper invokes native accessibility actions; Bun executes typed steps with zero model calls. Every executed step saves a screenshot, accessibility snapshot, English instruction and timestamp in a continuous MP4. The static report lets a person search descriptions and jump to the corresponding video moment.
 
@@ -41,9 +41,9 @@ bun run tools/mentra-e2e/run.ts run --suite driver-proof
 bun run tools/mentra-e2e/run.ts run --suite onboarding
 # From signed-in unpaired home:
 bun run tools/mentra-e2e/run.ts run --suite lifecycle-proof
-# Call's current iOS exclusion, from signed-in unpaired home:
-bun run tools/mentra-e2e/run.ts run --suite mentra-call-ios-availability --build-manifest mobile/build/ios-mac/build-manifest.json
-bun run tools/mentra-e2e/run.ts describe --suite mentra-call-ios-availability
+# Call visibility/search on the enabled build; declare the actual fixture:
+bun run tools/mentra-e2e/run.ts run --suite mentra-call-availability --fixture pairing-incomplete --build-manifest mobile/build/ios-mac/build-manifest.json
+bun run tools/mentra-e2e/run.ts describe --suite mentra-call-availability
 # With a miniapp open, read-only capsule contract check:
 bun run tools/mentra-e2e/run.ts run --suite accessibility-preflight
 ```
@@ -68,6 +68,7 @@ New reports also record `bundledMiniappArtifacts`: SHA-256 hashes of ZIPs in the
 
 | Run folder | Result |
 | --- | --- |
+| `2026-09-16T19-07-26-868Z-mentra-call-availability-5b7785`, `2026-09-16T19-07-54-008Z-mentra-call-availability-fff46b`, `2026-09-16T19-08-09-417Z-mentra-call-availability-a956b0` | Enabled iOS host: three five-step passes in 5.841667, 5.963333 and 5.84 seconds. All artifact/liveness checks passed; zero model calls. Fixture is honestly recorded as pairing-incomplete. No Call WebView or meeting coverage. |
 | `2026-09-16T18-44-23-699Z-no-glasses-f84f75` | After merging dev and fixing Clear Search activation: all 70 steps passed in 85.86 seconds. All screenshot/video/chapter and liveness checks passed; zero model calls and no step recorded Mentra as foreground. This build includes the recorded local source diff. |
 | `2026-09-16T18-43-54-655Z-mentra-call-ios-availability-a19d83` | Five host-policy/search steps passed in 6.465 seconds after fixing Clear Search. Artifact checks passed. This is not Call UI or meeting coverage. |
 | `2026-09-16T00-12-31-228Z-lifecycle-proof-6b13b6` and `2026-09-16T00-12-52-266Z-accessibility-preflight-4619a3` | Keep-awake follow-up: recorded relaunch passed; intentionally running the miniapp preflight from home failed as expected. Both runs passed artifact checks and released their own macOS power assertions. The nine native checks also verify assertion creation and cleanup. |

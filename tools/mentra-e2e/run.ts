@@ -12,7 +12,7 @@ import {lifecycleProof} from "./flows/lifecycle-proof"
 import {noGlasses, noGlassesExclusions} from "./flows/no-glasses"
 import {recoverUnpaired} from "./runner/recovery"
 import {failureProof} from "./flows/failure-proof"
-import {mentraCallIosAvailability} from "./flows/mentra-call-ios-availability"
+import {mentraCallAvailability} from "./flows/mentra-call-availability"
 
 const {positionals, values} = parseArgs({
   args: process.argv.slice(2),
@@ -27,14 +27,14 @@ const operation = positionals[0] ?? "doctor"
 try {
   if (operation !== "describe") await buildDriver()
   if (operation === "describe") {
-    const callAvailability = values.suite === "mentra-call-ios-availability"
+    const callAvailability = values.suite === "mentra-call-availability"
     console.log(
       callAvailability
-        ? "# Mentra Call iOS availability routine\n\nHost policy check only; Call UI and real calling are not covered. Start signed in on English, unpaired home. Each numbered action/check has its own screenshot and video chapter.\n"
+        ? "# Mentra Call iOS availability routine\n\nEnabled host visibility and search only; Call UI and real calling are not covered. Start signed in on English home and declare the actual device fixture. Each numbered action/check has its own screenshot and video chapter.\n"
         : "# Compiled no-glasses routine\n\nGenerated from `flows/no-glasses.ts`. Start signed in on English, unpaired home. Credentials are requested at runtime. Each numbered action/check has its own screenshot and video chapter.\n",
     )
     console.log(
-      (callAvailability ? mentraCallIosAvailability : noGlasses)
+      (callAvailability ? mentraCallAvailability : noGlasses)
         .map((step, index) => `${index + 1}. **${step.id}** ${step.instruction} Expected: ${step.expected}`)
         .join("\n"),
     )
@@ -61,13 +61,13 @@ try {
       "lifecycle-proof": lifecycleProof,
       "no-glasses": noGlasses,
       "failure-proof": failureProof,
-      "mentra-call-ios-availability": mentraCallIosAvailability,
+      "mentra-call-availability": mentraCallAvailability,
       "restore-unpaired": [],
     }
     const steps = suites[values.suite as keyof typeof suites]
     if (!steps) throw new Error(`Suite is not implemented: ${values.suite}`)
     if (
-      ["no-glasses", "failure-proof", "restore-unpaired", "mentra-call-ios-availability"].includes(values.suite!) &&
+      ["no-glasses", "failure-proof", "restore-unpaired"].includes(values.suite!) &&
       values.fixture !== "unpaired"
     )
       throw new Error("This suite requires the declared unpaired fixture")
@@ -114,8 +114,8 @@ try {
           await report.record({...excluded, expected: excluded.reason, status: "not-applicable", durationMs: 0})
       }
       const restored =
-        values.suite === "mentra-call-ios-availability"
-          ? "iOS host exclusion verified; search cleared and unpaired home restored. Call UI and real calling were not exercised."
+        values.suite === "mentra-call-availability"
+          ? "Call launcher and search result verified; search cleared and home restored. Call UI and real calling were not exercised."
           : values.suite === "driver-proof"
             ? "Authentication start restored"
             : values.suite === "accessibility-preflight"
