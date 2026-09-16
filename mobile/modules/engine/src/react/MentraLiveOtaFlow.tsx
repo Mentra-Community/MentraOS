@@ -73,12 +73,12 @@ const DEFAULT_THEME: MentraLiveOtaFlowTheme = {
 }
 
 const ENGLISH_COPY: Record<string, string> = {
-  "ota:downloadingToPhone": "Downloading update to phone...",
-  "ota:startingGlassesHotspot": "Starting glasses hotspot...",
-  "ota:connectingPhoneToGlasses": "Connecting phone to glasses...",
-  "ota:startingHotspotUpdate": "Starting update...",
-  "ota:transferringToGlasses": "Transferring update to glasses...",
-  "ota:installingOnGlasses": "Installing update on glasses...",
+  "ota:downloadingToPhone": "Downloading update to phone…",
+  "ota:startingGlassesHotspot": "Starting glasses hotspot…",
+  "ota:connectingPhoneToGlasses": "Connecting phone to glasses…",
+  "ota:startingHotspotUpdate": "Starting update…",
+  "ota:transferringToGlasses": "Transferring update to glasses…",
+  "ota:installingOnGlasses": "Installing update on glasses…",
   "ota:componentApk": "Glasses software",
   "ota:componentMtk": "System firmware",
   "ota:componentBes": "Bluetooth firmware",
@@ -90,7 +90,7 @@ const ENGLISH_COPY: Record<string, string> = {
   "common:done": "Done",
   "ota:checkingForUpdates": "Checking for updates",
   "ota:checkingForUpdatesMessage":
-    "Connected devices will perform automatic updates. Automatic updates can be disabled in Device Settings",
+    "Connected devices will perform automatic updates. Automatic updates can be disabled in Device Settings.",
   "ota:finishingUpdate": "Finishing your update",
   "ota:checkingAdditionalUpdates": "Checking whether your glasses need any additional updates.",
   "ota:updateAvailable": "{{deviceName}} Update Available",
@@ -98,8 +98,8 @@ const ENGLISH_COPY: Record<string, string> = {
   "ota:batteryRequiredMessage":
     "{{deviceName}} is currently at {{batteryLevel}}%. Charge it to at least {{minimumBatteryLevel}}% before updating.",
   "ota:batteryRequiredLiveUpdate": "This screen will update automatically as the battery charges.",
-  "ota:updateConnectWifi": "Connect your {{deviceName}} to WiFi to install the update.",
-  "ota:wifiRequiredTitle": "WiFi Needed for Update",
+  "ota:updateConnectWifi": "Connect your {{deviceName}} to Wi-Fi to install the update.",
+  "ota:wifiRequiredTitle": "Wi-Fi Needed for Update",
   "ota:updateDescription":
     "A new update is available for your glasses. We recommend updating now for the best experience.",
   "ota:updateSequenceMessage":
@@ -111,11 +111,11 @@ const ENGLISH_COPY: Record<string, string> = {
   "ota:downgradeDescription":
     "This app requires an earlier glasses software version. Your photos and videos will be preserved, but glasses settings will be reset and restored automatically after the change.",
   "ota:updateNow": "Update Now",
-  "ota:setupWifi": "Setup WiFi",
+  "ota:setupWifi": "Set up Wi-Fi",
   "ota:updateLater": "Later",
   "ota:updateComplete": "Update complete",
   "ota:whatsNew": "What's new",
-  "ota:upToDate": "Up To Date",
+  "ota:upToDate": "Up to Date",
   "ota:devBuild": "Development Build",
   "ota:devBuildNoOta":
     "This mobile app is a development build, so automatic glasses updates are disabled. Use the developer settings manifest override to update them manually.",
@@ -500,7 +500,7 @@ function OtaFlowContent({
         {state.hotspotPhase === "downloading" ? (
           <BodyText colors={colors}>{translate("ota:phoneFileProgress")}</BodyText>
         ) : null}
-        <BodyText colors={colors}>Do not disconnect your glasses</BodyText>
+        <BodyText colors={colors}>Do not disconnect your glasses.</BodyText>
       </FlowPage>
     )
   }
@@ -510,8 +510,8 @@ function OtaFlowContent({
     const title = hotspot
       ? translate(state.phase === "download" ? "ota:transferringToGlasses" : "ota:installingOnGlasses")
       : state.phase === "download"
-        ? "Downloading..."
-        : "Installing..."
+        ? "Downloading…"
+        : "Installing…"
     const component = state.step ? translate(componentCopyKey[state.step]) : null
     const hasStepCount =
       state.currentStep !== null &&
@@ -543,7 +543,7 @@ function OtaFlowContent({
             </View>
           </>
         )}
-        <BodyText colors={colors}>Do not disconnect your glasses</BodyText>
+        <BodyText colors={colors}>Do not disconnect your glasses.</BodyText>
         {state.versionChange && state.phase === "install" ? (
           <BodyText colors={colors}>{translate("ota:downgradeDuration")}</BodyText>
         ) : null}
@@ -607,7 +607,7 @@ function OtaFlowContent({
               onPress={state.canRetry ? controller.retryInstall : controller.finish}
             />
             {state.canOpenWifiSetup ? (
-              <FlowButton colors={colors} label="Change WiFi" onPress={controller.openWifiSetup} secondary />
+              <FlowButton colors={colors} label="Change Wi-Fi" onPress={controller.openWifiSetup} secondary />
             ) : null}
           </>
         }
@@ -634,7 +634,7 @@ function OtaFlowContent({
       colors={colors}
       icon="bluetooth"
       title="Glasses disconnected">
-      <BodyText colors={colors}>Reconnecting...</BodyText>
+      <BodyText colors={colors}>Reconnecting…</BodyText>
       <ActivityIndicator size="large" color={colors.foreground} />
     </FlowPage>
   )

@@ -77,7 +77,7 @@ describe("MentraLiveOtaFlow", () => {
     fireEvent.press(getByTestId("button-Update Now"))
 
     expect(prepare).toHaveBeenCalledWith(result)
-    expect(getByText("Starting update...")).toBeDefined()
+    expect(getByText("Starting update…")).toBeDefined()
   })
 
   it("blocks an update below 25% and reacts to live battery changes", async () => {
@@ -129,7 +129,7 @@ describe("MentraLiveOtaFlow", () => {
 
     fireEvent.press(getByTestId("button-Update Now"))
     expect(prepare).toHaveBeenCalledWith(result)
-    expect(getByText("Starting update...")).toBeDefined()
+    expect(getByText("Starting update…")).toBeDefined()
   })
 
   it("lets the user dismiss an optional update when Wi-Fi setup is required", async () => {
@@ -216,7 +216,7 @@ describe("MentraLiveOtaFlow", () => {
     })
 
     expect(check).toHaveBeenCalledTimes(1)
-    expect(getByText("Up To Date")).toBeDefined()
+    expect(getByText("Up to Date")).toBeDefined()
   })
 
   it("reports that progress is inactive when the flow unmounts", () => {
