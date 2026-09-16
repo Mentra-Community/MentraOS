@@ -68,7 +68,12 @@ Related: `2026-09-08-ios-softap-spike.md`, the Mentra Call SoftAP recovery merge
    whether native cleanup settled. An unconfirmed ack does not block the next owner (matches
    today's Call behaviour); pending native work does, and is retried with a bound, after which
    the service performs local forced cleanup and records it. No `leaveHotspotOn` until there is
-   a handoff use case.
+   a handoff use case. **No deferred glasses command may run against the next owner**: a BLE
+   `stopStream` or `setHotspotState(false)` that a session defers because the BLE link is down
+   (today `PhoneStreamCoordinator.flushPendingBleStop`, sent whenever the link returns) is
+   owned by that session, carries its id, and is retired when the session's release settles or
+   when another session acquires. Release does not report `released` while such a command is
+   still pending and unretired.
 7. **Per-operation recovery policy**, `none` or `auto` with separate return and rebuild
    budgets (Call's current 60 s return, 45 s rebuild, at most three transient attempts). No
    `manual` mode: a second lifecycle driver is not worth it.
@@ -83,8 +88,16 @@ Related: `2026-09-08-ios-softap-spike.md`, the Mentra Call SoftAP recovery merge
 10. **Native session tracking on both platforms.** iOS has no `Network` handle to hand out,
     but pending `NEHotspotConfiguration` callbacks must stay fenced through release, so the
     iOS driver tracks session and generation too.
-11. **Reservation gate migrates first.** All four consumers reserve through the service before
-    any join moves, so a legacy path can never enable or disable the AP under a new owner.
+11. **Reservation gate migrates first, deferred teardown included.** All four consumers reserve
+    through the service before any join moves, and every deferred BLE teardown is tied to its
+    session and retired on release or on a new acquire, so a legacy path can never enable or
+    disable the AP under a new owner. Reservation alone does not fence commands queued after an
+    owner releases: the managed relay releases its lease after offline cleanup has deferred the
+    stop, and the coordinator would later send hotspot-off into a gallery or OTA session.
+12. **No owner waiting in the first version.** `acquire` fails fast with `busy`. A bounded wait
+    can be added later behind an option if a real flow needs it.
+13. **Join hook on both platforms.** Gallery's explanation is shown on Android and iOS today and
+    keeps that behaviour inside `beforeJoin`.
 
 ## TypeScript API (engine, `mobile/modules/engine/src/services/hotspot/`)
 
@@ -169,10 +182,8 @@ export type HotspotSessionOptions = {
   recovery: HotspotRecoveryPolicy
   /** Default "advisory": a failed probe is recorded, not fatal. Gallery and OTA may set "required". */
   gatewayProbe?: "required" | "advisory"
-  /** Before every join, initial and rejoin. Gallery shows its one-time explanation here. */
+  /** Before every join, initial and rejoin, on both platforms. Gallery shows its one-time explanation here. */
   beforeJoin?: (info: {ssid: string | null; reason: "initial" | "rejoin"}, signal: AbortSignal) => Promise<void>
-  /** Wait for the current owner instead of failing with busy. Re-checked with `stillWanted` before proceeding. */
-  waitForOwner?: {timeoutMs: number; stillWanted: () => boolean}
   signal?: AbortSignal
 }
 
@@ -214,12 +225,17 @@ export interface HotspotSession {
   /** A transport error asks the service to verify the network; it never cycles the AP directly. */
   reportSuspectedLoss(ref: NetworkRef): void
 
-  /** Cancels start/recovery, drains the client, disables the AP with bounded retries, releases native ownership. Repeated calls share one cleanup; a blocked result is retryable. */
+  /**
+   * Cancels start/recovery, drains the client, disables the AP with bounded retries, releases
+   * native ownership. If the BLE link is down the hotspot-off is deferred, tied to this session,
+   * and retired if another session acquires first; release then reports hotspotOff "unconfirmed".
+   * Repeated calls share one cleanup; a blocked result is retryable.
+   */
   release(): Promise<ReleaseResult>
 }
 
 export interface GlassesHotspotService {
-  /** Rejects with busy (details.owner) unless waitForOwner is set and the owner releases in time. */
+  /** Rejects with busy (details.owner) while any session is not released. No waiting, no preemption. */
   acquire(options: HotspotSessionOptions): Promise<HotspotSession>
   current(): {consumer: HotspotConsumer; operationId: string; sessionId: string; phase: HotspotPhase} | null
   capabilities(): {supported: boolean; hotspotOtaVersion: number}
@@ -307,7 +323,12 @@ moves behind the same serialized native operation; consumers stop touching the p
    modules untouched. Tests: reservation, generation invalidation, late callbacks, settled
    cancellation, iOS pending-configuration fencing.
 2. **Shared reservation gate**: all four consumers reserve through the service before their
-   joins move, so old and new owners never mix. `GlassesHotspotLease` becomes a wrapper.
+   joins move, so old and new owners never mix. `GlassesHotspotLease` becomes a wrapper. In the
+   same PR, `PhoneStreamCoordinator`'s deferred `stopStream` / hotspot-off is keyed by the
+   session that deferred it and retired when that session's release settles or when another
+   session acquires; `ManagedWebRtcRelay.stop` releases only after the deferral is registered
+   with the service. Tests: relay releases with BLE down, gallery acquires and enables the AP,
+   BLE returns, the deferred hotspot-off must not be sent.
 3. **Engine service plus gallery sync**: state machine, budgets, structured release; gallery
    keeps its explanation, SSID-unreadable tolerance, and transfer ledger. `localNetworkTransport`
    becomes a session-bound adapter.
@@ -333,8 +354,8 @@ moves behind the same serialized native operation; consumers stop touching the p
 - **Dependency direction**: glasses-media and acs-meeting now depend on the SDK Android
   library; the SDK depends on neither.
 
-## Open questions
+## Deferred
 
-- Whether gallery's Android join explanation should also route through `beforeJoin`
-  (it is shown on both platforms today).
-- Whether `waitForOwner` is wanted at all in the first version, or every consumer fails fast.
+- Bounded waiting for the current owner (`waitForOwner`): omitted from the first version;
+  every consumer fails fast with `busy`.
+- `leaveHotspotOn` on release: omitted until there is a handoff use case.
