@@ -808,7 +808,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             ispAnalogGain = state.photoIspAnalogGain,
             aeExposureDivisor = state.photoAeExposureDivisor,
             isoCap = state.photoIsoCap,
-            compress = state.photoCompression,
+            compress = PhotoCompression.fromValue(state.photoCompression),
             sound = true,
             resetCaptureTuning = shouldResetCaptureTuning(),
         )
