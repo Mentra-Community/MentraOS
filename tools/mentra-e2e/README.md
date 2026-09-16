@@ -2,6 +2,8 @@
 
 Start with the [English coverage checklist](ROUTINE.md), [exact compiled routine](COMPILED-ROUTINE.md), [design and technology choices](../../notes/superpowers/specs/2026-09-15-mentra-app-e2e-harness.md), [accessibility contract](ACCESSIBILITY.md), and [Mac Mini setup](SETUP.md).
 
+The [Android comparison guide](ANDROID.md) documents phone setup, a fail-closed glasses identity check, desktop-independent recording and the verified dev.262/dev.263 Call backend mismatch. Android meeting/media qualification is still pending.
+
 The [Mentra Call English routine](MENTRA-CALL-ROUTINE.md) targets the real iOS app on this Mac. Product branch `codex/enable-mentra-call-ios` restores availability and fixes Mac audio pairing; use that build for Call suites. The five-step `mentra-call-availability` verifies host search. The 13-step `mentra-call-ui` exercises paired settings, empty meeting forms and minimize/reopen. Pairing and camera/microphone permissions are complete. A real Teams meeting was created, but cloud video provisioning failed because the dev runtime's Cloudflare token lacks Stream access. Browser media and field editing remain unqualified.
 
 This harness drives the real iOS app on an Apple Silicon Mac. A Swift helper invokes native accessibility actions; Bun executes typed steps with zero model calls. Every executed step saves a screenshot, accessibility snapshot, English instruction and timestamp in a continuous MP4. The static report lets a person search descriptions and jump to the corresponding video moment.

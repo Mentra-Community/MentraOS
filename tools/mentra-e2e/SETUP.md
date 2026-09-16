@@ -2,6 +2,8 @@
 
 This guide provisions the standalone harness and the optional local app build. Replay does not require an AI agent or the monorepo's dependencies. The target is the real iOS app running on an Apple Silicon Mac, installed through TestFlight or built locally for **My Mac (Designed for iPhone/iPad)**.
 
+For the USB-connected Android comparison phone, see [Android setup, identity gate and backend evidence](ANDROID.md). It is a separate discovery lane, not a qualified replacement for the Mac routine.
+
 ## 1. Prepare the Mac
 
 1. Use an Apple Silicon Mac with a logged-in graphical desktop. Keep a display connected for initial qualification; a headless Mac Mini has not been qualified.
