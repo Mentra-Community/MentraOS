@@ -8,16 +8,22 @@ export interface MiniappPingLivenessDecision {
  * hotspot even turns on. The JS bundle stays alive but may miss pongs while
  * ACS is on the native thread. Unregistering for missed pings in that window
  * cancels the join and leaves the UI stuck on the hotspot row.
+ *
+ * The hold is scoped to that native join window only. Once the call is live,
+ * liveness must resume: a hung JS context has to be respawnable so the wearer
+ * always keeps a working hang-up UI.
  */
 export function shouldHoldMiniappPingLiveness(args: {
   packageName: string
   softapPackageName?: string | null
   softapCancelled?: boolean
+  softapJoining?: boolean
 }): boolean {
   return Boolean(
     args.softapPackageName &&
       args.softapPackageName === args.packageName &&
-      !args.softapCancelled,
+      !args.softapCancelled &&
+      args.softapJoining,
   )
 }
 

@@ -413,6 +413,12 @@ type SoftapAttempt = {
   startedAt: number
   /** Set by leave, end, or a superseding join. Checked after every await the join performs. */
   cancelled: boolean
+  /**
+   * True only while the native join window is in flight (through `prepareAgent`/`transport.start`).
+   * Ping liveness is held during this window because ACS blocks the JS thread; it is cleared the
+   * moment the call is live so a hung context can once again be respawned.
+   */
+  joinInFlight: boolean
   /** Set only after the preceding attempt has fully settled. */
   releaseHotspot?: () => void
   ownsResources: boolean
@@ -3894,6 +3900,7 @@ class LocalMiniappRuntime {
       packageName,
       startedAt: Date.now(),
       cancelled: false,
+      joinInFlight: true,
       ownsResources: false,
       transport: null,
       progress: {
@@ -4208,6 +4215,9 @@ class LocalMiniappRuntime {
       onProgress: (progress) => this.emitSoftapProgress(attempt, progress),
     })
     this.checkpointSoftapAttempt(attempt, "transport.start")
+    // The native join window is over: the call is live, so ping liveness must resume and a hung
+    // JS context can be respawned again rather than silently held alive.
+    attempt.joinInFlight = false
     const state = acsMeetingService.getState()
     softapTrace("softap_attempt_live", {
       attempt: attempt.id,
@@ -4271,6 +4281,10 @@ class LocalMiniappRuntime {
           },
         })
         if (attempt.cancelled || this.softapAttempt !== attempt) return
+        // The hop is rebuilt and live again. Clear the deadline so later MEETING_STATE snapshots
+        // stop carrying `recovery` fields; otherwise the miniapp keeps showing reconnect chrome
+        // on an already-live call.
+        attempt.recoveryDeadlineAt = null
         this.emitSoftapProgress(attempt, transport.progress())
         const current = acsMeetingService.getState()
         this.sendToMiniapp(attempt.packageName, {
@@ -6029,6 +6043,7 @@ class LocalMiniappRuntime {
         packageName,
         softapPackageName: this.softapAttempt?.packageName,
         softapCancelled: this.softapAttempt?.cancelled,
+        softapJoining: this.softapAttempt?.joinInFlight,
       })
       if (!holdPingLiveness) {
         const liveness = advanceMiniappPingLiveness(app.unansweredPingRounds, PING_TIMEOUT_THRESHOLD)

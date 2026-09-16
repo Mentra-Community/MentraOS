@@ -71,6 +71,7 @@ public final class LocalWhipIngestSource: NSObject, DecodedGlassesMediaSource {
                 return
             }
             let oldUrl = self.url
+            let oldAddress = self.address
             if let server = self.server {
                 self.retiring = server
                 self.server = nil
@@ -80,6 +81,18 @@ public final class LocalWhipIngestSource: NSObject, DecodedGlassesMediaSource {
             self.startListener(config: config) { result in
                 switch result {
                 case let .failure(error):
+                    // The replacement bind failed. The previous listener was only parked, not
+                    // closed, so restore it as the live receiver instead of leaving the standing
+                    // ACS session with no ingest. Without this, recovery marks the transport
+                    // `failed` and a later hotspot return can never rebuild the hop.
+                    if let parked = self.retiring {
+                        self.server?.stop {}
+                        self.retiring = nil
+                        self.server = parked
+                        self.url = oldUrl
+                        self.address = oldAddress
+                        self.transition(.connecting, "ingest_rebind_restored")
+                    }
                     completion(.failure(error))
                 case let .success(newUrl):
                     if newUrl.isEmpty || newUrl == oldUrl {

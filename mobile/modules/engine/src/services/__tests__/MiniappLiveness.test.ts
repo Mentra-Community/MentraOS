@@ -34,8 +34,20 @@ describe("shouldHoldMiniappPingLiveness", () => {
         packageName: "com.mentra.call",
         softapPackageName: "com.mentra.call",
         softapCancelled: false,
+        softapJoining: true,
       }),
     ).toBe(true)
+  })
+
+  test("does not hold once the SoftAP call is live", () => {
+    expect(
+      shouldHoldMiniappPingLiveness({
+        packageName: "com.mentra.call",
+        softapPackageName: "com.mentra.call",
+        softapCancelled: false,
+        softapJoining: false,
+      }),
+    ).toBe(false)
   })
 
   test("does not hold after the SoftAP join is cancelled", () => {
@@ -44,6 +56,7 @@ describe("shouldHoldMiniappPingLiveness", () => {
         packageName: "com.mentra.call",
         softapPackageName: "com.mentra.call",
         softapCancelled: true,
+        softapJoining: true,
       }),
     ).toBe(false)
   })
@@ -54,6 +67,7 @@ describe("shouldHoldMiniappPingLiveness", () => {
         packageName: "com.mentra.call",
         softapPackageName: "com.mentra.notes",
         softapCancelled: false,
+        softapJoining: true,
       }),
     ).toBe(false)
     expect(
