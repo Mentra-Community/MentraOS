@@ -275,7 +275,7 @@ data class MentraExampleState(
     val videoPreviewDetails: VideoPreviewDetails? = null,
     val videoPreviewUrl: String? = null,
     val videoRecording: Boolean = false,
-    val photoCompression: String = "none",
+    val photoCompression: PhotoCompression = PhotoCompression.NONE,
     val photoSize: String = "max",
     val scanMode: Boolean = false,
     val scanAeDivisor: Int = 3,
@@ -751,7 +751,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         syncScanButtonPresetIfEnabled()
     }
 
-    fun setPhotoCompression(compression: String) {
+    fun setPhotoCompression(compression: PhotoCompression) {
         state = state.copy(photoCompression = compression)
         syncScanButtonPresetIfEnabled()
     }
@@ -808,7 +808,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             ispAnalogGain = state.photoIspAnalogGain,
             aeExposureDivisor = state.photoAeExposureDivisor,
             isoCap = state.photoIsoCap,
-            compress = PhotoCompression.fromValue(state.photoCompression),
+            compress = state.photoCompression,
             sound = true,
             resetCaptureTuning = shouldResetCaptureTuning(),
         )
@@ -901,7 +901,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         // Barcode scan tuning relies on ASG auto metering plus AE divisor / ISO cap.
         state = state.copy(
             photoSize = "max",
-            photoCompression = "none",
+            photoCompression = PhotoCompression.NONE,
             photoExposureManual = false,
             scanAeDivisor = 3,
             scanIsoCap = 800,
@@ -1125,7 +1125,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             requestId = requestId,
             size = photoSizeToSdk(state.photoSize),
             webhookUrl = webhookUrl,
-            compress = PhotoCompression.fromValue(state.photoCompression),
+            compress = state.photoCompression,
             save = save,
             sound = true,
             exposureTimeNs = if (state.photoExposureManual) state.photoExposureTimeNs.toDouble() else null,
@@ -3763,7 +3763,7 @@ fun photoSizeToSdk(size: String): PhotoSize = when (size) {
 }
 
 val photoSizeOptions = listOf("low", "medium", "high", "max")
-val photoCompressionOptions = listOf("none", "low", "medium", "high")
+val photoCompressionOptions = PhotoCompression.entries
 
 fun roiPositionLabel(roiPosition: Int): String =
     cameraRoiPositions.firstOrNull { it.second == roiPosition }?.first ?: "Center"
@@ -3771,7 +3771,7 @@ fun roiPositionLabel(roiPosition: Int): String =
 fun cameraSdkCall(
     mode: String,
     size: String,
-    compression: String,
+    compression: PhotoCompression,
     photoDestination: PhotoDestination,
     aeExposureDivisor: Int?,
     isoCap: Int?,
@@ -3832,7 +3832,7 @@ val photo = mentraBluetoothSdk.requestPhoto(
     PhotoRequest(
       size = PhotoSize.${when(size) { "low" -> "LOW"; "high" -> "HIGH"; "max" -> "MAX"; else -> "MEDIUM" }},
       webhookUrl = $webhookLine,$saveLine
-      compress = PhotoCompression.${compression.uppercase(Locale.US)},
+      compress = PhotoCompression.${compression.name},
       sound = true,
       exposureTimeNs = ${if (exposureManual) exposureTimeNs else "null"},
       iso = ${if (exposureManual) iso else "null"},

@@ -623,7 +623,7 @@ fun CameraScreen(controller: MentraExampleController) {
                     }
                     CameraOptionGroup("photo compress") {
                         photoCompressionOptions.forEach { compression ->
-                            OptionChip(compression, state.photoCompression == compression) {
+                            OptionChip(compression.value, state.photoCompression == compression) {
                                 controller.setPhotoCompression(compression)
                             }
                         }
