@@ -183,7 +183,7 @@ class LocalWhipIngestSource(
    * Trivially true when nothing was ever bound, so a teardown after a join that failed before the
    * listener existed does not spend the whole bound discovering there is nothing to wait for.
    */
-  fun awaitIngestClosed(timeoutMs: Long): Boolean = (retiring ?: server)?.awaitClosed(timeoutMs) ?: true
+  override fun awaitIngestClosed(timeoutMs: Long): Boolean = (retiring ?: server)?.awaitClosed(timeoutMs) ?: true
 
   /**
    * Drop the listener now, tombstone or not.
@@ -192,7 +192,7 @@ class LocalWhipIngestSource(
    * gets a connection reset instead of `410`, which is a worse answer — but it is a better outcome
    * than a next call that cannot bind its port.
    */
-  fun forceCloseIngest() {
+  override fun forceCloseIngest() {
     // Keep the handle: forceSoftapCleanup re-asks awaitIngestClosed to confirm the port is really
     // free. Nulling here would make that check read `null -> true` and mask a closeNow that threw,
     // so the next Start binds a port this listener still holds. closeNow/awaitClosed are idempotent,

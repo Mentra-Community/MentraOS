@@ -2,6 +2,16 @@ import CryptoKit
 import ExpoModulesCore
 import Foundation
 
+/// Carry the SDK's own error code across the Expo bridge.
+///
+/// `BluetoothSdkError` is a plain `Error`, not an Expo `Exception`, so `Promise.reject`
+/// wraps it in `UnexpectedException` and every code JS branches on arrives as
+/// `ERR_UNEXPECTED`. Android keeps the code because `DecoratedException` forwards
+/// `cause.code`; this is the iOS half of that guarantee.
+private func codedBridgeError(_ error: BluetoothSdkError) -> Exception {
+    Exception(name: error.code, description: error.message, code: error.code)
+}
+
 public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
     private var sdk: MentraBluetoothSDK?
 
@@ -344,9 +354,16 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             return try await sdk.forgetWifiNetwork(ssid: ssid).values
         }
 
+        // The host retries a hotspot command that a Wi-Fi protocol session refresh
+        // cancelled, and branches on the code to tell that apart from a real failure,
+        // so this one has to reach JS with its code intact.
         AsyncFunction("setHotspotState") { (enabled: Bool) in
             let sdk = await MainActor.run { self.bluetoothSdk() }
-            return try await sdk.setHotspotState(enabled: enabled).values
+            do {
+                return try await sdk.setHotspotState(enabled: enabled).values
+            } catch let error as BluetoothSdkError {
+                throw codedBridgeError(error)
+            }
         }
 
         AsyncFunction("setWifiAdbState") { (enabled: Bool) in

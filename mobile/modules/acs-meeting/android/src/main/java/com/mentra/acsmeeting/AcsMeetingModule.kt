@@ -61,6 +61,28 @@ class AcsMeetingModule : Module() {
    */
   private var internetHold: InternetHold? = null
 
+  /**
+   * Lift the cellular process pin only across a SoftAP WHIP bind.
+   *
+   * A ServerSocket bound to 192.168.43.x while this UID is marked cellular accepts the bind
+   * but never sees the glasses' SYN — ICMP/ARP still work, TCP to the listener times out.
+   * Join already does this; recovery rebind must too.
+   */
+  private inline fun <T> withIngestUnpinned(bind: () -> T): T {
+    val hold = internetHold
+    if (hold == null) {
+      SoftApTrace.stage("native_ingest_bind", "unpinned" to false, "reason" to "no cellular hold")
+      return bind()
+    }
+    hold.unbindProcess()
+    try {
+      SoftApTrace.stage("native_ingest_bind", "unpinned" to true)
+      return bind()
+    } finally {
+      hold.bindProcessToCellular()
+    }
+  }
+
   override fun definition() = ModuleDefinition {
     Name("MentraAcsMeeting")
     // `onScopedNetworkLost` fires only for a hotspot that went away while we still wanted it: the
@@ -303,23 +325,7 @@ class AcsMeetingModule : Module() {
           video,
           audioDelayMs,
           origin,
-          bindIngestUnpinned = { bind ->
-            val hold = internetHold
-            if (hold == null) {
-              // No hold means no pin to lift, so the listener binds on whatever the default route
-              // is. Worth naming: that is also the state in which ACS's own sockets are unpinned.
-              SoftApTrace.stage("native_ingest_bind", "unpinned" to false, "reason" to "no cellular hold")
-              bind()
-            } else {
-              hold.unbindProcess()
-              try {
-                SoftApTrace.stage("native_ingest_bind", "unpinned" to true)
-                bind()
-              } finally {
-                hold.bindProcessToCellular()
-              }
-            }
-          },
+          bindIngestUnpinned = { bind -> withIngestUnpinned(bind) },
         )
         // Prefer the join snapshot: getState() can race a leave from a respawned miniapp
         // restore and drop the URL the orchestrator needs to tell the glasses.
@@ -418,6 +424,13 @@ class AcsMeetingModule : Module() {
 
     AsyncFunction("restartVideoSource") {
       session?.restartVideoSource()
+    }
+
+    AsyncFunction("rebindSoftApIngest") {
+      traced("rebind_softap_ingest", "hasSession" to (session != null)) {
+        val meeting = session ?: throw IllegalStateException("No active meeting to rebind")
+        meeting.rebindSoftApIngest { bind -> withIngestUnpinned(bind) }
+      }
     }
 
     AsyncFunction("getState") {

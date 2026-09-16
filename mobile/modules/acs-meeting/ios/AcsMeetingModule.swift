@@ -160,6 +160,19 @@ public class AcsMeetingModule: Module {
             self.session?.restartVideoSource()
         }
 
+        AsyncFunction("rebindSoftApIngest") { (promise: Promise) in
+            guard let session = self.session else {
+                promise.reject(AcsMeetingError("No active meeting to rebind"))
+                return
+            }
+            session.rebindSoftApIngest { result in
+                switch result {
+                case let .success(url): promise.resolve(url)
+                case let .failure(error): promise.reject(error)
+                }
+            }
+        }
+
         AsyncFunction("getState") {
             self.session?.snapshot() ?? ["state": "idle", "muted": false]
         }
@@ -236,6 +249,8 @@ final class AcsMeetingSession {
     private var mediaRestartTask: DispatchWorkItem?
     private static let mediaRestartBaseMs = 1000
     private static let mediaRestartMaxMs = 10000
+    /// How long rebind waits for the parked listener to release after a force-close.
+    private static let rebindIngestCloseMs = 2000
     private var joinGeneration: UInt64 = 0
     private var capabilitiesFeature: CapabilitiesCallFeature?
     /// nil means "not reported yet", which the miniapp shows as End disabled rather than absent.
@@ -571,6 +586,27 @@ final class AcsMeetingSession {
             guard self.sourceConfig.kind == .whep else { return }
             self.cancelMediaRestart()
             self.media?.restart(config: SourceConfig(url: whepUrl))
+        }
+    }
+
+    /// Destroy the current SoftAP listener generation and bind a new one on the
+    /// address the hotspot reports *now*. The caller rejoins first, then asks for this.
+    func rebindSoftApIngest(completion: @escaping (Result<String, Error>) -> Void) {
+        queue.async {
+            guard MediaDiagnostics.softapRecoveryEnabled else {
+                completion(.failure(AcsMeetingError("SoftAP ingest rebind is disabled")))
+                return
+            }
+            guard self.sourceConfig.kind == .softap, let source = self.media as? LocalWhipIngestSource else {
+                completion(.failure(AcsMeetingError("rebindSoftApIngest is only valid for a SoftAP call")))
+                return
+            }
+            guard let address = GlassesHotspotNetwork.wifiAddress() else {
+                completion(.failure(AcsMeetingError("scoped network has no IPv4 address after rejoin")))
+                return
+            }
+            let config = SourceConfig(url: "", kind: .softap, bindAddress: address)
+            source.rebindIngest(config: config, timeoutMs: Self.rebindIngestCloseMs, completion: completion)
         }
     }
 
