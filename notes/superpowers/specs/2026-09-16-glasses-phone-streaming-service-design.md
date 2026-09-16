@@ -19,7 +19,8 @@ Both instantiate glasses-media's `LocalWhipIngestSource` (the WHIP server, peer 
 and both drive the glasses publish through `PhoneStreamCoordinator.startUnmanaged` with
 host-only ICE. What is duplicated is everything around the receiver: hotspot setup, ordering,
 failure handling, first-frame gating and recovery. Rule from Cayden and Philippe: Mentra Call
-is a consumer of video streaming, not a streaming system of its own.
+is a consumer of video streaming, not a streaming system of its own. The Call-side reshuffle
+is specified in `2026-09-16-mentra-call-on-streaming-service-design.md`.
 
 Other routes are unaffected: managed SRT and RTMP send the glasses straight to Cloudflare over
 their own Wi-Fi, and `direct` publishes to a caller URL from the glasses. Neither touches the
