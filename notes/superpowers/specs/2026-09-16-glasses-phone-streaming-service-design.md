@@ -97,7 +97,9 @@ phone.
    result). The adapter's destination is untouched, so an audio-only ACS call continues while
    gallery sync or OTA can acquire the hotspot. This matches today's `SoftapCallTransport`,
    which unwinds the publisher, scoped join and AP on exhaustion while preserving ACS. A later
-   `close` on a failed stream is a no-op that returns the recorded result.
+   `close` on a failed stream returns the recorded result when the release settled, and retries
+   the hotspot release when the recorded result was `blocked`, so the retry path of the hotspot
+   contract is never lost; the stream stays `failed` either way.
 10. **SDK surface grows by one option, not one API.** The Miniapp SDK's `startStream` gains
    `route`. The Bluetooth SDK gains no new streaming method: the hotspot session API from the
    companion spec plus the existing `startStream` with host-only ICE already describe the
@@ -114,7 +116,7 @@ export type StreamPhase =
   | "publishing"    // adapter attached, BLE start_stream acked; waiting for the first decoded frame
   | "live"          // a decoded frame reached the adapter attached for this media generation
   | "recovering"    // media rebuild (peer stall / receiver failure) or hotspot recovery in progress
-  | "failed"        // terminal cleanup already ran (media detached, publish and receiver stopped, hotspot released); close() is a no-op
+  | "failed"        // terminal cleanup ran (media detached, publish and receiver stopped, hotspot release attempted); close() retries a blocked release
   | "closing"
   | "closed"
 
@@ -188,7 +190,7 @@ export interface StreamSession {
   whenLive(opts?: {afterMediaGeneration?: number; signal?: AbortSignal}): Promise<MediaRef>
   /** An adapter that lost frames asks for verification; the service decides media vs hotspot recovery. */
   reportSuspectedStall(media: MediaRef): void
-  /** Consumer-initiated end: detach, stop the glasses publish, close the receiver, release the hotspot session. Never touches the destination. Idempotent; on an already failed stream returns the recorded result. */
+  /** Consumer-initiated end: detach, stop the glasses publish, close the receiver, release the hotspot session. Never touches the destination. Idempotent: concurrent calls share one cleanup; on a failed stream it returns the settled result or retries a blocked hotspot release. */
   close(): Promise<{hotspot: ReleaseResult | null}>
 }
 
@@ -330,7 +332,7 @@ endpoint is on the active hotspot. Only additions: emit `route` in `stream_statu
 
 | Consumer | Sequence |
 |---|---|
-| Mentra Call | Runtime: acquire ACS agent (Internet) → `acs.join(meeting)` → `streamService.open({owner: "call", uplink: "cellular", captureAudio: false, recovery: callDefaults, adapter: acsAdapter})` → `await stream.start()` resolves on `live`, report ready. `acsAdapter.attach(media)` borrows the `MediaRef` and wires `AcsFrameSender` and PCM before the glasses publish; `detach` releases the lease and keeps the meeting. On `recovery_exhausted` the stream has already released the hotspot; the meeting stays joined (audio continues) until Leave; Leave → `stream.close()` (no-op) → ACS leave. `SoftapCallTransport` keeps only meeting ordering (`acsJoin`, attach, `live`); `hotspot`, `scopedJoin`, `publish` and `preserveMeeting` disappear. |
+| Mentra Call | Runtime: acquire ACS agent (Internet) → `acs.join(meeting)` → `streamService.open({owner: "call", uplink: "cellular", captureAudio: false, recovery: callDefaults, adapter: acsAdapter})` → `await stream.start()` resolves on `live`, report ready. `acsAdapter.attach(media)` borrows the `MediaRef` and wires `AcsFrameSender` and PCM before the glasses publish; `detach` releases the lease and keeps the meeting. On `recovery_exhausted` the stream has already released the hotspot; the meeting stays joined (audio continues) until Leave; Leave → `stream.close()` (settled: returns the recorded result; blocked: retries the release) → ACS leave. `SoftapCallTransport` keeps only meeting ordering (`acsJoin`, attach, `live`); `hotspot`, `scopedJoin`, `publish` and `preserveMeeting` disappear. |
 | Managed WHIP | `PhoneStreamCoordinator.startManaged` with `ingest: "whip"`: provision Cloudflare → `streamService.open({owner: "managed_whip", uplink: "cellular", captureAudio, adapter: republisher})` → `republisher.attach(media)` borrows the `MediaRef` and starts `PhoneWhipPublisher` toward `webrtcPublishUrl` before the glasses publish → status fans out tagged `route: "phone"`. `ManagedWebRtcRelay`'s attempt/retry loop is replaced by the stream service's recovery. |
 | Direct WHIP over the phone (new for miniapps) | Same as managed WHIP with the caller's WHIP URL as the republisher destination and `owner: "local"`. |
 | Local preview (future) | `open({owner: "local", uplink: "none"})`, adapter renders. |
@@ -348,8 +350,9 @@ Depends on hotspot spec steps 1 and 2 (native core, reservation gate).
    advances, no AP rejoin occurs, the rebuild deadline is not renewed, and the ACS adapter's
    destination survives terminal media failure. Exhaustion on the initial start and after a
    rejoin: the stream releases the hotspot on its own, ACS stays joined, gallery sync or OTA
-   can acquire after the release settles, a deferred stop cannot reach the next owner, and a
-   later Leave or `close` is safe. Fake-clock cases: glasses return at 50 s of a
+   can acquire after the release settles, a deferred stop cannot reach the next owner, a later
+   Leave or `close` is safe, and `close` after a blocked release retries it and reports the
+   new result. Fake-clock cases: glasses return at 50 s of a
    60 s return budget and the rebuild still gets its full 45 s; one expiry shared by the network
    rejoin and the media retries that follow it; duplicate loss events inside one outage renew
    neither deadline.
