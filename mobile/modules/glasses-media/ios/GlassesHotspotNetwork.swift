@@ -2,9 +2,11 @@ import Darwin
 import Foundation
 import Network
 import NetworkExtension
+import OSLog
 
 /// Same persistent hotspot join as gallery (`joinOnce=false`). Only local traffic uses Wi-Fi.
 public final class GlassesHotspotNetwork {
+    private let logger = Logger(subsystem: "com.mentra.glassesmedia", category: "hotspot")
     private let queue = DispatchQueue(label: "com.mentra.glassesmedia.hotspot")
     private var ssid: String?
     private var lastHotspotSSID: String?
@@ -35,7 +37,7 @@ public final class GlassesHotspotNetwork {
             self.joinReply = completion
             let config = NEHotspotConfiguration(ssid: ssid, passphrase: passphrase, isWEP: false)
             config.joinOnce = false
-            NSLog("HOTSPOT_JOIN apply_start ios_on_mac=\(ProcessInfo.processInfo.isiOSAppOnMac)")
+            self.logger.info("HOTSPOT_JOIN apply_start ios_on_mac=\(ProcessInfo.processInfo.isiOSAppOnMac)")
             NEHotspotConfigurationManager.shared.apply(config) { error in
                 self.queue.async {
                     guard gen == self.generation else { return }
@@ -46,10 +48,10 @@ public final class GlassesHotspotNetwork {
                         // localizedDescription. Do not log credentials or the full userInfo.
                         let nativeError = error as NSError
                         let underlying = nativeError.userInfo[NSUnderlyingErrorKey] as? NSError
-                        NSLog("HOTSPOT_JOIN apply_failed domain=\(nativeError.domain) code=\(nativeError.code) underlying_domain=\(underlying?.domain ?? "none") underlying_code=\(underlying.map { String($0.code) } ?? "none")")
+                        self.logger.error("HOTSPOT_JOIN apply_failed domain=\(nativeError.domain, privacy: .public) code=\(nativeError.code) underlying_domain=\(underlying?.domain ?? "none", privacy: .public) underlying_code=\(underlying.map { String($0.code) } ?? "none", privacy: .public)")
                         self.finishJoin(.failure(error)); self.finishLeave(); return
                     }
-                    NSLog("HOTSPOT_JOIN apply_accepted")
+                    self.logger.info("HOTSPOT_JOIN apply_accepted")
                     self.waitForAddress(ssid: ssid, generation: gen, remaining: 60)
                 }
             }
