@@ -4,6 +4,7 @@ import {homedir} from "node:os"
 import {join, relative, resolve} from "node:path"
 import {bin, command, root, type Doctor, type Snapshot} from "./driver"
 import {KEEP_AWAKE_SECONDS, keepAwake} from "./keep-awake"
+import {bundledMiniappArtifacts} from "./miniapp-artifacts"
 import {Video} from "./video"
 
 export interface StepResult {
@@ -124,6 +125,7 @@ export class Report {
             .digest("hex")
         : null,
       installedAppCommit: null,
+      bundledMiniappArtifacts: await bundledMiniappArtifacts(doctor.bundlePath),
       harnessHash: await treeHash(resolve(root, "tools/mentra-e2e")),
       driverHash: createHash("sha256")
         .update(await readFile(bin))

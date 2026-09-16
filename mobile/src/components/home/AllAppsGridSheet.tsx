@@ -1,5 +1,5 @@
 import {useCallback, useEffect, useMemo, useRef, useState} from "react"
-import {AppState, BackHandler, Keyboard, Platform, Pressable, TextInput, TouchableOpacity, View} from "react-native"
+import {AppState, BackHandler, Keyboard, Platform, Pressable, TextInput, View} from "react-native"
 import {Icon} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import BottomSheet, {
@@ -20,6 +20,7 @@ export default function AllAppsGridSheet({bottomSheetRef}: {bottomSheetRef: Reac
   const [searchQuery, setSearchQuery] = useState("")
   const [isOpen, setIsOpen] = useState(false)
   const searchInputRef = useRef<TextInput>(null)
+  const clearSearch = useCallback(() => setSearchQuery(""), [])
 
   const snapPoints = useMemo(() => ["90%"], [])
 
@@ -177,13 +178,15 @@ export default function AllAppsGridSheet({bottomSheetRef}: {bottomSheetRef: Reac
                   hitSlop={16}
                 />
                 {searchQuery.length > 0 && (
-                  <TouchableOpacity
+                  <Pressable
                     accessibilityRole="button"
                     accessibilityLabel={translate("home:clearSearch")}
                     testID="home.allApps.clearSearch"
-                    onPress={() => setSearchQuery("")}>
+                    onPress={clearSearch}
+                    onAccessibilityTap={clearSearch}
+                    style={({pressed}) => ({opacity: pressed ? 0.2 : 1})}>
                     <Icon name="x" size={20} color={theme.colors.muted_foreground} />
-                  </TouchableOpacity>
+                  </Pressable>
                 )}
               </View>
               {/* <View className="h-px bg-border my-4" /> */}

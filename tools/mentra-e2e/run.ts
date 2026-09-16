@@ -12,6 +12,7 @@ import {lifecycleProof} from "./flows/lifecycle-proof"
 import {noGlasses, noGlassesExclusions} from "./flows/no-glasses"
 import {recoverUnpaired} from "./runner/recovery"
 import {failureProof} from "./flows/failure-proof"
+import {mentraCallIosAvailability} from "./flows/mentra-call-ios-availability"
 
 const {positionals, values} = parseArgs({
   args: process.argv.slice(2),
@@ -26,16 +27,23 @@ const operation = positionals[0] ?? "doctor"
 try {
   if (operation !== "describe") await buildDriver()
   if (operation === "describe") {
+    const callAvailability = values.suite === "mentra-call-ios-availability"
     console.log(
-      "# Compiled no-glasses routine\n\nGenerated from `flows/no-glasses.ts`. Start signed in on English, unpaired home. Credentials are requested at runtime. Each numbered action/check has its own screenshot and video chapter.\n",
+      callAvailability
+        ? "# Mentra Call iOS availability routine\n\nHost policy check only; Call UI and real calling are not covered. Start signed in on English, unpaired home. Each numbered action/check has its own screenshot and video chapter.\n"
+        : "# Compiled no-glasses routine\n\nGenerated from `flows/no-glasses.ts`. Start signed in on English, unpaired home. Credentials are requested at runtime. Each numbered action/check has its own screenshot and video chapter.\n",
     )
     console.log(
-      noGlasses
+      (callAvailability ? mentraCallIosAvailability : noGlasses)
         .map((step, index) => `${index + 1}. **${step.id}** ${step.instruction} Expected: ${step.expected}`)
         .join("\n"),
     )
-    console.log("\nDeclared exclusions:\n")
-    console.log(noGlassesExclusions.map((step) => `- **${step.id} — ${step.instruction}:** ${step.reason}`).join("\n"))
+    if (!callAvailability) {
+      console.log("\nDeclared exclusions:\n")
+      console.log(
+        noGlassesExclusions.map((step) => `- **${step.id} — ${step.instruction}:** ${step.reason}`).join("\n"),
+      )
+    }
   } else if (operation === "doctor") {
     const doctor = await command<Doctor>({op: "doctor"})
     console.log(JSON.stringify(doctor, null, 2))
@@ -53,12 +61,16 @@ try {
       "lifecycle-proof": lifecycleProof,
       "no-glasses": noGlasses,
       "failure-proof": failureProof,
+      "mentra-call-ios-availability": mentraCallIosAvailability,
       "restore-unpaired": [],
     }
     const steps = suites[values.suite as keyof typeof suites]
     if (!steps) throw new Error(`Suite is not implemented: ${values.suite}`)
-    if (["no-glasses", "failure-proof", "restore-unpaired"].includes(values.suite!) && values.fixture !== "unpaired")
-      throw new Error("The no-glasses suite requires the declared unpaired fixture")
+    if (
+      ["no-glasses", "failure-proof", "restore-unpaired", "mentra-call-ios-availability"].includes(values.suite!) &&
+      values.fixture !== "unpaired"
+    )
+      throw new Error("This suite requires the declared unpaired fixture")
     const account = ["login", "no-glasses", "failure-proof", "restore-unpaired"].includes(values.suite!)
       ? await credentials()
       : {email: "", password: ""}
@@ -102,13 +114,15 @@ try {
           await report.record({...excluded, expected: excluded.reason, status: "not-applicable", durationMs: 0})
       }
       const restored =
-        values.suite === "driver-proof"
-          ? "Authentication start restored"
-          : values.suite === "accessibility-preflight"
-            ? "No UI changes; inspected the current miniapp"
-            : values.suite === "no-glasses"
-              ? "Signed-in unpaired home verified; test overlays closed; no preference changes made"
-              : "Authenticated app reached"
+        values.suite === "mentra-call-ios-availability"
+          ? "iOS host exclusion verified; search cleared and unpaired home restored. Call UI and real calling were not exercised."
+          : values.suite === "driver-proof"
+            ? "Authentication start restored"
+            : values.suite === "accessibility-preflight"
+              ? "No UI changes; inspected the current miniapp"
+              : values.suite === "no-glasses"
+                ? "Signed-in unpaired home verified; test overlays closed; no preference changes made"
+                : "Authenticated app reached"
       await report.finish(
         passed ? "passed" : "failed",
         passed

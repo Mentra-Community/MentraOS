@@ -11,7 +11,7 @@ Labels are localized human language. `testID` values are stable, locale-independ
 | Close miniapp | `miniapp.close` | Press invokes the existing close handler. |
 | Open all miniapps | `home.allApps.open` | Press opens the all-apps sheet. |
 | Search miniapps | `home.allApps.search` | Editable value updates the actual search/filter state. |
-| Clear search | `home.allApps.clearSearch` | Press clears the query; only present for a nonempty query. |
+| Clear search | `home.allApps.clearSearch` | Press clears the query; only present for a nonempty query. Explicit accessibility activation and touch share the same clear handler. |
 | Dismiss all-apps sheet | `home.allApps.close` | Press invokes the same sheet close operation as the backdrop. |
 | Home miniapp launcher | `home.miniapp.<packageName>` | Press uses normal compatibility checks and launch logic. |
 | All-apps miniapp launcher | `allApps.miniapp.<packageName>` | Same launch behavior, distinguished from the home grid behind the sheet. |

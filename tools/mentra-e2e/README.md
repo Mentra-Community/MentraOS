@@ -2,6 +2,8 @@
 
 Start with the [English coverage checklist](ROUTINE.md), [exact compiled routine](COMPILED-ROUTINE.md), [design and technology choices](../../notes/superpowers/specs/2026-09-15-mentra-app-e2e-harness.md), [accessibility contract](ACCESSIBILITY.md), and [Mac Mini setup](SETUP.md).
 
+The [Mentra Call English routine](MENTRA-CALL-ROUTINE.md) is being developed separately. Latest `dev` hides Call on iOS, and the unpaired host lacks its required camera capability. `mentra-call-ios-availability` checks that existing host policy through Home and All Apps; it does **not** qualify the Call UI or meetings. The target for the Call UI routine is still pending.
+
 This harness drives the real iOS app on an Apple Silicon Mac. A Swift helper invokes native accessibility actions; Bun executes typed steps with zero model calls. Every executed step saves a screenshot, accessibility snapshot, English instruction and timestamp in a continuous MP4. The static report lets a person search descriptions and jump to the corresponding video moment.
 
 Three consecutive **70-step** replays passed in **91.0, 93.3 and 90.8 seconds** on the same clean local Release build and identical harness code. All 210 screenshots and accessibility snapshots, three MP4s and their chapter timestamps passed independent artifact checks, including frame liveness. Each replay used zero model calls; no step recorded Mentra as foreground. Earlier failed runs remain preserved.
@@ -39,6 +41,9 @@ bun run tools/mentra-e2e/run.ts run --suite driver-proof
 bun run tools/mentra-e2e/run.ts run --suite onboarding
 # From signed-in unpaired home:
 bun run tools/mentra-e2e/run.ts run --suite lifecycle-proof
+# Call's current iOS exclusion, from signed-in unpaired home:
+bun run tools/mentra-e2e/run.ts run --suite mentra-call-ios-availability --build-manifest mobile/build/ios-mac/build-manifest.json
+bun run tools/mentra-e2e/run.ts describe --suite mentra-call-ios-availability
 # With a miniapp open, read-only capsule contract check:
 bun run tools/mentra-e2e/run.ts run --suite accessibility-preflight
 ```
@@ -59,8 +64,12 @@ Open a run's `index.html` locally to browse its English steps, or open `routine.
 
 Evidence version 2 records the latest window-server observation time for every screenshot. A complete frame or an explicit idle observation confirms the stream is live; blank, suspended, stopped or stale capture cannot produce a passing screenshot. Idle observations retain the last complete image, so an unchanged screen remains valid without inventing a new image timestamp.
 
+New reports also record `bundledMiniappArtifacts`: SHA-256 hashes of ZIPs in the running binary's `assets/assets/miniapps` directory. This distinguishes archives even when their filename/version is unchanged. An unavailable directory is reported explicitly. These are packaged assets, not proof of which runtime-extracted or subsequently updated miniapp is active. Incremental Xcode products may retain an older unreferenced archive alongside the current one; do not select the runtime version by directory order.
+
 | Run folder | Result |
 | --- | --- |
+| `2026-09-16T18-44-23-699Z-no-glasses-f84f75` | After merging dev and fixing Clear Search activation: all 70 steps passed in 85.86 seconds. All screenshot/video/chapter and liveness checks passed; zero model calls and no step recorded Mentra as foreground. This build includes the recorded local source diff. |
+| `2026-09-16T18-43-54-655Z-mentra-call-ios-availability-a19d83` | Five host-policy/search steps passed in 6.465 seconds after fixing Clear Search. Artifact checks passed. This is not Call UI or meeting coverage. |
 | `2026-09-16T00-12-31-228Z-lifecycle-proof-6b13b6` and `2026-09-16T00-12-52-266Z-accessibility-preflight-4619a3` | Keep-awake follow-up: recorded relaunch passed; intentionally running the miniapp preflight from home failed as expected. Both runs passed artifact checks and released their own macOS power assertions. The nine native checks also verify assertion creation and cleanup. |
 | `2026-09-15T23-34-29-745Z-no-glasses-0d7ee5` | Qualification 1: 70 passed, 3 exclusions, 90.998333-second video; all evidence and frame-liveness checks passed. |
 | `2026-09-15T23-36-01-585Z-no-glasses-2cdbc6` | Qualification 2: 70 passed, 3 exclusions, 93.303333-second video; all evidence and frame-liveness checks passed. |

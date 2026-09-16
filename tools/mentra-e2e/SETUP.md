@@ -211,3 +211,17 @@ The background launcher monitors only Apple's notification/security dialog owner
 The initial Xcode account/SPM Keychain permissions and the terminal launcher's Accessibility/Screen Recording permissions may require one human setup action. Complete those once, rerun `doctor`, and then replay. Do not reset the macOS permission database between runs. The harness captures only the Mentra window even when a system dialog is diagnosed; unrelated desktop content is not added to recordings.
 
 For independent artifact checks, install FFmpeg through your normal package manager (for example `brew install ffmpeg`), then run `bun tools/mentra-e2e/verify-run.ts <run-folder>`. Normal replay does not require FFmpeg.
+
+## Mentra Call source and target setup
+
+Clone `https://github.com/Mentra-Community/Mentra-Call` on its `main` branch when working on Call; its source is not the ZIP in this repository. Record the source commit, `miniapp/miniapp.json` version and bundled ZIP hash separately. See [the English Call routine](MENTRA-CALL-ROUTINE.md) for current fixture limitations.
+
+Call is explicitly hidden on ordinary iOS builds, including iOS-on-Mac. Installing the harness does not enable it. On an unpaired host, the required camera capability also blocks launch. Do not report a missing launcher as successful Call UI coverage. The `mentra-call-ios-availability` suite verifies this host exclusion without a meeting or a device-state override.
+
+If Call source needs a release change, use the existing sync workflow from the MentraOS root, with the actual external checkout path because an isolated worktree may not have the normal sibling layout:
+
+```sh
+bun scripts/sync-miniapp.mjs --repo /absolute/path/to/Mentra-Call --pack-script pack:prod --bump patch
+```
+
+Follow the repository's external-miniapp version/commit/push requirements. Rebuild the Mentra App with `bun ios:mac` after updating its ZIP. A new run records the archives in the actual running binary in `run.json`; compare its current Call ZIP hash with the source-tree artifact. This identifies packaged bytes, not a running miniapp's extracted cache.
