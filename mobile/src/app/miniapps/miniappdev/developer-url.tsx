@@ -169,7 +169,7 @@ export default function MiniappDeveloperUrlScreen() {
       const manifest = launchResult.manifest
       const entry: RecentDevApp = {
         packageName: manifest.packageName || "com.dev.unknown",
-        name: manifest.name || "Dev Mini App",
+        name: manifest.name || "Dev miniapp",
         url: trimmed,
         iconUrl: resolveIconUrl(trimmed, manifest.icon),
         timestamp: Date.now(),
