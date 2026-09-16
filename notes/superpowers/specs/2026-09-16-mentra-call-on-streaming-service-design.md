@@ -76,8 +76,12 @@ LocalMiniappRuntime (MEETING_* requests, MEETING_STATE fanout)
    microphone capture, mute, audio source selection and incoming mixed audio playback are
    untouched. The stream is opened with `captureAudio: false` whenever the LC3 uplink is active,
    which is the `glassesLc3Uplink` decision the transport makes today.
-8. **The WHEP video source is unaffected.** `updateVideoSource(whepUrl)` and
-   `CloudflareWhepSource` are a different video source kind and stay in ACS as they are.
+8. **The WHEP video source and its recovery are unaffected.** `updateVideoSource(whepUrl)`,
+   `CloudflareWhepSource`, the phone-network watcher (`watchPhoneNetwork`,
+   `unwatchPhoneNetwork`) that restarts the WHEP subscription when the phone switches between
+   Wi-Fi and cellular (`restartMediaSource` → native `restartVideoSource`), and the watcher's
+   explicit no-restart rule for the SoftAP kind stay in ACS exactly as they are. They are
+   destination-side video recovery, not hotspot ownership.
 
 ## Step and error mapping
 
@@ -147,8 +151,9 @@ the miniapp while `details` carries the new code for logs and bug reports.
 | Group | Fate |
 |---|---|
 | Meeting: `prepareAgent`, `join`, `leave`, `leaveAndAwait`, `endForEveryone`, `setMuted`, `setAudioSource`, `updateVideoSource`, `readState`, `leaveIfOwner`, state handler, ownership | kept |
+| WHEP recovery: `watchPhoneNetwork`, `unwatchPhoneNetwork`, `restartMediaSource` (native `restartVideoSource`) | kept; the SoftAP kind is simply never watched, as today |
 | Audio: `startGlassesMicUplink`, `stopGlassesMicUplink`, `pushOutgoingPcm`, PCM playback, incoming audio | kept |
-| Network: `isWifiEnabled`, `joinScopedNetwork`, `onScopedNetworkLost`, `beginScopedTeardown`, `awaitValidatedDefaultNetwork`, `awaitDefaultNetworkAfterHotspot`, `cancelScopedNetworkJoin`, `probeScopedGateway`, `leaveScopedNetwork`, `watchPhoneNetwork`, `restartMediaSource` | deleted |
+| SoftAP network: `isWifiEnabled`, `joinScopedNetwork`, `onScopedNetworkLost`, `beginScopedTeardown`, `awaitValidatedDefaultNetwork`, `awaitDefaultNetworkAfterHotspot`, `cancelScopedNetworkJoin`, `probeScopedGateway`, `leaveScopedNetwork` | deleted |
 | Media/ingest: `softApIngestUrl`, `awaitIngestClosed`, `forceCloseIngest`, `rebindSoftApIngest`, `invalidateDecodedMedia`, `waitForFirstFrame`, `waitUntilMediaLive` | deleted |
 | New: `attachMedia(media: MediaRef)`, `detachMedia(media: MediaRef)` | the `AcsMediaAdapter` implementation, calling native `attachMedia` / `detachMedia` |
 
@@ -156,7 +161,8 @@ the miniapp while `details` carries the new code for logs and bug reports.
 
 | Item | Fate |
 |---|---|
-| Expo functions `isWifiEnabled`, `joinScopedNetwork`, `joinScopedNetworkWithGateway`, `leaveScopedNetwork`, `cancelScopedNetworkJoin`, `awaitValidatedDefaultNetwork`, `awaitDefaultNetworkAfterHotspot`, `scopedNetworkInfo`, `probeScopedGateway`, `awaitIngestClosed`, `forceCloseIngest`, `rebindSoftApIngest`, `restartVideoSource` (SoftAP kind) | deleted |
+| Expo functions `isWifiEnabled`, `joinScopedNetwork`, `joinScopedNetworkWithGateway`, `leaveScopedNetwork`, `cancelScopedNetworkJoin`, `awaitValidatedDefaultNetwork`, `awaitDefaultNetworkAfterHotspot`, `scopedNetworkInfo`, `probeScopedGateway`, `awaitIngestClosed`, `forceCloseIngest`, `rebindSoftApIngest` | deleted |
+| Expo function `restartVideoSource` | kept for the WHEP source; it never applied to the SoftAP kind |
 | Event `onScopedNetworkLost` | deleted |
 | New functions `attachMedia(mediaRef)`, `detachMedia(mediaRef)` | borrow from `GlassesMediaRegistry`, wire `AcsFrameSender` + PCM, release on detach |
 | `join(options)` with `videoSource.type === "softap"` | no longer takes `ssid`, `passphrase`, `bindAddress`; the video source is attached later by `attachMedia` |
@@ -180,7 +186,7 @@ the miniapp while `details` carries the new code for logs and bug reports.
 |---|---|
 | `SoftapCallTransport.test.ts`, 97 cases | the `hotspot`, `scopedJoin`, `publish`, `live`, `recover`, `republish` cases move to the streaming and hotspot service suites as behaviour of those services; the remaining cases cover ACS ordering, step derivation from snapshots, error mapping, and teardown order |
 | `SoftapCleanupBarrier.test.ts`, 5 cases | replaced by "join while previous close pending waits" and "busy from gallery/OTA maps to step hotspot" in the runtime suite |
-| `AcsMeetingService.test.ts`, 134 cases | network and ingest cases deleted; adapter cases added: attach before publish, detach on invalidation, stale `MediaRef` rejected, meeting untouched by detach and by stream failure |
+| `AcsMeetingService.test.ts`, 134 cases | SoftAP network and ingest cases deleted; the WHEP network-switch restart regression and the SoftAP-never-restarts case stay; adapter cases added: attach before publish, detach on invalidation, stale `MediaRef` rejected, meeting untouched by detach and by stream failure |
 | `LocalMiniappRuntime.softap.test.ts`, 27 cases | adapted to the subscription mapping: progress steps, recovery fields, `SOFTAP_NETWORK_LOST` with the meeting joined, leave and end paths |
 | native SoftAP tests in glasses-media and asg_client | unchanged |
 
