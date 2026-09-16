@@ -35,14 +35,21 @@ public final class GlassesHotspotNetwork {
             self.joinReply = completion
             let config = NEHotspotConfiguration(ssid: ssid, passphrase: passphrase, isWEP: false)
             config.joinOnce = false
+            NSLog("HOTSPOT_JOIN apply_start ios_on_mac=\(ProcessInfo.processInfo.isiOSAppOnMac)")
             NEHotspotConfigurationManager.shared.apply(config) { error in
                 self.queue.async {
                     guard gen == self.generation else { return }
                     self.applying = false
                     if self.cancelled { self.finishLeave(); return }
                     if let error, (error as NSError).code != NEHotspotConfigurationError.alreadyAssociated.rawValue {
+                        // Keep Apple's diagnostic identity when the bridge/UI only retains
+                        // localizedDescription. Do not log credentials or the full userInfo.
+                        let nativeError = error as NSError
+                        let underlying = nativeError.userInfo[NSUnderlyingErrorKey] as? NSError
+                        NSLog("HOTSPOT_JOIN apply_failed domain=\(nativeError.domain) code=\(nativeError.code) underlying_domain=\(underlying?.domain ?? "none") underlying_code=\(underlying.map { String($0.code) } ?? "none")")
                         self.finishJoin(.failure(error)); self.finishLeave(); return
                     }
+                    NSLog("HOTSPOT_JOIN apply_accepted")
                     self.waitForAddress(ssid: ssid, generation: gen, remaining: 60)
                 }
             }
