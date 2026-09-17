@@ -52,7 +52,7 @@ Start on English paired home with Debug Mode unlocked and the saved Call switch 
 19. **VIS-11-disabled-search-search** Search All Apps for Call. Expected: The search reads Call and Mentra Call is absent, including previously installed entries.
 20. **VIS-11-disabled-search-clear** Clear the miniapp search. Expected: The search field is empty.
 21. **VIS-11-disabled-search-close** Close All Apps. Expected: Home is restored without Mentra Call.
-# iOS Call visibility routine
+# iOS build override routine
 
 Start on English paired home with Debug Mode unlocked and the saved Call switch off. Use the matching default or environment-enabled build. No meeting or stream is created.
 
@@ -61,3 +61,23 @@ Start on English paired home with Debug Mode unlocked and the saved Call switch 
 3. **ENV-02-override-scroll** Scroll Settings down to the advanced settings section. Expected: Debug settings is available.
 4. **ENV-02-override-debug** Open Debug Settings and inspect the Mentra Call switch. Expected: Call is enabled by the build override; the switch is on and disabled.
 5. **ENV-03-home** Close Settings and check the Call launcher. Expected: Home is ready and Mentra Call is visible.
+
+## Recorded validation (2026-09-17)
+
+In the provisioned integration checkout, these run folders under
+`.test-results/mentra-e2e/` passed with screenshot/AX evidence, English chapters,
+video liveness and zero model calls:
+
+- `2026-09-17T17-52-08-414Z-ios-call-visibility-259ea6`: default build, 21 steps,
+  41.643 seconds.
+- `2026-09-17T17-55-04-292Z-ios-call-build-override-f196c2`: environment override,
+  five steps, 11.660 seconds. Saved debug preference remained off.
+- `2026-09-17T17-57-23-960Z-ios-call-visibility-bb865a`: restored default archive,
+  21 steps, 42.252 seconds, stable-state assertions and no focus changes.
+
+The first restored-default attempt stopped at the recorder's eight-second
+reattachment deadline during restart. Its incomplete evidence is preserved in
+`2026-09-17T17-55-43-455Z-ios-call-visibility-b93911`; the retry passed without
+relaxing the assertion. Earlier implementation failures are also retained.
+The final installed app uses the default bundle and saved debug preference off.
+No meeting or glasses stream was started by these checks.
