@@ -27,6 +27,7 @@ import {miniappLauncher} from "../services/MiniappLauncher"
 import {miniappRunningRegistry} from "../services/MiniappRunningRegistry"
 import {resolveHiddenStatus} from "./appVisibility"
 import {SETTINGS, useSettingsStore} from "./settings"
+import {runAppsRefresh} from "./appsRefresh"
 import BluetoothSdk from "@mentra/bluetooth-sdk"
 
 // ---------------------------------------------------------------------------
@@ -79,6 +80,15 @@ interface AppStatusState {
    * `projectApps` / `setForeground` / `clearForeground`.
    */
   foregroundedPackage: string | null
+  /** True once the first refresh() (success or failure) has completed. `apps`
+   * before this point is only ever the persisted cache (or empty) — the host
+   * uses this to distinguish "still loading" from "confirmed empty" (#1222). */
+  initialized: boolean
+  /** True while a refresh() is in flight. */
+  loading: boolean
+  /** Message from the most recent failed refresh(); cleared on the next
+   * attempt (success or failure). Null when no refresh has failed. */
+  refreshError: string | null
   refresh: () => Promise<void>
   /** Resolves true if the app actually started; false if a host gate aborted it or its JS context failed to spawn. */
   start: (app: ClientApp, opts?: StartOptions) => Promise<boolean>
@@ -143,6 +153,24 @@ export const sortAppsByPackageNamePriority = (a: ClientApp, b: ClientApp): numbe
     return pa - pb
   }
   return a.name.localeCompare(b.name)
+}
+
+// Last-known app list, persisted so the home screen has something to paint
+// immediately on cold boot instead of an empty grid while the on-disk scan
+// in AppRegistry.getInstalledMiniapps() completes (#1222). Best-effort only:
+// a missing/corrupt cache just falls back to an empty list, same as before.
+const CACHED_APPS_KEY = "cached_app_list"
+
+export const loadCachedApps = (): ClientApp[] => {
+  const res = storage.load<ClientApp[]>(CACHED_APPS_KEY)
+  return res.is_ok() ? res.value : []
+}
+
+// Functions (onStart/onStop) don't survive JSON.stringify — they're silently
+// dropped, which is fine: a cached snapshot is only ever shown for the brief
+// window before the first live refresh() replaces it.
+const saveCachedApps = (apps: ClientApp[]): void => {
+  storage.save(CACHED_APPS_KEY, apps)
 }
 
 export const saveLastOpenTime = (packageName: string): void => {
@@ -276,13 +304,26 @@ function compatibilityEqual(a?: CompatibilityResult, b?: CompatibilityResult): b
 }
 
 export const useAppStatusStore = create<AppStatusState>((set, get) => ({
-  apps: [],
+  apps: loadCachedApps(),
   foregroundedPackage: null,
+  initialized: false,
+  loading: false,
+  refreshError: null,
 
   refresh: async () => {
     const previousState = get()
-    const localApps = await appRegistry.getInstalledMiniapps()
-    set({apps: projectApps(previousState, localApps)})
+    set({loading: true})
+    const result = await runAppsRefresh(
+      () => appRegistry.getInstalledMiniapps(),
+      (localApps) => projectApps(previousState, localApps),
+      saveCachedApps,
+    )
+    set({
+      ...(result.apps ? {apps: result.apps} : {}),
+      loading: false,
+      initialized: true,
+      refreshError: result.refreshError,
+    })
   },
 
   start: async (clientApp: ClientApp, opts?: StartOptions) => {
@@ -581,6 +622,9 @@ export const useStop = () => useAppStatusStore((state) => state.stop)
 export const useSetForeground = () => useAppStatusStore((state) => state.setForeground)
 export const useClearForeground = () => useAppStatusStore((state) => state.clearForeground)
 export const useRefresh = () => useAppStatusStore((state) => state.refresh)
+export const useAppsInitialized = () => useAppStatusStore((state) => state.initialized)
+export const useAppsLoading = () => useAppStatusStore((state) => state.loading)
+export const useAppsRefreshError = () => useAppStatusStore((state) => state.refreshError)
 export const useStopAll = () => useAppStatusStore((state) => state.stopAll)
 export const useInstall = () => useAppStatusStore((state) => state.install)
 export const useUninstall = () => useAppStatusStore((state) => state.uninstall)
