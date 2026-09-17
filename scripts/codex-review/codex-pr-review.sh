@@ -24,6 +24,7 @@ reported=""
 fail() { reported=1; echo "codex-pr-review: FAILED: $*" >&2; exit 1; }
 on_exit() {
   local status=$?
+  [[ -n "${reclaim_held:-}" ]] && rmdir "${reclaim_path:-}" 2>/dev/null
   [[ -n "$lock" ]] && rm -rf "$lock"
   if (( status != 0 )) && [[ -z "$reported" ]]; then
     echo "codex-pr-review: FAILED (exit $status before the review ran)" >&2
@@ -68,32 +69,62 @@ export GH_ACCOUNT
 wt="${repo_dir}-pr-${pr}"
 # One review per PR worktree at a time: the runner identifies its Codex session by this
 # directory, and two runs checking out into the same tree would corrupt each other.
-# mkdir is atomic, so only one caller ever owns the directory. A lock is reclaimed
-# only when its owner is provably dead: its pid file names a process that no longer
-# exists, or the directory is older than LOCK_STALE_SECONDS with no pid file at all
-# (the owner died between mkdir and writing the pid). Reclaiming renames the stale
-# directory out of the way first; rename is atomic, so of two callers recovering the
-# same stale lock only one can proceed, and neither can ever delete a lock that a
-# third caller has just created in its place. Anything else fails closed.
+# mkdir is atomic, so only one caller ever owns the lock directory. A lock is
+# reclaimed only when its owner is provably dead: its pid file names a process that
+# no longer exists, or the directory is older than LOCK_STALE_SECONDS with no pid file
+# (the owner died between mkdir and writing the pid). Reclaims are serialised through
+# a second directory, <lock>.reclaim, and the lock is inspected AGAIN while holding it:
+# a caller that saw a dead pid, then lost the race to another reclaimer, now sees that
+# reclaimer's live pid and backs off instead of renaming its fresh lock away. The
+# mutex is held for milliseconds; it can only outlive a run that crashed inside that
+# window, and then it has to be removed by hand. Anything unclear fails closed.
 lock_path="${wt}.lock"
+reclaim_path="${lock_path}.reclaim"
+reclaim_held=""
 LOCK_STALE_SECONDS="${LOCK_STALE_SECONDS:-60}"
-take_lock() {
-  mkdir "$lock_path" 2>/dev/null && { lock="$lock_path"; echo $$ > "$lock/pid"; return 0; }
+release_reclaim() { [[ -n "$reclaim_held" ]] && rmdir "$reclaim_path" 2>/dev/null; reclaim_held=""; }
+# Sets lock_verdict to "stale <why>" when the lock may be reclaimed, otherwise to the
+# reason it must not be.
+inspect_lock() {
   local other age
   other=$(cat "$lock_path/pid" 2>/dev/null || true)
   if [[ -n "$other" ]]; then
-    kill -0 "$other" 2>/dev/null && fail "another review of ${slug}#${pr} is running (pid ${other}); wait for it or remove ${lock_path}"
-    echo "codex-pr-review: reclaiming lock left by dead pid ${other}" >&2
+    if kill -0 "$other" 2>/dev/null; then
+      lock_verdict="another review of ${slug}#${pr} is running (pid ${other}); wait for it or remove ${lock_path}"
+    else
+      lock_verdict="stale lock left by dead pid ${other}"
+    fi
   else
     age=$(( $(date +%s) - $(file_mtime "$lock_path") ))
-    (( age > LOCK_STALE_SECONDS )) || fail "another review of ${slug}#${pr} is starting (lock ${lock_path} is ${age}s old); retry shortly"
-    echo "codex-pr-review: reclaiming ${age}s-old lock with no owner" >&2
+    if (( age > LOCK_STALE_SECONDS )); then
+      lock_verdict="stale ${age}s-old lock with no owner"
+    else
+      lock_verdict="another review of ${slug}#${pr} is starting (lock ${lock_path} is ${age}s old); retry shortly"
+    fi
   fi
+}
+take_lock() {
+  mkdir "$lock_path" 2>/dev/null && { lock="$lock_path"; echo $$ > "$lock/pid"; return 0; }
+  inspect_lock
+  [[ "$lock_verdict" == stale* ]] || fail "$lock_verdict"
+  # Test hook: lets the lifecycle test replace the lock between the two inspections.
+  [[ -z "${CODEX_REVIEW_HOOK_BEFORE_RECLAIM:-}" ]] || eval "$CODEX_REVIEW_HOOK_BEFORE_RECLAIM"
+  mkdir "$reclaim_path" 2>/dev/null \
+    || fail "another caller is reclaiming ${lock_path}; retry shortly (remove ${reclaim_path} by hand only if no review is running)"
+  reclaim_held=1
+  if mkdir "$lock_path" 2>/dev/null; then
+    # The previous reclaimer finished and released; the path was free again.
+    lock="$lock_path"; echo $$ > "$lock/pid"; release_reclaim; return 0
+  fi
+  inspect_lock
+  [[ "$lock_verdict" == stale* ]] || { release_reclaim; fail "$lock_verdict"; }
+  echo "codex-pr-review: reclaiming ${lock_verdict}" >&2
   local stale="${lock_path}.stale.$$"
-  mv "$lock_path" "$stale" 2>/dev/null || fail "lock ${lock_path} was reclaimed by another caller; retry shortly"
+  mv "$lock_path" "$stale" 2>/dev/null || { release_reclaim; fail "lock ${lock_path} changed while reclaiming; retry shortly"; }
   rm -rf "$stale"
-  mkdir "$lock_path" 2>/dev/null || fail "lock ${lock_path} was taken by another caller; retry shortly"
+  mkdir "$lock_path" 2>/dev/null || { release_reclaim; fail "lock ${lock_path} was taken by another caller; retry shortly"; }
   lock="$lock_path"; echo $$ > "$lock/pid"
+  release_reclaim
 }
 take_lock
 git -C "$repo_dir" fetch -q origin "$base" "pull/${pr}/head"

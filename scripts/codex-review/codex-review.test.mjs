@@ -154,6 +154,33 @@ describe("codex-pr-review.sh lifecycle", () => {
     expect(r.out).toContain("codex-pr-review: done")
   }, 90_000)
 
+  test("a stale lock replaced by a live one after inspection is not stolen", () => {
+    const f = makeFixture()
+    mkdirSync(`${f.worktree}.lock`)
+    writeFileSync(`${f.worktree}.lock/pid`, "999999")
+    // Between the first inspection and the reclaim, another caller reclaims the lock
+    // and starts running (its live pid is ours). The late reclaimer must back off.
+    const hook = `echo ${process.pid} > "${f.worktree}.lock/pid"`
+    const r = run(f, [f.repo, "1"], {CODEX_REVIEW_HOOK_BEFORE_RECLAIM: hook})
+    expect(r.out).toContain(`is running (pid ${process.pid})`)
+    expect(r.out).not.toContain("reclaiming")
+    expect(readFileSync(`${f.worktree}.lock/pid`, "utf8").trim()).toBe(String(process.pid))
+    expect(existsSync(`${f.worktree}.lock.reclaim`)).toBe(false)
+    expect(codexCalls(f)).toBe(0)
+  }, 90_000)
+
+  test("fails closed while another caller holds the reclaim mutex", () => {
+    const f = makeFixture()
+    mkdirSync(`${f.worktree}.lock`)
+    writeFileSync(`${f.worktree}.lock/pid`, "999999")
+    mkdirSync(`${f.worktree}.lock.reclaim`)
+    const r = run(f, [f.repo, "1"])
+    expect(r.out).toContain("another caller is reclaiming")
+    expect(existsSync(`${f.worktree}.lock.reclaim`)).toBe(true)
+    expect(existsSync(`${f.worktree}.lock/pid`)).toBe(true)
+    expect(codexCalls(f)).toBe(0)
+  }, 90_000)
+
   test("two callers recovering the same stale lock: exactly one proceeds", async () => {
     const f = makeFixture()
     mkdirSync(`${f.worktree}.lock`)
@@ -161,7 +188,7 @@ describe("codex-pr-review.sh lifecycle", () => {
     const [a, b] = await Promise.all([run2(f), run2(f)])
     const done = [a, b].filter((r) => r.out.includes("codex-pr-review: done")).length
     const refused = [a, b].filter((r) =>
-      /reclaimed by another caller|taken by another caller|is running \(pid/.test(r.out),
+      /another caller is reclaiming|taken by another caller|changed while reclaiming|is running \(pid/.test(r.out),
     ).length
     expect(done).toBe(1)
     expect(refused).toBe(1)
@@ -216,7 +243,7 @@ describe("codex-pr-review.sh lifecycle", () => {
     mkdirSync(`${f.worktree}.lock`)
     writeFileSync(`${f.worktree}.lock/pid`, "999999")
     const r = run(f, [f.repo, "1"])
-    expect(r.out).toContain("reclaiming lock left by dead pid 999999")
+    expect(r.out).toContain("reclaiming stale lock left by dead pid 999999")
     expect(r.out).toContain("codex-pr-review: done")
   }, 90_000)
 

@@ -29,7 +29,8 @@ verdict was already posted. Never launch a bare `codex exec` for a review.
   never touched. The tool marks worktrees it created with a `<repo-dir>-pr-<n>.codex-review-owned`
   sentinel; on reruns it resets and cleans only those (ignored files such as `node_modules`
   are kept) and refuses a path at that location it did not create. A per-PR lock refuses a
-  second concurrent run.
+  second concurrent run; a lock whose owner is dead is reclaimed through a short-lived
+  `<lock>.reclaim` mutex, so two reclaimers cannot clobber each other.
   A worktree created by an earlier version of the script has no sentinel: add the file by
   hand (any content) or remove the worktree with `git worktree remove`.
 - Chooses the posting account. GitHub refuses a formal review from the PR author, so a PR
