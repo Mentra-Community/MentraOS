@@ -222,3 +222,103 @@ Latest fetched dev `e8e1ced74c05705b313769d49dfbf98f8bf5b1d2` adds the BES
 26.9.17.0 manifest and a Windows miniapp watcher correction. It contains no new
 Call/iOS media/Bluetooth SDK implementation fix. Sync source before continuing
 the ICE diagnosis; this source sync does not install firmware on the fixture.
+
+
+## OTA-enabled build and Call after the firmware update
+
+Synced with dev `e8e1ced74c` and built the integrated signed app with the explicit
+public OTA manifest from merged PR #4080. The build verifies the URL in bundled
+JavaScript and records it in its manifest. Native SHA-256 is
+`cbd2419dff595ff2b531f6a2d40eec660fbe3bd83f72843630fcebc7d69e7c7a`;
+JavaScript SHA-256 is
+`41786720e307dc5deddd2d42ef3f0c32675cfcbf6adf41787bd6ada04d6d5c1b`.
+No further diagnostic binary rotation is needed for the permission investigation.
+
+The user-authorized normal OTA flow updated the same USB/CID/Bluetooth fixture to
+ASG `302000015` (`3.2.0`), MTK `MentraLive_20260915.0`, and BES `26.9.17.0`.
+MTK activated slot `_b`, boot `29d9df46-e015-4b38-a62a-035153d8a026`.
+The ASG APK SHA-256 matches the published manifest; fresh current-boot BES replies
+supersede the cached pre-update version. The old custom ASG is no longer installed.
+Discovery `2026-09-17T02-33-08-925Z-mentra-live-ota-discovery-bf2ed2` retains
+608.695 seconds and nine steps. Hardware succeeded, but the discovery report
+remains failed because one assertion missed a brief finishing screen. The final
+Update Complete screen and independent hardware proof are retained separately.
+
+Harness PR #4069 now contains the English OTA routine and deterministic controller.
+Its already-current replay `2026-09-17T02-54-37-726Z-mentra-live-ota-16bc79`
+passed six steps in 7.34 seconds with zero model calls and verified artifacts.
+A complete autonomous installation remains unqualified until a future update.
+
+Call run `2026-09-17T02-49-31-935Z-call-after-ota-95a7ea` then failed its sustained
+active-call check. ACS connected and the glasses applied HTTP 201 WHIP answer;
+ASG reported `ice_timeout` after 8.673 seconds. Scoped AP packet capture records
+82 STUN requests from glasses to the Mac, no STUN replies and no DTLS/media.
+Both offer and answer advertise the correct hotspot subnet. The packet parser
+reports a TCP reassembly gap, so do not claim the archived answer is complete.
+The app's Network.framework gateway probe reported `Local network prohibited`.
+System Settings showed duplicate Mentra entries enabled; this does not prove the
+running process's effective permission. Apple's TN3179 documents unexpected
+behavior with multiple installed app versions (FB15568200). The fixed signed app
+and path are retained while investigating; no privacy database or global policy
+is modified. Location remains off.
+
+The 17-step / 104.916667-second failed run passed screenshot/AX/video/chapter and
+liveness checks. Its exact owned meeting was retired after ID/subject/time checks
+(DELETE 204, GET 404). Hotspot, original audio defaults and ADB shell privilege were
+restored. The firmware update did not resolve Call, and browser media is still
+unqualified. Private packet, native and glasses logs stay under the run setup
+`2026-09-17T02-47-23Z-call-after-ota` in the integration evidence directory.
+
+
+## Real browser video/audio and iOS roster correction — September 17
+
+The same fixed signed OTA-enabled build succeeded on a later retry after the user
+accepted local-network access. Setup `2026-09-17T02-56-16Z-call-permission-retry`
+and recording `2026-09-17T02-56-37-469Z-call-permission-retry-11f617` retain native
+first-frame and ACS-connected events, successful two-way STUN/DTLS and media
+traffic. No Local Network prohibition appeared in this retry. No permission
+database, firewall, quarantine or global network policy was changed.
+
+After the user completed Microsoft email verification and clicked Join now,
+Teams displayed the actual glasses scene at 960×540. The unpaused video’s
+currentTime advanced from 65.146 to 109.747 seconds. A 16.56-second browser clip
+is screenshot-sampled with saved timestamps; the Mentra window has a separate
+continuous 1931.965-second MP4. A 13.475-second WAV captured nonzero browser
+output; the user then confirmed intelligible glasses speech from the laptop.
+These are actual glasses-to-browser video/audio results on the explicitly
+marked `mac-host-verified-test-only` network adapter, not native iPhone
+association or an autonomous browser-join qualification.
+
+The browser participant uses the laptop’s built-in camera and microphone. A
+virtual output selected for audio capture initially made the laptop silent;
+selecting its speakers fixed that setup issue. Mac volume keys controlled the
+system default glasses output instead of Teams’ separately selected laptop
+speakers. The user disconnected Bluetooth Classic and requested no automatic
+audio-route overrides. Preserve those selections. Return audio was reported
+silent before the disconnect and has not been qualified; after Classic is
+disconnected, sound through the glasses is not expected. A player backlog after
+route changes is a diagnostic lead, not a confirmed cause. No speculative PCM
+recovery or audio-device override change is included.
+
+The participant sheet stayed at zero while the browser showed both people in
+the meeting. iOS omitted remote-roster reporting entirely; Android implements
+it. The fix seeds the roster when joining, attaches participant state/name/mute/
+speaking delegates, publishes changes on the session queue and detaches them
+on leave. Late callbacks from an old call/participant are ignored. The
+miniapp’s existing typed roster path consumes these events. The full signed
+Release build passed: native SHA
+`e5a24789c6c8dcdb3a49f7732f0dc8c5107bdcc8039dc5ab6c5f32a94dd7619e`,
+JS SHA `f517fad5fcc9d957c4d878b0c868d6ad645a0036ecf2182542f70b0010fc94a8`.
+Installed-app roster/rejoin qualification is pending the next fixture run;
+compilation alone does not prove it. The disabled miniapp preview is for
+outgoing glasses video and does not render the laptop participant.
+
+The original recording retains 25 steps and failed status, including the
+participant wait and human intervention while the controller deadline was
+paused. All screenshots, AX, video chapters and frame-liveness checks passed.
+The browser left, the app closed Call, the owned hotspot stopped, the scoped
+packet capture was copied/hash-verified and removed, and ADB returned to uid2000.
+The operator retired only the exact owned test meeting (Graph DELETE204/GET404).
+The original controller briefly restored its initial audio defaults; the user’s
+latest selections were immediately reapplied and verified. The next prepared
+controller only inspects devices and never selects or restores audio routes.

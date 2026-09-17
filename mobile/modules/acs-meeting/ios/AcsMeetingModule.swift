@@ -257,8 +257,17 @@ final class AcsMeetingSession {
     private var hangUpForEveryone: (allowed: Bool, reason: String)?
     private lazy var callDelegateProxy = AcsCallDelegateProxy(
         onStateChange: { [weak self] call in self?.handleCallStateChange(call) },
-        onMuteChange: { [weak self] call in self?.handleCallMuteChange(call) }
+        onMuteChange: { [weak self] call in self?.handleCallMuteChange(call) },
+        onRosterChange: { [weak self] call in self?.refreshRoster(call) }
     )
+    private var remoteParticipants: [ObjectIdentifier: RemoteParticipant] = [:]
+    private lazy var participantDelegateProxy = AcsParticipantDelegateProxy { [weak self] participant in
+        self?.queue.async {
+            guard let self, self.remoteParticipants[ObjectIdentifier(participant)] === participant else { return }
+            self.onState(self.snapshot())
+        }
+    }
+
     private lazy var capabilitiesDelegateProxy = AcsCapabilitiesDelegateProxy(
         onChanged: { [weak self] in self?.refreshCapabilities() }
     )
@@ -277,6 +286,9 @@ final class AcsMeetingSession {
             "activeStream": controller.readActive().rawValue,
             "audioSafety": lastSafety.rawValue,
             "mediaSource": mediaSource.rawValue,
+            "participants": remoteParticipants.values.map(Self.describeParticipant).sorted {
+                ($0["id"] as? String ?? "") < ($1["id"] as? String ?? "")
+            },
         ]
         // Always present, so a host that simply has not heard from Teams yet is distinguishable
         // from one that cannot report capabilities at all. Keys are omitted rather than sent as
@@ -520,6 +532,7 @@ final class AcsMeetingSession {
         }
         self.call = call
         call.delegate = callDelegateProxy
+        refreshRosterLocked(call)
         attachCapabilities(call)
 
         let bridge = PcmBridge(dumpWav: dumpWav)
@@ -848,6 +861,7 @@ final class AcsMeetingSession {
         // snapshot (or schedule a rebuild) for a call that is going away.
         cancelMediaRestart()
         detachCapabilities()
+        detachRoster()
         media?.onStateChange = nil
         media?.onFrame = nil
         media?.onPcm = nil
@@ -964,6 +978,54 @@ final class AcsMeetingSession {
         }
     }
 
+    private func refreshRoster(_ changedCall: Call) {
+        queue.async {
+            guard self.call === changedCall else { return }
+            self.refreshRosterLocked(changedCall)
+            self.onState(self.snapshot())
+        }
+    }
+
+    private func refreshRosterLocked(_ changedCall: Call) {
+        let current = Dictionary(uniqueKeysWithValues: changedCall.remoteParticipants.map {
+            (ObjectIdentifier($0), $0)
+        })
+        for (id, participant) in remoteParticipants where current[id] == nil {
+            participant.delegate = nil
+        }
+        remoteParticipants = current
+        for participant in current.values {
+            participant.delegate = participantDelegateProxy
+        }
+    }
+
+    private func detachRoster() {
+        for participant in remoteParticipants.values {
+            participant.delegate = nil
+        }
+        remoteParticipants.removeAll()
+    }
+
+    private static func describeParticipant(_ participant: RemoteParticipant) -> [String: Any] {
+        let state: String
+        switch participant.state {
+        case .connected: state = "connected"
+        case .connecting, .ringing, .earlyMedia: state = "connecting"
+        case .inLobby: state = "lobby"
+        case .hold: state = "hold"
+        case .disconnected: state = "disconnected"
+        case .idle: state = "idle"
+        @unknown default: state = "idle"
+        }
+        return [
+            "id": participant.identifier.rawId,
+            "displayName": participant.displayName,
+            "state": state,
+            "isMuted": participant.isMuted,
+            "isSpeaking": participant.isSpeaking,
+        ]
+    }
+
     private func handleIncomingAudio(_ args: IncomingMixedAudioEventArgs) {
         let rawBuffer = args.audioBuffer
         defer { rawBuffer.dispose() }
@@ -1042,10 +1104,14 @@ final class SessionAudioController: AudioStreamController {
 private final class AcsCallDelegateProxy: NSObject, CallDelegate {
     private let onStateChange: (Call) -> Void
     private let onMuteChange: (Call) -> Void
+    private let onRosterChange: (Call) -> Void
 
-    init(onStateChange: @escaping (Call) -> Void, onMuteChange: @escaping (Call) -> Void) {
+    init(onStateChange: @escaping (Call) -> Void, onMuteChange: @escaping (Call) -> Void,
+         onRosterChange: @escaping (Call) -> Void)
+    {
         self.onStateChange = onStateChange
         self.onMuteChange = onMuteChange
+        self.onRosterChange = onRosterChange
     }
 
     func call(_ call: Call, didChangeState _: PropertyChangedEventArgs) {
@@ -1054,6 +1120,34 @@ private final class AcsCallDelegateProxy: NSObject, CallDelegate {
 
     func call(_ call: Call, didUpdateOutgoingAudioState _: PropertyChangedEventArgs) {
         onMuteChange(call)
+    }
+
+    func call(_ call: Call, didUpdateRemoteParticipant _: ParticipantsUpdatedEventArgs) {
+        onRosterChange(call)
+    }
+}
+
+private final class AcsParticipantDelegateProxy: NSObject, RemoteParticipantDelegate {
+    private let onChanged: (RemoteParticipant) -> Void
+
+    init(onChanged: @escaping (RemoteParticipant) -> Void) {
+        self.onChanged = onChanged
+    }
+
+    func remoteParticipant(_ participant: RemoteParticipant, didChangeState _: PropertyChangedEventArgs) {
+        onChanged(participant)
+    }
+
+    func remoteParticipant(_ participant: RemoteParticipant, didChangeMuteState _: PropertyChangedEventArgs) {
+        onChanged(participant)
+    }
+
+    func remoteParticipant(_ participant: RemoteParticipant, didChangeSpeakingState _: PropertyChangedEventArgs) {
+        onChanged(participant)
+    }
+
+    func remoteParticipant(_ participant: RemoteParticipant, didChangeDisplayName _: PropertyChangedEventArgs) {
+        onChanged(participant)
     }
 }
 
