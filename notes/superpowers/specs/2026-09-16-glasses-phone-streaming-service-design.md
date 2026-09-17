@@ -50,8 +50,12 @@ phone.
 1. **Layering.** `GlassesHotspotService` → `GlassesPhoneStreamService` → adapters. The stream
    service is the only hotspot consumer for video; it acquires with
    `consumer: "video_streaming"` and passes the owner (`call`, `managed_whip`, `local`) as
-   diagnostic metadata. `PhoneStreamCoordinator` keeps publisher exclusivity, stream ids, BLE
-   status routing and managed cloud provisioning; it does not learn about hotspots.
+   diagnostic metadata. It tells the glasses to publish through the Bluetooth SDK's
+   `GlassesPublisher` slot (public surface spec, decision 6), never by calling `startStream`
+   directly, so exclusivity, stream ids, status correlation and deferred stops are enforced
+   below it. `PhoneStreamCoordinator` is a consumer of that same slot for glasses-direct and
+   managed streams and keeps cloud provisioning, subscriber refcounting and miniapp status
+   fanout; it does not learn about hotspots.
 2. **Media reference, not media objects, across the bridge.** JS holds
    `MediaRef {streamSessionId, mediaGeneration}`. Native adapters borrow the decoded source
    from a registry by that reference; frames, PCM, buffer ownership and backpressure stay
@@ -163,6 +167,8 @@ export type OpenStreamOptions = {
   owner: StreamOwner
   operationId: string
   adapter: StreamAdapter
+  /** The glasses publisher slot to use; defaults to the SDK's glassesPublisher. */
+  publisher?: GlassesPublisher
   video: StreamVideoConfig            // reuses the Bluetooth SDK type
   audio?: StreamAudioConfig
   captureAudio?: boolean              // default false for "call", true for "managed_whip"

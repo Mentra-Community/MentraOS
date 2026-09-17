@@ -53,7 +53,21 @@ flows inside them.
    exists; it gains the Android `NEARBY_WIFI_DEVICES` permission and the iOS hotspot
    configuration entitlement plus local-network usage description, so an integrator does not
    discover them at runtime.
-6. **Frames never cross the JavaScript bridge.** In React Native the sinks are a native view
+6. **One glasses publisher slot, in the SDK, shared by everyone.** The glasses can run one
+   stream at a time, and today the engine's `PhoneStreamCoordinator` enforces that with stream
+   ids, status routing and deferred stops. Once the stream service can run without the engine
+   that enforcement must sit below both, so `@mentra/bluetooth-sdk/streaming` exposes a
+   `GlassesPublisher` port and its single implementation, `glassesPublisher`: one slot per
+   process, `start` rejects with `publisher_busy` naming the owner while another stream is
+   active (the coordinator's current policy, no preemption), `stop` by stream id, status
+   subscription correlated by stream id, and a deferred stop that registers with the active
+   hotspot session so it is fenced by the hotspot spec's deferred-command rule. The stream
+   service publishes only through this port. The coordinator becomes a consumer of the same
+   slot for its glasses-direct and managed streams and keeps what is genuinely its own: cloud
+   provisioning, per-package subscriber refcounting and status fanout to miniapps. A standalone
+   integrator and an embedder using the engine therefore contend for the same slot, and a
+   direct stream and a phone-route stream can never both be started.
+7. **Frames never cross the JavaScript bridge.** In React Native the sinks are a native view
    and the republisher; decoded frames are reachable only from Kotlin and Swift through the
    native frame sink. This is the same rule the streaming spec applies to `MediaRef`.
 
@@ -87,10 +101,34 @@ glassesHotspot.current()   // {purpose, operationId, sessionId, phase} | null
 ```
 
 `@mentra/bluetooth-sdk/react` gains `useGlassesHotspot()` returning the current owner and
-phase for UI. The existing `@mentra/bluetooth-sdk/ota-transport` keeps its API as a thin facade
-over a session for one release, then is removed with the engine's `localNetworkTransport`.
+phase for UI.
 
-Native, same shape:
+`@mentra/bluetooth-sdk/ota-transport` is two things and they are treated differently. Its
+`otaServer` (`start`, `stop`, `downloadArtifact`, `onArtifactDownloadProgress`, the phone-hosted
+manifest server) stays a supported public export: the engine's `HotspotOtaTransport` needs it,
+including Internet artifact staging before any hotspot session exists, and the public OTA
+design requires supported SDK imports. Only its `otaLocalNetwork` half (`connect`, `request`,
+`download`, `cancel`, `disconnect`, `onNetworkLost`) becomes a deprecated facade over a hotspot
+session for one release and is then removed together with the engine's `localNetworkTransport`.
+`otaServer.start` takes the phone address from a session binding, as the hotspot spec says.
+
+### `@mentra/bluetooth-sdk/streaming`: the publisher slot
+
+```ts
+export interface GlassesPublisher {
+  /** Rejects with publisher_busy (details.owner) while another stream is active. */
+  start(request: StreamStartRequest & {owner: string}): Promise<{streamId: string; status: StreamStatusEvent}>
+  stop(streamId: string): Promise<void>
+  /** If the BLE link is down, queue the stop; `hotspotSessionId` ties it to that session so it is retired with it. */
+  deferStop(streamId: string, opts: {hotspotSessionId?: string}): void
+  owns(streamId: string): boolean
+  subscribe(listener: (event: StreamStatusEvent & {streamId: string}) => void): () => void
+  current(): {streamId: string; owner: string} | null
+}
+export const glassesPublisher: GlassesPublisher
+```
+
+Native, same shape (the publisher slot has the same Kotlin and Swift surface):
 
 ```kotlin
 // Android (SDK AAR)
@@ -122,6 +160,7 @@ const stream = await glassesPhoneStream.open({
   uplink: "cellular",
   recovery: {returnBudgetMs: 60_000, rebuildBudgetMs: 45_000, maxAttempts: 3, stallMs: 5_000},
   adapter: whipRepublishAdapter({url: "https://example.com/whip/abc", authToken}),
+  // publisher defaults to the SDK's glassesPublisher; the engine passes the same instance
 })
 await stream.start()          // resolves on live
 await stream.close()
@@ -166,15 +205,22 @@ import {glassesHotspot} from "@mentra/engine/hotspot"         // re-export of th
 import {glassesPhoneStream} from "@mentra/engine/streaming"    // re-export of the glasses-media service
 import {phoneStreamCoordinator} from "@mentra/engine"
 
-// Flows on the coordinator, which keeps publisher exclusivity and BLE status routing.
+// Flows on the coordinator. It publishes through the SDK's glassesPublisher slot like everyone
+// else and keeps cloud provisioning, per-package subscriber refcounting and miniapp status fanout.
 await phoneStreamCoordinator.startUnmanaged(pkg, {streamUrl, route: "phone", authToken, video})  // phone relay to a WHIP URL
 await phoneStreamCoordinator.startManaged(pkg, {ingest: "whip"})                                    // already the phone route; unchanged
-await phoneStreamCoordinator.startLocal(pkg, {adapter, video, captureAudio, uplink})                // custom sink; Mentra Call uses this
+await phoneStreamCoordinator.startLocal(pkg, {
+  adapter, video, captureAudio, uplink,
+  /** Runs between the stream's open (hotspot reserved, cellular held) and start. Mentra Call prepares its ACS agent here. */
+  prepare?: (signal: AbortSignal) => Promise<void>,
+})
 await phoneStreamCoordinator.stop(pkg)
 ```
 
 `startUnmanaged` with `route: "phone"` and a non-WHIP URL is rejected, matching the streaming
-spec's decision that phone relay is WHIP only in v1. Gallery sync, hotspot OTA and Mentra Call
+spec's decision that phone relay is WHIP only in v1. `startLocal` preserves the Call spec's
+`open → prepareAgent → start` sequence through the `prepare` hook, so the call session never
+touches the stream service directly. Gallery sync, hotspot OTA and Mentra Call
 keep their engine entry points and run on the SDK hotspot service and the glasses-media stream
 service underneath, so an embedder gets the same behaviour the Mentra App has.
 
@@ -183,7 +229,7 @@ service underneath, so an embedder gets the same behaviour the Mentra App has.
 | Spec | Change |
 |---|---|
 | Hotspot spec | the TypeScript service's home is `mobile/modules/bluetooth-sdk/src/hotspot/`, not the engine; `HotspotConsumer` is `purpose: string` at the SDK boundary with the engine's three reserved values; nothing else changes |
-| Streaming spec | the TypeScript service's home is `mobile/modules/glasses-media/src/`, not the engine; the "SDK surface" section is superseded by this spec except the Miniapp SDK `route` option and `stream_status.route`, which stand |
+| Streaming spec | the TypeScript service's home is `mobile/modules/glasses-media/src/`, not the engine; it publishes through the SDK's `GlassesPublisher` port instead of calling `startStream` itself; `PhoneStreamCoordinator` is a consumer of the same slot, not the service's caller; the "SDK surface" section is superseded by this spec except the Miniapp SDK `route` option and `stream_status.route`, which stand |
 | Call spec | `AcsMediaAdapter` implements the same `StreamAdapter` interface the packaged adapters implement; `SoftapCallSession` calls the coordinator's `startLocal` |
 
 ## Packaging and release
@@ -222,8 +268,13 @@ steps:
 3. Streaming spec step 2 moves managed WHIP onto `startManaged`'s new path; `startUnmanaged`
    gains `route: "phone"` and `startLocal` appears at the same time.
 4. The Call spec's steps use `startLocal`.
-5. Docs and the OEM example screen land with step 3; the `ota-transport` facade is removed one
-   release after step 1.
+5. Docs and the OEM example screen land with step 3; the `otaLocalNetwork` facade is removed
+   one release after step 1; `otaServer` stays.
+6. The publisher slot lands with hotspot spec step 2 (the reservation gate), because the
+   deferred-stop fencing that step introduces belongs to the slot; the coordinator moves its
+   glasses-direct and managed starts onto the slot in the same PR, with tests for standalone
+   consumption without the engine, a direct start competing with a phone-route start, status
+   correlation by stream id, and a deferred stop retired with its hotspot session.
 
 ## Risks
 
