@@ -10,10 +10,9 @@ name: OEM Example App APK
 # build signed with the debug keystore (the expo-generated default when no
 # upload key is configured): installable anywhere, JS bundled, no secrets.
 #
-# The pull_request path filter names only THIS file, but pull_request path
-# filters match the whole PR diff — so while a PR touches this file, every
-# push to that PR re-runs the full build (which is how workflow changes get
-# proven in CI before landing on dev).
+# The pull_request path filter covers this workflow and its shared publisher.
+# Filters match the whole PR diff, so every push to a PR touching either file
+# re-runs the full build before the changes land on dev.
 
 on:
   push:
@@ -28,9 +27,11 @@ on:
       - "sdk/package.json"
       - "sdk/bun.lock"
       - ".github/workflows/oem-app-apk.yml"
+      - ".github/scripts/publish-immutable-release-asset.mjs"
   pull_request:
     paths:
       - ".github/workflows/oem-app-apk.yml"
+      - ".github/scripts/publish-immutable-release-asset.mjs"
   workflow_dispatch:
 
 concurrency:
@@ -179,19 +180,21 @@ jobs:
           # The whole cleanup policy: GitHub deletes expired artifacts itself.
           retention-days: 14
 
-      - name: Publish APK to the oem-app-builds rolling release
+      - name: Prepare the oem-app-builds rolling release
         # Dev builds only — PR runs stay as run-scoped artifacts. The rolling
         # release is the browsable index (mirrors the pr-builds release the
         # MentraOS Android build maintains for PR APKs):
         # https://github.com/Mentra-Community/MentraOS/releases/tag/oem-app-builds
         if: github.event_name != 'pull_request'
+        id: release
         uses: actions/github-script@v7
+        env:
+          APK_NAME: ${{ steps.apk.outputs.name }}
         with:
           script: |
-            const fs = require('fs');
             const {owner, repo} = context.repo;
             const tag = 'oem-app-builds';
-            const apkName = '${{ steps.apk.outputs.name }}';
+            const apkName = process.env.APK_NAME;
 
             let release;
             try {
@@ -205,17 +208,29 @@ jobs:
               })).data;
             }
 
-            for (const asset of release.assets) {
+            const assets = await github.paginate(github.rest.repos.listReleaseAssets, {
+              owner, repo, release_id: release.id, per_page: 100,
+            });
+            for (const asset of assets) {
               if (asset.name === apkName) {
                 await github.rest.repos.deleteReleaseAsset({owner, repo, asset_id: asset.id});
               }
             }
 
-            const data = fs.readFileSync(apkName);
-            console.log(`Uploading ${apkName} (${data.length} bytes)...`);
-            await github.rest.repos.uploadReleaseAsset({
-              owner, repo, release_id: release.id, name: apkName, data,
-            });
+            core.setOutput('release_id', release.id);
+
+      - name: Publish APK to the oem-app-builds rolling release
+        if: github.event_name != 'pull_request'
+        env:
+          GH_TOKEN: ${{ github.token }}
+          APK_NAME: ${{ steps.apk.outputs.name }}
+          RELEASE_ID: ${{ steps.release.outputs.release_id }}
+        run: |
+          node .github/scripts/publish-immutable-release-asset.mjs \
+            --file "$APK_NAME" \
+            --name "$APK_NAME" \
+            --release-id "$RELEASE_ID" \
+            --repository "$GITHUB_REPOSITORY"
 
       - name: Sweep old release assets
         if: github.event_name != 'pull_request'
