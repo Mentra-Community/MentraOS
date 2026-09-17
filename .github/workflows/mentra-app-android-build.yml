@@ -529,18 +529,46 @@ jobs:
             const apkData = fs.readFileSync(apkPath);
             const sha256 = require('crypto').createHash('sha256').update(apkData).digest('hex');
 
-            // Upload the APK
+            // Upload the APK.
+            //
+            // GitHub intermittently answers 500 "Error saving asset" on these
+            // uploads, and the larger the APK the more often it does. A failure
+            // here wastes the whole build, so retry rather than discard it. A
+            // partial asset can survive a failed attempt, so clear any leftover
+            // by this name before each retry.
             console.log(`Uploading ${apkName} (${apkData.length} bytes)...`);
-            await github.rest.repos.uploadReleaseAsset({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              release_id: release.data.id,
-              name: apkName,
-              label: `mobile-v1:${process.env.MENTRA_PR_APK_FINGERPRINT}:${sha256}`,
-              data: apkData
-            });
-
-            console.log(`Successfully uploaded ${apkName}`);
+            const uploadAttempts = 4;
+            for (let attempt = 1; attempt <= uploadAttempts; attempt++) {
+              try {
+                await github.rest.repos.uploadReleaseAsset({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  release_id: release.data.id,
+                  name: apkName,
+                  label: `mobile-v1:${process.env.MENTRA_PR_APK_FINGERPRINT}:${sha256}`,
+                  data: apkData
+                });
+                console.log(`Successfully uploaded ${apkName}`);
+                break;
+              } catch (error) {
+                if (attempt === uploadAttempts) throw error;
+                console.log(`Upload attempt ${attempt} failed (${error.status ?? 'no status'}): ${error.message}`);
+                const current = await github.rest.repos.getReleaseByTag({
+                  owner: context.repo.owner,
+                  repo: context.repo.repo,
+                  tag: 'pr-builds'
+                });
+                const stale = current.data.assets.find(asset => asset.name === apkName);
+                if (stale) {
+                  await github.rest.repos.deleteReleaseAsset({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    asset_id: stale.id
+                  });
+                }
+                await new Promise(resolve => setTimeout(resolve, attempt * 15000));
+              }
+            }
 
       - name: Update PR comment - Build succeeded
         if: success() && github.event_name == 'pull_request'
