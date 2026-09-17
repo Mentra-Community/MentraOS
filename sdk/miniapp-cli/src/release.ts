@@ -43,6 +43,9 @@ const BUNDLE_PATH = '/bundle.zip'
 interface ReleaseOptions {
   noCache?: boolean
   qrOutput?: string
+  /** Sign the bundle. Off by default; see pack()'s `sign` for why. */
+  sign?: boolean
+  /** Implies `sign`. */
   signingKeyPath?: string
 }
 
@@ -77,7 +80,12 @@ export async function release(opts: ReleaseOptions = {}): Promise<void> {
   const cacheDir = resolve(cwd, 'build')
   const cachedZipName = `${packageName}-${version}.zip`
   const cachedZipPath = join(cacheDir, cachedZipName)
-  const signingKey = await resolvePackageSigningKey(packageName, {inputPath: opts.signingKeyPath})
+  // Only look for a key when signing was actually requested. A key sitting in
+  // the store is not consent to pin this package's publisher forever.
+  const wantsSignature = opts.sign === true || Boolean(opts.signingKeyPath)
+  const signingKey = wantsSignature
+    ? await resolvePackageSigningKey(packageName, {inputPath: opts.signingKeyPath})
+    : null
   const expectedPublisherFingerprint = signingKey ? publisherKeyFingerprint(signingKey.publicKeyJwk) : null
 
   let cacheValid = !opts.noCache && isCacheFresh(cachedZipPath, cwd)
@@ -96,7 +104,12 @@ export async function release(opts: ReleaseOptions = {}): Promise<void> {
 
     // Pack into build/<pkg>-<v>.zip
     const packStart = Date.now()
-    const zipPath = await pack({outDir: 'build', silent: true, signingKey: signingKey ?? undefined})
+    const zipPath = await pack({
+      outDir: 'build',
+      silent: true,
+      sign: wantsSignature,
+      signingKey: signingKey ?? undefined,
+    })
     const sizeKb = Math.round(statSync(zipPath).size / 1024)
     console.log(`✓ Packed ${packageName}@${version} (${sizeKb} KB) in ${((Date.now() - packStart) / 1000).toFixed(1)}s`)
   }

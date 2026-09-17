@@ -28,9 +28,18 @@ function printUsage(): void {
   console.log('                                            --device <serial>  target one adb device');
   console.log('                                            --no-hot-reload    serve + log only; no remount on save');
   console.log('  release                          Build, pack, and serve a QR to install on a phone');
-  console.log('                                   Options: --no-cache  --qr-output <path>  --signing-key <path>');
+  console.log('                                   Options: --no-cache  --qr-output <path>  --sign  --signing-key <path>');
   console.log(
-    '  pack                             Production-build and sign miniapp (--no-build, --signing-key <path>)',
+    '  pack                             Production-build and package miniapp (--no-build)',
+  );
+  console.log(
+    '                                   Signing is opt-in and permanent per package:',
+  );
+  console.log(
+    '                                            --sign                 sign with the stored publisher key',
+  );
+  console.log(
+    '                                            --signing-key <path>   sign with a key read from disk',
   );
   console.log('  keys create <package>            Create a durable publisher signing key');
   console.log('  keys show <package>              Show a publisher signing key fingerprint');
@@ -71,6 +80,7 @@ switch (subcommand) {
     await release({
       noCache: process.argv.includes('--no-cache'),
       qrOutput: flagValue('--qr-output'),
+      sign: process.argv.includes('--sign'),
       signingKeyPath: flagValue('--signing-key'),
     });
     break;
@@ -80,6 +90,8 @@ switch (subcommand) {
     // as-is for callers that manage the build themselves.
     await pack({
       build: !process.argv.includes('--no-build'),
+      // Unsigned unless asked: signing pins a package's publisher permanently.
+      sign: process.argv.includes('--sign'),
       signingKeyPath: flagValue('--signing-key'),
     });
     break;

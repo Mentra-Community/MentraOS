@@ -50,6 +50,36 @@ describe("pack", () => {
     )
     expect(readFileSync(zipPath)).toEqual(original)
   })
+
+  test("leaves the bundle unsigned unless signing is asked for", async () => {
+    // Signing pins a package's publisher for every later update and the
+    // envelope has no rotation chain, so a plain repack must never take that
+    // door on the developer's behalf.
+    const cwd = createProject()
+    const zipPath = await pack({cwd, silent: true})
+
+    const zip = await JSZip.loadAsync(await Bun.file(zipPath).arrayBuffer())
+    expect(zip.file("META-INF/MENTRA.SIG")).toBeNull()
+    expect(zip.file("miniapp.json")).not.toBeNull()
+  })
+
+  test("signs when asked, with the key from the store", async () => {
+    const cwd = createProject()
+    const signingKey = generatePackageSigningKey("com.example.pack")
+    const zipPath = await pack({cwd, silent: true, sign: true, signingKey})
+
+    const zip = await JSZip.loadAsync(await Bun.file(zipPath).arrayBuffer())
+    expect(zip.file("META-INF/MENTRA.SIG")).not.toBeNull()
+  })
+
+  test("treats an explicit key as the request to sign", async () => {
+    const cwd = createProject()
+    const signingKey = generatePackageSigningKey("com.example.pack")
+    const zipPath = await pack({cwd, silent: true, signingKey})
+
+    const zip = await JSZip.loadAsync(await Bun.file(zipPath).arrayBuffer())
+    expect(zip.file("META-INF/MENTRA.SIG")).not.toBeNull()
+  })
 })
 
 function createProject(): string {

@@ -222,7 +222,12 @@ test("identifies the requested tag from the deployed pod spec, not the kubelet's
   })
   assert.deepEqual(
     record.observedServices.map((service) => service.images),
-    [[`registry.example.com/cloud-v2:${sourceCommit}`], [`registry.example.com/cloud-v2:${sourceCommit}`]],
+    // core, store, runtime — Cloud V2 deploys three services.
+    [
+      [`registry.example.com/cloud-v2:${sourceCommit}`],
+      [`registry.example.com/cloud-v2:${sourceCommit}`],
+      [`registry.example.com/cloud-v2:${sourceCommit}`],
+    ],
   )
   assert.equal(
     record.observedServices.every((service) => service.digest === `sha256:${"b".repeat(64)}`),

@@ -94,7 +94,9 @@ describe("getLanIp with mocked os.networkInterfaces", () => {
   let originalNetworkInterfaces: typeof os.networkInterfaces
 
   function mockInterfaces(map: NodeJS.Dict<LanIface[] | undefined>) {
-    ;(os as {networkInterfaces: () => typeof map}).networkInterfaces = () => map
+    // os.networkInterfaces() is typed NetworkInterfaceInfo[], which lacks the
+    // `name` LanIface carries, so the cast needs to go through unknown.
+    ;(os as unknown as {networkInterfaces: () => typeof map}).networkInterfaces = () => map
   }
 
   beforeEach(() => {
@@ -141,7 +143,9 @@ describe("virtual vs physical LAN regression cases (PR #4048)", () => {
   let originalNetworkInterfaces: typeof os.networkInterfaces
 
   function mockInterfaces(map: NodeJS.Dict<LanIface[] | undefined>) {
-    ;(os as {networkInterfaces: () => typeof map}).networkInterfaces = () => map
+    // os.networkInterfaces() is typed NetworkInterfaceInfo[], which lacks the
+    // `name` LanIface carries, so the cast needs to go through unknown.
+    ;(os as unknown as {networkInterfaces: () => typeof map}).networkInterfaces = () => map
   }
 
   beforeEach(() => {

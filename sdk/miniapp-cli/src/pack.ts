@@ -28,9 +28,22 @@ export interface PackOptions {
   silent?: boolean;
   /** Command used to create the ZIP. Intended for tests and embedders. */
   zipCommand?: string;
-  /** Explicit package signing key. Defaults to the package-scoped CLI key store. */
+  /**
+   * Sign the bundle with the package's publisher key.
+   *
+   * Off by default. Publisher identity is opt-in on the host and sticky: the
+   * first signed bundle a package installs pins that key for every later
+   * update, and the envelope has no rotation chain. Signing is therefore a
+   * one-way door per package — take it deliberately, once the key has somewhere
+   * durable to live, not as a side effect of repacking.
+   *
+   * Passing `signingKey` or `signingKeyPath` is itself that intent and implies
+   * this.
+   */
+  sign?: boolean;
+  /** Explicit package signing key. Implies `sign`. */
   signingKey?: PackageSigningKey;
-  /** Read a package signing key without importing it into persistent storage. */
+  /** Read a package signing key without importing it into persistent storage. Implies `sign`. */
   signingKeyPath?: string;
 }
 
@@ -168,17 +181,22 @@ export async function pack(opts: PackOptions = {}): Promise<string> {
   try {
     const exitCode = await zipProc.exited;
     if (exitCode !== 0) throw new Error('zip command failed');
-    const signingKey =
-      opts.signingKey ?? (await resolvePackageSigningKey(packageName, { inputPath: opts.signingKeyPath }));
-    if (!signingKey) throw missingSigningKeyError(packageName);
-    const signedArchive = await signBundleArchive(readFileSync(temporaryPath), signingKey);
-    const verified = await verifySignedBundleArchive(signedArchive);
-    if (verified.packageName !== packageName || verified.version !== version) {
-      throw new Error('Signed bundle identity does not match miniapp.json');
+    const wantsSignature = opts.sign === true || Boolean(opts.signingKey) || Boolean(opts.signingKeyPath);
+    if (wantsSignature) {
+      const signingKey =
+        opts.signingKey ?? (await resolvePackageSigningKey(packageName, { inputPath: opts.signingKeyPath }));
+      if (!signingKey) throw missingSigningKeyError(packageName);
+      const signedArchive = await signBundleArchive(readFileSync(temporaryPath), signingKey);
+      const verified = await verifySignedBundleArchive(signedArchive);
+      if (verified.packageName !== packageName || verified.version !== version) {
+        throw new Error('Signed bundle identity does not match miniapp.json');
+      }
+      publisherFingerprint = verified.publisherKeyFingerprint;
+      bundleSha256 = createHash('sha256').update(signedArchive).digest('hex');
+      writeFileSync(temporaryPath, signedArchive);
+    } else {
+      bundleSha256 = createHash('sha256').update(readFileSync(temporaryPath)).digest('hex');
     }
-    publisherFingerprint = verified.publisherKeyFingerprint;
-    bundleSha256 = createHash('sha256').update(signedArchive).digest('hex');
-    writeFileSync(temporaryPath, signedArchive);
     renameSync(temporaryPath, outputPath);
   } catch (error) {
     rmSync(temporaryPath, { force: true });
@@ -187,7 +205,7 @@ export async function pack(opts: PackOptions = {}): Promise<string> {
 
   if (!opts.silent) {
     console.log(`\nPacked: ${outputPath}`);
-    console.log(`Publisher key: ${publisherFingerprint}`);
+    console.log(publisherFingerprint ? `Publisher key: ${publisherFingerprint}` : 'Publisher key: unsigned');
     console.log(`SHA-256: ${bundleSha256}`);
   }
   return outputPath;
