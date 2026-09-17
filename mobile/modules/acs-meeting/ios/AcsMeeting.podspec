@@ -86,6 +86,5 @@ Pod::Spec.new do |s|
   s.source_files = '*.{h,m,mm,swift}', 'PolicyKit/Sources/AcsAudioPolicy/*.swift'
   s.test_spec 'SessionTests' do |test|
     test.source_files = 'Tests/*.swift'
-    test.requires_app_host = true
   end
 end
