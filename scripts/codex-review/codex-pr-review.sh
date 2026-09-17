@@ -13,6 +13,8 @@
 # - Prints Codex's final message; artifacts land in $CODEX_REVIEW_HOME (default ~/.codex-reviews).
 set -euo pipefail
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
+# shellcheck source=common.sh
+source "$script_dir/common.sh"
 
 # Every exit path prints exactly one terminal marker ("codex-pr-review: done" or
 # "codex-pr-review: FAILED ..."), so a caller waiting on the log never hangs on a
@@ -69,25 +71,28 @@ wt="${repo_dir}-pr-${pr}"
 # mkdir is atomic, so only one caller ever owns the directory. A lock is reclaimed
 # only when its owner is provably dead: its pid file names a process that no longer
 # exists, or the directory is older than LOCK_STALE_SECONDS with no pid file at all
-# (the owner died between mkdir and writing the pid). Anything else fails closed, so
-# a second caller can never take over a lock whose owner is still starting up.
+# (the owner died between mkdir and writing the pid). Reclaiming renames the stale
+# directory out of the way first; rename is atomic, so of two callers recovering the
+# same stale lock only one can proceed, and neither can ever delete a lock that a
+# third caller has just created in its place. Anything else fails closed.
 lock_path="${wt}.lock"
 LOCK_STALE_SECONDS="${LOCK_STALE_SECONDS:-60}"
 take_lock() {
   mkdir "$lock_path" 2>/dev/null && { lock="$lock_path"; echo $$ > "$lock/pid"; return 0; }
-  local other
+  local other age
   other=$(cat "$lock_path/pid" 2>/dev/null || true)
   if [[ -n "$other" ]]; then
     kill -0 "$other" 2>/dev/null && fail "another review of ${slug}#${pr} is running (pid ${other}); wait for it or remove ${lock_path}"
     echo "codex-pr-review: reclaiming lock left by dead pid ${other}" >&2
   else
-    local age
-    age=$(( $(date +%s) - $(stat -f %m "$lock_path" 2>/dev/null || stat -c %Y "$lock_path" 2>/dev/null || date +%s) ))
+    age=$(( $(date +%s) - $(file_mtime "$lock_path") ))
     (( age > LOCK_STALE_SECONDS )) || fail "another review of ${slug}#${pr} is starting (lock ${lock_path} is ${age}s old); retry shortly"
     echo "codex-pr-review: reclaiming ${age}s-old lock with no owner" >&2
   fi
-  rm -rf "$lock_path"
-  mkdir "$lock_path" 2>/dev/null || fail "lock ${lock_path} was taken by another caller"
+  local stale="${lock_path}.stale.$$"
+  mv "$lock_path" "$stale" 2>/dev/null || fail "lock ${lock_path} was reclaimed by another caller; retry shortly"
+  rm -rf "$stale"
+  mkdir "$lock_path" 2>/dev/null || fail "lock ${lock_path} was taken by another caller; retry shortly"
   lock="$lock_path"; echo $$ > "$lock/pid"
 }
 take_lock

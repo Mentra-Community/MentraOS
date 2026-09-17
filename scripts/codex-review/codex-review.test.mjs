@@ -2,7 +2,7 @@ import {afterAll, describe, expect, test} from "bun:test"
 import {existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, statSync, writeFileSync} from "fs"
 import {tmpdir} from "os"
 import {dirname, join} from "path"
-import {spawnSync} from "child_process"
+import {spawn, spawnSync} from "child_process"
 
 // Lifecycle tests for codex-pr-review.sh + codex-review.sh, driven with fake
 // `gh` and `codex` binaries on PATH against a local bare "origin". Nothing here
@@ -74,24 +74,42 @@ function makeFixture() {
   return {root, origin, repo, bin, state, worktree: `${repo}-pr-1`, reviews: join(root, "reviews")}
 }
 
+// The wrapper honours several environment overrides (CODEX_BIN, GH_ACCOUNT, GH_TOKEN,
+// model, limits). None may leak in from the developer's shell: the fixtures must be the
+// only gh and codex the scripts can reach, and GH_ACCOUNT must be derived, not inherited.
+function env(f, extraEnv = {}) {
+  const base = {...process.env}
+  for (const k of Object.keys(base)) {
+    if (/^(CODEX_|GH_|REVIEW_|STALL_|MAX_|POLL_|ATTEMPTS$|LOCK_)/.test(k)) delete base[k]
+  }
+  return {
+    ...base,
+    PATH: `${f.bin}:${process.env.PATH}`,
+    CODEX_BIN: join(f.bin, "codex"),
+    FAKE_ORIGIN: f.origin,
+    FAKE_STATE: f.state,
+    CODEX_REVIEW_HOME: f.reviews,
+    STALL_SECONDS: "2",
+    POLL_SECONDS: "1",
+    MAX_SECONDS: "30",
+    ATTEMPTS: "2",
+    ...extraEnv,
+  }
+}
+
 function run(f, args, extraEnv = {}) {
-  const r = spawnSync("bash", [wrapper, ...args], {
-    encoding: "utf8",
-    timeout: 90_000,
-    env: {
-      ...process.env,
-      PATH: `${f.bin}:${process.env.PATH}`,
-      FAKE_ORIGIN: f.origin,
-      FAKE_STATE: f.state,
-      CODEX_REVIEW_HOME: f.reviews,
-      STALL_SECONDS: "2",
-      POLL_SECONDS: "1",
-      MAX_SECONDS: "30",
-      ATTEMPTS: "2",
-      ...extraEnv,
-    },
-  })
+  const r = spawnSync("bash", [wrapper, ...args], {encoding: "utf8", timeout: 90_000, env: env(f, extraEnv)})
   return {code: r.status, out: `${r.stdout}${r.stderr}`}
+}
+
+function runAsync(f, args, extraEnv = {}) {
+  return new Promise((resolve) => {
+    const child = spawn("bash", [wrapper, ...args], {env: env(f, extraEnv)})
+    let out = ""
+    child.stdout.on("data", (d) => (out += d))
+    child.stderr.on("data", (d) => (out += d))
+    child.on("close", (code) => resolve({code, out}))
+  })
 }
 
 const codexCalls = (f) =>
@@ -106,6 +124,52 @@ describe("codex-pr-review.sh lifecycle", () => {
     expect(existsSync(`${f.worktree}.codex-review-owned`)).toBe(true)
     expect(existsSync(`${f.worktree}.lock`)).toBe(false)
     expect(codexCalls(f)).toBe(1)
+  }, 90_000)
+
+  test("inherited review overrides never reach the scripts", () => {
+    const f = makeFixture()
+    const poisoned = {...process.env, CODEX_BIN: "/nonexistent/codex", GH_ACCOUNT: "app", GH_TOKEN: "leaked"}
+    const saved = process.env
+    process.env = poisoned
+    try {
+      const r = run(f, [f.repo, "1"])
+      expect(r.out).toContain("GH_ACCOUNT=own")
+      expect(r.out).toContain("codex-pr-review: done")
+      expect(codexCalls(f)).toBe(1)
+    } finally {
+      process.env = saved
+    }
+  }, 90_000)
+
+  test("works when stat has GNU semantics", () => {
+    const f = makeFixture()
+    // GNU: `stat -c %Y` is the mtime; `stat -f` is filesystem status and prints text with exit 0.
+    writeFileSync(
+      join(f.bin, "stat"),
+      '#!/usr/bin/env bash\nif [[ "$1" == "-c" ]]; then exec /usr/bin/stat -f %m "$3"; fi\nif [[ "$1" == "-f" ]]; then echo "  File: \\"$3\\""; exit 0; fi\nexec /usr/bin/stat "$@"\n',
+      {mode: 0o755},
+    )
+    const r = run(f, [f.repo, "1"], {FAKE_CODEX_MODE: "post-then-crash"})
+    expect(r.out).not.toContain("unbound variable")
+    expect(r.out).toContain("codex-pr-review: done")
+  }, 90_000)
+
+  test("two callers recovering the same stale lock: exactly one proceeds", async () => {
+    const f = makeFixture()
+    mkdirSync(`${f.worktree}.lock`)
+    writeFileSync(`${f.worktree}.lock/pid`, "999999")
+    const [a, b] = await Promise.all([run2(f), run2(f)])
+    const done = [a, b].filter((r) => r.out.includes("codex-pr-review: done")).length
+    const refused = [a, b].filter((r) =>
+      /reclaimed by another caller|taken by another caller|is running \(pid/.test(r.out),
+    ).length
+    expect(done).toBe(1)
+    expect(refused).toBe(1)
+    expect(codexCalls(f)).toBe(1)
+    expect(existsSync(`${f.worktree}.lock`)).toBe(false)
+    function run2(fx) {
+      return runAsync(fx, [fx.repo, "1"])
+    }
   }, 90_000)
 
   test("every preflight failure prints the FAILED marker", () => {

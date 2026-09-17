@@ -28,7 +28,8 @@ EFFORT="${CODEX_REVIEW_EFFORT:-medium}"
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
 out_dir=$(dirname "$output")
 
-mtime() { stat -f %m "$1" 2>/dev/null || stat -c %Y "$1" 2>/dev/null || date +%s; }
+# shellcheck source=common.sh
+source "$script_dir/common.sh"
 
 # Prints the number of reviews this run has already posted, or 0 when the
 # wrapper did not pass PR coordinates (standalone use).
@@ -61,7 +62,7 @@ for attempt in $(seq 1 "$ATTEMPTS"); do
     sleep "${POLL_SECONDS:-5}"
     now=$(date +%s)
     if [[ -s "$events" ]]; then
-      last=$(mtime "$events")
+      last=$(file_mtime "$events")
     else
       last=$started
     fi
