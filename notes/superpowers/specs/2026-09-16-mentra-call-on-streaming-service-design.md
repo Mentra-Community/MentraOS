@@ -144,10 +144,12 @@ the pending `hotspot` row to narrate the preflight ("asking for nearby devices p
 
 On recovery the steps that are rebuilt (`hotspot` and `scopedJoin` for a hotspot outage,
 `publish` and `live` for both kinds) go back to `pending` and run again, driven by
-`recovery.step` rather than by the stream phase: `waiting_return` and `rejoining` run
-`hotspot` then `scopedJoin` (from the hotspot snapshot), `listening` and `attaching` keep
-`publish` pending, `publishing` runs `publish` then `live`; `acsJoin` stays `done` because the
-meeting is preserved. On failure the step running at that moment becomes `failed`
+`recovery.step` rather than by the stream phase, with exactly the startup milestones:
+`waiting_return` and `rejoining` run `hotspot` then `scopedJoin` (from the hotspot snapshot);
+`listening`, `attaching` and `publishing` run `publish` (listener, receiver, adapter attach,
+`start_stream` sent); `awaiting_frame` marks `publish` done and runs `live`; the first frame
+marks `live` done. A failure during any step fails the row that is running at that moment,
+which is therefore always defined. `acsJoin` stays `done` because the meeting is preserved. On failure the step running at that moment becomes `failed`
 and later steps stay `pending`. On stop the steps are retained as they were (today's
 `keepProgress` default); on a new join they start from `pending`.
 
@@ -156,8 +158,9 @@ rebuilt generation is live; `generation` is `recovery.nextMediaGeneration` (the 
 is absent during a rebuild, so it is never read there); `deadlineAt` is
 `RecoveryContext.rebuildDeadlineAt` when set, otherwise `returnDeadlineAt`; `phase` is the
 projected `softap.phase` above, which is what the field carries today
-(`SoftapRecoveryState.phase` is a `SoftapPhase`). `softap.mediaGeneration` keeps the last
-live generation until the rebuilt one is live, as today's transport does. When recovery ends in
+(`SoftapRecoveryState.phase` is a `SoftapPhase`). `softap.mediaGeneration` becomes
+`recovery.nextMediaGeneration` as soon as recovery starts, which preserves today's raw payload
+behaviour where the transport increments its media generation on recovery entry. When recovery ends in
 `live` the runtime sends one more `MEETING_STATE` with `recovery.active: false`; when it ends
 in `failed` with `recovery_exhausted` the state carries `state: "error"` and
 `error: "SOFTAP_NETWORK_LOST: …"` as today.

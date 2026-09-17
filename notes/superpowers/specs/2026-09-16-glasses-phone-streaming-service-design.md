@@ -193,7 +193,9 @@ export type StreamState = {
    * observers can project progress without a usable MediaRef. The phase stays "recovering" throughout; it never
    * passes through "listening" or "publishing" during a rebuild.
    */
-  recovery?: {kind: "media" | "hotspot"; nextMediaGeneration: number; step: "detaching" | "waiting_return" | "rejoining" | "listening" | "attaching" | "publishing"} & RecoveryContext
+  recovery?: {kind: "media" | "hotspot"; nextMediaGeneration: number; step: "detaching" | "waiting_return" | "rejoining" | "listening" | "attaching" | "publishing" | "awaiting_frame"} & RecoveryContext
+  // "publishing" = start_stream sent, awaiting the glasses' ack; "awaiting_frame" = acked, waiting for the first decoded frame.
+  // These are the same two milestones the startup phases "publishing" (after ack) and "live" expose.
   stats?: StreamLiveStats             // from the glasses' stream_status
   error?: StreamError
   terminalCleanup?: {hotspot: ReleaseResult | null}   // set once terminal cleanup has run (failed or closed)
