@@ -30,6 +30,8 @@ verdict was already posted. Never launch a bare `codex exec` for a review.
   sentinel; on reruns it resets and cleans only those (ignored files such as `node_modules`
   are kept) and refuses a path at that location it did not create. A per-PR lock refuses a
   second concurrent run.
+  A worktree created by an earlier version of the script has no sentinel: add the file by
+  hand (any content) or remove the worktree with `git worktree remove`.
 - Chooses the posting account. GitHub refuses a formal review from the PR author, so a PR
   authored by the logged-in gh user posts through a `mentra-release-coordinator` GitHub App
   token minted by `mentra-release-coordinator-token.mjs`; anyone else's PR posts from the
