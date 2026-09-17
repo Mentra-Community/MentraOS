@@ -275,6 +275,118 @@ the underlying stream snapshot event for event. Gallery sync, hotspot OTA and Me
 keep their engine entry points and run on the SDK hotspot service and the glasses-media stream
 service underneath, so an embedder gets the same behaviour the Mentra App has.
 
+### Engine hotspot facade: `@mentra/engine/hotspot`
+
+The engine owns three hotspot flows today, gallery sync, hotspot OTA and the video stream,
+each with its own service and its own notion of progress. The facade makes them one
+observable surface for an embedder, with the hotspot session state attached, without adding
+behaviour: every method delegates to `gallerySyncService`, `OtaInstallCoordinator` and the
+stream coordinator, and every snapshot is composed from their existing state plus the SDK
+hotspot service's `current()` and session snapshot.
+
+```ts
+import {engineHotspot} from "@mentra/engine/hotspot"
+
+export interface EngineHotspotSnapshot {
+  /** The SDK hotspot session, if any consumer holds one. */
+  session: HotspotState | null
+  owner: {purpose: "gallery_sync" | "hotspot_ota" | "video_streaming" | string; operationId: string} | null
+  uplink: {held: boolean; holders: number}
+  flows: {
+    gallerySync: GallerySyncFlowState        // the gallery store's status, queue progress, last error, plus `hotspot: HotspotState | null`
+    ota: OtaInstallSnapshot & {hotspot: HotspotState | null; transport: "wifi" | "hotspot" | null}
+    stream: StreamState | null               // the active phone-route stream, if any
+  }
+}
+
+export interface EngineHotspotFacade {
+  snapshot(): EngineHotspotSnapshot
+  /** Delivers the current snapshot immediately, then one event per change in any flow or in the session. */
+  subscribe(listener: (snapshot: EngineHotspotSnapshot) => void): () => void
+
+  gallerySync: {
+    /** Starts a sync: acquires the hotspot as gallery_sync, downloads the queue, releases. Rejects with busy naming the owner if another flow holds it. */
+    start(): Promise<void>
+    /** Resumes the saved queue after a loss or an app restart, reusing the session if still ready. */
+    resume(): Promise<void>
+    cancel(): Promise<void>
+    snapshot(): GallerySyncFlowState
+    subscribe(listener: (state: GallerySyncFlowState) => void): () => void
+  }
+
+  ota: {
+    /** Stages artifacts over the Internet, then acquires the hotspot as hotspot_ota and serves the manifest. */
+    prepare(check: OtaCheckCurrentGlassesResult): Promise<{transport: "wifi" | "hotspot"}>
+    /** Sends ota_start; the session survives the ASG APK restart and is released when the outcome is known. */
+    start(): Promise<void>
+    cancel(): Promise<void>
+    snapshot(): OtaInstallSnapshot & {hotspot: HotspotState | null}
+    subscribe(listener: (snapshot: OtaInstallSnapshot & {hotspot: HotspotState | null}) => void): () => void
+  }
+}
+export const engineHotspot: EngineHotspotFacade
+```
+
+`useEngineHotspot()` in the engine's React exports returns the composed snapshot for UI: an
+embedder can show "Gallery sync is using the glasses hotspot" or block an OTA button while a
+call holds the session from one place. The facade is the only engine surface an embedder
+needs for hotspot features; the SDK service stays available for anything custom.
+
+### Miniapp handlers
+
+Two capabilities reach miniapps. Relay needs no new handler; preview needs one.
+
+**Relay to the miniapp's own WHIP destination over the phone.** Already covered by the
+streaming spec's `route` option:
+
+```ts
+// Miniapp SDK, StreamModule
+session.stream.startStream({direct: "https://example.com/whip/abc", authToken, route: "phone", video})
+```
+
+The glasses publish to the phone over the hotspot and the phone republishes to the URL. The
+engine handler for `miniapp_stream_start` maps `route: "phone"` onto
+`phoneStreamCoordinator.startUnmanaged(pkg, {route: "phone", ...})`, requires the CAMERA
+manifest permission and the LOCAL_WIFI runtime permission, and rejects a non-WHIP URL. Status
+arrives as today's `StreamStatus` with `route: "phone"`.
+
+**Preview the glasses on the phone.** A miniapp runs as a background JS context with an
+on-demand UI WebView, so it cannot host a native video view. The preview is a host-rendered
+surface that the Mentra App shows on the miniapp's behalf:
+
+```ts
+// Miniapp SDK, StreamModule
+/**
+ * Show live glasses video on the phone. The host opens the glasses hotspot, receives the stream on the
+ * phone and renders it in a surface it owns: "pip" floats over the miniapp UI and can be dragged, "sheet"
+ * fills the miniapp's UI area. Resolves once the first frame is on screen. Only one preview can be active;
+ * a second call while one is active rejects. Requires the CAMERA manifest permission and the nearby-devices
+ * permission, and fails with `hotspot_busy` if gallery sync, OTA or a call holds the hotspot.
+ */
+preview(options?: {placement?: "pip" | "sheet"; video?: StreamVideoConfig}): Promise<PreviewHandle>
+
+export interface PreviewHandle {
+  readonly previewId: string
+  /** Progress and recovery of the underlying phone-route stream: the StreamStatus the miniapp already knows, with route "phone". */
+  onStatus(handler: (status: StreamStatus) => void): () => void
+  /** Move the surface without restarting the stream. */
+  setPlacement(placement: "pip" | "sheet"): Promise<void>
+  /** Stops the stream and closes the surface. The host also stops it when the miniapp is closed or backgrounded. */
+  stop(): Promise<void>
+}
+```
+
+Wire: `miniapp_stream_preview_start` with `{placement?, video?}` returning `{previewId,
+streamId}`, `miniapp_stream_preview_set_placement` with `{previewId, placement}`, and
+`miniapp_stream_preview_stop` with `{previewId}`. The engine handler calls
+`phoneStreamCoordinator.startLocal(pkg, {adapter: renderAdapter(hostSurface), ...})`, owns the
+surface lifecycle, and forwards stream status to the miniapp as `StreamStatus` with
+`route: "phone"`. Preview and a miniapp stream are mutually exclusive through the publisher
+slot, as they must be: the glasses publish once.
+
+Rendering the preview inside the miniapp's own WebView (a local WHEP endpoint the WebView could
+play) is deliberately out of scope; it would add a phone-side WHEP server to glasses-media.
+
 ## Reconciliation with the other specs
 
 | Spec | Change |
@@ -349,6 +461,12 @@ steps:
   check on final release; a premature unpin while a leftover AP is still the default strands
   the call. Tests: exhaustion with an unconfirmed hotspot-off, then gallery or OTA acquiring
   the hotspot, with ACS connectivity intact throughout.
+- **Facade coupling.** `engineHotspot` composes three services' state; it must stay a
+  projection with no state of its own, or it becomes a fourth owner. Tests assert that every
+  facade snapshot equals the composition of the underlying snapshots.
+- **Preview surface lifecycle.** The host-owned surface must close when the miniapp is closed
+  or backgrounded, and the underlying stream must close with it; tests cover both and a
+  placement change mid-recovery.
 - **Two published services.** Moving the services out of the engine means their tests and
   their release gates live in the SDK and glasses-media packages; the engine's suites keep only
   the flow tests.
