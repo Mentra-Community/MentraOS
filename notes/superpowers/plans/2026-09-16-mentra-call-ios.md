@@ -100,3 +100,50 @@ The next bounded experiment used a minimal signed UIKit app with the existing ap
 The probe confirmed its temporary configuration absent and restored the original Mentra executable in the background; no privacy, account or pairing settings were changed. Source, build/signing manifest and replay commands are retained in `2026-09-16T23-52-07Z-minimal-hotspot-probe`. The probe executable hash is `e9a4941a1dee5559527e91a404bb72e499f546e02195544441f6fd18efb0907b`. This is diagnostic provenance, not a product build. The failed API outcome remains failed in the report even though result-capture and cleanup assertions passed.
 
 The diagnostic's different window title exposed a harness-only literal-title assumption. #4069 now selects the accessible standard window by its actual title and process for both screenshots and video, including after relaunch. Nineteen runner/native checks and harness TypeScript passed. The same-build Mentra relaunch run `2026-09-16T23-55-46-543Z-paired-recorder-lifecycle-47a4f6` passed two steps / 6.28 seconds with verified artifacts and no observed foreground change. The actual Call failure remains before ACS; the next investigation should isolate Mac hotspot configuration/routing without assuming the same limitation on a physical iPhone.
+
+## Mac association and local transport fix
+
+macOS successfully joined original 03BE through `networksetup`, received a Wi-Fi
+client address on the glasses' subnet and read `/api/health` on port 8089. Ethernet
+remained the default internet route and reached Teams HTTPS. The five-step run
+`2026-09-17T00-13-35-329Z-macos-hotspot-join-53853a` passed. This establishes host
+association independently of the failing iOS configuration API.
+
+In one signed iOS process, both system-selected routing and a connection bound to
+the hotspot source IP returned HTTP 200 healthy over `en0`. Requiring the Wi-Fi
+interface type then returned no network route and timed out. Run
+`2026-09-17T00-47-24-457Z-ios-permission-route-a9093c` preserves all nine steps and
+the failing constraint comparison (59.018333-second video). An earlier bound-IP
+probe had reported Local Network denial; this same-process success supersedes it
+as the evidence for whether IP binding is usable. It does not establish which
+permission prompt the user accepted.
+
+Run `2026-09-17T00-51-04-853Z-ios-whip-listener-8b4637` passed ten steps in
+42.831667 seconds. The diagnostic compiled the actual `WhipIngestServer`,
+`WhipRequest` and `LocalMediaPolicy` sources into a signed UIKit app. The real
+USB-identified glasses sent a GET over their hotspot to the iOS listener and
+received HTTP 405 with `Allow: POST`, as required by that server. No fake network
+state or media negotiation was used. Each source hash, executable hash, command,
+response, screenshot and video chapter is retained. All artifact and liveness
+checks passed, with zero model calls during replay. This proves incoming HTTP,
+not SDP/ICE, decoded video or Teams media.
+
+The product change keeps iPhone routing unchanged. On iOS-on-Mac it binds the
+gateway probe and WHIP listener to the verified hotspot source IP without the
+failing Wi-Fi type constraint. It can reuse a macOS-established connection only
+when both the exact SSID and a valid client address match the glasses' reported
+gateway. It removes only hotspot configurations it created; cancellation still
+invalidates pending callbacks before another join can start. Two new identity and
+DHCP tests bring CoreKit to 24 passing tests. The signed Release build passed;
+its source diff and binary hashes are archived with the diagnostic build.
+
+Exact-SSID reuse is not yet qualified: Location Services and Mentra location
+access are off, and `fetchCurrent` returns no network. An app-configured current
+network can qualify for SSID access without Location, but these tests established
+the connection through macOS instead. The user has been asked to approve a
+temporary Location grant for this different path, with restoration afterward.
+No permission change has been made. Original Mentra was restored, the test
+hotspot stopped and only newly added Wi-Fi preferences removed after each run.
+The ASG fixture remains `3.2.0-dev.206-camera-failure-dev`; it is not a latest-build
+firmware qualification. Full product join, Teams browser media, repeated calls
+and app-owned cleanup remain outstanding.

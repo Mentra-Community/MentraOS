@@ -39,6 +39,14 @@ public enum LocalMediaPolicy {
         return bytes[3] > 0 && bytes[3] < 255
     }
 
+    /// A Mac may join through its host network controls. Reuse that connection only
+    /// after both its SSID and DHCP address match the hotspot advertised over BLE.
+    public static func canReuseHotspot(requestedSSID: String, currentSSID: String?, address: String?, gateway: String?) -> Bool {
+        guard !requestedSSID.isEmpty, requestedSSID == currentSSID,
+              let address, let gateway else { return false }
+        return isHotspotClientAddress(address, gateway: gateway)
+    }
+
     /// Keep only concrete host candidates on the local link. Never rewrite a cellular socket's
     /// advertised address: a candidate must already belong to the interface it claims.
     public static func localSdp(_ sdp: String, address: String, answer: Bool) throws -> String {
