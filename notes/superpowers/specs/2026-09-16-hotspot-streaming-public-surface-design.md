@@ -226,6 +226,95 @@ await stream.close()
 
 The glasses side is unchanged: the stream service sends `startStream({streamUrl: <phone WHIP URL>, ice: {stun: ""}, ...})`, and `stream_status` gains `route: "glasses_wifi" | "phone_hotspot"` as the streaming spec says.
 
+## `startStream` destination union: the stream stays on the phone
+
+`takePhoto` had the same problem and #3619 fixed it with a destination union: an app that
+wanted the photo on the phone had to give a webhook URL that pointed back at itself. Streaming
+has the twin today. The Bluetooth SDK Starter Kit's Stream tab starts its own WHIP receiver
+(`mentra-video-stream-receiver`, `startWebRtcReceiver()`), gets a URL back, and passes that URL
+to `BluetoothSdk.startStream`; the glasses then publish to the phone across the home Wi-Fi both
+are on, which is why that tab is gated on the glasses being on Wi-Fi. `startStream` gains the
+same shape of union `PhotoDestination` has, with a `phone` arm that takes no URL:
+
+```ts
+// @mentra/bluetooth-sdk
+export type StreamDestination =
+  | {
+      kind: "url"                  // today's behaviour: the glasses publish to a URL over their own Wi-Fi
+      streamUrl: string
+      authToken?: string
+      ice?: StreamIceConfig
+    }
+  | {
+      kind: "phone"                // the stream ends on this phone: no URL, no loopback
+      /** "hotspot" (default): the glasses hotspot, no shared network needed. "wifi": phone and glasses on the same LAN. */
+      route?: "hotspot" | "wifi"
+    }
+
+export type StreamStartRequest = {
+  /** Where the stream ends up. Preferred over the deprecated flat `streamUrl`. */
+  destination?: StreamDestination
+  /** @deprecated Use `destination: {kind: "url", streamUrl}`. Mixing it with `destination` throws at request time, as PhotoRequestParams does. */
+  streamUrl?: string
+  video?: StreamVideoConfig
+  audio?: StreamAudioConfig
+  captureAudio?: boolean
+  sound?: boolean
+  // authToken and ice move into the "url" arm; the flat fields stay accepted with the flat streamUrl only.
+}
+
+const started = await BluetoothSdk.startStream({destination: {kind: "phone"}, video})
+// started: StreamStatusEvent & {phone?: {streamSessionId: string}}
+<GlassesStreamView streamSessionId={started.phone.streamSessionId} style={styles.preview} />
+await BluetoothSdk.stopStream()
+```
+
+The `phone` arm is the SDK-level front door of `glassesPhoneStream.preview()`: it opens the
+hotspot session (or, for `route: "wifi"`, binds on the LAN address with no hotspot session),
+starts the receiver with the render adapter, publishes through the glasses publisher slot with
+host-only ICE, and resolves on the first frame. Recovery, first-frame gating and cleanup are
+the stream service's. `stream_status` reports `route: "phone_hotspot"` or `"phone_wifi"`.
+Nothing changes on the glasses: they already accept a phone-local URL and detect the hotspot
+route.
+
+Placement follows the libwebrtc rule. Photo phone delivery lives entirely in the SDK because
+BLE file transfer does. A stream receiver needs libwebrtc, which stays in
+`@mentra/glasses-media`. The union and the call live in the SDK; glasses-media registers itself
+as the provider of the `phone` arm when it is imported
+(`registerPhoneStreamProvider(provider)` on an SDK-internal registry). Without glasses-media
+installed, `startStream` with `kind: "phone"` rejects with `phone_stream_unavailable` and a
+message naming the package. The native SDKs get the same union (`StreamDestination.Phone`,
+`.url(...)`) with the same provider registration from the glasses-media AAR and pod.
+
+### Starter kit: a hotspot option on the Stream tab
+
+The Starter Kit's React Native example has a Camera tab and a Stream tab. The Camera tab
+already uses the glasses hotspot: its saved-photo preview shows a "Glasses hotspot" panel with
+the SSID and password, a "Connect glasses hotspot" action, and the gallery server status. The
+Stream tab has one switch today, computer or cloud URL versus the on-phone receiver, and the
+on-phone mode requires the glasses to be on Wi-Fi. It gains the hotspot the same way:
+
+- In on-phone mode a two-way selector, **Glasses hotspot** (default) and **Same Wi-Fi**, maps
+  to `destination: {kind: "phone", route}`. With the hotspot selected the Wi-Fi gate on the
+  start button disappears; the button is enabled as soon as the glasses are connected.
+- The preview pane renders `GlassesStreamView`; the first-frame and status lines the tab already
+  shows come from `stream_status` and the returned session instead of the local module's
+  `receiverStatus`, `streamFirstFrame` and `streamFrame` events.
+- While the hotspot route is starting the tab shows the same kind of panel the Camera tab does,
+  driven by `useGlassesHotspot()`: enabling, joining, ready, and the owner when busy (for
+  example the Camera tab's own saved-photo session), so the two tabs explain the hotspot
+  identically. The Camera tab's manual join helper moves onto the SDK hotspot session in the
+  same change, so the example has one hotspot code path.
+- The "SDK call" box the tab displays shows the three-line version above instead of
+  `startWebRtcReceiver()` followed by `startStream({streamUrl: receiver.streamUrl})`.
+- `examples/react-native/modules/mentra-video-stream-receiver` is deleted. It is a third WHIP
+  receiver implementation beside the two that already share glasses-media.
+- Computer or cloud mode is unchanged and uses the `url` arm for RTMP, SRT and remote WHIP.
+- Docs: `docs/api-reference.md`, `docs/troubleshooting.md` and the README's streaming section
+  describe the destination union, the hotspot route and its permissions.
+
+The Kotlin and Swift examples in the Starter Kit get the same option with the native union.
+
 ## Engine: `@mentra/engine`
 
 ```ts
@@ -448,7 +537,9 @@ steps:
    gains `route: "phone"` and `startLocal` appears at the same time.
 4. The Call spec's steps use `startLocal`.
 5. Docs and the OEM example screen land with step 3; the `otaLocalNetwork` facade is removed
-   one release after step 1; `otaServer` stays.
+   one release after step 1; `otaServer` stays. The `StreamDestination` union and the provider
+   registration land with step 3 too, and the Starter Kit's Stream tab hotspot option ships in
+   that repo as soon as the SDK release containing them is published.
 6. The publisher slot lands with hotspot spec step 2 (the reservation gate), because the
    deferred-stop fencing that step introduces belongs to the slot; the coordinator moves its
    glasses-direct and managed starts onto the slot in the same PR, with tests for standalone
@@ -483,6 +574,10 @@ steps:
 - **Preview surface lifecycle.** The host-owned surface must close when the miniapp is closed
   or backgrounded, and the underlying stream must close with it; tests cover both and a
   placement change mid-recovery.
+- **Provider registration.** The `phone` arm depends on glasses-media being imported before
+  the first `startStream`; the rejection when it is not must be immediate and named, never a
+  hang. Tests cover the SDK alone, the SDK plus glasses-media, and the deprecated flat
+  `streamUrl` mixed with `destination`.
 - **Two published services.** Moving the services out of the engine means their tests and
   their release gates live in the SDK and glasses-media packages; the engine's suites keep only
   the flow tests.
