@@ -62,6 +62,23 @@ bun tools/mentra-e2e/teams-media-preflight.ts check \
   --camera-label 'MacBook Pro Camera (0000:0001)'
 ```
 
+To make Chrome's ordinary capture requests use the laptop too, configure the
+**dedicated test profile** through Chrome's normal Microphone and Camera settings:
+
+```sh
+bun tools/mentra-e2e/teams-media-preflight.ts configure \
+  --microphone-label 'MacBook Pro Microphone (Built-in)' \
+  --camera-label 'MacBook Pro Camera (0000:0001)' \
+  --camera-setting-label 'MacBook Pro Camera'
+```
+
+Chrome's camera settings label differs from its media-track label; inspect the
+actual UI on another Mac. Configuration records before/after settings screenshots
+and AX, then verifies that an ordinary `getUserMedia({audio:true, video:true})`
+opens those exact laptop tracks. The first Mac passed this check on September 17.
+This changes only the isolated test Chrome profile; macOS audio defaults remain
+unchanged. Incoming speaker selection still belongs to the Teams call UI.
+
 Use the actual devices on another Mac; never choose the glasses or the default
 alias. The command refuses missing or ambiguous labels, requests both exact
 capture devices and immediately stops the tracks. It opens no meeting, starts
