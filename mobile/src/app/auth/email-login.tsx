@@ -1,11 +1,11 @@
 import {FontAwesome} from "@expo/vector-icons"
-import * as WebBrowser from "expo-web-browser"
 import {useState} from "react"
 import {ActivityIndicator, Keyboard, Modal, Platform, ScrollView, TextInput, TouchableOpacity, View} from "react-native"
 
 import {Button, Header, Icon, Screen, Text} from "@/components/ignite"
 import {Spacer} from "@/components/ui/Spacer"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {useDeeplink} from "@/contexts/DeeplinkContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import {SETTINGS, useSetting} from "@mentra/engine"
@@ -13,6 +13,7 @@ import {spacing} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
 import mentraAuth from "@/utils/auth/authClient"
 import {mapAuthError} from "@/utils/auth/authErrors"
+import {openAuthBrowser} from "@/utils/auth/openAuthBrowser"
 
 import AppleIcon from "assets/icons/component/AppleIcon"
 import GoogleIcon from "assets/icons/component/GoogleIcon"
@@ -25,6 +26,7 @@ export default function EmailLoginScreen() {
   const [isAuthLoading, setIsAuthLoading] = useState(false)
 
   const {goBack, replace, push} = useNavigationStore.getState()
+  const {processUrl} = useDeeplink()
   const {theme} = useAppTheme()
   const [isChina] = useSetting(SETTINGS.china_deployment.key)
 
@@ -65,43 +67,20 @@ export default function EmailLoginScreen() {
     replace("/")
   }
 
-  const handleGoogleSignIn = async () => {
+  const handleSocialSignIn = async (provider: "google" | "apple") => {
     setIsAuthLoading(true)
-
-    setTimeout(() => {
+    try {
+      const res = await (provider === "google" ? mentraAuth.googleSignIn() : mentraAuth.appleSignIn())
+      if (res.is_error()) throw res.error
+      await openAuthBrowser(res.value, processUrl)
+    } catch (error) {
+      showAlert(translate("common:error"), mapAuthError(error instanceof Error ? error : String(error)))
+    } finally {
       setIsAuthLoading(false)
-    }, 5000)
-
-    const res = await mentraAuth.googleSignIn()
-
-    if (res.is_error()) {
-      setIsAuthLoading(false)
-      return
     }
-    const url = res.value
-
-    console.log("Opening browser with:", url)
-    await WebBrowser.openBrowserAsync(url)
-
-    setIsAuthLoading(false)
   }
-
-  const handleAppleSignIn = async () => {
-    setIsAuthLoading(true)
-
-    const res = await mentraAuth.appleSignIn()
-    if (res.is_error()) {
-      console.error("Apple sign in failed:", res.error)
-      setIsAuthLoading(false)
-      return
-    }
-    const url = res.value
-
-    console.log("Opening browser with:", url)
-    await WebBrowser.openBrowserAsync(url)
-
-    setIsAuthLoading(false)
-  }
+  const handleGoogleSignIn = () => handleSocialSignIn("google")
+  const handleAppleSignIn = () => handleSocialSignIn("apple")
 
   return (
     <Screen preset="fixed">

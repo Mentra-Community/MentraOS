@@ -1,0 +1,22 @@
+appId: ${MAESTRO_APP_ID}
+---
+# Start signed in at Home, with no glasses paired. Supports iOS and Android.
+# No physical glasses are needed to verify that discovery remains accessible.
+- launchApp:
+    permissions:
+      all: allow
+      microphone: deny
+- tapOn: "Glasses"
+- tapOn: "Connect Glasses"
+- assertVisible: "Before you begin"
+- tapOn: "Continue"
+- assertVisible: "Select your glasses"
+- tapOn:
+    id: "pairing-model-mentra_live"
+- extendedWaitUntil:
+    visible: "Turn on your glasses"
+    timeout: 20000
+- assertVisible: "We're looking for your Mentra Live."
+- assertNotVisible: "Microphone Permission Required"
+- assertNotVisible: "Open Settings"
+- takeScreenshot: "pairing-microphone-denied"

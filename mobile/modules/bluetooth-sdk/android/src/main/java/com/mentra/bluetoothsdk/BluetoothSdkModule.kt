@@ -643,7 +643,7 @@ class BluetoothSdkModule : Module() {
 
         @Suppress("DEPRECATION")
         SdkCoroutineFunction("setPhotoCaptureDefaults") { params: Map<String, Any?> ->
-            requireSdk().setPhotoCaptureDefaults(params.toPhotoCaptureDefaults()).values
+            requireSdk().setPhotoCaptureDefaults(PhotoCaptureDefaults.fromMap(params)).values
         }
 
         SdkCoroutineFunction("setVideoRecordingDefaults") { width: Int, height: Int, fps: Int ->
@@ -698,12 +698,7 @@ class BluetoothSdkModule : Module() {
         SdkCoroutineFunction("queryGalleryStatus") { -> requireSdk().queryGalleryStatus().values }
 
         SdkCoroutineFunction("requestPhoto") { params: Map<String, Any?> ->
-            // JS may pass null for optional fields; Map<String, Any> rejects null values at the bridge.
-            val sanitized =
-                    params.mapNotNull { (key, value) ->
-                        if (value == null) null else key to value
-                    }.toMap()
-            val req = PhotoRequest.fromMap(sanitized)
+            val req = PhotoRequest.fromMap(params)
             Bridge.log(
                     "NATIVE: PHOTO PIPELINE [3/6] BluetoothSdk.requestPhoto requestId=${req.requestId} size=${req.size} mode=${req.mode.value} compress=${req.compress} sound=${req.sound} exposureTimeNs=${req.exposureTimeNs} iso=${req.iso}"
             )
@@ -1043,22 +1038,6 @@ private fun Map<String, Any>?.toMentraDevice(): Device? {
             id = id?.takeIf { it.isNotBlank() } ?: address?.takeIf { it.isNotBlank() } ?: "$model:$name",
     )
 }
-
-private fun Map<String, Any?>.toPhotoCaptureDefaults(): PhotoCaptureDefaults =
-        PhotoCaptureDefaults(
-                size = (this["size"] as? String)?.let { PhotoSize.fromValue(it) },
-                mfnr = this["mfnr"] as? Boolean,
-                zsl = this["zsl"] as? Boolean,
-                noiseReduction = this["noiseReduction"] as? Boolean,
-                edgeEnhancement = this["edgeEnhancement"] as? Boolean,
-                ispDigitalGain = (this["ispDigitalGain"] as? Number)?.toInt(),
-                ispAnalogGain = this["ispAnalogGain"] as? String,
-                aeExposureDivisor = (this["aeExposureDivisor"] as? Number)?.toInt(),
-                isoCap = (this["isoCap"] as? Number)?.toInt(),
-                compress = this["compress"] as? String,
-                sound = this["sound"] as? Boolean,
-                resetCaptureTuning = this["resetCaptureTuning"] as? Boolean == true,
-        )
 
 private fun Map<String, Any>?.toMentraConnectOptions(): ConnectOptions {
     val values = this ?: return ConnectOptions()

@@ -3,6 +3,7 @@ import {describe, expect, test} from "bun:test"
 
 import {parseEnvelope, serializeEnvelope} from "./envelope"
 import {CLOUD_STATUS_STREAM} from "./modules/cloud"
+import type {MeetingState} from "./modules/meeting"
 import {MiniappRequestType, MiniappResponseType} from "./protocol"
 import {MiniappSession} from "./session"
 import {Transport, TransportDisconnectHandler, TransportMessageHandler} from "./transport/types"
@@ -53,6 +54,42 @@ class FakeTransport implements Transport {
     this.disconnectHandler?.(reason)
   }
 }
+
+describe("MiniappSession meeting termination details", () => {
+  test("host end reason reaches listeners and cached state, then clears for the next call", async () => {
+    const transport = new FakeTransport()
+    const session = new MiniappSession({transport, packageName: "com.test.meeting"})
+    const connected = session.connect()
+    await Promise.resolve()
+    transport.deliverFromPhone({
+      type: MiniappResponseType.CONNECT_ACK,
+      userId: "u",
+      packageName: "com.test.meeting",
+    })
+    await connected
+    const events: MeetingState[] = []
+    session.meeting.onState((state) => events.push(state))
+    const endReason = {code: 404, subcode: 8543, message: "Meeting not found"}
+
+    transport.deliverFromPhone({type: MiniappResponseType.MEETING_STATE, state: "error", muted: false, endReason})
+    expect(events.at(-1)?.endReason).toEqual(endReason)
+    expect(session.meeting.state.endReason).toEqual(endReason)
+
+    transport.deliverFromPhone({type: MiniappResponseType.MEETING_STATE, state: "connecting", muted: false})
+    expect(events.at(-1)?.endReason).toBeUndefined()
+    expect(session.meeting.state.endReason).toBeUndefined()
+
+    transport.deliverFromPhone({
+      type: MiniappResponseType.MEETING_STATE,
+      state: "error",
+      muted: false,
+      endReason: {code: "404", subcode: null, message: 8543},
+    })
+    expect(events.at(-1)?.endReason).toBeUndefined()
+    expect(session.meeting.state.endReason).toBeUndefined()
+    session.disconnect()
+  })
+})
 
 describe("MiniappSession queue-before-ACK", () => {
   test("calls made before CONNECT_ACK are buffered then flushed in FIFO order", async () => {

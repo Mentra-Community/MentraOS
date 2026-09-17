@@ -29,7 +29,7 @@ export interface MentraOSGlobals {
   platform?: string
   /** Capabilities the host exposes to this miniapp (e.g. ["share", "open_url"]). */
   capabilities?: string[]
-  /** True when this miniapp is running locally on-device (vs. hosted in the cloud). */
+  /** Host marker for a local miniapp running in the Mentra App on the phone. */
   miniappLocal?: boolean
   /** True when the miniapp is running via the dev workflow (QR sideload). */
   miniappDeveloperMode?: boolean

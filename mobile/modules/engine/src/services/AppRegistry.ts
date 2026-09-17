@@ -25,7 +25,7 @@ import semver from "semver"
 import {AsyncResult, Result, result as Res} from "typesafe-ts"
 
 import {getConfigValues, isInstalledMiniappAllowed, isOfflineSystemMiniappAllowed} from "../runtime/bootstrap"
-import type {AppletPermission, AppPermissionType, AppletType, ClientApp} from "../types/applet"
+import type {AppletType, ClientApp} from "../types/applet"
 import {type Capabilities, HardwareRequirement, HardwareRequirementLevel, HardwareType} from "../types"
 import {readBoundedByteStream} from "../utils/boundedByteStream"
 import {configuredDevHost} from "../utils/configuredDevHost"
@@ -48,51 +48,14 @@ import {checkMiniappInstallCompatibility} from "./miniappInstallCompatibility"
 import {normalizeManifestActions} from "./manifestActions"
 import {selectReleaseVersionsForGarbageCollection} from "./releaseVersionGc"
 import {assertPublisherIdentityPolicy} from "./publisherIdentityPolicy"
+import {normalizeManifestPermissions} from "./manifestPermissions"
 import {miniappInstallIdentityError, type MiniappInstallExpectations} from "./miniappInstallIdentity"
 import {miniappRunningRegistry} from "./MiniappRunningRegistry"
 import {canInstallMiniappRelease, isSystemMiniappPackage, requiresConnectedGlasses} from "./SystemMiniappPolicy"
 import {validateInstallBundleArchive} from "./validateInstallBundle"
 
 export {normalizeManifestActions} from "./manifestActions"
-
-const ALLOWED_PERMISSION_TYPES: ReadonlySet<AppPermissionType> = new Set<AppPermissionType>([
-  "MICROPHONE",
-  "CAMERA",
-  "CALENDAR",
-  "LOCATION",
-  "BACKGROUND_LOCATION",
-  "READ_NOTIFICATIONS",
-  "POST_NOTIFICATIONS",
-])
-
-/**
- * Normalize the `permissions` field from a miniapp.json manifest.
- *
- * New miniapps ship `[{type, required?, description?}]` objects. A few older
- * installed bundles may have `["MICROPHONE", ...]` plain strings. Accept both.
- */
-export function normalizeManifestPermissions(
-  raw: Array<string | {type: string; required?: boolean; description?: string}> | undefined,
-): AppletPermission[] {
-  if (!Array.isArray(raw)) return []
-  const out: AppletPermission[] = []
-  for (const p of raw) {
-    if (typeof p === "string") {
-      if (ALLOWED_PERMISSION_TYPES.has(p as AppPermissionType)) {
-        out.push({type: p as AppPermissionType, required: true})
-      }
-    } else if (p && typeof p === "object" && typeof p.type === "string") {
-      if (ALLOWED_PERMISSION_TYPES.has(p.type as AppPermissionType)) {
-        out.push({
-          type: p.type as AppPermissionType,
-          ...(typeof p.required === "boolean" ? {required: p.required} : {}),
-          ...(typeof p.description === "string" ? {description: p.description} : {}),
-        })
-      }
-    }
-  }
-  return out
-}
+export {normalizeManifestPermissions} from "./manifestPermissions"
 
 function normalizeManifestType(raw: unknown): AppletType {
   return raw === "background" || raw === "system_dashboard" || raw === "standard" ? raw : "standard"

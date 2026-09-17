@@ -5,7 +5,7 @@ import path from "node:path"
 import test from "node:test"
 import {fileURLToPath} from "node:url"
 
-import {createReleasePlan, loadReleaseFamily, serializeReleaseRecord} from "./release-family.mjs"
+import {createReleasePlan, familyBuildNumber, loadReleaseFamily, serializeReleaseRecord} from "./release-family.mjs"
 import {stageReleaseFamily} from "./stage-release-family.mjs"
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
@@ -35,7 +35,7 @@ test("stages one exact prerelease identity without changing MentraOS workspace e
     channel: "beta",
     sequence: 57,
     sourceCommit: "a".repeat(40),
-    nativeBuildNumber: 310000057,
+    nativeBuildNumber: familyBuildNumber(family.familyBaseVersion, 57),
   })
 
   const downloadedPlan = JSON.parse(serializeReleaseRecord(plan))
@@ -57,7 +57,7 @@ test("rejects a plan from another family base", () => {
     channel: "dev",
     sequence: 4,
     sourceCommit: "b".repeat(40),
-    nativeBuildNumber: 310000004,
+    nativeBuildNumber: familyBuildNumber(family.familyBaseVersion, 4),
   })
   plan.familyBaseVersion = family.familyBaseVersion === "0.0.0" ? "0.0.1" : "0.0.0"
 
@@ -71,7 +71,7 @@ test("rejects a plan whose changelog does not match the source", () => {
     channel: "dev",
     sequence: 4,
     sourceCommit: "b".repeat(40),
-    nativeBuildNumber: 310000004,
+    nativeBuildNumber: familyBuildNumber(family.familyBaseVersion, 4),
   })
   plan.changelog.sha256 = "0".repeat(64)
 

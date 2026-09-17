@@ -89,6 +89,21 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
 
   return {
     ...config,
+    ...(process.env.MENTRA_PR_APK_FINGERPRINT
+      ? {
+          extra: {
+            ...config.extra,
+            mentraPrBuild: {
+              schemaVersion: 1,
+              mobileFingerprint: process.env.MENTRA_PR_APK_FINGERPRINT,
+              mobileSourceCommit: process.env.GITHUB_SHA,
+              // Expo's config serializer transforms nested nulls; keep the
+              // unconfigured intermediate explicit until CI packages its pin.
+              otaManifestUrl: "",
+            },
+          },
+        }
+      : {}),
     name: appName,
     slug: "Mentra",
     // Coordinated prereleases expose their full identity (for example,
@@ -179,7 +194,7 @@ module.exports = ({config}: ConfigContext): Partial<ExpoConfig> => {
         LSApplicationQueriesSchemes: ["msauthv2", "msauthv3"],
         NSCameraUsageDescription: "This app needs access to your camera to capture images.",
         NSMicrophoneUsageDescription:
-          "Mentra uses your microphone to enable the 'Hey Mira' AI assistant and provide live captions for deaf and hard-of-hearing users on smart glasses. For example, you can say 'Hey Mira, what's on my calendar today?' or the app can caption conversations in real-time on your glasses display.",
+          "The Mentra App uses your phone microphone for features such as live captions, translation, notes, and video recording when they use phone audio. You can connect glasses and use other features without allowing microphone access.",
         NSBluetoothAlwaysUsageDescription: "This app needs access to your Bluetooth to connect to your glasses.",
         NSLocationWhenInUseUsageDescription:
           "Mentra uses your location to display nearby points of interest, weather updates, and navigation directions on your smart glasses. For example, when you're walking, the app can show restaurants within 100 meters or provide turn-by-turn directions to your destination on your glasses display.",

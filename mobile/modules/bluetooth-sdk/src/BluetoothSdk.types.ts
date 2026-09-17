@@ -1,3 +1,6 @@
+import type {PhotoCompression} from "@mentra/cloud-protocol/photo-compression"
+export type {PhotoCompression} from "@mentra/cloud-protocol/photo-compression"
+
 // Bluetooth SDK Event Types
 export type GlassesNotReadyEvent = {
   type: "glasses_not_ready"
@@ -284,6 +287,7 @@ export type PhotoStatusState =
   | "uploaded"
   | "ready_for_transfer"
   | "transferring"
+  | "thumbnail_received"
   | "failed"
 
 export type PhotoResolvedConfig = {
@@ -294,7 +298,7 @@ export type PhotoResolvedConfig = {
   requestedSize?: PhotoSize | string
   source?: "sdk" | "button" | string
   transferMethod?: "webhook" | "ble" | "local" | string
-  compression?: PhotoCompression | string
+  compression?: PhotoCompression
   saveToGallery?: boolean
   exposureTimeNs?: number
   iso?: number
@@ -360,6 +364,9 @@ export type PhotoStatusEvent = {
   captureMetadata?: PhotoCaptureMetadata
   errorCode?: string
   errorMessage?: string
+  /** Present on thumbnail_received: a JPEG data URI, not the final photo. */
+  thumbnailUrl?: string
+  fileSizeBytes?: number
 }
 
 export type CameraStatusEvent = {
@@ -561,7 +568,6 @@ export type PhotoCaptureDefaults = {
   /** When true, clears stored NR/edge/ISP presets on the glasses before applying other fields. */
   resetCaptureTuning?: boolean
 }
-export type PhotoCompression = "none" | "medium" | "heavy"
 
 export type VideoRecordingDefaults = {
   width: number
@@ -653,6 +659,11 @@ export type MicPreference = "auto" | "phone" | "glasses" | "bluetooth"
 export type MicMode = "phone" | "glasses" | "bluetoothClassic" | "bluetooth"
 
 export type PhotoRequestParams = {
+  /**
+   * Send an oriented <=500px, quality-50 JPEG preview before the full photo. Default false.
+   * Enables a 110-second end-to-end native deadline (ordinary requests: 30 seconds).
+   */
+  presend_thumbnail?: boolean
   requestId?: string
   appId?: string
   size: PhotoSize
@@ -661,7 +672,7 @@ export type PhotoRequestParams = {
   transferMethod?: PhotoTransferMethod
   webhookUrl: string | null
   authToken: string | null
-  compress: PhotoCompression
+  compress?: PhotoCompression
   save?: boolean
   sound: boolean
   exposureTimeNs?: number | null
@@ -688,13 +699,15 @@ export type WarmUpCameraParams = {
   size: PhotoSize
   mode?: PhotoMode
   exposureTimeNs?: number | null
-  /** Ready-state hold; defaults to 15 seconds and is capped at 60 seconds by ASG. */
+  /** Ready-state hold; defaults to 15 seconds and is capped at 5 minutes by ASG. */
   durationMs?: number
   /** ZSL preview buffering for the warm-up session. */
   zsl?: boolean
   /** MFNR still capture for the warm-up session. */
   mfnr?: boolean
 }
+
+export type StreamDegradationPreference = "MAINTAIN_FRAMERATE" | "MAINTAIN_RESOLUTION" | "BALANCED" | "DISABLED"
 
 export type StreamVideoConfig = {
   width?: number
@@ -705,6 +718,8 @@ export type StreamVideoConfig = {
   /** WHIP startup bitrate in bps, clamped to the requested bounds. */
   initialBitrateBps?: number
   fps?: number
+  /** WHIP adaptation policy. Omit to keep the glasses' MAINTAIN_FRAMERATE default. */
+  degradationPreference?: StreamDegradationPreference
 }
 
 export type StreamAudioConfig = {
@@ -745,6 +760,8 @@ export type StreamStartRequest = {
    * TEMPORARY: part of the SoftAP diagnostic trace layer.
    */
   traceId?: string
+  authToken?: string
+  telemetry?: boolean
 }
 
 export type StreamKeepAliveRequest = {
@@ -865,6 +882,8 @@ export type StreamResolvedConfig = {
     bitrate: number
     /** Resolved capture/encode frame rate. */
     fps: number
+    /** Applied WHIP adaptation policy; absent on older firmware and other transports. */
+    degradationPreference?: StreamDegradationPreference
   }
   audio?: {
     /** Encoded audio bitrate in bits per second. */

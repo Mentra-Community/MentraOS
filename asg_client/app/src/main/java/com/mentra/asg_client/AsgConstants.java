@@ -1,6 +1,34 @@
 package com.mentra.asg_client;
 
 public class AsgConstants {
+    /** Keep BES receiving across the prep-to-snap gap and successive short cues. */
+    public static final long I2S_IDLE_CLOSE_MS = 750L;
+
+    /** Bound a missing readiness reply without playing into a closed BES input. */
+    public static final long I2S_READY_TIMEOUT_MS = 1500L;
+
+    /** Compatibility only for BES firmware without the readiness acknowledgement. */
+    public static final long I2S_LEGACY_SETTLE_MS = 250L;
+
+    /** Internal service extra carrying the correlated BES START request. */
+    public static final String EXTRA_I2S_REQUEST_ID = "i2s_request_id";
+
+    /** Maximum wait for Camera2 re-registration before a FOV readiness error. */
+    public static final long CAMERA_FOV_READY_TIMEOUT_MS = 20_000L;
+
+    /** BLE command/response delivery margin for the bounded FOV update contract. */
+    public static final long CAMERA_FOV_DELIVERY_MARGIN_MS = 5_000L;
+
+    /** One active restart plus one coalesced pending restart, with BLE delivery margin.
+     * Mirrored by CAMERA_FOV_REQUEST_TIMEOUT_MS / cameraFovRequestTimeoutMs in the
+     * Android/iOS MentraBluetoothSdk facades; keep the three contracts in sync.
+     */
+    public static final long CAMERA_FOV_REQUEST_TIMEOUT_MS =
+            2 * CAMERA_FOV_READY_TIMEOUT_MS + CAMERA_FOV_DELIVERY_MARGIN_MS;
+
+    /** Check registration without blocking the main lifecycle thread. */
+    public static final long CAMERA_FOV_READY_POLL_MS = 250L;
+
     /** A charger never permits camera use at or below this known battery percentage. */
     public static final int CAMERA_CHARGING_BATTERY_FLOOR = 3;
 
@@ -70,7 +98,10 @@ public class AsgConstants {
     /**
      * 1Hz encoder FPS/bitrate/dropped-frame telemetry ({@code [STREAM_QUALITY]} and BLE {@code
      * stream_status.stats}). Lifecycle {@code stream_status} (started/stopped/error) is unaffected.
-     * Keep false in production; flip locally to debug the Mentra Call FPS ladder.
+     * Build-time DEFAULT only: the live switch is {@link
+     * com.mentra.asg_client.io.streaming.StreamTelemetryPolicy}, which the phone flips per stream
+     * via {@code start_stream.telemetry} (compact {@code tl}). Keep false here; opt in from the
+     * phone when the temperature / FPS ladder is needed.
      *
      * <p>Double gate: reporters are not scheduled, and {@code onStreamMetrics} returns immediately
      * so accidental emission cannot reach BLE. Manual acceptance with every layer false: join
@@ -123,7 +154,7 @@ public class AsgConstants {
     /** Warm-up leases are intentionally short-lived to bound idle camera power use. */
     public static final long CAMERA_WARM_UP_DEFAULT_DURATION_MS = 15_000L;
 
-    public static final long CAMERA_WARM_UP_MAX_DURATION_MS = 60_000L;
+    public static final long CAMERA_WARM_UP_MAX_DURATION_MS = 300_000L;
 
     /**
      * Shortest gap between two camera-button photos. Presses inside this window are dropped.
@@ -407,7 +438,26 @@ public class AsgConstants {
      * transfer pipeline. Filter logcat on tag {@code BlePhotoTiming} or prefix {@code ⏱️ [BLE
      * PHOTO]}. Keep false in production.
      */
-    public static final boolean ENABLE_PHOTO_TIMING_LOGS = true;
+    public static final boolean ENABLE_PHOTO_TIMING_LOGS = false;
+
+    /** Opt-in SDK preview: preserve aspect ratio, never upscale. */
+    public static final int PHOTO_THUMBNAIL_LONG_EDGE = 500;
+
+    public static final int PHOTO_THUMBNAIL_JPEG_QUALITY = 50;
+
+    /** Bound the preview's wait for phone acknowledgement before starting full delivery. */
+    public static final int PHOTO_THUMBNAIL_TIMEOUT_SECONDS = 30;
+
+  /** Full-image delivery allowance after the preview ACK (includes upload or BLE fallback). */
+  public static final long PHOTO_DELIVERY_TIMEOUT_MS = 30_000L;
+  /** Glasses job budget: capture + preview transfer/retries + full delivery, without timer resets. */
+  public static final long PHOTO_THUMBNAIL_JOB_TIMEOUT_MS =
+      PHOTO_CAPTURE_TIMEOUT_MS + PHOTO_THUMBNAIL_TIMEOUT_SECONDS * 1000L + PHOTO_DELIVERY_TIMEOUT_MS;
+  /** Command/terminal-event transit margin; mirrored by both Bluetooth SDK facades. */
+  public static final long PHOTO_RESPONSE_MARGIN_MS = 5_000L;
+  /** SDK end-to-end deadline. Keep Android/iOS MentraBluetoothSDK photo constants in sync. */
+  public static final long PHOTO_THUMBNAIL_REQUEST_TIMEOUT_MS =
+      PHOTO_THUMBNAIL_JOB_TIMEOUT_MS + PHOTO_RESPONSE_MARGIN_MS;
 
     /**
      * ZSL preview/capture buffering kill switch. Disable only as an emergency; normal photo capture
@@ -487,9 +537,15 @@ public class AsgConstants {
     public static final String BLE_PHOTO_CODEC = "JPEG_FAST";
 
     /**
-     * JPEG quality for all BLE photo payloads when {@link #BLE_PHOTO_CODEC} is {@code JPEG_FAST}.
+     * Delivered JPEG quality when compression is none or omitted (still lossy JPEG).
      */
-    public static final int BLE_PHOTO_JPEG_FAST_QUALITY = 80;
+    public static final int PHOTO_JPEG_QUALITY_NONE = 95;
+    /** Delivered JPEG quality for low compression. */
+    public static final int PHOTO_JPEG_QUALITY_LOW = 88;
+    /** Delivered JPEG quality for medium compression. */
+    public static final int PHOTO_JPEG_QUALITY_MEDIUM = 78;
+    /** Delivered JPEG quality for high compression. */
+    public static final int PHOTO_JPEG_QUALITY_HIGH = 60;
 
     /**
      * Log UART file-transfer send progress every N packets. {@code 0} = off (start/end/errors

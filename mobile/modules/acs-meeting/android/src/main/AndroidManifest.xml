@@ -4,4 +4,7 @@
   <uses-permission android:name="android.permission.ACCESS_WIFI_STATE" />
   <uses-permission android:name="android.permission.NEARBY_WIFI_DEVICES" android:usesPermissionFlags="neverForLocation" />
   <uses-permission android:name="android.permission.RECORD_AUDIO" />
+  <!-- ACS refuses to publish a video stream without it, even though our frames come from the
+       glasses over WHIP rather than from this phone's own camera sensor. -->
+  <uses-permission android:name="android.permission.CAMERA" />
 </manifest>

@@ -1,7 +1,11 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import {validateGooglePlayDraft, validateGooglePlayRollout} from "./validate-google-play-release.mjs"
+import {
+  validateGooglePlayDraft,
+  validateGooglePlayRollout,
+  validateGooglePlaySubmission,
+} from "./validate-google-play-release.mjs"
 
 function inventory(status, userFraction) {
   return {
@@ -21,6 +25,16 @@ test("accepts only an exact unreleased Google Play draft during submission", () 
   assert.equal(result.status, "draft")
   assert.throws(() => validateGooglePlayDraft(inventory("inProgress", 0.1), 310000100), /unreleased draft/)
   assert.throws(() => validateGooglePlayDraft(inventory("completed", null), 310000100), /unreleased draft/)
+})
+
+test("accepts a draft or a managed-publishing-held rollout as a submission, never a halted release", () => {
+  assert.equal(validateGooglePlaySubmission(inventory("draft", null), 310000100).requiredState, "draft")
+  const held = validateGooglePlaySubmission(inventory("completed", null), 310000100)
+  assert.equal(held.requiredState, "submitted")
+  assert.equal(held.status, "completed")
+  assert.equal(validateGooglePlaySubmission(inventory("inProgress", 0.1), 310000100).userFraction, 0.1)
+  assert.throws(() => validateGooglePlaySubmission(inventory("halted", 0.1), 310000100), /not held for review/)
+  assert.throws(() => validateGooglePlaySubmission(inventory("completed", null), 310000101), /exactly one/)
 })
 
 test("accepts only an exact active or completed Google Play rollout", () => {

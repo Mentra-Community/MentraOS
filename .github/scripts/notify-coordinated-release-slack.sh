@@ -138,6 +138,9 @@ if [[ "${UPLOAD_GOOGLE_PLAY:-true}" == "false" ]]; then
   play_detail="dev uploads paused; APK/AAB downloads remain available"
 fi
 android_line="*$(icon "$android_result") Android* - $(label "$android_result") - ${android_detail}${newline}Google Play: ${play_detail}"
+if [[ -n "${PLAY_INSTALL_URL:-}" ]]; then
+  android_line+=" - <${PLAY_INSTALL_URL}|Install from Google Play>"
+fi
 ios_line="*$(icon "$ios_result") iOS* - $(label "$ios_result") - ${ios_detail}${newline}TestFlight: ${TESTFLIGHT_GROUP:-unknown}"
 if [[ -n "${TESTFLIGHT_DISTRIBUTION_STATUS:-}" ]]; then
   ios_line+=" - ${TESTFLIGHT_DISTRIBUTION_STATUS}"
@@ -152,12 +155,26 @@ asg_line="*$(icon "${OTA_RESULT:-unknown}") ASG + OTA* - $(label "${OTA_RESULT:-
 starter_line="*$(icon "${FINALIZE_EXAMPLE_RESULT:-unknown}") Bluetooth example* - $(label "${FINALIZE_EXAMPLE_RESULT:-unknown}") - Starter Kit build: $(icon "${STARTER_KIT_RESULT:-unknown}") $(label "${STARTER_KIT_RESULT:-unknown}") - ${starter_detail}${newline}React Native iOS TestFlight: ${example_testflight_icon} ${example_testflight_detail}"
 starter_line+="${newline}React Native Android Google Play: $(icon "${EXAMPLE_GOOGLE_PLAY_RESULT:-unknown}") ${example_play_detail}"
 docs_line="*$(icon "${DOCS_RESULT:-unknown}") Docs* - $(label "${DOCS_RESULT:-unknown}") - ${docs_detail}"
-checks_line="*Release checks*${newline}Plan: $(icon "${PLAN_RESULT:-unknown}") $(label "${PLAN_RESULT:-unknown}") | Cloud V2: $(icon "${CLOUD_V2_RESULT:-unknown}") $(label "${CLOUD_V2_RESULT:-unknown}") | Mentra Cloud image: $(icon "${RUNTIME_IMAGE_RESULT:-unknown}") $(label "${RUNTIME_IMAGE_RESULT:-unknown}") | Private deployment: $(icon "${PRIVATE_DEPLOYMENT_RESULT:-skipped}") $(label "${PRIVATE_DEPLOYMENT_RESULT:-skipped}") | Packages: $(icon "${NPM_RESULT:-unknown}") $(label "${NPM_RESULT:-unknown}") | Native SDK: $(icon "${SDK_NATIVE_RESULT:-unknown}") $(label "${SDK_NATIVE_RESULT:-unknown}") | Engine consumer: $(icon "${ENGINE_RESULT:-unknown}") $(label "${ENGINE_RESULT:-unknown}") | Examples: $(icon "${STARTER_KIT_RESULT:-unknown}") $(label "${STARTER_KIT_RESULT:-unknown}") | Example TestFlight: $(icon "${EXAMPLE_TESTFLIGHT_RESULT:-unknown}") $(label "${EXAMPLE_TESTFLIGHT_RESULT:-unknown}") | Finalize: $(icon "${FINALIZE_RESULT:-unknown}") $(label "${FINALIZE_RESULT:-unknown}")"
-
-checks_line+=" | Example Google Play: $(icon "${EXAMPLE_GOOGLE_PLAY_RESULT:-unknown}") $(label "${EXAMPLE_GOOGLE_PLAY_RESULT:-unknown}")"
-checks_line+=" | Example finalize: $(icon "${FINALIZE_EXAMPLE_RESULT:-unknown}") $(label "${FINALIZE_EXAMPLE_RESULT:-unknown}")"
+scope="${RELEASE_SCOPE:-core}"
+if [[ "$scope" == examples ]]; then
+  if [[ "${FINALIZE_EXAMPLE_RESULT:-}" == success && "${DOCS_RESULT:-}" == success ]]; then
+    header_icon=":white_check_mark:"
+    header_text="$channel_label examples and docs complete"
+  else
+    header_icon=":warning:"
+    header_text="$channel_label examples and docs incomplete"
+  fi
+  checks_line="*Example checks*${newline}Inputs: $(icon "${PLAN_RESULT:-unknown}") $(label "${PLAN_RESULT:-unknown}") | Starter Kit: $(icon "${STARTER_KIT_RESULT:-unknown}") $(label "${STARTER_KIT_RESULT:-unknown}") | TestFlight: $(icon "${EXAMPLE_TESTFLIGHT_RESULT:-unknown}") $(label "${EXAMPLE_TESTFLIGHT_RESULT:-unknown}")"
+  checks_line+=" | Example Google Play: $(icon "${EXAMPLE_GOOGLE_PLAY_RESULT:-unknown}") $(label "${EXAMPLE_GOOGLE_PLAY_RESULT:-unknown}")"
+  checks_line+=" | Example finalize: $(icon "${FINALIZE_EXAMPLE_RESULT:-unknown}") $(label "${FINALIZE_EXAMPLE_RESULT:-unknown}")"
+else
+  checks_line="*Release checks*${newline}Plan: $(icon "${PLAN_RESULT:-unknown}") $(label "${PLAN_RESULT:-unknown}") | Cloud V2: $(icon "${CLOUD_V2_RESULT:-unknown}") $(label "${CLOUD_V2_RESULT:-unknown}") | Mentra Cloud image: $(icon "${RUNTIME_IMAGE_RESULT:-unknown}") $(label "${RUNTIME_IMAGE_RESULT:-unknown}") | Private deployment: $(icon "${PRIVATE_DEPLOYMENT_RESULT:-skipped}") $(label "${PRIVATE_DEPLOYMENT_RESULT:-skipped}") | Packages: $(icon "${NPM_RESULT:-unknown}") $(label "${NPM_RESULT:-unknown}") | Native SDK: $(icon "${SDK_NATIVE_RESULT:-unknown}") $(label "${SDK_NATIVE_RESULT:-unknown}") | Engine consumer: $(icon "${ENGINE_RESULT:-unknown}") $(label "${ENGINE_RESULT:-unknown}") | Finalize: $(icon "${FINALIZE_RESULT:-unknown}") $(label "${FINALIZE_RESULT:-unknown}")"
+  examples_url="https://github.com/${REPOSITORY}/actions/workflows/coordinated-example-release.yml?query=branch%3A${BRANCH}"
+  checks_line+="${newline}Examples and docs dispatch: $(icon "${EXAMPLES_DISPATCH_RESULT:-unknown}") $(label "${EXAMPLES_DISPATCH_RESULT:-unknown}") - <${examples_url}|View separate workflow>"
+fi
 
 payload=$(jq -n \
+  --arg scope "$scope" \
   --arg header "$header_icon $header_text" \
   --arg commit "$commit_subject" \
   --arg release "$release_text" \
@@ -174,11 +191,14 @@ payload=$(jq -n \
       {type: "section", text: {type: "mrkdwn", text: $commit}},
       {type: "section", text: {type: "mrkdwn", text: $release}},
       {type: "divider"},
-      {type: "section", text: {type: "mrkdwn", text: $android}},
-      {type: "section", text: {type: "mrkdwn", text: $ios}},
-      {type: "section", text: {type: "mrkdwn", text: $asg}},
-      {type: "section", text: {type: "mrkdwn", text: $starter}},
-      {type: "section", text: {type: "mrkdwn", text: $docs}},
+      (if $scope == "examples" then
+        {type: "section", text: {type: "mrkdwn", text: $starter}},
+        {type: "section", text: {type: "mrkdwn", text: $docs}}
+      else
+        {type: "section", text: {type: "mrkdwn", text: $android}},
+        {type: "section", text: {type: "mrkdwn", text: $ios}},
+        {type: "section", text: {type: "mrkdwn", text: $asg}}
+      end),
       {type: "section", text: {type: "mrkdwn", text: $checks}},
       {type: "context", elements: [{type: "mrkdwn", text: $context}]}
     ]

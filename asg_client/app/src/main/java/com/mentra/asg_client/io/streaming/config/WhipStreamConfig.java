@@ -23,6 +23,12 @@ public class WhipStreamConfig {
 
   public static final String DEFAULT_STUN_SERVER = "stun:stun.cloudflare.com:3478";
 
+  public static final String DEFAULT_DEGRADATION_PREFERENCE = "MAINTAIN_FRAMERATE";
+  public static final String DEGRADATION_MAINTAIN_FRAMERATE = "MAINTAIN_FRAMERATE";
+  public static final String DEGRADATION_MAINTAIN_RESOLUTION = "MAINTAIN_RESOLUTION";
+  public static final String DEGRADATION_BALANCED = "BALANCED";
+  public static final String DEGRADATION_DISABLED = "DISABLED";
+
   private int videoWidth = DEFAULT_VIDEO_WIDTH;
   private int videoHeight = DEFAULT_VIDEO_HEIGHT;
   private int videoFps = DEFAULT_VIDEO_FPS;
@@ -30,6 +36,7 @@ public class WhipStreamConfig {
   private Integer videoMinBitrateBps;
   private Integer videoInitialBitrateBps;
   private volatile double statusVideoFps = Double.NaN;
+  private String degradationPreference = DEFAULT_DEGRADATION_PREFERENCE;
 
   private boolean echoCancellation = DEFAULT_ECHO_CANCELLATION;
   private boolean noiseSuppression = DEFAULT_NOISE_SUPPRESSION;
@@ -82,6 +89,10 @@ public class WhipStreamConfig {
       int requestedMinimum = videoJson.optInt("minBitrateBps", 0);
       if (requestedMinimum > 0) {
         config.videoMinBitrateBps = Math.min(requestedMinimum, config.videoBitrate);
+      }
+      String dp = optStringWithFallback(videoJson, "degradationPreference", "dp", null);
+      if (dp != null && !dp.trim().isEmpty()) {
+        config.degradationPreference = normalizeDegradationPreference(dp);
       }
     }
 
@@ -148,6 +159,28 @@ public class WhipStreamConfig {
   private static boolean optBoolWithFallback(JSONObject json, String fullKey, String compactKey, boolean defaultValue) {
     if (json.has(fullKey)) return json.optBoolean(fullKey, defaultValue);
     return json.optBoolean(compactKey, defaultValue);
+  }
+
+  private static String optStringWithFallback(JSONObject json, String fullKey, String compactKey, String defaultValue) {
+    if (json.has(fullKey)) return json.optString(fullKey, defaultValue);
+    if (json.has(compactKey)) return json.optString(compactKey, defaultValue);
+    return defaultValue;
+  }
+
+  private static String normalizeDegradationPreference(String value) {
+    if (value == null) return DEFAULT_DEGRADATION_PREFERENCE;
+    String normalized = value.trim().toUpperCase().replace('-', '_');
+    switch (normalized) {
+      case DEGRADATION_MAINTAIN_RESOLUTION:
+        return DEGRADATION_MAINTAIN_RESOLUTION;
+      case DEGRADATION_BALANCED:
+        return DEGRADATION_BALANCED;
+      case DEGRADATION_DISABLED:
+        return DEGRADATION_DISABLED;
+      case DEGRADATION_MAINTAIN_FRAMERATE:
+      default:
+        return DEGRADATION_MAINTAIN_FRAMERATE;
+    }
   }
 
   private static int clamp(int value, int min, int max) {
@@ -223,6 +256,7 @@ public class WhipStreamConfig {
   public boolean isNoiseSuppression() { return noiseSuppression; }
   public boolean isCaptureAudio() { return captureAudio; }
   public String getStunServer() { return stunServer; }
+  public String getDegradationPreference() { return degradationPreference; }
 
   // Setters with validation (fluent API)
   public WhipStreamConfig setVideoWidth(int width) {
@@ -267,6 +301,7 @@ public class WhipStreamConfig {
       video.put("height", getVideoHeight());
       video.put("bitrate", getVideoBitrate());
       video.put("fps", oneDecimal(getStatusVideoFps()));
+      video.put("degradationPreference", getDegradationPreference());
       resolvedConfig.put("video", video);
       audio.put("echoCancellation", isEchoCancellation());
       audio.put("noiseSuppression", isNoiseSuppression());
@@ -279,6 +314,11 @@ public class WhipStreamConfig {
 
   public WhipStreamConfig setVideoBitrate(int bitrate) {
     this.videoBitrate = clamp(bitrate, 100000, 10000000);
+    return this;
+  }
+
+  public WhipStreamConfig setDegradationPreference(String preference) {
+    this.degradationPreference = normalizeDegradationPreference(preference);
     return this;
   }
 
@@ -307,6 +347,7 @@ public class WhipStreamConfig {
     return "WhipStreamConfig{"
         + "video=" + videoWidth + "x" + videoHeight + "@" + videoFps + "fps, "
         + (videoBitrate / 1000) + "kbps"
+        + ", degradation=" + degradationPreference
         + ", echo=" + echoCancellation
         + ", noise=" + noiseSuppression
         + ", captureAudio=" + captureAudio

@@ -90,7 +90,7 @@ jobs:
           cp mobile/Gemfile mobile/Gemfile.lock store-status/play/
           cd store-status/play
           bundle install
-          APP_PACKAGE_NAME=com.mentra.mentra GOOGLE_PLAY_INVENTORY_OUTPUT=mentraApp.json bundle exec fastlane google_play_inventory
+          APP_PACKAGE_NAME=com.mentra.mentra GOOGLE_PLAY_INVENTORY_OUTPUT="$GITHUB_WORKSPACE/store-status/play/mentraApp.json" bundle exec fastlane google_play_inventory
 
       - name: Summarize observed state and exact next action
         run: |

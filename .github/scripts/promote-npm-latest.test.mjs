@@ -5,14 +5,14 @@ import path from "node:path"
 import test from "node:test"
 
 import {compareVersions, latestFlipDecision, npmMembersFromPlan, promoteNpmLatest} from "./promote-npm-latest.mjs"
-import {createReleasePlan, loadReleaseFamily} from "./release-family.mjs"
+import {createReleasePlan, familyBuildNumber, loadReleaseFamily} from "./release-family.mjs"
 
 const family = loadReleaseFamily()
 const plan = createReleasePlan({
   family,
   channel: "production",
   sourceCommit: "a".repeat(40),
-  nativeBuildNumber: 310000057,
+  nativeBuildNumber: familyBuildNumber(family.familyBaseVersion, 57),
 })
 const version = plan.releaseIdentity
 const candidateTag = `candidate-${version}`
@@ -80,7 +80,7 @@ function registry(initialTags) {
   }
 }
 
-test("flips latest for every npm member, reads it back, and retires the candidate tag", () => {
+test("flips latest for every npm member, reads it back, and leaves the candidate tag as a record", () => {
   const members = npmMembersFromPlan(plan)
   const initial = Object.fromEntries(
     members.map((name) => [
@@ -106,11 +106,82 @@ test("flips latest for every npm member, reads it back, and retires the candidat
   assert.equal(result.publications["@mentra/bluetooth-sdk"].npm.status, "published")
   assert.equal(result.publications["@mentra/bluetooth-sdk"].npm.previousLatest, "3.0.0")
   assert.ok(fake.commands.includes(`npm dist-tag add @mentra/bluetooth-sdk@${version} latest`))
-  assert.ok(fake.commands.includes(`npm dist-tag rm @mentra/bluetooth-sdk ${candidateTag}`))
+  assert.ok(!fake.commands.some((command) => command.includes("dist-tag rm")))
+  assert.equal(fake.view("@mentra/bluetooth-sdk", "dist-tags").includes(candidateTag), true)
   assert.ok(!fake.commands.some((command) => command.includes("@mentra/engine@")))
   const written = JSON.parse(readFileSync(path.join(outputDir, "npm-latest.json"), "utf8"))
   assert.equal(written.releaseSetId, plan.releaseSetId)
   assert.equal(Object.keys(written.publications).length, members.length)
+})
+
+test("waits for npm to serve the moved latest before trusting the read-back", () => {
+  const members = npmMembersFromPlan(plan)
+  const initial = Object.fromEntries(
+    members.map((name) => [
+      name,
+      [
+        [candidateTag, version],
+        ["latest", "3.0.0"],
+      ],
+    ]),
+  )
+  // The registry acknowledges the move, but the next reads still serve the
+  // previous latest for a while, as npm does.
+  const staleReads = (count) => {
+    const fake = registry(initial)
+    const stale = new Map()
+    return {
+      fake,
+      view(spec, field) {
+        const fresh = fake.view(spec, field)
+        if (field !== "dist-tags" || !(stale.get(spec) > 0)) return fresh
+        stale.set(spec, stale.get(spec) - 1)
+        return JSON.stringify({...JSON.parse(fresh), latest: "3.0.0"})
+      },
+      exec(command, args) {
+        fake.exec(command, args)
+        if (args[1] === "add") stale.set(args[2].slice(0, args[2].lastIndexOf("@")), count)
+      },
+    }
+  }
+
+  const lagging = staleReads(2)
+  let sleeps = 0
+  const result = promoteNpmLatest({
+    plan,
+    npmTag: candidateTag,
+    outputDir: mkdtempSync(path.join(tmpdir(), "npm-latest-")),
+    view: lagging.view,
+    exec: lagging.exec,
+    log: () => {},
+    readbackAttempts: 4,
+    sleep: () => {
+      sleeps += 1
+    },
+  })
+  assert.equal(sleeps, 2 * members.length)
+  assert.ok(members.every((name) => result.publications[name].npm.status === "published"))
+  assert.ok(!lagging.fake.commands.some((command) => command.includes("dist-tag rm")))
+
+  const stuck = staleReads(100)
+  let stuckSleeps = 0
+  assert.throws(
+    () =>
+      promoteNpmLatest({
+        plan,
+        npmTag: candidateTag,
+        outputDir: mkdtempSync(path.join(tmpdir(), "npm-latest-")),
+        view: stuck.view,
+        exec: stuck.exec,
+        log: () => {},
+        readbackAttempts: 3,
+        sleep: () => {
+          stuckSleeps += 1
+        },
+      }),
+    /latest reads back as "3\.0\.0" after 10s, expected/,
+  )
+  assert.equal(stuckSleeps, 2)
 })
 
 test("refuses unpublished versions and does nothing in a dry run", () => {

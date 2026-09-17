@@ -1,5 +1,7 @@
 package com.mentra.asg_client.service.core;
 
+import android.os.SystemClock;
+
 /**
  * Tracks a short cooldown after the camera HAL is restarted (e.g. after FOV change).
  * During cooldown, photo capture should skip shutter sound and LED flash to avoid
@@ -16,7 +18,7 @@ public final class CameraRestartCooldown {
      * Start the cooldown period (call after restarting the camera HAL).
      */
     public static void setCooldownMs(int durationMs) {
-        cooldownUntilMs = System.currentTimeMillis() + durationMs;
+        cooldownUntilMs = SystemClock.elapsedRealtime() + durationMs;
     }
 
     /**
@@ -30,11 +32,11 @@ public final class CameraRestartCooldown {
      * Returns true if we are still within the cooldown window (sound/flash should be suppressed).
      */
     public static boolean isActive() {
-        return System.currentTimeMillis() < cooldownUntilMs;
+        return SystemClock.elapsedRealtime() < cooldownUntilMs;
     }
 
     /** Time still needed before acknowledging a crop as ready for capture. */
     public static long remainingMs() {
-        return Math.max(0L, cooldownUntilMs - System.currentTimeMillis());
+        return Math.max(0L, cooldownUntilMs - SystemClock.elapsedRealtime());
     }
 }

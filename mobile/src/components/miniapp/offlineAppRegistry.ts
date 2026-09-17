@@ -34,6 +34,7 @@ import MainSettings from "@/app/miniapps/settings/main"
 import MicrophoneSettings from "@/app/miniapps/settings/microphone"
 import MiniappDevSettings from "@/app/miniapps/settings/miniapp-dev"
 import NotificationSettings from "@/app/miniapps/settings/notifications"
+import OtaPreviewScreen from "@/app/miniapps/settings/ota-preview"
 import PositionSettings from "@/app/miniapps/settings/position"
 import PrivacySettings from "@/app/miniapps/settings/privacy"
 import ProfileSettings from "@/app/miniapps/settings/profile"
@@ -67,6 +68,7 @@ const settingsRoutes: Record<string, ComponentType<any>> = {
   "/miniapps/miniappdev/developer-url": DeveloperUrlScreen,
   "/miniapps/miniappdev/scanner": ScannerScreen,
   "/miniapps/settings/notifications": NotificationSettings,
+  "/miniapps/settings/ota-preview": OtaPreviewScreen,
   "/miniapps/settings/position": PositionSettings,
   "/miniapps/settings/privacy": PrivacySettings,
   "/miniapps/settings/profile": ProfileSettings,

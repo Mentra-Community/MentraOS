@@ -19,6 +19,8 @@ import java.util.concurrent.atomic.AtomicLong
 import kotlinx.coroutines.CancellationException
 import kotlinx.coroutines.CompletableDeferred
 import kotlinx.coroutines.delay
+import kotlinx.coroutines.sync.Mutex
+import kotlinx.coroutines.sync.withLock
 import kotlinx.coroutines.withTimeoutOrNull
 
 class MentraBluetoothSdk private constructor(
@@ -73,6 +75,7 @@ class MentraBluetoothSdk private constructor(
     private var pendingWifiStatus: PendingWifiStatusRequest? = null
     private var pendingWifiForget: PendingWifiForgetRequest? = null
     private var pendingHotspotStatus: PendingHotspotStatusRequest? = null
+    private val hotspotMutex = Mutex()
     private var pendingVersionInfo: PendingVersionInfoRequest? = null
     private val wifiSessionCapabilities = WifiSessionCapabilities()
     @Volatile private var configuredOtaVersionUrl: String? = null
@@ -86,6 +89,9 @@ class MentraBluetoothSdk private constructor(
             activityLifecycleCallbacksRegistered = true
         }
         bridgeEventSinkId = Bridge.addEventSink { eventName, data -> dispatchBridgeEvent(eventName, data) }
+        // DeviceManager/MentraLive outlive Expo module remounts. glasses_ready already
+        // ran on this BLE session; replay it so startStream does not claim old firmware.
+        deviceManager.sgc?.replayStreamControlReady()
         // Baseline the analytics connection state before subscribing to the store:
         // store updates invoke listeners synchronously on the updating thread, so a
         // connected status observed before the baseline would be reported as a fresh
@@ -100,9 +106,24 @@ class MentraBluetoothSdk private constructor(
         private val SCAN_STATE_KEYS = setOf("searching", "searchingController", "searchResults")
         private const val DEFAULT_SCAN_TIMEOUT_MS = 15_000L
         private const val DEFAULT_REQUEST_TIMEOUT_MS = 15_000L
+        // Mirrors AsgConstants: one active + one coalesced pending FOV update, plus BLE margin.
+        // Keep in sync with ios/Source/MentraBluetoothSDK.swift and the ASG readiness budget.
+        private const val CAMERA_FOV_READY_TIMEOUT_MS = 20_000L
+        private const val CAMERA_FOV_DELIVERY_MARGIN_MS = 5_000L
+        private const val CAMERA_FOV_REQUEST_TIMEOUT_MS =
+            2 * CAMERA_FOV_READY_TIMEOUT_MS + CAMERA_FOV_DELIVERY_MARGIN_MS
         // A photo response is terminal only after capture, encoding, transport, and upload.
         // Max-quality BLE fallback can legitimately exceed the generic command deadline.
         private const val PHOTO_REQUEST_TIMEOUT_MS = 30_000L
+        // Mirrors AsgConstants.PHOTO_THUMBNAIL_REQUEST_TIMEOUT_MS and the iOS facade.
+        // Reserve capture, preview ACK/retries, full delivery, then terminal-event transit.
+        private const val PHOTO_CAPTURE_TIMEOUT_MS = 45_000L
+        private const val PHOTO_THUMBNAIL_TIMEOUT_SECONDS = 30L
+        private const val PHOTO_DELIVERY_TIMEOUT_MS = 30_000L
+        private const val PHOTO_RESPONSE_MARGIN_MS = 5_000L
+        private const val PHOTO_THUMBNAIL_REQUEST_TIMEOUT_MS =
+            PHOTO_CAPTURE_TIMEOUT_MS + PHOTO_THUMBNAIL_TIMEOUT_SECONDS * 1000L +
+                PHOTO_DELIVERY_TIMEOUT_MS + PHOTO_RESPONSE_MARGIN_MS
         private const val WIFI_SCAN_TIMEOUT_MS = 20_000L
         private const val VIDEO_UPLOAD_STOP_TIMEOUT_MS = 10 * 60 * 1000L
         private const val STREAM_START_TIMEOUT_MS = 30_000L
@@ -597,7 +618,12 @@ class MentraBluetoothSdk private constructor(
         pendingSettingsRequests[requestId] = pending
         try {
             send(requestId)
-            val ack = pending.await()
+            val timeoutMs = if (setting == "camera_fov" || setting == "camera_fov_override") {
+                CAMERA_FOV_REQUEST_TIMEOUT_MS
+            } else {
+                DEFAULT_REQUEST_TIMEOUT_MS
+            }
+            val ack = pending.await(timeoutMs)
             updateStore(ack)
             return ack
         } finally {
@@ -664,7 +690,7 @@ class MentraBluetoothSdk private constructor(
                     DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_iso_cap", it)
                 }
                 settings.compress?.let {
-                    DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_compress", it)
+                    DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_compress", it.value)
                 }
                 settings.sound?.let {
                     DeviceStore.set(ObservableStore.BLUETOOTH_CATEGORY, "button_photo_sound", it)
@@ -1010,23 +1036,23 @@ class MentraBluetoothSdk private constructor(
     }
 
     suspend fun setHotspotState(enabled: Boolean): HotspotStatusEvent {
-        val pending = PendingResponse<HotspotStatusEvent>("hotspot ${if (enabled) "enable" else "disable"} request")
-        synchronized(oneShotLock) {
-            if (pendingHotspotStatus != null) {
-                throw BluetoothSdkException(
-                    "request_in_flight",
-                    "A hotspot command is already waiting for a glasses response.",
-                )
-            }
-            pendingHotspotStatus = PendingHotspotStatusRequest(enabled, pending)
-        }
-        try {
-            deviceManager.setHotspotState(enabled)
-            return pending.await()
-        } finally {
+        // SoftAP teardown disables from the transport and again from the host
+        // barrier. Throwing request_in_flight on the second disable recorded a
+        // cleanup error that refused the next join. Queue instead: same-state
+        // and opposite-state both wait their turn, then send.
+        return hotspotMutex.withLock {
+            val pending = PendingResponse<HotspotStatusEvent>("hotspot ${if (enabled) "enable" else "disable"} request")
             synchronized(oneShotLock) {
-                if (pendingHotspotStatus?.pending === pending) {
-                    pendingHotspotStatus = null
+                pendingHotspotStatus = PendingHotspotStatusRequest(enabled, pending)
+            }
+            try {
+                deviceManager.setHotspotState(enabled)
+                pending.await()
+            } finally {
+                synchronized(oneShotLock) {
+                    if (pendingHotspotStatus?.pending === pending) {
+                        pendingHotspotStatus = null
+                    }
                 }
             }
         }
@@ -1052,7 +1078,9 @@ class MentraBluetoothSdk private constructor(
         pendingPhotoRequests[routedRequest.requestId] = pending
         try {
             deviceManager.requestPhoto(routedRequest)
-            return pending.await(PHOTO_REQUEST_TIMEOUT_MS)
+            return pending.await(
+                if (routedRequest.presendThumbnail) PHOTO_THUMBNAIL_REQUEST_TIMEOUT_MS else PHOTO_REQUEST_TIMEOUT_MS,
+            )
         } finally {
             pendingPhotoRequests.remove(routedRequest.requestId, pending)
         }

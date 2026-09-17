@@ -29,6 +29,9 @@ export default {
   async restartVideoSource(): Promise<void> {
     unavailable()
   },
+  async rebindSoftApIngest(): Promise<string> {
+    unavailable()
+  },
   async joinScopedNetwork(_ssid: string, _passphrase: string): Promise<string> {
     unavailable()
   },

@@ -81,7 +81,7 @@ For one-shot manual capture tuning, pass `exposureTimeNs` and `iso` together. `e
 | `size` | React Native, Android, iOS | JPEG size tier: `low`, `medium`, `high`, or `max`. |
 | `webhookUrl` | React Native, Android, iOS | Upload URL that receives the multipart `photo` file and `requestId`. |
 | `authToken` | React Native, Android, iOS | Optional bearer token for the upload request. Omit it or pass `null` / `nil` to send no `Authorization` header. |
-| `compress` | React Native, Android, iOS | Upload compression: `none`, `medium`, or `heavy`. Omitted native values default to `none`. |
+| `compress` | React Native, Android, iOS | Upload compression: `none`, `low`, `medium`, or `high`. Omitted native values default to `none`. |
 | `save` | React Native, Android, iOS | Keeps the captured photo in the glasses gallery after delivery when `true`. When `false`, the photo is only used for the requested delivery. Defaults to `false`. |
 | `sound` | React Native, Android, iOS | Plays the shutter sound when `true`; defaults to `true`. |
 | `exposureTimeNs` | React Native, Android, iOS | Optional manual sensor exposure time in nanoseconds. Omit or pass `null` / `nil` for auto exposure. |
@@ -395,7 +395,7 @@ console.log('saved as', savedPhoto?.name, 'at', savedPhoto?.url);
 | `ispAnalogGain` | ISP analog gain hint for action-button photos. |
 | `aeExposureDivisor` | Scan-style auto-exposure divisor for action-button photos. Values must be greater than `1`. |
 | `isoCap` | Scan-style ISO cap for action-button photos. Values must be greater than `0`. |
-| `compress` | Upload compression for action-button photos: `none`, `medium`, or `heavy`. |
+| `compress` | Upload compression for action-button photos: `none`, `low`, `medium`, or `high`. |
 | `sound` | Shutter sound preference for action-button photos. |
 | `resetCaptureTuning` | Restores optional tuning fields to standard capture behavior before applying any fields included in the same call. |
 

@@ -30,7 +30,13 @@ on:
         required: true
         type: string
       play_track:
+        description: Google Play track, or internal-app-sharing for a Play-signed build with no track floor
         required: true
+        type: string
+      play_release_status:
+        description: Release status of the track upload (completed, or draft for production candidates)
+        required: false
+        default: completed
         type: string
       testflight_group:
         required: true
@@ -98,6 +104,8 @@ on:
         value: ${{ jobs.status.outputs.ipa_name }}
       asset_base_url:
         value: ${{ jobs.status.outputs.asset_base_url }}
+      play_install_url:
+        value: ${{ jobs.android.outputs.play_install_url }}
       testflight_install_url:
         value: ${{ jobs.ios-store.outputs.install_url }}
       testflight_distribution_status:
@@ -264,6 +272,8 @@ jobs:
     needs: prepare
     runs-on: blacksmith-8vcpu-ubuntu-2404
     timeout-minutes: 60
+    outputs:
+      play_install_url: ${{ steps.play-link.outputs.install_url }}
     env:
       EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY }}
       EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID }}
@@ -283,6 +293,10 @@ jobs:
           distribution: temurin
 
       - uses: android-actions/setup-android@v3
+        with:
+          # The action's default list includes the retired `tools` package,
+          # which no longer downloads; Gradle fetches the rest it needs.
+          packages: platform-tools
 
       - name: Install Android build tools used for artifact verification
         run: sdkmanager "build-tools;36.0.0"
@@ -484,7 +498,7 @@ jobs:
 
       - name: Check selected Google Play track
         id: play
-        if: inputs.dry_run != true && inputs.compatibility_lab != true && needs.prepare.outputs.upload_google_play == 'true'
+        if: inputs.dry_run != true && inputs.compatibility_lab != true && needs.prepare.outputs.upload_google_play == 'true' && inputs.play_track != 'internal-app-sharing'
         working-directory: mobile-play
         env:
           GOOGLE_PLAY_TRACK: ${{ inputs.play_track }}
@@ -499,11 +513,12 @@ jobs:
           fi
 
       - name: Upload exact AAB to Google Play
-        if: inputs.dry_run != true && inputs.compatibility_lab != true && needs.prepare.outputs.upload_google_play == 'true' && steps.play.outputs.exists != 'true'
+        if: inputs.dry_run != true && inputs.compatibility_lab != true && needs.prepare.outputs.upload_google_play == 'true' && inputs.play_track != 'internal-app-sharing' && steps.play.outputs.exists != 'true'
         working-directory: mobile-play
         env:
           GOOGLE_PLAY_AAB: ${{ github.workspace }}/mobile-release/android/${{ needs.prepare.outputs.aab_name }}
           GOOGLE_PLAY_TRACK: ${{ inputs.play_track }}
+          GOOGLE_PLAY_RELEASE_STATUS: ${{ inputs.play_release_status }}
         run: bundle exec fastlane google_play
 
       - name: Checkout current non-promotable distribution tooling
@@ -514,10 +529,12 @@ jobs:
           path: production-tools
           sparse-checkout: .github/scripts
 
-      - name: Upload compatibility AAB to Google Play Internal App Sharing
-        if: inputs.dry_run != true && inputs.compatibility_lab == true
+      # Internal App Sharing has no version-code floor, so it distributes
+      # Play-signed builds whose numbers sit below what a track already serves.
+      - name: Upload exact AAB to Google Play Internal App Sharing
+        if: inputs.dry_run != true && inputs.play_track == 'internal-app-sharing' && needs.prepare.outputs.upload_google_play == 'true'
         run: >-
-          node production-tools/.github/scripts/google-play-internal-sharing.mjs
+          node ${{ inputs.compatibility_lab && 'production-tools' || '.' }}/.github/scripts/google-play-internal-sharing.mjs
           --credentials "$GOOGLE_PLAY_JSON_KEY"
           --package com.mentra.mentra
           --bundle "mobile-release/android/${{ needs.prepare.outputs.aab_name }}"
@@ -534,9 +551,20 @@ jobs:
           --aab "mobile-release/android/${{ needs.prepare.outputs.aab_name }}"
           --aab-url "${{ needs.prepare.outputs.asset_base_url }}/${{ needs.prepare.outputs.aab_name }}"
           --play-track "${{ inputs.play_track }}"
+          ${{ inputs.dry_run != true && inputs.play_track == 'internal-app-sharing' && needs.prepare.outputs.upload_google_play == 'true' && '--internal-sharing mobile-release/android-internal-sharing.json' || '' }}
           --status "$STATUS"
           --provenance-url "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           --output mobile-release/android-publication.json
+
+      - name: Export the Google Play install link
+        id: play-link
+        run: |
+          set -euo pipefail
+          url=""
+          if [[ "${{ inputs.play_track }}" == internal-app-sharing && "${{ inputs.dry_run }}" != true && "${{ needs.prepare.outputs.upload_google_play }}" == true ]]; then
+            url=$(jq -er '.publications.mentraos["google-play"].url' mobile-release/android-publication.json)
+          fi
+          echo "install_url=$url" >> "$GITHUB_OUTPUT"
 
       - uses: actions/upload-artifact@v4
         with:

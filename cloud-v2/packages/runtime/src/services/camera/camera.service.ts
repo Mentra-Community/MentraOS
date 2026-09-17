@@ -33,7 +33,6 @@ import {
 import { forwardToUserSessions } from "../../net/ws";
 import { PROTOCOL_MAJOR } from "@mentra/cloud-protocol/envelope";
 import type {
-  PhotoOptions,
   StreamOptions,
   ManagedStream,
   StreamStatusResult,
@@ -74,10 +73,8 @@ export interface PhotoRequestResult {
  */
 export async function requestPhoto(
   mentraUserId: string,
-  opts: PhotoOptions,
   origin: string,
 ): Promise<PhotoRequestResult> {
-  void opts; // size/compress/etc. are passed to a real provider later
   const provider = getStorageProvider();
   const requestId = `photo_${ulid()}`;
   const key = photoKey(requestId);

@@ -29,3 +29,5 @@ jobs:
         run: swift test --package-path mobile/modules/glasses-media/ios/CoreKit
       - name: Test ACS audio policy
         run: swift test --package-path mobile/modules/acs-meeting/ios/PolicyKit
+      - name: Test local WHIP when the internet path omits Wi-Fi
+        run: mobile/modules/glasses-media/ios/Tests/LocalWhipNetwork/run.sh

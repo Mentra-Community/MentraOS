@@ -49,9 +49,23 @@ describe("preparePairingScan", () => {
 
     expect(checkConnectivityRequirementsUI).toHaveBeenCalledTimes(1)
     expect(requestFeaturePermissions).toHaveBeenNthCalledWith(1, PermissionFeatures.BLUETOOTH)
-    expect(requestFeaturePermissions).toHaveBeenNthCalledWith(2, PermissionFeatures.MICROPHONE)
+    expect(requestFeaturePermissions).toHaveBeenCalledTimes(1)
     expect(engine.miniapps.stopAll).toHaveBeenCalledTimes(1)
   })
+
+  it.each(["Mentra Live", "Even Realities G1", "Simulated Glasses"])(
+    "allows iOS pairing for %s without phone microphone access",
+    async (model) => {
+      ;(requestFeaturePermissions as jest.Mock).mockImplementation(
+        async (feature) => feature !== PermissionFeatures.MICROPHONE,
+      )
+
+      await expect(preparePairingScan(model)).resolves.toBe(true)
+
+      expect(requestFeaturePermissions).not.toHaveBeenCalledWith(PermissionFeatures.MICROPHONE)
+      expect(showAlert).not.toHaveBeenCalled()
+    },
+  )
 
   it("does not stop miniapps or continue when connectivity is unavailable", async () => {
     ;(checkConnectivityRequirementsUI as jest.Mock).mockResolvedValue(false)
@@ -75,6 +89,30 @@ describe("preparePairingScan", () => {
     expect(engine.miniapps.stopAll).not.toHaveBeenCalled()
   })
 
+  it.each([30, 33, 36])("allows Android %s pairing without microphone access", async (version) => {
+    Object.defineProperty(Platform, "OS", {value: "android", configurable: true})
+    Object.defineProperty(Platform, "Version", {value: version, configurable: true})
+    const requestMultiple = jest
+      .spyOn(PermissionsAndroid, "requestMultiple")
+      .mockImplementation(
+        async (permissions) =>
+          Object.fromEntries(
+            permissions.map((permission) => [permission, PermissionsAndroid.RESULTS.GRANTED]),
+          ) as Awaited<ReturnType<typeof PermissionsAndroid.requestMultiple>>,
+      )
+    ;(requestFeaturePermissions as jest.Mock).mockImplementation(
+      async (feature) => feature !== PermissionFeatures.MICROPHONE,
+    )
+
+    for (const model of ["Mentra Live", "Even Realities G1", "Simulated Glasses"]) {
+      await expect(preparePairingScan(model)).resolves.toBe(true)
+    }
+    expect(engine.miniapps.stopAll).toHaveBeenCalledTimes(3)
+    expect(requestFeaturePermissions).not.toHaveBeenCalledWith(PermissionFeatures.MICROPHONE)
+    expect(requestFeaturePermissions).toHaveBeenCalledWith(PermissionFeatures.LOCATION)
+    requestMultiple.mockRestore()
+  })
+
   it("preserves the Android permission order before checking connectivity", async () => {
     Object.defineProperty(Platform, "OS", {value: "android", configurable: true})
     Object.defineProperty(Platform, "Version", {value: 33, configurable: true})
@@ -96,8 +134,8 @@ describe("preparePairingScan", () => {
       PermissionsAndroid.PERMISSIONS.BLUETOOTH_ADVERTISE,
     ])
     expect(requestFeaturePermissions).toHaveBeenNthCalledWith(2, PermissionFeatures.BLUETOOTH)
-    expect(requestFeaturePermissions).toHaveBeenNthCalledWith(3, PermissionFeatures.MICROPHONE)
-    expect(requestFeaturePermissions).toHaveBeenNthCalledWith(4, PermissionFeatures.LOCATION)
+    expect(requestFeaturePermissions).toHaveBeenNthCalledWith(3, PermissionFeatures.LOCATION)
+    expect(requestFeaturePermissions).not.toHaveBeenCalledWith(PermissionFeatures.MICROPHONE)
     expect(checkConnectivityRequirementsUI).toHaveBeenCalledTimes(1)
     requestMultiple.mockRestore()
   })

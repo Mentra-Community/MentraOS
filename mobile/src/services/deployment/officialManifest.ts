@@ -1,5 +1,8 @@
+import Constants from "expo-constants"
+
 import {APP_STORE_REVIEW_URL, APP_STORE_URL, PLAY_STORE_URL} from "@/constants/appConfig"
 
+import {packagedOtaPin} from "./packagedOtaPin"
 import type {ConsumerDeployment, DeploymentManifest} from "./types"
 
 /** Embedded defaults. Expo inlines these environment reads into each build. */
@@ -14,7 +17,10 @@ export function createOfficialManifest(): DeploymentManifest {
     },
     auth: {mode: "mentra-account"},
     artifacts: {
-      mentraLiveOtaManifestUrl: process.env.EXPO_PUBLIC_ASG_OTA_VERSION_URL?.trim() || null,
+      mentraLiveOtaManifestUrl: packagedOtaPin(
+        Constants.expoConfig?.extra,
+        process.env.EXPO_PUBLIC_ASG_OTA_VERSION_URL,
+      ),
       sttModelBaseUrl: null,
       ttsModelBaseUrl: null,
     },

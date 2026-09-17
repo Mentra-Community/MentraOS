@@ -7,6 +7,7 @@ import NetworkExtension
 public final class GlassesHotspotNetwork {
     private let queue = DispatchQueue(label: "com.mentra.glassesmedia.hotspot")
     private var ssid: String?
+    private var lastHotspotSSID: String?
     private var localAddress: String?
     private var gatewayAddress: String?
     private var generation = 0
@@ -27,6 +28,7 @@ public final class GlassesHotspotNetwork {
             self.generation += 1
             let gen = self.generation
             self.ssid = ssid
+            self.lastHotspotSSID = ssid
             self.gatewayAddress = gateway
             self.cancelled = false
             self.applying = true
@@ -104,7 +106,7 @@ public final class GlassesHotspotNetwork {
         }
     }
 
-    public func awaitInternet(completion: @escaping (Bool, String) -> Void) {
+    public func awaitInternet(requireCellular: Bool = true, completion: @escaping (Bool, String) -> Void) {
         queue.async {
             let monitor = NWPathMonitor()
             var finished = false
@@ -116,9 +118,21 @@ public final class GlassesHotspotNetwork {
             }
             monitor.pathUpdateHandler = { path in
                 if path.status == .satisfied, path.usesInterfaceType(.cellular) { finish(true, "cellular") }
+                // Once the hotspot is released, a return to the user's Wi-Fi is also valid.
+                // Do not mistake the departing glasses AP's local-only path for restored internet.
+                if !requireCellular, path.status == .satisfied, path.usesInterfaceType(.wifi) {
+                    NEHotspotNetwork.fetchCurrent { network in
+                        self.queue.async {
+                            guard let network, !network.ssid.isEmpty, network.ssid != self.lastHotspotSSID else { return }
+                            finish(true, "wifi")
+                        }
+                    }
+                }
             }
             monitor.start(queue: self.queue)
-            self.queue.asyncAfter(deadline: .now() + 15) { finish(false, "Cellular internet did not become the default route") }
+            self.queue.asyncAfter(deadline: .now() + 15) {
+                finish(false, requireCellular ? "Cellular internet did not become the default route" : "Internet did not return after leaving the glasses hotspot")
+            }
         }
     }
 
@@ -136,7 +150,9 @@ public final class GlassesHotspotNetwork {
                 } else if remaining > 0 {
                     self.queue.asyncAfter(deadline: .now() + 0.5) { self.waitForAddress(ssid: ssid, generation: gen, remaining: remaining - 1) }
                 } else {
-                    self.finishJoin(.failure(LocalMediaError("Glasses hotspot has no verified Wi-Fi address")))
+                    let association = network == nil ? "unavailable" : (network?.ssid == ssid ? "matched" : "different")
+                    let address = Self.wifiAddress() ?? "none"
+                    self.finishJoin(.failure(LocalMediaError("Glasses hotspot has no verified Wi-Fi address (SSID=\(association), Wi-Fi IPv4=\(address))")))
                     self.finishLeave()
                 }
             }

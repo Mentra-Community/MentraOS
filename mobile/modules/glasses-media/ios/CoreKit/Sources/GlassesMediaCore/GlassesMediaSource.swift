@@ -1,5 +1,11 @@
 import Foundation
 
+/// Investigation arms shared with the Android [MediaDiagnostics] object.
+public enum MediaDiagnostics {
+    /// SoftAP ingest rebind kill switch. Ships on. Flip off to refuse destroying the live listener.
+    public static var softapRecoveryEnabled = true
+}
+
 public enum SourceKind: String, Sendable {
     case whep
     case direct
@@ -33,6 +39,8 @@ public protocol GlassesMediaSource: AnyObject {
     func restart(config: SourceConfig)
     func stop()
     func setPcmDeliveryEnabled(_ enabled: Bool)
+    func forceCloseIngest()
+    func awaitIngestClosed(timeoutMs: Int) -> Bool
 }
 
 public final class GlassesMediaController {
@@ -74,6 +82,12 @@ public extension GlassesMediaSource {
     }
 
     func forceRestart() {}
+
+    func forceCloseIngest() {}
+
+    func awaitIngestClosed(timeoutMs _: Int) -> Bool {
+        true
+    }
 }
 
 public extension SourceConfig {

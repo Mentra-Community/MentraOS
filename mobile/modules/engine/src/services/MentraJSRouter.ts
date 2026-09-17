@@ -23,10 +23,9 @@
  * Host-side handler bodies (display fan-out, mic state, transcription,
  * navigation, etc.) live untouched in `LocalMiniappRuntime.ts`.
  *
- * Cloud-message routing (`phone_stream_status`, `phone_managed_stream_status`)
- * goes straight through `LocalMiniappRuntime.handleCloudMessage` — nothing
- * for the router to do; the responses arrive inside an envelope whose
- * `sendMessage` was already registered via the same path here.
+ * PhoneStreamCoordinator delivers stream status through LocalMiniappRuntime
+ * to the miniapp's registered `sendMessage` callback, using the same local
+ * bridge as other responses and events.
  *
  * The router also bridges native error / log / unhandled-rejection
  * events (`iface: "__log"`, `iface: "__error"`) into the standard
@@ -583,11 +582,8 @@ export class MentraJSRouter {
 
   /**
    * Push a `kind="bridge"` envelope into the named JSContext's
-   * `globalThis.__deliver`. Used both by the per-app `sendMessage`
-   * registered via {@link registerApp} and by ad-hoc callers (e.g.
-   * cloud-relayed stream-status responses route through
-   * `LocalMiniappRuntime.handleCloudMessage`, which then calls the
-   * `app.sendMessage(serialized)` registered above).
+   * `globalThis.__deliver`. Used by the per-app `sendMessage` registered via
+   * {@link registerApp} to deliver runtime responses and events locally.
    */
   private dispatchBridgeRaw(packageName: string, raw: string): void {
     void this.crust.mentraJsDispatchToJs(packageName, {kind: "bridge", raw})

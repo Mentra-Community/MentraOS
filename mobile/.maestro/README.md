@@ -43,6 +43,7 @@ npm run test:maestro:ci
 
 ### Simulated Hardware Tests
 
+- `04c-pairing-without-microphone.yaml` - iOS and Android discovery with microphone access denied (signed in, no glasses paired)
 - `04b-mentra-live-adaptive-scan.yaml` - Direct Mentra Live scan, timeout help, and in-place retry
 - `04-simulated-glasses-pairing.yaml` - Pairing flow with simulated glasses (built-in feature)
 - `06-launch-app-simulated-glasses.yaml` - Launch Mira app on simulated glasses
@@ -87,3 +88,25 @@ npm run test:maestro:ci
 
 - Some emulators don't properly support airplane mode toggle
 - May need to manually test network scenarios
+
+## Microphone denial regression
+
+Run `maestro test -e MAESTRO_APP_ID=com.mentra.mentra .maestro/flows/04c-pairing-without-microphone.yaml`
+on a signed-in iOS simulator or Android emulator starting at Home with no glasses paired. This sets
+microphone access to denied and verifies that Mentra Live discovery opens.
+
+Before resubmitting to Apple, verify on iPhone, iPad, and Android with the updated native build:
+
+1. With microphone access undetermined, pair Mentra Live and simulated glasses.
+   Neither pairing flow should request microphone access. Repeat with access denied.
+2. With simulated glasses, launch a miniapp requiring microphone access (for example,
+   Captions). Decline the system prompt. The miniapp must remain closed, Home must
+   stay usable, and Settings must not open or be suggested immediately afterward.
+3. On Android, also exercise repeated denial and "Don’t ask again"; neither should
+   immediately suggest Settings. Try that miniapp again after access is blocked. Cancel the feature-specific Settings explanation and
+   verify Home remains usable. Repeat and explicitly select Open Settings to verify
+   that this is the only action that opens Settings.
+4. Grant access and retry the miniapp; verify transcription starts. A miniapp without
+   microphone requirements must still open when access is denied.
+5. Open the fullscreen mirror without microphone access. Only attempting video
+   recording should request access. Declining must leave the mirror usable.

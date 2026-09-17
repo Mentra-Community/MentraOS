@@ -335,7 +335,7 @@ interface CloudRuntimeAdapter {
   setSubscriptions: (subs: AudioSubscription[]) => Promise<void>
   onTranscript: (cb: (d: TranscriptionData) => void) => () => void
   onTranslation: (cb: (d: TranslationData) => void) => () => void
-  requestManagedPhoto: (opts: PhotoOptions) => Promise<PhotoResult>
+  requestManagedPhoto: () => Promise<PhotoResult>
   startManagedStream: (opts: StreamOptions) => Promise<ManagedStream>
   // ...connection lifecycle
 }

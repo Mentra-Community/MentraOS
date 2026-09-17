@@ -20,13 +20,12 @@ import {getDefaultMenuApps, type GlassesMenuItem} from "@/utils/glassesMenu"
 
 import {
   cameraPackageName,
-  CHINA_HIDDEN_APPS,
   feedbackPackageName,
-  isChinaBuild,
   miniappDeveloperPackageName,
   mirrorPackageName,
   notifyPackageName,
   settingsPackageName,
+  shouldHideMiniapp,
 } from "@/constants/miniapps"
 
 /**
@@ -299,7 +298,7 @@ class BuiltInMiniappCatalog {
       iconComponent: createElement(DevIcon),
     })
 
-    return isChinaBuild() ? apps.filter((app) => !CHINA_HIDDEN_APPS.includes(app.packageName)) : apps
+    return apps.filter((app) => !shouldHideMiniapp(app.packageName))
   }
 }
 

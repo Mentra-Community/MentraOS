@@ -262,19 +262,6 @@ export default function SelectGlassesBluetoothScreen() {
       }
     }
 
-    const hasMicPermission = await requestFeaturePermissions(PermissionFeatures.MICROPHONE)
-    if (!hasMicPermission) {
-      connectingRef.current = false
-      setScanTimedOut(true)
-      void BluetoothSdk.stopScan()
-      showAlert(
-        "Microphone Permission Required",
-        "Microphone permission is required to connect to smart glasses. Voice control and audio features are essential for the AR experience.",
-        [{text: "OK"}],
-      )
-      return
-    }
-
     await startPairing(device)
   }
 

@@ -74,6 +74,77 @@ export function validateFamilyBaseVersion(version) {
   return version
 }
 
+// Every store build number in the family (the Mentra App's iOS build and
+// Android versionCode, and the ASG client's versionCode) derives from the family
+// base version, so a number says which release it belongs to and every channel
+// of a family orders naturally: MAJOR*100_000_000 + MINOR*1_000_000 +
+// PATCH*10_000 + SEQUENCE. Dev and beta use the coordinated run number as the
+// sequence; production takes the next free sequence above everything the
+// stores already hold for the family. MINOR and PATCH are limited to 99 so the
+// windows never overlap, and MAJOR to 20 so codes stay under Android's
+// 2,100,000,000 limit. Two legacy namespaces sit below every family window:
+// the timestamp scheme of the pre-coordinated releases (below 60 million) and
+// the first coordinated allocator's 100_000_000 + run number. The Mentra App's
+// 3.1.0 betas and early 3.2.0 dev builds used a flat 310_000_000 + run number
+// and sit above their families' windows; testers on those Android builds
+// reinstall once to rejoin the release train.
+export const BUILD_NUMBER_MAJOR_WEIGHT = 100_000_000
+export const BUILD_NUMBER_MINOR_WEIGHT = 1_000_000
+export const BUILD_NUMBER_PATCH_WEIGHT = 10_000
+export const BUILD_NUMBER_MAX_SEQUENCE = BUILD_NUMBER_PATCH_WEIGHT - 1
+// Release channels (dev, beta, production) allocate sequences from this band;
+// the sequences above it are reserved for local and pull-request builds, which
+// must always outrank every release of their family.
+export const BUILD_NUMBER_RELEASE_SEQUENCE_LIMIT = 2_999
+
+export function familyBuildNumberPrefix(baseVersion) {
+  const match = STABLE_VERSION_PATTERN.exec(typeof baseVersion === "string" ? baseVersion : "")
+  if (!match) throw new Error(`Family base version ${JSON.stringify(baseVersion)} must be a plain X.Y.Z version`)
+  const [major, minor, patch] = match.slice(1).map(Number)
+  if (major < 2 || major > 20) throw new Error(`Family base version major ${major} must be between 2 and 20`)
+  if (minor > 99) throw new Error(`Family base version minor ${minor} must be at most 99`)
+  if (patch > 99) throw new Error(`Family base version patch ${patch} must be at most 99`)
+  return major * BUILD_NUMBER_MAJOR_WEIGHT + minor * BUILD_NUMBER_MINOR_WEIGHT + patch * BUILD_NUMBER_PATCH_WEIGHT
+}
+
+// Local and pull-request builds of the app and the ASG client take a sequence
+// above every release of their family, derived from the HEAD commit's
+// committer time so that the app and the ASG client built from the same commit
+// share a number without any shared counter. Minutes wrap the band every 4.9
+// days, which covers iterating on a pull request with glasses attached.
+export const BUILD_NUMBER_NON_RELEASE_SEQUENCE_BASE = 3_000
+const BUILD_NUMBER_NON_RELEASE_SEQUENCE_SPAN = BUILD_NUMBER_MAX_SEQUENCE - BUILD_NUMBER_NON_RELEASE_SEQUENCE_BASE + 1
+const BUILD_NUMBER_EPOCH_SECONDS = Date.UTC(2025, 0, 1) / 1000
+
+export function nonReleaseBuildSequence(committerEpochSeconds) {
+  if (!Number.isSafeInteger(committerEpochSeconds) || committerEpochSeconds < BUILD_NUMBER_EPOCH_SECONDS) {
+    throw new Error(`Commit time ${JSON.stringify(committerEpochSeconds)} must be a Unix time on or after 2025-01-01`)
+  }
+  const minutes = Math.floor((committerEpochSeconds - BUILD_NUMBER_EPOCH_SECONDS) / 60)
+  return BUILD_NUMBER_NON_RELEASE_SEQUENCE_BASE + (minutes % BUILD_NUMBER_NON_RELEASE_SEQUENCE_SPAN)
+}
+
+export function nonReleaseBuildNumber(baseVersion, committerEpochSeconds) {
+  return familyBuildNumber(baseVersion, nonReleaseBuildSequence(committerEpochSeconds))
+}
+
+export function familyBuildNumberWindow(baseVersion) {
+  const prefix = familyBuildNumberPrefix(baseVersion)
+  return {prefix, first: prefix + 1, last: prefix + BUILD_NUMBER_MAX_SEQUENCE}
+}
+
+export function familyBuildNumber(baseVersion, sequence) {
+  if (!Number.isSafeInteger(sequence) || sequence < 1 || sequence > BUILD_NUMBER_MAX_SEQUENCE) {
+    throw new Error(`Build sequence ${JSON.stringify(sequence)} must be between 1 and ${BUILD_NUMBER_MAX_SEQUENCE}`)
+  }
+  return familyBuildNumberPrefix(baseVersion) + sequence
+}
+
+export function buildNumberBelongsTo(baseVersion, buildNumber) {
+  const window = familyBuildNumberWindow(baseVersion)
+  return Number.isSafeInteger(buildNumber) && buildNumber >= window.first && buildNumber <= window.last
+}
+
 export function channelForBranch(branch) {
   if (branch === "dev") return "dev"
   if (branch === "staging") return "beta"
@@ -265,8 +336,15 @@ export function createReleasePlan({
   if (typeof sourceCommit !== "string" || !COMMIT_PATTERN.test(sourceCommit)) {
     throw new Error("sourceCommit must be a full lowercase Git commit SHA")
   }
-  if (!Number.isSafeInteger(nativeBuildNumber) || nativeBuildNumber < 1) {
-    throw new Error("nativeBuildNumber must be a positive safe integer")
+  if (!buildNumberBelongsTo(family.familyBaseVersion, nativeBuildNumber)) {
+    throw new Error(
+      `nativeBuildNumber ${JSON.stringify(nativeBuildNumber)} does not belong to family ${family.familyBaseVersion}`,
+    )
+  }
+  if (nativeBuildNumber - familyBuildNumberPrefix(family.familyBaseVersion) > BUILD_NUMBER_RELEASE_SEQUENCE_LIMIT) {
+    throw new Error(
+      `nativeBuildNumber ${nativeBuildNumber} is outside the release band of family ${family.familyBaseVersion}`,
+    )
   }
 
   const releaseIdentity = deriveReleaseIdentity(family.familyBaseVersion, channel, sequence)
@@ -382,7 +460,9 @@ function expectedPublicationCoordinate(plan, memberName, target) {
   if (target === "swift-package-manager") return `Mentra-Community/mentra-bluetooth-sdk-ios@${version}`
   const channels = {
     dev: {play: "internal", appStore: "Mentra Dev"},
-    beta: {play: "beta", appStore: "Mentra Staging"},
+    // Betas use Internal App Sharing while the Play beta track serves a
+    // pre-formula build number above every family window.
+    beta: {play: "internal-app-sharing", appStore: "Mentra Staging"},
     production: {play: "production", appStore: "App Store"},
   }
   const selected = channels[plan.channel]

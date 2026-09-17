@@ -103,17 +103,16 @@ test("records exact non-promotable lab distributions", () => {
   assert.equal(evidence.source.mobileNCommit, record.coordinates.currentMentraApp.sourceCommit)
 })
 
-test("rejects internal-sharing evidence for a different AAB", () => {
-  assert.throws(
-    () =>
-      createCompatibilityLabEvidence({
-        record,
-        plan,
-        mobile,
-        internalSharing: {...sharing, sha256: sha("0")},
-        createdAt: "2026-08-28T21:00:00.000Z",
-        provenanceUrl: "https://github.com/Mentra-Community/MentraOS/actions/runs/2",
-      }),
-    /does not match the built AAB/,
-  )
+test("records Play's generated-artifact digest next to the built AAB digest", () => {
+  const evidence = createCompatibilityLabEvidence({
+    record,
+    plan,
+    mobile,
+    internalSharing: {downloadUrl: sharing.downloadUrl, sha256: sha("0").toUpperCase()},
+    createdAt: "2026-08-28T21:00:00.000Z",
+    provenanceUrl: "https://github.com/Mentra-Community/MentraOS/actions/runs/2",
+  })
+  assert.equal(evidence.android.aabSha256, sha("d"))
+  assert.equal(evidence.android.playArtifactSha256, sha("0"))
+  assert.equal(evidence.android.certificateFingerprint, "")
 })

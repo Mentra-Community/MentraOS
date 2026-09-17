@@ -39,7 +39,7 @@ final class PhoneWhipPublisher: NSObject {
         queue.async {
             guard !self.stopped else { return }
             RTCInitializeSSL()
-            let factory = RTCPeerConnectionFactory(encoderFactory: RTCDefaultVideoEncoderFactory(), decoderFactory: RTCDefaultVideoDecoderFactory(), audioDevice: self.audioDevice)
+            let factory = GlassesPeerFactory.make(audioDevice: self.audioDevice)
             let options = RTCPeerConnectionFactoryOptions()
             options.ignoreWiFiNetworkAdapter = true
             options.ignoreVPNNetworkAdapter = true

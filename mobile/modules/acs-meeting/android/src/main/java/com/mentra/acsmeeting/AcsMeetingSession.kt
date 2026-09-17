@@ -61,6 +61,8 @@ import com.mentra.acsmeeting.audio.PcmBridge
 import com.mentra.acsmeeting.audio.PhoneMicCapturer
 import com.mentra.acsmeeting.audio.UplinkPacer
 import com.mentra.acsmeeting.audio.UplinkSender
+import com.mentra.acsmeeting.telemetry.CallDiagnostics
+import com.mentra.acsmeeting.telemetry.WireEpisodeTracker
 import com.mentra.glassesmedia.source.MediaDiagnostics
 import com.mentra.glassesmedia.source.CloudflareWhepSource
 import com.mentra.glassesmedia.source.DecoderMode
@@ -108,7 +110,7 @@ class AcsMeetingSession(
 ) {
   internal val stats = PipelineStats()
   private val avSync = AvSyncProbe()
-  private val ticker = PipelineTicker(stats, avSync) {
+  private val ticker = PipelineTicker(stats, avSync, onTick = { sampleBwe() }) {
     Log.i(TAG, it)
   }
   private val executor: ScheduledExecutorService = Executors.newSingleThreadScheduledExecutor()
@@ -217,6 +219,37 @@ class AcsMeetingSession(
   @Volatile private var currentSourceKind = SourceKind.WHEP
   private var mediaRestartAttempts = 0
   private var mediaRestartTask: ScheduledFuture<*>? = null
+
+  /**
+   * Which path the wearer took into this call: `created` (Start) or `joined` (Join).
+   *
+   * Stamped on every diagnostic below, because the open question these traces exist to answer —
+   * whether a joined call runs at a lower bitrate than a created one — cannot be asked of a log
+   * that does not say which kind of call produced each line. `unknown` means a caller that
+   * predates the field, and is kept distinct from either answer rather than guessed at.
+   */
+  @Volatile private var callOrigin = "unknown"
+
+  /** ACS call id once the SDK has one; the only key that ties these lines to a Teams-side record. */
+  @Volatile private var callId = ""
+  @Volatile private var joinStartedAtMs = 0L
+  @Volatile private var lobbyEnteredAtMs = 0L
+  @Volatile private var connectedAtMs = 0L
+  @Volatile private var lastBweSampleAtMs = 0L
+
+  /**
+   * Calls out each stretch where the ACS uplink went bad, and what it cost to come back.
+   *
+   * Kept here rather than left to the analyzer because the two are not redundant: the analyzer can
+   * only reconstruct episodes from readings that arrived, and on a Start call barely a quarter of
+   * them do. This is the session's own account, so an episode is on the record even when
+   * MEDIA_STATISTICS went quiet in the middle of it.
+   */
+  @Volatile private var wireEpisodes = WireEpisodeTracker()
+  /** When the wire size last changed, so the recovery ramp after a downscale is sampled densely. */
+  @Volatile private var lastAdaptationAtMs = 0L
+  /** When the wire was last under the low threshold, for the same reason. */
+  @Volatile private var lastLowWireAtMs = 0L
 
   /**
    * Bumped by every join and every leave, so a bounded ACS operation that completes late cannot
@@ -340,6 +373,8 @@ class AcsMeetingSession(
     audioSource: String = "glasses",
     video: VideoProfile = VideoProfile.DEFAULT,
     audioDelayMs: Int? = null,
+    /** `created` (Start) or `joined` (Join); see [callOrigin]. Diagnostic only. */
+    origin: String = "unknown",
     /**
      * Runs the WHIP listener bind, and exists so the caller can lift a process-wide network pin
      * across exactly that call. Takes the block rather than being a pair of before/after hooks so
@@ -361,6 +396,17 @@ class AcsMeetingSession(
     phase = "connecting"
     lastError = null
     meetingUrl = teamsUrl
+    callOrigin = origin
+    callId = ""
+    joinStartedAtMs = SystemClock.elapsedRealtime()
+    lobbyEnteredAtMs = 0L
+    connectedAtMs = 0L
+    lastBweSampleAtMs = 0L
+    // Fresh per call. A tracker carried over would open this call's first episode against the
+    // previous call's floor, and an A/B run is back-to-back calls on different ceilings.
+    wireEpisodes = WireEpisodeTracker()
+    lastAdaptationAtMs = 0L
+    lastLowWireAtMs = 0L
     // SoftAP needs the WHIP listener bound before this method returns: the JS
     // orchestrator reads ingestUrl off the join result and tears the scoped
     // network down if it is missing. ACS join itself stays on the executor.
@@ -440,7 +486,29 @@ class AcsMeetingSession(
         videoOptions.formats = listOf(AcsFrameSender.outgoingFormat(profile))
         val videoStream = VirtualOutgoingVideoStream(videoOptions)
         videoOut = videoStream
-        frameSender.attach(videoStream) { size -> media.setTargetSize(size) }
+        frameSender.attach(
+          videoStream,
+          onFormat = { size -> media.setTargetSize(size) },
+          // Fires at stream start and again on every renegotiation. ACS trades resolution inside
+          // the budget it was given, so "what we asked for" and "what is being sent" diverge
+          // silently; only this says when.
+          onNegotiatedFormat = { format ->
+            SoftApTrace.stage(
+              "acs_outgoing_format",
+              *diag(
+                "width" to format.width,
+                "height" to format.height,
+                "fps" to format.framesPerSecond,
+                "pixelFormat" to format.pixelFormat,
+                "askedWidth" to profile.width,
+                "askedHeight" to profile.height,
+                "askedFps" to profile.fps,
+                "maxBitrateBps" to profile.maxBitrateBps,
+                "rateArm" to MediaDiagnostics.outgoingRate.name.lowercase(),
+              ),
+            )
+          },
+        )
 
         val audioProperties = RawOutgoingAudioStreamProperties()
           .setFormat(AudioStreamFormat.PCM16_BIT)
@@ -680,6 +748,58 @@ class AcsMeetingSession(
   fun softApIngestUrl(): String? = media.ingestUrl
 
   /**
+   * Destroy the current SoftAP listener generation and bind a new one on the address the
+   * scoped network reports *now* — the caller rejoins first, then asks for this.
+   *
+   * Blocks on [executor] so it cannot race [join] / [leaveLocked]. Returns the new ingest URL
+   * the glasses must be told; throws rather than hand back a stale listener.
+   */
+  fun rebindSoftApIngest(bindIngestUnpinned: (() -> Unit) -> Unit = { bind -> bind() }): String {
+    val done = CountDownLatch(1)
+    val result = AtomicReference<String?>(null)
+    val failure = AtomicReference<Exception?>(null)
+    val submittedAt = SystemClock.elapsedRealtime()
+    executor.execute {
+      try {
+        traceQueued("session_rebind_ingest_begin", submittedAt)
+        if (!MediaDiagnostics.SOFTAP_RECOVERY_ENABLED) {
+          throw IllegalStateException("SoftAP ingest rebind is disabled")
+        }
+        if (currentSourceKind != SourceKind.SOFTAP) {
+          throw IllegalStateException("rebindSoftApIngest is only valid for a SoftAP call")
+        }
+        val address = scopedNetwork?.localIpv4()
+          ?: throw IllegalStateException("scoped network has no IPv4 address after rejoin")
+        // Same pin-lift as [join]: a listener bound while this UID is marked cellular
+        // never receives the glasses' TCP SYN, even though ping/ARP succeed.
+        lateinit var url: String
+        bindIngestUnpinned {
+          url = media.rebindIngest(
+            SourceConfig("", SourceKind.SOFTAP, address),
+            REBIND_INGEST_CLOSE_MS,
+          )
+        }
+        SoftApTrace.stage("session_rebind_ingest_end", "url" to url)
+        result.set(url)
+      } catch (error: Exception) {
+        SoftApTrace.failure(
+          "session_rebind_ingest_failed",
+          "reason" to "${error.javaClass.simpleName}: ${error.message ?: ""}",
+        )
+        failure.set(error)
+      } finally {
+        done.countDown()
+      }
+    }
+    if (!done.await(REBIND_INGEST_CLOSE_MS + 8_000L, TimeUnit.MILLISECONDS)) {
+      SoftApTrace.failure("session_rebind_ingest_timeout", "timeoutMs" to (REBIND_INGEST_CLOSE_MS + 8_000L))
+      throw IllegalStateException("SoftAP ingest rebind timed out")
+    }
+    failure.get()?.let { throw it }
+    return result.get() ?: throw IllegalStateException("SoftAP ingest rebind returned no URL")
+  }
+
+  /**
    * Rebuild the WHEP subscription on the current URL even when it looks healthy.
    * The host calls this when the phone changed networks: ICE may not have noticed
    * yet, but the old candidate pair is dead.
@@ -837,6 +957,18 @@ class AcsMeetingSession(
     failure.get()?.let { throw it }
     return true
   }
+
+  /**
+   * Wait for the SoftAP WHIP listener to release its port, and say whether it did.
+   *
+   * Deliberately not folded into [leaveAndAwait]: the ACS teardown and the listener's tombstone
+   * run on their own clocks, and collapsing them into one answer would hide which of the two the
+   * next call is actually waiting on. `false` means the port is still held.
+   */
+  fun awaitIngestClosed(timeoutMs: Long): Boolean = media.awaitIngestClosed(timeoutMs)
+
+  /** Drop the retiring WHIP listener now. The barrier's forced path, after [awaitIngestClosed]. */
+  fun forceCloseIngest() = media.forceCloseIngest()
 
   /**
    * End the Teams group call for everyone, then tear this device down.
@@ -1021,6 +1153,25 @@ class AcsMeetingSession(
         "(code=${end["code"]}, subcode=${end["subcode"]})"
     }
     Log.i(TAG, "ACS call state=$state phase=$phase previous=$previous end=$end")
+    if (callId.isEmpty()) callId = readCallId()
+    if (phase == "lobby" && lobbyEnteredAtMs == 0L) lobbyEnteredAtMs = SystemClock.elapsedRealtime()
+    if (phase == "connected" && connectedAtMs == 0L) connectedAtMs = SystemClock.elapsedRealtime()
+    SoftApTrace.stage(
+      "acs_call_state",
+      *diag(
+        "state" to state.toString().lowercase(),
+        // Not `phase`: the trace parser treats a bare `phase=` as a stage name, because that is
+        // how the host's own lines are shaped. A field called `phase` here is silently dropped.
+        "callPhase" to phase,
+        "previous" to previous,
+        "sinceJoinMs" to sinceJoinMs(),
+        // Reported on every transition, not only on admission, so a call that is still waiting
+        // shows a dwell that grows instead of a field that appears once at the end.
+        "sinceLobbyMs" to lobbyDwellMs(),
+        "endCode" to (end["code"] ?: -1),
+        "endSubcode" to (end["subcode"] ?: -1),
+      ),
+    )
     if (phase == "connected" && previous != "connected") {
       call?.let {
         attachMediaStats(it)
@@ -1036,6 +1187,14 @@ class AcsMeetingSession(
   private fun emit(next: String) {
     phase = next
     onState(snapshot())
+  }
+
+  /** The ACS call id, or empty if the SDK has not minted one yet. Never throws into a trace. */
+  private fun readCallId(): String = try {
+    call?.id.orEmpty()
+  } catch (error: Exception) {
+    Log.w(TAG, "call id unavailable", error)
+    ""
   }
 
   private fun attachMediaStats(joined: Call) {
@@ -1073,6 +1232,24 @@ class AcsMeetingSession(
         if (width != null && height != null && width > 0 && height > 0) {
           stats.setSize(width, height)
         }
+        // Every report, not just the first eight: Start has been observed to attach and then
+        // never print a P6 line the analyzer can see. SoftApTrace is what the comparison reads.
+        SoftApTrace.stage(
+          "acs_media_stats",
+          *CallDiagnostics.mediaStatsReportFields(
+            origin = callOrigin,
+            callId = callId,
+            n = n,
+            videos = videos?.size ?: 0,
+            audios = outgoing?.audioStatistics?.size ?: 0,
+            wireBitrateBps = video?.bitrateInBps?.toLong(),
+            width = video?.frameWidth,
+            height = video?.frameHeight,
+            fps = video?.frameRate?.toDouble(),
+            codec = codec,
+            packetCount = video?.packetCount,
+          ),
+        )
       }
       feature.addOnReportReceivedListener(listener)
       mediaStatsListener = listener
@@ -1082,8 +1259,18 @@ class AcsMeetingSession(
       // CONNECTED so codecName is not stuck at na.
       scheduleMediaStatsInterval(feature, 0)
       Log.i(TAG, "P6 wire hop attached")
+      SoftApTrace.stage("acs_media_stats_attach", *CallDiagnostics.mediaStatsAttachFields(callOrigin, callId, ok = true))
     } catch (error: Exception) {
       Log.w(TAG, "MEDIA_STATISTICS attach failed", error)
+      SoftApTrace.stage(
+        "acs_media_stats_attach",
+        *CallDiagnostics.mediaStatsAttachFields(
+          callOrigin,
+          callId,
+          ok = false,
+          error = "${error.javaClass.simpleName}:${error.message.orEmpty()}",
+        ),
+      )
     }
   }
 
@@ -1095,14 +1282,45 @@ class AcsMeetingSession(
    * the adapted size once per second and a permanent downscale reads exactly like a healthy call —
    * the number is right there and nothing ever calls it out. Logged on transition only, because at
    * 1 Hz a warning per report is noise nobody reads.
+   *
+   * Traced as well as logged. A `Log.w` is invisible to `acs-quality-compare.mjs`, and while that
+   * was the only record, a call that spent 90 s at 320x180 was scored as healthy: the analyzer had
+   * no downscale to count, and 320x180 at a steady 15 fps looks like a working ladder. The trace
+   * carries `ceilingBps` so a downscale can be attributed to its A/B arm.
    */
   private fun reportWireAdaptation(width: Int?, height: Int?, fps: Float?) {
     if (width == null || height == null || width <= 0 || height <= 0) return
     val key = "${width}x$height"
-    if (key == lastWireSizeKey) return
+    val previous = lastWireSizeKey
+    if (key == previous) return
     lastWireSizeKey = key
     val askedPixels = profile.width.toLong() * profile.height
     val gotPixels = width.toLong() * height
+    // First report is the baseline, not an adaptation: direction is only meaningful against a
+    // previous size, and calling the initial negotiated size a "downscale" would put a spurious
+    // adaptation on every call in the A/B.
+    val direction = when {
+      previous == null -> "initial"
+      gotPixels < pixelsOfKey(previous) -> "down"
+      else -> "up"
+    }
+    lastAdaptationAtMs = SystemClock.elapsedRealtime()
+    SoftApTrace.stage(
+      "acs_wire_adaptation",
+      *CallDiagnostics.wireAdaptationFields(
+        origin = callOrigin,
+        callId = callId,
+        width = width,
+        height = height,
+        direction = direction,
+        sinceConnectedMs = if (connectedAtMs == 0L) -1L else SystemClock.elapsedRealtime() - connectedAtMs,
+        askedWidth = profile.width,
+        askedHeight = profile.height,
+        wireBitrateBps = stats.wireBitrateBps,
+        ceilingBps = profile.maxBitrateBps,
+        fps = fps?.toDouble(),
+      ),
+    )
     if (gotPixels < askedPixels) {
       val percent = (gotPixels * 100 / askedPixels).toInt()
       Log.w(
@@ -1116,22 +1334,80 @@ class AcsMeetingSession(
     }
   }
 
+  private fun pixelsOfKey(key: String): Long {
+    val parts = key.split("x")
+    val width = parts.getOrNull(0)?.toLongOrNull() ?: return 0L
+    val height = parts.getOrNull(1)?.toLongOrNull() ?: return 0L
+    return width * height
+  }
+
+  /**
+   * Keep asking ACS for 1 Hz reports until it agrees, for as long as the call lasts.
+   *
+   * This used to give up after six attempts across about ten seconds, and the captures show it
+   * never once succeeded: every call in `outputs/acs-quality` carries `interval=no`, and the Start
+   * calls sit at 0-28% observed coverage as a direct result. The default interval is coarse enough
+   * that a 90-second collapse can pass with a handful of readings, so losing this is what made the
+   * whole investigation guess.
+   *
+   * Ten seconds was the wrong budget because it encodes the wrong theory. The evidence is that ACS
+   * populates outgoing statistics only once a remote subscriber is actually pulling the stream —
+   * which on a Start call is whenever the other person happens to join, not a fixed delay after
+   * the local join. So the retry now backs off and keeps going for
+   * [MEDIA_STATS_INTERVAL_MAX_ATTEMPTS], and stops early only on success or when the feature is
+   * replaced.
+   */
   private fun scheduleMediaStatsInterval(feature: MediaStatisticsCallFeature, attempt: Int) {
+    val delaySeconds = when {
+      attempt == 0 -> 0L
+      attempt <= 5 -> 2L
+      attempt <= 15 -> 5L
+      else -> 15L
+    }
     executor.schedule({
       if (mediaStatsFeature !== feature) return@schedule
       try {
         feature.updateReportIntervalInSeconds(1)
         Log.i(TAG, "P6 wire interval=1s attempt=$attempt")
+        SoftApTrace.stage(
+          "acs_media_stats_interval",
+          *CallDiagnostics.mediaStatsIntervalFields(
+            callOrigin,
+            callId,
+            attempt = attempt,
+            ok = true,
+            seconds = 1,
+          ),
+        )
       } catch (error: Exception) {
         Log.w(
           TAG,
           "P6 wire interval attempt=$attempt failed ${error.javaClass.simpleName}: ${error.message}",
         )
-        if (attempt < 5) {
+        SoftApTrace.stage(
+          "acs_media_stats_interval",
+          *CallDiagnostics.mediaStatsIntervalFields(
+            callOrigin,
+            callId,
+            attempt = attempt,
+            ok = false,
+            seconds = 1,
+            error = "${error.javaClass.simpleName}:${error.message.orEmpty()}",
+          ),
+        )
+        // Logged at info for the first handful and then only occasionally: the point of retrying
+        // for minutes is defeated if it fills logcat with the same refusal every 15 seconds.
+        if (attempt < MEDIA_STATS_INTERVAL_MAX_ATTEMPTS) {
           scheduleMediaStatsInterval(feature, attempt + 1)
+        } else {
+          Log.w(
+            TAG,
+            "P6 wire interval never accepted after $attempt attempts; " +
+              "MEDIA_STATISTICS stays at its default cadence and captures will be sparse",
+          )
         }
       }
-    }, if (attempt == 0) 0L else 2L, TimeUnit.SECONDS)
+    }, delaySeconds, TimeUnit.SECONDS)
   }
 
   /**
@@ -1177,6 +1453,156 @@ class AcsMeetingSession(
 
   private fun logDiagnostic(name: String, value: String) {
     Log.i(TAG, "P7 diag $name=$value")
+    SoftApTrace.stage("acs_network_diag", *diag("name" to name, "value" to value))
+  }
+
+  /**
+   * Stamp a diagnostic with the two facts that make it comparable across runs.
+   *
+   * Without `origin` the Start-versus-Join question cannot be asked of the log at all, and without
+   * `callId` two calls in one capture merge into one timeline whenever the trace id is reused.
+   */
+  private fun diag(vararg fields: Pair<String, Any?>): Array<out Pair<String, Any?>> =
+    CallDiagnostics.stamp(callOrigin, callId, *fields)
+
+  private fun sinceJoinMs(): Long =
+    if (joinStartedAtMs == 0L) -1L else SystemClock.elapsedRealtime() - joinStartedAtMs
+
+  /**
+   * How long this call has been in, or was held in, the Teams lobby.
+   *
+   * Frozen at admission rather than reset, so every sample after `connected` still carries the
+   * dwell that preceded it. That is the correlation the comparison is looking for: a joined call
+   * that settles low *and* waited in the lobby points at ACS rate control settling while there was
+   * nowhere to send to.
+   */
+  private fun lobbyDwellMs(): Long = when {
+    lobbyEnteredAtMs == 0L -> -1L
+    connectedAtMs > 0L -> connectedAtMs - lobbyEnteredAtMs
+    else -> SystemClock.elapsedRealtime() - lobbyEnteredAtMs
+  }
+
+  /**
+   * One `acs_bwe_sample` per cadence slot, driven by the 1 Hz ladder tick.
+   *
+   * The cadence follows the wire's health rather than the clock. It used to be dense (2 s) for the
+   * first 90 s after `connected` and sparse (10 s) forever after, on the theory that a call which
+   * settles low settles low early. An 8-minute capture killed that theory: the collapse started at
+   * t=150 s, so the 90 seconds that mattered got nine samples while the uneventful first minute
+   * got forty-five. Now anything other than an established full-rate call is worth 2 s — a dip,
+   * the climb out of one, a fresh downscale, or ACS publishing empty reports.
+   *
+   * Before `connected` the dense rate applies too: the outgoing stream exists during the lobby,
+   * and what it does there is half the hypothesis.
+   */
+  private fun sampleBwe() {
+    val now = SystemClock.elapsedRealtime()
+    val sinceConnectedMs = if (connectedAtMs == 0L) -1L else now - connectedAtMs
+    val wireBitrateBps = stats.wireBitrateBps
+    if (wireBitrateBps != null && wireBitrateBps in 1 until CallDiagnostics.LOW_BITRATE_BPS) {
+      lastLowWireAtMs = now
+    }
+    val health = CallDiagnostics.wireHealth(
+      sinceConnectedMs = sinceConnectedMs,
+      wireBitrateBps = wireBitrateBps,
+      msSinceLow = if (lastLowWireAtMs == 0L) -1L else now - lastLowWireAtMs,
+      msSinceAdaptation = if (lastAdaptationAtMs == 0L) -1L else now - lastAdaptationAtMs,
+    )
+    // Episodes are tracked on every tick, not on every emitted sample: the record of a collapse
+    // must not depend on the cadence that the collapse is what widens.
+    trackWireEpisode(sinceConnectedMs, wireBitrateBps)
+    val interval = CallDiagnostics.sampleIntervalMs(health)
+    if (lastBweSampleAtMs != 0L && now - lastBweSampleAtMs < interval) return
+    lastBweSampleAtMs = now
+    SoftApTrace.stage(
+      "acs_bwe_sample",
+      *CallDiagnostics.bweFields(
+        callOrigin,
+        callId,
+        CallDiagnostics.BweSample(
+          state = phase,
+          sinceJoinMs = sinceJoinMs(),
+          sinceConnectedMs = sinceConnectedMs,
+          lobbyDwellMs = lobbyDwellMs(),
+          sendQuality = stats.sendQuality,
+          wireBitrateBps = stats.wireBitrateBps,
+          wireWidth = stats.wireWidth,
+          wireHeight = stats.wireHeight,
+          sentFps = stats.lastSubFps,
+          wireFps = stats.wireFps,
+          inboundBitrateBps = stats.inboundBitrateBps,
+          inboundFps = stats.recvFps,
+          decodedFps = stats.decodedFps,
+          framesGated = stats.dropCount(),
+          pacerDrops = stats.dropPacedCount(),
+          budgetBps = stats.budgetBps,
+          rateArm = MediaDiagnostics.outgoingRate.name.lowercase(),
+          mediaStatsReports = mediaStatsReports.get(),
+          mediaStatsAttached = mediaStatsFeature != null,
+          videoOut = videoOutLabel(),
+          packetsPerSecond = stats.lastPacketsPerSecond,
+          subCount = stats.subCount(),
+          sinkCount = stats.sinkCount(),
+        ),
+      ),
+    )
+  }
+
+  /**
+   * Feed the episode tracker and emit the transitions it reports.
+   *
+   * Separate from the sample above because the two have different jobs. The sample answers "what
+   * is it doing now" and is rate-limited; this answers "what did that outage cost" and must not
+   * be, because the interesting transitions are exactly two per outage and dropping either one
+   * loses the measurement. Only counted once connected — the lobby has nowhere to send to, so a
+   * low rate there is not an outage.
+   */
+  private fun trackWireEpisode(sinceConnectedMs: Long, wireBitrateBps: Long?) {
+    if (sinceConnectedMs < 0) return
+    val event = wireEpisodes.observe(
+      atMs = sinceConnectedMs,
+      bitrateBps = wireBitrateBps,
+      width = stats.wireWidth,
+      height = stats.wireHeight,
+      inboundBitrateBps = stats.inboundBitrateBps?.toDouble(),
+      sentFps = stats.lastSubFps,
+    ) ?: return
+    val label = event.phase.name.lowercase()
+    SoftApTrace.stage(
+      "acs_wire_episode",
+      *CallDiagnostics.episodeFields(
+        origin = callOrigin,
+        callId = callId,
+        episode = label,
+        startedAtMs = event.startedAtMs,
+        durationMs = event.durationMs,
+        minBitrateBps = event.minBitrateBps,
+        minResolution = event.minResolution,
+        recoveryMs = event.recoveryMs,
+        inboundBitrateBps = event.inboundBitrateBps,
+        sentFps = event.sentFps,
+        ceilingBps = profile.maxBitrateBps,
+      ),
+    )
+    // Warned rather than logged at info: a wire under 500 kbps while the glasses keep feeding full
+    // rate is the fault itself, and it is the line a reader scanning logcat should trip over.
+    Log.w(
+      TAG,
+      "P6 wire episode=$label since=${event.startedAtMs}ms dur=${event.durationMs}ms " +
+        "floor=${event.minBitrateBps} minRes=${event.minResolution.ifBlank { "na" }} " +
+        "recovery=${event.recoveryMs}ms glassesHop=${event.inboundBitrateBps?.toLong() ?: -1} " +
+        "sentFps=${event.sentFps} ceiling=${profile.maxBitrateBps}",
+    )
+  }
+
+  /** ACS stream state, or `none` if we never built one. Independent of MEDIA_STATISTICS. */
+  private fun videoOutLabel(): String {
+    val stream = videoOut ?: return "none"
+    return try {
+      stream.state.toString().lowercase()
+    } catch (_: Exception) {
+      "unknown"
+    }
   }
 
   /**
@@ -1542,6 +1968,15 @@ class AcsMeetingSession(
     audioSource = "glasses"
     lastSafety = AudioSafety.DEGRADED
     meetingUrl = null
+    // Not `callOrigin`: a teardown trace still belongs to the call that is ending, and the next
+    // join overwrites it before anything else is stamped.
+    callId = ""
+    lobbyEnteredAtMs = 0L
+    connectedAtMs = 0L
+    lastBweSampleAtMs = 0L
+    wireEpisodes = WireEpisodeTracker()
+    lastAdaptationAtMs = 0L
+    lastLowWireAtMs = 0L
     // Clearing lastError is scoped to the clean idle reset. A failed join tears
     // down with emitIdle=false and relies on lastError staying set so emit("error")
     // still carries it and pushCallState keeps ignoring late disconnected callbacks.
@@ -1604,8 +2039,26 @@ class AcsMeetingSession(
     private const val ROSTER_COALESCE_MS = 150L
     private const val MEDIA_RESTART_BASE_MS = 1_000L
     private const val MEDIA_RESTART_MAX_MS = 10_000L
+
+    /**
+     * How many times to ask ACS for 1 Hz MEDIA_STATISTICS before giving up.
+     *
+     * With the backoff in [scheduleMediaStatsInterval] — 2 s, then 5 s, then 15 s — this spans
+     * roughly eleven minutes, which is deliberately longer than a short call. The old budget was
+     * six attempts over ten seconds and it never succeeded in any capture, because the condition
+     * being waited on is a remote subscriber pulling the stream rather than a fixed startup delay.
+     */
+    private const val MEDIA_STATS_INTERVAL_MAX_ATTEMPTS = 60
+
     /** SoftAP join() blocks until the WHIP listener is bound and ACS join is queued. */
     private const val SOFTAP_JOIN_WAIT_MS = 45_000L
+
+    /**
+     * How long [rebindSoftApIngest] waits for the parked listener to release its port after a
+     * force-close. Not a tombstone: the old generation is closed immediately.
+     */
+    private const val REBIND_INGEST_CLOSE_MS = 2_000L
+
 
     /**
      * How long End waits for ACS to accept the hang-up before reporting it unconfirmed. Local

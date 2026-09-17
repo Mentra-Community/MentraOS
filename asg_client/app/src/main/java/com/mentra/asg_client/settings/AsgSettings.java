@@ -4,6 +4,7 @@ import android.content.Context;
 import android.content.SharedPreferences;
 import android.util.Log;
 
+import com.mentra.asg_client.io.media.core.PhotoCompression;
 import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.camera.policy.PhotoSizeTier;
 
@@ -458,10 +459,11 @@ public class AsgSettings {
     }
 
     public void setButtonPhotoCompress(String compress) {
-        if (compress == null || compress.isEmpty()) {
+        if (compress == null) {
             prefs.edit().remove(KEY_BUTTON_PHOTO_COMPRESS).commit();
             return;
         }
+        PhotoCompression.fromValue(compress);
         Log.d(TAG, "Setting button photo compress to: " + compress);
         prefs.edit().putString(KEY_BUTTON_PHOTO_COMPRESS, compress).commit();
     }

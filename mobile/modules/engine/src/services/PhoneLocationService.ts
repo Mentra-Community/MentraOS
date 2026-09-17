@@ -1,8 +1,8 @@
 /**
  * Phone location service — engine-owned. Owns the background phone-GPS task: the
  * accuracy-tier control (`setLocationTier`), the accuracy mapping, and the
- * `expo-task-manager` background task that fans each fix to the v2 cloud
- * local miniapps (`location_update`). Cloud upload was V1 (removed).
+ * `expo-task-manager` background task that forwards the first fix in each batch
+ * to subscribed local miniapps (`location_update`). Cloud upload was V1 (removed).
  *
  * This used to be the host-injected `locationTier` runtime hook + a MantleManager
  * `TaskManager.defineTask`. It's device/OS plumbing (no UI), so it moved into engine:
@@ -21,8 +21,7 @@ import localMiniappRuntime from "./LocalMiniappRuntime"
 
 export const LOCATION_TASK_NAME = "handleLocationUpdates"
 
-// Background location task — sends each fix to the v2 cloud (RestComms) + local
-// miniapps. (The v1 SocketComms leg was already removed/commented before the move.)
+// Background location task — forwards the first fix from each non-empty batch.
 TaskManager.defineTask<{locations?: Location.LocationObject[]}>(LOCATION_TASK_NAME, async ({data, error}) => {
   if (error) {
     // OS-level failure (permission revoked, GPS unavailable, …) — log it so
@@ -36,11 +35,8 @@ TaskManager.defineTask<{locations?: Location.LocationObject[]}>(LOCATION_TASK_NA
     return
   }
   const first = locs[0]!
-  // Cloud path (relayMessageToApps) never reaches __phone__, so local miniapps rely
-  // on this direct push.
-  // Local miniapps get the update directly (the cloud relay never reaches
-  // __phone__). The Cloud V1 upload that used to run here was removed with the
-  // V1 ripout (issue #3392); a V2 location channel is separate product work.
+  // Deliver directly to local miniapps. The Cloud V1 upload that used to run
+  // here was removed with the V1 ripout (issue #3392).
   localMiniappRuntime.forwardEvent("location_update", {
     lat: first.coords.latitude,
     lng: first.coords.longitude,

@@ -90,6 +90,14 @@ export interface MeetingOutgoingVideo {
   maxBitrateBps: number
 }
 
+/**
+ * Which path the wearer took into the call: a meeting this app created, or a link they joined.
+ *
+ * Diagnostic only — the host behaves identically either way — but it is stamped on the host and
+ * native traces, so a quality comparison between the two paths can be made from one capture.
+ */
+export type MeetingOrigin = "created" | "joined"
+
 export interface MeetingJoinOptions {
   provider: MeetingProvider
   meetingUrl: string
@@ -98,6 +106,7 @@ export interface MeetingJoinOptions {
   token: string
   displayName?: string
   video?: MeetingOutgoingVideo
+  origin?: MeetingOrigin
 }
 
 export type MeetingParticipantState = "idle" | "connecting" | "connected" | "lobby" | "hold" | "disconnected"
@@ -116,15 +125,12 @@ export interface MeetingState {
   state: MeetingPhase
   muted: boolean
   error?: string
+  /** Provider termination details, including Teams' invalid meeting-link codes. */
+  endReason?: MeetingEndReason
   meetingUrl?: string
   provider?: MeetingProvider
   audioSource?: "glasses" | "phone"
-  audioSourceReason?:
-    | "explicit"
-    | "current-mic"
-    | "ranking"
-    | "fallback-glasses-connected"
-    | "fallback-no-glasses"
+  audioSourceReason?: "explicit" | "current-mic" | "ranking" | "fallback-glasses-connected" | "fallback-no-glasses"
   activeStream?: "none" | "virtual" | "local"
   audioSafety?: "safe" | "degraded" | "unsafe"
   /**
@@ -148,9 +154,37 @@ export interface MeetingState {
    * the native meeting client's own. Keep the last one you saw — absence is not a reset.
    */
   softap?: MeetingSoftApProgress
+  /**
+   * SoftAP mid-call recovery. Omitted by hosts that predate the field, and omitted on events
+   * that have no news. `active` means keep the ACS call — a lost hotspot is a media outage.
+   */
+  recovery?: MeetingSoftApRecovery
 }
 
 export type MeetingMediaSource = "idle" | "connecting" | "live" | "failed"
+
+export interface MeetingEndReason {
+  code?: number
+  subcode?: number
+  message?: string
+}
+
+/** Older hosts omit this field; malformed values must not become provider error codes. */
+export function parseMeetingEndReason(raw: unknown): MeetingEndReason | undefined {
+  if (!raw || typeof raw !== "object") return undefined
+  const value = raw as Record<string, unknown>
+  const number = (field: unknown): number | undefined =>
+    typeof field === "number" && Number.isFinite(field) ? field : undefined
+  const code = number(value.code)
+  const subcode = number(value.subcode)
+  const message = typeof value.message === "string" && value.message ? value.message : undefined
+  if (code === undefined && subcode === undefined && message === undefined) return undefined
+  return {
+    ...(code !== undefined ? {code} : {}),
+    ...(subcode !== undefined ? {subcode} : {}),
+    ...(message !== undefined ? {message} : {}),
+  }
+}
 
 /**
  * One runtime capability.
@@ -207,15 +241,30 @@ export interface MeetingSoftApStepState {
 export interface MeetingSoftApProgress {
   /** Correlates phone and glasses logs for this attempt. */
   traceId?: string
-  phase: "idle" | "starting" | "live" | "stopping" | "failed"
+  phase: "idle" | "starting" | "recovering" | "live" | "stopping" | "failed"
   steps: MeetingSoftApStepState[]
   /** ms since the host started the sequence. */
   elapsedMs: number
 }
 
+/** Host SoftAP mid-call recovery. Missing `recovery` is "no news", not "ended". */
+export interface MeetingSoftApRecovery {
+  active: boolean
+  generation?: number
+  deadlineAt?: number
+  phase?: string
+}
+
 const SOFTAP_STEPS: ReadonlySet<string> = new Set(["hotspot", "scopedJoin", "acsJoin", "publish", "live"])
 const SOFTAP_STEP_STATUSES: ReadonlySet<string> = new Set(["pending", "running", "done", "failed"])
-const SOFTAP_PHASES: ReadonlySet<string> = new Set(["idle", "starting", "live", "stopping", "failed"])
+const SOFTAP_PHASES: ReadonlySet<string> = new Set([
+  "idle",
+  "starting",
+  "recovering",
+  "live",
+  "stopping",
+  "failed",
+])
 
 /** Tolerant parse of a host `softap` payload. Unknown steps are dropped; a malformed payload reads as absent. */
 export function parseMeetingSoftApProgress(raw: unknown): MeetingSoftApProgress | undefined {
@@ -243,7 +292,32 @@ export function parseMeetingSoftApProgress(raw: unknown): MeetingSoftApProgress 
   }
 }
 
-const PARTICIPANT_STATES: ReadonlySet<string> = new Set(["idle", "connecting", "connected", "lobby", "hold", "disconnected"])
+/** Tolerant parse of a host `recovery` payload. A malformed payload reads as absent. */
+export function parseMeetingRecovery(raw: unknown): MeetingSoftApRecovery | undefined {
+  if (!raw || typeof raw !== "object") return undefined
+  const value = raw as Record<string, unknown>
+  if (typeof value.active !== "boolean") return undefined
+  const generation =
+    typeof value.generation === "number" && Number.isFinite(value.generation) ? value.generation : undefined
+  const deadlineAt =
+    typeof value.deadlineAt === "number" && Number.isFinite(value.deadlineAt) ? value.deadlineAt : undefined
+  const phase = typeof value.phase === "string" && value.phase ? value.phase : undefined
+  return {
+    active: value.active,
+    ...(generation !== undefined ? {generation} : {}),
+    ...(deadlineAt !== undefined ? {deadlineAt} : {}),
+    ...(phase ? {phase} : {}),
+  }
+}
+
+const PARTICIPANT_STATES: ReadonlySet<string> = new Set([
+  "idle",
+  "connecting",
+  "connected",
+  "lobby",
+  "hold",
+  "disconnected",
+])
 
 const MEDIA_SOURCES: ReadonlySet<string> = new Set(["idle", "connecting", "live", "failed"])
 
@@ -317,6 +391,7 @@ export class MeetingModule {
           videoSource,
           token: options.token,
           displayName: options.displayName,
+          ...(options.origin ? {origin: options.origin} : {}),
           ...(options.video ? {video: options.video} : {}),
         },
         {timeoutMs: 0},
@@ -413,6 +488,7 @@ export class MeetingModule {
       state: event.state,
       muted: Boolean(event.muted),
       error: event.error,
+      endReason: parseMeetingEndReason(event.endReason),
       meetingUrl: event.meetingUrl,
       provider: event.provider,
       audioSource: event.audioSource,
@@ -425,6 +501,8 @@ export class MeetingModule {
       // out of the UI on every native state event that does not carry capabilities.
       capabilities: parseMeetingCapabilities(event.capabilities) ?? this._state.capabilities,
       softap: parseMeetingSoftApProgress(event.softap),
+      // Absence is "no news", never "recovery ended". The host must send `active: false`.
+      recovery: parseMeetingRecovery(event.recovery) ?? this._state.recovery,
     }
   }
 }

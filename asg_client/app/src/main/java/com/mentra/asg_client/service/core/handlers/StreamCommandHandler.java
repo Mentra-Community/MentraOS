@@ -1,5 +1,6 @@
 package com.mentra.asg_client.service.core.handlers;
 
+import com.mentra.asg_client.io.streaming.StreamTelemetryPolicy;
 import android.content.Context;
 import android.hardware.camera2.CameraAccessException;
 import android.hardware.camera2.CameraCharacteristics;
@@ -264,6 +265,11 @@ public class StreamCommandHandler implements ICommandHandler {
             // Capture light is mandatory for privacy; ignore any caller-supplied flash value.
             boolean flash = true;
             boolean sound = data.optBoolean("sound", true);
+
+            // Per-stream telemetry opt-in ("telemetry" / compact "tl"): 1Hz stream_status.stats
+            // incl. SoC temperature. Absent → build default (off).
+            StreamTelemetryPolicy.applyStartStream(data);
+            Log.i(TAG, "[STREAM_STARTUP] telemetry=" + StreamTelemetryPolicy.isEnabled());
 
             // Parse video/audio config (supports full and compact keys)
             JSONObject videoJson = data.optJSONObject("video");

@@ -122,7 +122,10 @@ test("source-only and stable docs use honest version-neutral example links", (co
   writeFileSync(path.join(source, "docs.json"), sourceConfig)
 
   assert.equal(variables["example-app-download-label"], "Browse React Native example APK releases")
-  assert.equal(variables["example-app-url"], "https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit/releases")
+  assert.equal(
+    variables["example-app-url"],
+    "https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit/releases",
+  )
   assert.equal(variables["example-app-version"], undefined)
 
   for (const file of ["software-update.mdx", "quickstart.mdx"]) {
@@ -237,8 +240,5 @@ test("air-gapped deployment is not published or linked", () => {
   assert.doesNotMatch(JSON.stringify(config), /air-gapped-deployment/)
   assert.doesNotMatch(content, /\/bluetooth-sdk\/air-gapped-deployment/)
   assert.doesNotMatch(sdkReadme, /\/bluetooth-sdk\/air-gapped-deployment/)
-  assert.equal(
-    existsSync(path.join(docsRoot, "bluetooth-sdk/air-gapped-deployment.mdx")),
-    false,
-  )
+  assert.equal(existsSync(path.join(docsRoot, "bluetooth-sdk/air-gapped-deployment.mdx")), false)
 })

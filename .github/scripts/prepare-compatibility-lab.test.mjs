@@ -1,7 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
 
-import {loadReleaseFamily} from "./release-family.mjs"
+import {familyBuildNumber, loadReleaseFamily} from "./release-family.mjs"
 import {prepareCompatibilityLabPlan} from "./prepare-compatibility-lab.mjs"
 
 const commit = (value) => value.repeat(40)
@@ -33,17 +33,17 @@ const record = {
       provenance: "coordinated",
       sourceCommit: currentSource,
       provenanceUrl: "https://example.com/current.json",
-      ios: {marketingVersion: currentVersion, buildNumber: 100},
-      android: {marketingVersion: currentVersion, buildNumber: 100},
+      ios: {marketingVersion: currentVersion, buildNumber: familyBuildNumber(family.familyBaseVersion, 100)},
+      android: {marketingVersion: currentVersion, buildNumber: familyBuildNumber(family.familyBaseVersion, 100)},
     },
     compatibilityLab: {
-      ios: {marketingVersion: currentVersion, buildNumber: 101},
-      android: {marketingVersion: currentVersion, buildNumber: 101},
+      ios: {marketingVersion: currentVersion, buildNumber: familyBuildNumber(family.familyBaseVersion, 101)},
+      android: {marketingVersion: currentVersion, buildNumber: familyBuildNumber(family.familyBaseVersion, 101)},
     },
     candidates: {
       mentraApp: {
-        ios: {marketingVersion: "99.0.0", buildNumber: 102},
-        android: {marketingVersion: "99.0.0", buildNumber: 102},
+        ios: {marketingVersion: "99.0.0", buildNumber: 990000102},
+        android: {marketingVersion: "99.0.0", buildNumber: 990000102},
       },
     },
   },
@@ -52,7 +52,7 @@ const record = {
 const previousPlan = {
   channel: "production",
   sourceCommit: currentSource,
-  native: {marketingVersion: currentVersion, buildNumber: 100},
+  native: {marketingVersion: currentVersion, buildNumber: familyBuildNumber(family.familyBaseVersion, 100)},
   otaInputs: {asg: {source: "current-production"}},
 }
 
@@ -60,7 +60,7 @@ test("creates a beta-shaped, staging-targeted, non-promotable Mobile N plan", ()
   const plan = prepareCompatibilityLabPlan({root: process.cwd(), record, previousPlan})
   assert.equal(plan.sourceCommit, currentSource)
   assert.equal(plan.native.marketingVersion, currentVersion)
-  assert.equal(plan.native.buildNumber, 101)
+  assert.equal(plan.native.buildNumber, familyBuildNumber(family.familyBaseVersion, 101))
   assert.equal(plan.compatibilityLab.nonPromotable, true)
   assert.match(plan.compatibilityLab.runtimeLabel, /COMPATIBILITY-LAB-NOT-FOR-PRODUCTION$/)
 })

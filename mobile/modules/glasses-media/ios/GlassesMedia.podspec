@@ -12,7 +12,8 @@ Pod::Spec.new do |s|
   s.swift_version = '5.9'
   s.static_framework = true
   s.dependency 'ExpoModulesCore'
-  s.dependency 'WebRTC-SDK', '137.7151.09'
+  # Keep in sync with the iOS-only @livekit/react-native-webrtc podspec patch.
+  s.dependency 'WebRTC-SDK', '144.7559.15'
   s.frameworks = 'AVFoundation', 'CoreMedia', 'CoreVideo', 'Network', 'NetworkExtension'
   s.source_files = '*.{swift,h,m,mm}', 'CoreKit/Sources/GlassesMediaCore/*.swift'
   s.pod_target_xcconfig = { 'DEFINES_MODULE' => 'YES' }

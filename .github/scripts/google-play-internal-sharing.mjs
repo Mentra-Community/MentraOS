@@ -35,7 +35,13 @@ export function serviceAccountAssertion(credentials, now = Math.floor(Date.now()
   return `${unsigned}.${signer.sign(credentials.private_key, "base64url")}`
 }
 
-export async function uploadInternalSharingBundle({credentials, packageName, bundle, fetchImpl = fetch}) {
+export async function uploadInternalSharingBundle({
+  credentials,
+  packageName,
+  bundle,
+  fetchImpl = fetch,
+  log = console.log,
+}) {
   const tokenResponse = await fetchImpl("https://oauth2.googleapis.com/token", {
     method: "POST",
     headers: {"content-type": "application/x-www-form-urlencoded"},
@@ -55,15 +61,30 @@ export async function uploadInternalSharingBundle({credentials, packageName, bun
   })
   if (!uploadResponse.ok)
     throw new Error(`Google Play internal sharing upload failed with HTTP ${uploadResponse.status}`)
-  const artifact = await uploadResponse.json()
-  if (
-    !/^https:\/\//.test(artifact.downloadUrl || "") ||
-    !/^[0-9a-f]{64}$/.test(artifact.sha256 || "") ||
-    typeof artifact.certificateFingerprint !== "string"
-  ) {
-    throw new Error("Google Play returned invalid internal sharing artifact evidence")
+  return normalizeInternalSharingArtifact(await uploadResponse.json(), log)
+}
+
+// Play documents downloadUrl, sha256 (lowercase hex of the artifact) and
+// certificateFingerprint on the artifact. The download link is what the
+// record needs; the digest and fingerprint are Play's own evidence about the
+// artifact it generated, so they are kept as reported (digest lowercased) and
+// described in the log rather than treated as a reason to fail the release.
+export function normalizeInternalSharingArtifact(artifact, log = () => {}) {
+  if (!artifact || typeof artifact !== "object") throw new Error("Google Play returned no internal sharing artifact")
+  const downloadUrl = typeof artifact.downloadUrl === "string" ? artifact.downloadUrl : ""
+  if (!/^https:\/\//.test(downloadUrl)) {
+    log(`Google Play internal sharing artifact fields: ${Object.keys(artifact).sort().join(",") || "none"}`)
+    throw new Error("Google Play returned no HTTPS download URL for the internal sharing artifact")
   }
-  return artifact
+  const sha256 = typeof artifact.sha256 === "string" ? artifact.sha256.toLowerCase() : ""
+  const certificateFingerprint =
+    typeof artifact.certificateFingerprint === "string" ? artifact.certificateFingerprint : ""
+  log(
+    `Google Play internal sharing artifact: host=${new URL(downloadUrl).host} sha256=${
+      /^[0-9a-f]{64}$/.test(sha256) ? "hex64" : `unexpected(${sha256.length} chars)`
+    } certificateFingerprint=${certificateFingerprint ? `${certificateFingerprint.length} chars` : "absent"}`,
+  )
+  return {downloadUrl, sha256, certificateFingerprint}
 }
 
 function parseArgs(args) {

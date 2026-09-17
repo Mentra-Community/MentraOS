@@ -185,6 +185,7 @@ jobs:
             --assets coordinated-ota-work/release-assets.json \
             --fingerprint "$ASG_FINGERPRINT" \
             --base-version "$ASG_BASE_VERSION" \
+            --build-number "$(jq -er .native.buildNumber release-intent/release-plan.json)" \
             --output coordinated-ota-work/asg-allocation.json
 
           if [[ "${{ inputs.dry_run }}" != "true" ]]; then
@@ -296,6 +297,10 @@ jobs:
 
       - name: Setup Android SDK for APK verification
         uses: android-actions/setup-android@v3
+        with:
+          # The action's default list includes the retired `tools` package,
+          # which no longer downloads; Gradle fetches the rest it needs.
+          packages: platform-tools
 
       - name: Restore isolated ASG Gradle cache
         if: steps.existing-asg.outputs.exists != 'true'

@@ -73,7 +73,36 @@ export function validateContractCoverage(contract, sourceKeys) {
   }
   if (overlaps.length > 0)
     throw new Error(`Cloud configuration keys have conflicting classifications: ${overlaps.join(", ")}`)
+  const rules = [
+    ...Object.entries(contract.required || {}).map(([id, rule]) => ({id, rule})),
+    ...(contract.requiredAnyOf || []).map((rule) => ({id: rule.id, rule})),
+  ]
+  for (const {id, rule} of rules) {
+    const condition = rule.requiredWhen
+    if (condition === undefined) continue
+    const selector = contract.required?.[condition.key]
+    const allowed = new Set([...(selector?.values || []), ...Object.values(selector?.valuesByEnvironment || {}).flat()])
+    if (
+      !selector ||
+      selector.kind !== "enum" ||
+      !Array.isArray(condition.values) ||
+      condition.values.length === 0 ||
+      condition.values.some((value) => !allowed.has(value))
+    ) {
+      throw new Error(`${id} is conditional on ${condition.key}, which is not a required enum offering those values`)
+    }
+  }
   return true
+}
+
+// A requirement with `requiredWhen` only applies while the selecting key holds
+// one of the listed values (for example the runtime storage webhook secret and
+// R2 credentials, which only matter when STORAGE_PROVIDER is r2 or s3). While
+// inactive, the keys may still be present and are then validated as usual.
+function requirementActive(rule, values) {
+  const condition = rule.requiredWhen
+  if (condition === undefined) return true
+  return condition.values.includes(values[condition.key])
 }
 
 function parseUrl(value, protocols, label) {
@@ -101,7 +130,10 @@ function validateConnectionUrl(value, protocols, label) {
 
 function validateValue(value, rule, label, environment) {
   if (typeof value !== "string" || value.trim() === "") throw new Error(`${label} is missing or empty`)
-  if (/TBD|CHANGEME|localhost|127\.0\.0\.1/i.test(value))
+  // Key material is validated structurally below; its base64 body can contain
+  // any letter sequence, so the placeholder scan does not apply to it.
+  const keyMaterialRule = rule.kind === "private-key" || rule.kind === "public-key"
+  if (!keyMaterialRule && /TBD|CHANGEME|localhost|127\.0\.0\.1/i.test(value))
     throw new Error(`${label} contains a placeholder or local value`)
   const values = rule.valuesByEnvironment?.[environment] || rule.values
   if (values && !values.includes(value)) throw new Error(`${label} is not an allowed ${environment} value`)
@@ -120,25 +152,63 @@ function validateValue(value, rule, label, environment) {
   if (rule.kind === "host" && (!/^[A-Za-z0-9.-]+$/.test(value) || !value.includes("."))) {
     throw new Error(`${label} is not a hostname`)
   }
-  if (rule.kind === "private-key" && !/-----BEGIN [A-Z ]*PRIVATE KEY-----/.test(value)) {
-    throw new Error(`${label} is not private-key PEM`)
+  if (rule.kind === "private-key") {
+    try {
+      createPrivateKey(keyMaterial(value, "PRIVATE KEY"))
+    } catch {
+      throw new Error(`${label} is not a private key (PEM or PKCS#8 base64 body)`)
+    }
   }
-  if (rule.kind === "public-key" && !/-----BEGIN (?:PUBLIC KEY|CERTIFICATE)-----/.test(value)) {
-    throw new Error(`${label} is not public-key PEM`)
+  if (rule.kind === "public-key") {
+    try {
+      createPublicKey(keyMaterial(value, "PUBLIC KEY"))
+    } catch {
+      throw new Error(`${label} is not a public key (PEM or SPKI base64 body)`)
+    }
   }
+}
+
+// Cloud V2 stores its Ed25519 signing keys as bare base64 PKCS#8 / SPKI bodies
+// and rebuilds the PEM armour when loading them (signing-keys.service.ts
+// toPem). Accept that form as well as full PEM, so the contract checks the
+// same material the service will actually load.
+export function keyMaterial(value, label) {
+  const text = String(value).replace(/\\n/g, "\n").trim()
+  if (text.includes("-----BEGIN ")) {
+    // A PEM must be of the slot's own type: createPublicKey would happily
+    // derive a public key from private material, but the service's
+    // importSPKI would not, so private PEM in a public slot must fail here.
+    const expected =
+      label === "PUBLIC KEY" ? /^-----BEGIN (?:PUBLIC KEY|CERTIFICATE)-----/m : /^-----BEGIN [A-Z ]*PRIVATE KEY-----/m
+    if (!expected.test(text)) throw new Error("not key material of the expected type")
+    return text
+  }
+  if (!/^[A-Za-z0-9+/=\s]+$/.test(text)) throw new Error("not key material")
+  return `-----BEGIN ${label}-----\n${text.replace(/\s+/g, "")}\n-----END ${label}-----`
 }
 
 export function validateProductionCloudConfig({contract, environment, values}) {
   if (!new Set(["staging", "prod"]).has(environment)) throw new Error(`Unsupported environment ${environment}`)
   validateContractCoverage(contract, [])
   const checks = []
+  const isPresent = (key) => typeof values[key] === "string" && values[key].trim() !== ""
   for (const [key, rule] of Object.entries(contract.required)) {
+    if (!requirementActive(rule, values) && !isPresent(key)) {
+      checks.push({id: key, keys: [], status: "inactive", acceptanceTest: rule.acceptanceTest})
+      continue
+    }
     validateValue(values[key], rule, key, environment)
     checks.push({id: key, keys: [key], status: "pass", acceptanceTest: rule.acceptanceTest})
   }
   for (const requirement of contract.requiredAnyOf || []) {
-    const present = requirement.keys.filter((key) => typeof values[key] === "string" && values[key].trim() !== "")
-    if (present.length === 0) throw new Error(`${requirement.id} requires one of ${requirement.keys.join(", ")}`)
+    const present = requirement.keys.filter(isPresent)
+    if (present.length === 0) {
+      if (!requirementActive(requirement, values)) {
+        checks.push({id: requirement.id, keys: [], status: "inactive", acceptanceTest: requirement.acceptanceTest})
+        continue
+      }
+      throw new Error(`${requirement.id} requires one of ${requirement.keys.join(", ")}`)
+    }
     present.forEach((key) => validateValue(values[key], requirement, key, environment))
     checks.push({
       id: requirement.id,
@@ -156,8 +226,14 @@ export function validateProductionCloudConfig({contract, environment, values}) {
     let derived
     let supplied
     try {
-      derived = createPublicKey(createPrivateKey(values[pair.privateKey])).export({type: "spki", format: "pem"})
-      supplied = createPublicKey(values[pair.publicKey]).export({type: "spki", format: "pem"})
+      derived = createPublicKey(createPrivateKey(keyMaterial(values[pair.privateKey], "PRIVATE KEY"))).export({
+        type: "spki",
+        format: "pem",
+      })
+      supplied = createPublicKey(keyMaterial(values[pair.publicKey], "PUBLIC KEY")).export({
+        type: "spki",
+        format: "pem",
+      })
     } catch {
       throw new Error(`${pair.id} contains an invalid key pair`)
     }

@@ -24,9 +24,7 @@ export default function SelectGlassesBluetoothScreen() {
   const {theme} = useAppTheme()
   const {goBack, replace} = useNavigationStore.getState()
   const [showTroubleshootingModal, setShowTroubleshootingModal] = useState(false)
-  const searchResults = useEngineSnapshot(engine.pairing.searchResults, (onChange) =>
-    engine.pairing.onFound(onChange),
-  )
+  const searchResults = useEngineSnapshot(engine.pairing.searchResults, (onChange) => engine.pairing.onFound(onChange))
   const [rememberedSearchResults, setRememberedSearchResults] = useState<Device[]>(searchResults)
 
   // useFocusEffect(
@@ -77,17 +75,6 @@ export default function SelectGlassesBluetoothScreen() {
         )
         return
       }
-    }
-
-    const hasMicPermission = await requestFeaturePermissions(PermissionFeatures.MICROPHONE)
-
-    if (!hasMicPermission) {
-      showAlert(
-        "Microphone Permission Required",
-        "Microphone permission is required to connect to smart glasses. Voice control and audio features are essential for the AR experience.",
-        [{text: "OK"}],
-      )
-      return
     }
 
     await startPairing(device)
@@ -146,10 +133,10 @@ export default function SelectGlassesBluetoothScreen() {
                 {visibleResults.map((res: Device) => {
                   let deviceName = filterDeviceName(res.name)
                   return (
-                    <View key={res.id} className="flex-row items-center justify-between px-4 py-3 bg-primary-foreground">
-                      <TouchableOpacity
-                        className="flex-1"
-                        onPress={() => triggerGlassesPairingGuide(res)}>
+                    <View
+                      key={res.id}
+                      className="flex-row items-center justify-between px-4 py-3 bg-primary-foreground">
+                      <TouchableOpacity className="flex-1" onPress={() => triggerGlassesPairingGuide(res)}>
                         <View className="flex-1 px-2.5 flex-col">
                           <Text text={deviceModel} className="flex-wrap text-sm font-semibold" numberOfLines={2} />
                           <Text text={deviceName} className="text-xs text-muted-foreground" numberOfLines={1} />

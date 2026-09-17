@@ -11,6 +11,7 @@ import java.net.ServerSocket
 import java.net.Socket
 import java.net.SocketException
 import java.util.UUID
+import java.util.concurrent.CountDownLatch
 import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import java.util.concurrent.atomic.AtomicInteger
@@ -72,6 +73,16 @@ class WhipIngestServer(
   private val activeSockets = java.util.concurrent.ConcurrentHashMap.newKeySet<Socket>()
   private val accepted = AtomicInteger()
 
+  /**
+   * Open while a listener is bound; counted down once the socket is actually closed.
+   *
+   * [stop] returns immediately and finishes on a tombstone thread [TOMBSTONE_MS] later, so nothing
+   * above this class could tell the port had been released. The next call would bind before this
+   * one let go and fail with a port that was still ours. Starts already-counted-down so a server
+   * that never bound is trivially "closed".
+   */
+  @Volatile private var closed = CountDownLatch(0)
+
   /** Bound endpoint, or null before [start]. This is the URL the glasses must be told to POST to. */
   val boundEndpoint: WhipIngestProtocol.Endpoint?
     get() = synchronized(lock) { endpoint }
@@ -93,6 +104,7 @@ class WhipIngestServer(
       val bound = WhipIngestProtocol.Endpoint(address.hostAddress ?: "127.0.0.1", socket.localPort)
       server = socket
       endpoint = bound
+      closed = CountDownLatch(1)
       state = WhipIngestProtocol.State()
       acceptThread = Thread({ acceptLoop(socket) }, "whip-ingest-accept").apply {
         isDaemon = true
@@ -149,13 +161,27 @@ class WhipIngestServer(
     return connections.awaitTermination(timeoutMs, TimeUnit.MILLISECONDS)
   }
 
+  /**
+   * Block until the listener is really gone, or the bound expires.
+   *
+   * The teardown barrier's whole job is to answer "can the next call bind this port", and only
+   * this can answer it: [stop] hands the close to a thread that runs [TOMBSTONE_MS] later. `false`
+   * means the caller must force the close rather than proceed — a timeout here is not consent.
+   */
+  fun awaitClosed(timeoutMs: Long = TOMBSTONE_MS + 500): Boolean =
+    closed.await(timeoutMs, TimeUnit.MILLISECONDS)
+
   private fun closeListener() {
     val socket = synchronized(lock) {
       val current = server
       server = null
       endpoint = null
       current
-    } ?: return
+    }
+    // Counted down even on the early return: a second close must not leave a waiter parked on a
+    // latch that nothing will ever open again.
+    closed.countDown()
+    if (socket == null) return
     runCatching { socket.close() }
     activeSockets.forEach { runCatching { it.close() } }
     connections.shutdownNow()

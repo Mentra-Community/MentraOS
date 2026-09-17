@@ -78,7 +78,7 @@ const PERMISSION_CONFIG: Record<string, PermissionConfig> = {
   },
   [PermissionFeatures.CAMERA]: {
     name: "Camera",
-    description: "Used for the fullscreen mirror mode",
+    description: "Used for fullscreen mirror mode and for miniapps that publish video from this phone",
     ios: [PERMISSIONS.IOS.CAMERA],
     android: [PermissionsAndroid.PERMISSIONS.CAMERA],
     critical: false,
@@ -92,7 +92,7 @@ const PERMISSION_CONFIG: Record<string, PermissionConfig> = {
   },
   [PermissionFeatures.MICROPHONE]: {
     name: "Microphone",
-    description: "Used for audio and voice commands on your glasses",
+    description: "Used by features that capture audio through this phone",
     ios: [PERMISSIONS.IOS.MICROPHONE],
     android: [PermissionsAndroid.PERMISSIONS.RECORD_AUDIO],
     critical: false,
@@ -334,6 +334,11 @@ export interface PermissionRequestResult {
   previouslyDenied: boolean
 }
 
+// Android's check API cannot distinguish denied from "Don't ask again". Remember
+// only an observed blocked result so Settings is offered on a subsequent attempt,
+// never immediately after the user declines the native prompt.
+const ANDROID_MICROPHONE_BLOCKED_KEY = "PERMISSION_BLOCKED_microphone"
+
 // Request permissions for a specific feature - the main entry point
 export const requestFeaturePermissions = async (featureKey: string): Promise<boolean> => {
   const config = PERMISSION_CONFIG[featureKey]
@@ -412,6 +417,18 @@ export const requestFeaturePermissions = async (featureKey: string): Promise<boo
   // For Android
   if (Platform.OS === "android" && config.android.length > 0) {
     try {
+      if (featureKey === PermissionFeatures.MICROPHONE) {
+        if (await PermissionsAndroid.check(PermissionsAndroid.PERMISSIONS.RECORD_AUDIO)) {
+          await storage.remove(ANDROID_MICROPHONE_BLOCKED_KEY)
+          return true
+        }
+        const blocked = storage.load<boolean>(ANDROID_MICROPHONE_BLOCKED_KEY)
+        if (!blocked.is_error() && blocked.value === true) {
+          await handlePreviouslyDeniedPermission(config)
+          return false
+        }
+      }
+
       // Filter out any null/undefined permissions before requesting
       console.log(`${featureKey} original permissions:`, config.android)
       console.log(
@@ -450,6 +467,10 @@ export const requestFeaturePermissions = async (featureKey: string): Promise<boo
 
       // Handle "Never Ask Again" case similar to iOS previouslyDenied
       if (anyNeverAskAgain) {
+        if (featureKey === PermissionFeatures.MICROPHONE) {
+          await storage.save(ANDROID_MICROPHONE_BLOCKED_KEY, true)
+          return false
+        }
         // Handle the previously denied permission by showing the alert
         await handlePreviouslyDeniedPermission(config)
         // Just return false, since we've handled the alert internally
@@ -616,7 +637,9 @@ export const handlePreviouslyDeniedPermission = (config: PermissionConfig): Prom
   return new Promise((resolve) => {
     showAlert(
       translate("permissions:permissionRequired"),
-      translate("permissions:permissionRequiredMessage", {name: config.name}),
+      config === PERMISSION_CONFIG[PermissionFeatures.MICROPHONE]
+        ? translate("permissions:phoneMicrophoneDeniedMessage")
+        : translate("permissions:permissionRequiredMessage", {name: config.name}),
       [
         {
           text: translate("common:cancel"),
@@ -799,6 +822,15 @@ export const checkPermissionsUI = async (app: AppletInterface) => {
         //   neededPermissions.push(PermissionFeatures.GLASSES_CAMERA)
         // }
         break
+      // This phone's own camera, which is a real OS permission — unlike CAMERA above. Prompted
+      // here, when the wearer opens the miniapp, rather than mid-join: an ACS Teams call is
+      // refused outright without it, and a permission dialog on top of a half-built call is both
+      // confusing and too late to explain why it is being asked for.
+      case "PHONE_CAMERA":
+        if (!(await checkFeaturePermissions(PermissionFeatures.CAMERA))) {
+          neededPermissions.push(PermissionFeatures.CAMERA)
+        }
+        break
       case "CALENDAR":
         const hasCalendar = await checkFeaturePermissions(PermissionFeatures.CALENDAR)
         if (!hasCalendar) {
@@ -840,7 +872,12 @@ export const checkPermissionsUI = async (app: AppletInterface) => {
 
 export const requestPermissionsUI = async (permissions: string[]): Promise<"completed" | "cancelled"> => {
   for (const permission of permissions) {
-    await requestFeaturePermissions(permission)
+    const granted = await requestFeaturePermissions(permission)
+    // Respect microphone denial immediately. In particular, do not let
+    // launch callers follow it with another prompt directing users to Settings.
+    if (permission === PermissionFeatures.MICROPHONE && !granted) {
+      return "cancelled"
+    }
   }
 
   if (permissions.includes(PermissionFeatures.READ_NOTIFICATIONS) && Platform.OS === "android") {

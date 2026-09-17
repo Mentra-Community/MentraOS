@@ -51,7 +51,7 @@
       "manifest": "mobile/modules/bluetooth-sdk/package.json",
       "kind": "product",
       "publishTargets": ["npm", "maven-central", "swift-package-manager"],
-      "dependencies": []
+      "dependencies": ["@mentra/cloud-protocol"]
     },
     {
       "name": "@mentra/miniapp",

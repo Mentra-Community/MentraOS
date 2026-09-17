@@ -1,6 +1,6 @@
 #!/usr/bin/env node
 import {createHash} from "node:crypto"
-import {execFileSync} from "node:child_process"
+import {execFileSync, spawnSync} from "node:child_process"
 import {mkdirSync, readFileSync, writeFileSync} from "node:fs"
 import path from "node:path"
 import {fileURLToPath} from "node:url"
@@ -60,16 +60,41 @@ function parseArgs(args) {
   return values
 }
 
+export function isNpmConflictError(message) {
+  return /npm error code E409\b|\b409 Conflict\b/.test(message)
+}
+
+// A large publish that npm is still processing (see the read-back notes
+// below) is invisible to `npm view` but already occupies its version: a
+// second publish of the same version is refused with
+// `409 Conflict - Cannot publish over previously staged version "X.Y.Z"`.
+// Seen 2026-09-14 for @mentra/bluetooth-sdk@3.1.1 (runs 34829440530 and
+// 34833322934): the first run gave up waiting for the metadata, the re-run
+// hit the conflict on every attempt. Report the staged version so the caller
+// can treat an exact match as published and wait for the read-back instead.
+export function npmStagedVersionConflict(message) {
+  if (!isNpmConflictError(message)) return null
+  const match = /Cannot publish over previously staged version "([^"]+)"/.exec(message)
+  return match ? match[1] : null
+}
+
+function versionOfCoordinate(coordinate) {
+  return coordinate.slice(coordinate.lastIndexOf("@") + 1)
+}
+
 // npm publish --provenance mints a Sigstore signing certificate from
 // fulcio.sigstore.dev, so a blip reaching that CA fails the publish and, with
 // it, the coordinated release: seen 2026-09-08 as
 // CA_CREATE_SIGNING_CERTIFICATE_ERROR / "read ECONNRESET". Retry, and treat a
 // version that turns up on the registry with the bytes we packed as published,
-// because a publish can also fail after the tarball has already landed.
+// because a publish can also fail after the tarball has already landed. A 409
+// conflict is never transient: the exact version already staged on npm counts
+// as published (the read-back then confirms the bytes); any other conflict
+// fails immediately.
 export function publishWithRetry(
   coordinate,
   integrity,
-  {attempts = 4, publish, registryIntegrityOf, sleep = () => execFileSync("sleep", ["15"])},
+  {attempts = 4, publish, registryIntegrityOf, sleep = () => execFileSync("sleep", ["15"]), log = console.log},
 ) {
   for (let attempt = 1; attempt <= attempts; attempt += 1) {
     try {
@@ -80,14 +105,24 @@ export function publishWithRetry(
       try {
         landed = registryIntegrityOf(coordinate)
       } catch (viewError) {
-        console.log(`npm view of ${coordinate} failed during publish recovery: ${viewError.message}`)
+        log(`npm view of ${coordinate} failed during publish recovery: ${viewError.message}`)
       }
       if (landed !== null) {
         if (landed !== integrity) throw new Error(`${coordinate} already exists on npm with different bytes`)
         return "published"
       }
+      const stagedVersion = npmStagedVersionConflict(error.message)
+      if (stagedVersion === versionOfCoordinate(coordinate)) {
+        log(`npm already holds ${coordinate} as a staged publish; waiting for the registry to expose it`)
+        return "published"
+      }
+      if (isNpmConflictError(error.message)) {
+        throw new Error(
+          `npm refused ${coordinate} with a conflict that is not its own staged version: ${error.message}`,
+        )
+      }
       if (attempt === attempts) throw error
-      console.log(`npm publish of ${coordinate} failed (attempt ${attempt}/${attempts}); retrying: ${error.message}`)
+      log(`npm publish of ${coordinate} failed (attempt ${attempt}/${attempts}); retrying: ${error.message}`)
       sleep()
     }
   }
@@ -97,6 +132,22 @@ export function publishWithRetry(
 function run(command, args, options = {}) {
   console.log(`$ ${command} ${args.join(" ")}`)
   return execFileSync(command, args, {stdio: "inherit", ...options})
+}
+
+// Like run, but keeps the command's output in the thrown error so the caller
+// can read npm's error code and message (an inherited stdio leaves only
+// "Command failed"). The output is still echoed to the job log.
+function runCapturingOutput(command, args, options = {}) {
+  console.log(`$ ${command} ${args.join(" ")}`)
+  const result = spawnSync(command, args, {encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], ...options})
+  process.stdout.write(result.stdout || "")
+  process.stderr.write(result.stderr || "")
+  if (result.error) throw result.error
+  if (result.status !== 0) {
+    const exit = result.status === null ? `signal ${result.signal}` : `exit code ${result.status}`
+    throw new Error(`${command} ${args.join(" ")} failed with ${exit}\n${result.stderr || ""}`)
+  }
+  return result
 }
 
 function npmView(spec, field) {
@@ -430,7 +481,9 @@ export function publishReleaseNpm({
     } else if (!dryRun) {
       status = publishWithRetry(coordinate, integrity, {
         publish: () =>
-          run("npm", ["publish", tarball, "--tag", tag, "--access", "public", "--provenance"], {cwd: rootDir}),
+          runCapturingOutput("npm", ["publish", tarball, "--tag", tag, "--access", "public", "--provenance"], {
+            cwd: rootDir,
+          }),
         registryIntegrityOf: (spec) => parseViewValue(npmView(spec, "dist.integrity")),
       })
     }
@@ -442,6 +495,12 @@ export function publishReleaseNpm({
         throw new Error(
           `${coordinate} was published but has no HTTPS registry tarball URL after ${npmReadbackWaitSeconds(bytes.length)}s`,
         )
+      }
+      // The read-back is the only proof for a publish npm accepted as an
+      // already-staged version, so confirm the exposed bytes are ours.
+      const exposedIntegrity = parseViewValue(npmView(coordinate, "dist.integrity"))
+      if (exposedIntegrity !== integrity) {
+        throw new Error(`${coordinate} is exposed on npm with different bytes (${exposedIntegrity})`)
       }
       url = registryUrl
     }

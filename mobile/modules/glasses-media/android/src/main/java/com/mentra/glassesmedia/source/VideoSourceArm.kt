@@ -102,6 +102,16 @@ object MediaDiagnostics {
    * timestamps is what makes the Teams jitter buffer hold.
    */
   const val acsAudioTimestamps = true
+
+  /**
+   * SoftAP ingest rebind kill switch. Ships on.
+   *
+   * When false, [GlassesMediaController.rebindIngest] refuses rather than destroying the live
+   * listener. Flip locally to freeze recovery without a rebuild.
+   */
+  @JvmField
+  @Volatile
+  var SOFTAP_RECOVERY_ENABLED = true
 }
 
 data class SyntheticConfig(

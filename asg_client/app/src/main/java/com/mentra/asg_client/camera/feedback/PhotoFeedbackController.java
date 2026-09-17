@@ -161,10 +161,9 @@ public final class PhotoFeedbackController {
                 //
                 // Dispatch off the caller's thread. start() runs inline on the UART reader
                 // thread (SerialPortBridge.RecvThread -> SerialSession.dispatch ->
-                // ButtonEventSubscriber -> takePhotoLocally), and opening the I2S path costs
-                // MediaPlayer.prepare() plus I2SAudioController.I2S_START_SETTLE_MS of
-                // Thread.sleep. Running that here would stall every MCU event behind the
-                // serial reader and push back the enqueuePhotoRequest() call that follows.
+                // ButtonEventSubscriber -> takePhotoLocally). MediaPlayer.prepare() still
+                // blocks even though BES readiness is now awaited asynchronously. Running
+                // preparation here would stall MCU events and delay enqueuePhotoRequest().
                 // A capture that fails before this runs marks the token terminal, so playSnap
                 // correctly stays silent.
                 //

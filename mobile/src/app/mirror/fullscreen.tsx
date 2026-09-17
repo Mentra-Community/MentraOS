@@ -24,7 +24,7 @@ import {useNavigationStore} from "@/stores/navigation"
 import {SETTINGS, useSetting} from "@mentra/engine"
 import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
-import {PermissionFeatures, requestFeaturePermissions} from "@/utils/PermissionsUtils"
+import {checkFeaturePermissions, PermissionFeatures, requestFeaturePermissions} from "@/utils/PermissionsUtils"
 
 // Request microphone permission for recording
 const requestMicrophonePermission = async () => {
@@ -50,7 +50,7 @@ export default function GlassesMirrorFullscreen() {
 
   // Check permissions and setup on component mount
   useEffect(() => {
-    checkMicrophonePermission()
+    void checkFeaturePermissions(PermissionFeatures.MICROPHONE).then(setHasMicrophonePermission)
     // Hide status bar in fullscreen mode
     StatusBar.setHidden(true)
     // Check for existing recordings

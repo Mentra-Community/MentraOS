@@ -91,7 +91,14 @@ function exactlyOne(response, label) {
 }
 
 export async function collectPaginatedData(client, resource) {
+  return (await collectPaginated(client, resource)).data
+}
+
+// Like collectPaginatedData, but also gathers the `included` resources of every
+// page, for queries that use `include=`.
+export async function collectPaginated(client, resource) {
   const data = []
+  const included = []
   const visited = new Set()
   let next = resource
   while (next) {
@@ -100,9 +107,10 @@ export async function collectPaginatedData(client, resource) {
     const response = await client.request(next)
     if (!Array.isArray(response?.data)) throw new Error(`App Store Connect page ${next} has no data array`)
     data.push(...response.data)
+    if (Array.isArray(response.included)) included.push(...response.included)
     next = response.links?.next || null
   }
-  return data
+  return {data, included}
 }
 
 export async function findApp(client, bundleId, appId) {
@@ -545,10 +553,12 @@ export async function setBetaBuildWhatsNew(client, {buildId, locale = "en-US", w
   return {localization: localization.data, reused: false}
 }
 
+// App Store versions are listed through the app; there is no top-level
+// /v1/appStoreVersions collection (that request answers 403, seen on the
+// first live 3.1.1 submission read-back, run 34891948855).
 export async function findAppStoreVersion(client, {appId, versionString}) {
   const response = await client.request(
-    query("/v1/appStoreVersions", {
-      "filter[app]": appId,
+    query(`/v1/apps/${encodeURIComponent(appId)}/appStoreVersions`, {
       "filter[platform]": "IOS",
       "filter[versionString]": versionString,
       "limit": "2",
@@ -572,11 +582,32 @@ function compareVersionStrings(left, right) {
 }
 
 export async function appStoreInventory(client, {app}) {
-  const builds = await collectPaginatedData(
+  // Each build is listed with the marketing version it was uploaded under, so
+  // an allocator can honour App Store Connect's rule that a new build of a
+  // version string must exceed every earlier build of that same string.
+  const {data: buildRows, included} = await collectPaginated(
     client,
-    query("/v1/builds", {"filter[app]": app.id, "sort": "-uploadedDate", "limit": "200"}),
+    query("/v1/builds", {
+      "filter[app]": app.id,
+      "sort": "-uploadedDate",
+      "limit": "200",
+      "include": "preReleaseVersion",
+      "fields[preReleaseVersions]": "version",
+    }),
   )
-  const buildNumbers = builds.map((build) => Number(build.attributes?.version)).filter(Number.isSafeInteger)
+  const versionById = new Map(
+    included
+      .filter((item) => item?.type === "preReleaseVersions" && item.id)
+      .map((item) => [item.id, item.attributes?.version ?? null]),
+  )
+  const builds = buildRows
+    .map((build) => ({
+      buildNumber: Number(build.attributes?.version),
+      marketingVersion: versionById.get(build.relationships?.preReleaseVersion?.data?.id) ?? null,
+    }))
+    .filter((build) => Number.isSafeInteger(build.buildNumber))
+    .sort((left, right) => left.buildNumber - right.buildNumber)
+  const buildNumbers = builds.map((build) => build.buildNumber)
   const versions = await collectPaginatedData(
     client,
     query(`/v1/apps/${encodeURIComponent(app.id)}/appStoreVersions`, {"filter[platform]": "IOS", "limit": "200"}),
@@ -608,6 +639,11 @@ export async function appStoreInventory(client, {app}) {
     bundleId: app.attributes?.bundleId,
     current,
     maxBuildNumber: buildNumbers.length === 0 ? 0 : Math.max(...buildNumbers),
+    // Every numeric build the app holds with its marketing version, so an
+    // allocator can look inside one family's window and at one version
+    // string's history instead of trusting the global maximum, which any stray
+    // upload (a 900000001 once) would poison for good.
+    builds,
   }
 }
 
@@ -627,13 +663,15 @@ export async function productionSubmissionStatus(client, {appId, versionString, 
   if (!version) return {version: null, state: "ABSENT", attachedBuildId: null, promoted: false}
   const relationship = await client.request(`/v1/appStoreVersions/${version.id}/relationships/build`)
   const attachedBuildId = relationship?.data?.id || null
-  if (attachedBuildId && attachedBuildId !== buildId) {
-    throw new Error(`App Store version ${versionString} is attached to unexpected build ${attachedBuildId}`)
-  }
   const state = version.attributes?.appStoreState || version.attributes?.appVersionState
   if (!state) throw new Error(`App Store version ${versionString} has no state`)
+  // A version still editable (prepare, developer rejected, App Review
+  // rejected) may carry an earlier build: the submission replaces it. Only a
+  // version already in the review or release flow must carry this build.
   if (SUBMITTED_APP_STORE_STATES.has(state) && attachedBuildId !== buildId) {
-    throw new Error(`Submitted App Store version ${versionString} is not attached to build ${buildId}`)
+    throw new Error(
+      `Submitted App Store version ${versionString} is attached to build ${attachedBuildId ?? "none"}, not ${buildId}`,
+    )
   }
   return {version, state, attachedBuildId, promoted: SUBMITTED_APP_STORE_STATES.has(state)}
 }

@@ -17,12 +17,20 @@ declare class AcsMeetingNativeModule extends NativeModule<AcsMeetingModuleEvents
   updateVideoSource(whepUrl: string): Promise<void>
   /** Force a WHEP rebuild on the current URL (phone changed networks). */
   restartVideoSource(): Promise<void>
+  /**
+   * SoftAP: destroy the current ingest listener generation and bind a new one.
+   * Resolves with the new URL the glasses must publish to. Rejects rather than
+   * reuse a stale listener.
+   */
+  rebindSoftApIngest(): Promise<string>
   /** SoftAP: join the glasses hotspot; resolves to the phone's IPv4 on it. */
   joinScopedNetwork(ssid: string, passphrase: string): Promise<string>
   /** iOS: verify DHCP against the gateway advertised by the glasses before resolving. */
   joinScopedNetworkWithGateway?(ssid: string, passphrase: string, gateway: string): Promise<string>
   beginTrace(traceId: string): Promise<void>
   leaveScopedNetwork(): Promise<void>
+  cancelScopedNetworkJoin?(): Promise<void>
+  awaitDefaultNetworkAfterHotspot?(): Promise<{usable: boolean; detail: string; transport: string}>
   /** SoftAP: TCP-probe the hotspot gateway over the scoped network. */
   probeScopedGateway(): Promise<{reachable: boolean; detail: string}>
   getState(): Promise<AcsMeetingState>

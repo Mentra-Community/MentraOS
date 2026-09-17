@@ -25,7 +25,11 @@ jobs:
           distribution: "temurin"
 
       - name: Setup Android SDK
-        uses: android-actions/setup-android@v2
+        uses: android-actions/setup-android@v3
+        with:
+          # The action's default list includes the retired `tools` package,
+          # which no longer downloads; Gradle fetches the rest it needs.
+          packages: platform-tools
 
       - name: Download APK from build workflow
         uses: dawidd6/action-download-artifact@v3

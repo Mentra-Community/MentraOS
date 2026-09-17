@@ -6,6 +6,10 @@ import {
   SoftapCallError,
   SoftapCallTransport,
   SoftapEndNotSupportedError,
+  SOFTAP_STEPS,
+  RETURN_DEADLINE_MS,
+  REARM_BUDGET_MS,
+  softapVideoPolicy,
   type SoftapCallDeps,
   type SoftapProgress,
   type SoftapStep,
@@ -52,8 +56,12 @@ function recordingDeps(overrides: Partial<SoftapCallDeps> | ((calls: string[]) =
     stopPublishing: async () => {
       calls.push("stopPublishing")
     },
-    awaitFirstFrame: async () => {
-      calls.push("awaitFirstFrame")
+    awaitFirstFrame: async (_report, options) => {
+      calls.push(options?.fresh ? "awaitFirstFrame:fresh" : "awaitFirstFrame")
+    },
+    rebindIngest: async () => {
+      calls.push("rebindIngest")
+      return {ingestUrl: "http://192.168.43.20:8791/whip"}
     },
     ...resolved,
   }
@@ -719,7 +727,118 @@ describe("SoftapCallTransport leave during every phase", () => {
   })
 })
 
+describe("SoftapCallTransport Wi-Fi preflight", () => {
+  /**
+   * The point of the preflight is what does *not* happen: the glasses are never asked to raise a
+   * hotspot for a join the phone's radio cannot complete. Asserting on the absence of
+   * `startHotspot` is therefore the whole test — a failure that merely arrives earlier would
+   * still cost the wearer a hotspot and a teardown.
+   */
+  test("a disabled radio fails the call before the glasses are asked for anything", async () => {
+    const {calls, transport} = recordingDeps({isWifiEnabled: async () => false})
+
+    const error = (await transport.start().catch((thrown) => thrown)) as SoftapCallError
+
+    expect(error).toBeInstanceOf(SoftapCallError)
+    expect(error.code).toBe("SOFTAP_WIFI_DISABLED")
+    expect(error.step).toBe("hotspot")
+    expect(calls).toEqual([])
+  })
+
+  test("an enabled radio runs the normal sequence", async () => {
+    const {calls, transport} = recordingDeps({isWifiEnabled: async () => true})
+
+    await transport.start()
+
+    expect(calls).toEqual(START_ORDER)
+  })
+
+  /**
+   * A host that cannot answer must not be able to stop a call. iOS has no such API, and a native
+   * that predates the function throws through the bridge — both have to read as "carry on", with
+   * the native throw at `scopedJoin` left as the backstop.
+   */
+  test("a probe that throws is not treated as a disabled radio", async () => {
+    const {calls, transport} = recordingDeps({
+      isWifiEnabled: async () => {
+        throw new Error("MentraAcsMeeting.isWifiEnabled is not a function")
+      },
+    })
+
+    await transport.start()
+
+    expect(calls).toEqual(START_ORDER)
+  })
+
+  test("the failed preflight marks the hotspot row so the checklist names it", async () => {
+    const snapshots: SoftapProgress[] = []
+    const {transport} = recordingDeps({isWifiEnabled: async () => false})
+
+    await transport.start({onProgress: (progress) => snapshots.push(progress)}).catch(() => undefined)
+
+    const hotspot = snapshots.at(-1)?.steps.find((step) => step.step === "hotspot")
+    expect(hotspot?.status).toBe("failed")
+    expect(snapshots.at(-1)?.phase).toBe("failed")
+  })
+})
+
 describe("SoftapCallTransport stop waits for the step in flight", () => {
+  test("cancel interrupts address discovery and still waits for the native configuration release", async () => {
+    let rejectJoin!: (error: Error) => void
+    let releaseNative!: () => void
+    const join = new Promise<string>((_, reject) => {
+      rejectJoin = reject
+    })
+    const released = new Promise<void>((resolve) => {
+      releaseNative = resolve
+    })
+    const {transport, calls} = recordingDeps({
+      joinScopedNetwork: () => join,
+      cancelScopedNetworkJoin: async () => {
+        rejectJoin(new Error("Hotspot join cancelled"))
+        await released
+      },
+    })
+    const started = transport.start().catch((error: Error) => error)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    let stopped = false
+    const stopping = transport.stop().then(() => {
+      stopped = true
+    })
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    expect(stopped).toBe(false)
+    expect(calls).not.toContain("stopHotspot")
+    releaseNative()
+    await stopping
+    expect(await started).toBeInstanceOf(SoftapCallError)
+    expect(calls).toContain("stopHotspot")
+    expect(calls.some((call) => call.startsWith("joinMeeting"))).toBe(false)
+    expect(transport.lastTeardownFailures()).toEqual([])
+  })
+
+  test("a failed native cancellation is retained while normal cleanup still runs", async () => {
+    let resolveJoin!: (address: string) => void
+    const join = new Promise<string>((resolve) => {
+      resolveJoin = resolve
+    })
+    const {transport, calls} = recordingDeps({
+      joinScopedNetwork: () => join,
+      cancelScopedNetworkJoin: async () => {
+        throw new Error("native cancel failed")
+      },
+    })
+    const started = transport.start().catch((error: Error) => error)
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    const stopping = transport.stop()
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    resolveJoin("192.168.43.20")
+    await stopping
+    await started
+    expect(calls).toContain("leaveScopedNetwork")
+    expect(calls).toContain("stopHotspot")
+    expect(transport.lastTeardownFailures()).toEqual(["scopedJoin"])
+  })
+
   /**
    * The restart race, at the layer that can close it.
    *
@@ -1019,9 +1138,7 @@ describe("SoftapCallTransport progress", () => {
       },
     })
     let last: SoftapProgress | undefined
-    await expect(transport.start({onProgress: (progress) => (last = progress)})).rejects.toBeInstanceOf(
-      SoftapCallError,
-    )
+    await expect(transport.start({onProgress: (progress) => (last = progress)})).rejects.toBeInstanceOf(SoftapCallError)
     expect(last?.phase).toBe("failed")
     expect(statuses(last!)).toBe("hotspot=done scopedJoin=done acsJoin=failed publish=pending live=pending")
     expect(last?.steps.find((step) => step.step === "acsJoin")?.error).toBe("ACS said no")
@@ -1091,7 +1208,10 @@ describe("createSoftapCallDeps", () => {
 
   function deps(
     overrides: Partial<ReturnType<typeof subsystems>["subsystems"]> = {},
-    options: {hotspotBroadcastWaitMs?: number} = {},
+    options: {
+      hotspotBroadcastWaitMs?: number
+      video?: {width: number; height: number; fps: number; maxBitrateBps: number}
+    } = {},
   ) {
     const harness = subsystems()
     return {
@@ -1101,12 +1221,76 @@ describe("createSoftapCallDeps", () => {
         meetingUrl: "https://teams.microsoft.com/l/meetup-join/x",
         token: "tok",
         displayName: "Mentra Live",
+        video: options.video,
         awaitFirstFrame: async () => {},
         subsystems: {...harness.subsystems, ...overrides},
         hotspotBroadcastWaitMs: options.hotspotBroadcastWaitMs,
       }),
     }
   }
+
+  test("the glasses are given a bitrate floor and a high start on the hop to the phone", async () => {
+    const harness = deps({}, {video: {width: 960, height: 540, fps: 15, maxBitrateBps: 1_500_000}})
+
+    await harness.deps.startPublishing({ingestUrl: "http://192.168.43.20:8790/whip", traceId: "t"})
+
+    const published = harness.calls.find(([name]) => name === "startPublishing")?.[1] as {
+      options: {video?: Record<string, number>}
+    }
+    // The ACS profile's 1.5 Mbps describes the phone→Teams hop. This one is a metre of air, so
+    // it gets the hotspot ceiling instead of inheriting the internet hop's limit.
+    expect(published.options.video).toEqual({
+      width: 960,
+      height: 540,
+      fps: 15,
+      bitrate: 2_500_000,
+      initialBitrateBps: 2_000_000,
+      minBitrateBps: 1_200_000,
+    })
+  })
+
+  test("no profile means the glasses keep their own WHIP defaults", async () => {
+    const harness = deps()
+
+    await harness.deps.startPublishing({ingestUrl: "http://192.168.43.20:8790/whip", traceId: "t"})
+
+    const published = harness.calls.find(([name]) => name === "startPublishing")?.[1] as {
+      options: {video?: unknown}
+    }
+    expect(published.options.video).toBeUndefined()
+  })
+
+  test("a profile above 540p can request a ceiling above the hotspot budget", () => {
+    expect(softapVideoPolicy({width: 1280, height: 720, fps: 15, maxBitrateBps: 3_000_000})).toMatchObject({
+      bitrate: 3_000_000,
+      initialBitrateBps: 2_000_000,
+      minBitrateBps: 1_200_000,
+    })
+  })
+
+  test("720p with a 1 Mbps Teams cap still starts publishing over the hotspot", async () => {
+    const harness = deps({}, {video: {width: 1280, height: 720, fps: 15, maxBitrateBps: 1_000_000}})
+
+    await harness.deps.startPublishing({ingestUrl: "http://192.168.43.20:8790/whip", traceId: "t"})
+
+    const published = harness.calls.find(([name]) => name === "startPublishing")?.[1] as {
+      options: {video?: Record<string, number>}
+    }
+    expect(published.options.video).toEqual({
+      width: 1280,
+      height: 720,
+      fps: 15,
+      bitrate: 2_500_000,
+      initialBitrateBps: 2_000_000,
+      minBitrateBps: 1_200_000,
+    })
+  })
+
+  test.each([0, -1, NaN, Infinity])("an invalid bitrate %s is rejected", (maxBitrateBps) => {
+    expect(() => softapVideoPolicy({width: 1280, height: 720, fps: 15, maxBitrateBps})).toThrow(
+      /invalid SoftAP video bitrate/,
+    )
+  })
 
   test("the meeting is asked for a softap source carrying the hotspot credentials", async () => {
     const harness = deps()
@@ -1167,6 +1351,58 @@ describe("createSoftapCallDeps", () => {
     await real.startHotspot()
     await expect(real.joinScopedNetwork("MentraLive-1234", "pw")).resolves.toBe("10.5.6.8")
     expect(gateways).toEqual(["192.168.43.1", "10.5.6.1"])
+  })
+
+  test("an unanswered enable is asked again instead of turning the hotspot off", async () => {
+    // BLE can deliver the enable after the phone gave up on it. Disabling here turned an AP that
+    // had just come up back off, and the rebuild then ran out of budget.
+    const base = subsystems()
+    const calls: boolean[] = []
+    let enables = 0
+    const real = createSoftapCallDeps({
+      packageName: "com.mentra.call",
+      meetingUrl: "https://teams.microsoft.com/l/meetup-join/x",
+      token: "tok",
+      awaitFirstFrame: async () => {},
+      hotspotBroadcastWaitMs: 0,
+      subsystems: {
+        ...base.subsystems,
+        setHotspotState: async (enabled) => {
+          calls.push(enabled)
+          if (enabled && ++enables === 1) {
+            throw new Error("hotspot enable request timed out waiting for glasses response")
+          }
+          return enabled ? {state: "enabled", ssid: "MentraLive-1234", password: "pw"} : {state: "disabled"}
+        },
+      },
+    })
+
+    await expect(real.startHotspot()).resolves.toEqual({ssid: "MentraLive-1234", passphrase: "pw"})
+    expect(calls).toEqual([true, true])
+  })
+
+  test("a hotspot that answers 'disabled' is still cycled off before the retry", async () => {
+    const base = subsystems()
+    const calls: boolean[] = []
+    let enables = 0
+    const real = createSoftapCallDeps({
+      packageName: "com.mentra.call",
+      meetingUrl: "https://teams.microsoft.com/l/meetup-join/x",
+      token: "tok",
+      awaitFirstFrame: async () => {},
+      hotspotBroadcastWaitMs: 0,
+      subsystems: {
+        ...base.subsystems,
+        setHotspotState: async (enabled) => {
+          calls.push(enabled)
+          if (enabled && ++enables === 1) return {state: "disabled"}
+          return enabled ? {state: "enabled", ssid: "MentraLive-1234", password: "pw"} : {state: "disabled"}
+        },
+      },
+    })
+
+    await real.startHotspot()
+    expect(calls).toEqual([true, false, true])
   })
 
   test("the join waits for the phone's internet to come back before asking ACS for anything", async () => {
@@ -1390,9 +1626,7 @@ describe("createSoftapCallDeps", () => {
       subsystems: {...harness.subsystems, glassesLc3Uplink: () => true},
     })
 
-    await real.startPublishing({ingestUrl: "http://192.168.43.20:8790/whip", traceId: "abc123"}, (d) =>
-      details.push(d),
-    )
+    await real.startPublishing({ingestUrl: "http://192.168.43.20:8790/whip", traceId: "abc123"}, (d) => details.push(d))
 
     expect(harness.calls).toContainEqual([
       "startPublishing",
@@ -1553,4 +1787,266 @@ describe("createSoftapCallDeps", () => {
       ingestUrl: "",
     })
   })
+})
+
+describe("SoftapCallTransport mid-call republish", () => {
+  test("is a no-op until the call is live", async () => {
+    const {calls, transport} = recordingDeps()
+    await transport.republish("too early")
+    expect(calls.filter((call) => call.startsWith("startPublishing"))).toEqual([])
+    expect(transport.shouldRepublish("failed")).toBe(false)
+  })
+
+  test("re-issues start_stream on the standing ingest URL without leaving the meeting", async () => {
+    const {calls, transport} = recordingDeps({
+      waitUntilLive: async () => true,
+    })
+    await transport.start()
+    const before = calls.length
+    expect(transport.shouldRepublish("failed")).toBe(true)
+    await transport.republish("mediaSource failed")
+    expect(calls.slice(before)).toEqual([
+      "stopPublishing",
+      "startPublishing:http://192.168.43.20:8790/whip",
+    ])
+    expect(calls.filter((call) => call === "leaveMeeting")).toEqual([])
+    expect(transport.currentPhase()).toBe("live")
+  })
+
+  test("retries start_stream until ingest is live again", async () => {
+    let lives = 0
+    const {calls, transport} = recordingDeps({
+      republishRetryDelayMs: 0,
+      waitUntilLive: async () => {
+        lives += 1
+        return lives >= 2
+      },
+    })
+    await transport.start()
+    await transport.republish("stalled")
+    expect(calls.filter((call) => call.startsWith("startPublishing"))).toHaveLength(3)
+  })
+
+  test("does not republish after the call has been torn down", async () => {
+    const {calls, transport} = recordingDeps({waitUntilLive: async () => true})
+    await transport.start()
+    await transport.stop()
+    const after = calls.length
+    await transport.republish("too late")
+    expect(calls.length).toBe(after)
+    expect(transport.shouldRepublish("failed")).toBe(false)
+  })
+
+  test("an invalidated republish clears the field so a later republish can run", async () => {
+    let blockLive = true
+    let releaseLive!: (live: boolean) => void
+    const {calls, transport} = recordingDeps({
+      waitUntilLive: () => {
+        if (!blockLive) return Promise.resolve(true)
+        return new Promise<boolean>((resolve) => {
+          releaseLive = resolve
+        })
+      },
+    })
+    await transport.start()
+    calls.length = 0
+    const first = transport.republish("stalled")
+    for (let i = 0; i < 20 && !releaseLive; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    }
+    const stopped = transport.stop()
+    releaseLive(false)
+    await first
+    await stopped
+    expect(transport.currentPhase()).toBe("idle")
+
+    blockLive = false
+    await transport.start()
+    calls.length = 0
+    await transport.republish("again")
+    expect(calls.filter((call) => call.startsWith("startPublishing"))).toHaveLength(1)
+  })
+
+  test("a cancelled republish does not stopPublishing a successor's publisher", async () => {
+    let releaseRepublishStart!: () => void
+    let startPublishingCalls = 0
+    const {calls, deps, transport} = recordingDeps({waitUntilLive: async () => true})
+    await transport.start()
+    calls.length = 0
+    deps.startPublishing = async (args) => {
+      startPublishingCalls += 1
+      calls.push(`startPublishing:${args.ingestUrl}:${startPublishingCalls}`)
+      if (startPublishingCalls === 1) {
+        await new Promise<void>((resolve) => {
+          releaseRepublishStart = resolve
+        })
+      }
+    }
+    const republished = transport.republish("cam died")
+    for (let i = 0; i < 20 && !releaseRepublishStart; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    }
+    const recovered = transport.recover("hotspot lost")
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    releaseRepublishStart()
+    await republished
+    await recovered
+    const publishStarts = calls.filter((call) => call.startsWith("startPublishing"))
+    const lastPublish = publishStarts.at(-1)
+    const lastStopAfter = calls.slice(calls.lastIndexOf(lastPublish ?? "")).filter((call) => call === "stopPublishing")
+    expect(lastStopAfter).toEqual([])
+    expect(transport.currentPhase()).toBe("live")
+    expect(transport.shouldRepublish("failed")).toBe(true)
+  })
+})
+
+describe("SoftapCallTransport media generation recovery", () => {
+  const PRESERVE_TEARDOWN = ["stopPublishing", "leaveScopedNetwork", "stopHotspot"]
+  const MEDIA_ONLY_ORDER = [
+    "startHotspot",
+    "waitUntilHotspotJoinable",
+    "joinScopedNetwork:MentraLive-1234:hunter2!",
+    "rebindIngest",
+    "startPublishing:http://192.168.43.20:8791/whip",
+    "awaitFirstFrame:fresh",
+  ]
+
+  test("exposes return and rearm budgets for the host", () => {
+    expect(RETURN_DEADLINE_MS).toBe(60_000)
+    expect(REARM_BUDGET_MS).toBe(45_000)
+  })
+
+  test("preserveMeeting undoes everything except acsJoin", async () => {
+    const {calls, transport} = recordingDeps()
+    await transport.start()
+    calls.length = 0
+
+    await transport.stop({preserveMeeting: true})
+
+    expect(calls).toEqual(PRESERVE_TEARDOWN)
+    expect(calls).not.toContain("leaveMeeting")
+    expect(transport.activeSteps()).toEqual(["acsJoin"])
+    expect(transport.currentPhase()).toBe("recovering")
+  })
+
+  test("mediaOnly rebuilds through rebindIngest and restores canonical completed", async () => {
+    const {calls, transport} = recordingDeps()
+    await transport.start()
+    await transport.stop({preserveMeeting: true})
+    calls.length = 0
+
+    await transport.start({mediaOnly: true})
+
+    expect(calls).toEqual(MEDIA_ONLY_ORDER)
+    expect(calls.some((call) => call.startsWith("joinMeeting"))).toBe(false)
+    expect(transport.activeSteps()).toEqual([...SOFTAP_STEPS])
+    expect(transport.currentPhase()).toBe("live")
+  })
+
+  test("recover mints a fresh traceId and stands republish down immediately", async () => {
+    let transport!: InstanceType<typeof SoftapCallTransport>
+    let phaseDuringFirstWait: string | undefined
+    let republishDuringFirstWait: boolean | undefined
+    const harness = recordingDeps((calls) => ({
+      stopPublishing: async () => {
+        calls.push("stopPublishing")
+        phaseDuringFirstWait = transport.currentPhase()
+        republishDuringFirstWait = transport.shouldRepublish("failed")
+      },
+    }))
+    transport = harness.transport
+    await transport.start()
+    const previousTrace = transport.progress().traceId
+    expect(transport.shouldRepublish("failed")).toBe(true)
+
+    const recovered = transport.recover("hotspot lost")
+    await recovered
+
+    expect(phaseDuringFirstWait).toBe("recovering")
+    expect(republishDuringFirstWait).toBe(false)
+    expect(transport.currentPhase()).toBe("live")
+    expect(transport.progress().traceId).not.toBe(previousTrace)
+    expect(transport.progress().traceId.length).toBeGreaterThan(0)
+    expect(transport.activeSteps()).toEqual([...SOFTAP_STEPS])
+    expect(transport.recoveryState().mediaGeneration).toBeGreaterThan(0)
+    expect(transport.shouldRepublish("failed")).toBe(true)
+  })
+
+  test("recover does not leave the ACS meeting", async () => {
+    const {calls, transport} = recordingDeps()
+    await transport.start()
+    calls.length = 0
+    await transport.recover("scoped network lost")
+    expect(calls).not.toContain("leaveMeeting")
+    expect(calls.filter((call) => call.startsWith("joinMeeting"))).toEqual([])
+    expect(calls).toContain("rebindIngest")
+    expect(transport.currentPhase()).toBe("live")
+  })
+
+  test("recover waits for the glasses before tearing the hotspot down", async () => {
+    const {calls, transport} = recordingDeps()
+    await transport.start()
+    calls.length = 0
+    let released = false
+    const wait = new Promise<void>((resolve) => {
+      setTimeout(() => {
+        released = true
+        resolve()
+      }, 20)
+    })
+    const recovered = transport.recover("hotspot lost", {wait: () => wait})
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    expect(released).toBe(false)
+    expect(calls).not.toContain("stopHotspot")
+    expect(calls).not.toContain("rebindIngest")
+    await recovered
+    expect(released).toBe(true)
+    expect(calls.indexOf("stopHotspot")).toBeGreaterThan(-1)
+    expect(calls.indexOf("stopHotspot")).toBeLessThan(calls.indexOf("rebindIngest"))
+    expect(calls).toContain("rebindIngest")
+  })
+})
+
+describe("SoftapCallTransport stop wins during recovery", () => {
+  const blockable: Array<{name: string; override: keyof SoftapCallDeps}> = [
+    {name: "preserve teardown", override: "stopPublishing"},
+    {name: "mediaOnly hotspot", override: "startHotspot"},
+    {name: "mediaOnly scopedJoin", override: "joinScopedNetwork"},
+    {name: "mediaOnly rebindIngest", override: "rebindIngest"},
+    {name: "mediaOnly publish", override: "startPublishing"},
+    {name: "mediaOnly first frame", override: "awaitFirstFrame"},
+  ]
+
+  for (const {name, override} of blockable) {
+    test(`stop() wins at ${name}`, async () => {
+      let release!: () => void
+      const blocked = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      let entered = false
+      const {calls, deps, transport} = recordingDeps()
+      await transport.start()
+      const original = deps[override] as (...args: never[]) => Promise<unknown>
+      Object.assign(deps, {
+        [override]: async (...args: never[]) => {
+          entered = true
+          await blocked
+          return original(...args)
+        },
+      })
+
+      const recovered = transport.recover("hotspot lost")
+      for (let i = 0; i < 20 && !entered; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      }
+      expect(entered).toBe(true)
+      const stopped = transport.stop()
+      release()
+      await stopped
+      await expect(recovered).rejects.toBeInstanceOf(SoftapCallError)
+      expect(calls).toContain("leaveMeeting")
+      expect(transport.currentPhase()).toBe("idle")
+      expect(transport.activeSteps()).toEqual([])
+    })
+  }
 })

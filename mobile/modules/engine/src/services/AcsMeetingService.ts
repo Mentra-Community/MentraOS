@@ -83,6 +83,23 @@ export function parseMeetingCapabilities(raw: unknown): MeetingCapabilities | un
   }
 }
 
+/**
+ * Read the ACS `CallEndReason` off a native state event.
+ *
+ * Native flattens it into `endReason_code` / `endReason_subcode` / `endReason_message` rather than
+ * a nested object, because the Expo bridge drops nested nulls. Anything non-numeric is discarded:
+ * a code that arrived as a string would compare unequal to every entry in the lookup tables and
+ * classify a known failure as unknown, which is worse than having no code at all.
+ */
+export function parseMeetingEndReason(event: Record<string, unknown>): MeetingEndReason | undefined {
+  const num = (value: unknown): number | undefined => (typeof value === "number" && Number.isFinite(value) ? value : undefined)
+  const code = num(event.endReason_code)
+  const subcode = num(event.endReason_subcode)
+  const message = typeof event.endReason_message === "string" ? event.endReason_message : undefined
+  if (code === undefined && subcode === undefined && !message) return undefined
+  return {...(code !== undefined ? {code} : {}), ...(subcode !== undefined ? {subcode} : {}), ...(message ? {message} : {})}
+}
+
 export interface MeetingState {
   state: MeetingPhase
   muted: boolean
@@ -95,6 +112,7 @@ export interface MeetingState {
   audioSafety?: AudioSafety
   mediaSource?: MediaSourceState
   mediaSourceReason?: string
+  callEndReason?: {code: number; subcode: number}
   participants?: MeetingParticipant[]
   /** Runtime capabilities. Omitted by natives that predate them; read that as unknown. */
   capabilities?: MeetingCapabilities
@@ -106,6 +124,22 @@ export interface MeetingState {
    * so a consumer keeps the last one it saw rather than treating its absence as a reset.
    */
   softap?: SoftapProgress
+  /**
+   * ACS `CallEndReason`, forwarded numerically.
+   *
+   * It is the only machine-readable statement of *why* a join failed, and a miniapp cannot tell a
+   * dead meeting link from a dropped network any other way — the human message is localised and
+   * reworded between SDK releases, so matching on it would turn an outage into "your link is
+   * broken" the first time Microsoft rephrases a sentence.
+   */
+  endReason?: MeetingEndReason
+}
+
+/** Numeric ACS `CallEndReason`. `message` is for logs and bug reports only, never for branching. */
+export interface MeetingEndReason {
+  code?: number
+  subcode?: number
+  message?: string
 }
 
 /**
@@ -290,6 +324,19 @@ export interface DefaultNetworkStatus {
   detail: string
 }
 
+/**
+ * Which path the wearer took into the call.
+ *
+ * Diagnostic only — nothing behaves differently — but it is carried all the way to the native
+ * traces because the open question about video quality is exactly "do these two differ", and a
+ * log that cannot separate them cannot answer it.
+ */
+export type AcsCallOrigin = "created" | "joined" | "unknown"
+
+export function parseAcsCallOrigin(value: unknown): AcsCallOrigin {
+  return value === "created" || value === "joined" ? value : "unknown"
+}
+
 type NativeModule = {
   prepareAgent?(options: {token: string; displayName?: string}): Promise<MeetingState>
   join(options: {
@@ -303,6 +350,7 @@ type NativeModule = {
     audioSource?: "glasses" | "phone"
     audioDelayMs?: number
     video?: AcsOutgoingVideo
+    origin?: AcsCallOrigin
   }): Promise<MeetingState & {ingestUrl?: string}>
   leave(): Promise<void>
   /**
@@ -315,6 +363,16 @@ type NativeModule = {
    */
   leaveAndAwait?(options: {timeoutMs: number}): Promise<{completed: boolean}>
   /**
+   * Wait for the SoftAP WHIP listener's port. `closed: false` means it is still held.
+   *
+   * Separate from [leaveAndAwait] because the listener outlives the ACS teardown on purpose: it
+   * answers `410` for a few seconds so an in-flight request from the glasses gets a status rather
+   * than a reset. Absent on natives that predate the barrier.
+   */
+  awaitIngestClosed?(options: {timeoutMs: number}): Promise<{closed: boolean}>
+  /** Drop the retiring WHIP listener now, skipping its grace period. */
+  forceCloseIngest?(): Promise<void>
+  /**
    * End the group call for everyone, then tear this device down. Rejects when the capability is
    * denied or ACS refuses — and has still left the call. Absent on natives that predate End.
    */
@@ -325,13 +383,22 @@ type NativeModule = {
   /** Force a WHEP rebuild on the current URL. Absent on natives that predate it. */
   restartVideoSource?(): Promise<void>
   /**
+   * SoftAP: destroy the current ingest listener and bind a new one. Resolves with
+   * the new URL. Absent on natives that predate rebind; disabled natives reject.
+   */
+  rebindSoftApIngest?(): Promise<string>
+  /**
    * Join the glasses hotspot as a scoped, internet-less network; resolves with this phone's
    * address on it. Absent on natives that predate SoftAP.
    */
   joinScopedNetwork?(ssid: string, passphrase: string): Promise<string>
   joinScopedNetworkWithGateway?(ssid: string, passphrase: string, gateway: string): Promise<string>
+  /** Is this phone's Wi-Fi radio on? Absent on natives that predate the preflight. */
+  isWifiEnabled?(): Promise<boolean>
   beginTrace?(traceId: string): Promise<void>
   leaveScopedNetwork?(): Promise<void>
+  cancelScopedNetworkJoin?(): Promise<void>
+  awaitDefaultNetworkAfterHotspot?(): Promise<DefaultNetworkStatus>
   /**
    * TCP-probe the hotspot gateway over the scoped network. Absent on natives that predate it.
    * `detail` is a one-line human summary (address, port, latency or the failure).
@@ -507,6 +574,15 @@ class AcsMeetingService {
   private lastMediaRestartAt = 0
   /** Callers parked in [waitForFirstFrame], woken by the next `mediaSource` verdict. */
   private readonly firstFrameWaiters = new Set<(error?: Error) => void>()
+  /**
+   * Bumped by [invalidateDecodedMedia]. A `live` verdict only counts for the wait that
+   * started after that bump if [liveEpoch] matches.
+   */
+  private decodedMediaEpoch = 0
+  /** [decodedMediaEpoch] at the moment the phone last reported `mediaSource: live`. */
+  private liveEpoch = -1
+  /** Mid-call republish waiters: live resolves true, leave/timeout resolves false. Failed is ignored. */
+  private readonly mediaLiveWaiters = new Set<(live: boolean) => void>()
   private scopedLostSub: {remove: () => void} | null = null
   private readonly scopedLostListeners = new Set<(error: {code: string; message: string}) => void>()
   /**
@@ -524,6 +600,8 @@ class AcsMeetingService {
    * wearer's voice at a native session that has already left the meeting.
    */
   private callGeneration = 0
+  /** Stamped on the host-side state traces so they can be grouped the same way the native ones are. */
+  private callOrigin: AcsCallOrigin = "unknown"
   private micTransport: MicTransport = "whip"
   private micSub: {remove: () => void} | null = null
   /** True between the pin/requirement being taken and released, so release is exactly once. */
@@ -574,6 +652,63 @@ class AcsMeetingService {
   }
 
   /**
+   * Has the SoftAP video receiver released its port?
+   *
+   * A native that cannot answer reports `true`: it also predates the tombstone this waits out, so
+   * there is nothing for the barrier to be waiting on.
+   */
+  async awaitIngestClosed(timeoutMs: number): Promise<boolean> {
+    const native = getNative()
+    if (!native?.awaitIngestClosed) return true
+    const outcome = await native.awaitIngestClosed({timeoutMs})
+    return outcome.closed
+  }
+
+  /** Close the retiring WHIP listener now. No-op on natives without it. */
+  async forceCloseIngest(): Promise<void> {
+    await getNative()?.forceCloseIngest?.()
+  }
+
+  /**
+   * Destroy the current SoftAP ingest listener and bind a new one. The caller
+   * rejoins the hotspot first; native reads the current scoped address.
+   */
+  async rebindSoftApIngest(): Promise<string> {
+    const native = getNative()
+    if (!native?.rebindSoftApIngest) {
+      throw new Error("SoftAP ingest rebind is not available on this native")
+    }
+    this.invalidateDecodedMedia()
+    const url = await native.rebindSoftApIngest()
+    this.ingestUrl = url
+    return url
+  }
+
+  /**
+   * Forget a previously decoded first frame. Recovery must wait for a frame
+   * from the new ingest generation, not short-circuit on the last live verdict.
+   */
+  invalidateDecodedMedia(): void {
+    this.decodedMediaEpoch++
+    if (this.lastState.mediaSource === "live") {
+      this.lastState = {...this.lastState, mediaSource: "connecting", mediaSourceReason: "ingest_rebind"}
+    }
+  }
+
+  /**
+   * Is this phone's Wi-Fi radio on?
+   *
+   * `null` means the question cannot be answered on this host — iOS, or a native that predates the
+   * preflight — and callers must treat that as "carry on", not as "off". Refusing a call because
+   * we could not ask would break every platform that never had the problem.
+   */
+  async isWifiEnabled(): Promise<boolean | null> {
+    const native = getNative()
+    if (!native?.isWifiEnabled) return null
+    return await native.isWifiEnabled()
+  }
+
+  /**
    * Join the glasses hotspot as a scoped, internet-less network, returning this phone's address on
    * it. Called before the ACS join, because the local WHIP listener has to bind to that address.
    *
@@ -588,6 +723,7 @@ class AcsMeetingService {
     this.scopedTerminating = false
     this.bindScopedNetworkLost(native)
     await native.beginTrace?.(softapTraceId())
+    if (this.scopedTerminating) throw new Error("Hotspot join cancelled")
     if (native.joinScopedNetworkWithGateway) {
       if (!gateway) throw new Error("The glasses did not report a hotspot gateway")
       return await native.joinScopedNetworkWithGateway(ssid, passphrase, gateway)
@@ -654,6 +790,19 @@ class AcsMeetingService {
     return await native.awaitValidatedDefaultNetwork()
   }
 
+  /** Cleanup may restore home Wi-Fi; only the live SoftAP leg requires cellular on iOS. */
+  async awaitDefaultNetworkAfterHotspot(): Promise<DefaultNetworkStatus | null> {
+    const native = getNative()
+    return native?.awaitDefaultNetworkAfterHotspot
+      ? await native.awaitDefaultNetworkAfterHotspot()
+      : await this.awaitValidatedDefaultNetwork()
+  }
+
+  async cancelScopedNetworkJoin(): Promise<void> {
+    this.scopedTerminating = true
+    await getNative()?.cancelScopedNetworkJoin?.()
+  }
+
   /**
    * Can this phone reach the glasses over the hotspot it just joined? Null when the host cannot
    * tell (no native support), so the orchestrator narrates nothing rather than a guess.
@@ -678,18 +827,24 @@ class AcsMeetingService {
   }
 
   /**
-   * Resolves once the host reports a frame actually reached ACS, which is the only signal that
-   * remote participants can see the camera.
-   *
-   * Rejects if the feed fails first, and on timeout. A SoftAP call that connects but never paints
-   * is the failure this exists to catch: without it the orchestrator would report `live` on the
-   * strength of an ACS join that says nothing about video.
+   * Resolves when the phone decodes its first glasses frame. This confirms the local media leg;
+   * Teams admission is a separate call state and may still be connecting or in the lobby.
+   * Rejects if the feed fails first, and on timeout.
    *
    * @param timeoutMs how long to wait before treating the silence as a failure
    */
-  waitForFirstFrame(timeoutMs: number): Promise<void> {
-    if (this.lastState.mediaSource === "live") {
-      softapTrace("acs_first_frame_already_live", {mediaSource: this.lastState.mediaSource})
+  waitForFirstFrame(timeoutMs: number, options: {fresh?: boolean} = {}): Promise<void> {
+    const liveThisGeneration =
+      this.lastState.mediaSource === "live" && this.liveEpoch === this.decodedMediaEpoch
+    // Join short-circuits on any live. Recovery (`fresh`) short-circuits only on a live
+    // from this ingest generation: the new WHIP first frame often lands during publish,
+    // before this wait starts. Waiting for a later `onState` then times out while video
+    // is already flowing, and the miniapp hangs up the ACS meeting.
+    if (liveThisGeneration) {
+      softapTrace(
+        options.fresh ? "glasses_first_frame_this_generation" : "glasses_first_frame_already_received",
+        {mediaSource: this.lastState.mediaSource, epoch: this.decodedMediaEpoch},
+      )
       return Promise.resolve()
     }
     const startedAt = Date.now()
@@ -719,7 +874,7 @@ class AcsMeetingService {
       }
       let done = false
       const timer = setTimeout(
-        () => settle(new Error(`No glasses video reached the meeting within ${Math.round(timeoutMs / 1000)}s`)),
+        () => settle(new Error(`No glasses video reached the phone within ${Math.round(timeoutMs / 1000)}s`)),
         timeoutMs,
       )
       this.firstFrameWaiters.add(settle)
@@ -731,6 +886,42 @@ class AcsMeetingService {
     if (mediaSource !== "live" && mediaSource !== "failed") return
     const error = mediaSource === "failed" ? new Error("The glasses video feed failed") : undefined
     for (const settle of [...this.firstFrameWaiters]) settle(error)
+    if (mediaSource === "live") this.settleMediaLiveWaiters(true)
+  }
+
+  private settleMediaLiveWaiters(live: boolean): void {
+    for (const settle of [...this.mediaLiveWaiters]) settle(live)
+  }
+
+  /**
+   * Mid-call SoftAP camera recovery. Resolves `true` only when ingest is live again.
+   * A standing `failed` is why we republished, so it must not abort the wait the way
+   * [waitForFirstFrame] does on join.
+   */
+  waitUntilMediaLive(timeoutMs: number): Promise<boolean> {
+    if (this.lastState.mediaSource === "live") return Promise.resolve(true)
+    const startedAt = Date.now()
+    softapTrace("acs_media_live_wait", {
+      timeoutMs,
+      mediaSource: this.lastState.mediaSource ?? "unknown",
+      state: this.lastState.state,
+    })
+    return new Promise<boolean>((resolve) => {
+      const settle = (live: boolean) => {
+        if (done) return
+        done = true
+        clearTimeout(timer)
+        this.mediaLiveWaiters.delete(settle)
+        softapTrace("acs_media_live_wait_done", {
+          waitedMs: Date.now() - startedAt,
+          live,
+        })
+        resolve(live)
+      }
+      let done = false
+      const timer = setTimeout(() => settle(false), timeoutMs)
+      this.mediaLiveWaiters.add(settle)
+    })
   }
 
   /**
@@ -772,6 +963,7 @@ class AcsMeetingService {
       videoSource: AcsVideoSource
       displayName?: string
       video?: AcsOutgoingVideo
+      origin?: AcsCallOrigin
     },
   ): Promise<MeetingState> {
     const native = getNative()
@@ -812,6 +1004,8 @@ class AcsMeetingService {
       preferredMic: useSettingsStore.getState().getSetting(SETTINGS.preferred_mic.key),
     })
     const joinStartedAt = Date.now()
+    const origin = parseAcsCallOrigin(args.origin)
+    this.callOrigin = origin
     softapTrace("acs_native_join", {
       packageName,
       generation,
@@ -820,6 +1014,18 @@ class AcsMeetingService {
       micTransport: this.micTransport,
       audioDelayMs: lc3Uplink ? SOFTAP_LC3_AUDIO_DELAY_MS : 0,
       video: video ? `${video.width}x${video.height}@${video.fps}` : "default",
+      origin,
+    })
+    // Duplicated from the native `native_join_options` line on purpose: if the native trace is
+    // missing from a capture — a bug report with only the JS log, a crash before export — this is
+    // the only record of what the two paths actually asked for.
+    softapTrace("acs_join_options", {
+      origin,
+      transport: args.videoSource.type,
+      width: video?.width ?? 0,
+      height: video?.height ?? 0,
+      fps: video?.fps ?? 0,
+      maxBitrateBps: video?.maxBitrateBps ?? 0,
     })
     try {
       const state = await native.join({
@@ -829,6 +1035,7 @@ class AcsMeetingService {
         videoSource: args.videoSource,
         displayName: args.displayName,
         audioSource: resolved.source,
+        origin,
         ...(lc3Uplink ? {audioDelayMs: SOFTAP_LC3_AUDIO_DELAY_MS} : {}),
         ...(video ? {video} : {}),
       })
@@ -1042,6 +1249,8 @@ class AcsMeetingService {
     // rejected, or a leave mid-join leaves the orchestrator waiting out its whole timeout.
     for (const settle of [...this.firstFrameWaiters]) settle(new Error("The meeting ended"))
     this.firstFrameWaiters.clear()
+    this.settleMediaLiveWaiters(false)
+    this.mediaLiveWaiters.clear()
     this.stopGlassesMicUplink()
     this.unwatchPhoneNetwork()
     await this.stopPcm()
@@ -1301,8 +1510,22 @@ class AcsMeetingService {
 
   private bindNative(native: NativeModule, packageName: string): void {
     this.unbindNative()
+    // Captured at bind, checked on every event. `unbindNative` removes the listener, but an event
+    // already dispatched onto the JS queue still runs — and this is the one path where that lands
+    // as the *previous* call's `disconnected` ending the call the wearer just started. Every other
+    // callback that can outlive a session (mic PCM, the in-flight join) is fenced the same way.
+    const generation = this.callGeneration
     this.subscriptions = [
       native.addListener("onState", (event) => {
+        if (generation !== this.callGeneration) {
+          softapTraceFailure("softap_stale_callback", {
+            source: "acs_state",
+            generation,
+            current: this.callGeneration,
+            state: String(event.state ?? "unknown"),
+          })
+          return
+        }
         const audioSafety = parseAudioSafety(event.audioSafety)
         if (audioSafety === "unsafe") {
           console.error("[AcsMeeting] phase=audio-unsafe", {
@@ -1313,7 +1536,12 @@ class AcsMeetingService {
         const participants = parseMeetingParticipants(event.participants)
         const mediaSource = parseMediaSource(event.mediaSource)
         const mediaSourceReason = typeof event.mediaSourceReason === "string" ? event.mediaSourceReason : undefined
+        const callEndReason =
+          Number.isInteger(event.endReason_code) && Number.isInteger(event.endReason_subcode)
+            ? {code: event.endReason_code as number, subcode: event.endReason_subcode as number}
+            : undefined
         const capabilities = parseMeetingCapabilities(event.capabilities)
+        const endReason = parseMeetingEndReason(event as Record<string, unknown>)
         const state: MeetingState = {
           state: (event.state as MeetingPhase) ?? "idle",
           muted: Boolean(event.muted),
@@ -1327,11 +1555,26 @@ class AcsMeetingService {
           micTransport: this.micTransport,
           ...(mediaSource ? {mediaSource} : {}),
           ...(mediaSourceReason ? {mediaSourceReason} : {}),
+          ...(callEndReason ? {callEndReason} : {}),
           ...(participants ? {participants} : {}),
+          ...(endReason ? {endReason} : {}),
           // Absent means unknown, so keep the last known verdict rather than clearing it.
           ...((capabilities ?? this.lastState.capabilities) ? {capabilities: capabilities ?? this.lastState.capabilities} : {}),
         }
+        const previous = this.lastState.state
         this.lastState = state
+        if (state.state !== previous) {
+          // The host's own copy of the transition. Native already traces `acs_call_state` with
+          // timings; this one survives a capture where the native trace is absent, and is the
+          // line the miniapp's timeline is reconciled against.
+          softapTrace("acs_state", {
+            state: state.state,
+            previous,
+            origin: this.callOrigin,
+            mediaSource: state.mediaSource ?? "unknown",
+            micTransport: state.micTransport ?? "unknown",
+          })
+        }
         console.log("[AcsMeeting] phase=native-state", {
           state: state.state,
           muted: state.muted,
@@ -1341,9 +1584,12 @@ class AcsMeetingService {
           audioSafety: state.audioSafety,
           mediaSource: state.mediaSource,
           mediaSourceReason: state.mediaSourceReason,
+          callEndReason: state.callEndReason,
           micTransport: state.micTransport,
           participants: participants?.length,
+          endReason: endReason ? `${endReason.code ?? "?"}/${endReason.subcode ?? "?"}` : undefined,
         })
+        if (mediaSource === "live") this.liveEpoch = this.decodedMediaEpoch
         this.settleFirstFrameWaiters(mediaSource)
         this.onState?.(packageName, state)
         // A remote hang-up, an ACS error or a dropped call never goes through `leave`, so without

@@ -156,6 +156,10 @@ jobs:
           distribution: temurin
 
       - uses: android-actions/setup-android@v3
+        with:
+          # The action's default list includes the retired `tools` package,
+          # which no longer downloads; Gradle fetches the rest it needs.
+          packages: platform-tools
 
       - uses: oven-sh/setup-bun@v2
         with:

@@ -1,3 +1,5 @@
+import {Platform} from "react-native"
+
 export const cameraPackageName = "com.mentra.camera"
 export const galleryPackageName = "com.mentra.gallery"
 export const settingsPackageName = "com.mentra.settings"
@@ -8,6 +10,7 @@ export const feedbackPackageName = "com.mentra.feedback"
 export const miniappDeveloperPackageName = "com.mentra.miniappdev"
 export const notifyPackageName = "cloud.augmentos.notify"
 export const navigationPackageName = "com.mentra.navigation" // "Mentra Map"
+export const mentraCallPackageName = "com.mentra.call"
 
 /** True when this binary is the China (com.mentra.mentra.cn) build. */
 export const isChinaBuild = (): boolean => process.env.EXPO_PUBLIC_DEPLOYMENT_REGION === "china"
@@ -15,10 +18,22 @@ export const isChinaBuild = (): boolean => process.env.EXPO_PUBLIC_DEPLOYMENT_RE
 /**
  * Apps that are not shipped in the China build: Mentra Map (navigation),
  * Notify, and Feedback. Enforced at every registration surface —
- * bundled-miniapp install, the offline-app catalog, and the post-process
- * filter that the cloud/local merge flows through.
+ * bundled-miniapp install, the offline-app catalog, and leftover hide.
  */
 export const CHINA_HIDDEN_APPS = [navigationPackageName, notifyPackageName, feedbackPackageName]
+
+/**
+ * Mentra Call is Android-first (ACS SoftAP). The zip still ships in the
+ * binary so Android users get it, but iOS must not install or surface it.
+ */
+export const IOS_HIDDEN_APPS = [mentraCallPackageName]
+
+/** True when this build+OS must not install or show the given miniapp. */
+export const shouldHideMiniapp = (packageName: string, os: typeof Platform.OS = Platform.OS): boolean => {
+  if (isChinaBuild() && CHINA_HIDDEN_APPS.includes(packageName)) return true
+  if (os === "ios" && IOS_HIDDEN_APPS.includes(packageName)) return true
+  return false
+}
 
 /**
  * Host utilities that should not appear in the glasses' launch menu.

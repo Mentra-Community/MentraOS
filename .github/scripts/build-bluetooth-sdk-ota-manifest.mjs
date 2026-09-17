@@ -1,57 +1,57 @@
 #!/usr/bin/env node
-import {mkdirSync, readFileSync, writeFileSync} from 'node:fs';
-import {dirname} from 'node:path';
+import {mkdirSync, readFileSync, writeFileSync} from "node:fs"
+import {dirname} from "node:path"
 
 const requiredEnv = [
-  'ASG_APK_SHA256',
-  'ASG_APK_SIZE',
-  'ASG_APK_URL',
-  'ASG_VERSION_CODE',
-  'ASG_VERSION_NAME',
-  'FIRMWARE_MANIFEST',
-  'OUTPUT_PATH',
-  'RELEASE_VERSION',
-];
+  "ASG_APK_SHA256",
+  "ASG_APK_SIZE",
+  "ASG_APK_URL",
+  "ASG_VERSION_CODE",
+  "ASG_VERSION_NAME",
+  "FIRMWARE_MANIFEST",
+  "OUTPUT_PATH",
+  "RELEASE_VERSION",
+]
 
 for (const key of requiredEnv) {
   if (!process.env[key]) {
-    throw new Error(`Missing required environment variable: ${key}`);
+    throw new Error(`Missing required environment variable: ${key}`)
   }
 }
 
 // Coordinated releases label the manifest with their release identity. Pull
 // request builds (mentra-asg-client-build.yml) label it pr-<number>-<sha>; the
 // app treats that as "no coordinated release" and shows the ASG versionName.
-const releaseVersion = process.env.RELEASE_VERSION.trim();
+const releaseVersion = process.env.RELEASE_VERSION.trim()
 if (
   !/^\d+\.\d+\.\d+(?:-(?:dev|beta)\.[1-9]\d*)?$/.test(releaseVersion) &&
   !/^pr-[1-9]\d*-[0-9a-f]{7,40}$/.test(releaseVersion)
 ) {
-  throw new Error(`Invalid release version (expected X.Y.Z[-dev.N|-beta.N] or pr-<number>-<sha>): ${releaseVersion}`);
+  throw new Error(`Invalid release version (expected X.Y.Z[-dev.N|-beta.N] or pr-<number>-<sha>): ${releaseVersion}`)
 }
 
-const versionCode = Number(process.env.ASG_VERSION_CODE);
+const versionCode = Number(process.env.ASG_VERSION_CODE)
 if (!Number.isSafeInteger(versionCode) || versionCode <= 0) {
-  throw new Error(`ASG_VERSION_CODE must be a positive integer, got: ${process.env.ASG_VERSION_CODE}`);
+  throw new Error(`ASG_VERSION_CODE must be a positive integer, got: ${process.env.ASG_VERSION_CODE}`)
 }
 
-const apkSize = Number(process.env.ASG_APK_SIZE);
+const apkSize = Number(process.env.ASG_APK_SIZE)
 if (!Number.isSafeInteger(apkSize) || apkSize <= 0) {
-  throw new Error(`ASG_APK_SIZE must be a positive integer, got: ${process.env.ASG_APK_SIZE}`);
+  throw new Error(`ASG_APK_SIZE must be a positive integer, got: ${process.env.ASG_APK_SIZE}`)
 }
 
-const firmware = JSON.parse(readFileSync(process.env.FIRMWARE_MANIFEST, 'utf8'));
+const firmware = JSON.parse(readFileSync(process.env.FIRMWARE_MANIFEST, "utf8"))
 if (!Array.isArray(firmware.mtk_patches) || firmware.mtk_patches.length === 0) {
-  throw new Error('Firmware manifest must include non-empty mtk_patches for SDK OTA releases.');
+  throw new Error("Firmware manifest must include non-empty mtk_patches for SDK OTA releases.")
 }
-if (!firmware.bes_firmware || typeof firmware.bes_firmware !== 'object' || Array.isArray(firmware.bes_firmware)) {
-  throw new Error('Firmware manifest must include bes_firmware for SDK OTA releases.');
+if (!firmware.bes_firmware || typeof firmware.bes_firmware !== "object" || Array.isArray(firmware.bes_firmware)) {
+  throw new Error("Firmware manifest must include bes_firmware for SDK OTA releases.")
 }
 
 const manifest = {
   releaseVersion,
   apps: {
-    'com.mentra.asg_client': {
+    "com.mentra.asg_client": {
       versionCode,
       versionName: process.env.ASG_VERSION_NAME,
       apkUrl: process.env.ASG_APK_URL,
@@ -62,7 +62,7 @@ const manifest = {
   mtk_patches: firmware.mtk_patches,
   ...(firmware.mtk_full_ota ? {mtk_full_ota: firmware.mtk_full_ota} : {}),
   bes_firmware: firmware.bes_firmware,
-};
+}
 
-mkdirSync(dirname(process.env.OUTPUT_PATH), {recursive: true});
-writeFileSync(process.env.OUTPUT_PATH, `${JSON.stringify(manifest, null, 2)}\n`);
+mkdirSync(dirname(process.env.OUTPUT_PATH), {recursive: true})
+writeFileSync(process.env.OUTPUT_PATH, `${JSON.stringify(manifest, null, 2)}\n`)

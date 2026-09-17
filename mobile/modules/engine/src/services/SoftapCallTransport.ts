@@ -33,16 +33,27 @@ export type SoftapStep = (typeof SOFTAP_STEPS)[number]
  * `starting` covers every step up to `live` because the caller's only useful distinction is
  * "not yet usable" versus "carrying media"; the step names are for diagnostics, not for branching.
  */
-export type SoftapPhase = "idle" | "starting" | "live" | "stopping" | "failed"
+export type SoftapPhase = "idle" | "starting" | "recovering" | "live" | "stopping" | "failed"
+
+/**
+ * SoftAP loss is a media outage, not call termination. The wearer has this long to
+ * come back in range before the host should give up rebuilding the hop.
+ */
+export const RETURN_DEADLINE_MS = 60_000
+
+/** Budget to re-arm hotspot, scoped join, ingest, and publish after the glasses return. */
+export const REARM_BUDGET_MS = 45_000
+
+/** Snapshot a host can use to decide whether to keep waiting or stand the call down. */
+export interface SoftapRecoveryState {
+  phase: SoftapPhase
+  mediaGeneration: number
+  reason?: string
+}
 
 /** A failure, named by the step that produced it so the UI and the logs agree on the cause. */
 export class SoftapCallError extends Error {
-  constructor(
-    readonly step: SoftapStep,
-    readonly code: string,
-    message: string,
-    readonly cause?: unknown,
-  ) {
+  constructor(readonly step: SoftapStep, readonly code: string, message: string, readonly cause?: unknown) {
     super(message)
     this.name = "SoftapCallError"
   }
@@ -50,6 +61,73 @@ export class SoftapCallError extends Error {
 
 /** Gallery sync already learned this: glasses report enabled before the SSID is in the phone scan. */
 export const HOTSPOT_BROADCAST_WAIT_MS = 3_000
+
+/**
+ * What the glasses→phone hop is worth at 540p over a hotspot with one client and no contention.
+ *
+ * Not the ACS ceiling: this link is a metre of air between two devices that are already paired,
+ * and the profile's `maxBitrateBps` describes the phone→Teams hop, which crosses the internet.
+ * Sharing one number between them makes the easy hop obey the hard hop's limits.
+ */
+export const GLASSES_PHONE_BITRATE_BPS = 2_500_000
+
+/** Where the encoder starts. High, because the link is good from the first frame. */
+const SOFTAP_START_BITRATE_BPS = 2_000_000
+
+/**
+ * The floor. This is the whole point of the policy.
+ *
+ * WHIP's default has none, so after an ICE interruption WebRTC restarts at its own minimum and
+ * climbs by probing — which is the "potato for a while" the wearer reports. The link did not get
+ * worse; the estimator merely forgot what it knew. A floor says: this hop is a hotspot, not a
+ * congested uplink, and it is never worth less than this.
+ *
+ * That trade is the opposite of Mentra-Call#27's cloud-WHIP review: a 1 Mbps floor on Auto over
+ * LTE turns a weak WAN into freezes. This function is SoftAP-only. Cloud WHIP must not call it.
+ */
+const SOFTAP_MIN_BITRATE_BPS = 1_200_000
+
+/** Field names are the glasses' `WhipStreamConfig` parser's, where `bitrate` means the maximum. */
+export interface SoftapVideoPolicy {
+  width: number
+  height: number
+  fps: number
+  bitrate: number
+  initialBitrateBps: number
+  minBitrateBps: number
+}
+
+/**
+ * The bitrate the glasses are told to hold on the hop to the phone.
+ *
+ * The hotspot has its own bitrate budget, independent of the phone-to-Teams cap. Above 540p,
+ * allow a higher requested ceiling while retaining the hotspot budget for low WAN caps.
+ */
+export function softapVideoPolicy(video: {
+  width: number
+  height: number
+  fps: number
+  maxBitrateBps: number
+}): SoftapVideoPolicy {
+  const isSmall = video.width * video.height <= 960 * 540
+  if (!Number.isFinite(video.maxBitrateBps) || video.maxBitrateBps <= 0) {
+    throw new Error(`invalid SoftAP video bitrate: ${video.maxBitrateBps}`)
+  }
+  const max = isSmall ? GLASSES_PHONE_BITRATE_BPS : Math.max(GLASSES_PHONE_BITRATE_BPS, video.maxBitrateBps)
+  const initialBitrateBps = Math.min(SOFTAP_START_BITRATE_BPS, max)
+  const minBitrateBps = Math.min(SOFTAP_MIN_BITRATE_BPS, initialBitrateBps)
+  if (!(minBitrateBps <= initialBitrateBps && initialBitrateBps <= max)) {
+    throw new Error(`incoherent SoftAP video policy: min=${minBitrateBps} start=${initialBitrateBps} max=${max}`)
+  }
+  return {
+    width: video.width,
+    height: video.height,
+    fps: video.fps,
+    bitrate: max,
+    initialBitrateBps,
+    minBitrateBps,
+  }
+}
 
 /**
  * Android's WifiNetworkSpecifier called onUnavailable. The native message lists three causes
@@ -61,6 +139,17 @@ function isScopedJoinUnavailable(error: unknown): boolean {
   return /SOFTAP_UNAVAILABLE|ScopedNetworkError\$Unavailable|SSID not in scan, Wi-Fi off, or the system join prompt/i.test(
     message,
   )
+}
+
+/**
+ * The glasses never answered, as opposed to answering "disabled".
+ *
+ * A timeout is not evidence the command was lost: BLE can redeliver it after the phone has given
+ * up, so the AP may be coming up at the very moment the retry would ask for it to go down.
+ */
+function isHotspotAnswerTimeout(error: unknown): boolean {
+  const message = error instanceof Error ? error.message : String(error)
+  return /timed out waiting for glasses response|glasses did not answer/i.test(message)
 }
 
 export type SoftapStepStatus = "pending" | "running" | "done" | "failed"
@@ -88,12 +177,23 @@ export interface SoftapProgress {
   steps: SoftapStepState[]
   /** ms since `start()` was called. */
   elapsedMs: number
+  /** Media hop generation. Bumped on recover / media-only rebuild; ACS join is not. */
+  mediaGeneration: number
 }
 
 /** Sub-status callback a step can use to narrate what it is doing while it runs. */
 export type SoftapStepReporter = (detail: string) => void
 
 export interface SoftapCallDeps {
+  /**
+   * Is this phone's Wi-Fi radio on? Asked before anything is built.
+   *
+   * The station radio is what reaches the glasses, and no app can turn it on since Android 10.
+   * Finding out at `scopedJoin` means the glasses already raised a hotspot for a join that cannot
+   * happen, so the wearer pays a teardown for a condition that was knowable up front. Optional:
+   * a host that cannot answer skips the preflight and relies on the native throw at `scopedJoin`.
+   */
+  isWifiEnabled?(): Promise<boolean>
   /** Enable the glasses hotspot and return its credentials. */
   startHotspot(report?: SoftapStepReporter): Promise<{ssid: string; passphrase: string}>
   /**
@@ -107,6 +207,8 @@ export interface SoftapCallDeps {
   /** Join the hotspot without taking the phone's default route. Resolves to the phone's own IPv4. */
   joinScopedNetwork(ssid: string, passphrase: string, report?: SoftapStepReporter): Promise<string | undefined>
   leaveScopedNetwork(): Promise<void>
+  /** Interrupt a pending native join while retaining its cleanup barrier. Unsupported hosts wait. */
+  cancelScopedNetworkJoin?(): Promise<void>
   /**
    * Join the meeting. This is what binds the local WHIP listener and arms the ACS raw outputs, so
    * it must resolve before the glasses are told to publish.
@@ -123,18 +225,41 @@ export interface SoftapCallDeps {
    * tears down correctly, it just cannot honour `stop({mode: "end"})`.
    */
   endMeeting?(): Promise<void>
+  /**
+   * Rebind the local WHIP listener onto the standing ACS session. Substitutes for
+   * [joinMeeting] on a media-only rebuild: the meeting stays up, the ingest URL is new.
+   */
+  rebindIngest?(report?: SoftapStepReporter): Promise<{ingestUrl: string}>
   /** Tell the glasses to publish to [ingestUrl] in host-only ICE mode. */
-  startPublishing(args: {ingestUrl: string; traceId: string}, report?: SoftapStepReporter): Promise<void>
+  startPublishing(
+    args: {ingestUrl: string; traceId: string; mediaGeneration?: number},
+    report?: SoftapStepReporter,
+  ): Promise<void>
   stopPublishing(): Promise<void>
   /**
    * Resolves when a frame has reached ACS, rejects if the feed failed or the deadline passed.
    * Separate from [joinMeeting] because an answered negotiation is not a working call: a session
    * that never delivers a frame reads as healthy behind a frozen tile.
+   *
+   * [fresh] ignores a standing `live` verdict. Recovery must wait for a frame from the new
+   * ingest generation; the previous hop's last decoded frame is not that.
    */
-  awaitFirstFrame(report?: SoftapStepReporter): Promise<void>
+  awaitFirstFrame(report?: SoftapStepReporter, options?: {fresh?: boolean}): Promise<void>
+  /**
+   * Mid-call camera recovery. Resolves `true` only when ingest is live again.
+   * A standing `failed` is the reason we are republishing, so it must not abort the wait.
+   */
+  waitUntilLive?(timeoutMs: number): Promise<boolean>
+  /** Delay after a failed `start_stream` before the next republish attempt. Tests set 0. */
+  republishRetryDelayMs?: number
 }
 
 export interface SoftapCallOptions {
+  /**
+   * Rebuild the media hop only. Skips `joinMeeting` and calls [SoftapCallDeps.rebindIngest]
+   * for the `acsJoin` step so the ACS session, endpoints, and mute intent stay up.
+   */
+  mediaOnly?: boolean
   /** Override the minted trace id, so a caller can correlate with logs it already started. */
   traceId?: string
   /**
@@ -173,6 +298,15 @@ function deferred(): {promise: Promise<void>; resolve: () => void} {
   return {promise, resolve}
 }
 
+function sleep(ms: number): Promise<void> {
+  if (ms <= 0) return Promise.resolve()
+  return new Promise((resolve) => setTimeout(resolve, ms))
+}
+
+/** How long a mid-call republish waits for a frame after re-issuing `start_stream`. */
+export const SOFTAP_REPUBLISH_LIVE_MS = 20_000
+const REPUBLISH_RETRY_DELAY_MS = 2_000
+
 /**
  * How a call is being taken down.
  *
@@ -185,6 +319,11 @@ export type SoftapTeardownMode = "leave" | "end"
 export interface SoftapStopOptions {
   mode?: SoftapTeardownMode
   keepProgress?: boolean
+  /**
+   * Tear down the media hop and keep the ACS session. Skips only the `acsJoin` undo
+   * (`leaveOrEndMeeting`) and leaves `acsJoin` in [completed].
+   */
+  preserveMeeting?: boolean
 }
 
 export class SoftapEndNotSupportedError extends Error {
@@ -249,11 +388,206 @@ export class SoftapCallTransport {
   private startedAt = 0
   private traceId = ""
   private onProgress: ((progress: SoftapProgress) => void) | undefined
+  private republishing: Promise<void> | null = null
+  /** Bumped by `stop` so an in-flight republish cannot start_stream after Leave. */
+  private republishGeneration = 0
+  /**
+   * Media hop generation. Distinct from [generation]: ACS join is preserved across recoveries,
+   * but hotspot, scoped network, ingest, and publisher belong to this number.
+   */
+  private mediaGeneration = 0
+  /** Why the current recover was requested. Cleared when the hop is live again. */
+  private recoveryReason: string | undefined
+  /** In-flight [recover]. Concurrent recoveries share one rebuild. */
+  private recovering: Promise<void> | null = null
+  /** A [stop] without preserveMeeting landed during recover; recover must not rebuild. */
+  private recoveryAbort = false
+  /** Skip `acsJoin` undo so the ACS session survives a media-only teardown. */
+  private meetingPreserved = false
+  /**
+   * Identity of the publisher the most recent `startPublishing` created.
+   * A cancelled republish may only `stopPublishing` if it still owns this token.
+   */
+  private publisherToken: object | null = null
 
   constructor(private readonly deps: SoftapCallDeps) {}
 
   currentPhase(): SoftapPhase {
     return this.phase
+  }
+
+  currentMediaGeneration(): number {
+    return this.mediaGeneration
+  }
+
+  recoveryState(): SoftapRecoveryState {
+    return {
+      phase: this.phase,
+      mediaGeneration: this.mediaGeneration,
+      ...(this.recoveryReason ? {reason: this.recoveryReason} : {}),
+    }
+  }
+
+  /**
+   * The glasses camera died after this call was already live. Re-issue `start_stream` at the
+   * existing ingest URL — do not rebind the WHIP listener, or the glasses POST to a dead port.
+   */
+  shouldRepublish(mediaSource?: string): boolean {
+    return this.phase === "live" && !this.terminating && mediaSource === "failed"
+  }
+
+  /**
+   * Rebuild the glasses publisher onto the standing SoftAP ingest URL.
+   *
+   * ACS, BLE mic, and the WHIP listener stay up. The glasses process is what usually vanished
+   * (UVC/`system_server` crash); a new `start_stream` is what they need after ASG comes back.
+   */
+  republish(reason: string): Promise<void> {
+    if (this.phase !== "live" || this.terminating || !this.ingestUrl) return Promise.resolve()
+    if (this.republishing) return this.republishing
+    const generation = this.republishGeneration
+    let run!: Promise<void>
+    run = this.runRepublish(reason, generation).finally(() => {
+      // Clear when *this* run still owns the field, even if stop() bumped the generation.
+      // Gating on generation left a settled promise stranded and the next republish was a no-op.
+      if (this.republishing === run) this.republishing = null
+    })
+    this.republishing = run
+    return run
+  }
+
+  private async runRepublish(reason: string, generation: number): Promise<void> {
+    const ingestUrl = this.ingestUrl
+    if (!ingestUrl) return
+    const retryDelayMs = this.deps.republishRetryDelayMs ?? REPUBLISH_RETRY_DELAY_MS
+    let attempt = 0
+    softapTrace("glasses_republish_begin", {reason, ingestUrl})
+    while (
+      generation === this.republishGeneration &&
+      !this.terminating &&
+      this.phase === "live" &&
+      this.ingestUrl === ingestUrl
+    ) {
+      attempt += 1
+      let startedPublisher = false
+      const token = {}
+      try {
+        await this.deps.stopPublishing()
+        if (generation !== this.republishGeneration || this.terminating) return
+        await this.startPublishingOwned(token, {ingestUrl, traceId: this.traceId})
+        startedPublisher = true
+        if (generation !== this.republishGeneration || this.terminating) {
+          // Only stop a publisher this run started, and only if a successor has not taken it.
+          if (startedPublisher && this.publisherToken === token) {
+            await this.deps.stopPublishing().catch(() => undefined)
+          }
+          return
+        }
+        softapTrace("glasses_republish_sent", {attempt, ingestUrl})
+        if (!this.deps.waitUntilLive) return
+        const live = await this.deps.waitUntilLive(SOFTAP_REPUBLISH_LIVE_MS)
+        if (generation !== this.republishGeneration || this.terminating) return
+        if (live) {
+          softapTrace("glasses_republish_live", {attempt})
+          return
+        }
+        softapTraceFailure("glasses_republish_no_frame", {attempt})
+      } catch (error) {
+        if (generation !== this.republishGeneration || this.terminating) return
+        softapTraceFailure("glasses_republish_start_failed", {
+          attempt,
+          reason: error instanceof Error ? error.message : String(error),
+        })
+        await sleep(retryDelayMs)
+      }
+    }
+  }
+
+  /**
+   * Rebuild the glasses→phone hop after SoftAP loss. ACS, mute intent, and media endpoints stay.
+   *
+   * Phase flips to `recovering` before any await so [shouldRepublish] stands down immediately —
+   * not after a BLE wait that could still issue `start_stream` at the dying hop.
+   */
+  recover(reason: string, options: {wait?: () => Promise<void>} = {}): Promise<void> {
+    if (this.recovering) return this.recovering
+    if (this.phase !== "live") {
+      return Promise.reject(
+        new SoftapCallError("live", "NOT_RECOVERABLE", `Cannot recover a SoftAP call that is ${this.phase}`),
+      )
+    }
+    this.phase = "recovering"
+    this.recoveryReason = reason
+    this.recoveryAbort = false
+    this.mediaGeneration++
+    this.emitProgress()
+    softapTrace("softap_media_recover", {reason, mediaGeneration: this.mediaGeneration})
+
+    let run!: Promise<void>
+    run = this.runRecover(options).finally(() => {
+      if (this.recovering === run) this.recovering = null
+    })
+    this.recovering = run
+    return run
+  }
+
+  private async runRecover(options: {wait?: () => Promise<void>}): Promise<void> {
+    const onProgress = this.onProgress
+    // Wait for BLE *before* `set_hotspot_state false`. Doing stop first while the glasses are
+    // out of range queues the off command; when BLE returns it fires into a still-up hotspot
+    // and races the media-only start.
+    if (options.wait) await options.wait()
+    if (this.recoveryAbort) {
+      throw new SoftapCallError("hotspot", "CANCELLED", "SoftAP recovery was cancelled")
+    }
+    await this.stop({preserveMeeting: true, keepProgress: true})
+    if (this.recoveryAbort) {
+      throw new SoftapCallError("hotspot", "CANCELLED", "SoftAP recovery was cancelled")
+    }
+    // The return deadline bounds [options.wait]; the rebuild gets its own budget from the moment
+    // the glasses are back. Charging the rebuild for the time the wearer spent away left a return
+    // at 48s with 12s to re-arm a hotspot that takes ~30s, and the call was dropped as it worked.
+    const rearmMs = REARM_BUDGET_MS
+    let budgetTimer: ReturnType<typeof setTimeout> | undefined
+    const budget = new Promise<never>((_, reject) => {
+      budgetTimer = setTimeout(() => {
+        void this.stop({preserveMeeting: true}).catch(() => undefined)
+        reject(new SoftapCallError("hotspot", "REARM_BUDGET", "SoftAP media rebuild exceeded its budget"))
+      }, rearmMs)
+    })
+    try {
+      await Promise.race([this.start({mediaOnly: true, onProgress}), budget])
+    } finally {
+      if (budgetTimer !== undefined) clearTimeout(budgetTimer)
+    }
+    this.completed = [...SOFTAP_STEPS]
+    this.recoveryReason = undefined
+    this.emitProgress()
+  }
+
+  /** Issue `start_stream` and take publisher ownership so a stale republish cannot stop a successor. */
+  private async startPublishingOwned(
+    token: object,
+    args: {ingestUrl: string; traceId: string},
+    report?: SoftapStepReporter,
+  ): Promise<void> {
+    const mediaGeneration = this.mediaGeneration
+    const stamped: SoftapStepReporter | undefined = report
+      ? (detail) => {
+          if (mediaGeneration !== this.mediaGeneration) {
+            softapTrace("softap_stale_callback", {
+              source: "startPublishing",
+              mediaGeneration,
+              current: this.mediaGeneration,
+              detail,
+            })
+            return
+          }
+          report(detail)
+        }
+      : undefined
+    await this.deps.startPublishing({...args, mediaGeneration}, stamped)
+    this.publisherToken = token
   }
 
   /**
@@ -272,6 +606,7 @@ export class SoftapCallTransport {
       phase: this.phase,
       steps: this.steps.map((step) => ({...step})),
       elapsedMs: this.startedAt ? Date.now() - this.startedAt : 0,
+      mediaGeneration: this.mediaGeneration,
     }
   }
 
@@ -316,11 +651,10 @@ export class SoftapCallTransport {
   }
 
   /**
-   * Steps whose undo threw during the last teardown, so the caller can refuse the next call.
+   * Steps whose undo threw during the last teardown.
    *
-   * Teardown deliberately swallows these to keep unwinding — but a hotspot that would not turn off
-   * is exactly the state the next call cannot be built on, and starting anyway is what produced
-   * "Cannot start glasses hotspot" followed by a scoped join that never found the SSID.
+   * Teardown swallows these so unwind can finish. The host refuses the next join for ingest /
+   * scoped-network leaks; a hotspot that missed its off-ack is leftover ON and is raised again.
    */
   lastTeardownFailures(): SoftapStep[] {
     // Logged on read rather than only on write, because this is the moment the list turns into a
@@ -330,6 +664,43 @@ export class SoftapCallTransport {
       softapTraceFailure("softap_teardown_failures_read", {steps: this.teardownFailures.join(",")})
     }
     return [...this.teardownFailures]
+  }
+
+  /**
+   * Refuse the call while the Wi-Fi radio is off, before the glasses are asked for anything.
+   *
+   * Ordered ahead of the hotspot step rather than folded into `scopedJoin` because the cost of
+   * learning late is paid by the glasses: a hotspot raised, a teardown, and a wearer watching a
+   * checklist fail at step 2 for a toggle on their own phone. The native join keeps its own throw
+   * for the radio that goes off in between — this is the explainable path, that one is the racy
+   * backstop.
+   *
+   * A probe that throws is treated as "unknown, carry on": an unanswerable question about the
+   * radio must not be the thing that stops a call the radio would have carried.
+   */
+  private async preflightWifi(): Promise<void> {
+    if (!this.deps.isWifiEnabled) return
+    let enabled: boolean
+    try {
+      enabled = await this.deps.isWifiEnabled()
+    } catch (error) {
+      softapTraceFailure("softap_wifi_preflight_unknown", {
+        reason: error instanceof Error ? error.message : String(error),
+      })
+      return
+    }
+    softapTrace("softap_wifi_preflight", {enabled})
+    if (enabled) return
+    this.setStep("hotspot", {status: "failed", error: "This phone's Wi-Fi is off"})
+    this.emitProgress()
+    // Code in the message as well as on the error: the miniapp classifies on the message today
+    // (the structured code only arrives on the join rejection), and every other SoftAP failure
+    // carries its code the same way.
+    throw new SoftapCallError(
+      "hotspot",
+      "SOFTAP_WIFI_DISABLED",
+      "SOFTAP_WIFI_DISABLED: this phone's Wi-Fi is off, so it cannot reach the glasses.",
+    )
   }
 
   /**
@@ -344,17 +715,22 @@ export class SoftapCallTransport {
       softapTraceFailure("softap_call_refused", {reason: "cancelled before start"})
       throw new SoftapCallError("hotspot", "CANCELLED", "SoftAP call was cancelled before it started")
     }
-    if (this.phase !== "idle" && this.phase !== "failed") {
+    const mediaOnly = options.mediaOnly === true
+    const allowed =
+      this.phase === "idle" || this.phase === "failed" || (mediaOnly && this.phase === "recovering")
+    if (!allowed) {
       softapTraceFailure("softap_call_refused", {reason: "already active", phase: this.phase})
       throw new SoftapCallError("hotspot", "ALREADY_ACTIVE", `A SoftAP call is already ${this.phase}`)
     }
     this.startedEver = true
     const generation = ++this.generation
-    this.phase = "starting"
+    if (mediaOnly) this.mediaGeneration++
+    this.phase = mediaOnly ? "recovering" : "starting"
     this.terminating = false
     this.teardownMode = "leave"
     this.endFailure = null
-    this.completed = []
+    this.meetingPreserved = mediaOnly
+    this.completed = mediaOnly ? this.completed.filter((step) => step === "acsJoin") : []
     this.ingestUrl = null
     this.hotspot = null
     this.teardownFailures = []
@@ -362,12 +738,19 @@ export class SoftapCallTransport {
     this.stepStartedAt.clear()
     this.startedAt = Date.now()
     this.onProgress = options.onProgress
-    const traceId = beginSoftapTrace(options.traceId)
+    // Media-only rebuilds mint a fresh trace id: the previous hop is gone and its id must not
+    // be reused, even if the caller still holds it.
+    const traceId = beginSoftapTrace(mediaOnly ? undefined : options.traceId)
     this.traceId = traceId
-    softapTrace("softap_call_start", {traceId})
+    softapTrace("softap_call_start", {traceId, mediaOnly, mediaGeneration: this.mediaGeneration})
     this.emitProgress()
 
     try {
+      if (mediaOnly && !this.deps.rebindIngest) {
+        throw new SoftapCallError("acsJoin", "ACS_JOIN_FAILED", "rebindIngest is required for a media-only rebuild")
+      }
+      await this.preflightWifi()
+
       await this.step(generation, "hotspot", "HOTSPOT_FAILED", async (report) => {
         report("Asking the glasses to turn on their hotspot")
         const hotspot = await this.deps.startHotspot(report)
@@ -387,15 +770,24 @@ export class SoftapCallTransport {
       const hotspot = this.requireHotspot()
       let bindAddress: string | undefined
       await this.step(generation, "scopedJoin", "SCOPED_JOIN_FAILED", async (report) => {
-        report(
-          `Phone joining ${hotspot.ssid}. Turn Wi-Fi on if a panel opens — Teams stays on cellular.`,
-        )
+        report(`Phone joining ${hotspot.ssid}. Turn Wi-Fi on if a panel opens — Teams stays on cellular.`)
         bindAddress = await this.deps.joinScopedNetwork(hotspot.ssid, hotspot.passphrase, report)
         softapTrace("scoped_network_joined", {bindAddress: bindAddress ?? "unknown"})
         if (bindAddress) report(`Phone is ${bindAddress} on ${hotspot.ssid}`)
       })
 
       await this.step(generation, "acsJoin", "ACS_JOIN_FAILED", async (report) => {
+        if (mediaOnly) {
+          report(bindAddress ? `Rebinding the video receiver on ${bindAddress}` : "Rebinding the video receiver")
+          const {ingestUrl} = await this.deps.rebindIngest!(report)
+          if (!ingestUrl) {
+            throw new Error("the meeting reported no ingest URL")
+          }
+          this.ingestUrl = ingestUrl
+          softapTrace("acs_receiver_rebound", {ingestUrl})
+          report(`Receiver ready at ${ingestUrl}`)
+          return
+        }
         report(bindAddress ? `Opening video receiver on ${bindAddress}, then joining Teams` : "Joining Teams")
         const {ingestUrl} = await this.deps.joinMeeting(
           {
@@ -411,23 +803,23 @@ export class SoftapCallTransport {
           throw new Error("the meeting reported no ingest URL")
         }
         this.ingestUrl = ingestUrl
-        softapTrace("acs_joined", {ingestUrl})
+        softapTrace("acs_receiver_ready", {ingestUrl})
         report(`Receiver ready at ${ingestUrl}`)
       })
 
       const ingestUrl = this.requireIngestUrl()
       await this.step(generation, "publish", "PUBLISH_FAILED", async (report) => {
         report("Telling the glasses to start the camera and publish to the phone")
-        await this.deps.startPublishing({ingestUrl, traceId}, report)
+        await this.startPublishingOwned({}, {ingestUrl, traceId}, report)
         softapTrace("glasses_publishing", {ingestUrl})
         report("Glasses camera is streaming to the phone")
       })
 
       await this.step(generation, "live", "NO_FIRST_FRAME", async (report) => {
-        report("Waiting for the first video frame to reach Teams")
-        await this.deps.awaitFirstFrame(report)
-        softapTrace("first_frame_in_acs")
-        report("Video is live in the meeting")
+        report("Waiting for the first glasses video frame on this phone")
+        await this.deps.awaitFirstFrame(report, mediaOnly ? {fresh: true} : undefined)
+        softapTrace("first_glasses_frame_received")
+        report("Glasses video is reaching this phone")
       })
 
       if (generation !== this.generation) {
@@ -437,14 +829,17 @@ export class SoftapCallTransport {
         softapTraceFailure("softap_call_abandoned_at_live", {generation, current: this.generation})
         return
       }
+      if (mediaOnly) this.completed = [...SOFTAP_STEPS]
       this.phase = "live"
+      this.recoveryReason = undefined
       softapTrace("softap_call_live")
       this.emitProgress()
     } catch (error) {
       // Unwind before rethrowing. A caller that sees a rejection is entitled to assume nothing was
       // left running, and a hotspot left up is both a battery cost and a second call's failure.
-      await this.stop({keepProgress: true})
-      this.phase = "failed"
+      // Media-only failures keep ACS; a user Leave during recover does not (`recoveryAbort`).
+      await this.stop({keepProgress: true, preserveMeeting: mediaOnly && !this.recoveryAbort})
+      if (!(mediaOnly && this.recoveryAbort)) this.phase = "failed"
       this.emitProgress()
       throw error
     }
@@ -467,13 +862,19 @@ export class SoftapCallTransport {
     // Intent before action, always: a watcher must be able to tell a deliberate teardown from a
     // failure even during the very first await below.
     this.terminating = true
+    this.republishGeneration++
     if (options.mode) this.teardownMode = options.mode
+    if (!options.preserveMeeting) this.recoveryAbort = true
     if (this.stopping) {
-      softapTrace("softap_stop_joined_in_flight", {mode: this.teardownMode})
-      return this.stopping
+      softapTrace("softap_stop_joined_in_flight", {mode: this.teardownMode, preserveMeeting: !!options.preserveMeeting})
+      await this.stopping
+      // A Leave that joined a preserveMeeting teardown still has to drop ACS.
+      if (options.preserveMeeting || (!this.completed.includes("acsJoin") && this.completed.length === 0 && !this.running)) {
+        return
+      }
     }
     const running = this.running
-    if (this.completed.length === 0 && this.phase === "idle" && !running) {
+    if (this.completed.length === 0 && (this.phase === "idle" || this.phase === "failed") && !running) {
       // Nothing was built, so there is nothing to unwind — but a start() that has not run yet
       // still has to be refused, and a generation bump still has to invalidate anything holding
       // the old one.
@@ -489,20 +890,42 @@ export class SoftapCallTransport {
     }
 
     this.generation++
-    this.phase = "stopping"
+    this.meetingPreserved = options.preserveMeeting === true
+    this.phase = this.meetingPreserved ? "recovering" : "stopping"
     this.endFailure = null
-    softapTrace("softap_call_stop", {steps: this.completed.join(","), mode: this.teardownMode})
+    softapTrace("softap_call_stop", {
+      steps: this.completed.join(","),
+      mode: this.teardownMode,
+      preserveMeeting: this.meetingPreserved,
+    })
     this.emitProgress()
 
     this.stopping = (async () => {
+      const inFlightRepublish = this.republishing
+      if (inFlightRepublish) {
+        softapTrace("softap_stop_draining_republish")
+        await inFlightRepublish.catch(() => undefined)
+      }
       // The generation bump above has already told the in-flight step to release whatever it
       // produced. Waiting for that release is what makes a resolved `stop()` mean "nothing from
       // this call is still coming". Deliberately unbounded: a native call that never returns must
       // hold the next call back, never let it race this one's cleanup.
       if (running) {
+        const cancellation =
+          running.step === "scopedJoin" && this.deps.cancelScopedNetworkJoin
+            ? Promise.resolve()
+                .then(() => this.deps.cancelScopedNetworkJoin!())
+                .catch((error) => {
+                  if (!this.teardownFailures.includes("scopedJoin")) this.teardownFailures.push("scopedJoin")
+                  softapTraceFailure("softap_join_cancel_failed", {
+                    reason: error instanceof Error ? error.message : String(error),
+                  })
+                })
+            : undefined
         softapTrace("softap_stop_waiting_for_step", {step: running.step})
         const waitStartedAt = Date.now()
         await running.settled
+        await cancellation
         // This wait is unbounded by design, so its duration is the difference between "the leave
         // was slow" and "the leave was held by a native call that had not returned".
         softapTrace("softap_stop_step_settled", {step: running.step, waitedMs: Date.now() - waitStartedAt})
@@ -510,7 +933,12 @@ export class SoftapCallTransport {
       // The late step may have recorded a failed self-undo while we waited. Preserve it,
       // and any earlier teardown result, until start() explicitly begins a new attempt.
       const failures: SoftapStep[] = [...this.teardownFailures]
+      const kept: SoftapStep[] = []
       for (const step of [...this.completed].reverse()) {
+        if (this.meetingPreserved && step === "acsJoin") {
+          if (!kept.includes("acsJoin")) kept.unshift(step)
+          continue
+        }
         const undoStartedAt = Date.now()
         try {
           await this.undo(step)
@@ -527,10 +955,10 @@ export class SoftapCallTransport {
           })
         }
       }
-      this.completed = []
+      this.completed = kept
       this.hotspot = null
       this.ingestUrl = null
-      this.phase = "idle"
+      this.phase = this.meetingPreserved && !this.recoveryAbort ? "recovering" : "idle"
       this.teardownFailures = failures
       softapTrace("softap_call_stopped", {undoFailures: failures.join(",")})
       resetSoftapTrace()
@@ -562,6 +990,7 @@ export class SoftapCallTransport {
       case "publish":
         return this.deps.stopPublishing()
       case "acsJoin":
+        if (this.meetingPreserved) return
         return this.leaveOrEndMeeting()
       case "scopedJoin":
         return this.deps.leaveScopedNetwork()
@@ -658,7 +1087,7 @@ export class SoftapCallTransport {
       await this.undoSafely(step)
       throw new SoftapCallError(step, "CANCELLED", `SoftAP call was cancelled during ${step}`)
     }
-    this.completed.push(step)
+    if (!this.completed.includes(step)) this.completed.push(step)
     softapTrace("softap_step_done", {step, durationMs: Date.now() - startedAt})
     this.setStep(step, {status: "done", durationMs: Date.now() - startedAt})
   }
@@ -704,12 +1133,25 @@ export function createSoftapCallDeps(args: {
   meetingUrl: string
   token: string
   displayName?: string
+  /**
+   * The ACS outgoing profile. Used here only to size the glasses→phone hop; when absent the
+   * glasses keep their WHIP defaults, which is what every pre-policy build did.
+   */
+  video?: {width: number; height: number; fps: number; maxBitrateBps: number}
   /** Resolves when the meeting reports a frame reached ACS; rejects on a failed feed. */
-  awaitFirstFrame: () => Promise<void>
+  awaitFirstFrame: (report?: SoftapStepReporter, options?: {fresh?: boolean}) => Promise<void>
+  /**
+   * Mid-call camera recovery. Resolves `true` only when ingest is live again.
+   * A standing `failed` is the reason we are republishing, so it must not abort the wait.
+   */
+  waitUntilLive?: (timeoutMs: number) => Promise<boolean>
   subsystems: {
     setHotspotState: (enabled: boolean) => Promise<{state: string; ssid?: string; password?: string; localIp?: string}>
+    /** Whether this phone's Wi-Fi radio is on. Optional: only Android hosts can answer it. */
+    isWifiEnabled?: () => Promise<boolean>
     joinScopedNetwork: (ssid: string, passphrase: string, gateway?: string) => Promise<string | undefined>
     leaveScopedNetwork: () => Promise<void>
+    cancelScopedNetworkJoin?: () => Promise<void>
     joinMeeting: (
       packageName: string,
       options: {
@@ -725,9 +1167,22 @@ export function createSoftapCallDeps(args: {
     ingestUrl: () => string | null
     startPublishing: (
       packageName: string,
-      options: {streamUrl: string; ice: {stun: string}; traceId: string; captureAudio?: boolean},
+      options: {
+        streamUrl: string
+        ice: {stun: string}
+        traceId: string
+        captureAudio?: boolean
+        video?: SoftapVideoPolicy
+        mediaGeneration?: number
+      },
     ) => Promise<unknown>
     stopPublishing: (packageName: string) => Promise<void>
+    /** Drop a deferred BLE stopStream that belonged to a destroyed SoftAP media generation. */
+    discardPendingBleStop?: () => void
+    /**
+     * Rebind WHIP ingest on the standing ACS session. Required for media-only rebuilds.
+     */
+    rebindIngest?: (report?: SoftapStepReporter) => Promise<{ingestUrl: string}>
     /**
      * Whether the host is taking the wearer's voice off the glasses over BLE LC3 for this call.
      *
@@ -769,6 +1224,7 @@ export function createSoftapCallDeps(args: {
   const hotspotBroadcastWaitMs = args.hotspotBroadcastWaitMs ?? HOTSPOT_BROADCAST_WAIT_MS
   let gatewayAddress: string | undefined
   return {
+    isWifiEnabled: subsystems.isWifiEnabled ? () => subsystems.isWifiEnabled!() : undefined,
     startHotspot: async (report) => {
       const enable = async () => {
         const status = await subsystems.setHotspotState(true)
@@ -786,15 +1242,23 @@ export function createSoftapCallDeps(args: {
         return await enable()
       } catch (error) {
         if (error instanceof Error && /no password/.test(error.message)) throw error
+        const unanswered = isHotspotAnswerTimeout(error)
         // Cancel-then-start races the previous disable: the glasses report disabled (or no SSID)
         // and the UI said "Couldn't start glasses hotspot" before step 2 ran on a leftover AP.
         softapTraceFailure("hotspot_enable_retry", {
           reason: error instanceof Error ? error.message : String(error),
+          unanswered,
         })
+        if (unanswered) {
+          // Enable is idempotent; disabling here is what turned a late-delivered enable back off
+          // and cost the whole rebuild budget after a walk-away.
+          report?.("Glasses did not answer; asking again without turning the hotspot off")
+          return await enable()
+        }
         report?.("Glasses hotspot did not start; turning it off and trying again")
         await subsystems.setHotspotState(false)
         if (hotspotBroadcastWaitMs > 0) {
-          await new Promise<void>(resolve => setTimeout(resolve, Math.min(1_000, hotspotBroadcastWaitMs)))
+          await new Promise<void>((resolve) => setTimeout(resolve, Math.min(1_000, hotspotBroadcastWaitMs)))
         }
         return await enable()
       }
@@ -803,7 +1267,7 @@ export function createSoftapCallDeps(args: {
       if (hotspotBroadcastWaitMs <= 0) return
       softapTrace("hotspot_broadcast_wait", {ms: hotspotBroadcastWaitMs})
       report?.(`Giving the hotspot ${Math.round(hotspotBroadcastWaitMs / 1000)}s to start broadcasting`)
-      await new Promise<void>(resolve => setTimeout(resolve, hotspotBroadcastWaitMs))
+      await new Promise<void>((resolve) => setTimeout(resolve, hotspotBroadcastWaitMs))
     },
     stopHotspot: async () => {
       await subsystems.setHotspotState(false)
@@ -827,10 +1291,8 @@ export function createSoftapCallDeps(args: {
         if (status.state !== "enabled" || !status.ssid || !status.password) throw error
         gatewayAddress = status.localIp
         if (hotspotBroadcastWaitMs > 0) {
-          report?.(
-            `Giving the hotspot ${Math.round(hotspotBroadcastWaitMs / 1000)}s to start broadcasting`,
-          )
-          await new Promise<void>(resolve => setTimeout(resolve, hotspotBroadcastWaitMs))
+          report?.(`Giving the hotspot ${Math.round(hotspotBroadcastWaitMs / 1000)}s to start broadcasting`)
+          await new Promise<void>((resolve) => setTimeout(resolve, hotspotBroadcastWaitMs))
         }
         address = await joinOnce(status.ssid, status.password)
       }
@@ -853,6 +1315,7 @@ export function createSoftapCallDeps(args: {
       return address
     },
     leaveScopedNetwork: () => subsystems.leaveScopedNetwork(),
+    cancelScopedNetworkJoin: subsystems.cancelScopedNetworkJoin,
     joinMeeting: async ({ssid, passphrase, bindAddress}, report) => {
       // The hotspot join just took this phone off Wi-Fi, so the route Teams needs is whatever
       // Android promoted in its place. Waiting for it to validate is what stopped the ACS join
@@ -889,7 +1352,8 @@ export function createSoftapCallDeps(args: {
     },
     leaveMeeting: () => subsystems.leaveMeeting(packageName),
     ...(subsystems.endMeeting ? {endMeeting: () => subsystems.endMeeting!(packageName)} : {}),
-    startPublishing: async ({ingestUrl, traceId}, report) => {
+    ...(subsystems.rebindIngest ? {rebindIngest: subsystems.rebindIngest} : {}),
+    startPublishing: async ({ingestUrl, traceId, mediaGeneration}, report) => {
       // Narrate the glasses side while the BLE start command is in flight. `initializing` means
       // the glasses accepted the command and are opening the camera; `streaming` means the WHIP
       // offer was answered and ICE connected; anything else is the reason it did not.
@@ -914,6 +1378,20 @@ export function createSoftapCallDeps(args: {
           ? "Publishing video only; the wearer's voice comes over Bluetooth LC3"
           : "Publishing video and the glasses microphone",
       )
+      const policy = args.video ? softapVideoPolicy(args.video) : undefined
+      if (policy) {
+        // Traced at send time rather than read back: the glasses log what they applied in
+        // `applyBitrateConstraints`, and the pair of lines is what shows a clamp we did not
+        // intend. One line alone can only ever show agreement with itself.
+        softapTrace("softap_video_policy", {
+          width: policy.width,
+          height: policy.height,
+          fps: policy.fps,
+          min: policy.minBitrateBps,
+          start: policy.initialBitrateBps,
+          max: policy.bitrate,
+        })
+      }
       try {
         await subsystems.startPublishing(packageName, {
           streamUrl: ingestUrl,
@@ -922,12 +1400,18 @@ export function createSoftapCallDeps(args: {
           ice: {stun: ""},
           traceId,
           captureAudio: !lc3Uplink,
+          ...(typeof mediaGeneration === "number" ? {mediaGeneration} : {}),
+          ...(policy ? {video: policy} : {}),
         })
       } finally {
         unsubscribe?.()
       }
     },
-    stopPublishing: () => subsystems.stopPublishing(packageName),
+    stopPublishing: async () => {
+      await subsystems.stopPublishing(packageName)
+      subsystems.discardPendingBleStop?.()
+    },
     awaitFirstFrame: args.awaitFirstFrame,
+    waitUntilLive: args.waitUntilLive,
   }
 }

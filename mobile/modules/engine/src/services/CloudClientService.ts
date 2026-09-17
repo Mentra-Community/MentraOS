@@ -641,9 +641,9 @@ export const cloudClientService = {
   },
 
   /** Device-side managed photo (cloud-v2): presign now, deliver bytes, await ready. */
-  startManagedPhoto(opts: Record<string, unknown> = {}) {
+  startManagedPhoto() {
     if (!client) throw new Error("cloud client not connected")
-    return client.runtime.startManagedPhoto(opts)
+    return client.runtime.startManagedPhoto()
   },
   awaitManagedPhotoReady(requestId: string) {
     if (!client) throw new Error("cloud client not connected")

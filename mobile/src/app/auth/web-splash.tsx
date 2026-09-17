@@ -1,66 +1,40 @@
-import {SplashVideo} from "@/components/splash/SplashVideo"
+import {useLocalSearchParams} from "expo-router"
+import {useEffect, useRef} from "react"
+
 import {Screen} from "@/components/ignite"
-import {useCallback, useEffect, useRef} from "react"
-import {useFocusEffect, useLocalSearchParams} from "expo-router"
-import {BgTimer} from "@mentra/engine"
+import {SplashVideo} from "@/components/splash/SplashVideo"
+import {useDeeplink} from "@/contexts/DeeplinkContext"
+import {translate} from "@/i18n"
 import {useNavigationStore} from "@/stores/navigation"
-import * as WebBrowser from "expo-web-browser"
-import {AppState} from "react-native"
+import showAlert from "@/utils/AlertUtils"
+import {mapAuthError} from "@/utils/auth/authErrors"
+import {openAuthBrowser} from "@/utils/auth/openAuthBrowser"
 
 export default function WebSplash() {
   const {goBack} = useNavigationStore.getState()
-  const {url} = useLocalSearchParams()
-  const timerRef = useRef<number | null>(null)
-
-  // goBack() if we stay on this screen for more than 1 second:
-  //   useFocusEffect(
-  //     useCallback(() => {
-  //       const timeout = BgTimer.setTimeout(() => {
-  //         goBack()
-  //       }, 2000)
-  //       return () => BgTimer.clearTimeout(timeout)
-  //     }, [goBack]),
-  //   )
+  const {url} = useLocalSearchParams<{url: string}>()
+  const {processUrl} = useDeeplink()
+  const processUrlRef = useRef(processUrl)
+  processUrlRef.current = processUrl
 
   useEffect(() => {
-    console.log("WebSplash: url", url)
+    let mounted = true
     const openBrowser = async () => {
-      if (url) {
-        await WebBrowser.openBrowserAsync(url as string)
-      }
-    }
-    openBrowser()
-  }, [url])
-
-  // Add a listener for app state changes to detect when the app comes back from background
-  useEffect(() => {
-    const handleAppStateChange = async (nextAppState: any) => {
-      console.log("RECONNECT: App state changed to:", nextAppState)
-      // If app comes back to foreground, hide the loading overlay
-      if (nextAppState === "active") {
-        if (timerRef.current) {
-          BgTimer.clearTimeout(timerRef.current)
-          timerRef.current = null
-        }
-        // goBack() if we stay on this screen for more than 1.5 seconds:
-        timerRef.current = BgTimer.setTimeout(() => {
+      try {
+        const completed = url && (await openAuthBrowser(url, (callbackUrl) => processUrlRef.current(callbackUrl)))
+        if (!completed && mounted) goBack()
+      } catch (error) {
+        if (mounted) {
           goBack()
-        }, 1500)
+          showAlert(translate("common:error"), mapAuthError(error instanceof Error ? error : String(error)))
+        }
       }
     }
-
-    // Subscribe to app state changes
-    const appStateSubscription = AppState.addEventListener("change", handleAppStateChange)
-
+    void openBrowser()
     return () => {
-      appStateSubscription.remove()
-      // clear the timeout if it's still set:
-      if (timerRef.current) {
-        BgTimer.clearTimeout(timerRef.current)
-        timerRef.current = null
-      }
+      mounted = false
     }
-  }, [])
+  }, [url, goBack])
 
   return (
     <Screen preset="fixed">

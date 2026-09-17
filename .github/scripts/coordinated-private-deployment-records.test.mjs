@@ -6,15 +6,16 @@ import {
   createPrivateDeploymentRecord,
   validatePrivateDeploymentRecord,
 } from "./coordinated-private-deployment-records.mjs"
-import {createReleasePlan, loadReleaseFamily} from "./release-family.mjs"
+import {createReleasePlan, familyBuildNumber, loadReleaseFamily} from "./release-family.mjs"
 
 const sourceCommit = "a".repeat(40)
+const family = loadReleaseFamily({rootDir: fileURLToPath(new URL("../..", import.meta.url))})
 const plan = createReleasePlan({
-  family: loadReleaseFamily({rootDir: fileURLToPath(new URL("../..", import.meta.url))}),
+  family,
   channel: "dev",
   sequence: 91,
   sourceCommit,
-  nativeBuildNumber: 310000091,
+  nativeBuildNumber: familyBuildNumber(family.familyBaseVersion, 91),
 })
 
 function runtimeImage(status = "published") {
@@ -87,10 +88,7 @@ test("rejects mutable or mismatched deployment evidence", () => {
 
   const wrongSource = structuredClone(create())
   wrongSource.sourceCommit = "c".repeat(40)
-  assert.throws(
-    () => validatePrivateDeploymentRecord({plan, record: wrongSource}),
-    /do not match a dev release plan/,
-  )
+  assert.throws(() => validatePrivateDeploymentRecord({plan, record: wrongSource}), /do not match a dev release plan/)
 
   const rebuilt = structuredClone(create())
   rebuilt.azure.imageDigest = `sha256:${"d".repeat(64)}`
@@ -148,7 +146,11 @@ test("rejects look-alike or non-default-port Core origins", () => {
 
 test("rejects deployed evidence with the wrong workspace origin", () => {
   assert.throws(
-    () => createPrivateDeploymentRecord({...deploymentArgs(), workspaceOrigin: "https://enterprisedev.mentraglass.com.evil.example"}),
+    () =>
+      createPrivateDeploymentRecord({
+        ...deploymentArgs(),
+        workspaceOrigin: "https://enterprisedev.mentraglass.com.evil.example",
+      }),
     /wrong workspace origin/,
   )
   const recorded = structuredClone(create())

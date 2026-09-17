@@ -1,5 +1,5 @@
 import assert from "node:assert/strict"
-import {existsSync, readFileSync, mkdtempSync, rmSync} from "node:fs"
+import {existsSync, readFileSync, mkdtempSync, readdirSync, rmSync} from "node:fs"
 import {spawnSync} from "node:child_process"
 import {tmpdir} from "node:os"
 import path from "node:path"
@@ -70,6 +70,14 @@ test("production promotion is resumable and keeps irreversible actions behind se
     assert.match(source, /ref: main/)
   }
   assert.match(prepare, /group: production-release-prepare\n/)
+  // Candidates take the family's next sequence from the family container and
+  // record it there; the lab does the same in the current app's family.
+  assert.match(prepare, /--family-assets promotion-input\/family\/assets\.json/)
+  assert.match(prepare, /--current-family-assets promotion-input\/family\/current-assets\.json/)
+  assert.match(prepare, /--marker-directory promotion-output\/family-build-numbers/)
+  assert.match(prepare, /--family-markers-dir promotion-input\/family\/markers/)
+  assert.match(prepare, /--current-family-markers-dir promotion-input\/family\/current-markers/)
+  assert.match(prepare, /Record the allocated build numbers in the family containers/)
   assert.doesNotMatch(prepare, /group: production-release-prepare-\$\{\{/)
   assert.match(prepare, /--beta "\$\{\{ inputs\.beta_identity \}\}"/)
   assert.match(prepare, /production-promotion-assets\.mjs selection-digest/)
@@ -96,7 +104,9 @@ test("production promotion is resumable and keeps irreversible actions behind se
   assert.match(rollout, /name: production-store-release/)
   assert.match(status, /permissions:\n  contents: read/)
   assert.match(mobile, /backend_environment: prod/)
-  assert.match(mobile, /play_track: internal/)
+  assert.match(mobile, /play_track: production/)
+  assert.match(mobile, /play_release_status: draft/)
+  assert.match(mobile, /com\.mentra\.mentra:\$\{\{ needs\.load\.outputs\.mentra_build \}\}:production/)
   assert.match(mobile, /Mentra Production Candidates/)
   for (const source of [prepare, mobile, submit, release, status]) {
     assert.doesNotMatch(source, /com\.mentra\.bluetoothsdkexample|starterKitCommit/)
@@ -105,11 +115,17 @@ test("production promotion is resumable and keeps irreversible actions behind se
   assert.match(mobile, /needs: \[load, mentra-app\]/)
   const androidFastfile = mobileFastfile("fastlane-android")
   assert.match(androidFastfile, /version_name: ENV\["GOOGLE_PLAY_RELEASE_NAME"\]/)
-  assert.doesNotMatch(androidFastfile, /release_name:/)
+  assert.match(androidFastfile, /release_status: ENV\.fetch\("GOOGLE_PLAY_RELEASE_STATUS", "completed"\)/)
+  assert.doesNotMatch(androidFastfile, /release_name:|promote_google_play|track_promote_to/)
   assert.match(mobile, /release_id: \$\{\{ needs\.load\.outputs\.promotion_release_id \}\}/)
   assert.match(mobile, /artifact_container_tag: \$\{\{ needs\.load\.outputs\.candidate_container_tag \}\}/)
   assert.doesNotMatch(mobile, /allocate stable artifact container/i)
-  assert.match(submit, /GOOGLE_PLAY_RELEASE_STATUS=draft/)
+  // The candidate already sits on the production track as a draft; submission
+  // verifies it and never promotes from a testing track.
+  assert.doesNotMatch(submit, /promote_google_play|GOOGLE_PLAY_SOURCE_TRACK/)
+  assert.match(submit, /Verify the exact Google Play production release is held for review/)
+  assert.match(submit, /id: asc-before/)
+  assert.match(submit, /if: steps\.asc-before\.outputs\.promoted != 'true'/)
   assert.doesNotMatch(submit, /automatic_release: true/)
   assert.doesNotMatch(release, /automatic_release: true/)
   assert.match(rollout, /\[\[ "\$percent" -lt 100 \]\]/)
@@ -127,7 +143,8 @@ test("production promotion is resumable and keeps irreversible actions behind se
     assert.match(source, /production-promotion-assets\.mjs prepare-evidence/)
   }
   assert.match(submit, /validate-google-play-release\.mjs/)
-  assert.match(submit, /--required-state draft/)
+  assert.match(submit, /--required-state submitted/)
+  assert.doesNotMatch(submit, /--required-state draft/)
   assert.match(release, /validate-google-play-release\.mjs/)
   assert.match(release, /--required-state public/)
   assert.doesNotMatch(release, /\.tracks\.production \| map\(tonumber\)/)
@@ -234,6 +251,17 @@ test("Cloud V2 deploys once per coordinated environment before mobile publicatio
   assert.match(cloud, /group: coordinated-cloud-v2-\$\{\{ inputs\.deployment_environment \}\}/)
   assert.match(cloud, /cancel-in-progress: false/)
   assert.match(cloud, /porter apply \\\n+            -w/)
+  // Porter's CLI otherwise tags from GITHUB_SHA, which on a workflow_dispatch
+  // from main is the dispatching commit, not the frozen source; the deploy
+  // verifies the observed image tag against the source, so the tag is explicit.
+  assert.match(cloud, /PORTER_TAG: \$\{\{ steps\.source\.outputs\.tag \}\}/)
+  assert.match(cloud, /--tag "\$PORTER_TAG" \\/)
+  // The frozen source may predate tooling fixes on main; scripts run from the
+  // workflow revision, which is the same revision the workflow file came from.
+  assert.match(cloud, /ref: \$\{\{ github\.sha \}\}\n\s+path: release-tooling/)
+  assert.doesNotMatch(cloud, /node \.github\/scripts\//)
+  assert.match(cloud, /node release-tooling\/\.github\/scripts\/coordinated-cloud-v2-records\.mjs resolve/)
+  assert.match(cloud, /node release-tooling\/\.github\/scripts\/coordinated-cloud-v2-records\.mjs create/)
   assert.match(cloud, /getent hosts "\$host"/)
   assert.match(cloud, /for probe in healthz ready/)
   assert.match(cloud, /porter kubectl -- get pods/)
@@ -317,6 +345,17 @@ test("mobile destinations use real TestFlight groups without changing the releas
   assert.match(mobile, /MENTRA_TESTFLIGHT_INTERNAL_ONLY: \$\{\{ inputs\.compatibility_lab \}\}/)
   assert.match(mobile, /testFlightInternalTestingOnly -bool true/)
   assert.match(mobile, /google-play-internal-sharing\.mjs/)
+  assert.match(mobile, /if: inputs\.dry_run != true && inputs\.play_track == 'internal-app-sharing'/)
+  assert.match(mobile, /GOOGLE_PLAY_RELEASE_STATUS: \$\{\{ inputs\.play_release_status \}\}/)
+  assert.match(mobile, /--internal-sharing mobile-release\/android-internal-sharing\.json/)
+  assert.match(mobile, /play_install_url:\n        value: \$\{\{ jobs\.android\.outputs\.play_install_url \}\}/)
+  assert.match(coordinator, /PLAY_INSTALL_URL: \$\{\{ needs\.mobile\.outputs\.play_install_url \}\}/)
+  // The beta channel and the plan's expected coordinate name the same Play destination.
+  assert.match(coordinator, /play_track=internal-app-sharing/)
+  assert.match(
+    readFileSync(new URL("./release-family.mjs", import.meta.url), "utf8"),
+    /beta: \{play: "internal-app-sharing"/,
+  )
   assert.match(mobile, /COMPATIBILITY-LAB-NOT-FOR-PRODUCTION/)
   assert.doesNotMatch(mobile, /MENTRA_COORDINATED_RELEASE_CHANNEL=\$\{\{ inputs\.testflight_group \}\}/)
   assert.match(example, /EXAMPLE_APP_ID: "6792839366"/)
@@ -364,15 +403,33 @@ test("mobile destinations use real TestFlight groups without changing the releas
 
 test("coordinated docs publish only after finalization to the matching channel", () => {
   const coordinator = workflow("coordinated-release.yml")
+  const examples = workflow("coordinated-example-release.yml")
   const plan = jobBlock(coordinator, "plan")
-  const starterKit = jobBlock(coordinator, "starter-kit")
+  // Store build numbers come from the family formula with the run number as
+  // the sequence, for the app plan and the ASG client alike.
+  assert.match(plan, /allocate-family-build-sequence\.mjs allocate/)
+  assert.match(plan, /--owner "coordinated-run:\$\{GITHUB_RUN_ID\}"/)
+  assert.match(plan, /--native-build-number "\$\{\{ steps\.family-number\.outputs\.build_number \}\}"/)
+  assert.match(plan, /Record the family build number in the release container/)
+  assert.doesNotMatch(coordinator, /310000000|--native-build-sequence/)
+  const familyChecks = workflow("release-family-checks.yml")
+  assert.match(familyChecks, /--native-build-sequence 1 \\/)
+  assert.doesNotMatch(familyChecks, /310000001|--native-build-number/)
+  assert.match(
+    workflow("reusable-coordinated-ota.yml"),
+    /allocate-asg-version\.mjs \\\n[\s\S]{0,300}--build-number "\$\(jq -er \.native\.buildNumber release-intent\/release-plan\.json\)"/,
+  )
+  const starterKitJob = jobBlock(examples, "starter-kit")
+  // The Starter Kit request is shared with the production example: the
+  // coordinator only wires the reusable workflow.
+  const starterKit = jobBlock(workflow("reusable-coordinated-starter-kit.yml"), "starter-kit")
   const engineConsumer = jobBlock(coordinator, "engine-consumer")
-  const exampleTestflight = jobBlock(coordinator, "example-testflight")
-  const docs = jobBlock(coordinator, "docs")
-  const notify = jobBlock(coordinator, "notify-slack")
+  const exampleTestflight = jobBlock(examples, "example-testflight")
+  const docs = jobBlock(examples, "docs")
+  const notify = jobBlock(examples, "notify-slack")
 
   const finalize = jobBlock(coordinator, "finalize")
-  const finalizeExample = jobBlock(coordinator, "finalize-example")
+  const finalizeExample = jobBlock(examples, "finalize-example")
 
   // The Mentra beta (Cloud V2, Mentra App, Engine, Bluetooth SDK) is complete
   // on its own; the Bluetooth example is built against the finalized beta and
@@ -382,16 +439,16 @@ test("coordinated docs publish only after finalization to the matching channel",
     /^    needs: \[plan, cloud-v2, runtime-image, private-deployment, ota, npm, sdk-native, mobile, engine-consumer\]$/m,
   )
   assert.doesNotMatch(finalize, /starter-kit|example-testflight|example-google-play/)
-  assert.match(starterKit, /^    needs: \[plan, ota, npm, sdk-native, finalize\]$/m)
+  assert.match(starterKitJob, /^    needs: plan$/m)
+  assert.match(starterKitJob, /uses: \.\/\.github\/workflows\/reusable-coordinated-starter-kit\.yml/)
+  assert.match(starterKitJob, /if: needs\.plan\.outputs\.dry_run != 'true'/)
   assert.match(engineConsumer, /^    needs: \[plan, npm\]$/m)
   assert.match(starterKit, /coordinated-example-release\.yml/)
+  assert.match(starterKit, /production\) target_branch=main ;;/)
+  assert.match(starterKit, /container_tag="sdk-\$identity"/)
   assert.doesNotMatch(coordinator, /Freeze the Starter Kit channel source/)
   assert.doesNotMatch(coordinator, /--starter-kit-source|starterKitSource|Starter-Kit-Source/)
-  assert.match(
-    finalizeExample,
-    /^    needs: \[plan, finalize, starter-kit, example-testflight, example-google-play\]$/m,
-  )
-  assert.match(finalizeExample, /needs\.finalize\.result == 'success'/)
+  assert.match(finalizeExample, /^    needs: \[plan, starter-kit, example-testflight, example-google-play\]$/m)
   assert.match(finalizeExample, /needs\.plan\.outputs\.dry_run != 'true'/)
   assert.match(finalizeExample, /name: coordinated-release-result-\$\{\{ needs\.plan\.outputs\.release_set_id \}\}/)
   assert.match(finalizeExample, /example-release-records\.mjs/)
@@ -470,10 +527,10 @@ test("coordinated docs publish only after finalization to the matching channel",
   assert.match(exampleTestflight, /^    needs: \[plan, starter-kit\]$/m)
   assert.match(exampleTestflight, /reusable-coordinated-example-testflight\.yml/)
   assert.match(finalize, /needs\.engine-consumer\.result == 'success'/)
-  assert.match(docs, /^    needs: \[plan, starter-kit, example-testflight, finalize, finalize-example\]$/m)
+  assert.match(docs, /^    needs: \[plan, starter-kit, example-testflight\]$/m)
   assert.match(docs, /needs\.starter-kit\.result == 'success'/)
-  assert.match(docs, /needs\.finalize\.result == 'success'/)
-  assert.match(docs, /needs\.finalize-example\.result == 'success'/)
+  assert.doesNotMatch(docs, /needs\.(finalize-example|example-google-play)/)
+  assert.match(docs, /!cancelled\(\)/)
   assert.match(docs, /needs\.plan\.outputs\.dry_run != 'true'/)
   assert.match(docs, /project=mentraos-docs-dev/)
   assert.match(docs, /docs_url=https:\/\/docs-dev\.mentraglass\.com/)
@@ -502,7 +559,7 @@ test("coordinated docs publish only after finalization to the matching channel",
   assert.match(docs, /%7b%7b\[a-z0-9_-\]\+%7d%7d/)
   assert.match(
     notify,
-    /^    needs:\n      \[\n        plan,\n        cloud-v2,\n        runtime-image,\n        private-deployment,\n        ota,\n        npm,\n        sdk-native,\n        mobile,\n        engine-consumer,\n        starter-kit,\n        example-testflight,\n        example-google-play,\n        finalize,\n        finalize-example,\n        docs,\n      \]$/m,
+    /^    needs: \[plan, starter-kit, example-testflight, example-google-play, finalize-example, docs\]$/m,
   )
   assert.match(notify, /FINALIZE_EXAMPLE_RESULT: \$\{\{ needs\.finalize-example\.result \}\}/)
   assert.match(notify, /STARTER_KIT_RESULT: \$\{\{ needs\.starter-kit\.result \}\}/)
@@ -708,4 +765,151 @@ test("iOS status reports the failed phase instead of downstream skips", (t) => {
     assert.equal(result.status, 0, result.stderr)
     assert.match(readFileSync(output, "utf8"), new RegExp(`^ios_result=${expected}$`, "m"))
   }
+})
+
+test("Play lane outputs in the production workflows are absolute paths", () => {
+  // fastlane runs every lane from inside the fastlane/ directory, so a
+  // relative output path lands one level deeper than the caller expects.
+  for (const name of [
+    "production-release-prepare.yml",
+    "production-release-status.yml",
+    "production-release-store-release.yml",
+    "production-release-store-submit.yml",
+    "production-release-example.yml",
+  ]) {
+    const source = workflow(name)
+    for (const match of source.matchAll(/GOOGLE_PLAY_[A-Z_]*OUTPUT=(\S+)/g)) {
+      assert.match(match[1], /^"\$GITHUB_WORKSPACE\//, `${name}: ${match[0]}`)
+    }
+  }
+})
+
+test("the production example is keyed on the promoted beta and never promotes a store listing", () => {
+  const example = workflow("production-release-example.yml")
+  const load = jobBlock(example, "load")
+  const finalize = jobBlock(example, "finalize-example")
+  const play = workflow("reusable-coordinated-example-google-play.yml")
+
+  assert.match(example, /group: production-release-example\n/)
+  assert.match(load, /environment:\n      name: production-store-status/)
+  assert.match(load, /git merge-base --is-ancestor "\$source_commit" origin\/main/)
+  assert.match(load, /npm view "\$name@\$RELEASE_IDENTITY" version/)
+  assert.match(load, /production-example\.mjs plan/)
+  // The example's number is the family's next sequence from the family
+  // container, recorded there before any upload; stores are not consulted.
+  assert.match(load, /--family-assets example-input\/family\/assets\.json/)
+  assert.match(load, /--marker-directory example-output\/family-build-number/)
+  assert.match(load, /--family-markers-dir example-input\/family\/markers/)
+  assert.match(load, /Record the allocated build number in the family container/)
+  assert.doesNotMatch(load, /--apple-inventory|--google-inventory|google_play_inventory/)
+  assert.match(load, /production-packages\.mjs ensure-container/)
+  assert.match(example, /uses: \.\/\.github\/workflows\/reusable-coordinated-starter-kit\.yml/)
+  assert.match(example, /uses: \.\/\.github\/workflows\/reusable-coordinated-example-testflight\.yml/)
+  assert.match(example, /uses: \.\/\.github\/workflows\/reusable-coordinated-example-google-play\.yml/)
+  assert.match(example, /production_build_number: \$\{\{ fromJSON\(needs\.load\.outputs\.build_number\) \}\}/)
+  assert.match(finalize, /example-release-records\.mjs/)
+  assert.match(load, /Recover the example plan a previous run already froze/)
+  assert.match(load, /--existing-plan example-input\/existing-plan\.json/)
+  assert.match(load, /cp release-intent\/release-plan\.json "release-intent\/\$PLAN_ASSET"/)
+  assert.match(load, /--file "release-intent\/\$PLAN_ASSET" \\\n\s+--name "\$PLAN_ASSET"/)
+  assert.doesNotMatch(load, /mv "[^"]*" "\1"/)
+  assert.match(finalize, /example-release-records\.mjs reconcile/)
+  assert.match(finalize, /if: steps\.results\.outputs\.published != 'true'/)
+  assert.doesNotMatch(finalize, /cmp existing-record\.json/)
+  assert.match(play, /if \[\[ "\$\(jq -er \.channel "\$plan"\)" == "production" \]\]; then/)
+  assert.match(play, /target_commitish <<< "\$release"\)" == "\$\(jq -er \.sourceCommit "\$plan"\)"/)
+  assert.match(finalize, /publish-immutable-release-asset\.mjs/)
+  assert.doesNotMatch(
+    example,
+    /production-status|store-submit|store-release|rollout|submit-for-review|app-store-version/i,
+  )
+  assert.doesNotMatch(example, /production-store-submission|production-store-release/)
+  // The Play lane runs its scripts from the workflow revision so a promoted
+  // beta that predates production support can still build the example.
+  assert.match(play, /Checkout example tooling from the workflow revision/)
+  assert.equal(
+    [...play.matchAll(/release-tooling\/\.github\/scripts\/coordinated-example-google-play\.mjs/g)].length,
+    4,
+  )
+  assert.doesNotMatch(play, /node \.github\/scripts\/coordinated-example-google-play\.mjs/)
+  const testflight = workflow("reusable-coordinated-example-testflight.yml")
+  assert.match(testflight, /release-tooling\/\.github\/scripts\/coordinated-example-testflight-record\.mjs/)
+  assert.doesNotMatch(testflight, /node \.github\/scripts\/coordinated-example-testflight-record\.mjs/)
+  assert.match(testflight, /elif \.channel == "production" then "Mentra Bluetooth Example"/)
+  assert.match(testflight, /if \.channel == "dev" then "internal" else "external" end/)
+  assert.doesNotMatch(example + testflight, /Mentra SDK Example|Production Candidates/)
+  assert.equal(existsSync(new URL("../workflows/reusable-production-starter-kit-android.yml", import.meta.url)), false)
+})
+
+// Every publish-immutable-release-asset.mjs invocation in a workflow, as its
+// raw --file and --name arguments. Each invocation is cut at its own
+// --repository argument so one call can never borrow another's arguments.
+export function immutablePublishArguments(source) {
+  const invocations = []
+  const parts = source.split("publish-immutable-release-asset.mjs")
+  for (const part of parts.slice(1)) {
+    const scope = part.split("--repository")[0]
+    const argument = (flag) => {
+      const match = new RegExp(`${flag}\\s+(?:"([^"]*)"|(\\S+))`).exec(scope)
+      return match ? (match[1] ?? match[2]) : null
+    }
+    invocations.push({file: argument("--file"), name: argument("--name")})
+  }
+  return invocations
+}
+
+// A --file whose basename is not the --name fails at publication time. Two
+// spellings are accepted: the basename of the file string equals the name
+// string (plain names, "$variable" names, and "${{ ... }}" expressions alike),
+// or both are the asset_path and asset_name outputs of the same step, which
+// prepareEvidenceAsset in production-promotion-assets.mjs derives together.
+export function immutablePublishMismatches(source) {
+  return immutablePublishArguments(source).filter(({file, name}) => {
+    if (!file || !name) return true
+    if (file.split("/").pop() === name) return false
+    const pathOutput = /^\$\{\{ steps\.([a-z-]+)\.outputs\.asset_path \}\}$/.exec(file)
+    const nameOutput = /^\$\{\{ steps\.([a-z-]+)\.outputs\.asset_name \}\}$/.exec(name)
+    return !(pathOutput && nameOutput && pathOutput[1] === nameOutput[1])
+  })
+}
+
+test("immutable assets in every production workflow are published from a file named like the asset", () => {
+  const names = readdirSync(new URL("../workflows/", import.meta.url)).filter((name) =>
+    /^production-release-.*\.yml$/.test(name),
+  )
+  assert.ok(names.length >= 10, `expected the production workflows, found ${names.length}`)
+  let invocations = 0
+  for (const name of names) {
+    const source = workflow(name)
+    invocations += immutablePublishArguments(source).length
+    assert.deepEqual(immutablePublishMismatches(source), [], `${name} publishes an asset under another name`)
+  }
+  assert.ok(invocations >= 18, `expected every publisher invocation to be inspected, found ${invocations}`)
+})
+
+test("the immutable publish contract inspects each invocation on its own", () => {
+  const snippet = `
+          node .github/scripts/publish-immutable-release-asset.mjs \\
+            --file "promotion-output/$plan_name" \\
+            --name "$plan_name" \\
+            --release-id "1" \\
+            --repository "$GITHUB_REPOSITORY"
+          node .github/scripts/publish-immutable-release-asset.mjs \\
+            --file promotion-input/current/release-plan.json \\
+            --name current-production-release-plan.json \\
+            --release-id "1" \\
+            --repository "$GITHUB_REPOSITORY"
+          node .github/scripts/publish-immutable-release-asset.mjs --file "\${{ steps.a.outputs.asset_path }}" --name "\${{ steps.b.outputs.asset_name }}" --release-id "1" --repository "$GITHUB_REPOSITORY"
+          node .github/scripts/publish-immutable-release-asset.mjs --file "\${{ steps.a.outputs.asset_path }}" --name "\${{ steps.a.outputs.asset_name }}" --release-id "1" --repository "$GITHUB_REPOSITORY"
+          node .github/scripts/publish-immutable-release-asset.mjs \\
+            --file promotion-input/stores/current-production-store-inventory.json \\
+            --name current-production-store-inventory.json \\
+            --release-id "1" \\
+            --repository "$GITHUB_REPOSITORY"
+  `
+  assert.equal(immutablePublishArguments(snippet).length, 5)
+  assert.deepEqual(
+    immutablePublishMismatches(snippet).map(({name}) => name),
+    ["current-production-release-plan.json", "\${{ steps.b.outputs.asset_name }}"],
+  )
 })

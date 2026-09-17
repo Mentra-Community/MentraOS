@@ -15,12 +15,25 @@ platform :android do
     output = ENV.fetch("GOOGLE_PLAY_INVENTORY_OUTPUT")
     tracks = ENV.fetch("GOOGLE_PLAY_INVENTORY_TRACKS", "internal,beta,production").split(",")
     package_name = ENV.fetch("APP_PACKAGE_NAME", "com.mentra.mentra")
+    # Google meters edit creation per day, and every coordinated build and
+    # store lane spends some. Read every track inside one edit: the release
+    # inventory already carries the version codes, so the per-track
+    # google_play_track_version_codes action (one more edit each) is not
+    # opened.
     releases = {}
-    versions = tracks.to_h do |track|
-      action_codes = google_play_track_version_codes(track: track).map(&:to_i).sort
-      client = Supply::Client.make_from_config
-      client.begin_edit(package_name: package_name)
-      begin
+    # Supply's client reads its credentials from Supply.config, which the
+    # google_play_track_version_codes action used to populate as a side effect.
+    # Build it from Supply's own options so the Appfile defaults (package name,
+    # json_key_file) still apply.
+    require "supply"
+    Supply.config = FastlaneCore::Configuration.create(
+      Supply::Options.available_options,
+      { package_name: package_name },
+    )
+    client = Supply::Client.make_from_config
+    client.begin_edit(package_name: package_name)
+    begin
+      tracks.each do |track|
         releases[track] = client.track_releases(track).map do |release|
           {
             name: release.name,
@@ -29,12 +42,12 @@ platform :android do
             versionCodes: (release.version_codes || []).map(&:to_i).sort,
           }
         end
-      ensure
-        client.abort_current_edit
       end
-      release_codes = releases.fetch(track).flat_map { |release| release.fetch(:versionCodes) }.uniq.sort
-      UI.user_error!("Google Play #{track} release inventory disagrees with its version-code inventory") unless release_codes == action_codes
-      [track, action_codes]
+    ensure
+      client.abort_current_edit
+    end
+    versions = tracks.to_h do |track|
+      [track, releases.fetch(track).flat_map { |release| release.fetch(:versionCodes) }.uniq.sort]
     end
     all_codes = versions.values.flatten
     public_statuses = ["inProgress", "completed"]
@@ -61,44 +74,11 @@ platform :android do
       track: ENV.fetch("GOOGLE_PLAY_TRACK", "internal"),
       aab: ENV.fetch("GOOGLE_PLAY_AAB", "app/build/outputs/bundle/release/app-release.aab"),
       version_name: ENV["GOOGLE_PLAY_RELEASE_NAME"],
+      release_status: ENV.fetch("GOOGLE_PLAY_RELEASE_STATUS", "completed"),
       skip_upload_apk: true,
       skip_upload_metadata: true,
       skip_upload_images: true,
       skip_upload_screenshots: true,
     )
-  end
-
-  desc "Promote one exact existing version code between Google Play tracks"
-  lane :promote_google_play do
-    source = ENV.fetch("GOOGLE_PLAY_SOURCE_TRACK")
-    target = ENV.fetch("GOOGLE_PLAY_TARGET_TRACK", "production")
-    version_code = Integer(ENV.fetch("GOOGLE_PLAY_VERSION_CODE"))
-    output = ENV.fetch("GOOGLE_PLAY_PROMOTION_OUTPUT")
-
-    source_codes = google_play_track_version_codes(track: source).map(&:to_i)
-    UI.user_error!("Version code #{version_code} is absent from Google Play #{source}") unless source_codes.include?(version_code)
-    target_codes = google_play_track_version_codes(track: target).map(&:to_i)
-    reused = target_codes.include?(version_code)
-    unless reused
-      release_status = ENV.fetch("GOOGLE_PLAY_RELEASE_STATUS", "draft")
-      rollout = ENV["GOOGLE_PLAY_ROLLOUT"]
-      upload_to_play_store(
-        track: source,
-        track_promote_to: target,
-        version_code: version_code,
-        track_promote_release_status: release_status,
-        rollout: rollout && Float(rollout),
-        skip_upload_apk: true,
-        skip_upload_aab: true,
-        skip_upload_metadata: true,
-        skip_upload_changelogs: true,
-        skip_upload_images: true,
-        skip_upload_screenshots: true,
-      )
-    end
-
-    confirmed = google_play_track_version_codes(track: target).map(&:to_i)
-    UI.user_error!("Google Play did not retain version code #{version_code} on #{target}") unless confirmed.include?(version_code)
-    File.write(output, JSON.generate({ versionCode: version_code, source: source, target: target, reused: reused, releaseStatus: ENV.fetch("GOOGLE_PLAY_RELEASE_STATUS", "draft") }))
   end
 end

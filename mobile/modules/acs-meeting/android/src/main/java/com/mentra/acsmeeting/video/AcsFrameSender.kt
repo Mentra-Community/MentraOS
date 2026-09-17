@@ -59,14 +59,21 @@ class AcsFrameSender(
   }
   // Set on the session thread, read from ACS state/format listener threads.
   @Volatile private var onFormat: ((TargetSize) -> Unit)? = null
+  @Volatile private var onNegotiatedFormat: ((VideoStreamFormat) -> Unit)? = null
   private var attachedStream: VirtualOutgoingVideoStream? = null
   private var stateListener: VideoStreamStateChangedListener? = null
   private var formatListener: VideoStreamFormatChangedListener? = null
 
-  fun attach(outgoing: VirtualOutgoingVideoStream, onFormat: ((TargetSize) -> Unit)? = null) {
+  fun attach(
+    outgoing: VirtualOutgoingVideoStream,
+    onFormat: ((TargetSize) -> Unit)? = null,
+    /** The whole negotiated format, for callers that log it. [onFormat] only carries the size. */
+    onNegotiatedFormat: ((VideoStreamFormat) -> Unit)? = null,
+  ) {
     detach()
     pacer.reset()
     this.onFormat = onFormat
+    this.onNegotiatedFormat = onNegotiatedFormat
     stream.set(outgoing)
     attachedStream = outgoing
     val onState = VideoStreamStateChangedListener {
@@ -365,6 +372,7 @@ class AcsFrameSender(
     pacer.reset()
     pool.clear()
     onFormat = null
+    onNegotiatedFormat = null
   }
 
   private fun pushTarget(fmt: VideoStreamFormat?) {
@@ -393,6 +401,7 @@ class AcsFrameSender(
 
   private fun logFormat(fmt: VideoStreamFormat?) {
     if (fmt == null) return
+    onNegotiatedFormat?.invoke(fmt)
     Log.i(
       TAG,
       "P5 negotiated format pixel=${fmt.pixelFormat} ${fmt.width}x${fmt.height} fps=${fmt.framesPerSecond} " +

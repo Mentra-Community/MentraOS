@@ -18,16 +18,18 @@ learns of completion from the storage provider's event, then notifies the phone.
 1. `POST /api/camera/photo`
    ```
    Authorization: Bearer <cloud-runtime token>
-   { "size"?: "low|medium|high|max", "compress"?: "none|medium|heavy", "saveToGallery"?: bool, "sound"?: bool }
-   Legacy aliases are also accepted on input and normalized server-side:
-   `small→low`, `large→high`, `full→max`. Compression aliases `low`/`high`
-   normalize to `medium`/`heavy`.
+   No request body.
    -> { "requestId": string, "uploadUrl": string, "readUrl": string }
    ```
    The cloud records a pending request keyed by `requestId`, generates a
    **presigned PUT** `uploadUrl` to the blob key `photos/{requestId}`, and a
-   **presigned GET** `readUrl` for the same key.
-2. The cloud tells the glasses to capture (the existing capture path). The glasses
+   **presigned GET** `readUrl` for the same key. Any supplied body is ignored,
+   including unused photo options sent by older clients. Size, compression, sound,
+   and gallery saving belong to the phone/glasses capture request.
+
+   **API change:** Cloud Client `startManagedPhoto()` / `requestManagedPhoto()`
+   take no options; the unused Cloud `PhotoOptions` type/schema is removed.
+2. The phone tells the glasses to capture with the chosen photo options. The glasses
    PUT the encoded image directly to `uploadUrl` (the blob store), then forget.
 3. The blob provider fires an **object-created** event for `photos/{requestId}`
    (R2 Event Notifications, S3 events, OSS events). The cloud maps the key back to

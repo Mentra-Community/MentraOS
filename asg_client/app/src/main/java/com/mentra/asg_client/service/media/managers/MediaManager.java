@@ -4,6 +4,7 @@ import android.content.Context;
 import android.util.Log;
 import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.io.streaming.StreamStatusSnapshot;
+import com.mentra.asg_client.io.streaming.StreamTelemetryPolicy;
 import com.mentra.asg_client.service.utils.ProcessSessionId;
 import com.mentra.asg_client.io.streaming.events.StreamingCommand;
 import com.mentra.asg_client.io.streaming.interfaces.StreamingStatusCallback;
@@ -430,7 +431,7 @@ public class MediaManager implements IMediaManager {
                     long droppedFrames,
                     long durationSeconds,
                     double temperatureC) {
-                if (!AsgConstants.ENABLE_PIPELINE_FPS_TELEMETRY) {
+                if (!StreamTelemetryPolicy.isEnabled()) {
                     return;
                 }
                 try {

@@ -238,6 +238,37 @@ public class BleJsonCompactTest {
     }
 
     @Test
+    public void startStreamPreservesTelemetry() throws Exception {
+        JSONObject startTrue =
+                new JSONObject(
+                        "{\"type\":\"start_stream\",\"streamUrl\":\"https://example.test/whip\","
+                                + "\"telemetry\":true}");
+        JSONObject wireTrue = BleJsonCompact.encode(startTrue);
+        assertEquals("start_stream", wireTrue.getString("t"));
+        assertTrue(wireTrue.has("telemetry"));
+        assertTrue(wireTrue.getBoolean("telemetry"));
+        assertTrue(BleJsonCompact.decode(wireTrue).getBoolean("telemetry"));
+
+        JSONObject startFalse =
+                new JSONObject(
+                        "{\"type\":\"start_stream\",\"streamUrl\":\"https://example.test/whip\","
+                                + "\"telemetry\":false}");
+        JSONObject wireFalse = BleJsonCompact.encode(startFalse);
+        assertEquals("start_stream", wireFalse.getString("t"));
+        assertTrue(wireFalse.has("telemetry"));
+        assertFalse(wireFalse.getBoolean("telemetry"));
+        assertFalse(BleJsonCompact.decode(wireFalse).getBoolean("telemetry"));
+
+        JSONObject startOmitted =
+                new JSONObject(
+                        "{\"type\":\"start_stream\",\"streamUrl\":\"https://example.test/whip\"}");
+        JSONObject wireOmitted = BleJsonCompact.encode(startOmitted);
+        assertEquals("start_stream", wireOmitted.getString("t"));
+        assertFalse(wireOmitted.has("telemetry"));
+        assertFalse(BleJsonCompact.decode(wireOmitted).has("telemetry"));
+    }
+
+    @Test
     public void jsonValuesRoundTripAtEveryDepth() throws Exception {
         JSONObject status =
                 new JSONObject(

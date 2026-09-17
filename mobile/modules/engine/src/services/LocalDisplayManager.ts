@@ -9,10 +9,6 @@
  *   - durationMs auto-clear
  *   - core-app vs background-app arbitration with a background lock
  *
- * Scope is deliberately local-only. Cloud-originated displays are untouched
- * and may race with local displays during dev; that's acceptable per plan
- * (agents/local-display-manager-plan.md).
- *
  * Display pacing is NOT done here. A JS-side ~300ms throttle used to live in
  * this class, but JS timers (and therefore the throttle's trailing flush) do
  * not fire on schedule while the iOS app is suspended in the background — so
@@ -90,9 +86,8 @@ interface BackgroundLock {
 
 const LOG_TAG = "LOCAL_DISPLAY"
 const BOOT_DURATION_MS = 1500
-// Mirrors cloud lease for a bg app holding the display. The bg app has to
-// keep driving the display to hold the lock; if it goes quiet and the core
-// app wants the screen, we release.
+// Background renders renew this lease. An expired lock is dropped when the
+// next display request is arbitrated, allowing another app to take the screen.
 const BACKGROUND_LOCK_TIMEOUT_MS = 10_000
 // Sentinel package name used as the "source" of the system boot message.
 const SYSTEM_BOOT_PKG = "system.boot"

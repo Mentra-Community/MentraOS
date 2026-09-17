@@ -63,4 +63,9 @@ class MediaDiagnosticsTest {
   fun timestampsDefaultOnAndRemainSwitchable() {
     assertThat(MediaDiagnostics.acsAudioTimestamps).isTrue()
   }
+
+  @Test
+  fun softapRecoveryShipsEnabled() {
+    assertThat(MediaDiagnostics.SOFTAP_RECOVERY_ENABLED).isTrue()
+  }
 }

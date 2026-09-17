@@ -5,16 +5,17 @@ import path from "node:path"
 import test from "node:test"
 import {fileURLToPath} from "node:url"
 
-import {createReleasePlan, loadReleaseFamily} from "./release-family.mjs"
+import {createReleasePlan, familyBuildNumber, loadReleaseFamily} from "./release-family.mjs"
 import {verifyExternalEngineInstall} from "./verify-external-engine-install.mjs"
 
 const repositoryRoot = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
+const family = loadReleaseFamily({rootDir: repositoryRoot})
 const plan = createReleasePlan({
-  family: loadReleaseFamily({rootDir: repositoryRoot}),
+  family,
   channel: "beta",
   sequence: 57,
   sourceCommit: "a".repeat(40),
-  nativeBuildNumber: 310000057,
+  nativeBuildNumber: familyBuildNumber(family.familyBaseVersion, 57),
 })
 const expectedClosure = [
   "@mentra/acs-meeting",

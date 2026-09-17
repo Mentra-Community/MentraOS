@@ -1,8 +1,15 @@
 name: Production Release - Prepare
+# The dispatch id, when the CLI passes one, lets it recognise the run its own
+# dispatch started among this workflow's runs.
+run-name: ${{ inputs.beta_identity }} ${{ inputs.dispatch_id && format('[{0}]', inputs.dispatch_id) || '' }}
 
 on:
   workflow_dispatch:
     inputs:
+      dispatch_id:
+        description: Correlation id chosen by the dispatching CLI; shown in the run name
+        required: false
+        type: string
       beta_identity:
         description: Completed coordinated beta to select, for example 3.1.0-beta.57
         required: true
@@ -161,7 +168,7 @@ jobs:
         run: |
           set -euo pipefail
           APP_PACKAGE_NAME=com.mentra.mentra \
-            GOOGLE_PLAY_INVENTORY_OUTPUT=../stores/mentra-google.json \
+            GOOGLE_PLAY_INVENTORY_OUTPUT="$GITHUB_WORKSPACE/promotion-input/stores/mentra-google.json" \
             bundle exec fastlane google_play_inventory
           jq -s '{apple: .[0], google: .[1]}' \
             ../stores/mentra-apple.json ../stores/mentra-google.json \
@@ -193,6 +200,63 @@ jobs:
             --mentra-inventory promotion-input/stores/mentra-inventory.json \
             --github-output "$GITHUB_OUTPUT"
 
+      # Production candidates take the next sequence of their family from the
+      # family's build container, like every coordinated run; the compatibility
+      # lab takes the next sequence of the current app's family.
+      - name: Read the family build containers
+        id: family
+        env:
+          GH_TOKEN: ${{ github.token }}
+          BETA_TAG: ${{ steps.identity.outputs.beta_tag }}
+          PREVIOUS_FOUND: ${{ steps.previous.outputs.found }}
+        run: |
+          set -euo pipefail
+          mkdir -p promotion-input/family
+          # Markers above a floor are downloaded so a retry of this attempt finds
+          # the numbers it already reserved (markers name their owner).
+          download_markers() {
+            local assets="$1" floor="$2" directory="$3"
+            mkdir -p "$directory"
+            while IFS=$'\t' read -r asset_id name; do
+              [[ -z "$asset_id" ]] && continue
+              gh api -H "Accept: application/octet-stream" "repos/${GITHUB_REPOSITORY}/releases/assets/$asset_id" \
+                > "$directory/$name"
+            done < <(jq -r --argjson floor "$floor" \
+              '.[] | select(.name | test("^mentra-build-number-[0-9]+\\.json$")) | select((.name | capture("mentra-build-number-(?<code>[0-9]+)") | .code | tonumber) > $floor) | [.id, .name] | @tsv' \
+              "$assets")
+          }
+          # ASG pairs numbered before markers existed live in the shared ASG
+          # release; their numbers are taken too, in every family.
+          asg_assets='[]'
+          if asg_release_id=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/mentra-coordinated-asg" --jq .id 2>/dev/null); then
+            asg_assets=$(gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases/$asg_release_id/assets?per_page=100" | jq 'add // []')
+          fi
+          printf '%s\n' "$asg_assets" > promotion-input/family/asg-assets.json
+          release_id=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/$BETA_TAG" --jq .id)
+          gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases/$release_id/assets?per_page=100" \
+            | jq 'add // []' | jq -s 'add' - promotion-input/family/asg-assets.json > promotion-input/family/assets.json
+          download_markers promotion-input/family/assets.json \
+            "$(jq -er .native.buildNumber promotion-input/beta/release-plan.json)" promotion-input/family/markers
+          echo "release_id=$release_id" >> "$GITHUB_OUTPUT"
+          # The current app's family container is only needed for a compatibility
+          # lab; a current app that predates the formula has none, and its
+          # family may have no container at all.
+          if [[ "$PREVIOUS_FOUND" == "true" ]]; then
+            current_version=$(jq -er .familyBaseVersion promotion-input/current/release-plan.json)
+            current_tag="mentra-builds-v$current_version"
+            mkdir -p promotion-input/family/current-markers
+            if current_id=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/$current_tag" --jq .id 2>/dev/null); then
+              gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases/$current_id/assets?per_page=100" \
+                | jq 'add // []' | jq -s 'add' - promotion-input/family/asg-assets.json > promotion-input/family/current-assets.json
+              download_markers promotion-input/family/current-assets.json \
+                "$(jq -er .native.buildNumber promotion-input/current/release-plan.json)" promotion-input/family/current-markers
+              echo "current_release_id=$current_id" >> "$GITHUB_OUTPUT"
+            else
+              echo '[]' > promotion-input/family/current-assets.json
+            fi
+            echo "current_version=$current_version" >> "$GITHUB_OUTPUT"
+          fi
+
       - name: Allocate append-only promotion container
         id: container
         env:
@@ -223,6 +287,8 @@ jobs:
             previous=(
               --previous-manifest promotion-input/current/release-manifest.json
               --previous-manifest-url "$PREVIOUS_MANIFEST_URL"
+              --current-family-assets promotion-input/family/current-assets.json
+              --current-family-markers-dir promotion-input/family/current-markers
             )
           fi
           mkdir -p promotion-output
@@ -232,6 +298,9 @@ jobs:
             --beta-manifest-url "$beta_manifest_url" \
             "${previous[@]}" \
             --mentra-inventory promotion-input/stores/mentra-inventory.json \
+            --family-assets promotion-input/family/assets.json \
+            --family-markers-dir promotion-input/family/markers \
+            --marker-directory promotion-output/family-build-numbers \
             --attempt "${{ steps.container.outputs.attempt }}" \
             --actor "$GITHUB_ACTOR" \
             --created-at "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" \
@@ -241,6 +310,39 @@ jobs:
           record=$(find promotion-output -maxdepth 1 -name 'production-promotion-*.json' -print -quit)
           test -n "$record"
           echo "record=$record" >> "$GITHUB_OUTPUT"
+
+      # Recorded in the family containers before anything is built, so no later
+      # coordinated run or attempt can take the same numbers.
+      - name: Record the allocated build numbers in the family containers
+        env:
+          GH_TOKEN: ${{ github.token }}
+          RELEASE_IDENTITY: ${{ steps.identity.outputs.release_identity }}
+          FAMILY_RELEASE_ID: ${{ steps.family.outputs.release_id }}
+          CURRENT_VERSION: ${{ steps.family.outputs.current_version }}
+          CURRENT_RELEASE_ID: ${{ steps.family.outputs.current_release_id }}
+        run: |
+          set -euo pipefail
+          shopt -s nullglob
+          published=0
+          for marker in promotion-output/family-build-numbers/"$RELEASE_IDENTITY"/mentra-build-number-*.json; do
+            name=$(basename "$marker")
+            node .github/scripts/publish-immutable-release-asset.mjs \
+              --file "promotion-output/family-build-numbers/$RELEASE_IDENTITY/$name" --name "$name" \
+              --release-id "$FAMILY_RELEASE_ID" --repository "$GITHUB_REPOSITORY"
+            published=$((published + 1))
+          done
+          (( published == 1 ))
+          # A compatibility-lab marker exists only when the current app could be
+          # rebuilt; it then goes to that app's family container.
+          if [[ -n "$CURRENT_VERSION" && -d "promotion-output/family-build-numbers/$CURRENT_VERSION" ]]; then
+            test -n "$CURRENT_RELEASE_ID"
+            for marker in promotion-output/family-build-numbers/"$CURRENT_VERSION"/mentra-build-number-*.json; do
+              name=$(basename "$marker")
+              node .github/scripts/publish-immutable-release-asset.mjs \
+                --file "promotion-output/family-build-numbers/$CURRENT_VERSION/$name" --name "$name" \
+                --release-id "$CURRENT_RELEASE_ID" --repository "$GITHUB_REPOSITORY"
+            done
+          fi
 
       - name: Publish immutable preparation evidence
         env:
@@ -255,19 +357,23 @@ jobs:
             --release-id "${{ steps.container.outputs.release_id }}" \
             --repository "$GITHUB_REPOSITORY"
           if [[ "${{ steps.previous.outputs.found }}" == "true" ]]; then
+            cp promotion-input/current/release-plan.json promotion-input/current/current-production-release-plan.json
+            cp promotion-input/current/release-manifest.json promotion-input/current/current-production-release-manifest.json
             node .github/scripts/publish-immutable-release-asset.mjs \
-              --file promotion-input/current/release-plan.json \
+              --file promotion-input/current/current-production-release-plan.json \
               --name current-production-release-plan.json \
               --release-id "${{ steps.container.outputs.release_id }}" \
               --repository "$GITHUB_REPOSITORY"
             node .github/scripts/publish-immutable-release-asset.mjs \
-              --file promotion-input/current/release-manifest.json \
+              --file promotion-input/current/current-production-release-manifest.json \
               --name current-production-release-manifest.json \
               --release-id "${{ steps.container.outputs.release_id }}" \
               --repository "$GITHUB_REPOSITORY"
           fi
+          # The immutable publisher requires the file basename to be the asset name.
+          cp promotion-input/stores/mentra-inventory.json promotion-input/stores/current-production-store-inventory.json
           node .github/scripts/publish-immutable-release-asset.mjs \
-            --file promotion-input/stores/mentra-inventory.json \
+            --file promotion-input/stores/current-production-store-inventory.json \
             --name current-production-store-inventory.json \
             --release-id "${{ steps.container.outputs.release_id }}" \
             --repository "$GITHUB_REPOSITORY"

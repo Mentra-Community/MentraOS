@@ -46,6 +46,21 @@ export function validateGooglePlayDraft(inventory, expectedVersionCode) {
   return releaseResult(inventory, expectedVersionCode, release, "draft")
 }
 
+// Submission holds the exact candidate on the production track without
+// making it public. That is a draft when the pipeline alone touched it, or a
+// rolled-out release that managed publishing (a documented precondition of
+// submission) keeps in "changes ready to publish" until a human publishes.
+// Only a halted release, or none for the exact code, fails.
+export function validateGooglePlaySubmission(inventory, expectedVersionCode) {
+  const release = exactProductionRelease(inventory, expectedVersionCode)
+  if (release.status === "draft") return validateGooglePlayDraft(inventory, expectedVersionCode)
+  if (release.status === "inProgress" || release.status === "completed") {
+    const rollout = validateGooglePlayRollout(inventory, expectedVersionCode)
+    return {...rollout, requiredState: "submitted"}
+  }
+  throw new Error(`Google Play release is not held for review: ${release.status || "missing status"}`)
+}
+
 export function validateGooglePlayRollout(inventory, expectedVersionCode) {
   const release = exactProductionRelease(inventory, expectedVersionCode)
   if (release.status === "inProgress") {
@@ -75,9 +90,13 @@ function main() {
   const args = parseArgs(process.argv.slice(2))
   const inventory = JSON.parse(readFileSync(path.resolve(args.inventory), "utf8"))
   const expectedVersionCode = Number(args["version-code"])
-  const validators = {draft: validateGooglePlayDraft, public: validateGooglePlayRollout}
+  const validators = {
+    draft: validateGooglePlayDraft,
+    submitted: validateGooglePlaySubmission,
+    public: validateGooglePlayRollout,
+  }
   const validate = validators[args["required-state"]]
-  if (!validate) throw new Error("--required-state must be draft or public")
+  if (!validate) throw new Error("--required-state must be draft, submitted or public")
   const result = validate(inventory, expectedVersionCode)
   writeFileSync(path.resolve(args.output), `${JSON.stringify(result, null, 2)}\n`)
 }

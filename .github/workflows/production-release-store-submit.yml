@@ -87,7 +87,24 @@ jobs:
           cd store-tools
           bundle install
 
+      # A rerun after a later step failed must not submit twice: an App Store
+      # version already in the review or release flow with the exact build is
+      # reconciled, not resubmitted.
+      - name: Read the App Store state of the exact candidate
+        id: asc-before
+        env:
+          ASC_API_KEY_ID: ${{ secrets.ASC_API_KEY_ID }}
+          ASC_API_ISSUER_ID: ${{ secrets.ASC_API_ISSUER_ID }}
+          ASC_API_KEY_PATH: ${{ steps.asc.outputs.key_path }}
+        run: |
+          set -euo pipefail
+          build=$(jq -er .coordinates.candidates.mentraApp.ios.buildNumber promotion-input/current.json)
+          node mobile/scripts/app-store-connect-build.mjs production-status \
+            --issuer-id "$ASC_API_ISSUER_ID" --key-id "$ASC_API_KEY_ID" --key-path "$ASC_API_KEY_PATH" \
+            --bundle-id com.mentra.mentra --build-number "$build" --app-version "${{ inputs.release_identity }}"
+
       - name: Submit exact iOS candidates for review with manual release
+        if: steps.asc-before.outputs.promoted != 'true'
         working-directory: store-tools
         env:
           ASC_API_KEY_ID: ${{ secrets.ASC_API_KEY_ID }}
@@ -102,7 +119,10 @@ jobs:
             MENTRA_PHASED_RELEASE=true \
             bundle exec fastlane promote_app_store
 
-      - name: Create or reconcile Google Play production drafts
+      # Under managed publishing (a documented precondition) the exact release
+      # may already be rolled out in the Console yet held unpublished; a draft
+      # or that held release both count as submitted, a halted one does not.
+      - name: Verify the exact Google Play production release is held for review
         run: |
           set -euo pipefail
           mkdir -p play-tools/fastlane promotion-output/play
@@ -112,19 +132,12 @@ jobs:
           bundle install
           build=$(jq -er .coordinates.candidates.mentraApp.android.buildNumber ../promotion-input/current.json)
           APP_PACKAGE_NAME=com.mentra.mentra \
-            GOOGLE_PLAY_SOURCE_TRACK=internal \
-            GOOGLE_PLAY_TARGET_TRACK=production \
-            GOOGLE_PLAY_VERSION_CODE="$build" \
-            GOOGLE_PLAY_RELEASE_STATUS=draft \
-            GOOGLE_PLAY_PROMOTION_OUTPUT=../promotion-output/play/mentra.json \
-            bundle exec fastlane promote_google_play
-          APP_PACKAGE_NAME=com.mentra.mentra \
-            GOOGLE_PLAY_INVENTORY_OUTPUT=mentraApp-inventory.json \
+            GOOGLE_PLAY_INVENTORY_OUTPUT="$GITHUB_WORKSPACE/play-tools/mentraApp-inventory.json" \
             bundle exec fastlane google_play_inventory
           node ../.github/scripts/validate-google-play-release.mjs \
             --inventory mentraApp-inventory.json \
             --version-code "$build" \
-            --required-state draft \
+            --required-state submitted \
             --output ../promotion-output/play/mentra-observed.json
 
       - name: Read back exact submitted coordinates and append state

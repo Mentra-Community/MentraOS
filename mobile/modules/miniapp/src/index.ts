@@ -196,6 +196,7 @@ export type {
   MeetingModule,
   MeetingJoinOptions,
   MeetingState,
+  MeetingEndReason,
   MeetingPhase,
   MeetingProvider,
   MeetingVideoSource,
@@ -207,6 +208,7 @@ export type {
   MeetingCapability,
   MeetingCapabilities,
   MeetingSoftApProgress,
+  MeetingSoftApRecovery,
   MeetingSoftApStep,
   MeetingSoftApStepState,
   MeetingSoftApStepStatus,
@@ -214,8 +216,10 @@ export type {
 export {
   MEETING_HOST_UPDATE_MESSAGE,
   parseMeetingCapabilities,
+  parseMeetingEndReason,
   parseMeetingMediaSource,
   parseMeetingParticipants,
+  parseMeetingRecovery,
   parseMeetingSoftApProgress,
   validateMeetingVideoSource,
 } from "./modules/meeting"

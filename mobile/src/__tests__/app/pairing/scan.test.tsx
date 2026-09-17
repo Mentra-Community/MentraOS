@@ -1,3 +1,19 @@
+import {act, render, fireEvent, waitFor} from "@testing-library/react-native"
+import type {ReactNode} from "react"
+import {Platform} from "react-native"
+
+import {engine, SETTINGS} from "@mentra/engine"
+import {useLocalSearchParams} from "expo-router"
+import {focusEffectPreventBack, usePushUnder} from "@/contexts/NavigationHistoryContext"
+import {useNavigationStore} from "@/stores/navigation"
+import {PermissionFeatures, requestFeaturePermissions} from "@/utils/PermissionsUtils"
+import SelectGlassesBluetoothScreen from "@/app/pairing/scan"
+import {useCoreStore, useSettingsStore} from "@mentra/engine-host-internal"
+// The glasses store is private to the local engine workspace and has no public test export.
+// eslint-disable-next-line no-restricted-imports
+import {useGlassesStore} from "../../../../modules/engine/src/stores/glasses"
+import {resetBluetoothSdkMock} from "@/test-utils/mockBluetoothSdk"
+
 jest.mock("@mentra/bluetooth-sdk", () => {
   const {bluetoothSdkMock} = require("@/test-utils/mockBluetoothSdk")
   return {
@@ -125,24 +141,6 @@ jest.mock("@/components/ignite", () => {
   }
 })
 
-import {act, render, fireEvent, waitFor} from "@testing-library/react-native"
-import type {ReactNode} from "react"
-import {Platform} from "react-native"
-
-import {engine} from "@mentra/engine"
-import {useLocalSearchParams} from "expo-router"
-import {focusEffectPreventBack, usePushUnder} from "@/contexts/NavigationHistoryContext"
-import {useNavigationStore} from "@/stores/navigation"
-import {requestFeaturePermissions} from "@/utils/PermissionsUtils"
-import SelectGlassesBluetoothScreen from "@/app/pairing/scan"
-import {useCoreStore} from "@mentra/engine-host-internal"
-// The glasses store is private to the local engine workspace and has no public test export.
-// eslint-disable-next-line no-restricted-imports
-import {useGlassesStore} from "../../../../modules/engine/src/stores/glasses"
-import {SETTINGS} from "@mentra/engine"
-import {useSettingsStore} from "@mentra/engine-host-internal"
-import {resetBluetoothSdkMock} from "@/test-utils/mockBluetoothSdk"
-
 const originalPlatformOS = Platform.OS
 
 function setPlatformOS(os: typeof Platform.OS) {
@@ -191,7 +189,8 @@ describe("pairing scan screen", () => {
     setPlatformOS(originalPlatformOS)
   })
 
-  it("starts a compatible-device search and routes Mentra Live through btclassic on iOS", async () => {
+  it("routes Mentra Live through btclassic on iOS even without phone microphone permission", async () => {
+    ;(requestFeaturePermissions as jest.Mock).mockResolvedValue(false)
     useCoreStore.setState({
       searchResults: [
         {id: "a", model: "Mentra Live", name: "MENTRA_LIVE_BLE_001", address: "a"},
@@ -218,6 +217,8 @@ describe("pairing scan screen", () => {
         deviceName: "MENTRA_LIVE_BLE_001",
       })
     })
+
+    expect(requestFeaturePermissions).not.toHaveBeenCalled()
 
     // Two-phase identity: picking a device must NOT write the default identity —
     // the scan marks the model pending and the native layer promotes on success.
@@ -262,7 +263,10 @@ describe("pairing scan screen", () => {
     expect(goBack).not.toHaveBeenCalled()
   })
 
-  it("hands the exact selected device to loading without connecting from the scan screen", async () => {
+  it("hands the selected device to loading on Android without microphone permission", async () => {
+    ;(requestFeaturePermissions as jest.Mock).mockImplementation(
+      async (feature) => feature !== PermissionFeatures.MICROPHONE,
+    )
     jest.useFakeTimers()
     setPlatformOS("android")
     useCoreStore.setState({
@@ -289,6 +293,7 @@ describe("pairing scan screen", () => {
       jest.advanceTimersByTime(3_000)
     })
     expect(engine.pairing.pair).not.toHaveBeenCalled()
+    expect(requestFeaturePermissions).not.toHaveBeenCalledWith(PermissionFeatures.MICROPHONE)
   })
 
   it("auto-skips directly into pairing when NOTREQUIREDSKIP is discovered", async () => {

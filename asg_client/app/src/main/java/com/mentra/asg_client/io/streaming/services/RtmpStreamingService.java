@@ -28,6 +28,7 @@ import androidx.annotation.RequiresPermission;
 import androidx.core.app.NotificationCompat;
 
 import com.mentra.asg_client.AsgConstants;
+import com.mentra.asg_client.io.streaming.StreamTelemetryPolicy;
 import com.mentra.asg_client.camera.CameraNeoService;
 import com.mentra.asg_client.utils.WakeLockManager;
 import com.mentra.asg_client.reporting.domains.StreamingReporting;
@@ -1424,7 +1425,7 @@ public class RtmpStreamingService extends Service {
     }
 
     private void startMetricsReporting() {
-        if (!AsgConstants.ENABLE_PIPELINE_FPS_TELEMETRY) {
+        if (!StreamTelemetryPolicy.isEnabled()) {
             return;
         }
         if (mMetricsReporter != null) {

@@ -7,6 +7,8 @@ data class StreamVideoConfig @JvmOverloads constructor(
     val fps: Int? = null,
     val minBitrateBps: Int? = null,
     val initialBitrateBps: Int? = null,
+    /** WHIP adaptation policy; null preserves the glasses' MAINTAIN_FRAMERATE default. */
+    val degradationPreference: String? = null,
 ) {
     fun toMap(): Map<String, Any> =
         listOfNotNull(
@@ -15,6 +17,7 @@ data class StreamVideoConfig @JvmOverloads constructor(
             bitrate?.let { "bitrate" to it },
             minBitrateBps?.let { "minBitrateBps" to it },
             initialBitrateBps?.let { "initialBitrateBps" to it },
+            degradationPreference?.let { "degradationPreference" to it },
             // ASG stream parsers shipped with the BLE key named "frameRate".
             fps?.let { "frameRate" to it },
         ).toMap()
@@ -30,6 +33,7 @@ data class StreamVideoConfig @JvmOverloads constructor(
                 fps = numberValue(values, "fps"),
                 minBitrateBps = numberValue(values, "minBitrateBps"),
                 initialBitrateBps = numberValue(values, "initialBitrateBps"),
+                degradationPreference = stringValue(values, "degradationPreference", "dp"),
             )
         }
     }
@@ -105,6 +109,8 @@ data class StreamResolvedVideoConfig @JvmOverloads constructor(
     val bitrate: Int,
     /** Resolved capture/encode frame rate. */
     val fps: Double,
+    /** Applied WHIP adaptation policy; absent on older firmware and other transports. */
+    val degradationPreference: String? = null,
 ) {
     fun toMap(): Map<String, Any> =
         buildMap {
@@ -114,6 +120,7 @@ data class StreamResolvedVideoConfig @JvmOverloads constructor(
             captureHeight?.let { put("captureHeight", it) }
             put("bitrate", bitrate)
             put("fps", fps)
+            degradationPreference?.let { put("degradationPreference", it) }
         }
 
     companion object {
@@ -127,6 +134,7 @@ data class StreamResolvedVideoConfig @JvmOverloads constructor(
                 captureHeight = numberValue(values, "captureHeight"),
                 bitrate = numberValue(values, "bitrate") ?: return null,
                 fps = doubleValue(values, "fps") ?: return null,
+                degradationPreference = stringValue(values, "degradationPreference", "dp"),
             )
         }
     }
@@ -248,6 +256,7 @@ data class StreamRequest @JvmOverloads constructor(
      * joined despite unsynchronised clocks.
      */
     val traceId: String? = null,
+    val telemetry: Boolean? = null,
 ) {
     fun toMap(): Map<String, Any> =
         buildMap {
@@ -261,6 +270,7 @@ data class StreamRequest @JvmOverloads constructor(
             if (!captureAudio) put("captureAudio", false)
             ice?.toMap()?.takeIf { it.isNotEmpty() }?.let { put("ice", it) }
             traceId?.takeIf { it.isNotEmpty() }?.let { put("traceId", it) }
+            telemetry?.let { put("telemetry", it) }
         }
 
     companion object {
@@ -278,6 +288,7 @@ data class StreamRequest @JvmOverloads constructor(
                 captureAudio = boolValue(values, "captureAudio") ?: boolValue(values, "ca") ?: true,
                 ice = StreamIceConfig.fromMap(stringMapValue(values["ice"] ?: values["i"])),
                 traceId = stringValue(values, "traceId"),
+                telemetry = (values["telemetry"] as? Boolean) ?: (values["tl"] as? Boolean),
             )
     }
 }

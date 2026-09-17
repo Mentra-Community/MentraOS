@@ -422,7 +422,6 @@ const en = {
     updateFile: "File {{current}} of {{total}} · {{component}}",
     updatePart: "Update {{current}} of {{total}} · {{component}}",
     phoneFileProgress: "Each file downloads separately. Progress is for the current file.",
-    transferFileProgress: "Progress is for this file’s transfer from your phone.",
     checkingForUpdates: "Checking for updates",
     checkingForUpdatesMessage:
       "Connected devices will perform automatic updates. Automatic updates can be disabled in Device Settings",
@@ -592,6 +591,8 @@ const en = {
     appsCount_other: "{{count}} Apps",
   },
   permissions: {
+    phoneMicrophoneDeniedMessage:
+      "This feature needs access to your phone microphone. You can enable it in Settings, or cancel and continue using the Mentra App without this feature.",
     backgroundLocationPermissionRequiredMessage:
       'MentraOS needs access to your location when the app is in the background to provide location-based features. On the next screen, select Location, then select "Always" instead of "While Using the App"',
     openSettings: "Open Settings",
@@ -803,6 +804,10 @@ const en = {
     androidInnerShadow: "Inner shadow",
   },
   debugSettings: {
+    otaPreview: "OTA Preview",
+    otaPreviewSubtitle: "Browse update screens with sample data",
+    otaPreviewPage: "Preview page",
+    otaPreviewHint: "Sample data · Update buttons are inactive",
     debugConsole: "Debug Console",
     debugConsoleSubtitle: "Enable the debug console.",
     miniappScanTitle: "Scan Mini App QR",

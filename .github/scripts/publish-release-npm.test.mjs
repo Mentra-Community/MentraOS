@@ -8,9 +8,11 @@ import {fileURLToPath} from "node:url"
 import {loadReleaseFamily} from "./release-family.mjs"
 import {
   isHttpsRegistryUrl,
+  isNpmConflictError,
   npmMembersInOrder,
   npmReleaseTag,
   npmReadbackAttempts,
+  npmStagedVersionConflict,
   npmReadbackWaitSeconds,
   npmViewPublishedTarball,
   NPM_READBACK_POLL_SECONDS,
@@ -312,4 +314,100 @@ test("keeps bounded attempts and the publish error when every recovery read fail
   )
   assert.equal(publishes, 3)
   assert.equal(pauses, 2)
+})
+
+// The stderr npm printed in run 34833322934 (2026-09-14) when the re-run of a
+// publish npm was still processing reached the registry.
+function stagedVersionConflictText(name, version) {
+  return [
+    `npm error code E409`,
+    `npm error 409 Conflict - PUT https://registry.npmjs.org/${encodeURIComponent(name)} - Cannot publish over previously staged version "${version}".`,
+    `npm error A complete log of this run can be found in: /home/runner/.npm/_logs/2026-09-14T10_30_26_355Z-debug-0.log`,
+    "",
+  ].join("\n")
+}
+
+function failedNpmPublish(name, version, stderr) {
+  return new Error(
+    `npm publish release-output/${name.replace(/^@/, "").replaceAll("/", "-")}-${version}.tgz --tag candidate-${version} --access public --provenance failed with exit code 1\n${stderr}`,
+  )
+}
+
+test("recognises npm's staged-version publish conflict", () => {
+  const text = stagedVersionConflictText("@mentra/bluetooth-sdk", "3.1.1")
+  assert.equal(isNpmConflictError(text), true)
+  assert.equal(npmStagedVersionConflict(text), "3.1.1")
+  assert.equal(
+    npmStagedVersionConflict("npm error code E409\nnpm error 409 Conflict - cannot modify pre-existing version: 3.1.1"),
+    null,
+  )
+  assert.equal(isNpmConflictError("CA_CREATE_SIGNING_CERTIFICATE_ERROR: read ECONNRESET"), false)
+  assert.equal(npmStagedVersionConflict('Cannot publish over previously staged version "3.1.1"'), null)
+})
+
+test("treats a conflict with its own staged version as published and awaits the read-back", () => {
+  const name = "@mentra/bluetooth-sdk"
+  const version = "3.1.1"
+  let publishes = 0
+  let sleeps = 0
+  const log = []
+  const status = publishWithRetry(`${name}@${version}`, "sha512-abc", {
+    publish: () => {
+      publishes += 1
+      throw failedNpmPublish(name, version, stagedVersionConflictText(name, version))
+    },
+    registryIntegrityOf: () => null,
+    sleep: () => {
+      sleeps += 1
+    },
+    log: (line) => log.push(line),
+  })
+  assert.equal(status, "published")
+  assert.equal(publishes, 1)
+  assert.equal(sleeps, 0)
+  assert.match(log.at(-1), /already holds @mentra\/bluetooth-sdk@3\.1\.1 as a staged publish/)
+})
+
+test("fails closed on a staged-version conflict for a different version", () => {
+  let publishes = 0
+  assert.throws(
+    () =>
+      publishWithRetry("@mentra/bluetooth-sdk@3.1.1", "sha512-abc", {
+        publish: () => {
+          publishes += 1
+          throw failedNpmPublish(
+            "@mentra/bluetooth-sdk",
+            "3.1.1",
+            stagedVersionConflictText("@mentra/bluetooth-sdk", "3.1.0"),
+          )
+        },
+        registryIntegrityOf: () => null,
+        sleep: () => assert.fail("a conflict must not be retried"),
+        log: () => {},
+      }),
+    /conflict that is not its own staged version[\s\S]*previously staged version "3\.1\.0"/,
+  )
+  assert.equal(publishes, 1)
+})
+
+test("fails closed without retrying on any other npm conflict", () => {
+  let publishes = 0
+  assert.throws(
+    () =>
+      publishWithRetry("@mentra/engine@3.1.1", "sha512-abc", {
+        publish: () => {
+          publishes += 1
+          throw failedNpmPublish(
+            "@mentra/engine",
+            "3.1.1",
+            "npm error code E409\nnpm error 409 Conflict - PUT https://registry.npmjs.org/@mentra%2fengine - cannot modify pre-existing version: 3.1.1\n",
+          )
+        },
+        registryIntegrityOf: () => null,
+        sleep: () => assert.fail("a conflict must not be retried"),
+        log: () => {},
+      }),
+    /conflict that is not its own staged version[\s\S]*cannot modify pre-existing version/,
+  )
+  assert.equal(publishes, 1)
 })

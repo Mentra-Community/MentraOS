@@ -21,6 +21,7 @@ import {
   type MentraLiveOtaController,
   type MentraLiveOtaError,
   type MentraLiveOtaFlowPage,
+  type MentraLiveOtaState,
 } from "./useMentraLiveOta"
 
 export type {MentraLiveOtaFlowPage} from "./useMentraLiveOta"
@@ -84,7 +85,6 @@ const ENGLISH_COPY: Record<string, string> = {
   "ota:updateFile": "File {{current}} of {{total}} · {{component}}",
   "ota:updatePart": "Update {{current}} of {{total}} · {{component}}",
   "ota:phoneFileProgress": "Each file downloads separately. Progress is for the current file.",
-  "ota:transferFileProgress": "Progress is for this file’s transfer from your phone.",
 
   "common:continue": "Continue",
   "common:done": "Done",
@@ -193,6 +193,50 @@ export function MentraLiveOtaFlow({
     onOpenWifiSetup,
   })
 
+  return <OtaFlowFrame {...{allowDevSkip, colors, controller, deviceName, style, superMode, translate}} />
+}
+
+type OtaFlowFrameProps = {
+  allowDevSkip: boolean
+  colors: MentraLiveOtaFlowTheme
+  controller: MentraLiveOtaController
+  deviceName: string
+  style?: StyleProp<ViewStyle>
+  superMode: boolean
+  translate: MentraLiveOtaFlowTranslate
+}
+
+const previewAction = () => {}
+
+/** Renders the real OTA pages without mounting the runtime hook or performing any actions. */
+export function MentraLiveOtaPreview({
+  state,
+  deviceName = "Mentra Live",
+  theme,
+  translate = defaultTranslate,
+}: Pick<MentraLiveOtaFlowProps, "deviceName" | "theme" | "translate"> & {state: MentraLiveOtaState}) {
+  return (
+    <OtaFlowFrame
+      allowDevSkip={false}
+      colors={{...DEFAULT_THEME, ...theme}}
+      controller={{
+        state,
+        check: previewAction,
+        retryCheck: previewAction,
+        install: previewAction,
+        retryInstall: previewAction,
+        finish: previewAction,
+        discard: previewAction,
+        openWifiSetup: previewAction,
+      }}
+      deviceName={deviceName}
+      superMode={false}
+      translate={translate}
+    />
+  )
+}
+
+function OtaFlowFrame({allowDevSkip, colors, controller, deviceName, style, superMode, translate}: OtaFlowFrameProps) {
   return (
     <SafeAreaView style={[styles.safeArea, {backgroundColor: colors.background}, style]}>
       <View style={styles.header}>
@@ -500,9 +544,6 @@ function OtaFlowContent({
           </>
         )}
         <BodyText colors={colors}>Do not disconnect your glasses</BodyText>
-        {hotspot && state.phase === "download" ? (
-          <BodyText colors={colors}>{translate("ota:transferFileProgress")}</BodyText>
-        ) : null}
         {state.versionChange && state.phase === "install" ? (
           <BodyText colors={colors}>{translate("ota:downgradeDuration")}</BodyText>
         ) : null}
@@ -805,8 +846,33 @@ function MentraMark({color}: {color: string}) {
 
 function FlowIcon({colors, name}: {colors: MentraLiveOtaFlowTheme; name: FlowPageProps["icon"]}) {
   const color = name === "alert" || name === "bluetooth" ? colors.error : colors.primary
-  const glyph =
-    name === "check" ? "✓" : name === "alert" ? "!" : name === "settings" ? "⚙" : name === "bluetooth" ? "⌁" : "↓"
+  if (name === "download" || name === "check") {
+    // Lucide arrow-down-to-line and check; see ./lucide-LICENSE.txt.
+    return (
+      <View style={styles.svgIcon}>
+        <Svg
+          width={64}
+          height={64}
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke={color}
+          strokeWidth={2}
+          strokeLinecap="round"
+          strokeLinejoin="round">
+          {name === "download" ? (
+            <>
+              <Path d="M12 17V3" />
+              <Path d="m6 11 6 6 6-6" />
+              <Path d="M19 21H5" />
+            </>
+          ) : (
+            <Path d="M20 6 9 17l-5-5" />
+          )}
+        </Svg>
+      </View>
+    )
+  }
+  const glyph = name === "alert" ? "!" : name === "settings" ? "⚙" : "⌁"
   return <Text style={[styles.icon, {color}]}>{glyph}</Text>
 }
 
@@ -826,6 +892,7 @@ const styles = StyleSheet.create({
   actionSpacer: {height: 48},
   actions: {gap: 12},
   icon: {fontSize: 64, fontWeight: "500", lineHeight: 72, textAlign: "center"},
+  svgIcon: {alignItems: "center", height: 72, justifyContent: "center", width: 72},
   title: {fontSize: 20, fontWeight: "600", textAlign: "center"},
   body: {fontSize: 14, lineHeight: 20, maxWidth: 420, textAlign: "center"},
   errorCode: {fontSize: 12, fontVariant: ["tabular-nums"], lineHeight: 16, opacity: 0.7, textAlign: "center"},

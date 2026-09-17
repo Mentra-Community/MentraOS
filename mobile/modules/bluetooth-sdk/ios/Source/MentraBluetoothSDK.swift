@@ -232,10 +232,25 @@ final class PendingResponse<T> {
 
 @MainActor
 public final class MentraBluetoothSDK {
+    // Mirrors AsgConstants: one active + one coalesced pending FOV update, plus BLE margin.
+    // Keep in sync with Android MentraBluetoothSdk and the ASG readiness budget.
+    private static let cameraFovReadyTimeoutMs = 20000
+    private static let cameraFovDeliveryMarginMs = 5000
+    private static let cameraFovRequestTimeoutMs =
+        2 * cameraFovReadyTimeoutMs + cameraFovDeliveryMarginMs
     private static let wifiScanTimeoutMs = 20000
-    // A photo response is terminal only after capture, encoding, transport, and upload.
-    // Max-quality BLE fallback can legitimately exceed the generic command deadline.
+    /// A photo response is terminal only after capture, encoding, transport, and upload.
+    /// Max-quality BLE fallback can legitimately exceed the generic command deadline.
     private static let photoRequestTimeoutMs = 30000
+    // Mirrors AsgConstants.PHOTO_THUMBNAIL_REQUEST_TIMEOUT_MS and the Android facade.
+    // Reserve capture, preview ACK/retries, full delivery, then terminal-event transit.
+    private static let photoCaptureTimeoutMs = 45000
+    private static let photoThumbnailTimeoutSeconds = 30
+    private static let photoDeliveryTimeoutMs = 30000
+    private static let photoResponseMarginMs = 5000
+    private static let photoThumbnailRequestTimeoutMs =
+        photoCaptureTimeoutMs + photoThumbnailTimeoutSeconds * 1000
+            + photoDeliveryTimeoutMs + photoResponseMarginMs
     private static let otaBesVersionWaitMs = 5000
     private static let otaMtkVersionWaitMs = 2000
     private static let otaVersionPollMs = 100
@@ -277,6 +292,9 @@ public final class MentraBluetoothSDK {
     private var pendingWifiStatus: PendingWifiStatusRequest?
     private var pendingWifiForget: PendingWifiForgetRequest?
     private var pendingHotspotStatus: PendingHotspotStatusRequest?
+    /// Serializes enable/disable so SoftAP teardown's second disable waits
+    /// instead of throwing `request_in_flight` and refusing the next join.
+    private var hotspotTail: Task<HotspotStatusEvent, Error>?
     private var pendingVersionInfo: PendingVersionInfoRequest?
     private let wifiSessionCapabilities = WifiSessionCapabilities()
     private var configuredOtaVersionUrl: String?
@@ -310,6 +328,7 @@ public final class MentraBluetoothSDK {
                 }
             }
         }
+        DeviceManager.shared.sgc?.replayStreamControlReady()
         storeListenerId = DeviceStore.shared.store.addListener { [weak self] category, changes in
             Task { @MainActor [weak self] in
                 self?.dispatchStoreUpdate(category, changes)
@@ -638,7 +657,9 @@ public final class MentraBluetoothSDK {
         pendingSettingsRequests[requestId] = pending
         do {
             try send(requestId)
-            let ack = try await pending.wait()
+            let timeoutMs = (setting == "camera_fov" || setting == "camera_fov_override")
+                ? Self.cameraFovRequestTimeoutMs : 15000
+            let ack = try await pending.wait(timeoutMs: timeoutMs)
             updateStore(ack)
             pendingSettingsRequests.removeValue(forKey: requestId)
             return ack
@@ -705,7 +726,7 @@ public final class MentraBluetoothSDK {
                     DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_photo_iso_cap", isoCap)
                 }
                 if let compress = settings.compress {
-                    DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_photo_compress", compress)
+                    DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_photo_compress", compress.rawValue)
                 }
                 if let sound = settings.sound {
                     DeviceStore.shared.set(ObservableStore.bluetoothCategory, "button_photo_sound", sound)
@@ -1041,29 +1062,34 @@ public final class MentraBluetoothSDK {
     }
 
     public func setHotspotState(enabled: Bool) async throws -> HotspotStatusEvent {
-        guard pendingHotspotStatus == nil else {
-            throw BluetoothSdkError(
-                code: "request_in_flight",
-                message: "A hotspot command is already waiting for a glasses response."
+        let previous = hotspotTail
+        let task = Task { @MainActor [weak self] in
+            guard let self else {
+                throw BluetoothSdkError(code: "sdk_closed", message: "Bluetooth SDK is closed.")
+            }
+            if let previous {
+                _ = try? await previous.value
+            }
+            let pending = PendingResponse<HotspotStatusEvent>(
+                operation: "hotspot \(enabled ? "enable" : "disable") request"
             )
-        }
-        let pending = PendingResponse<HotspotStatusEvent>(
-            operation: "hotspot \(enabled ? "enable" : "disable") request"
-        )
-        pendingHotspotStatus = PendingHotspotStatusRequest(enabled: enabled, pending: pending)
-        DeviceManager.shared.setHotspotState(enabled)
-        do {
-            let event = try await pending.wait()
-            if pendingHotspotStatus?.pending === pending {
-                pendingHotspotStatus = nil
+            self.pendingHotspotStatus = PendingHotspotStatusRequest(enabled: enabled, pending: pending)
+            DeviceManager.shared.setHotspotState(enabled)
+            do {
+                let event = try await pending.wait()
+                if self.pendingHotspotStatus?.pending === pending {
+                    self.pendingHotspotStatus = nil
+                }
+                return event
+            } catch {
+                if self.pendingHotspotStatus?.pending === pending {
+                    self.pendingHotspotStatus = nil
+                }
+                throw error
             }
-            return event
-        } catch {
-            if pendingHotspotStatus?.pending === pending {
-                pendingHotspotStatus = nil
-            }
-            throw error
         }
+        hotspotTail = task
+        return try await task.value
     }
 
     /// Fire-and-forget Mentra Live Wi-Fi ADB toggle. Glasses do not ack this
@@ -1087,7 +1113,9 @@ public final class MentraBluetoothSDK {
         pendingPhotoRequests[routedRequest.requestId] = pending
         DeviceManager.shared.requestPhoto(routedRequest)
         do {
-            let event = try await pending.wait(timeoutMs: MentraBluetoothSDK.photoRequestTimeoutMs)
+            let event = try await pending.wait(timeoutMs: routedRequest.presendThumbnail
+                ? MentraBluetoothSDK.photoThumbnailRequestTimeoutMs
+                : MentraBluetoothSDK.photoRequestTimeoutMs)
             pendingPhotoRequests.removeValue(forKey: routedRequest.requestId)
             return event
         } catch {

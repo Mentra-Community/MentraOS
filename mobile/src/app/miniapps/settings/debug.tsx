@@ -131,6 +131,11 @@ export default function DebugSettingsScreen() {
           </Group>
 
           <Group title="Quick Links">
+            <RouteButton
+              label={translate("debugSettings:otaPreview")}
+              subtitle={translate("debugSettings:otaPreviewSubtitle")}
+              onPress={() => push("/miniapps/settings/ota-preview")}
+            />
             <RouteButton label="Sitemap" subtitle="View the app's route map" onPress={() => push("/_sitemap")} />
 
             <RouteButton

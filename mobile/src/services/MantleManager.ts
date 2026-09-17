@@ -14,7 +14,7 @@ import {
   BUNDLED_SYSTEM_MINIAPP_PACKAGES,
   BUNDLED_SYSTEM_MINIAPP_PUBLISHER_KEYS,
 } from "@/generated/bundledMiniapps"
-import {CHINA_HIDDEN_APPS, isChinaBuild, notifyPackageName} from "@/constants/miniapps"
+import {CHINA_HIDDEN_APPS, IOS_HIDDEN_APPS, notifyPackageName, shouldHideMiniapp} from "@/constants/miniapps"
 import {migrate} from "@/services/Migrations"
 import {buildSpokenNotification} from "@/services/notifications/spokenNotification"
 import {deploymentCloudConfigValues} from "@/services/cloudClient"
@@ -32,6 +32,7 @@ import {
   isHostTrustedSystemMiniapp,
   offlineSpeechModelService,
   phoneLocationService,
+  saveLocalAppRunningState,
   ttsModelManager,
   shouldActivateBundledVersion,
 } from "@mentra/engine-host-internal"
@@ -640,6 +641,10 @@ class MantleManager {
       },
     )
 
+    // Mentra Call still ships in the binary, but iOS must not show a leftover
+    // copy (or a cloud-pushed one) on the home screen or autostart it.
+    this.hidePlatformBlockedMiniapps()
+
     // Re-spawn local miniapps that were running when the app was last killed.
     // Cloud apps get resurrected by the cloud on reconnect; local (phone-hosted)
     // miniapps have no server to bring them back, so the launcher restarts them
@@ -708,8 +713,8 @@ class MantleManager {
         }
         const {packageName, version} = parsed
 
-        // China build: don't install hidden bundled miniapps (e.g. Mentra Map).
-        if (isChinaBuild() && CHINA_HIDDEN_APPS.includes(packageName)) {
+        // China / iOS: don't install platform-hidden bundled miniapps.
+        if (shouldHideMiniapp(packageName)) {
           continue
         }
 
@@ -775,6 +780,21 @@ class MantleManager {
       } catch (error) {
         console.error(`MANTLE: error installing bundled miniapp:`, error)
       }
+    }
+  }
+
+  /**
+   * Hide (and stop) miniapps this platform must not surface. Bundled install
+   * already skips them, but iOS users may still have an older Mentra Call on
+   * disk from a previous build.
+   */
+  private hidePlatformBlockedMiniapps() {
+    const blocked = new Set([...CHINA_HIDDEN_APPS, ...IOS_HIDDEN_APPS])
+    for (const packageName of blocked) {
+      if (!shouldHideMiniapp(packageName)) continue
+      engine.miniapps.setHiddenStatus(packageName, true)
+      saveLocalAppRunningState(packageName, false)
+      void miniappLauncher.stop(packageName)
     }
   }
 

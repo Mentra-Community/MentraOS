@@ -810,6 +810,7 @@ private struct FileTransferSession {
 }
 
 private struct BlePhotoTransfer {
+    var isThumbnail = false
     let bleImgId: String
     let requestId: String
     let webhookUrl: String
@@ -1055,6 +1056,7 @@ extension MentraLive: CBCentralManagerDelegate {
             self.fullyBooted = false
             self.connected = false
             self.glassesSessionId = nil // Fresh BLE session starts with no sid known
+            self.streamControlVersion = 0
             self.readinessCompletedThisBleSession = false
             self.updateConnectionState(ConnTypes.DISCONNECTED)
             self.rgbLedAuthorityClaimed = false
@@ -1701,6 +1703,9 @@ class MentraLive: NSObject, SGCManager {
     /// cannot signal a restart - a CHANGED (or newly appearing) sid is the restart signal.
     /// Nil = no sid observed this BLE session (legacy glasses, or none seen yet).
     private var glassesSessionId: String?
+    /// Last `glasses_ready.streamControlVersion`. Survives SDK remounts so a new
+    /// MentraBluetoothSDK can seed StreamSessionState without another ready.
+    private var streamControlVersion = 0
     // True once a glasses_ready completed on THIS physical BLE session. Unlike
     // fullyBooted, this never flaps on sr_hrt ready=0 heartbeats — it only resets with
     // the physical connection — so a first-seen sid after an upgrade OTA cannot be
@@ -1844,6 +1849,7 @@ class MentraLive: NSObject, SGCManager {
         connected = false
         fullyBooted = false
         glassesSessionId = nil
+        streamControlVersion = 0
         readinessCompletedThisBleSession = false
         rgbLedAuthorityClaimed = false
         stopAllTimers()
@@ -2059,6 +2065,7 @@ class MentraLive: NSObject, SGCManager {
             "I" + String(format: "%09d", Int(Date().timeIntervalSince1970 * 1000) % 100_000_000)
         json["bleImgId"] = bleImgId
         json["transferMethod"] = request.transferMethod
+        if request.presendThumbnail { json["presend_thumbnail"] = true }
 
         if let webhookUrl = request.webhookUrl, !webhookUrl.isEmpty {
             json["webhookUrl"] = webhookUrl
@@ -2085,7 +2092,7 @@ class MentraLive: NSObject, SGCManager {
         json["size"] = allowedSizes.contains(size) ? size : "medium"
         json["mode"] = request.mode.rawValue
 
-        json["compress"] = request.compress?.rawValue ?? "none"
+        json["compress"] = request.compress.rawValue
         json["save"] = request.save
         json["sound"] = request.sound
 
@@ -2148,6 +2155,15 @@ class MentraLive: NSObject, SGCManager {
             ["type": "camera_warm_up_stop", "requestId": requestId],
             wakeUp: true
         )
+    }
+
+    func replayStreamControlReady() {
+        guard let sid = glassesSessionId, streamControlVersion == 1 else { return }
+        Bridge.log("LIVE: Replaying stream_control_ready sid=\(sid) version=\(streamControlVersion)")
+        Bridge.sendTypedMessage("stream_control_ready", body: [
+            "sid": sid,
+            "streamControlVersion": streamControlVersion,
+        ])
     }
 
     func startStream(_ message: [String: Any]) {
@@ -2520,6 +2536,7 @@ class MentraLive: NSObject, SGCManager {
             connected = false
             fullyBooted = false
             glassesSessionId = nil
+            streamControlVersion = 0
             readinessCompletedThisBleSession = false
             readinessCompletedThisBleSession = false // Fresh BLE session starts with no sid known
             readinessCompletedThisBleSession = false
@@ -2799,6 +2816,7 @@ class MentraLive: NSObject, SGCManager {
             // already runs this full remote-reset flow, so recording (not re-triggering)
             // is correct here; version_info detection covers the restart case.
             glassesSessionId = (json["sid"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            streamControlVersion = json["streamControlVersion"] as? Int ?? 0
             Bridge.sendTypedMessage(
                 "wifi_protocol_session_ready",
                 body: ["sid": glassesSessionId ?? ""]
@@ -2806,7 +2824,7 @@ class MentraLive: NSObject, SGCManager {
             readinessCompletedThisBleSession = true
             Bridge.sendTypedMessage("stream_control_ready", body: [
                 "sid": json["sid"] as? String ?? "",
-                "streamControlVersion": json["streamControlVersion"] as? Int ?? 0,
+                "streamControlVersion": streamControlVersion,
             ])
             handleGlassesReady()
 
@@ -4003,6 +4021,20 @@ class MentraLive: NSObject, SGCManager {
         let bleImgId = json["bleImgId"] as? String ?? ""
         let requestId = json["requestId"] as? String ?? ""
         let compressionDurationMs = json["compressionDurationMs"] as? Int64 ?? 0
+        if json["thumbnail"] as? Bool == true, !bleImgId.isEmpty, !requestId.isEmpty {
+            guard blePhotoTransfers.values.contains(where: {
+                !$0.isThumbnail && $0.requestId == requestId && bleImgId == "T" + $0.bleImgId.dropFirst()
+            }) else {
+                Bridge.log("LIVE: Ignoring thumbnail for an unknown photo request")
+                return
+            }
+            // Preserve any packets already received when the ready message is repeated.
+            if blePhotoTransfers[bleImgId] == nil {
+                var transfer = BlePhotoTransfer(bleImgId: bleImgId, requestId: requestId, webhookUrl: "")
+                transfer.isThumbnail = true
+                blePhotoTransfers[bleImgId] = transfer
+            }
+        }
 
         Bridge.log(
             "LIVE: 📸 BLE photo ready notification: bleImgId=\(bleImgId), requestId=\(requestId)"
@@ -4480,6 +4512,17 @@ class MentraLive: NSObject, SGCManager {
     }
 
     private func processAndUploadBlePhoto(_ transfer: BlePhotoTransfer, imageData: Data) {
+        if transfer.isThumbnail {
+            Bridge.sendPhotoStatus([
+                "type": "photo_status",
+                "requestId": transfer.requestId,
+                "status": "thumbnail_received",
+                "timestamp": Int64(Date().timeIntervalSince1970 * 1000),
+                "thumbnailUrl": "data:image/jpeg;base64," + imageData.base64EncodedString(),
+                "fileSizeBytes": imageData.count,
+            ])
+            return
+        }
         Bridge.log("LIVE: Processing BLE photo for upload. RequestId: \(transfer.requestId)")
 
         BlePhotoUploadService.processAndUploadPhoto(
@@ -5626,6 +5669,7 @@ class MentraLive: NSObject, SGCManager {
         fullyBooted = false
         connected = false
         glassesSessionId = nil
+        streamControlVersion = 0
 
         Bridge.log("LIVE: 🔄 Starting glasses SOC readiness check loop")
 
@@ -6888,6 +6932,10 @@ extension MentraLive {
         let aeExposureDivisor = DeviceStore.shared.get("bluetooth", "button_photo_ae_exposure_divisor") as? Int
         let isoCap = DeviceStore.shared.get("bluetooth", "button_photo_iso_cap") as? Int
         let compressStr = DeviceStore.shared.get("bluetooth", "button_photo_compress") as? String
+        if let compressStr, PhotoCompression(rawValue: compressStr) == nil {
+            Bridge.log("LIVE: Invalid stored photo compression: \(compressStr)")
+            return
+        }
         let sound = DeviceStore.shared.get("bluetooth", "button_photo_sound") as? Bool
 
         let settings = PhotoCaptureDefaults(
@@ -6900,7 +6948,7 @@ extension MentraLive {
             ispAnalogGain: ispAnalogGain,
             aeExposureDivisor: aeExposureDivisor,
             isoCap: isoCap,
-            compress: compressStr,
+            compress: compressStr.flatMap(PhotoCompression.init(rawValue:)),
             sound: sound,
             resetCaptureTuning: false
         )
@@ -6984,8 +7032,8 @@ extension MentraLive {
         if let isoCap = settings.isoCap, isoCap > 0 {
             json["isoCap"] = isoCap
         }
-        if let compress = settings.compress, !compress.isEmpty {
-            json["compress"] = compress
+        if let compress = settings.compress {
+            json["compress"] = compress.rawValue
         }
         if let sound = settings.sound {
             json["sound"] = sound

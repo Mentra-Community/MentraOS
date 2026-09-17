@@ -19,6 +19,7 @@ import androidx.annotation.Nullable;
 import androidx.core.app.NotificationCompat;
 
 import com.mentra.asg_client.AsgConstants;
+import com.mentra.asg_client.io.streaming.StreamTelemetryPolicy;
 import com.mentra.asg_client.audio.AudioAssets;
 import com.mentra.asg_client.camera.CameraNeoService;
 import com.mentra.asg_client.io.hardware.core.HardwareManagerFactory;
@@ -204,7 +205,7 @@ public class WhipStreamingService extends Service {
       if (mPeerConnection == null) return;
       mPeerConnection.getStats(report -> {
         reportPipelineDiagnosis(report);
-        if (!AsgConstants.ENABLE_PIPELINE_FPS_TELEMETRY) {
+        if (!StreamTelemetryPolicy.isEnabled()) {
           rescheduleStatsSweep(this);
           return;
         }
@@ -291,7 +292,7 @@ public class WhipStreamingService extends Service {
    * metrics fanout is off, which is its normal state in production.
    */
   private static boolean statsSweepEnabled() {
-    return AsgConstants.ENABLE_PIPELINE_FPS_TELEMETRY
+    return StreamTelemetryPolicy.isEnabled()
         || AsgConstants.ENABLE_CALL_PIPELINE_DIAGNOSTICS;
   }
 
@@ -822,9 +823,10 @@ public class WhipStreamingService extends Service {
   }
 
   /**
-   * Seed WebRTC above its conservative startup default, cap the video encoder bitrate, and set
-   * degradation preference to MAINTAIN_FRAMERATE so WebRTC drops quality-per-frame instead of
-   * frame rate when thermals get tight.
+   * Seed WebRTC above its conservative startup default, cap the video encoder bitrate, and apply
+   * the requested degradation preference (default MAINTAIN_FRAMERATE: WebRTC drops
+   * quality-per-frame instead of frame rate when thermals get tight; MAINTAIN_RESOLUTION keeps
+   * the resolution and lowers frame rate instead).
    */
   private void applyBitrateConstraints() {
     int maximumBitrateBps = mStreamConfig.getVideoBitrate();
@@ -840,7 +842,7 @@ public class WhipStreamingService extends Service {
       RtpParameters params = sender.getParameters();
       if (params == null) continue;
 
-      params.degradationPreference = RtpParameters.DegradationPreference.MAINTAIN_FRAMERATE;
+      params.degradationPreference = resolveDegradationPreference(mStreamConfig.getDegradationPreference());
 
       for (RtpParameters.Encoding encoding : params.encodings) {
         encoding.minBitrateBps = minimumBitrateBps;
@@ -860,7 +862,22 @@ public class WhipStreamingService extends Service {
         + (minimumBitrateBps == null ? "unset" : minimumBitrateBps / 1000)
         + " kbps, start=" + (initialBitrateBps / 1000)
         + " kbps, max=" + (maximumBitrateBps / 1000)
-        + " kbps, degradation=MAINTAIN_FRAMERATE");
+        + " kbps, degradation=" + mStreamConfig.getDegradationPreference());
+  }
+
+  private static RtpParameters.DegradationPreference resolveDegradationPreference(String preference) {
+    if (preference == null) return RtpParameters.DegradationPreference.MAINTAIN_FRAMERATE;
+    switch (preference.trim().toUpperCase()) {
+      case "MAINTAIN_RESOLUTION":
+        return RtpParameters.DegradationPreference.MAINTAIN_RESOLUTION;
+      case "BALANCED":
+        return RtpParameters.DegradationPreference.BALANCED;
+      case "DISABLED":
+        return RtpParameters.DegradationPreference.DISABLED;
+      case "MAINTAIN_FRAMERATE":
+      default:
+        return RtpParameters.DegradationPreference.MAINTAIN_FRAMERATE;
+    }
   }
 
   // -----------------------------------------------------------------------
@@ -1579,7 +1596,7 @@ public class WhipStreamingService extends Service {
       long droppedFrames,
       long durationSeconds,
       double temperatureC) {
-    if (!AsgConstants.ENABLE_PIPELINE_FPS_TELEMETRY) return;
+    if (!StreamTelemetryPolicy.isEnabled()) return;
     StreamingStatusCallback callback = sStatusCallback;
     String streamId = mCurrentStreamId;
     if (callback == null) return;

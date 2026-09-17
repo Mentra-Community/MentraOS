@@ -9,7 +9,7 @@ import {
   requireStableContainer,
   stableContainerPayload,
 } from "./production-packages.mjs"
-import {createReleasePlan, loadReleaseFamily, releaseRecordSha256} from "./release-family.mjs"
+import {createReleasePlan, familyBuildNumber, loadReleaseFamily, releaseRecordSha256} from "./release-family.mjs"
 
 const family = loadReleaseFamily()
 const betaPlan = createReleasePlan({
@@ -17,7 +17,7 @@ const betaPlan = createReleasePlan({
   channel: "beta",
   sequence: 192,
   sourceCommit: "a".repeat(40),
-  nativeBuildNumber: 310000192,
+  nativeBuildNumber: familyBuildNumber(family.familyBaseVersion, 192),
 })
 const betaManifest = {
   schemaVersion: 1,

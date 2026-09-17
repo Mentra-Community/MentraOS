@@ -9,77 +9,11 @@
  * Mirrors docs/issues/002-cloud-runtime/camera/spec.md.
  */
 import { z } from "zod";
+export type { PhotoCompression } from "./photo-compression";
 
 // --- Managed photo ----------------------------------------------------------
 
-/** Device-canonical photo size tier (matches miniapp SDK and ASG). */
-export const photoSizeCanonicalSchema = z.enum(["low", "medium", "high", "max"]);
-export type PhotoSizeTier = z.infer<typeof photoSizeCanonicalSchema>;
-
-/** Accepted on the wire: canonical names plus legacy cloud aliases. */
-const photoSizeInputSchema = z.enum([
-  "low",
-  "medium",
-  "high",
-  "max",
-  "small",
-  "large",
-  "full",
-]);
-
-/**
- * Normalize a photo size string to the device-canonical tier.
- * Legacy aliases: small→low, large→high, full→max.
- */
-export function normalizePhotoSizeTier(value: string): PhotoSizeTier {
-  switch (value) {
-    case "small":
-      return "low";
-    case "large":
-      return "high";
-    case "full":
-      return "max";
-    case "low":
-    case "medium":
-    case "high":
-    case "max":
-      return value;
-    default:
-      throw new Error(`invalid photo size: ${value}`);
-  }
-}
-
-const photoCompressInputSchema = z.enum(["none", "low", "medium", "high", "heavy"]);
-
-/** Normalize compression aliases to the cloud wire enum. */
-export function normalizePhotoCompress(
-  value: string,
-): "none" | "medium" | "heavy" {
-  switch (value) {
-    case "low":
-    case "medium":
-      return "medium";
-    case "high":
-    case "heavy":
-      return "heavy";
-    case "none":
-      return "none";
-    default:
-      throw new Error(`invalid photo compress: ${value}`);
-  }
-}
-
-export const photoOptionsSchema = z.object({
-  size: photoSizeInputSchema
-    .optional()
-    .transform((value) => (value === undefined ? undefined : normalizePhotoSizeTier(value))),
-  compress: photoCompressInputSchema
-    .optional()
-    .transform((value) => (value === undefined ? undefined : normalizePhotoCompress(value))),
-  saveToGallery: z.boolean().optional(),
-  sound: z.boolean().optional(),
-});
-export type PhotoOptions = z.infer<typeof photoOptionsSchema>;
+// Photo allocation has no request body. Capture options belong to the device.
 
 /**
  * The REST response to a photo request. The capture happens out of band (the

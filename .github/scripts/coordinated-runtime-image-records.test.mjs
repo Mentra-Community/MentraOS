@@ -3,15 +3,16 @@ import test from "node:test"
 import {fileURLToPath} from "node:url"
 
 import {createRuntimeImageRecord, validateRuntimeImageRecord} from "./coordinated-runtime-image-records.mjs"
-import {createReleasePlan, loadReleaseFamily} from "./release-family.mjs"
+import {createReleasePlan, familyBuildNumber, loadReleaseFamily} from "./release-family.mjs"
 
 const sourceCommit = "a".repeat(40)
+const family = loadReleaseFamily({rootDir: fileURLToPath(new URL("../..", import.meta.url))})
 const plan = createReleasePlan({
-  family: loadReleaseFamily({rootDir: fileURLToPath(new URL("../..", import.meta.url))}),
+  family,
   channel: "dev",
   sequence: 91,
   sourceCommit,
-  nativeBuildNumber: 310000091,
+  nativeBuildNumber: familyBuildNumber(family.familyBaseVersion, 91),
 })
 
 function create(status = "published") {

@@ -32,7 +32,10 @@ export type AcsMeetingState = {
   mediaSource?: AcsMediaSourceState
   /** Native receiver diagnostic, including the reason a local WHIP offer was rejected. */
   mediaSourceReason?: string
-  /** Local WHIP endpoint, available after a SoftAP join. */
+  /** ACS disconnect diagnostics, emitted when the final disconnected state arrives. */
+  endReason_code?: number
+  endReason_subcode?: number
+  /** Local WHIP endpoint, available after a SoftAP join or `rebindSoftApIngest`. */
   ingestUrl?: string
   /** Remote roster (Android emits this; iOS does not yet). */
   participants?: AcsMeetingParticipant[]

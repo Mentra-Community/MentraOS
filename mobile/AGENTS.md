@@ -36,8 +36,9 @@ derives `X.Y.Z-dev.N` or `X.Y.Z-beta.N` identities without source edits.
 - Beta store builds target staging services and are not production-promotable
   binaries. Production candidates are rebuilt from the selected source with
   production configuration and new store build numbers after Cloud promotion.
-- Automatic glasses OTA is enabled only when the mobile bundle contains an
-  `EXPO_PUBLIC_ASG_OTA_VERSION_URL` release pin. Local and compile-only builds
+- Automatic glasses OTA uses `EXPO_PUBLIC_ASG_OTA_VERSION_URL` for releases or
+  the packaged `extra.mentraPrBuild.otaManifestUrl` in Expo's `app.config` asset
+  for PR APKs. Local and compile-only builds
   without a pin fail closed; a Super Mode manifest override remains available
   for deliberate local OTA testing.
 - Pull request Android APKs are pinned to `ota-pr-<n>-<head sha>.json` on the
@@ -47,6 +48,10 @@ derives `X.Y.Z-dev.N` or `X.Y.Z-beta.N` identities without source edits.
   exists, at an ASG client built from the PR. Installing a PR ASG over a
   coordinated build is a version-code downgrade that the exact-pin OTA flow
   handles through the uninstall-then-reinstall detour.
+- PR CI reuses signed APKs when mobile build fingerprints match, then replaces
+  the packaged configuration and Android versionCode, aligns and re-signs.
+  Keep PR configuration separate from the compiled JS bundle; changing ASG or
+  firmware targets must not require recompiling unchanged mobile code.
 
 ### Testing
 

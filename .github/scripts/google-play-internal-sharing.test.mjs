@@ -5,7 +5,11 @@ import {tmpdir} from "node:os"
 import path from "node:path"
 import test from "node:test"
 
-import {serviceAccountAssertion, uploadInternalSharingBundle} from "./google-play-internal-sharing.mjs"
+import {
+  normalizeInternalSharingArtifact,
+  serviceAccountAssertion,
+  uploadInternalSharingBundle,
+} from "./google-play-internal-sharing.mjs"
 
 const keys = generateKeyPairSync("rsa", {modulusLength: 1024})
 const credentials = {
@@ -55,4 +59,22 @@ test("uploads a bundle only to Google Play internal app sharing", async () => {
   assert.equal(artifact.sha256, "a".repeat(64))
   assert.match(calls[1].url, /applications\/internalappsharing\/com\.mentra\.mentra\/artifacts\/bundle/)
   assert.equal(calls[1].url.includes("edits"), false)
+})
+
+test("keeps the download link and describes Play's artifact evidence without failing on its shape", () => {
+  const lines = []
+  const artifact = normalizeInternalSharingArtifact(
+    {downloadUrl: "https://play.google.com/apps/test/example", sha256: "A".repeat(64)},
+    (line) => lines.push(line),
+  )
+  assert.deepEqual(artifact, {
+    downloadUrl: "https://play.google.com/apps/test/example",
+    sha256: "a".repeat(64),
+    certificateFingerprint: "",
+  })
+  assert.match(lines[0], /host=play\.google\.com sha256=hex64 certificateFingerprint=absent/)
+  const odd = normalizeInternalSharingArtifact({downloadUrl: "https://play.google.com/x", sha256: "short"}, () => {})
+  assert.equal(odd.sha256, "short")
+  assert.throws(() => normalizeInternalSharingArtifact({sha256: "a".repeat(64)}, () => {}), /no HTTPS download URL/)
+  assert.throws(() => normalizeInternalSharingArtifact({downloadUrl: "http://play.google.com/x"}, () => {}), /HTTPS/)
 })

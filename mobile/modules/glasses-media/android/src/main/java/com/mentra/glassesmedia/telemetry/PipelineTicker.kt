@@ -11,6 +11,13 @@ class PipelineTicker(
   looper: Looper = Looper.getMainLooper(),
   private val elapsedCpuMs: () -> Long = { Process.getElapsedCpuTime() },
   private val cores: Int = Runtime.getRuntime().availableProcessors(),
+  /**
+   * Run once per tick, after the ladder lines.
+   *
+   * A second timer for sampling would drift against this one, and two sets of numbers a second
+   * apart cannot be compared. Whoever samples here decides its own cadence by counting ticks.
+   */
+  private val onTick: (() -> Unit)? = null,
   private val emit: (String) -> Unit,
 ) {
   private val handler = Handler(looper)
@@ -47,6 +54,7 @@ class PipelineTicker(
         ),
       )
       avSync?.let { emit(it.tick(stats.e2e.p50(), stats.age.p50())) }
+      onTick?.invoke()
       handler.postDelayed(this, INTERVAL_MS)
     }
   }

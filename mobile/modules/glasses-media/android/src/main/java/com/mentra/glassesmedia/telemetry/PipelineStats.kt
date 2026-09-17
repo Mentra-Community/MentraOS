@@ -108,6 +108,15 @@ class PipelineStats(
   @Volatile var lastSubFps: Double = 0.0
   @Volatile var decodedFps: Double? = null
   @Volatile var recvFps: Double? = null
+  /**
+   * Glasses→phone WHIP rate, mirrored here from the ingest source's own sampler.
+   *
+   * Published on the shared stats rather than kept local to the ingest source because it is the
+   * field that assigns blame for a bad picture, and the thing that needs it is the ACS side: a
+   * collapsed uplink alongside a full-rate source is ACS's rate controller, while both low is a
+   * starved pipeline. Null until two reads have been taken — a rate needs a delta.
+   */
+  @Volatile var inboundBitrateBps: Long? = null
   @Volatile var wireFps: Double? = null
   @Volatile var wireWidth: Int? = null
   @Volatile var wireHeight: Int? = null
@@ -281,6 +290,9 @@ class PipelineStats(
     val settled = sub.get() + dropCount()
     return sink.get() - settled
   }
+
+  /** Frames refused by the outgoing pacer alone, separated from the other drop reasons. */
+  fun dropPacedCount(): Int = dropPaced.get()
 
   fun dupCount(): Int = dup.get()
   fun rotCount(): Int = rot.get()

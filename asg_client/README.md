@@ -160,3 +160,11 @@ Must use Java SDK 17. To set this, in Android Studio, go to Settings > Build, Ex
 ### Documentation
 
 See [docs/](docs/README.md) for architecture overview, command API reference, and feature docs.
+
+### Photo compression
+
+The `compress` field accepts exactly `none`, `low`, `medium`, or `high`, defaulting
+to `none`. Delivered JPEG qualities are Q95, Q88, Q78, and Q60 on both direct
+upload and BLE. Compression does not resize images; `size` and crop policy own
+pixel limits. Invalid compression is rejected before capture; no aliases are
+accepted. See [Mentra Live spec](docs/mentra-live-spec.md) for metadata and preview behavior.

@@ -53,7 +53,11 @@ public enum LocalMediaPolicy {
             candidates += 1
             return true
         }
-        guard candidates > 0 else { throw LocalMediaError("No host ICE candidate on the glasses hotspot") }
+        guard candidates > 0 else {
+            throw LocalMediaError(answer
+                ? "Phone answer has no host ICE candidate on the glasses hotspot"
+                : "Glasses offer has no host ICE candidate on the glasses hotspot")
+        }
         return lines.joined(separator: "\r\n") + "\r\n"
     }
 }

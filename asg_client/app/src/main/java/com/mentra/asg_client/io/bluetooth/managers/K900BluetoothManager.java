@@ -4,6 +4,7 @@ import android.content.Context;
 import android.os.SystemClock;
 import android.util.Log;
 
+import com.mentra.asg_client.audio.I2sReadyGate;
 import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.io.bes.BesOtaStateStore;
 import com.mentra.asg_client.io.bes.BesOtaUartListener;
@@ -1188,6 +1189,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
     private void invalidateFramedPathProof() {
         uartEvidenceInvalidatedAtElapsedMs = SystemClock.elapsedRealtime();
         framedPathProven = false;
+        I2sReadyGate.invalidateLink();
     }
 
     private BesUartTransportCoordinator.SafetyPolicy currentBesOtaSafetyPolicy() {
@@ -1392,6 +1394,8 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                                 // both mutations atomic with the baud-state transition.
                                 applyPhonePresenceFromSyvr(bData);
                                 linkState.capsAdvertised(applyBesWireCaps(json));
+                                JSONObject caps = json.optJSONObject("wire_caps");
+                                I2sReadyGate.setSupported(caps != null && caps.optInt("i2s_ready", 0) == 1);
                             });
             if (result == BesUartTransportCoordinator.SystemVersionResult.IGNORED) {
                 Log.i(TAG, "Ignoring sr_syvr from a retired UART session");
@@ -2076,6 +2080,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                             // CommandProcessor initialization
                             if (!handleSrSyvrResponse(payload, receiveSession)
                                     && !handleSrBaudResponse(payload, receiveSession)
+                                    && !handleI2sReadyResponse(payload, receiveSession)
                                     && !handleSrPhbleResponse(payload, receiveSession)
                                     && !handleFileTransportResponse(payload)) {
                                 // Not a BES-owned sr_* response, forward to listeners
@@ -2104,6 +2109,21 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
         boolean accepted;
         List<byte[]> messages;
         long discardedBytes;
+    }
+
+    private boolean handleI2sReadyResponse(byte[] payload, SerialSession receiveSession) {
+        try {
+            JSONObject message = new JSONObject(new String(payload, java.nio.charset.StandardCharsets.UTF_8));
+            if (!"hm_i2sready".equals(message.optString("C"))) return false;
+            if (!transportCoordinator.isCurrentSerialSession(receiveSession)) return true;
+            Object rawBody = message.opt("B");
+            JSONObject body = rawBody instanceof JSONObject ? (JSONObject) rawBody
+                    : new JSONObject(String.valueOf(rawBody));
+            I2sReadyGate.onResponse(body.optInt("request_id", 0), body.optBoolean("ready", false));
+            return true;
+        } catch (org.json.JSONException e) {
+            return false;
+        }
     }
 
     private void onValidUartFrame(SerialSession receiveSession) {

@@ -383,8 +383,8 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
     // side effect of LocalMiniappView mounting on foreground; pulling it here
     // lets start() actually run the app even when nothing foregrounds it (e.g.
     // a system app launching another miniapp via session.miniapps). Idempotent
-    // with the view's own ensureRunning; a no-op for native offline built-ins
-    // and cloud apps (no JS bundle).
+    // with the view's own ensureRunning; skipped for native offline built-ins
+    // (no JS bundle).
     if (app.local) {
       try {
         await miniappLauncher.ensureRunning(packageName)

@@ -55,7 +55,12 @@ the selected deployment's authentication.
 
 ## OTA compatibility
 
-The official manifest reads `EXPO_PUBLIC_ASG_OTA_VERSION_URL`. Its engine adapter
+The official manifest reads `EXPO_PUBLIC_ASG_OTA_VERSION_URL`. PR APKs instead
+read `extra.mentraPrBuild.otaManifestUrl` from Expo's packaged `app.config` asset,
+which CI can replace before re-signing a matching existing APK. Malformed PR
+configuration is rejected; it never falls back to a previous bundled pin.
+The selected pin still goes through the existing host/engine adapter.
+Its engine adapter
 preserves the existing embedded-engine release fallback and pre-39 glasses
 protocol behavior. Workspace OTA uses the manifest's source, with `null` meaning
 disabled. A deliberate OTA debug override takes precedence for workspaces too,

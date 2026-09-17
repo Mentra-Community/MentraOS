@@ -6,7 +6,9 @@ import type {MiniappSession} from "../session"
 import {
   MEETING_HOST_UPDATE_MESSAGE,
   MeetingModule,
+  parseMeetingEndReason,
   parseMeetingMediaSource,
+  parseMeetingRecovery,
   parseMeetingSoftApProgress,
   validateMeetingVideoSource,
 } from "./meeting"
@@ -32,6 +34,26 @@ const joinArgs = {
 }
 
 describe("MeetingModule", () => {
+  test("getState preserves provider termination details", async () => {
+    const endReason = {code: 404, subcode: 8543}
+    const {session} = mockSession(async () => ({state: "error", muted: false, endReason}))
+    const meeting = new MeetingModule(session)
+    expect((await meeting.getState()).endReason).toEqual(endReason)
+    expect(meeting.state.endReason).toEqual(endReason)
+  })
+
+  test("end reason parsing retains valid fields without coercing malformed codes", () => {
+    expect(parseMeetingEndReason({code: 0, subcode: 8543, message: "ended", extra: true})).toEqual({
+      code: 0,
+      subcode: 8543,
+      message: "ended",
+    })
+    expect(parseMeetingEndReason({code: NaN, subcode: Infinity, message: "ended"})).toEqual({message: "ended"})
+    for (const raw of [undefined, null, "404", {}, {code: "404", subcode: false, message: ""}]) {
+      expect(parseMeetingEndReason(raw)).toBeUndefined()
+    }
+  })
+
   test("join sends MEETING_JOIN and maps NOT_IMPLEMENTED to an update-app error", async () => {
     const {session} = mockSession(async () => {
       throw {code: MiniappErrorCode.NOT_IMPLEMENTED, message: "Unknown or unimplemented request type"}
@@ -228,12 +250,38 @@ describe("MeetingModule", () => {
       elapsedMs: 4200,
       steps: [
         {step: "hotspot", status: "done", detail: "Hotspot MentraLive_38f108", error: undefined, durationMs: 3500},
-        {step: "scopedJoin", status: "running", detail: "Phone joining MentraLive_38f108", error: undefined, durationMs: undefined},
+        {
+          step: "scopedJoin",
+          status: "running",
+          detail: "Phone joining MentraLive_38f108",
+          error: undefined,
+          durationMs: undefined,
+        },
         {step: "acsJoin", status: "pending", detail: undefined, error: undefined, durationMs: undefined},
         {step: "publish", status: "pending", detail: undefined, error: undefined, durationMs: undefined},
         {step: "live", status: "pending", detail: undefined, error: undefined, durationMs: undefined},
       ],
     })
+  })
+
+  test("applies SoftAP recovery from host state and keeps it when a later event omits it", async () => {
+    const recovery = {active: true, generation: 2, deadlineAt: 1_700_000_000_000, phase: "waiting-ble"}
+    const {session} = mockSession(async () => ({state: "connected", muted: false, recovery}))
+    const meeting = new MeetingModule(session)
+    expect((await meeting.getState()).recovery).toEqual(recovery)
+    const {session: omitted} = mockSession(async () => ({state: "connected", muted: false}))
+    const kept = new MeetingModule(omitted)
+    kept._applyState({state: "connected", muted: false, recovery})
+    kept._applyState({state: "connected", muted: false})
+    expect(kept.state.recovery).toEqual(recovery)
+  })
+
+  test("recovery parse is tolerant: malformed payloads read as absent", () => {
+    expect(parseMeetingRecovery(undefined)).toBeUndefined()
+    expect(parseMeetingRecovery(null)).toBeUndefined()
+    expect(parseMeetingRecovery({generation: 1})).toBeUndefined()
+    expect(parseMeetingRecovery({active: true, generation: 1})).toEqual({active: true, generation: 1})
+    expect(parseMeetingRecovery({active: false})).toEqual({active: false})
   })
 
   test("SoftAP checklist parse is tolerant: unknown steps drop, malformed payloads read as absent", () => {
@@ -242,6 +290,14 @@ describe("MeetingModule", () => {
     expect(parseMeetingSoftApProgress("starting")).toBeUndefined()
     expect(parseMeetingSoftApProgress({phase: "warp", steps: []})).toBeUndefined()
     expect(parseMeetingSoftApProgress({phase: "failed", steps: "nope"})).toBeUndefined()
+    expect(
+      parseMeetingSoftApProgress({
+        phase: "recovering",
+        elapsedMs: 1200,
+        traceId: "gen-2",
+        steps: [{step: "hotspot", status: "running"}],
+      })?.phase,
+    ).toBe("recovering")
     expect(
       parseMeetingSoftApProgress({
         phase: "failed",

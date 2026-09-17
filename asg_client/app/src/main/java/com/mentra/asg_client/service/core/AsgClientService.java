@@ -17,6 +17,7 @@ import android.os.IBinder;
 import android.os.Looper;
 import android.util.Log;
 import android.util.Size;
+import com.mentra.asg_client.audio.I2sReadyGate;
 import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.NetworkUtils;
 import com.mentra.asg_client.camera.UvcStreamingState;
@@ -309,7 +310,8 @@ public class AsgClientService extends Service implements NetworkStateListener, T
             if (ACTION_I2S_AUDIO_STATE.equals(action)) {
                 boolean playing = intent.getBooleanExtra(EXTRA_I2S_AUDIO_PLAYING, false);
                 boolean forceRestart = intent.getBooleanExtra(EXTRA_I2S_FORCE_RESTART, false);
-                handleI2SAudioState(playing, forceRestart);
+                handleI2SAudioState(playing, forceRestart,
+                        intent.getIntExtra(AsgConstants.EXTRA_I2S_REQUEST_ID, 0));
                 return START_STICKY;
             }
 
@@ -494,6 +496,13 @@ public class AsgClientService extends Service implements NetworkStateListener, T
      *     and storms UART ({@code lxy uart break} / {@code rx err3}).
      */
     public void handleI2SAudioState(boolean playing, boolean forceRestart) {
+        handleI2SAudioState(playing, forceRestart, 0);
+    }
+
+    /** Dispatch a correlated START; success means UART accepted it, not that BES is ready. */
+    public synchronized boolean handleI2SAudioState(
+            boolean playing, boolean forceRestart, int requestId) {
+        if (!playing) I2sReadyGate.onBridgeStopped();
         Log.i(
                 TAG,
                 "I2S audio state request: "
@@ -504,15 +513,17 @@ public class AsgClientService extends Service implements NetworkStateListener, T
             Log.i(
                     TAG,
                     "[I2S-RATE] I2S already open — re-announce mh_starti2s; BES retunes only on mismatch");
-        } else if (!forceRestart && playing == lastI2sPlaying) {
+        } else if (!forceRestart && requestId == 0 && playing == lastI2sPlaying) {
             Log.i(TAG, "I2S state unchanged, skipping command");
-            return;
+            return true;
         }
 
         Integer rateHz = playing ? readHalOutputSampleRateHz() : null;
-        if (sendI2sCommand(playing, rateHz)) {
+        if (sendI2sCommand(playing, rateHz, requestId)) {
             lastI2sPlaying = playing;
+            return true;
         }
+        return false;
     }
 
     private Integer readHalOutputSampleRateHz() {
@@ -537,7 +548,7 @@ public class AsgClientService extends Service implements NetworkStateListener, T
         }
     }
 
-    private boolean sendI2sCommand(boolean playing, Integer rateHz) {
+    private boolean sendI2sCommand(boolean playing, Integer rateHz, int requestId) {
         final String command = playing ? "mh_starti2s" : "mh_stopi2s";
         try {
             JSONObject payload = new JSONObject();
@@ -545,6 +556,7 @@ public class AsgClientService extends Service implements NetworkStateListener, T
             payload.put("V", 1);
 
             JSONObject body = new JSONObject();
+            if (playing && requestId > 0) body.put("request_id", requestId);
             if (playing && rateHz != null) {
                 body.put("rate", rateHz);
             }

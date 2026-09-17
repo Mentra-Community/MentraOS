@@ -174,11 +174,15 @@ describe("managed photo (real device upload)", () => {
     await client.close();
   }, 20_000);
 
-  test.each(["low", "high", "max"] as const)(
-    "accepts canonical size %s on POST /api/camera/photo",
-    async (size) => {
-      const client = await connectDevice(`alice-cam-${size}`);
-      const { requestId, uploadUrl } = await requestPhoto(client.token, size);
+  test.each([
+    { size: "medium" },
+    { size: "medium", compress: "heavy" },
+    { size: "gigantic", compress: "unknown" },
+  ])(
+    "ignores unused photo options %p and completes the upload",
+    async (options) => {
+      const client = await connectDevice("alice-cam-unused-options");
+      const { requestId, uploadUrl } = await requestPhoto(client.token, options);
       expect(requestId).toMatch(/^photo_/);
 
       const image = makeImageBytes();
@@ -197,22 +201,6 @@ describe("managed photo (real device upload)", () => {
     },
     20_000,
   );
-
-  test("rejects invalid photo size with HTTP 400", async () => {
-    const client = await connectDevice("alice-cam-bad-size");
-    const res = await fetch(`${BASE()}/api/camera/photo`, {
-      method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-        Authorization: `Bearer ${client.token}`,
-      },
-      body: JSON.stringify({ size: "gigantic" }),
-    });
-    expect(res.status).toBe(400);
-    const body = (await res.json()) as { error?: string };
-    expect(body.error).toBe("invalid photo options");
-    await client.close();
-  }, 20_000);
 });
 
 // === Helpers ===
@@ -230,12 +218,12 @@ async function connectDevice(tenantUserId: string): Promise<TestClient> {
 
 async function requestPhoto(
   token: string,
-  size: string = "medium",
+  unusedBody?: unknown,
 ): Promise<{ requestId: string; uploadUrl: string; readUrl: string }> {
   const res = await fetch(`${BASE()}/api/camera/photo`, {
     method: "POST",
     headers: { "Content-Type": "application/json", Authorization: `Bearer ${token}` },
-    body: JSON.stringify({ size }),
+    body: unusedBody === undefined ? undefined : JSON.stringify(unusedBody),
   });
   if (!res.ok) throw new Error(`photo request failed: ${res.status}`);
   return (await res.json()) as { requestId: string; uploadUrl: string; readUrl: string };

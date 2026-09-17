@@ -49,8 +49,10 @@ import {BlobModule} from "./modules/blob"
 import {
   MeetingModule,
   parseMeetingCapabilities,
+  parseMeetingEndReason,
   parseMeetingMediaSource,
   parseMeetingParticipants,
+  parseMeetingRecovery,
   parseMeetingSoftApProgress,
 } from "./modules/meeting"
 
@@ -718,9 +720,11 @@ export class MiniappSession<TChannels extends object = any> {
           activeStream: payload.activeStream as import("./modules/meeting").MeetingState["activeStream"],
           audioSafety: payload.audioSafety as import("./modules/meeting").MeetingState["audioSafety"],
           mediaSource: parseMeetingMediaSource(payload.mediaSource),
+          endReason: parseMeetingEndReason(payload.endReason),
           participants: parseMeetingParticipants(payload.participants),
           capabilities: parseMeetingCapabilities(payload.capabilities),
           softap: parseMeetingSoftApProgress(payload.softap),
+          recovery: parseMeetingRecovery(payload.recovery),
         }
         this.meeting._applyState(event)
         this.emitter.emit("meetingState", event)

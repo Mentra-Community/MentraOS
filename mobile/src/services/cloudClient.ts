@@ -145,7 +145,7 @@ export const cloudClient = {
   },
   getMiniappAuthToken: (packageName: string, opts?: {minTtlMs?: number; devAttestation?: string}) =>
     cloudClientService.getMiniappAuthToken(packageName, opts),
-  startManagedPhoto: (opts: Record<string, unknown> = {}) => cloudClientService.startManagedPhoto(opts),
+  startManagedPhoto: () => cloudClientService.startManagedPhoto(),
   awaitManagedPhotoReady: (requestId: string) => cloudClientService.awaitManagedPhotoReady(requestId),
   startManagedStream: (opts: Record<string, unknown> = {}) => cloudClientService.startManagedStream(opts),
   getManagedStreamStatus: (streamId: string) => cloudClientService.getManagedStreamStatus(streamId),

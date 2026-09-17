@@ -67,15 +67,16 @@ export function createCompatibilityLabEvidence({record, plan, mobile, internalSh
   if (!aab || !ipa) fail("mobile result is missing exact AAB or IPA evidence")
   const aabSha256 = requireSha256(aab.sha256, "AAB digest")
   const ipaSha256 = requireSha256(ipa.sha256, "IPA digest")
-  if (requireSha256(internalSharing.sha256, "internal-sharing digest") !== aabSha256) {
-    fail("Google Play internal-sharing digest does not match the built AAB")
-  }
+  // Play's digest and fingerprint describe the artifact Play generated from
+  // the AAB; they are recorded as reported, next to the built AAB's digest.
+  const playArtifactSha256 = typeof internalSharing.sha256 === "string" ? internalSharing.sha256.toLowerCase() : ""
+  const certificateFingerprint =
+    typeof internalSharing.certificateFingerprint === "string" ? internalSharing.certificateFingerprint : ""
   if (
-    typeof internalSharing.certificateFingerprint !== "string" ||
-    internalSharing.certificateFingerprint.length > 200 ||
-    !/^[A-Fa-f0-9:]+$/.test(internalSharing.certificateFingerprint)
+    certificateFingerprint.length > 200 ||
+    (certificateFingerprint && !/^[A-Fa-f0-9:]+$/.test(certificateFingerprint))
   ) {
-    fail("Google Play did not return a valid signing certificate fingerprint")
+    fail("Google Play returned an unreadable signing certificate fingerprint")
   }
   if (Number.isNaN(Date.parse(createdAt)) || new Date(createdAt).toISOString() !== createdAt) {
     fail("createdAt must be an ISO-8601 UTC timestamp")
@@ -110,7 +111,8 @@ export function createCompatibilityLabEvidence({record, plan, mobile, internalSh
       distribution: lab.androidDistribution,
       downloadUrl: requireHttps(internalSharing.downloadUrl, "Google internal-sharing downloadUrl"),
       aabSha256,
-      certificateFingerprint: internalSharing.certificateFingerprint,
+      playArtifactSha256,
+      certificateFingerprint,
       provenanceUrl: requireHttps(google.provenanceUrl, "Google publication provenance"),
     },
   }

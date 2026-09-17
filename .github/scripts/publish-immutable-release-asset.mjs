@@ -42,7 +42,11 @@ export function findReleaseAsset(repository, releaseId, name, run = gh) {
     ],
     {encoding: "utf8"},
   )
-  const assets = output.trim().split("\n").filter(Boolean).map((line) => JSON.parse(line))
+  const assets = output
+    .trim()
+    .split("\n")
+    .filter(Boolean)
+    .map((line) => JSON.parse(line))
   return matchingAsset(assets, name)
 }
 

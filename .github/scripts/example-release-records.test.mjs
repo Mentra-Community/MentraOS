@@ -7,21 +7,23 @@ import {
   EXAMPLE_RELEASE_KIND,
   assembleExampleReleaseResults,
   exampleReleaseAssetName,
+  reconcileExampleReleaseRecord,
   validateExampleReleaseRecord,
   verifyStarterKitResult,
 } from "./example-release-records.mjs"
-import {createReleasePlan, loadReleaseFamily} from "./release-family.mjs"
+import {createReleasePlan, familyBuildNumber, loadReleaseFamily} from "./release-family.mjs"
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
+const family = loadReleaseFamily({rootDir})
 const provenanceUrl = "https://github.com/Mentra-Community/MentraOS/actions/runs/123"
 
 function planFor(channel = "beta") {
   return createReleasePlan({
-    family: loadReleaseFamily({rootDir}),
+    family,
     channel,
     sequence: 57,
     sourceCommit: "a".repeat(40),
-    nativeBuildNumber: 310000057,
+    nativeBuildNumber: familyBuildNumber(family.familyBaseVersion, 57),
   })
 }
 
@@ -48,7 +50,7 @@ function fixtures(plan) {
       mergeCommit: "3".repeat(40),
       sourceTag: `sdk-${plan.releaseIdentity}`,
       artifactContainerTag: `sdk-builds-v${plan.familyBaseVersion}`,
-      releaseUrl: "https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit/releases/tag/sdk-builds-v3.1.0",
+      releaseUrl: `https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit/releases/tag/sdk-builds-v${family.familyBaseVersion}`,
       pullRequestUrl: "https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit/pull/51",
       validationRunUrl: "https://github.com/Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit/actions/runs/456",
     },
@@ -151,7 +153,7 @@ test("the example release cannot be assembled without the finalized beta it was 
   const plan = planFor()
   const {betaManifest} = fixtures(plan)
   assert.throws(
-    () => assemble(plan, {betaManifest: {...betaManifest, releaseIdentity: "3.1.0-beta.56"}}),
+    () => assemble(plan, {betaManifest: {...betaManifest, releaseIdentity: `${family.familyBaseVersion}-beta.56`}}),
     /finalized manifest of the same coordinated beta/,
   )
   assert.throws(
@@ -192,15 +194,187 @@ test("the example release verifies the Starter Kit evidence on its own terms", (
   )
 })
 
-test("only dev and beta plans have an example release", () => {
-  const family = loadReleaseFamily({rootDir})
-  const production = createReleasePlan({
+function productionFixtures() {
+  const betaPlan = planFor("beta")
+  const {betaManifest, starterKit, exampleTestflight, exampleGooglePlay} = fixtures(betaPlan)
+  const betaManifestUrl = `https://github.com/Mentra-Community/MentraOS/releases/download/${betaPlan.artifactContainerTag}/${betaPlan.artifactNames.releaseManifest}`
+  const betaManifestSha256 = "b".repeat(64)
+  const plan = createReleasePlan({
     family,
     channel: "production",
-    sourceCommit: "a".repeat(40),
-    nativeBuildNumber: 3100057,
+    sourceCommit: betaPlan.sourceCommit,
+    nativeBuildNumber: familyBuildNumber(family.familyBaseVersion, 58),
   })
-  assert.throws(() => assemble(production), /coordinated dev or beta release plan/)
+  plan.promotion = {
+    selectedBetaReleaseSetId: betaPlan.releaseSetId,
+    selectedBetaIdentity: betaPlan.releaseIdentity,
+    selectedBetaManifest: {url: betaManifestUrl, sha256: betaManifestSha256},
+    otaManifest: {url: "https://example.com/ota.json", sha256: "c".repeat(64)},
+  }
+  plan.example = {
+    testflight: {group: "Mentra Bluetooth Example", audience: "external"},
+    googlePlay: {track: "Mentra Bluetooth Example Production Candidates"},
+    storePromotion: "never",
+  }
+  const production = {
+    starterKit: {
+      ...starterKit,
+      releaseSetId: plan.releaseSetId,
+      releaseIdentity: plan.releaseIdentity,
+      channel: "production",
+      packages: {
+        "@mentra/bluetooth-sdk": `${family.familyBaseVersion}`,
+        "@mentra/engine": `${family.familyBaseVersion}`,
+      },
+      starterKit: {
+        ...starterKit.starterKit,
+        sourceTag: `sdk-${family.familyBaseVersion}`,
+        artifactContainerTag: `sdk-${family.familyBaseVersion}`,
+      },
+      artifacts: starterKit.artifacts.map((artifact) => ({
+        ...artifact,
+        name: artifact.name.replace(betaPlan.releaseIdentity, plan.releaseIdentity),
+      })),
+    },
+    exampleTestflight: {
+      ...exampleTestflight,
+      releaseSetId: plan.releaseSetId,
+      releaseIdentity: plan.releaseIdentity,
+      channel: "production",
+      version: {
+        marketingVersion: `${family.familyBaseVersion}`,
+        buildNumber: familyBuildNumber(family.familyBaseVersion, 58),
+      },
+      group: {id: "group-2", name: "Mentra Bluetooth Example"},
+      distribution: {
+        audience: "external",
+        status: "submitted",
+        installUrl: "https://testflight.apple.com/join/production123",
+        reviewState: "WAITING_FOR_REVIEW",
+      },
+    },
+    exampleGooglePlay: {
+      ...exampleGooglePlay,
+      releaseSetId: plan.releaseSetId,
+      releaseIdentity: plan.releaseIdentity,
+      channel: "production",
+      version: {
+        marketingVersion: `${family.familyBaseVersion}`,
+        buildNumber: familyBuildNumber(family.familyBaseVersion, 58),
+      },
+      track: "Mentra Bluetooth Example Production Candidates",
+      distribution: {...exampleGooglePlay.distribution, audience: "internal"},
+      aab: {
+        ...exampleGooglePlay.aab,
+        url: `https://github.com/Mentra-Community/MentraOS/releases/download/${plan.artifactContainerTag}/mentra-example-react-native-${family.familyBaseVersion}.aab`,
+      },
+    },
+  }
+  return {plan, betaPlan, betaManifest, betaManifestUrl, betaManifestSha256, ...production}
+}
+
+function assembleProduction(overrides = {}) {
+  const f = productionFixtures()
+  return assembleExampleReleaseResults({
+    plan: f.plan,
+    betaManifest: f.betaManifest,
+    betaManifestUrl: f.betaManifestUrl,
+    betaManifestSha256: f.betaManifestSha256,
+    starterKit: f.starterKit,
+    starterKitResultUrl: "https://example.com/starter-kit-result.json",
+    exampleTestflight: f.exampleTestflight,
+    exampleGooglePlay: f.exampleGooglePlay,
+    completedAt: "2026-08-25T02:00:00.000Z",
+    provenanceUrl,
+    ...overrides,
+  })
+}
+
+test("a production example is finalized against the promoted beta's manifest and never a store release", () => {
+  const f = productionFixtures()
+  const record = assembleProduction()
+  assert.equal(record.channel, "production")
+  assert.equal(record.releaseIdentity, `${family.familyBaseVersion}`)
+  assert.equal(record.native.buildNumber, familyBuildNumber(family.familyBaseVersion, 58))
+  assert.equal(record.betaManifest.name, `mentra-release-${f.betaPlan.releaseIdentity}.json`)
+  assert.equal(record.promotion.selectedBetaIdentity, f.betaPlan.releaseIdentity)
+  assert.equal(record.promotion.storePromotion, "never")
+  assert.equal(record.starterKit.testflight.group.name, "Mentra Bluetooth Example")
+  assert.equal(record.starterKit.testflight.distribution.audience, "external")
+  assert.match(record.starterKit.testflight.distribution.installUrl, /^https:\/\/testflight\.apple\.com\/join\//)
+  assert.equal(record.starterKit.googlePlay.track, "Mentra Bluetooth Example Production Candidates")
+  assert.equal(record.starterKit.googlePlay.distribution.audience, "internal")
+  assert.equal(validateExampleReleaseRecord(record, f.plan), record)
+  assert.throws(
+    () =>
+      validateExampleReleaseRecord({...record, promotion: {...record.promotion, storePromotion: "app-store"}}, f.plan),
+    /finalized Mentra Bluetooth example/,
+  )
+})
+
+test("a production example refuses a manifest, plan, or destination that is not the promoted beta's", () => {
+  const f = productionFixtures()
+  assert.throws(
+    () =>
+      assembleProduction({betaManifest: {...f.betaManifest, releaseIdentity: `${family.familyBaseVersion}-beta.56`}}),
+    /finalized manifest of the promoted beta/,
+  )
+  assert.throws(
+    () => assembleProduction({betaManifestSha256: "d".repeat(64)}),
+    /exact beta manifest the plan was promoted from/,
+  )
+  assert.throws(
+    () => assembleProduction({plan: {...f.plan, example: {...f.plan.example, storePromotion: "app-store"}}}),
+    /never promoted to a store/,
+  )
+  assert.throws(
+    () =>
+      assembleProduction({
+        exampleTestflight: {...f.exampleTestflight, group: {id: "g", name: "Mentra Staging Public"}},
+      }),
+    /Example TestFlight result does not match/,
+  )
+  assert.throws(
+    () =>
+      assembleProduction({
+        exampleTestflight: {
+          ...f.exampleTestflight,
+          distribution: {
+            ...f.exampleTestflight.distribution,
+            installUrl: "https://appstoreconnect.apple.com/apps/6792839366/testflight/groups/group-2",
+          },
+        },
+      }),
+    /public invitation link/,
+  )
+  assert.throws(
+    () => assembleProduction({exampleGooglePlay: {...f.exampleGooglePlay, track: "beta"}}),
+    /track does not match/,
+  )
+  // A skipped review submission is retried, never frozen as the production record.
+  assert.throws(
+    () =>
+      assembleProduction({
+        exampleTestflight: {
+          ...f.exampleTestflight,
+          distribution: {
+            ...f.exampleTestflight.distribution,
+            status: "skipped",
+            skipReason: "external_review_setup_required",
+          },
+        },
+      }),
+    /was skipped \(external_review_setup_required\); rerun/,
+  )
+  assert.equal(
+    assembleProduction({
+      exampleTestflight: {
+        ...f.exampleTestflight,
+        distribution: {...f.exampleTestflight.distribution, status: "available", reviewState: "APPROVED"},
+      },
+    }).starterKit.testflight.distribution.status,
+    "available",
+  )
 })
 
 test("validation rejects records that do not describe a finalized example", () => {
@@ -217,5 +391,51 @@ test("validation rejects records that do not describe a finalized example", () =
   assert.throws(
     () => validateExampleReleaseRecord({...record, betaManifest: {...record.betaManifest, sha256: "x"}}, plan),
     /finalized Mentra Bluetooth example/,
+  )
+})
+
+test("a rerun reconciles its re-observed candidates against the published production record", () => {
+  const f = productionFixtures()
+  const record = assembleProduction()
+  const rerun = {
+    plan: f.plan,
+    record,
+    starterKit: f.starterKit,
+    exampleTestflight: {
+      ...f.exampleTestflight,
+      build: {...f.exampleTestflight.build, uploadStatus: "reused"},
+      ipa: undefined,
+      provenanceUrl: "https://github.com/Mentra-Community/MentraOS/actions/runs/999",
+    },
+    exampleGooglePlay: {
+      ...f.exampleGooglePlay,
+      uploadStatus: "reused",
+      provenanceUrl: "https://github.com/Mentra-Community/MentraOS/actions/runs/999",
+    },
+  }
+  assert.equal(reconcileExampleReleaseRecord(rerun), record)
+  assert.throws(
+    () =>
+      reconcileExampleReleaseRecord({
+        ...rerun,
+        exampleTestflight: {...rerun.exampleTestflight, build: {...rerun.exampleTestflight.build, id: "build-9"}},
+      }),
+    /TestFlight build id/,
+  )
+  assert.throws(
+    () =>
+      reconcileExampleReleaseRecord({
+        ...rerun,
+        starterKit: {...f.starterKit, starterKit: {...f.starterKit.starterKit, releaseCommit: "9".repeat(40)}},
+      }),
+    /Starter Kit release commit/,
+  )
+  assert.throws(
+    () =>
+      reconcileExampleReleaseRecord({
+        ...rerun,
+        exampleGooglePlay: {...rerun.exampleGooglePlay, aab: {...rerun.exampleGooglePlay.aab, sha256: "7".repeat(64)}},
+      }),
+    /Google Play bundle digest/,
   )
 })

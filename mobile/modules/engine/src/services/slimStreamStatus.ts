@@ -11,7 +11,10 @@ import type {StreamStatusEvent} from "@mentra/bluetooth-sdk/internal"
  */
 export const ENABLE_PIPELINE_FPS_TELEMETRY = false
 
-/** Fields forwarded to cloud / miniapps after the first resolvedConfig ack. */
+/**
+ * Select stream-status fields for local miniapps. Include resolvedConfig only
+ * when requested by the caller; include stats only when FPS telemetry is enabled.
+ */
 export function slimStreamStatusEvent(
   event: StreamStatusEvent,
   options: {includeResolvedConfig?: boolean; enableFpsTelemetry?: boolean} = {},

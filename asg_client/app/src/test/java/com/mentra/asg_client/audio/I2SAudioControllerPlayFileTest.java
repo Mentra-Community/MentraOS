@@ -20,6 +20,7 @@ import android.media.AudioManager;
 import android.os.Looper;
 import androidx.test.core.app.ApplicationProvider;
 import com.mentra.asg_client.service.core.AsgClientService;
+import com.mentra.asg_client.AsgConstants;
 import java.io.File;
 import java.io.FileDescriptor;
 import java.io.FileOutputStream;
@@ -49,6 +50,7 @@ public class I2SAudioControllerPlayFileTest {
 
     @Before
     public void setUp() {
+        I2sReadyGate.invalidateLink();
         app = ApplicationProvider.getApplicationContext();
         controller = new I2SAudioController(app);
         shadowApp = shadowOf(app);
@@ -62,6 +64,7 @@ public class I2SAudioControllerPlayFileTest {
     public void tearDown() {
         controller.stopPlayback();
         I2SAudioController.setExternalAudioPlaying(false);
+        shadowOf(Looper.getMainLooper()).idle();
         drainStartedServices();
     }
 
@@ -74,6 +77,7 @@ public class I2SAudioControllerPlayFileTest {
     @Test
     public void playFile_missingFile_stillClosesI2s() {
         controller.playFile(new File(app.getCacheDir(), "missing-pairing.wav"), 0.1f);
+        finishIdleGrace();
 
         List<Boolean> playing = playingFlags(drainStartedServices());
         assertThat(playing).containsExactly(true, false);
@@ -119,6 +123,7 @@ public class I2SAudioControllerPlayFileTest {
         try (MockedConstruction<MediaPlayer> players = mockConstruction(MediaPlayer.class)) {
             long prep = controller.playOverlayAssetTracked(AudioAssets.CAMERA_PREP_CLICK, 0.1f);
             MediaPlayer beep = players.constructed().get(0);
+            shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(AsgConstants.I2S_LEGACY_SETTLE_MS));
             when(beep.getCurrentPosition()).thenReturn(100, 1000, 1200);
             controller.stopOverlayPlayback(prep);
             controller.playOverlayAssetTracked(AudioAssets.CAMERA_SNAP, 0.1f);
@@ -142,6 +147,7 @@ public class I2SAudioControllerPlayFileTest {
         try (MockedConstruction<MediaPlayer> players = mockConstruction(MediaPlayer.class)) {
             long prep = controller.playOverlayAssetTracked(AudioAssets.CAMERA_PREP_CLICK, 0.1f);
             MediaPlayer beep = players.constructed().get(0);
+            shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(AsgConstants.I2S_LEGACY_SETTLE_MS));
             when(beep.getCurrentPosition()).thenReturn(100, 300);
             controller.stopOverlayPlayback(prep);
             long snapToken = controller.playOverlayAssetTracked(AudioAssets.CAMERA_SNAP, 0.1f);
@@ -183,6 +189,7 @@ public class I2SAudioControllerPlayFileTest {
             assertThat(playingFlags(drainStartedServices())).containsExactly(true);
 
             controller.stopOverlayPlayback(snap);
+            finishIdleGrace();
             assertThat(playingFlags(drainStartedServices())).containsExactly(false);
         }
     }
@@ -211,6 +218,7 @@ public class I2SAudioControllerPlayFileTest {
             assertThat(I2SAudioController.isExternalAudioPlaying()).isFalse();
 
             controller.stopOverlayPlayback(snap);
+            finishIdleGrace();
             assertThat(playingFlags(drainStartedServices())).containsExactly(false);
         }
     }
@@ -226,6 +234,7 @@ public class I2SAudioControllerPlayFileTest {
             assertThat(I2SAudioController.isExternalAudioPlaying()).isFalse();
             assertThat(drainStartedServices()).isEmpty(); // Never cut off the cue itself.
             controller.stopOverlayPlayback(snap);
+            finishIdleGrace();
             assertThat(playingFlags(drainStartedServices())).containsExactly(false);
             controller.playOverlayAssetTracked(AudioAssets.CAMERA_SNAP, 0.1f);
             assertThat(playingFlags(drainStartedServices())).containsExactly(true);
@@ -257,6 +266,66 @@ public class I2SAudioControllerPlayFileTest {
             assertThat(I2SAudioController.isExternalAudioPlaying()).isTrue();
             assertThat(drainStartedServices()).isEmpty();
         }
+    }
+
+    @Test
+    public void snapWaitsForReadyAndCancelledSnapCannotStart() throws Exception {
+        controller = controllerWithStubAssets();
+        I2sReadyGate.setSupported(true);
+        try (MockedConstruction<MediaPlayer> players = mockConstruction(MediaPlayer.class)) {
+            long snap = controller.playOverlayAssetTracked(AudioAssets.CAMERA_SNAP, 0.1f);
+            int requestId = drainStartedServices().get(0).getIntExtra(AsgConstants.EXTRA_I2S_REQUEST_ID, 0);
+            shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(120));
+            verify(players.constructed().get(0), never()).start();
+            controller.stopOverlayPlayback(snap);
+            I2sReadyGate.onResponse(requestId, true);
+            shadowOf(Looper.getMainLooper()).idle();
+            verify(players.constructed().get(0), never()).start();
+        }
+    }
+
+    @Test
+    public void prepToSnapGapReusesReadyBridgeAndCancelsPendingStop() throws Exception {
+        controller = controllerWithStubAssets();
+        I2sReadyGate.setSupported(true);
+        try (MockedConstruction<MediaPlayer> players = mockConstruction(MediaPlayer.class)) {
+            long prep = controller.playOverlayAssetTracked(AudioAssets.CAMERA_PREP_CLICK, 0.1f);
+            int requestId = drainStartedServices().get(0).getIntExtra(AsgConstants.EXTRA_I2S_REQUEST_ID, 0);
+            I2sReadyGate.onResponse(requestId, true);
+            shadowOf(Looper.getMainLooper()).idle();
+            MediaPlayer beep = players.constructed().get(0);
+            when(beep.getCurrentPosition()).thenReturn(300);
+            controller.stopOverlayPlayback(prep);
+            shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(100));
+            long snap = controller.playOverlayAssetTracked(AudioAssets.CAMERA_SNAP, 0.1f);
+            shadowOf(Looper.getMainLooper()).idle();
+            verify(players.constructed().get(1)).start();
+            finishIdleGrace();
+            assertThat(drainStartedServices()).isEmpty();
+            controller.stopOverlayPlayback(snap);
+            finishIdleGrace();
+            assertThat(playingFlags(drainStartedServices())).containsExactly(false);
+        }
+    }
+
+    @Test
+    public void prepStillWaitingForReadyDoesNotStartOverNewSnap() throws Exception {
+        controller = controllerWithStubAssets();
+        I2sReadyGate.setSupported(true);
+        try (MockedConstruction<MediaPlayer> players = mockConstruction(MediaPlayer.class)) {
+            controller.playOverlayAssetTracked(AudioAssets.CAMERA_PREP_CLICK, 0.1f);
+            int requestId = drainStartedServices().get(0).getIntExtra(AsgConstants.EXTRA_I2S_REQUEST_ID, 0);
+            controller.playOverlayAssetTracked(AudioAssets.CAMERA_SNAP, 0.1f);
+            I2sReadyGate.onResponse(requestId, true);
+            shadowOf(Looper.getMainLooper()).idle();
+            verify(players.constructed().get(0), never()).start();
+            verify(players.constructed().get(0)).release();
+            verify(players.constructed().get(1)).start();
+        }
+    }
+
+    private void finishIdleGrace() {
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(AsgConstants.I2S_IDLE_CLOSE_MS));
     }
 
     private void receiveDuringMusic(String state, boolean playing) {

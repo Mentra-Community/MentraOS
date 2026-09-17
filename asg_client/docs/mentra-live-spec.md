@@ -83,6 +83,26 @@ Mentra Live supports photo capture and video recording from the glasses camera.
 
 After a photo completes, the camera normally stays warm for 8 seconds for successive shots.
 
+Bluetooth SDK photo requests can opt into `presend_thumbnail: true`. Compatible
+phone SDKs receive a JPEG preview over BLE as `photo_status: thumbnail_received`,
+with a local JPEG data URI, before full-photo delivery. The preview preserves
+aspect ratio, never upscales, and is capped at a 500-pixel long edge at JPEG
+quality 50. It requires an upload target and does not replace the full photo or
+complete the capture request. Full-image BLE transmission waits for the preview
+acknowledgement; a failed or timed-out preview fails the opted-in request.
+Preview pixels use the full delivered image's display orientation: direct-upload
+previews apply the upload source's EXIF rotation/mirroring. BLE previews and full
+images normalize the source EXIF transform into their pixels (including RAM-first,
+grayscale, and Wi-Fi fallback after a direct preview). Previews need no EXIF-aware renderer.
+Direct full uploads continue preserving EXIF orientation and IMU metadata.
+The opted-in request has one end-to-end SDK deadline of 110 seconds: 45 seconds
+for capture + 30 seconds for preview transfer/retries and ACK + 30 seconds for
+full delivery + 5 seconds for command/terminal-event transit. The glasses job
+watchdog is 105 seconds from admission; progress and preview ACK do not reset it.
+The constants live in `AsgConstants` and are mirrored in both native Bluetooth
+SDK facades. Ordinary SDK photo requests retain their 30-second deadline.
+Requests that omit the option retain their existing transfer behavior.
+
 - **Short camera-button press**: takes a photo unless video is currently recording, in which case it stops the recording.
 - **Long camera-button press**: starts video recording unless video is already recording, in which case it stops.
 - Photo/video resolution, FPS, max recording duration, and privacy LED behavior are configurable by commands from the phone app.
@@ -121,6 +141,40 @@ same gate. An unchanged crop never restarts the HAL. A changed crop is rejected 
 while a publisher is pending, live, or reconnecting; while a photo/video or warm-camera service
 owns the camera; or while USB webcam capture is active. Busy persistent changes are not saved.
 Override release/expiry retains ownership until the saved crop can be restored safely.
+Direct-upload and BLE JPEG encoding share one `compress` policy: `none` = Q95, `low` = Q88,
+`medium` = Q78, and `high` = Q60. Omitted compression defaults to `none`; invalid values are rejected.
+Photo compression omission is distinct from an explicit `null`: requests default
+omission to `none`, and partial preset updates leave an omitted compression field
+unchanged. A supplied `null` or other invalid value is rejected. Stored presets
+containing removed values are invalid; replace their compression with one of the
+four supported values before replaying the complete preset. There is no automatic
+migration or substitution. Fresh valid preset updates remain available.
+
+Cloud photo allocation takes no photo options: the authenticated endpoint only
+returns upload/download URLs and ignores any supplied body. The phone sends size,
+compression, sound, and gallery-saving choices to the glasses separately.
+
+Direct upload re-encodes every level, including omitted/`none` compression at Q95,
+at the captured/cropped dimensions and carries EXIF orientation, IMU data, and capture ID
+over. The original capture's size-dependent JPEG quality does not override this delivery
+policy. Compression no longer applies an extra 75% or 50% resize. The size tier independently
+controls pixel limits, including the existing BLE-specific caps. Wi-Fi fallback reuses
+the original capture and the same quality, never the already-compressed upload copy.
+Warm-camera leases default to 15 seconds and support requested holds up to 5 minutes.
+FOV `ready` acknowledgments wait for delayed camera tuning to finish, its subsequent
+restart cooldown, and Camera2 camera
+re-registration (including readable characteristics). If registration does not recover
+within 20 seconds, glasses return `camera_unavailable` instead of reporting ready.
+FOV commands have one active update and one pending slot. A new pending command replaces
+and immediately rejects the previous pending command as `fov_superseded`, without applying
+it. This applies to persistent settings, overrides, and releases. A completed
+update with a pending successor returns `status: error`, `ready: false`, and
+`error_code: fov_superseded` before the successor starts; only the final update reports
+ready. Registration timeout also fails the pending update. Android and iOS SDK FOV calls allow
+45 seconds: at most two 20-second readiness waits plus a 5-second BLE delivery margin
+(`AsgConstants.CAMERA_FOV_REQUEST_TIMEOUT_MS`, mirrored in both SDK facades). Other
+settings retain their 15-second deadline. Lease expiry restoration waits
+behind active updates. Duplicate lease refreshes use the same readiness gate.
 On miniapp exit the phone orders release after its capture cleanup, stops renewing a rejected
 release, and retries release on reconnect. The existing ASG lease TTL bounds abandoned ownership;
 expiry waits for camera-idle rather than resetting the HAL during another app's capture.
@@ -169,6 +223,13 @@ While the Mentra Live hotspot is active, `asg_client` runs an embedded HTTP serv
 ### Audio and microphone
 
 Mentra Live exposes microphone/audio paths used for recording, streaming, and device audio cues. Battery warnings and other local prompts can use bundled audio assets. Audio behavior spans both MTK Android code and BES-controlled audio/Bluetooth firmware behavior.
+
+Local ASG cues wait asynchronously for a correlated BES I2S-ready reply before starting PCM
+on firmware advertising `wire_caps.i2s_ready: 1`. BES replies only after its audio thread
+has opened the receiver and armed speaker output. ASG retains the bridge for 750ms between
+cues, including camera prep-to-snap transitions; shutdown still stops it immediately.
+Old BES firmware uses a 250ms compatibility delay. A missing readiness reply on capable
+firmware cancels the cue after 1500ms instead of knowingly playing into an unready input.
 
 ### LEDs and user feedback
 
