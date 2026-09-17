@@ -13,6 +13,10 @@ import {command, snapshot, root, type Doctor} from "./driver"
 import {acquireLock, Report} from "./report"
 
 export async function runConnectedCall(fixture: CallFixture, buildManifestPath: string) {
+  // Detect an unprovisioned worktree before opening a call or changing hardware.
+  await import("playwright-core").catch(() => {
+    throw new Error("Browser dependency is unavailable; run bun install --frozen-lockfile in tools/mentra-e2e")
+  })
   process.umask(0o077)
   const config = parseCallFixture(fixture)
   const expected = config.glasses
