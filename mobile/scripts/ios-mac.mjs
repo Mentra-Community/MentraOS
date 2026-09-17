@@ -14,6 +14,8 @@ Release is the default: JavaScript is bundled, so Metro is unnecessary.
 --build-only leaves the running app untouched.
 --e2e-host-network compiles the test-only Mac network lease adapter. Runs using
   this adapter test real media but do not qualify native iPhone Wi-Fi association.
+Set EXPO_PUBLIC_ASG_OTA_VERSION_URL to an explicitly selected public manifest
+  to enable glasses OTA. Without a manifest, local builds keep OTA disabled.
 Uses the existing Xcode account, development signing, and mobile/.env.
 Does not archive, export an IPA, or upload to TestFlight.`)
   process.exit(0)
@@ -128,11 +130,18 @@ const manifest = {
   sourceDiffSha256: createHash("sha256").update(sourceBefore.diff).digest("hex"),
   configuration,
   networkAdapter: e2eHostNetwork ? "mac-host-verified-test-only" : "native",
+  otaManifestUrl: process.env.EXPO_PUBLIC_ASG_OTA_VERSION_URL?.trim() || null,
   destination,
   app,
   bundleId: settings[0].PRODUCT_BUNDLE_IDENTIFIER,
   executableSha256: await hash(path.join(settings[0].TARGET_BUILD_DIR, settings[0].EXECUTABLE_PATH)),
   javascriptSha256: configuration === "Release" ? await hash(path.join(app, "main.jsbundle")) : null,
+}
+if (manifest.otaManifestUrl && configuration === "Release") {
+  const bundle = await fs.readFile(path.join(app, "main.jsbundle"))
+  if (!bundle.includes(Buffer.from(manifest.otaManifestUrl))) {
+    throw new Error("Selected OTA manifest URL is absent from the bundled JavaScript")
+  }
 }
 // iOS-on-Mac launches require an outer app wrapper. Keep signed contents intact
 // and use immutable per-build paths so compiling never overwrites a running app.

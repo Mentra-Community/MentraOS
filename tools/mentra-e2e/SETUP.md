@@ -294,3 +294,15 @@ Use it only for an actionable request, and keep credentials and meeting links ou
 of speech. Confirm the output route is audible before relying on it; Bluetooth
 tests can move audio to the glasses. The September 16 alerts used the MacBook Pro
 speakers. Speech requests attention; it never counts as permission approval.
+
+## Glasses OTA on the test Mac
+
+Local builds enable glasses updates only with an explicit public
+`EXPO_PUBLIC_ASG_OTA_VERSION_URL` in `mobile/.env`. Select and archive a published
+manifest, rebuild the app, then follow [OTA-ROUTINE.md](OTA-ROUTINE.md) for fixture
+identity, initial versions, replay commands and independent post-update checks.
+The build manifest records the URL and verifies its presence in Release JavaScript.
+The glasses need their own download route, such as the office Wi-Fi; the Call
+hotspot test is a separate routine. Never copy another Mac's USB transport ID or
+another pair's hardware fixture. The completed update recording and deterministic
+already-current replay are documented separately from an autonomous installation.

@@ -12,6 +12,8 @@ export async function discover(fixture: string, buildManifestPath?: string) {
   try {
     const doctor = await command<Doctor>({op: "doctor"})
     await report.start(doctor, fixture, buildManifestPath)
+    report.metadata.executionMode = "interactive-discovery"
+    report.metadata.modelCalls = null
     if (!doctor.accessibility || !doctor.screenCapture)
       throw new Error("Run doctor and complete macOS permissions first")
     await report.startVideo()
