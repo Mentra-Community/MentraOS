@@ -280,3 +280,16 @@ Extraction validation: 35 offline tests passed (103 assertions), with eight
 hardware/keep-awake checks skipped; TypeScript passed. Both the native driver
 and separate lease launcher compiled, and fixture-only validation passed. No
 live call, recorder, browser or device command was run for this validation.
+
+## Authorized test-account quota exemption
+
+After live streaming was stopped, the user explicitly approved adding the test
+account to the existing production `CALL_QUOTA_UNLIMITED` setting. Porter accepted
+the account-only change, and the merged configuration read back correctly. A
+read-only execution of the deployed quota predicates in the existing production
+container (image `6ab859d499321e7bc394f3113db8e024649e7faa`) verified that this
+account is exempt, built-in exemptions remain active, and an unlisted account
+still has the normal 10-call daily limit. No call or token was created, and no
+quota counter was consumed. Private identity and verification are retained in
+the `call-quota-allowlist` evidence folder. Streams remain stopped until testing
+resumes; a quota exemption does not qualify any media or permission behavior.
