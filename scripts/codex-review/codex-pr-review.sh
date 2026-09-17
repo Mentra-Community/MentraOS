@@ -87,6 +87,11 @@ release_reclaim() { [[ -n "$reclaim_held" ]] && rmdir "$reclaim_path" 2>/dev/nul
 # reason it must not be.
 inspect_lock() {
   local other age
+  if [[ ! -d "$lock_path" ]]; then
+    # Another caller moved it away between our failed mkdir and this look.
+    lock_verdict="lock ${lock_path} vanished while another caller was reclaiming it; retry shortly"
+    return 0
+  fi
   other=$(cat "$lock_path/pid" 2>/dev/null || true)
   if [[ -n "$other" ]]; then
     if kill -0 "$other" 2>/dev/null; then
