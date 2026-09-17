@@ -44,49 +44,33 @@ the terminal. Setup does not record authentication video. The profile can retain
 the session, but Microsoft can require verification again. A run that reaches
 sign-in stops; the runner never requests or enters verification codes.
 
-## Camera and microphone readiness without a meeting
+## Camera and microphone readiness without joining
 
-Before spending a live-call attempt on the laptop participant, enumerate Chrome's
-actual device labels:
+Use Teams' device menus as the authority. The earlier Chrome-defaults preflight
+has been removed: a real call showed Teams selecting 03BE despite that browser
+check passing. Its historical evidence remains unchanged.
 
-```sh
-bun tools/mentra-e2e/teams-media-preflight.ts devices
-```
-
-Read its private `result.json`, then supply the exact laptop microphone and camera
-labels. On the first Mac the checked command is:
-
-```sh
-bun tools/mentra-e2e/teams-media-preflight.ts check \
-  --microphone-label 'MacBook Pro Microphone (Built-in)' \
-  --camera-label 'MacBook Pro Camera (0000:0001)'
-```
-
-To make Chrome's ordinary capture requests use the laptop too, configure the
-**dedicated test profile** through Chrome's normal Microphone and Camera settings:
+On another Mac, open Teams prejoin during the human setup above, keep microphone
+and camera off, and inspect the **Microphone**, **Speaker** and **Camera** menus.
+Copy the exact laptop device labels into the private fixture described in
+[CONNECTED-CALL-REPLAY.md](CONNECTED-CALL-REPLAY.md). Choose named laptop devices,
+not glasses or **Default** aliases. The camera label can differ between Macs.
+Close prejoin without joining, then rehearse those same selections:
 
 ```sh
-bun tools/mentra-e2e/teams-media-preflight.ts configure \
-  --microphone-label 'MacBook Pro Microphone (Built-in)' \
-  --camera-label 'MacBook Pro Camera (0000:0001)' \
-  --camera-setting-label 'MacBook Pro Camera'
+bun tools/mentra-e2e/teams-device-setup.ts \
+  --meeting-url-file /absolute/private/meeting-url.txt \
+  --devices-file /absolute/private/laptop-teams-devices.json \
+  --output /absolute/private/new-setup-directory
 ```
 
-Chrome's camera settings label differs from its media-track label; inspect the
-actual UI on another Mac. Configuration records before/after settings screenshots
-and AX, then verifies that an ordinary `getUserMedia({audio:true, video:true})`
-opens those exact laptop tracks. The first Mac passed this check on September 17.
-This changes only the isolated test Chrome profile; macOS audio defaults remain
-unchanged. Incoming speaker selection still belongs to the Teams call UI.
-
-Use the actual devices on another Mac; never choose the glasses or the default
-alias. The command refuses missing or ambiguous labels, requests both exact
-capture devices and immediately stops the tracks. It opens no meeting, starts
-no glasses stream and does not change macOS audio defaults. Browser-origin
-permission is scoped to this context and cleared afterward; ordinary macOS
-permission gates still apply. A passed readiness check does not prove Teams
-transmission, return audio or audible glasses playback. Run it separately from
-the observer because both own the same dedicated Chrome profile.
+The rehearsal saves screenshots and accessibility snapshots, selects all three
+devices through Teams, verifies the actual camera preview track, turns capture
+off and closes. It never joins or starts a glasses stream. Microphone capture
+may wait until admission, so its selected label alone is not transmission proof.
+Browser-origin permission is temporary; ordinary macOS permission gates still
+apply. A setup pass does not prove return audio or audible glasses playback.
+Run it separately from the observer because both own the dedicated Chrome profile.
 
 ## English steps
 

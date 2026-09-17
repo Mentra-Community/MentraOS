@@ -78,10 +78,11 @@ export function hasAdvancingVideo(
   )
 }
 
-export async function reachTeamsPrejoin(
+export async function reachTeamsJoinState(
   runPage: Page,
   evidence: (id: string, instruction: string) => Promise<void>,
   prefix: string,
+  allowAdmission = false,
 ) {
   // The visible heading is "Continue on this browser"; its containing button's
   // observed accessible name is "Join meeting from this browser".
@@ -90,9 +91,11 @@ export async function reachTeamsPrejoin(
   const deadline = performance.now() + 30000
   let choseBrowser = false
   let continuedWithoutMedia = false
-  while (!(await runPage.getByRole("button", {name: "Join now", exact: true}).isVisible())) {
-    if ((await teamsPhase(runPage)) === "signin") throw new Error("SIGN_IN_REQUIRED")
-    if (performance.now() > deadline) throw new Error("Teams did not reach prejoin within 30 seconds")
+  while (true) {
+    const phase = await teamsPhase(runPage)
+    if (phase === "prejoin" || (allowAdmission && (phase === "lobby" || phase === "connected"))) return phase
+    if (phase === "signin") throw new Error("SIGN_IN_REQUIRED")
+    if (performance.now() > deadline) throw new Error("Teams did not reach a join state within 30 seconds")
     if (!choseBrowser && (await browserChoice.isVisible())) {
       await evidence(prefix + "browser-choice", "Choose Continue on this browser in the Teams launcher.")
       await browserChoice.click()

@@ -12,7 +12,7 @@ import {
   videoSamples,
   hasAdvancingVideo,
   hasDecodedVideo,
-  reachTeamsPrejoin,
+  reachTeamsJoinState,
 } from "./runner/teams-browser"
 import {
   installMediaDiagnostics,
@@ -185,8 +185,7 @@ try {
     if (mode === "run") {
       const runPage = page
       if ((await teamsPhase(runPage)) === "signin") throw new Error("SIGN_IN_REQUIRED: run setup before retrying")
-      const withoutMedia = runPage.getByRole("button", {name: "Continue without audio or video", exact: true})
-      const reachPrejoin = (prefix: string) => reachTeamsPrejoin(runPage, evidence, prefix)
+      const reachPrejoin = (prefix: string) => reachTeamsJoinState(runPage, evidence, prefix)
       await reachPrejoin("01-")
       const name = runPage.getByRole("textbox", {name: "Type your name", exact: true})
       if (await name.isVisible()) await name.fill(values.name!)
@@ -334,18 +333,8 @@ try {
         await runPage.getByRole("button", {name: /^Rejoin(?: meeting)?$/}).click()
         cleanup = "not-needed"
         await evidence("rejoin-requested", "Rejoin this same meeting while the glasses stream continues.")
-        const rejoinDeadline = performance.now() + 30000
-        let continuedWithoutMedia = false
-        while ((await teamsPhase(runPage)) === "unknown") {
-          if (performance.now() > rejoinDeadline) throw new Error("Rejoin did not reach a recognized state")
-          if (!continuedWithoutMedia && (await withoutMedia.isVisible())) {
-            await evidence("rejoin-no-capture", "Continue the browser rejoin without camera or microphone capture.")
-            await withoutMedia.click()
-            continuedWithoutMedia = true
-          }
-          await new Promise((resolve) => setTimeout(resolve, 250))
-        }
-        if ((await teamsPhase(runPage)) === "prejoin") {
+        const rejoinState = await reachTeamsJoinState(runPage, evidence, "rejoin-", true)
+        if (rejoinState === "prejoin") {
           if (await name.isVisible()) await name.fill(values.name!)
           if (captureDevices)
             await selectTeamsDevices(runPage, captureDevices, (id, text) => evidence("rejoin-" + id, text))

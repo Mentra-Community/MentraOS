@@ -603,7 +603,9 @@ export async function runConnectedCall(
           await waitFor([{selector: {description: "Glasses audio disconnected"}, absent: true}], 10000)
         },
       )
-    } else opening[0].action = undefined
+    }
+    // The launch preflight already opened Call, including the warning path.
+    opening[0].action = undefined
 
     if (!(await executeSteps(opening, context, report))) throw new Error("Call opening preflight failed")
     await save("meeting-attempt-start.json", {at: new Date().toISOString()})

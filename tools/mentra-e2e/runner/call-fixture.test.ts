@@ -45,6 +45,9 @@ test("pin the current boot for each run and reject a reboot or replacement devic
   const observed = {...fixture.glasses, bootId: boot}
   expect(verifyCallDevice(fixture.glasses, observed)).toBe(boot)
   expect(verifyCallDevice(fixture.glasses, observed, boot)).toBe(boot)
+  const cid = "abcdef0123456789abcdef0123456789"
+  expect(verifyCallDevice({...fixture.glasses, cid}, {...observed, cid: cid.toUpperCase()}, boot)).toBe(boot)
+  expect(() => verifyCallDevice(fixture.glasses, {...observed, cid: ""}, boot)).toThrow("cid")
   expect(() => verifyCallDevice(fixture.glasses, {...observed, cid: "2".repeat(32)}, boot)).toThrow("cid")
   expect(() =>
     verifyCallDevice(fixture.glasses, {...observed, bootId: "22222222-2222-3333-4444-555555555555"}, boot),

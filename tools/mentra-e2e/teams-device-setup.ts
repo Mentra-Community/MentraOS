@@ -3,7 +3,7 @@ import {mkdir, readFile, writeFile} from "node:fs/promises"
 import {homedir} from "node:os"
 import {join, resolve} from "node:path"
 import {chromium} from "playwright-core"
-import {reachTeamsPrejoin, teamsMeetingUrl} from "./runner/teams-browser"
+import {reachTeamsJoinState, teamsMeetingUrl} from "./runner/teams-browser"
 import {parseTeamsDevices, selectTeamsDevices} from "./runner/teams-devices"
 import {installMediaDiagnostics, sampleMediaDiagnostics} from "./runner/browser-media-diagnostics"
 
@@ -28,8 +28,24 @@ const context = await chromium.launchPersistentContext(join(homedir(), ".cache/m
   chromiumSandbox: true,
   viewport: {width: 1280, height: 800},
 })
-const timeout = setTimeout(() => void context.close(), 60000)
-let result: Record<string, unknown>
+let capturesClosed = false
+let timedOut = false
+let closeError: string | undefined
+let closing: Promise<void> | undefined
+const closeContext = () =>
+  (closing ??= context.close().then(
+    () => {
+      capturesClosed = true
+    },
+    (error) => {
+      closeError = String(error)
+    },
+  ))
+const timeout = setTimeout(() => {
+  timedOut = true
+  void closeContext()
+}, 60000)
+let result: Record<string, unknown> = {status: "failed", error: "Setup did not complete"}
 try {
   await installMediaDiagnostics(context)
   const page = context.pages()[0] ?? (await context.newPage())
@@ -41,7 +57,7 @@ try {
   }
   await context.grantPermissions(["camera", "microphone"], {origin: "https://teams.microsoft.com"})
   await page.goto(meeting, {waitUntil: "domcontentloaded"})
-  await reachTeamsPrejoin(page, evidence, "prepare-")
+  await reachTeamsJoinState(page, evidence, "prepare-")
   await page.getByRole("textbox", {name: "Type your name", exact: true}).fill("Mentra E2E Observer")
   await selectTeamsDevices(page, devices, evidence)
   const deadline = Date.now() + 10000
@@ -90,8 +106,29 @@ try {
   }
 } finally {
   clearTimeout(timeout)
+  // Persist the assessment before cleanup: a stalled close must not erase it or
+  // imply that physical capture tracks were released.
+  await writeFile(
+    join(output, "result.json"),
+    JSON.stringify(
+      {
+        ...result,
+        status: "cleanup-pending",
+        assessmentBeforeCleanup: result.status,
+        meetingJoined: false,
+        glassesStreamsStarted: 0,
+        capturesClosed: false,
+      },
+      null,
+      2,
+    ),
+  )
   await context.clearPermissions().catch(() => {})
-  await context.close()
+  await closeContext()
+}
+if (timedOut || closeError) {
+  result = {...result, status: "failed", cleanupError: closeError, timedOut}
+  process.exitCode = 1
 }
 await writeFile(
   join(output, "result.json"),
@@ -101,7 +138,7 @@ await writeFile(
       meetingJoined: false,
       glassesStreamsStarted: 0,
       systemAudioDeviceChanges: 0,
-      capturesClosed: true,
+      capturesClosed,
     },
     null,
     2,

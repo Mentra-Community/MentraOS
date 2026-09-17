@@ -76,7 +76,9 @@ export function verifyCallDevice(
   observed: Record<string, string>,
   pinnedBoot?: string,
 ): string {
-  for (const key of ["serial", "cid", "firmware", "slot"] as const)
+  if (!/^[a-f0-9]{32}$/i.test(observed.cid ?? "") || observed.cid.toLowerCase() !== expected.cid.toLowerCase())
+    throw new Error("Device identity changed: cid")
+  for (const key of ["serial", "firmware", "slot"] as const)
     if (observed[key] !== expected[key]) throw new Error(`Device identity changed: ${key}`)
   if (!/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i.test(observed.bootId ?? ""))
     throw new Error("No valid current boot identity")
