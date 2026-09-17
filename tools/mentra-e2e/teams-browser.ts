@@ -262,8 +262,14 @@ try {
         cleanup = "not-needed"
         await evidence("rejoin-requested", "Rejoin this same meeting while the glasses stream continues.")
         const rejoinDeadline = performance.now() + 30000
+        let continuedWithoutMedia = false
         while ((await teamsPhase(runPage)) === "unknown") {
           if (performance.now() > rejoinDeadline) throw new Error("Rejoin did not reach a recognized state")
+          if (!continuedWithoutMedia && await withoutMedia.isVisible()) {
+            await evidence("rejoin-no-capture", "Continue the browser rejoin without camera or microphone capture.")
+            await withoutMedia.click()
+            continuedWithoutMedia = true
+          }
           await new Promise((resolve) => setTimeout(resolve, 250))
         }
         if ((await teamsPhase(runPage)) === "prejoin") {
