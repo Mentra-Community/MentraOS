@@ -687,7 +687,8 @@ jobs:
           FINALIZE_RESULT: ${{ needs.finalize.result }}
           APK_NAME: ${{ needs.mobile.outputs.apk_name }}
           IPA_NAME: ${{ needs.mobile.outputs.ipa_name }}
-          MOBILE_ASSET_BASE_URL: ${{ needs.mobile.outputs.asset_base_url }}
+          MOBILE_APK_URL: ${{ needs.mobile.outputs.apk_url }}
+          MOBILE_IPA_URL: ${{ needs.mobile.outputs.ipa_url }}
           ASG_APK_NAME: ${{ needs.ota.outputs.asg_apk_name }}
           ASG_APK_URL: ${{ needs.ota.outputs.asg_apk_url }}
         run: .github/scripts/notify-coordinated-release-slack.sh

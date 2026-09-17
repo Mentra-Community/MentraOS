@@ -6,18 +6,20 @@ import test from "node:test"
 
 import {
   artifactKey,
+  artifactHeaders,
   artifactUrl,
   mergeAssets,
   publishR2Artifact,
   readArtifactIndex,
   readPublicIndex,
   releaseDownloadBody,
+  resolveArtifactUrl,
   sha256File,
   updateIndex,
   usesPrivateArtifactStorage,
   validateIndex,
 } from "./release-artifact-storage.mjs"
-import {matchesPattern, parseArgs} from "./release-assets.mjs"
+import {matchesPattern, parseArgs, removeAsset} from "./release-assets.mjs"
 
 const repository = "Mentra-Community/MentraOS"
 const release = {id: 123, tag_name: "mentra-builds-v3.2.0", draft: false}
@@ -66,14 +68,18 @@ function memoryStore() {
         etag: `etag-${++sequence}`,
         metadata: options.Metadata,
         modified: new Date(),
+        cacheControl: options.CacheControl,
       })
     },
     async upload(key, file, hash, options = {}) {
       this.uploads++
       await this.put(key, await readFile(file), {
-        Metadata: {sha256: hash, ...(options.fingerprint ? {fingerprint: options.fingerprint} : {})},
+        ...artifactHeaders(file, hash, options.fingerprint),
         ...(options.etag ? {IfMatch: options.etag} : {IfNoneMatch: "*"}),
       })
+    },
+    async remove(key) {
+      values.delete(key)
     },
   }
 }
@@ -143,6 +149,32 @@ test("R2 entries supersede matching legacy names while keeping old-only assets r
   )
 })
 
+test("mobile URLs preserve private and historical storage while routing new public files to R2", () => {
+  const privateRelease = {...release, draft: true, tag_name: "mentra-production-promotion-v3.2.0-attempt-1"}
+  const legacy = {
+    ...asset(),
+    id: 123,
+    browser_download_url: "https://github.com/Mentra-Community/MentraOS/releases/download/mentra-builds-v3.2.0/one.apk",
+  }
+  for (const name of ["new.apk", "new.aab", "new.ipa"]) {
+    assert.equal(
+      resolveArtifactUrl(repository, privateRelease, name, [], {allowMissing: true}),
+      `https://github.com/${repository}/releases/download/${privateRelease.tag_name}/${name}`,
+    )
+    assert.equal(
+      resolveArtifactUrl(repository, release, name, [], {allowMissing: true}),
+      artifactUrl(repository, release.tag_name, name),
+    )
+  }
+  assert.equal(resolveArtifactUrl(repository, release, legacy.name, [legacy]), legacy.browser_download_url)
+  assert.equal(
+    resolveArtifactUrl(repository, release, legacy.name, [asset()], {legacy: [legacy]}),
+    legacy.browser_download_url,
+  )
+  assert.equal(resolveArtifactUrl(repository, release, "one.apk", [asset()]), asset().url)
+  assert.throws(() => resolveArtifactUrl(repository, release, "missing.apk", []), /Expected an existing/)
+})
+
 test("private promotion drafts remain private; final production distribution uses the CDN", () => {
   assert.equal(
     usesPrivateArtifactStorage({draft: true, tag_name: "mentra-production-promotion-v3.2.0-attempt-1"}),
@@ -208,6 +240,27 @@ test("immutable artifacts refuse different bytes before any replacement upload",
   await writeFile(options.file, "different signed APK")
   await assert.rejects(publishR2Artifact(options), /Refusing to overwrite immutable/)
   assert.equal(options.store.uploads, 1)
+})
+
+test("publish-delete-rebuild does not serve stale cached bytes at the same URL", async (t) => {
+  const options = await fixture(t)
+  const cache = new Map()
+  options.verify = async (_repository, record, file) => {
+    const stored = options.store.values.get(record.id.slice(3))
+    let response = cache.get(record.url)
+    if (!response || ["no-cache", "no-store"].includes(response.cacheControl)) {
+      response = {...stored}
+      if (response.cacheControl !== "no-store") cache.set(record.url, response)
+    }
+    await writeFile(file, response.body)
+    assert.equal(`sha256:${await sha256File(file)}`, record.digest)
+  }
+  const first = await publishR2Artifact(options)
+  await removeAsset(repository, first.id, options.store)
+  await writeFile(options.file, "rebuilt signed bytes after incomplete-pair cleanup")
+  const rebuilt = await publishR2Artifact(options)
+  assert.equal(rebuilt.url, first.url)
+  assert.notEqual(rebuilt.digest, first.digest)
 })
 
 test("failed public verification cannot publish a download record", async (t) => {

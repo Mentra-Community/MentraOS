@@ -13,6 +13,7 @@ import {
   gh,
   listReleaseAssets,
   resolveRelease,
+  resolveArtifactUrl,
   updateIndex,
 } from "./release-artifact-storage.mjs"
 
@@ -82,22 +83,22 @@ async function main() {
     console.log(JSON.stringify(assets))
     return
   }
-  if (command === "url") {
+  if (command === "url" || command === "urls") {
     // Preserve the exact URL of historical records, including frozen production
     // selections, even if the same bytes have subsequently been mirrored to R2.
     const legacy = JSON.parse(
       gh(["api", "--paginate", "--slurp", `repos/${repository}/releases/${release.id}/assets?per_page=100`]),
+    ).flat()
+    const resolve = (name) =>
+      resolveArtifactUrl(repository, release, name, assets, {
+        legacy,
+        allowMissing: args["allow-missing"] === "true",
+      })
+    console.log(
+      command === "url"
+        ? resolve(args.name)
+        : JSON.stringify(Object.fromEntries(args.patterns.map((name) => [name, resolve(name)]))),
     )
-      .flat()
-      .filter((a) => a.name === args.name && a.state === "uploaded")
-    if (legacy.length === 1) {
-      console.log(legacy[0].browser_download_url)
-      return
-    }
-    if (legacy.length > 1) throw new Error(`Duplicate legacy artifact ${args.name}`)
-    const matches = assets.filter((a) => a.name === args.name)
-    if (matches.length !== 1) throw new Error(`Expected one existing artifact ${args.name}; found ${matches.length}`)
-    console.log(matches[0].browser_download_url)
     return
   }
   if (command === "download") {

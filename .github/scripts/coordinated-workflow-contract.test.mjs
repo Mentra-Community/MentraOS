@@ -46,6 +46,23 @@ test("ASG publication restores Node and npm after runner disk cleanup", () => {
   assert.ok(build.indexOf("publish-immutable-release-asset.mjs", setup) > setup)
 })
 
+test("mobile records and notifications use per-artifact storage URLs", () => {
+  const mobile = workflow("reusable-coordinated-mobile.yml")
+  const prepare = jobBlock(mobile, "prepare")
+  assert.match(prepare, /release-assets\.mjs" urls/)
+  assert.match(prepare, /--allow-missing true/)
+  for (const kind of ["apk", "aab", "ipa"]) {
+    assert.ok(
+      prepare.includes(`${kind}_url: \${{ steps.container.outputs.${kind}_url || steps.release.outputs.${kind}_url }}`),
+    )
+    assert.ok(mobile.includes(`--${kind}-url "\${{ needs.prepare.outputs.${kind}_url }}"`))
+  }
+  assert.doesNotMatch(mobile, /asset_base_url/)
+  const coordinator = workflow("coordinated-release.yml")
+  assert.match(coordinator, /MOBILE_APK_URL: \$\{\{ needs.mobile.outputs.apk_url \}\}/)
+  assert.match(coordinator, /MOBILE_IPA_URL: \$\{\{ needs.mobile.outputs.ipa_url \}\}/)
+})
+
 test("coordinated OTA assets have bounded release ownership", () => {
   const coordinator = workflow("coordinated-release.yml")
   const ota = workflow("reusable-coordinated-ota.yml")
@@ -481,10 +498,9 @@ test("coordinated docs publish only after finalization to the matching channel",
     /candidate_parent=\$\(gh api "repos\/\$STARTER_KIT_REPOSITORY\/commits\/coordinated\/\$identity" --jq '\.parents\[0\]\.sha'/,
   )
   assert.match(starterKit, /commits\/sdk-\$identity" --jq '\.parents\[0\]\.sha'/)
-  assert.match(finalizeExample, /--output existing-record\.json/)
-  assert.match(finalizeExample, /completed_at=\$\(jq -er \.completedAt existing-record\.json\)/)
-  assert.match(finalizeExample, /cmp existing-record\.json "finalized-example\/\$record_name"/)
-  assert.match(finalizeExample, /--completed-at "\$completed_at"/)
+  assert.match(finalizeExample, /release-assets\.mjs fetch --asset-id/)
+  assert.match(finalizeExample, /example-release-records\.mjs reconcile/)
+  assert.match(finalizeExample, /if: steps.results.outputs.published != 'true'/)
   assert.match(plan, /Restore the release plan selected by an earlier attempt/)
   assert.match(plan, /actions\/runs\/\$GITHUB_RUN_ID\/artifacts/)
   assert.match(plan, /gh run download "\$GITHUB_RUN_ID"/)
@@ -776,7 +792,8 @@ test("iOS status reports the failed phase instead of downstream skips", (t) => {
         IOS_STORE_RESULT: store,
         APK_NAME: "app.apk",
         IPA_NAME: "app.ipa",
-        ASSET_BASE_URL: "https://example.com",
+        APK_URL: "https://example.com/app.apk",
+        IPA_URL: "https://example.com/app.ipa",
       },
     })
     assert.equal(result.status, 0, result.stderr)

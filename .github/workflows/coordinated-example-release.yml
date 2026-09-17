@@ -187,31 +187,31 @@ jobs:
           test -n "$example_testflight"
           record_name="mentra-example-release-$identity.json"
           record_url="https://artifactscdn.mentraglass.com/${GITHUB_REPOSITORY}/releases/$tag/$record_name"
-          # Immutable asset: a retry after a partial publication must reproduce
-          # the exact bytes already on the release, so reuse that record's
-          # completion time and provenance instead of minting new ones.
-          completed_at=$(date -u +%Y-%m-%dT%H:%M:%S.000Z)
-          provenance_url="https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}"
-          if curl --fail --silent --show-error --location "$record_url" --output existing-record.json 2>/dev/null; then
-            echo "Reconciling against the example record already published at $record_url"
-            completed_at=$(jq -er .completedAt existing-record.json)
-            provenance_url=$(jq -er .provenanceUrl existing-record.json)
+          assets=$(node .github/scripts/release-assets.mjs list --tag "$tag")
+          asset_id=$(jq -r --arg name "$record_name" '.[] | select(.name == $name and .state == "uploaded") | .id' <<< "$assets")
+          if [[ -n "$asset_id" ]]; then
+            # Keep the complete frozen record, including its historical AAB
+            # URL and first-run timestamps. Verify the re-observed candidates.
+            node .github/scripts/release-assets.mjs fetch --asset-id "$asset_id" > "finalized-example/$record_name"
+            node .github/scripts/example-release-records.mjs reconcile \
+              --plan "$plan" --record "finalized-example/$record_name" \
+              --starter-kit "$starter_kit_result" --example-testflight "$example_testflight" \
+              --example-google-play release-input/example-google-play/example-google-play-publication.json
+            record_url=$(node .github/scripts/release-assets.mjs url --tag "$tag" --name "$record_name" --existing true)
+            echo "published=true" >> "$GITHUB_OUTPUT"
           else
-            rm -f existing-record.json
-          fi
-          node .github/scripts/example-release-records.mjs \
-            --plan "$plan" \
-            --beta-manifest "$beta_manifest" \
-            --beta-manifest-url "$(node .github/scripts/release-assets.mjs url --tag "$tag" --name "$manifest_name" --existing true)" \
-            --starter-kit "$starter_kit_result" \
-            --starter-kit-result-url "${{ needs.starter-kit.outputs.result_url }}" \
-            --example-testflight "$example_testflight" \
-            --example-google-play release-input/example-google-play/example-google-play-publication.json \
-            --completed-at "$completed_at" \
-            --provenance-url "$provenance_url" \
-            --output "finalized-example/$record_name"
-          if [[ -f existing-record.json ]]; then
-            cmp existing-record.json "finalized-example/$record_name"
+            node .github/scripts/example-release-records.mjs assemble \
+              --plan "$plan" \
+              --beta-manifest "$beta_manifest" \
+              --beta-manifest-url "$(node .github/scripts/release-assets.mjs url --tag "$tag" --name "$manifest_name" --existing true)" \
+              --starter-kit "$starter_kit_result" \
+              --starter-kit-result-url "${{ needs.starter-kit.outputs.result_url }}" \
+              --example-testflight "$example_testflight" \
+              --example-google-play release-input/example-google-play/example-google-play-publication.json \
+              --completed-at "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" \
+              --provenance-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+              --output "finalized-example/$record_name"
+            echo "published=false" >> "$GITHUB_OUTPUT"
           fi
           {
             echo "tag=$tag"
@@ -221,6 +221,7 @@ jobs:
           } >> "$GITHUB_OUTPUT"
 
       - name: Publish and verify the immutable example release record
+        if: steps.results.outputs.published != 'true'
         env:
           ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
           ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}

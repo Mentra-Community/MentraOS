@@ -11,6 +11,7 @@ import {
   readArtifactIndex,
   readPublicIndex,
 } from "./release-artifact-storage.mjs"
+import {removeAsset} from "./release-assets.mjs"
 
 // Synthetic data only. Never rebuild or publish a real release to check the
 // storage transport. Every object belongs to a unique disposable release key.
@@ -71,6 +72,21 @@ try {
   assert.equal((await readPublicIndex(repository, tag)).assets[0].digest, asset.digest)
   assert.equal(uploads, 1)
   records.push({test: "restart recovers a committed object missing its download index", uploads})
+  const headers = await fetch(asset.url, {method: "HEAD", signal: AbortSignal.timeout(30_000)})
+  assert.match(headers.headers.get("cache-control"), /no-store/)
+  await removeAsset(repository, asset.id, store)
+  await writeFile(file, "Rebuilt artifact after incomplete-pair cleanup")
+  const rebuilt = await publishR2Artifact({
+    repository,
+    release,
+    name: "payload.bin",
+    file,
+    store: observedStore,
+    updateRelease: false,
+  })
+  assert.equal(rebuilt.url, asset.url)
+  assert.notEqual(rebuilt.digest, asset.digest)
+  records.push({test: "delete and rebuild at the same URL avoids stale cached bytes", uploads})
   console.log("R2 artifact storage check passed")
 } finally {
   try {

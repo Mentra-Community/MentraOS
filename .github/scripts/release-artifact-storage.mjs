@@ -47,6 +47,20 @@ export function legacyArtifactUrl(repository, tag, name) {
   return `https://github.com/${repository}/releases/download/${encodeURIComponent(tag)}/${encodeURIComponent(name)}`
 }
 
+export function resolveArtifactUrl(repository, release, name, assets, {legacy = [], allowMissing = false} = {}) {
+  artifactKey(repository, release.tag_name, name)
+  // Frozen records retain their original GitHub URLs even after mirroring.
+  for (const source of [legacy, assets]) {
+    const matches = source.filter((asset) => asset.name === name && asset.state === "uploaded")
+    if (matches.length > 1) throw new Error(`Duplicate artifact ${name}`)
+    if (matches.length === 1) return matches[0].browser_download_url
+  }
+  if (!allowMissing) throw new Error(`Expected an existing artifact ${name}`)
+  return usesPrivateArtifactStorage(release)
+    ? legacyArtifactUrl(repository, release.tag_name, name)
+    : artifactUrl(repository, release.tag_name, name)
+}
+
 export function gh(args, options = {}) {
   return execFileSync("gh", args, {encoding: "utf8", maxBuffer: 64 * 1024 * 1024, ...options})
 }
@@ -322,16 +336,25 @@ export async function createR2Store(env = process.env) {
           Bucket: bucket,
           Key: key,
           Body: createReadStream(file),
-          ContentLength: statSync(file).size,
-          ContentType: file.endsWith(".json") ? "application/json" : "application/octet-stream",
-          CacheControl: replace ? "no-cache" : "public, max-age=31536000, immutable",
-          Metadata: {sha256: digest, ...(fingerprint ? {fingerprint} : {})},
+          ...artifactHeaders(file, digest, fingerprint),
           ...(etag ? {IfMatch: etag} : {IfNoneMatch: "*"}),
         },
       })
       return upload.done()
     },
     remove: (key) => send("DeleteObjectCommand", {Key: key}),
+  }
+}
+
+export function artifactHeaders(file, digest, fingerprint) {
+  return {
+    ContentLength: statSync(file).size,
+    ContentType: file.endsWith(".json") ? "application/json" : "application/octet-stream",
+    // Recovery can discard an incomplete artifact pair or failed deployment
+    // record and rebuild that key. This zone rewrites no-cache to a four-hour
+    // TTL; no-store is honored by both the CDN and browsers.
+    CacheControl: "no-store",
+    Metadata: {sha256: digest, ...(fingerprint ? {fingerprint} : {})},
   }
 }
 

@@ -55,10 +55,15 @@ preserved when resolving a frozen record. This migration does not delete or
 rewrite historical release assets or their signed/provenance records.
 
 Normal release objects are immutable and use conditional creation. A repeated
-publication must match the stored size and SHA-256. The `--replace true` option
+publication must match the stored size and SHA-256. Downloads use `no-store`:
+recovery may discard an incomplete artifact pair or failed deployment record and
+rebuild at that URL, so browsers and the CDN must not retain stale bytes. The
+current Cloudflare zone rewrites `no-cache` to a four-hour TTL but honors
+`no-store`; the live check verifies the public response header as well as bytes.
+The `--replace true` option
 is restricted to the rolling `pr-builds` and `oem-app-builds` releases, where a
 rerun can regenerate the same commit's APK. Those replacements use conditional
-atomic writes and revalidation caching instead of deleting a working download.
+atomic writes instead of deleting a working download.
 Rolling PR builds expire after seven days; OEM builds after fourteen days, via
 the bucket rules in `lifecycle.json`. Workflow sweeps prune expired index entries
 and legacy GitHub attachments. Object expiration uses R2's current modification
@@ -77,7 +82,8 @@ by external repositories continue to be read from their recorded source URLs.
 `Release Artifact Storage Checks` uploads synthetic 110 MiB files from both
 GitHub-hosted Ubuntu and Blacksmith, verifies the public download digest,
 simulates a lost completion response, verifies an idempotent retry, and recovers
-a committed file after removing its download index. It
+a committed file after removing its download index. It also checks deletion and
+rebuilding at the same public URL with different bytes. It
 deletes its unique diagnostic objects after the check. It runs on relevant
 same-repository pull requests and supports manual dispatch. Unit coverage also
 checks index conflicts, immutable-name conflicts, failed verification, private
