@@ -681,3 +681,11 @@ No external source or version change was necessary after the merge.
 This resolves source publication and merged-source bundle verification. Android
 release qualification and the physical call limitations above remain separate
 requirements. No new call or stream was started for this follow-up.
+
+### Android qualification follow-up — September 17
+
+The Razr with SIM and 03BE reached `softap_call_live`, first glasses frame, and ACS CONNECTED after the harness's hotspot approval was moved into one Maestro session. The anonymous browser guest reached the lobby, but Android exposed neither `manageLobby` nor `admitParticipant`, so the miniapp could not admit it. The Android host now observes MANAGE_LOBBY and admits exactly the selected waiting guest, rejecting stale completion after Leave. All 223 native unit tests passed on Java 17, including seven admission tests. Hardware qualification of this replacement remains pending.
+
+The same recording showed an unnamed Android ToggleButton for the microphone action. Call 2.1.18 removes `aria-pressed` from the button that already changes its accessible action name between Mute and Unmute. Source is published on Mentra-Call branch `codex/android-call-mute-accessibility`, commit `22c6a46`, based on merged main `a0fea46`; this is a client-only change. The backend remains production from main.
+
+Packed using `bun scripts/sync-miniapp.mjs --repo /Users/philippe/.codex/worktrees/mentra-call-android/Mentra-Call --pack-script pack:prod --bump patch`. ZIP SHA256: `4cb4a23a168d8d175af65e45f388dee06a823d6e351f94a650544182e3f0d7fb`. The packaged BACKEND_URL assignment points to `https://mentra-call-miniapp-prod.mentraglass.com`; permissions are CAMERA, PHONE_CAMERA and MICROPHONE, with no calendar permission. Miniapp typecheck, 13 call-control tests and pack passed.
