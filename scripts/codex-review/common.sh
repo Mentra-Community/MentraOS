@@ -11,3 +11,10 @@ file_mtime() {
   [[ "$t" =~ ^[0-9]+$ ]] || t=$(date +%s)
   echo "$t"
 }
+
+# Classify `git status --porcelain=v2` output read from stdin.
+# untracked_paths: paths git reports as untracked.
+# dirty_gitlinks:  submodules (gitlinks) that are not clean: a different commit checked
+#                  out, modified tracked content, or untracked content inside them.
+untracked_paths() { awk '$1 == "?" { sub(/^\? /, ""); print }'; }
+dirty_gitlinks() { awk '($1 == "1" || $1 == "2") && substr($3, 1, 1) == "S" { print $NF }'; }
