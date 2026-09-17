@@ -2,6 +2,7 @@ package com.mentra.asg_client.io.server.services;
 
 import android.media.MediaMetadataRetriever;
 import android.os.Build;
+import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.io.file.core.FileManager;
 import com.mentra.asg_client.io.file.core.FileManager.FileMetadata;
 import com.mentra.asg_client.io.server.core.AsgServer;
@@ -41,7 +42,6 @@ public class AsgCameraServer extends AsgServer {
 
     private static final int MAX_JSON_BODY_BYTES = 1024 * 1024;
     private static final int DEFAULT_MANIFEST_PAGE_SIZE = 50;
-    private static final int MAX_MANIFEST_PAGE_SIZE = 100;
     private static final long MIN_TRASH_RETENTION_MS = 7L * 24 * 60 * 60 * 1000;
 
     /**
@@ -1307,7 +1307,7 @@ public class AsgCameraServer extends AsgServer {
         data.put("idempotent_ack", true);
         data.put("selected_capture", true);
         data.put("recommended_segment_bytes", 16 * 1024 * 1024);
-        data.put("max_manifest_page_size", MAX_MANIFEST_PAGE_SIZE);
+        data.put("max_manifest_page_size", AsgConstants.GALLERY_MAX_MANIFEST_PAGE_SIZE);
         data.put("server_time", System.currentTimeMillis());
         return createSuccessResponse(data);
     }
@@ -1320,7 +1320,7 @@ public class AsgCameraServer extends AsgServer {
             if (limitValue != null) {
                 limit = Integer.parseInt(limitValue);
             }
-            limit = Math.max(1, Math.min(limit, MAX_MANIFEST_PAGE_SIZE));
+            limit = Math.max(1, Math.min(limit, AsgConstants.GALLERY_MAX_MANIFEST_PAGE_SIZE));
             String cursor = session.getParms().get("cursor");
             String selectedCaptureId = session.getParms().get("capture_id");
 

@@ -1555,6 +1555,10 @@ class GallerySyncService {
       asgCameraApi.setServer(hotspotInfo.ip, 8089)
       console.log("[GallerySyncService]   ✅ API client configured")
 
+      // Wi-Fi is ready. Inventory/recovery can take time for large galleries and must
+      // render as preparation, rather than leaving the UI on "Connecting".
+      store.setSyncing([])
+
       const recovery = await mediaProcessingQueue.retryPending()
       if (recovery.retried > 0 || recovery.failed > 0) {
         console.log(

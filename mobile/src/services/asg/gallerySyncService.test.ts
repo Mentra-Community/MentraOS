@@ -733,6 +733,22 @@ describe("GallerySyncService", () => {
       consoleLogSpy.mockRestore()
     })
 
+    it("shows preparation while the gallery inventory is loading", async () => {
+      useGallerySyncStore.getState().setConnectingWifi()
+      mockGetV3Manifest.mockImplementationOnce(async () => {
+        const state = useGallerySyncStore.getState()
+        expect(state.syncState).toBe("syncing")
+        expect(state.totalFiles).toBe(0)
+        expect(state.queue).toEqual([])
+        return null
+      })
+      mockSyncWithServer.mockResolvedValueOnce(CAPTURE_SYNC_RESPONSE)
+
+      await startFileDownload()
+
+      expect(executeCaptureDownloadSpy).toHaveBeenCalledWith([FAKE_CAPTURE], 2000)
+    })
+
     it("retries with last_sync_time=0 when glasses have content but incremental sync is empty", async () => {
       mockGetSyncState.mockResolvedValue({
         last_sync_time: 1500,

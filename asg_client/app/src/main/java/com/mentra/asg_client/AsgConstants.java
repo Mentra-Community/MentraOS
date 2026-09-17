@@ -1,6 +1,8 @@
 package com.mentra.asg_client;
 
 public class AsgConstants {
+    /** Bound manifest responses while letting a several-hundred-item gallery use one scan. */
+    public static final int GALLERY_MAX_MANIFEST_PAGE_SIZE = 500;
     /** Keep BES receiving across the prep-to-snap gap and successive short cues. */
     public static final long I2S_IDLE_CLOSE_MS = 750L;
 

@@ -620,6 +620,7 @@ const en = {
     loadingPhotosAndVideos: "Loading photos and videos…",
     loadingMedia: "Loading media…",
     loadingItems: "Loading items…",
+    preparingGallerySync: "Preparing sync…",
     success: "Success",
     photoTaken: "Photo taken! Refreshing gallery…",
     error: "Error",

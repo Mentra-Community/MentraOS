@@ -1114,7 +1114,7 @@ export function GalleryScreen() {
             return (
               <View style={themed($syncButtonRow)}>
                 <ActivityIndicator size="small" color={theme.colors.foreground} style={{marginRight: spacing.s2}} />
-                <Text style={themed($syncButtonText)}>Preparing sync...</Text>
+                <Text style={themed($syncButtonText)} tx="glasses:preparingGallerySync" />
               </View>
             )
           }
