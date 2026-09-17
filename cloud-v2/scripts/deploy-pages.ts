@@ -36,7 +36,9 @@ const storeUrls: Record<Environment, string> = {
 for (const site of selectedSites) {
   const project = `${sites[site]}-${env}`;
   run(["bun", "--cwd", `websites/${site}`, "build"]);
-  if (site === "portal") {
+  // admin needs both: Store serves miniapp review, Core serves incident
+  // reports and support profiles directly so triage survives a Store outage.
+  if (site === "portal" || site === "admin") {
     run([
       "bunx", "wrangler", "pages", "secret", "put", "CORE_URL", "--project-name", project,
     ], { cwd: `websites/${site}`, input: coreUrls[env] });

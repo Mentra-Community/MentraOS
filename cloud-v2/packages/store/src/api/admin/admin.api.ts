@@ -8,7 +8,6 @@ import {MiniAppService, MiniAppServiceError} from "../../services/miniapps/minia
 import type {AppContext, AppEnv} from "../../types/hono.types"
 import {InvalidRequest} from "../../types/oauth.types"
 import {createStorageService} from "../../services/storage/storage.service"
-import {proxyCoreAdmin} from "../../services/core-admin.client"
 
 const app = new Hono<AppEnv>()
 const miniapps = new MiniAppService()
@@ -43,10 +42,6 @@ app.post("/submissions/:releaseId/publish", postPublishSubmission)
 app.patch("/apps/:packageName/store-moderation", patchStoreModeration)
 app.get("/apps/:packageName/store-assets/:assetId", getStoreAsset)
 app.get("/audit-log", getAuditLog)
-app.all("/reports", proxyCoreAdmin)
-app.all("/reports/*", proxyCoreAdmin)
-app.all("/support-profiles", proxyCoreAdmin)
-app.all("/support-profiles/*", proxyCoreAdmin)
 
 async function getSubmissions(c: AppContext) {
   return c.json({submissions: await miniapps.listAdminSubmissions()})

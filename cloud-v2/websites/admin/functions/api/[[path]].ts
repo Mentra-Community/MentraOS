@@ -1,25 +1,11 @@
-export async function onRequest(context: {
-  request: Request;
-  env: { STORE_URL?: string; BUN_PUBLIC_STORE_URL?: string };
-}): Promise<Response> {
-  const storeUrl = context.env.STORE_URL ?? context.env.BUN_PUBLIC_STORE_URL;
-  if (!storeUrl) {
-    return Response.json(
-      { error: "server_error", error_description: "STORE_URL is not configured" },
-      { status: 500 },
-    );
-  }
+import {proxyTo, storeUpstream, type ProxyContext} from "../_upstream"
 
-  const sourceUrl = new URL(context.request.url);
-  const upstreamUrl = new URL(sourceUrl.pathname + sourceUrl.search, storeUrl);
-  const headers = new Headers(context.request.headers);
-  headers.delete("host");
-  headers.set("x-mentra-public-origin", sourceUrl.origin);
-
-  return fetch(upstreamUrl, {
-    method: context.request.method,
-    headers,
-    body: context.request.method === "GET" || context.request.method === "HEAD" ? undefined : context.request.body,
-    redirect: "manual",
-  });
+/**
+ * Everything else under /api is the Miniapp Store's admin surface (review,
+ * submissions, moderation, audit log). More specific routes under
+ * api/admin/reports and api/admin/support-profiles take precedence and go to
+ * Core instead.
+ */
+export async function onRequest(context: ProxyContext): Promise<Response> {
+  return proxyTo(context, storeUpstream(context.env), "STORE_URL")
 }

@@ -26,7 +26,7 @@ import type { AppEnv } from "../types/hono.types";
 import { OauthError } from "../types/oauth.types";
 import { AccountError } from "../services/account/account-error";
 import { requestContext } from "./middleware/context.middleware";
-import internalAdmin from "./admin/admin.api";
+import adminApi from "./admin/admin.api";
 import reportAgent from "./agent/reports.api";
 import clientAuth from "./client/auth.api";
 import clientReports from "./client/reports.api";
@@ -86,7 +86,7 @@ export function createApp(opts: CreateAppOptions): Hono<AppEnv> {
   app.route("/api/account/oauth", accountOauth);
   app.route("/api/internal/identity", internalIdentity);
   app.route("/api/portal", portalEnterprise);
-  app.route("/api/internal/admin", internalAdmin);
+  app.route("/api/admin", adminApi);
 
   // Global error translator.
   app.onError((err, c) => {
