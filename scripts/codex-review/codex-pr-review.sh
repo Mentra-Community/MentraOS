@@ -13,7 +13,6 @@
 # - Prints Codex's final message; artifacts land in $CODEX_REVIEW_HOME (default ~/.codex-reviews).
 set -euo pipefail
 script_dir=$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)
-repo_dir="$1"; pr="$2"; extra_prompt="${3:-}"
 
 # Every exit path prints exactly one terminal marker ("codex-pr-review: done" or
 # "codex-pr-review: FAILED ..."), so a caller waiting on the log never hangs on a
@@ -29,6 +28,9 @@ on_exit() {
   fi
 }
 trap on_exit EXIT
+repo_dir="${1:-}"; pr="${2:-}"; extra_prompt="${3:-}"
+[[ -n "$repo_dir" && -n "$pr" ]] || fail "usage: codex-pr-review.sh <repo-dir> <pr-number> [extra-prompt-file]"
+[[ "$pr" =~ ^[0-9]+$ ]] || fail "pr-number must be numeric, got '$pr'"
 [[ -d "$repo_dir" ]] || fail "repo dir $repo_dir does not exist"
 repo_dir="$(cd "$repo_dir" && pwd)"
 
@@ -64,28 +66,48 @@ export GH_ACCOUNT
 wt="${repo_dir}-pr-${pr}"
 # One review per PR worktree at a time: the runner identifies its Codex session by this
 # directory, and two runs checking out into the same tree would corrupt each other.
-lock="${wt}.lock"
-if ! mkdir "$lock" 2>/dev/null; then
-  other=$(cat "$lock/pid" 2>/dev/null || true)
-  if [[ -n "$other" ]] && kill -0 "$other" 2>/dev/null; then
-    lock=""  # not ours; leave it in place
-    fail "another review of ${slug}#${pr} is running (pid ${other}); wait for it or remove ${wt}.lock"
+# mkdir is atomic, so only one caller ever owns the directory. A lock is reclaimed
+# only when its owner is provably dead: its pid file names a process that no longer
+# exists, or the directory is older than LOCK_STALE_SECONDS with no pid file at all
+# (the owner died between mkdir and writing the pid). Anything else fails closed, so
+# a second caller can never take over a lock whose owner is still starting up.
+lock_path="${wt}.lock"
+LOCK_STALE_SECONDS="${LOCK_STALE_SECONDS:-60}"
+take_lock() {
+  mkdir "$lock_path" 2>/dev/null && { lock="$lock_path"; echo $$ > "$lock/pid"; return 0; }
+  local other
+  other=$(cat "$lock_path/pid" 2>/dev/null || true)
+  if [[ -n "$other" ]]; then
+    kill -0 "$other" 2>/dev/null && fail "another review of ${slug}#${pr} is running (pid ${other}); wait for it or remove ${lock_path}"
+    echo "codex-pr-review: reclaiming lock left by dead pid ${other}" >&2
+  else
+    local age
+    age=$(( $(date +%s) - $(stat -f %m "$lock_path" 2>/dev/null || stat -c %Y "$lock_path" 2>/dev/null || date +%s) ))
+    (( age > LOCK_STALE_SECONDS )) || fail "another review of ${slug}#${pr} is starting (lock ${lock_path} is ${age}s old); retry shortly"
+    echo "codex-pr-review: reclaiming ${age}s-old lock with no owner" >&2
   fi
-  rm -rf "$lock"; mkdir "$lock" || { lock=""; fail "cannot create lock ${wt}.lock"; }
-fi
-echo $$ > "$lock/pid"
+  rm -rf "$lock_path"
+  mkdir "$lock_path" 2>/dev/null || fail "lock ${lock_path} was taken by another caller"
+  lock="$lock_path"; echo $$ > "$lock/pid"
+}
+take_lock
 git -C "$repo_dir" fetch -q origin "$base" "pull/${pr}/head"
 # The branch ref can be ahead of GitHub's pull ref right after a push; fetch it when it exists on origin.
 git -C "$repo_dir" ls-remote --exit-code origin "refs/heads/${head_branch}" >/dev/null 2>&1 \
   && git -C "$repo_dir" fetch -q origin "refs/heads/${head_branch}"
-if [[ -d "$wt" ]]; then
-  # A reused tree may hold leftovers from a previous run (test artifacts, an aborted
-  # checkout). Reset tracked files and drop untracked ones; ignored files such as
-  # node_modules are kept so dependencies do not have to be reinstalled every run.
+# The sibling path is only ever reset if this tool created it: a sentinel beside the
+# worktree records ownership. A directory at that path without the sentinel belongs to
+# someone else and is never touched.
+owned="${wt}.codex-review-owned"
+if [[ -e "$wt" ]]; then
+  [[ -f "$owned" ]] || fail "$wt exists but was not created by codex-pr-review; move it or pass a different repo dir"
+  # Drop leftovers from a previous run (test artifacts, an aborted checkout). Ignored
+  # files such as node_modules are kept so dependencies need not be reinstalled.
   git -C "$wt" reset -q --hard && git -C "$wt" clean -fdq
   git -C "$wt" checkout -q --detach "$head_sha"
 else
   git -C "$repo_dir" worktree add -q --detach "$wt" "$head_sha"
+  echo "created by codex-pr-review.sh on $(date -u +%Y-%m-%dT%H:%M:%SZ); safe to delete together with $wt" > "$owned"
 fi
 [[ "$(git -C "$wt" rev-parse HEAD)" == "$head_sha" ]] || fail "worktree $wt is not at ${head_sha:0:8}"
 [[ -z "$(git -C "$wt" status --porcelain)" ]] || fail "worktree $wt is not clean after reset"
@@ -145,13 +167,11 @@ fi
 
 echo "codex-pr-review: ${slug}#${pr} by ${author} (gh user ${me}) -> GH_ACCOUNT=${GH_ACCOUNT}; worktree ${wt}; output ${out_dir}"
 started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
-"$script_dir/codex-review.sh" "$wt" "$repo_name" "$out_dir/last-message.txt" "$prompt" \
+REVIEW_SLUG="$slug" REVIEW_PR="$pr" REVIEW_HEAD="$head_sha" REVIEW_STARTED_AT="$started_at" \
+  "$script_dir/codex-review.sh" "$wt" "$repo_name" "$out_dir/last-message.txt" "$prompt" \
   > "$out_dir/runner.log" 2>&1 || { tail -5 "$out_dir/runner.log" >&2; fail "runner did not finish (see $out_dir/runner.log)"; }
 # Codex exiting cleanly is not the deliverable; a review from this run on this head is.
-# Count reviews on head_sha carrying the standard marker and submitted after we started.
-posted=$(gh api "repos/${slug}/pulls/${pr}/reviews" --paginate \
-  --jq "[.[] | select(.commit_id == \"${head_sha}\" and (.body | contains(\"Reviewed by local Codex\")) and .submitted_at >= \"${started_at}\")] | length" \
-  2>/dev/null | awk '{ n += $1 } END { print n + 0 }')
+posted=$("$script_dir/review-receipt.sh" "$slug" "$pr" "$head_sha" "$started_at" 2>/dev/null || echo 0)
 if [[ "${posted:-0}" -lt 1 ]]; then
   fail "Codex finished but no review from this run is on ${head_sha:0:8} (see $out_dir/last-message.txt)"
 fi

@@ -18,14 +18,18 @@ nohup scripts/codex-review/codex-pr-review.sh <repo-dir> <pr-number> [extra-prom
 ```
 
 Then wait on the log (`until grep -q 'codex-pr-review: done\|FAILED' <log>; do sleep 15; done`)
-and keep working. A run normally takes 5-20 minutes. The watchdog kills a run after 8 minutes
-without progress in its own Codex session, or 30 minutes total, and retries once. Never launch a
-bare `codex exec` for a review.
+and keep working. Every exit path prints exactly one of those markers, including preflight
+failures. A run normally takes 5-20 minutes. The watchdog kills an attempt after 8 minutes
+without an event from the Codex process, or 30 minutes total, and retries once unless the
+verdict was already posted. Never launch a bare `codex exec` for a review.
 
 ## What the script does
 
-- Fetches the PR head into the sibling worktree `<repo-dir>-pr-<n>` (reused on reruns), so the
-  main checkout is never touched.
+- Fetches the PR head into the sibling worktree `<repo-dir>-pr-<n>`, so the main checkout is
+  never touched. The tool marks worktrees it created with a `<repo-dir>-pr-<n>.codex-review-owned`
+  sentinel; on reruns it resets and cleans only those (ignored files such as `node_modules`
+  are kept) and refuses a path at that location it did not create. A per-PR lock refuses a
+  second concurrent run.
 - Chooses the posting account. GitHub refuses a formal review from the PR author, so a PR
   authored by the logged-in gh user posts through a `mentra-release-coordinator` GitHub App
   token minted by `mentra-release-coordinator-token.mjs`; anyone else's PR posts from the
@@ -40,24 +44,34 @@ bare `codex exec` for a review.
   desirable for the project at all (real problem, existing or planned alternative, surface area
   and maintenance cost versus benefit, smaller change possible) and let that weigh in the
   verdict, not only implementation quality.
-- Runs `codex-review.sh` (watchdog + one retry) and prints Codex's final message. Artifacts:
-  `$CODEX_REVIEW_HOME/<repo>-pr-<n>-<timestamp>/{prompt.txt,last-message.txt,runner.log}`
+- Runs `codex-review.sh` (watchdog + one retry) and prints Codex's final message. Success means
+  a review carrying the marker was found on the head commit after the run started, checked
+  through the GitHub API by `review-receipt.sh`; the runner performs the same check before any
+  retry so a verdict posted just before a crash is never duplicated. Artifacts:
+  `$CODEX_REVIEW_HOME/<repo>-pr-<n>-<timestamp>/{prompt.txt,last-message.txt,runner.log,events-<attempt>.jsonl}`
   (default `~/.codex-reviews`).
 
 ## Configuration
 
-| Variable                                     | Default                                                | Purpose                                                                                       |
-| -------------------------------------------- | ------------------------------------------------------ | --------------------------------------------------------------------------------------------- |
-| `CODEX_BIN`                                  | `codex`                                                | Codex CLI binary. Point it at a specific install if the shim on PATH does not support `exec`. |
-| `CODEX_REVIEW_MODEL` / `CODEX_REVIEW_EFFORT` | `gpt-6-astra` / `medium`                               | Model and reasoning effort.                                                                   |
-| `CODEX_HOME`                                 | `~/.codex`                                             | Where Codex writes `sessions/`; the watchdog reads progress there.                            |
-| `CODEX_REVIEW_HOME`                          | `~/.codex-reviews`                                     | Where prompts, final messages and runner logs are kept.                                       |
-| `MENTRA_RELEASE_COORDINATOR_KEY`             | `~/.config/mentra-release-coordinator/private-key.pem` | App private key (0600) for posting on your own PRs.                                           |
-| `GH_ACCOUNT`                                 | auto                                                   | `app` or `own`, see above.                                                                    |
-| `STALL_SECONDS` / `MAX_SECONDS` / `ATTEMPTS` | 480 / 1800 / 2                                         | Watchdog limits.                                                                              |
+| Variable                                                      | Default                                                | Purpose                                                                                       |
+| ------------------------------------------------------------- | ------------------------------------------------------ | --------------------------------------------------------------------------------------------- |
+| `CODEX_BIN`                                                   | `codex`                                                | Codex CLI binary. Point it at a specific install if the shim on PATH does not support `exec`. |
+| `CODEX_REVIEW_MODEL` / `CODEX_REVIEW_EFFORT`                  | `gpt-6-astra` / `medium`                               | Model and reasoning effort.                                                                   |
+| `CODEX_HOME`                                                  | `~/.codex`                                             | Where Codex writes `sessions/`; the watchdog reads progress there.                            |
+| `CODEX_REVIEW_HOME`                                           | `~/.codex-reviews`                                     | Where prompts, final messages and runner logs are kept.                                       |
+| `MENTRA_RELEASE_COORDINATOR_KEY`                              | `~/.config/mentra-release-coordinator/private-key.pem` | App private key (0600) for posting on your own PRs.                                           |
+| `GH_ACCOUNT`                                                  | auto                                                   | `app` or `own`, see above.                                                                    |
+| `STALL_SECONDS` / `MAX_SECONDS` / `ATTEMPTS` / `POLL_SECONDS` | 480 / 1800 / 2 / 5                                     | Watchdog limits and poll interval.                                                            |
+| `LOCK_STALE_SECONDS`                                          | 60                                                     | Age after which a lock directory without a pid file is reclaimed.                             |
 
 The App must be installed on the target repository or the mint fails with HTTP 422 and the run
 falls back to a comment review from the logged-in account.
+
+## Tests
+
+`bun test scripts/codex-review` runs the lifecycle suite with fake `gh` and `codex` binaries:
+markers on every exit path, worktree ownership, lock behaviour, receipt-before-retry, and
+stall handling. CI runs it on changes under `scripts/codex-review/`.
 
 ## Extra prompt file
 
