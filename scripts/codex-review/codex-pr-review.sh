@@ -173,7 +173,18 @@ else
   echo "created by codex-pr-review.sh on $(date -u +%Y-%m-%dT%H:%M:%SZ); safe to delete together with $wt" > "$owned"
 fi
 [[ "$(git -C "$wt" rev-parse HEAD)" == "$head_sha" ]] || fail "worktree $wt is not at ${head_sha:0:8}"
-[[ -z "$(git -C "$wt" status --porcelain)" ]] || fail "worktree $wt is not clean after reset"
+# Right after a hard reset and clean, nothing a previous run left behind can remain:
+# untracked files would mean the clean failed, so that is fatal. Tracked paths that
+# still show as modified are a property of the checkout itself (case-colliding paths
+# on a case-insensitive filesystem, line-ending or mode normalisation), not leftovers;
+# they are reported and the review proceeds.
+wt_status=$(git -C "$wt" status --porcelain)
+if grep -q '^??' <<<"$wt_status"; then
+  fail "worktree $wt still has untracked files after clean"
+fi
+if [[ -n "$wt_status" ]]; then
+  echo "codex-pr-review: note: $(grep -c . <<<"$wt_status") tracked path(s) show as modified right after a hard reset (intrinsic to this checkout, e.g. case-colliding paths); continuing" >&2
+fi
 
 # Every PR also gets a "should this change exist at all" assessment.
 need_step="

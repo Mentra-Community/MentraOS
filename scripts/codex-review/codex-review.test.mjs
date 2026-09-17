@@ -64,7 +64,7 @@ case "\${FAKE_CODEX_MODE:-ok}" in
 esac
 `
 
-function makeFixture() {
+function makeFixture({caseCollision = false} = {}) {
   const root = mkdtempSync(join(tmpdir(), "codex-review-test-"))
   roots.push(root)
   const origin = join(root, "origin.git")
@@ -82,6 +82,15 @@ function makeFixture() {
     repo,
     `git checkout -qb feature && echo change >> file && git commit -qam change && git push -q origin feature && git checkout -q main`,
   )
+  if (caseCollision) {
+    // Two tracked paths that differ only by case, written with plumbing so the fixture
+    // can be built on any filesystem. On a case-insensitive volume a checkout of this
+    // commit always reports one of them as modified, even right after a hard reset.
+    sh(
+      repo,
+      `git checkout -q feature && one=$(echo one | git hash-object -w --stdin) && two=$(echo two | git hash-object -w --stdin) && git update-index --add --cacheinfo 100644,$one,Dup.txt --cacheinfo 100644,$two,dup.txt && git commit -qm collide && git push -q origin feature && git checkout -q -f main`,
+    )
+  }
   sh(origin, `git update-ref refs/pull/1/head "$(git rev-parse refs/heads/feature)"`)
   writeFileSync(join(bin, "gh"), FAKE_GH, {mode: 0o755})
   writeFileSync(join(bin, "codex"), FAKE_CODEX, {mode: 0o755})
@@ -235,6 +244,21 @@ describe("codex-pr-review.sh lifecycle", () => {
     expect(r.out).toContain("was not created by codex-pr-review")
     expect(readFileSync(join(f.worktree, "precious"), "utf8")).toBe("keep me")
     expect(codexCalls(f)).toBe(0)
+  }, 90_000)
+
+  test("reviews a head whose checkout is intrinsically modified (case-colliding paths)", () => {
+    const f = makeFixture({caseCollision: true})
+    const first = run(f, [f.repo, "1"])
+    expect(first.out).toContain("codex-pr-review: done")
+    // Reuse goes through reset + clean; the intrinsic state must not block it either.
+    const second = run(f, [f.repo, "1"])
+    expect(second.out).toContain("codex-pr-review: done")
+    const caseInsensitive = existsSync(f.repo.toUpperCase())
+    if (caseInsensitive) {
+      expect(second.out).toContain("tracked path(s) show as modified right after a hard reset")
+    } else {
+      expect(sh(f.worktree, "git status --porcelain")).toBe("")
+    }
   }, 90_000)
 
   test("reuses its own worktree after resetting leftovers", () => {
