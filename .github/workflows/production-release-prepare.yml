@@ -28,8 +28,6 @@ concurrency:
 
 env:
   ARTIFACTS_R2_ACCOUNT_ID: ${{ vars.ARTIFACTS_R2_ACCOUNT_ID }}
-  ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
-  ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
   ARTIFACTS_R2_BUCKET: artifactscdn
 
 jobs:
@@ -70,6 +68,8 @@ jobs:
       - name: Download and verify the completed selected beta
         id: beta
         env:
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
           GH_TOKEN: ${{ github.token }}
           BETA_IDENTITY: ${{ inputs.beta_identity }}
           BETA_TAG: ${{ steps.identity.outputs.beta_tag }}
@@ -94,6 +94,8 @@ jobs:
       - name: Download current production provenance
         id: previous
         env:
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
@@ -183,6 +185,8 @@ jobs:
       - name: Fingerprint every frozen preparation input
         id: selection
         env:
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
           BETA_IDENTITY: ${{ inputs.beta_identity }}
           BETA_TAG: ${{ steps.identity.outputs.beta_tag }}
           GH_TOKEN: ${{ github.token }}
@@ -212,6 +216,8 @@ jobs:
       - name: Read the family build containers
         id: family
         env:
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
           GH_TOKEN: ${{ github.token }}
           BETA_TAG: ${{ steps.identity.outputs.beta_tag }}
           PREVIOUS_FOUND: ${{ steps.previous.outputs.found }}
@@ -277,6 +283,8 @@ jobs:
       - name: Create frozen production plan and initial state
         id: record
         env:
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
           BETA_IDENTITY: ${{ inputs.beta_identity }}
           BETA_TAG: ${{ steps.identity.outputs.beta_tag }}
           GH_TOKEN: ${{ github.token }}
@@ -319,6 +327,8 @@ jobs:
       # coordinated run or attempt can take the same numbers.
       - name: Record the allocated build numbers in the family containers
         env:
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
           GH_TOKEN: ${{ github.token }}
           RELEASE_IDENTITY: ${{ steps.identity.outputs.release_identity }}
           FAMILY_RELEASE_ID: ${{ steps.family.outputs.release_id }}
@@ -350,6 +360,8 @@ jobs:
 
       - name: Publish immutable preparation evidence
         env:
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail

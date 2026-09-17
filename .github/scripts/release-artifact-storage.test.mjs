@@ -9,8 +9,10 @@ import {
   artifactUrl,
   mergeAssets,
   publishR2Artifact,
+  readArtifactIndex,
   readPublicIndex,
   releaseDownloadBody,
+  sha256File,
   updateIndex,
   usesPrivateArtifactStorage,
   validateIndex,
@@ -39,10 +41,15 @@ function memoryStore() {
   return {
     values,
     uploads: 0,
+    async list(prefix) {
+      return [...values]
+        .filter(([key]) => key.startsWith(prefix))
+        .map(([Key, value]) => ({Key, ETag: value.etag, LastModified: value.modified}))
+    },
     async head(key) {
       const value = values.get(key)
       return value
-        ? {ContentLength: value.body.length, Metadata: value.metadata, ETag: value.etag, LastModified: new Date(0)}
+        ? {ContentLength: value.body.length, Metadata: value.metadata, ETag: value.etag, LastModified: value.modified}
         : null
     },
     async read(key) {
@@ -54,12 +61,17 @@ function memoryStore() {
       if ((options.IfNoneMatch === "*" && old) || (options.IfMatch && old?.etag !== options.IfMatch)) {
         throw Object.assign(new Error("Precondition failed"), {$metadata: {httpStatusCode: 412}})
       }
-      values.set(key, {body: Buffer.from(body), etag: `etag-${++sequence}`, metadata: options.Metadata})
+      values.set(key, {
+        body: Buffer.from(body),
+        etag: `etag-${++sequence}`,
+        metadata: options.Metadata,
+        modified: new Date(),
+      })
     },
     async upload(key, file, hash, options = {}) {
       this.uploads++
       await this.put(key, await readFile(file), {
-        Metadata: {sha256: hash},
+        Metadata: {sha256: hash, ...(options.fingerprint ? {fingerprint: options.fingerprint} : {})},
         ...(options.etag ? {IfMatch: options.etag} : {IfNoneMatch: "*"}),
       })
     },
@@ -205,6 +217,101 @@ test("failed public verification cannot publish a download record", async (t) =>
   }
   await assert.rejects(publishR2Artifact(options), /SHA-256 mismatch/)
   assert.equal(await options.store.read(`${repository}/releases/${release.tag_name}/_assets.json`), null)
+  await assert.rejects(readArtifactIndex(repository, release.tag_name, options), /SHA-256 mismatch/)
+})
+
+test("a restarted build discovers verified committed bytes after index publication failed", async (t) => {
+  const options = await fixture(t)
+  const indexKey = `${repository}/releases/${release.tag_name}/_assets.json`
+  const put = options.store.put.bind(options.store)
+  options.store.put = async (key, ...args) => {
+    if (key === indexKey) throw new Error("Job stopped before indexing")
+    return put(key, ...args)
+  }
+  await assert.rejects(publishR2Artifact(options), /Job stopped/)
+  assert.equal(await options.store.read(indexKey), null)
+  options.store.put = put
+  let verifications = 0
+  options.verify = async (_repo, record, file) => {
+    verifications++
+    await writeFile(file, options.store.values.get(record.id.slice(3)).body)
+    assert.equal(record.digest, `sha256:${await sha256File(file)}`)
+    assert.equal(record.size, (await readFile(file)).length)
+  }
+  const index = await readArtifactIndex(repository, release.tag_name, options)
+  assert.deepEqual(
+    index.assets.map((a) => a.name),
+    [options.name],
+  )
+  assert.equal(JSON.parse((await options.store.read(indexKey)).body).assets[0].digest, index.assets[0].digest)
+  assert.ok(await options.store.read(`${repository}/releases/${release.tag_name}/index.html`))
+  // The next lookup sees this as reusable, without downloading or rebuilding.
+  assert.deepEqual(await readArtifactIndex(repository, release.tag_name, options), index)
+  assert.equal(verifications, 1)
+  await publishR2Artifact(options)
+  assert.equal(options.store.uploads, 1)
+})
+
+test("recovery restores PR reuse fingerprints and repairs an interrupted rolling replacement", async (t) => {
+  const options = {
+    ...(await fixture(t)),
+    release: {...release, tag_name: "pr-builds"},
+    replace: true,
+    fingerprint: digest,
+  }
+  const first = await publishR2Artifact(options)
+  await writeFile(options.file, "next signed APK")
+  await assert.rejects(
+    publishR2Artifact({
+      ...options,
+      verify: async () => {
+        throw new Error("Job stopped")
+      },
+    }),
+    /Job stopped/,
+  )
+  const index = await readArtifactIndex(repository, "pr-builds", options)
+  assert.equal(index.assets.length, 1)
+  assert.notEqual(index.assets[0].digest, first.digest)
+  assert.equal(index.assets[0].label, `mobile-v1:${digest}:${await sha256File(options.file)}`)
+})
+
+test("recovery cannot replace a newer concurrently published rolling record", async (t) => {
+  const options = {...(await fixture(t)), release: {...release, tag_name: "pr-builds"}, replace: true}
+  await assert.rejects(
+    publishR2Artifact({
+      ...options,
+      verify: async () => {
+        throw new Error("Job stopped")
+      },
+    }),
+    /Job stopped/,
+  )
+  const index = await readArtifactIndex(repository, "pr-builds", {
+    store: options.store,
+    verify: async () => {
+      await writeFile(options.file, "a newer successful publication")
+      await publishR2Artifact(options)
+    },
+  })
+  assert.equal(index.assets[0].digest, `sha256:${await sha256File(options.file)}`)
+})
+
+test("recovery never resurrects expired rolling objects awaiting lifecycle deletion", async (t) => {
+  const options = {...(await fixture(t)), release: {...release, tag_name: "pr-builds"}, replace: true}
+  await assert.rejects(
+    publishR2Artifact({
+      ...options,
+      verify: async () => {
+        throw new Error("Job stopped")
+      },
+    }),
+    /Job stopped/,
+  )
+  options.store.values.get(artifactKey(repository, "pr-builds", options.name)).modified = new Date(
+    Date.now() - 8 * 86400000,
+  )
+  assert.deepEqual((await readArtifactIndex(repository, "pr-builds", options)).assets, [])
 })
 
 test("upload failure without a committed matching object stays failed", async (t) => {

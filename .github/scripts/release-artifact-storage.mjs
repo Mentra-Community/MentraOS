@@ -1,8 +1,9 @@
 import {execFileSync} from "node:child_process"
 import {createHash, randomUUID} from "node:crypto"
 import {createReadStream, createWriteStream, existsSync, statSync} from "node:fs"
-import {mkdir, rename, rm} from "node:fs/promises"
+import {mkdir, mkdtemp, rename, rm} from "node:fs/promises"
 import {createRequire} from "node:module"
+import {tmpdir} from "node:os"
 import path from "node:path"
 import {Readable} from "node:stream"
 import {pipeline} from "node:stream/promises"
@@ -110,7 +111,88 @@ export async function listReleaseAssets(repository, release) {
   // Promotion evidence in a private draft must not become public as a side
   // effect of changing the transport used for public download artifacts.
   if (usesPrivateArtifactStorage(release)) return legacy
-  return mergeAssets(legacy, (await readPublicIndex(repository, release.tag_name)).assets)
+  return mergeAssets(legacy, (await readArtifactIndex(repository, release.tag_name)).assets)
+}
+
+export async function readArtifactIndex(repository, tag, {store, env = process.env, verify = downloadAsset} = {}) {
+  // CI must discover committed objects even if the previous job died before
+  // indexing them. Public/operator reads can still work without S3 credentials.
+  if (!store && !env.ARTIFACTS_R2_ACCESS_KEY_ID && !env.ARTIFACTS_R2_SECRET_ACCESS_KEY)
+    return readPublicIndex(repository, tag)
+  store ||= await createR2Store(env)
+  const prefix = artifactPrefix(repository, tag)
+  const previous = await store.read(prefix + INDEX_NAME)
+  const index = previous
+    ? validateIndex(JSON.parse(previous.body), repository, tag)
+    : {schemaVersion: 1, repository, tag, assets: []}
+  const known = new Map(index.assets.map((asset) => [asset.name, asset]))
+  const recovered = []
+  const retentionDays = {"pr-builds": 7, "oem-app-builds": 14}[tag]
+  for (const object of await store.list(prefix)) {
+    const name = object.Key.slice(prefix.length)
+    if (RESERVED_NAMES.has(name)) continue
+    artifactKey(repository, tag, name)
+    if (known.get(name)?.etag === object.ETag) continue
+    // Lifecycle deletion is asynchronous. Do not resurrect an expired rolling
+    // build that a sweep already removed from the download index.
+    if (retentionDays && object.LastModified.getTime() < Date.now() - retentionDays * 86400000) continue
+    const head = await store.head(object.Key)
+    if (!head) continue // It expired between listing and HEAD.
+    const asset = recordFromObject(repository, tag, name, head)
+    const directory = await mkdtemp(path.join(tmpdir(), "mentra-artifact-recovery-"))
+    try {
+      // A corrupt/unavailable committed object is a failure, never "not built".
+      await verify(repository, asset, path.join(directory, "artifact"))
+    } finally {
+      await rm(directory, {recursive: true, force: true})
+    }
+    recovered.push(asset)
+  }
+  if (!recovered.length) return index
+  const next = await updateIndex(store, repository, tag, (assets) => {
+    const current = new Map(assets.map((asset) => [asset.name, asset]))
+    for (const asset of recovered) {
+      // A concurrent publisher may have indexed a newer replacement while we
+      // verified this one. Preserve its record and only repair our snapshot.
+      if (JSON.stringify(current.get(asset.name)) === JSON.stringify(known.get(asset.name)))
+        current.set(asset.name, asset)
+    }
+    return [...current.values()]
+  })
+  await writeDownloadPage(store, repository, tag)
+  return next
+}
+
+function recordFromObject(repository, tag, name, head) {
+  const key = artifactKey(repository, tag, name)
+  const digest = head.Metadata?.sha256
+  const fingerprint = head.Metadata?.fingerprint
+  if (!/^[a-f0-9]{64}$/.test(digest || "") || (fingerprint && !/^[a-f0-9]{64}$/.test(fingerprint)))
+    throw new Error(`Committed R2 artifact ${name} has invalid checksum/fingerprint metadata`)
+  return validateIndex(
+    {
+      schemaVersion: 1,
+      repository,
+      tag,
+      assets: [
+        {
+          id: `r2:${key}`,
+          name,
+          size: head.ContentLength,
+          digest: `sha256:${digest}`,
+          state: "uploaded",
+          url: keyUrl(key),
+          browser_download_url: keyUrl(key),
+          created_at: head.LastModified.toISOString(),
+          updated_at: head.LastModified.toISOString(),
+          etag: head.ETag,
+          ...(fingerprint ? {label: `mobile-v1:${fingerprint}:${digest}`} : {}),
+        },
+      ],
+    },
+    repository,
+    tag,
+  ).assets[0]
 }
 
 export async function sha256File(file) {
@@ -183,7 +265,9 @@ export async function createR2Store(env = process.env) {
         "--no-audit",
         "--no-fund",
       ],
-      {stdio: ["ignore", "inherit", "inherit"]},
+      // Listing commands write JSON to stdout. Keep installation output out
+      // of that data stream, including the first call on a fresh runner.
+      {stdio: ["ignore", 2, 2]},
     )
   }
   const sdk = require("@aws-sdk/client-s3")
@@ -198,6 +282,16 @@ export async function createR2Store(env = process.env) {
   })
   const send = (command, input) => client.send(new sdk[command]({Bucket: bucket, ...input}))
   return {
+    async list(prefix) {
+      const objects = []
+      let token
+      do {
+        const result = await send("ListObjectsV2Command", {Prefix: prefix, ContinuationToken: token})
+        objects.push(...(result.Contents || []))
+        token = result.NextContinuationToken
+      } while (token)
+      return objects
+    },
     async head(key) {
       try {
         return await send("HeadObjectCommand", {Key: key})
@@ -218,7 +312,7 @@ export async function createR2Store(env = process.env) {
     put(key, body, options = {}) {
       return send("PutObjectCommand", {Key: key, Body: body, ...options})
     },
-    async upload(key, file, digest, {etag, replace = false} = {}) {
+    async upload(key, file, digest, {etag, replace = false, fingerprint} = {}) {
       const upload = new Upload({
         client,
         queueSize: 4,
@@ -231,7 +325,7 @@ export async function createR2Store(env = process.env) {
           ContentLength: statSync(file).size,
           ContentType: file.endsWith(".json") ? "application/json" : "application/octet-stream",
           CacheControl: replace ? "no-cache" : "public, max-age=31536000, immutable",
-          Metadata: {sha256: digest},
+          Metadata: {sha256: digest, ...(fingerprint ? {fingerprint} : {})},
           ...(etag ? {IfMatch: etag} : {IfNoneMatch: "*"}),
         },
       })
@@ -277,6 +371,13 @@ export function releaseDownloadBody(body, repository, tag) {
 
 const INDEX_HTML = `<!doctype html><html lang="en"><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Mentra release artifacts</title><style>body{font:16px system-ui;max-width:1000px;margin:48px auto;padding:0 24px}table{border-collapse:collapse;width:100%}th,td{text-align:left;padding:12px;border-bottom:1px solid #ddd}code{font-size:12px;overflow-wrap:anywhere}a{color:#1765ce}</style><h1>Mentra release artifacts</h1><p id="status">Loading downloads…</p><table><thead><tr><th>File</th><th>Size</th><th>SHA-256</th></tr></thead><tbody></tbody></table><noscript><a href="_assets.json">Download the artifact manifest</a></noscript><script>fetch('_assets.json?read='+Date.now(),{cache:'no-store'}).then(r=>{if(!r.ok)throw Error('Could not load downloads');return r.json()}).then(index=>{document.querySelector('#status').textContent=index.repository+' · '+index.tag;for(const a of index.assets){const row=document.createElement('tr'),name=document.createElement('td'),size=document.createElement('td'),hash=document.createElement('td'),link=document.createElement('a'),code=document.createElement('code');link.textContent=a.name;link.href=a.browser_download_url;name.append(link);size.textContent=(a.size/1000000).toFixed(1)+' MB';code.textContent=a.digest.replace('sha256:','');hash.append(code);row.append(name,size,hash);document.querySelector('tbody').append(row)}}).catch(e=>document.querySelector('#status').textContent=e.message)</script></html>`
 
+function writeDownloadPage(store, repository, tag) {
+  return store.put(artifactPrefix(repository, tag) + "index.html", INDEX_HTML, {
+    ContentType: "text/html; charset=utf-8",
+    CacheControl: "no-cache",
+  })
+}
+
 export async function publishR2Artifact({
   repository,
   release,
@@ -305,28 +406,16 @@ export async function publishR2Artifact({
     throw new Error(`Refusing to overwrite immutable R2 artifact ${name} with different bytes`)
   if (!matches(existing) || replace) {
     try {
-      await store.upload(key, file, digest, {replace, etag: existing?.ETag})
+      await store.upload(key, file, digest, {replace, etag: existing?.ETag, fingerprint})
     } catch (error) {
       // A lost completion response or a concurrent identical publisher is safe
       // to reconcile; an incomplete multipart upload never becomes an object.
       if (!matches(await store.head(key))) throw error
     }
   }
-  const now = new Date().toISOString()
-  const asset = {
-    id: `r2:${key}`,
-    name,
-    size,
-    digest: `sha256:${digest}`,
-    state: "uploaded",
-    url: keyUrl(key),
-    browser_download_url: keyUrl(key),
-    created_at: replace ? now : existing?.LastModified?.toISOString() || now,
-    updated_at: now,
-  }
-  if (fingerprint) {
-    asset.label = `mobile-v1:${fingerprint}:${digest}`
-  }
+  const committed = await store.head(key)
+  if (!matches(committed)) throw new Error(`Committed R2 artifact ${name} changed during publication`)
+  const asset = recordFromObject(repository, release.tag_name, name, committed)
   const verificationFile = `${file}.${randomUUID()}.verify`
   try {
     for (let attempt = 0; ; attempt++) {
@@ -343,10 +432,7 @@ export async function publishR2Artifact({
     await rm(verificationFile, {force: true})
   }
   await updateIndex(store, repository, release.tag_name, (assets) => [...assets.filter((a) => a.name !== name), asset])
-  await store.put(artifactPrefix(repository, release.tag_name) + "index.html", INDEX_HTML, {
-    ContentType: "text/html; charset=utf-8",
-    CacheControl: "no-cache",
-  })
+  await writeDownloadPage(store, repository, release.tag_name)
   if (updateRelease) {
     const current = resolveRelease(repository, {releaseId: release.id})
     const body = releaseDownloadBody(current.body, repository, release.tag_name)

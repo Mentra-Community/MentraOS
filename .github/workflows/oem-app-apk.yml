@@ -43,8 +43,6 @@ permissions:
 
 env:
   ARTIFACTS_R2_ACCOUNT_ID: ${{ vars.ARTIFACTS_R2_ACCOUNT_ID }}
-  ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
-  ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
   ARTIFACTS_R2_BUCKET: artifactscdn
 
 jobs:
@@ -192,6 +190,8 @@ jobs:
         # https://github.com/Mentra-Community/MentraOS/releases/tag/oem-app-builds
         if: github.event_name != 'pull_request'
         env:
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
           GITHUB_TOKEN: ${{ github.token }}
         uses: actions/github-script@v7
         with:
@@ -223,5 +223,7 @@ jobs:
         if: github.event_name != 'pull_request'
         continue-on-error: true
         env:
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
           GH_TOKEN: ${{ github.token }}
         run: node .github/scripts/release-assets.mjs sweep --tag oem-app-builds --days 14

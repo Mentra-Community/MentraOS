@@ -3,7 +3,7 @@ name: MentraOS ASG Client Build
 # Pull requests: publish the ASG client a PR mobile build pins for glasses OTA.
 #
 # Every Mobile App Android Build PR APK embeds the OTA manifest URL
-# https://github.com/<repo>/releases/download/pr-builds/ota-pr-<n>-<head sha>.json
+# https://artifactscdn.mentraglass.com/<repo>/releases/pr-builds/ota-pr-<n>-<head sha>.json
 # and this workflow is the only producer of that manifest, so its pull_request
 # paths must stay a superset of that workflow's. The manifest points at an ASG
 # client built from the PR's own ASG sources: the `select` job fingerprints
@@ -53,8 +53,6 @@ permissions:
 
 env:
   ARTIFACTS_R2_ACCOUNT_ID: ${{ vars.ARTIFACTS_R2_ACCOUNT_ID }}
-  ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
-  ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
   ARTIFACTS_R2_BUCKET: artifactscdn
   # Content-addressed ASG artifacts of the coordinated release lane
   # (reusable-coordinated-ota.yml): mentra-live-asg-<versionCode>-<fingerprint>.{apk,json}.
@@ -77,9 +75,16 @@ jobs:
           fetch-depth: 0
           filter: blob:none
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
       - name: Select the ASG client for this pull request
         id: select
         env:
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
@@ -94,6 +99,8 @@ jobs:
       - name: Publish the OTA manifest for the reused ASG client
         if: steps.select.outputs.mode == 'reuse'
         env:
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
           GH_TOKEN: ${{ github.token }}
           PROVENANCE_ASSET: ${{ steps.select.outputs.provenance_asset }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
@@ -183,7 +190,7 @@ jobs:
             const sha = context.payload.pull_request.head.sha.substring(0, 7);
 
             // Check for existing working build link to preserve
-            const existingDownloadMatch = comment.body.match(/\[📥 \*\*Download ASG APK\*\*\]\((https:\/\/github\.com[^)]+\.apk)\)/);
+            const existingDownloadMatch = comment.body.match(/\[📥 \*\*Download ASG APK\*\*\]\((https:\/\/(?:github\.com|artifactscdn\.mentraglass\.com)\/[^)]+\.apk)\)/);
             const existingShaMatch = comment.body.match(/🕶️ ASG Client[\s\S]*?✅ \*\*Ready to test!\*\* \(commit `([a-f0-9]+)`\)/);
 
             let buildStatus = `### 🕶️ ASG Client Build\n⏳ **Building...** (commit \`${sha}\`)`;
@@ -234,6 +241,11 @@ jobs:
             /opt/hostedtoolcache/CodeQL /usr/local/lib/node_modules 2>/dev/null || true
           sudo docker image prune --all --force 2>/dev/null || true
           echo "After:"; df -h / | tail -1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -375,6 +387,8 @@ jobs:
       - name: Upload APK to the public artifact CDN
         if: github.event_name == 'pull_request'
         env:
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
@@ -391,6 +405,8 @@ jobs:
         # runs have no PR manifest to publish.
         if: github.event_name == 'pull_request'
         env:
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
@@ -430,6 +446,8 @@ jobs:
         if: github.event_name == 'pull_request'
         continue-on-error: true
         env:
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
           GH_TOKEN: ${{ github.token }}
         run: node .github/scripts/release-assets.mjs sweep --tag pr-builds --days 7
 
@@ -489,7 +507,7 @@ jobs:
             const runUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
 
             // Check if there was a previous working build
-            const previousDownloadMatch = comment.body.match(/\[📥 \*\*Download ASG APK\*\*\]\((https:\/\/github\.com[^)]+\.apk)\)/);
+            const previousDownloadMatch = comment.body.match(/\[📥 \*\*Download ASG APK\*\*\]\((https:\/\/(?:github\.com|artifactscdn\.mentraglass\.com)\/[^)]+\.apk)\)/);
             const previousShaMatch = comment.body.match(/🕶️ ASG Client[\s\S]*?✅ \*\*Ready to test!\*\* \(commit `([a-f0-9]+)`\)/)
                                   || comment.body.match(/📦 \*\*Previous build:\*\* \(commit `([a-f0-9]+)`\)/);
 

@@ -3,7 +3,7 @@ import {execFileSync} from "node:child_process"
 import {appendFileSync, writeFileSync} from "node:fs"
 import path from "node:path"
 import {fileURLToPath} from "node:url"
-import {downloadAsset, mergeAssets, readPublicIndex} from "./release-artifact-storage.mjs"
+import {downloadAsset, mergeAssets, readArtifactIndex} from "./release-artifact-storage.mjs"
 
 // Include shared Metro sources and native inputs, not just mobile/. Firmware
 // selection and per-run packaging metadata do not change the compiled app.
@@ -59,7 +59,7 @@ export async function selectMobile({github, context, core}) {
     per_page: 100,
   })
   const repository = `${repo.owner}/${repo.repo}`
-  const assets = mergeAssets(legacy, (await readPublicIndex(repository, "pr-builds")).assets)
+  const assets = mergeAssets(legacy, (await readArtifactIndex(repository, "pr-builds")).assets)
   for (const asset of candidateAssets(assets, fingerprint)) {
     try {
       if (String(asset.id).startsWith("r2:")) {

@@ -4,7 +4,13 @@ import {randomUUID} from "node:crypto"
 import {mkdtemp, open, rm, writeFile} from "node:fs/promises"
 import {tmpdir} from "node:os"
 import path from "node:path"
-import {artifactPrefix, createR2Store, publishR2Artifact, readPublicIndex} from "./release-artifact-storage.mjs"
+import {
+  artifactPrefix,
+  createR2Store,
+  publishR2Artifact,
+  readArtifactIndex,
+  readPublicIndex,
+} from "./release-artifact-storage.mjs"
 
 // Synthetic data only. Never rebuild or publish a real release to check the
 // storage transport. Every object belongs to a unique disposable release key.
@@ -56,6 +62,15 @@ try {
   assert.equal(index.assets.length, 1)
   assert.equal(index.assets[0].digest, asset.digest)
   records.push({test: "idempotent retry and public index", uploads})
+  // Simulate a process stopping after object commit but before either index
+  // file was published. A fresh reader must discover and verify that object.
+  await store.remove(artifactPrefix(repository, tag) + "_assets.json")
+  await store.remove(artifactPrefix(repository, tag) + "index.html")
+  const recovered = await readArtifactIndex(repository, tag, {store})
+  assert.equal(recovered.assets[0].digest, asset.digest)
+  assert.equal((await readPublicIndex(repository, tag)).assets[0].digest, asset.digest)
+  assert.equal(uploads, 1)
+  records.push({test: "restart recovers a committed object missing its download index", uploads})
   console.log("R2 artifact storage check passed")
 } finally {
   try {

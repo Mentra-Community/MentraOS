@@ -44,8 +44,6 @@ concurrency:
 
 env:
   ARTIFACTS_R2_ACCOUNT_ID: ${{ vars.ARTIFACTS_R2_ACCOUNT_ID }}
-  ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
-  ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
   ARTIFACTS_R2_BUCKET: artifactscdn
 
 jobs:
@@ -90,6 +88,8 @@ jobs:
       - name: Download and verify the completed selected beta
         id: beta
         env:
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
           GH_TOKEN: ${{ github.token }}
           BETA_IDENTITY: ${{ inputs.beta_identity }}
           BETA_TAG: ${{ steps.identity.outputs.beta_tag }}
@@ -308,6 +308,8 @@ jobs:
 
       - name: Publish the evidence into the stable release container
         env:
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
           GH_TOKEN: ${{ github.token }}
         run: >-
           node .github/scripts/publish-immutable-release-asset.mjs
@@ -379,6 +381,8 @@ jobs:
 
       - name: Preflight the validated Sonatype deployment
         env:
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
           GH_TOKEN: ${{ github.token }}
           MAVEN_CENTRAL_TOKEN_BASE64: ${{ secrets.MAVEN_CENTRAL_TOKEN_BASE64 }}
           RELEASE_ID: ${{ needs.load.outputs.stable_release_id }}
@@ -409,6 +413,8 @@ jobs:
       - name: Preflight the staged SwiftPM commit against its archived export
         id: swiftpm
         env:
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
           GH_TOKEN: ${{ github.token }}
           RELEASE_ID: ${{ needs.load.outputs.stable_release_id }}
           VERSION: ${{ needs.load.outputs.release_identity }}
@@ -524,6 +530,8 @@ jobs:
 
       - name: Publish the evidence into the stable release container
         env:
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
           GH_TOKEN: ${{ github.token }}
         run: >-
           node .github/scripts/publish-immutable-release-asset.mjs

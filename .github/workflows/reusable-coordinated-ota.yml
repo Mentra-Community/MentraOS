@@ -59,8 +59,6 @@ concurrency:
 
 env:
   ARTIFACTS_R2_ACCOUNT_ID: ${{ vars.ARTIFACTS_R2_ACCOUNT_ID }}
-  ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
-  ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
   ARTIFACTS_R2_BUCKET: artifactscdn
   ASG_RELEASE_TAG: mentra-coordinated-asg
   ASG_SIGNING_CERT_SHA256: e8f49381d6324f0703d464328a46eaba1f40422be3b39085d521e38885677387
@@ -68,13 +66,8 @@ env:
 jobs:
   ota:
     name: Select ASG and publish immutable OTA bundle
-    # Ubuntu, matching the standalone ASG build, which already produces this
-    # same production-signed APK there. The signed APK is ~105 MB and the
-    # release API takes it as a single POST with no resumable or block upload,
-    # so publishing it needs an uplink that can finish 105 MB inside GitHub's
-    # ~120s window. The self-hosted Macs share a residential connection that
-    # cannot, and the build itself needs nothing local: inject-signing supplies
-    # the keystore from secrets.
+    # Match the standalone production-signed ASG build. Signing credentials
+    # are injected from secrets and public artifacts use multipart R2 uploads.
     runs-on: blacksmith-4vcpu-ubuntu-2404
     timeout-minutes: 90
     env:
@@ -171,6 +164,8 @@ jobs:
       - name: Allocate or reuse the ASG version code
         id: existing-asg
         env:
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
           GH_TOKEN: ${{ github.token }}
           ASG_FINGERPRINT: ${{ steps.asg-fingerprint.outputs.fingerprint }}
           ASG_BASE_VERSION: ${{ steps.asg-base.outputs.version }}
@@ -214,6 +209,8 @@ jobs:
       - name: Resolve ASG version name
         id: asg-version
         env:
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
           GH_TOKEN: ${{ github.token }}
           PROVENANCE_ASSET: ${{ steps.existing-asg.outputs.provenance_asset }}
           ASG_BASE_VERSION: ${{ steps.asg-base.outputs.version }}
@@ -244,6 +241,9 @@ jobs:
         id: names
         env:
           REPOSITORY: ${{ github.repository }}
+          ASG_REUSED: ${{ steps.existing-asg.outputs.exists }}
+          EXPECTED_APK_ASSET: ${{ steps.existing-asg.outputs.apk_asset }}
+          EXPECTED_PROVENANCE_ASSET: ${{ steps.existing-asg.outputs.provenance_asset }}
         run: |
           set -euo pipefail
           mkdir -p coordinated-ota-work/release-assets coordinated-ota-work/bundle
@@ -254,11 +254,17 @@ jobs:
           selection_asset=$(jq -er .artifactNames.asgSelection release-intent/release-plan.json)
           apk_asset=$(jq -er .apkAsset coordinated-ota-work/asg-build-identity.json)
           provenance_asset=$(jq -er .provenanceAsset coordinated-ota-work/asg-build-identity.json)
-          [[ "$apk_asset" == "${{ steps.existing-asg.outputs.apk_asset }}" ]]
-          [[ "$provenance_asset" == "${{ steps.existing-asg.outputs.provenance_asset }}" ]]
+          [[ "$apk_asset" == "$EXPECTED_APK_ASSET" ]]
+          [[ "$provenance_asset" == "$EXPECTED_PROVENANCE_ASSET" ]]
           release_tag=$(jq -er .artifactContainerTag release-intent/release-plan.json)
           asg_release_base="https://artifactscdn.mentraglass.com/${REPOSITORY}/releases/${ASG_RELEASE_TAG}"
           release_base="https://artifactscdn.mentraglass.com/${REPOSITORY}/releases/${release_tag}"
+          apk_url="${asg_release_base}/${apk_asset}"
+          if [[ "$ASG_REUSED" == "true" ]]; then
+            # Provenance is immutable, including its original GitHub/CDN URL.
+            # The downloaded APK and this URL are verified before publication.
+            apk_url=$(jq -er --arg asset "$apk_asset" 'select(.apk.asset == $asset) | .apk.url' coordinated-ota-work/asg-provenance.json)
+          fi
 
           {
             echo "release_identity=${release_identity}"
@@ -269,7 +275,7 @@ jobs:
             echo "manifest_asset=${manifest_asset}"
             echo "selection_asset=${selection_asset}"
             echo "bundle_asset=${bundle_asset}"
-            echo "apk_url=${asg_release_base}/${apk_asset}"
+            echo "apk_url=${apk_url}"
             echo "manifest_url=${release_base}/${manifest_asset}"
             echo "selection_url=${release_base}/${selection_asset}"
             echo "bundle_url=${release_base}/${bundle_asset}"
@@ -279,6 +285,8 @@ jobs:
       - name: Download reusable ASG artifact
         if: steps.existing-asg.outputs.exists == 'true'
         env:
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
           GH_TOKEN: ${{ github.token }}
           APK_ASSET: ${{ steps.names.outputs.apk_asset }}
         run: |
@@ -450,6 +458,8 @@ jobs:
       - name: Inspect immutable OTA asset state
         id: asset-state
         env:
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
@@ -516,6 +526,8 @@ jobs:
       - name: Publish or reconcile reusable ASG assets
         if: inputs.dry_run != true
         env:
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
@@ -536,6 +548,8 @@ jobs:
       - name: Publish this release set's immutable OTA assets
         if: inputs.dry_run != true
         env:
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail

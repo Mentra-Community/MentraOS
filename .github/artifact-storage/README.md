@@ -16,13 +16,19 @@ writes merge concurrent publishers without dropping another job's entries.
   `ARTIFACTS_R2_SECRET_ACCESS_KEY`.
 - `ARTIFACTS_R2_BUCKET=artifactscdn` in publishing workflows.
 
-These credentials are S3 credentials, not a Cloudflare API bearer token. Public
-downloads and index reads do not require credentials. Writes go directly to
-the authenticated R2 S3 endpoint; they do not pass through the CDN.
+These credentials are S3 credentials, not a Cloudflare API bearer token. Workflows
+scope them to artifact discovery/publication steps. Public downloads and index
+reads do not require credentials. With credentials, discovery also lists committed
+R2 objects and repairs missing/stale index entries after verifying their public
+bytes. This lets a restarted job reuse an upload that finished before its previous
+job stopped, instead of rebuilding conflicting immutable bytes. Object metadata
+retains the checksum and mobile build fingerprint needed for recovery. Writes go
+directly to the authenticated R2 S3 endpoint; they do not pass through the CDN.
 
-The publisher installs the lockfile-pinned AWS S3 client in this directory on
+Authenticated tooling installs the lockfile-pinned AWS S3 client in this directory on
 first use (`npm ci --ignore-scripts`). It does not install the monorepo or run
-application build hooks. Large files use 16 MiB multipart chunks, four concurrent
+application build hooks. Runners need Node 20+ and npm, including after disk-cleanup
+steps. Large files use 16 MiB multipart chunks, four concurrent
 parts, and up to five SDK attempts per request. Failed multipart uploads are
 aborted. Publication verifies the complete file through the public CDN before
 adding it to the index.
@@ -70,7 +76,8 @@ by external repositories continue to be read from their recorded source URLs.
 
 `Release Artifact Storage Checks` uploads synthetic 110 MiB files from both
 GitHub-hosted Ubuntu and Blacksmith, verifies the public download digest,
-simulates a lost completion response, and verifies an idempotent retry. It
+simulates a lost completion response, verifies an idempotent retry, and recovers
+a committed file after removing its download index. It
 deletes its unique diagnostic objects after the check. It runs on relevant
 same-repository pull requests and supports manual dispatch. Unit coverage also
 checks index conflicts, immutable-name conflicts, failed verification, private

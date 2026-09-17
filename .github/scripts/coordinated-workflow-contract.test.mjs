@@ -29,6 +29,23 @@ function jobBlock(source, name) {
   return next === -1 ? rest : rest.slice(0, next + 1)
 }
 
+test("example finalization authenticates historical asset URL lookup", () => {
+  const finalize = jobBlock(workflow("coordinated-example-release.yml"), "finalize-example")
+  const step = finalize
+    .split("      - name: Assemble the example release record against the finalized beta\n")[1]
+    .split("\n      - name:")[0]
+  assert.match(step, /env:\n(?:          .*\n)*          GH_TOKEN: \$\{\{ github.token \}\}/)
+  assert.match(step, /release-assets\.mjs url .*--existing true/)
+})
+
+test("ASG publication restores Node and npm after runner disk cleanup", () => {
+  const build = jobBlock(workflow("mentra-asg-client-build.yml"), "build")
+  const cleanup = build.indexOf("/usr/local/lib/node_modules")
+  const setup = build.indexOf("uses: actions/setup-node@v4", cleanup)
+  assert.ok(cleanup > 0 && setup > cleanup)
+  assert.ok(build.indexOf("publish-immutable-release-asset.mjs", setup) > setup)
+})
+
 test("coordinated OTA assets have bounded release ownership", () => {
   const coordinator = workflow("coordinated-release.yml")
   const ota = workflow("reusable-coordinated-ota.yml")
