@@ -15,6 +15,7 @@ function home(id: string, visible: boolean, relaunch = false): Step {
       {selector: call, ...(visible ? {count: 1} : {absent: true})},
     ],
     timeoutMs: 30000,
+    stableForMs: 1000,
   }
 }
 
@@ -76,6 +77,7 @@ function searchHidden(prefix: string): Step[] {
       instruction: "Search All Apps for Call.",
       expected: "The search reads Call and Mentra Call is absent, including previously installed entries.",
       action: {op: "type", method: "ax-value", selector: {identifier: "home.allApps.search"}, text: "Call"},
+      stableForMs: 1000,
       checks: [
         {selector: {identifier: "home.allApps.search", value: "Call"}},
         {selector: {identifier: "allApps.miniapp.com.mentra.call"}, absent: true},
