@@ -1488,6 +1488,26 @@ struct ViewState {
 
     func dbg2() {}
 
+    func queryWearState() {
+        sgc?.queryWearState()
+    }
+
+    func setWearReporting(_ enabled: Bool) {
+        sgc?.setWearReporting(enabled)
+    }
+
+    func setWearTuning(intervalMs: Int, count: Int, majority: Int) {
+        sgc?.setWearTuning(intervalMs: intervalMs, count: count, majority: majority)
+    }
+
+    func requestWearTuning() {
+        sgc?.requestWearTuning()
+    }
+
+    func resetWearTuning() {
+        sgc?.resetWearTuning()
+    }
+
     func startStream(_ message: [String: Any]) {
         var message = message
         Bridge.log("MAN: startStream: \(message)")
