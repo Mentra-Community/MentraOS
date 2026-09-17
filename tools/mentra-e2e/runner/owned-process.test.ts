@@ -8,7 +8,7 @@ test("a graceful owned child can finalize evidence before exit", async () => {
       "-e",
       `process.on('SIGTERM', () => process.exit(0)); console.log('ready'); setInterval(() => {}, 1000)`,
     ],
-    {stdout: "pipe"},
+    {stdin: "ignore", stdout: "pipe", stderr: "pipe"},
   )
   try {
     const reader = child.stdout.getReader()
@@ -24,7 +24,7 @@ test("a graceful owned child can finalize evidence before exit", async () => {
 test("a hung child cannot block other cleanup or be reported as graceful", async () => {
   const child = Bun.spawn(
     [process.execPath, "-e", `process.on('SIGTERM', () => {}); console.log('ready'); setInterval(() => {}, 1000)`],
-    {stdout: "pipe"},
+    {stdin: "ignore", stdout: "pipe", stderr: "pipe"},
   )
   try {
     const reader = child.stdout.getReader()

@@ -39,7 +39,7 @@ import {
 } from "@mentra/engine"
 
 import {isOfflineHosted} from "@/components/miniapp/offlineHostedPackages"
-import {shouldHideMiniapp, SYSTEM_APPS} from "@/constants/miniapps"
+import {SYSTEM_APPS} from "@/constants/miniapps"
 import {useForegroundApps} from "@/hooks/useAppsExtras"
 import {uninstallAppUI} from "@/utils/uninstallAppUI"
 import {askPermissionsUI, checkPermissionsUI} from "@/utils/PermissionsUtils"
@@ -345,8 +345,6 @@ export function AppsGrid({
   // actually changes. Same semantics, no mutation of React state during render.
   const {gridData, nextOrderMap} = useMemo(() => {
     let filteredApps = apps.filter((app) => {
-      // All Apps includes user-hidden entries, but must honor platform exclusions.
-      if (shouldHideMiniapp(app.packageName)) return false
       if (showAllApps) {
         return true
       }
