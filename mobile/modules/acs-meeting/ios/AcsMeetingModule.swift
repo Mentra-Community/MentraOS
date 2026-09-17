@@ -140,6 +140,17 @@ public class AcsMeetingModule: Module {
             }
         }
 
+        AsyncFunction("admitParticipant") { (participantId: String, promise: Promise) in
+            guard let session = self.session else {
+                promise.reject(AcsMeetingError("No active meeting"))
+                return
+            }
+            session.admitParticipant(participantId) { error in
+                if let error { promise.reject(error) }
+                else { promise.resolve(nil) }
+            }
+        }
+
         AsyncFunction("scopedNetworkInfo") { (promise: Promise) in
             self.hotspot.info { promise.resolve($0) }
         }
@@ -255,6 +266,7 @@ final class AcsMeetingSession {
     private var capabilitiesFeature: CapabilitiesCallFeature?
     /// nil means "not reported yet", which the miniapp shows as End disabled rather than absent.
     private var hangUpForEveryone: (allowed: Bool, reason: String)?
+    private var manageLobby: (allowed: Bool, reason: String)?
     private lazy var callDelegateProxy = AcsCallDelegateProxy(
         onStateChange: { [weak self] call in self?.handleCallStateChange(call) },
         onMuteChange: { [weak self] call in self?.handleCallMuteChange(call) },
@@ -298,7 +310,12 @@ final class AcsMeetingSession {
             hangUp["allowed"] = capability.allowed
             hangUp["reason"] = capability.reason
         }
-        result["capabilities"] = ["hangUpForEveryone": hangUp]
+        var lobby: [String: Any] = [:]
+        if let capability = manageLobby {
+            lobby["allowed"] = capability.allowed
+            lobby["reason"] = capability.reason
+        }
+        result["capabilities"] = ["hangUpForEveryone": hangUp, "manageLobby": lobby]
         if let ingestUrl = media?.ingestUrl { result["ingestUrl"] = ingestUrl }
         if let mediaSourceReason { result["mediaSourceReason"] = mediaSourceReason }
         if let meetingUrl { result["meetingUrl"] = meetingUrl }
@@ -756,6 +773,46 @@ final class AcsMeetingSession {
         return "hang_up_for_everyone_not_allowed:\(capability.reason)"
     }
 
+    /// Admit only the selected guest from this call. Never changes meeting policy.
+    func admitParticipant(_ participantId: String, completion: @escaping (Error?) -> Void) {
+        queue.async { [weak self] in
+            guard let self, let active = self.call, active.state == .connected else {
+                completion(AcsMeetingError("No connected meeting"))
+                return
+            }
+            guard self.readCapability(.manageLobby)?.allowed == true else {
+                completion(AcsMeetingError("This meeting does not allow you to admit guests"))
+                return
+            }
+            guard let guest = active.callLobby.participants.first(where: {
+                $0.identifier.rawId == participantId && $0.state == .inLobby
+            }) else {
+                completion(AcsMeetingError("This guest is no longer waiting in the lobby"))
+                return
+            }
+            active.callLobby.admit(identifiers: [guest.identifier]) { [weak self] result, error in
+                guard let self else {
+                    completion(error ?? AcsMeetingError("The meeting ended"))
+                    return
+                }
+                self.queue.async {
+                    guard self.call === active else {
+                        completion(AcsMeetingError("The meeting changed before admission completed"))
+                        return
+                    }
+                    if let error { completion(error); return }
+                    guard result?.successCount == 1, result?.failedParticipants.isEmpty == true else {
+                        completion(AcsMeetingError("Teams did not admit this guest"))
+                        return
+                    }
+                    self.refreshRosterLocked(active)
+                    self.onState(self.snapshot())
+                    completion(nil)
+                }
+            }
+        }
+    }
+
     /**
      Subscribe to the runtime capability that decides whether End is offered.
 
@@ -774,9 +831,13 @@ final class AcsMeetingSession {
         queue.async { [weak self] in
             guard let self else { return }
             let next = self.readHangUpForEveryone()
+            let lobby = self.readCapability(.manageLobby)
             guard next?.allowed != self.hangUpForEveryone?.allowed
-                || next?.reason != self.hangUpForEveryone?.reason else { return }
+                || next?.reason != self.hangUpForEveryone?.reason
+                || lobby?.allowed != self.manageLobby?.allowed
+                || lobby?.reason != self.manageLobby?.reason else { return }
             self.hangUpForEveryone = next
+            self.manageLobby = lobby
             NSLog("ACS-SPIKE hangUpForEveryone allowed=\(next?.allowed.description ?? "unknown") reason=\(next?.reason ?? "-")")
             self.onState(self.snapshot())
         }
@@ -787,11 +848,16 @@ final class AcsMeetingSession {
         capabilitiesFeature?.delegate = nil
         capabilitiesFeature = nil
         hangUpForEveryone = nil
+        manageLobby = nil
     }
 
     private func readHangUpForEveryone() -> (allowed: Bool, reason: String)? {
+        readCapability(.hangUpForEveryone)
+    }
+
+    private func readCapability(_ type: ParticipantCapabilityType) -> (allowed: Bool, reason: String)? {
         guard let feature = capabilitiesFeature else { return nil }
-        guard let capability = feature.capabilities.first(where: { $0.type == .hangUpForEveryone }) else { return nil }
+        guard let capability = feature.capabilities.first(where: { $0.type == type }) else { return nil }
         return (capability.isAllowed, String(describing: capability.reason))
     }
 
