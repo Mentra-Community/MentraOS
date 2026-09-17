@@ -31,7 +31,12 @@ case "$1 $2" in
     if [[ "$*" == *headRefOid* ]]; then git -C "$FAKE_ORIGIN" rev-parse refs/pull/1/head
     else echo "alice main feature OPEN Fixture title"; fi ;;
   "api user") echo "bob" ;;
-  "api repos/Mentra-Community/fixture/pulls/1/reviews") cat "$FAKE_STATE/receipts" 2>/dev/null || echo 0 ;;
+  "api repos/Mentra-Community/fixture/pulls/1/reviews")
+    case "\${FAKE_GH_REVIEWS:-ok}" in
+      fail) echo "gh: HTTP 502 from GitHub" >&2; exit 1 ;;
+      garbage) echo "not a number" ;;
+      *) cat "$FAKE_STATE/receipts" 2>/dev/null || echo 0 ;;
+    esac ;;
   *) exit 0 ;;
 esac
 `
@@ -338,7 +343,48 @@ describe("codex-pr-review.sh lifecycle", () => {
   }, 90_000)
 })
 
+describe("receipt lookup failures", () => {
+  test("a failed lookup after a clean Codex exit is FAILED, never done", () => {
+    const f = makeFixture()
+    const r = run(f, [f.repo, "1"], {FAKE_GH_REVIEWS: "fail"})
+    expect(r.out).toContain("cannot verify whether the review was posted")
+    expect(r.out).not.toContain("codex-pr-review: done")
+  }, 90_000)
+
+  test("a crash with unknown posting status is not retried", () => {
+    const f = makeFixture()
+    const r = run(f, [f.repo, "1"], {FAKE_CODEX_MODE: "post-then-crash", FAKE_GH_REVIEWS: "fail"})
+    expect(r.out).toContain("codex-pr-review: FAILED")
+    expect(codexCalls(f)).toBe(1)
+    const runner = readFileSync(join(f.reviews, sh(f.reviews, "ls"), "runner.log"), "utf8")
+    expect(runner).toContain("cannot tell whether attempt 1 posted its review")
+  }, 90_000)
+
+  test("an unparseable lookup is treated as unknown", () => {
+    const f = makeFixture()
+    const r = run(f, [f.repo, "1"], {FAKE_GH_REVIEWS: "garbage"})
+    expect(r.out).toContain("cannot verify whether the review was posted")
+    expect(r.out).not.toContain("codex-pr-review: done")
+  }, 90_000)
+})
+
 describe("review-receipt.sh", () => {
+  function receiptRun(f, extraEnv = {}) {
+    return spawnSync("bash", [receipt, "Mentra-Community/fixture", "1", "abc", "2026-01-01T00:00:00Z"], {
+      encoding: "utf8",
+      env: {...process.env, PATH: `${f.bin}:${process.env.PATH}`, FAKE_STATE: f.state, ...extraEnv},
+    })
+  }
+
+  test("exits 2 with no output when GitHub fails or answers garbage", () => {
+    const f = makeFixture()
+    for (const mode of ["fail", "garbage"]) {
+      const r = receiptRun(f, {FAKE_GH_REVIEWS: mode})
+      expect(r.status).toBe(2)
+      expect(r.stdout.trim()).toBe("")
+    }
+  })
+
   test("sums the per-page counts gh prints", () => {
     const f = makeFixture()
     writeFileSync(join(f.state, "receipts"), "1\n2\n")

@@ -212,8 +212,11 @@ REVIEW_SLUG="$slug" REVIEW_PR="$pr" REVIEW_HEAD="$head_sha" REVIEW_STARTED_AT="$
   "$script_dir/codex-review.sh" "$wt" "$repo_name" "$out_dir/last-message.txt" "$prompt" \
   > "$out_dir/runner.log" 2>&1 || { tail -5 "$out_dir/runner.log" >&2; fail "runner did not finish (see $out_dir/runner.log)"; }
 # Codex exiting cleanly is not the deliverable; a review from this run on this head is.
-posted=$("$script_dir/review-receipt.sh" "$slug" "$pr" "$head_sha" "$started_at" 2>/dev/null || echo 0)
-if [[ "${posted:-0}" -lt 1 ]]; then
+# An unknown answer (API failure) is not zero: it fails the run, never passes it.
+posted=$("$script_dir/review-receipt.sh" "$slug" "$pr" "$head_sha" "$started_at") \
+  || fail "cannot verify whether the review was posted on ${head_sha:0:8}: GitHub review lookup failed (see $out_dir/last-message.txt)"
+[[ "$posted" =~ ^[0-9]+$ ]] || fail "review lookup returned an unusable count '${posted}'"
+if (( posted < 1 )); then
   fail "Codex finished but no review from this run is on ${head_sha:0:8} (see $out_dir/last-message.txt)"
 fi
 reported=1

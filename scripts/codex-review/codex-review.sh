@@ -31,11 +31,17 @@ out_dir=$(dirname "$output")
 # shellcheck source=common.sh
 source "$script_dir/common.sh"
 
-# Prints the number of reviews this run has already posted, or 0 when the
-# wrapper did not pass PR coordinates (standalone use).
+# Prints the number of reviews this run has already posted, "unknown" when GitHub
+# could not answer, or 0 when the wrapper did not pass PR coordinates (standalone use).
 posted_reviews() {
+  local count
   if [[ -n "${REVIEW_SLUG:-}" && -n "${REVIEW_PR:-}" && -n "${REVIEW_HEAD:-}" && -n "${REVIEW_STARTED_AT:-}" ]]; then
-    "$script_dir/review-receipt.sh" "$REVIEW_SLUG" "$REVIEW_PR" "$REVIEW_HEAD" "$REVIEW_STARTED_AT" 2>/dev/null || echo 0
+    if count=$("$script_dir/review-receipt.sh" "$REVIEW_SLUG" "$REVIEW_PR" "$REVIEW_HEAD" "$REVIEW_STARTED_AT" 2>/dev/null) \
+       && [[ "$count" =~ ^[0-9]+$ ]]; then
+      echo "$count"
+    else
+      echo unknown
+    fi
   else
     echo 0
   fi
@@ -141,8 +147,14 @@ for attempt in $(seq 1 "$ATTEMPTS"); do
     echo "codex-review: attempt $attempt finished"; tail -c 1500 "$output"; exit 0
   fi
   echo "codex-review: attempt $attempt did not finish (exit $status)" >&2
-  # The attempt may have posted its verdict before dying. Never retry a posted review.
-  if [[ "$(posted_reviews)" -ge 1 ]]; then
+  # The attempt may have posted its verdict before dying. Never retry a posted review,
+  # and never retry while it is unknown whether one was posted.
+  posted=$(posted_reviews)
+  if [[ "$posted" == unknown ]]; then
+    echo "codex-review: FAILED: cannot tell whether attempt $attempt posted its review (GitHub lookup failed); not retrying" >&2
+    exit 1
+  fi
+  if (( posted >= 1 )); then
     echo "codex-review: attempt $attempt posted its review before exiting; treating as success" >&2
     [[ -s "$output" ]] || echo "(Codex exited $status after posting; see $events for the transcript)" > "$output"
     exit 0
