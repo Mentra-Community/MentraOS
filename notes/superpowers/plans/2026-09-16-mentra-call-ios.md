@@ -367,3 +367,32 @@ returned to uid2000, and the exact meeting was retired (DELETE204 / GET404).
 The controller performed zero audio routing mutations; all user-selected audio
 device UIDs matched before and after. The test-only Mac network adapter remains
 explicitly declared. Return audio and native iPhone association remain unqualified.
+
+
+## Capability-gated lobby admission — implementation validation
+
+Microsoft documents [lobby admission](https://learn.microsoft.com/en-us/azure/communication-services/how-tos/calling-sdk/lobby)
+for connected callers with organizer, co-organizer or presenter permission.
+The installed SDK exposes `manageLobby` and individual `CallLobby.admit`.
+The new host path reports that capability and permits one current lobby guest
+at a time, using the exact participant identifier from the active call. The
+miniapp gets a named Admit button only when permission is explicitly granted.
+Unknown/denied permission never enables it. There is no admit-all action or
+meeting/tenant policy change. Failure leaves the ongoing call intact; success
+still requires the native participant state to change to connected.
+
+Call 2.1.16 (`5412bac` locally in the external repository) includes the typed
+SDK bridge and UI. Its production-backend ZIP SHA is
+`fe39832978a067b3c1d2f86a233abbc16b58db7bc1f48f035c3d2cd1a54b7b5f`.
+Validation: 473 miniapp tests / 1,355 assertions; 84 host-service tests / 229
+assertions; 27 SDK meeting tests / 71 assertions; miniapp and SDK TypeScript.
+The signed Release build passed with clean integration source `abe03aab716b`,
+native SHA `6dc59afac11706a3733bf1039fb36ee2c0176863eb4478f043e8b4737818bfb1`
+and JS SHA `a7db04379bcb5294e386e5f3fbca5e11276b96648b26c5bece78a2899c8fe278`.
+
+The first UI run retained failure at the intentional Classic-disconnected
+warning. A separate one-step recording chose Mentra's Ignore for this declared
+roster-only fixture; no audio devices were selected. The subsequent 13-step
+UI replay `2026-09-17T04-10-29-826Z-mentra-call-ui-06aba8` passed in 13.985 seconds,
+with zero model calls and verified PNG/AX/video/chapters/liveness. This does not
+qualify the newly added admission action; the next real call tests it.
