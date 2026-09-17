@@ -254,6 +254,12 @@ class DeviceStore {
         case ("bluetooth", "loudness_gate_enabled"):
             DeviceManager.shared.sgc?.sendLoudnessGateSetting()
 
+        // Deliberately has no seeded default: the key starts absent so that a
+        // session where the engine has not authorized tuning can only ever
+        // send a reset.
+        case ("bluetooth", "mic_tuning"):
+            DeviceManager.shared.sgc?.sendMicTuningSetting()
+
         case ("bluetooth", "screen_disabled"):
             if let disabled = value as? Bool {
                 if disabled {
