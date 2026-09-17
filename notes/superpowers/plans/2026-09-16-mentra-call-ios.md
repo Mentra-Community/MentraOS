@@ -456,3 +456,59 @@ consumed. Streams remain stopped. Private proof is in
 `2026-09-17T05-24-21Z-call-quota-allowlist/verification.json` in the integration
 worktree's E2E evidence directory. This removes the account quota gate only;
 media, permission persistence and publication qualification remain unchanged.
+
+
+## Portable live replay passes, September 17
+
+The user resumed testing with a strict limit of ten further live attempts,
+including failures. After the separate 03BE Bluetooth Classic entry was
+connected, CoreAudio exposed its speaker and microphone UIDs. The routine
+records and preserves the user's input, output and system choices; it makes
+zero audio routing mutations.
+
+A private ledger reserved four attempts. Attempt 1 failed before browser launch
+because `playwright-core` was missing; the dependency is now installed and
+checked before hardware setup. Attempt 2 received HTTP 503 while the production
+backend restarted. Its native error is now an explicit fail-fast condition.
+Both failed recordings passed artifact/liveness verification and retained their
+failures. No extra retry is hidden from the attempt budget.
+
+Attempts 3 and 4 passed consecutively using the same installed signed build:
+
+| Run | Native recording | Browser recording | Result |
+| --- | --- | --- | --- |
+| `2026-09-17T05-41-53-618Z-call-incoming-video-f716b0` | 27 steps, 113.802 s | 9 chapters, 17.72 s, 55 ms calibration uncertainty | Passed |
+| `2026-09-17T05-44-11-613Z-call-incoming-video-978d08` | 27 steps, 119.787 s | 9 chapters, 17.16 s, 48 ms calibration uncertainty | Passed |
+
+Each run created one Direct link meeting, admitted only the named anonymous
+browser guest, verified one participant in the native roster and advancing
+960×540 glasses video in Teams, left the browser, verified zero participants,
+left the native call and returned home. No model calls or email codes were
+needed. The second browser sample advanced from 0.087 to 5.190 seconds at
+readyState 4. Neither run logged a Local Network prohibition or needed manual
+intervention. This is repeatability evidence for this unchanged installation,
+not proof that permission persists across future installs or rebuilds.
+
+Both exact Graph meetings were independently retired (DELETE 204, then GET 404).
+Hotspot cleanup, ADB restoration, scoped capture retention and unchanged audio
+UIDs were verified. Native PNG/AX/video/chapters/frame-liveness verification
+passed independently. Browser camera and microphone were off, so these passes
+do not qualify return audio, laptop-camera transmission, mute/rejoin or a
+physical iPhone. Six of the user's ten further attempts remain available.
+
+
+### Android listener-close CI failure
+
+CI run 35185646439 failed twice because the replacement listener could not bind
+its just-closed port. The close barrier was signaled before closing the socket,
+and Java can defer descriptor release until a blocked `accept()` unwinds.
+The listener's accept thread now owns that barrier and signals only after its
+socket closes; concurrent close calls cannot signal it early. The hard teardown
+waits for both the listener and connection workers within one timeout budget.
+No port retry, sleep or weakened bind assertion was added.
+
+Validation: the real-loopback and rebind suites passed (22 tests), then all 348
+glasses-media JVM tests passed locally on Android Studio JBR 21. CI uses Java 17
+on Linux and remains the required platform confirmation. Native Android sources
+compiled through the generated Expo Android project; no glasses stream or Mac
+app rebuild was used for this check.
