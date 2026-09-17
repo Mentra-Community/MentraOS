@@ -278,6 +278,12 @@ object DeviceStore {
             "bluetooth" to "loudness_gate_enabled" -> {
                 DeviceManager.getInstance().sgc?.sendLoudnessGateSetting()
             }
+            // Deliberately has no seeded default above: the key starts absent so
+            // that a session where the engine has not authorized tuning can only
+            // ever send a reset.
+            "bluetooth" to "mic_tuning" -> {
+                DeviceManager.getInstance().sgc?.sendMicTuningSetting()
+            }
             "bluetooth" to "nex_lc3_audio_playback" -> {
                 (value as? Boolean)?.let { enabled ->
                     Bridge.log("DeviceStore: nex_lc3_audio_playback changed to $enabled")
