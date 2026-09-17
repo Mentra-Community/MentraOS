@@ -1048,14 +1048,16 @@ export function GalleryScreen() {
   // The performance trade-off is acceptable for correct scrolling behavior.
 
   // UI state
-  const isLoading = syncState === "connecting_wifi" || syncState === "requesting_hotspot" || isInitialLoading
+  const isLoading =
+    syncState === "connecting_wifi" ||
+    syncState === "requesting_hotspot" ||
+    syncState === "preparing" ||
+    isInitialLoading
   const isSyncing = syncState === "syncing"
 
   const shouldShowSyncButton =
     glassesGalleryStatus.hasContent ||
-    syncState === "requesting_hotspot" ||
-    syncState === "connecting_wifi" ||
-    syncState === "syncing" ||
+    galleryStatus.isSyncing ||
     syncState === "complete" ||
     syncState === "error"
 
@@ -1109,8 +1111,9 @@ export function GalleryScreen() {
             </View>
           )
 
+        case "preparing":
         case "syncing":
-          if (totalFiles === 0) {
+          if (syncState === "preparing" || totalFiles === 0) {
             return (
               <View style={themed($syncButtonRow)}>
                 <ActivityIndicator size="small" color={theme.colors.foreground} style={{marginRight: spacing.s2}} />

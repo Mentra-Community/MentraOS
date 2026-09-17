@@ -32,6 +32,7 @@ export type SyncState =
   | "idle"
   | "requesting_hotspot"
   | "connecting_wifi"
+  | "preparing"
   | "syncing"
   | "complete"
   | "error"
@@ -374,7 +375,10 @@ export const selectSyncProgress = (state: GallerySyncState) => ({
 })
 
 export const selectIssyncing = (state: GallerySyncState) =>
-  state.syncState === "syncing" || state.syncState === "requesting_hotspot" || state.syncState === "connecting_wifi"
+  state.syncState === "syncing" ||
+  state.syncState === "preparing" ||
+  state.syncState === "requesting_hotspot" ||
+  state.syncState === "connecting_wifi"
 
 export const selectGlassesGalleryStatus = (state: GallerySyncState) => ({
   photos: state.glassesPhotoCount,
