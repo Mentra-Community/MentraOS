@@ -9,12 +9,19 @@ export function teamsMeetingUrl(text: string): string {
   return url.href
 }
 
-export type TeamsPhase = "lobby" | "connected" | "prejoin" | "signin" | "unknown"
+export type TeamsPhase = "lobby" | "connected" | "left" | "prejoin" | "signin" | "unknown"
 
 /** A lobby is not a call, even when a camera preview or participant count is visible. */
-export function classifyTeams(signals: {lobby: boolean; leave: boolean; join: boolean; signin: boolean}): TeamsPhase {
+export function classifyTeams(signals: {
+  lobby: boolean
+  leave: boolean
+  left?: boolean
+  join: boolean
+  signin: boolean
+}): TeamsPhase {
   if (signals.lobby) return "lobby"
   if (signals.leave) return "connected"
+  if (signals.left) return "left"
   if (signals.join) return "prejoin"
   if (signals.signin) return "signin"
   return "unknown"
@@ -24,6 +31,7 @@ export async function teamsPhase(page: Page): Promise<TeamsPhase> {
   return classifyTeams({
     lobby: await page.getByRole("heading", {name: /Someone will let you in shortly/i}).isVisible(),
     leave: await page.getByRole("button", {name: "Leave", exact: true}).isVisible(),
+    left: await page.getByRole("button", {name: /^Rejoin(?: meeting)?$/}).isVisible(),
     join: await page.getByRole("button", {name: "Join now", exact: true}).isVisible(),
     signin:
       /login\.microsoftonline\.com|login\.live\.com/.test(new URL(page.url()).hostname) ||

@@ -250,7 +250,7 @@ try {
       await verifyIncomingVideo("initial-")
       if (values.rejoin) {
         await runPage.getByRole("button", {name: "Leave", exact: true}).click()
-        await runPage.getByRole("button", {name: "Rejoin", exact: true}).waitFor({state: "visible", timeout: 10000})
+        await runPage.getByRole("button", {name: /^Rejoin(?: meeting)?$/}).waitFor({state: "visible", timeout: 10000})
         cleanup = "left"
         await nativeDepartureAcknowledged(() =>
           evidence(
@@ -258,7 +258,7 @@ try {
             "Leave and wait for the native roster to verify zero participants before rejoining.",
           ),
         )
-        await runPage.getByRole("button", {name: "Rejoin", exact: true}).click()
+        await runPage.getByRole("button", {name: /^Rejoin(?: meeting)?$/}).click()
         cleanup = "not-needed"
         await evidence("rejoin-requested", "Rejoin this same meeting while the glasses stream continues.")
         const rejoinDeadline = performance.now() + 30000
@@ -288,7 +288,9 @@ try {
       const phase = await teamsPhase(page)
       if (phase === "connected") {
         await page.getByRole("button", {name: "Leave", exact: true}).click()
-        await page.getByRole("button", {name: "Rejoin", exact: true}).waitFor({state: "visible", timeout: 10000})
+        await page.getByRole("button", {name: /^Rejoin(?: meeting)?$/}).waitFor({state: "visible", timeout: 10000})
+        cleanup = "left"
+      } else if (phase === "left") {
         cleanup = "left"
       } else if (phase === "lobby") {
         await page.getByRole("button", {name: "Cancel", exact: true}).click()

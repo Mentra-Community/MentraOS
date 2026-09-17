@@ -5,6 +5,7 @@ describe("Teams browser qualification boundaries", () => {
   test("a lobby takes precedence over previews and other call controls", () => {
     expect(classifyTeams({lobby: true, leave: true, join: true, signin: false})).toBe("lobby")
     expect(classifyTeams({lobby: false, leave: false, join: true, signin: false})).toBe("prejoin")
+    expect(classifyTeams({lobby: false, leave: false, left: true, join: false, signin: false})).toBe("left")
     expect(classifyTeams({lobby: false, leave: true, join: false, signin: false})).toBe("connected")
   })
   test("only generated work Teams HTTPS links can launch a test", () => {
