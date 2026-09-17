@@ -246,9 +246,7 @@ export type StreamDestination =
       ice?: StreamIceConfig
     }
   | {
-      kind: "phone"                // the stream ends on this phone: no URL, no loopback
-      /** "hotspot" (default): the glasses hotspot, no shared network needed. "wifi": phone and glasses on the same LAN. */
-      route?: "hotspot" | "wifi"
+      kind: "phone"                // the stream ends on this phone over the glasses hotspot: no URL, no loopback, no shared network needed
     }
 
 export type StreamStartRequest = {
@@ -270,12 +268,20 @@ await BluetoothSdk.stopStream()
 ```
 
 The `phone` arm is the SDK-level front door of `glassesPhoneStream.preview()`: it opens the
-hotspot session (or, for `route: "wifi"`, binds on the LAN address with no hotspot session),
-starts the receiver with the render adapter, publishes through the glasses publisher slot with
-host-only ICE, and resolves on the first frame. Recovery, first-frame gating and cleanup are
-the stream service's. `stream_status` reports `route: "phone_hotspot"` or `"phone_wifi"`.
+hotspot session, starts the receiver with the render adapter, publishes through the glasses
+publisher slot with host-only ICE, and resolves on the first frame. Recovery, first-frame
+gating and cleanup are the stream service's. `stream_status` reports `route: "phone_hotspot"`.
 Nothing changes on the glasses: they already accept a phone-local URL and detect the hotspot
 route.
+
+The `phone` arm is hotspot only in this version. A same-LAN route, where phone and glasses
+share a Wi-Fi network and no hotspot is involved, would need the stream service to take a
+network source other than a hotspot session: LAN address and interface selection, loss
+invalidation and recovery that never touch the glasses AP, and cleanup to match. None of that
+exists in the streaming spec, whose `open` always acquires a hotspot and whose receiver setup
+and recovery are built on the hotspot lease. It is deferred rather than half-specified; until
+then same-LAN streaming to the phone keeps working the way it does today, through the `url`
+arm with a receiver the app runs.
 
 Placement follows the libwebrtc rule. Photo phone delivery lives entirely in the SDK because
 BLE file transfer does. A stream receiver needs libwebrtc, which stays in
@@ -294,21 +300,27 @@ the SSID and password, a "Connect glasses hotspot" action, and the gallery serve
 Stream tab has one switch today, computer or cloud URL versus the on-phone receiver, and the
 on-phone mode requires the glasses to be on Wi-Fi. It gains the hotspot the same way:
 
-- In on-phone mode a two-way selector, **Glasses hotspot** (default) and **Same Wi-Fi**, maps
-  to `destination: {kind: "phone", route}`. With the hotspot selected the Wi-Fi gate on the
-  start button disappears; the button is enabled as soon as the glasses are connected.
-- The preview pane renders `GlassesStreamView`; the first-frame and status lines the tab already
-  shows come from `stream_status` and the returned session instead of the local module's
-  `receiverStatus`, `streamFirstFrame` and `streamFrame` events.
+- In on-phone mode a two-way selector, **Glasses hotspot** (new, default) and **Same Wi-Fi**
+  (today's behaviour). Glasses hotspot uses `destination: {kind: "phone"}`; the Wi-Fi gate on
+  the start button does not apply to it, so the button is enabled as soon as the glasses are
+  connected. Same Wi-Fi is unchanged: the kit's `mentra-video-stream-receiver` module starts
+  its receiver and the app passes the returned URL through the `url` arm, still gated on the
+  glasses being on Wi-Fi.
+- With the hotspot selected the preview pane renders `GlassesStreamView`, and the first-frame
+  and status lines come from `stream_status` and the returned session; with Same Wi-Fi the
+  pane and events stay the local module's.
 - While the hotspot route is starting the tab shows the same kind of panel the Camera tab does,
   driven by `useGlassesHotspot()`: enabling, joining, ready, and the owner when busy (for
   example the Camera tab's own saved-photo session), so the two tabs explain the hotspot
   identically. The Camera tab's manual join helper moves onto the SDK hotspot session in the
   same change, so the example has one hotspot code path.
-- The "SDK call" box the tab displays shows the three-line version above instead of
-  `startWebRtcReceiver()` followed by `startStream({streamUrl: receiver.streamUrl})`.
-- `examples/react-native/modules/mentra-video-stream-receiver` is deleted. It is a third WHIP
-  receiver implementation beside the two that already share glasses-media.
+- The "SDK call" box the tab displays shows the three-line version above for the hotspot
+  option, and today's `startWebRtcReceiver()` plus `startStream` with the `url` arm for Same
+  Wi-Fi.
+- `examples/react-native/modules/mentra-video-stream-receiver` stays, serving Same Wi-Fi only.
+  It is a third WHIP receiver implementation beside the two that share glasses-media, and it is
+  deleted when the same-LAN network source above is designed and the `phone` arm can cover
+  that mode; not before.
 - Computer or cloud mode is unchanged and uses the `url` arm for RTMP, SRT and remote WHIP.
 - Docs: `docs/api-reference.md`, `docs/troubleshooting.md` and the README's streaming section
   describe the destination union, the hotspot route and its permissions.
