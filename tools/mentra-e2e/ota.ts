@@ -73,6 +73,7 @@ let loggingTransport = ""
 let logSegment = 0
 let hardwareFolder = ""
 let started = false
+let installPasses = 0
 let finished = false
 let index = 0
 let lastHardware = ""
@@ -280,9 +281,9 @@ try {
           {
             id: `OTA-${String(++index).padStart(2, "0")}`,
             instruction: "Relaunch the same signed app to repeat its normal update check.",
-            expected: "Paired home returns without changing the build or account.",
+            expected: "The same app relaunches; the observer handles home, checking and update offers.",
             action: {op: "relaunch"},
-            checks: [{selector: {identifier: "home.miniapp.com.mentra.settings"}}],
+            checks: [],
             timeoutMs: 20000,
           },
         ],
@@ -318,7 +319,11 @@ try {
       finished = true
       break
     }
-    if (page.kind === "offered") {
+    if (page.kind === "pass-complete") {
+      if (!started && !values.resume)
+        throw new Error("An existing update completed; use --resume to finish observing it")
+      await press(page.finishControl!, "Finish this installation pass and let the app check for remaining updates.")
+    } else if (page.kind === "offered") {
       if (!values.install || values.resume)
         throw new Error("An update is offered; --install is required to start a new update")
       const ok = await executeSteps(
@@ -337,10 +342,13 @@ try {
       )
       if (!ok) throw new Error("Update offer did not open")
     } else if (page.kind === "available") {
-      if (!values.install || values.resume || started) throw new Error("Refusing to start another installation")
+      if (!values.install || values.resume) throw new Error("--install is required to start an update pass")
+      // Match the app's eight-pass auto-chain bound; every pass retains the same pinned targets.
+      if (installPasses >= 8) throw new Error("Pinned OTA sequence exceeded eight installation passes")
       await hardware()
       started = true
-      await press("button-Update Now", "Start the pinned OTA update once through the Mentra App.")
+      report.metadata.installPasses = ++installPasses
+      await press("button-Update Now", `Start pass ${installPasses} of the pinned OTA sequence through the Mentra App.`)
     } else if (page.kind === "working") {
       if (!started && !values.resume) throw new Error("An existing update is active; use --resume to observe it")
     }

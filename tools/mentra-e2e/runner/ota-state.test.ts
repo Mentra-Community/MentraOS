@@ -3,15 +3,35 @@ import type {Snapshot} from "./driver"
 import {freshBesProof, otaPage, selectUsbTransport} from "./ota-state"
 
 const screen = (...labels: string[]) =>
-  ({elements: labels.map((description) => ({visible: true, description}))} as Snapshot)
+  ({elements: labels.map((description) => ({visible: true, description}))}) as Snapshot
 
 test("Done and transient component completion cannot pass the complete OTA routine", () => {
   expect(otaPage(screen("Done", "Update Failed")).kind).toBe("failed")
-  expect(otaPage(screen("Done", "Update complete!", "Your glasses are up to date.")).kind).toBe("unknown")
+  expect(otaPage(screen("Done", "Update complete!", "Your glasses are up to date."))).toEqual({
+    kind: "pass-complete",
+    title: "Update complete!",
+    finishControl: "button-Done",
+  })
   expect(otaPage(screen("Done", "Update Complete", "Your glasses are running the latest version.")).kind).toBe(
     "complete",
   )
   expect(otaPage(screen("Continue", "Up to Date", "Your glasses are running the latest version.")).kind).toBe("current")
+})
+
+test("checking, hotspot transfer and reconnect remain observable without becoming final success", () => {
+  expect(otaPage(screen("Checking for updates")).kind).toBe("checking")
+  for (const label of [
+    "Downloading update to phone...",
+    "Starting glasses hotspot...",
+    "Connecting phone to glasses...",
+    "Transferring update to glasses...",
+    "Installing update on glasses...",
+    "Finishing your update",
+  ])
+    expect(otaPage(screen(label)).kind).toBe("working")
+  expect(otaPage(screen("Glasses disconnected", "Reconnecting...")).kind).toBe("working")
+  expect(otaPage(screen("Done")).kind).toBe("unknown")
+  expect(otaPage(screen("Done", "Update Failed", "Installing update on glasses...")).kind).toBe("failed")
 })
 
 test("USB selection rejects an unauthorized, different or ambiguous pair", () => {

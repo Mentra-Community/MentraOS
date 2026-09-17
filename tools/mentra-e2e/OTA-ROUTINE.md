@@ -112,10 +112,20 @@ bun tools/mentra-e2e/ota.ts \
 ```
 
 The URL must match the build pin and the published bytes must match the archived
-manifest. `--install` permits one installation; omit it for an already-current
+manifest. `--install` permits one sequence for those exact targets, including
+later component offers (at most eight passes, matching the app); omit it for an already-current
 verification. `--resume` only observes an existing update and never starts one.
 The default observation deadline is 30 minutes. The runner never stops an update
 when its own deadline expires.
+
+Checking, hotspot transfer and reconnect screens remain in progress. An
+installation's **Update complete!** page is a pass boundary: acknowledge its
+known **Done** or **Continue** control and let the app check for remaining
+updates. Only the final latest-version page plus all three independently
+verified targets can pass. A new offer needs `--install`; `--resume` never
+starts another pass. The relaunch step permits the normal update check or
+offer to appear before home. These paths are covered offline and await the
+next real firmware update for end-to-end qualification.
 
 Before installation, the runner briefly defers an initial offer, opens Device
 info and matches the app's serial/Bluetooth address to USB. It then relaunches the
