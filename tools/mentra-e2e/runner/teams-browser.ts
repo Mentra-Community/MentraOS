@@ -83,6 +83,8 @@ export async function reachTeamsPrejoin(
   evidence: (id: string, instruction: string) => Promise<void>,
   prefix: string,
 ) {
+  // The visible heading is "Continue on this browser"; its containing button's
+  // observed accessible name is "Join meeting from this browser".
   const browserChoice = runPage.getByRole("button", {name: "Join meeting from this browser", exact: true})
   const withoutMedia = runPage.getByRole("button", {name: "Continue without audio or video", exact: true})
   const deadline = performance.now() + 30000
