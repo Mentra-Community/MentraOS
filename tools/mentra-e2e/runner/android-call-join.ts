@@ -34,42 +34,50 @@ export function androidJoinState(nodes: Node[], expectedSsid: string): AndroidJo
 const exact = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")
 
 /**
- * After Create & Join, poll both system and app UI. The caller must read the SSID
+ * After Create & Join, wait for system or app UI within one instrumentation session. The caller must read the SSID
  * from this attempt's identity-verified native trace, not a saved network name.
  * This helper never creates/retries a call and never performs OTA.
  */
 export async function waitForAndroidCallJoin(run: AndroidSession, expectedSsid: string, timeoutMs = 90_000) {
   if (!Number.isFinite(timeoutMs) || timeoutMs < 1 || timeoutMs > 180_000) throw new Error("Invalid join deadline")
-  const deadline = Date.now() + timeoutMs
-  let approved = false
-  while (Date.now() < deadline) {
-    const state = androidJoinState((await run.snapshot()).nodes, expectedSsid)
-    if (state.kind === "failed") throw new Error(state.reason)
-    if (state.kind === "connected") return
-    if (state.kind === "connect") {
-      if (approved) throw new Error("Android repeated the network approval; do not retry silently")
-      approved = true
-      await run.step(
-        "CALL-NETWORK-CONNECT",
-        "Approve the temporary Wi-Fi connection to this run's verified glasses hotspot.",
-        "The matching Android network prompt closes; subsequent checks still require successful call join.",
-        async () => {
-          await run.flow("CALL-NETWORK-CONNECT", [
-            {assertVisible: {id: "com.android.settings:id/network_request_title_text", text: "Connect to device"}},
-            {assertVisible: {id: "com.android.settings:id/network_request_summary_text", text: exact(state.summary)}},
-            {assertVisible: {id: "android:id/message", text: exact(expectedSsid)}},
-            {tapOn: {id: "android:id/button1", text: "Connect"}},
-            {
-              extendedWaitUntil: {
-                notVisible: {id: "com.android.settings:id/network_request_title_text"},
-                timeout: 15000,
-              },
+  if (!/^MentraLive_[A-Za-z0-9_-]+$/.test(expectedSsid)) throw new Error("Expected this run's verified glasses SSID")
+  // Keep UI observation and the press inside one Maestro instrumentation session.
+  // Android's external uiautomator dump waits for UI idleness and missed the
+  // 30-second network approval while the join progress screen kept changing.
+  const title = "com.android.settings:id/network_request_title_text"
+  const summary = "Mentra app wants to use a temporary Wi‑Fi network to connect to your device"
+  await run.step(
+    "CALL-NETWORK-CONNECT",
+    "Wait for Android's network decision and approve only this run's verified glasses hotspot.",
+    "Any offered network prompt matches Mentra and the exact SSID; the call then exposes Leave.",
+    async () => {
+      await run.flow("CALL-NETWORK-CONNECT", [
+        {
+          extendedWaitUntil: {
+            visible: {
+              text: "Connect to device|Leave the call|Couldn’t join the meeting|Couldn’t start glasses camera|Call limit reached|No devices found\\..*|Something came up\\..*",
             },
-          ])
+            timeout: timeoutMs,
+          },
         },
-      )
-    }
-    await Bun.sleep(250)
-  }
-  throw new Error("Call join timed out; preserve evidence and clean up the owned attempt before retrying")
+        {
+          runFlow: {
+            when: {visible: {id: title, text: "Connect to device"}},
+            commands: [
+              {assertVisible: {id: "com.android.settings:id/network_request_summary_text", text: exact(summary)}},
+              {assertVisible: {id: "android:id/message", text: exact(expectedSsid)}},
+              {takeScreenshot: "android-network-before-connect"},
+              {tapOn: {id: "android:id/button1", text: "Connect"}},
+            ],
+          },
+        },
+        {
+          assertNotVisible:
+            "No devices found\\..*|Something came up\\..*|Couldn’t join the meeting|Couldn’t start glasses camera|Call limit reached",
+        },
+        {extendedWaitUntil: {visible: "Leave the call", timeout: timeoutMs}},
+        {takeScreenshot: "android-call-joined"},
+      ])
+    },
+  )
 }
