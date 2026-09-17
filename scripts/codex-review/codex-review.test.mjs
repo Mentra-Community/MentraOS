@@ -213,7 +213,7 @@ describe("codex-pr-review.sh lifecycle", () => {
     ])
     const both = `--- A ---\n${a.out}\n--- B ---\n${b.out}`
     expect(both).toContain("reclaiming stale lock left by dead pid 999999")
-    expect(both).toMatch(/is running \(pid \d+\)/)
+    expect(both).toMatch(/is running \((runner )?pid \d+/)
     expect(a.out).not.toContain("reclaiming")
     expect(codexCalls(f)).toBe(1)
     expect(existsSync(`${f.worktree}.lock`)).toBe(false)
