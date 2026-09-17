@@ -130,8 +130,9 @@ Every recorded checkpoint includes its English instruction, screenshot and
 accessibility snapshot. The output contains `steps.json`, `result.json`, decoded
 video samples, the original continuous WebM, `routine.mp4`, `chapters.json` and
 `index.html`. These recordings are silent; they do not prove microphone or return
-audio. The current observer does not transmit laptop camera video either. Those
-directions remain required, separate qualification work for the complete goal.
+audio. The default observer keeps laptop capture off. The optional capture extension
+records hardware tracks and outgoing packet counters separately; those do not
+prove audible return audio or native reception.
 
 A green frame before Teams navigation calibrates the browser recording's clock
 against step times. Calibration uncertainty above 200 ms, missing calibration,
@@ -141,26 +142,34 @@ Browser interaction with that local viewer remains unqualified because the
 browser tool rejected its local-file URL; no alternate URL or browser was used
 to work around that restriction.
 
-The September 17 native/Chrome controller admitted a real guest without a model
-call, but the browser's first sample preceded its first video frame. Its failed
-report is retained; the readiness correction is unit-tested and awaits another
-live run. The next attempt hit the daily quota before ACS joined. No successful
-full standalone replay is claimed. Offline reprocessing of the saved recording
-verified a 16.72-second MP4 with eight chapters and 49 ms calibration uncertainty;
-this does not change the original call result.
+The portable connected controller passed two consecutive complete incoming-video
+runs on September 17: 27 native steps each, 113.802 and 119.787 seconds. Both
+verify named anonymous admission, native roster arrival/departure, advancing
+glasses video and exact owned cleanup without model calls or email codes.
+These are incoming-video passes; full duplex remains unqualified. Earlier
+failed runs are retained unchanged.
 
-The user stopped live streaming for the day. Neither quota configuration changes
-nor additional live qualification were performed afterward. See
-[MENTRA-CALL-ROUTINE.md](MENTRA-CALL-ROUTINE.md) for the exact runs and remaining
-permission, audio and hardware gates.
-
-The [connected replay controller](CONNECTED-CALL-REPLAY.md) supplies this
-companion's exact generated meeting link, handles named admission and checks the
-native roster after departure. Its portable extraction is offline-tested but
-has not yet passed an end-to-end live run.
+The user authorized ten further stream attempts and the test account's quota
+exemption. That private ledger now records nine attempts,
+including failures. One remains. This cap is separate from the backend quota.
 
 The connected controller can also request `--rejoin` through its own
 `--browser-rejoin` flag. This mode requires the native controller's departure
 acknowledgement on stdin; do not run the standalone flag without that controller.
 The browser records both admissions and separate first-frame/progression
 samples. See [CONNECTED-CALL-REPLAY.md](CONNECTED-CALL-REPLAY.md).
+
+The optional laptop capture and separate no-join device setup commands are in
+[CONNECTED-CALL-REPLAY.md](CONNECTED-CALL-REPLAY.md). Teams' own device menus
+must be checked; Chrome defaults alone are insufficient. Capture setup passed,
+but attempt 9's combined sending check failed because outgoing video remained
+zero. Actual laptop capture and outgoing audio packets were observed. The
+current native host has no incoming-video renderer. Neither audible return
+audio nor laptop-video reception is qualified.
+
+Attempt 8 reproduced the rejoin issue with stronger evidence: Teams People
+listed only the browser guest and WebRTC had no incoming RTP, while native
+still listed the admitted guest. Its fresh-link comparison stopped at the
+browser launcher, which the shared helper now handles. This recovery has not
+yet been qualified live. See the full evidence ledger in
+[MENTRA-CALL-ROUTINE.md](MENTRA-CALL-ROUTINE.md).
