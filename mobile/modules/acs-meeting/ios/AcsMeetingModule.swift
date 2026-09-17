@@ -135,7 +135,7 @@ public class AcsMeetingModule: Module {
                 if let error {
                     promise.reject(error)
                 } else {
-                    promise.resolve(session.snapshot())
+                    session.snapshot { promise.resolve($0) }
                 }
             }
         }
@@ -155,12 +155,16 @@ public class AcsMeetingModule: Module {
             self.hotspot.info { promise.resolve($0) }
         }
 
-        AsyncFunction("setMuted") { (muted: Bool) in
-            self.session?.setMuted(muted) ?? ["state": "idle", "muted": muted]
+        AsyncFunction("setMuted") { (muted: Bool, promise: Promise) in
+            guard let session = self.session else { promise.resolve(["state": "idle", "muted": muted]); return }
+            session.setMuted(muted) { promise.resolve($0) }
         }
 
-        AsyncFunction("setAudioSource") { (source: String) in
-            self.session?.setAudioSource(source) ?? ["state": "idle", "muted": false, "audioSource": source]
+        AsyncFunction("setAudioSource") { (source: String, promise: Promise) in
+            guard let session = self.session else {
+                promise.resolve(["state": "idle", "muted": false, "audioSource": source]); return
+            }
+            session.setAudioSource(source) { promise.resolve($0) }
         }
 
         AsyncFunction("updateVideoSource") { (whepUrl: String) in
@@ -184,8 +188,9 @@ public class AcsMeetingModule: Module {
             }
         }
 
-        AsyncFunction("getState") {
-            self.session?.snapshot() ?? ["state": "idle", "muted": false]
+        AsyncFunction("getState") { (promise: Promise) in
+            guard let session = self.session else { promise.resolve(["state": "idle", "muted": false]); return }
+            session.snapshot { promise.resolve($0) }
         }
 
         OnDestroy {
@@ -277,7 +282,7 @@ final class AcsMeetingSession {
     private lazy var participantDelegateProxy = AcsParticipantDelegateProxy { [weak self] participant in
         self?.queue.async {
             guard let self, self.remoteParticipants[ObjectIdentifier(participant)] === participant else { return }
-            self.onState(self.snapshot())
+            self.onState(self.snapshotLocked())
         }
     }
 
@@ -290,7 +295,13 @@ final class AcsMeetingSession {
         self.onIncomingPcm = onIncomingPcm
     }
 
-    func snapshot() -> [String: Any] {
+    /// Expo callers must not enumerate the roster or read session fields off queue.
+    func snapshot(completion: @escaping ([String: Any]) -> Void) {
+        queue.async { completion(self.snapshotLocked()) }
+    }
+
+    private func snapshotLocked() -> [String: Any] {
+        dispatchPrecondition(condition: .onQueue(queue))
         var result: [String: Any] = [
             "state": phase,
             "muted": muted,
@@ -350,7 +361,7 @@ final class AcsMeetingSession {
                         if let agent, error == nil {
                             self.preparedAgent = agent
                             self.preparedToken = token
-                            reply?(.success(self.snapshot()))
+                            reply?(.success(self.snapshotLocked()))
                         } else {
                             agent?.dispose()
                             self.preparedClient = nil
@@ -587,7 +598,7 @@ final class AcsMeetingSession {
                     self.refreshCallStateLocked(call)
                     let reply = self.pendingJoin
                     self.pendingJoin = nil
-                    reply?(.success(self.snapshot()))
+                    reply?(.success(self.snapshotLocked()))
                 case let .failure(error): self.failJoinLocked(error, generation: generation)
                 }
             }
@@ -661,7 +672,7 @@ final class AcsMeetingSession {
         if state == .live { mediaRestartAttempts = 0 }
         if state == .failed { scheduleMediaRestart(reason: reason) }
         // start() emits idle then connecting back to back; one snapshot per real change.
-        if previous != state, call != nil, phase != "idle" { onState(snapshot()) }
+        if previous != state, call != nil, phase != "idle" { onState(snapshotLocked()) }
     }
 
     /// Native owns first-line recovery: nothing above this layer can see ICE fail, and a
@@ -690,21 +701,23 @@ final class AcsMeetingSession {
         mediaRestartAttempts = 0
     }
 
-    func setMuted(_ next: Bool) -> [String: Any] {
-        muted = next
-        queue.async { self.applyAudioPolicyOnQueue("set-muted") }
-        let snap = snapshot()
-        onState(snap)
-        return snap
+    func setMuted(_ next: Bool, completion: @escaping ([String: Any]) -> Void) {
+        queue.async {
+            self.muted = next
+            self.applyAudioPolicyOnQueue("set-muted")
+            completion(self.snapshotLocked())
+        }
     }
 
-    func setAudioSource(_ source: String) -> [String: Any] {
-        if AcsAudioPolicy.parseSource(source) == nil {
-            NSLog("ACS-SPIKE unknown audioSource=\(source) ignored; source is locked for this call")
-        } else {
-            NSLog("ACS-SPIKE setAudioSource=\(source) ignored; audio source is locked for this call at \(audioSource)")
+    func setAudioSource(_ source: String, completion: @escaping ([String: Any]) -> Void) {
+        queue.async {
+            if AcsAudioPolicy.parseSource(source) == nil {
+                NSLog("ACS-SPIKE unknown audioSource=\(source) ignored; source is locked for this call")
+            } else {
+                NSLog("ACS-SPIKE setAudioSource=\(source) ignored; audio source is locked for this call at \(self.audioSource)")
+            }
+            completion(self.snapshotLocked())
         }
-        return snapshot()
     }
 
     func leave() {
@@ -810,7 +823,7 @@ final class AcsMeetingSession {
                         return
                     }
                     self.refreshRosterLocked(active)
-                    self.onState(self.snapshot())
+                    self.onState(self.snapshotLocked())
                     completion(nil)
                 }
             }
@@ -843,7 +856,7 @@ final class AcsMeetingSession {
             self.hangUpForEveryone = next
             self.manageLobby = lobby
             NSLog("ACS-SPIKE hangUpForEveryone allowed=\(next?.allowed.description ?? "unknown") reason=\(next?.reason ?? "-")")
-            self.onState(self.snapshot())
+            self.onState(self.snapshotLocked())
         }
     }
 
@@ -870,12 +883,13 @@ final class AcsMeetingSession {
     }
 
     private func applyAudioPolicyOnQueue(_ reason: String) {
+        dispatchPrecondition(condition: .onQueue(queue))
         let desired: AudioSourceKind = audioSource == "phone" ? .phone : .glasses
         lastSafety = applier.apply(desired: desired, userMuted: muted, reason: reason)
         if lastSafety == .unsafe {
             NSLog("ACS-SPIKE audioSafety=unsafe — mute and stopAudio both failed; unintended mic may be live")
         }
-        onState(snapshot())
+        onState(snapshotLocked())
     }
 
     private func feedOutgoingPcm(_ pcm: Data, sampleRate: Int, channels: Int, generation: UInt64) {
@@ -912,10 +926,11 @@ final class AcsMeetingSession {
 
     private func emit(_ next: String) {
         phase = next
-        onState(snapshot())
+        onState(snapshotLocked())
     }
 
     private func leaveLocked(emitIdle: Bool = true) {
+        dispatchPrecondition(condition: .onQueue(queue))
         audioDiagnostics?.finish()
         audioDiagnostics = nil
         joinGeneration &+= 1
@@ -1059,11 +1074,12 @@ final class AcsMeetingSession {
         queue.async {
             guard self.call === changedCall else { return }
             self.refreshRosterLocked(changedCall)
-            self.onState(self.snapshot())
+            self.onState(self.snapshotLocked())
         }
     }
 
     private func refreshRosterLocked(_ changedCall: Call) {
+        dispatchPrecondition(condition: .onQueue(queue))
         let current = Dictionary(uniqueKeysWithValues: changedCall.remoteParticipants.map {
             (ObjectIdentifier($0), $0)
         })
@@ -1077,6 +1093,7 @@ final class AcsMeetingSession {
     }
 
     private func detachRoster() {
+        dispatchPrecondition(condition: .onQueue(queue))
         for participant in remoteParticipants.values {
             participant.delegate = nil
         }
