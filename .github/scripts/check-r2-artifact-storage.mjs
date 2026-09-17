@@ -6,6 +6,7 @@ import {tmpdir} from "node:os"
 import path from "node:path"
 import {
   artifactPrefix,
+  artifactUrl,
   createR2Store,
   publishR2Artifact,
   readArtifactIndex,
@@ -35,6 +36,11 @@ const observedStore = {
 }
 
 try {
+  // Test the URL before publication too: caching this 404 would mask a later
+  // successful upload. The hostname's cache rule must bypass negative caching.
+  const missing = await fetch(artifactUrl(repository, tag, "payload.bin"), {signal: AbortSignal.timeout(30_000)})
+  await missing.arrayBuffer()
+  assert.equal(missing.status, 404)
   const fd = await open(file, "w")
   try {
     const block = Buffer.alloc(1024 * 1024, 0xa5)
@@ -57,6 +63,7 @@ try {
     size: asset.size,
     digest: asset.digest,
   })
+  records.push({test: "a pre-publication 404 does not mask the uploaded artifact"})
   await publishR2Artifact({repository, release, name: "payload.bin", file, store: observedStore, updateRelease: false})
   assert.equal(uploads, 1, "an identical retry must not upload the file again")
   const index = await readPublicIndex(repository, tag)

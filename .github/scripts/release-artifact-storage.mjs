@@ -351,8 +351,8 @@ export function artifactHeaders(file, digest, fingerprint) {
     ContentLength: statSync(file).size,
     ContentType: file.endsWith(".json") ? "application/json" : "application/octet-stream",
     // Recovery can discard an incomplete artifact pair or failed deployment
-    // record and rebuild that key. This zone rewrites no-cache to a four-hour
-    // TTL; no-store is honored by both the CDN and browsers.
+    // record and rebuild that key. Keep no-store even if the hostname's cache
+    // bypass rule changes: the zone default rewrites no-cache to four hours.
     CacheControl: "no-store",
     Metadata: {sha256: digest, ...(fingerprint ? {fingerprint} : {})},
   }
