@@ -44,6 +44,33 @@ the terminal. Setup does not record authentication video. The profile can retain
 the session, but Microsoft can require verification again. A run that reaches
 sign-in stops; the runner never requests or enters verification codes.
 
+## Camera and microphone readiness without a meeting
+
+Before spending a live-call attempt on the laptop participant, enumerate Chrome's
+actual device labels:
+
+```sh
+bun tools/mentra-e2e/teams-media-preflight.ts devices
+```
+
+Read its private `result.json`, then supply the exact laptop microphone and camera
+labels. On the first Mac the checked command is:
+
+```sh
+bun tools/mentra-e2e/teams-media-preflight.ts check \
+  --microphone-label 'MacBook Pro Microphone (Built-in)' \
+  --camera-label 'MacBook Pro Camera (0000:0001)'
+```
+
+Use the actual devices on another Mac; never choose the glasses or the default
+alias. The command refuses missing or ambiguous labels, requests both exact
+capture devices and immediately stops the tracks. It opens no meeting, starts
+no glasses stream and does not change macOS audio defaults. Browser-origin
+permission is scoped to this context and cleared afterward; ordinary macOS
+permission gates still apply. A passed readiness check does not prove Teams
+transmission, return audio or audible glasses playback. Run it separately from
+the observer because both own the same dedicated Chrome profile.
+
 ## English steps
 
 1. Open the exact fresh meeting link in the dedicated browser profile.
