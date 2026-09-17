@@ -1,0 +1,41 @@
+# Android Mentra Call routine — without OTA
+
+This routine tests Call with an already-qualified firmware fixture. It performs no updates. If the required firmware is missing, stop before creating a meeting and run the separate [OTA routine](ANDROID-OTA-ROUTINE.md).
+
+The English acceptance routine is saved below. Android launch discovery and hardware verification have been exercised; a complete Android meeting/media replay is still being qualified. An executed UI action is not evidence of successful media delivery.
+
+## English steps
+
+| Step    | Action                                                                                                                                                                                          | Required result                                                                                                                                                                           |
+| ------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| CALL-01 | Start a fresh recording and verify the phone APK, exact glasses identity, BLE and Classic connections, and all mandatory ASG/MTK/BES targets.                                                   | Candidate hashes and current firmware match the pinned fixture. An outdated or unidentified device fails before any call action.                                                          |
+| CALL-02 | Check phone internet over cellular, Wi-Fi availability, battery/power, and the agreed transport setting. Prepare Teams in the laptop browser with the laptop's microphone, camera and speakers. | The hotspot path has validated cellular internet. The phone owns the glasses' Bluetooth audio; the browser is an independent participant. Do not override system audio routes.            |
+| CALL-03 | From paired home, open **Mentra Call**. Complete any normal first-use permission requests and inspect Call settings.                                                                            | Call loads, Direct link for Teams is on, and its active version/backend match the intended production bundle. Calendar access is not requested. Save first-use prompts as setup evidence. |
+| CALL-04 | Reserve one authorized live attempt, create a uniquely named meeting and join from the glasses.                                                                                                 | A meeting link is shown; native logs establish hotspot association and successful ACS join/publishing. A spinner or “Camera is streaming” alone does not pass.                            |
+| CALL-05 | Open that link in the persistent Teams browser profile and join as the laptop participant.                                                                                                      | The browser is admitted, not waiting in sign-in or a lobby. Mentra Call's participant count reflects the admitted peer.                                                                   |
+| CALL-06 | Move the glasses camera toward a recognizable changing subject and inspect the browser's received video.                                                                                        | The remote glasses image changes. Record incoming video statistics and screenshots; do not mistake laptop self-preview for received glasses video.                                        |
+| CALL-07 | Speak a distinct phrase into the glasses and have the laptop listener confirm it. Then speak a different phrase into the laptop and have the glasses wearer confirm it.                         | Both directions are audibly intelligible. Packet counters alone cannot establish an audible pass; absent listeners leave this step unqualified.                                           |
+| CALL-08 | Mute and unmute the glasses participant using the Call control while the laptop listener checks the result.                                                                                     | Remote speech stops while muted and returns after unmuting. Save the UI state and listener outcome.                                                                                       |
+| CALL-09 | Have the browser participant leave and rejoin, observing the phone roster after both transitions.                                                                                               | Counts decrease and recover to match actual admitted participants. Distinguish browser rejoin from a new glasses stream.                                                                  |
+| CALL-10 | Leave from Mentra Call; if a further live attempt is authorized, join again and repeat admission and media checks.                                                                              | Cleanup completes before a new stream begins. Count a failed start against the attempt budget too. If the budget is exhausted, mark rejoin not run.                                       |
+| CALL-11 | End the owned call, close its browser peer and retire the owned test meeting using the supported cleanup path. Finalize all recordings.                                                         | Glasses streaming/privacy light is off, the hotspot is stopped, normal phone networking returns, and the app is ready. Preserve any cleanup failure in the report.                        |
+
+## Saved replay and evidence
+
+The independently executable preparation segment uses the recorded controls and performs no OTA or meeting creation:
+
+```sh
+bun tools/mentra-e2e/android-call.ts prepare \
+  --fixture /absolute/path/android-rig.json \
+  --output /absolute/path/runs/call-preparation-001
+```
+
+Start on paired home, Call home, or the unsubmitted New Call form, after first-use permissions have been granted. It verifies the required firmware, opens settings, checks the default video summary, fills a unique meeting name and cancels back to Call home. Its report explicitly says `preparation-only` and `mediaQualified: false`; a passing preparation run does not qualify a live call. The switch's Android accessibility dump does not reliably expose its selected state, so the settings screenshot is evidence for review and the native join trace remains necessary to prove hotspot transport.
+
+Use ADB for identity/version/log readbacks, Maestro for observed semantic UI controls, scrcpy for phone video, and the existing Teams browser companion for the peer. These tools support deterministic replay without moving the Mac pointer or bringing the phone UI into the foreground on the Mac. No coordinate or OCR fallback belongs in the routine; fix inaccessible app controls when needed.
+
+`runner/android-hardware.ts` supplies the shared read-only gate: `verifyAndroidHardware(rig, true)` rejects missing mandatory targets. `runner/android-session.ts` saves each English action, its expected result, screenshots, accessibility XML and executed Maestro YAML in an independent report directory. The final Call coordinator must use the same gate and must not invoke `android-ota.ts`.
+
+Save phone and glasses logs, candidate/miniapp/backend provenance, actual admission and media observations, and explicit listener results with the recording. A Call run gets its own `index.html`, `routine.mp4`, chapters and result; it does not reuse the OTA recording as Call evidence. Sign-in may reuse the browser profile, but an expired session can still require a person to enter a code.
+
+Current local discovery evidence is under `.test-results/pr-4078-android-qualification-01f22fc/android-call-discovery-01/`. The five-step compiled preparation replay passed under `android-call-preparation-01/`, including the required firmware checks, settings, meeting-name editing and cancellation, with zero model calls. No meeting or stream was created. The complete live replay command will be added after the remaining actions have been exercised on the candidate.

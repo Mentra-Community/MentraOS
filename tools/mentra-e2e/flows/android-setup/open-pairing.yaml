@@ -1,0 +1,5 @@
+appId: com.mentra.mentra
+---
+- assertVisible: "Do you have smart glasses?"
+- tapOn: "Pair glasses"
+- takeScreenshot: setup-pairing

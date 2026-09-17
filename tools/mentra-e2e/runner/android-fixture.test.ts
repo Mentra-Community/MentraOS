@@ -57,3 +57,30 @@ test("requires a suffix match between device address and name", () => {
 test("rejects a generic model name as fixture identity", () => {
   expect(verifyAndroidFixture(dump(row("03BE")), "Mentra Live").passed).toBe(false)
 })
+
+const moto = (links: string, bonds = "    XX:XX:XX:XX:03:BE [ DUAL ][ 0x001F00 ] Mentra_Live_03BE") =>
+  `AdapterProperties\n  ConnectionState: STATE_CONNECTED\n  Bonded devices:\n${bonds}\n\nScanMode: SCAN_MODE_CONNECTABLE\n${links}`
+const acl = (suffix: string, transport: "LE" | "BR_EDR", up = true) =>
+  `shim::acl remote_addr:xx:xx:xx:xx:${suffix.slice(0, 2)}:${suffix.slice(2)} handle:0x0015 transport:BT_TRANSPORT_${transport}\nshim::acl     link_up_issued: ${up}\n`
+
+test("Motorola joins bond identity to current LE and Classic ACLs", () => {
+  expect(verifyAndroidFixture(moto(acl("03be", "LE") + acl("03be", "BR_EDR")), "Mentra_Live_03BE").passed).toBe(true)
+})
+
+test("Motorola refuses missing/down transports and historical connection text", () => {
+  for (const links of [
+    acl("03be", "LE"),
+    acl("03be", "BR_EDR"),
+    acl("03be", "LE", false) + acl("03be", "BR_EDR"),
+    "shim::btm 2026-09-17 13:57:07.190 ACL Connection successful : xx:xx:xx:xx:03:be classic\n",
+  ])
+    expect(verifyAndroidFixture(moto(links), "Mentra_Live_03BE").passed).toBe(false)
+})
+
+test("Motorola refuses the wrong pair and ambiguous active pairs", () => {
+  const bonds =
+    "    XX:XX:XX:XX:03:BE [ DUAL ][ 0x001F00 ] Mentra_Live_03BE\n    XX:XX:XX:XX:E7:FA [ DUAL ][ 0x001F00 ] Mentra_Live_E7FA"
+  const other = acl("e7fa", "LE") + acl("e7fa", "BR_EDR")
+  expect(verifyAndroidFixture(moto(other, bonds), "Mentra_Live_03BE").reason).toContain("Wrong glasses")
+  expect(verifyAndroidFixture(moto(other + acl("03be", "LE"), bonds), "Mentra_Live_03BE").passed).toBe(false)
+})
