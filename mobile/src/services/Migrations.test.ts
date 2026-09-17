@@ -61,13 +61,13 @@ describe("mobile migrations", () => {
     expect(mockSave).not.toHaveBeenCalled()
   })
 
-  it("restores a Call entry forcibly hidden by the old iOS policy", async () => {
+  it("reserves migration 5 without unhiding Call before the current policy is applied", async () => {
     jest.replaceProperty(Platform, "OS", "ios")
     mockLoad.mockImplementation((key) => Res.ok(key === "migration_version" ? 4 : true))
 
     await migrate()
 
-    expect(mockSetHidden).toHaveBeenCalledWith("com.mentra.call", false)
+    expect(mockSetHidden).not.toHaveBeenCalled()
     expect(mockSet).not.toHaveBeenCalled()
     expect(mockSave).toHaveBeenCalledWith("migration_version", 5)
   })

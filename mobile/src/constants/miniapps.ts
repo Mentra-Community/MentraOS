@@ -1,3 +1,5 @@
+import {Platform} from "react-native"
+
 export const cameraPackageName = "com.mentra.camera"
 export const galleryPackageName = "com.mentra.gallery"
 export const settingsPackageName = "com.mentra.settings"
@@ -20,9 +22,20 @@ export const isChinaBuild = (): boolean => process.env.EXPO_PUBLIC_DEPLOYMENT_RE
  */
 export const CHINA_HIDDEN_APPS = [navigationPackageName, notifyPackageName, feedbackPackageName]
 
-/** True when this build must not install or show the given miniapp. */
-export const shouldHideMiniapp = (packageName: string): boolean =>
-  isChinaBuild() && CHINA_HIDDEN_APPS.includes(packageName)
+export const IOS_HIDDEN_APPS = [mentraCallPackageName]
+
+/** Expo inlines this optional override into the JS bundle. */
+export const isIosCallBuildEnabled = (): boolean => process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS === "true"
+
+/** Pure policy; host callers supply the hydrated, device-local debug setting. */
+export const shouldHideMiniapp = (
+  packageName: string,
+  os: typeof Platform.OS = Platform.OS,
+  showIosCall = false,
+): boolean => {
+  if (isChinaBuild() && CHINA_HIDDEN_APPS.includes(packageName)) return true
+  return os === "ios" && IOS_HIDDEN_APPS.includes(packageName) && !isIosCallBuildEnabled() && !showIosCall
+}
 
 // these apps cannot be uninstalled:
 export const SYSTEM_APPS = [

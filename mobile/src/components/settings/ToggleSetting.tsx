@@ -11,6 +11,7 @@ type ToggleSettingProps = {
   value: boolean
   onValueChange: (newValue: boolean) => void
   disabled?: boolean
+  testID?: string
   style?: ViewStyle
   icon?: React.ReactNode
   compact?: boolean
@@ -25,6 +26,7 @@ const ToggleSetting: React.FC<ToggleSettingProps> = ({
   value,
   onValueChange,
   disabled = false,
+  testID,
   style,
   icon,
   compact = false,
@@ -63,7 +65,13 @@ const ToggleSetting: React.FC<ToggleSettingProps> = ({
         </View>
         {subtitle && <Text text={subtitle} style={themed($subtitle)} />}
       </View>
-      <Switch value={value} onValueChange={onValueChange} disabled={disabled} />
+      <Switch
+        testID={testID}
+        accessibilityLabel={label}
+        value={value}
+        onValueChange={onValueChange}
+        disabled={disabled}
+      />
     </Wrapper>
   )
 }

@@ -25,8 +25,8 @@ import {
   mirrorPackageName,
   notifyPackageName,
   settingsPackageName,
-  shouldHideMiniapp,
 } from "@/constants/miniapps"
+import {shouldHideMiniapp} from "./miniappVisibility"
 
 /**
  * Registers the Mentra app's built-in/offline miniapps.

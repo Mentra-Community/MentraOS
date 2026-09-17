@@ -3,7 +3,7 @@ import {appRegistry} from "@mentra/engine-host-internal"
 import {Directory, File, Paths} from "expo-file-system"
 import semver from "semver"
 
-import {shouldHideMiniapp} from "@/constants/miniapps"
+import {shouldHideMiniapp} from "./miniappVisibility"
 import {cloudClient} from "@/services/cloudClient"
 
 const LOG_TAG = "PreinstalledMiniappSync"
@@ -65,6 +65,7 @@ async function installEntry(entry: PreinstalledMiniappRegistryEntry): Promise<vo
 
   console.log(`${LOG_TAG}: installing ${entry.packageName}@${entry.version} (${entry.installPolicy})`)
   const zipPath = await downloadVerifiedBundle(entry)
+  if (shouldHideMiniapp(entry.packageName)) return
   const result = await appRegistry.installFromLocalZip(zipPath, {
     releaseIdentity: {
       source: "preinstalled_registry",
