@@ -509,6 +509,6 @@ No port retry, sleep or weakened bind assertion was added.
 
 Validation: the real-loopback and rebind suites passed (22 tests), then all 348
 glasses-media JVM tests passed locally on Android Studio JBR 21. CI uses Java 17
-on Linux and remains the required platform confirmation. Native Android sources
+on Linux; run `35187175233` passed on exact head `5996d37f97`, confirming the fix there as well. Native Android sources
 compiled through the generated Expo Android project; no glasses stream or Mac
 app rebuild was used for this check.
