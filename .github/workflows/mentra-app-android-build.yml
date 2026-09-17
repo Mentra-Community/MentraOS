@@ -462,6 +462,36 @@ jobs:
           name: app-release
           path: mobile/android/app/build/outputs/apk/release/app-release.apk
 
+      - name: Cleanup old release assets
+        if: github.event_name == 'pull_request'
+        continue-on-error: true
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
+
+            try {
+              const release = await github.rest.repos.getReleaseByTag({
+                owner: context.repo.owner,
+                repo: context.repo.repo,
+                tag: 'pr-builds'
+              });
+
+              for (const asset of release.data.assets) {
+                const createdAt = new Date(asset.created_at);
+                if (createdAt < sevenDaysAgo) {
+                  console.log(`Deleting old asset: ${asset.name} (created ${asset.created_at})`);
+                  await github.rest.repos.deleteReleaseAsset({
+                    owner: context.repo.owner,
+                    repo: context.repo.repo,
+                    asset_id: asset.id
+                  });
+                }
+              }
+            } catch (error) {
+              console.log('Cleanup skipped:', error.message);
+            }
+
       - name: Upload APK to pr-builds release
         if: github.event_name == 'pull_request'
         uses: actions/github-script@v7
@@ -511,36 +541,6 @@ jobs:
             });
 
             console.log(`Successfully uploaded ${apkName}`);
-
-      - name: Cleanup old release assets
-        if: github.event_name == 'pull_request'
-        continue-on-error: true
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-
-            try {
-              const release = await github.rest.repos.getReleaseByTag({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                tag: 'pr-builds'
-              });
-
-              for (const asset of release.data.assets) {
-                const createdAt = new Date(asset.created_at);
-                if (createdAt < sevenDaysAgo) {
-                  console.log(`Deleting old asset: ${asset.name} (created ${asset.created_at})`);
-                  await github.rest.repos.deleteReleaseAsset({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    asset_id: asset.id
-                  });
-                }
-              }
-            } catch (error) {
-              console.log('Cleanup skipped:', error.message);
-            }
 
       - name: Update PR comment - Build succeeded
         if: success() && github.event_name == 'pull_request'
