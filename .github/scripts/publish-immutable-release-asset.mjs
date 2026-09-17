@@ -34,17 +34,19 @@ function responseHeadersPattern() {
   return /^HTTP\/\S+ \d{3}[^\r\n]*\r?\n(?:[^\r\n]+\r?\n)*\r?\n/gm
 }
 
-function rateLimitDetails(headers) {
+function rateLimitDetails(headers, status, detail = "") {
   const retryAfter = headers["retry-after"]
   let retryAfterMs = retryAfter
     ? /^\d+$/.test(retryAfter)
       ? Number(retryAfter) * 1000
       : Date.parse(retryAfter) - Date.now()
     : undefined
-  const rateLimited = headers["x-ratelimit-remaining"] === "0"
-  if (rateLimited && headers["x-ratelimit-reset"]) {
+  const rateLimited =
+    headers["x-ratelimit-remaining"] === "0" || status === 429 || (status === 403 && /rate limit/i.test(detail))
+  if (headers["x-ratelimit-remaining"] === "0" && headers["x-ratelimit-reset"]) {
     retryAfterMs = Math.max(retryAfterMs || 0, Number(headers["x-ratelimit-reset"]) * 1000 - Date.now())
   }
+  if (rateLimited && retryAfterMs === undefined) retryAfterMs = 60_000
   return {retryAfterMs, rateLimited}
 }
 
@@ -58,13 +60,7 @@ export function githubError(error, output = "", stderr = "") {
       .filter((line) => line.includes(":"))
       .map((line) => [line.slice(0, line.indexOf(":")).toLowerCase(), line.slice(line.indexOf(":") + 1).trim()]),
   )
-  const details = rateLimitDetails(headers)
-  if (!block && /rate limit/i.test(stderr)) {
-    details.rateLimited = true
-    // Binary download errors do not include response headers. GitHub advises
-    // waiting at least a minute for a secondary limit without Retry-After.
-    details.retryAfterMs = 60_000
-  }
+  const details = rateLimitDetails(headers, status, stderr)
   const code =
     /timeout|timed out|connection reset|unexpected EOF|TLS handshake|temporary failure|connection refused/i.test(stderr)
       ? "ECONNRESET"
@@ -185,7 +181,7 @@ export async function uploadReleaseAsset({
               new Error(
                 `Uploading ${name} failed with HTTP ${status}: ${detail.replace(/\s+/g, " ").trim().slice(0, 300)}`,
               ),
-              {status, ...rateLimitDetails(response.headers)},
+              {status, ...rateLimitDetails(response.headers, status, detail)},
             ),
           )
         })
@@ -212,6 +208,32 @@ async function hashStream(stream) {
   return hash.digest("hex")
 }
 
+async function hashDownload(stream) {
+  const hash = createHash("sha256")
+  let pending = Buffer.alloc(0)
+  let headers
+  for await (const chunk of stream) {
+    if (headers !== undefined) {
+      hash.update(chunk)
+      continue
+    }
+    pending = Buffer.concat([pending, chunk])
+    // gh --include emits one final response header block, followed by the
+    // binary body. Keep only that block, even when it spans stream chunks.
+    const boundary = /\r?\n\r?\n/.exec(pending.toString("latin1"))
+    if (!boundary) {
+      if (pending.length > 64 * 1024) throw new Error("GitHub download response headers exceed 64 KiB")
+      continue
+    }
+    const offset = boundary.index + boundary[0].length
+    headers = pending.subarray(0, offset).toString("utf8")
+    if (!/^HTTP\/\S+ \d{3}/.test(headers)) throw new Error("GitHub download is missing HTTP response headers")
+    hash.update(pending.subarray(offset))
+    pending = null
+  }
+  return {digest: hash.digest("hex"), headers: headers || ""}
+}
+
 export async function verifyReleaseAsset({repository, file, asset, spawnImpl = spawn}) {
   const mismatch = () => new Error(`Refusing to overwrite immutable release asset ${asset.name} with different bytes`)
   if (asset.size !== statSync(file).size) throw mismatch()
@@ -219,7 +241,7 @@ export async function verifyReleaseAsset({repository, file, asset, spawnImpl = s
   // Stream verification too: the OTA bundle can be much larger than the APK.
   const download = spawnImpl(
     "gh",
-    ["api", "-H", "Accept: application/octet-stream", `repos/${repository}/releases/assets/${asset.id}`],
+    ["api", "--include", "-H", "Accept: application/octet-stream", `repos/${repository}/releases/assets/${asset.id}`],
     {stdio: ["ignore", "pipe", "pipe"], timeout: 15 * 60_000},
   )
   let stderr = ""
@@ -230,7 +252,15 @@ export async function verifyReleaseAsset({repository, file, asset, spawnImpl = s
     download.on("error", (error) => resolve({error}))
     download.on("close", (code, signal) => resolve({code, signal}))
   })
-  const actual = await hashStream(download.stdout)
+  let result
+  try {
+    result = await hashDownload(download.stdout)
+  } catch (error) {
+    download.kill()
+    await completed
+    throw error
+  }
+  const {digest: actual, headers} = result
   const {code, signal, error} = await completed
   if (error) throw error
   if (code !== 0)
@@ -238,9 +268,11 @@ export async function verifyReleaseAsset({repository, file, asset, spawnImpl = s
       Object.assign(new Error(`Downloading ${asset.name} for verification failed (${signal || code})`), {
         code: signal === "SIGTERM" ? "ETIMEDOUT" : undefined,
       }),
-      "",
+      headers,
       stderr,
     )
+  if (!/^HTTP\/\S+ 2\d{2}/.test(headers))
+    throw new Error(`Downloading ${asset.name} did not return successful HTTP headers`)
   if (actual !== expected) throw mismatch()
 }
 

@@ -332,6 +332,14 @@ test("preserves GitHub rate-limit metadata and distinguishes CLI exit status fro
   )
   assert.equal(error.status, 403)
   assert.equal(error.rateLimited, true)
+  assert.equal(
+    githubError(
+      new Error("gh failed"),
+      `HTTP/2.0 429 Too Many Requests\nRetry-After: 120\r\nX-Ratelimit-Remaining: 100\r\nX-Ratelimit-Reset: ${reset + 3600}\r\n\r\n`,
+      "gh: secondary rate limit (HTTP 429)",
+    ).retryAfterMs,
+    120000,
+  )
   assert.ok(error.retryAfterMs >= 89000 && error.retryAfterMs <= 91000)
   assert.equal(githubError(new Error("gh failed"), "", "gh: Bad credentials (HTTP 401)").status, 401)
   assert.equal(githubError(new Error("gh failed"), "", "read: connection reset by peer").code, "ECONNRESET")
@@ -535,7 +543,7 @@ test("streams byte verification and rejects equal-sized but different content", 
       spawnImpl: () =>
         spawn(process.execPath, [
           "-e",
-          "process.stdout.write(process.argv[1])",
+          'process.stdout.write("HTTP/2.0 200 OK\\n\\r\\n"); process.stdout.write(process.argv[1])',
           same ? body.toString() : "x".repeat(body.length),
         ]),
     })
@@ -552,10 +560,102 @@ test("rejects an incomplete verification download even if it returned matching b
       file,
       asset: {...uploaded, size: body.length},
       spawnImpl: () =>
-        spawn(process.execPath, ["-e", "process.stdout.write(process.argv[1]); process.exitCode = 1", body.toString()]),
+        spawn(process.execPath, [
+          "-e",
+          'process.stdout.write("HTTP/2.0 200 OK\\n\\r\\n"); process.stdout.write(process.argv[1]); process.exitCode = 1',
+          body.toString(),
+        ]),
     }),
     /verification failed/,
   )
+})
+
+test("preserves download Retry-After greater than a minute before retrying verification", async (t) => {
+  const {file, body} = fixture(t)
+  let downloads = 0
+  const delays = []
+  await publishReleaseAsset(
+    publisher({
+      file,
+      findAsset: () => ({...uploaded, size: body.length}),
+      upload: async () => assert.fail("must not re-upload during verification"),
+      wait: async (ms) => delays.push(ms),
+      verify: (args) =>
+        verifyReleaseAsset({
+          ...args,
+          spawnImpl: (command, args) => {
+            assert.ok(args.includes("--include"))
+            const limited = ++downloads === 1
+            if (!limited) assert.deepEqual(delays, [120000])
+            return spawn(process.execPath, [
+              "-e",
+              `
+        process.stdout.write(process.argv[1]);
+        process.stderr.write(process.argv[2]);
+        process.exitCode = Number(process.argv[3]);
+      `,
+              limited ? "HTTP/2.0 429 Too Many Requests\nRetry-After: 120\r\n\r\n" : "HTTP/2.0 200 OK\n\r\n" + body,
+              limited ? "gh: secondary rate limit (HTTP 429)" : "",
+              limited ? "1" : "0",
+            ])
+          },
+        }),
+    }),
+  )
+  assert.equal(downloads, 2)
+  assert.deepEqual(delays, [120000])
+})
+
+test("does not retry a download before an over-budget Retry-After", async (t) => {
+  const {file, body} = fixture(t)
+  let downloads = 0
+  await assert.rejects(
+    publishReleaseAsset(
+      publisher({
+        file,
+        findAsset: () => ({...uploaded, size: body.length}),
+        wait: async () => assert.fail("must not shorten the cooldown"),
+        verify: (args) =>
+          verifyReleaseAsset({
+            ...args,
+            spawnImpl: () => {
+              downloads++
+              return spawn(process.execPath, [
+                "-e",
+                `
+        process.stdout.write("HTTP/2.0 429 Too Many Requests\\nRetry-After: 300\\r\\n\\r\\n");
+        process.stderr.write("gh: secondary rate limit (HTTP 429)");
+        process.exitCode = 1;
+      `,
+              ])
+            },
+          }),
+      }),
+    ),
+    /rate limit/,
+  )
+  assert.equal(downloads, 1)
+})
+
+test("hashes binary bytes exactly when download headers span chunks", async (t) => {
+  const {file, body} = fixture(t, Buffer.from([0, 255, 128, 13, 10, 13, 10, 42]))
+  await verifyReleaseAsset({
+    repository: coordinates.repository,
+    file,
+    asset: {...uploaded, size: body.length},
+    spawnImpl: () =>
+      spawn(process.execPath, [
+        "-e",
+        `
+      process.stdout.write("HTTP/2.0 200 OK\\nX-Test: one\\r\\n\\r");
+      setTimeout(() => {
+        process.stdout.write("\\n");
+        process.stdout.write(Buffer.from(process.argv[1], "base64"));
+      }, 20);
+    `,
+        body.toString("base64"),
+      ]),
+  })
 })
 
 test("filters all release asset pages inside gh and safely quotes the exact name", () => {
