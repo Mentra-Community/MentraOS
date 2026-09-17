@@ -110,8 +110,8 @@ recovering | live | stopping | failed`, `steps[]` with `pending | running | done
 
 | Projected phase | When |
 |---|---|
-| `idle` | no stream session |
-| `starting` | from `open` until the first `live`, including the initial attach and publish |
+| `idle` | no join attempt |
+| `starting` | from the moment the runtime accepts the join (before `open`, during permission checks, reservation and agent preparation) until the first `live` |
 | `recovering` | stream phase `recovering` (media or hotspot recovery) |
 | `live` | stream phase `live` |
 | `stopping` | stream phase `closing`, and the ACS leave that follows |
@@ -122,11 +122,17 @@ end each one, and `detail` from the hotspot or stream error message when a step 
 
 | Step | running | done | failed |
 |---|---|---|---|
-| `hotspot` | hotspot phase `reserved` or `enabling` | hotspot phase `joining` or later | hotspot `failed` before `joining` |
+| `hotspot` | hotspot phase `enabling` only; its timer starts here | hotspot phase `joining` or later | hotspot `failed` before `joining`, or a preflight failure (permission, agent preparation) before `start` |
 | `scopedJoin` | hotspot phase `joining` or `verifying` | hotspot phase `restoring` or later | hotspot `failed` at `joining` or `verifying` |
 | `acsJoin` | an adapter attach has started with `meetingJoined` false and the ACS join promise is pending | ACS join resolved | ACS join rejected (`ACS_JOIN_FAILED`) |
 | `publish` | stream phase `listening` after the ACS join, until the glasses acknowledge `start_stream` | stream phase `publishing` (the glasses acknowledged; this is when today's `publish` step completes) | stream `failed` while `listening` (`listener_bind_failed`, `receiver_failed`, `adapter_attach_failed`) or `publish_rejected` |
 | `live` | stream phase `publishing` (waiting for the first frame, today's `awaitFirstFrame`) | stream phase `live` | stream `failed` while `publishing` (`first_frame_timeout`) or after a first `live` (`stalled`, `recovery_exhausted`) |
+
+Before `start`, every step is `pending` and the attempt is `starting`: reservation, the cellular
+hold and ACS agent preparation are not hotspot work and must not count toward the `hotspot`
+step's `durationMs`. As today (`narrateSoftapPreflight`), the runtime may write a `detail` onto
+the pending `hotspot` row to narrate the preflight ("asking for nearby devices permission",
+"preparing the call agent") without changing its status.
 
 On recovery the steps that are rebuilt (`hotspot` and `scopedJoin` for a hotspot outage,
 `publish` and `live` for both kinds) go back to `pending` and run again; `acsJoin` stays `done`
@@ -169,7 +175,7 @@ surfaces as `ACS_JOIN_FAILED` on step `acsJoin`, not as `PUBLISH_FAILED`.
 |---|---|
 | steps `hotspot`, `scopedJoin`, `publish`, `live` | deleted as steps; derived for progress only |
 | step `acsJoin` | no longer a transport step: `join` runs inside the adapter's `attach` whenever `meetingJoined` is false; `leaveOrEnd` runs after `stream.close()` |
-| the sequence | `prepareAgent` → `streamService.open(...)` + `start()` → (leave: `close()` then `leaveOrEnd`) |
+| the sequence | as in decision 1: `streamService.open(...)` → `prepareAgent` → `stream.start()` → (leave: `close()` then `leaveOrEnd`) |
 | `SoftapCallDeps.startHotspot`, `waitUntilHotspotJoinable`, `stopHotspot`, `joinScopedNetwork`, `leaveScopedNetwork`, `cancelScopedNetworkJoin`, `startPublishing`, `stopPublishing`, `awaitFirstFrame`, `waitUntilLive`, `rebindIngest`, `republishRetryDelayMs` | deleted |
 | `SoftapCallDeps.isWifiEnabled` | deleted; the hotspot service's preflight reports `wifi_disabled` |
 | `SoftapCallDeps.joinMeeting`, `leaveMeeting`, `endMeeting` | kept; `joinMeeting` is called by the adapter's `attach` when not yet joined, no longer takes `bindAddress` and no longer returns an `ingestUrl` |
@@ -269,7 +275,9 @@ first as the simpler consumer).
   deadline and only the media reattach inside it. Test interrupted and late initial joins.
 - **Projection milestones.** `publish` completes when the glasses acknowledge `start_stream`,
   before the first-frame wait, and a first-frame timeout is a `live` failure. Test the
-  projection for the wait, the timeout, a recovery and a cancellation during each.
+  projection for the wait, the timeout, a recovery and a cancellation during each, and for the
+  preflight: a slow `open` or `prepareAgent`, a preflight failure and a cancellation before
+  `start`, each checked through the Miniapp parser with `hotspot` still `pending`.
 - **Audio through recovery.** With the stream detached during a rebuild, glasses PCM stops but
   BLE LC3 and phone mic continue; the meeting must not mute or switch source on its own.
 - **Old and new transport during the switch.** Both reserve the hotspot as `video_streaming`
