@@ -41,20 +41,46 @@ posted_reviews() {
   fi
 }
 
-# With job control on, every background job runs in its own process group whose id is
-# the job's pid, so the whole tree Codex spawned (shells, gh, node) can be terminated
-# together. Nothing from a killed attempt may survive into the receipt check or the
-# retry, or a late `gh pr review` could post a second verdict.
+# With job control on, every background job runs in its own process group, but
+# Codex runs its tool commands in sessions of their own, so a group kill alone is
+# not enough. Before terminating anything the whole descendant tree is snapshotted
+# while it is still intact (a child that re-parents to init after its parent dies
+# could not be found afterwards), then the group and every snapshotted pid get
+# SIGTERM, then SIGKILL, and each one is verified dead. A survivor is a hard
+# failure: the runner neither retries nor trusts a receipt, because a late
+# `gh pr review` from that survivor could still post.
 set -m
-group_alive() { pgrep -g "$1" >/dev/null 2>&1; }
+descendants() {
+  local child
+  for child in $(pgrep -P "$1" 2>/dev/null); do
+    echo "$child"
+    descendants "$child"
+  done
+}
+alive() {
+  local state
+  state=$(ps -o stat= -p "$1" 2>/dev/null) && [[ -n "$state" && "$state" != Z* ]]
+}
+survivors=""
 kill_attempt() {
-  local pgid="$1" i
+  local pgid="$1" i p pids
   [[ -n "$pgid" ]] || return 0
+  pids="$pgid $(descendants "$pgid") $(pgrep -g "$pgid" 2>/dev/null)"
   kill -TERM -- "-$pgid" 2>/dev/null || true
-  for i in $(seq 1 10); do group_alive "$pgid" || return 0; sleep 0.5; done
+  for p in $pids; do kill -TERM "$p" 2>/dev/null || true; done
+  for i in $(seq 1 10); do
+    survivors=""; for p in $pids; do alive "$p" && survivors="$survivors $p"; done
+    [[ -n "$survivors" ]] || return 0
+    sleep 0.5
+  done
   kill -KILL -- "-$pgid" 2>/dev/null || true
-  for i in $(seq 1 10); do group_alive "$pgid" || return 0; sleep 0.5; done
-  echo "codex-review: warning: process group $pgid still has members after SIGKILL" >&2
+  for p in $pids; do kill -KILL "$p" 2>/dev/null || true; done
+  for i in $(seq 1 10); do
+    survivors=""; for p in $pids; do alive "$p" && survivors="$survivors $p"; done
+    [[ -n "$survivors" ]] || return 0
+    sleep 0.5
+  done
+  echo "codex-review: processes of the attempt survived SIGKILL:${survivors}" >&2
   return 1
 }
 pid=""
@@ -92,8 +118,9 @@ for attempt in $(seq 1 "$ATTEMPTS"); do
     fi
   done
   wait "$pid" 2>/dev/null; status=$?
-  # Codex may exit while a command it spawned is still running; drain the group first.
-  kill_attempt "$pid"
+  # Codex may exit while a command it spawned is still running; drain everything first.
+  # Fail closed if that cannot be verified: a survivor could still post a late review.
+  kill_attempt "$pid" || { echo "codex-review: FAILED: cannot verify the attempt is fully terminated; not retrying" >&2; exit 1; }
   if [[ $status -eq 0 && -s "$output" ]]; then
     echo "codex-review: attempt $attempt finished"; tail -c 1500 "$output"; exit 0
   fi
