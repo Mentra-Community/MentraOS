@@ -118,7 +118,7 @@ describe("iOS miniapp microphone permission", () => {
     expect(showAlert).not.toHaveBeenCalled()
   })
 
-  it("allows Call to launch with optional calendar access denied", async () => {
+  it("launches Call without reading or requesting calendar permission", async () => {
     ;(check as jest.Mock).mockResolvedValue(RESULTS.GRANTED)
     ;(ExpoCalendar.getCalendarPermissionsAsync as jest.Mock).mockResolvedValue({
       canAskAgain: false,
@@ -131,7 +131,6 @@ describe("iOS miniapp microphone permission", () => {
       permissions: [
         {type: "PHONE_CAMERA", required: true},
         {type: "MICROPHONE", required: true},
-        {type: "CALENDAR", required: false},
       ],
     } as typeof app
 
