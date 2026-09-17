@@ -20,6 +20,7 @@ import {
   hasAdvancingLaptopMedia,
 } from "./runner/browser-media-diagnostics"
 import {parseTeamsDevices, selectTeamsDevices} from "./runner/teams-devices"
+import {BROWSER_CONTROLLER_TIMEOUT_MS, waitForNativeCheckpoint} from "./runner/native-checkpoint"
 
 // Experimental browser companion. It does not qualify the native or duplex routine.
 process.umask(0o077)
@@ -98,26 +99,20 @@ let freshLinkRecovery: {status: "passed" | "failed"; error?: string} | undefined
 const browserErrors: {type: string; text: string}[] = []
 const nativeInput =
   (values.rejoin || values["audio-only"]) && mode === "run" ? createInterface({input: process.stdin}) : undefined
+const nativeClosed = new AbortController()
+nativeInput?.once("close", () => nativeClosed.abort(new Error("Native controller closed its acknowledgement pipe")))
 function nativeCheckpointAcknowledged(checkpoint: string, publish: () => Promise<void>) {
-  return new Promise<void>((resolve, reject) => {
-    const finish = (error?: Error) => {
-      clearTimeout(timer)
-      nativeInput!.off("line", onLine)
-      nativeInput!.off("close", onClose)
-      error ? reject(error) : resolve()
-    }
-    const onLine = (line: string) => {
-      if (line === "MENTRA_NATIVE_ACK " + checkpoint) finish()
-    }
-    const onClose = () => finish(new Error(`Native controller closed before acknowledging ${checkpoint}`))
-    const timer = setTimeout(() => finish(new Error(`Native acknowledgement timed out: ${checkpoint}`)), 30000)
-    nativeInput!.on("line", onLine)
-    nativeInput!.once("close", onClose)
-    void publish().catch(finish)
-  })
+  return waitForNativeCheckpoint(
+    nativeInput!,
+    checkpoint,
+    publish,
+    started + BROWSER_CONTROLLER_TIMEOUT_MS,
+    nativeClosed.signal,
+  )
 }
 process.once("SIGTERM", () => {
   failure ??= "Controller cancelled the browser routine"
+  nativeClosed.abort(new Error(failure))
   void context?.close().catch(() => {})
 })
 const elapsed = () => Math.round(performance.now() - started)
@@ -317,6 +312,7 @@ try {
         )
         if (values["audio-only"]) {
           await runPage.getByRole("button", {name: /^Mute mic/}).click()
+          await runPage.getByRole("button", {name: /^Unmute mic/}).waitFor({state: "visible"})
           await nativeCheckpointAcknowledged("audio-return-finished", () =>
             evidence(
               "audio-return-finished",

@@ -242,9 +242,13 @@ Before enabling the browser microphone, the controller closes Participants and
 presses the native **Mute your microphone** switch. It must observe **Unmute
 your microphone** and acknowledge that state to the browser. The wearer then
 speaks near the laptop and listens through the glasses during a recorded
-15-second window. The browser mutes before the controller restores the glasses
-microphone and reopens Participants. Both transitions require observed native
-state and an acknowledgement; this isolates return audio from the glasses mic.
+15-second window. The browser presses **Mute mic** and waits for **Unmute mic**
+before the controller restores the glasses microphone and reopens Participants.
+Both transitions require observed native state and an acknowledgement; this
+isolates return audio from the glasses mic. Native acknowledgements use the
+controller's existing four-minute overall browser deadline. A separate short
+timer does not cut off successful native actions while their evidence is being
+recorded. Closing the controller pipe or cancellation fails the pending barrier.
 The controls come from recorded AX snapshots (`AXCheckBox` with `AXSwitch`
 subrole), not screen coordinates. This new isolated hearing sequence awaits its
 first live run.

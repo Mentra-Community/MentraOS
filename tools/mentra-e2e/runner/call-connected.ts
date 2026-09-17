@@ -12,6 +12,7 @@ import {join} from "node:path"
 import {command, snapshot, root, type Doctor} from "./driver"
 import {acquireLock, Report} from "./report"
 import {parseTeamsDevices} from "./teams-devices"
+import {BROWSER_CONTROLLER_TIMEOUT_MS} from "./native-checkpoint"
 
 export async function runConnectedCall(
   fixture: CallFixture,
@@ -731,7 +732,7 @@ export async function runConnectedCall(
       failed = true
       void save("browser-timeout.json", {error: "Browser companion exceeded four minutes"}).catch(() => {})
       stopBrowser()
-    }, 240000)
+    }, BROWSER_CONTROLLER_TIMEOUT_MS)
     abort.signal.addEventListener("abort", stopBrowser, {once: true})
     const input = createInterface({input: Readable.fromWeb(child.stdout as any), crlfDelay: Infinity})
     let admitted = false
