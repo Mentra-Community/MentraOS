@@ -1,13 +1,14 @@
 import {useCallback, useEffect, useState} from "react"
-import {View} from "react-native"
+import {Pressable, View} from "react-native"
 
 import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
 import type {WearStateEvent, WearTuningEvent} from "@mentra/bluetooth-sdk-internal"
 import {DeviceTypes, SETTINGS, useSetting} from "@mentra/engine"
 
 import {Text} from "@/components/ignite"
-import {Group} from "@/components/ui/Group"
-import {RouteButton} from "@/components/ui/RouteButton"
+import SelectSetting from "@/components/settings/SelectSetting"
+import SliderSetting from "@/components/settings/SliderSetting"
+import ToggleSetting from "@/components/settings/ToggleSetting"
 import {useAppTheme} from "@/contexts/ThemeContext"
 
 const DEFAULTS = {interval: 300, count: 5, majority: 4} as const
@@ -21,6 +22,37 @@ const PRESETS = {
 
 type Vote = {interval: number; count: number; majority: number}
 type PendingVote = {enabled?: boolean} & Partial<Vote>
+
+function clampVote(next: Vote): Vote {
+  const count = Math.min(15, Math.max(3, next.count))
+  const minMajority = Math.floor(count / 2) + 1
+  return {
+    interval: Math.min(2000, Math.max(50, next.interval)),
+    count,
+    majority: Math.min(count, Math.max(minMajority, next.majority)),
+  }
+}
+
+function presetOf(vote: Vote): string {
+  if (vote.interval === PRESETS.fast.interval && vote.count === PRESETS.fast.count && vote.majority === PRESETS.fast.majority) {
+    return "fast"
+  }
+  if (
+    vote.interval === PRESETS.default.interval &&
+    vote.count === PRESETS.default.count &&
+    vote.majority === PRESETS.default.majority
+  ) {
+    return "default"
+  }
+  if (
+    vote.interval === PRESETS.sticky.interval &&
+    vote.count === PRESETS.sticky.count &&
+    vote.majority === PRESETS.sticky.majority
+  ) {
+    return "sticky"
+  }
+  return "custom"
+}
 
 /**
  * Super Mode wear-detection commands. Mounting asks the glasses what they
@@ -68,63 +100,116 @@ export function WearDetectionSettings() {
   const interval = pending?.interval ?? applied?.interval ?? DEFAULTS.interval
   const count = pending?.count ?? applied?.count ?? DEFAULTS.count
   const majority = pending?.majority ?? applied?.majority ?? DEFAULTS.majority
+  const vote = clampVote({interval, count, majority})
+  const preset = presetOf(vote)
 
   const setReporting = (on: boolean) => {
-    setPending({enabled: on, interval, count, majority})
+    setPending({enabled: on, ...vote})
     void send("setWearReporting", () => BluetoothSdk.setWearReporting(on))
   }
 
   const sendVote = (next: Vote) => {
-    setPending({enabled, ...next})
-    void send("setWearTuning", () => BluetoothSdk.setWearTuning(next.interval, next.count, next.majority))
+    const clamped = clampVote(next)
+    setPending({enabled, ...clamped})
+    void send("setWearTuning", () => BluetoothSdk.setWearTuning(clamped.interval, clamped.count, clamped.majority))
   }
 
   if (!isMentraLive) {
     return (
-      <Group title="Wear detection">
-        <Text
-          text="Connect Mentra Live to tune wear detection."
-          style={{color: theme.colors.textDim}}
-          className="text-sm"
-        />
-      </Group>
+      <Text
+        text="Connect Mentra Live to tune wear detection."
+        style={{color: theme.colors.textDim}}
+        className="text-sm"
+      />
     )
   }
 
   return (
-    <View className="gap-3">
-      <Group title="Wear detection">
-        <View className="gap-1 px-1 pb-1">
-          <Text text={`reporting: ${enabled ? "on" : "off"}`} className="text-text text-sm" />
-          <Text text={`worn: ${worn === null ? "unknown" : worn ? "yes" : "no"}`} className="text-text text-sm" />
-          <Text
-            text={`applied: ${interval}ms x ${count}, majority ${majority} (gen ${applied?.generation ?? 0})`}
-            style={{color: theme.colors.textDim}}
-            className="text-sm"
-          />
-          {applied && !applied.accepted && (
-            <Text text="rejected" style={{color: theme.colors.tint}} className="text-sm font-medium" />
-          )}
-          {error && <Text text={error} style={{color: theme.colors.tint}} className="text-sm font-medium" />}
-        </View>
-        <RouteButton label="Query state" onPress={() => void send("queryWearState", () => BluetoothSdk.queryWearState())} />
-        <RouteButton label="Reporting ON" onPress={() => setReporting(true)} />
-        <RouteButton label="Reporting OFF" onPress={() => setReporting(false)} />
-        <RouteButton label="Fast" subtitle="150ms x 5, majority 4" onPress={() => sendVote(PRESETS.fast)} />
-        <RouteButton label="Default" subtitle="300ms x 5, majority 4" onPress={() => sendVote(PRESETS.default)} />
-        <RouteButton label="Sticky" subtitle="300ms x 9, majority 7" onPress={() => sendVote(PRESETS.sticky)} />
-        <RouteButton label="Majority +" onPress={() => sendVote({interval, count, majority: majority + 1})} />
-        <RouteButton label="Majority -" onPress={() => sendVote({interval, count, majority: majority - 1})} />
-        <RouteButton label="Interval +50" onPress={() => sendVote({interval: interval + 50, count, majority})} />
-        <RouteButton label="Interval -50" onPress={() => sendVote({interval: interval - 50, count, majority})} />
-        <RouteButton
-          label="Reset to firmware defaults"
+    <View className="gap-6">
+      <View className="gap-1">
+        <Text text={`worn: ${worn === null ? "unknown" : worn ? "yes" : "no"}`} className="text-text text-sm" />
+        <Text
+          text={`applied: ${vote.interval}ms × ${vote.count}, majority ${vote.majority} (gen ${applied?.generation ?? 0})`}
+          style={{color: theme.colors.textDim}}
+          className="text-sm"
+        />
+        {applied && !applied.accepted && (
+          <Text text="rejected" style={{color: theme.colors.tint}} className="text-sm font-medium" />
+        )}
+        {error && <Text text={error} style={{color: theme.colors.tint}} className="text-sm font-medium" />}
+      </View>
+
+      <ToggleSetting
+        label="Reporting"
+        subtitle="RAM-only. The glasses forget this on disconnect."
+        value={enabled}
+        onValueChange={setReporting}
+        isFirst
+        isLast
+      />
+
+      <View className="gap-2">
+        <SelectSetting
+          label="Preset"
+          value={preset}
+          options={[
+            {label: "Fast (150ms × 5, majority 4)", value: "fast"},
+            {label: "Default (300ms × 5, majority 4)", value: "default"},
+            {label: "Sticky (300ms × 9, majority 7)", value: "sticky"},
+            {label: "Custom", value: "custom"},
+          ]}
+          onValueChange={(value) => {
+            if (value === "custom") return
+            sendVote(PRESETS[value as keyof typeof PRESETS])
+          }}
+          isFirst
+          isLast
+        />
+        <SliderSetting
+          label="Interval (ms)"
+          value={vote.interval}
+          min={50}
+          max={2000}
+          onValueChange={() => {}}
+          onValueSet={(value) => sendVote({...vote, interval: value})}
+          isFirst
+        />
+        <SliderSetting
+          label="Count"
+          subtitle="Sliding-window length (3–15)."
+          value={vote.count}
+          min={3}
+          max={15}
+          onValueChange={() => {}}
+          onValueSet={(value) => sendVote({...vote, count: value})}
+        />
+        <SliderSetting
+          label="Majority"
+          subtitle="Votes needed to flip. Must be more than count/2."
+          value={vote.majority}
+          min={2}
+          max={15}
+          onValueChange={() => {}}
+          onValueSet={(value) => sendVote({...vote, majority: value})}
+          isLast
+        />
+      </View>
+
+      <View className="gap-2">
+        <Pressable
+          onPress={() => void send("queryWearState", () => BluetoothSdk.queryWearState())}
+          className="bg-primary-foreground rounded-2xl px-4 py-4">
+          <Text text="Query state" className="text-sm font-semibold text-foreground" />
+        </Pressable>
+        <Pressable
           onPress={() => {
             setPending({enabled: false, ...DEFAULTS})
             void send("resetWearTuning", () => BluetoothSdk.resetWearTuning())
           }}
-        />
-      </Group>
+          className="bg-primary-foreground rounded-2xl px-4 py-4">
+          <Text text="Reset to firmware defaults" className="text-sm font-semibold text-foreground" />
+        </Pressable>
+      </View>
     </View>
   )
 }
