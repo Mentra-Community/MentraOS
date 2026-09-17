@@ -147,3 +147,14 @@ hotspot stopped and only newly added Wi-Fi preferences removed after each run.
 The ASG fixture remains `3.2.0-dev.206-camera-failure-dev`; it is not a latest-build
 firmware qualification. Full product join, Teams browser media, repeated calls
 and app-owned cleanup remain outstanding.
+
+Product commit `4f1c87dd57` is pushed to draft #4078. The candidate full app is
+installed as build `302005557`, executable SHA-256
+`33a64c8efc429c784de962e4bdb7dc4345170512ae75e3b5282cd4c773a3634d`.
+The 13-step paired UI replay `2026-09-17T00-56-20-518Z-mentra-call-ui-d728a4`
+passed in 11.753333 seconds, including settings, forms, minimize/reopen and close.
+All screenshot/AX/video/chapter/liveness checks passed, zero model calls; no
+meeting was created. The build's source diff and native/JS hashes are archived.
+The candidate remains running and all three original audio defaults were restored
+and verified. Temporary Location permission approval is still pending; a spoken
+attention request was issued through the Mac speakers as requested by the user.
