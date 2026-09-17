@@ -283,6 +283,39 @@ and recovery are built on the hotspot lease. It is deferred rather than half-spe
 then same-LAN streaming to the phone keeps working the way it does today, through the `url`
 arm with a receiver the app runs.
 
+Stopping is the other half of the contract. Today `BluetoothSdk.stopStream()` binds straight to
+native and only sends the BLE stop and awaits its acknowledgement; it knows nothing about a
+phone receiver or a hotspot. With a `phone` destination the public stop must close the whole
+operation, so the provider owns one:
+
+```ts
+// SDK-internal provider contract, implemented by glasses-media
+export interface PhoneStreamProvider {
+  /** Called on admission, before anything starts. Returns synchronously so stop() can reach it during startup. */
+  begin(request: StreamStartRequest): PhoneStreamOperation
+}
+export interface PhoneStreamOperation {
+  readonly streamSessionId: string
+  /** open → start; resolves on the first frame with the status the public startStream returns. */
+  started: Promise<StreamStatusEvent & {phone: {streamSessionId: string}}>
+  /** Cancels a start or a recovery in flight, closes the stream session (which stops the glasses through the publisher slot's own low-level stop), and awaits the close. Idempotent; retries a blocked hotspot release. */
+  stop(): Promise<{status: StreamStatusEvent; hotspot: ReleaseResult | null}>
+}
+```
+
+`BluetoothSdk.startStream` with `kind: "phone"` registers the operation before it awaits
+`started`, and `BluetoothSdk.stopStream()` routes by what is active: with a phone operation
+registered, including one still starting or recovering, it calls `operation.stop()` and
+resolves with the final `stopped` status once the session has closed; with a `url` stream it
+does exactly what it does today. The stream service stops the glasses through
+`glassesPublisher.stop(streamId)`, never through the public `stopStream`, so there is no
+recursive dispatch. A blocked cleanup leaves the operation registered in a `closing` state:
+`stream_status` carries `cleanup: "blocked"`, a second `stopStream()` retries the release, and
+`startStream` rejects with `publisher_busy` until the close settles, so a late completion from
+the old operation can never attach to a successor. With the BLE link down the glasses stop is
+deferred through the publisher slot as already specified, while the receiver and the hotspot
+session close immediately.
+
 Placement follows the libwebrtc rule. Photo phone delivery lives entirely in the SDK because
 BLE file transfer does. A stream receiver needs libwebrtc, which stays in
 `@mentra/glasses-media`. The union and the call live in the SDK; glasses-media registers itself
@@ -586,10 +619,12 @@ steps:
 - **Preview surface lifecycle.** The host-owned surface must close when the miniapp is closed
   or backgrounded, and the underlying stream must close with it; tests cover both and a
   placement change mid-recovery.
-- **Provider registration.** The `phone` arm depends on glasses-media being imported before
-  the first `startStream`; the rejection when it is not must be immediate and named, never a
-  hang. Tests cover the SDK alone, the SDK plus glasses-media, and the deprecated flat
-  `streamUrl` mixed with `destination`.
+- **Provider registration and stop routing.** The `phone` arm depends on glasses-media being
+  imported before the first `startStream`; the rejection when it is not must be immediate and
+  named, never a hang. Tests cover the SDK alone (the `url` arm and `stopStream` behave exactly
+  as today), the SDK plus glasses-media, the deprecated flat `streamUrl` mixed with
+  `destination`, start then stop, stop during start and during recovery, stop with the BLE link
+  down, and a blocked close followed by a successful retry.
 - **Two published services.** Moving the services out of the engine means their tests and
   their release gates live in the SDK and glasses-media packages; the engine's suites keep only
   the flow tests.
