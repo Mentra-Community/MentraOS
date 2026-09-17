@@ -33,6 +33,7 @@ const {positionals, values} = parseArgs({
     "headful": {type: "boolean", default: false},
     "rejoin": {type: "boolean", default: false},
     "capture-devices": {type: "string"},
+    "audio-only": {type: "boolean", default: false},
     "name": {type: "string", default: "Mentra E2E Observer"},
     "remote-name": {type: "string", default: "Mentra Live"},
     "admission-seconds": {type: "string", default: "90"},
@@ -54,8 +55,9 @@ const mode = positionals[0] ?? "probe"
 const captureDevices = values["capture-devices"]
   ? parseTeamsDevices(JSON.parse(await readFile(values["capture-devices"], "utf8")))
   : undefined
-if (captureDevices && (mode !== "run" || values.rejoin))
-  throw new Error("Laptop capture requires run mode and is currently separate from browser rejoin")
+if (values["audio-only"] && !captureDevices) throw new Error("Audio-only requires explicit laptop devices")
+if (captureDevices && (mode !== "run" || (values.rejoin && !values["audio-only"])))
+  throw new Error("Rejoin with laptop capture currently requires audio-only mode")
 if (!["setup", "probe", "run"].includes(mode)) throw new Error("Use setup, probe or run")
 const admissionSeconds = Number(values["admission-seconds"])
 if (!Number.isFinite(admissionSeconds) || admissionSeconds < 1 || admissionSeconds > 300)
@@ -91,6 +93,7 @@ let cleanup = "not-needed"
 let joinRequested = false
 let rejoinQualified = false
 let browserSendingVerified = false
+let audioDeviceSelections = 0
 let freshLinkRecovery: {status: "passed" | "failed"; error?: string} | undefined
 const browserErrors: {type: string; text: string}[] = []
 const nativeInput = values.rejoin && mode === "run" ? createInterface({input: process.stdin}) : undefined
@@ -118,6 +121,7 @@ process.once("SIGTERM", () => {
 })
 const elapsed = () => Math.round(performance.now() - started)
 async function evidence(id: string, instruction: string) {
+  if (/(?:^|-)device-(?:microphone|speaker)$/.test(id)) audioDeviceSelections++
   const phase = await teamsPhase(page!)
   const event = {id, instruction, elapsedMs: elapsed(), phase}
   events.push(event)
@@ -272,12 +276,14 @@ try {
       if (captureDevices) {
         const before = await sampleMediaDiagnostics(runPage)
         await runPage.getByRole("button", {name: /^Unmute mic/}).click()
-        await runPage.getByRole("button", {name: /^Turn camera on/}).click()
+        if (!values["audio-only"]) await runPage.getByRole("button", {name: /^Turn camera on/}).click()
         await runPage.getByRole("button", {name: /^Mute mic/}).waitFor({state: "visible"})
-        await runPage.getByRole("button", {name: /^Turn camera off/}).waitFor({state: "visible"})
+        await runPage
+          .getByRole("button", {name: values["audio-only"] ? /^Turn camera on/ : /^Turn camera off/})
+          .waitFor({state: "visible"})
         const deadline = performance.now() + 20000
         let after = await sampleMediaDiagnostics(runPage)
-        while (!hasAdvancingLaptopMedia(before, after, captureDevices)) {
+        while (!hasAdvancingLaptopMedia(before, after, captureDevices, values["audio-only"])) {
           await writeFile(join(output, "laptop-sending.json"), JSON.stringify({before, after}, null, 2))
           if (performance.now() > deadline)
             throw new Error("Selected laptop tracks and outbound RTP did not become active")
@@ -287,13 +293,16 @@ try {
         await new Promise((resolve) => setTimeout(resolve, 5000))
         const sustained = await sampleMediaDiagnostics(runPage)
         await writeFile(join(output, "laptop-sending.json"), JSON.stringify({before, after, sustained}, null, 2))
-        if (!hasAdvancingLaptopMedia(after, sustained, captureDevices))
+        if (!hasAdvancingLaptopMedia(after, sustained, captureDevices, values["audio-only"]))
           throw new Error("Laptop RTP did not keep advancing")
         browserSendingVerified = true
         await evidence(
           "laptop-sending",
-          "Verify selected laptop capture tracks and sustained outgoing audio/video packets.",
+          values["audio-only"]
+            ? "Verify the selected laptop microphone and sustained outgoing audio packets with camera off."
+            : "Verify selected laptop capture tracks and sustained outgoing audio/video packets.",
         )
+        if (values["audio-only"]) await runPage.getByRole("button", {name: /^Mute mic/}).click()
       }
       if (values.rejoin) {
         await runPage.getByRole("button", {name: "Leave", exact: true}).click()
@@ -320,6 +329,9 @@ try {
           await new Promise((resolve) => setTimeout(resolve, 250))
         }
         if ((await teamsPhase(runPage)) === "prejoin") {
+          if (await name.isVisible()) await name.fill(values.name!)
+          if (captureDevices)
+            await selectTeamsDevices(runPage, captureDevices, (id, text) => evidence("rejoin-" + id, text))
           await verifyCaptureOff("rejoin-")
           await runPage.getByRole("button", {name: "Join now", exact: true}).click()
         }
@@ -348,13 +360,14 @@ try {
               evidence("recovery-left", "Verify native departure before opening the same meeting link again."),
             )
             await runPage.goto(meeting!, {waitUntil: "domcontentloaded", timeout: 30000})
-            cleanup = "not-needed"
             await evidence(
               "recovery-open",
               "Open the original meeting link in a fresh page load without restarting the glasses stream.",
             )
             await reachPrejoin("recovery-")
             if (await name.isVisible()) await name.fill(values.name!)
+            if (captureDevices)
+              await selectTeamsDevices(runPage, captureDevices, (id, text) => evidence("recovery-" + id, text))
             await verifyCaptureOff("recovery-")
             cleanup = "not-needed"
             await runPage.getByRole("button", {name: "Join now", exact: true}).click()
@@ -430,8 +443,9 @@ try {
         rejoinQualified,
         captureDevices,
         browserSendingVerified,
+        captureScope: captureDevices ? (values["audio-only"] ? "audio-only" : "audio-and-video") : "none",
         freshLinkRecovery,
-        audioDeviceSelections: captureDevices ? 2 : 0,
+        audioDeviceSelections,
         videoTimeline,
         profile: "dedicated local profile; excluded from evidence",
       },

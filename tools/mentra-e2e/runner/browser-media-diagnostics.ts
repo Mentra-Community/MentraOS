@@ -132,10 +132,11 @@ export function hasAdvancingLaptopMedia(
   before: Awaited<ReturnType<typeof sampleMediaDiagnostics>>,
   after: Awaited<ReturnType<typeof sampleMediaDiagnostics>>,
   devices: TeamsDevices,
+  audioOnly = false,
 ) {
   const captures = after.flatMap((frame) => frame.captures ?? [])
   if (
-    ![devices.microphone, devices.camera].every((label) =>
+    !(audioOnly ? [devices.microphone] : [devices.microphone, devices.camera]).every((label) =>
       captures.some((t: any) => t.label === label && t.readyState === "live" && t.enabled && !t.muted),
     )
   )
@@ -155,5 +156,8 @@ export function hasAdvancingLaptopMedia(
           }),
       ),
     )
-  return advanced("audio", "packetsSent") && advanced("video", "framesEncoded") && advanced("video", "bytesSent")
+  return (
+    advanced("audio", "packetsSent") &&
+    (audioOnly || (advanced("video", "framesEncoded") && advanced("video", "bytesSent")))
+  )
 }

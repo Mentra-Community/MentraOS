@@ -16,7 +16,7 @@ import {parseTeamsDevices} from "./teams-devices"
 export async function runConnectedCall(
   fixture: CallFixture,
   buildManifestPath: string,
-  options: {browserRejoin?: boolean; browserCaptureDevices?: string} = {},
+  options: {browserRejoin?: boolean; browserCaptureDevices?: string; browserAudioOnly?: boolean} = {},
 ) {
   // Detect an unprovisioned worktree before opening a call or changing hardware.
   await import("playwright-core").catch(() => {
@@ -29,7 +29,10 @@ export async function runConnectedCall(
   const ethernetInterface = config.network.ethernetInterface
   const manifest = parseCallBuild(await Bun.file(buildManifestPath).json())
   if (options.browserCaptureDevices) parseTeamsDevices(await Bun.file(options.browserCaptureDevices).json())
-  if (options.browserCaptureDevices && options.browserRejoin) throw new Error("Choose capture or rejoin separately")
+  if (options.browserAudioOnly && !options.browserCaptureDevices)
+    throw new Error("Audio-only requires explicit laptop devices")
+  if (options.browserCaptureDevices && options.browserRejoin && !options.browserAudioOnly)
+    throw new Error("Rejoin with capture requires audio-only mode")
   let here = ""
   let finalized = false
   let browserWatchdog: ReturnType<typeof setTimeout> | undefined
@@ -716,6 +719,7 @@ export async function runConnectedCall(
         "90",
         ...(options.browserRejoin ? ["--rejoin"] : []),
         ...(options.browserCaptureDevices ? ["--capture-devices", join(here, "teams-devices.json")] : []),
+        ...(options.browserAudioOnly ? ["--audio-only"] : []),
       ],
       {stdin: "pipe", stdout: "pipe", stderr: Bun.file(join(here, "browser-stderr.log"))},
     ))

@@ -29,6 +29,13 @@ test("sending proof rejects the glasses microphone, stopped capture and stale co
   expect(hasAdvancingLaptopMedia(sample(1), sample(2, "Mentra_Live_03BE"), devices)).toBe(false)
   expect(hasAdvancingLaptopMedia(sample(1), sample(2, devices.microphone, "ended"), devices)).toBe(false)
   expect(hasAdvancingLaptopMedia(sample(2), sample(2), devices)).toBe(false)
+  const audioOnly = sample(2)
+  audioOnly[0].captures[1].readyState = "ended"
+  audioOnly[0].peers[0].stats[1].framesEncoded = 0
+  audioOnly[0].peers[0].stats[1].bytesSent = 0
+  expect(hasAdvancingLaptopMedia(sample(1), audioOnly, devices, true)).toBe(true)
+  expect(hasAdvancingLaptopMedia(sample(1), audioOnly, devices)).toBe(false)
+  expect(hasAdvancingLaptopMedia(sample(1), sample(2, "Mentra_Live_03BE"), devices, true)).toBe(false)
   expect(() => parseTeamsDevices({...devices, microphone: "Default microphone"})).toThrow()
   expect(() => parseTeamsDevices({...devices, speaker: ""})).toThrow()
 })

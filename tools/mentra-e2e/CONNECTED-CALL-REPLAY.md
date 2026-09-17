@@ -232,5 +232,22 @@ For a recorded call, add
 `browserSendingVerified` covers actual browser capture and outgoing RTP. It does
 not prove return audio is audible through the glasses or that the native app
 renders the laptop video. `duplexQualified` remains false. Capture and rejoin
-extensions are currently separate runs. Each consumes one authorized stream
+extensions with combined audio/video capture are currently separate runs. Each consumes one authorized stream
 attempt; setup alone consumes none.
+
+For a targeted audio check, add `--browser-audio-only` alongside the device
+fixture. The camera stays off during the call, and the explicit capture scope
+requires the selected live laptop microphone and advancing outgoing audio RTP.
+It can be combined with `--browser-rejoin`: mute the browser after the audio
+check, verify native departure, then reselect the declared devices at prejoin
+before repeating incoming-video/roster checks. This does not relax the original
+combined audio/video assertion or change any historical failed result.
+
+The diagnostic native build logs `ACS_AUDIO` once per audio stage and at leave,
+with counts and peak magnitude only. `PCM_PLAYBACK` records the first accepted
+write, first playback callback and counters at abort. These distinguish a
+missing source, raw send failure, missing incoming PCM and a player that never
+consumes its buffers. Playback callbacks are evidence of rendering, not proof
+that a wearer heard the glasses. No raw microphone content or audio-route
+override is added. The last authorized live attempt is held for the requested
+listener check; native build/setup work starts no glasses stream.

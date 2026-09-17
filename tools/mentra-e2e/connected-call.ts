@@ -12,6 +12,7 @@ const {positionals, values} = parseArgs({
     "help": {type: "boolean"},
     "browser-rejoin": {type: "boolean", default: false},
     "browser-capture-devices": {type: "string"},
+    "browser-audio-only": {type: "boolean", default: false},
   },
 })
 const mode = positionals[0] ?? "describe"
@@ -25,7 +26,9 @@ if (values.help || mode === "describe") {
   parseCallBuild(await Bun.file(manifestPath).json())
   const capturePath = values["browser-capture-devices"] ? resolve(values["browser-capture-devices"]) : undefined
   if (capturePath) parseTeamsDevices(await Bun.file(capturePath).json())
-  if (capturePath && values["browser-rejoin"]) throw new Error("Choose capture or rejoin qualification separately")
+  if (values["browser-audio-only"] && !capturePath) throw new Error("Audio-only requires explicit laptop devices")
+  if (capturePath && values["browser-rejoin"] && !values["browser-audio-only"])
+    throw new Error("Rejoin with capture requires audio-only mode")
   if (mode === "validate") {
     console.log(
       JSON.stringify(
@@ -39,6 +42,7 @@ if (values.help || mode === "describe") {
     const result = await runConnectedCall(fixture, manifestPath, {
       browserRejoin: values["browser-rejoin"],
       browserCaptureDevices: capturePath,
+      browserAudioOnly: values["browser-audio-only"],
     })
     console.log(JSON.stringify(result))
     if (result.status !== "passed") process.exitCode = 1
