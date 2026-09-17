@@ -149,10 +149,9 @@ test("coordinator preserves MentraOS tracks and separates example audiences", ()
   assert.match(stagingBlock, /echo "play_track=internal-app-sharing"/)
   assert.doesNotMatch(devBlock, /echo "play_track=beta|echo "play_track=internal-app-sharing"/)
   assert.doesNotMatch(stagingBlock, /echo "play_track=internal"/)
-  assert.match(channelBlock, /example_play_track=internal/)
-  assert.match(channelBlock, /example_play_track=beta/)
-  assert.match(workflow, /needs\.example-google-play\.result == 'success'/)
-  assert.match(workflow, /--example-google-play release-input\/example-google-play/)
+  const examples = readFileSync(new URL("../workflows/coordinated-example-release.yml", import.meta.url), "utf8")
+  assert.match(examples, /needs\.example-google-play\.result == 'success'/)
+  assert.match(examples, /--example-google-play release-input\/example-google-play/)
   const reusable = readFileSync(
     new URL("../workflows/reusable-coordinated-example-google-play.yml", import.meta.url),
     "utf8",
