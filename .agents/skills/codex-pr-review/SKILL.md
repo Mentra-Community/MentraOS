@@ -51,7 +51,10 @@ total, and retries once unless the verdict was already posted. Never launch a ba
   desirable for the project at all (real problem, existing or planned alternative, surface area
   and maintenance cost versus benefit, smaller change possible) and let that weigh in the
   verdict, not only implementation quality.
-- Runs `codex-review.sh` (watchdog + one retry) and prints Codex's final message. Success means
+- Runs `codex-review.sh` (watchdog + one retry) and prints Codex's final message. The runner
+  starts `codex exec --json` and uses its event stream as the heartbeat, so other Codex sessions
+  on the machine can never be mistaken for this one; every process of the attempt carries a
+  unique `CODEX_REVIEW_ATTEMPT` marker so it can be terminated even if Codex exits first. Success means
   a review carrying the marker was found on the head commit after the run started, checked
   through the GitHub API by `review-receipt.sh`; the runner performs the same check before any
   retry so a verdict posted just before a crash is never duplicated. Artifacts:
@@ -64,7 +67,6 @@ total, and retries once unless the verdict was already posted. Never launch a ba
 | ------------------------------------------------------------- | ------------------------------------------------------ | --------------------------------------------------------------------------------------------- |
 | `CODEX_BIN`                                                   | `codex`                                                | Codex CLI binary. Point it at a specific install if the shim on PATH does not support `exec`. |
 | `CODEX_REVIEW_MODEL` / `CODEX_REVIEW_EFFORT`                  | `gpt-6-astra` / `medium`                               | Model and reasoning effort.                                                                   |
-| `CODEX_HOME`                                                  | `~/.codex`                                             | Where Codex writes `sessions/`; the watchdog reads progress there.                            |
 | `CODEX_REVIEW_HOME`                                           | `~/.codex-reviews`                                     | Where prompts, final messages and runner logs are kept.                                       |
 | `MENTRA_RELEASE_COORDINATOR_KEY`                              | `~/.config/mentra-release-coordinator/private-key.pem` | App private key (0600) for posting on your own PRs.                                           |
 | `GH_ACCOUNT`                                                  | auto                                                   | `app` or `own`, see above.                                                                    |
