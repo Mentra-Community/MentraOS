@@ -445,3 +445,14 @@ recording and keep-awake processes ended. No new streams or production quota
 changes are to run today. The Mac currently exposes 03BE as BLE-only, with a USB
 Mentra microphone and no glasses Bluetooth speaker endpoint. Preserve this as an
 unqualified return-audio fixture, without changing the user's audio routes.
+
+### Test-account quota exemption (2026-09-17 UTC)
+
+The user subsequently approved adding the test account to production
+`CALL_QUOTA_UNLIMITED`. Porter readback and the deployed quota predicates in the
+existing container verified the exemption, preserved built-in exemptions and the
+normal 10-call cap for unlisted users. No call/token was created and no quota was
+consumed. Streams remain stopped. Private proof is in
+`2026-09-17T05-24-21Z-call-quota-allowlist/verification.json` in the integration
+worktree's E2E evidence directory. This removes the account quota gate only;
+media, permission persistence and publication qualification remain unchanged.
