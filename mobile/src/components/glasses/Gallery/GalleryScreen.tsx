@@ -160,14 +160,14 @@ export function GalleryScreen() {
           )
           break
         case "wifi_initializing":
-          showAlert("Please Wait", "WiFi is initializing. Please wait a moment before trying to sync again.", [
+          showAlert("Please Wait", "Wi-Fi is initializing. Please wait a moment before trying to sync again.", [
             {text: "OK"},
           ])
           break
         case "wifi_off":
           showAlert(
-            "WiFi is Disabled",
-            "Please enable WiFi to sync photos from your glasses. Would you like to open WiFi settings?",
+            "Wi-Fi is disabled",
+            "Please enable Wi-Fi to sync photos and videos from your glasses. Would you like to open Wi-Fi settings?",
             [
               // Cancel arms nothing — the island only arms the retry/cooldown via ack().
               {text: "Cancel", style: "cancel"},
@@ -187,7 +187,7 @@ export function GalleryScreen() {
         case "location_services_off":
           showAlert(
             "Location Services Required",
-            "Android requires Location Services to be enabled to connect to your glasses WiFi hotspot. Would you like to enable it?",
+            "Android requires Location Services to be enabled to connect to your glasses’ Wi-Fi hotspot. Would you like to enable them?",
             [
               {text: "Cancel", style: "cancel"},
               {text: "Enable", onPress: () => void SettingsNavigationUtils.showLocationServicesDialog()},
@@ -198,7 +198,7 @@ export function GalleryScreen() {
         case "location_permission_required":
           showAlert(
             "Location Access Required",
-            "The app needs Location access to verify it joined your glasses WiFi network. Enable it in Settings, then try syncing again.",
+            "The app needs location access to verify it joined your glasses’ Wi-Fi network. Enable it in Settings, then try syncing again.",
             [
               {text: "Cancel", style: "cancel"},
               {text: "Open Settings", onPress: () => void SettingsNavigationUtils.openAppSettings()},
@@ -635,7 +635,7 @@ export function GalleryScreen() {
           } not been confirmed in your camera roll and may be permanently lost.`
         : " Copies already saved to your camera roll will not be affected."
 
-    showAlert("Delete Photos", `Are you sure you want to delete ${selectedCount} ${itemText}?${exportWarning}`, [
+    showAlert("Delete selected items?", `Are you sure you want to delete ${selectedCount} ${itemText}?${exportWarning}`, [
       {text: translate("common:cancel"), style: "cancel"},
       {
         text: translate("common:delete"),

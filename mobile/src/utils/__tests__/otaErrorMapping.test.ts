@@ -48,7 +48,7 @@ describe("getOtaErrorMessage", () => {
     )
   })
   it("maps no_internet to WiFi message", () => {
-    expect(getOtaErrorMessage("no_internet")).toBe("Glasses WiFi has no internet connection")
+    expect(getOtaErrorMessage("no_internet")).toBe("Glasses Wi-Fi has no internet connection")
   })
 
   it("maps clock_skew to time-sync message", () => {
@@ -58,11 +58,11 @@ describe("getOtaErrorMessage", () => {
   })
 
   it("maps ssl_error to connection message", () => {
-    expect(getOtaErrorMessage("ssl_error")).toBe("Secure connection failed — try a different WiFi network")
+    expect(getOtaErrorMessage("ssl_error")).toBe("Secure connection failed — try a different Wi-Fi network")
   })
 
   it("maps download_failed to download message", () => {
-    expect(getOtaErrorMessage("download_failed")).toBe("Download failed — check glasses WiFi connection")
+    expect(getOtaErrorMessage("download_failed")).toBe("Download failed — check glasses Wi-Fi connection")
   })
 
   it("maps firmware_too_large to size message", () => {
