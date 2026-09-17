@@ -35,6 +35,12 @@ The browser profile is `~/.cache/mentra-e2e/teams-chrome`, with user-only access
 Anonymous guests worked with explicit host admission and required no email
 code. Use normal sign-in only if the meeting policy requires it:
 
+Check the generated meeting link, not the Teams homepage. The homepage can show
+sign-in even when the meeting accepts anonymous guests; that is not evidence
+that a Microsoft account is required. A September 17 Android-owned meeting
+reached guest prejoin and passed laptop device selection without account
+creation. Do not close a human's active verification window unexpectedly.
+
 ```sh
 bun tools/mentra-e2e/teams-browser.ts setup --meeting-url-file /absolute/private/meeting-url.txt
 ```
