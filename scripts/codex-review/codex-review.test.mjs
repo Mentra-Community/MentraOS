@@ -45,7 +45,7 @@ post() { echo 1 > "$FAKE_STATE/receipts"; }
 case "\${FAKE_CODEX_MODE:-ok}" in
   ok)               echo '{"type":"item"}'; post; echo "Approve. reviewed" > "$out"; exit 0 ;;
   post-then-crash)  echo '{"type":"item"}'; post; exit 1 ;;
-  hang)             echo '{"type":"item"}'; sleep 120 ;;
+  hang)             sleep 300 & echo $! >> "$FAKE_STATE/grandchildren"; echo '{"type":"item"}'; sleep 120 ;;
   silent-hang)      sleep 120 ;;
 esac
 `
@@ -266,6 +266,23 @@ describe("codex-pr-review.sh lifecycle", () => {
     const runner = readFileSync(join(f.reviews, sh(f.reviews, "ls"), "runner.log"), "utf8")
     expect(runner).toContain("stalled for")
     expect(runner).toContain("FAILED after 2 attempts")
+  }, 90_000)
+
+  test("descendants of a killed attempt are terminated before the retry", () => {
+    const f = makeFixture()
+    const r = run(f, [f.repo, "1"], {FAKE_CODEX_MODE: "hang"})
+    expect(r.out).toContain("codex-pr-review: FAILED")
+    const pids = readFileSync(join(f.state, "grandchildren"), "utf8").trim().split("\n").map(Number)
+    expect(pids.length).toBe(2)
+    for (const pid of pids) {
+      let alive = true
+      try {
+        process.kill(pid, 0)
+      } catch {
+        alive = false
+      }
+      expect(alive).toBe(false)
+    }
   }, 90_000)
 
   test("an attempt that never emits an event is also killed", () => {

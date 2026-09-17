@@ -19,9 +19,10 @@ nohup scripts/codex-review/codex-pr-review.sh <repo-dir> <pr-number> [extra-prom
 
 Then wait on the log (`until grep -q 'codex-pr-review: done\|FAILED' <log>; do sleep 15; done`)
 and keep working. Every exit path prints exactly one of those markers, including preflight
-failures. A run normally takes 5-20 minutes. The watchdog kills an attempt after 8 minutes
-without an event from the Codex process, or 30 minutes total, and retries once unless the
-verdict was already posted. Never launch a bare `codex exec` for a review.
+failures. A run normally takes 5-20 minutes. The watchdog kills an attempt, with every
+process it spawned, after 8 minutes without an event from the Codex process, or 30 minutes
+total, and retries once unless the verdict was already posted. Never launch a bare
+`codex exec` for a review.
 
 ## What the script does
 

@@ -41,9 +41,25 @@ posted_reviews() {
   fi
 }
 
+# With job control on, every background job runs in its own process group whose id is
+# the job's pid, so the whole tree Codex spawned (shells, gh, node) can be terminated
+# together. Nothing from a killed attempt may survive into the receipt check or the
+# retry, or a late `gh pr review` could post a second verdict.
+set -m
+group_alive() { pgrep -g "$1" >/dev/null 2>&1; }
 kill_attempt() {
-  kill "$1" 2>/dev/null; sleep 3; kill -9 "$1" 2>/dev/null
+  local pgid="$1" i
+  [[ -n "$pgid" ]] || return 0
+  kill -TERM -- "-$pgid" 2>/dev/null || true
+  for i in $(seq 1 10); do group_alive "$pgid" || return 0; sleep 0.5; done
+  kill -KILL -- "-$pgid" 2>/dev/null || true
+  for i in $(seq 1 10); do group_alive "$pgid" || return 0; sleep 0.5; done
+  echo "codex-review: warning: process group $pgid still has members after SIGKILL" >&2
+  return 1
 }
+pid=""
+on_signal() { echo "codex-review: cancelled; terminating attempt" >&2; kill_attempt "$pid"; exit 130; }
+trap on_signal INT TERM HUP
 
 for attempt in $(seq 1 "$ATTEMPTS"); do
   if [[ "$GH_ACCOUNT" == "own" ]]; then
@@ -76,6 +92,8 @@ for attempt in $(seq 1 "$ATTEMPTS"); do
     fi
   done
   wait "$pid" 2>/dev/null; status=$?
+  # Codex may exit while a command it spawned is still running; drain the group first.
+  kill_attempt "$pid"
   if [[ $status -eq 0 && -s "$output" ]]; then
     echo "codex-review: attempt $attempt finished"; tail -c 1500 "$output"; exit 0
   fi
