@@ -158,3 +158,67 @@ meeting was created. The build's source diff and native/JS hashes are archived.
 The candidate remains running and all three original audio defaults were restored
 and verified. Temporary Location permission approval is still pending; a spoken
 attention request was issued through the Mac speakers as requested by the user.
+
+## Authorized Location comparison and test-only Mac network adapter
+
+The temporary Location experiment did not make the Mac APIs work. With both
+System Settings switches on, full-app run
+`2026-09-17T01-08-34-876Z-mac-prejoined-call-071e57` still reached error 8 before
+ACS. A minimal signed UIKit comparison reported CoreLocation services ON,
+authorization 3 (Always), accuracy 0 (Full), while both NEHotspotNetwork and
+CaptiveNetwork returned no network. Run
+`2026-09-17T01-14-21-331Z-ios-location-ssid-ec55ac` records nine steps / 52.06
+seconds with valid artifacts and a failed SSID assertion. No coordinates were
+requested. Both temporary Location switches were restored OFF and verified.
+The new owned meeting was retired after matching its exact ID, subject and
+01:09:39.757Z start time (DELETE 204, GET 404).
+
+To continue real media qualification on this Mac, an explicit `MENTRA_E2E`
+compilation condition adds a host network lease input. It is excluded from normal
+builds and CI. The harness owns and verifies association, including matching the
+Wi-Fi gateway MAC against the exact USB fixture's ap0 interface, then supplies a
+fresh SSID/gateway/client-address lease when launching the test process. The
+adapter additionally requires iOS-on-Mac, a matching BLE-requested network,
+current client address, a five-minute maximum age and single consumption per
+hotspot manager. It never supplies frames, SDP, ACS state or UI results.
+
+The build and run explicitly record `mac-host-verified-test-only` and native
+association remains unqualified. This is a test dependency input, not a shipping
+fallback for failed identity checks. The existing native association logic is
+unchanged. The matching harness helper does not activate the app or handle
+system dialogs. Keep a fixed signed test build during the diagnostic session;
+cleanup relaunches it without the lease rather than rotating app variants.
+
+Core tests pass with the condition enabled (25 tests) and disabled (24 tests).
+The real Call/Teams test using this adapter is still pending; compilation or
+health checks do not establish media success. The computer rebooted after a
+power loss; existing evidence/cleanup survived, Ethernet returned on en10, and
+the USB fixture retained the same boot ID. The ADB transport changed to 1 and is
+resolved afresh rather than copied into the controller.
+
+## Full-app media attempt and current qualification
+
+The signed test build `302005618` (native SHA-256
+`5a0f05a07db23b447645aad13b1a52d981896a9b5f4f4bc55eec3ddb45fab478`)
+accepted the verified host lease. In run
+`2026-09-17T01-39-19-655Z-mac-host-adapter-call-ab682e`, ACS reached connected,
+the glasses received/applied the WHIP answer, then startup failed with
+`ice_timeout` after 8.544 seconds. The UI showed “Couldn't start glasses camera.”
+No browser participant or decoded frame was verified. The exact owned meeting
+was retired with DELETE 204 followed by GET 404; hotspot/audio cleanup completed.
+
+The transient enabled Leave control originally satisfied a UI assertion. The
+overall run is now failed, with original reports/raw observations retained and
+the correction recorded separately. The harness adds sustained state checks;
+successful qualification still requires actual browser media, not that control.
+
+Repeated signed diagnostic variants prompted Local Network approval repeatedly.
+Further runs reuse one fixed signed app. Location remains OFF. The scoped packet
+capture setup passed in `2026-09-17T02-24-34-538Z-mac-fixed-build-media-e6641d`
+(16 steps, 70.04 seconds); no meeting was created before stopping to sync dev.
+Capture copy hashes and restoration to the original ADB shell user were verified.
+
+Latest fetched dev `e8e1ced74c05705b313769d49dfbf98f8bf5b1d2` adds the BES
+26.9.17.0 manifest and a Windows miniapp watcher correction. It contains no new
+Call/iOS media/Bluetooth SDK implementation fix. Sync source before continuing
+the ICE diagnosis; this source sync does not install firmware on the fixture.

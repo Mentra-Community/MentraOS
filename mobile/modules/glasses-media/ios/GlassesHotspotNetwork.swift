@@ -19,6 +19,9 @@ public final class GlassesHotspotNetwork {
     private var joinReply: ((Result<String, Error>) -> Void)?
     private var leaveReplies: [() -> Void] = []
     private var monitor: NWPathMonitor?
+    #if MENTRA_E2E
+        private var testLeaseConsumed = false
+    #endif
     public var onLost: ((String) -> Void)?
     public init() {}
 
@@ -38,6 +41,26 @@ public final class GlassesHotspotNetwork {
             self.ownsConfiguration = false
             self.joinReply = completion
             if ProcessInfo.processInfo.isiOSAppOnMac {
+                #if MENTRA_E2E
+                    if let raw = ProcessInfo.processInfo.environment["MENTRA_E2E_PREJOINED_HOTSPOT"] {
+                        let address = Self.wifiAddress()
+                        guard !self.testLeaseConsumed,
+                              let lease = try? JSONDecoder().decode(MacE2EHotspotLease.self, from: Data(raw.utf8)),
+                              lease.matches(ssid: ssid, gateway: gateway, address: address, now: Date().timeIntervalSince1970),
+                              let address
+                        else {
+                            self.finishJoin(.failure(LocalMediaError("Mac E2E network lease is invalid, expired or already consumed")))
+                            self.finishLeave()
+                            return
+                        }
+                        self.testLeaseConsumed = true
+                        self.localAddress = address
+                        self.logger.notice("HOTSPOT_JOIN test_harness_connection native_association_untested")
+                        self.startMonitor(generation: gen)
+                        self.finishJoin(.success(address))
+                        return
+                    }
+                #endif
                 NEHotspotNetwork.fetchCurrent { network in
                     self.queue.async {
                         guard gen == self.generation, !self.cancelled else { return }
