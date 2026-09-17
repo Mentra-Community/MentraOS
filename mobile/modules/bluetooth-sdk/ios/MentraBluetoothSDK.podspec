@@ -38,13 +38,14 @@ Pod::Spec.new do |s|
   }
 
   # iOS frameworks required by Bluetooth SDK
-  ios_frameworks = ['AVFoundation', 'CoreBluetooth', 'UIKit', 'CoreGraphics']
+  ios_frameworks = ['AVFoundation', 'CoreBluetooth', 'UIKit', 'CoreGraphics', 'ImageIO']
   ios_frameworks << 'Network' if include_expo_adapter
   s.ios.frameworks = ios_frameworks
   s.osx.frameworks = ['AVFoundation', 'CoreBluetooth', 'CoreAudio', 'AudioToolbox', 'ImageIO', 'JavaScriptCore', 'Network']
 
   # System libraries required by MentraOS
-  s.ios.library = 'bz2'
+  s.ios.libraries = 'bz2', 'z'
+  s.osx.library = 'z'
 
   # Vendored frameworks
   s.ios.vendored_frameworks = 'Packages/SherpaOnnx/sherpa-onnx.xcframework'

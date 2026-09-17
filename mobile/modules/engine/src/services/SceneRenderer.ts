@@ -11,6 +11,8 @@
  * the code paths are generic. Spec: notes/miniapp-display-render-implementation-spec.md
  */
 
+import {degradeTextScene} from "../utils/display/scene/degrade"
+import type {SceneTextLayout} from "../utils/display/scene/types"
 import displayProcessor from "./DisplayProcessor"
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import {useDisplayStore} from "../stores/display"
@@ -36,15 +38,29 @@ export type LegacyLayout = {layoutType: string; [key: string]: unknown}
 
 export type SceneEmitResult =
   /** A SceneFrame went to native. */
-  | {kind: "scene"; degraded: boolean; dropped: string[]}
+  | {
+      kind: "scene"
+      degraded: boolean
+      dropped: string[]
+      textLayout?: Record<string, SceneTextLayout>
+      prewrapped?: boolean
+    }
   /** Degrade path: caller routes this legacy layout through the existing pipeline (null layout ⇒ clear). */
-  | {kind: "legacy"; layout: LegacyLayout | null; degraded: boolean; dropped: string[]}
+  | {
+      kind: "legacy"
+      layout: LegacyLayout | null
+      degraded: boolean
+      dropped: string[]
+      textLayout?: Record<string, SceneTextLayout>
+      prewrapped?: boolean
+    }
   /** No display capabilities on the connected device. */
   | {kind: "no-display"}
 
 class SceneRenderer {
   private static instance: SceneRenderer | null = null
   private store = new SceneStore()
+  private sources = new Map<string, SceneElementInput[]>()
 
   public static getInstance(): SceneRenderer {
     if (!SceneRenderer.instance) {
@@ -69,6 +85,8 @@ class SceneRenderer {
       (useGlassesStore.getState().deviceModel as string | undefined)
     const display = getModelCapabilities((model ?? DeviceTypes.NONE) as DeviceTypes)?.display
     if (!display) return null
+    // Geometry and font metrics must describe the same device, even during a switch.
+    displayProcessor.setDeviceModel(model)
     return {
       width: display.width ?? display.resolution?.width ?? displayProcessor.getProfile().displayWidthPx,
       height: display.height ?? display.resolution?.height ?? displayProcessor.getProfile().displayHeightPx ?? 288,
@@ -192,16 +210,35 @@ class SceneRenderer {
    * through the existing DisplayProcessor path (which wraps it, keeping G1/Z100
    * output byte-identical to today).
    */
-  public emitScene(appId: string, view: "main" | "dashboard", elements: SceneElementInput[]): SceneEmitResult {
+  public emitScene(
+    appId: string,
+    view: "main" | "dashboard",
+    elements: SceneElementInput[],
+    replay = false,
+    includeTextLayout = false,
+  ): SceneEmitResult {
     const caps = this.currentCapabilities()
     if (!caps) return {kind: "no-display"}
 
+    this.sources.set(`${appId}:${view}`, elements)
     if (!caps.canPosition) {
-      const {layout, degraded, dropped} = degradeScene(elements)
-      return {kind: "legacy", layout, degraded, dropped}
+      const controls =
+        includeTextLayout ||
+        elements.some(
+          (el) =>
+            el?.type === "text" &&
+            (el.style?.maxLines !== undefined || el.style?.textWindow || el.style?.verticalAlign),
+        )
+      const result = controls
+        ? degradeTextScene(elements, caps, displayProcessor.getProfile(), includeTextLayout)
+        : degradeScene(elements)
+      return {kind: "legacy", ...result}
     }
 
-    const processed = processScene(elements, caps, displayProcessor.getProfile())
+    const processed = processScene(elements, caps, displayProcessor.getProfile(), includeTextLayout)
+    // A newly restored payload replaces another app's frame on the device.
+    // Reset before diffing so the latest scene is sent once, all-created.
+    if (replay) this.store.bumpEpoch(appId, view)
     // A stale baseline means the glasses were cleared since the last commit —
     // diff from empty so everything repaints (the retained frame stays valid
     // as the replay source only).
@@ -219,9 +256,15 @@ class SceneRenderer {
       sceneEpoch: this.store.currentEpoch(appId, view),
       elements: diffed,
       removed,
+      ...(replay ? {replay: true} : {}),
     }
     this.sendFrame(frame)
-    return {kind: "scene", degraded: processed.degraded, dropped: processed.dropped}
+    return {
+      kind: "scene",
+      degraded: processed.degraded,
+      dropped: processed.dropped,
+      ...(includeTextLayout ? {textLayout: processed.textLayout} : {}),
+    }
   }
 
   /**
@@ -230,15 +273,16 @@ class SceneRenderer {
    * Returns false when nothing is retained.
    */
   public replayApp(appId: string, view: "main" | "dashboard"): boolean {
-    const frame = this.store.buildReplayFrame(appId, view)
-    if (!frame) return false
-    this.sendFrame(frame)
-    return true
+    const source = this.sources.get(`${appId}:${view}`)
+    if (!source || !this.currentCapabilities()?.canPosition) return false
+    return this.emitScene(appId, view, source, true).kind === "scene"
   }
 
   /** Forget an app's retained scenes (app stop). */
   public clearApp(appId: string): void {
     this.store.clear(appId)
+    this.sources.delete(`${appId}:main`)
+    this.sources.delete(`${appId}:dashboard`)
   }
 
   /**
@@ -296,6 +340,7 @@ class SceneRenderer {
 
   public _resetForTest(): void {
     this.store.clearAll()
+    this.sources.clear()
   }
 
   public _lastFrameForTest(appId: string, view: string): FrameElement[] {

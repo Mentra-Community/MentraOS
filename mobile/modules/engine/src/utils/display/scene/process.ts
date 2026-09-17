@@ -13,12 +13,15 @@ import {TextWrapper} from "../wrapper/TextWrapper"
 import type {DisplayProfile} from "../profiles/types"
 import type {DiffableElement} from "./differ"
 import type {SceneBox, SceneDisplayCapabilities, SceneElementInput, SceneTextStyle} from "./types"
+import {processText} from "./text"
+import type {SceneTextLayout} from "./types"
 import {elementContentHash} from "./types"
 
 export interface ProcessedScene {
   elements: DiffableElement[]
   degraded: boolean
   dropped: string[]
+  textLayout?: Record<string, SceneTextLayout>
 }
 
 /** Reporting id for an element the app may not have named. */
@@ -67,9 +70,11 @@ export function processScene(
   input: readonly SceneElementInput[],
   caps: SceneDisplayCapabilities,
   profile: DisplayProfile,
+  includeTextLayout = false,
 ): ProcessedScene {
   const dropped: string[] = []
   let degraded = false
+  const textLayout: Record<string, SceneTextLayout> = Object.create(null)
 
   const measurer = new TextMeasurer(profile)
   const wrapper = new TextWrapper(measurer)
@@ -177,6 +182,25 @@ export function processScene(
     // Height clipping only applies with a CALIBRATED line height — otherwise
     // the firmware clips vertically in-box (legacy behavior).
     const style: SceneTextStyle = el.style ?? {}
+    if (style.maxLines !== undefined && (!Number.isFinite(style.maxLines) || style.maxLines < 1)) {
+      dropped.push(reportId(el, index))
+      degraded = true
+      continue
+    }
+    if (includeTextLayout || style.maxLines !== undefined || style.textWindow || style.verticalAlign) {
+      const processed = processText(el.text ?? "", clamped, style, profile)
+      degraded ||= processed.degraded
+      textLayout[reportId(el, index)] = processed.layout
+      out.push({
+        id: el.id,
+        type: "text",
+        box: processed.box,
+        text: processed.text,
+        style: el.style,
+        contentHash: elementContentHash({type: "text", text: processed.text, style: el.style}),
+      })
+      continue
+    }
     const maxLines = lineHeight ? Math.max(1, Math.floor(clamped.h / lineHeight)) : profile.maxLines
     const result = wrapper.wrap(el.text ?? "", {
       maxWidthPx: clamped.w,
@@ -210,5 +234,5 @@ export function processScene(
     })
   }
 
-  return {elements: out, degraded, dropped}
+  return {elements: out, degraded, dropped, ...(includeTextLayout ? {textLayout} : {})}
 }

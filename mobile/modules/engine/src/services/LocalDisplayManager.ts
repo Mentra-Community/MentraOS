@@ -28,6 +28,7 @@ import {useDisplayStore} from "../stores/display"
 import sceneRenderer from "./SceneRenderer"
 import {isGlassesConnected} from "./GlassesReadiness"
 import {useGlassesStore} from "../stores/glasses"
+import type {SceneTextLayout} from "../utils/display/scene/types"
 import type {SceneElementInput} from "../utils/display/scene"
 import {BgTimer} from "../utils/timers"
 
@@ -42,6 +43,7 @@ export interface DisplayPayload {
   /** Scene elements from display.render(). Either this or `layout`. */
   scene?: SceneElementInput[]
   durationMs?: number
+  includeTextLayout?: boolean
 }
 
 /** Outcome delivered to an awaiting render() call (REQUEST_RESULT payload). */
@@ -50,6 +52,7 @@ export interface DisplayRequestResult {
   degraded?: boolean
   dropped?: string[]
   reason?: string
+  textLayout?: Record<string, SceneTextLayout>
 }
 
 export type DisplayRequestResolver = (result: DisplayRequestResult) => void
@@ -59,6 +62,8 @@ interface ActiveDisplay {
   processedEvent: Record<string, unknown>
   /** Set when this display is a scene — restore goes through SceneRenderer replay. */
   scene?: SceneElementInput[]
+  /** Latest blocked core request; not yet processed or retained by SceneRenderer. */
+  pendingPayload?: DisplayPayload
   expiresAt: number | null
 }
 
@@ -348,6 +353,7 @@ class LocalDisplayManager {
         packageName,
         processedEvent: {}, // filled by sendNow
         scene: payload.scene,
+        pendingPayload: payload,
         expiresAt: payload.durationMs ? now + payload.durationMs : null,
       }
 
@@ -427,7 +433,12 @@ class LocalDisplayManager {
   // Internals — send
   // ===========================================================================
 
-  private sendNow(packageName: string, payload: DisplayPayload, resolve?: DisplayRequestResolver): void {
+  private sendNow(
+    packageName: string,
+    payload: DisplayPayload,
+    resolve?: DisplayRequestResolver,
+    replay = false,
+  ): void {
     const expiresAt = payload.durationMs ? this.now() + payload.durationMs : null
     const view = (payload.view === "dashboard" ? "dashboard" : "main") as "main" | "dashboard"
 
@@ -443,7 +454,7 @@ class LocalDisplayManager {
     }
 
     if (sceneElements) {
-      this.sendScene(packageName, view, sceneElements, expiresAt, resolve)
+      this.sendScene(packageName, view, sceneElements, expiresAt, resolve, replay, payload.includeTextLayout)
     } else if (payload.layout) {
       // This layout bypasses the scene pipeline (clear_view, dashboard_card,
       // unknown types, or a non-positioning device). If this (app, view) had a
@@ -489,8 +500,10 @@ class LocalDisplayManager {
     elements: SceneElementInput[],
     expiresAt: number | null,
     resolve?: DisplayRequestResolver,
+    replay = false,
+    includeTextLayout = false,
   ): void {
-    const result = sceneRenderer.emitScene(packageName, view, elements)
+    const result = sceneRenderer.emitScene(packageName, view, elements, replay, includeTextLayout)
 
     if (result.kind === "no-display") {
       resolve?.({status: "blocked", reason: "no display connected"})
@@ -499,13 +512,23 @@ class LocalDisplayManager {
 
     if (result.kind === "legacy") {
       if (result.layout) {
-        this.sendToNative(packageName, {view, layout: result.layout}, expiresAt)
+        this.sendToNative(
+          packageName,
+          {view, layout: result.layout, ...(result.prewrapped ? {_processed: true} : {})},
+          expiresAt,
+        )
+        if (this.currentDisplay) this.currentDisplay.scene = elements
       } else {
         // Scene degraded to nothing (e.g. all-image scene on a text-only
         // device). render() replaces the frame, so nothing means clear.
         this.sendClear()
       }
-      resolve?.({status: "displayed", degraded: result.degraded, dropped: result.dropped})
+      resolve?.({
+        status: "displayed",
+        degraded: result.degraded,
+        dropped: result.dropped,
+        ...(includeTextLayout ? {textLayout: result.textLayout} : {}),
+      })
       return
     }
 
@@ -518,7 +541,12 @@ class LocalDisplayManager {
         this.handleExpiry(packageName)
       }, delay)
     }
-    resolve?.({status: "displayed", degraded: result.degraded, dropped: result.dropped})
+    resolve?.({
+      status: "displayed",
+      degraded: result.degraded,
+      dropped: result.dropped,
+      ...(includeTextLayout ? {textLayout: result.textLayout} : {}),
+    })
   }
 
   private sendToNative(packageName: string, rawEvent: Record<string, unknown>, expiresAt: number | null): void {
@@ -654,6 +682,19 @@ class LocalDisplayManager {
   private restoreDisplay(saved: ActiveDisplay): void {
     const remaining = saved.expiresAt !== null ? Math.max(0, saved.expiresAt - this.now()) : undefined
 
+    // Blocked requests never reached SceneRenderer. Process the latest payload
+    // now, preserving its original deadline, and replace the covered scene in
+    // one create-based replay rather than replaying an older retained frame.
+    if (saved.pendingPayload) {
+      // durationMs: 0 means persistent; an expired deadline must not become one.
+      if (remaining === 0) {
+        this.coreAppDisplay = null
+        return
+      }
+      this.sendNow(saved.packageName, {...saved.pendingPayload, durationMs: remaining}, undefined, true)
+      return
+    }
+
     // Scene restores must REPLAY (create-based, epoch-bumped): re-emitting the
     // scene through the normal diff would come back all-"unchanged" and the
     // device would skip every element (spec §4 — replay is always create-based).
@@ -722,8 +763,16 @@ class LocalDisplayManager {
     console.log(`${LOG_TAG}: replayCurrent(${current.packageName})`)
     if (current.scene) {
       if (!sceneRenderer.replayApp(current.packageName, "main")) {
-        // Retained state gone (app stopped between disconnect and reconnect).
-        this.sendClear()
+        this.sendNow(
+          current.packageName,
+          {
+            view: "main",
+            scene: current.scene,
+            durationMs: current.expiresAt === null ? 0 : Math.max(0, current.expiresAt - this.now()),
+          },
+          undefined,
+          true,
+        )
       }
     } else if (current.processedEvent.layout) {
       this.sendToNative(current.packageName, current.processedEvent, current.expiresAt)

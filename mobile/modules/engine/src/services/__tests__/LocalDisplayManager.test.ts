@@ -16,6 +16,7 @@ const displayEventMock = mock(() => {})
 mock.module("../DisplayProcessor", () => ({
   __esModule: true,
   default: {
+    setDeviceModel: () => {},
     processDisplayEvent: (e: Record<string, unknown>) => ({...e, _processed: true}),
   },
 }))
@@ -441,9 +442,7 @@ describe("LocalDisplayManager", () => {
       expect(lastText()).toBe("bg")
       displayEventMock.mockClear()
       mgr.onUnmount("com.app.bg")
-      const restoredOldCore = displayEventMock.mock.calls.some(
-        ([e]: any[]) => e.layout?.text === "a1",
-      )
+      const restoredOldCore = displayEventMock.mock.calls.some(([e]: any[]) => e.layout?.text === "a1")
       expect(restoredOldCore).toBe(false)
     })
   })

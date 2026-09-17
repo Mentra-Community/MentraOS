@@ -1046,14 +1046,18 @@ struct ViewState {
             sgc.setDashboardPosition(h, d)
         }
 
-        // Show welcome message on first connect for all display glasses
+        // Preserve the connected-edge scene replay on full-frame adapters.
         if shouldSendBootingMessage {
-            Task {
-                await sgc.sendTextWall("// MentraOS Connected")
-                try? await Task.sleep(nanoseconds: 3_000_000_000) // 1 second
-                sgc.clearDisplay()
-            }
             shouldSendBootingMessage = false
+            if sgc.showConnectionConfirmation {
+                Task {
+                    guard (self.sgc as AnyObject?) === (sgc as AnyObject) else { return }
+                    await sgc.sendTextWall("// MentraOS Connected")
+                    try? await Task.sleep(nanoseconds: 3_000_000_000)
+                    guard (self.sgc as AnyObject?) === (sgc as AnyObject) else { return }
+                    sgc.clearDisplay()
+                }
+            }
         }
 
         // Call device-specific setup handlers
@@ -1236,7 +1240,9 @@ struct ViewState {
                 self.dashboardSceneCleanupPending = false
                 let elementIds = Array(self.pendingDashboardSceneElementIds)
                 self.pendingDashboardSceneElementIds.removeAll()
-                await self.sgc?.clearSceneElements(elementIds)
+                if self.sgc?.sceneHandoffRequiresClear == true {
+                    await self.sgc?.clearSceneElements(elementIds)
+                }
             }
             self.dashboardSceneCleanupTask = nil
         }
@@ -1283,7 +1289,7 @@ struct ViewState {
             if stateIndex == 1, dashboardSceneCleanupDeferred {
                 dashboardSceneCleanupPending = true
                 pendingDashboardSceneElementIds.formUnion(prevFrame.elements.map(\.id))
-            } else if layoutType != "clear_view" {
+            } else if layoutType != "clear_view", shouldClearSceneHandoff(stateIndex) {
                 let ids = prevFrame.elements.map(\.id)
                 Task { [weak self] in
                     await self?.sgc?.clearSceneElements(ids)
@@ -1377,7 +1383,7 @@ struct ViewState {
             // on G2 - no page rebuild).
             let prevLegacyType = viewStates[stateIndex].layoutType
             let cleanupDeferred = stateIndex == 1 && dashboardSceneCleanupDeferred
-            if !cleanupDeferred,
+            if !cleanupDeferred, shouldClearSceneHandoff(stateIndex),
                !prevLegacyType.isEmpty,
                prevLegacyType != "clear_view",
                prevLegacyType != "scene"
@@ -1393,7 +1399,7 @@ struct ViewState {
             if stateIndex == 1, dashboardSceneCleanupDeferred {
                 dashboardSceneCleanupPending = true
                 pendingDashboardSceneElementIds.formUnion(prevFrame.elements.map(\.id))
-            } else {
+            } else if shouldClearSceneHandoff(stateIndex) {
                 let ids = prevFrame.elements.map(\.id)
                 Task { [weak self] in
                     await self?.sgc?.clearSceneElements(ids)
@@ -1415,6 +1421,13 @@ struct ViewState {
         if (stateIndex == 0 && !hUp) || (stateIndex == 1 && hUp) {
             dispatchSceneFrame(frame, stateIndex: stateIndex)
         }
+    }
+
+    private func shouldClearSceneHandoff(_ stateIndex: Int) -> Bool {
+        let visibleIndex = headUp && contextualDashboard ? 1 : 0
+        guard let sgc else { return false }
+        return stateIndex == visibleIndex && !screenDisabled && sgc.fullyBooted
+            && !sgc.type.contains(DeviceTypes.SIMULATED) && sgc.sceneHandoffRequiresClear
     }
 
     /// Guarded scene dispatch - mirrors sendCurrentState's send conditions.
