@@ -65,7 +65,7 @@ export default function SuperSettingsScreen() {
             <RouteButton label="Stress Test (Jetsam)" onPress={() => push("/miniapps/settings/stress-test")} />
           </Group>
 
-          <Group title="Mini Apps">
+          <Group title="Miniapps">
             <RouteButton label="Miniapp Developer" onPress={() => push("/miniapps/settings/miniapp-dev")} />
           </Group>
         </View>

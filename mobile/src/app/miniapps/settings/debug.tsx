@@ -186,7 +186,7 @@ export default function DebugSettingsScreen() {
           </Group>
 
           <Group title="Misc">
-            <RouteButton label="Test Mini App" subtitle="Test the Mini App" onPress={() => push("/test/mini-app")} />
+            <RouteButton label="Test miniapp" subtitle="Test the miniapp" onPress={() => push("/test/mini-app")} />
 
             <RouteButton
               label={navRunning ? "Stop Test Nav" : "Start Test Nav"}

@@ -116,7 +116,7 @@ export default function DevMiniappOfflineScreen() {
     push("/miniapps/miniappdev/scanner")
   }
 
-  const displayName = resolvedName ?? packageName ?? "Dev mini app"
+  const displayName = resolvedName ?? packageName ?? "Dev miniapp"
 
   return (
     <Screen preset="fixed" ref={viewShotRef} safeAreaEdges={["bottom"]} extraAndroidInsets>

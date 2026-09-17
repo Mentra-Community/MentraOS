@@ -4,12 +4,15 @@ import {afterEach, beforeEach, describe, expect, test} from "bun:test"
 import {getLanIp, getMdnsHostname, pickLanIp, scoreLanIface, type LanIface} from "./lan.js"
 import os from "os"
 
-function iface(partial: Partial<LanIface> & Pick<LanIface, "name" | "address">): LanIface {
+type TestLanIface = os.NetworkInterfaceInfoIPv4 & Pick<LanIface, "name">
+
+function iface(partial: Partial<TestLanIface> & Pick<TestLanIface, "name" | "address">): TestLanIface {
   return {
     family: "IPv4",
     internal: false,
     netmask: "255.255.255.0",
     mac: "aa:bb:cc:dd:ee:ff",
+    cidr: null,
     ...partial,
   }
 }
@@ -93,10 +96,8 @@ describe("scoreLanIface Linux predictable names", () => {
 describe("getLanIp with mocked os.networkInterfaces", () => {
   let originalNetworkInterfaces: typeof os.networkInterfaces
 
-  function mockInterfaces(map: NodeJS.Dict<LanIface[] | undefined>) {
-    // os.networkInterfaces() is typed NetworkInterfaceInfo[], which lacks the
-    // `name` LanIface carries, so the cast needs to go through unknown.
-    ;(os as unknown as {networkInterfaces: () => typeof map}).networkInterfaces = () => map
+  function mockInterfaces(map: ReturnType<typeof os.networkInterfaces>) {
+    os.networkInterfaces = () => map
   }
 
   beforeEach(() => {
@@ -104,7 +105,7 @@ describe("getLanIp with mocked os.networkInterfaces", () => {
   })
 
   afterEach(() => {
-    ;(os as {networkInterfaces: typeof originalNetworkInterfaces}).networkInterfaces = originalNetworkInterfaces
+    os.networkInterfaces = originalNetworkInterfaces
   })
 
   test("Case 1: Tailscale + Wi-Fi (192.168.x.x) present -> must select Wi-Fi", () => {
@@ -142,10 +143,8 @@ describe("getLanIp with mocked os.networkInterfaces", () => {
 describe("virtual vs physical LAN regression cases (PR #4048)", () => {
   let originalNetworkInterfaces: typeof os.networkInterfaces
 
-  function mockInterfaces(map: NodeJS.Dict<LanIface[] | undefined>) {
-    // os.networkInterfaces() is typed NetworkInterfaceInfo[], which lacks the
-    // `name` LanIface carries, so the cast needs to go through unknown.
-    ;(os as unknown as {networkInterfaces: () => typeof map}).networkInterfaces = () => map
+  function mockInterfaces(map: ReturnType<typeof os.networkInterfaces>) {
+    os.networkInterfaces = () => map
   }
 
   beforeEach(() => {
@@ -153,7 +152,7 @@ describe("virtual vs physical LAN regression cases (PR #4048)", () => {
   })
 
   afterEach(() => {
-    ;(os as {networkInterfaces: typeof originalNetworkInterfaces}).networkInterfaces = originalNetworkInterfaces
+    os.networkInterfaces = originalNetworkInterfaces
   })
 
   const regressionCases = [

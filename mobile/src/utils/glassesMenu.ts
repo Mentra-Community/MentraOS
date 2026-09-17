@@ -1,7 +1,7 @@
 /**
  * G2 Dashboard Menu Utilities
  *
- * Maps MentraOS mini-apps to the G2 glasses' native swipe menu.
+ * Maps Mentra miniapps to the G2 glasses' native swipe menu.
  * RN is responsible for: which miniapps go in the menu, and whether they're running.
  * G2.swift is responsible for: name truncation, running indicators, padding, numeric IDs, wire format.
  */
