@@ -166,3 +166,21 @@ meeting retirement. It does not qualify restarting the native glasses stream,
 return audio or laptop capture. `rejoinQualified` requires actual second video
 reception, not merely a connected UI. A missing acknowledgement times out and
 retains failure instead of guessing that the native roster recovered.
+
+Each browser chapter also saves observed WebRTC connection states, sender and
+receiver track labels, and allowlisted RTP counters. The observer does not
+change media constraints, selected devices, SDP or frame contents. ICE
+credentials, network addresses and raw media are excluded from these statistics.
+An optional Chrome loopback test validates this observer without opening any
+hardware capture or meeting:
+
+```sh
+MENTRA_E2E_BROWSER_TEST=1 bun test tools/mentra-e2e/runner/browser-media-diagnostics.test.ts
+```
+
+If the second video check fails, the extension preserves that failure and
+inspects Teams' People list. It then leaves, waits for native zero participants,
+and opens the original meeting link in a fresh page load. Admission and video
+are checked again without restarting the glasses stream. This diagnostic
+comparison is reported separately as `freshLinkRecovery`; recovery never
+changes the original failed Rejoin result into a pass.

@@ -7,6 +7,7 @@ import {chromium, type BrowserContext, type Page} from "playwright-core"
 import {keepAwake} from "./runner/keep-awake"
 import {finishBrowserEvidence, type BrowserChapter, type VideoCalibration} from "./runner/browser-evidence"
 import {teamsMeetingUrl, teamsPhase, videoSamples, hasAdvancingVideo, hasDecodedVideo} from "./runner/teams-browser"
+import {installMediaDiagnostics, sampleMediaDiagnostics} from "./runner/browser-media-diagnostics"
 
 // Experimental browser companion. It does not qualify the native or duplex routine.
 process.umask(0o077)
@@ -71,6 +72,8 @@ let failure: string | undefined
 let cleanup = "not-needed"
 let joinRequested = false
 let rejoinQualified = false
+let freshLinkRecovery: {status: "passed" | "failed"; error?: string} | undefined
+const browserErrors: {type: string; text: string}[] = []
 const nativeInput = values.rejoin && mode === "run" ? createInterface({input: process.stdin}) : undefined
 function nativeDepartureAcknowledged(publish: () => Promise<void>) {
   return new Promise<void>((resolve, reject) => {
@@ -103,6 +106,7 @@ async function evidence(id: string, instruction: string) {
   if (phase !== "signin") {
     await page!.screenshot({path: join(output, `${id}.png`)})
     await writeFile(join(output, `${id}.yml`), await page!.locator("body").ariaSnapshot())
+    await writeFile(join(output, `${id}-media.json`), JSON.stringify(await sampleMediaDiagnostics(page!), null, 2))
   }
   await writeFile(join(output, "steps.json"), JSON.stringify(events, null, 2))
   console.log(`${id}: ${phase} — ${instruction}`)
@@ -116,8 +120,16 @@ try {
     viewport: {width: 1280, height: 800},
     ...(mode === "run" ? {recordVideo: {dir: output, size: {width: 1280, height: 800}}} : {}),
   })
+  await installMediaDiagnostics(context)
   // This context owns only the dedicated test profile, never personal Chrome tabs.
   page = context.pages()[0] ?? (await context.newPage())
+  page.on("pageerror", (error) => {
+    if (browserErrors.length < 200) browserErrors.push({type: "pageerror", text: String(error)})
+  })
+  page.on("console", (message) => {
+    if (["error", "warning"].includes(message.type()) && browserErrors.length < 200)
+      browserErrors.push({type: message.type(), text: message.text()})
+  })
   page.setDefaultTimeout(10000)
   if (mode === "run") {
     // This is our own blank calibration page, before any Teams content loads.
@@ -265,7 +277,7 @@ try {
         let continuedWithoutMedia = false
         while ((await teamsPhase(runPage)) === "unknown") {
           if (performance.now() > rejoinDeadline) throw new Error("Rejoin did not reach a recognized state")
-          if (!continuedWithoutMedia && await withoutMedia.isVisible()) {
+          if (!continuedWithoutMedia && (await withoutMedia.isVisible())) {
             await evidence("rejoin-no-capture", "Continue the browser rejoin without camera or microphone capture.")
             await withoutMedia.click()
             continuedWithoutMedia = true
@@ -277,8 +289,54 @@ try {
           await runPage.getByRole("button", {name: "Join now", exact: true}).click()
         }
         await waitForAdmission("rejoin-")
-        await verifyIncomingVideo("rejoin-")
-        rejoinQualified = true
+        try {
+          await verifyIncomingVideo("rejoin-")
+          rejoinQualified = true
+        } catch (error) {
+          // Keep the Rejoin failure, even if reopening the link later recovers.
+          // This comparison uses the same meeting and continuously running glasses stream.
+          failure = String(error)
+          process.exitCode = 1
+          await evidence("rejoin-failure", "Record the failed Rejoin check before trying a fresh page load.")
+          const people = runPage.getByRole("button", {name: "People", exact: true})
+          if (await people.isVisible()) {
+            await people.click()
+            await evidence("rejoin-people", "Inspect which participants Teams actually lists after rejoin.")
+          }
+          try {
+            await runPage.getByRole("button", {name: "Leave", exact: true}).click()
+            await runPage
+              .getByRole("button", {name: /^Rejoin(?: meeting)?$/})
+              .waitFor({state: "visible", timeout: 10000})
+            cleanup = "left"
+            await nativeDepartureAcknowledged(() =>
+              evidence("recovery-left", "Verify native departure before opening the same meeting link again."),
+            )
+            await runPage.goto(meeting!, {waitUntil: "domcontentloaded", timeout: 30000})
+            cleanup = "not-needed"
+            await evidence(
+              "recovery-open",
+              "Open the original meeting link in a fresh page load without restarting the glasses stream.",
+            )
+            await Promise.race([
+              withoutMedia.waitFor({state: "visible", timeout: 30000}),
+              runPage.getByRole("button", {name: "Join now", exact: true}).waitFor({state: "visible", timeout: 30000}),
+            ])
+            if (await withoutMedia.isVisible()) await withoutMedia.click()
+            await runPage
+              .getByRole("button", {name: "Join now", exact: true})
+              .waitFor({state: "visible", timeout: 30000})
+            if (await name.isVisible()) await name.fill(values.name!)
+            await verifyCaptureOff("recovery-")
+            await runPage.getByRole("button", {name: "Join now", exact: true}).click()
+            await waitForAdmission("recovery-")
+            await verifyIncomingVideo("recovery-")
+            freshLinkRecovery = {status: "passed"}
+          } catch (recoveryError) {
+            freshLinkRecovery = {status: "failed", error: String(recoveryError)}
+            await evidence("recovery-failure", "Preserve the fresh-link comparison failure.")
+          }
+        }
       }
     }
   }
@@ -325,6 +383,7 @@ try {
     }
   }
   await awake.stop()
+  await writeFile(join(output, "browser-errors.json"), JSON.stringify(browserErrors, null, 2))
   await writeFile(
     join(output, "result.json"),
     JSON.stringify(
@@ -339,6 +398,7 @@ try {
         duplexQualified: false,
         rejoinRequested: values.rejoin,
         rejoinQualified,
+        freshLinkRecovery,
         audioDeviceSelections: 0,
         videoTimeline,
         profile: "dedicated local profile; excluded from evidence",

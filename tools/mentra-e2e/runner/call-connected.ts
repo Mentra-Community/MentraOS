@@ -216,6 +216,9 @@ export async function runConnectedCall(
     const inputs: Record<string, string> = {
       "controller.ts": import.meta.path,
       "retire-call-meeting.ts": join(import.meta.dir, "retire-call-meeting.ts"),
+      "teams-browser.ts": join(root, "tools/mentra-e2e/teams-browser.ts"),
+      "teams-browser-helpers.ts": join(import.meta.dir, "teams-browser.ts"),
+      "browser-media-diagnostics.ts": join(import.meta.dir, "browser-media-diagnostics.ts"),
       "launch-with-network-lease.swift": join(root, "tools/mentra-e2e/native/helpers/LaunchWithNetworkLease.swift"),
       "launch-mentra.swift": join(root, "mobile/scripts/launch-ios-on-mac.swift"),
       "opening-steps.json": join(root, "tools/mentra-e2e/flows/call-connected-opening.json"),
@@ -726,10 +729,10 @@ export async function runConnectedCall(
       await appendFile(join(here, "browser-events.log"), line + "\n", {mode: 0o600})
       if (!line.startsWith("MENTRA_BROWSER_EVENT ")) continue
       const event = JSON.parse(line.slice("MENTRA_BROWSER_EVENT ".length))
-      if (event.id === "browser-left" && options.browserRejoin) {
+      if (["browser-left", "recovery-left"].includes(event.id) && options.browserRejoin) {
         await ui([
           {
-            id: "CALL-DEPARTURE-BEFORE-REJOIN",
+            id: event.id === "recovery-left" ? "CALL-DEPARTURE-BEFORE-RECOVERY" : "CALL-DEPARTURE-BEFORE-REJOIN",
             instruction: "Verify the browser guest has left before allowing it to rejoin.",
             expected: "The participant sheet remains at zero other participants.",
             checks: [
@@ -744,11 +747,11 @@ export async function runConnectedCall(
         child.stdin.write("MENTRA_NATIVE_ACK browser-left\n")
         await child.stdin.flush()
       }
-      const rejoining = event.id.startsWith("rejoin-")
+      const rejoining = event.id.startsWith("rejoin-") || event.id.startsWith("recovery-")
       if (event.phase === "lobby" && !admitted) {
         await ui([
           {
-            id: rejoining ? "CALL-READMIT" : "CALL-ADMIT",
+            id: event.id.startsWith("recovery-") ? "CALL-RECOVERY-ADMIT" : rejoining ? "CALL-READMIT" : "CALL-ADMIT",
             instruction: "Admit only the named Mentra E2E Observer from this replay.",
             expected: "The guest leaves the lobby through the capability-gated Admit control.",
             action: {op: "press", selector: {role: "AXButton", description: "Admit Mentra E2E Observer"}},
@@ -762,10 +765,14 @@ export async function runConnectedCall(
         ])
         admitted = true
       }
-      if (["initial-admitted", "rejoin-admitted"].includes(event.id))
+      if (["initial-admitted", "rejoin-admitted", "recovery-admitted"].includes(event.id))
         await ui([
           {
-            id: rejoining ? "CALL-ROSTER-READMITTED" : "CALL-ROSTER-ADMITTED",
+            id: event.id.startsWith("recovery-")
+              ? "CALL-ROSTER-RECOVERY"
+              : rejoining
+              ? "CALL-ROSTER-READMITTED"
+              : "CALL-ROSTER-ADMITTED",
             instruction: "Verify the admitted browser guest remains in the native roster.",
             expected: "One guest is listed without a waiting label.",
             checks: [
