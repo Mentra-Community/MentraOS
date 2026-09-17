@@ -132,3 +132,8 @@ bun tools/mentra-e2e/qualify.ts --build-manifest mobile/build/ios-mac/build-mani
 ```
 
 After an interrupted run, `run --suite restore-unpaired` records recovery from recognized home, authentication-start or onboarding state. It uses the designated credentials and normal navigation; it does not reset storage.
+
+The experimental [Teams browser companion](TEAMS-BROWSER-ROUTINE.md) now records
+semantic join/admission checkpoints and calibrated continuous browser video. It
+remains separate from the qualified navigation routines until a complete live
+replay passes.

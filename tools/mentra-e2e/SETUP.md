@@ -320,3 +320,15 @@ The glasses need their own download route, such as the office Wi-Fi; the Call
 hotspot test is a separate routine. Never copy another Mac's USB transport ID or
 another pair's hardware fixture. The completed update recording and deterministic
 already-current replay are documented separately from an autonomous installation.
+
+
+### Local Network permission qualification on repeated launches
+
+A fixed installation path and Apple-issued signature are necessary build hygiene,
+but are not yet a proven fix for repeated Local Network prompts on this Mac.
+The unchanged signed installation asked again in the 04:45 UTC September 17
+run. Record every manual grant and exclude such a run from unattended
+qualification. A successful retry after approval only proves current access.
+Keep native denial logs, executable UUID/signature and installed path with the
+run. Do not reset privacy settings or bypass macOS security as part of replay.
+See `MENTRA-CALL-ROUTINE.md` for the current evidence and remaining investigation.

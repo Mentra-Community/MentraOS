@@ -25,7 +25,33 @@ test("an interrupted active state must satisfy a fresh full observation period",
 
 test("ordinary navigation retains immediate checks and rejects impossible observation windows", async () => {
   let reads = 0
-  await waitFor(checks, 100, 0, async () => { reads++; return state(true) })
+  await waitFor(checks, 100, 0, async () => {
+    reads++
+    return state(true)
+  })
   expect(reads).toBe(1)
   await expect(waitFor(checks, 100, 100)).rejects.toThrow("stableForMs")
+})
+
+test("an explicit terminal error wins over a stale success control without waiting out the timeout", async () => {
+  let reads = 0
+  await expect(
+    waitFor(
+      checks,
+      5000,
+      0,
+      async () => {
+        reads++
+        return {
+          ...state(true),
+          elements: [
+            ...state(true).elements,
+            {role: "AXHeading", description: "Call limit reached", visible: true} as Element,
+          ],
+        }
+      },
+      [{selector: {role: "AXHeading", description: "Call limit reached"}, message: "Daily call quota exhausted"}],
+    ),
+  ).rejects.toThrow("Daily call quota exhausted")
+  expect(reads).toBe(1)
 })

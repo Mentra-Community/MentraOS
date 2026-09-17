@@ -20,9 +20,16 @@ export interface Step {
   checks: Check[] | ((context: Context) => Check[])
   timeoutMs?: number
   stableForMs?: number
+  failOn?: {selector: Selector; message: string}[]
 }
 
-export async function waitFor(checks: Check[], timeoutMs = 10000, stableForMs = 0, readSnapshot = snapshot): Promise<Snapshot> {
+export async function waitFor(
+  checks: Check[],
+  timeoutMs = 10000,
+  stableForMs = 0,
+  readSnapshot = snapshot,
+  failOn: Step["failOn"] = [],
+): Promise<Snapshot> {
   if (!Number.isFinite(stableForMs) || stableForMs < 0 || stableForMs >= timeoutMs)
     throw new Error("stableForMs must be nonnegative and shorter than the assertion timeout")
   let matchedSince: number | undefined
@@ -31,13 +38,15 @@ export async function waitFor(checks: Check[], timeoutMs = 10000, stableForMs = 
   let unmet = ""
   while (performance.now() < deadline) {
     last = await readSnapshot()
+    const terminalFailure = failOn.find((failure) => visible(last!, failure.selector).length > 0)
+    if (terminalFailure) throw new Error(terminalFailure.message)
     const failure = checks.find((check) => {
       const count = visible(last!, check.selector).filter(
         (element) => !check.action || element.actions.includes(check.action),
       ).length
       const ok = check.absent ? count === 0 : check.count !== undefined ? count === check.count : count > 0
       if (!ok)
-        unmet = `Expected ${check.absent ? "no" : (check.count ?? "at least one")} match for ${JSON.stringify(
+        unmet = `Expected ${check.absent ? "no" : check.count ?? "at least one"} match for ${JSON.stringify(
           check.selector,
         )}${check.action ? ` exposing ${check.action}` : ""}, found ${count}`
       return !ok
@@ -87,7 +96,13 @@ export async function executeSteps(steps: Step[], context: Context, report: Repo
       if (action?.op === "relaunch") await report.video?.park()
       if (action) await command(action)
       if (action?.op === "relaunch") await report.video?.reattach()
-      state = await waitFor(typeof step.checks === "function" ? step.checks(context) : step.checks, step.timeoutMs, step.stableForMs)
+      state = await waitFor(
+        typeof step.checks === "function" ? step.checks(context) : step.checks,
+        step.timeoutMs,
+        step.stableForMs,
+        snapshot,
+        step.failOn,
+      )
       checkSize(state)
       const videoEnd = await report.video?.mark()
       const result = await report.record(

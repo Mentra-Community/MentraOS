@@ -131,7 +131,8 @@ Successful browser controls observed during this run: role `button` named `Open 
 ## Browser session and admission setup
 
 A repeatable browser routine should reuse a dedicated test profile, separate
-from the user's personal browser. Sign in once through Microsoft's normal UI.
+from the user's personal browser. An anonymous guest with explicit host admission
+worked without a code. If meeting policy requires sign-in, use Microsoft's normal UI.
 Keep that profile local with user-only filesystem permissions; never put its
 cookies, tokens, OTPs or profile in Git or the evidence bundle. Reuse normally
 avoids email verification on every run, but Microsoft can expire or challenge
@@ -154,9 +155,9 @@ The proposed standalone browser adapter uses Playwright Core with installed
 Google Chrome and a dedicated persistent profile. Playwright supplies semantic
 locators, bounded waits, screenshots and recording; Chrome is a supported
 Teams browser already installed here. This avoids maintaining a handwritten
-CDP client for a changing third-party UI. It is still a proposal until the
-standalone adapter completes a real run. The current IAB discovery and cached
-Mentra AX steps remain separate; do not label them a zero-model full-call replay.
+CDP client for a changing third-party UI. The [browser companion](TEAMS-BROWSER-ROUTINE.md) is implemented and has recorded
+real admission and incoming video, but has not completed a passing standalone
+replay. Do not label its diagnostics a qualified full-call replay.
 
 ## Rebuilt roster result
 
@@ -186,3 +187,75 @@ The same binary was installed at the stable `~/Applications/Mentra E2E/Mentra.ap
 Both owned meetings were retired with exact ID/subject/time verification, DELETE 204 and GET 404. Each controller stopped its hotspot, restored ADB to uid 2000, retained scoped packet-capture evidence and made zero audio-device selection changes. The installer archived, extracted and signature/hash-verified all 22 legacy harness-created app wrappers before retiring those copies; the archive migration index preserves restoration paths. See [SETUP.md](SETUP.md) for the stable installation procedure. Cross-rebuild permission retention still requires qualification; no privacy setting was reset or bypassed.
 
 The current miniapp intentionally disables preview (`CALL_PREVIEW_ENABLED = false` and `previewEnabled = false`). **Glasses camera is streaming** is its expected status card. It renders neither outgoing glasses video nor the laptop participant's video; the dormant preview implementation is for the glasses feed. Do not fail this build for a missing in-miniapp preview.
+
+
+## Same-build permission recurrence and browser readiness
+
+`2026-09-17T04-45-12-373Z-call-compiled-replay-cd1476` ran the native
+controller and standalone Chrome companion without model calls. The native
+host admitted the anonymous guest and showed one participant. The browser
+participant tile appeared before its video element: the first sample was empty,
+then five seconds later decoded 960×540 video was playing. The assertion failed
+because it had no valid baseline. Replay now waits at most 20 seconds for a
+first decoded frame, then independently requires advancing playback; an empty
+baseline still cannot pass.
+
+This run also required the user's repeated Local Network approval. The exact
+same installed native and JavaScript hashes were reused. The native log reported
+`Local network prohibited` at 04:45:53.881 UTC. The earlier stable-path pass
+therefore does not establish permission persistence. Nearby macOS `nehelper`
+logs show an app-uninstalled notification for the bundle ID, UUID cache removal,
+and repeated zero-UUID lookups. Old diagnostic probe registrations remain;
+these are investigation evidence, not proof of the cause. No privacy settings,
+quarantine flags or security policy were reset. Keep `qualification.json` beside
+the original failed report to record the human intervention.
+
+The failed run retains 26 native steps / 116.218333 seconds with verified
+screenshots, AX and video liveness. Its browser has a continuous recording with
+English chapters calibrated against a recorded marker (49 ms uncertainty).
+The browser left, the exact owned meeting was retired (DELETE 204 / GET 404),
+the hotspot stopped and ADB returned to shell. Audio device selections were
+unchanged. macOS reports the original 03BE link as BLE-only and exposes a USB
+Mentra microphone, with no glasses Bluetooth speaker endpoint. This is not a
+duplex audio qualification.
+
+
+## Quota stop and offline follow-through
+
+`2026-09-17T04-51-23-299Z-call-compiled-replay-6d2592` failed before ACS mint
+with **Call limit reached**. Production returned HTTP 429 for the test account.
+The default is 10 calls per UTC day, resetting at midnight UTC (5 PM PDT).
+This did not retest Local Network access or browser video. A supplemental
+`qualification.json` corrects the initial metadata's insufficient inference
+from zero denial messages. The future controller requires the run itself to
+pass before reporting unattended qualification. Known terminal screens can now
+be declared with `failOn` so quota errors do not wait out the success timeout.
+
+All 18 native checkpoint artifacts and the 99.93-second recording verified.
+The exact meeting created before token mint was retired (DELETE 204 / GET 404),
+the hotspot stopped and ADB returned to shell. This iteration gathers setup
+logs, helper hashes and browser evidence under its single run directory.
+The connected controller is still a private qualification script, not a
+portable, qualified public replay command.
+
+Ten additional signed diagnostic probe wrappers left registered under the same
+bundle ID were archived, restored and file/signature-verified before unregistering
+and removing those owned copies. Each original evidence folder retains its
+`probe-archive.json` and restorable ZIP. The TestFlight installation and other
+user checkouts were not changed. Whether this resolves the repeated prompt is
+unverified; no security or privacy settings were changed.
+
+At the user's request, live streaming stopped for the day. The final read-only
+check `2026-09-17T04-57-22Z-end-of-day-stop` verified no active glasses camera
+clients, no hotspot IPv4 address, Mentra home, Teams' Rejoin screen and no replay
+or recorder processes. The test-owned keep-awake process was released. A standby
+WHIP foreground service remained present with no camera client; service presence
+alone is not evidence of an active stream. The pending proposal to add the test
+account to the existing production QA quota allowlist was not applied.
+
+Offline validation: 24 runner tests passed (68 assertions), with eight hardware
+or keep-awake checks intentionally skipped; TypeScript and the browser CLI help
+passed. Reprocessing the saved browser WebM produced a verified 16.72-second MP4,
+eight calibrated chapters and 49 ms uncertainty. The original failing call report
+is unchanged. Live readiness/rejoin, return audio and permission persistence
+remain unqualified.
