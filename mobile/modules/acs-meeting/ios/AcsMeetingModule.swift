@@ -245,6 +245,7 @@ final class AcsMeetingSession {
     private let pcmSlots = DispatchSemaphore(value: 8)
     private var frameSender = AcsFrameSender()
     private var pcmBridge: PcmBridge?
+    private var audioDiagnostics: AcsAudioDiagnostics?
     private var audioOut: RawOutgoingAudioStream?
     private var audioIn: RawIncomingAudioStream?
     private var localOut: LocalOutgoingAudioStream?
@@ -432,6 +433,8 @@ final class AcsMeetingSession {
         video: AcsOutgoingVideo
     ) throws {
         callAgent = agent
+        let diagnostics = AcsAudioDiagnostics()
+        audioDiagnostics = diagnostics
 
         let videoFormat = VideoStreamFormat()
         videoFormat.pixelFormat = .nv12
@@ -454,6 +457,7 @@ final class AcsMeetingSession {
         let outgoing = RawOutgoingAudioStream(options: outAudioOptions)
         outgoing.events.onStateChanged = { [weak self, weak outgoing] _ in
             guard let outgoing else { return }
+            diagnostics.record("outgoing_state_\(outgoing.state)")
             self?.handleOutgoingAudioStateChange(outgoing)
         }
         audioOut = outgoing
@@ -478,7 +482,7 @@ final class AcsMeetingSession {
         inAudioOptions.properties = inAudioProperties
         let incoming = RawIncomingAudioStream(options: inAudioOptions)
         incoming.events.onMixedAudioBufferReceived = { [weak self] args in
-            self?.handleIncomingAudio(args)
+            self?.handleIncomingAudio(args, diagnostics: diagnostics)
         }
         audioIn = incoming
 
@@ -884,7 +888,10 @@ final class AcsMeetingSession {
     }
 
     private func feedOutgoingPcmLocked(_ pcm: Data, sampleRate: Int, channels: Int) {
-        guard !muted, outgoingReady, let stream = audioOut else { return }
+        let diagnostics = audioDiagnostics
+        diagnostics?.record("source_pcm", pcm: pcm)
+        guard !muted else { diagnostics?.record("user_muted"); return }
+        guard outgoingReady, let stream = audioOut else { diagnostics?.record("outgoing_not_ready"); return }
         for frame in pcmBridge?.ingest(pcm16Le: pcm, sampleRate: sampleRate, channels: channels) ?? [] {
             guard let pcmBuffer = PcmBridge.audioBuffer(pcm16Le: frame, sampleRate: PcmBridge.targetRate, channels: 1) else {
                 NSLog("ACS-SPIKE could not create outgoing AVAudioPCMBuffer")
@@ -892,7 +899,9 @@ final class AcsMeetingSession {
             }
             let buffer = RawAudioBuffer()
             buffer.buffer = pcmBuffer
+            diagnostics?.record("submitted_pcm", pcm: frame)
             stream.send(buffer: buffer) { error in
+                diagnostics?.record(error == nil ? "send_completed" : "send_failed")
                 if let error {
                     NSLog("ACS-SPIKE sendRawAudioBuffer failed: \(error)")
                 }
@@ -907,6 +916,8 @@ final class AcsMeetingSession {
     }
 
     private func leaveLocked(emitIdle: Bool = true) {
+        audioDiagnostics?.finish()
+        audioDiagnostics = nil
         joinGeneration &+= 1
         let joinReply = pendingJoin
         pendingJoin = nil
@@ -1092,11 +1103,16 @@ final class AcsMeetingSession {
         ]
     }
 
-    private func handleIncomingAudio(_ args: IncomingMixedAudioEventArgs) {
+    private func handleIncomingAudio(_ args: IncomingMixedAudioEventArgs, diagnostics: AcsAudioDiagnostics) {
         let rawBuffer = args.audioBuffer
         defer { rawBuffer.dispose() }
         guard let pcmBuffer = rawBuffer.buffer as? AVAudioPCMBuffer,
-              let data = PcmBridge.pcm16Data(from: pcmBuffer) else { return }
+              let data = PcmBridge.pcm16Data(from: pcmBuffer)
+        else {
+            diagnostics.record("incoming_unreadable")
+            return
+        }
+        diagnostics.record("incoming_pcm", pcm: data)
         onIncomingPcm(
             data.base64EncodedString(),
             Int(args.streamProperties.sampleRate.valueInHz),
