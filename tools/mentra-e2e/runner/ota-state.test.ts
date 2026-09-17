@@ -1,9 +1,38 @@
 import {expect, test} from "bun:test"
 import type {Snapshot} from "./driver"
-import {freshBesProof, otaPage, selectUsbTransport} from "./ota-state"
+import {checkOtaObservedVersions, freshBesProof, otaFirmwareRoute, otaPage, selectUsbTransport} from "./ota-state"
 
 const screen = (...labels: string[]) =>
   ({elements: labels.map((description) => ({visible: true, description}))}) as Snapshot
+
+test("only versions on the pinned firmware route are valid intermediate boots", () => {
+  const before = "MentraLive_20260113"
+  const intermediate = "MentraLive_20260709"
+  const target = "MentraLive_20260915.0"
+  const route = otaFirmwareRoute(before, target, [
+    {start_firmware: intermediate, end_firmware: target},
+    {start_firmware: before, end_firmware: intermediate},
+    {start_firmware: "MentraLive_20260204", end_firmware: "MentraLive_20260626"},
+  ])
+  expect(route).toEqual([before, intermediate, target])
+  expect(() => checkOtaObservedVersions(intermediate, 2, route, [1, 2], false)).not.toThrow()
+  expect(() => checkOtaObservedVersions("MentraLive_20260626", 2, route, [1, 2], true)).toThrow("UNEXPECTED_FIRMWARE")
+  expect(otaFirmwareRoute(before, target)).toEqual([before, target])
+  expect(() =>
+    otaFirmwareRoute(before, target, [
+      {start_firmware: before, end_firmware: intermediate},
+      {start_firmware: intermediate, end_firmware: before},
+    ]),
+  ).toThrow("Cyclic")
+})
+
+test("an intermediate stock ASG can be observed but cannot authorize another install or final pass", () => {
+  const route = ["MentraLive_20260709", "MentraLive_20260915.0"]
+  expect(() => checkOtaObservedVersions(route[0], 50, route, [100, 200], true)).not.toThrow()
+  expect(() => checkOtaObservedVersions(route[0], 50, route, [100, 200], false)).toThrow("UNEXPECTED_ASG_VERSION")
+  expect(() => checkOtaObservedVersions(route[0], NaN, route, [100, 200], false)).toThrow("UNEXPECTED_ASG_VERSION")
+  expect(() => checkOtaObservedVersions(route[1], 200, route, [100, 200], false)).not.toThrow()
+})
 
 test("Done and transient component completion cannot pass the complete OTA routine", () => {
   expect(otaPage(screen("Done", "Update Failed")).kind).toBe("failed")

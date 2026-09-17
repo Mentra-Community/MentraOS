@@ -1,5 +1,42 @@
 import type {Snapshot} from "./driver"
 
+/** Follow the app's first-matching patch order, never unrelated manifest branches. */
+export function otaFirmwareRoute(
+  before: string,
+  target: string,
+  patches: {start_firmware: string; end_firmware: string}[] = [],
+): string[] {
+  const normalize = (version: string) => {
+    if (typeof version !== "string" || !/^(?:MentraLive_)?\d{8}(?:\.\d{1,9})?$/.test(version))
+      throw new Error("Invalid firmware version in OTA route")
+    return "MentraLive_" + version.split("_").at(-1)
+  }
+  let current = normalize(before)
+  const destination = normalize(target)
+  const route = new Set([current])
+  while (current !== destination) {
+    const patch = patches.find((entry) => normalize(entry.start_firmware) === current)
+    if (!patch) break // The pinned full image remains the final fallback.
+    current = normalize(patch.end_firmware)
+    if (route.has(current)) throw new Error("Cyclic pinned firmware route")
+    route.add(current)
+  }
+  route.add(destination)
+  return [...route]
+}
+
+/** A stock ASG build can briefly reappear during the owned uninstall/reinstall detour. */
+export function checkOtaObservedVersions(
+  firmware: string,
+  asgVersion: number,
+  allowedFirmware: string[],
+  asgVersions: number[],
+  observingActivePass: boolean,
+) {
+  if (!allowedFirmware.includes(firmware)) throw new Error("UNEXPECTED_FIRMWARE")
+  if (!asgVersions.includes(asgVersion) && !observingActivePass) throw new Error("UNEXPECTED_ASG_VERSION")
+}
+
 export type OtaPage =
   | "available"
   | "offered"

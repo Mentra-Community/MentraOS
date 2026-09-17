@@ -4,7 +4,13 @@ import {appendFile, chmod, copyFile, mkdir} from "node:fs/promises"
 import {join} from "node:path"
 import {parseArgs} from "node:util"
 import {buildDriver, command, snapshot, type Doctor, type Snapshot} from "./runner/driver"
-import {freshBesProof, otaPage, selectUsbTransport} from "./runner/ota-state"
+import {
+  checkOtaObservedVersions,
+  freshBesProof,
+  otaFirmwareRoute,
+  otaPage,
+  selectUsbTransport,
+} from "./runner/ota-state"
 import {acquireLock, Report} from "./runner/report"
 import {executeSteps} from "./runner/suite"
 
@@ -54,6 +60,7 @@ if (
   !target.bes
 )
   throw new Error("Manifest must pin ASG, full MTK fallback and BES targets")
+const allowedFirmware = otaFirmwareRoute(fixture.before.firmware, target.firmware, manifest.mtk_patches)
 const build = await Bun.file(values["build-manifest"]!).json()
 if (build.otaManifestUrl !== values["manifest-url"])
   throw new Error("Build OTA pin differs from the requested manifest")
@@ -93,24 +100,29 @@ async function run(args: string[]): Promise<string> {
     clearTimeout(timer)
   }
 }
-async function hardware() {
+async function hardware(observingActivePass = false) {
   const transport = selectUsbTransport(await run(["adb", "devices", "-l"]), fixture.serial, fixture.usb)
   const shell = (...args: string[]) => run(["adb", "-t", transport, "shell", ...args])
   const cid = await shell("cat", "/sys/block/mmcblk0/device/cid")
   const serial = await shell("getprop", "ro.serialno")
-  if (cid !== fixture.cid || serial !== fixture.serial) throw new Error("HARDWARE_IDENTITY_MISMATCH")
+  if (cid.toLowerCase() !== fixture.cid.toLowerCase() || serial !== fixture.serial)
+    throw new Error("HARDWARE_IDENTITY_MISMATCH")
   const bluetooth = await shell("getprop", "persist.mentra.live.mac")
   if (bluetooth.toUpperCase() !== fixture.bluetooth.toUpperCase()) throw new Error("HARDWARE_BLUETOOTH_MISMATCH")
   const firmware = await shell("getprop", "ro.custom.ota.version")
-  if (firmware !== fixture.before.firmware && firmware !== target.firmware) throw new Error("UNEXPECTED_FIRMWARE")
   const bootId = await shell("cat", "/proc/sys/kernel/random/boot_id")
   const slot = await shell("getprop", "ro.boot.slot_suffix")
   const bootCompleted = await shell("getprop", "sys.boot_completed")
   const packageInfo = await shell("dumpsys", "package", "com.mentra.asg_client")
   const asgVersion = Number(/versionCode=(\d+)/.exec(packageInfo)?.[1])
   if (!asgVersion && bootCompleted !== "1") throw new Error("ASG is not yet available during boot")
-  if (asgVersion !== fixture.before.asgVersion && asgVersion !== target.asgVersion)
-    throw new Error("UNEXPECTED_ASG_VERSION")
+  checkOtaObservedVersions(
+    firmware,
+    asgVersion,
+    allowedFirmware,
+    [fixture.before.asgVersion, target.asgVersion],
+    observingActivePass,
+  )
   if (transport !== loggingTransport || !logger || logger.exitCode !== null) {
     if (logger && logger.exitCode === null) {
       logger.kill()
@@ -235,11 +247,14 @@ try {
     url: url.href,
     manifestSha256: createHash("sha256").update(manifestBytes).digest("hex"),
     target,
+    allowedFirmware,
     resume: values.resume,
     nativeAssociationQualified: false,
   }
   await report.startVideo()
-  const before = await hardware()
+  const before = await hardware(
+    values.resume && ["working", "checking", "pass-complete"].includes(otaPage(await snapshot()).kind),
+  )
   // ASG and MTK can stay unchanged in a BES-only release. Require a fresh BES
   // response before deciding to skip the app's normal installation flow.
   let alreadyCurrent = false
@@ -357,7 +372,7 @@ try {
       throw new Error("Unrecognized OTA screen persisted for 60 seconds")
     if (performance.now() - lastHardwareCheck > 5000) {
       try {
-        await hardware()
+        await hardware((started || values.resume) && ["working", "checking", "pass-complete"].includes(page.kind))
       } catch (error) {
         if (/MISMATCH|UNEXPECTED/.test(String(error))) throw error
         await appendFile(

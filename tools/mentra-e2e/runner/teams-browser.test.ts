@@ -6,6 +6,7 @@ describe("Teams browser qualification boundaries", () => {
   test("a lobby takes precedence over previews and other call controls", () => {
     expect(classifyTeams({lobby: true, leave: true, join: true, signin: false})).toBe("lobby")
     expect(classifyTeams({lobby: false, leave: false, join: true, signin: false})).toBe("prejoin")
+    expect(classifyTeams({lobby: false, leave: false, left: true, join: true, signin: false})).toBe("prejoin")
     expect(classifyTeams({lobby: false, leave: false, left: true, join: false, signin: false})).toBe("left")
     expect(classifyTeams({lobby: false, leave: true, join: false, signin: false})).toBe("connected")
   })
@@ -55,7 +56,7 @@ test.skipIf(process.env.MENTRA_E2E_BROWSER_TEST !== "1")(
       })
       await Bun.sleep(100)
       expect(settled).toBe(false)
-      await page.setContent("<button>Join now</button>")
+      await page.setContent("<button>Rejoin meeting</button><button>Join now</button>")
       expect(await ready).toBe("prejoin")
       await page.setContent("<h1>Someone will let you in shortly</h1><button>Leave</button>")
       expect(await reachTeamsJoinState(page, async () => {}, "rejoin-", true)).toBe("lobby")

@@ -127,6 +127,17 @@ starts another pass. The relaunch step permits the normal update check or
 offer to appear before home. These paths are covered offline and await the
 next real firmware update for end-to-end qualification.
 
+The accepted MTK versions come from the published manifest's route starting at
+the fixture's original version, following the same first-matching patch order
+as the app. Unrelated manifest branches remain invalid. The pinned manifest
+used on this Mac includes older-device paths through `MentraLive_20260709`
+before `MentraLive_20260915.0`. During an active pass, the observer records the
+temporary stock ASG version that can appear during uninstall/reinstall. That
+observation does not authorize another install or final success: those require
+the expected ASG build, and final success still requires the exact target APK
+hash, firmware and fresh BES response. USB, CID and Bluetooth identity checks
+remain active throughout.
+
 Before installation, the runner briefly defers an initial offer, opens Device
 info and matches the app's serial/Bluetooth address to USB. It then relaunches the
 same signed build to obtain the normal update offer again. No build replacement,

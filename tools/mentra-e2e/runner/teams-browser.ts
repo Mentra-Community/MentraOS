@@ -21,8 +21,8 @@ export function classifyTeams(signals: {
 }): TeamsPhase {
   if (signals.lobby) return "lobby"
   if (signals.leave) return "connected"
-  if (signals.left) return "left"
   if (signals.join) return "prejoin"
+  if (signals.left) return "left"
   if (signals.signin) return "signin"
   return "unknown"
 }
