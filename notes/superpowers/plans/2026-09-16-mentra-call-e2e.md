@@ -50,10 +50,13 @@ The authorized foreground comparison then failed with the same error in `2026-09
 
 After USB reconnection, the existing ASG command started original 03BE's hotspot and macOS joined it successfully. A Wi-Fi-bound Mac health request passed while Ethernet retained Teams HTTPS access. A minimal iOS request using the system route also passed on `en0`. In the same process, requiring the Wi-Fi interface type produced no network route and a 10-second timeout. A subsequent source-IP-bound request reported Local Network denial; permission acceptance is unresolved. SSID proof remains unavailable, so product reuse and incoming media are not qualified.
 
-The [English diagnostic routine and cache index](../../../tools/mentra-e2e/MAC-HOTSPOT-DIAGNOSTICS.md) retain all five recordings, fixture limitations, cleanup, distinct network/assertion deadlines and requirements for another Mac. Hotspot state was temporarily changed through existing ASG commands and stopped after each run; no firmware, account or Teams meeting was changed. The product candidate passed 24 CoreKit tests and a signed Release build, but remains uncommitted and uninstalled pending hardware qualification. The original app was restored.
+The [English diagnostic routine and cache index](../../../tools/mentra-e2e/MAC-HOTSPOT-DIAGNOSTICS.md) retain the recordings, fixture limitations, cleanup, distinct network/assertion deadlines and requirements for another Mac. Hotspot state was temporarily changed through existing ASG commands and stopped after each run; no firmware, account or Teams meeting was changed.
+
+A later same-process comparison proved both system-selected routing and source-IP binding, then reproduced the required-Wi-Fi failure. The actual production WHIP HTTP server also accepted a request from the real glasses: ten steps / 42.831667 seconds, verified artifacts and cleanup. Product commit `4f1c87dd57` is pushed to draft #4078. Its full app passed a signed Release build and the 13-step paired UI replay in 11.753333 seconds; the candidate remains running with all three original Mac audio defaults restored. CoreKit has 24 passing tests. Exact-SSID reuse and Teams media remain unqualified. Temporary Location Services/Mentra location approval is pending for this macOS-established network; spoken attention was requested by the user and used, but no privacy setting changed.
 
 - [x] Record macOS association and health independently of iOS configuration submission.
 - [x] Compare system-selected and required-Wi-Fi requests in one signed iOS process.
-- [ ] Establish the exact probe's Local Network permission state and qualify explicit IP binding.
-- [ ] Qualify exact-SSID reuse, incoming WHIP, media, Teams browser participation and cleanup.
+- [x] Qualify explicit IP binding in the same process after a successful system-route request.
+- [x] Verify incoming HTTP from the real glasses to the actual iOS WHIP server.
+- [ ] Qualify exact-SSID reuse, media, Teams browser participation and cleanup.
 - [ ] Package the local experiment cache as a portable diagnostic after resolving these gates.

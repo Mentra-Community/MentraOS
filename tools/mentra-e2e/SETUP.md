@@ -281,8 +281,16 @@ For a minimal API reproduction on another Mac, build a small UIKit app with the 
 The recorder now uses the actual accessible window title plus process identity. The different-title diagnostic recording verified three screenshot/AX pairs; a separate same-build paired-home relaunch verified recorder reattachment. An earlier attempt failed before executing any probe because the recorder required the literal title “Mentra”; that incomplete run remains preserved.
 
 The subsequent [real-hotspot diagnostic routine](MAC-HOTSPOT-DIAGNOSTICS.md)
-records macOS association, a successful iOS request over Wi-Fi, the same-process
-failure caused by requiring the Wi-Fi interface type, and an unresolved Local
-Network permission result for explicit IP binding. It includes the English
+records macOS association, successful iOS requests over Wi-Fi with system routing
+and explicit source-IP binding, the same-process failure caused by requiring the
+Wi-Fi interface type, and an incoming request from the glasses to the actual iOS
+WHIP server. It includes the English
 steps, local cached script locations, exact run evidence and transfer requirements
 for another Mac. None of these results qualifies a Teams call.
+
+When the operator requests spoken attention for setup gates, macOS includes
+`/usr/bin/say 'Mentra testing needs your attention; see the pending request.'`.
+Use it only for an actionable request, and keep credentials and meeting links out
+of speech. Confirm the output route is audible before relying on it; Bluetooth
+tests can move audio to the glasses. The September 16 alerts used the MacBook Pro
+speakers. Speech requests attention; it never counts as permission approval.

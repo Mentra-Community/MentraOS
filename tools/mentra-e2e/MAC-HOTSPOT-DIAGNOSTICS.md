@@ -56,13 +56,22 @@ checkout. UTC timestamps cross into September 17.
 | iOS system-selected route | `2026-09-17T00-19-07-612Z-ios-prejoined-system-route-c5080d` | Seven steps passed; HTTP 200 healthy over `en0`, connection reports Wi-Fi. |
 | Same-process comparison | `2026-09-17T00-21-52-777Z-ios-route-comparison-2dc105` | System-selected route passed, then requiring Wi-Fi failed with no network route. Eight recorded steps; the run remains failed. |
 | iOS bound to hotspot source IP | `2026-09-17T00-25-28-408Z-ios-bound-route-5f70ca` | Timed out while reporting Local Network denial. Permission acceptance is unresolved, so this does not establish whether IP binding works. Seven recorded steps including restoration and cleanup. |
+| Same-process system / source-IP / Wi-Fi comparison | `2026-09-17T00-47-24-457Z-ios-permission-route-a9093c` | System routing and source-IP binding both returned HTTP 200 healthy over Wi-Fi. Requiring the Wi-Fi type then failed. Nine recorded steps / 59.018333 seconds; retains the negative result. |
+| Actual iOS WHIP listener from real glasses | `2026-09-17T00-51-04-853Z-ios-whip-listener-8b4637` | Ten steps passed / 42.831667 seconds. The glasses sent GET to the production server bound to the hotspot IP and received its expected 405 / Allow: POST response. No media negotiation was attempted. |
 
-The iOS probe has a **10-second network deadline**. The replay then waits up to
+The initial iOS probe has a **10-second network deadline**. The replay then waits up to
 **15 seconds for the accessible “Glasses health: PASS” result**. Thus a harness
 message saying it could not find PASS is the assertion deadline following a
 network failure. It is not a Teams join timeout. The latest bound-IP probe showed
 `waiting reason 3` (`local_network_denied`); the matched required-Wi-Fi comparison
 showed reason 0 and no network route. Preserve these distinct diagnoses.
+
+The later same-process comparison allows 60 seconds for its first two requests,
+including time for a possible Local Network prompt, then 10 seconds for the Wi-Fi
+constraint check. The system-route request passed after a brief reason-3 wait;
+source-IP binding passed immediately afterward. That functional result establishes
+IP binding without assuming which permission the user accepted. The explicit
+Wi-Fi type constraint still failed in the same process.
 
 SSID reads remained unavailable. Location was off. Apple's allowance for reading
 an app-configured current network without Location does not establish SSID access
@@ -70,8 +79,17 @@ after macOS itself joins a network. A candidate reuse path still requires an exa
 SSID match and a valid client address on the advertised subnet; it must not treat
 an arbitrary private address as identity proof.
 
-The Mac-specific product candidate is not yet qualified. The existing app was
-restored after every probe, and no Teams meetings were created in these tests.
+The Mac-specific product change is committed in #4078. The actual WHIP listener
+test compiles and hashes `WhipIngestServer`, `WhipRequest` and `LocalMediaPolicy`
+from that source; it does not substitute a fake HTTP server. Full product reuse,
+SDP/ICE and Teams media remain unqualified. The existing app was restored after
+every probe, and no Teams meetings were created in these tests.
+
+The updated full app subsequently passed the existing 13-step paired UI routine:
+`2026-09-17T00-56-20-518Z-mentra-call-ui-d728a4`, 11.753333 seconds, zero model
+calls, all screenshot/AX/video/chapter/liveness checks passed. That candidate is
+now running. Its build manifest records the source diff and actual executable/JS
+hashes; this navigation pass does not establish a successful call.
 
 ## Reproduce on this Mac or prepare another Mac
 
@@ -86,6 +104,8 @@ signed iOS variants additionally contain `main.m`, `build.py` and
 | `2026-09-17T00-18-36Z-ios-route-probe` | System-selected iOS route |
 | `2026-09-17T00-20-58Z-ios-route-comparison` | Both requests in the same process |
 | `2026-09-17T00-25-07Z-ios-bound-route` | Explicit local-IP binding |
+| `2026-09-17T00-47-16Z-ios-permission-route` | System, source-IP and required-Wi-Fi requests in the same process |
+| `2026-09-17T00-50-49Z-ios-whip-listener` | Actual production WHIP listener and glasses-origin request |
 
 These are retained local experiment scripts, not a portable qualified suite. Do
 not rerun them in place: they write setup evidence and pin the original boot ID,
