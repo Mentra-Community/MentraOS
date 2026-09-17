@@ -633,3 +633,51 @@ attempts remain used; one is held for an instrumented check with a listener.
 The user was asked asynchronously to signal availability and alerted by the
 requested text-to-speech method. Native rendering counters do not replace that
 physical hearing check.
+
+### September 17 review follow-up and merged production source
+
+The remaining audio-readiness review finding was reproduced with one route
+notification followed by a delayed `availableInputs` update. The independent
+observer now reconciles immediately and at 200, 500, and 1000 ms. A newer route,
+foreground, or selected-device change cancels and replaces the pending window;
+releasing the observer cancels it too. Each check reads the current device
+pattern and route. The checks continue through the bounded window even after an
+initial ready result, so delayed input removal is also observed. No audio route
+selection or session activation was added.
+
+Validation: all 116 native SDK Swift tests passed, including delayed availability
+without another notification, delayed removal, device changes, disposal, and
+bounded retry coverage. The standalone exported SDK also built for native macOS
+and generic iOS without signing or launching a simulator. Commands:
+
+```sh
+swift test --package-path mobile/modules/bluetooth-sdk
+bash scripts/export-bluetooth-sdk-ios-spm.sh --target /tmp/mentra-call-review-sdk --verify
+```
+
+Mentra-Call #34 merged as `a0fea464164678ef189bb9d43f9391c6f7bb5716`.
+Production deployment run [35266735530](https://github.com/Mentra-Community/Mentra-Call/actions/runs/35266735530)
+succeeded for that commit, and the production `/healthz` endpoint returned OK.
+The endpoint does not expose its revision; the deployment workflow supplies
+revision evidence.
+
+Call 2.1.17 was repacked from a clean worktree at that merge commit using:
+
+```sh
+MENTRA_PUBLIC_DISABLE_AUTH= MENTRA_PUBLIC_CALL_TRANSPORT= \
+  bun scripts/sync-miniapp.mjs --repo /path/to/merged/Mentra-Call \
+  --pack-script pack:prod --no-bump
+```
+
+All seven payload files are byte-identical to the reviewed 2.1.17 bundle. ZIP
+container timestamps changed; the repacked ZIP SHA-256 is
+`ec92fb4d046737d290dd0c1977717420fe23e454a34e802ef928cec9958c7dc0`.
+The effective backend assignment is
+`https://mentra-call-miniapp-prod.mentraglass.com`, with ACS and authentication
+enabled. The exact permission set remains `CAMERA`, `PHONE_CAMERA`, and
+`MICROPHONE`; calendar retrieval and its permission remain deferred to 3.3.
+No external source or version change was necessary after the merge.
+
+This resolves source publication and merged-source bundle verification. Android
+release qualification and the physical call limitations above remain separate
+requirements. No new call or stream was started for this follow-up.

@@ -375,7 +375,7 @@ struct ViewState {
             AVAudioSession.routeChangeNotification,
             UIApplication.didBecomeActiveNotification,
         ]) { [weak self] in
-            self?.checkCurrentAudioDevice()
+            self?.refreshAudioDeviceState()
             self?.updateMicState()
         }
         #endif
@@ -943,6 +943,16 @@ struct ViewState {
     }
 
     func checkCurrentAudioDevice() {
+        #if os(macOS)
+        refreshAudioDeviceState()
+        #else
+        // DeviceStore calls this when the selected glasses change. Replace any
+        // pending route checks so the new target gets its own settling window.
+        audioRouteObservation?.refresh()
+        #endif
+    }
+
+    private func refreshAudioDeviceState() {
         let audioDevicePattern = getAudioDevicePattern()
         Bridge.log("MAN: checkCurrentAudioDevice: audioDevicePattern: \(audioDevicePattern)")
 
