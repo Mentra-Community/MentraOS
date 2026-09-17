@@ -238,8 +238,19 @@ attempt; setup alone consumes none.
 For a targeted audio check, add `--browser-audio-only` alongside the device
 fixture. The camera stays off during the call, and the explicit capture scope
 requires the selected live laptop microphone and advancing outgoing audio RTP.
-It can be combined with `--browser-rejoin`: mute the browser after the audio
-check, verify native departure, then reselect the declared devices at prejoin
+Before enabling the browser microphone, the controller closes Participants and
+presses the native **Mute your microphone** switch. It must observe **Unmute
+your microphone** and acknowledge that state to the browser. The wearer then
+speaks near the laptop and listens through the glasses during a recorded
+15-second window. The browser mutes before the controller restores the glasses
+microphone and reopens Participants. Both transitions require observed native
+state and an acknowledgement; this isolates return audio from the glasses mic.
+The controls come from recorded AX snapshots (`AXCheckBox` with `AXSwitch`
+subrole), not screen coordinates. This new isolated hearing sequence awaits its
+first live run.
+
+It can be combined with `--browser-rejoin`: verify native departure, then
+reselect the declared devices at prejoin
 before repeating incoming-video/roster checks. This does not relax the original
 combined audio/video assertion or change any historical failed result.
 

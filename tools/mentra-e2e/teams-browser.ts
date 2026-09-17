@@ -96,8 +96,9 @@ let browserSendingVerified = false
 let audioDeviceSelections = 0
 let freshLinkRecovery: {status: "passed" | "failed"; error?: string} | undefined
 const browserErrors: {type: string; text: string}[] = []
-const nativeInput = values.rejoin && mode === "run" ? createInterface({input: process.stdin}) : undefined
-function nativeDepartureAcknowledged(publish: () => Promise<void>) {
+const nativeInput =
+  (values.rejoin || values["audio-only"]) && mode === "run" ? createInterface({input: process.stdin}) : undefined
+function nativeCheckpointAcknowledged(checkpoint: string, publish: () => Promise<void>) {
   return new Promise<void>((resolve, reject) => {
     const finish = (error?: Error) => {
       clearTimeout(timer)
@@ -106,10 +107,10 @@ function nativeDepartureAcknowledged(publish: () => Promise<void>) {
       error ? reject(error) : resolve()
     }
     const onLine = (line: string) => {
-      if (line === "MENTRA_NATIVE_ACK browser-left") finish()
+      if (line === "MENTRA_NATIVE_ACK " + checkpoint) finish()
     }
-    const onClose = () => finish(new Error("Native controller closed before checking browser departure"))
-    const timer = setTimeout(() => finish(new Error("Native departure acknowledgement timed out")), 30000)
+    const onClose = () => finish(new Error(`Native controller closed before acknowledging ${checkpoint}`))
+    const timer = setTimeout(() => finish(new Error(`Native acknowledgement timed out: ${checkpoint}`)), 30000)
     nativeInput!.on("line", onLine)
     nativeInput!.once("close", onClose)
     void publish().catch(finish)
@@ -274,6 +275,13 @@ try {
       }
       await verifyIncomingVideo("initial-")
       if (captureDevices) {
+        if (values["audio-only"])
+          await nativeCheckpointAcknowledged("audio-return-ready", () =>
+            evidence(
+              "audio-return-ready",
+              "Wait for the native host to mute the glasses microphone before checking return audio.",
+            ),
+          )
         const before = await sampleMediaDiagnostics(runPage)
         await runPage.getByRole("button", {name: /^Unmute mic/}).click()
         if (!values["audio-only"]) await runPage.getByRole("button", {name: /^Turn camera on/}).click()
@@ -290,7 +298,12 @@ try {
           await new Promise((resolve) => setTimeout(resolve, 250))
           after = await sampleMediaDiagnostics(runPage)
         }
-        await new Promise((resolve) => setTimeout(resolve, 5000))
+        if (values["audio-only"])
+          await evidence(
+            "audio-return-active",
+            "Speak near the laptop and listen through the glasses while the glasses microphone is muted.",
+          )
+        await new Promise((resolve) => setTimeout(resolve, values["audio-only"] ? 15000 : 5000))
         const sustained = await sampleMediaDiagnostics(runPage)
         await writeFile(join(output, "laptop-sending.json"), JSON.stringify({before, after, sustained}, null, 2))
         if (!hasAdvancingLaptopMedia(after, sustained, captureDevices, values["audio-only"]))
@@ -302,13 +315,21 @@ try {
             ? "Verify the selected laptop microphone and sustained outgoing audio packets with camera off."
             : "Verify selected laptop capture tracks and sustained outgoing audio/video packets.",
         )
-        if (values["audio-only"]) await runPage.getByRole("button", {name: /^Mute mic/}).click()
+        if (values["audio-only"]) {
+          await runPage.getByRole("button", {name: /^Mute mic/}).click()
+          await nativeCheckpointAcknowledged("audio-return-finished", () =>
+            evidence(
+              "audio-return-finished",
+              "Mute the browser microphone and restore the glasses microphone before continuing.",
+            ),
+          )
+        }
       }
       if (values.rejoin) {
         await runPage.getByRole("button", {name: "Leave", exact: true}).click()
         await runPage.getByRole("button", {name: /^Rejoin(?: meeting)?$/}).waitFor({state: "visible", timeout: 10000})
         cleanup = "left"
-        await nativeDepartureAcknowledged(() =>
+        await nativeCheckpointAcknowledged("browser-left", () =>
           evidence(
             "browser-left",
             "Leave and wait for the native roster to verify zero participants before rejoining.",
@@ -356,7 +377,7 @@ try {
               .getByRole("button", {name: /^Rejoin(?: meeting)?$/})
               .waitFor({state: "visible", timeout: 10000})
             cleanup = "left"
-            await nativeDepartureAcknowledged(() =>
+            await nativeCheckpointAcknowledged("browser-left", () =>
               evidence("recovery-left", "Verify native departure before opening the same meeting link again."),
             )
             await runPage.goto(meeting!, {waitUntil: "domcontentloaded", timeout: 30000})

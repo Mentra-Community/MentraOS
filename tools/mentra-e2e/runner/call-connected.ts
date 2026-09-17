@@ -739,6 +739,51 @@ export async function runConnectedCall(
       await appendFile(join(here, "browser-events.log"), line + "\n", {mode: 0o600})
       if (!line.startsWith("MENTRA_BROWSER_EVENT ")) continue
       const event = JSON.parse(line.slice("MENTRA_BROWSER_EVENT ".length))
+      if (event.id === "audio-return-ready" && options.browserAudioOnly) {
+        await ui([
+          {
+            id: "CALL-AUDIO-CLOSE-PARTICIPANTS",
+            instruction: "Close Participants to reach the wearer's microphone control.",
+            expected: "The native microphone is unmuted before the return-audio check.",
+            action: {op: "press", selector: {role: "AXButton", description: "Close participants"}},
+            checks: [{selector: {role: "AXCheckBox", description: "Mute your microphone"}}],
+          },
+          {
+            id: "CALL-AUDIO-MUTE-GLASSES",
+            instruction: "Mute the glasses microphone so laptop speech is the only test source for return audio.",
+            expected: "The control offers Unmute your microphone; the call remains connected.",
+            action: {op: "press", selector: {role: "AXCheckBox", description: "Mute your microphone"}},
+            checks: [
+              {selector: {role: "AXCheckBox", description: "Unmute your microphone"}},
+              {selector: {role: "AXButton", description: "Leave the call"}},
+            ],
+            stableForMs: 1000,
+          },
+        ])
+        child.stdin.write("MENTRA_NATIVE_ACK audio-return-ready\n")
+        await child.stdin.flush()
+      }
+      if (event.id === "audio-return-finished" && options.browserAudioOnly) {
+        await ui([
+          {
+            id: "CALL-AUDIO-UNMUTE-GLASSES",
+            instruction: "Restore the glasses microphone after the browser microphone is muted.",
+            expected: "The control offers Mute your microphone again.",
+            action: {op: "press", selector: {role: "AXCheckBox", description: "Unmute your microphone"}},
+            checks: [{selector: {role: "AXCheckBox", description: "Mute your microphone"}}],
+            stableForMs: 1000,
+          },
+          {
+            id: "CALL-AUDIO-RESTORE-PARTICIPANTS",
+            instruction: "Reopen Participants before continuing the browser departure/rejoin checks.",
+            expected: "The admitted browser guest is still listed.",
+            action: {op: "press", selector: {role: "AXButton", description: "View participants"}},
+            checks: [{selector: {role: "AXHeading", description: "1 participant"}}],
+          },
+        ])
+        child.stdin.write("MENTRA_NATIVE_ACK audio-return-finished\n")
+        await child.stdin.flush()
+      }
       if (["browser-left", "recovery-left"].includes(event.id) && options.browserRejoin) {
         await ui([
           {
