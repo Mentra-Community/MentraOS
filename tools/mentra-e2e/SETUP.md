@@ -279,3 +279,10 @@ Desktop focus is not a general setup prerequisite. A controlled foreground retry
 For a minimal API reproduction on another Mac, build a small UIKit app with the existing development identity, provisioning profile, bundle ID and required HotspotConfiguration/Wi-Fi information entitlements. Archive its source and executable hashes separately from the product build. Use a fresh temporary test SSID, invoke `applyConfiguration`, retain error domain/code and elapsed time, remove only that test configuration and confirm its absence. This tests configuration submission, not association to real glasses. Preserve the original signed app wrapper and restore it through a background launch afterward; never reset its container. The first machine's exact source/build/replay scripts are retained under `.test-results/mentra-e2e/2026-09-16T23-52-07Z-minimal-hotspot-probe/`; their local paths and expected product hash must be replaced with the new machine's verified build.
 
 The recorder now uses the actual accessible window title plus process identity. The different-title diagnostic recording verified three screenshot/AX pairs; a separate same-build paired-home relaunch verified recorder reattachment. An earlier attempt failed before executing any probe because the recorder required the literal title “Mentra”; that incomplete run remains preserved.
+
+The subsequent [real-hotspot diagnostic routine](MAC-HOTSPOT-DIAGNOSTICS.md)
+records macOS association, a successful iOS request over Wi-Fi, the same-process
+failure caused by requiring the Wi-Fi interface type, and an unresolved Local
+Network permission result for explicit IP binding. It includes the English
+steps, local cached script locations, exact run evidence and transfer requirements
+for another Mac. None of these results qualifies a Teams call.
