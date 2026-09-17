@@ -6,6 +6,7 @@ import {request} from "node:https"
 import path from "node:path"
 import {setTimeout as sleep} from "node:timers/promises"
 import {fileURLToPath} from "node:url"
+import {publishR2Artifact, resolveRelease, usesPrivateArtifactStorage} from "./release-artifact-storage.mjs"
 
 function parseArgs(args) {
   const values = {}
@@ -385,6 +386,21 @@ async function main() {
   const args = parseArgs(process.argv.slice(2))
   if (!args.file || !args.name || !args["release-id"] || !args.repository) {
     throw new Error("--file, --name, --release-id, and --repository are required")
+  }
+  const release = resolveRelease(args.repository, {releaseId: args["release-id"]})
+  if (!usesPrivateArtifactStorage(release)) {
+    const existing = findReleaseAsset(args.repository, release.id, args.name)
+    if (existing?.state === "uploaded" && args.replace !== "true")
+      await verifyReleaseAsset({repository: args.repository, file: path.resolve(args.file), asset: existing})
+    await publishR2Artifact({
+      repository: args.repository,
+      release,
+      name: args.name,
+      file: path.resolve(args.file),
+      replace: args.replace === "true",
+      fingerprint: args.fingerprint,
+    })
+    return
   }
   await publishReleaseAsset({
     repository: args.repository,

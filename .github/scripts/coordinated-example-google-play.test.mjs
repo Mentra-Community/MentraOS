@@ -160,9 +160,7 @@ test("coordinator preserves MentraOS tracks and separates example audiences", ()
   assert.match(reusable, /starter_release_commit/)
   assert.match(reusable, /cancel-in-progress: false/)
   assert.match(reusable, /queue: max/)
-  assert.ok(
-    reusable.indexOf(".mjs verify-aab") < reusable.indexOf("node .github/scripts/publish-immutable-release-asset.mjs"),
-  )
+  assert.ok(reusable.indexOf(".mjs verify-aab") < reusable.indexOf("publish-immutable-release-asset.mjs"))
   const verificationStep = reusable.slice(
     reusable.indexOf("- name: Verify and persist"),
     reusable.indexOf("- name: Require Play access"),

@@ -113,7 +113,7 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch, 
     if (asgRun?.conclusion !== "success")
       error = `ASG + OTA ${asgRun?.conclusion || "did not complete before the notification timeout"}; no ready-to-test build is available.`
   }
-  const base = `https://github.com/${repo.owner}/${repo.repo}/releases/download/pr-builds`
+  const base = `https://artifactscdn.mentraglass.com/${repo.owner}/${repo.repo}/releases/pr-builds`
   const androidUrl = `${base}/mobile-pr-${pr.number}-${sha.slice(0, 7)}.apk`
   const manifestUrl = `${base}/ota-pr-${pr.number}-${sha}.json`
   let targets
