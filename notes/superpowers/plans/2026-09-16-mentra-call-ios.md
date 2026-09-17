@@ -404,8 +404,44 @@ After the user approved Local Network for the signed Call 2.1.16 build, a delaye
 
 Run `2026-09-17T04-21-31-860Z-call-prompt-retention-20cfd4` successfully admitted the named anonymous browser participant through **Admit Mentra E2E Observer** in Mentra Call. The UI correctly moved **0 in call · 1 waiting** → **1 in call**. Teams displayed live 960×540 glasses video, with playback time advancing 10.912 → 62.516 seconds, unpaused at readyState 4. No email code was needed. The browser used the laptop's built-in camera, microphone and speakers. The continuous native recording has 26 steps / 273.785 seconds; artifact and liveness checks passed. It retains failed status because the departure assertion incorrectly expected a main-screen zero-participant button. Correct behavior hides that strip; the participant sheet exposes **0 participants** and **Nobody else is in the call yet.**
 
-The harness installer now archives signed builds and updates one managed `~/Applications/Mentra E2E/Mentra.app` path, retaining signing identity and executable UUID. Apple's TN3179 documents Local Network settings problems with multiple installed versions (FB15568200); matching Apple-issued signing requirements were verified before changing installation layout. All 22 legacy harness wrappers were archived, extracted, signature/hash-verified and retired. Neither privacy settings nor the app container were reset. Same-build installation and replacement both launched successfully. This addresses a known contributing condition; permission persistence across a newly compiled binary remains to be qualified.
+The harness installer now archives signed builds and updates one managed `~/Applications/Mentra E2E/Mentra.app` path, retaining signing identity and executable UUID. Apple's TN3179 documents Local Network settings problems with multiple installed versions (FB15568200); matching Apple-issued signing requirements were verified before changing installation layout. All 22 legacy harness wrappers were archived, extracted, signature/hash-verified and retired. Neither privacy settings nor the app container were reset. Same-build installation and replacement both launched successfully. This reduces duplicate installation registrations; it does not establish the cause of the prompt. Permission persistence remains unqualified, including repeated launches of the same binary.
 
 Run `2026-09-17T04-30-06-098Z-call-stable-install-7ce2e2` started a real hotspot call from the fixed installation with no Local Network prohibition. All 27 native steps passed in 436.315 seconds, including repeated named guest admission and corrected departure verification; artifact/liveness checks passed. The standalone Chrome observer received actual glasses video on one attempt but rejected the legitimate adaptation from 848×480 to 960×540; the assertion is fixed and unit-covered. Its subsequent rejoin reached a connected Teams UI but showed no remote participant within 20 seconds. Browser repeatability remains unqualified, and this native pass does not conceal that companion failure.
 
 Both calls and the intervening lease-failure meeting were retired with exact ID, subject and creation-time checks (DELETE 204, GET 404). Hotspots stopped, scoped captures were retained and verified, ADB returned to uid 2000, and all three audio defaults were preserved with zero routing mutations. Glasses return audio remains excluded while Bluetooth Classic is disconnected. The miniapp's disabled preview is intentional and renders neither participant's video; its dormant preview implementation targets the outgoing glasses feed.
+
+
+## Same-build recurrence and end-of-day stop
+
+The subsequent deterministic native/Chrome run
+`2026-09-17T04-45-12-373Z-call-compiled-replay-cd1476` admitted the anonymous
+browser guest and showed one native participant, but required another user
+Local Network approval on the unchanged installed binary. At 04:45:53.881 UTC
+native networking logged `Local network prohibited`; nearby `nehelper` logs
+recorded an app-uninstalled notification, UUID cache removal and zero-UUID
+lookups for the bundle. Ten remaining diagnostic probe wrappers were later
+archived, restored, signature/file-verified and retired. These facts do not yet
+prove the repeated prompt's cause or resolution.
+
+The browser's empty initial video sample preceded a valid playing 960×540 frame.
+The harness now waits for a decoded baseline before testing advancing playback;
+that change awaits a live replay. The original run remains failed and explicitly
+records the manual approval. The 26-step / 116.218333-second native recording,
+screenshots, AX and frame liveness verified. Browser and native cleanup retired
+the exact meeting, stopped the hotspot and restored ADB shell and unchanged
+audio device choices.
+
+The next attempt, `2026-09-17T04-51-23-299Z-call-compiled-replay-6d2592`, hit the
+production test account's 10-calls-per-UTC-day cap before ACS mint. Its 18-step /
+99.93-second failed recording verified; the Graph meeting created before token
+mint was retired (DELETE 204 / GET 404). It provides no new permission or media
+qualification. An existing production QA allowlist is available, but its proposed
+configuration change was not approved or applied before the user stopped streams
+for the day.
+
+The final read-only device check confirmed zero active camera clients, a stopped
+hotspot, Mentra home and a browser already out of the call. All owned replay,
+recording and keep-awake processes ended. No new streams or production quota
+changes are to run today. The Mac currently exposes 03BE as BLE-only, with a USB
+Mentra microphone and no glasses Bluetooth speaker endpoint. Preserve this as an
+unqualified return-audio fixture, without changing the user's audio routes.
