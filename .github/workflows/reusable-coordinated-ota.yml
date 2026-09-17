@@ -17,6 +17,10 @@ on:
         default: false
         type: boolean
     secrets:
+      ARTIFACTS_R2_ACCESS_KEY_ID:
+        required: false
+      ARTIFACTS_R2_SECRET_ACCESS_KEY:
+        required: false
       ASG_KEYSTORE_B64:
         required: false
       ASG_STORE_PASSWORD:
@@ -54,6 +58,10 @@ concurrency:
   queue: max
 
 env:
+  ARTIFACTS_R2_ACCOUNT_ID: ${{ vars.ARTIFACTS_R2_ACCOUNT_ID }}
+  ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+  ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
+  ARTIFACTS_R2_BUCKET: artifactscdn
   ASG_RELEASE_TAG: mentra-coordinated-asg
   ASG_SIGNING_CERT_SHA256: e8f49381d6324f0703d464328a46eaba1f40422be3b39085d521e38885677387
 
@@ -178,7 +186,7 @@ jobs:
           release_id=$(jq -r '.[0].id // empty' <<< "$matches")
           assets='[]'
           if [[ -n "$release_id" ]]; then
-            assets=$(gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases/${release_id}/assets?per_page=100" | jq 'add')
+            assets=$(node .github/scripts/release-assets.mjs list --repository "${GITHUB_REPOSITORY}" --release-id "${release_id}")
           fi
           printf '%s\n' "$assets" > coordinated-ota-work/release-assets.json
           node .github/scripts/allocate-asg-version.mjs \
@@ -192,7 +200,7 @@ jobs:
             while IFS= read -r asset_id; do
               [[ -z "$asset_id" ]] && continue
               echo "Removing incomplete ASG release asset ${asset_id} before rebuilding its pair."
-              gh api --method DELETE "repos/${GITHUB_REPOSITORY}/releases/assets/${asset_id}"
+              node .github/scripts/release-assets.mjs remove --repository "${GITHUB_REPOSITORY}" --asset-id "${asset_id}"
             done < <(jq -r '.orphanAssetIds[]' coordinated-ota-work/asg-allocation.json)
           fi
 
@@ -213,7 +221,7 @@ jobs:
           set -euo pipefail
           version_name="$ASG_BASE_VERSION"
           if [[ "${{ steps.existing-asg.outputs.exists }}" == "true" ]]; then
-            gh release download "$ASG_RELEASE_TAG" --pattern "$PROVENANCE_ASSET" --dir coordinated-ota-work
+            node .github/scripts/release-assets.mjs download --tag "$ASG_RELEASE_TAG" --pattern "$PROVENANCE_ASSET" --dir coordinated-ota-work
             mv "coordinated-ota-work/$PROVENANCE_ASSET" coordinated-ota-work/asg-provenance.json
             recorded=$(jq -er .versionName coordinated-ota-work/asg-provenance.json)
             if [[ "$recorded" != "$version_name" ]]; then
@@ -249,8 +257,8 @@ jobs:
           [[ "$apk_asset" == "${{ steps.existing-asg.outputs.apk_asset }}" ]]
           [[ "$provenance_asset" == "${{ steps.existing-asg.outputs.provenance_asset }}" ]]
           release_tag=$(jq -er .artifactContainerTag release-intent/release-plan.json)
-          asg_release_base="https://github.com/${REPOSITORY}/releases/download/${ASG_RELEASE_TAG}"
-          release_base="https://github.com/${REPOSITORY}/releases/download/${release_tag}"
+          asg_release_base="https://artifactscdn.mentraglass.com/${REPOSITORY}/releases/${ASG_RELEASE_TAG}"
+          release_base="https://artifactscdn.mentraglass.com/${REPOSITORY}/releases/${release_tag}"
 
           {
             echo "release_identity=${release_identity}"
@@ -277,7 +285,7 @@ jobs:
           set -euo pipefail
           for attempt in 1 2 3; do
             rm -f "coordinated-ota-work/$APK_ASSET"
-            if timeout 120s gh release download "$ASG_RELEASE_TAG" --pattern "$APK_ASSET" --dir coordinated-ota-work; then
+            if timeout 120s node .github/scripts/release-assets.mjs download --tag "$ASG_RELEASE_TAG" --pattern "$APK_ASSET" --dir coordinated-ota-work; then
               break
             fi
             if [[ "$attempt" == 3 ]]; then
@@ -460,7 +468,7 @@ jobs:
             echo "A coordinated release container is required outside dry-run mode." >&2
             exit 1
           fi
-          assets=$(gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases/${{ inputs.release_id }}/assets?per_page=100" | jq 'add')
+          assets=$(node .github/scripts/release-assets.mjs list --repository "${GITHUB_REPOSITORY}" --release-id "${{ inputs.release_id }}")
           if jq -e --arg name "${{ steps.names.outputs.manifest_asset }}" '.[] | select(.name == $name)' <<< "$assets" >/dev/null; then
             manifest_status=reused
           fi

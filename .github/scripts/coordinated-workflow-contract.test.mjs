@@ -136,7 +136,7 @@ test("production promotion is resumable and keeps irreversible actions behind se
   assert.match(rollout, /\.artifactNames\.releasePlan/)
   assert.match(rollout, /\.artifactNames\.releaseManifest/)
   assert.match(rollout, /checkpoint_name=.*promotionAssetName/)
-  assert.match(rollout, /releases\/download\/\$tag\/\$checkpoint_name/)
+  assert.match(rollout, /artifactscdn\.mentraglass\.com\/\$\{GITHUB_REPOSITORY\}\/releases\/\$tag\/\$checkpoint_name/)
   assert.match(rollout, /--to completed/)
   assert.doesNotMatch(rollout, /releases\/\$\{\{ steps\.promotion\.outputs\.release_id \}\}\/assets/)
   for (const source of [compatibilityLab, cloud, mobile, submit, release, rollout]) {

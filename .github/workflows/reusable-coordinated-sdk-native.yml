@@ -23,6 +23,10 @@ on:
         default: false
         type: boolean
     secrets:
+      ARTIFACTS_R2_ACCESS_KEY_ID:
+        required: false
+      ARTIFACTS_R2_SECRET_ACCESS_KEY:
+        required: false
       MAVEN_CENTRAL_TOKEN_BASE64:
         required: false
       MAVEN_SIGNING_KEY:
@@ -42,6 +46,12 @@ concurrency:
   group: coordinated-sdk-native-publication
   cancel-in-progress: false
   queue: max
+
+env:
+  ARTIFACTS_R2_ACCOUNT_ID: ${{ vars.ARTIFACTS_R2_ACCOUNT_ID }}
+  ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+  ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
+  ARTIFACTS_R2_BUCKET: artifactscdn
 
 jobs:
   prepare:
@@ -114,7 +124,9 @@ jobs:
         with:
           ref: ${{ github.sha }}
           path: release-tooling
-          sparse-checkout: .github/scripts
+          sparse-checkout: |
+            .github/scripts
+            .github/artifact-storage
           sparse-checkout-cone-mode: false
 
       - name: Resolve exact Maven coordinates
@@ -289,7 +301,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p native-result/maven
-          assets=$(gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases/$RELEASE_ID/assets?per_page=100" | jq 'add')
+          assets=$(node "$GITHUB_WORKSPACE/release-tooling/.github/scripts/release-assets.mjs" list --repository "${GITHUB_REPOSITORY}" --release-id "$RELEASE_ID")
           matches=$(jq --arg name "$ASSET_NAME" '[.[] | select(.name == $name)]' <<< "$assets")
           count=$(jq 'length' <<< "$matches")
           if [[ "$count" -gt 1 ]]; then
@@ -298,8 +310,7 @@ jobs:
           fi
           if [[ "$count" == 1 ]]; then
             asset_id=$(jq -er '.[0].id' <<< "$matches")
-            gh api -H "Accept: application/octet-stream" \
-              "repos/${GITHUB_REPOSITORY}/releases/assets/$asset_id" > native-result/maven/sonatype-deployment.json
+            node "$GITHUB_WORKSPACE/release-tooling/.github/scripts/release-assets.mjs" fetch --repository "${GITHUB_REPOSITORY}" --asset-id "$asset_id" > native-result/maven/sonatype-deployment.json
             [[ "$(jq -er .deploymentName native-result/maven/sonatype-deployment.json)" == "${{ steps.release.outputs.deployment_name }}" ]]
             jq -e \
               --arg sdk "${{ steps.release.outputs.sdk_purl }}" \
@@ -310,7 +321,7 @@ jobs:
               --record native-result/maven/sonatype-deployment.json \
               --output native-result/maven/sonatype-inspection.json
             if [[ "$(jq -er .disposition native-result/maven/sonatype-inspection.json)" == "replace" ]]; then
-              gh api --method DELETE "repos/${GITHUB_REPOSITORY}/releases/assets/$asset_id"
+              node "$GITHUB_WORKSPACE/release-tooling/.github/scripts/release-assets.mjs" remove --repository "${GITHUB_REPOSITORY}" --asset-id "$asset_id"
               rm native-result/maven/sonatype-deployment.json
               echo "exists=false" >> "$GITHUB_OUTPUT"
             else
@@ -372,31 +383,9 @@ jobs:
             --publishing-type "$PUBLISHING_TYPE" \
             --output native-result/maven/sonatype-deployment.json
           [[ "$(jq -er .publishingType native-result/maven/sonatype-deployment.json)" == "$PUBLISHING_TYPE" ]]
-          encoded_name=$(jq -rn --arg value "$ASSET_NAME" '$value | @uri')
-          persisted=false
-          for attempt in {1..6}; do
-            if gh api \
-              --method POST \
-              -H "Content-Type: application/octet-stream" \
-              --input native-result/maven/sonatype-deployment.json \
-              "https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/$RELEASE_ID/assets?name=$encoded_name" \
-              >/dev/null 2>deployment-upload-error.log; then
-              persisted=true
-              break
-            fi
-            (( attempt < 6 )) && sleep 5
-          done
-          if [[ "$persisted" != "true" ]]; then
-            asset_id=$(gh api --paginate "repos/${GITHUB_REPOSITORY}/releases/$RELEASE_ID/assets?per_page=100" \
-              --jq ".[] | select(.name == \"$ASSET_NAME\") | .id" 2>/dev/null | head -1 || true)
-            if [[ -z "$asset_id" ]]; then
-              cat deployment-upload-error.log >&2
-              exit 1
-            fi
-            gh api -H "Accept: application/octet-stream" \
-              "repos/${GITHUB_REPOSITORY}/releases/assets/$asset_id" > persisted-deployment.json
-            cmp --silent native-result/maven/sonatype-deployment.json persisted-deployment.json
-          fi
+          node "$GITHUB_WORKSPACE/release-tooling/.github/scripts/publish-immutable-release-asset.mjs" \
+            --file native-result/maven/sonatype-deployment.json --name "$ASSET_NAME" \
+            --release-id "$RELEASE_ID" --repository "$GITHUB_REPOSITORY"
 
       - name: Require the production deployment to be validated before staging succeeds
         if: inputs.dry_run != true && steps.existing.outputs.exists != 'true' && steps.release.outputs.channel == 'production'
@@ -447,6 +436,16 @@ jobs:
           ref: ${{ inputs.source_commit }}
           path: MentraOS
 
+      - name: Checkout artifact tooling from the workflow revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: release-tooling
+          persist-credentials: false
+          sparse-checkout: |
+            .github/scripts
+            .github/artifact-storage
+
       - uses: actions/download-artifact@v4
         with:
           name: ${{ inputs.release_plan_artifact }}
@@ -490,7 +489,7 @@ jobs:
             echo "staging_ref=$staging_ref"
             echo "archive_name=$archive_name"
             echo "release_tag=mentra-v$version"
-            echo "archive_url=https://github.com/${{ github.repository }}/releases/download/$artifact_tag/$archive_name"
+            echo "archive_url=https://artifactscdn.mentraglass.com/${{ github.repository }}/releases/$artifact_tag/$archive_name"
             echo "tag_url=https://github.com/Mentra-Community/mentra-bluetooth-sdk-ios/tree/$version"
           } >> "$GITHUB_OUTPUT"
 
@@ -589,25 +588,9 @@ jobs:
           RELEASE_ID: ${{ needs.prepare.outputs.release_id }}
         run: |
           set -euo pipefail
-          assets=$(gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases/$RELEASE_ID/assets?per_page=100" | jq 'add')
-          matches=$(jq --arg name "$ARCHIVE_NAME" '[.[] | select(.name == $name)]' <<< "$assets")
-          count=$(jq 'length' <<< "$matches")
-          if [[ "$count" -gt 1 ]]; then
-            echo "Release contains duplicate SwiftPM archives." >&2
-            exit 1
-          elif [[ "$count" == 1 ]]; then
-            asset_id=$(jq -er '.[0].id' <<< "$matches")
-            gh api -H "Accept: application/octet-stream" \
-              "repos/${GITHUB_REPOSITORY}/releases/assets/$asset_id" > "$RUNNER_TEMP/existing-swiftpm.tar"
-            cmp "$ARCHIVE" "$RUNNER_TEMP/existing-swiftpm.tar"
-          else
-            encoded_name=$(jq -rn --arg value "$ARCHIVE_NAME" '$value | @uri')
-            gh api \
-              --method POST \
-              -H "Content-Type: application/octet-stream" \
-              --input "$ARCHIVE" \
-              "https://uploads.github.com/repos/${GITHUB_REPOSITORY}/releases/$RELEASE_ID/assets?name=$encoded_name" >/dev/null
-          fi
+          node "$GITHUB_WORKSPACE/release-tooling/.github/scripts/publish-immutable-release-asset.mjs" \
+            --file "$ARCHIVE" --name "$ARCHIVE_NAME" \
+            --release-id "$RELEASE_ID" --repository "$GITHUB_REPOSITORY"
 
       - name: Write SwiftPM publication record
         working-directory: MentraOS

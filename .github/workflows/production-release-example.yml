@@ -24,6 +24,10 @@ concurrency:
   cancel-in-progress: false
 
 env:
+  ARTIFACTS_R2_ACCOUNT_ID: ${{ vars.ARTIFACTS_R2_ACCOUNT_ID }}
+  ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+  ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
+  ARTIFACTS_R2_BUCKET: artifactscdn
   EXAMPLE_BUNDLE_ID: com.mentra.bluetoothsdkexample
 
 jobs:
@@ -86,7 +90,7 @@ jobs:
           mkdir -p example-input/beta
           state=$(gh release view "$BETA_TAG" --json isDraft,isPrerelease --jq '[.isDraft,.isPrerelease] | @tsv')
           [[ "$state" == $'false\ttrue' ]]
-          gh release download "$BETA_TAG" \
+          node .github/scripts/release-assets.mjs download --tag "$BETA_TAG" \
             --pattern "mentra-release-plan-$BETA_IDENTITY.json" \
             --pattern "mentra-release-$BETA_IDENTITY.json" \
             --dir example-input/beta
@@ -99,7 +103,7 @@ jobs:
           {
             echo "source_commit=$source_commit"
             echo "manifest_path=example-input/beta/mentra-release-$BETA_IDENTITY.json"
-            echo "manifest_url=https://github.com/${GITHUB_REPOSITORY}/releases/download/$BETA_TAG/mentra-release-$BETA_IDENTITY.json"
+            echo "manifest_url=$(node .github/scripts/release-assets.mjs url --tag "$BETA_TAG" --name "mentra-release-$BETA_IDENTITY.json" --existing true)"
           } >> "$GITHUB_OUTPUT"
 
       # The Starter Kit installs the SDK and Engine from the public registry, so
@@ -154,19 +158,18 @@ jobs:
           # release; their numbers are taken too.
           asg_assets='[]'
           if asg_release_id=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/mentra-coordinated-asg" --jq .id 2>/dev/null); then
-            asg_assets=$(gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases/$asg_release_id/assets?per_page=100" | jq 'add // []')
+            asg_assets=$(node .github/scripts/release-assets.mjs list --repository "${GITHUB_REPOSITORY}" --release-id "$asg_release_id")
           fi
           printf '%s\n' "$asg_assets" > example-input/family/asg-assets.json
           release_id=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/$BETA_TAG" --jq .id)
-          gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases/$release_id/assets?per_page=100" \
-            | jq 'add // []' | jq -s 'add' - example-input/family/asg-assets.json > example-input/family/assets.json
+          node .github/scripts/release-assets.mjs list --repository "${GITHUB_REPOSITORY}" --release-id "$release_id" | jq -s 'add' - example-input/family/asg-assets.json > example-input/family/assets.json
           # Markers above the beta are downloaded so a retry finds the number
           # this example release already reserved.
           mkdir -p example-input/family/markers
           floor=$(jq -er .native.buildNumber example-input/beta/release-plan.json)
           while IFS=$'\t' read -r asset_id name; do
             [[ -z "$asset_id" ]] && continue
-            gh api -H "Accept: application/octet-stream" "repos/${GITHUB_REPOSITORY}/releases/assets/$asset_id" \
+            node .github/scripts/release-assets.mjs fetch --repository "${GITHUB_REPOSITORY}" --asset-id "$asset_id" \
               > "example-input/family/markers/$name"
           done < <(jq -r --argjson floor "$floor" \
             '.[] | select(.name | test("^mentra-build-number-[0-9]+\\.json$")) | select((.name | capture("mentra-build-number-(?<code>[0-9]+)") | .code | tonumber) > $floor) | [.id, .name] | @tsv' \
@@ -192,7 +195,7 @@ jobs:
             echo "found=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          assets=$(gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases/$release_id/assets?per_page=100" | jq 'add')
+          assets=$(node .github/scripts/release-assets.mjs list --repository "${GITHUB_REPOSITORY}" --release-id "$release_id")
           asset_id=$(jq -r --arg name "$PLAN_ASSET" \
             '[.[] | select(.name == $name)] | if length == 0 then empty elif length == 1 then .[0].id else error("multiple assets are named " + $name) end' \
             <<< "$assets")
@@ -200,7 +203,7 @@ jobs:
             echo "found=false" >> "$GITHUB_OUTPUT"
             exit 0
           fi
-          gh api -H "Accept: application/octet-stream" "repos/${GITHUB_REPOSITORY}/releases/assets/$asset_id" \
+          node .github/scripts/release-assets.mjs fetch --repository "${GITHUB_REPOSITORY}" --asset-id "$asset_id" \
             > example-input/existing-plan.json
           echo "Reusing the example plan already frozen as $PLAN_ASSET"
           echo "found=true" >> "$GITHUB_OUTPUT"
@@ -401,10 +404,10 @@ jobs:
           # canonical one: it is validated and checked against this run's
           # candidate identities instead of being regenerated. The container is
           # a draft, so the record is read through the release API.
-          assets=$(gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases/${{ needs.load.outputs.stable_release_id }}/assets?per_page=100" | jq 'add')
+          assets=$(node .github/scripts/release-assets.mjs list --repository "${GITHUB_REPOSITORY}" --release-id "${{ needs.load.outputs.stable_release_id }}")
           asset_id=$(jq -r --arg name "$record_name" '[.[] | select(.name == $name)] | if length == 0 then empty elif length == 1 then .[0].id else error("multiple assets are named " + $name) end' <<< "$assets")
           if [[ -n "$asset_id" ]]; then
-            gh api -H "Accept: application/octet-stream" "repos/${GITHUB_REPOSITORY}/releases/assets/$asset_id" > "finalized-example/$record_name"
+            node .github/scripts/release-assets.mjs fetch --repository "${GITHUB_REPOSITORY}" --asset-id "$asset_id" > "finalized-example/$record_name"
             echo "Reconciling this run's candidates against the example record already published as $record_name"
             node .github/scripts/example-release-records.mjs reconcile \
               --plan "$plan" \

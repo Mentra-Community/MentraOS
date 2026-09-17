@@ -42,6 +42,12 @@ concurrency:
   group: production-release-packages
   cancel-in-progress: false
 
+env:
+  ARTIFACTS_R2_ACCOUNT_ID: ${{ vars.ARTIFACTS_R2_ACCOUNT_ID }}
+  ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+  ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
+  ARTIFACTS_R2_BUCKET: artifactscdn
+
 jobs:
   load:
     name: Freeze the promoted beta source and package plan
@@ -92,7 +98,7 @@ jobs:
           mkdir -p packages-input/beta
           state=$(gh release view "$BETA_TAG" --json isDraft,isPrerelease --jq '[.isDraft,.isPrerelease] | @tsv')
           [[ "$state" == $'false\ttrue' ]]
-          gh release download "$BETA_TAG" \
+          node .github/scripts/release-assets.mjs download --tag "$BETA_TAG" \
             --pattern "mentra-release-plan-$BETA_IDENTITY.json" \
             --pattern "mentra-release-$BETA_IDENTITY.json" \
             --dir packages-input/beta
@@ -106,7 +112,7 @@ jobs:
           git merge-base --is-ancestor "$source_commit" origin/main
           {
             echo "source_commit=$source_commit"
-            echo "manifest_url=https://github.com/${GITHUB_REPOSITORY}/releases/download/$BETA_TAG/mentra-release-$BETA_IDENTITY.json"
+            echo "manifest_url=$(node .github/scripts/release-assets.mjs url --tag "$BETA_TAG" --name "mentra-release-$BETA_IDENTITY.json" --existing true)"
           } >> "$GITHUB_OUTPUT"
 
       - name: Checkout the frozen package source separately from workflow tooling
@@ -381,10 +387,9 @@ jobs:
           set -euo pipefail
           mkdir -p packages-output/maven
           asset_name="mentra-$VERSION-sonatype-deployment.json"
-          assets=$(gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases/$RELEASE_ID/assets?per_page=100" | jq 'add')
+          assets=$(node .github/scripts/release-assets.mjs list --repository "${GITHUB_REPOSITORY}" --release-id "$RELEASE_ID")
           asset_id=$(jq -er --arg name "$asset_name" '[.[] | select(.name == $name)] | if length == 1 then .[0].id else error("Sonatype deployment record must be unique; run the publish phase first") end' <<< "$assets")
-          gh api -H "Accept: application/octet-stream" \
-            "repos/${GITHUB_REPOSITORY}/releases/assets/$asset_id" > packages-output/maven/sonatype-deployment.json
+          node .github/scripts/release-assets.mjs fetch --repository "${GITHUB_REPOSITORY}" --asset-id "$asset_id" > packages-output/maven/sonatype-deployment.json
           [[ "$(jq -er .deploymentName packages-output/maven/sonatype-deployment.json)" == "mentra-$VERSION-android-sdk" ]]
           [[ "$(jq -er .publishingType packages-output/maven/sonatype-deployment.json)" == "USER_MANAGED" ]]
           node .github/scripts/sonatype-central-deployment.mjs inspect \
@@ -411,10 +416,9 @@ jobs:
           set -euo pipefail
           archive_name=$(jq -er .artifactNames.iosSdkArchive release-intent/release-plan.json)
           mkdir -p packages-output/swiftpm
-          assets=$(gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases/$RELEASE_ID/assets?per_page=100" | jq 'add')
+          assets=$(node .github/scripts/release-assets.mjs list --repository "${GITHUB_REPOSITORY}" --release-id "$RELEASE_ID")
           asset_id=$(jq -er --arg name "$archive_name" '[.[] | select(.name == $name)] | if length == 1 then .[0].id else error("SwiftPM archive must be unique; run the publish phase first") end' <<< "$assets")
-          gh api -H "Accept: application/octet-stream" \
-            "repos/${GITHUB_REPOSITORY}/releases/assets/$asset_id" > "packages-output/swiftpm/$archive_name"
+          node .github/scripts/release-assets.mjs fetch --repository "${GITHUB_REPOSITORY}" --asset-id "$asset_id" > "packages-output/swiftpm/$archive_name"
           cd mentra-bluetooth-sdk-ios
           git fetch --tags origin
           if git rev-parse -q --verify "refs/tags/$VERSION^{commit}" >/dev/null; then

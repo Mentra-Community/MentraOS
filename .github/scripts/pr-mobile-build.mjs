@@ -3,6 +3,7 @@ import {execFileSync} from "node:child_process"
 import {appendFileSync, writeFileSync} from "node:fs"
 import path from "node:path"
 import {fileURLToPath} from "node:url"
+import {downloadAsset, mergeAssets, readPublicIndex} from "./release-artifact-storage.mjs"
 
 // Include shared Metro sources and native inputs, not just mobile/. Firmware
 // selection and per-run packaging metadata do not change the compiled app.
@@ -41,28 +42,38 @@ export function candidateAssets(assets, fingerprint) {
         /^mobile-pr-\d+-[a-f0-9]{7}\.apk$/.test(asset.name) &&
         new RegExp(`^mobile-v1:${fingerprint}:[a-f0-9]{64}$`).test(asset.label ?? ""),
     )
-    .sort((a, b) => b.id - a.id)
+    .sort(
+      (a, b) =>
+        Date.parse(b.updated_at || b.created_at || 0) - Date.parse(a.updated_at || a.created_at || 0) ||
+        Number(b.id) - Number(a.id),
+    )
 }
 
 export async function selectMobile({github, context, core}) {
   const fingerprint = process.env.MENTRA_PR_APK_FINGERPRINT
   const repo = context.repo
   const {data: release} = await github.rest.repos.getReleaseByTag({...repo, tag: "pr-builds"})
-  const assets = await github.paginate(github.rest.repos.listReleaseAssets, {
+  const legacy = await github.paginate(github.rest.repos.listReleaseAssets, {
     ...repo,
     release_id: release.id,
     per_page: 100,
   })
+  const repository = `${repo.owner}/${repo.repo}`
+  const assets = mergeAssets(legacy, (await readPublicIndex(repository, "pr-builds")).assets)
   for (const asset of candidateAssets(assets, fingerprint)) {
     try {
-      const response = await github.rest.repos.getReleaseAsset({
-        ...repo,
-        asset_id: asset.id,
-        headers: {accept: "application/octet-stream"},
-      })
-      const bytes = Buffer.from(response.data)
-      if (hash(bytes) !== asset.label.split(":")[2]) throw new Error("APK checksum mismatch")
-      writeFileSync("pr-mobile-candidate.apk", bytes)
+      if (String(asset.id).startsWith("r2:")) {
+        await downloadAsset(repository, asset, "pr-mobile-candidate.apk")
+      } else {
+        const response = await github.rest.repos.getReleaseAsset({
+          ...repo,
+          asset_id: asset.id,
+          headers: {accept: "application/octet-stream"},
+        })
+        const bytes = Buffer.from(response.data)
+        if (hash(bytes) !== asset.label.split(":")[2]) throw new Error("APK checksum mismatch")
+        writeFileSync("pr-mobile-candidate.apk", bytes)
+      }
       // Also checks the embedded fingerprint and current upload certificate.
       execFileSync(
         "python3",

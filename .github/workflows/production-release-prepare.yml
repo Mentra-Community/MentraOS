@@ -26,6 +26,12 @@ concurrency:
   group: production-release-prepare
   cancel-in-progress: false
 
+env:
+  ARTIFACTS_R2_ACCOUNT_ID: ${{ vars.ARTIFACTS_R2_ACCOUNT_ID }}
+  ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+  ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
+  ARTIFACTS_R2_BUCKET: artifactscdn
+
 jobs:
   prepare:
     name: Select and freeze production inputs
@@ -72,7 +78,7 @@ jobs:
           mkdir -p promotion-input/beta
           state=$(gh release view "$BETA_TAG" --json isDraft,isPrerelease --jq '[.isDraft,.isPrerelease] | @tsv')
           [[ "$state" == $'false\ttrue' ]]
-          gh release download "$BETA_TAG" \
+          node .github/scripts/release-assets.mjs download --tag "$BETA_TAG" \
             --pattern "mentra-release-plan-$BETA_IDENTITY.json" \
             --pattern "mentra-release-$BETA_IDENTITY.json" \
             --dir promotion-input/beta
@@ -110,11 +116,11 @@ jobs:
           name="mentra-release-$identity.json"
           plan_name="mentra-release-plan-$identity.json"
           mkdir -p promotion-input/current
-          gh release download "$tag" --pattern "$name" --pattern "$plan_name" --dir promotion-input/current
+          node .github/scripts/release-assets.mjs download --tag "$tag" --pattern "$name" --pattern "$plan_name" --dir promotion-input/current
           mv "promotion-input/current/$name" promotion-input/current/release-manifest.json
           mv "promotion-input/current/$plan_name" promotion-input/current/release-plan.json
           [[ "$(node --input-type=module -e 'import {readFileSync} from "node:fs"; import {releaseRecordSha256} from "./.github/scripts/release-family.mjs"; process.stdout.write(releaseRecordSha256(JSON.parse(readFileSync("promotion-input/current/release-plan.json", "utf8"))))')" == "$(jq -er .releasePlanSha256 promotion-input/current/release-manifest.json)" ]]
-          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/$tag/$name"
+          url="$(node .github/scripts/release-assets.mjs url --tag "$tag" --name "$name" --existing true)"
           node .github/scripts/verify-public-release-asset.mjs \
             --file promotion-input/current/release-manifest.json \
             --url "$url"
@@ -195,7 +201,7 @@ jobs:
           node .github/scripts/production-promotion-assets.mjs selection-digest \
             --beta-plan promotion-input/beta/release-plan.json \
             --beta-manifest promotion-input/beta/release-manifest.json \
-            --beta-manifest-url "https://github.com/${GITHUB_REPOSITORY}/releases/download/$BETA_TAG/mentra-release-$BETA_IDENTITY.json" \
+            --beta-manifest-url "$(node .github/scripts/release-assets.mjs url --tag "$BETA_TAG" --name "mentra-release-$BETA_IDENTITY.json" --existing true)" \
             "${previous[@]}" \
             --mentra-inventory promotion-input/stores/mentra-inventory.json \
             --github-output "$GITHUB_OUTPUT"
@@ -219,7 +225,7 @@ jobs:
             mkdir -p "$directory"
             while IFS=$'\t' read -r asset_id name; do
               [[ -z "$asset_id" ]] && continue
-              gh api -H "Accept: application/octet-stream" "repos/${GITHUB_REPOSITORY}/releases/assets/$asset_id" \
+              node .github/scripts/release-assets.mjs fetch --repository "${GITHUB_REPOSITORY}" --asset-id "$asset_id" \
                 > "$directory/$name"
             done < <(jq -r --argjson floor "$floor" \
               '.[] | select(.name | test("^mentra-build-number-[0-9]+\\.json$")) | select((.name | capture("mentra-build-number-(?<code>[0-9]+)") | .code | tonumber) > $floor) | [.id, .name] | @tsv' \
@@ -229,12 +235,11 @@ jobs:
           # release; their numbers are taken too, in every family.
           asg_assets='[]'
           if asg_release_id=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/mentra-coordinated-asg" --jq .id 2>/dev/null); then
-            asg_assets=$(gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases/$asg_release_id/assets?per_page=100" | jq 'add // []')
+            asg_assets=$(node .github/scripts/release-assets.mjs list --repository "${GITHUB_REPOSITORY}" --release-id "$asg_release_id")
           fi
           printf '%s\n' "$asg_assets" > promotion-input/family/asg-assets.json
           release_id=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/$BETA_TAG" --jq .id)
-          gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases/$release_id/assets?per_page=100" \
-            | jq 'add // []' | jq -s 'add' - promotion-input/family/asg-assets.json > promotion-input/family/assets.json
+          node .github/scripts/release-assets.mjs list --repository "${GITHUB_REPOSITORY}" --release-id "$release_id" | jq -s 'add' - promotion-input/family/asg-assets.json > promotion-input/family/assets.json
           download_markers promotion-input/family/assets.json \
             "$(jq -er .native.buildNumber promotion-input/beta/release-plan.json)" promotion-input/family/markers
           echo "release_id=$release_id" >> "$GITHUB_OUTPUT"
@@ -246,8 +251,7 @@ jobs:
             current_tag="mentra-builds-v$current_version"
             mkdir -p promotion-input/family/current-markers
             if current_id=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/$current_tag" --jq .id 2>/dev/null); then
-              gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases/$current_id/assets?per_page=100" \
-                | jq 'add // []' | jq -s 'add' - promotion-input/family/asg-assets.json > promotion-input/family/current-assets.json
+              node .github/scripts/release-assets.mjs list --repository "${GITHUB_REPOSITORY}" --release-id "$current_id" | jq -s 'add' - promotion-input/family/asg-assets.json > promotion-input/family/current-assets.json
               download_markers promotion-input/family/current-assets.json \
                 "$(jq -er .native.buildNumber promotion-input/current/release-plan.json)" promotion-input/family/current-markers
               echo "current_release_id=$current_id" >> "$GITHUB_OUTPUT"
@@ -281,7 +285,7 @@ jobs:
         run: |
           set -euo pipefail
           beta_manifest_name="mentra-release-$BETA_IDENTITY.json"
-          beta_manifest_url="https://github.com/${GITHUB_REPOSITORY}/releases/download/$BETA_TAG/$beta_manifest_name"
+          beta_manifest_url="$(node .github/scripts/release-assets.mjs url --tag "$BETA_TAG" --name "$beta_manifest_name" --existing true)"
           previous=()
           if [[ "$PREVIOUS_FOUND" == "true" ]]; then
             previous=(

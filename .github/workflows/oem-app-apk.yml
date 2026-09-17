@@ -41,6 +41,12 @@ permissions:
   # Upload/replace assets on the rolling `oem-app-builds` release.
   contents: write
 
+env:
+  ARTIFACTS_R2_ACCOUNT_ID: ${{ vars.ARTIFACTS_R2_ACCOUNT_ID }}
+  ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+  ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
+  ARTIFACTS_R2_BUCKET: artifactscdn
+
 jobs:
   build:
     # Same runner class as the MentraOS Android build: an ubuntu compile job
@@ -185,6 +191,8 @@ jobs:
         # MentraOS Android build maintains for PR APKs):
         # https://github.com/Mentra-Community/MentraOS/releases/tag/oem-app-builds
         if: github.event_name != 'pull_request'
+        env:
+          GITHUB_TOKEN: ${{ github.token }}
         uses: actions/github-script@v7
         with:
           script: |
@@ -205,34 +213,15 @@ jobs:
               })).data;
             }
 
-            for (const asset of release.assets) {
-              if (asset.name === apkName) {
-                await github.rest.repos.deleteReleaseAsset({owner, repo, asset_id: asset.id});
-              }
-            }
-
-            const data = fs.readFileSync(apkName);
-            console.log(`Uploading ${apkName} (${data.length} bytes)...`);
-            await github.rest.repos.uploadReleaseAsset({
-              owner, repo, release_id: release.id, name: apkName, data,
-            });
+            require('child_process').execFileSync('node', [
+              '.github/scripts/publish-immutable-release-asset.mjs',
+              '--file', apkName, '--name', apkName, '--release-id', String(release.id),
+              '--repository', `${owner}/${repo}`, '--replace', 'true',
+            ], {stdio: 'inherit', env: {...process.env, GH_TOKEN: process.env.GITHUB_TOKEN}});
 
       - name: Sweep old release assets
         if: github.event_name != 'pull_request'
         continue-on-error: true
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const {owner, repo} = context.repo;
-            const cutoff = new Date(Date.now() - 14 * 24 * 60 * 60 * 1000);
-            try {
-              const release = (await github.rest.repos.getReleaseByTag({owner, repo, tag: 'oem-app-builds'})).data;
-              for (const asset of release.assets) {
-                if (new Date(asset.created_at) < cutoff) {
-                  console.log(`Deleting expired asset: ${asset.name} (created ${asset.created_at})`);
-                  await github.rest.repos.deleteReleaseAsset({owner, repo, asset_id: asset.id});
-                }
-              }
-            } catch (e) {
-              console.log('Sweep skipped:', e.message);
-            }
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: node .github/scripts/release-assets.mjs sweep --tag oem-app-builds --days 14

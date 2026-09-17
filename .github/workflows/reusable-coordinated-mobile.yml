@@ -55,6 +55,10 @@ on:
         default: false
         type: boolean
     secrets:
+      ARTIFACTS_R2_ACCESS_KEY_ID:
+        required: false
+      ARTIFACTS_R2_SECRET_ACCESS_KEY:
+        required: false
       UPLOAD_KEYSTORE_B64:
         required: false
       MENTRAOS_UPLOAD_STORE_PASSWORD:
@@ -121,6 +125,12 @@ concurrency:
   cancel-in-progress: false
   queue: max
 
+env:
+  ARTIFACTS_R2_ACCOUNT_ID: ${{ vars.ARTIFACTS_R2_ACCOUNT_ID }}
+  ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+  ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
+  ARTIFACTS_R2_BUCKET: artifactscdn
+
 jobs:
   prepare:
     name: Prepare immutable mobile release
@@ -146,6 +156,16 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.source_commit }}
+
+      - name: Checkout artifact tooling from the workflow revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: release-tooling
+          persist-credentials: false
+          sparse-checkout: |
+            .github/scripts
+            .github/artifact-storage
 
       - uses: actions/download-artifact@v4
         with:
@@ -186,7 +206,7 @@ jobs:
             echo "apk_name=$(jq -er .artifactNames.androidApp release-intent/release-plan.json)"
             echo "aab_name=$(jq -er .artifactNames.androidStoreApp release-intent/release-plan.json)"
             echo "ipa_name=$(jq -er .artifactNames.iosApp release-intent/release-plan.json)"
-            echo "asset_base_url=https://github.com/${GITHUB_REPOSITORY}/releases/download/$tag"
+            echo "asset_base_url=https://artifactscdn.mentraglass.com/${GITHUB_REPOSITORY}/releases/$tag"
           } >> "$GITHUB_OUTPUT"
 
       - name: Verify the selected OTA manifest is live and exact
@@ -234,7 +254,7 @@ jobs:
           fi
 
           release_id="$RELEASE_ID"
-          assets=$(gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases/$release_id/assets?per_page=100" | jq 'add')
+          assets=$(node "$GITHUB_WORKSPACE/release-tooling/.github/scripts/release-assets.mjs" list --repository "${GITHUB_REPOSITORY}" --release-id "$release_id")
           asset_id() {
             local name="$1"
             local matches
@@ -253,8 +273,8 @@ jobs:
             android_assets_exist=true
           elif [[ -n "$apk_id" || -n "$aab_id" ]]; then
             echo "Removing an interrupted Android asset pair before rebuilding it."
-            [[ -z "$apk_id" ]] || gh api --method DELETE "repos/${GITHUB_REPOSITORY}/releases/assets/$apk_id"
-            [[ -z "$aab_id" ]] || gh api --method DELETE "repos/${GITHUB_REPOSITORY}/releases/assets/$aab_id"
+            [[ -z "$apk_id" ]] || node "$GITHUB_WORKSPACE/release-tooling/.github/scripts/release-assets.mjs" remove --repository "${GITHUB_REPOSITORY}" --asset-id "$apk_id"
+            [[ -z "$aab_id" ]] || node "$GITHUB_WORKSPACE/release-tooling/.github/scripts/release-assets.mjs" remove --repository "${GITHUB_REPOSITORY}" --asset-id "$aab_id"
             apk_id=""
             aab_id=""
           fi
@@ -281,6 +301,16 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.source_commit }}
+
+      - name: Checkout artifact tooling from the workflow revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: release-tooling
+          persist-credentials: false
+          sparse-checkout: |
+            .github/scripts
+            .github/artifact-storage
 
       - uses: actions/download-artifact@v4
         with:
@@ -401,11 +431,9 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p mobile-release/android
-          gh api -H "Accept: application/octet-stream" \
-            "repos/${GITHUB_REPOSITORY}/releases/assets/${{ needs.prepare.outputs.apk_asset_id }}" \
+          node "$GITHUB_WORKSPACE/release-tooling/.github/scripts/release-assets.mjs" fetch --repository "${GITHUB_REPOSITORY}" --asset-id "${{ needs.prepare.outputs.apk_asset_id }}" \
             > "mobile-release/android/${{ needs.prepare.outputs.apk_name }}"
-          gh api -H "Accept: application/octet-stream" \
-            "repos/${GITHUB_REPOSITORY}/releases/assets/${{ needs.prepare.outputs.aab_asset_id }}" \
+          node "$GITHUB_WORKSPACE/release-tooling/.github/scripts/release-assets.mjs" fetch --repository "${GITHUB_REPOSITORY}" --asset-id "${{ needs.prepare.outputs.aab_asset_id }}" \
             > "mobile-release/android/${{ needs.prepare.outputs.aab_name }}"
 
       - name: Verify Android native version and production signature
@@ -470,12 +498,12 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: |
-          node .github/scripts/publish-immutable-release-asset.mjs \
+          node "$GITHUB_WORKSPACE/release-tooling/.github/scripts/publish-immutable-release-asset.mjs" \
             --release-id "${{ needs.prepare.outputs.release_id }}" \
             --repository "${{ github.repository }}" \
             --file "mobile-release/android/${{ needs.prepare.outputs.apk_name }}" \
             --name "${{ needs.prepare.outputs.apk_name }}"
-          node .github/scripts/publish-immutable-release-asset.mjs \
+          node "$GITHUB_WORKSPACE/release-tooling/.github/scripts/publish-immutable-release-asset.mjs" \
             --release-id "${{ needs.prepare.outputs.release_id }}" \
             --repository "${{ github.repository }}" \
             --file "mobile-release/android/${{ needs.prepare.outputs.aab_name }}" \
@@ -589,6 +617,16 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.source_commit }}
+
+      - name: Checkout artifact tooling from the workflow revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: release-tooling
+          persist-credentials: false
+          sparse-checkout: |
+            .github/scripts
+            .github/artifact-storage
 
       - uses: actions/download-artifact@v4
         with:
@@ -766,8 +804,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p mobile-release/ios
-          gh api -H "Accept: application/octet-stream" \
-            "repos/${GITHUB_REPOSITORY}/releases/assets/${{ needs.prepare.outputs.ipa_asset_id }}" \
+          node "$GITHUB_WORKSPACE/release-tooling/.github/scripts/release-assets.mjs" fetch --repository "${GITHUB_REPOSITORY}" --asset-id "${{ needs.prepare.outputs.ipa_asset_id }}" \
             > "mobile-release/ios/${{ needs.prepare.outputs.ipa_name }}"
 
       - name: Verify iOS native version and build number
@@ -858,6 +895,16 @@ jobs:
         with:
           ref: ${{ inputs.source_commit }}
 
+      - name: Checkout artifact tooling from the workflow revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: release-tooling
+          persist-credentials: false
+          sparse-checkout: |
+            .github/scripts
+            .github/artifact-storage
+
       - uses: actions/download-artifact@v4
         with:
           name: ${{ needs.ios.outputs.upload_artifact }}
@@ -873,7 +920,7 @@ jobs:
         env:
           GH_TOKEN: ${{ github.token }}
         run: >-
-          node .github/scripts/publish-immutable-release-asset.mjs
+          node "$GITHUB_WORKSPACE/release-tooling/.github/scripts/publish-immutable-release-asset.mjs"
           --release-id "${{ needs.prepare.outputs.release_id }}"
           --repository "${{ github.repository }}"
           --file "mobile-release/ios/${{ needs.prepare.outputs.ipa_name }}"

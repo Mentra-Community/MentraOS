@@ -21,6 +21,12 @@ concurrency:
   group: production-release-${{ inputs.release_identity }}-attempt-${{ inputs.attempt }}
   cancel-in-progress: false
 
+env:
+  ARTIFACTS_R2_ACCOUNT_ID: ${{ vars.ARTIFACTS_R2_ACCOUNT_ID }}
+  ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+  ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
+  ARTIFACTS_R2_BUCKET: artifactscdn
+
 jobs:
   submit:
     name: Submit exact accepted candidates without public release
@@ -54,11 +60,11 @@ jobs:
             --output promotion-input/current.json \
             --github-output "$GITHUB_OUTPUT"
           [[ "$(jq -er .state promotion-input/current.json)" == "mobile-candidates-accepted" ]]
-          assets=$(gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases/$(sed -n 's/^release_id=//p' "$GITHUB_OUTPUT")/assets?per_page=100" | jq 'add')
+          assets=$(node .github/scripts/release-assets.mjs list --repository "$GITHUB_REPOSITORY" --release-id "$(sed -n 's/^release_id=//p' "$GITHUB_OUTPUT")")
           candidate_name=$(jq -er '[.evidence[] | select(.kind == "production-mobile-candidates")] | if length == 1 then .[0].assetName else error("candidate evidence reference must be unique") end' promotion-input/current.json)
           candidate_sha=$(jq -er '[.evidence[] | select(.kind == "production-mobile-candidates")][0].sha256' promotion-input/current.json)
           asset_id=$(jq -er --arg name "$candidate_name" '[.[] | select(.name == $name)] | if length == 1 then .[0].id else error("candidate evidence asset must be unique") end' <<< "$assets")
-          gh api -H "Accept: application/octet-stream" "repos/${GITHUB_REPOSITORY}/releases/assets/$asset_id" > promotion-input/candidates.json
+          node .github/scripts/release-assets.mjs fetch --repository "${GITHUB_REPOSITORY}" --asset-id "$asset_id" > promotion-input/candidates.json
           [[ "$(sha256sum promotion-input/candidates.json | cut -d' ' -f1)" == "$candidate_sha" ]]
 
       - name: Inject store credentials
