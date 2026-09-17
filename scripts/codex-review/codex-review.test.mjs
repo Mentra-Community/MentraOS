@@ -343,6 +343,67 @@ describe("codex-pr-review.sh lifecycle", () => {
   }, 90_000)
 })
 
+async function until(check, ms = 30_000) {
+  const deadline = Date.now() + ms
+  while (Date.now() < deadline) {
+    if (check()) return
+    await new Promise((r) => setTimeout(r, 100))
+  }
+  throw new Error("condition not met in time")
+}
+
+function isAlive(pid) {
+  try {
+    process.kill(pid, 0)
+    return true
+  } catch {
+    return false
+  }
+}
+
+function startHung(f) {
+  const child = spawn("bash", [wrapper, f.repo, "1"], {
+    env: env(f, {FAKE_CODEX_MODE: "hang", ATTEMPTS: "1", STALL_SECONDS: "60"}),
+  })
+  let out = ""
+  child.stdout.on("data", (d) => (out += d))
+  child.stderr.on("data", (d) => (out += d))
+  const closed = new Promise((resolve) => child.on("close", (code) => resolve(code)))
+  return {child, closed, out: () => out}
+}
+
+describe("cancellation", () => {
+  test("cancelling the wrapper stops the runner and its processes before the lock is released", async () => {
+    const f = makeFixture()
+    const h = startHung(f)
+    await until(() => existsSync(`${f.worktree}.lock/runner-pid`) && existsSync(join(f.state, "grandchildren")))
+    const runnerPid = Number(readFileSync(`${f.worktree}.lock/runner-pid`, "utf8").trim())
+    const kids = readFileSync(join(f.state, "grandchildren"), "utf8").trim().split("\n").map(Number)
+    h.child.kill("SIGTERM")
+    await h.closed
+    expect(h.out()).toContain("cancelled")
+    expect(h.out()).toContain("codex-pr-review: FAILED")
+    expect(existsSync(`${f.worktree}.lock`)).toBe(false)
+    await until(() => !isAlive(runnerPid) && kids.every((k) => !isAlive(k)), 10_000)
+  }, 90_000)
+
+  test("a runner that outlives a hard-killed wrapper keeps the lock live", async () => {
+    const f = makeFixture()
+    const h = startHung(f)
+    await until(() => existsSync(`${f.worktree}.lock/runner-pid`) && existsSync(join(f.state, "grandchildren")))
+    const runnerPid = Number(readFileSync(`${f.worktree}.lock/runner-pid`, "utf8").trim())
+    h.child.kill("SIGKILL") // no trap can run: lock stays, runner keeps going
+    await h.closed
+    expect(existsSync(`${f.worktree}.lock`)).toBe(true)
+    expect(isAlive(runnerPid)).toBe(true)
+    const r = run(f, [f.repo, "1"])
+    expect(r.out).toContain(`is running (runner pid ${runnerPid}`)
+    expect(codexCalls(f)).toBe(1)
+    process.kill(runnerPid, "SIGTERM")
+    await until(() => !isAlive(runnerPid), 10_000)
+  }, 90_000)
+})
+
 describe("receipt lookup failures", () => {
   test("a failed lookup after a clean Codex exit is FAILED, never done", () => {
     const f = makeFixture()

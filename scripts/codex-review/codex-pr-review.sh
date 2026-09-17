@@ -31,6 +31,22 @@ on_exit() {
   fi
 }
 trap on_exit EXIT
+# Cancellation (Ctrl-C, SIGTERM, lost terminal) is forwarded to the runner, which
+# terminates its Codex attempt and every process it spawned; the lock is released only
+# after the runner has exited, so a second invocation can never reset a worktree that
+# is still being reviewed.
+runner_pid=""
+on_signal() {
+  reported=1
+  echo "codex-pr-review: cancelled; stopping the review runner" >&2
+  if [[ -n "$runner_pid" ]] && kill -0 "$runner_pid" 2>/dev/null; then
+    kill -TERM "$runner_pid" 2>/dev/null || true
+    wait "$runner_pid" 2>/dev/null || true
+  fi
+  echo "codex-pr-review: FAILED: cancelled" >&2
+  exit 130
+}
+trap on_signal INT TERM HUP
 repo_dir="${1:-}"; pr="${2:-}"; extra_prompt="${3:-}"
 [[ -n "$repo_dir" && -n "$pr" ]] || fail "usage: codex-pr-review.sh <repo-dir> <pr-number> [extra-prompt-file]"
 [[ "$pr" =~ ^[0-9]+$ ]] || fail "pr-number must be numeric, got '$pr'"
@@ -86,14 +102,20 @@ release_reclaim() { [[ -n "$reclaim_held" ]] && rmdir "$reclaim_path" 2>/dev/nul
 # Sets lock_verdict to "stale <why>" when the lock may be reclaimed, otherwise to the
 # reason it must not be.
 inspect_lock() {
-  local other age
+  local other runner age
   if [[ ! -d "$lock_path" ]]; then
     # Another caller moved it away between our failed mkdir and this look.
     lock_verdict="lock ${lock_path} vanished while another caller was reclaiming it; retry shortly"
     return 0
   fi
   other=$(cat "$lock_path/pid" 2>/dev/null || true)
-  if [[ -n "$other" ]]; then
+  runner=$(cat "$lock_path/runner-pid" 2>/dev/null || true)
+  # A wrapper killed with SIGKILL cannot forward cancellation, so its runner may still
+  # be reviewing in this worktree. The runner pid is recorded in the lock for exactly
+  # that case: the lock stays live while either process is alive.
+  if [[ -n "$runner" ]] && kill -0 "$runner" 2>/dev/null; then
+    lock_verdict="another review of ${slug}#${pr} is running (runner pid ${runner}, wrapper pid ${other:-unknown}); wait for it or stop that runner"
+  elif [[ -n "$other" ]]; then
     if kill -0 "$other" 2>/dev/null; then
       lock_verdict="another review of ${slug}#${pr} is running (pid ${other}); wait for it or remove ${lock_path}"
     else
@@ -208,9 +230,20 @@ fi
 
 echo "codex-pr-review: ${slug}#${pr} by ${author} (gh user ${me}) -> GH_ACCOUNT=${GH_ACCOUNT}; worktree ${wt}; output ${out_dir}"
 started_at=$(date -u +%Y-%m-%dT%H:%M:%SZ)
+# The runner runs in the background so cancellation signals reach this script while
+# it waits; its pid goes into the lock (see inspect_lock).
 REVIEW_SLUG="$slug" REVIEW_PR="$pr" REVIEW_HEAD="$head_sha" REVIEW_STARTED_AT="$started_at" \
   "$script_dir/codex-review.sh" "$wt" "$repo_name" "$out_dir/last-message.txt" "$prompt" \
-  > "$out_dir/runner.log" 2>&1 || { tail -5 "$out_dir/runner.log" >&2; fail "runner did not finish (see $out_dir/runner.log)"; }
+  > "$out_dir/runner.log" 2>&1 &
+runner_pid=$!
+echo "$runner_pid" > "$lock/runner-pid"
+runner_status=0
+wait "$runner_pid" || runner_status=$?
+runner_pid=""
+if (( runner_status != 0 )); then
+  tail -5 "$out_dir/runner.log" >&2
+  fail "runner did not finish (see $out_dir/runner.log)"
+fi
 # Codex exiting cleanly is not the deliverable; a review from this run on this head is.
 # An unknown answer (API failure) is not zero: it fails the run, never passes it.
 posted=$("$script_dir/review-receipt.sh" "$slug" "$pr" "$head_sha" "$started_at") \

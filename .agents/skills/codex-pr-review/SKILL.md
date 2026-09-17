@@ -32,6 +32,9 @@ total, and retries once unless the verdict was already posted. Never launch a ba
   are kept) and refuses a path at that location it did not create. A per-PR lock refuses a
   second concurrent run; a lock whose owner is dead is reclaimed through a short-lived
   `<lock>.reclaim` mutex, so two reclaimers cannot clobber each other.
+  Cancelling the script (Ctrl-C, SIGTERM) stops the runner and every process of the
+  attempt before the lock is released; the runner pid is kept in the lock so a runner that
+  outlives a hard-killed wrapper still counts as live.
   A worktree created by an earlier version of the script has no sentinel: add the file by
   hand (any content) or remove the worktree with `git worktree remove`.
 - Chooses the posting account. GitHub refuses a formal review from the PR author, so a PR
