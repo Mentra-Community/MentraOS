@@ -14,6 +14,7 @@ import {recoverUnpaired} from "./runner/recovery"
 import {failureProof} from "./flows/failure-proof"
 import {mentraCallAvailability} from "./flows/mentra-call-availability"
 import {mentraCallUi} from "./flows/mentra-call-ui"
+import {iosCallBuildOverride, iosCallVisibility} from "./flows/ios-call-visibility"
 
 const {positionals, values} = parseArgs({
   args: process.argv.slice(2),
@@ -28,6 +29,18 @@ const operation = positionals[0] ?? "doctor"
 try {
   if (operation !== "describe") await buildDriver()
   if (operation === "describe") {
+    if (values.suite === "ios-call-visibility" || values.suite === "ios-call-build-override") {
+      const steps = values.suite === "ios-call-visibility" ? iosCallVisibility : iosCallBuildOverride
+      console.log(
+        "# iOS Call visibility routine\n\nStart on English paired home with Debug Mode unlocked and the saved Call switch off. Use the matching default or environment-enabled build. No meeting or stream is created.\n",
+      )
+      console.log(
+        steps
+          .map((step, index) => `${index + 1}. **${step.id}** ${step.instruction} Expected: ${step.expected}`)
+          .join("\n"),
+      )
+      process.exit(0)
+    }
     const callAvailability = values.suite === "mentra-call-availability"
     const callUi = values.suite === "mentra-call-ui"
     console.log(
@@ -67,6 +80,8 @@ try {
       "failure-proof": failureProof,
       "mentra-call-availability": mentraCallAvailability,
       "mentra-call-ui": mentraCallUi,
+      "ios-call-visibility": iosCallVisibility,
+      "ios-call-build-override": iosCallBuildOverride,
       "restore-unpaired": [],
     }
     const steps = suites[values.suite as keyof typeof suites]
@@ -118,17 +133,21 @@ try {
           await report.record({...excluded, expected: excluded.reason, status: "not-applicable", durationMs: 0})
       }
       const restored =
-        values.suite === "mentra-call-ui"
-          ? "Call settings, forms and minimize/reopen verified; preferences preserved and miniapp closed. No meeting created; text editing and media remain unqualified."
-          : values.suite === "mentra-call-availability"
-            ? "Call launcher and search result verified; search cleared and home restored. Call UI and real calling were not exercised."
-            : values.suite === "driver-proof"
-              ? "Authentication start restored"
-              : values.suite === "accessibility-preflight"
-                ? "No UI changes; inspected the current miniapp"
-                : values.suite === "no-glasses"
-                  ? "Signed-in unpaired home verified; test overlays closed; no preference changes made"
-                  : "Authenticated app reached"
+        values.suite === "ios-call-visibility"
+          ? "Default hiding, debug opt-in, restart persistence and All Apps exclusion verified. Call switch off; home restored; no meeting or stream created."
+          : values.suite === "ios-call-build-override"
+            ? "Build override and disabled debug switch verified; saved preference unchanged and home restored. No meeting or stream created."
+            : values.suite === "mentra-call-ui"
+              ? "Call settings, forms and minimize/reopen verified; preferences preserved and miniapp closed. No meeting created; text editing and media remain unqualified."
+              : values.suite === "mentra-call-availability"
+                ? "Call launcher and search result verified; search cleared and home restored. Call UI and real calling were not exercised."
+                : values.suite === "driver-proof"
+                  ? "Authentication start restored"
+                  : values.suite === "accessibility-preflight"
+                    ? "No UI changes; inspected the current miniapp"
+                    : values.suite === "no-glasses"
+                      ? "Signed-in unpaired home verified; test overlays closed; no preference changes made"
+                      : "Authenticated app reached"
       await report.finish(
         passed ? "passed" : "failed",
         passed

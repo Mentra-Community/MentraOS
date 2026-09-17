@@ -1,5 +1,9 @@
 # Mentra Call routine
 
+On iOS (including Mac), Call is hidden by default. Opt in through Debug Settings
+or build with `EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS=true` in `mobile/.env`. See the
+[visibility routine](IOS-CALL-VISIBILITY-ROUTINE.md) for setup, precedence and replay.
+
 Status: Call UI and real-meeting coverage are in development. The user requested a separate iOS enablement branch, supplied Mentra Live glasses, and authorized opening the generated Teams link in a browser to verify the remote experience. See [the iOS enablement PR](https://github.com/Mentra-Community/MentraOS/pull/4078). A host-policy or source-level test pass does not qualify the Call UI routine.
 
 ## Target and source
