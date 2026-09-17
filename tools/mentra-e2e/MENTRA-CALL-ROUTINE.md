@@ -6,8 +6,8 @@ Status: Call UI and real-meeting coverage are in development. The user requested
 
 - Host: harness branch merged with `dev` at `e8e1ced74c05705b313769d49dfbf98f8bf5b1d2` on September 16, 2026.
 - Call source: [Mentra-Community/Mentra-Call](https://github.com/Mentra-Community/Mentra-Call), `main` at `6ab859d499321e7bc394f3113db8e024649e7faa`.
-- Local source adds commit `92149df` (calendar optional), version 2.1.14. Publishing it to external `main` still requires repository write access.
-- Bundled miniapp: `mobile/assets/miniapps/com.mentra.call-2.1.14.zip`, SHA-256 `c1c3bf69bcdede1acbffe4c9238a4e463a310c484cbe65c317954cbd7b591c35`.
+- Local source adds calendar and participant-state corrections; version 2.1.15 is prepared and the capability-gated admission extension is under native build validation. Publishing it to external `main` still requires repository write access.
+- Bundled miniapp: `mobile/assets/miniapps/com.mentra.call-2.1.15.zip`, SHA-256 `2c5d3425d66373f48de7c508533308c908e05ed5a38964be57dc6a2d937c72e5` (product PR; the integration build may advance during qualification).
 
 Latest `dev` explicitly hides Call on iOS in `mobile/src/constants/miniapps.ts`. The host also requires the miniapp's declared camera and speaker capabilities before launch. An unpaired host uses the simulated-glasses profile, which has no camera. Inside Call, Join via Link and New Call are disabled while the Bluetooth link is unknown, disconnected, or reconnecting. Calendar is currently hidden (`SHOW_CALENDAR = false`).
 
@@ -126,3 +126,50 @@ A 13.475-second browser-output WAV was non-silent, and the user subsequently con
 The iOS participant sheet displayed zero after the browser joined. Source inspection confirmed the iOS native module omitted remote-roster reporting that Android already implements. This remains a failed check until a rebuilt app reports the actual participant and subsequent removal. The current miniapp preview is disabled deliberately; it is not a renderer for the remote laptop participant. The run involved user actions and a paused controller deadline to allow live testing, so it cannot qualify as zero-model replay. Keep the original failed participant assertion, user actions, setup changes and cleanup status in the evidence.
 
 Successful browser controls observed during this run: role `button` named `Open audio options`; role `listbox` named `Microphone` with option `MacBook Pro Microphone (Built-in)`; listbox `Speaker` with option `MacBook Pro Speakers (Built-in)`; buttons `Mute mic`, `Turn camera off` and `Leave`. Scope options to their listbox, wait for the selected state after changing a device, and inspect fresh DOM state after every action. These are discovery selectors, not a qualified standalone browser runner.
+
+
+## Browser session and admission setup
+
+A repeatable browser routine should reuse a dedicated test profile, separate
+from the user's personal browser. Sign in once through Microsoft's normal UI.
+Keep that profile local with user-only filesystem permissions; never put its
+cookies, tokens, OTPs or profile in Git or the evidence bundle. Reuse normally
+avoids email verification on every run, but Microsoft can expire or challenge
+the session. Stop with an explicit sign-in-required checkpoint when that
+happens; do not repeatedly request codes or report the run as passed.
+
+On September 17 a stale guest session repeatedly stalled at “Just a moment.”
+A normal Teams sign-out followed by sign-in reached email verification, which
+the user completed. This is a documented recovery procedure, not an automatic
+step for every run. The full Teams web loader also stalled separately.
+
+After Join now, classify the actual browser state. “Someone will let you in
+shortly” is a lobby, even if Mentra lists the guest. A permitted host must admit
+the guest before media checks. The new iOS admission control targets one named
+guest and appears only when Teams reports lobby-management permission. Do not
+modify meeting/tenant policy to make a test pass. Only a connected browser
+state, incoming media and a connected native participant qualify admission.
+
+The proposed standalone browser adapter uses Playwright Core with installed
+Google Chrome and a dedicated persistent profile. Playwright supplies semantic
+locators, bounded waits, screenshots and recording; Chrome is a supported
+Teams browser already installed here. This avoids maintaining a handwritten
+CDP client for a changing third-party UI. It is still a proposal until the
+standalone adapter completes a real run. The current IAB discovery and cached
+Mentra AX steps remain separate; do not label them a zero-model full-call replay.
+
+## Rebuilt roster result
+
+`2026-09-17T03-33-41-155Z-mentra-call-ui-7950c6` passed all 13 UI steps in
+11.873333 seconds on the rebuilt roster binary, with zero model calls and
+verified artifacts. Diagnostic `2026-09-17T03-34-34-888Z-call-roster-check-5bc264`
+recorded 27 passing scoped steps in 1548.888333 seconds. Anonymous and verified
+email guests changed the iOS roster 0 → 1 on lobby arrival and 1 → 0 on departure.
+Neither was admitted during this run. Its passing checks prove roster updates
+and cleanup, not a successful media call. The source correction in Call 2.1.15
+retains admission state and labels lobby guests accurately.
+
+The browser left, Mentra showed “You left the call,” the owned hotspot stopped,
+ADB returned to uid2000, capture copy hashes matched, and the exact meeting was
+retired (DELETE204/GET404). All three user-selected audio device UIDs matched
+before/after and the controller performed zero audio routing mutations.
