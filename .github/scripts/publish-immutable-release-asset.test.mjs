@@ -12,6 +12,7 @@ import test from "node:test"
 
 import {
   findReleaseAsset,
+  githubError,
   matchingAsset,
   publishReleaseAsset,
   releaseAssetUploadUrl,
@@ -210,6 +211,130 @@ test("honors Retry-After from GitHub before retrying a rate-limited upload", asy
   )
   assert.deepEqual(delays, [12000])
   assert.equal(attempts, 2)
+})
+
+test("waits out the upload rate limit before making any reconciliation request", async () => {
+  let blocked = false,
+    uploads = 0
+  const delays = []
+  await publishReleaseAsset(
+    publisher({
+      findAsset: () => {
+        assert.equal(blocked, false, "lookup attempted during cooldown")
+        return null
+      },
+      upload: async () => {
+        if (++uploads === 1) {
+          blocked = true
+          throw failure({status: 429, retryAfterMs: 12000})
+        }
+      },
+      wait: async (ms) => {
+        delays.push(ms)
+        blocked = false
+      },
+    }),
+  )
+  assert.equal(uploads, 2)
+  assert.deepEqual(delays, [12000])
+})
+
+test("recovers transient reconciliation failures without resending a committed upload", async () => {
+  let lookups = 0,
+    uploads = 0,
+    verifications = 0
+  const delays = []
+  await publishReleaseAsset(
+    publisher({
+      findAsset: () => {
+        lookups++
+        if (lookups === 1) return null
+        if (lookups === 2) throw failure({status: 502})
+        return uploaded
+      },
+      upload: async () => {
+        uploads++
+        throw failure({code: "ECONNRESET"})
+      },
+      verify: async () => {
+        verifications++
+      },
+      wait: async (ms) => delays.push(ms),
+    }),
+  )
+  assert.equal(uploads, 1)
+  assert.equal(verifications, 1)
+  assert.deepEqual(delays, [5000])
+})
+
+test("retries a rate-limited lookup after its cooldown before deciding whether to upload", async () => {
+  let lookups = 0,
+    uploads = 0
+  const delays = []
+  await publishReleaseAsset(
+    publisher({
+      findAsset: () => {
+        if (++lookups === 1)
+          throw githubError(
+            new Error("gh failed"),
+            "HTTP/2.0 429 Too Many Requests\nRetry-After: 12\r\n\r\n",
+            "gh: rate limited (HTTP 429)",
+          )
+        assert.deepEqual(delays, [12000])
+        return null
+      },
+      upload: async () => {
+        uploads++
+      },
+      wait: async (ms) => delays.push(ms),
+    }),
+  )
+  assert.equal(uploads, 1)
+})
+
+test("never treats exhausted lookup retries as proof that an asset is absent", async () => {
+  let lookups = 0
+  await assert.rejects(
+    publishReleaseAsset(
+      publisher({
+        findAsset: () => {
+          lookups++
+          throw failure({status: 503})
+        },
+        upload: async () => assert.fail("must not upload after failed lookup"),
+      }),
+    ),
+    /upload failed/,
+  )
+  assert.equal(lookups, 3)
+})
+
+test("recovers transient byte-verification failures without uploading again", async () => {
+  let verifications = 0
+  await publishReleaseAsset(
+    publisher({
+      findAsset: () => uploaded,
+      verify: async () => {
+        if (++verifications === 1) throw githubError(new Error("gh failed"), "", "gh: Bad Gateway (HTTP 502)")
+      },
+      upload: async () => assert.fail("must not overwrite an existing asset"),
+    }),
+  )
+  assert.equal(verifications, 2)
+})
+
+test("preserves GitHub rate-limit metadata and distinguishes CLI exit status from HTTP status", () => {
+  const reset = Math.ceil(Date.now() / 1000) + 90
+  const error = githubError(
+    Object.assign(new Error("gh failed"), {status: 1}),
+    `HTTP/2.0 403 Forbidden\nX-Ratelimit-Remaining: 0\r\nX-Ratelimit-Reset: ${reset}\r\n\r\n`,
+    "gh: API rate limit exceeded (HTTP 403)",
+  )
+  assert.equal(error.status, 403)
+  assert.equal(error.rateLimited, true)
+  assert.ok(error.retryAfterMs >= 89000 && error.retryAfterMs <= 91000)
+  assert.equal(githubError(new Error("gh failed"), "", "gh: Bad credentials (HTTP 401)").status, 401)
+  assert.equal(githubError(new Error("gh failed"), "", "read: connection reset by peer").code, "ECONNRESET")
 })
 
 test("refuses to upload without a token", async () => {

@@ -19,7 +19,61 @@ function parseArgs(args) {
 }
 
 function gh(args, options = {}) {
-  return execFileSync("gh", args, {stdio: ["ignore", "pipe", "inherit"], ...options})
+  // Preserve HTTP status and rate-limit headers on failures, including lookup
+  // failures. A failed lookup must never be interpreted as an absent asset.
+  try {
+    const output = execFileSync("gh", [...args, "--include"], {stdio: ["ignore", "pipe", "pipe"], ...options})
+    const body = output.toString().replace(responseHeadersPattern(), "")
+    return typeof output === "string" ? body : Buffer.from(body)
+  } catch (error) {
+    throw githubError(error, error.stdout?.toString(), error.stderr?.toString())
+  }
+}
+
+function responseHeadersPattern() {
+  return /^HTTP\/\S+ \d{3}[^\r\n]*\r?\n(?:[^\r\n]+\r?\n)*\r?\n/gm
+}
+
+function rateLimitDetails(headers) {
+  const retryAfter = headers["retry-after"]
+  let retryAfterMs = retryAfter
+    ? /^\d+$/.test(retryAfter)
+      ? Number(retryAfter) * 1000
+      : Date.parse(retryAfter) - Date.now()
+    : undefined
+  const rateLimited = headers["x-ratelimit-remaining"] === "0"
+  if (rateLimited && headers["x-ratelimit-reset"]) {
+    retryAfterMs = Math.max(retryAfterMs || 0, Number(headers["x-ratelimit-reset"]) * 1000 - Date.now())
+  }
+  return {retryAfterMs, rateLimited}
+}
+
+export function githubError(error, output = "", stderr = "") {
+  const block = [...output.matchAll(responseHeadersPattern())].at(-1)?.[0]
+  const status = Number(block?.match(/^HTTP\/\S+ (\d{3})/)?.[1] || stderr.match(/HTTP (\d{3})/)?.[1]) || undefined
+  const headers = Object.fromEntries(
+    (block || "")
+      .split(/\r?\n/)
+      .slice(1)
+      .filter((line) => line.includes(":"))
+      .map((line) => [line.slice(0, line.indexOf(":")).toLowerCase(), line.slice(line.indexOf(":") + 1).trim()]),
+  )
+  const details = rateLimitDetails(headers)
+  if (!block && /rate limit/i.test(stderr)) {
+    details.rateLimited = true
+    // Binary download errors do not include response headers. GitHub advises
+    // waiting at least a minute for a secondary limit without Retry-After.
+    details.retryAfterMs = 60_000
+  }
+  const code =
+    /timeout|timed out|connection reset|unexpected EOF|TLS handshake|temporary failure|connection refused/i.test(stderr)
+      ? "ECONNRESET"
+      : error.code
+  return Object.assign(new Error(stderr.trim().slice(0, 500) || error.message, {cause: error}), {
+    status,
+    code,
+    ...details,
+  })
 }
 
 export function matchingAsset(assets, name) {
@@ -126,25 +180,12 @@ export async function uploadReleaseAsset({
         response.on("end", () => {
           if (response.statusCode >= 200 && response.statusCode < 300) return finish()
           const status = response.statusCode
-          const retryAfter = response.headers["retry-after"]
-          let retryAfterMs = retryAfter
-            ? /^\d+$/.test(retryAfter)
-              ? Number(retryAfter) * 1000
-              : Date.parse(retryAfter) - Date.now()
-            : undefined
-          const rateLimited = response.headers["x-ratelimit-remaining"] === "0"
-          if (rateLimited && response.headers["x-ratelimit-reset"]) {
-            retryAfterMs = Math.max(
-              retryAfterMs || 0,
-              Number(response.headers["x-ratelimit-reset"]) * 1000 - Date.now(),
-            )
-          }
           finish(
             Object.assign(
               new Error(
                 `Uploading ${name} failed with HTTP ${status}: ${detail.replace(/\s+/g, " ").trim().slice(0, 300)}`,
               ),
-              {status, retryAfterMs, rateLimited},
+              {status, ...rateLimitDetails(response.headers)},
             ),
           )
         })
@@ -179,8 +220,12 @@ export async function verifyReleaseAsset({repository, file, asset, spawnImpl = s
   const download = spawnImpl(
     "gh",
     ["api", "-H", "Accept: application/octet-stream", `repos/${repository}/releases/assets/${asset.id}`],
-    {stdio: ["ignore", "pipe", "inherit"], timeout: 15 * 60_000},
+    {stdio: ["ignore", "pipe", "pipe"], timeout: 15 * 60_000},
   )
+  let stderr = ""
+  download.stderr.on("data", (chunk) => {
+    stderr = (stderr + chunk).slice(0, 4096)
+  })
   const completed = new Promise((resolve) => {
     download.on("error", (error) => resolve({error}))
     download.on("close", (code, signal) => resolve({code, signal}))
@@ -188,7 +233,14 @@ export async function verifyReleaseAsset({repository, file, asset, spawnImpl = s
   const actual = await hashStream(download.stdout)
   const {code, signal, error} = await completed
   if (error) throw error
-  if (code !== 0) throw new Error(`Downloading ${asset.name} for verification failed (${signal || code})`)
+  if (code !== 0)
+    throw githubError(
+      Object.assign(new Error(`Downloading ${asset.name} for verification failed (${signal || code})`), {
+        code: signal === "SIGTERM" ? "ETIMEDOUT" : undefined,
+      }),
+      "",
+      stderr,
+    )
   if (actual !== expected) throw mismatch()
 }
 
@@ -215,11 +267,31 @@ export async function publishReleaseAsset({
   maxAttempts = 3,
 }) {
   if (path.basename(file) !== name) throw new Error("Immutable asset name must equal the source file basename")
-  let existing = await findAsset()
+  const backoff = async (error, attempt) => {
+    const delay = Math.max(5000 * 2 ** (attempt - 1), error.retryAfterMs || 0)
+    // Do not violate a long Retry-After or hold a release job indefinitely.
+    if (delay > 120_000) throw error
+    log(`${name}: ${error.message}; retrying after ${delay / 1000}s`)
+    await wait(delay)
+  }
+  const recover = async (operation) => {
+    for (let attempt = 1; ; attempt++) {
+      try {
+        return await operation()
+      } catch (error) {
+        if (!retryable(error) || attempt === maxAttempts) throw error
+        await backoff(error, attempt)
+      }
+    }
+  }
+  const lookup = () => recover(findAsset)
+  const verifyExisting = (asset) => recover(() => verify({repository, file, asset}))
+  let existing = await lookup()
   let lastError
   for (let attempt = 1; attempt <= maxAttempts; attempt++) {
+    let cooledDown = false
     if (existing?.state === "uploaded") {
-      await verify({repository, file, asset: existing})
+      await verifyExisting(existing)
       log(`Verified existing immutable release asset ${name}`)
       return
     }
@@ -238,25 +310,31 @@ export async function publishReleaseAsset({
         return
       } catch (error) {
         lastError = error
+        // The same credential is used for reconciliation. Honor the upload's
+        // cooldown before making ANY further API request, even on the last try.
+        if (error.status === 429 || error.rateLimited || error.retryAfterMs !== undefined) {
+          await backoff(error, attempt)
+          cooledDown = true
+        }
         // A response can be lost after GitHub commits the asset. Reconcile
         // even on the last attempt, and verify bytes before accepting a race.
-        existing = await findAsset()
+        existing = await lookup()
         if (existing?.state === "uploaded") {
-          await verify({repository, file, asset: existing})
+          await verifyExisting(existing)
           log(`Verified completed immutable release asset ${name} after upload error`)
           return
         }
         // GitHub documents an empty starter after a terminal 502. Only clean
         // that specific outcome of this invocation, never an ambiguous timeout.
         if (error.status === 502 && existing?.state === "starter" && existing.size === 0) {
-          const confirmed = await findAsset()
+          const confirmed = await lookup()
           if (confirmed?.id === existing.id && confirmed.state === "starter" && confirmed.size === 0) {
-            await removeAsset(existing.id)
+            await recover(() => removeAsset(existing.id))
             log(`Removed empty failed upload placeholder for ${name} (asset ${existing.id}) after HTTP 502`)
             existing = null
           } else existing = confirmed
           if (existing?.state === "uploaded") {
-            await verify({repository, file, asset: existing})
+            await verifyExisting(existing)
             log(`Verified completed immutable release asset ${name} before placeholder cleanup`)
             return
           }
@@ -265,12 +343,8 @@ export async function publishReleaseAsset({
       }
     }
     if (attempt === maxAttempts) break
-    const delay = Math.max(5000 * 2 ** (attempt - 1), lastError.retryAfterMs || 0)
-    // Do not violate a long Retry-After or hold a release job indefinitely.
-    if (delay > 120_000) throw lastError
-    log(`${name}: ${lastError.message}; reconciling again in ${delay / 1000}s`)
-    await wait(delay)
-    existing = await findAsset()
+    if (!cooledDown) await backoff(lastError, attempt)
+    existing = await lookup()
   }
   throw new Error(`Could not publish ${name} after ${maxAttempts} attempts: ${lastError.message}`, {cause: lastError})
 }
