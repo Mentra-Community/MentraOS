@@ -69,6 +69,13 @@ The local signed Release build, background launch, accessibility controls, sign-
 
 Use one installed development app per test Mac. Earlier versions of this harness launched a separate `.app` directory for every executable/JavaScript hash. Apple documents unexpected Local Network settings behavior with multiple versions installed (FB15568200) in [TN3179](https://developer.apple.com/documentation/technotes/tn3179-understanding-local-network-privacy). The installer now preserves signed builds as ZIPs and replaces one managed path only after the running process terminates. A marker prevents it from replacing an unrelated installation; an install lock prevents concurrent replacement. The previous installation is retained as `previous-installation.zip`. Account storage and pairing remain in the existing app container.
 
+The new manifest is staged before replacement. If promoting that manifest fails,
+the installer restores the previous app and retains its matching manifest. A
+rollback failure preserves `.install-lock/previous.app` and the staging folder
+for recovery, and the lock prevents another installer from overwriting them.
+A launch permission prompt after a successful commit leaves the verified new
+app and its matching manifest installed.
+
 To install or restore an already built archive without compiling again, from `mobile/`:
 
 ```sh

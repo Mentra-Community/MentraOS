@@ -84,6 +84,37 @@ export async function claimInstallation(root, bundleId) {
     throw new Error("Installation directory is not owned by this app installer")
 }
 
+export class InstallationRollbackError extends AggregateError {}
+
+/** Commit an already verified wrapper and its staged manifest as one recoverable replacement. */
+export async function commitStagedInstallation({root, staging, lock}, move = rename) {
+  const destination = path.join(root, "Mentra.app")
+  const wrapper = path.join(staging, "Mentra.app")
+  const previous = path.join(lock, "previous.app")
+  let movedPrevious = false
+  let movedNew = false
+  try {
+    if (await exists(destination)) {
+      await move(destination, previous)
+      movedPrevious = true
+    }
+    await move(wrapper, destination)
+    movedNew = true
+    await move(path.join(staging, "installed-build.json"), path.join(root, "installed-build.json"))
+  } catch (error) {
+    try {
+      if (movedNew) await move(destination, wrapper)
+      if (movedPrevious) await move(previous, destination)
+    } catch (rollbackError) {
+      throw new InstallationRollbackError(
+        [error, rollbackError],
+        "Installation rollback failed; recovery files retained",
+      )
+    }
+    throw error
+  }
+}
+
 export async function installBuild(manifestPath, {launch = true} = {}) {
   if (process.platform !== "darwin") throw new Error("Requires macOS")
   const manifest = JSON.parse(await readFile(manifestPath, "utf8"))
@@ -94,8 +125,8 @@ export async function installBuild(manifestPath, {launch = true} = {}) {
   const lock = path.join(root, ".install-lock")
   await mkdir(lock) // A second installer fails rather than racing the replacement.
   let staging
-  let movedPrevious = false
   let installedNew = false
+  let preserveRecovery = false
   const previous = path.join(lock, "previous.app")
   try {
     staging = await mkdtemp(path.join(root, ".staging-"))
@@ -138,27 +169,24 @@ export async function installBuild(manifestPath, {launch = true} = {}) {
       command("/usr/bin/unzip", ["-tq", backup])
       await rename(backup, path.join(root, "previous-installation.zip"))
     }
-    command(launcher, ["--quit", wrapper])
-    if (await exists(destination)) {
-      await rename(destination, previous)
-      movedPrevious = true
-    }
-    await rename(wrapper, destination)
-    installedNew = true
     const installed = {...manifest, ...identity, launchPath: destination, installedAt: new Date().toISOString()}
     await writeFile(path.join(staging, "installed-build.json"), JSON.stringify(installed, null, 2) + "\n")
-    await rename(path.join(staging, "installed-build.json"), path.join(root, "installed-build.json"))
+    command(launcher, ["--quit", wrapper])
+    await commitStagedInstallation({root, staging, lock})
+    installedNew = true
     if (launch) console.log(command(launcher, [destination]))
     console.log(`Installed app: ${destination}\nInstalled evidence: ${path.join(root, "installed-build.json")}`)
     return installed
   } catch (error) {
     // Roll back a failed filesystem replacement. If launching the verified new
     // app times out on a permission prompt, leave it installed for the user.
-    if (movedPrevious && !installedNew) await rename(previous, destination)
+    preserveRecovery = error instanceof InstallationRollbackError
     throw error
   } finally {
-    if (staging) await rm(staging, {recursive: true, force: true})
-    if (installedNew || !(await exists(previous))) await rm(lock, {recursive: true, force: true})
+    if (!preserveRecovery) {
+      if (staging) await rm(staging, {recursive: true, force: true})
+      if (installedNew || !(await exists(previous))) await rm(lock, {recursive: true, force: true})
+    }
   }
 }
 
