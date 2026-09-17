@@ -551,6 +551,12 @@ export async function runConnectedCall(
       },
     )
     const doctor = await command<Doctor>({op: "doctor"})
+    await save("native-log-context.json", {
+      pid: doctor.pid,
+      executableSha256: manifest.executableSha256,
+      startedAt: new Date().toISOString(),
+      utcOffsetMinutes: new Date().getTimezoneOffset(),
+    })
     nativeLogger = Bun.spawn(
       ["/usr/bin/log", "stream", "--style", "compact", "--level", "debug", "--predicate", `processID == ${doctor.pid}`],
       {stdout: Bun.file(join(here, "native-private.log")), stderr: Bun.file(join(here, "native-log-stderr.log"))},

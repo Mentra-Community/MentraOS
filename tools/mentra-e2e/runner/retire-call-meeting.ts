@@ -12,6 +12,41 @@ interface GraphMeeting {
   joinMeetingIdSettings?: {joinMeetingId?: string; passcode?: string}
 }
 
+/** Creation must come from this run's signed host process and exact miniapp log scope. */
+export function nativeCreatedMeeting(
+  log: string,
+  context: {pid: number; utcOffsetMinutes: number},
+  start: number,
+  end: number,
+): string {
+  if (
+    !Number.isInteger(context.pid) ||
+    context.pid <= 0 ||
+    !Number.isInteger(context.utcOffsetMinutes) ||
+    Math.abs(context.utcOffsetMinutes) > 840 ||
+    !Number.isFinite(start) ||
+    !Number.isFinite(end) ||
+    end < start ||
+    end - start > 90000
+  )
+    throw new Error("Invalid native meeting ownership context")
+  const events = [
+    ...log.matchAll(
+      /^(\d{4}-\d{2}-\d{2} \d{2}:\d{2}:\d{2}\.\d{3}) I  Mentra\[(\d+):[a-f0-9]+\] \[com\.facebook\.react\.log:javascript\] '\[MentraJSRouter\] \[com\.mentra\.call\] console\.log', \[ '\[mentra-call\] \[meeting\] teams meeting created',\n  \{ meetingId: '([A-Za-z0-9+/_=-]+)',\n    owned: true,\n    hasRef: true \} \]$/gm,
+    ),
+  ].filter((event) => {
+    const time = Date.parse(event[1].replace(" ", "T") + "Z") + context.utcOffsetMinutes * 60000
+    return Number(event[2]) === context.pid && time >= start && time <= end
+  })
+  if (events.length !== 1) throw new Error("Native meeting creation is missing or ambiguous")
+  return events[0][3]
+}
+
+function matchesMeetingIdentity(meeting: GraphMeeting, id: string, start: number, end: number) {
+  const time = Date.parse(meeting.startDateTime ?? "")
+  return meeting.id === id && meeting.subject === "Mentra Call" && Number.isFinite(time) && time >= start && time <= end
+}
+
 export function matchesOwnedMeeting(
   meeting: GraphMeeting,
   id: string,
@@ -19,9 +54,7 @@ export function matchesOwnedMeeting(
   start: number,
   end: number,
 ): boolean {
-  const time = Date.parse(meeting.startDateTime ?? "")
-  if (meeting.id !== id || meeting.subject !== "Mentra Call" || !Number.isFinite(time) || time < start || time > end)
-    return false
+  if (!matchesMeetingIdentity(meeting, id, start, end)) return false
   const url = new URL(teamsMeetingUrl(urlText))
   if (url.pathname.startsWith("/meet/")) {
     const settings = meeting.joinMeetingIdSettings
@@ -56,9 +89,21 @@ export async function retireOwnedMeeting(directory: string, config: CallFixture[
   if (!Number.isFinite(start) || !Number.isFinite(end) || end < start || end - start > 90000)
     throw new Error("Meeting creation window is invalid; cleanup requires operator review")
   const urlFile = Bun.file(join(directory, "meeting-url.txt"))
-  if (!(await urlFile.exists()))
-    throw new Error("No captured join link proves meeting ownership; operator cleanup is required")
-  const meetingUrl = teamsMeetingUrl(await urlFile.text())
+  const meetingUrl = (await urlFile.exists()) ? teamsMeetingUrl(await urlFile.text()) : undefined
+  let nativeId: string | undefined
+  if (!meetingUrl) {
+    const context = JSON.parse(await readFile(join(directory, "native-log-context.json"), "utf8"))
+    const doctor = JSON.parse(await readFile(join(directory, "test-build-doctor.json"), "utf8"))
+    if (
+      context.pid !== doctor.pid ||
+      context.executableSha256 !== doctor.sha256 ||
+      !/^[a-f0-9]{64}$/.test(context.executableSha256 ?? "") ||
+      !Number.isFinite(Date.parse(context.startedAt)) ||
+      Date.parse(context.startedAt) > start
+    )
+      throw new Error("Native creation log does not match the verified test process")
+    nativeId = nativeCreatedMeeting(await readFile(join(directory, "native-private.log"), "utf8"), context, start, end)
+  }
   const scope = ["--project", config.project, "--cluster", config.cluster, "--target", config.target]
   const logs = await porter([
     "app",
@@ -77,6 +122,7 @@ export async function retireOwnedMeeting(directory: string, config: CallFixture[
   await writeFile(join(directory, "owned-meeting-server-private.log"), logs, {mode: 0o600})
   const ids = [...new Set([...logs.matchAll(/\[teams\] meeting created \(([^)]+)\)/g)].map((match) => match[1]))]
   if (ids.length !== 1) throw new Error("Meeting creation log is absent or ambiguous; retained for operator cleanup")
+  if (nativeId && nativeId !== ids[0]) throw new Error("Native and server meeting IDs disagree; cleanup refused")
   // Credentials remain in memory and are never added to a command transcript.
   const env = parseEnv(await porter(["env", "pull", "--app", config.porterApp, "--merged", ...scope]))
   const required = (key: string): string => {
@@ -108,8 +154,11 @@ export async function retireOwnedMeeting(directory: string, config: CallFixture[
   const before = await request("GET")
   if (!before.ok) throw new Error(`Meeting ownership verification HTTP ${before.status}`)
   const meeting = (await before.json()) as GraphMeeting
-  if (!matchesOwnedMeeting(meeting, ids[0], meetingUrl, start, end))
-    throw new Error("Graph meeting does not match the captured test link, ID, subject and time; retained")
+  if (
+    !matchesMeetingIdentity(meeting, ids[0], start, end) ||
+    (meetingUrl && !matchesOwnedMeeting(meeting, ids[0], meetingUrl, start, end))
+  )
+    throw new Error("Graph meeting does not match this run's creation proof, ID, subject and time; retained")
   const removed = await request("DELETE")
   if (removed.status !== 204) throw new Error(`Meeting retirement HTTP ${removed.status}`)
   const after = await request("GET")
@@ -120,7 +169,9 @@ export async function retireOwnedMeeting(directory: string, config: CallFixture[
         meetingId: ids[0],
         deleteStatus: removed.status,
         verificationStatus: after.status,
-        method: "Exact captured join link, Graph ID, subject and creation time",
+        method: meetingUrl
+          ? "Exact captured join link, Graph ID, subject and creation time"
+          : "Exact native creation event from verified test PID, matching server/Graph ID, subject and creation time",
         appCleanupQualified: false,
         recordedAt: new Date().toISOString(),
       },

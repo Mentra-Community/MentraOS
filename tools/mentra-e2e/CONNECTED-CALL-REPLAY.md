@@ -136,10 +136,13 @@ are not an independent installed package.
 Meeting retirement is an administrative test cleanup, separate from the app's
 Leave action. It reads authorized Porter configuration only into memory and
 does not log credentials. It rejects ambiguous logs and requires the Graph
-meeting to match the exact captured join link. If creation fails before the
-link is captured, it records a cleanup failure for operator review rather than
-deleting a meeting based only on a nearby timestamp. This failure path still
-needs app-owned meeting retirement qualification.
+meeting to match the exact captured join link. If creation fails before the link is captured, cleanup instead requires exactly
+one creation event from the verified signed host PID and exact Call miniapp
+log scope, inside the recorded attempt window with its captured timezone. Its
+ID must match the server creation log and Graph record, including subject and
+time. Missing, foreign or ambiguous proof still requires operator review; a
+nearby timestamp alone never authorizes deletion. This remains administrative
+cleanup, not app-owned meeting retirement qualification.
 
 Any observed Local Network denial excludes unattended qualification. Human
 interventions must also be recorded; absence of a denial alone does not prove
