@@ -184,3 +184,53 @@ and opens the original meeting link in a fresh page load. Admission and video
 are checked again without restarting the glasses stream. This diagnostic
 comparison is reported separately as `freshLinkRecovery`; recovery never
 changes the original failed Rejoin result into a pass.
+
+## Laptop capture extension
+
+Teams has its own device selection: Chrome's default microphone setting does
+not guarantee which microphone Teams uses. Create a private device fixture
+using exact labels from Teams' device menus (no Default or Communications
+aliases):
+
+```json
+{
+  "schemaVersion": 1,
+  "microphone": "MacBook Pro Microphone (Built-in)",
+  "camera": "MacBook Pro Camera (0000:0001)",
+  "speaker": "MacBook Pro Speakers (Built-in)"
+}
+```
+
+First rehearse the controls without joining. The URL file can contain a previous
+test meeting link that still opens Teams prejoin; this tool never presses Join.
+
+```sh
+bun tools/mentra-e2e/teams-device-setup.ts \
+  --meeting-url-file /absolute/private/meeting-url.txt \
+  --devices-file /absolute/private/laptop-teams-devices.json \
+  --output /absolute/private/new-setup-directory
+```
+
+The setup selects the laptop microphone, speaker and camera through Teams'
+normal controls, verifies the actual camera preview track, then turns the
+camera and microphone off. Teams may defer opening the microphone track until
+joining; a selected prejoin microphone alone is not capture or transmission
+proof. Browser-origin permission is temporary; macOS media permissions still
+apply. This neither changes macOS audio defaults nor starts a glasses stream.
+
+For a recorded call, add
+`--browser-capture-devices /absolute/private/laptop-teams-devices.json` to
+`connected-call.ts run`. It performs these additional English steps:
+
+1. Select and verify the declared laptop devices before joining the browser.
+2. Join with browser camera/microphone off and verify incoming glasses video.
+3. Turn on the browser microphone and camera through the call controls.
+4. Verify live capture tracks match the declared laptop devices and outgoing
+   audio packets, video frames and video bytes keep advancing for five seconds.
+5. Leave the browser and perform the existing native/network/meeting cleanup.
+
+`browserSendingVerified` covers actual browser capture and outgoing RTP. It does
+not prove return audio is audible through the glasses or that the native app
+renders the laptop video. `duplexQualified` remains false. Capture and rejoin
+extensions are currently separate runs. Each consumes one authorized stream
+attempt; setup alone consumes none.

@@ -11,11 +11,12 @@ import {appendFile, chmod, mkdir, copyFile, realpath} from "node:fs/promises"
 import {join} from "node:path"
 import {command, snapshot, root, type Doctor} from "./driver"
 import {acquireLock, Report} from "./report"
+import {parseTeamsDevices} from "./teams-devices"
 
 export async function runConnectedCall(
   fixture: CallFixture,
   buildManifestPath: string,
-  options: {browserRejoin?: boolean} = {},
+  options: {browserRejoin?: boolean; browserCaptureDevices?: string} = {},
 ) {
   // Detect an unprovisioned worktree before opening a call or changing hardware.
   await import("playwright-core").catch(() => {
@@ -27,6 +28,8 @@ export async function runConnectedCall(
   const wifi = config.network.wifiInterface
   const ethernetInterface = config.network.ethernetInterface
   const manifest = parseCallBuild(await Bun.file(buildManifestPath).json())
+  if (options.browserCaptureDevices) parseTeamsDevices(await Bun.file(options.browserCaptureDevices).json())
+  if (options.browserCaptureDevices && options.browserRejoin) throw new Error("Choose capture or rejoin separately")
   let here = ""
   let finalized = false
   let browserWatchdog: ReturnType<typeof setTimeout> | undefined
@@ -219,6 +222,8 @@ export async function runConnectedCall(
       "teams-browser.ts": join(root, "tools/mentra-e2e/teams-browser.ts"),
       "teams-browser-helpers.ts": join(import.meta.dir, "teams-browser.ts"),
       "browser-media-diagnostics.ts": join(import.meta.dir, "browser-media-diagnostics.ts"),
+      "teams-devices.ts": join(import.meta.dir, "teams-devices.ts"),
+      ...(options.browserCaptureDevices ? {"teams-devices.json": options.browserCaptureDevices} : {}),
       "launch-with-network-lease.swift": join(root, "tools/mentra-e2e/native/helpers/LaunchWithNetworkLease.swift"),
       "launch-mentra.swift": join(root, "mobile/scripts/launch-ios-on-mac.swift"),
       "opening-steps.json": join(root, "tools/mentra-e2e/flows/call-connected-opening.json"),
@@ -710,6 +715,7 @@ export async function runConnectedCall(
         "--admission-seconds",
         "90",
         ...(options.browserRejoin ? ["--rejoin"] : []),
+        ...(options.browserCaptureDevices ? ["--capture-devices", join(here, "teams-devices.json")] : []),
       ],
       {stdin: "pipe", stdout: "pipe", stderr: Bun.file(join(here, "browser-stderr.log"))},
     ))
@@ -796,6 +802,8 @@ export async function runConnectedCall(
         report.metadata.browserResult = result
         if (options.browserRejoin && result.rejoinQualified !== true)
           throw new Error("Browser rejoin was not qualified")
+        if (options.browserCaptureDevices && result.browserSendingVerified !== true)
+          throw new Error("Browser laptop sending was not verified")
         if (browserCode !== 0 || result.status !== "incoming-video-passed" || result.cleanup !== "left")
           throw new Error("Browser companion failed; retained in browser/result.json")
       },

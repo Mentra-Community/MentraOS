@@ -6,8 +6,20 @@ import {dirname, join, resolve} from "node:path"
 import {chromium, type BrowserContext, type Page} from "playwright-core"
 import {keepAwake} from "./runner/keep-awake"
 import {finishBrowserEvidence, type BrowserChapter, type VideoCalibration} from "./runner/browser-evidence"
-import {teamsMeetingUrl, teamsPhase, videoSamples, hasAdvancingVideo, hasDecodedVideo} from "./runner/teams-browser"
-import {installMediaDiagnostics, sampleMediaDiagnostics} from "./runner/browser-media-diagnostics"
+import {
+  teamsMeetingUrl,
+  teamsPhase,
+  videoSamples,
+  hasAdvancingVideo,
+  hasDecodedVideo,
+  reachTeamsPrejoin,
+} from "./runner/teams-browser"
+import {
+  installMediaDiagnostics,
+  sampleMediaDiagnostics,
+  hasAdvancingLaptopMedia,
+} from "./runner/browser-media-diagnostics"
+import {parseTeamsDevices, selectTeamsDevices} from "./runner/teams-devices"
 
 // Experimental browser companion. It does not qualify the native or duplex routine.
 process.umask(0o077)
@@ -20,6 +32,7 @@ const {positionals, values} = parseArgs({
     "output": {type: "string"},
     "headful": {type: "boolean", default: false},
     "rejoin": {type: "boolean", default: false},
+    "capture-devices": {type: "string"},
     "name": {type: "string", default: "Mentra E2E Observer"},
     "remote-name": {type: "string", default: "Mentra Live"},
     "admission-seconds": {type: "string", default: "90"},
@@ -38,6 +51,11 @@ Recordings and the dedicated profile stay local. See TEAMS-BROWSER-ROUTINE.md.`)
   process.exit(0)
 }
 const mode = positionals[0] ?? "probe"
+const captureDevices = values["capture-devices"]
+  ? parseTeamsDevices(JSON.parse(await readFile(values["capture-devices"], "utf8")))
+  : undefined
+if (captureDevices && (mode !== "run" || values.rejoin))
+  throw new Error("Laptop capture requires run mode and is currently separate from browser rejoin")
 if (!["setup", "probe", "run"].includes(mode)) throw new Error("Use setup, probe or run")
 const admissionSeconds = Number(values["admission-seconds"])
 if (!Number.isFinite(admissionSeconds) || admissionSeconds < 1 || admissionSeconds > 300)
@@ -72,6 +90,7 @@ let failure: string | undefined
 let cleanup = "not-needed"
 let joinRequested = false
 let rejoinQualified = false
+let browserSendingVerified = false
 let freshLinkRecovery: {status: "passed" | "failed"; error?: string} | undefined
 const browserErrors: {type: string; text: string}[] = []
 const nativeInput = values.rejoin && mode === "run" ? createInterface({input: process.stdin}) : undefined
@@ -121,6 +140,7 @@ try {
     ...(mode === "run" ? {recordVideo: {dir: output, size: {width: 1280, height: 800}}} : {}),
   })
   await installMediaDiagnostics(context)
+  if (captureDevices) await context.grantPermissions(["camera", "microphone"], {origin: "https://teams.microsoft.com"})
   // This context owns only the dedicated test profile, never personal Chrome tabs.
   page = context.pages()[0] ?? (await context.newPage())
   page.on("pageerror", (error) => {
@@ -165,23 +185,12 @@ try {
     if (mode === "run") {
       const runPage = page
       if ((await teamsPhase(runPage)) === "signin") throw new Error("SIGN_IN_REQUIRED: run setup before retrying")
-      const browserChoice = runPage.getByRole("button", {name: "Join meeting from this browser", exact: true})
-      if (await browserChoice.isVisible()) await browserChoice.click()
       const withoutMedia = runPage.getByRole("button", {name: "Continue without audio or video", exact: true})
-      await Promise.race([
-        withoutMedia.waitFor({state: "visible", timeout: 30000}),
-        runPage.getByRole("button", {name: "Join now", exact: true}).waitFor({state: "visible", timeout: 30000}),
-      ])
-      if (await withoutMedia.isVisible()) {
-        await evidence(
-          "01-no-capture",
-          "Continue as an incoming-video observer without granting camera or microphone capture.",
-        )
-        await withoutMedia.click()
-      }
-      await runPage.getByRole("button", {name: "Join now", exact: true}).waitFor({state: "visible", timeout: 30000})
+      const reachPrejoin = (prefix: string) => reachTeamsPrejoin(runPage, evidence, prefix)
+      await reachPrejoin("01-")
       const name = runPage.getByRole("textbox", {name: "Type your name", exact: true})
       if (await name.isVisible()) await name.fill(values.name!)
+      if (captureDevices) await selectTeamsDevices(runPage, captureDevices, evidence)
       async function verifyCaptureOff(prefix: string) {
         // Incoming-video qualification only. Leave selected hardware devices untouched.
         const camera = runPage.getByRole("switch", {name: /^Turn camera off/})
@@ -260,6 +269,32 @@ try {
         await evidence(prefix + "video", "Verify advancing remote video with the laptop camera off.")
       }
       await verifyIncomingVideo("initial-")
+      if (captureDevices) {
+        const before = await sampleMediaDiagnostics(runPage)
+        await runPage.getByRole("button", {name: /^Unmute mic/}).click()
+        await runPage.getByRole("button", {name: /^Turn camera on/}).click()
+        await runPage.getByRole("button", {name: /^Mute mic/}).waitFor({state: "visible"})
+        await runPage.getByRole("button", {name: /^Turn camera off/}).waitFor({state: "visible"})
+        const deadline = performance.now() + 20000
+        let after = await sampleMediaDiagnostics(runPage)
+        while (!hasAdvancingLaptopMedia(before, after, captureDevices)) {
+          await writeFile(join(output, "laptop-sending.json"), JSON.stringify({before, after}, null, 2))
+          if (performance.now() > deadline)
+            throw new Error("Selected laptop tracks and outbound RTP did not become active")
+          await new Promise((resolve) => setTimeout(resolve, 250))
+          after = await sampleMediaDiagnostics(runPage)
+        }
+        await new Promise((resolve) => setTimeout(resolve, 5000))
+        const sustained = await sampleMediaDiagnostics(runPage)
+        await writeFile(join(output, "laptop-sending.json"), JSON.stringify({before, after, sustained}, null, 2))
+        if (!hasAdvancingLaptopMedia(after, sustained, captureDevices))
+          throw new Error("Laptop RTP did not keep advancing")
+        browserSendingVerified = true
+        await evidence(
+          "laptop-sending",
+          "Verify selected laptop capture tracks and sustained outgoing audio/video packets.",
+        )
+      }
       if (values.rejoin) {
         await runPage.getByRole("button", {name: "Leave", exact: true}).click()
         await runPage.getByRole("button", {name: /^Rejoin(?: meeting)?$/}).waitFor({state: "visible", timeout: 10000})
@@ -318,16 +353,10 @@ try {
               "recovery-open",
               "Open the original meeting link in a fresh page load without restarting the glasses stream.",
             )
-            await Promise.race([
-              withoutMedia.waitFor({state: "visible", timeout: 30000}),
-              runPage.getByRole("button", {name: "Join now", exact: true}).waitFor({state: "visible", timeout: 30000}),
-            ])
-            if (await withoutMedia.isVisible()) await withoutMedia.click()
-            await runPage
-              .getByRole("button", {name: "Join now", exact: true})
-              .waitFor({state: "visible", timeout: 30000})
+            await reachPrejoin("recovery-")
             if (await name.isVisible()) await name.fill(values.name!)
             await verifyCaptureOff("recovery-")
+            cleanup = "not-needed"
             await runPage.getByRole("button", {name: "Join now", exact: true}).click()
             await waitForAdmission("recovery-")
             await verifyIncomingVideo("recovery-")
@@ -369,6 +398,7 @@ try {
     }
   }
   nativeInput?.close()
+  if (captureDevices) await context?.clearPermissions().catch(() => {})
   await context?.close().catch((error) => {
     failure ??= String(error)
     process.exitCode = 1
@@ -398,8 +428,10 @@ try {
         duplexQualified: false,
         rejoinRequested: values.rejoin,
         rejoinQualified,
+        captureDevices,
+        browserSendingVerified,
         freshLinkRecovery,
-        audioDeviceSelections: 0,
+        audioDeviceSelections: captureDevices ? 2 : 0,
         videoTimeline,
         profile: "dedicated local profile; excluded from evidence",
       },

@@ -1,9 +1,25 @@
 import type {BrowserContext, Page} from "playwright-core"
+import type {TeamsDevices} from "./teams-devices"
 
 /** Observe actual connections without changing devices, constraints, SDP or media. */
 export async function installMediaDiagnostics(context: BrowserContext) {
   await context.addInitScript(() => {
     const peers: RTCPeerConnection[] = []
+    const captures: MediaStreamTrack[] = []
+    if (navigator.mediaDevices?.getUserMedia) {
+      navigator.mediaDevices.getUserMedia = new Proxy(navigator.mediaDevices.getUserMedia, {
+        apply(target, thisArg, args) {
+          const pending = Reflect.apply(target, thisArg, args) as Promise<MediaStream>
+          void pending.then(
+            (stream) => {
+              captures.push(...stream.getTracks())
+            },
+            () => {},
+          )
+          return pending
+        },
+      })
+    }
     const NativePeer = window.RTCPeerConnection
     if (!NativePeer) return
     window.RTCPeerConnection = new Proxy(NativePeer, {
@@ -15,6 +31,7 @@ export async function installMediaDiagnostics(context: BrowserContext) {
     })
     const track = (t: MediaStreamTrack | null) =>
       t && {kind: t.kind, label: t.label, enabled: t.enabled, muted: t.muted, readyState: t.readyState}
+    Object.defineProperty(window, "__mentraCaptureDiagnostics", {value: () => captures.map(track)})
     // Allowlisted counters only: no SDP, IP addresses, ICE credentials or raw media.
     const keys = [
       "id",
@@ -102,10 +119,41 @@ export async function sampleMediaDiagnostics(page: Page) {
             const sample = (window as any).__mentraMediaDiagnostics
             return sample ? sample() : null
           }),
+          captures: await frame.evaluate(() => (window as any).__mentraCaptureDiagnostics?.() ?? null),
         }
       } catch (error) {
         return {index, error: String(error)}
       }
     }),
   )
+}
+
+export function hasAdvancingLaptopMedia(
+  before: Awaited<ReturnType<typeof sampleMediaDiagnostics>>,
+  after: Awaited<ReturnType<typeof sampleMediaDiagnostics>>,
+  devices: TeamsDevices,
+) {
+  const captures = after.flatMap((frame) => frame.captures ?? [])
+  if (
+    ![devices.microphone, devices.camera].every((label) =>
+      captures.some((t: any) => t.label === label && t.readyState === "live" && t.enabled && !t.muted),
+    )
+  )
+    return false
+  const advanced = (kind: string, counter: string) =>
+    after.some((frame) =>
+      frame.peers?.some(
+        (peer: any) =>
+          peer.connectionState === "connected" &&
+          peer.stats.some((row: any) => {
+            if (row.type !== "outbound-rtp" || row.kind !== kind || !(row[counter] > 0)) return false
+            const prior = before
+              .find((f) => f.index === frame.index)
+              ?.peers?.find((p: any) => p.index === peer.index)
+              ?.stats.find((s: any) => s.id === row.id)
+            return row[counter] > (prior?.[counter] ?? 0)
+          }),
+      ),
+    )
+  return advanced("audio", "packetsSent") && advanced("video", "framesEncoded") && advanced("video", "bytesSent")
 }
