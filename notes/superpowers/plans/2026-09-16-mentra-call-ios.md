@@ -552,3 +552,57 @@ track proof are in `2026-09-17-chrome-laptop-capture-setup`. Both tracks closed;
 no meeting or glasses stream started, and no macOS audio default changed.
 Return audio and laptop transmission remain unqualified; three authorized
 stream attempts remain.
+
+## Browser diagnostics and laptop capture, September 17
+
+Nine of the user's ten further stream attempts are now used; one remains. All
+owned calls are stopped. The per-attempt budget includes failed runs and is
+independent of the production quota exemption.
+
+Attempt 8 (`2026-09-17T06-27-27-306Z-call-incoming-video-f00e80`) added observed
+WebRTC counters and the Teams People panel. Initial incoming video advanced
+from 7 to 57 decoded frames. After browser rejoin, Teams' connected peer had no
+incoming RTP and its People panel listed only **Mentra E2E Observer** (one total),
+while the native participant sheet had readmitted that guest. This reproduces
+the roster asymmetry, without proving whether the cause is Teams interop or the
+native SDK. The fresh-link comparison stopped at the normal **Continue on this
+browser** launcher; the shared prejoin helper now handles that observed control.
+The original failure and incomplete recovery remain unchanged. Native evidence
+has 29 steps / 180.642 seconds; browser evidence has 20 chapters / 80.20 seconds,
+53 ms calibration uncertainty.
+
+Teams selects devices independently of Chrome's default settings. The new
+`teams-device-setup.ts` routine selects the exact laptop microphone, speaker and
+camera through Teams controls, verifies the actual camera preview track, turns
+capture off and closes without joining. The final rehearsal passed. It does
+not claim microphone transmission before a call: Teams defers opening that
+track until joining. No macOS audio defaults are changed.
+
+Attempt 9 (`2026-09-17T06-41-30-103Z-call-incoming-video-fccdbc`) recorded the
+verified laptop device selection, native admission and incoming glasses video,
+then enabled browser microphone and camera. The actual MacBook microphone and
+camera tracks were live. Outgoing audio packets advanced (39 to 136 in the
+saved samples), with a later remote RTCP report showing about 44 ms round trip.
+Outgoing video frames and bytes remained zero, so the combined transmission
+assertion correctly failed. The current native host has no incoming-video
+renderer/subscription; this recording does not establish that a laptop camera
+preview should appear in the miniapp. It also does not qualify audible return
+audio. The browser snapshot contains incoming glasses video (290 decoded frames)
+but no incoming-audio RTP row; this needs an audio stimulus and native PCM
+observability before drawing a microphone failure conclusion.
+
+Attempt 9's native recording has 25 steps / 133.395 seconds; its browser recording
+has 13 chapters / 41.32 seconds, 51.5 ms calibration uncertainty. Both new native
+runs passed independent artifact/frame-liveness checks. Both exact Graph
+meetings were retired (DELETE 204 / GET 404), hotspots stopped, ADB restored, and
+the user's input/output/system audio UIDs preserved. Neither logged a Local
+Network denial. Browser departure was positively verified in attempt 9;
+attempt 8 retains its original context-closed-state-unverified result after the
+launcher comparison, alongside verified native departure and Graph cleanup.
+
+Validation: 38 offline harness tests / 120 assertions and TypeScript passed;
+nine hardware/Chrome tests skip in the ordinary offline suite. The opt-in real
+Chrome loopback diagnostic test passed separately (four assertions, synthetic
+canvas only, no meeting or hardware capture). Keep the last authorized stream
+for a diagnostic that can resolve a remaining question; do not repeat unchanged
+failures or claim full duplex qualification.
