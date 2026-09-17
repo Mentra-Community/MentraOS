@@ -33,7 +33,7 @@ LocalMiniappRuntime (MEETING_* requests, MEETING_STATE fanout)
   └─ SoftapCallSession            (was SoftapCallTransport; open → prepareAgent → start → … → close → leave)
        ├─ AcsMeetingService       (meeting, audio, state)
        ├─ AcsMediaAdapter         (attach: ACS join if not yet joined, then media; detach: media only)
-       └─ GlassesPhoneStreamService.open({owner: "call", adapter: AcsMediaAdapter, ...})
+       └─ phoneStreamCoordinator.startLocal(pkg, {adapter: AcsMediaAdapter, ...}) → GlassesPhoneStreamService (glasses-media)
              └─ GlassesHotspotService.acquire({consumer: "video_streaming", operationId: "call:<id>"})
 ```
 

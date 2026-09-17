@@ -110,7 +110,10 @@ phone.
    companion spec plus the existing `startStream` with host-only ICE already describe the
    glasses side of the path; the phone-side receiver is app code (glasses-media) and stays so.
 
-## TypeScript API (engine, `mobile/modules/engine/src/services/streaming/`)
+## TypeScript API (`@mentra/glasses-media`, `mobile/modules/glasses-media/src/`)
+
+Per `2026-09-16-hotspot-streaming-public-surface-design.md` the service ships in the
+glasses-media package with its packaged adapters, and the engine re-exports it.
 
 ```ts
 export type StreamOwner = "call" | "managed_whip" | "local"
@@ -268,9 +271,10 @@ Adapters:
 
 ## SDK surface
 
-Everything in this section is the last migration step and ships only after the streaming
-service exists and Mentra Call and managed WHIP run on it. It is recorded here so the service
-API is designed with it in mind, not to be built alongside it.
+Superseded by `2026-09-16-hotspot-streaming-public-surface-design.md` for the Bluetooth SDK,
+glasses-media and engine surfaces. The Miniapp SDK `route` option below and the
+`stream_status.route` field stand as specified. The Miniapp SDK part remains the last migration
+step.
 
 ### Miniapp SDK (`mobile/modules/miniapp/src/modules/stream.ts`)
 
@@ -310,24 +314,10 @@ option, documents that managed `whip` already runs over the phone, and adds `"rt
 
 ### Bluetooth SDK
 
-No new streaming method. The path is fully expressible with public pieces once the hotspot
-session API from the companion spec lands:
-
-1. `glassesHotspotService.acquire(...)` (or the raw `setHotspotState` and
-   `hotspot_status_change` pair for integrators on older versions);
-2. a WHIP receiver on the phone bound to the hotspot address (integrator-provided; glasses-media
-   is the Mentra App's and is not part of the SDK);
-3. `startStream({streamUrl: "http://<phoneIpv4>:<port>/whip", ice: {stun: ""}, ...})`, which
-   the glasses already treat as a hotspot route (`StreamCommandHandler` checks
-   `HotspotNetworkUtils.isEndpointOnActiveHotspot`).
-
-Two additive changes:
-
-- `StreamStatusEvent` gains `route?: "glasses_wifi" | "phone_hotspot"`, set by the glasses from
-  the same route detection, so an integrator can see which path a stream took.
-- `mintlify-docs/bluetooth-sdk/camera-streaming.mdx` gains a "Streaming to the phone over the
-  glasses hotspot" section with the three steps above and the host-only ICE note that today
-  lives only in the `StreamIceConfig` doc comment.
+See the public surface spec: `@mentra/bluetooth-sdk/hotspot` for sessions and
+`@mentra/glasses-media` for the stream service and adapters. `StreamStatusEvent` gains
+`route?: "glasses_wifi" | "phone_hotspot"`, set by the glasses from their existing route
+detection.
 
 ### ASG
 

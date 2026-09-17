@@ -127,7 +127,11 @@ consumers; the streaming service is.
     rebind). The core exposes a generation-validated `bindLocalListener` that serializes with
     `detach`/`release` and restores the pin in `finally`; consumers never touch the process route.
 
-## TypeScript API (engine, `mobile/modules/engine/src/services/hotspot/`)
+## TypeScript API (`@mentra/bluetooth-sdk/hotspot`, `mobile/modules/bluetooth-sdk/src/hotspot/`)
+
+Per `2026-09-16-hotspot-streaming-public-surface-design.md` the service ships in the Bluetooth
+SDK and the engine re-exports it. At the SDK boundary `consumer` is an open `purpose: string`;
+the engine reserves the three values below.
 
 ```ts
 export type HotspotConsumer = "gallery_sync" | "hotspot_ota" | "video_streaming"
