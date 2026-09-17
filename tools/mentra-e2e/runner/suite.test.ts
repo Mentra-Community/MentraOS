@@ -55,3 +55,17 @@ test("an explicit terminal error wins over a stale success control without waiti
   ).rejects.toThrow("Daily call quota exhausted")
   expect(reads).toBe(1)
 })
+
+test("cancellation interrupts sustained observation even while the success control remains visible", async () => {
+  const abort = new AbortController()
+  let reads = 0
+  await expect(
+    waitFor(checks, 5000, 1000, async () => {
+      reads++
+      if (reads === 2) abort.abort(new Error("Cancelled by operator"))
+      abort.signal.throwIfAborted()
+      return state(true)
+    }),
+  ).rejects.toThrow("Cancelled by operator")
+  expect(reads).toBe(2)
+})

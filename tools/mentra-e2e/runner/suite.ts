@@ -11,6 +11,7 @@ export interface Context {
   email: string
   password: string
   fixture: string
+  signal?: AbortSignal
 }
 export interface Step {
   id: string
@@ -88,6 +89,7 @@ export async function executeSteps(steps: Step[], context: Context, report: Repo
     let videoStart: number | undefined
     let focusBefore: string | undefined
     try {
+      context.signal?.throwIfAborted()
       videoStart = await report.video?.mark()
       state = await snapshot()
       checkSize(state)
@@ -100,7 +102,10 @@ export async function executeSteps(steps: Step[], context: Context, report: Repo
         typeof step.checks === "function" ? step.checks(context) : step.checks,
         step.timeoutMs,
         step.stableForMs,
-        snapshot,
+        async () => {
+          context.signal?.throwIfAborted()
+          return snapshot()
+        },
         step.failOn,
       )
       checkSize(state)

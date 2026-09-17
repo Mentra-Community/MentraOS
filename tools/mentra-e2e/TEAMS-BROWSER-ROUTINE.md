@@ -109,3 +109,8 @@ The user stopped live streaming for the day. Neither quota configuration changes
 nor additional live qualification were performed afterward. See
 [MENTRA-CALL-ROUTINE.md](MENTRA-CALL-ROUTINE.md) for the exact runs and remaining
 permission, audio and hardware gates.
+
+The [connected replay controller](CONNECTED-CALL-REPLAY.md) supplies this
+companion's exact generated meeting link, handles named admission and checks the
+native roster after departure. Its portable extraction is offline-tested but
+has not yet passed an end-to-end live run.

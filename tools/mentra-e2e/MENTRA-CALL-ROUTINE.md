@@ -259,3 +259,24 @@ passed. Reprocessing the saved browser WebM produced a verified 16.72-second MP4
 eight calibrated chapters and 49 ms uncertainty. The original failing call report
 is unchanged. Live readiness/rejoin, return audio and permission persistence
 remain unqualified.
+
+## Portable controller extraction (offline)
+
+The [connected replay](CONNECTED-CALL-REPLAY.md) replaces the private script
+with checked-in source and a validated per-machine fixture. It resolves the
+current USB transport, pins hardware and boot identity, checks the signed build,
+and coordinates native steps with the recorded browser companion under one run
+folder. Meeting retirement now additionally requires the exact captured join
+link, so a nearby meeting with the same subject cannot establish ownership.
+Missing UI evidence fails the report without skipping owned resource cleanup.
+
+This extraction was performed with streams stopped. Configuration parsing,
+identity rejection, bounded child shutdown, evidence-failure handling and meeting
+ownership have offline tests. They do not qualify live replay, permission
+persistence, return audio, or native iPhone hotspot association. The historical
+failed and assisted runs above retain their original status.
+
+Extraction validation: 35 offline tests passed (103 assertions), with eight
+hardware/keep-awake checks skipped; TypeScript passed. Both the native driver
+and separate lease launcher compiled, and fixture-only validation passed. No
+live call, recorder, browser or device command was run for this validation.

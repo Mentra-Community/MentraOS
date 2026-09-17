@@ -1,0 +1,140 @@
+# Connected Mentra Call replay — experimental
+
+This checked-in controller replaces the machine-specific discovery script. It
+coordinates the real Mentra App, original USB-identified glasses, Ethernet,
+glasses hotspot, and the dedicated Teams browser companion. It records English
+steps, screenshots, accessibility snapshots and continuous native/browser video
+under one run directory without calling a model.
+
+The current automated scope is admission, incoming glasses video, roster and
+cleanup. The full call goal additionally requires laptop microphone/camera,
+return audio, rejoin and physical iPhone qualification. Those checks are still
+unqualified and must not be inferred from this controller's result. The portable
+controller has not yet completed a live qualification; streams were stopped at
+the user's request before this extraction.
+
+## Prepare a machine-specific fixture
+
+Follow [SETUP.md](SETUP.md) and [TEAMS-BROWSER-ROUTINE.md](TEAMS-BROWSER-ROUTINE.md).
+Required local commands are Bun, Xcode's `xcrun`, ADB, `blueutil`,
+`SwitchAudioSource`, FFmpeg/ffprobe, Google Chrome and authenticated Porter.
+The glasses build must support root ADB and its existing hotspot command.
+
+Copy `call-fixture.example.json` to a private location outside Git and replace
+every placeholder using the actual machine and authorized glasses. Supply the
+USB serial and topology, eMMC CID, exact MTK version, slot, Bluetooth address,
+Wi-Fi/Ethernet interfaces and the authorized Call backend's Porter coordinates.
+Never copy an ADB transport number: it changes. The runner resolves it from the
+unique serial/topology, verifies the CID/version/slot, then pins the current boot
+for the duration of each run. A reboot or replacement fails the run.
+
+The fixture contains no passwords or tokens. The current signed test build must
+already be installed and open at Mentra home with no miniapp open. Supply its
+`installed-build.json`; the runner verifies the installed Apple signature and checks native and JavaScript hashes before
+changing hardware or launching anything. It never installs a different build.
+The build must explicitly contain the Mac host-verified test adapter. Native
+iPhone hotspot association is not covered by that adapter.
+
+Read the procedure or validate configuration without contacting a device:
+
+```sh
+bun tools/mentra-e2e/connected-call.ts describe
+bun tools/mentra-e2e/connected-call.ts validate \
+  --fixture /absolute/private/call-fixture.json \
+  --build-manifest "$HOME/Applications/Mentra E2E/installed-build.json"
+```
+
+Validation checks the file shapes only. It does not claim current hardware,
+signing, quota, permissions or network readiness. When live testing is authorized,
+run the exact checkout whose source is being qualified:
+
+```sh
+bun tools/mentra-e2e/connected-call.ts run \
+  --fixture /absolute/private/call-fixture.json \
+  --build-manifest "$HOME/Applications/Mentra E2E/installed-build.json"
+```
+
+The default command is `describe`, so an omitted subcommand cannot start a call.
+Do not run while live testing is paused. The controller never changes quota
+configuration, clears privacy grants, accepts system dialogs or selects audio
+devices. Ensure the test account has quota and complete normal permissions first.
+
+## English routine
+
+1. Verify the running signed-build manifest and Mentra home. Acquire the test
+   lock and start the native recording.
+2. Match the exact USB serial/topology, eMMC CID, installed MTK version and boot
+   slot. Pin the current boot ID, and require a device log linking that serial
+   to the expected Bluetooth address.
+3. Verify Ethernet is the default internet route and can reach Teams. Record
+   Wi-Fi state. Refuse to take over an already active glasses hotspot.
+4. Verify the expected Bluetooth device is connected. Record available audio
+   devices and the user's selected input/output/system UIDs without changing
+   them. A Bluetooth connection alone does not qualify Classic speaker audio.
+5. Start the glasses hotspot through its existing command. Read its credentials
+   locally, redact the password, and join with the configured Mac Wi-Fi adapter.
+6. Verify the Mac's subnet and Wi-Fi route, read the glasses health endpoint and
+   match its gateway MAC to the exact USB-identified device. Recheck Ethernet.
+7. Start a bounded packet capture on the glasses, scoped to this Mac's address.
+   Retain the process identity so cleanup cannot stop a different capture.
+8. Launch the unchanged test app with the freshly verified, short-lived Mac
+   network lease. Keep it in the background and verify its executable hash.
+9. Open Mentra Call. Acknowledge only its known **Glasses audio disconnected**
+   warning with **Ignore** for this declared video/roster test. Do not handle
+   operating-system dialogs.
+10. Inspect Call settings: **Name in calls** is **Mentra Live**, **Direct link**
+    is enabled and **Chat TTS** is disabled. Return and open **New Call**.
+11. Choose **Create & Join** once. Require an active call for 15 seconds within
+    the bounded join deadline. A call-limit or camera-start error fails
+    immediately, with no automatic retry.
+12. Open the meeting QR dialog, capture its unique Teams link privately, then
+    close it. Open Participants and require zero other participants.
+13. Start the dedicated browser companion with that exact link. When it reports
+    the lobby, admit only **Mentra E2E Observer** through the native named button.
+    Require one admitted participant with no waiting label.
+14. Require the browser to verify a decoded first frame, advancing glasses video,
+    calibrated continuous recording and successful departure. Keep laptop camera
+    and microphone capture off in this observer routine.
+15. Verify the native participant sheet returns to **0 participants** and
+    **Nobody else is in the call yet.** Close the sheet and leave the call.
+16. Close only the miniapp this run opened. Relaunch the unchanged app without
+    the temporary network lease, then stop the owned hotspot and remove only a
+    Wi-Fi preference created by this run.
+17. Check audio defaults for unexpected changes without restoring or overriding
+    the user's selections. Stop owned loggers/capture, copy and hash-check the
+    PCAP, remove only that copied remote file, and restore ADB to shell.
+18. Independently retire the owned Graph meeting using the captured join link,
+    exact ID, subject and creation interval. Require DELETE 204 followed by
+    GET 404. Finalize recordings and run status, then release the lock and
+    scoped keep-awake assertion.
+
+Ctrl-C requests cleanup rather than starting another attempt. Cleanup actions
+still run if app screenshots are unavailable, while missing evidence fails the
+run. Owned child processes receive a bounded graceful shutdown; a forced stop
+is a failure and does not qualify browser departure or recording finalization.
+The controller also bounds the browser companion to four minutes. A failed command,
+recording, permission check or cleanup produces failure; a successful command
+cannot override a stale screenshot. Every performed step retains its actual
+English description and observed result in the report.
+
+## Ownership and evidence
+
+Each run is under `.test-results/mentra-e2e/<timestamp>-call-incoming-video-*`.
+Native `routine.mp4`, chapters and screenshots are at the run root; continuous
+browser evidence is in `browser/`; private setup logs, fixture, helper/source
+hashes, packet capture and cleanup proofs are in `setup/`. Run from the recorded
+repository revision; copied source files in evidence document provenance and
+are not an independent installed package.
+
+Meeting retirement is an administrative test cleanup, separate from the app's
+Leave action. It reads authorized Porter configuration only into memory and
+does not log credentials. It rejects ambiguous logs and requires the Graph
+meeting to match the exact captured join link. If creation fails before the
+link is captured, it records a cleanup failure for operator review rather than
+deleting a meeting based only on a nearby timestamp. This failure path still
+needs app-owned meeting retirement qualification.
+
+Any observed Local Network denial excludes unattended qualification. Human
+interventions must also be recorded; absence of a denial alone does not prove
+permission persistence. A successful report covers only its declared scope.
+The earlier manually assisted and failed diagnostics remain unchanged.
