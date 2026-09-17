@@ -439,45 +439,17 @@ jobs:
             // Read the APK file
             const apkData = fs.readFileSync(apkPath);
 
-            // Upload the APK.
-            //
-            // GitHub intermittently answers 500 "Error saving asset" on these
-            // uploads, and the larger the APK the more often it does. This step
-            // is required — the mobile APK pins a manifest pointing at this
-            // asset — so retry rather than fail the build. A partial asset can
-            // survive a failed attempt, so clear any leftover before retrying.
+            // Upload the APK
             console.log(`Uploading ${apkName} (${apkData.length} bytes)...`);
-            const uploadAttempts = 4;
-            for (let attempt = 1; attempt <= uploadAttempts; attempt++) {
-              try {
-                await github.rest.repos.uploadReleaseAsset({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  release_id: release.data.id,
-                  name: apkName,
-                  data: apkData
-                });
-                console.log(`Successfully uploaded ${apkName}`);
-                break;
-              } catch (error) {
-                if (attempt === uploadAttempts) throw error;
-                console.log(`Upload attempt ${attempt} failed (${error.status ?? 'no status'}): ${error.message}`);
-                const current = await github.rest.repos.getReleaseByTag({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  tag: 'pr-builds'
-                });
-                const stale = current.data.assets.find(asset => asset.name === apkName);
-                if (stale) {
-                  await github.rest.repos.deleteReleaseAsset({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    asset_id: stale.id
-                  });
-                }
-                await new Promise(resolve => setTimeout(resolve, attempt * 15000));
-              }
-            }
+            await github.rest.repos.uploadReleaseAsset({
+              owner: context.repo.owner,
+              repo: context.repo.repo,
+              release_id: release.data.id,
+              name: apkName,
+              data: apkData
+            });
+
+            console.log(`Successfully uploaded ${apkName}`);
 
       - name: Publish the OTA manifest for this build
         # Runs after the APK it points at is on the release; push and dispatch
