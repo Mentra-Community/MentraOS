@@ -738,11 +738,6 @@ class MantleManager {
     })
     this.iosCallVisibility = visibility
     visibility.applyRestriction()
-    this.subs.push({
-      remove: engine.settings.onChanged(SETTINGS.show_mentra_call_ios.key, () => {
-        void visibility.reconcile().catch((error) => this.reportMiniappVisibilityError(error))
-      }),
-    })
   }
 
   private reportMiniappVisibilityError(error: unknown): void {
@@ -810,6 +805,15 @@ class MantleManager {
     // Remove old event subscriptions
     this.subs.forEach((sub) => sub.remove())
     this.subs = []
+
+    const callVisibility = this.iosCallVisibility
+    if (callVisibility) {
+      this.subs.push({
+        remove: engine.settings.onChanged(SETTINGS.show_mentra_call_ios.key, () => {
+          void callVisibility.reconcile().catch((error) => this.reportMiniappVisibilityError(error))
+        }),
+      })
+    }
 
     // LocalDisplayManager arbitrates foreground miniapp frames against
     // temporary background frames (notably phone notifications). Keep its

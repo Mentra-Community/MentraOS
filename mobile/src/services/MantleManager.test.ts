@@ -631,4 +631,41 @@ describe("MantleManager", () => {
       params: {returnToMiniapp: "com.mentra.livestreamer"},
     })
   })
+
+  it("keeps the iOS Call listener after normal subscription setup and replaces it cleanly", async () => {
+    const originalPlatform = Platform.OS
+    const originalOverride = process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS
+    Object.defineProperty(Platform, "OS", {configurable: true, value: "ios"})
+    delete process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS
+    const instance = new (mantle.constructor as new () => {
+      setupIosCallVisibility: () => void
+      setupSubscriptions: () => Promise<void>
+      installBundledMiniapps: (packageName?: string) => Promise<void>
+      subs: Array<{remove: () => void}>
+      iosCallVisibility: {dispose: () => void}
+    })()
+    const install = jest.fn(async () => {})
+    instance.installBundledMiniapps = install
+    try {
+      await engine.settings.set(SETTINGS.show_mentra_call_ios.key, false)
+      instance.setupIosCallVisibility()
+      await instance.setupSubscriptions()
+      await engine.settings.set(SETTINGS.show_mentra_call_ios.key, true)
+      await waitFor(() => expect(install).toHaveBeenCalledWith("com.mentra.call"))
+      await waitFor(() => expect(engine.miniapps.setHiddenStatus).toHaveBeenLastCalledWith("com.mentra.call", false))
+      await instance.setupSubscriptions()
+      await engine.settings.set(SETTINGS.show_mentra_call_ios.key, false)
+      expect(engine.miniapps.setHiddenStatus).toHaveBeenLastCalledWith("com.mentra.call", true)
+      install.mockClear()
+      await engine.settings.set(SETTINGS.show_mentra_call_ios.key, true)
+      await waitFor(() => expect(install).toHaveBeenCalledTimes(1))
+      await waitFor(() => expect(engine.miniapps.setHiddenStatus).toHaveBeenLastCalledWith("com.mentra.call", false))
+    } finally {
+      instance.iosCallVisibility.dispose()
+      instance.subs.forEach((sub) => sub.remove())
+      Object.defineProperty(Platform, "OS", {configurable: true, value: originalPlatform})
+      if (originalOverride === undefined) delete process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS
+      else process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS = originalOverride
+    }
+  })
 })
