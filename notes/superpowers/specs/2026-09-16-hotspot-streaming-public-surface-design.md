@@ -129,7 +129,9 @@ including Internet artifact staging before any hotspot session exists, and the p
 design requires supported SDK imports. Only its `otaLocalNetwork` half (`connect`, `request`,
 `download`, `cancel`, `disconnect`, `onNetworkLost`) becomes a deprecated facade over a hotspot
 session for one release and is then removed together with the engine's `localNetworkTransport`.
-`otaServer.start` takes the phone address from a session binding, as the hotspot spec says.
+`otaServer.start` takes the session binding's `NetworkRef` and creates its listener through the
+SDK core's `bindLocalListener`, as the hotspot spec says, so it is reachable from the glasses
+even while another consumer's uplink lease pins the process to cellular.
 
 ### `@mentra/bluetooth-sdk/streaming`: the publisher slot
 
@@ -339,6 +341,10 @@ steps:
 - **Native view lifecycle.** `GlassesStreamView` must survive a media generation change without
   a black flash; the render adapter reattaches on the new generation before the old surface is
   released.
+- **OTA listener under a foreign pin.** Tests: Call exhausts with its lease still held, OTA
+  acquires and its manifest server is reachable from the glasses; bind failure restores the
+  pin; a release racing the bind is rejected with `stale_generation`; ACS stays connected
+  throughout.
 - **Uplink release timing.** `UplinkLease` must reproduce `InternetHold`'s default-route
   check on final release; a premature unpin while a leftover AP is still the default strands
   the call. Tests: exhaustion with an unconfirmed hotspot-off, then gallery or OTA acquiring

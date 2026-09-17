@@ -358,7 +358,15 @@ The cellular pin that `AcsMeetingModule` applies and lifts around listener bindi
 `bindLocalListener` / `Lease.bindListener`; consumers stop touching the process route. Tests:
 initial bind, recovery rebind, bind failure restores the pin, bind racing a concurrent release
 or detach is rejected with `stale_generation`.
-`MentraOtaServer.start` takes the phone address from the binding instead of polling
+`MentraOtaServer.start` takes a `NetworkRef` and creates its listener through
+`bindLocalListener` on that generation, never a plain `ServerSocket`: a socket bound while the
+process is pinned to cellular by a surviving uplink lease (an audio-only Mentra Call after
+stream exhaustion) accepts the bind but receives no glasses SYNs, which `AcsMeetingModule`
+documents today. The helper lifts the pin only for the bind and restores it in `finally`,
+serialized with uplink changes, `detach` and `release`, whether or not the OTA session itself
+requested an uplink. The server endpoint stays immutable across the ASG APK restart because
+the listener is created once per generation and the OTA restore fails explicitly on an address
+change. It takes the phone address from the binding instead of polling
 `waitForWifiAddress`.
 
 ## Consumers
@@ -366,7 +374,7 @@ or detach is rejected with `stale_generation`.
 | Consumer | Sequence |
 |---|---|
 | Gallery sync | `acquire({consumer: "gallery_sync", uplink: "none", recovery: auto, gatewayProbe: "required", beforeJoin: explainOnce})` → `start(client)`; `restore`: fetch manifest, continue unverified files with `fetch/download(ref)`; `quiesce`: cancel transfers, keep the ledger; `close`; `release`. Requests are not replayed transparently; gallery keeps ownership of acknowledgements and integrity. The two-minute queue age guard stays because the glasses idle-disable the AP. |
-| Hotspot OTA | Download artifacts over the normal network first → `acquire({consumer: "hotspot_ota", uplink: "none", recovery: auto, gatewayProbe: "required"})` → `restore` on `initial`: start `otaServer` bound to `binding.phoneIpv4`, publish the immutable manifest; `ota_start` once; on `rejoin` with a different `phoneIpv4`, throw so the restore fails explicitly and the coordinator reconciles; the ASG APK restart does not close the server or cycle the AP; `release` after the outcome is known. |
+| Hotspot OTA | Download artifacts over the normal network first → `acquire({consumer: "hotspot_ota", uplink: "none", recovery: auto, gatewayProbe: "required"})` → `restore` on `initial`: start `otaServer` with the binding's `NetworkRef`, whose listener is created through `bindLocalListener` (pin-safe under a surviving Call uplink lease), publish the immutable manifest; `ota_start` once; on `rejoin` with a different `phoneIpv4`, throw so the restore fails explicitly and the coordinator reconciles; the ASG APK restart does not close the server or cycle the AP; `release` after the outcome is known. |
 | Video streaming (Mentra Call, managed WHIP, direct WHIP over the phone) | The streaming service is the hotspot client: `acquire({consumer: "video_streaming", operationId: "call:<id>", uplink: "cellular", recovery: {auto, 60 s return, 45 s rebuild, 3 attempts}, gatewayProbe: "advisory"})` (Mentra Call prepares its ACS agent between `acquire`, which pins cellular, and `start`) → `restore` on the initial join and on every rejoin: `Lease.bindListener` on `binding.phoneIpv4`, start the receiver, hand the `Network` to libwebrtc, then return, so the hotspot is `ready` once the network-bound setup is up; adapter attach, the glasses publish, the first frame and media retries run in the stream lifecycle afterwards, bounded by `recovery.rebuildDeadlineAt` from the same `RecoveryContext`, and never fail this restore; `quiesce`: stop local media only; `close`: stop the receiver. Destination adapters (ACS sink, Cloudflare republisher) attach to decoded media by `MediaRef` and never touch this session. See the companion streaming spec for the full contract. |
 
 ## Migration in small PRs
