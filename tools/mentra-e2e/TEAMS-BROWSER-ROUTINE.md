@@ -41,6 +41,10 @@ that a Microsoft account is required. A September 17 Android-owned meeting
 reached guest prejoin and passed laptop device selection without account
 creation. Do not close a human's active verification window unexpectedly.
 
+Prejoin is not admission. The Android September 17 run reached the lobby even though Graph returned `lobbyBypassSettings.scope=everyone`. Microsoft documents a separate **Anonymous users and dial-in callers can start a meeting** policy: when off, anonymous attendees can wait for a verified participant even with Everyone selected. See [Microsoft's lobby policy documentation](https://learn.microsoft.com/en-us/microsoftteams/who-can-bypass-meeting-lobby). The exact tenant policy was not read in that run, so this is a possible explanation, not a confirmed diagnosis.
+
+Check the native `manageLobby` capability before offering admission. A missing native method and a server-side denial are different failures; adding the method cannot grant Teams permissions. Do not claim Android calls generally fail from an anonymous guest lobby failure, and do not change tenant policy to make a test pass. Record whether the peer joined anonymously, with email verification, or with an existing account.
+
 ```sh
 bun tools/mentra-e2e/teams-browser.ts setup --meeting-url-file /absolute/private/meeting-url.txt
 ```
@@ -139,9 +143,7 @@ glasses video and exact owned cleanup without model calls or email codes.
 These are incoming-video passes; full duplex remains unqualified. Earlier
 failed runs are retained unchanged.
 
-The user authorized ten further stream attempts and the test account's quota
-exemption. That private ledger now records nine attempts,
-including failures. One remains. This cap is separate from the backend quota.
+The private attempt ledger is the authority for the user's live-stream allowance, including failed starts. Reserve each attempt before creating or rejoining a glasses stream. Backend quota exemption does not extend that allowance.
 
 The connected controller can also request `--rejoin` through its own
 `--browser-rejoin` flag. This mode requires the native controller's departure
