@@ -322,3 +322,48 @@ The operator retired only the exact owned test meeting (Graph DELETE204/GET404).
 The original controller briefly restored its initial audio defaults; the user’s
 latest selections were immediately reapplied and verified. The next prepared
 controller only inspects devices and never selects or restores audio routes.
+
+
+## Rebuilt iOS roster and lobby-state follow-up — September 17
+
+Build `302005751` (native `e5a24789…`, JS `f517fad5…`) passed the 13-step
+paired UI replay in 11.873333 seconds, with zero model calls and verified
+screenshots, AX, chapters and video liveness. The real-call diagnostic
+`2026-09-17T03-34-34-888Z-call-roster-check-5bc264` then recorded 27 passing
+Mentra/network steps across 1548.888333 seconds. Its tested scope is roster
+arrival/departure and cleanup, not browser admission or duplex media.
+
+Both anonymous and email-verified browser guests appeared by name in the iOS
+roster, changing 0 → 1 on lobby arrival and 1 → 0 on departure. The browser
+remained in the Teams lobby. The screenshot below captures the native roster
+fix but also exposes a separate miniapp bug: it labels the waiting guest
+“in call.” It must not be used as evidence of admission.
+
+![Lobby guest visible in the iOS roster before the label correction](../assets/mentra-call/ios-participant-roster.png)
+
+Call 2.1.15 preserves native admission state into the UI. The strip now reports
+“0 in call · 1 waiting in lobby,” and the participant row says “Waiting in
+lobby.” Local external commit `3dc879b` adds this correction on top of the
+calendar fix. All 473 miniapp tests (1,348 assertions), including the guest
+lobby/admission/departure regression, and miniapp TypeScript pass. The production
+backend ZIP is SHA-256
+`2c5d3425d66373f48de7c508533308c908e05ed5a38964be57dc6a2d937c72e5`.
+Installed UI qualification of 2.1.15 is pending. External origin/main remains
+`6ab859d`; the current account still lacks push permission. Keep this PR draft
+until the external commits are published and the remaining device checks pass.
+
+A stale Teams guest sign-in failed inside Microsoft's page. Signing out through
+normal Teams UI and retrying reached email verification; the user entered the
+code successfully. The verified guest still waited in the lobby. Reloading the
+full Teams web app subsequently stalled on its loader. These browser failures
+remain separate from the native roster success. Do not change tenant policy or
+infer admission from a participant count. The standalone browser routine needs
+a persistent dedicated profile plus a sign-in-required checkpoint; no promise
+is made that Microsoft will never request another verification code.
+
+Cleanup passed: browser left its lobby, Mentra showed “You left the call,” the
+owned hotspot stopped, the scoped capture was copied and hash-verified, ADB
+returned to uid2000, and the exact meeting was retired (DELETE204 / GET404).
+The controller performed zero audio routing mutations; all user-selected audio
+device UIDs matched before and after. The test-only Mac network adapter remains
+explicitly declared. Return audio and native iPhone association remain unqualified.
