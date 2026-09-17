@@ -5,7 +5,12 @@ import {parseCallBuild, parseCallFixture} from "./runner/call-fixture"
 const {positionals, values} = parseArgs({
   args: process.argv.slice(2),
   allowPositionals: true,
-  options: {"fixture": {type: "string"}, "build-manifest": {type: "string"}, "help": {type: "boolean"}},
+  options: {
+    "fixture": {type: "string"},
+    "build-manifest": {type: "string"},
+    "help": {type: "boolean"},
+    "browser-rejoin": {type: "boolean", default: false},
+  },
 })
 const mode = positionals[0] ?? "describe"
 if (values.help || mode === "describe") {
@@ -26,7 +31,7 @@ if (values.help || mode === "describe") {
     )
   } else {
     const {runConnectedCall} = await import("./runner/call-connected")
-    const result = await runConnectedCall(fixture, manifestPath)
+    const result = await runConnectedCall(fixture, manifestPath, {browserRejoin: values["browser-rejoin"]})
     console.log(JSON.stringify(result))
     if (result.status !== "passed") process.exitCode = 1
   }

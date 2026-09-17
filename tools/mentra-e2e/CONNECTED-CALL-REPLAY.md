@@ -145,3 +145,21 @@ Any observed Local Network denial excludes unattended qualification. Human
 interventions must also be recorded; absence of a denial alone does not prove
 permission persistence. A successful report covers only its declared scope.
 The earlier manually assisted and failed diagnostics remain unchanged.
+
+
+## Browser rejoin extension
+
+Add `--browser-rejoin` to `connected-call.ts run` to leave and rejoin the browser
+within the same owned meeting. The glasses stream continues, so this remains
+one stream attempt. After the first video check, the browser leaves and waits
+for an acknowledgement over its owned stdin pipe. The native controller must
+verify zero participants before issuing that acknowledgement. The browser
+then uses **Rejoin**, completes prejoin if shown, waits for admission, verifies
+camera/microphone capture remain off, and checks a new decoded video baseline
+and advancing playback. The native roster must return to one participant.
+
+The extension still performs normal final browser/native departure and exact
+meeting retirement. It does not qualify restarting the native glasses stream,
+return audio or laptop capture. `rejoinQualified` requires actual second video
+reception, not merely a connected UI. A missing acknowledgement times out and
+retains failure instead of guessing that the native roster recovered.

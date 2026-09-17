@@ -141,3 +141,9 @@ The [connected replay controller](CONNECTED-CALL-REPLAY.md) supplies this
 companion's exact generated meeting link, handles named admission and checks the
 native roster after departure. Its portable extraction is offline-tested but
 has not yet passed an end-to-end live run.
+
+The connected controller can also request `--rejoin` through its own
+`--browser-rejoin` flag. This mode requires the native controller's departure
+acknowledgement on stdin; do not run the standalone flag without that controller.
+The browser records both admissions and separate first-frame/progression
+samples. See [CONNECTED-CALL-REPLAY.md](CONNECTED-CALL-REPLAY.md).

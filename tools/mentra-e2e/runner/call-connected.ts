@@ -12,7 +12,11 @@ import {join} from "node:path"
 import {command, snapshot, root, type Doctor} from "./driver"
 import {acquireLock, Report} from "./report"
 
-export async function runConnectedCall(fixture: CallFixture, buildManifestPath: string) {
+export async function runConnectedCall(
+  fixture: CallFixture,
+  buildManifestPath: string,
+  options: {browserRejoin?: boolean} = {},
+) {
   // Detect an unprovisioned worktree before opening a call or changing hardware.
   await import("playwright-core").catch(() => {
     throw new Error("Browser dependency is unavailable; run bun install --frozen-lockfile in tools/mentra-e2e")
@@ -607,7 +611,8 @@ export async function runConnectedCall(fixture: CallFixture, buildManifestPath: 
                   role: "AXStaticText",
                   description: "Couldn’t reach Mentra Call. Check this phone’s internet connection and try again.",
                 },
-                message: "The app could not reach the Mentra Call backend; inspect the recorded request failure before retrying.",
+                message:
+                  "The app could not reach the Mentra Call backend; inspect the recorded request failure before retrying.",
               },
               {
                 selector: {role: "AXHeading", description: "Call limit reached"},
@@ -695,8 +700,9 @@ export async function runConnectedCall(fixture: CallFixture, buildManifestPath: 
         browserFolder,
         "--admission-seconds",
         "90",
+        ...(options.browserRejoin ? ["--rejoin"] : []),
       ],
-      {stdout: "pipe", stderr: Bun.file(join(here, "browser-stderr.log"))},
+      {stdin: "pipe", stdout: "pipe", stderr: Bun.file(join(here, "browser-stderr.log"))},
     ))
     const stopBrowser = () => {
       browserStop ??= stopOwnedProcess(child).catch((error) => cleanupFailure("browser-stop-error.json", error))
@@ -714,10 +720,29 @@ export async function runConnectedCall(fixture: CallFixture, buildManifestPath: 
       await appendFile(join(here, "browser-events.log"), line + "\n", {mode: 0o600})
       if (!line.startsWith("MENTRA_BROWSER_EVENT ")) continue
       const event = JSON.parse(line.slice("MENTRA_BROWSER_EVENT ".length))
+      if (event.id === "browser-left" && options.browserRejoin) {
+        await ui([
+          {
+            id: "CALL-DEPARTURE-BEFORE-REJOIN",
+            instruction: "Verify the browser guest has left before allowing it to rejoin.",
+            expected: "The participant sheet remains at zero other participants.",
+            checks: [
+              {selector: {role: "AXHeading", description: "0 participants"}},
+              {selector: {description: "Nobody else is in the call yet."}},
+            ],
+            timeoutMs: 15000,
+            stableForMs: 1000,
+          },
+        ])
+        admitted = false
+        child.stdin.write("MENTRA_NATIVE_ACK browser-left\n")
+        await child.stdin.flush()
+      }
+      const rejoining = event.id.startsWith("rejoin-")
       if (event.phase === "lobby" && !admitted) {
         await ui([
           {
-            id: "CALL-ADMIT",
+            id: rejoining ? "CALL-READMIT" : "CALL-ADMIT",
             instruction: "Admit only the named Mentra E2E Observer from this replay.",
             expected: "The guest leaves the lobby through the capability-gated Admit control.",
             action: {op: "press", selector: {role: "AXButton", description: "Admit Mentra E2E Observer"}},
@@ -731,10 +756,10 @@ export async function runConnectedCall(fixture: CallFixture, buildManifestPath: 
         ])
         admitted = true
       }
-      if (event.id === "05-admitted")
+      if (["initial-admitted", "rejoin-admitted"].includes(event.id))
         await ui([
           {
-            id: "CALL-ROSTER-ADMITTED",
+            id: rejoining ? "CALL-ROSTER-READMITTED" : "CALL-ROSTER-ADMITTED",
             instruction: "Verify the admitted browser guest remains in the native roster.",
             expected: "One guest is listed without a waiting label.",
             checks: [
@@ -756,6 +781,8 @@ export async function runConnectedCall(fixture: CallFixture, buildManifestPath: 
       async () => {
         const result = await Bun.file(join(browserFolder, "result.json")).json()
         report.metadata.browserResult = result
+        if (options.browserRejoin && result.rejoinQualified !== true)
+          throw new Error("Browser rejoin was not qualified")
         if (browserCode !== 0 || result.status !== "incoming-video-passed" || result.cleanup !== "left")
           throw new Error("Browser companion failed; retained in browser/result.json")
       },

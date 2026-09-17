@@ -1,3 +1,4 @@
+import {createInterface} from "node:readline"
 import {parseArgs} from "node:util"
 import {chmod, lstat, mkdir, readFile, writeFile} from "node:fs/promises"
 import {homedir} from "node:os"
@@ -17,6 +18,7 @@ const {positionals, values} = parseArgs({
     "meeting-url-file": {type: "string"},
     "output": {type: "string"},
     "headful": {type: "boolean", default: false},
+    "rejoin": {type: "boolean", default: false},
     "name": {type: "string", default: "Mentra E2E Observer"},
     "remote-name": {type: "string", default: "Mentra Live"},
     "admission-seconds": {type: "string", default: "90"},
@@ -68,6 +70,26 @@ let page: Page | undefined
 let failure: string | undefined
 let cleanup = "not-needed"
 let joinRequested = false
+let rejoinQualified = false
+const nativeInput = values.rejoin && mode === "run" ? createInterface({input: process.stdin}) : undefined
+function nativeDepartureAcknowledged(publish: () => Promise<void>) {
+  return new Promise<void>((resolve, reject) => {
+    const finish = (error?: Error) => {
+      clearTimeout(timer)
+      nativeInput!.off("line", onLine)
+      nativeInput!.off("close", onClose)
+      error ? reject(error) : resolve()
+    }
+    const onLine = (line: string) => {
+      if (line === "MENTRA_NATIVE_ACK browser-left") finish()
+    }
+    const onClose = () => finish(new Error("Native controller closed before checking browser departure"))
+    const timer = setTimeout(() => finish(new Error("Native departure acknowledgement timed out")), 30000)
+    nativeInput!.on("line", onLine)
+    nativeInput!.once("close", onClose)
+    void publish().catch(finish)
+  })
+}
 process.once("SIGTERM", () => {
   failure ??= "Controller cancelled the browser routine"
   void context?.close().catch(() => {})
@@ -129,13 +151,14 @@ try {
     await page.waitForLoadState("networkidle", {timeout: 10000}).catch(() => {})
     await evidence("01-open", "Open the exact meeting link in the dedicated Teams browser profile.")
     if (mode === "run") {
-      if ((await teamsPhase(page)) === "signin") throw new Error("SIGN_IN_REQUIRED: run setup before retrying")
-      const browserChoice = page.getByRole("button", {name: "Join meeting from this browser", exact: true})
+      const runPage = page
+      if ((await teamsPhase(runPage)) === "signin") throw new Error("SIGN_IN_REQUIRED: run setup before retrying")
+      const browserChoice = runPage.getByRole("button", {name: "Join meeting from this browser", exact: true})
       if (await browserChoice.isVisible()) await browserChoice.click()
-      const withoutMedia = page.getByRole("button", {name: "Continue without audio or video", exact: true})
+      const withoutMedia = runPage.getByRole("button", {name: "Continue without audio or video", exact: true})
       await Promise.race([
         withoutMedia.waitFor({state: "visible", timeout: 30000}),
-        page.getByRole("button", {name: "Join now", exact: true}).waitFor({state: "visible", timeout: 30000}),
+        runPage.getByRole("button", {name: "Join now", exact: true}).waitFor({state: "visible", timeout: 30000}),
       ])
       if (await withoutMedia.isVisible()) {
         await evidence(
@@ -144,66 +167,113 @@ try {
         )
         await withoutMedia.click()
       }
-      await page.getByRole("button", {name: "Join now", exact: true}).waitFor({state: "visible", timeout: 30000})
-      const name = page.getByRole("textbox", {name: "Type your name", exact: true})
+      await runPage.getByRole("button", {name: "Join now", exact: true}).waitFor({state: "visible", timeout: 30000})
+      const name = runPage.getByRole("textbox", {name: "Type your name", exact: true})
       if (await name.isVisible()) await name.fill(values.name!)
-      // Incoming-video qualification only. Leave selected hardware devices untouched.
-      const camera = page.getByRole("switch", {name: /^Turn camera off/})
-      if (await camera.isVisible()) await camera.click()
-      const mic = page.getByRole("switch", {name: /^Mute mic/})
-      if (await mic.isVisible()) await mic.click()
-      const unavailableCamera = page.getByRole("switch", {name: "Camera is not available", exact: true})
-      const unavailableMic = page.getByRole("switch", {name: "Mic is not available", exact: true})
-      if (
-        !(await page.getByRole("switch", {name: /^Turn camera on/}).isVisible()) &&
-        !((await unavailableCamera.isVisible()) && (await unavailableCamera.isDisabled()))
-      )
-        throw new Error("Camera-off state could not be verified")
-      if (
-        !(await page.getByRole("switch", {name: /^Unmute mic/}).isVisible()) &&
-        !((await unavailableMic.isVisible()) && (await unavailableMic.isDisabled()))
-      )
-        throw new Error("Microphone-off state could not be verified")
-      await evidence("02-prejoin", "Verify the browser participant is ready with camera and microphone off.")
+      async function verifyCaptureOff(prefix: string) {
+        // Incoming-video qualification only. Leave selected hardware devices untouched.
+        const camera = runPage.getByRole("switch", {name: /^Turn camera off/})
+        if (await camera.isVisible()) await camera.click()
+        const mic = runPage.getByRole("switch", {name: /^Mute mic/})
+        if (await mic.isVisible()) await mic.click()
+        const unavailableCamera = runPage.getByRole("switch", {name: "Camera is not available", exact: true})
+        const unavailableMic = runPage.getByRole("switch", {name: "Mic is not available", exact: true})
+        if (
+          !(await runPage.getByRole("switch", {name: /^Turn camera on/}).isVisible()) &&
+          !((await unavailableCamera.isVisible()) && (await unavailableCamera.isDisabled()))
+        )
+          throw new Error("Camera-off state could not be verified")
+        if (
+          !(await runPage.getByRole("switch", {name: /^Unmute mic/}).isVisible()) &&
+          !((await unavailableMic.isVisible()) && (await unavailableMic.isDisabled()))
+        )
+          throw new Error("Microphone-off state could not be verified")
+        await evidence(prefix + "prejoin", "Verify the browser participant is ready with camera and microphone off.")
+      }
+      await verifyCaptureOff("02-")
       joinRequested = true
-      await page.getByRole("button", {name: "Join now", exact: true}).click()
+      await runPage.getByRole("button", {name: "Join now", exact: true}).click()
       await evidence("03-join", "Join the meeting and classify lobby separately from admission.")
-      const deadline = performance.now() + admissionSeconds * 1000
-      let reportedLobby = false
-      while ((await teamsPhase(page)) !== "connected") {
-        const phase = await teamsPhase(page)
-        if (phase === "lobby" && !reportedLobby) {
-          await evidence("04-lobby", "Wait for the permitted host to admit this named guest.")
-          reportedLobby = true
+      async function waitForAdmission(prefix: string) {
+        const deadline = performance.now() + admissionSeconds * 1000
+        let reportedLobby = false
+        while ((await teamsPhase(runPage)) !== "connected") {
+          const phase = await teamsPhase(runPage)
+          if (phase === "lobby" && !reportedLobby) {
+            await evidence(prefix + "lobby", "Wait for the permitted host to admit this named guest.")
+            reportedLobby = true
+          }
+          if (phase === "signin") throw new Error("SIGN_IN_REQUIRED")
+          if (performance.now() > deadline) throw new Error(`ADMISSION_TIMEOUT: last phase ${phase}`)
+          await new Promise((resolve) => setTimeout(resolve, 500))
         }
-        if (phase === "signin") throw new Error("SIGN_IN_REQUIRED")
-        if (performance.now() > deadline) throw new Error(`ADMISSION_TIMEOUT: last phase ${phase}`)
-        await new Promise((resolve) => setTimeout(resolve, 500))
+        await evidence(prefix + "admitted", "Verify the browser exposes the connected-call Leave control.")
       }
-      await evidence("05-admitted", "Verify the browser exposes the connected-call Leave control.")
-      await page
-        .getByRole("menuitem", {name: values["remote-name"]! + " (Unverified)", exact: true})
-        .waitFor({state: "visible", timeout: 20000})
-      // The participant tile can precede the first decoded frame. Preserve this
-      // bounded readiness wait separately from the playback progression check.
-      const readiness: {elapsedMs: number; samples: Awaited<ReturnType<typeof videoSamples>>}[] = []
-      const videoDeadline = performance.now() + 20000
-      let before = await videoSamples(page)
-      while (!hasDecodedVideo(before)) {
+      await waitForAdmission("initial-")
+      async function verifyIncomingVideo(prefix: string) {
+        const unavailableCamera = runPage.getByRole("button", {name: "No available camera found", exact: true})
+        const unavailableMic = runPage.getByRole("button", {name: "No audio devices available", exact: true})
+        if (
+          !(await runPage.getByRole("button", {name: /^Turn camera on/}).isVisible()) &&
+          !((await unavailableCamera.isVisible()) && (await unavailableCamera.isDisabled()))
+        )
+          throw new Error("Connected browser camera-off state is not verified")
+        if (
+          !(await runPage.getByRole("button", {name: /^Unmute mic/}).isVisible()) &&
+          !((await unavailableMic.isVisible()) && (await unavailableMic.isDisabled()))
+        )
+          throw new Error("Connected browser microphone-off state is not verified")
+        await runPage
+          .getByRole("menuitem", {name: values["remote-name"]! + " (Unverified)", exact: true})
+          .waitFor({state: "visible", timeout: 20000})
+        // The participant tile can precede the first decoded frame. Preserve this
+        // bounded readiness wait separately from the playback progression check.
+        const readiness: {elapsedMs: number; samples: Awaited<ReturnType<typeof videoSamples>>}[] = []
+        const videoDeadline = performance.now() + 20000
+        let before = await videoSamples(runPage)
+        while (!hasDecodedVideo(before)) {
+          readiness.push({elapsedMs: elapsed(), samples: before})
+          await writeFile(join(output, prefix + "video-readiness.json"), JSON.stringify(readiness, null, 2))
+          if (performance.now() >= videoDeadline) throw new Error("No decoded incoming video arrived within 20 seconds")
+          await new Promise((resolve) => setTimeout(resolve, 250))
+          before = await videoSamples(runPage)
+        }
         readiness.push({elapsedMs: elapsed(), samples: before})
-        await writeFile(join(output, "video-readiness.json"), JSON.stringify(readiness, null, 2))
-        if (performance.now() >= videoDeadline) throw new Error("No decoded incoming video arrived within 20 seconds")
-        await new Promise((resolve) => setTimeout(resolve, 250))
-        before = await videoSamples(page)
+        await writeFile(join(output, prefix + "video-readiness.json"), JSON.stringify(readiness, null, 2))
+        await evidence(prefix + "first-frame", "Wait for the first decoded frame from the glasses participant.")
+        await new Promise((resolve) => setTimeout(resolve, 5000))
+        const after = await videoSamples(runPage)
+        await writeFile(join(output, prefix + "video-samples.json"), JSON.stringify({before, after}, null, 2))
+        if (!hasAdvancingVideo(before, after)) throw new Error("No advancing incoming video was observed")
+        await evidence(prefix + "video", "Verify advancing remote video with the laptop camera off.")
       }
-      readiness.push({elapsedMs: elapsed(), samples: before})
-      await writeFile(join(output, "video-readiness.json"), JSON.stringify(readiness, null, 2))
-      await evidence("06-first-frame", "Wait for the first decoded frame from the glasses participant.")
-      await new Promise((resolve) => setTimeout(resolve, 5000))
-      const after = await videoSamples(page)
-      await writeFile(join(output, "video-samples.json"), JSON.stringify({before, after}, null, 2))
-      if (!hasAdvancingVideo(before, after)) throw new Error("No advancing incoming video was observed")
-      await evidence("06-video", "Verify advancing remote video with the laptop camera off.")
+      await verifyIncomingVideo("initial-")
+      if (values.rejoin) {
+        await runPage.getByRole("button", {name: "Leave", exact: true}).click()
+        await runPage.getByRole("button", {name: "Rejoin", exact: true}).waitFor({state: "visible", timeout: 10000})
+        cleanup = "left"
+        await nativeDepartureAcknowledged(() =>
+          evidence(
+            "browser-left",
+            "Leave and wait for the native roster to verify zero participants before rejoining.",
+          ),
+        )
+        await runPage.getByRole("button", {name: "Rejoin", exact: true}).click()
+        cleanup = "not-needed"
+        await evidence("rejoin-requested", "Rejoin this same meeting while the glasses stream continues.")
+        const rejoinDeadline = performance.now() + 30000
+        while ((await teamsPhase(runPage)) === "unknown") {
+          if (performance.now() > rejoinDeadline) throw new Error("Rejoin did not reach a recognized state")
+          await new Promise((resolve) => setTimeout(resolve, 250))
+        }
+        if ((await teamsPhase(runPage)) === "prejoin") {
+          await verifyCaptureOff("rejoin-")
+          await runPage.getByRole("button", {name: "Join now", exact: true}).click()
+        }
+        await waitForAdmission("rejoin-")
+        await verifyIncomingVideo("rejoin-")
+        rejoinQualified = true
+      }
     }
   }
 } catch (error) {
@@ -232,6 +302,7 @@ try {
       process.exitCode = 1
     }
   }
+  nativeInput?.close()
   await context?.close().catch((error) => {
     failure ??= String(error)
     process.exitCode = 1
@@ -258,6 +329,8 @@ try {
         events,
         modelCalls: 0,
         duplexQualified: false,
+        rejoinRequested: values.rejoin,
+        rejoinQualified,
         audioDeviceSelections: 0,
         videoTimeline,
         profile: "dedicated local profile; excluded from evidence",
