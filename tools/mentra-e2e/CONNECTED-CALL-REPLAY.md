@@ -9,9 +9,16 @@ under one run directory without calling a model.
 The current automated scope is admission, incoming glasses video, roster and
 cleanup. The full call goal additionally requires laptop microphone/camera,
 return audio, rejoin and physical iPhone qualification. Those checks are still
-unqualified and must not be inferred from this controller's result. The portable
-controller has not yet completed a live qualification; streams were stopped at
-the user's request before this extraction.
+unqualified and must not be inferred from this controller's result. The portable controller completed its first live qualification on September 17
+with the original 03BE glasses. Run
+`2026-09-17T05-41-53-618Z-call-incoming-video-f716b0` passed 27 native steps
+in 113.802 seconds and the browser companion in 17.752 seconds, with zero
+model calls. Recordings, screenshots, chapters, frame liveness and exact
+meeting retirement (DELETE 204 / GET 404) verified. This is an observed pass,
+not proof that macOS Local Network permission will persist across installs.
+A second consecutive replay, `2026-09-17T05-44-11-613Z-call-incoming-video-978d08`,
+passed 27 native steps in 119.787 seconds and recorded 17.16 seconds of browser
+video. Both runs verified owned meeting retirement and preserved audio UIDs.
 
 ## Prepare a machine-specific fixture
 
@@ -85,7 +92,7 @@ devices. Ensure the test account has quota and complete normal permissions first
 10. Inspect Call settings: **Name in calls** is **Mentra Live**, **Direct link**
     is enabled and **Chat TTS** is disabled. Return and open **New Call**.
 11. Choose **Create & Join** once. Require an active call for 15 seconds within
-    the bounded join deadline. A call-limit or camera-start error fails
+    the bounded join deadline. A backend-connection, call-limit or camera-start error fails
     immediately, with no automatic retry.
 12. Open the meeting QR dialog, capture its unique Teams link privately, then
     close it. Open Participants and require zero other participants.

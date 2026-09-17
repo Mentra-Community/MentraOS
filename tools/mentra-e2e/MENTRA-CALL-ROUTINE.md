@@ -293,3 +293,42 @@ still has the normal 10-call daily limit. No call or token was created, and no
 quota counter was consumed. Private identity and verification are retained in
 the `call-quota-allowlist` evidence folder. Streams remain stopped until testing
 resumes; a quota exemption does not qualify any media or permission behavior.
+
+
+## Portable live replay passes, September 17
+
+The user resumed testing with a strict limit of ten further live attempts,
+including failures. After the separate 03BE Bluetooth Classic entry was
+connected, CoreAudio exposed its speaker and microphone UIDs. The routine
+records and preserves the user's input, output and system choices; it makes
+zero audio routing mutations.
+
+A private ledger reserved four attempts. Attempt 1 failed before browser launch
+because `playwright-core` was missing; the dependency is now installed and
+checked before hardware setup. Attempt 2 received HTTP 503 while the production
+backend restarted. Its native error is now an explicit fail-fast condition.
+Both failed recordings passed artifact/liveness verification and retained their
+failures. No extra retry is hidden from the attempt budget.
+
+Attempts 3 and 4 passed consecutively using the same installed signed build:
+
+| Run | Native recording | Browser recording | Result |
+| --- | --- | --- | --- |
+| `2026-09-17T05-41-53-618Z-call-incoming-video-f716b0` | 27 steps, 113.802 s | 9 chapters, 17.72 s, 55 ms calibration uncertainty | Passed |
+| `2026-09-17T05-44-11-613Z-call-incoming-video-978d08` | 27 steps, 119.787 s | 9 chapters, 17.16 s, 48 ms calibration uncertainty | Passed |
+
+Each run created one Direct link meeting, admitted only the named anonymous
+browser guest, verified one participant in the native roster and advancing
+960×540 glasses video in Teams, left the browser, verified zero participants,
+left the native call and returned home. No model calls or email codes were
+needed. The second browser sample advanced from 0.087 to 5.190 seconds at
+readyState 4. Neither run logged a Local Network prohibition or needed manual
+intervention. This is repeatability evidence for this unchanged installation,
+not proof that permission persists across future installs or rebuilds.
+
+Both exact Graph meetings were independently retired (DELETE 204, then GET 404).
+Hotspot cleanup, ADB restoration, scoped capture retention and unchanged audio
+UIDs were verified. Native PNG/AX/video/chapters/frame-liveness verification
+passed independently. Browser camera and microphone were off, so these passes
+do not qualify return audio, laptop-camera transmission, mute/rejoin or a
+physical iPhone. Six of the user's ten further attempts remain available.

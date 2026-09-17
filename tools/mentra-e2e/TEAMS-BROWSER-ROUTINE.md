@@ -3,7 +3,7 @@
 This experimental companion replays the browser half of a Mentra Call test. It
 uses Playwright Core 1.63.0 with the installed Google Chrome and a dedicated
 persistent profile. The native host must create the meeting and admit the named
-guest. This companion does not yet qualify the complete connected-call routine.
+guest. The connected controller and this companion passed two consecutive incoming-video routines on September 17. Duplex audio and laptop-camera transmission remain unqualified.
 
 Playwright provides semantic locators, bounded waits and continuous recording.
 Using installed Chrome gives Teams its supported browser engine without a
