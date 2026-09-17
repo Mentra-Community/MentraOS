@@ -1,4 +1,5 @@
-import {afterEach, expect, test} from "bun:test"
+import assert from "node:assert/strict"
+import {afterEach, test} from "node:test"
 import {mkdtemp, mkdir, readFile, rm, symlink, writeFile} from "node:fs/promises"
 import {tmpdir} from "node:os"
 import path from "node:path"
@@ -19,22 +20,22 @@ test("reuse the same managed installation across builds", async () => {
   await claimInstallation(root, "com.mentra.mentra")
   await writeFile(path.join(root, "retained.txt"), "existing installation")
   await claimInstallation(root, "com.mentra.mentra")
-  expect(await readFile(path.join(root, "retained.txt"), "utf8")).toBe("existing installation")
+  assert.equal(await readFile(path.join(root, "retained.txt"), "utf8"), "existing installation")
 })
 
 test("refuse an existing directory without this installer's marker", async () => {
   const root = await fixture()
   await mkdir(root, {recursive: true})
   await writeFile(path.join(root, "retained.txt"), "unrelated data")
-  await expect(claimInstallation(root, "com.mentra.mentra")).rejects.toThrow()
-  expect(await readFile(path.join(root, "retained.txt"), "utf8")).toBe("unrelated data")
+  await assert.rejects(claimInstallation(root, "com.mentra.mentra"))
+  assert.equal(await readFile(path.join(root, "retained.txt"), "utf8"), "unrelated data")
 })
 
 test("refuse another bundle and a symlinked installation", async () => {
   const root = await fixture()
   await claimInstallation(root, "another.bundle")
-  await expect(claimInstallation(root, "com.mentra.mentra")).rejects.toThrow("not owned")
+  await assert.rejects(claimInstallation(root, "com.mentra.mentra"), /not owned/)
   const alias = path.join(path.dirname(root), "alias")
   await symlink(root, alias)
-  await expect(claimInstallation(alias, "another.bundle")).rejects.toThrow("real directory")
+  await assert.rejects(claimInstallation(alias, "another.bundle"), /real directory/)
 })
