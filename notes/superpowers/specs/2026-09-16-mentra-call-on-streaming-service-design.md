@@ -32,7 +32,7 @@ settled teardown that races the ingest-closed and hotspot-off acks and force-cle
 LocalMiniappRuntime (MEETING_* requests, MEETING_STATE fanout)
   └─ SoftapCallSession            (was SoftapCallTransport; open → prepareAgent → start → … → close → leave)
        ├─ AcsMeetingService       (meeting, audio, state)
-       ├─ AcsMediaAdapter         (attach: ACS join on generation 1, then media; detach: media only)
+       ├─ AcsMediaAdapter         (attach: ACS join if not yet joined, then media; detach: media only)
        └─ GlassesPhoneStreamService.open({owner: "call", adapter: AcsMediaAdapter, ...})
              └─ GlassesHotspotService.acquire({consumer: "video_streaming", operationId: "call:<id>"})
 ```
@@ -44,8 +44,8 @@ LocalMiniappRuntime (MEETING_* requests, MEETING_STATE fanout)
    and waits for the first frame. The sequence stays exactly that: `streamService.open(...)`
    reserves the hotspot session and establishes the cellular hold without touching the glasses;
    `prepareAgent` then runs over the pinned route; `stream.start()` enables and joins the
-   hotspot, and the meeting is joined inside the adapter's initial `attach`, after the hotspot
-   is `ready` and before the glasses publish. The meeting is never established over station
+   hotspot, and the meeting is joined inside the first adapter `attach` that finds it not yet
+   joined, after the hotspot is `ready` and before the glasses publish. The meeting is never established over station
    Wi-Fi and never has to survive the phone's Wi-Fi moving to the glasses AP. Cancellation or
    failure at any point before `start` resolves runs `stream.close()`, which releases the
    reservation and the hold; a meeting already joined is left by the call session afterwards.
@@ -149,14 +149,17 @@ Join failure codes keep their names and gain a precise source:
 | `SOFTAP_WIFI_DISABLED` (step `hotspot`) | `HotspotError` `wifi_disabled` |
 | `HOTSPOT_FAILED` (step `hotspot`) | `HotspotError` `ap_start_failed`, `unsupported`, `permission_denied`, `ble_unavailable`; `busy` from another consumer |
 | `SCOPED_JOIN_FAILED` (step `scopedJoin`) | `HotspotError` `join_failed`, `address_unavailable`, `user_action_required`, `cellular_unavailable` |
-| `ACS_JOIN_FAILED` (step `acsJoin`) | unchanged, raised by the call session |
-| `PUBLISH_FAILED` (step `publish`) | `StreamError` `listener_bind_failed`, `receiver_failed`, `publish_rejected`, `adapter_attach_failed` |
+| `ACS_JOIN_FAILED` (step `acsJoin`) | `StreamError` `adapter_attach_failed` whose `cause` is the adapter's `AcsJoinError` (the adapter throws a typed error for a failed `acsMeetingService.join`); the call session classifies by `cause`, never by the wrapper |
+| `PUBLISH_FAILED` (step `publish`) | `StreamError` `listener_bind_failed`, `receiver_failed`, `publish_rejected`, and `adapter_attach_failed` whose `cause` is not an `AcsJoinError` (media attach failed) |
 | `NO_FIRST_FRAME` (step `live`) | `StreamError` `first_frame_timeout` |
 | `NOT_RECOVERABLE`, `REARM_BUDGET` | `StreamError` `recovery_exhausted`, reported through `MEETING_STATE`, never as a join failure |
 | `CANCELLED` | `cancelled` from either service, same step derivation |
 
 The call session wraps the underlying error so `step` and the legacy `code` are preserved for
-the miniapp while `details` carries the new code for logs and bug reports.
+the miniapp while `details` carries the new code for logs and bug reports. Because the ACS join
+now runs inside `attach`, the adapter must throw a distinguishable `AcsJoinError` and the
+streaming service must pass it through unchanged as `cause`; a test asserts that a failed join
+surfaces as `ACS_JOIN_FAILED` on step `acsJoin`, not as `PUBLISH_FAILED`.
 
 ## Reshuffle map
 
@@ -165,11 +168,11 @@ the miniapp while `details` carries the new code for logs and bug reports.
 | Member | Fate |
 |---|---|
 | steps `hotspot`, `scopedJoin`, `publish`, `live` | deleted as steps; derived for progress only |
-| step `acsJoin` | no longer a transport step: `join` runs inside the adapter's initial `attach`; `leaveOrEnd` runs after `stream.close()` |
+| step `acsJoin` | no longer a transport step: `join` runs inside the adapter's `attach` whenever `meetingJoined` is false; `leaveOrEnd` runs after `stream.close()` |
 | the sequence | `prepareAgent` → `streamService.open(...)` + `start()` → (leave: `close()` then `leaveOrEnd`) |
 | `SoftapCallDeps.startHotspot`, `waitUntilHotspotJoinable`, `stopHotspot`, `joinScopedNetwork`, `leaveScopedNetwork`, `cancelScopedNetworkJoin`, `startPublishing`, `stopPublishing`, `awaitFirstFrame`, `waitUntilLive`, `rebindIngest`, `republishRetryDelayMs` | deleted |
 | `SoftapCallDeps.isWifiEnabled` | deleted; the hotspot service's preflight reports `wifi_disabled` |
-| `SoftapCallDeps.joinMeeting`, `leaveMeeting`, `endMeeting` | kept; `joinMeeting` is called by the adapter's initial `attach`, no longer takes `bindAddress` and no longer returns an `ingestUrl` |
+| `SoftapCallDeps.joinMeeting`, `leaveMeeting`, `endMeeting` | kept; `joinMeeting` is called by the adapter's `attach` when not yet joined, no longer takes `bindAddress` and no longer returns an `ingestUrl` |
 | `recover`, `republish`, `shouldRepublish`, `mediaOnly`, `preserveMeeting`, `keepProgress`, `mediaGeneration` field | deleted; recovery is the stream's, progress keeps the last snapshot on failure by default |
 | `progress()`, `recoveryState()`, `currentPhase()`, `lastTeardownFailures()` | kept, computed from subscriptions |
 | `SoftapCallError(step, code, message, cause)` | kept as the miniapp-facing wrapper with the mapping above |
