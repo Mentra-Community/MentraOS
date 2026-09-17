@@ -512,3 +512,43 @@ glasses-media JVM tests passed locally on Android Studio JBR 21. CI uses Java 17
 on Linux; run `35187175233` passed on exact head `5996d37f97`, confirming the fix there as well. Native Android sources
 compiled through the generated Expo Android project; no glasses stream or Mac
 app rebuild was used for this check.
+
+
+## Browser rejoin qualification, September 17
+
+The private ten-attempt ledger now records seven attempts. Attempts 5 and 6
+found browser UI transitions missing from the first rejoin implementation:
+Teams alternates **Rejoin** / **Rejoin meeting**, and it asks **Continue without
+audio or video** again on rejoin. The runner now handles those observed semantic
+controls and recognizes the explicit left-call state. Their original failed
+recordings remain failed; exact Graph retirement and hotspot cleanup passed.
+
+Attempt 7 (`2026-09-17T06-06-13-887Z-call-incoming-video-15b8ca`) completed the
+browser rejoin UI and exposed an unresolved media/roster asymmetry. The native
+app admitted the named browser guest twice and its participant sheet correctly
+changed 1 → 0 → 1. Initial 960×540 glasses video played in Teams. After rejoin,
+Teams instead showed **Waiting for others to join...**, with no Mentra Live
+tile within 20 seconds, although native ACS still reported connected, live
+media and one participant. This is not a passing rejoin or a proven native
+media root cause. The 28-step / 137.283-second native recording, browser
+recording and failure snapshots are preserved. Artifact/liveness validation,
+final departure, exact meeting retirement (204/404), hotspot cleanup and unchanged
+audio UIDs were verified. No further stream is to start merely to repeat this
+same failure without collecting new diagnostic evidence.
+
+The failed-join cleanup helper can now use exactly one native meeting-creation
+event from the verified signed host PID, with its recorded local timezone and
+bounded creation interval, when the QR link was never available. Native, server
+and Graph IDs must agree and Graph subject/time must match. Foreign-PID,
+wrong-miniapp, duplicate, unowned and out-of-window events fail closed. An offline
+check against attempt 6 matched its already-retired Graph ID without network
+calls; the 37-test harness suite / 114 assertions passed. This is administrative
+cleanup and does not change product Leave semantics.
+
+The separate Chrome capture setup now uses the normal settings UI to select the
+laptop microphone and camera in the dedicated browser profile, then verifies
+ordinary capture opens those exact devices. Its before/after screenshots and
+track proof are in `2026-09-17-chrome-laptop-capture-setup`. Both tracks closed;
+no meeting or glasses stream started, and no macOS audio default changed.
+Return audio and laptop transmission remain unqualified; three authorized
+stream attempts remain.
