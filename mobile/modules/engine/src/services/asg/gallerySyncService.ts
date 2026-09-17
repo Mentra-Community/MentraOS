@@ -11,7 +11,7 @@ import {AppState, AppStateStatus, Platform} from "react-native"
 import BleManager from "react-native-ble-manager"
 import WifiManager from "react-native-wifi-reborn"
 
-import {useGallerySyncStore, HotspotInfo} from "../../stores/gallerySync"
+import {useGallerySyncStore, HotspotInfo, selectIssyncing} from "../../stores/gallerySync"
 import {selectGlassesConnected, useGlassesStore} from "../../stores/glasses"
 import {isGlassesConnected} from "../GlassesReadiness"
 import {SETTINGS, useSettingsStore} from "../../stores/settings"
@@ -561,11 +561,7 @@ class GallerySyncService {
         : null
 
     // R1: Check if already syncing (including requesting_hotspot to prevent double-tap)
-    if (
-      store.syncState === "syncing" ||
-      store.syncState === "connecting_wifi" ||
-      store.syncState === "requesting_hotspot"
-    ) {
+    if (this.isSyncing()) {
       console.log(`[GallerySyncService] ⚠️ Already syncing (state: ${store.syncState}), ignoring start request`)
       return
     }
@@ -1555,6 +1551,11 @@ class GallerySyncService {
       asgCameraApi.setServer(hotspotInfo.ip, 8089)
       console.log("[GallerySyncService]   ✅ API client configured")
 
+      // Wi-Fi is ready. Inventory/recovery can take time for large galleries and must
+      // render as preparation. Preserve the display queue until a new manifest is ready;
+      // setSyncing([]) would discard retained thumbnails and recovery progress on failure.
+      store.setSyncState("preparing")
+
       const recovery = await mediaProcessingQueue.retryPending()
       if (recovery.retried > 0 || recovery.failed > 0) {
         console.log(
@@ -2412,14 +2413,11 @@ class GallerySyncService {
   }
 
   /**
-   * Check if sync is currently in progress (hotspot/WiFi/download phases).
+   * Check if sync is currently in progress (hotspot/WiFi/preparation/download phases).
    * Does not include pre-flight — use isSyncStarting() for that.
    */
   isSyncing(): boolean {
-    const store = useGallerySyncStore.getState()
-    return (
-      store.syncState === "syncing" || store.syncState === "connecting_wifi" || store.syncState === "requesting_hotspot"
-    )
+    return selectIssyncing(useGallerySyncStore.getState())
   }
 }
 
