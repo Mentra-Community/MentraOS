@@ -133,3 +133,111 @@ reuse another app's permission, or circumvent a denied system-dialog tool.
 Keep private glasses logs and credentials out of Git; hotspot logs can contain
 the passphrase. Portable probe packaging and a repeated successful product call
 remain outstanding work.
+
+## Location experiment and Mac test adapter
+
+The user approved temporary Location Services and Mentra access. The full app
+still failed association with NEHotspotConfiguration error 8 in run
+`2026-09-17T01-08-34-876Z-mac-prejoined-call-071e57`. Its 17 recorded steps and
+293.471667-second video passed artifact verification. Two cleanup assertions were
+also wrong (command field `type` instead of `op`, then a shortened accessible
+button name); these remain failed in the evidence. Miniapp close, hotspot teardown,
+audio restoration and exact meeting retirement subsequently completed.
+
+A signed UIKit probe then tested actual CoreLocation status and both public SSID
+APIs in the same process. It reported services on, authorization 3 (Always), and
+accuracy 0 (Full), but `NEHotspotNetwork.fetchCurrent` and
+`CNCopyCurrentNetworkInfo` both returned no network. Run
+`2026-09-17T01-14-21-331Z-ios-location-ssid-ec55ac` retains nine steps / 52.06
+seconds and the failed SSID assertion; its artifact checks passed. No coordinates
+were requested and no meeting was created. Both Location switches were restored
+off through System Settings and verified before the Mac's later power loss.
+
+This is a Mac testing limitation observed on this machine. It is not evidence
+that the native iPhone path cannot work. The HTTP health endpoint has no device
+identity, so accepting a private address plus a healthy response would weaken the
+fixture check.
+
+For further media investigation, `bun ios:mac --build-only --e2e-host-network`
+explicitly compiles `MENTRA_E2E` and marks the build manifest as
+`mac-host-verified-test-only`. This requires the matching product source from
+#4078. Normal local builds and CI omit the adapter entirely. The host routine must:
+
+1. Verify the USB/Bluetooth fixture, Ethernet, hotspot credentials and association
+   using the existing checks above.
+2. Compare the Wi-Fi gateway's ARP hardware address with `ap0/address` read from
+   that exact USB fixture. Reject a missing or different gateway.
+3. Save the SSID, gateway, client address and current Unix time to a private lease
+   JSON file, then launch the test build through
+   `helpers/launch-with-network-lease.swift`. The helper passes that lease in the
+   child environment without activating the app or handling system dialogs.
+4. Require the app's actual binary hash to match the test build manifest. The
+   native adapter accepts the lease only once per hotspot manager, on iOS-on-Mac,
+   within five minutes, and only when its SSID/gateway match the BLE request and
+   its client address matches the current Wi-Fi interface.
+5. Record `nativeAssociationQualified: false`. The native log explicitly says
+   `test_harness_connection native_association_untested`. Then exercise actual
+   ACS, WHIP, WebRTC and the browser participant without substituting media.
+6. Relaunch the same fixed test build without the lease, stop the owned hotspot
+   and restore audio after the run. A retry needs fresh host verification and a
+   newly launched process. Switch back to a normal build only when finishing the
+   diagnostic session, rather than rotating signed variants between attempts.
+
+This adapter is a test dependency input, not a production fallback. It cannot
+qualify iPhone association, automatic Mac association, recovery or teardown that
+depends on the native OS configuration. Those remain distinct hardware checks.
+
+When adding this native source to an existing checkout, run the first build with
+`MENTRA_POD_INSTALL=force bun ios:mac --build-only --e2e-host-network` so CocoaPods
+adds the new Swift file to its generated project. Later builds can use the cache.
+The initial cache did not detect the new source filename; no signed artifact from
+that interrupted build was used.
+
+The adapter's actual native class was then exercised with a signed UIKit probe.
+The first IP-bound gateway request timed out with Local Network prohibited,
+despite all seven visible Mentra Local Network entries being on. In the next
+same-process comparison, an ordinary system-route health request passed after
+12.6 seconds; the native lease and bound gateway probe then passed. This records
+the sequence, not an assumption about which permission action caused it.
+Run `2026-09-17T01-37-56-747Z-native-host-lease-522f9d` passed ten steps /
+50.528333 seconds, with valid screenshots/AX/video and zero model calls during
+replay. The exact gateway MAC matched the USB fixture. The normal candidate was
+restored and the owned hotspot stopped. No Teams meeting or media was exercised.
+The setup is `2026-09-17T01-37-09Z-native-lease-permission`; it contains copied,
+hashed production Swift sources and the complete controller.
+
+## Full call result and stable build identity
+
+The full app reached ACS `connected` in
+`2026-09-17T01-39-19-655Z-mac-host-adapter-call-ab682e`. The glasses received and
+applied the WHIP answer, then failed with `ice_timeout` after 8.544 seconds.
+The UI reported “Couldn't start glasses camera.” No decoded frame or browser
+participant was verified. The owned meeting was retired (DELETE 204, GET 404).
+
+The enabled “Leave the call” control appeared briefly before that failure. Its
+original step observation is preserved, but the overall run is marked failed;
+`initial-*` files retain the original report and `qualification-review.json`
+explains the correction. A UI control alone is not media qualification.
+The runner now supports `stableForMs` for continuous state checks and resets
+the observation interval when a check fails. Require sustained UI state plus
+actual incoming media before claiming a successful call.
+
+Repeated signed probe variants caused repeated Local Network permission prompts.
+Use one fixed signed app and wrapper throughout a diagnostic session. Record
+binary/JavaScript hashes, reuse the existing permission state, and do not launch
+new variants merely to retry a permission-denied request. A new Mac still needs
+the ordinary Local Network grant for the exact build; preserving identity reduces
+prompt churn but does not guarantee macOS will never request permission again.
+
+The fixed-build setup `2026-09-17T02-24-27Z-mac-fixed-build-media` successfully
+records a bounded packet capture on the USB-verified glasses' `ap0`, filtered to
+the Mac's Wi-Fi address. Write PCAP to an owned remote file: `adb exec-out` can mix
+remote stderr into stdout, corrupting a streamed binary capture. On cleanup,
+match the owned process PID and start time, stop it, pull the file, compare SHA-256
+on both ends, remove only that remote file, and restore ADB to its original shell
+user. Keep raw captures private because SDP contains session credentials.
+
+Run `2026-09-17T02-24-34-538Z-mac-fixed-build-media-e6641d` passed its 16 setup/UI/
+cleanup steps (70.04 seconds) before creating a meeting; it was stopped to sync
+latest dev. Audio, hotspot and ADB restoration passed. This is a capture/setup
+qualification only, not a successful media call.
