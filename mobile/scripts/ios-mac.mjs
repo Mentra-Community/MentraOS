@@ -1,6 +1,7 @@
 #!/usr/bin/env bun
 import "./configure-zx-shell.mjs"
 import {createHash} from "node:crypto"
+import {archiveBuild, installBuild, installationRoot} from "./install-ios-mac.mjs"
 import {runPodInstallIfNeeded} from "./cocoapods-install.mjs"
 import {setBuildEnv} from "./set-build-env.mjs"
 
@@ -11,7 +12,7 @@ if (args.includes("--help")) {
 Build the iOS app for this Apple Silicon Mac, then launch it in the background.
 Release is the default: JavaScript is bundled, so Metro is unnecessary.
 --debug uses Metro; start bun start in a separate terminal.
---build-only leaves the running app untouched.
+--build-only archives the build and leaves the installed app untouched.
 --e2e-host-network compiles the test-only Mac network lease adapter. Runs using
   this adapter test real media but do not qualify native iPhone Wi-Fi association.
 Set EXPO_PUBLIC_ASG_OTA_VERSION_URL to an explicitly selected public manifest
@@ -143,24 +144,13 @@ if (manifest.otaManifestUrl && configuration === "Release") {
     throw new Error("Selected OTA manifest URL is absent from the bundled JavaScript")
   }
 }
-// iOS-on-Mac launches require an outer app wrapper. Keep signed contents intact
-// and use immutable per-build paths so compiling never overwrites a running app.
-const wrapper = path.join(
-  derivedData,
-  "Applications",
-  `${manifest.executableSha256.slice(0, 12)}-${manifest.javascriptSha256?.slice(0, 12) ?? "debug"}`,
-  `${scheme}.app`,
-)
-if (!(await fs.pathExists(wrapper))) {
-  await fs.ensureDir(path.join(wrapper, "Wrapper"))
-  await $`cp -cR ${app} ${path.join(wrapper, "Wrapper", path.basename(app))}`
-  await fs.symlink(`Wrapper/${path.basename(app)}`, path.join(wrapper, "WrappedBundle"))
-}
-manifest.launchPath = wrapper
-await fs.writeFile(path.join(derivedData, "build-manifest.json"), JSON.stringify(manifest, null, 2) + "\n")
+// Keep evidence in immutable ZIPs, not separately registered .app installations.
+// Replacement happens only after a successful build and normal app termination.
+Object.assign(manifest, await archiveBuild(app, manifest, path.join(derivedData, "Archives")))
+manifest.launchPath = path.join(installationRoot(), "Mentra.app")
+const manifestPath = path.join(derivedData, "build-manifest.json")
+await fs.writeFile(manifestPath, JSON.stringify(manifest, null, 2) + "\n")
 console.log(`Built app: ${app}\nBuild evidence: ${path.join(derivedData, "build-manifest.json")}`)
 if (!args.includes("--build-only")) {
-  const launcher = path.join(derivedData, "launch-ios-on-mac")
-  await $`xcrun swiftc -parse-as-library -O scripts/launch-ios-on-mac.swift -o ${launcher}`
-  await $({stdio: "inherit"})`${launcher} ${wrapper}`
+  await installBuild(manifestPath)
 }
