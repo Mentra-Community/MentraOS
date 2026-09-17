@@ -120,7 +120,7 @@ recovering | live | stopping | failed`, `steps[]` with `pending | running | done
 |---|---|
 | `idle` | no join attempt |
 | `starting` | from the moment the runtime accepts the join (before `open`, during permission checks, reservation and agent preparation) until the first `live` |
-| `recovering` | stream phase `recovering` (media or hotspot recovery) |
+| `recovering` | stream phase `recovering`, for the whole rebuild until `live` (the stream never reports `listening` or `publishing` during a rebuild; `recovery.step` carries the position) |
 | `live` | stream phase `live` |
 | `stopping` | stream phase `closing`, and the ACS leave that follows |
 | `failed` | stream phase `failed`, or a join failure before the stream opened |
@@ -143,15 +143,21 @@ the pending `hotspot` row to narrate the preflight ("asking for nearby devices p
 "preparing the call agent") without changing its status.
 
 On recovery the steps that are rebuilt (`hotspot` and `scopedJoin` for a hotspot outage,
-`publish` and `live` for both kinds) go back to `pending` and run again; `acsJoin` stays `done`
-because the meeting is preserved. On failure the step running at that moment becomes `failed`
+`publish` and `live` for both kinds) go back to `pending` and run again, driven by
+`recovery.step` rather than by the stream phase: `waiting_return` and `rejoining` run
+`hotspot` then `scopedJoin` (from the hotspot snapshot), `listening` and `attaching` keep
+`publish` pending, `publishing` runs `publish` then `live`; `acsJoin` stays `done` because the
+meeting is preserved. On failure the step running at that moment becomes `failed`
 and later steps stay `pending`. On stop the steps are retained as they were (today's
 `keepProgress` default); on a new join they start from `pending`.
 
-`recovery`: `active` is true while the stream phase is `recovering`; `generation` is the
-stream's `media.mediaGeneration`; `deadlineAt` is `RecoveryContext.rebuildDeadlineAt` when set,
-otherwise `returnDeadlineAt`; `phase` is the projected `softap.phase` above, which is what the
-field carries today (`SoftapRecoveryState.phase` is a `SoftapPhase`). When recovery ends in
+`recovery`: `active` is true while the stream phase is `recovering`, which lasts until the
+rebuilt generation is live; `generation` is `recovery.nextMediaGeneration` (the `media` field
+is absent during a rebuild, so it is never read there); `deadlineAt` is
+`RecoveryContext.rebuildDeadlineAt` when set, otherwise `returnDeadlineAt`; `phase` is the
+projected `softap.phase` above, which is what the field carries today
+(`SoftapRecoveryState.phase` is a `SoftapPhase`). `softap.mediaGeneration` keeps the last
+live generation until the rebuilt one is live, as today's transport does. When recovery ends in
 `live` the runtime sends one more `MEETING_STATE` with `recovery.active: false`; when it ends
 in `failed` with `recovery_exhausted` the state carries `state: "error"` and
 `error: "SOFTAP_NETWORK_LOST: …"` as today.
@@ -285,7 +291,9 @@ first as the simpler consumer).
   before the first-frame wait, and a first-frame timeout is a `live` failure. Test the
   projection for the wait, the timeout, a recovery and a cancellation during each, and for the
   preflight: a slow `open` or `prepareAgent`, a preflight failure and a cancellation before
-  `start`, each checked through the Miniapp parser with `hotspot` still `pending`.
+  `start`, each checked through the Miniapp parser with `hotspot` still `pending`; and the
+  complete recovery sequence for both outage kinds, asserting `recovery.active` stays true and
+  `generation` reports the generation under construction from loss until `live`.
 - **Audio through recovery.** With the stream detached during a rebuild, glasses PCM stops but
   BLE LC3 and phone mic continue; the meeting must not mute or switch source on its own.
 - **Old and new transport during the switch.** Both reserve the hotspot as `video_streaming`

@@ -66,7 +66,12 @@ flows inside them.
    slot for its glasses-direct and managed streams and keeps what is genuinely its own: cloud
    provisioning, per-package subscriber refcounting and status fanout to miniapps. A standalone
    integrator and an embedder using the engine therefore contend for the same slot, and a
-   direct stream and a phone-route stream can never both be started.
+   direct stream and a phone-route stream can never both be started. Dispatch through the slot
+   is serialized and ordered: because the glasses' `stop_stream` is untargeted, a deferred stop
+   left by a publisher that a recovery has already replaced within the same hotspot session is
+   drained before the successor starts when the link is up, or retired when the successor's
+   `start_stream` will replace the stream on the glasses anyway; a reconnect never dispatches a
+   stop older than the newest admitted command for that session.
 7. **The Internet uplink is its own lease.** `@mentra/bluetooth-sdk/hotspot` exposes
    `acquireUplink({kind: "cellular"})` returning an `UplinkLease` with `release()`. It is the
    SDK home of today's `InternetHold`: it pins the process to cellular, is reference counted
@@ -133,7 +138,14 @@ export interface GlassesPublisher {
   /** Rejects with publisher_busy (details.owner) while another stream is active. */
   start(request: StreamStartRequest & {owner: string}): Promise<{streamId: string; status: StreamStatusEvent}>
   stop(streamId: string): Promise<void>
-  /** If the BLE link is down, queue the stop; `hotspotSessionId` ties it to that session so it is retired with it. */
+  /**
+   * If the BLE link is down, queue the stop; `hotspotSessionId` ties it to that session so it is retired with it.
+   * Dispatch is serialized: one glasses command in flight at a time. Because the BLE stop_stream carries no
+   * stream id, a deferred stop is never sent after a later start has been admitted: `start` first drains an
+   * outstanding deferred stop when the link is up (send, await ack), or retires it when the link is down or the
+   * new start would replace the stream on the glasses anyway. A link reconnect only dispatches a deferred stop
+   * that is still the newest command for its session.
+   */
   deferStop(streamId: string, opts: {hotspotSessionId?: string}): void
   owns(streamId: string): boolean
   subscribe(listener: (event: StreamStatusEvent & {streamId: string}) => void): () => void
@@ -311,7 +323,10 @@ steps:
    deferred-stop fencing that step introduces belongs to the slot; the coordinator moves its
    glasses-direct and managed starts onto the slot in the same PR, with tests for standalone
    consumption without the engine, a direct start competing with a phone-route start, status
-   correlation by stream id, and a deferred stop retired with its hotspot session.
+   correlation by stream id, a deferred stop retired with its hotspot session, and the
+   same-session races: link drops during a media rebuild, reconnect arriving after the
+   successor started (the old stop must not be sent), reconnect arriving before it (the old stop
+   is drained, then the successor starts).
 
 ## Risks
 

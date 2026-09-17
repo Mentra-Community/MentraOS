@@ -129,7 +129,7 @@ export type StreamPhase =
   | "listening"     // listener bound, receiver up; adapter.attach running for this generation
   | "publishing"    // adapter attached, BLE start_stream acked; waiting for the first decoded frame
   | "live"          // a decoded frame reached the adapter attached for this media generation
-  | "recovering"    // media rebuild (peer stall / receiver failure) or hotspot recovery in progress
+  | "recovering"    // stays until the rebuilt generation is live; recovery.step says where the rebuild is
   | "failed"        // terminal cleanup ran (media detached, publish and receiver stopped, hotspot release attempted); close() retries a blocked release
   | "closing"
   | "closed"
@@ -187,7 +187,13 @@ export type StreamState = {
   media?: MediaRef                    // present from "listening" until the generation is invalidated
   hotspot: {sessionId: string; generation: number; phase: HotspotPhase} | null
   ingestUrl?: string                  // phone-local WHIP URL handed to the glasses
-  recovery?: {kind: "media" | "hotspot"} & RecoveryContext   // the hotspot's context for a network outage, the stream's own for a media outage
+  /**
+   * Present from loss detection until the rebuilt generation is live (or the stream fails). `media` is absent for
+   * the whole of it; `nextMediaGeneration` is the generation being built and `step` is the rebuild's position, so
+   * observers can project progress without a usable MediaRef. The phase stays "recovering" throughout; it never
+   * passes through "listening" or "publishing" during a rebuild.
+   */
+  recovery?: {kind: "media" | "hotspot"; nextMediaGeneration: number; step: "detaching" | "waiting_return" | "rejoining" | "listening" | "attaching" | "publishing"} & RecoveryContext
   stats?: StreamLiveStats             // from the glasses' stream_status
   error?: StreamError
   terminalCleanup?: {hotspot: ReleaseResult | null}   // set once terminal cleanup has run (failed or closed)
