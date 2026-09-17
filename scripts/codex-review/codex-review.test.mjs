@@ -288,6 +288,19 @@ describe("codex-pr-review.sh lifecycle", () => {
     expect(sh(f.worktree, "git status --porcelain")).toBe("")
   }, 90_000)
 
+  test("reuse never clones a submodule that only the main checkout has initialised", () => {
+    const f = makeFixture({submodule: true})
+    // `submodule add` registered vendor/sub in the repository config, which the review
+    // worktree shares, but the worktree itself never checked it out.
+    expect(run(f, [f.repo, "1"]).out).toContain("codex-pr-review: done")
+    expect(existsSync(join(f.worktree, "vendor/sub/.git"))).toBe(false)
+    // Make any clone attempt fail loudly: the submodule's source is gone.
+    rmSync(join(f.root, "sub"), {recursive: true, force: true})
+    const r = run(f, [f.repo, "1"])
+    expect(r.out).toContain("codex-pr-review: done")
+    expect(existsSync(join(f.worktree, "vendor/sub/.git"))).toBe(false)
+  }, 90_000)
+
   test("reuses its own worktree after resetting leftovers", () => {
     const f = makeFixture()
     expect(run(f, [f.repo, "1"]).out).toContain("codex-pr-review: done")
@@ -491,11 +504,13 @@ describe("status classification", () => {
     "1 .M N... 100644 100644 100644 aaa bbb res/Connected_16000.txt",
     "1 .M S.M. 160000 160000 160000 ccc ccc vendor/sub",
     "1 .M SC.. 160000 160000 160000 ddd ddd vendor/other",
+    "1 .M S..U 160000 160000 160000 eee eee third party/my lib",
+    "2 R. S.M. 160000 160000 160000 fff fff R100 libs/new name\tlibs/old name",
     "? scratch/new file.txt",
   ].join("\n")
 
   test("a dirty submodule is singled out from ordinary modified paths", () => {
-    expect(classify("dirty_gitlinks", status)).toBe("vendor/sub\nvendor/other")
+    expect(classify("dirty_gitlinks", status)).toBe("vendor/sub\nvendor/other\nthird party/my lib\nlibs/new name")
     expect(classify("dirty_gitlinks", "1 .M N... 100644 100644 100644 aaa bbb res/a.txt")).toBe("")
   })
 

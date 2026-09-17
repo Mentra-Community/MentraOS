@@ -167,14 +167,25 @@ if [[ -e "$wt" ]]; then
   # Drop leftovers from a previous run (test artifacts, an aborted checkout). Ignored
   # files such as node_modules are kept so dependencies need not be reinstalled.
   git -C "$wt" reset -q --hard && git -C "$wt" clean -fdq
-  # Submodules a previous run initialised are repositories of their own: the parent's
-  # reset and clean never touch what is inside them, so they are reset separately and
-  # then moved to the commits the PR head records.
-  git -C "$wt" submodule foreach --quiet --recursive 'git reset -q --hard && git clean -fdq' \
-    || fail "cannot reset initialised submodules in $wt"
+  # Submodules a previous run checked out are repositories of their own: the parent's
+  # reset and clean never touch what is inside them, so each one is reset separately and
+  # then moved to the commit the PR head records. Only submodules that exist inside THIS
+  # worktree are touched: a submodule the main checkout happens to have initialised is
+  # never cloned here, so a repeat review needs no extra network access. Nested
+  # submodules are not descended into; if one is dirty its parent gitlink stays dirty
+  # and the status check below fails closed.
+  subs=$(populated_submodules "$wt")
+  while IFS= read -r sub; do
+    [[ -n "$sub" ]] || continue
+    git -C "$wt/$sub" reset -q --hard && git -C "$wt/$sub" clean -fdq \
+      || fail "cannot reset submodule $sub in $wt"
+  done <<<"$subs"
   git -C "$wt" checkout -q --detach "$head_sha"
-  git -C "$wt" submodule update --quiet --recursive \
-    || fail "cannot restore initialised submodules in $wt to the commits recorded at ${head_sha:0:8}"
+  while IFS= read -r sub; do
+    [[ -n "$sub" && -e "$wt/$sub/.git" ]] || continue
+    git -C "$wt" submodule update --quiet -- "$sub" \
+      || fail "cannot restore submodule $sub in $wt to the commit recorded at ${head_sha:0:8}"
+  done <<<"$subs"
 else
   git -C "$repo_dir" worktree add -q --detach "$wt" "$head_sha"
   echo "created by codex-pr-review.sh on $(date -u +%Y-%m-%dT%H:%M:%SZ); safe to delete together with $wt" > "$owned"
