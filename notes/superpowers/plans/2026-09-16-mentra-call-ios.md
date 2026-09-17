@@ -689,3 +689,27 @@ The Razr with SIM and 03BE reached `softap_call_live`, first glasses frame, and 
 The same recording showed an unnamed Android ToggleButton for the microphone action. Call 2.1.18 removes `aria-pressed` from the button that already changes its accessible action name between Mute and Unmute. Source is published on Mentra-Call branch `codex/android-call-mute-accessibility`, commit `22c6a46`, based on merged main `a0fea46`; this is a client-only change. The backend remains production from main.
 
 Packed using `bun scripts/sync-miniapp.mjs --repo /Users/philippe/.codex/worktrees/mentra-call-android/Mentra-Call --pack-script pack:prod --bump patch`. ZIP SHA256: `4cb4a23a168d8d175af65e45f388dee06a823d6e351f94a650544182e3f0d7fb`. The packaged BACKEND_URL assignment points to `https://mentra-call-miniapp-prod.mentraglass.com`; permissions are CAMERA, PHONE_CAMERA and MICROPHONE, with no calendar permission. Miniapp typecheck, 13 call-control tests and pack passed.
+
+### Call 2.1.18 repacked after PR35 merged
+
+Mentra-Call #35 merged into main as
+`1bdbfdb4f66ca4e03d1df5db833d4615a180b5de`. Repacked from a clean worktree
+at that exact commit using the repository sync command:
+
+```sh
+bun scripts/sync-miniapp.mjs --repo /path/to/merged/Mentra-Call \
+  --pack-script pack:prod --no-bump
+```
+
+All seven payload files are byte-identical to the previously reviewed 2.1.18
+bundle; only ZIP metadata changed. Version 2.1.18 is retained because there is
+no further source or payload change. The repacked ZIP SHA-256 is
+`2f732716335832cf3a1852cc22adb411fd482767ec3b63848a25e835bee7a444`.
+The generated bundle registry still references that version. The effective
+backend assignment is production, and the permission set remains exactly
+CAMERA, PHONE_CAMERA and MICROPHONE. Miniapp typecheck and all 473 miniapp tests
+(1,355 assertions) passed against merged main.
+
+The external source dependency is now merged. Android device qualification
+remains pending; no hardware operation or live stream was performed during
+this repack while the separate USB investigation is in progress.
