@@ -56,12 +56,19 @@ consumers; the streaming service is.
 
 ## Decisions
 
-1. **The session is the reservation.** `acquire` is the only entry point; it reserves
-   natively and, when `uplink: "cellular"` is requested, establishes the cellular hold, before
-   any BLE command and before `start`. A consumer can therefore do Internet work that must
-   already be routed over cellular (Mentra Call's ACS agent preparation) between `acquire` and
-   `start`. `release` drops the hold. Reservation is held until native cleanup settles, never
-   freed by `failed` alone.
+1. **The session is the reservation; the uplink is a separate lease.** `acquire` is the only
+   entry point; it reserves natively before any BLE command and before `start`. The cellular
+   Internet route is a distinct `UplinkLease` (public surface spec) with its own lifetime: a
+   consumer whose destination outlives the hotspot (Mentra Call's ACS meeting) acquires the
+   lease itself before `acquire` and passes it in as `uplink`, and the session never releases a
+   lease it did not create; a consumer whose destination dies with the stream (the managed
+   WHIP relay) passes `uplink: "cellular"` and the session acquires and releases the lease for
+   its own lifetime. Either way the hold exists before `start`, so Internet work that must
+   already be routed over cellular (ACS agent preparation) can run between `acquire` and
+   `start`. Final release of a lease restores the default route only when the phone's default
+   network is validated Internet; while a leftover local-only AP is still the default the pin is
+   retained until it goes away, which is what `InternetHold` does today. Reservation is held
+   until native cleanup settles, never freed by `failed` alone.
 2. **Explicit generation references.** Every network-bound operation and every native
    attachment takes a `NetworkRef {sessionId, generation}`. Loss invalidates the generation
    immediately, natively first, so late work can never attach to a successor network.
@@ -216,8 +223,8 @@ export interface HotspotClient {
 export type HotspotSessionOptions = {
   consumer: HotspotConsumer
   operationId: string
-  /** "cellular": hold an Internet route over cellular for the life of the session (Call). */
-  uplink: "none" | "cellular"
+  /** "cellular": the session acquires and releases its own UplinkLease; an UplinkLease: supplied by the caller, outlives the session (Call). */
+  uplink: "none" | "cellular" | UplinkLease
   recovery: HotspotRecoveryPolicy
   /** Default "advisory": a failed probe is recorded, not fatal. Gallery and OTA may set "required". */
   gatewayProbe?: "required" | "advisory"

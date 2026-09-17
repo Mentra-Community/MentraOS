@@ -67,7 +67,15 @@ flows inside them.
    provisioning, per-package subscriber refcounting and status fanout to miniapps. A standalone
    integrator and an embedder using the engine therefore contend for the same slot, and a
    direct stream and a phone-route stream can never both be started.
-7. **Frames never cross the JavaScript bridge.** In React Native the sinks are a native view
+7. **The Internet uplink is its own lease.** `@mentra/bluetooth-sdk/hotspot` exposes
+   `acquireUplink({kind: "cellular"})` returning an `UplinkLease` with `release()`. It is the
+   SDK home of today's `InternetHold`: it pins the process to cellular, is reference counted
+   per process, and on final release restores the default route only when the default network
+   is validated Internet, retaining the pin while a leftover local-only AP is still the default.
+   A hotspot session or a stream that is given a lease never releases it; a session or stream
+   given `uplink: "cellular"` acquires and releases its own. Mentra Call holds the lease from
+   before agent preparation until ACS leave, exactly the native module's current lifetime.
+8. **Frames never cross the JavaScript bridge.** In React Native the sinks are a native view
    and the republisher; decoded frames are reachable only from Kotlin and Swift through the
    native frame sink. This is the same rule the streaming spec applies to `MediaRef`.
 
@@ -98,6 +106,12 @@ await glassesHotspot.withSession({purpose: "my_app_sync"}, async (session, bindi
 })
 
 glassesHotspot.current()   // {purpose, operationId, sessionId, phase} | null
+
+// Internet uplink, independent of any session (see decision 7).
+const uplink = await glassesHotspot.acquireUplink({kind: "cellular"})
+const call = await glassesHotspot.acquire({purpose: "video_streaming", uplink, ...})
+// ... later, after the destination is gone:
+await uplink.release()
 ```
 
 `@mentra/bluetooth-sdk/react` gains `useGlassesHotspot()` returning the current owner and
@@ -209,18 +223,41 @@ import {phoneStreamCoordinator} from "@mentra/engine"
 // else and keeps cloud provisioning, per-package subscriber refcounting and miniapp status fanout.
 await phoneStreamCoordinator.startUnmanaged(pkg, {streamUrl, route: "phone", authToken, video})  // phone relay to a WHIP URL
 await phoneStreamCoordinator.startManaged(pkg, {ingest: "whip"})                                    // already the phone route; unchanged
-await phoneStreamCoordinator.startLocal(pkg, {
-  adapter, video, captureAudio, uplink,
-  /** Runs between the stream's open (hotspot reserved, cellular held) and start. Mentra Call prepares its ACS agent here. */
+
+// Custom sink with a full lifecycle: this is what Mentra Call uses.
+const attempt = phoneStreamCoordinator.startLocal(pkg, {
+  adapter, video, captureAudio,
+  uplink,                                   // "none" | "cellular" | an UplinkLease the caller keeps
+  recovery,                                 // StreamRecoveryPolicy, forwarded unchanged
+  /** Runs between the stream's open (hotspot reserved, uplink held) and start. Mentra Call prepares its ACS agent here. */
   prepare?: (signal: AbortSignal) => Promise<void>,
 })
-await phoneStreamCoordinator.stop(pkg)
+const unsubscribe = attempt.subscribe(e => project(e.state))   // available before start(); first event is the "acquiring" snapshot
+const media = await attempt.start()                             // open → prepare → stream.start; resolves on live
+attempt.cancel()                                                // aborts prepare, start or recovery through the same signal
+const result = await attempt.close()                            // {hotspot: ReleaseResult | null}; retries a blocked release on a failed attempt
+await phoneStreamCoordinator.stop(pkg)                          // refcounted stop for subscribers; a Call attempt closes itself
+```
+
+```ts
+export interface LocalStreamAttempt {
+  readonly id: string
+  snapshot(): StreamState                    // the streaming spec's StreamState, from creation
+  subscribe(listener: (event: StreamEvent) => void): () => void
+  start(): Promise<MediaRef>
+  cancel(): void
+  close(): Promise<{hotspot: ReleaseResult | null}>
+}
 ```
 
 `startUnmanaged` with `route: "phone"` and a non-WHIP URL is rejected, matching the streaming
-spec's decision that phone relay is WHIP only in v1. `startLocal` preserves the Call spec's
-`open → prepareAgent → start` sequence through the `prepare` hook, so the call session never
-touches the stream service directly. Gallery sync, hotspot OTA and Mentra Call
+spec's decision that phone relay is WHIP only in v1. `startLocal` returns the attempt
+synchronously with nothing started, so the caller can subscribe first and project every step
+from the `acquiring` snapshot on, and it preserves the Call spec's `open → prepareAgent →
+start` sequence through the `prepare` hook; the call session never touches the stream service
+directly. Facade tests: preflight progress before `start`, cancel during `prepare` and during
+recovery, a blocked `close` followed by a successful retry, and the attempt's state matching
+the underlying stream snapshot event for event. Gallery sync, hotspot OTA and Mentra Call
 keep their engine entry points and run on the SDK hotspot service and the glasses-media stream
 service underneath, so an embedder gets the same behaviour the Mentra App has.
 
@@ -287,6 +324,10 @@ steps:
 - **Native view lifecycle.** `GlassesStreamView` must survive a media generation change without
   a black flash; the render adapter reattaches on the new generation before the old surface is
   released.
+- **Uplink release timing.** `UplinkLease` must reproduce `InternetHold`'s default-route
+  check on final release; a premature unpin while a leftover AP is still the default strands
+  the call. Tests: exhaustion with an unconfirmed hotspot-off, then gallery or OTA acquiring
+  the hotspot, with ACS connectivity intact throughout.
 - **Two published services.** Moving the services out of the engine means their tests and
   their release gates live in the SDK and glasses-media packages; the engine's suites keep only
   the flow tests.

@@ -103,8 +103,10 @@ phone.
    stop the glasses publish and the receiver, then await the hotspot session's `release`. The
    stream reaches `failed` with the error snapshot and the hotspot `ReleaseResult` recorded;
    ownership is retained only while that cleanup is genuinely pending (a `blocked` release
-   result). The adapter's destination is untouched, so an audio-only ACS call continues while
-   gallery sync or OTA can acquire the hotspot. This matches today's `SoftapCallTransport`,
+   result). The adapter's destination is untouched, and a caller-supplied `UplinkLease` is
+   untouched too, so an audio-only ACS call keeps its cellular route even if the hotspot-off
+   ack was unconfirmed and a leftover AP lingers, while gallery sync or OTA can acquire the
+   hotspot. This matches today's `SoftapCallTransport`,
    which unwinds the publisher, scoped join and AP on exhaustion while preserving ACS. A later
    `close` on a failed stream returns the recorded result when the release settled, and retries
    the hotspot release when the recorded result was `blocked`, so the retry path of the hotspot
@@ -173,7 +175,7 @@ export type OpenStreamOptions = {
   audio?: StreamAudioConfig
   captureAudio?: boolean              // default false for "call", true for "managed_whip"
   sound?: boolean
-  uplink: "none" | "cellular"         // forwarded to the hotspot session
+  uplink: "none" | "cellular" | UplinkLease   // forwarded to the hotspot session; a supplied lease outlives the stream
   recovery: StreamRecoveryPolicy
   signal?: AbortSignal
 }

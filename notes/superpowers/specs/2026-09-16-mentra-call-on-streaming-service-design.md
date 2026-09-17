@@ -33,22 +33,27 @@ LocalMiniappRuntime (MEETING_* requests, MEETING_STATE fanout)
   └─ SoftapCallSession            (was SoftapCallTransport; open → prepareAgent → start → … → close → leave)
        ├─ AcsMeetingService       (meeting, audio, state)
        ├─ AcsMediaAdapter         (attach: ACS join if not yet joined, then media; detach: media only)
-       └─ phoneStreamCoordinator.startLocal(pkg, {adapter: AcsMediaAdapter, ...}) → GlassesPhoneStreamService (glasses-media)
+       └─ phoneStreamCoordinator.startLocal(pkg, {adapter: AcsMediaAdapter, uplink: lease, recovery, prepare}) → LocalStreamAttempt → GlassesPhoneStreamService (glasses-media)
              └─ GlassesHotspotService.acquire({consumer: "video_streaming", operationId: "call:<id>"})
 ```
 
 ## Decisions
 
-1. **Same order as today, pin first.** Today the native module establishes the cellular hold
-   before the ACS agent is prepared, then enables the hotspot, joins it, joins ACS, publishes
-   and waits for the first frame. The sequence stays exactly that: `streamService.open(...)`
-   reserves the hotspot session and establishes the cellular hold without touching the glasses;
-   `prepareAgent` then runs over the pinned route; `stream.start()` enables and joins the
-   hotspot, and the meeting is joined inside the first adapter `attach` that finds it not yet
-   joined, after the hotspot is `ready` and before the glasses publish. The meeting is never established over station
-   Wi-Fi and never has to survive the phone's Wi-Fi moving to the glasses AP. Cancellation or
-   failure at any point before `start` resolves runs `stream.close()`, which releases the
-   reservation and the hold; a meeting already joined is left by the call session afterwards.
+1. **Same order as today, pin first, and the pin outlives the hotspot.** Today the native
+   module establishes the cellular hold before the ACS agent is prepared, keeps it through
+   scoped-network leave, and releases it at ACS leave only after checking the default route.
+   The sequence stays exactly that: the call session acquires an `UplinkLease` (public surface
+   spec, decision 7), creates the attempt with `startLocal({uplink: lease, prepare:
+   prepareAgent, ...})`, subscribes, and calls `attempt.start()`, which reserves the hotspot
+   session, runs `prepareAgent` over the pinned route, then enables and joins the hotspot; the
+   meeting is joined inside the first adapter `attach` that finds it not yet joined, after the
+   hotspot is `ready` and before the glasses publish. The lease is released by the call
+   session after ACS leave, never by the stream or the hotspot session, so an audio-only call
+   after stream exhaustion keeps its Internet route even if a leftover AP lingers. The meeting is never established over station
+   Wi-Fi and never has to survive the phone's Wi-Fi moving to the glasses AP. Cancellation
+   (`attempt.cancel()`) or failure at any point before `start` resolves runs `attempt.close()`,
+   which releases the reservation but not the caller's lease; a meeting already joined is left
+   by the call session afterwards, and the lease is released last.
    Meeting-first was considered and rejected for the reason above.
 2. **The miniapp-facing contract does not change.** `MEETING_STATE` keeps `softap: {traceId,
    phase, steps[hotspot, scopedJoin, acsJoin, publish, live], elapsedMs, mediaGeneration}` and
@@ -71,15 +76,18 @@ LocalMiniappRuntime (MEETING_* requests, MEETING_STATE fanout)
 4. **Recovery is observed, not driven.** `beginSoftapRecovery`, `transport.recover`,
    `shouldRepublish` and `republish` are deleted. The stream service recovers under the shared
    `RecoveryContext` with Call's defaults (60 s return, 45 s rebuild, three attempts, fresh
-   frame). The call session subscribes to stream state and maps `recovering` to the existing
+   frame), passed as the attempt's `recovery` policy. The call session subscribes to the
+   attempt before `start` and maps `recovering` to the existing
    `recovery` fields, `live` after a rebuild to a cleared recovery, and `failed` with
    `recovery_exhausted` to today's `state: "error"`, `error: "SOFTAP_NETWORK_LOST: …"` while
    the meeting stays joined and audio continues.
-5. **Teardown is `stream.close()` then ACS leave.** `settleSoftapTeardown`,
-   `forceSoftapCleanup`, `setGlassesHotspotState`, the hotspot-off ack race and the
-   ingest-closed wait are deleted: the hotspot session's `release` settles the AP and the
-   receiver, and the stream's `close` reports the `ReleaseResult`. `leaveAndAwait` stays for
-   ACS. Leave and end-for-everyone differ only in the ACS call, as today.
+5. **Teardown is `attempt.close()`, then ACS leave, then the uplink lease.**
+   `settleSoftapTeardown`, `forceSoftapCleanup`, `setGlassesHotspotState`, the hotspot-off ack
+   race and the ingest-closed wait are deleted: the hotspot session's `release` settles the AP
+   and the receiver, and `attempt.close()` reports the `ReleaseResult`; a `blocked` result is
+   surfaced in `lastTeardownFailures()` and retried on the next leave or app close.
+   `leaveAndAwait` stays for ACS. Leave and end-for-everyone differ only in the ACS call, as
+   today.
 6. **The cleanup barrier becomes a wait on the previous attempt's close.** `SoftapCleanupBarrier`
    existed to keep a new join from starting while the previous media hop was still unwinding.
    The hotspot service's reservation now makes that a `busy` error; the runtime avoids it by
@@ -193,7 +201,7 @@ surfaces as `ACS_JOIN_FAILED` on step `acsJoin`, not as `PUBLISH_FAILED`.
 | `acquireGlassesHotspot` call and `GlassesHotspotLease` | deleted |
 | `awaitCleanupBarrier`, `softapCleanupError`, `SoftapCleanupBarrier.ts` | deleted (decision 6) |
 | `beginSoftapRecovery` | deleted; replaced by the subscription mapping in decision 4 |
-| `teardownSoftapAttempt` | kept: `session.stop()` = `stream.close()` then `acsMeetingService.leaveAndAwait` |
+| `teardownSoftapAttempt` | kept: `attempt.close()` then `acsMeetingService.leaveAndAwait` then `uplink.release()` |
 | `settleSoftapTeardown`, `forceSoftapCleanup`, `setGlassesHotspotState` | deleted |
 | `ensureMeetingStateBridge` republish trigger | deleted; the stream service handles a `failed` glasses media source through its own recovery |
 | `MEETING_STATE` payload | unchanged |
