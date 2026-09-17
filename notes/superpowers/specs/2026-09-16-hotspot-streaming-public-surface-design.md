@@ -280,9 +280,15 @@ service underneath, so an embedder gets the same behaviour the Mentra App has.
 The engine owns three hotspot flows today, gallery sync, hotspot OTA and the video stream,
 each with its own service and its own notion of progress. The facade makes them one
 observable surface for an embedder, with the hotspot session state attached, without adding
-behaviour: every method delegates to `gallerySyncService`, `OtaInstallCoordinator` and the
-stream coordinator, and every snapshot is composed from their existing state plus the SDK
-hotspot service's `current()` and session snapshot.
+behaviour or a fourth owner: every action delegates to the existing flow controller and every
+snapshot is composed from the controllers' existing state plus the SDK hotspot service's
+`current()` and session snapshot. For OTA the existing controller is the one the public OTA
+design and `mintlify-docs/bluetooth-sdk/software-update.mdx` already direct custom UIs to,
+`MentraLiveOtaController` (`@mentra/engine/ota`, today produced by `useMentraLiveOta`): it
+owns battery admission, artifact staging, `ota_start`, APK-to-firmware chaining, restart
+reconciliation and dismissal policy above `OtaInstallCoordinator`, which by itself only stores
+a check and runs staging and start together. The facade reuses that controller's semantic
+state and idempotent actions verbatim; it defines no OTA sequence of its own.
 
 ```ts
 import {engineHotspot} from "@mentra/engine/hotspot"
@@ -294,7 +300,7 @@ export interface EngineHotspotSnapshot {
   uplink: {held: boolean; holders: number}
   flows: {
     gallerySync: GallerySyncFlowState        // the gallery store's status, queue progress, last error, plus `hotspot: HotspotState | null`
-    ota: OtaInstallSnapshot & {hotspot: HotspotState | null; transport: "wifi" | "hotspot" | null}
+    ota: MentraLiveOtaState & {hotspot: HotspotState | null}   // the controller's semantic state (screen, transport, hotspotPhase, step, error) plus the session
     stream: StreamState | null               // the active phone-route stream, if any
   }
 }
@@ -314,14 +320,15 @@ export interface EngineHotspotFacade {
     subscribe(listener: (state: GallerySyncFlowState) => void): () => void
   }
 
-  ota: {
-    /** Stages artifacts over the Internet, then acquires the hotspot as hotspot_ota and serves the manifest. */
-    prepare(check: OtaCheckCurrentGlassesResult): Promise<{transport: "wifi" | "hotspot"}>
-    /** Sends ota_start; the session survives the ASG APK restart and is released when the outcome is known. */
-    start(): Promise<void>
-    cancel(): Promise<void>
-    snapshot(): OtaInstallSnapshot & {hotspot: HotspotState | null}
-    subscribe(listener: (snapshot: OtaInstallSnapshot & {hotspot: HotspotState | null}) => void): () => void
+  /**
+   * The existing MentraLiveOtaController, unchanged, with the hotspot session attached to its state.
+   * The actions are the controller's own idempotent actions with their existing semantics; there is no
+   * cancel: an accepted glasses transaction is never cancelled and its serving endpoint is never released
+   * early. `discard` keeps the controller's meaning (dismiss a not-yet-accepted update or a finished flow).
+   */
+  ota: Pick<MentraLiveOtaController, "check" | "retryCheck" | "install" | "retryInstall" | "finish" | "discard"> & {
+    snapshot(): MentraLiveOtaState & {hotspot: HotspotState | null}
+    subscribe(listener: (state: MentraLiveOtaState & {hotspot: HotspotState | null}) => void): () => void
   }
 }
 export const engineHotspot: EngineHotspotFacade
@@ -329,8 +336,17 @@ export const engineHotspot: EngineHotspotFacade
 
 `useEngineHotspot()` in the engine's React exports returns the composed snapshot for UI: an
 embedder can show "Gallery sync is using the glasses hotspot" or block an OTA button while a
-call holds the session from one place. The facade is the only engine surface an embedder
-needs for hotspot features; the SDK service stays available for anything custom.
+call holds the session from one place. The facade is the ownership and progress projection an
+embedder needs for hotspot features; the SDK service stays available for anything custom, and
+`useMentraLiveOta` and `MentraLiveOtaFlow` remain the OTA UI surface.
+
+One extraction is required and it is the only new code the facade needs: today the controller
+exists only as a React hook. Extract its logic once into a non-React
+`createMentraLiveOtaController(options)` in `@mentra/engine/ota`, make `useMentraLiveOta` a
+thin subscription over it, and have `engineHotspot.ota` delegate to the same instance. Parity
+tests run the extracted controller and the hook through the same cases: low battery admission,
+APK-to-firmware chaining across the ASG restart, restart reconciliation, and `discard` before
+and after the glasses accept the transaction.
 
 ### Miniapp handlers
 
