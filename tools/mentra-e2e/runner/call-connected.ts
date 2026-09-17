@@ -272,7 +272,7 @@ export async function runConnectedCall(fixture: CallFixture, buildManifestPath: 
     await step(
       "AUDIO-SETUP",
       "Inspect the selected glasses audio routes without changing the user’s selected devices.",
-      "The exact BLE target is connected; available audio devices are recorded without selecting them. Return audio is excluded while Classic is disconnected.",
+      "The exact BLE target is connected; available audio devices are recorded without selecting them. This incoming-video routine does not qualify return audio.",
       async () => {
         const paired = JSON.parse((await run(["blueutil", "--paired", "--format", "json"])).stdout)
         const target = paired.filter((d: any) => d.address.replaceAll("-", ":").toUpperCase() === expected.bluetooth)
@@ -593,7 +593,7 @@ export async function runConnectedCall(fixture: CallFixture, buildManifestPath: 
             instruction:
               "Create one Direct link meeting immediately after verifying the hotspot and launching the same approved build.",
             expected:
-              "The active call remains visible for fifteen seconds; return audio is excluded while Classic is disconnected.",
+              "The active call remains visible for fifteen seconds; this routine qualifies incoming video and roster updates.",
             action: {op: "press", selector: {role: "AXButton", description: "Create & Join"}},
             checks: [
               {selector: {role: "AXButton", description: "Leave the call", enabled: true}},
@@ -602,6 +602,13 @@ export async function runConnectedCall(fixture: CallFixture, buildManifestPath: 
             timeoutMs: 45000,
             stableForMs: 15000,
             failOn: [
+              {
+                selector: {
+                  role: "AXStaticText",
+                  description: "Couldn’t reach Mentra Call. Check this phone’s internet connection and try again.",
+                },
+                message: "The app could not reach the Mentra Call backend; inspect the recorded request failure before retrying.",
+              },
               {
                 selector: {role: "AXHeading", description: "Call limit reached"},
                 message: "Daily Call quota exhausted; no automatic retry or quota modification.",
