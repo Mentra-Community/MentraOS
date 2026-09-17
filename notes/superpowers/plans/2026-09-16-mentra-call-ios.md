@@ -606,3 +606,30 @@ Chrome loopback diagnostic test passed separately (four assertions, synthetic
 canvas only, no meeting or hardware capture). Keep the last authorized stream
 for a diagnostic that can resolve a remaining question; do not repeat unchanged
 failures or claim full duplex qualification.
+
+### Native audio observability build
+
+Added per-call `ACS_AUDIO` counters for source PCM, outgoing readiness, submitted
+and completed/failed sends, and incoming PCM. Log output is bounded to the first
+occurrence of each stage plus a summary at leave; it retains only counts and
+peak magnitude, never raw samples, credentials or meeting/participant identity.
+`PCM_PLAYBACK` marks the first accepted write, first rendered-buffer callback
+and counters at abort. The existing routing and media policies are unchanged.
+
+The standalone native smoke test verified visible macOS logs, exactly three log
+lines for 1,003 events, concurrent callback accounting, peak 32768, empty/odd
+input handling and ignored callbacks after finish. Swift type checking passed
+for the diagnostics/player files; all 23 PolicyKit tests passed. The signed
+Release iOS-on-Mac build passed and its actual executable contains both new
+markers. It was installed without foreground activation; doctor verified the
+new process while Codex remained frontmost.
+
+Build source `d96c0fc25b3a1cede63f3df67b3cc13bb980b42d`, native SHA
+`e39394e4b748417c37eab8361a2c144733d8f9f5c057b38ded7013e01084b1c4`, JS SHA
+`99d0dddcd4c7577db1cc3d1f671a128e12c7cf622fb6e92ad0c244156c4074ca`.
+The host lease remains test-only and the existing public OTA manifest pin is
+preserved. No live call has run on this build yet. Nine of ten further stream
+attempts remain used; one is held for an instrumented check with a listener.
+The user was asked asynchronously to signal availability and alerted by the
+requested text-to-speech method. Native rendering counters do not replace that
+physical hearing check.
