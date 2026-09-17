@@ -64,7 +64,7 @@ case "\${FAKE_CODEX_MODE:-ok}" in
 esac
 `
 
-function makeFixture({caseCollision = false} = {}) {
+function makeFixture({caseCollision = false, submodule = false} = {}) {
   const root = mkdtempSync(join(tmpdir(), "codex-review-test-"))
   roots.push(root)
   const origin = join(root, "origin.git")
@@ -82,6 +82,17 @@ function makeFixture({caseCollision = false} = {}) {
     repo,
     `git checkout -qb feature && echo change >> file && git commit -qam change && git push -q origin feature && git checkout -q main`,
   )
+  if (submodule) {
+    // A PR head that records a submodule. Review worktrees start with it uninitialised.
+    sh(
+      root,
+      `git init -q -b main sub && cd sub && git config user.email t@example.com && git config user.name t && echo lib > lib.txt && git add lib.txt && git commit -qm lib`,
+    )
+    sh(
+      repo,
+      `git checkout -q feature && git -c protocol.file.allow=always submodule add -q "${join(root, "sub")}" vendor/sub && git commit -qm "add submodule" && git push -q origin feature && git checkout -q -f main`,
+    )
+  }
   if (caseCollision) {
     // Two tracked paths that differ only by case, written with plumbing so the fixture
     // can be built on any filesystem. On a case-insensitive volume a checkout of this
@@ -259,6 +270,35 @@ describe("codex-pr-review.sh lifecycle", () => {
     } else {
       expect(sh(f.worktree, "git status --porcelain")).toBe("")
     }
+  }, 90_000)
+
+  test("leftovers inside an initialised submodule are reset, not accepted as intrinsic", () => {
+    const f = makeFixture({submodule: true})
+    expect(run(f, [f.repo, "1"]).out).toContain("codex-pr-review: done")
+    // A previous review initialised the submodule, then edited and added files inside it.
+    sh(f.worktree, "git -c protocol.file.allow=always submodule update -q --init")
+    const sub = join(f.worktree, "vendor/sub")
+    writeFileSync(join(sub, "lib.txt"), "tampered")
+    writeFileSync(join(sub, "leftover.txt"), "x")
+    const r = run(f, [f.repo, "1"])
+    expect(r.out).toContain("codex-pr-review: done")
+    expect(r.out).not.toContain("intrinsic to this checkout")
+    expect(readFileSync(join(sub, "lib.txt"), "utf8").trim()).toBe("lib")
+    expect(existsSync(join(sub, "leftover.txt"))).toBe(false)
+    expect(sh(f.worktree, "git status --porcelain")).toBe("")
+  }, 90_000)
+
+  test("reuse never clones a submodule that only the main checkout has initialised", () => {
+    const f = makeFixture({submodule: true})
+    // `submodule add` registered vendor/sub in the repository config, which the review
+    // worktree shares, but the worktree itself never checked it out.
+    expect(run(f, [f.repo, "1"]).out).toContain("codex-pr-review: done")
+    expect(existsSync(join(f.worktree, "vendor/sub/.git"))).toBe(false)
+    // Make any clone attempt fail loudly: the submodule's source is gone.
+    rmSync(join(f.root, "sub"), {recursive: true, force: true})
+    const r = run(f, [f.repo, "1"])
+    expect(r.out).toContain("codex-pr-review: done")
+    expect(existsSync(join(f.worktree, "vendor/sub/.git"))).toBe(false)
   }, 90_000)
 
   test("reuses its own worktree after resetting leftovers", () => {
@@ -451,6 +491,32 @@ describe("receipt lookup failures", () => {
     expect(r.out).toContain("cannot verify whether the review was posted")
     expect(r.out).not.toContain("codex-pr-review: done")
   }, 90_000)
+})
+
+describe("status classification", () => {
+  const classify = (fn, status) =>
+    spawnSync("bash", ["-c", `source "${join(here, "common.sh")}"; ${fn}`], {
+      input: status,
+      encoding: "utf8",
+    }).stdout.trim()
+  // Porcelain v2: "1 <XY> <sub> <mH> <mI> <mW> <hH> <hI> <path>"; <sub> starts with S for a submodule.
+  const status = [
+    "1 .M N... 100644 100644 100644 aaa bbb res/Connected_16000.txt",
+    "1 .M S.M. 160000 160000 160000 ccc ccc vendor/sub",
+    "1 .M SC.. 160000 160000 160000 ddd ddd vendor/other",
+    "1 .M S..U 160000 160000 160000 eee eee third party/my lib",
+    "2 R. S.M. 160000 160000 160000 fff fff R100 libs/new name\tlibs/old name",
+    "? scratch/new file.txt",
+  ].join("\n")
+
+  test("a dirty submodule is singled out from ordinary modified paths", () => {
+    expect(classify("dirty_gitlinks", status)).toBe("vendor/sub\nvendor/other\nthird party/my lib\nlibs/new name")
+    expect(classify("dirty_gitlinks", "1 .M N... 100644 100644 100644 aaa bbb res/a.txt")).toBe("")
+  })
+
+  test("untracked paths are reported whole", () => {
+    expect(classify("untracked_paths", status)).toBe("scratch/new file.txt")
+  })
 })
 
 describe("review-receipt.sh", () => {
