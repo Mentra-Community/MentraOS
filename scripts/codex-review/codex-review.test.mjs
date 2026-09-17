@@ -51,6 +51,11 @@ case "\${FAKE_CODEX_MODE:-ok}" in
     sleep 300 & echo $! >> "$FAKE_STATE/grandchildren"
     echo '{"type":"item"}'; sleep 120 ;;
   silent-hang)      sleep 120 ;;
+  orphan)
+    # Codex dies first: its tool command keeps running in its own session and
+    # re-parents to init before the runner can walk the tree.
+    python3 -c 'import os,time; os.setsid(); time.sleep(300)' & echo $! >> "$FAKE_STATE/grandchildren"
+    echo '{"type":"item"}'; sleep 0.3; exit 1 ;;
 esac
 `
 
@@ -185,22 +190,28 @@ describe("codex-pr-review.sh lifecycle", () => {
     expect(codexCalls(f)).toBe(0)
   }, 90_000)
 
-  test("two callers recovering the same stale lock: exactly one proceeds", async () => {
+  test("two callers recovering the same stale lock: the late one sees the winner and backs off", async () => {
     const f = makeFixture()
     mkdirSync(`${f.worktree}.lock`)
     writeFileSync(`${f.worktree}.lock/pid`, "999999")
-    const [a, b] = await Promise.all([run2(f), run2(f)])
-    const done = [a, b].filter((r) => r.out.includes("codex-pr-review: done")).length
-    const refused = [a, b].filter((r) =>
-      /another caller is reclaiming|taken by another caller|changed while reclaiming|is running \(pid/.test(r.out),
-    ).length
-    expect(done).toBe(1)
-    expect(refused).toBe(1)
+    // Contender B reclaims and then hangs, so it stays the live owner. Contender A
+    // pauses after its first inspection until B's live pid is in the lock, which
+    // is exactly the interleaving that used to steal B's fresh lock.
+    const waitForWinner = `until pid=$(cat "${f.worktree}.lock/pid" 2>/dev/null) && [[ "$pid" != 999999 ]] && kill -0 "$pid" 2>/dev/null; do sleep 0.1; done`
+    const [a, b] = await Promise.all([
+      runAsync(f, [f.repo, "1"], {
+        CODEX_REVIEW_HOOK_BEFORE_RECLAIM: waitForWinner,
+        FAKE_CODEX_MODE: "hang",
+        ATTEMPTS: "1",
+      }),
+      runAsync(f, [f.repo, "1"], {FAKE_CODEX_MODE: "hang", ATTEMPTS: "1"}),
+    ])
+    const both = `--- A ---\n${a.out}\n--- B ---\n${b.out}`
+    expect(both).toContain("reclaiming stale lock left by dead pid 999999")
+    expect(both).toMatch(/is running \(pid \d+\)/)
+    expect(a.out).not.toContain("reclaiming")
     expect(codexCalls(f)).toBe(1)
     expect(existsSync(`${f.worktree}.lock`)).toBe(false)
-    function run2(fx) {
-      return runAsync(fx, [fx.repo, "1"])
-    }
   }, 90_000)
 
   test("every preflight failure prints the FAILED marker", () => {
@@ -278,6 +289,23 @@ describe("codex-pr-review.sh lifecycle", () => {
     expect(r.out).toContain("codex-pr-review: FAILED")
     const pids = readFileSync(join(f.state, "grandchildren"), "utf8").trim().split("\n").map(Number)
     expect(pids.length).toBe(4) // two per attempt: one in its own session, one in the group
+    for (const pid of pids) {
+      let alive = true
+      try {
+        process.kill(pid, 0)
+      } catch {
+        alive = false
+      }
+      expect(alive).toBe(false)
+    }
+  }, 90_000)
+
+  test("a tool command that outlives a crashed Codex is found and terminated", () => {
+    const f = makeFixture()
+    const r = run(f, [f.repo, "1"], {FAKE_CODEX_MODE: "orphan"})
+    expect(r.out).toContain("codex-pr-review: FAILED")
+    const pids = readFileSync(join(f.state, "grandchildren"), "utf8").trim().split("\n").map(Number)
+    expect(pids.length).toBe(2) // one orphan per attempt; the first must be dead before the retry
     for (const pid of pids) {
       let alive = true
       try {

@@ -41,14 +41,16 @@ posted_reviews() {
   fi
 }
 
-# With job control on, every background job runs in its own process group, but
-# Codex runs its tool commands in sessions of their own, so a group kill alone is
-# not enough. Before terminating anything the whole descendant tree is snapshotted
-# while it is still intact (a child that re-parents to init after its parent dies
-# could not be found afterwards), then the group and every snapshotted pid get
-# SIGTERM, then SIGKILL, and each one is verified dead. A survivor is a hard
-# failure: the runner neither retries nor trusts a receipt, because a late
-# `gh pr review` from that survivor could still post.
+# Cleanup has to survive Codex exiting first. Codex runs tool commands in sessions
+# of their own; when Codex dies before the watchdog acts they re-parent to init and
+# can no longer be found by walking down from its pid. Two independent views are
+# therefore combined: the descendant tree is snapshotted on every poll while the
+# parent is alive, and every attempt is launched with a unique CODEX_REVIEW_ATTEMPT
+# marker in its environment, which each descendant inherits and which can be found
+# by scanning process environments after the fact (procfs on Linux, `ps -E` on
+# macOS). The group and every pid found either way get SIGTERM, then SIGKILL, and
+# each is verified dead. A survivor is a hard failure: the runner neither retries
+# nor trusts a receipt, because a late `gh pr review` from it could still post.
 set -m
 descendants() {
   local child
@@ -57,15 +59,25 @@ descendants() {
     descendants "$child"
   done
 }
+marked_processes() {  # pids whose environment carries this attempt's marker
+  if [[ -d /proc/self ]]; then
+    grep -lz "CODEX_REVIEW_ATTEMPT=$1" /proc/[0-9]*/environ 2>/dev/null | sed -E 's#/proc/([0-9]+)/environ#\1#'
+  else
+    ps -ax -o pid=,command= -E 2>/dev/null | awk -v m="CODEX_REVIEW_ATTEMPT=$1" 'index($0, m) { print $1 }'
+  fi
+}
 alive() {
   local state
   state=$(ps -o stat= -p "$1" 2>/dev/null) && [[ -n "$state" && "$state" != Z* ]]
 }
+seen_pids=""
+note_descendants() { seen_pids="$seen_pids $(descendants "$1") $(pgrep -g "$1" 2>/dev/null)"; }
 survivors=""
 kill_attempt() {
-  local pgid="$1" i p pids
+  local pgid="$1" marker="$2" i p pids
   [[ -n "$pgid" ]] || return 0
-  pids="$pgid $(descendants "$pgid") $(pgrep -g "$pgid" 2>/dev/null)"
+  note_descendants "$pgid"
+  pids=$(printf '%s\n' $pgid $seen_pids $(marked_processes "$marker") | grep -v "^$$\$" | sort -u)
   kill -TERM -- "-$pgid" 2>/dev/null || true
   for p in $pids; do kill -TERM "$p" 2>/dev/null || true; done
   for i in $(seq 1 10); do
@@ -84,7 +96,8 @@ kill_attempt() {
   return 1
 }
 pid=""
-on_signal() { echo "codex-review: cancelled; terminating attempt" >&2; kill_attempt "$pid"; exit 130; }
+marker=""
+on_signal() { echo "codex-review: cancelled; terminating attempt" >&2; kill_attempt "$pid" "$marker"; exit 130; }
 trap on_signal INT TERM HUP
 
 for attempt in $(seq 1 "$ATTEMPTS"); do
@@ -96,12 +109,15 @@ for attempt in $(seq 1 "$ATTEMPTS"); do
   rm -f "$output"  # success below requires output written by this attempt
   events="$out_dir/events-${attempt}.jsonl"
   : > "$events"
-  env ${token_env[@]+"${token_env[@]}"} "$CODEX" exec -C "$repo_dir" -m "$MODEL" -c model_reasoning_effort="$EFFORT" \
+  marker="$$-${attempt}-$(date +%s)-$RANDOM"
+  seen_pids=""
+  env ${token_env[@]+"${token_env[@]}"} CODEX_REVIEW_ATTEMPT="$marker" "$CODEX" exec -C "$repo_dir" -m "$MODEL" -c model_reasoning_effort="$EFFORT" \
     --dangerously-bypass-approvals-and-sandbox --json -o "$output" "$(cat "$prompt_file")" < /dev/null > "$events" 2>>"$out_dir/codex-stderr.log" &
   pid=$!
   started=$(date +%s)
   while kill -0 "$pid" 2>/dev/null; do
     sleep "${POLL_SECONDS:-5}"
+    note_descendants "$pid"
     now=$(date +%s)
     if [[ -s "$events" ]]; then
       last=$(file_mtime "$events")
@@ -110,17 +126,17 @@ for attempt in $(seq 1 "$ATTEMPTS"); do
     fi
     if (( now - last > STALL_SECONDS )); then
       echo "codex-review: attempt $attempt stalled for $((now - last))s (no event from the child); killing pid $pid" >&2
-      kill_attempt "$pid"; break
+      kill_attempt "$pid" "$marker"; break
     fi
     if (( now - started > MAX_SECONDS )); then
       echo "codex-review: attempt $attempt exceeded ${MAX_SECONDS}s; killing pid $pid" >&2
-      kill_attempt "$pid"; break
+      kill_attempt "$pid" "$marker"; break
     fi
   done
   wait "$pid" 2>/dev/null; status=$?
   # Codex may exit while a command it spawned is still running; drain everything first.
   # Fail closed if that cannot be verified: a survivor could still post a late review.
-  kill_attempt "$pid" || { echo "codex-review: FAILED: cannot verify the attempt is fully terminated; not retrying" >&2; exit 1; }
+  kill_attempt "$pid" "$marker" || { echo "codex-review: FAILED: cannot verify the attempt is fully terminated; not retrying" >&2; exit 1; }
   if [[ $status -eq 0 && -s "$output" ]]; then
     echo "codex-review: attempt $attempt finished"; tail -c 1500 "$output"; exit 0
   fi
