@@ -10,6 +10,22 @@ on:
       - main
       - dev
   workflow_dispatch:
+    inputs:
+      pr_compile_mode:
+        description: >-
+          Build with the same settings a pull_request run gets (PR-only
+          compile-check shortcuts). Use together with force_clean_retry to
+          exercise the retry path under PR conditions.
+        required: false
+        type: boolean
+        default: false
+      force_clean_retry:
+        description: >-
+          Skip the first xcodebuild attempt so the clean-cache retry path runs.
+          Test-only; never set on real builds.
+        required: false
+        type: boolean
+        default: false
 
 # Cancel a branch's in-flight build when a newer commit is pushed to it.
 # Scoped per-ref so branches never cancel each other; keeps the Mac runner
@@ -18,6 +34,12 @@ concurrency:
   group: ios-build-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+# This is a compile check: it never writes to the repository. `actions: read`
+# lets the timing summary read its own job's step timestamps.
+permissions:
+  contents: read
+  actions: read
+
 jobs:
   build:
     runs-on: [self-hosted, macOS, ARM64]
@@ -25,8 +47,35 @@ jobs:
     env:
       EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID }}
       EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY }}
+      # True for pull_request runs and for dispatches that ask for PR
+      # behaviour. Every PR-only compile-check shortcut keys off this single
+      # value so a workflow_dispatch can reproduce a PR run exactly.
+      MENTRA_IOS_PR_COMPILE_MODE: ${{ (github.event_name == 'pull_request' || inputs.pr_compile_mode == true) && 'true' || 'false' }}
+      MENTRA_IOS_FORCE_CLEAN_RETRY: ${{ inputs.force_clean_retry == true && 'true' || 'false' }}
 
     steps:
+      - name: Record job start and Actions cache state
+        id: job-start
+        continue-on-error: true
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          echo "started_at=$(date +%s)" >> "$GITHUB_OUTPUT"
+          echo "Runner: ${RUNNER_NAME:-unknown}  event: ${{ github.event_name }}  pr_compile_mode: $MENTRA_IOS_PR_COMPILE_MODE"
+          # Actions cache usage for the repo at job start. The configured
+          # storage limit is not exposed by the REST API for this repo
+          # (usage-policy returns 404); it is 10 GB unless changed in repo
+          # settings, so record usage and the largest entries instead.
+          usage="$(gh api "repos/${GITHUB_REPOSITORY}/actions/cache/usage" 2>/dev/null || echo '{}')"
+          size_bytes="$(printf '%s' "$usage" | jq -r '.active_caches_size_in_bytes // 0')"
+          count="$(printf '%s' "$usage" | jq -r '.active_caches_count // 0')"
+          printf 'Actions cache usage: %s entries, %s GB\n' "$count" "$(awk -v b="$size_bytes" 'BEGIN { printf "%.2f", b / 1073741824 }')"
+          echo "cache_size_bytes=$size_bytes" >> "$GITHUB_OUTPUT"
+          echo "cache_count=$count" >> "$GITHUB_OUTPUT"
+          gh api --paginate "repos/${GITHUB_REPOSITORY}/actions/caches?per_page=100&sort=size_in_bytes&direction=desc" \
+            --jq '.actions_caches[] | "\(.size_in_bytes / 1048576 | floor) MB  \(.key)"' 2>/dev/null | head -12 > "$RUNNER_TEMP/cache-entries.txt" || true
+          cat "$RUNNER_TEMP/cache-entries.txt" || true
+
       - name: Kill stale build processes (this runner's prior job only)
         run: |
           # This is a SHARED self-hosted macOS runner. A blanket `killall xcodebuild`
@@ -315,6 +364,21 @@ jobs:
         working-directory: ./mobile
         run: bun expo prebuild --platform ios
 
+      - name: Show generated Podfile ccache hook
+        # Diagnostic only. Prints how the generated Podfile wires
+        # react_native_post_install so we know which switch (USE_CCACHE env or
+        # Podfile.properties.json apple.ccacheEnabled) actually enables ccache
+        # for this Expo/RN version.
+        continue-on-error: true
+        working-directory: ./mobile/ios
+        run: |
+          echo "--- react_native_post_install(...) in generated Podfile ---"
+          awk '/react_native_post_install\(/,/^[[:space:]]*\)/' Podfile || true
+          echo "--- ccache references in Podfile ---"
+          grep -n -i "ccache" Podfile || echo "(none)"
+          echo "--- Podfile.properties.json ---"
+          cat Podfile.properties.json 2>/dev/null || echo "(missing)"
+
       - name: Restore iOS dep caches (Pods + build-device)
         run: |
           # Prebuild just regenerated a clean mobile/ios with a valid AppDelegate.
@@ -387,21 +451,22 @@ jobs:
           SENTRY_DISABLE_AUTO_UPLOAD: "true"
         continue-on-error: true
         run: |
-          started_at="$(date +%s)"
-          record_duration() {
-            status=$?
-            echo "duration_seconds=$(($(date +%s) - started_at))" >> "$GITHUB_OUTPUT"
-            trap - EXIT
-            exit "$status"
-          }
-          trap record_duration EXIT
-
-          xcodebuild -quiet \
+          if [ "$MENTRA_IOS_FORCE_CLEAN_RETRY" = "true" ]; then
+            echo "force_clean_retry set: skipping the first attempt so the retry path runs."
+            echo "duration_seconds=0" >> "$GITHUB_OUTPUT"
+            echo "status=99" >> "$GITHUB_OUTPUT"
+            exit 99
+          fi
+          # Full log + Build Timing Summary land in $RUNNER_TEMP (uploaded as an
+          # artifact below); the console shows errors/warnings/result only.
+          # Exit status is xcodebuild's own (PIPESTATUS), never tee's.
+          "$GITHUB_WORKSPACE/.github/scripts/ios-xcodebuild-attempt.sh" attempt-1 -- \
                      -workspace Mentra.xcworkspace \
                      -scheme Mentra \
                      -configuration Release \
                      -destination 'generic/platform=iOS' \
                      -derivedDataPath build-device \
+                     -showBuildTimingSummary \
                      CODE_SIGN_IDENTITY="" \
                      CODE_SIGNING_REQUIRED=NO \
                      CODE_SIGNING_ALLOWED=NO
@@ -413,15 +478,6 @@ jobs:
         env:
           SENTRY_DISABLE_AUTO_UPLOAD: "true"
         run: |
-          started_at="$(date +%s)"
-          record_duration() {
-            status=$?
-            echo "duration_seconds=$(($(date +%s) - started_at))" >> "$GITHUB_OUTPUT"
-            trap - EXIT
-            exit "$status"
-          }
-          trap record_duration EXIT
-
           echo "First build failed, nuking caches and retrying from scratch..."
 
           # Kill any hung xcodebuild from THIS job's failed attempt only — scoped to our
@@ -457,55 +513,49 @@ jobs:
           # Retry serially. The fallback only runs after a failed cached build,
           # and limiting concurrency avoids the observed CocoaPods VFS overlay
           # disappearing while parallel compile and XCFramework copy jobs run.
-          xcodebuild -quiet \
+          "$GITHUB_WORKSPACE/.github/scripts/ios-xcodebuild-attempt.sh" attempt-2 -- \
                      -workspace Mentra.xcworkspace \
                      -scheme Mentra \
                      -jobs 1 \
                      -configuration Release \
                      -destination 'generic/platform=iOS' \
                      -derivedDataPath build-device \
+                     -showBuildTimingSummary \
                      CODE_SIGN_IDENTITY="" \
                      CODE_SIGNING_REQUIRED=NO \
                      CODE_SIGNING_ALLOWED=NO
 
       - name: Summarize iOS build attempts
         if: always()
+        continue-on-error: true
         env:
+          GH_TOKEN: ${{ github.token }}
+          JOB_STARTED_AT: ${{ steps.job-start.outputs.started_at }}
+          CACHE_SIZE_BYTES: ${{ steps.job-start.outputs.cache_size_bytes }}
+          CACHE_COUNT: ${{ steps.job-start.outputs.cache_count }}
           DERIVED_CACHE_HIT: ${{ steps.xcode-derived-cache.outputs.cache-hit }}
-          CACHED_OUTCOME: ${{ steps.xcode-build.outcome }}
-          CACHED_DURATION_SECONDS: ${{ steps.xcode-build.outputs.duration_seconds }}
-          RETRY_OUTCOME: ${{ steps.xcode-build-clean.outcome }}
-          RETRY_DURATION_SECONDS: ${{ steps.xcode-build-clean.outputs.duration_seconds }}
-        run: |
-          format_duration() {
-            seconds="$1"
-            if ! [[ "$seconds" =~ ^[0-9]+$ ]]; then
-              echo "not recorded"
-              return
-            fi
-            printf '%dm %02ds\n' "$((seconds / 60))" "$((seconds % 60))"
-          }
+          ATTEMPT1_OUTCOME: ${{ steps.xcode-build.outcome }}
+          ATTEMPT1_SECONDS: ${{ steps.xcode-build.outputs.duration_seconds }}
+          ATTEMPT1_TIMING: ${{ steps.xcode-build.outputs.timing_summary }}
+          ATTEMPT2_OUTCOME: ${{ steps.xcode-build-clean.outcome }}
+          ATTEMPT2_SECONDS: ${{ steps.xcode-build-clean.outputs.duration_seconds }}
+          ATTEMPT2_TIMING: ${{ steps.xcode-build-clean.outputs.timing_summary }}
+          EVENT_NAME: ${{ github.event_name }}
+          PR_COMPILE_MODE: ${{ env.MENTRA_IOS_PR_COMPILE_MODE }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+        run: "$GITHUB_WORKSPACE/.github/scripts/ios-build-summary.sh"
 
-          cache_hit="${DERIVED_CACHE_HIT:-false}"
-          cached_outcome="${CACHED_OUTCOME:-not run}"
-          retry_outcome="${RETRY_OUTCOME:-not run}"
-          cached_duration="$(format_duration "$CACHED_DURATION_SECONDS")"
-          retry_duration="$(format_duration "$RETRY_DURATION_SECONDS")"
-
-          {
-            echo "## iOS device build attempts"
-            echo ""
-            echo "- DerivedData exact-key hit: $cache_hit"
-            echo ""
-            echo "| Attempt | Outcome | Duration |"
-            echo "| --- | --- | ---: |"
-            echo "| Cache-enabled build | $cached_outcome | $cached_duration |"
-            echo "| Clean-cache retry | $retry_outcome | $retry_duration |"
-          } >> "$GITHUB_STEP_SUMMARY"
-
-          if [ "$cached_outcome" = "failure" ]; then
-            echo "::warning::Cache-enabled iOS build failed after $cached_duration; clean-cache retry outcome: $retry_outcome ($retry_duration)."
-          fi
+      - name: Upload xcodebuild logs
+        if: always()
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: ios-xcodebuild-logs-${{ github.run_id }}-${{ github.run_attempt }}
+          path: |
+            ${{ runner.temp }}/xcodebuild-attempt-*.log
+            ${{ runner.temp }}/xcodebuild-attempt-*.timing.txt
+          if-no-files-found: ignore
+          retention-days: 7
 
       - name: Fail if both builds failed
         if: steps.xcode-build.outcome == 'failure'
