@@ -15,6 +15,7 @@ import {DevIcon} from "@/components/miniapps/DevIcons"
 import {isOfflineHosted} from "@/components/miniapp/offlineHostedPackages"
 import {showAlert} from "@/contexts/ModalContext"
 import {translate} from "@/i18n"
+import {showMiniappUpdatingAlert} from "@/utils/miniappUpdatingAlert"
 import {useNavigationStore} from "@/stores/navigation"
 import {getDefaultMenuApps, type GlassesMenuItem} from "@/utils/glassesMenu"
 
@@ -58,6 +59,7 @@ class BuiltInMiniappCatalog {
     }
 
     installAppStoreHooks({
+      onUpdateBlocked: showMiniappUpdatingAlert,
       onIncompatibleBlocked: (app) => this.showIncompatibleAlert(app),
       onOpenRequested: (app, opts) => {
         const nav = useNavigationStore.getState()

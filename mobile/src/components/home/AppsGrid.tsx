@@ -24,12 +24,23 @@ import {BlurView} from "expo-blur"
 import {Icon, Text} from "@/components/ignite"
 import AppIcon from "@/components/home/AppIcon"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {DUMMY_APPLET, HardwareType, getAppsOrder, saveAppsOrder, sortAppsByPackageNamePriority, engine, type ClientApp, type OrderMap, useSetForeground, useStart, useStop} from "@mentra/engine"
+import {
+  DUMMY_APPLET,
+  HardwareType,
+  getAppsOrder,
+  isSystemMiniappPackage,
+  saveAppsOrder,
+  sortAppsByPackageNamePriority,
+  engine,
+  type ClientApp,
+  type OrderMap,
+  useStop,
+} from "@mentra/engine"
 
-import {isOfflineHosted} from "@/components/miniapp/offlineHostedPackages"
-import {SYSTEM_APPS} from "@/constants/miniapps"
 import {useForegroundApps} from "@/hooks/useAppsExtras"
 import {uninstallAppUI} from "@/utils/uninstallAppUI"
+import {blockUpdatingMiniapp} from "@/utils/miniappUpdatingAlert"
+import {openMiniappFromHome} from "@/utils/openMiniappFromHome"
 import {askPermissionsUI, checkPermissionsUI} from "@/utils/PermissionsUtils"
 import {SETTINGS, useSetting} from "@mentra/engine"
 import {storage} from "@/utils/storage"
@@ -285,9 +296,7 @@ export function AppsGrid({
 }: AppsGridProps) {
   const {themed, theme} = useAppTheme()
 
-  const startApplet = useStart()
   const stopApplet = useStop()
-  const setForeground = useSetForeground()
   const apps = useForegroundApps()
 
   const [orderMap, setOrderMap] = useState<OrderMap>({})
@@ -600,22 +609,11 @@ export function AppsGrid({
 
   const openApp = useCallback(
     async (app: ClientApp) => {
+      if (blockUpdatingMiniapp(app.packageName)) return
       if (await showCompatibilityAlert(app)) return
-
-      const started = app.running || (await startApplet(app, {skipNavigation: true}))
-      if (!started) return
-
-      if (isOfflineHosted(app.packageName) || app.local) {
-        await setForeground(app.packageName)
-      } else if (app.offlineRoute) {
-        push(app.offlineRoute, {transition: "fade"})
-      }
-      // (Cloud V1 apps opened /applet/webview here; removed with Cloud V1 app
-      // end-of-life. Installed apps are local/offline-hosted.)
-
-      onOpenApp?.(app)
+      if (await openMiniappFromHome(app)) onOpenApp?.(app)
     },
-    [onOpenApp, push, setForeground, startApplet],
+    [onOpenApp],
   )
 
   const placeAppOnHome = useCallback(
@@ -672,16 +670,17 @@ export function AppsGrid({
             }
           },
         },
-        !SYSTEM_APPS.includes(liveSelectedApp?.packageName || "") && {
-          label: translate("appInfo:settings"),
-          icon: "exclamation-circle",
-          onPress: () => {
-            push("/applet/settings", {
-              packageName: liveSelectedApp?.packageName,
-              appName: liveSelectedApp?.name,
-            })
+        !liveSelectedApp?.offline &&
+          !isSystemMiniappPackage(liveSelectedApp?.packageName || "") && {
+            label: translate("appInfo:settings"),
+            icon: "exclamation-circle",
+            onPress: () => {
+              push("/applet/settings", {
+                packageName: liveSelectedApp?.packageName,
+                appName: liveSelectedApp?.name,
+              })
+            },
           },
-        },
         !showAllApps && {
           label: translate("appInfo:remove"),
           icon: "circle-minus",
@@ -701,16 +700,17 @@ export function AppsGrid({
             }
           },
         },
-        !SYSTEM_APPS.includes(liveSelectedApp?.packageName || "") && {
-          label: translate("appInfo:uninstall"),
-          icon: "trash",
-          destructive: true,
-          onPress: () => {
-            if (liveSelectedApp) {
-              uninstallAppUI(liveSelectedApp)
-            }
+        !liveSelectedApp?.offline &&
+          !isSystemMiniappPackage(liveSelectedApp?.packageName || "") && {
+            label: translate("appInfo:uninstall"),
+            icon: "trash",
+            destructive: true,
+            onPress: () => {
+              if (liveSelectedApp) {
+                uninstallAppUI(liveSelectedApp)
+              }
+            },
           },
-        },
       ].filter(Boolean) as PopoverAction[],
     [liveSelectedApp, openApp, stopApplet, showAllApps, placeAppOnHome, push],
   )
@@ -718,24 +718,19 @@ export function AppsGrid({
   const handlePress = useCallback(
     async (app: ClientApp) => {
       if (app.packageName.includes("@empty")) return // ignore dummy apps
+      if (blockUpdatingMiniapp(app.packageName)) return
       if (await showCompatibilityAlert(app)) return
 
-      // Overlay-hosted app types (local miniapps + offline-hosted built-ins) get
-      // their splash painted by foregrounding the Compositor overlay. Check
-      // permissions first so that splash never sits behind a permission prompt.
-      const overlayForegrounded = app.local || isOfflineHosted(app.packageName)
+      // Check permissions before accepting a launch or showing its overlay.
       const neededPermissions = await checkPermissionsUI(app)
       if (neededPermissions.length > 0) {
         const result = await askPermissionsUI(app, theme)
         if (result !== 1) return
       }
 
-      if (overlayForegrounded) {
-        await setForeground(app.packageName)
-      }
       await openApp(app)
     },
-    [openApp, setForeground, theme],
+    [openApp, theme],
   )
 
   const showPopover = useCallback(
@@ -830,6 +825,9 @@ export function AppsGrid({
             itemRefs.current[item.packageName] = ref
           }}
           className="flex-1 items-center justify-center pt-3"
+          accessibilityRole="button"
+          accessibilityLabel={item.updating ? translate("home:miniappUpdatingLabel", {app: item.name}) : item.name}
+          accessibilityState={{busy: Boolean(item.updating)}}
           onPress={() => {
             // if (showAllApps) {
             //   showPopover(item.packageName)
@@ -855,10 +853,11 @@ export function AppsGrid({
                 textShadowOffset: {width: 0, height: 0},
                 textShadowRadius: 30,
               }}
-              numberOfLines={2}
+              numberOfLines={item.updating ? 1 : 2}
               ellipsizeMode="tail"
               text={item.name}
             />
+            {item.updating && <Text className="text-muted-foreground text-[10px]" tx="home:miniappUpdating" />}
           </View>
         </TouchableOpacity>
       )

@@ -1,5 +1,7 @@
 import type {IslandConfigValues} from "../runtime/bootstrap"
 
+// The host addresses Core and Runtime only. A Store is reached by its own
+// miniapp, which holds its own credential and resolves its own backend.
 export type CloudEndpoints = {core?: string; runtime: string}
 
 /** Explicit reconnect pins win; clearing a pin resumes the live host resolver. */

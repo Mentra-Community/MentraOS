@@ -1,7 +1,5 @@
 import crypto from "node:crypto";
-import { readFileSync } from "node:fs";
-
-import { listSigningKeys, registerSigningKey, type SignedBundleMetadata } from "./api";
+import { listSigningKeys, registerSigningKey } from "./api";
 import { loadSigningKey, saveSigningKey, type CliCredentials, type CliJwk, type CliSigningKey } from "./credentials";
 
 export interface DevMiniappAttestation {
@@ -14,7 +12,7 @@ export interface DevMiniappAttestation {
 }
 
 export async function ensureSigningKey(credentials: CliCredentials): Promise<CliSigningKey> {
-  const stored = await loadSigningKey(credentials.coreUrl);
+  const stored = await loadSigningKey(credentials.storeUrl);
   if (stored && await remoteKeyIsActive(credentials, stored.signingKeyId)) return stored;
 
   const pair = crypto.generateKeyPairSync("ed25519");
@@ -22,7 +20,7 @@ export async function ensureSigningKey(credentials: CliCredentials): Promise<Cli
   const privateKeyJwk = pair.privateKey.export({ format: "jwk" }) as CliJwk;
   const { key } = await registerSigningKey(credentials, { publicKeyJwk });
   const localKey: CliSigningKey = {
-    coreUrl: credentials.coreUrl,
+    storeUrl: credentials.storeUrl,
     signingKeyId: key.id,
     publicKeyJwk,
     privateKeyJwk,
@@ -30,27 +28,6 @@ export async function ensureSigningKey(credentials: CliCredentials): Promise<Cli
   };
   await saveSigningKey(localKey);
   return localKey;
-}
-
-export function signBundleMetadata(input: {
-  signingKey: CliSigningKey;
-  packageName: string;
-  version: string;
-  manifest: Record<string, unknown>;
-  bundle: Uint8Array;
-}): SignedBundleMetadata {
-  const payload = {
-    packageName: input.packageName,
-    version: input.version,
-    bundleSha256: sha256Hex(input.bundle),
-    manifestSha256: sha256Hex(Buffer.from(canonicalJson(input.manifest))),
-    createdAt: new Date().toISOString(),
-  };
-  return {
-    signingKeyId: input.signingKey.signingKeyId,
-    payload,
-    signature: signPayload(input.signingKey.privateKeyJwk, payload),
-  };
 }
 
 export function signDevAttestation(input: {
@@ -74,14 +51,6 @@ export function signDevAttestation(input: {
 
 export function encodeDevAttestation(attestation: DevMiniappAttestation): string {
   return Buffer.from(JSON.stringify(attestation)).toString("base64url");
-}
-
-export function sha256Hex(bytes: Uint8Array): string {
-  return crypto.createHash("sha256").update(bytes).digest("hex");
-}
-
-export function fileSha256Hex(path: string): string {
-  return sha256Hex(readFileSync(path));
 }
 
 export function canonicalJson(value: unknown): string {

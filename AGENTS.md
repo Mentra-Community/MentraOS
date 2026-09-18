@@ -214,7 +214,7 @@ Bug reports and feedback filed from the Mentra App land in the Cloud V2 reports 
 
 1. Get the report id (from Slack, the admin console, or the user)
 2. Fetch it: `./scripts/fetch-incident-logs.sh {reportId}` — downloads `report.json` plus every artifact into `./incident-logs/{reportId}/`
-3. Requires `MENTRA_ADMIN_TOKEN` in your environment: an org API key (`msk_...`) whose synthetic email is allowlisted via `CLOUD_CORE_ADMIN_EMAILS`, or a WorkOS access token of an admin user
+3. Requires `MENTRA_ADMIN_TOKEN` in your environment: a WorkOS access token of an admin user whose email is allowlisted via `CLOUD_CORE_ADMIN_EMAILS`. Developer-org API keys (`msk_...`) are a Store/console credential and are not accepted by Core's admin API
 4. Without an environment override, the script tries prod, dev, then staging and reports which backend succeeded. Use `--env prod|dev|staging` or `MENTRA_CORE_URL` to target one backend explicitly.
 
 What you get:
@@ -228,7 +228,7 @@ Other modes: `--json` prints the raw report JSON to stdout (no downloads); `--li
 Example:
 
 ```bash
-export MENTRA_ADMIN_TOKEN=msk_your-admin-key
+export MENTRA_ADMIN_TOKEN=your-workos-admin-access-token
 ./scripts/fetch-incident-logs.sh rep_01JZWY3V8N0F2E9GQ4T6KXH5RD
 ```
 

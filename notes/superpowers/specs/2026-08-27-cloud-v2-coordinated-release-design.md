@@ -7,7 +7,7 @@ owner: Mentra
 
 ## Outcome
 
-Cloud V2 Core and Runtime deployment becomes a required stage of the coordinated
+Cloud V2 Core, Store, and Runtime deployment becomes a required stage of the coordinated
 Mentra release. The branch-associated cloud must deploy successfully and pass
 readiness checks before that run can publish a Mentra App build.
 
@@ -27,7 +27,7 @@ approval for every staging-backed beta commit.
 
 In scope:
 
-- Cloud V2 Core and Runtime under `cloud-v2/`.
+- Cloud V2 Core, Store, and Runtime under `cloud-v2/`.
 - The Porter applications and configuration already used by
   `.github/workflows/cloud-v2-dev.yml`, `cloud-v2-staging.yml`, and
   `cloud-v2-prod.yml`.
@@ -151,9 +151,9 @@ names, Porter files, domains, clusters, projects, or deployment-target IDs.
 
 | Environment | Porter app      | Config                         | Required public endpoints                                                             |
 | ----------- | --------------- | ------------------------------ | ------------------------------------------------------------------------------------- |
-| dev         | `cloud-dev`     | `cloud-v2/porter.dev.yaml`     | `core.dev.us-west-2.mentraglass.com`, `runtime.dev.us-west-2.mentraglass.com`         |
-| staging     | `cloud-staging` | `cloud-v2/porter.staging.yaml` | `core.staging.us-west-2.mentraglass.com`, `runtime.staging.us-west-2.mentraglass.com` |
-| prod        | `cloud-prod`    | `cloud-v2/porter.prod.yaml`    | regional and global Core/Runtime production hosts                                     |
+| dev         | `cloud-dev`     | `cloud-v2/porter.dev.yaml`     | `core.dev.us-west-2.mentraglass.com`, `store.dev.us-west-2.mentraglass.com`, `runtime.dev.us-west-2.mentraglass.com`         |
+| staging     | `cloud-staging` | `cloud-v2/porter.staging.yaml` | `core.staging.us-west-2.mentraglass.com`, `store.staging.us-west-2.mentraglass.com`, `runtime.staging.us-west-2.mentraglass.com` |
+| prod        | `cloud-prod`    | `cloud-v2/porter.prod.yaml`    | regional and global Core/Store/Runtime production hosts                               |
 
 The workflow validates that the release plan's source commit and expected cloud
 environment match its inputs. Production additionally consumes the source that
@@ -170,7 +170,7 @@ For a real release the reusable workflow:
 4. Runs `porter apply -w` with the environment's existing Porter file and waits
    for the rollout.
 5. Resolves every required hostname instead of warning and continuing.
-6. Requires both `/healthz` and `/ready` to return success for Core and Runtime.
+6. Requires both `/healthz` and `/ready` to return success for Core, Store, and Runtime.
 7. Reads back the deployed image reference/digest and deployment identifier from
    Porter or the resulting Kubernetes workloads.
 8. Writes and uploads deployment evidence.
@@ -189,7 +189,7 @@ The minimum result record is:
 ```json
 {
   "schemaVersion": 1,
-  "component": "cloud-v2-core-runtime",
+  "component": "cloud-v2-core-store-runtime",
   "releaseSetId": "mentra-3.1.0-dev.123",
   "sourceCommit": "<full SHA>",
   "environment": "dev",

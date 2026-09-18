@@ -37,8 +37,14 @@ export const shouldHideMiniapp = (
   return os === "ios" && IOS_HIDDEN_APPS.includes(packageName) && !isIosCallBuildEnabled() && !showIosCall
 }
 
-// these apps cannot be uninstalled:
-export const SYSTEM_APPS = [
+/**
+ * Host utilities that should not appear in the glasses' launch menu.
+ *
+ * This is deliberately separate from SYSTEM identity: bundled glasses-facing
+ * miniapps such as Notes and Translation are SYSTEM-owned but remain valid
+ * menu choices.
+ */
+export const GLASSES_MENU_EXCLUDED_APPS = [
   cameraPackageName,
   galleryPackageName,
   settingsPackageName,

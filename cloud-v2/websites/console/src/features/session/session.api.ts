@@ -47,6 +47,18 @@ export function logoutConsoleSession(): Promise<z.infer<typeof logoutResponseSch
   return apiRequest("/console/auth/logout", logoutResponseSchema, { method: "POST" });
 }
 
+export function selectConsoleOrganization(organizationId: string): Promise<{ ok: boolean; organizationId: string }> {
+  return apiRequest(
+    "/console/auth/developer-organization",
+    z.object({ ok: z.boolean(), organizationId: z.string() }),
+    {
+      method: "POST",
+      headers: { "content-type": "application/json" },
+      body: JSON.stringify({ organizationId }),
+    },
+  );
+}
+
 export function displayNameForUser(user: ConsoleUser | undefined): string {
   const fullName = [user?.firstName, user?.lastName].filter(Boolean).join(" ").trim();
   if (fullName) return fullName;

@@ -17,7 +17,6 @@ import {BottomSheetBackdrop, BottomSheetModal} from "@gorhom/bottom-sheet"
 import AppIcon from "@/components/home/AppIcon"
 import {SETTINGS, useSetting} from "@mentra/engine"
 import {useNavigationStore} from "@/stores/navigation"
-import {SYSTEM_APPS} from "@/constants/miniapps"
 import {enqueueScreenshotPersistence} from "@/effects/screenshotPersistenceQueue"
 
 interface CapsuleButtonProps {
@@ -343,7 +342,6 @@ export async function captureScreenshot(
 //       })
 //     }, [packageName, app?.name])
 
-//     const isSystemApp = SYSTEM_APPS.includes(packageName)
 //     const size = 28
 
 //     return (

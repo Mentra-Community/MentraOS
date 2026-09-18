@@ -12,7 +12,12 @@ import {
   SelectTrigger,
   SelectValue,
 } from "@/components/ui/select";
-import { displayNameForUser, initialsForUser, logoutConsoleSession } from "@/features/session/session.api";
+import {
+  displayNameForUser,
+  initialsForUser,
+  logoutConsoleSession,
+  selectConsoleOrganization,
+} from "@/features/session/session.api";
 import { sessionQuery } from "@/features/session/session.queries";
 import { DevOnboarding } from "@/features/org/org-onboarding";
 import { OnboardingShell } from "@/components/onboarding-shell";
@@ -72,7 +77,7 @@ export function AppShell({ children }: AppShellProps) {
     if (orgs?.length) return orgs;
     return [];
   }, [session.data?.organizationId, session.data?.organizations, session.data?.packagePrefix]);
-  const [selectedOrgId, setSelectedOrgId] = useState(developerOrgs[0]?.id ?? "default");
+  const selectedOrgId = session.data?.organizationId ?? developerOrgs[0]?.id ?? "default";
   const [mobileSidebarOpen, setMobileSidebarOpen] = useState(false);
   const logout = useMutation({
     mutationFn: logoutConsoleSession,
@@ -80,12 +85,10 @@ export function AppShell({ children }: AppShellProps) {
       window.location.href = logoutUrl ?? "/";
     },
   });
-
-  useEffect(() => {
-    if (!developerOrgs.some(org => org.id === selectedOrgId)) {
-      setSelectedOrgId(developerOrgs[0]?.id ?? "default");
-    }
-  }, [developerOrgs, selectedOrgId]);
+  const selectOrganization = useMutation({
+    mutationFn: selectConsoleOrganization,
+    onSuccess: () => window.location.reload(),
+  });
 
   useEffect(() => {
     setMobileSidebarOpen(false);
@@ -192,25 +195,40 @@ export function AppShell({ children }: AppShellProps) {
             </div>
             <div className={cn(sidebarCollapsed && "md:hidden")}>
               {developerOrgs.length > 0 ? (
-                <Select value={selectedOrgId} onValueChange={setSelectedOrgId}>
-                  <SelectTrigger className="h-10 w-full rounded-[10px] border-[#e0e4de] bg-[#f7f8f6] px-3 shadow-none focus:ring-0 focus-visible:ring-0">
-                    <div className="flex min-w-0 items-center gap-3">
-                      <Building2 className="size-4 shrink-0 text-[#747780]" />
-                      <div className="min-w-0 text-left">
-                        <div className="truncate text-sm font-medium leading-5">
-                          <SelectValue />
+                <>
+                  <Select
+                  value={selectedOrgId}
+                  disabled={selectOrganization.isPending}
+                  onValueChange={organizationId => {
+                    if (organizationId !== selectedOrgId) selectOrganization.mutate(organizationId);
+                  }}
+                  >
+                    <SelectTrigger className="h-10 w-full rounded-[10px] border-[#e0e4de] bg-[#f7f8f6] px-3 shadow-none focus:ring-0 focus-visible:ring-0">
+                      <div className="flex min-w-0 items-center gap-3">
+                        <Building2 className="size-4 shrink-0 text-[#747780]" />
+                        <div className="min-w-0 text-left">
+                          <div className="truncate text-sm font-medium leading-5">
+                            <SelectValue />
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  </SelectTrigger>
-                  <SelectContent align="start" className="w-[210px] rounded-[12px] border-[#e4e6e2] bg-white p-1 shadow-lg">
-                    {developerOrgs.map(org => (
-                      <SelectItem key={org.id} value={org.id} className="rounded-[9px] py-2">
-                        {org.name}
-                      </SelectItem>
-                    ))}
-                  </SelectContent>
-                </Select>
+                    </SelectTrigger>
+                    <SelectContent align="start" className="w-[210px] rounded-[12px] border-[#e4e6e2] bg-white p-1 shadow-lg">
+                      {developerOrgs.map(org => (
+                        <SelectItem key={org.id} value={org.id} className="rounded-[9px] py-2">
+                          {org.name}
+                        </SelectItem>
+                      ))}
+                    </SelectContent>
+                  </Select>
+                  {selectOrganization.error ? (
+                    <p className="mt-1 px-1 text-xs text-red-700">
+                      {selectOrganization.error instanceof Error
+                        ? selectOrganization.error.message
+                        : "Could not switch organization"}
+                    </p>
+                  ) : null}
+                </>
               ) : sessionReady ? (
                 <Link
                   to="/organization"

@@ -7,6 +7,7 @@ import {router} from "expo-router"
 
 import {initI18n} from "@/i18n"
 import mantle from "@/services/MantleManager"
+import {storeUpdateScheduler} from "@/services/miniapps/storeUpdateScheduler"
 import {
   appRegistry,
   audioPlaybackService,
@@ -136,7 +137,7 @@ describe("MantleManager", () => {
     }))
     await mantle.init()
     requestWifiSetup = (engine.configure as jest.Mock).mock.calls[0][0].ui.requestWifiSetup
-    syncCoreDisplayOwner = (useAppStatusStore.subscribe as jest.Mock).mock.calls.at(-1)![0]
+    syncCoreDisplayOwner = (engine.miniapps.onChanged as jest.Mock).mock.calls.at(-1)![0]
     syncGlassesPresentationState = (engine.glasses.onStatus as jest.Mock).mock.calls.at(-1)![0]
   })
 
@@ -147,6 +148,7 @@ describe("MantleManager", () => {
   })
 
   afterAll(() => {
+    storeUpdateScheduler.stop()
     jest.clearAllTimers()
     jest.useRealTimers()
   })
@@ -636,6 +638,78 @@ describe("MantleManager", () => {
     })
   })
 
+  it("keeps the bundled Store hidden and unscheduled until Store preview is enabled", async () => {
+    expect(SETTINGS.miniapp_store_preview_enabled.defaultValue()).toBe(false)
+    const start = jest.spyOn(storeUpdateScheduler, "start").mockResolvedValue()
+    const stop = jest.spyOn(storeUpdateScheduler, "stop").mockImplementation(() => {})
+    useAppStatusStore.setState({
+      apps: [
+        {
+          packageName: "com.mentra.store",
+          local: true,
+          running: true,
+          foregrounded: true,
+        },
+      ] as any,
+    })
+    await engine.settings.set(SETTINGS.menu_apps.key, [
+      {name: "Store", packageName: "com.mentra.store", running: true},
+      {name: "Notes", packageName: "com.mentra.notes", running: false},
+    ])
+
+    await (mantle as any).applyStorePreview(false)
+    expect(engine.miniapps.setHiddenStatus).toHaveBeenLastCalledWith("com.mentra.store", true)
+    expect(stop).toHaveBeenCalled()
+    expect(engine.miniapps.clearForeground).toHaveBeenCalled()
+    expect(engine.miniapps.stop).toHaveBeenCalledWith("com.mentra.store")
+    expect(engine.settings.get(SETTINGS.menu_apps.key)).toEqual([
+      {name: "Notes", packageName: "com.mentra.notes", running: false},
+    ])
+    expect(start).not.toHaveBeenCalled()
+
+    await (mantle as any).applyStorePreview(true)
+    expect(engine.miniapps.setHiddenStatus).toHaveBeenLastCalledWith("com.mentra.store", false)
+    expect(start).toHaveBeenCalledWith(["com.mentra.store"])
+
+    start.mockRestore()
+    stop.mockRestore()
+  })
+
+  it("does not reinstall an unsigned bundled version on subsequent startups", async () => {
+    const methods = [
+      "getInstalledVersions",
+      "getActiveVersion",
+      "getReleaseIdentity",
+      "getPublisherKeyFingerprint",
+      "wasUserUninstalled",
+      "installFromLocalZip",
+    ] as const
+    const originals = Object.fromEntries(methods.map((key) => [key, appRegistry[key]]))
+    const install = jest.fn()
+    Object.assign(appRegistry, {
+      getInstalledVersions: () => ["1.0.0"],
+      getActiveVersion: async () => "1.0.0",
+      getReleaseIdentity: () => ({source: "bundled_asset"}),
+      getPublisherKeyFingerprint: () => null,
+      wasUserUninstalled: () => false,
+      installFromLocalZip: install,
+    })
+    const asset = {
+      name: "com.example.fixture-1.0.0.zip",
+      localUri: "file:///fixture.zip",
+      downloadAsync: jest.fn(),
+    } as unknown as Asset
+    const instance = mantle as unknown as {installBundledMiniapp: (asset: Asset) => Promise<void>}
+    try {
+      await instance.installBundledMiniapp(asset)
+      await instance.installBundledMiniapp(asset)
+      expect(asset.downloadAsync).not.toHaveBeenCalled()
+      expect(install).not.toHaveBeenCalled()
+    } finally {
+      Object.assign(appRegistry, originals)
+    }
+  })
+
   it("continues startup bundle installation after one asset fails", async () => {
     const instance = new (mantle.constructor as new () => {
       installBundledMiniapps: () => Promise<void>
@@ -661,6 +735,8 @@ describe("MantleManager", () => {
     const originalOverride = process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS
     const originalVersions = appRegistry.getInstalledVersions
     const originalInstall = appRegistry.installFromLocalZip
+    const originalUninstalled = appRegistry.wasUserUninstalled
+    appRegistry.wasUserUninstalled = jest.fn(() => false)
     Object.defineProperty(Platform, "OS", {configurable: true, value: "ios"})
     delete process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS
     appRegistry.getInstalledVersions = jest.fn(() => [])
@@ -670,7 +746,7 @@ describe("MantleManager", () => {
         throw failure
       }),
     )
-    appRegistry.installFromLocalZip = install
+    appRegistry.installFromLocalZip = install as unknown as typeof appRegistry.installFromLocalZip
     const instance = mantle as unknown as {installBundledMiniapp: (asset: Asset) => Promise<void>}
     const asset = {
       name: "com.mentra.call-2.1.18.zip",
@@ -690,6 +766,7 @@ describe("MantleManager", () => {
     } finally {
       appRegistry.getInstalledVersions = originalVersions
       appRegistry.installFromLocalZip = originalInstall
+      appRegistry.wasUserUninstalled = originalUninstalled
       Object.defineProperty(Platform, "OS", {configurable: true, value: originalPlatform})
       if (originalOverride === undefined) delete process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS
       else process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS = originalOverride

@@ -1,11 +1,11 @@
 import { serve } from "bun";
 import index from "./index.html";
 
-const coreUrl = process.env.CORE_URL ?? process.env.BUN_PUBLIC_CORE_URL ?? "http://localhost:3000";
+const storeUrl = process.env.STORE_URL ?? process.env.BUN_PUBLIC_STORE_URL ?? "http://localhost:3003";
 
 async function proxyCoreRequest(req: Request) {
   const sourceUrl = new URL(req.url);
-  const upstreamUrl = new URL(sourceUrl.pathname + sourceUrl.search, coreUrl);
+  const upstreamUrl = new URL(sourceUrl.pathname + sourceUrl.search, storeUrl);
   const headers = new Headers(req.headers);
   headers.delete("host");
   // Match the deployed Pages proxy so local /api/* auth redirects target the
@@ -37,4 +37,4 @@ const server = serve({
 });
 
 console.log(`Console running at ${server.url}`);
-console.log(`Proxying /api/* to ${coreUrl}`);
+console.log(`Proxying /api/* to ${storeUrl}`);

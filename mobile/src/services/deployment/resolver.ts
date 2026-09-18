@@ -1,6 +1,7 @@
 import {deploymentManifestSchema} from "./schema"
 import type {DeploymentCandidate, DeploymentManifest} from "./types"
-import {SYSTEM_APPS} from "@/constants/miniapps"
+import {GLASSES_MENU_EXCLUDED_APPS} from "@/constants/miniapps"
+import {BUNDLED_SYSTEM_MINIAPP_PACKAGES} from "@/generated/bundledMiniapps"
 
 const MANIFEST_PATH = "/.well-known/mentra-deployment.json"
 const DEFAULT_MAX_BYTES = 256 * 1024
@@ -183,7 +184,9 @@ export function validateDeploymentManifest(
     managedBundlePaths.add(bundleUrl.pathname)
   }
   const approvedSystemMiniapps = manifest.systemMiniapps.approvedPackageNamesOverride
-  const systemPackageNames = new Set<string>(SYSTEM_APPS)
+  // Built-in identities are the native offline apps plus every SYSTEM miniapp
+  // bundled into this host build. A manifest may not claim either.
+  const systemPackageNames = new Set<string>([...GLASSES_MENU_EXCLUDED_APPS, ...BUNDLED_SYSTEM_MINIAPP_PACKAGES])
   if (
     [...managedPackageNames].some((packageName) => systemPackageNames.has(packageName)) ||
     approvedSystemMiniapps?.some((packageName) => managedPackageNames.has(packageName))

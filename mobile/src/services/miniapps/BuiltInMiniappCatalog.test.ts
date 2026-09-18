@@ -76,6 +76,9 @@ describe("BuiltInMiniappCatalog", () => {
     settingListener(false)
     expect(appRegistry.setOfflineAppHidden).toHaveBeenLastCalledWith(miniappDeveloperPackageName, true)
     expect(engine.miniapps.setHiddenStatus).toHaveBeenLastCalledWith(miniappDeveloperPackageName, true)
+    settingListener(undefined)
+    expect(appRegistry.setOfflineAppHidden).toHaveBeenLastCalledWith(miniappDeveloperPackageName, true)
+    expect(engine.miniapps.setHiddenStatus).toHaveBeenLastCalledWith(miniappDeveloperPackageName, true)
   })
 
   it("removes persisted Call menu entries when the iOS opt-in is turned off", async () => {
