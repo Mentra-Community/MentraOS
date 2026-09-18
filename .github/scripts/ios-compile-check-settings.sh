@@ -15,6 +15,13 @@
 #                                    upload disabled).
 #   GCC_GENERATE_DEBUGGING_SYMBOLS=NO no -g at all; nothing consumes the
 #                                    debug info of an unsigned check build.
+#
+# It also exports SKIP_BUNDLING=1 in PR compile mode. Expo's
+# react-native-xcode.sh then exits the "Bundle React Native code and images"
+# phase early (logging "SKIP_BUNDLING enabled; skipping."), so Metro, hermesc
+# and the asset copy are skipped on the Mac. The iOS Metro bundle is validated
+# on Linux by the "Validate the iOS Metro bundle" step in
+# .github/workflows/augmentos-manager-jest.yml instead.
 MENTRA_IOS_COMPILE_CHECK_SETTINGS=()
 if [ "${MENTRA_IOS_PR_COMPILE_MODE:-false}" = "true" ]; then
   MENTRA_IOS_COMPILE_CHECK_SETTINGS+=(
@@ -22,7 +29,9 @@ if [ "${MENTRA_IOS_PR_COMPILE_MODE:-false}" = "true" ]; then
     DEBUG_INFORMATION_FORMAT=dwarf
     GCC_GENERATE_DEBUGGING_SYMBOLS=NO
   )
-  echo "PR compile mode: applying ${#MENTRA_IOS_COMPILE_CHECK_SETTINGS[@]} compile-check build settings: ${MENTRA_IOS_COMPILE_CHECK_SETTINGS[*]}"
+  export SKIP_BUNDLING=1
+  echo "PR compile mode: SKIP_BUNDLING=1; applying ${#MENTRA_IOS_COMPILE_CHECK_SETTINGS[@]} compile-check build settings: ${MENTRA_IOS_COMPILE_CHECK_SETTINGS[*]}"
 else
-  echo "Full build mode (non-PR): no compile-check build settings applied."
+  unset SKIP_BUNDLING
+  echo "Full build mode (non-PR): JS bundle embedded; no compile-check build settings applied."
 fi

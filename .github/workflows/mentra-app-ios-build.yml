@@ -505,9 +505,15 @@ jobs:
         env:
           TIMING1: ${{ steps.xcode-build.outputs.timing_summary }}
           TIMING2: ${{ steps.xcode-build-clean.outputs.timing_summary }}
+          LOG1: ${{ steps.xcode-build.outputs.log }}
+          LOG2: ${{ steps.xcode-build-clean.outputs.log }}
         run: |
           app="mobile/ios/build-device/Build/Products/Release-iphoneos/Mentra.app"
           test -d "$app" || { echo "::error::$app missing after a successful build"; exit 1; }
+          # The log of the attempt that produced the app: the retry's if it ran.
+          log="$LOG1"
+          if [ -n "$LOG2" ] && [ -s "$LOG2" ]; then log="$LOG2"; fi
+          skip_marker='SKIP_BUNDLING enabled; skipping.'
           if [ "$MENTRA_IOS_PR_COMPILE_MODE" = "true" ]; then
             # dSYM generation is disabled in PR compile mode; the timing summary
             # lists every task type xcodebuild ran, so GenerateDSYMFile must be absent.
@@ -517,9 +523,28 @@ jobs:
                 exit 1
               fi
             done
-            echo "PR compile mode: no dSYM generation, as expected."
+            # JS bundling is skipped in PR compile mode: the bundle phase must
+            # have logged the skip marker and no main.jsbundle may exist.
+            if ! grep -qF "$skip_marker" "$log"; then
+              echo "::error::PR compile mode but the bundle phase did not log '$skip_marker' (SKIP_BUNDLING not honoured)"
+              exit 1
+            fi
+            if [ -e "$app/main.jsbundle" ]; then
+              echo "::error::PR compile mode but $app/main.jsbundle exists (JS bundling ran)"
+              exit 1
+            fi
+            echo "PR compile mode: no dSYM generation and JS bundling skipped, as expected."
           else
-            echo "Full build mode: default debug-info settings."
+            # Full build: the bundle phase must have run and embedded the bundle.
+            if grep -qF "$skip_marker" "$log"; then
+              echo "::error::Full build mode but the bundle phase was skipped"
+              exit 1
+            fi
+            if [ ! -s "$app/main.jsbundle" ]; then
+              echo "::error::Full build mode but $app/main.jsbundle is missing or empty"
+              exit 1
+            fi
+            echo "Full build mode: JS bundle embedded ($(du -h "$app/main.jsbundle" | cut -f1)), default debug-info settings."
           fi
 
       - name: Summarize iOS build attempts
