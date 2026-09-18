@@ -51,9 +51,7 @@ jobs:
       # behaviour. Every PR-only compile-check shortcut keys off this single
       # value so a workflow_dispatch can reproduce a PR run exactly.
       MENTRA_IOS_PR_COMPILE_MODE: ${{ (github.event_name == 'pull_request' || inputs.pr_compile_mode == true) && 'true' || 'false' }}
-      # TEMPORARY (reverted in the next commit): force the clean-cache retry
-      # path once on this PR to prove it still works without the cache steps.
-      MENTRA_IOS_FORCE_CLEAN_RETRY: 'true'
+      MENTRA_IOS_FORCE_CLEAN_RETRY: ${{ inputs.force_clean_retry == true && 'true' || 'false' }}
 
     steps:
       - name: Record job start and Actions cache state
