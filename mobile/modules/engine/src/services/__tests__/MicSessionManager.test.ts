@@ -22,13 +22,16 @@ const micStateCoordinator = require("../MicStateCoordinator").default
 const realCoordinator = {
   setSessionRequirement: micStateCoordinator.setSessionRequirement,
   setSessionMicTuning: micStateCoordinator.setSessionMicTuning,
+  setSessionLoudnessGate: micStateCoordinator.setSessionLoudnessGate,
 }
 const setSessionRequirement = mock((_pcm: boolean) => {})
 const setSessionMicTuning = mock((_profile: unknown) => {})
+const setSessionLoudnessGate = mock((_enabled: boolean | null) => {})
 
 beforeAll(() => {
   micStateCoordinator.setSessionRequirement = setSessionRequirement
   micStateCoordinator.setSessionMicTuning = setSessionMicTuning
+  micStateCoordinator.setSessionLoudnessGate = setSessionLoudnessGate
 })
 
 afterAll(() => {
@@ -44,13 +47,35 @@ describe("MicSessionManager", () => {
     setMicSourcePin.mockClear()
     setSessionRequirement.mockClear()
     setSessionMicTuning.mockClear()
+    setSessionLoudnessGate.mockClear()
   })
 
   test("a voice call pins the glasses, claims PCM and applies the call gain", () => {
     micSessionManager.acquire({owner: "com.mentra.call", source: "glasses", useCase: "voice_call"})
     expect(setMicSourcePin).toHaveBeenCalledWith("glasses")
     expect(setSessionRequirement).toHaveBeenLastCalledWith(true)
-    expect(setSessionMicTuning).toHaveBeenLastCalledWith({gain: 13})
+    expect(setSessionMicTuning).toHaveBeenLastCalledWith(
+      expect.objectContaining({gain: 13, open: 537, sp_open: 1155}),
+    )
+  })
+
+  /**
+   * The PCM claim turns hardware VAD off, so Barrier is the only thing left between the far end
+   * and its own echo. It has to arrive with the claim, not after it.
+   */
+  test("a voice call runs Barrier, and only a voice call does", () => {
+    const call = micSessionManager.acquire({
+      owner: "com.mentra.call",
+      source: "glasses",
+      useCase: "voice_call",
+    })
+    expect(setSessionLoudnessGate).toHaveBeenLastCalledWith(true)
+
+    call.release()
+    expect(setSessionLoudnessGate).toHaveBeenLastCalledWith(null)
+
+    micSessionManager.acquire({owner: "com.captions", source: "glasses", useCase: "transcription"})
+    expect(setSessionLoudnessGate).toHaveBeenLastCalledWith(false)
   })
 
   test("releasing the last session unpins and hands the tuning back", () => {
@@ -64,6 +89,7 @@ describe("MicSessionManager", () => {
     expect(setMicSourcePin).toHaveBeenCalledWith(null)
     expect(setSessionRequirement).toHaveBeenLastCalledWith(false)
     expect(setSessionMicTuning).toHaveBeenLastCalledWith(null)
+    expect(setSessionLoudnessGate).toHaveBeenLastCalledWith(null)
   })
 
   test("release is idempotent", () => {

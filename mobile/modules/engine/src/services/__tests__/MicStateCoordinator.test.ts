@@ -428,6 +428,59 @@ describe("MicStateCoordinator", () => {
       )
     })
   })
+
+  /**
+   * Barrier is the only echo control a call has: claiming raw PCM turns hardware VAD off, and
+   * there is no canceller on the LC3 uplink. Unlike VAD it zeroes a frame rather than dropping
+   * the stream, so a wrong threshold costs silence, never a cut-out.
+   */
+  describe("session loudness gate", () => {
+    beforeEach(async () => {
+      MicStateCoordinator.setSessionLoudnessGate(null)
+      MicStateCoordinator.applyRuntimeOverrides({mic_tuning: {}, loudness_gate_enabled: false})
+      await flushMicWrite()
+      mockUpdateBluetoothSettings.mockClear()
+    })
+
+    test("a call turns Barrier on and hands it back on release", async () => {
+      MicStateCoordinator.setSessionLoudnessGate(true)
+      await flushMicWrite()
+      expect(mockUpdateBluetoothSettings).toHaveBeenLastCalledWith(
+        expect.objectContaining({loudness_gate_enabled: true}),
+      )
+
+      MicStateCoordinator.setSessionLoudnessGate(null)
+      await flushMicWrite()
+      expect(mockUpdateBluetoothSettings).toHaveBeenLastCalledWith(
+        expect.objectContaining({loudness_gate_enabled: false}),
+      )
+    })
+
+    test("a settings replay re-applies the gate", async () => {
+      // The glasses forget it on disconnect, so the on-connect replay is what puts it back
+      // after a walk-away mid-call.
+      MicStateCoordinator.setSessionLoudnessGate(true)
+      await flushMicWrite()
+      expect(
+        MicStateCoordinator.applyRuntimeOverrides({brightness: 50, loudness_gate_enabled: false}),
+      ).toEqual(expect.objectContaining({brightness: 50, loudness_gate_enabled: true}))
+      MicStateCoordinator.setSessionLoudnessGate(null)
+      await flushMicWrite()
+    })
+
+    test("a live Super Mode tuning outranks the session gate", async () => {
+      // Hand-entered thresholds are the one case where the session's numbers are the wrong ones.
+      MicStateCoordinator.applyRuntimeOverrides({mic_tuning: {gain: 9, open: 700}})
+      MicStateCoordinator.setSessionLoudnessGate(true)
+      await flushMicWrite()
+      expect(mockUpdateBluetoothSettings).toHaveBeenLastCalledWith(
+        expect.objectContaining({loudness_gate_enabled: false}),
+      )
+      MicStateCoordinator.setSessionLoudnessGate(null)
+      MicStateCoordinator.applyRuntimeOverrides({mic_tuning: {}})
+      await flushMicWrite()
+    })
+  })
 })
 
 afterAll(() => {
