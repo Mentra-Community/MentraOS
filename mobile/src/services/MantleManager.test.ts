@@ -1,10 +1,14 @@
 import {Platform} from "react-native"
+import {Asset} from "expo-asset"
+import {result as Res} from "typesafe-ts"
+import {BUNDLED_MINIAPPS} from "@/generated/bundledMiniapps"
 import {waitFor} from "@testing-library/react-native"
 import {router} from "expo-router"
 
 import {initI18n} from "@/i18n"
 import mantle from "@/services/MantleManager"
 import {
+  appRegistry,
   audioPlaybackService,
   localDisplayManager,
   localMiniappRuntime,
@@ -630,5 +634,102 @@ describe("MantleManager", () => {
       pathname: "/wifi/scan",
       params: {returnToMiniapp: "com.mentra.livestreamer"},
     })
+  })
+
+  it("continues startup bundle installation after one asset fails", async () => {
+    const instance = new (mantle.constructor as new () => {
+      installBundledMiniapps: () => Promise<void>
+      installBundledMiniapp: (asset: Asset) => Promise<void>
+    })()
+    const asset = {name: "com.mentra.fixture-1.0.0.zip"} as Asset
+    const fromModule = jest.spyOn(Asset, "fromModule").mockReturnValue(asset)
+    const install = jest.fn(async () => {}).mockRejectedValueOnce(new Error("Invalid bundle"))
+    instance.installBundledMiniapp = install
+    const log = jest.spyOn(console, "error").mockImplementation(() => {})
+    try {
+      await expect(instance.installBundledMiniapps()).resolves.toBeUndefined()
+      expect(install).toHaveBeenCalledTimes(BUNDLED_MINIAPPS.length)
+      expect(log).toHaveBeenCalledWith("MANTLE: error installing bundled miniapp:", expect.any(Error))
+    } finally {
+      fromModule.mockRestore()
+      log.mockRestore()
+    }
+  })
+
+  it("rechecks Call policy after downloading and propagates an install failure", async () => {
+    const originalPlatform = Platform.OS
+    const originalOverride = process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS
+    const originalVersions = appRegistry.getInstalledVersions
+    const originalInstall = appRegistry.installFromLocalZip
+    Object.defineProperty(Platform, "OS", {configurable: true, value: "ios"})
+    delete process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS
+    appRegistry.getInstalledVersions = jest.fn(() => [])
+    const failure = new Error("Archive installation failed")
+    const install = jest.fn(() =>
+      Res.try_async(async () => {
+        throw failure
+      }),
+    )
+    appRegistry.installFromLocalZip = install
+    const instance = mantle as unknown as {installBundledMiniapp: (asset: Asset) => Promise<void>}
+    const asset = {
+      name: "com.mentra.call-2.1.18.zip",
+      localUri: "file:///fixture/call.zip",
+      downloadAsync: async () => {
+        await engine.settings.set(SETTINGS.show_mentra_call_ios.key, false)
+      },
+    } as unknown as Asset
+    try {
+      await engine.settings.set(SETTINGS.show_mentra_call_ios.key, true)
+      await instance.installBundledMiniapp(asset)
+      expect(install).not.toHaveBeenCalled()
+      await engine.settings.set(SETTINGS.show_mentra_call_ios.key, true)
+      asset.downloadAsync = jest.fn(async () => asset)
+      await expect(instance.installBundledMiniapp(asset)).rejects.toThrow(failure)
+      expect(install).toHaveBeenCalledWith(asset.localUri)
+    } finally {
+      appRegistry.getInstalledVersions = originalVersions
+      appRegistry.installFromLocalZip = originalInstall
+      Object.defineProperty(Platform, "OS", {configurable: true, value: originalPlatform})
+      if (originalOverride === undefined) delete process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS
+      else process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS = originalOverride
+    }
+  })
+
+  it("keeps the iOS Call listener after normal subscription setup and replaces it cleanly", async () => {
+    const originalPlatform = Platform.OS
+    const originalOverride = process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS
+    Object.defineProperty(Platform, "OS", {configurable: true, value: "ios"})
+    delete process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS
+    const instance = new (mantle.constructor as new () => {
+      setupIosCallVisibility: () => void
+      setupSubscriptions: () => Promise<void>
+      installBundledCall: () => Promise<void>
+      subs: Array<{remove: () => void}>
+      iosCallVisibility: {dispose: () => void}
+    })()
+    const install = jest.fn(async () => {})
+    instance.installBundledCall = install
+    try {
+      await engine.settings.set(SETTINGS.show_mentra_call_ios.key, false)
+      instance.setupIosCallVisibility()
+      await instance.setupSubscriptions()
+      await engine.settings.set(SETTINGS.show_mentra_call_ios.key, true)
+      await waitFor(() => expect(install).toHaveBeenCalledTimes(1))
+      await waitFor(() => expect(engine.miniapps.setHiddenStatus).toHaveBeenLastCalledWith("com.mentra.call", false))
+      await instance.setupSubscriptions()
+      await engine.settings.set(SETTINGS.show_mentra_call_ios.key, false)
+      expect(engine.miniapps.setHiddenStatus).toHaveBeenLastCalledWith("com.mentra.call", true)
+      install.mockClear()
+      await engine.settings.set(SETTINGS.show_mentra_call_ios.key, true)
+      await waitFor(() => expect(install).toHaveBeenCalledTimes(1))
+      await waitFor(() => expect(engine.miniapps.setHiddenStatus).toHaveBeenLastCalledWith("com.mentra.call", false))
+    } finally {
+      instance.iosCallVisibility.dispose()
+      instance.subs.forEach((sub) => sub.remove())
+      Object.defineProperty(Platform, "OS", {configurable: true, value: originalPlatform})
+      if (originalOverride === undefined) delete process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS
+      else process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS = originalOverride
+    }
   })
 })

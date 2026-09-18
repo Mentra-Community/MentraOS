@@ -141,6 +141,9 @@ class MentraLive : SGCManager() {
         private const val LC3_FRAME_SIZE = 40
         private const val VOICE_ACTIVITY_DETECTION_SWITCH_TYPE = 8
         private const val LOUDNESS_GATE_SWITCH_TYPE = 10
+        // Mic tuning field names, matching the BES cs_mictun body.
+        private val MIC_TUNING_FIELDS =
+                listOf("gain", "open", "close", "attack", "hang", "sp_open", "sp_close", "sp_hold")
         private const val BES2700_MTU_LIMIT = 509
         private const val A2DP_CONNECT_MAX_ATTEMPTS = 5
         private const val A2DP_CONNECT_RETRY_MS = 800L
@@ -532,11 +535,30 @@ class MentraLive : SGCManager() {
     private var peerK900Le = false
     private var peerWireCapsBinary = false
     private var peerFilePayloadV2 = false
+    // Firmware understands cs_mictun / cs_micst / cs_micrms. Nothing mic-tuning
+    // related goes on the wire until this is seen.
+    private var peerMicTuning = false
+    private var peerWearTuning = false
+    // Connect-time dedupe. Three paths push mic tuning when a link comes up
+    // (sendUserSettings, the wire_caps advertisement, the engine's settings
+    // replay) and the wire_caps parse re-runs on every glasses_ready, so a
+    // single connect used to cost two identical cs_mictun and several
+    // cs_wearst. The glasses only lose tuning state on BLE disconnect, so an
+    // identical body within one link is a no-op and is dropped here. Both
+    // reset when the link drops (updateConnectionState -> DISCONNECTED).
+    private var lastSentMicTuningBody: String? = null
+    private var wearTuningQueriedThisLink = false
+    // Tuning generation echoed by the last sr_mictun / sr_micst. An sr_micrms
+    // measured before that revision describes a config we already replaced.
+    private var micTuningGeneration = 0
     // Last observed glasses process session id (`sid` in glasses_ready / version_info_1).
     // The BES keeps the BLE link alive across asg_client restarts, so transport state
     // cannot signal a restart - a CHANGED (or newly appearing) sid is the restart signal.
     // Null = no sid observed this BLE session (legacy glasses, or none seen yet).
     private var glassesSessionId: String? = null
+    // Last `glasses_ready.streamControlVersion`. Survives BluetoothSdkModule remounts
+    // so a new MentraBluetoothSdk can seed StreamSessionState without another ready.
+    private var streamControlVersion = 0
     // True once a glasses_ready completed on THIS physical BLE session; resets only with
     // the physical connection (never on heartbeat readiness flaps), so a first-seen sid
     // after an upgrade OTA is always detected as a restart.
@@ -1216,6 +1238,10 @@ class MentraLive : SGCManager() {
             DeviceStore.apply("glasses", "signalStrengthUpdatedAt", 0L)
             resetWireNegotiationState()
             resetPendingAckState()
+            // The glasses reset mic and wear tuning on BLE disconnect, so the
+            // next link must be allowed to send them again.
+            lastSentMicTuningBody = null
+            wearTuningQueriedThisLink = false
             sendQueue.clear() // see the disconnect reset above: stale writes die with the session
 
             // Drop OTA caches when fully disconnected — avoids leaking session/step state
@@ -1673,6 +1699,7 @@ class MentraLive : SGCManager() {
         connectedDevice = null
         glassesReady = false
         glassesSessionId = null
+        streamControlVersion = 0
         readinessCompletedThisBleSession = false
         glassesReadyReceived = false
         ctkdInitiatedThisGattSession = false
@@ -1947,6 +1974,7 @@ class MentraLive : SGCManager() {
         connectedDevice = null
         glassesReady = false
         glassesSessionId = null
+        streamControlVersion = 0
         readinessCompletedThisBleSession = false
         glassesReadyReceived = false
         ctkdInitiatedThisGattSession = false
@@ -2328,6 +2356,8 @@ class MentraLive : SGCManager() {
                             // Discover services
                             gatt.discoverServices()
 
+                            GlassesLinkDiagnostics.onSessionStart()
+
                             // Do NOT reset reconnectAttempts here — ephemeral GATT CONNECTED
                             // followed by status 19 was zeroing the counter every ~1s and
                             // preventing exponential backoff. Reset at ble_chars_ready instead.
@@ -2340,6 +2370,13 @@ class MentraLive : SGCManager() {
                             Bridge.log(
                                     "LIVE: 🔌 ⚠️ Disconnected from GATT server - Will attempt reconnection"
                             )
+                            Bridge.log(
+                                    "LIVE: " +
+                                            GlassesLinkDiagnostics.summary(
+                                                    "gatt_disconnected",
+                                                    status
+                                            )
+                            )
                             endPairingTiming(
                                     "gatt_disconnected",
                                     "queueSize=${sendQueue.size}"
@@ -2350,6 +2387,7 @@ class MentraLive : SGCManager() {
                             connectedDevice = null
                             glassesReady = false // Reset ready state on disconnect
                             glassesSessionId = null // Fresh BLE session starts with no sid known
+                            streamControlVersion = 0
                             readinessCompletedThisBleSession = false
 
                             // Reset audio pairing flags
@@ -2401,6 +2439,9 @@ class MentraLive : SGCManager() {
                                         status +
                                         ") - Will retry reconnection"
                         )
+                        Bridge.log(
+                                "LIVE: " + GlassesLinkDiagnostics.summary("gatt_error", status)
+                        )
                         endPairingTiming(
                                 "gatt_error",
                                 "status=$status queueSize=${sendQueue.size}"
@@ -2409,6 +2450,7 @@ class MentraLive : SGCManager() {
                         isConnecting = false
                         glassesReady = false
                         glassesSessionId = null
+                        streamControlVersion = 0
                         readinessCompletedThisBleSession = false
                         glassesReadyReceived = false
                         audioConnected = false
@@ -3970,6 +4012,7 @@ class MentraLive : SGCManager() {
             Log.d(TAG, "LIVE: Got some JSON from glasses: " + json.toString())
         }
         BleTraceLogger.logJson("glasses_to_phone", "sdk_ble_event", json, null)
+        GlassesLinkDiagnostics.recordInbound()
 
         if (MessageChunker.isChunkedMessage(json)) {
             processChunkedJsonMessage(json)
@@ -4571,6 +4614,7 @@ class MentraLive : SGCManager() {
                 // already runs this full remote-reset flow, so recording (not re-triggering)
                 // is correct here; version_info detection covers the restart case.
                 glassesSessionId = json.optString("sid", "").takeIf { it.isNotEmpty() }
+                streamControlVersion = json.optInt("streamControlVersion", 0)
                 Bridge.sendTypedMessage(
                         "wifi_protocol_session_ready",
                         mapOf("sid" to (glassesSessionId ?: "")),
@@ -4578,7 +4622,7 @@ class MentraLive : SGCManager() {
                 readinessCompletedThisBleSession = true
                 Bridge.sendTypedMessage("stream_control_ready", mapOf(
                     "sid" to json.optString("sid", ""),
-                    "streamControlVersion" to json.optInt("streamControlVersion", 0),
+                    "streamControlVersion" to streamControlVersion,
                 ))
 
                 // Set the ready flag to stop any future readiness checks
@@ -5510,6 +5554,55 @@ class MentraLive : SGCManager() {
                     Log.e(TAG, "Error parsing sr_swit response", e)
                 }
             }
+            "sr_mictun", "sr_micst" -> {
+                try {
+                    val bodyObj = optK900Body(json)
+                    if (bodyObj != null) {
+                        handleMicTuningState(bodyObj)
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error parsing mic tuning state", e)
+                }
+            }
+            "sr_weartun" -> {
+                try {
+                    val bodyObj = optK900Body(json)
+                    if (bodyObj != null) {
+                        handleWearTuningState(json, bodyObj)
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error parsing wear tuning state", e)
+                }
+            }
+            "sr_wrst" -> {
+                try {
+                    val bodyObj = optK900Body(json)
+                    if (bodyObj != null) {
+                        Bridge.sendWearState(bodyObj.optInt("on", 0) != 0)
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error parsing sr_wrst response", e)
+                }
+            }
+            "sr_micrms" -> {
+                try {
+                    val bodyObj = optK900Body(json)
+                    if (bodyObj != null) {
+                        val generation = bodyObj.optInt("gen", 0)
+                        // Measured under a config we have already replaced.
+                        if (generation >= micTuningGeneration) {
+                            Bridge.sendMicRms(
+                                    bodyObj.optInt("rms", 0),
+                                    bodyObj.optInt("gate", 0) != 0,
+                                    bodyObj.optInt("sp", 0) != 0,
+                                    generation
+                            )
+                        }
+                    }
+                } catch (e: Exception) {
+                    Log.e(TAG, "Error parsing sr_micrms response", e)
+                }
+            }
             "sr_shut" -> {
                 Bridge.log("LIVE: K900 shutdown command received - glasses shutting down")
                 lastShutdownTimeMs = System.currentTimeMillis()
@@ -5519,6 +5612,7 @@ class MentraLive : SGCManager() {
                 glassesReady = false
                 glassesReadyReceived = false
                 glassesSessionId = null
+                streamControlVersion = 0
                 readinessCompletedThisBleSession = false
             }
             "sr_adota" -> {
@@ -5804,6 +5898,39 @@ class MentraLive : SGCManager() {
     private fun isVoiceActivityDetectionEnabled(): Boolean {
         val value = DeviceStore.get("bluetooth", "voice_activity_detection_enabled")
         return !(value is Boolean) || value
+    }
+
+    /**
+     * Post-clamp tuning the glasses report as in force. Forwarded verbatim so
+     * the screen can show the applied value next to the requested one.
+     */
+    private fun handleMicTuningState(body: JSONObject) {
+        val state = HashMap<String, Any>()
+        for (name in MIC_TUNING_FIELDS) {
+            if (body.has(name)) state[name] = body.optInt(name, 0)
+        }
+        val generation = body.optInt("gen", 0)
+        state["generation"] = generation
+        state["overridden"] = body.optInt("ovr", 0) != 0
+        micTuningGeneration = generation
+        Bridge.sendMicTuningState(state)
+    }
+
+    /**
+     * What the wear poll loop is actually running. A rejected patch comes back
+     * with the unchanged values and a non-zero result code, so the screen can
+     * show that the request did not take.
+     */
+    private fun handleWearTuningState(json: JSONObject, body: JSONObject) {
+        val state = HashMap<String, Any>()
+        state["enabled"] = body.optInt("enabled", 0) != 0
+        state["interval"] = body.optInt("interval", 0)
+        state["count"] = body.optInt("count", 0)
+        state["majority"] = body.optInt("majority", 0)
+        state["generation"] = body.optInt("gen", 0)
+        // K900 replies carry the result code in "S"; 0 is RC_SUCCESS.
+        state["accepted"] = json.optInt("S", 0) == 0
+        Bridge.sendWearTuningState(state)
     }
 
     private fun handleSwitchStatus(switchType: Int, switchValue: Int, timestamp: Long) {
@@ -6138,6 +6265,7 @@ class MentraLive : SGCManager() {
         val now = System.currentTimeMillis()
         DeviceStore.apply("glasses", "signalStrength", rssi)
         DeviceStore.apply("glasses", "signalStrengthUpdatedAt", now)
+        GlassesLinkDiagnostics.recordRssi(rssi, now)
         Bridge.log("LIVE: 📶 RSSI: " + rssi + " dBm")
     }
 
@@ -6819,6 +6947,19 @@ class MentraLive : SGCManager() {
         json.put("type", "camera_warm_up_stop")
         json.put("requestId", requestId)
         sendJson(json, true)
+    }
+
+    override fun replayStreamControlReady() {
+        val sid = glassesSessionId ?: return
+        if (streamControlVersion != 1) return
+        Bridge.log("LIVE: Replaying stream_control_ready sid=$sid version=$streamControlVersion")
+        Bridge.sendTypedMessage(
+            "stream_control_ready",
+            mapOf(
+                "sid" to sid,
+                "streamControlVersion" to streamControlVersion,
+            ),
+        )
     }
 
     override fun startStream(message: MutableMap<String, Any>) {
@@ -8843,6 +8984,9 @@ class MentraLive : SGCManager() {
         peerK900Le = false
         peerWireCapsBinary = false
         peerFilePayloadV2 = false
+        peerWearTuning = false
+        peerMicTuning = false
+        micTuningGeneration = 0
         BleJsonCompact.resetSession()
         wireHandshakeSentGeneration = -1
     }
@@ -8917,6 +9061,32 @@ class MentraLive : SGCManager() {
         }
         if (caps.has("file_payload_v2")) {
             peerFilePayloadV2 = caps.optBoolean("file_payload_v2", false)
+        }
+        if (caps.has("wear_tuning") && !peerWearTuning) {
+            // Firmware advertises this as a JSON bool (`true`), not `1`.
+            // optInt("wear_tuning") returns 0 for a boolean and used to
+            // no-op every Super Mode wear button.
+            peerWearTuning = jsonFlagOn(caps, "wear_tuning")
+            if (peerWearTuning) {
+                Bridge.log("LIVE: wire_caps wear_tuning supported")
+                // Nothing to push: wear reporting starts off on the glasses
+                // and stays off until the tuning screen asks for it. One read
+                // per link: the flag is cleared on every wire epoch, but the
+                // glasses only forget tuning on BLE disconnect.
+                if (!wearTuningQueriedThisLink) {
+                    wearTuningQueriedThisLink = true
+                    requestWearTuning()
+                }
+            }
+        }
+        if (caps.has("mic_tuning") && !peerMicTuning) {
+            peerMicTuning = jsonFlagOn(caps, "mic_tuning")
+            if (peerMicTuning) {
+                // Caps can arrive after the on-connect batch already ran, in
+                // which case the tuning send was skipped. Do it now.
+                Bridge.log("LIVE: wire_caps mic_tuning supported")
+                sendMicTuningSetting()
+            }
         }
     }
 
@@ -10646,6 +10816,209 @@ class MentraLive : SGCManager() {
 
         // Send glasses-side loudness / Barrier gate setting.
         sendLoudnessGateSetting()
+
+        // Send mic tuning. With nothing authorized this sends a reset, which is
+        // what returns a freshly connected pair of glasses to stock behaviour.
+        sendMicTuningSetting()
+    }
+
+    /**
+     * Push the effective mic tuning to the glasses.
+     *
+     * The store holds only what the engine has authorized for this process; a
+     * missing value means "no tuning", which is sent as an explicit reset
+     * rather than silently skipped. That is what keeps a persisted super-mode
+     * value from surviving into a session where super mode is off.
+     */
+    override fun sendMicTuningSetting() {
+        if (!isConnected) {
+            Bridge.log("LIVE: Cannot send mic tuning - not connected")
+            return
+        }
+        if (!peerMicTuning) {
+            Bridge.log("LIVE: mic_tuning cap not advertised; sending cs_mictun anyway")
+        }
+
+        try {
+            val tuning = DeviceStore.get("bluetooth", "mic_tuning")
+            val body = JSONObject()
+            @Suppress("UNCHECKED_CAST")
+            val fields = tuning as? Map<String, Any>
+            var sent = 0
+            if (fields != null) {
+                for (name in MIC_TUNING_FIELDS) {
+                    val raw = fields[name]
+                    val number = raw as? Number ?: continue
+                    body.put(name, number.toInt())
+                    sent++
+                }
+            }
+            if (sent == 0) {
+                body.put("reset", 1)
+            }
+
+            val serialized = body.toString()
+            if (serialized == lastSentMicTuningBody) {
+                Bridge.log("LIVE: 🎚️ Mic tuning unchanged this link, not resending: " + serialized)
+                return
+            }
+
+            Bridge.log("LIVE: 🎚️ Sending mic tuning to glasses: " + serialized)
+
+            val cmdObject = JSONObject()
+            cmdObject.put("C", "cs_mictun")
+            cmdObject.put("V", 1)
+            cmdObject.put("B", body.toString())
+
+            val packedData =
+                    K900ProtocolUtils.packDataToK900(
+                            cmdObject.toString().toByteArray(StandardCharsets.UTF_8),
+                            K900ProtocolUtils.CMD_TYPE_STRING,
+                            k900LengthEndian()
+                    )
+            if (packedData == null) {
+                Bridge.log("LIVE: Failed to pack mic tuning command")
+                return
+            }
+            queueData(packedData)
+            lastSentMicTuningBody = serialized
+        } catch (e: JSONException) {
+            Log.e(TAG, "Error creating mic tuning command", e)
+        }
+    }
+
+    /** Ask the glasses what tuning they are actually running (sr_micst). */
+    override fun requestMicTuningState() {
+        if (!isConnected) {
+            Bridge.log("LIVE: Cannot send cs_micst - not connected")
+            return
+        }
+        if (!peerMicTuning) {
+            Bridge.log("LIVE: mic_tuning cap not advertised; sending cs_micst anyway")
+        }
+        sendMicTuningCommand("cs_micst", JSONObject())
+    }
+
+    /** Read the current wear state (sr_wrst). Always available. */
+    override fun queryWearState() {
+        sendWearCommandIfReady("cs_wrst", JSONObject())
+    }
+
+    /**
+     * Turn wear reporting on or off for this session.
+     *
+     * Deliberately not the NV-backed cs_swit type 1: the glasses must forget
+     * this on disconnect, and any later switch write would re-persist a wear
+     * bit that had been enabled once.
+     */
+    override fun setWearReporting(enabled: Boolean) {
+        val body = JSONObject()
+        body.put("enabled", if (enabled) 1 else 0)
+        sendWearCommandIfReady("cs_weartun", body)
+    }
+
+    /** Move the debounce vote. Negative means "leave this one alone". */
+    override fun setWearTuning(intervalMs: Int, count: Int, majority: Int) {
+        val body = JSONObject()
+        if (intervalMs >= 0) body.put("interval", intervalMs)
+        if (count >= 0) body.put("count", count)
+        if (majority >= 0) body.put("majority", majority)
+        if (body.length() == 0) return
+        sendWearCommandIfReady("cs_weartun", body)
+    }
+
+    /** Ask what the poll loop is actually running (sr_weartun). */
+    override fun requestWearTuning() {
+        sendWearCommandIfReady("cs_wearst", JSONObject())
+    }
+
+    /**
+     * Restore firmware defaults and disable reporting. Distinct from sending
+     * the default vote values, which would leave reporting on.
+     */
+    override fun resetWearTuning() {
+        val body = JSONObject()
+        body.put("reset", 1)
+        sendWearCommandIfReady("cs_weartun", body)
+    }
+
+    /**
+     * JSON wire_caps flags arrive as bools (`true`) or ints (`1`).
+     * [JSONObject.optInt] returns 0 for a boolean, which used to hide
+     * advertised capabilities.
+     */
+    private fun jsonFlagOn(obj: JSONObject, key: String): Boolean {
+        if (!obj.has(key) || obj.isNull(key)) return false
+        return when (val value = obj.opt(key)) {
+            is Boolean -> value
+            is Number -> value.toInt() != 0
+            is String -> value == "1" || value.equals("true", ignoreCase = true)
+            else -> false
+        }
+    }
+
+    private fun sendWearCommandIfReady(command: String, body: JSONObject) {
+        if (!isConnected) {
+            Bridge.log("LIVE: Cannot send $command - not connected")
+            return
+        }
+        if (!peerWearTuning && command != "cs_wrst") {
+            Bridge.log("LIVE: wear_tuning cap not advertised; sending $command anyway")
+        }
+        sendWearCommand(command, body)
+    }
+
+    private fun sendWearCommand(command: String, body: JSONObject) {
+        try {
+            val cmdObject = JSONObject()
+            cmdObject.put("C", command)
+            cmdObject.put("V", 1)
+            cmdObject.put("B", body.toString())
+            val packedData =
+                    K900ProtocolUtils.packDataToK900(
+                            cmdObject.toString().toByteArray(StandardCharsets.UTF_8),
+                            K900ProtocolUtils.CMD_TYPE_STRING,
+                            k900LengthEndian()
+                    )
+            if (packedData == null) {
+                Bridge.log("LIVE: Failed to pack " + command)
+                return
+            }
+            Bridge.log("LIVE: 👓 " + command + " " + body.toString())
+            queueData(packedData)
+        } catch (e: JSONException) {
+            Log.e(TAG, "Error creating " + command, e)
+        }
+    }
+
+    /** Enable or disable the sr_micrms readout. */
+    override fun setMicRmsTelemetry(enabled: Boolean) {
+        if (!isConnected || !peerMicTuning) return
+        val body = JSONObject()
+        body.put("on", if (enabled) 1 else 0)
+        sendMicTuningCommand("cs_micrms", body)
+    }
+
+    private fun sendMicTuningCommand(command: String, body: JSONObject) {
+        try {
+            val cmdObject = JSONObject()
+            cmdObject.put("C", command)
+            cmdObject.put("V", 1)
+            cmdObject.put("B", body.toString())
+            val packedData =
+                    K900ProtocolUtils.packDataToK900(
+                            cmdObject.toString().toByteArray(StandardCharsets.UTF_8),
+                            K900ProtocolUtils.CMD_TYPE_STRING,
+                            k900LengthEndian()
+                    )
+            if (packedData == null) {
+                Bridge.log("LIVE: Failed to pack " + command)
+                return
+            }
+            queueData(packedData)
+        } catch (e: JSONException) {
+            Log.e(TAG, "Error creating " + command, e)
+        }
     }
 
     override fun sendVoiceActivityDetectionSetting() {

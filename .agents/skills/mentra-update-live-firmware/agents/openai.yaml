@@ -1,0 +1,4 @@
+interface:
+  display_name: "Update Mentra Live Firmware"
+  short_description: "Update BES and MTK pins and production upgrade paths"
+  default_prompt: "Use $mentra-update-live-firmware to update the BES and MTK firmware manifest to the latest published builds and open a PR to dev, preserving production upgrade paths."

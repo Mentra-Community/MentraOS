@@ -6,6 +6,9 @@ import {
   SoftapCallError,
   SoftapCallTransport,
   SoftapEndNotSupportedError,
+  SOFTAP_STEPS,
+  RETURN_DEADLINE_MS,
+  REARM_BUDGET_MS,
   softapVideoPolicy,
   type SoftapCallDeps,
   type SoftapProgress,
@@ -53,8 +56,12 @@ function recordingDeps(overrides: Partial<SoftapCallDeps> | ((calls: string[]) =
     stopPublishing: async () => {
       calls.push("stopPublishing")
     },
-    awaitFirstFrame: async () => {
-      calls.push("awaitFirstFrame")
+    awaitFirstFrame: async (_report, options) => {
+      calls.push(options?.fresh ? "awaitFirstFrame:fresh" : "awaitFirstFrame")
+    },
+    rebindIngest: async () => {
+      calls.push("rebindIngest")
+      return {ingestUrl: "http://192.168.43.20:8791/whip"}
     },
     ...resolved,
   }
@@ -1346,7 +1353,59 @@ describe("createSoftapCallDeps", () => {
     expect(gateways).toEqual(["192.168.43.1", "10.5.6.1"])
   })
 
-  test("the join waits for the phone's internet to come back before asking ACS for anything", async () => {
+  test("an unanswered enable is asked again instead of turning the hotspot off", async () => {
+    // BLE can deliver the enable after the phone gave up on it. Disabling here turned an AP that
+    // had just come up back off, and the rebuild then ran out of budget.
+    const base = subsystems()
+    const calls: boolean[] = []
+    let enables = 0
+    const real = createSoftapCallDeps({
+      packageName: "com.mentra.call",
+      meetingUrl: "https://teams.microsoft.com/l/meetup-join/x",
+      token: "tok",
+      awaitFirstFrame: async () => {},
+      hotspotBroadcastWaitMs: 0,
+      subsystems: {
+        ...base.subsystems,
+        setHotspotState: async (enabled) => {
+          calls.push(enabled)
+          if (enabled && ++enables === 1) {
+            throw new Error("hotspot enable request timed out waiting for glasses response")
+          }
+          return enabled ? {state: "enabled", ssid: "MentraLive-1234", password: "pw"} : {state: "disabled"}
+        },
+      },
+    })
+
+    await expect(real.startHotspot()).resolves.toEqual({ssid: "MentraLive-1234", passphrase: "pw"})
+    expect(calls).toEqual([true, true])
+  })
+
+  test("a hotspot that answers 'disabled' is still cycled off before the retry", async () => {
+    const base = subsystems()
+    const calls: boolean[] = []
+    let enables = 0
+    const real = createSoftapCallDeps({
+      packageName: "com.mentra.call",
+      meetingUrl: "https://teams.microsoft.com/l/meetup-join/x",
+      token: "tok",
+      awaitFirstFrame: async () => {},
+      hotspotBroadcastWaitMs: 0,
+      subsystems: {
+        ...base.subsystems,
+        setHotspotState: async (enabled) => {
+          calls.push(enabled)
+          if (enabled && ++enables === 1) return {state: "disabled"}
+          return enabled ? {state: "enabled", ssid: "MentraLive-1234", password: "pw"} : {state: "disabled"}
+        },
+      },
+    })
+
+    await real.startHotspot()
+    expect(calls).toEqual([true, false, true])
+  })
+
+  test.each(["cellular", "ethernet"])("the join waits for %s internet before asking ACS for anything", async (transport) => {
     // Joining the hotspot takes this phone off Wi-Fi, and signing in to ACS is the very next thing
     // that needs the internet. On device that ordering cost a 30s stall plus the join step's own
     // timeout, so the wait has to happen first, not concurrently.
@@ -1354,7 +1413,7 @@ describe("createSoftapCallDeps", () => {
     const {deps: real} = deps({
       awaitValidatedDefaultNetwork: async () => {
         order.push("awaitDefault")
-        return {usable: true, detail: "cellular (validated)"}
+        return {usable: true, detail: `${transport} (validated)`}
       },
       joinMeeting: async () => {
         order.push("joinMeeting")
@@ -1368,8 +1427,8 @@ describe("createSoftapCallDeps", () => {
     )
 
     expect(order).toEqual(["awaitDefault", "joinMeeting"])
-    expect(details.some((d) => d.includes("mobile data"))).toBe(true)
-    expect(details.some((d) => d.includes("Internet is on cellular (validated)"))).toBe(true)
+    expect(details.some((d) => d.includes("internet route outside the glasses hotspot"))).toBe(true)
+    expect(details.some((d) => d.includes(`Internet is on ${transport} (validated)`))).toBe(true)
   })
 
   test("an unvalidated default network is narrated but does not abort the join", async () => {
@@ -1777,4 +1836,217 @@ describe("SoftapCallTransport mid-call republish", () => {
     expect(calls.length).toBe(after)
     expect(transport.shouldRepublish("failed")).toBe(false)
   })
+
+  test("an invalidated republish clears the field so a later republish can run", async () => {
+    let blockLive = true
+    let releaseLive!: (live: boolean) => void
+    const {calls, transport} = recordingDeps({
+      waitUntilLive: () => {
+        if (!blockLive) return Promise.resolve(true)
+        return new Promise<boolean>((resolve) => {
+          releaseLive = resolve
+        })
+      },
+    })
+    await transport.start()
+    calls.length = 0
+    const first = transport.republish("stalled")
+    for (let i = 0; i < 20 && !releaseLive; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    }
+    const stopped = transport.stop()
+    releaseLive(false)
+    await first
+    await stopped
+    expect(transport.currentPhase()).toBe("idle")
+
+    blockLive = false
+    await transport.start()
+    calls.length = 0
+    await transport.republish("again")
+    expect(calls.filter((call) => call.startsWith("startPublishing"))).toHaveLength(1)
+  })
+
+  test("a cancelled republish does not stopPublishing a successor's publisher", async () => {
+    let releaseRepublishStart!: () => void
+    let startPublishingCalls = 0
+    const {calls, deps, transport} = recordingDeps({waitUntilLive: async () => true})
+    await transport.start()
+    calls.length = 0
+    deps.startPublishing = async (args) => {
+      startPublishingCalls += 1
+      calls.push(`startPublishing:${args.ingestUrl}:${startPublishingCalls}`)
+      if (startPublishingCalls === 1) {
+        await new Promise<void>((resolve) => {
+          releaseRepublishStart = resolve
+        })
+      }
+    }
+    const republished = transport.republish("cam died")
+    for (let i = 0; i < 20 && !releaseRepublishStart; i++) {
+      await new Promise((resolve) => setTimeout(resolve, 0))
+    }
+    const recovered = transport.recover("hotspot lost")
+    await new Promise((resolve) => setTimeout(resolve, 0))
+    releaseRepublishStart()
+    await republished
+    await recovered
+    const publishStarts = calls.filter((call) => call.startsWith("startPublishing"))
+    const lastPublish = publishStarts.at(-1)
+    const lastStopAfter = calls.slice(calls.lastIndexOf(lastPublish ?? "")).filter((call) => call === "stopPublishing")
+    expect(lastStopAfter).toEqual([])
+    expect(transport.currentPhase()).toBe("live")
+    expect(transport.shouldRepublish("failed")).toBe(true)
+  })
+})
+
+describe("SoftapCallTransport media generation recovery", () => {
+  const PRESERVE_TEARDOWN = ["stopPublishing", "leaveScopedNetwork", "stopHotspot"]
+  const MEDIA_ONLY_ORDER = [
+    "startHotspot",
+    "waitUntilHotspotJoinable",
+    "joinScopedNetwork:MentraLive-1234:hunter2!",
+    "rebindIngest",
+    "startPublishing:http://192.168.43.20:8791/whip",
+    "awaitFirstFrame:fresh",
+  ]
+
+  test("exposes return and rearm budgets for the host", () => {
+    expect(RETURN_DEADLINE_MS).toBe(60_000)
+    expect(REARM_BUDGET_MS).toBe(45_000)
+  })
+
+  test("preserveMeeting undoes everything except acsJoin", async () => {
+    const {calls, transport} = recordingDeps()
+    await transport.start()
+    calls.length = 0
+
+    await transport.stop({preserveMeeting: true})
+
+    expect(calls).toEqual(PRESERVE_TEARDOWN)
+    expect(calls).not.toContain("leaveMeeting")
+    expect(transport.activeSteps()).toEqual(["acsJoin"])
+    expect(transport.currentPhase()).toBe("recovering")
+  })
+
+  test("mediaOnly rebuilds through rebindIngest and restores canonical completed", async () => {
+    const {calls, transport} = recordingDeps()
+    await transport.start()
+    await transport.stop({preserveMeeting: true})
+    calls.length = 0
+
+    await transport.start({mediaOnly: true})
+
+    expect(calls).toEqual(MEDIA_ONLY_ORDER)
+    expect(calls.some((call) => call.startsWith("joinMeeting"))).toBe(false)
+    expect(transport.activeSteps()).toEqual([...SOFTAP_STEPS])
+    expect(transport.currentPhase()).toBe("live")
+  })
+
+  test("recover mints a fresh traceId and stands republish down immediately", async () => {
+    let transport!: InstanceType<typeof SoftapCallTransport>
+    let phaseDuringFirstWait: string | undefined
+    let republishDuringFirstWait: boolean | undefined
+    const harness = recordingDeps((calls) => ({
+      stopPublishing: async () => {
+        calls.push("stopPublishing")
+        phaseDuringFirstWait = transport.currentPhase()
+        republishDuringFirstWait = transport.shouldRepublish("failed")
+      },
+    }))
+    transport = harness.transport
+    await transport.start()
+    const previousTrace = transport.progress().traceId
+    expect(transport.shouldRepublish("failed")).toBe(true)
+
+    const recovered = transport.recover("hotspot lost")
+    await recovered
+
+    expect(phaseDuringFirstWait).toBe("recovering")
+    expect(republishDuringFirstWait).toBe(false)
+    expect(transport.currentPhase()).toBe("live")
+    expect(transport.progress().traceId).not.toBe(previousTrace)
+    expect(transport.progress().traceId.length).toBeGreaterThan(0)
+    expect(transport.activeSteps()).toEqual([...SOFTAP_STEPS])
+    expect(transport.recoveryState().mediaGeneration).toBeGreaterThan(0)
+    expect(transport.shouldRepublish("failed")).toBe(true)
+  })
+
+  test("recover does not leave the ACS meeting", async () => {
+    const {calls, transport} = recordingDeps()
+    await transport.start()
+    calls.length = 0
+    await transport.recover("scoped network lost")
+    expect(calls).not.toContain("leaveMeeting")
+    expect(calls.filter((call) => call.startsWith("joinMeeting"))).toEqual([])
+    expect(calls).toContain("rebindIngest")
+    expect(transport.currentPhase()).toBe("live")
+  })
+
+  test("recover waits for the glasses before tearing the hotspot down", async () => {
+    const {calls, transport} = recordingDeps()
+    await transport.start()
+    calls.length = 0
+    let released = false
+    const wait = new Promise<void>((resolve) => {
+      setTimeout(() => {
+        released = true
+        resolve()
+      }, 20)
+    })
+    const recovered = transport.recover("hotspot lost", {wait: () => wait})
+    await new Promise((resolve) => setTimeout(resolve, 5))
+    expect(released).toBe(false)
+    expect(calls).not.toContain("stopHotspot")
+    expect(calls).not.toContain("rebindIngest")
+    await recovered
+    expect(released).toBe(true)
+    expect(calls.indexOf("stopHotspot")).toBeGreaterThan(-1)
+    expect(calls.indexOf("stopHotspot")).toBeLessThan(calls.indexOf("rebindIngest"))
+    expect(calls).toContain("rebindIngest")
+  })
+})
+
+describe("SoftapCallTransport stop wins during recovery", () => {
+  const blockable: Array<{name: string; override: keyof SoftapCallDeps}> = [
+    {name: "preserve teardown", override: "stopPublishing"},
+    {name: "mediaOnly hotspot", override: "startHotspot"},
+    {name: "mediaOnly scopedJoin", override: "joinScopedNetwork"},
+    {name: "mediaOnly rebindIngest", override: "rebindIngest"},
+    {name: "mediaOnly publish", override: "startPublishing"},
+    {name: "mediaOnly first frame", override: "awaitFirstFrame"},
+  ]
+
+  for (const {name, override} of blockable) {
+    test(`stop() wins at ${name}`, async () => {
+      let release!: () => void
+      const blocked = new Promise<void>((resolve) => {
+        release = resolve
+      })
+      let entered = false
+      const {calls, deps, transport} = recordingDeps()
+      await transport.start()
+      const original = deps[override] as (...args: never[]) => Promise<unknown>
+      Object.assign(deps, {
+        [override]: async (...args: never[]) => {
+          entered = true
+          await blocked
+          return original(...args)
+        },
+      })
+
+      const recovered = transport.recover("hotspot lost")
+      for (let i = 0; i < 20 && !entered; i++) {
+        await new Promise((resolve) => setTimeout(resolve, 0))
+      }
+      expect(entered).toBe(true)
+      const stopped = transport.stop()
+      release()
+      await stopped
+      await expect(recovered).rejects.toBeInstanceOf(SoftapCallError)
+      expect(calls).toContain("leaveMeeting")
+      expect(transport.currentPhase()).toBe("idle")
+      expect(transport.activeSteps()).toEqual([])
+    })
+  }
 })

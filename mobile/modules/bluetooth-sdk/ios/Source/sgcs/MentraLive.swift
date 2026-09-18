@@ -1056,9 +1056,14 @@ extension MentraLive: CBCentralManagerDelegate {
             self.fullyBooted = false
             self.connected = false
             self.glassesSessionId = nil // Fresh BLE session starts with no sid known
+            self.streamControlVersion = 0
             self.readinessCompletedThisBleSession = false
             self.updateConnectionState(ConnTypes.DISCONNECTED)
             self.rgbLedAuthorityClaimed = false
+            // The glasses reset mic and wear tuning on BLE disconnect, so the
+            // next link must be allowed to send them again.
+            self.lastSentMicTuningBody = nil
+            self.wearTuningQueriedThisLink = false
 
             self.stopAllTimers()
             self.closeL2capFileChannel()
@@ -1697,11 +1702,29 @@ class MentraLive: NSObject, SGCManager {
     private var ancsRelayEnableRequested = false
     private var peerWireCapsBinary = false
     private var peerFilePayloadV2 = false
+    /// Firmware understands cs_mictun / cs_micst / cs_micrms. Nothing mic-tuning
+    /// related goes on the wire until this is seen.
+    private var peerMicTuning = false
+    /// Firmware understands cs_weartun / cs_wearst. Wear reporting stays off
+    /// until Super Mode asks for it; this flag only gates those commands.
+    private var peerWearTuning = false
+    /// Tuning generation echoed by the last sr_mictun / sr_micst. An sr_micrms
+    /// measured before that revision describes a config we already replaced.
+    private var micTuningGeneration = 0
+    /// Connect-time dedupe, mirroring Android. Several paths push mic tuning
+    /// when a link comes up and the wire_caps parse re-runs per glasses_ready;
+    /// the glasses only forget tuning on BLE disconnect, so an identical body
+    /// within one link is dropped. Both reset in didDisconnectPeripheral.
+    private var lastSentMicTuningBody: String?
+    private var wearTuningQueriedThisLink = false
     /// Last observed glasses process session id (`sid` in glasses_ready / version_info_1).
     /// The BES keeps the BLE link alive across asg_client restarts, so transport state
     /// cannot signal a restart - a CHANGED (or newly appearing) sid is the restart signal.
     /// Nil = no sid observed this BLE session (legacy glasses, or none seen yet).
     private var glassesSessionId: String?
+    /// Last `glasses_ready.streamControlVersion`. Survives SDK remounts so a new
+    /// MentraBluetoothSDK can seed StreamSessionState without another ready.
+    private var streamControlVersion = 0
     // True once a glasses_ready completed on THIS physical BLE session. Unlike
     // fullyBooted, this never flaps on sr_hrt ready=0 heartbeats — it only resets with
     // the physical connection — so a first-seen sid after an upgrade OTA cannot be
@@ -1845,6 +1868,7 @@ class MentraLive: NSObject, SGCManager {
         connected = false
         fullyBooted = false
         glassesSessionId = nil
+        streamControlVersion = 0
         readinessCompletedThisBleSession = false
         rgbLedAuthorityClaimed = false
         stopAllTimers()
@@ -2150,6 +2174,15 @@ class MentraLive: NSObject, SGCManager {
             ["type": "camera_warm_up_stop", "requestId": requestId],
             wakeUp: true
         )
+    }
+
+    func replayStreamControlReady() {
+        guard let sid = glassesSessionId, streamControlVersion == 1 else { return }
+        Bridge.log("LIVE: Replaying stream_control_ready sid=\(sid) version=\(streamControlVersion)")
+        Bridge.sendTypedMessage("stream_control_ready", body: [
+            "sid": sid,
+            "streamControlVersion": streamControlVersion,
+        ])
     }
 
     func startStream(_ message: [String: Any]) {
@@ -2522,6 +2555,7 @@ class MentraLive: NSObject, SGCManager {
             connected = false
             fullyBooted = false
             glassesSessionId = nil
+            streamControlVersion = 0
             readinessCompletedThisBleSession = false
             readinessCompletedThisBleSession = false // Fresh BLE session starts with no sid known
             readinessCompletedThisBleSession = false
@@ -2801,6 +2835,7 @@ class MentraLive: NSObject, SGCManager {
             // already runs this full remote-reset flow, so recording (not re-triggering)
             // is correct here; version_info detection covers the restart case.
             glassesSessionId = (json["sid"] as? String).flatMap { $0.isEmpty ? nil : $0 }
+            streamControlVersion = json["streamControlVersion"] as? Int ?? 0
             Bridge.sendTypedMessage(
                 "wifi_protocol_session_ready",
                 body: ["sid": glassesSessionId ?? ""]
@@ -2808,7 +2843,7 @@ class MentraLive: NSObject, SGCManager {
             readinessCompletedThisBleSession = true
             Bridge.sendTypedMessage("stream_control_ready", body: [
                 "sid": json["sid"] as? String ?? "",
-                "streamControlVersion": json["streamControlVersion"] as? Int ?? 0,
+                "streamControlVersion": streamControlVersion,
             ])
             handleGlassesReady()
 
@@ -3409,6 +3444,35 @@ class MentraLive: NSObject, SGCManager {
                     value: switchValue,
                     timestamp: Int64(Date().timeIntervalSince1970 * 1000)
                 )
+            }
+
+        case "sr_mictun", "sr_micst":
+            if let body = k900ParseBody(json["B"]) {
+                handleMicTuningState(body)
+            }
+
+        case "sr_weartun":
+            if let body = k900ParseBody(json["B"]) {
+                handleWearTuningState(json, body)
+            }
+
+        case "sr_wrst":
+            if let body = k900ParseBody(json["B"]) {
+                Bridge.sendWearState(worn: (k900JsonInt(body, "on") ?? 0) != 0)
+            }
+
+        case "sr_micrms":
+            if let body = k900ParseBody(json["B"]) {
+                let generation = k900JsonInt(body, "gen") ?? 0
+                // Measured under a config we have already replaced.
+                if generation >= micTuningGeneration {
+                    Bridge.sendMicRms(
+                        rms: k900JsonInt(body, "rms") ?? 0,
+                        gateOpen: (k900JsonInt(body, "gate") ?? 0) != 0,
+                        speakerElevated: (k900JsonInt(body, "sp") ?? 0) != 0,
+                        generation: generation
+                    )
+                }
             }
 
         case "sr_shut":
@@ -5653,6 +5717,7 @@ class MentraLive: NSObject, SGCManager {
         fullyBooted = false
         connected = false
         glassesSessionId = nil
+        streamControlVersion = 0
 
         Bridge.log("LIVE: 🔄 Starting glasses SOC readiness check loop")
 
@@ -6032,6 +6097,9 @@ extension MentraLive {
         peerK900Le = false
         peerWireCapsBinary = false
         peerFilePayloadV2 = false
+        peerWearTuning = false
+        peerMicTuning = false
+        micTuningGeneration = 0
         BleJsonCompact.resetSession()
         wireHandshakeSentGeneration = -1
     }
@@ -6100,6 +6168,33 @@ extension MentraLive {
         }
         if caps.keys.contains("file_payload_v2") {
             peerFilePayloadV2 = (caps["file_payload_v2"] as? Bool) == true
+        }
+        if caps.keys.contains("wear_tuning"), !peerWearTuning {
+            let supported = (caps["wear_tuning"] as? Bool) == true
+                || ((caps["wear_tuning"] as? NSNumber)?.intValue ?? 0) != 0
+            if supported {
+                peerWearTuning = true
+                Bridge.log("LIVE: wire_caps wear_tuning supported")
+                // Nothing to push: wear reporting starts off on the glasses
+                // and stays off until the tuning screen asks for it. One read
+                // per link: the flag is cleared on every wire epoch, but the
+                // glasses only forget tuning on BLE disconnect.
+                if !wearTuningQueriedThisLink {
+                    wearTuningQueriedThisLink = true
+                    requestWearTuning()
+                }
+            }
+        }
+        if caps.keys.contains("mic_tuning"), !peerMicTuning {
+            let supported = (caps["mic_tuning"] as? Bool) == true
+                || ((caps["mic_tuning"] as? NSNumber)?.intValue ?? 0) != 0
+            if supported {
+                peerMicTuning = true
+                // Caps can land after the on-connect batch already ran, which
+                // would have skipped the tuning send.
+                Bridge.log("LIVE: wire_caps mic_tuning supported")
+                sendMicTuningSetting()
+            }
         }
     }
 
@@ -6769,6 +6864,165 @@ extension MentraLive {
 
         // Send glasses-side loudness / Barrier gate setting.
         sendLoudnessGateSetting()
+
+        // Send mic tuning. With nothing authorized this sends a reset, which is
+        // what returns a freshly connected pair of glasses to stock behaviour.
+        sendMicTuningSetting()
+    }
+
+    /// Mic tuning field names, matching the BES cs_mictun body.
+    private static let micTuningFields = [
+        "gain", "open", "close", "attack", "hang", "sp_open", "sp_close", "sp_hold",
+    ]
+
+    /// Push the effective mic tuning to the glasses.
+    ///
+    /// The store holds only what the engine has authorized for this process; a
+    /// missing value means "no tuning", which is sent as an explicit reset
+    /// rather than silently skipped. That is what keeps a persisted super-mode
+    /// value from surviving into a session where super mode is off.
+    func sendMicTuningSetting() {
+        guard connectedPeripheral != nil, txCharacteristic != nil else {
+            Bridge.log("LIVE: Cannot send mic tuning - BLE write path not ready")
+            return
+        }
+        if !peerMicTuning {
+            Bridge.log("LIVE: mic_tuning cap not advertised; sending cs_mictun anyway")
+        }
+
+        var body: [String: Any] = [:]
+        if let fields = DeviceStore.shared.get("bluetooth", "mic_tuning") as? [String: Any] {
+            for name in Self.micTuningFields {
+                if let number = fields[name] as? NSNumber {
+                    body[name] = number.intValue
+                }
+            }
+        }
+        if body.isEmpty {
+            body["reset"] = 1
+        }
+
+        // Key order is fixed so equal bodies serialize identically.
+        let serialized = body.keys.sorted().map { "\($0)=\(body[$0]!)" }.joined(separator: ",")
+        if serialized == lastSentMicTuningBody {
+            Bridge.log("LIVE: 🎚️ Mic tuning unchanged this link, not resending: \(serialized)")
+            return
+        }
+
+        Bridge.log("LIVE: 🎚️ Sending mic tuning to glasses: \(body)")
+        sendMicTuningCommand("cs_mictun", body: body)
+        lastSentMicTuningBody = serialized
+    }
+
+    /// Ask the glasses what tuning they are actually running (sr_micst).
+    func requestMicTuningState() {
+        guard connectedPeripheral != nil, txCharacteristic != nil else {
+            Bridge.log("LIVE: Cannot send cs_micst - BLE write path not ready")
+            return
+        }
+        if !peerMicTuning {
+            Bridge.log("LIVE: mic_tuning cap not advertised; sending cs_micst anyway")
+        }
+        sendMicTuningCommand("cs_micst", body: [:])
+    }
+
+    /// Enable or disable the sr_micrms readout.
+    func setMicRmsTelemetry(_ enabled: Bool) {
+        guard connectedPeripheral != nil, txCharacteristic != nil, peerMicTuning else { return }
+        sendMicTuningCommand("cs_micrms", body: ["on": enabled ? 1 : 0])
+    }
+
+    /// Read the current wear state (sr_wrst). Always available.
+    @objc func queryWearState() {
+        sendWearCommandIfReady("cs_wrst", body: [:])
+    }
+
+    /// Turn wear reporting on or off for this session.
+    ///
+    /// Deliberately not the NV-backed cs_swit type 1: the glasses must forget
+    /// this on disconnect, and any later switch write would re-persist a wear
+    /// bit that had been enabled once.
+    @objc func setWearReporting(_ enabled: Bool) {
+        sendWearCommandIfReady("cs_weartun", body: ["enabled": enabled ? 1 : 0])
+    }
+
+    /// Move the debounce vote. Negative means "leave this one alone".
+    @objc func setWearTuning(intervalMs: Int, count: Int, majority: Int) {
+        var body: [String: Any] = [:]
+        if intervalMs >= 0 { body["interval"] = intervalMs }
+        if count >= 0 { body["count"] = count }
+        if majority >= 0 { body["majority"] = majority }
+        guard !body.isEmpty else { return }
+        sendWearCommandIfReady("cs_weartun", body: body)
+    }
+
+    /// Ask what the poll loop is actually running (sr_weartun).
+    @objc func requestWearTuning() {
+        sendWearCommandIfReady("cs_wearst", body: [:])
+    }
+
+    /// Restore firmware defaults and disable reporting. Distinct from sending
+    /// the default vote values, which would leave reporting on.
+    @objc func resetWearTuning() {
+        sendWearCommandIfReady("cs_weartun", body: ["reset": 1])
+    }
+
+    private func sendWearCommandIfReady(_ name: String, body: [String: Any]) {
+        guard connectedPeripheral != nil, txCharacteristic != nil else {
+            Bridge.log("LIVE: Cannot send \(name) - BLE write path not ready")
+            return
+        }
+        if !peerWearTuning && name != "cs_wrst" {
+            Bridge.log("LIVE: wear_tuning cap not advertised; sending \(name) anyway")
+        }
+        sendMicTuningCommand(name, body: body)
+    }
+
+    private func sendMicTuningCommand(_ name: String, body: [String: Any]) {
+        do {
+            let bodyData = try JSONSerialization.data(withJSONObject: body)
+            guard let bodyString = String(data: bodyData, encoding: .utf8) else {
+                Bridge.log("LIVE: Failed to encode \(name) payload")
+                return
+            }
+            let command: [String: Any] = ["C": name, "V": 1, "B": bodyString]
+            if !sendRawK900Command(command, wakeUp: true) {
+                Bridge.log("LIVE: Failed to send \(name)")
+            }
+        } catch {
+            Bridge.log("LIVE: Error encoding \(name) payload: \(error)")
+        }
+    }
+
+    /// Post-clamp tuning the glasses report as in force. Forwarded verbatim so
+    /// the screen can show the applied value next to the requested one.
+    private func handleMicTuningState(_ body: [String: Any]) {
+        var state: [String: Any] = [:]
+        for name in Self.micTuningFields {
+            if let number = body[name] as? NSNumber {
+                state[name] = number.intValue
+            }
+        }
+        let generation = (body["gen"] as? NSNumber)?.intValue ?? 0
+        state["generation"] = generation
+        state["overridden"] = ((body["ovr"] as? NSNumber)?.intValue ?? 0) != 0
+        micTuningGeneration = generation
+        Bridge.sendMicTuningState(state)
+    }
+
+    /// What the wear poll loop is actually running. A rejected patch comes back
+    /// with the unchanged values and a non-zero result code, so the screen can
+    /// show that the request did not take.
+    private func handleWearTuningState(_ json: [String: Any], _ body: [String: Any]) {
+        let state: [String: Any] = [
+            "enabled": (k900JsonInt(body, "enabled") ?? 0) != 0,
+            "interval": k900JsonInt(body, "interval") ?? 0,
+            "count": k900JsonInt(body, "count") ?? 0,
+            "majority": k900JsonInt(body, "majority") ?? 0,
+            "generation": k900JsonInt(body, "gen") ?? 0,
+            "accepted": (k900JsonInt(json, "S") ?? 0) == 0,
+        ]
+        Bridge.sendWearTuningState(state)
     }
 
     func sendVoiceActivityDetectionSetting() {

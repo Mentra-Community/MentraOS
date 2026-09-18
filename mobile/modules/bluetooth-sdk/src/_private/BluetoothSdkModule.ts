@@ -33,6 +33,7 @@ import {
   NativePhoneNotification,
   NativeNotificationConfig,
   NativeNotificationStatus,
+  MicTuning,
   ObservableStoreCategory,
   OtaQueryResult,
   OtaStartAckEvent,
@@ -143,6 +144,36 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   setVoiceActivityDetectionEnabled(enabled: boolean): Promise<void>
   /** Mentra Live center-mic loudness / Barrier gate (cs_swit type 10). */
   setLoudnessGateEnabled(enabled: boolean): Promise<void>
+  /**
+   * Mentra Live mic tuning. `null` clears every override and returns the
+   * glasses to firmware defaults.
+   *
+   * Deliberately absent from the public SDK surface: it is a super-mode
+   * calibration aid whose values only make sense next to a live RMS readout.
+   */
+  setMicTuning(tuning: MicTuning | null): Promise<void>
+  /**
+   * Ask the glasses to report the tuning they are actually running. The answer
+   * arrives as a `mic_tuning_state` event, which is also emitted unprompted
+   * after every set, so a screen that subscribes on mount and calls this on
+   * focus never has to guess.
+   */
+  requestMicTuningState(): Promise<void>
+  /** Enable or disable the `mic_rms` readout. Auto-disabled on disconnect. */
+  setMicRmsTelemetry(enabled: boolean): Promise<void>
+  /**
+   * Mentra Live wear detection. Internal / Super Mode only.
+   *
+   * Reporting is RAM-only on the glasses and must not go through `cs_swit`
+   * type 1 (that bit is NV-backed). `resetWearTuning` both restores the
+   * firmware vote defaults and turns reporting off.
+   */
+  queryWearState(): Promise<void>
+  setWearReporting(enabled: boolean): Promise<void>
+  /** Negative values leave that field unchanged. */
+  setWearTuning(intervalMs: number, count: number, majority: number): Promise<void>
+  requestWearTuning(): Promise<void>
+  resetWearTuning(): Promise<void>
   /**
    * @deprecated Sticky action-button photo presets are deprecated. Prefer per-request
    * `requestPhoto(...)` options (e.g. `mode: "text"` for text sensor size/crop).
@@ -546,6 +577,22 @@ NativeBluetoothSdkModule.setLoudnessGateEnabled = function (enabled: boolean) {
   return this.updateBluetoothSettings({loudness_gate_enabled: enabled})
 }
 
+NativeBluetoothSdkModule.setMicTuning = function (tuning: MicTuning | null) {
+  // `{}` rather than null: the store drops null writes, and the native side
+  // reads an empty object as "no overrides" and sends an explicit reset.
+  return this.updateBluetoothSettings({mic_tuning: tuning ?? {}})
+}
+
+const nativeMicModule = NativeBluetoothSdkModule as unknown as Record<string, unknown>
+NativeBluetoothSdkModule.requestMicTuningState = bindNativeMethod<() => Promise<void>>(
+  nativeMicModule,
+  "requestMicTuningState",
+)
+NativeBluetoothSdkModule.setMicRmsTelemetry = bindNativeMethod<(enabled: boolean) => Promise<void>>(
+  nativeMicModule,
+  "setMicRmsTelemetry",
+)
+
 const nativeSetCameraFov = bindNativeMethod<(fov: CameraFovSetting) => MaybePromise<CameraFovResult>>(
   NativeBluetoothSdkModule as unknown as Record<string, unknown>,
   "setCameraFov",
@@ -677,6 +724,21 @@ const nativeStartStream = bindNativeMethod<(params: StreamStartRequest) => Promi
 NativeBluetoothSdkModule.startStream = function (params: StreamStartRequest) {
   return nativeStartStream(streamRequestParamsForNative(params) as unknown as StreamStartRequest)
 }
+
+const nativeWearModule = NativeBluetoothSdkModule as unknown as Record<string, unknown>
+NativeBluetoothSdkModule.queryWearState = bindNativeMethod<() => Promise<void>>(nativeWearModule, "queryWearState")
+NativeBluetoothSdkModule.setWearReporting = bindNativeMethod<(enabled: boolean) => Promise<void>>(
+  nativeWearModule,
+  "setWearReporting",
+)
+NativeBluetoothSdkModule.setWearTuning = bindNativeMethod<
+  (intervalMs: number, count: number, majority: number) => Promise<void>
+>(nativeWearModule, "setWearTuning")
+NativeBluetoothSdkModule.requestWearTuning = bindNativeMethod<() => Promise<void>>(
+  nativeWearModule,
+  "requestWearTuning",
+)
+NativeBluetoothSdkModule.resetWearTuning = bindNativeMethod<() => Promise<void>>(nativeWearModule, "resetWearTuning")
 
 export default NativeBluetoothSdkModule
 export const BluetoothSdk = NativeBluetoothSdkModule as BluetoothSdkInternalModule

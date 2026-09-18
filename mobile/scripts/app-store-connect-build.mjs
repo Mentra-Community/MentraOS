@@ -663,13 +663,15 @@ export async function productionSubmissionStatus(client, {appId, versionString, 
   if (!version) return {version: null, state: "ABSENT", attachedBuildId: null, promoted: false}
   const relationship = await client.request(`/v1/appStoreVersions/${version.id}/relationships/build`)
   const attachedBuildId = relationship?.data?.id || null
-  if (attachedBuildId && attachedBuildId !== buildId) {
-    throw new Error(`App Store version ${versionString} is attached to unexpected build ${attachedBuildId}`)
-  }
   const state = version.attributes?.appStoreState || version.attributes?.appVersionState
   if (!state) throw new Error(`App Store version ${versionString} has no state`)
+  // A version still editable (prepare, developer rejected, App Review
+  // rejected) may carry an earlier build: the submission replaces it. Only a
+  // version already in the review or release flow must carry this build.
   if (SUBMITTED_APP_STORE_STATES.has(state) && attachedBuildId !== buildId) {
-    throw new Error(`Submitted App Store version ${versionString} is not attached to build ${buildId}`)
+    throw new Error(
+      `Submitted App Store version ${versionString} is attached to build ${attachedBuildId ?? "none"}, not ${buildId}`,
+    )
   }
   return {version, state, attachedBuildId, promoted: SUBMITTED_APP_STORE_STATES.has(state)}
 }

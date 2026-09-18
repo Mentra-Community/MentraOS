@@ -1,6 +1,6 @@
 /// <reference types="bun-types" />
 
-import {afterEach, beforeEach, describe, expect, mock, test} from "bun:test"
+import {afterAll, afterEach, beforeEach, describe, expect, mock, test} from "bun:test"
 
 import {reactNative} from "./reactNativeTestMock"
 
@@ -9,10 +9,27 @@ reactNative.Alert = {alert: () => {}}
 
 import {bluetoothSdk} from "./bluetoothSdkTestMock"
 
-const setCallRequirement = mock((_pcm: boolean) => {})
-mock.module("../MicStateCoordinator", () => ({
-  default: {setCallRequirement},
+/**
+ * The probe takes a lease like any other microphone consumer; MicSessionManager owns the pin and
+ * the PCM claim on its behalf. `diagnostic` carries no tuning, so a probe measures the gain users
+ * actually get.
+ *
+ * Patched on the instance, not through `mock.module`: bun's registry is process-wide and
+ * last-factory-wins, so mocking the module here would replace the real manager for every other
+ * suite in the run.
+ */
+const release = mock(() => {})
+const acquire = mock((options: {owner: string; source: string; useCase: string}) => ({
+  id: 1,
+  ...options,
+  release,
 }))
+const micSessionManager = require("../MicSessionManager").default
+const realAcquire = micSessionManager.acquire
+micSessionManager.acquire = acquire
+afterAll(() => {
+  micSessionManager.acquire = realAcquire
+})
 
 const openStream = mock(async () => {})
 const abortStream = mock(async () => {})
@@ -114,40 +131,61 @@ describe("pcmDataView / summarizePcm16", () => {
   })
 
   test("skips unreadable frames instead of throwing", () => {
-    expect(summarizePcm16([null, 12, "nope"])).toEqual({meanAbs: 0, peak: 0, samples: 0})
+    expect(summarizePcm16([null, 12, "nope"])).toEqual({
+      meanAbs: 0,
+      peak: 0,
+      samples: 0,
+      clipped: 0,
+      nearClip: 0,
+    })
   })
 })
 
 describe("GlassesMicProbe start/stop race", () => {
-  let pinResolve: (() => void) | undefined
+  let settingResolve: (() => void) | undefined
   let addListener = mock(() => ({remove: () => {}}))
 
   beforeEach(() => {
-    pinResolve = undefined
+    settingResolve = undefined
     addListener = mock(() => ({remove: () => {}}))
-    bluetoothSdk.setMicSourcePin = mock((source: string | null) => {
-      if (source == null) return Promise.resolve()
-      return new Promise<void>((resolve) => {
-        pinResolve = resolve
-      })
-    })
+    bluetoothSdk.setMicSourcePin = mock(async () => {})
     bluetoothSdk.addListener = addListener
-    setCallRequirement.mockClear()
+    acquire.mockClear()
+    release.mockClear()
   })
 
   afterEach(async () => {
-    pinResolve?.()
+    settingResolve?.()
     await glassesMicProbe.stop()
   })
 
-  test("a stop during pin does not re-arm the mic listener", async () => {
-    const started = glassesMicProbe.start({durationMs: 5000, a2dp: "none"})
+  test("a stop during the phone run's setup does not re-arm the mic listener", async () => {
+    // The control run steers `preferred_mic` before it takes a lease, which is the one await a
+    // stop can land inside. Losing that check is how a cancelled probe left the mic listening.
+    setSetting.mockImplementationOnce(
+      () =>
+        new Promise<void>((resolve) => {
+          settingResolve = resolve
+        }),
+    )
+    const started = glassesMicProbe.start({durationMs: 5000, a2dp: "none", source: "phone"})
     await glassesMicProbe.stop()
-    pinResolve?.()
+    settingResolve?.()
     await started
     expect(glassesMicProbe.isRunning()).toBe(false)
     expect(addListener).not.toHaveBeenCalled()
-    expect(setCallRequirement).not.toHaveBeenCalledWith(true)
+    expect(acquire).not.toHaveBeenCalled()
+  })
+
+  test("a glasses run leases the microphone and hands it back on stop", async () => {
+    await glassesMicProbe.start({durationMs: 5000, a2dp: "none"})
+    expect(acquire).toHaveBeenCalledWith({
+      owner: "engine:mic-probe",
+      source: "glasses",
+      useCase: "diagnostic",
+    })
+    await glassesMicProbe.stop()
+    expect(release).toHaveBeenCalled()
   })
 })
 
@@ -163,7 +201,8 @@ describe("GlassesMicProbe phone control run", () => {
     listeners = new Map()
     settingsState.preferred_mic = "glasses"
     setSetting.mockClear()
-    setCallRequirement.mockClear()
+    acquire.mockClear()
+    release.mockClear()
     bluetoothSdk.setMicSourcePin = mock(async () => {})
     bluetoothSdk.addListener = mock((event: string, listener: (e: {pcm?: unknown; source?: string}) => void) => {
       listeners.set(event, listener)
@@ -180,7 +219,11 @@ describe("GlassesMicProbe phone control run", () => {
 
     expect(bluetoothSdk.setMicSourcePin).not.toHaveBeenCalled()
     expect(setSetting).toHaveBeenCalledWith("preferred_mic", "phone", false)
-    expect(setCallRequirement).toHaveBeenCalledWith(true)
+    expect(acquire).toHaveBeenCalledWith({
+      owner: "engine:mic-probe",
+      source: "phone",
+      useCase: "diagnostic",
+    })
 
     await glassesMicProbe.stop()
 

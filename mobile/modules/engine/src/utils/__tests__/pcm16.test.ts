@@ -28,13 +28,25 @@ describe("Pcm16LevelMeter", () => {
     for (const frame of frames) meter.add(frame)
 
     expect(meter.take()).toEqual(summarizePcm16(frames))
-    expect(meter.take()).toEqual({meanAbs: 0, peak: 0, samples: 0})
+    expect(meter.take()).toEqual({meanAbs: 0, peak: 0, samples: 0, clipped: 0, nearClip: 0})
   })
 
   test("ignores frames it cannot read without poisoning the window", () => {
     const meter = new Pcm16LevelMeter()
     meter.add(undefined)
     meter.add(pcm16(50))
-    expect(meter.take()).toEqual({meanAbs: 50, peak: 50, samples: 1})
+    expect(meter.take()).toEqual({meanAbs: 50, peak: 50, samples: 1, clipped: 0, nearClip: 0})
+  })
+
+  test("counts the int16 rail and the near-clip band separately", () => {
+    const meter = new Pcm16LevelMeter()
+    meter.add(pcm16(30000, 32767, -32768, 0))
+    expect(meter.take()).toEqual({
+      meanAbs: Math.round((30000 + 32767 + 32768) / 4),
+      peak: 32768,
+      samples: 4,
+      clipped: 2,
+      nearClip: 3,
+    })
   })
 })

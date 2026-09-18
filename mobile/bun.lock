@@ -152,9 +152,9 @@
     },
     "../cloud-v2/packages/cloud-client": {
       "name": "@mentra/cloud-client",
-      "version": "3.2.0",
+      "version": "3.2.1",
       "dependencies": {
-        "@mentra/cloud-protocol": "3.2.0",
+        "@mentra/cloud-protocol": "3.2.1",
         "tweetnacl": "^1.0.3",
       },
       "devDependencies": {
@@ -170,17 +170,17 @@
     },
     "../cloud-v2/packages/protocol": {
       "name": "@mentra/cloud-protocol",
-      "version": "3.2.0",
+      "version": "3.2.1",
       "dependencies": {
         "zod": "^3.24.1",
       },
     },
     "modules/acs-meeting": {
       "name": "@mentra/acs-meeting",
-      "version": "3.2.0",
+      "version": "3.2.1",
       "dependencies": {
         "@expo/config-plugins": "~55.0.10",
-        "@mentra/glasses-media": "3.2.0",
+        "@mentra/glasses-media": "3.2.1",
       },
       "devDependencies": {
         "expo-module-scripts": "^55.0.2",
@@ -194,9 +194,9 @@
     },
     "modules/bluetooth-sdk": {
       "name": "@mentra/bluetooth-sdk",
-      "version": "3.2.0",
+      "version": "3.2.1",
       "dependencies": {
-        "@mentra/cloud-protocol": "3.2.0",
+        "@mentra/cloud-protocol": "3.2.1",
       },
       "devDependencies": {
         "@types/node": "^25.9.3",
@@ -213,9 +213,9 @@
     },
     "modules/crust": {
       "name": "@mentra/crust",
-      "version": "3.2.0",
+      "version": "3.2.1",
       "dependencies": {
-        "@mentra/jspolyfill": "3.2.0",
+        "@mentra/jspolyfill": "3.2.1",
       },
       "devDependencies": {
         "@expo/config-plugins": ">=8.0.0",
@@ -232,15 +232,15 @@
     },
     "modules/engine": {
       "name": "@mentra/engine",
-      "version": "3.2.0",
+      "version": "3.2.1",
       "dependencies": {
-        "@mentra/acs-meeting": "3.2.0",
-        "@mentra/bluetooth-sdk": "3.2.0",
-        "@mentra/cloud-client": "3.2.0",
-        "@mentra/cloud-protocol": "3.2.0",
-        "@mentra/crust": "3.2.0",
-        "@mentra/glasses-media": "3.2.0",
-        "@mentra/miniapp": "3.2.0",
+        "@mentra/acs-meeting": "3.2.1",
+        "@mentra/bluetooth-sdk": "3.2.1",
+        "@mentra/cloud-client": "3.2.1",
+        "@mentra/cloud-protocol": "3.2.1",
+        "@mentra/crust": "3.2.1",
+        "@mentra/glasses-media": "3.2.1",
+        "@mentra/miniapp": "3.2.1",
         "buffer": "^6.0.3",
         "events": "^3.3.0",
         "react-native-marked": "8.1.1",
@@ -310,20 +310,20 @@
     },
     "modules/glasses-media": {
       "name": "@mentra/glasses-media",
-      "version": "3.2.0",
+      "version": "3.2.1",
     },
     "modules/jspolyfill": {
       "name": "@mentra/jspolyfill",
-      "version": "3.2.0",
+      "version": "3.2.1",
       "devDependencies": {
         "esbuild": "^0.23.0",
       },
     },
     "modules/miniapp": {
       "name": "@mentra/miniapp",
-      "version": "3.2.0",
+      "version": "3.2.1",
       "dependencies": {
-        "@mentra/cloud-protocol": "3.2.0",
+        "@mentra/cloud-protocol": "3.2.1",
         "eventemitter3": "^5.0.1",
       },
       "devDependencies": {
@@ -348,10 +348,11 @@
     "react-native-mmkv",
   ],
   "patchedDependencies": {
+    "@dr.pogodin/react-native-fs@2.38.2": "patches/@dr.pogodin%2Freact-native-fs@2.38.2.patch",
+    "react-native-inner-shadow@2.4.0": "patches/react-native-inner-shadow@2.4.0.patch",
     "react-native-draggable-masonry@1.3.0": "patches/react-native-draggable-masonry@1.3.0.patch",
     "expo-audio@55.0.14": "patches/expo-audio@55.0.14.patch",
     "react-native-webview@13.16.0": "patches/react-native-webview@13.16.0.patch",
-    "react-native-inner-shadow@2.4.0": "patches/react-native-inner-shadow@2.4.0.patch",
     "@livekit/react-native-webrtc@137.0.3": "patches/@livekit%2Freact-native-webrtc@137.0.3.patch",
   },
   "packages": {

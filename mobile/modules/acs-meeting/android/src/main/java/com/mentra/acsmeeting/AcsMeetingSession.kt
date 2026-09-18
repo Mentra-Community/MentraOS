@@ -190,6 +190,7 @@ class AcsMeetingSession(
    * and ACS can deliver it after admission, so it is a live value rather than a join-time fact.
    */
   @Volatile private var hangUpForEveryone = CapabilityStatus()
+  @Volatile private var manageLobby = CapabilityStatus()
   private val mediaStatsReports = AtomicInteger(0)
   /** Last wire size reported by ACS, so adaptation is logged on transition rather than every 1 Hz report. */
   @Volatile private var lastWireSizeKey: String? = null
@@ -286,7 +287,10 @@ class AcsMeetingSession(
       "participants" to roster.snapshot(),
       // Nullable members inside, so the miniapp can tell "denied" from "not known yet" and only
       // offer End when it is actually allowed.
-      "capabilities" to mapOf("hangUpForEveryone" to hangUpForEveryone.toMap()),
+      "capabilities" to mapOf(
+        "hangUpForEveryone" to hangUpForEveryone.toMap(),
+        "manageLobby" to manageLobby.toMap(),
+      ),
     )
     meetingUrl?.let { result["meetingUrl"] = it }
     lastError?.let { result["error"] = it }
@@ -748,6 +752,58 @@ class AcsMeetingSession(
   fun softApIngestUrl(): String? = media.ingestUrl
 
   /**
+   * Destroy the current SoftAP listener generation and bind a new one on the address the
+   * scoped network reports *now* — the caller rejoins first, then asks for this.
+   *
+   * Blocks on [executor] so it cannot race [join] / [leaveLocked]. Returns the new ingest URL
+   * the glasses must be told; throws rather than hand back a stale listener.
+   */
+  fun rebindSoftApIngest(bindIngestUnpinned: (() -> Unit) -> Unit = { bind -> bind() }): String {
+    val done = CountDownLatch(1)
+    val result = AtomicReference<String?>(null)
+    val failure = AtomicReference<Exception?>(null)
+    val submittedAt = SystemClock.elapsedRealtime()
+    executor.execute {
+      try {
+        traceQueued("session_rebind_ingest_begin", submittedAt)
+        if (!MediaDiagnostics.SOFTAP_RECOVERY_ENABLED) {
+          throw IllegalStateException("SoftAP ingest rebind is disabled")
+        }
+        if (currentSourceKind != SourceKind.SOFTAP) {
+          throw IllegalStateException("rebindSoftApIngest is only valid for a SoftAP call")
+        }
+        val address = scopedNetwork?.localIpv4()
+          ?: throw IllegalStateException("scoped network has no IPv4 address after rejoin")
+        // Same pin-lift as [join]: a listener bound while this UID is marked cellular
+        // never receives the glasses' TCP SYN, even though ping/ARP succeed.
+        lateinit var url: String
+        bindIngestUnpinned {
+          url = media.rebindIngest(
+            SourceConfig("", SourceKind.SOFTAP, address),
+            REBIND_INGEST_CLOSE_MS,
+          )
+        }
+        SoftApTrace.stage("session_rebind_ingest_end", "url" to url)
+        result.set(url)
+      } catch (error: Exception) {
+        SoftApTrace.failure(
+          "session_rebind_ingest_failed",
+          "reason" to "${error.javaClass.simpleName}: ${error.message ?: ""}",
+        )
+        failure.set(error)
+      } finally {
+        done.countDown()
+      }
+    }
+    if (!done.await(REBIND_INGEST_CLOSE_MS + 8_000L, TimeUnit.MILLISECONDS)) {
+      SoftApTrace.failure("session_rebind_ingest_timeout", "timeoutMs" to (REBIND_INGEST_CLOSE_MS + 8_000L))
+      throw IllegalStateException("SoftAP ingest rebind timed out")
+    }
+    failure.get()?.let { throw it }
+    return result.get() ?: throw IllegalStateException("SoftAP ingest rebind returned no URL")
+  }
+
+  /**
    * Rebuild the WHEP subscription on the current URL even when it looks healthy.
    * The host calls this when the phone changed networks: ICE may not have noticed
    * yet, but the old candidate pair is dead.
@@ -979,6 +1035,29 @@ class AcsMeetingSession(
   fun hangUpForEveryoneCapability(): CapabilityStatus = hangUpForEveryone
 
   fun getState(): Map<String, Any> = snapshot()
+
+  /** The generation guard also rejects a result arriving after Leave was requested. */
+  fun admitParticipant(participantId: String, complete: (Throwable?) -> Unit) {
+    val generation = joinGeneration.get()
+    executor.execute {
+      val active = call
+      if (active == null) {
+        complete(IllegalStateException("No connected meeting"))
+        return@execute
+      }
+      admitLobbyParticipant(
+        active, participantId,
+        readCapability(ParticipantCapabilityType.MANAGE_LOBBY).allowed == true,
+        isCurrent = { call === active && joinGeneration.get() == generation },
+        dispatch = { executor.execute(it) },
+        complete = { error ->
+          if (error == null) onState(snapshot())
+          else Log.e(TAG, "Selected lobby participant admission failed", error)
+          complete(error)
+        },
+      )
+    }
+  }
 
   private fun desiredKind(): AudioSourceKind =
     if (audioSource == "phone") AudioSourceKind.PHONE else AudioSourceKind.GLASSES
@@ -1564,19 +1643,23 @@ class AcsMeetingSession(
     try {
       val feature = joined.feature(Features.CAPABILITIES)
       val listener = CapabilitiesChangedListener { event ->
-        val changed = event.changedCapabilities.orEmpty()
-          .any { it.type == ParticipantCapabilityType.HANG_UP_FOR_EVERYONE }
+        val changed = event.changedCapabilities.orEmpty().any {
+          it.type == ParticipantCapabilityType.HANG_UP_FOR_EVERYONE ||
+            it.type == ParticipantCapabilityType.MANAGE_LOBBY
+        }
         if (!changed) return@CapabilitiesChangedListener
-        val next = readHangUpForEveryone(feature)
-        if (next == hangUpForEveryone) return@CapabilitiesChangedListener
-        hangUpForEveryone = next
-        Log.i(TAG, "capability hangUpForEveryone allowed=${next.allowed} reason=${next.reason} (changed)")
-        onState(snapshot())
+        executor.execute {
+          if (call !== joined || capabilitiesFeature !== feature) return@execute
+          hangUpForEveryone = readHangUpForEveryone(feature)
+          manageLobby = readCapability(ParticipantCapabilityType.MANAGE_LOBBY, feature)
+          onState(snapshot())
+        }
       }
       feature.addOnCapabilitiesChangedListener(listener)
       capabilitiesFeature = feature
       capabilitiesListener = listener
       hangUpForEveryone = readHangUpForEveryone(feature)
+      manageLobby = readCapability(ParticipantCapabilityType.MANAGE_LOBBY, feature)
       Log.i(
         TAG,
         "capability hangUpForEveryone allowed=${hangUpForEveryone.allowed} reason=${hangUpForEveryone.reason}",
@@ -1585,16 +1668,22 @@ class AcsMeetingSession(
       // Unknown, not denied: an End is still attempted and ACS gets to answer.
       Log.w(TAG, "CAPABILITIES attach failed", error)
       hangUpForEveryone = CapabilityStatus(reason = "capabilities_unavailable")
+      manageLobby = CapabilityStatus(reason = "capabilities_unavailable")
     }
   }
 
   private fun readHangUpForEveryone(
     feature: CapabilitiesCallFeature? = capabilitiesFeature,
+  ): CapabilityStatus = readCapability(ParticipantCapabilityType.HANG_UP_FOR_EVERYONE, feature)
+
+  private fun readCapability(
+    type: ParticipantCapabilityType,
+    feature: CapabilitiesCallFeature? = capabilitiesFeature,
   ): CapabilityStatus {
     val current = feature ?: return CapabilityStatus(reason = "capabilities_unavailable")
     return try {
       val capability = current.capabilities.orEmpty()
-        .firstOrNull { it.type == ParticipantCapabilityType.HANG_UP_FOR_EVERYONE }
+        .firstOrNull { it.type == type }
         ?: return CapabilityStatus(reason = "not_reported")
       CapabilityStatus(capability.isAllowed, capability.reason?.name?.lowercase())
     } catch (error: Exception) {
@@ -1913,6 +2002,7 @@ class AcsMeetingSession(
     outgoingReady.set(false)
     muted.set(false)
     hangUpForEveryone = CapabilityStatus()
+    manageLobby = CapabilityStatus()
     audioSource = "glasses"
     lastSafety = AudioSafety.DEGRADED
     meetingUrl = null
@@ -2000,6 +2090,12 @@ class AcsMeetingSession(
 
     /** SoftAP join() blocks until the WHIP listener is bound and ACS join is queued. */
     private const val SOFTAP_JOIN_WAIT_MS = 45_000L
+
+    /**
+     * How long [rebindSoftApIngest] waits for the parked listener to release its port after a
+     * force-close. Not a tombstone: the old generation is closed immediately.
+     */
+    private const val REBIND_INGEST_CLOSE_MS = 2_000L
 
 
     /**

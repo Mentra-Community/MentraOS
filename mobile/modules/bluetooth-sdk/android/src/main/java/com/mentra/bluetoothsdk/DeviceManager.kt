@@ -16,6 +16,7 @@ import com.mentra.bluetoothsdk.services.ForegroundService
 import com.mentra.bluetoothsdk.services.PhoneMic
 import com.mentra.bluetoothsdk.sgcs.Ar99
 import com.mentra.bluetoothsdk.sgcs.G1
+import com.mentra.bluetoothsdk.sgcs.GlassesLinkDiagnostics
 import com.mentra.bluetoothsdk.sgcs.G2
 import com.mentra.bluetoothsdk.sgcs.SceneElement
 import com.mentra.bluetoothsdk.sgcs.SceneFrame
@@ -879,6 +880,7 @@ class DeviceManager {
 
     private fun micDbgLc3Window(lc3: ByteArray, seq: Int?, pcm: ByteArray) {
         val now = System.currentTimeMillis()
+        GlassesLinkDiagnostics.recordMicPacket(now)
         if (micDbgWindowStart == 0L) micDbgWindowStart = now
         micDbgPkts++
         micDbgLc3Bytes += lc3.size
@@ -1879,6 +1881,31 @@ class DeviceManager {
     fun dbg2() {
         Bridge.log("MAN: dbg2()")
         sgc?.dbg2()
+    }
+
+    fun queryWearState() {
+        Bridge.log("MAN: queryWearState()")
+        sgc?.queryWearState()
+    }
+
+    fun setWearReporting(enabled: Boolean) {
+        Bridge.log("MAN: setWearReporting($enabled)")
+        sgc?.setWearReporting(enabled)
+    }
+
+    fun setWearTuning(intervalMs: Int, count: Int, majority: Int) {
+        Bridge.log("MAN: setWearTuning($intervalMs, $count, $majority)")
+        sgc?.setWearTuning(intervalMs, count, majority)
+    }
+
+    fun requestWearTuning() {
+        Bridge.log("MAN: requestWearTuning()")
+        sgc?.requestWearTuning()
+    }
+
+    fun resetWearTuning() {
+        Bridge.log("MAN: resetWearTuning()")
+        sgc?.resetWearTuning()
     }
 
     fun startStream(message: MutableMap<String, Any>) {

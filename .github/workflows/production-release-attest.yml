@@ -1,8 +1,15 @@
 name: Production Release - Record Human Acceptance
+# The dispatch id, when the CLI passes one, lets it recognise the run its own
+# dispatch started among this workflow's runs.
+run-name: ${{ inputs.release_identity }} attempt ${{ inputs.attempt }} ${{ inputs.check }} ${{ inputs.dispatch_id && format('[{0}]', inputs.dispatch_id) || '' }}
 
 on:
   workflow_dispatch:
     inputs:
+      dispatch_id:
+        description: Correlation id chosen by the dispatching CLI; shown in the run name
+        required: false
+        type: string
       release_identity:
         required: true
         type: string
@@ -66,14 +73,12 @@ jobs:
           set -euo pipefail
           [[ "$EVIDENCE_ASSET" == production-attestation-* ]]
           [[ "$EVIDENCE_SHA256" =~ ^[0-9a-f]{64}$ ]]
-          assets=$(gh api --paginate --slurp \
-            "repos/${GITHUB_REPOSITORY}/releases/${{ steps.promotion.outputs.release_id }}/assets?per_page=100" | jq 'add')
+          assets=$(node .github/scripts/release-assets.mjs list --repository "${GITHUB_REPOSITORY}" --release-id "${{ steps.promotion.outputs.release_id }}")
           matches=$(jq --arg name "$EVIDENCE_ASSET" '[.[] | select(.name == $name)]' <<< "$assets")
           [[ "$(jq 'length' <<< "$matches")" == "1" ]]
           asset_id=$(jq -er '.[0].id' <<< "$matches")
           evidence_url=$(jq -er '.[0].url' <<< "$matches")
-          gh api -H "Accept: application/octet-stream" \
-            "repos/${GITHUB_REPOSITORY}/releases/assets/$asset_id" > promotion-input/attestation.json
+          node .github/scripts/release-assets.mjs fetch --repository "${GITHUB_REPOSITORY}" --asset-id "$asset_id" > promotion-input/attestation.json
           actual=$(sha256sum promotion-input/attestation.json | cut -d' ' -f1)
           [[ "$actual" == "$EVIDENCE_SHA256" ]]
           echo "evidence_url=$evidence_url" >> "$GITHUB_ENV"

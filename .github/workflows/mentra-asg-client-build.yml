@@ -3,7 +3,7 @@ name: MentraOS ASG Client Build
 # Pull requests: publish the ASG client a PR mobile build pins for glasses OTA.
 #
 # Every Mobile App Android Build PR APK embeds the OTA manifest URL
-# https://github.com/<repo>/releases/download/pr-builds/ota-pr-<n>-<head sha>.json
+# https://artifactscdn.mentraglass.com/<repo>/releases/pr-builds/ota-pr-<n>-<head sha>.json
 # and this workflow is the only producer of that manifest, so its pull_request
 # paths must stay a superset of that workflow's. The manifest points at an ASG
 # client built from the PR's own ASG sources: the `select` job fingerprints
@@ -52,6 +52,8 @@ permissions:
   pull-requests: write
 
 env:
+  ARTIFACTS_R2_ACCOUNT_ID: ${{ vars.ARTIFACTS_R2_ACCOUNT_ID }}
+  ARTIFACTS_R2_BUCKET: artifactscdn
   # Content-addressed ASG artifacts of the coordinated release lane
   # (reusable-coordinated-ota.yml): mentra-live-asg-<versionCode>-<fingerprint>.{apk,json}.
   ASG_RELEASE_TAG: mentra-coordinated-asg
@@ -73,16 +75,22 @@ jobs:
           fetch-depth: 0
           filter: blob:none
 
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
       - name: Select the ASG client for this pull request
         id: select
         env:
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           mkdir -p pr-asg-work
           release_id=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/${ASG_RELEASE_TAG}" --jq .id)
-          gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases/${release_id}/assets?per_page=100" \
-            | jq 'add' > pr-asg-work/coordinated-asg-assets.json
+          node .github/scripts/release-assets.mjs list --repository "${GITHUB_REPOSITORY}" --release-id "${release_id}" > pr-asg-work/coordinated-asg-assets.json
           node .github/scripts/select-pr-asg.mjs \
             --source-commit "$GITHUB_SHA" \
             --assets pr-asg-work/coordinated-asg-assets.json \
@@ -91,13 +99,15 @@ jobs:
       - name: Publish the OTA manifest for the reused ASG client
         if: steps.select.outputs.mode == 'reuse'
         env:
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
           GH_TOKEN: ${{ github.token }}
           PROVENANCE_ASSET: ${{ steps.select.outputs.provenance_asset }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
         run: |
           set -euo pipefail
-          gh release download "$ASG_RELEASE_TAG" --pattern "$PROVENANCE_ASSET" --dir pr-asg-work
+          node .github/scripts/release-assets.mjs download --tag "$ASG_RELEASE_TAG" --pattern "$PROVENANCE_ASSET" --dir pr-asg-work
           provenance="pr-asg-work/${PROVENANCE_ASSET}"
           ASG_APK_URL=$(jq -er .apk.url "$provenance")
           ASG_APK_SHA256=$(jq -er .apk.sha256 "$provenance")
@@ -110,7 +120,7 @@ jobs:
           export ASG_APK_URL ASG_APK_SHA256 ASG_APK_SIZE ASG_VERSION_CODE ASG_VERSION_NAME
           export RELEASE_VERSION FIRMWARE_MANIFEST OUTPUT_PATH
           node .github/scripts/build-bluetooth-sdk-ota-manifest.mjs
-          gh release upload "$PR_BUILDS_TAG" "$OUTPUT_PATH" --clobber
+          node .github/scripts/publish-immutable-release-asset.mjs --file "$OUTPUT_PATH" --name "${OUTPUT_PATH##*/}" --release-id "$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/$PR_BUILDS_TAG" --jq .id)" --repository "$GITHUB_REPOSITORY" --replace true
           echo "Published ${OUTPUT_PATH##*/} pinning coordinated ASG ${ASG_VERSION_CODE} (${ASG_VERSION_NAME})."
 
       - name: Update PR comment - Reused coordinated build
@@ -134,7 +144,7 @@ jobs:
             const headSha = context.payload.pull_request.head.sha;
             const sha = headSha.substring(0, 7);
             const manifestName = `ota-pr-${prNumber}-${headSha}.json`;
-            const manifestUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/pr-builds/${manifestName}`;
+            const manifestUrl = `https://artifactscdn.mentraglass.com/${context.repo.owner}/${context.repo.repo}/releases/pr-builds/${manifestName}`;
 
             const buildStatus = `### 🕶️ ASG Client Build\n♻️ **Unchanged in this PR** (commit \`${sha}\`) - reusing coordinated ASG build \`${process.env.ASG_VERSION_CODE}\`\n\n🔄 **OTA manifest:** [${manifestName}](${manifestUrl}) - the Mobile App PR build updates Mentra Live glasses to this ASG client.`;
 
@@ -180,7 +190,7 @@ jobs:
             const sha = context.payload.pull_request.head.sha.substring(0, 7);
 
             // Check for existing working build link to preserve
-            const existingDownloadMatch = comment.body.match(/\[📥 \*\*Download ASG APK\*\*\]\((https:\/\/github\.com[^)]+\.apk)\)/);
+            const existingDownloadMatch = comment.body.match(/\[📥 \*\*Download ASG APK\*\*\]\((https:\/\/(?:github\.com|artifactscdn\.mentraglass\.com)\/[^)]+\.apk)\)/);
             const existingShaMatch = comment.body.match(/🕶️ ASG Client[\s\S]*?✅ \*\*Ready to test!\*\* \(commit `([a-f0-9]+)`\)/);
 
             let buildStatus = `### 🕶️ ASG Client Build\n⏳ **Building...** (commit \`${sha}\`)`;
@@ -231,6 +241,11 @@ jobs:
             /opt/hostedtoolcache/CodeQL /usr/local/lib/node_modules 2>/dev/null || true
           sudo docker image prune --all --force 2>/dev/null || true
           echo "After:"; df -h / | tail -1
+
+      - name: Setup Node.js
+        uses: actions/setup-node@v4
+        with:
+          node-version: "24"
 
       - name: Setup Java
         uses: actions/setup-java@v4
@@ -358,7 +373,7 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-     # Temporarily disabled while ASG Java files are reformatted in a follow-up.
+      # Temporarily disabled while ASG Java files are reformatted in a follow-up.
       # - name: Spotless check
       #   working-directory: ./asg_client
       #   run: ./gradlew spotlessCheck
@@ -369,63 +384,29 @@ jobs:
           name: asg-client-release
           path: asg_client/app/build/outputs/apk/release/app-release.apk
 
-      - name: Upload APK to pr-builds release
-        # Required, not best-effort: the PR mobile APK pins the manifest
-        # published below, which points at this asset. A failed upload must
-        # fail the workflow rather than leave the phone pinned to a manifest
-        # that never appears.
+      - name: Upload APK to the public artifact CDN
         if: github.event_name == 'pull_request'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs');
-            const path = require('path');
-
-            const prNumber = context.payload.pull_request.number;
-            const sha = context.payload.pull_request.head.sha.substring(0, 7);
-            const apkName = `asg-pr-${prNumber}-${sha}.apk`;
-            const apkPath = 'asg_client/app/build/outputs/apk/release/app-release.apk';
-
-            // Get the pr-builds release
-            const release = await github.rest.repos.getReleaseByTag({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              tag: 'pr-builds'
-            });
-
-            // Delete existing asset with same name if it exists
-            for (const asset of release.data.assets) {
-              if (asset.name === apkName) {
-                console.log(`Deleting existing asset: ${asset.name}`);
-                await github.rest.repos.deleteReleaseAsset({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  asset_id: asset.id
-                });
-                break;
-              }
-            }
-
-            // Read the APK file
-            const apkData = fs.readFileSync(apkPath);
-
-            // Upload the APK
-            console.log(`Uploading ${apkName} (${apkData.length} bytes)...`);
-            await github.rest.repos.uploadReleaseAsset({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              release_id: release.data.id,
-              name: apkName,
-              data: apkData
-            });
-
-            console.log(`Successfully uploaded ${apkName}`);
+        env:
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          release_id=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/pr-builds" --jq .id)
+          name="asg-pr-${PR_NUMBER}-${HEAD_SHA:0:7}.apk"
+          node .github/scripts/publish-immutable-release-asset.mjs \
+            --file asg_client/app/build/outputs/apk/release/app-release.apk --name "$name" --release-id "$release_id" \
+            --repository "$GITHUB_REPOSITORY" --replace true
 
       - name: Publish the OTA manifest for this build
         # Runs after the APK it points at is on the release; push and dispatch
         # runs have no PR manifest to publish.
         if: github.event_name == 'pull_request'
         env:
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
           GH_TOKEN: ${{ github.token }}
           PR_NUMBER: ${{ github.event.pull_request.number }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha }}
@@ -442,7 +423,7 @@ jobs:
             exit 1
           fi
           mkdir -p pr-asg-work
-          ASG_APK_URL="https://github.com/${GITHUB_REPOSITORY}/releases/download/${PR_BUILDS_TAG}/asg-pr-${PR_NUMBER}-${HEAD_SHA:0:7}.apk"
+          ASG_APK_URL="https://artifactscdn.mentraglass.com/${GITHUB_REPOSITORY}/releases/${PR_BUILDS_TAG}/asg-pr-${PR_NUMBER}-${HEAD_SHA:0:7}.apk"
           ASG_APK_SHA256=$(sha256sum "$apk" | cut -d' ' -f1)
           ASG_APK_SIZE=$(stat -c %s "$apk")
           ASG_VERSION_NAME="$version_name"
@@ -452,7 +433,7 @@ jobs:
           export ASG_APK_URL ASG_APK_SHA256 ASG_APK_SIZE ASG_VERSION_CODE ASG_VERSION_NAME
           export RELEASE_VERSION FIRMWARE_MANIFEST OUTPUT_PATH
           node .github/scripts/build-bluetooth-sdk-ota-manifest.mjs
-          gh release upload "$PR_BUILDS_TAG" "$OUTPUT_PATH" --clobber
+          node .github/scripts/publish-immutable-release-asset.mjs --file "$OUTPUT_PATH" --name "${OUTPUT_PATH##*/}" --release-id "$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/$PR_BUILDS_TAG" --jq .id)" --repository "$GITHUB_REPOSITORY" --replace true
           echo "Published ${OUTPUT_PATH##*/} pinning ASG ${ASG_VERSION_CODE} (${ASG_VERSION_NAME})."
 
       - name: Mark build published
@@ -464,32 +445,11 @@ jobs:
       - name: Cleanup old release assets
         if: github.event_name == 'pull_request'
         continue-on-error: true
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-
-            try {
-              const release = await github.rest.repos.getReleaseByTag({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                tag: 'pr-builds'
-              });
-
-              for (const asset of release.data.assets) {
-                const createdAt = new Date(asset.created_at);
-                if (createdAt < sevenDaysAgo) {
-                  console.log(`Deleting old asset: ${asset.name} (created ${asset.created_at})`);
-                  await github.rest.repos.deleteReleaseAsset({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    asset_id: asset.id
-                  });
-                }
-              }
-            } catch (error) {
-              console.log('Cleanup skipped:', error.message);
-            }
+        env:
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
+          GH_TOKEN: ${{ github.token }}
+        run: node .github/scripts/release-assets.mjs sweep --tag pr-builds --days 7
 
       - name: Update PR comment - Build succeeded
         if: steps.build-ok.outputs.ok == 'true' && github.event_name == 'pull_request'
@@ -510,7 +470,7 @@ jobs:
             const headSha = context.payload.pull_request.head.sha;
             const sha = headSha.substring(0, 7);
             const apkName = `asg-pr-${prNumber}-${sha}.apk`;
-            const releaseBase = `https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/pr-builds`;
+            const releaseBase = `https://artifactscdn.mentraglass.com/${context.repo.owner}/${context.repo.repo}/releases/pr-builds`;
             const downloadUrl = `${releaseBase}/${apkName}`;
             const manifestName = `ota-pr-${prNumber}-${headSha}.json`;
 
@@ -547,7 +507,7 @@ jobs:
             const runUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
 
             // Check if there was a previous working build
-            const previousDownloadMatch = comment.body.match(/\[📥 \*\*Download ASG APK\*\*\]\((https:\/\/github\.com[^)]+\.apk)\)/);
+            const previousDownloadMatch = comment.body.match(/\[📥 \*\*Download ASG APK\*\*\]\((https:\/\/(?:github\.com|artifactscdn\.mentraglass\.com)\/[^)]+\.apk)\)/);
             const previousShaMatch = comment.body.match(/🕶️ ASG Client[\s\S]*?✅ \*\*Ready to test!\*\* \(commit `([a-f0-9]+)`\)/)
                                   || comment.body.match(/📦 \*\*Previous build:\*\* \(commit `([a-f0-9]+)`\)/);
 

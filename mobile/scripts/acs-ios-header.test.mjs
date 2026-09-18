@@ -46,12 +46,12 @@ for (const mode of ["xc", "dynamic", "static"]) {
     writeHeader(files[mode], `${mode} header`)
     const result = files.run()
     assert.equal(result.status, 0, result.stdout + result.stderr)
-    assert.equal(existsSync(files.public), mode !== "xc")
+    assert.equal(existsSync(files.public), mode === "static")
     assert.equal(readFileSync(files[mode], "utf8"), `${mode} header`)
     assert.equal(existsSync(files.fake), mode === "static")
     if (mode === "static") assert.equal(readFileSync(files.fake, "utf8"), "static header")
 
-    if (mode === "xc") return
+    if (mode !== "static") return
     assert.equal(readFileSync(files.public, "utf8"), `${mode} header`)
     const originalMtime = statSync(files.public).mtimeMs
     assert.equal(files.run().status, 0)
@@ -73,15 +73,17 @@ test("ACS prefers the selected XCFramework slice over stale source-build headers
   assert.equal(existsSync(files.fake), false)
 })
 
-test("vendored Common removes a stale loose header that would split Swift credential types", (t) => {
-  const files = fixture(t)
-  writeHeader(files.xc, "modular framework header")
-  writeHeader(files.public, "old public header copy")
-  const result = files.run()
-  assert.equal(result.status, 0, result.stdout + result.stderr)
-  assert.equal(existsSync(files.public), false)
-  assert.equal(readFileSync(files.xc, "utf8"), "modular framework header")
-})
+for (const mode of ["xc", "dynamic"]) {
+  test(`${mode} Common removes a stale loose header that would split Swift types`, (t) => {
+    const files = fixture(t)
+    writeHeader(files[mode], "modular framework header")
+    writeHeader(files.public, "old public header copy")
+    const result = files.run()
+    assert.equal(result.status, 0, result.stdout + result.stderr)
+    assert.equal(existsSync(files.public), false)
+    assert.equal(readFileSync(files[mode], "utf8"), "modular framework header")
+  })
+}
 
 test("ACS fails with searched paths when no Common header is available", (t) => {
   const files = fixture(t)

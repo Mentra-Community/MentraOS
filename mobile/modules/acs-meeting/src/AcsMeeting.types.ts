@@ -35,9 +35,9 @@ export type AcsMeetingState = {
   /** ACS disconnect diagnostics, emitted when the final disconnected state arrives. */
   endReason_code?: number
   endReason_subcode?: number
-  /** Local WHIP endpoint, available after a SoftAP join. */
+  /** Local WHIP endpoint, available after a SoftAP join or `rebindSoftApIngest`. */
   ingestUrl?: string
-  /** Remote roster (Android emits this; iOS does not yet). */
+  /** Remote roster, including participant state, mute state and speaking updates. */
   participants?: AcsMeetingParticipant[]
 }
 

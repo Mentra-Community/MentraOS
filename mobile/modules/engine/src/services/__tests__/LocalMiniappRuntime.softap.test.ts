@@ -23,6 +23,7 @@ const methods = [
   "settleSoftapTeardown",
   "forceSoftapCleanup",
   "emitSoftapProgress",
+  "softapRecoveryFields",
 ]
   .map((name) => {
     const start = source.search(new RegExp(`^  private (?:async )?${name}\\(`, "m"))
@@ -34,6 +35,20 @@ const methods = [
   })
   .join("\n")
 const compiled = new Bun.Transpiler({loader: "ts"}).transformSync(`class Host { ${methods} }`)
+
+/**
+ * The real retry codes, read from the source rather than retyped here.
+ *
+ * Retyping them would let a rename on the production side leave this suite green while the
+ * retry it is supposed to cover never fires.
+ */
+const REFRESH_CODES: Set<string> = (() => {
+  const match = source.match(/const HOTSPOT_SESSION_REFRESH_CODES = new Set\(\[([^\]]*)]\)/)
+  if (!match) throw new Error("Missing HOTSPOT_SESSION_REFRESH_CODES")
+  const codes = [...match[1].matchAll(/"([^"]+)"/g)].map((entry) => entry[1])
+  if (codes.length === 0) throw new Error("HOTSPOT_SESSION_REFRESH_CODES is empty")
+  return new Set(codes)
+})()
 
 function deferred() {
   let resolve!: () => void
@@ -68,13 +83,18 @@ function withTimeout<T>(work: Promise<T>, ms: number, reason: string): Promise<T
  * the teardown these tests drive is the one that ships, including the two waits (ingest close and
  * hotspot ack) that a fake host would otherwise silently skip.
  */
-function fixture(
-  gates: {ingestClosed?: boolean; hotspot?: "disabled" | "enabled" | "throw"} = {},
-): ReturnType<typeof buildFixture> {
+type HotspotGate = "disabled" | "enabled" | "throw"
+
+/** One scripted outcome per native hotspot command, for the session-refresh retry tests. */
+type HotspotScript = Array<HotspotGate | {code: string}>
+
+type Gates = {ingestClosed?: boolean; hotspot?: HotspotGate; hotspotScript?: HotspotScript}
+
+function fixture(gates: Gates = {}): ReturnType<typeof buildFixture> {
   return buildFixture(gates)
 }
 
-function buildFixture(gates: {ingestClosed?: boolean; hotspot?: "disabled" | "enabled" | "throw"}) {
+function buildFixture(gates: Gates) {
   const cleanup = deferred()
   let nativeReleases = 0
   let preflights = 0
@@ -112,8 +132,16 @@ function buildFixture(gates: {ingestClosed?: boolean; hotspot?: "disabled" | "en
   const bluetooth = {
     async setHotspotState(enabled: boolean) {
       hotspotCommands.push(enabled)
-      if (gates.hotspot === "throw") throw new Error("glasses did not answer")
-      return {state: gates.hotspot === "enabled" ? "enabled" : "disabled"}
+      // `hotspotScript` steps once per native command, so a test can say "the first send is
+      // cancelled by a session refresh, the second succeeds" and count the sends.
+      const step = gates.hotspotScript?.[hotspotCommands.length - 1]
+      const outcome = step ?? gates.hotspot
+      if (outcome && typeof outcome === "object") {
+        // Shaped like an Expo CodedException reaching JS: the code is what we branch on.
+        throw Object.assign(new Error("The glasses WiFi protocol session changed."), {code: outcome.code})
+      }
+      if (outcome === "throw") throw new Error("glasses did not answer")
+      return {state: outcome === "enabled" ? "enabled" : "disabled"}
     },
   }
   const permissions = {
@@ -142,6 +170,8 @@ function buildFixture(gates: {ingestClosed?: boolean; hotspot?: "disabled" | "en
     "SOFTAP_INGEST_CLOSE_WAIT_MS",
     "SOFTAP_HOTSPOT_OFF_ACK_MS",
     "SOFTAP_FORCED_VERIFY_MS",
+    "HOTSPOT_SESSION_REFRESH_CODES",
+    "HOTSPOT_SESSION_RETRY_DELAY_MS",
     `${compiled}; return Host`,
   )(
     () => () => {},
@@ -162,6 +192,8 @@ function buildFixture(gates: {ingestClosed?: boolean; hotspot?: "disabled" | "en
     50,
     50,
     50,
+    REFRESH_CODES,
+    5,
   )
   const host = new Host()
   const events: unknown[] = []
@@ -297,9 +329,26 @@ describe("SoftAP host attempt lifecycle", () => {
     const join = f.join()
     f.cleanup.reject(new Error("radio did not release"))
     await leave
-    expect(await join).toContain("Previous call cleanup failed")
+    expect(await join).toContain("cleanup has not finished yet")
     expect(f.preflights()).toBe(0)
     expect(f.nativeReleases()).toBe(1)
+  })
+
+  test("the refusal tells the wearer to retry rather than to power-cycle anything", async () => {
+    const f = fixture()
+    const leave = f.host.retireSoftapAttempt()
+    const join = f.join()
+    f.cleanup.reject(new Error("radio did not release"))
+    await leave
+
+    const message = await join
+    expect(message).toBe("Previous call cleanup has not finished yet. Please try joining again.")
+    // The native reason belongs in the trace; it names a leaked port, not a wearer action.
+    expect(message).not.toMatch(/power-cycle/i)
+    expect(message).not.toContain("radio did not release")
+    // Cleared on read, so the very next attempt gets through — which is what makes "try again" true.
+    expect(f.host.softapCleanupError).toBeNull()
+    expect(await f.join()).toBe("test preflight ended")
   })
 })
 
@@ -321,17 +370,17 @@ describe("SoftAP teardown barrier", () => {
     expect(await f.join()).toBe("test preflight ended")
   })
 
-  test("glasses that never acknowledge hotspot off refuse the next call by name", async () => {
+  test("glasses that never acknowledge hotspot off do not refuse the next call", async () => {
     const f = fixture({hotspot: "throw"})
     f.cleanup.resolve()
 
     await f.host.retireSoftapAttempt()
 
-    // Once in the settle gate, once more in forced cleanup — the second is the re-ask, not a retry
-    // loop, and it is what makes the failure below a fact rather than a timeout.
+    // Once in the settle gate, once more in forced cleanup — leftover ON is the next
+    // join's starting state, not a power-cycle dead end.
     expect(f.hotspotCommands()).toEqual([false, false])
-    expect(f.host.softapCleanupError).toContain("glasses hotspot off")
-    expect(await f.join()).toContain("Previous call cleanup failed")
+    expect(f.host.softapCleanupError).toBeNull()
+    expect(await f.join()).toBe("test preflight ended")
   })
 
   test("overlapping hotspot disables wait their turn instead of failing cleanup", async () => {
@@ -343,13 +392,120 @@ describe("SoftAP teardown barrier", () => {
     expect(f.host.softapCleanupError).toBeNull()
   })
 
-  test("a hotspot that answers 'enabled' is a failure, not an acknowledgement", async () => {
+  test("a hotspot that answers 'enabled' after disable does not refuse the next call", async () => {
     const f = fixture({hotspot: "enabled"})
     f.cleanup.resolve()
 
     await f.host.retireSoftapAttempt()
 
-    expect(f.host.softapCleanupError).toContain("still enabled")
+    expect(f.host.softapCleanupError).toBeNull()
+    expect(await f.join()).toBe("test preflight ended")
+  })
+
+  test("a transport hotspot undo timeout does not refuse the next call", async () => {
+    const f = fixture()
+    f.old.transport = {
+      activeSteps: () => [],
+      lastTeardownFailures: () => ["hotspot"],
+      async stop() {},
+    }
+    f.cleanup.resolve()
+
+    await f.host.retireSoftapAttempt()
+
+    expect(f.host.softapCleanupError).toBeNull()
+    expect(await f.join()).toBe("test preflight ended")
+  })
+
+  test("a transport undo other than hotspot still refuses the next call", async () => {
+    const f = fixture()
+    f.old.transport = {
+      activeSteps: () => [],
+      lastTeardownFailures: () => ["publish"],
+      async stop() {},
+    }
+    f.cleanup.resolve()
+
+    await f.host.retireSoftapAttempt()
+
+    expect(f.host.softapCleanupError).toContain("could not release publish")
+    expect(await f.join()).toContain("cleanup has not finished yet")
+  })
+})
+
+/**
+ * The glasses re-announce their Wi-Fi session on every `glasses_ready`, which cancels whatever
+ * hotspot command was in flight. That is what refused a join outright at 13:58:32 with a
+ * power-cycle instruction, so these cover both that the retry happens and that it cannot be
+ * used as a wedge for a later command to change the hotspot underneath it.
+ */
+describe("hotspot command across a Wi-Fi protocol session refresh", () => {
+  for (const code of REFRESH_CODES) {
+    test(`a command cancelled by ${code} is re-sent and succeeds`, async () => {
+      const f = fixture({hotspotScript: [{code}, "disabled"]})
+
+      const status = await f.host.setGlassesHotspotState(false)
+
+      expect(status).toEqual({state: "disabled"})
+      expect(f.hotspotCommands()).toEqual([false, false])
+    })
+  }
+
+  test("glasses that went away are not re-sent to", async () => {
+    const f = fixture({hotspotScript: [{code: "wifi_session_disconnected"}]})
+
+    await expect(f.host.setGlassesHotspotState(false)).rejects.toThrow(/session changed/)
+    expect(f.hotspotCommands()).toEqual([false])
+  })
+
+  test("a generic failure is not re-sent", async () => {
+    const f = fixture({hotspot: "throw"})
+
+    await expect(f.host.setGlassesHotspotState(false)).rejects.toThrow("glasses did not answer")
+    expect(f.hotspotCommands()).toEqual([false])
+  })
+
+  test("a second attempt that also fails propagates, without a third", async () => {
+    const f = fixture({hotspotScript: [{code: "wifi_session_restarted"}, "throw"]})
+
+    await expect(f.host.setGlassesHotspotState(false)).rejects.toThrow("glasses did not answer")
+    expect(f.hotspotCommands()).toEqual([false, false])
+  })
+
+  test("a refresh on the retry itself is not retried again", async () => {
+    const f = fixture({
+      hotspotScript: [{code: "wifi_session_restarted"}, {code: "wifi_session_restarted"}],
+    })
+
+    await expect(f.host.setGlassesHotspotState(false)).rejects.toThrow(/session changed/)
+    expect(f.hotspotCommands()).toEqual([false, false])
+  })
+
+  /**
+   * The invariant: one logical hotspot operation issues at most two native commands, and no
+   * later operation runs between them. A retry outside the queue would let this `on` land
+   * between the two halves of the `off` and leave the glasses in the opposite state.
+   */
+  test("a later command cannot execute between the two halves of a retried one", async () => {
+    const f = fixture({hotspotScript: [{code: "wifi_session_restarted"}, "disabled", "enabled"]})
+
+    const off = f.host.setGlassesHotspotState(false)
+    const on = f.host.setGlassesHotspotState(true)
+    await Promise.all([off, on])
+
+    expect(f.hotspotCommands()).toEqual([false, false, true])
+    expect(f.hotspotCommands()).not.toEqual([false, true, false])
+  })
+
+  test("a queued command still runs after the one before it exhausts its retry", async () => {
+    const f = fixture({hotspotScript: [{code: "wifi_session_changed"}, "throw", "enabled"]})
+
+    const off = f.host.setGlassesHotspotState(false)
+    const on = f.host.setGlassesHotspotState(true)
+
+    await expect(off).rejects.toThrow("glasses did not answer")
+    expect(await on).toEqual({state: "enabled"})
+    expect(f.hotspotCommands()).toEqual([false, false, true])
   })
 })
 

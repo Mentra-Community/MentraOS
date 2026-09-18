@@ -2,6 +2,16 @@ import CryptoKit
 import ExpoModulesCore
 import Foundation
 
+/// Carry the SDK's own error code across the Expo bridge.
+///
+/// `BluetoothSdkError` is a plain `Error`, not an Expo `Exception`, so `Promise.reject`
+/// wraps it in `UnexpectedException` and every code JS branches on arrives as
+/// `ERR_UNEXPECTED`. Android keeps the code because `DecoratedException` forwards
+/// `cause.code`; this is the iOS half of that guarantee.
+private func codedBridgeError(_ error: BluetoothSdkError) -> Exception {
+    Exception(name: error.code, description: error.message, code: error.code)
+}
+
 public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
     private var sdk: MentraBluetoothSDK?
 
@@ -44,6 +54,10 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             "heartbeat_received",
             "swipe_volume_status",
             "switch_status",
+            "mic_tuning_state",
+            "mic_rms",
+            "wear_state",
+            "wear_tuning",
             "rgb_led_control_response",
             "settings_ack",
             "version_info",
@@ -273,6 +287,57 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             MemoryMonitor.currentMemoryMB()
         }
 
+        // MARK: - Mic tuning (internal SDK surface only)
+
+        AsyncFunction("setMicRmsTelemetry") { (enabled: Bool) in
+            await MainActor.run {
+                DeviceManager.shared.sgc?.setMicRmsTelemetry(enabled)
+            }
+        }
+
+        // Fire-and-forget: the answer arrives as a mic_tuning_state event, which
+        // the screen is subscribed to anyway.
+        AsyncFunction("requestMicTuningState") {
+            await MainActor.run {
+                DeviceManager.shared.sgc?.requestMicTuningState()
+            }
+        }
+
+        // MARK: - Wear detection (internal SDK surface only)
+
+        // All fire-and-forget; answers arrive as wear_state / wear_tuning events.
+        // Call through DeviceManager so the SGCManager-typed reference hits the
+        // protocol requirement (extension-only methods would silently no-op).
+        AsyncFunction("queryWearState") {
+            await MainActor.run {
+                DeviceManager.shared.queryWearState()
+            }
+        }
+
+        AsyncFunction("setWearReporting") { (enabled: Bool) in
+            await MainActor.run {
+                DeviceManager.shared.setWearReporting(enabled)
+            }
+        }
+
+        AsyncFunction("setWearTuning") { (intervalMs: Int, count: Int, majority: Int) in
+            await MainActor.run {
+                DeviceManager.shared.setWearTuning(intervalMs: intervalMs, count: count, majority: majority)
+            }
+        }
+
+        AsyncFunction("requestWearTuning") {
+            await MainActor.run {
+                DeviceManager.shared.requestWearTuning()
+            }
+        }
+
+        AsyncFunction("resetWearTuning") {
+            await MainActor.run {
+                DeviceManager.shared.resetWearTuning()
+            }
+        }
+
         Function("jscSpawn") { (count: Int) -> Int in
             JSCExperiment.spawn(count: count)
         }
@@ -344,9 +409,16 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             return try await sdk.forgetWifiNetwork(ssid: ssid).values
         }
 
+        // The host retries a hotspot command that a Wi-Fi protocol session refresh
+        // cancelled, and branches on the code to tell that apart from a real failure,
+        // so this one has to reach JS with its code intact.
         AsyncFunction("setHotspotState") { (enabled: Bool) in
             let sdk = await MainActor.run { self.bluetoothSdk() }
-            return try await sdk.setHotspotState(enabled: enabled).values
+            do {
+                return try await sdk.setHotspotState(enabled: enabled).values
+            } catch let error as BluetoothSdkError {
+                throw codedBridgeError(error)
+            }
         }
 
         AsyncFunction("setWifiAdbState") { (enabled: Bool) in

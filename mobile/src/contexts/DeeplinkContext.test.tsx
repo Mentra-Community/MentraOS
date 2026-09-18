@@ -47,7 +47,7 @@ beforeEach(() => {
 
 afterEach(() => jest.useRealTimers())
 
-it("completes a warm OAuth callback without requiring any timer to fire", async () => {
+it.each(["", "#", "#_=_"])("completes a warm OAuth callback with suffix %j without a timer", async (suffix) => {
   render(
     <DeeplinkProvider>
       <Probe />
@@ -55,7 +55,7 @@ it("completes a warm OAuth callback without requiring any timer to fire", async 
   )
 
   await act(async () => {
-    await processUrl(callback)
+    await processUrl(callback + suffix)
   })
 
   expect(mockCompleteOAuthHandoff).toHaveBeenCalledWith({code: "test-handoff", state: "test-state"})

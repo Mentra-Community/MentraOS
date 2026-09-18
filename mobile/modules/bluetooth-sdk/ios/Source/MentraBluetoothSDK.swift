@@ -328,6 +328,7 @@ public final class MentraBluetoothSDK {
                 }
             }
         }
+        DeviceManager.shared.sgc?.replayStreamControlReady()
         storeListenerId = DeviceStore.shared.store.addListener { [weak self] category, changes in
             Task { @MainActor [weak self] in
                 self?.dispatchStoreUpdate(category, changes)

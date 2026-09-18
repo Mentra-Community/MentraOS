@@ -18,6 +18,35 @@ separately as `mentra-example-release-<beta>.json`, the "finalized Mentra
 Bluetooth example". An example build or store publish that fails never makes
 the beta incomplete and never blocks a promotion.
 
+For dev and staging, `coordinated-release.yml` publishes the core release,
+dispatches `coordinated-example-release.yml`, and posts the core notification.
+The examples workflow has its own per-branch concurrency group; Starter Kit
+builds, example store distribution, and docs never hold the next core release.
+It restores the originating run's exact plan and finalized manifest instead of
+allocating another version. A small path-filtered push trigger registers the
+new workflow on dev/staging; only dispatch events perform example release work.
+
+Docs require the finalized core release, the matching Starter Kit APK, and the
+example TestFlight result. Google Play publication and example finalization do
+not gate docs, because the Android documentation links to the GitHub APK.
+The complete example release record still requires both stores to succeed.
+
+To recover examples/docs without republishing the core, dispatch on the same
+channel as the original run (including old combined runs that failed only their
+example jobs):
+
+```bash
+gh workflow run coordinated-example-release.yml --ref dev \
+  -f source_run_id=35173449955
+```
+
+The loader rejects a different repository/channel, an unsuccessful core
+finalizer, expired or ambiguous artifacts, and mismatched release evidence.
+Starter Kit and store steps retain their existing exact-version reuse behavior;
+this is not a docs-only dispatch. A Play failure will still mark the examples
+workflow failed while allowing its docs deployment to succeed. To retry docs
+alone after an export/deployment failure, rerun that failed job.
+
 The process is resumable. It records immutable state in a draft GitHub release
 named `mentra-production-promotion-vX.Y.Z-attempt-N`. Store review may take days;
 no GitHub runner waits for it.
@@ -582,6 +611,39 @@ Common stop conditions include source/lock mismatch, missing store provenance,
 unclassified Cloud config, non-backward-compatible migration, Mobile N failure,
 wrong endpoint or OTA pin, store coordinate drift, rejected binary, missing
 reviewer access, and monitoring uncertainty during rollout.
+
+## Store rejection: resubmit with a corrected beta
+
+When App Review or Google Play rejects a candidate, the correction lands on
+`staging` like any other change and its coordinated run cuts a new beta of the
+same release identity. The promotion has no "rejected" state; a new attempt
+carries the corrected beta. One command does the whole walk, from a clean,
+up-to-date `staging` checkout:
+
+```bash
+./scripts/production-release.mjs resubmit --release X.Y.Z --beta X.Y.Z-beta.N --reason "what the store rejected and what changed"
+```
+
+It aborts the current attempt (recording the reason), promotes the beta into
+`main` (`--merge-admin` merges the exact head with administrator rights when
+the gate cannot complete), starts the next attempt, then dispatches each
+workflow in turn and waits for it: Cloud preflight, Cloud deploy, the
+candidate builds. If the rejected attempt had deferred
+`production-mobile-n-compatibility`, the deferral is carried over with a
+reason that names the earlier attempt; a gate the earlier attempt attested
+itself is not copied. It stops once the new candidates are uploaded, because
+candidate acceptance is the verification of the correction: install the exact
+builds, then `attest` (or `defer`) `production-mobile-candidate-acceptance` and
+run `next` to submit. Interrupted? Run the same command again; every step is
+decided from the latest promotion records, including a container that
+preparation allocated without a state record yet. Each dispatch carries a
+fresh id that the workflow shows in its run name, so the command waits on
+exactly the run it started, whatever else is running.
+
+On App Store Connect the rejected build stays attached to the version until the
+submission replaces it; nothing needs detaching by hand. On Google Play the new
+candidate arrives as a fresh draft on the production track and replaces the
+held one.
 
 ## UI-only GitHub fallback
 

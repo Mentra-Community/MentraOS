@@ -7,7 +7,9 @@ import {
   MEETING_HOST_UPDATE_MESSAGE,
   MeetingModule,
   parseMeetingEndReason,
+  parseMeetingCapabilities,
   parseMeetingMediaSource,
+  parseMeetingRecovery,
   parseMeetingSoftApProgress,
   validateMeetingVideoSource,
 } from "./meeting"
@@ -33,6 +35,27 @@ const joinArgs = {
 }
 
 describe("MeetingModule", () => {
+  test("admission preserves guest identity and propagates host rejection", async () => {
+    const requests: unknown[] = []
+    const {session} = mockSession(async (payload) => {
+      requests.push(payload)
+      throw new Error("This meeting does not allow you to admit guests")
+    })
+    const meeting = new MeetingModule(session)
+    await expect(meeting.admit("guest-1")).rejects.toThrow("does not allow")
+    expect(requests).toEqual([{type: MiniappRequestType.MEETING_ADMIT, participantId: "guest-1"}])
+    await expect(meeting.admit(" ")).rejects.toThrow("participant ID")
+    expect(requests).toHaveLength(1)
+  })
+
+  test("lobby permission distinguishes granted, denied and unreported", () => {
+    expect(parseMeetingCapabilities({hangUpForEveryone: {}})?.manageLobby).toBeUndefined()
+    for (const allowed of [true, false, null]) {
+      expect(parseMeetingCapabilities({hangUpForEveryone: {}, manageLobby: {allowed}})?.manageLobby?.allowed).toBe(allowed)
+    }
+    expect(parseMeetingCapabilities({hangUpForEveryone: {}, manageLobby: {allowed: "true"}})?.manageLobby?.allowed).toBeNull()
+  })
+
   test("getState preserves provider termination details", async () => {
     const endReason = {code: 404, subcode: 8543}
     const {session} = mockSession(async () => ({state: "error", muted: false, endReason}))
@@ -263,12 +286,40 @@ describe("MeetingModule", () => {
     })
   })
 
+  test("applies SoftAP recovery from host state and keeps it when a later event omits it", async () => {
+    const recovery = {active: true, generation: 2, deadlineAt: 1_700_000_000_000, phase: "waiting-ble"}
+    const {session} = mockSession(async () => ({state: "connected", muted: false, recovery}))
+    const meeting = new MeetingModule(session)
+    expect((await meeting.getState()).recovery).toEqual(recovery)
+    const {session: omitted} = mockSession(async () => ({state: "connected", muted: false}))
+    const kept = new MeetingModule(omitted)
+    kept._applyState({state: "connected", muted: false, recovery})
+    kept._applyState({state: "connected", muted: false})
+    expect(kept.state.recovery).toEqual(recovery)
+  })
+
+  test("recovery parse is tolerant: malformed payloads read as absent", () => {
+    expect(parseMeetingRecovery(undefined)).toBeUndefined()
+    expect(parseMeetingRecovery(null)).toBeUndefined()
+    expect(parseMeetingRecovery({generation: 1})).toBeUndefined()
+    expect(parseMeetingRecovery({active: true, generation: 1})).toEqual({active: true, generation: 1})
+    expect(parseMeetingRecovery({active: false})).toEqual({active: false})
+  })
+
   test("SoftAP checklist parse is tolerant: unknown steps drop, malformed payloads read as absent", () => {
     expect(parseMeetingSoftApProgress(undefined)).toBeUndefined()
     expect(parseMeetingSoftApProgress(null)).toBeUndefined()
     expect(parseMeetingSoftApProgress("starting")).toBeUndefined()
     expect(parseMeetingSoftApProgress({phase: "warp", steps: []})).toBeUndefined()
     expect(parseMeetingSoftApProgress({phase: "failed", steps: "nope"})).toBeUndefined()
+    expect(
+      parseMeetingSoftApProgress({
+        phase: "recovering",
+        elapsedMs: 1200,
+        traceId: "gen-2",
+        steps: [{step: "hotspot", status: "running"}],
+      })?.phase,
+    ).toBe("recovering")
     expect(
       parseMeetingSoftApProgress({
         phase: "failed",

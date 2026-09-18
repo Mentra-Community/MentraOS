@@ -12,6 +12,7 @@ import com.mentra.glassesmedia.trace.SoftApTrace
 import com.mentra.acsmeeting.video.VideoProfile
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
+import expo.modules.kotlin.Promise
 
 class AcsMeetingModule : Module() {
   private var session: AcsMeetingSession? = null
@@ -60,6 +61,28 @@ class AcsMeetingModule : Module() {
    * `joinScopedNetwork` call and be releasable by the same teardown that releases the scoped join.
    */
   private var internetHold: InternetHold? = null
+
+  /**
+   * Lift the cellular process pin only across a SoftAP WHIP bind.
+   *
+   * A ServerSocket bound to 192.168.43.x while this UID is marked cellular accepts the bind
+   * but never sees the glasses' SYN — ICMP/ARP still work, TCP to the listener times out.
+   * Join already does this; recovery rebind must too.
+   */
+  private inline fun <T> withIngestUnpinned(bind: () -> T): T {
+    val hold = internetHold
+    if (hold == null) {
+      SoftApTrace.stage("native_ingest_bind", "unpinned" to false, "reason" to "no cellular hold")
+      return bind()
+    }
+    hold.unbindProcess()
+    try {
+      SoftApTrace.stage("native_ingest_bind", "unpinned" to true)
+      return bind()
+    } finally {
+      hold.bindProcessToCellular()
+    }
+  }
 
   override fun definition() = ModuleDefinition {
     Name("MentraAcsMeeting")
@@ -303,23 +326,7 @@ class AcsMeetingModule : Module() {
           video,
           audioDelayMs,
           origin,
-          bindIngestUnpinned = { bind ->
-            val hold = internetHold
-            if (hold == null) {
-              // No hold means no pin to lift, so the listener binds on whatever the default route
-              // is. Worth naming: that is also the state in which ACS's own sockets are unpinned.
-              SoftApTrace.stage("native_ingest_bind", "unpinned" to false, "reason" to "no cellular hold")
-              bind()
-            } else {
-              hold.unbindProcess()
-              try {
-                SoftApTrace.stage("native_ingest_bind", "unpinned" to true)
-                bind()
-              } finally {
-                hold.bindProcessToCellular()
-              }
-            }
-          },
+          bindIngestUnpinned = { bind -> withIngestUnpinned(bind) },
         )
         // Prefer the join snapshot: getState() can race a leave from a respawned miniapp
         // restore and drop the URL the orchestrator needs to tell the glasses.
@@ -404,6 +411,18 @@ class AcsMeetingModule : Module() {
       session?.pushOutgoingPcm(base64, sampleRate, channels) ?: false
     }
 
+    AsyncFunction("admitParticipant") { participantId: String, promise: Promise ->
+      val meeting = session
+      if (meeting == null) {
+        promise.reject("ADMISSION_FAILED", "No connected meeting", null)
+      } else {
+        meeting.admitParticipant(participantId) { error ->
+          if (error != null) promise.reject("ADMISSION_FAILED", error.message, error)
+          else promise.resolve(null)
+        }
+      }
+    }
+
     AsyncFunction("setMuted") { muted: Boolean ->
       session?.setMuted(muted) ?: mapOf("state" to "idle", "muted" to muted)
     }
@@ -418,6 +437,13 @@ class AcsMeetingModule : Module() {
 
     AsyncFunction("restartVideoSource") {
       session?.restartVideoSource()
+    }
+
+    AsyncFunction("rebindSoftApIngest") {
+      traced("rebind_softap_ingest", "hasSession" to (session != null)) {
+        val meeting = session ?: throw IllegalStateException("No active meeting to rebind")
+        meeting.rebindSoftApIngest { bind -> withIngestUnpinned(bind) }
+      }
     }
 
     AsyncFunction("getState") {

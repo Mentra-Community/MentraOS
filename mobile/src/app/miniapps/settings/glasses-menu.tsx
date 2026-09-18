@@ -10,7 +10,8 @@ import {RouteButton} from "@/components/ui/RouteButton"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n/translate"
-import {sortAppsByLastOpenTime, useApps, type ClientApp} from "@mentra/engine"
+import {sortAppsByLastOpenTime, type ClientApp} from "@mentra/engine"
+import {useAvailableApps} from "@/hooks/useAppsExtras"
 
 import {SYSTEM_APPS} from "@/constants/miniapps"
 import {SETTINGS, useSetting} from "@mentra/engine"
@@ -21,7 +22,7 @@ const MAX_MENU_ITEMS = 10
 export default function GlassesMenuScreen() {
   const {theme} = useAppTheme()
   const {goBack} = useNavigationStore.getState()
-  const applets = useApps()
+  const applets = useAvailableApps()
   const [savedMenuApps, setSavedMenuApps] = useSetting<GlassesMenuItem[] | null>(SETTINGS.menu_apps.key)
   const [menuItems, setMenuItems] = useState<GlassesMenuItem[]>([])
   const [showPicker, setShowPicker] = useState(false)

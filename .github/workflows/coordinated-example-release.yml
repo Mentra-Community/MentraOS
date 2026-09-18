@@ -1,0 +1,479 @@
+name: Coordinated Examples and Docs
+run-name: Examples and docs for core run ${{ inputs.source_run_id || 'workflow registration' }}
+
+on:
+  # Register the workflow on dev/staging before the core run dispatches it.
+  # This push run performs no release work and needs no default-branch rollout.
+  push:
+    branches: [dev, staging]
+    paths: [".github/workflows/coordinated-example-release.yml"]
+  workflow_dispatch:
+    inputs:
+      source_run_id:
+        description: Core coordinated run whose finalized release to consume
+        required: true
+        type: string
+
+permissions:
+  actions: read
+  contents: write
+  id-token: write
+
+concurrency:
+  # Store uploads/docs must not race each other or hold the core release lock.
+  group: coordinated-mentra-examples-${{ github.ref_name }}
+  cancel-in-progress: false
+
+env:
+  ARTIFACTS_R2_ACCOUNT_ID: ${{ vars.ARTIFACTS_R2_ACCOUNT_ID }}
+  ARTIFACTS_R2_BUCKET: artifactscdn
+
+jobs:
+  plan:
+    name: Load the exact finalized core release
+    if: github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    outputs:
+      source_commit: ${{ steps.load.outputs.source_commit }}
+      release_identity: ${{ steps.load.outputs.release_identity }}
+      release_set_id: ${{ steps.load.outputs.release_set_id }}
+      plan_artifact: ${{ steps.load.outputs.plan_artifact }}
+      release_id: ${{ steps.load.outputs.release_id }}
+      manifest_url: ${{ steps.load.outputs.manifest_url }}
+      manifest_sha256: ${{ steps.load.outputs.manifest_sha256 }}
+      example_play_track: ${{ steps.load.outputs.example_play_track }}
+      example_testflight_group: ${{ steps.load.outputs.example_testflight_group }}
+      example_testflight_audience: ${{ steps.load.outputs.example_testflight_audience }}
+      dry_run: "false"
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+      - name: Verify the core run and restore its immutable release inputs
+        id: load
+        env:
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
+          GH_TOKEN: ${{ github.token }}
+          SOURCE_RUN_ID: ${{ inputs.source_run_id }}
+          BRANCH: ${{ github.ref_name }}
+        run: node .github/scripts/load-coordinated-example-release.mjs
+      # Reusable workflows read artifacts from their own run. Re-upload only
+      # the verified plan and finalized manifest, preserving their names.
+      - uses: actions/upload-artifact@v4
+        with:
+          name: ${{ steps.load.outputs.plan_artifact }}
+          path: release-handoff/plan/release-plan.json
+          overwrite: true
+          if-no-files-found: error
+          retention-days: 90
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coordinated-release-result-${{ steps.load.outputs.release_set_id }}
+          path: release-handoff/finalized/*.json
+          overwrite: true
+          if-no-files-found: error
+          retention-days: 90
+
+  starter-kit:
+    name: Build coordinated Starter Kit examples
+    needs: plan
+    if: needs.plan.outputs.dry_run != 'true'
+    uses: ./.github/workflows/reusable-coordinated-starter-kit.yml
+    with:
+      source_commit: ${{ needs.plan.outputs.source_commit }}
+      release_plan_artifact: ${{ needs.plan.outputs.plan_artifact }}
+      ota_manifest_url: ${{ needs.plan.outputs.manifest_url }}
+      ota_manifest_sha256: ${{ needs.plan.outputs.manifest_sha256 }}
+    secrets: inherit
+
+  example-testflight:
+    name: Publish React Native example to TestFlight
+    needs: [plan, starter-kit]
+    if: needs.plan.outputs.dry_run != 'true' && needs.starter-kit.result == 'success'
+    uses: ./.github/workflows/reusable-coordinated-example-testflight.yml
+    with:
+      source_commit: ${{ needs.plan.outputs.source_commit }}
+      release_plan_artifact: ${{ needs.plan.outputs.plan_artifact }}
+      starter_kit_result_artifact: ${{ needs.starter-kit.outputs.result_artifact }}
+      testflight_group: ${{ needs.plan.outputs.example_testflight_group }}
+      testflight_audience: ${{ needs.plan.outputs.example_testflight_audience }}
+    secrets: inherit
+
+  example-google-play:
+    name: Publish React Native example to Google Play
+    needs: [plan, starter-kit]
+    if: needs.plan.outputs.dry_run != 'true' && needs.starter-kit.result == 'success'
+    uses: ./.github/workflows/reusable-coordinated-example-google-play.yml
+    with:
+      source_commit: ${{ needs.plan.outputs.source_commit }}
+      release_plan_artifact: ${{ needs.plan.outputs.plan_artifact }}
+      starter_kit_result_artifact: ${{ needs.starter-kit.outputs.result_artifact }}
+      release_id: ${{ needs.plan.outputs.release_id }}
+      play_track: ${{ needs.plan.outputs.example_play_track }}
+    secrets: inherit
+
+  finalize-example:
+    name: Finalize the Mentra Bluetooth example release
+    # The example release is a separate notion from the Mentra beta: it is
+    # built against the finalized beta and recorded in its own asset, so an
+    # example failure never makes the beta incomplete.
+    needs: [plan, starter-kit, example-testflight, example-google-play]
+    if: >-
+      always() &&
+      needs.plan.result == 'success' &&
+      needs.plan.outputs.dry_run != 'true' &&
+      needs.starter-kit.result == 'success' &&
+      needs.example-testflight.result == 'success' &&
+      needs.example-google-play.result == 'success'
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    outputs:
+      record_url: ${{ steps.results.outputs.record_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.plan.outputs.source_commit }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.plan.outputs.plan_artifact }}
+          path: release-input/plan
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: coordinated-release-result-${{ needs.plan.outputs.release_set_id }}
+          path: release-input/finalized
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.starter-kit.outputs.result_artifact }}
+          path: release-input/starter-kit
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.example-testflight.outputs.result_artifact }}
+          path: release-input/example-testflight
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.example-google-play.outputs.result_artifact }}
+          path: release-input/example-google-play
+
+      - name: Assemble the example release record against the finalized beta
+        id: results
+        env:
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p finalized-example
+          plan=release-input/plan/release-plan.json
+          identity=$(jq -er .releaseIdentity "$plan")
+          tag=$(jq -er .artifactContainerTag "$plan")
+          manifest_name=$(jq -er .artifactNames.releaseManifest "$plan")
+          beta_manifest="release-input/finalized/$manifest_name"
+          test -s "$beta_manifest"
+          starter_kit_result=$(find release-input/starter-kit -type f -name 'starter-kit-release-*.json' -print -quit)
+          example_testflight=$(find release-input/example-testflight -type f -name 'example-testflight-publication.json' -print -quit)
+          test -n "$starter_kit_result"
+          test -n "$example_testflight"
+          record_name="mentra-example-release-$identity.json"
+          record_url="https://artifactscdn.mentraglass.com/${GITHUB_REPOSITORY}/releases/$tag/$record_name"
+          assets=$(node .github/scripts/release-assets.mjs list --tag "$tag")
+          asset_id=$(jq -r --arg name "$record_name" '.[] | select(.name == $name and .state == "uploaded") | .id' <<< "$assets")
+          if [[ -n "$asset_id" ]]; then
+            # Keep the complete frozen record, including its historical AAB
+            # URL and first-run timestamps. Verify the re-observed candidates.
+            node .github/scripts/release-assets.mjs fetch --asset-id "$asset_id" > "finalized-example/$record_name"
+            node .github/scripts/example-release-records.mjs reconcile \
+              --plan "$plan" --record "finalized-example/$record_name" \
+              --starter-kit "$starter_kit_result" --example-testflight "$example_testflight" \
+              --example-google-play release-input/example-google-play/example-google-play-publication.json
+            record_url=$(node .github/scripts/release-assets.mjs url --tag "$tag" --name "$record_name" --existing true)
+            echo "published=true" >> "$GITHUB_OUTPUT"
+          else
+            node .github/scripts/example-release-records.mjs assemble \
+              --plan "$plan" \
+              --beta-manifest "$beta_manifest" \
+              --beta-manifest-url "$(node .github/scripts/release-assets.mjs url --tag "$tag" --name "$manifest_name" --existing true)" \
+              --starter-kit "$starter_kit_result" \
+              --starter-kit-result-url "${{ needs.starter-kit.outputs.result_url }}" \
+              --example-testflight "$example_testflight" \
+              --example-google-play release-input/example-google-play/example-google-play-publication.json \
+              --completed-at "$(date -u +%Y-%m-%dT%H:%M:%S.000Z)" \
+              --provenance-url "https://github.com/${GITHUB_REPOSITORY}/actions/runs/${GITHUB_RUN_ID}" \
+              --output "finalized-example/$record_name"
+            echo "published=false" >> "$GITHUB_OUTPUT"
+          fi
+          {
+            echo "tag=$tag"
+            echo "identity=$identity"
+            echo "record_name=$record_name"
+            echo "record_url=$record_url"
+          } >> "$GITHUB_OUTPUT"
+
+      - name: Publish and verify the immutable example release record
+        if: steps.results.outputs.published != 'true'
+        env:
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          node .github/scripts/publish-immutable-release-asset.mjs \
+            --file "finalized-example/${{ steps.results.outputs.record_name }}" \
+            --name "${{ steps.results.outputs.record_name }}" \
+            --release-id "${{ needs.plan.outputs.release_id }}" \
+            --repository "${{ github.repository }}"
+          node .github/scripts/verify-public-release-asset.mjs \
+            --file "finalized-example/${{ steps.results.outputs.record_name }}" \
+            --url "${{ steps.results.outputs.record_url }}"
+
+      - uses: actions/upload-artifact@v4
+        with:
+          name: coordinated-example-release-result-${{ needs.plan.outputs.release_set_id }}
+          path: finalized-example
+          if-no-files-found: error
+          retention-days: 90
+
+      - name: Summarize the example release
+        run: |
+          {
+            echo "## Mentra Bluetooth example release"
+            echo ""
+            echo "- Release: \`${{ steps.results.outputs.identity }}\`"
+            echo "- Record: ${{ steps.results.outputs.record_url }}"
+            echo "- Starter Kit builds: ${{ needs.starter-kit.outputs.release_url }}"
+          } >> "$GITHUB_STEP_SUMMARY"
+
+  docs:
+    # Android docs link to the verified GitHub APK, so Play publication and
+    # the combined example record are not prerequisites for this deployment.
+    name: Publish release-matched documentation
+    needs: [plan, starter-kit, example-testflight]
+    if: ${{ !cancelled() && needs.plan.result == 'success' && needs.starter-kit.result == 'success' && needs.example-testflight.result == 'success' && needs.plan.outputs.dry_run != 'true' }}
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    outputs:
+      docs_url: ${{ steps.target.outputs.docs_url }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ needs.plan.outputs.source_commit }}
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      - uses: oven-sh/setup-bun@v2
+        with:
+          bun-version: 1.4.0
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.plan.outputs.plan_artifact }}
+          path: release-input/plan
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.starter-kit.outputs.result_artifact }}
+          path: release-input/starter-kit
+
+      - uses: actions/download-artifact@v4
+        with:
+          name: ${{ needs.example-testflight.outputs.result_artifact }}
+          path: release-input/example-testflight
+
+      - name: Select the documentation channel
+        id: target
+        env:
+          BRANCH: ${{ github.ref_name }}
+        run: |
+          set -euo pipefail
+          case "$BRANCH" in
+            dev)
+              echo "project=mentraos-docs-dev" >> "$GITHUB_OUTPUT"
+              echo "pages_branch=dev" >> "$GITHUB_OUTPUT"
+              echo "docs_url=https://docs-dev.mentraglass.com" >> "$GITHUB_OUTPUT"
+              ;;
+            staging)
+              echo "project=mentraos-docs-beta" >> "$GITHUB_OUTPUT"
+              echo "pages_branch=staging" >> "$GITHUB_OUTPUT"
+              echo "docs_url=https://docs-beta.mentraglass.com" >> "$GITHUB_OUTPUT"
+              ;;
+            *)
+              echo "Unsupported documentation branch $BRANCH" >&2
+              exit 1
+              ;;
+          esac
+
+      - name: Render the exact release version into a temporary docs tree
+        run: >-
+          node .github/scripts/render-coordinated-docs.mjs
+          --source mintlify-docs
+          --output "$RUNNER_TEMP/mentraos-docs-source"
+          --plan release-input/plan/release-plan.json
+          --starter-kit "$(find release-input/starter-kit -type f -name 'starter-kit-release-*.json' -print -quit)"
+          --example-testflight "$(find release-input/example-testflight -type f -name 'example-testflight-publication.json' -print -quit)"
+          --repository "${{ github.repository }}"
+
+      - name: Export Mintlify docs
+        run: |
+          set -euo pipefail
+          cd "$RUNNER_TEMP/mentraos-docs-source"
+          bunx --bun mint export --output "$RUNNER_TEMP/mentraos-docs.zip"
+
+      - name: Prepare and verify the Cloudflare Pages artifact
+        env:
+          RELEASE_IDENTITY: ${{ needs.plan.outputs.release_identity }}
+          EXAMPLE_APK_URL: ${{ needs.starter-kit.outputs.react_native_apk_url }}
+          EXAMPLE_IOS_URL: ${{ needs.example-testflight.outputs.install_url }}
+        run: |
+          set -euo pipefail
+          export_dir="$RUNNER_TEMP/mentraos-docs"
+          rm -rf "$export_dir"
+          mkdir -p "$export_dir"
+          unzip -q "$RUNNER_TEMP/mentraos-docs.zip" -d "$export_dir"
+          cat > "$export_dir/_headers" <<'HEADERS'
+          /*
+            Cache-Control: public, max-age=0, must-revalidate
+            X-Robots-Tag: noindex
+          HEADERS
+          if grep -R --extended-regexp --ignore-case --quiet '\{\{[a-z0-9_-]+\}\}|%7b%7b[a-z0-9_-]+%7d%7d' "$export_dir/bluetooth-sdk"; then
+            echo "Mintlify export contains an unresolved documentation variable." >&2
+            exit 1
+          fi
+          node .github/scripts/verify-coordinated-docs.mjs \
+            "$export_dir/bluetooth-sdk/software-update/index.html"
+          # Mintlify's static export does not emit docs.json redirects.
+          cat >> "$export_dir/_redirects" <<'REDIRECTS'
+          /mentra-live/software-update /bluetooth-sdk/software-update/ 301
+          /mentra-live/software-update/ /bluetooth-sdk/software-update/ 301
+          REDIRECTS
+
+      - name: Deploy to Cloudflare Pages
+        env:
+          CLOUDFLARE_ACCOUNT_ID: ${{ secrets.CLOUDFLARE_ACCOUNT_ID }}
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_PAGES_API_TOKEN }}
+          PROJECT: ${{ steps.target.outputs.project }}
+          PAGES_BRANCH: ${{ steps.target.outputs.pages_branch }}
+          RELEASE_IDENTITY: ${{ needs.plan.outputs.release_identity }}
+        run: |
+          set -euo pipefail
+          npx wrangler@4.86.0 pages deploy "$RUNNER_TEMP/mentraos-docs" \
+            --project-name "$PROJECT" \
+            --branch "$PAGES_BRANCH" \
+            --commit-hash "${{ needs.plan.outputs.source_commit }}" \
+            --commit-message "Deploy MentraOS docs for $RELEASE_IDENTITY" \
+            --commit-dirty=true
+
+      # Purging accelerates propagation; the required live-page check below
+      # determines whether the exact release is available to users.
+      - name: Purge release-sensitive documentation routes
+        continue-on-error: true
+        timeout-minutes: 1
+        env:
+          CLOUDFLARE_API_TOKEN: ${{ secrets.CLOUDFLARE_PAGES_API_TOKEN }}
+          CLOUDFLARE_ZONE_ID: ${{ vars.CLOUDFLARE_ZONE_ID }}
+          DOCS_URL: ${{ steps.target.outputs.docs_url }}
+        run: |
+          set -euo pipefail
+          [[ -n "$CLOUDFLARE_ZONE_ID" ]] || {
+            echo "CLOUDFLARE_ZONE_ID repository variable is required." >&2
+            exit 1
+          }
+          payload="$(jq -nc \
+            --arg canonical "$DOCS_URL/bluetooth-sdk/software-update/" \
+            --arg canonical_no_slash "$DOCS_URL/bluetooth-sdk/software-update" \
+            --arg legacy "$DOCS_URL/mentra-live/software-update/" \
+            --arg legacy_no_slash "$DOCS_URL/mentra-live/software-update" \
+            '{files: [$canonical, $canonical_no_slash, $legacy, $legacy_no_slash]}')"
+          response="$(curl --fail-with-body --silent --show-error \
+            --request POST \
+            --header "Authorization: Bearer $CLOUDFLARE_API_TOKEN" \
+            --header "Content-Type: application/json" \
+            --data "$payload" \
+            "https://api.cloudflare.com/client/v4/zones/$CLOUDFLARE_ZONE_ID/purge_cache")"
+          jq --exit-status '.success == true' <<< "$response" >/dev/null
+
+      - name: Verify the published custom domain
+        env:
+          DOCS_URL: ${{ steps.target.outputs.docs_url }}
+          RELEASE_IDENTITY: ${{ needs.plan.outputs.release_identity }}
+          EXAMPLE_APK_URL: ${{ needs.starter-kit.outputs.react_native_apk_url }}
+          EXAMPLE_IOS_URL: ${{ needs.example-testflight.outputs.install_url }}
+        run: |
+          set -euo pipefail
+          canonical_page="$DOCS_URL/bluetooth-sdk/software-update/"
+          legacy_page="$DOCS_URL/mentra-live/software-update/"
+          body="$RUNNER_TEMP/software-update.html"
+          headers="$RUNNER_TEMP/software-update.headers"
+          page_is_current() {
+            local page="$1"
+            curl --fail --silent --show-error --location \
+              --dump-header "$headers" --output "$body" "$page" && \
+              grep --fixed-strings --quiet "$RELEASE_IDENTITY" "$body" && \
+              grep --fixed-strings --quiet "href=\"$EXAMPLE_APK_URL\"" "$body" && \
+              grep --fixed-strings --quiet "href=\"$EXAMPLE_IOS_URL\"" "$body" && \
+              grep --ignore-case --quiet '^x-robots-tag:.*noindex' "$headers" && \
+              ! grep --extended-regexp --ignore-case --quiet \
+                '\{\{[a-z0-9_-]+\}\}|%7b%7b[a-z0-9_-]+%7d%7d' "$body"
+          }
+          for _ in {1..18}; do
+            if page_is_current "$canonical_page" && page_is_current "$legacy_page"; then
+              echo "Verified $canonical_page and $legacy_page for $RELEASE_IDENTITY"
+              exit 0
+            fi
+            sleep 10
+          done
+          echo "Published docs did not converge to $RELEASE_IDENTITY at $canonical_page and $legacy_page" >&2
+          exit 1
+
+  notify-slack:
+    name: Notify release Slack channel
+    needs: [plan, starter-kit, example-testflight, example-google-play, finalize-example, docs]
+    if: always() && github.event_name == 'workflow_dispatch'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Post coordinated release result
+        continue-on-error: true
+        env:
+          STAGING_SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_NIGHTLY_BUILDS }}
+          DEV_SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_DEV_BUILDS }}
+          RELEASE_SCOPE: examples
+          BRANCH: ${{ github.ref_name }}
+          REPOSITORY: ${{ github.repository }}
+          RUN_ID: ${{ github.run_id }}
+          SHA: ${{ needs.plan.outputs.source_commit || github.sha }}
+          COMMIT_MESSAGE: Examples and documentation for ${{ needs.plan.outputs.release_identity }}
+          COMMIT_AUTHOR: ${{ github.actor }}
+          RELEASE_IDENTITY: ${{ needs.plan.outputs.release_identity }}
+          PLAN_RESULT: ${{ needs.plan.result }}
+          STARTER_KIT_RESULT: ${{ needs.starter-kit.result }}
+          EXAMPLE_TESTFLIGHT_RESULT: ${{ needs.example-testflight.result }}
+          EXAMPLE_GOOGLE_PLAY_RESULT: ${{ needs.example-google-play.result }}
+          EXAMPLE_GOOGLE_PLAY_TRACK: ${{ needs.plan.outputs.example_play_track }}
+          EXAMPLE_GOOGLE_PLAY_INSTALL_URL: ${{ needs.example-google-play.outputs.install_url }}
+          FINALIZE_EXAMPLE_RESULT: ${{ needs.finalize-example.result }}
+          DOCS_RESULT: ${{ needs.docs.result }}
+          DOCS_URL: ${{ needs.docs.outputs.docs_url }}
+          STARTER_KIT_APK_NAME: ${{ needs.starter-kit.outputs.react_native_apk_name }}
+          STARTER_KIT_APK_URL: ${{ needs.starter-kit.outputs.react_native_apk_url }}
+          STARTER_KIT_RELEASE_URL: ${{ needs.starter-kit.outputs.release_url }}
+          STARTER_KIT_RUN_URL: ${{ needs.starter-kit.outputs.run_url }}
+          EXAMPLE_TESTFLIGHT_DISTRIBUTION_STATUS: ${{ needs.example-testflight.outputs.distribution_status }}
+          EXAMPLE_TESTFLIGHT_INSTALL_URL: ${{ needs.example-testflight.outputs.install_url }}
+          EXAMPLE_TESTFLIGHT_REVIEW_STATE: ${{ needs.example-testflight.outputs.review_state }}
+          EXAMPLE_TESTFLIGHT_MARKETING_VERSION: ${{ needs.example-testflight.outputs.marketing_version }}
+          EXAMPLE_TESTFLIGHT_BUILD_NUMBER: ${{ needs.example-testflight.outputs.build_number }}
+        run: .github/scripts/notify-coordinated-release-slack.sh

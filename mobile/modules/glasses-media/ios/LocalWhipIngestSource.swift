@@ -26,6 +26,8 @@ public final class LocalWhipIngestSource: NSObject, DecodedGlassesMediaSource {
     private var factory: RTCPeerConnectionFactory?
     private var peer: RTCPeerConnection?
     private var server: WhipIngestServer?
+    /// Parked by [rebindIngest] so the old generation still holds its port until force-close.
+    private var retiring: WhipIngestServer?
     private var video: RTCVideoTrack?
     private var audio: [RTCAudioTrack] = []
     private var renderer: LocalMediaRenderer?
@@ -56,16 +58,94 @@ public final class LocalWhipIngestSource: NSObject, DecodedGlassesMediaSource {
         queue.async { self.transition(.failed, "local_restart_requires_republish") }
     }
 
+    /// Destroy the current listener generation and bind a new one. Fail closed: a null or
+    /// unchanged URL is refused, and the parked listener is force-closed rather than reused.
+    public func rebindIngest(config: SourceConfig, timeoutMs: Int, completion: @escaping (Result<String, Error>) -> Void) {
+        queue.async {
+            guard MediaDiagnostics.softapRecoveryEnabled else {
+                completion(.failure(LocalMediaError("SoftAP ingest rebind is disabled")))
+                return
+            }
+            guard !self.stopping else {
+                completion(.failure(LocalMediaError("SoftAP ingest rebind is not possible while stopping")))
+                return
+            }
+            let oldUrl = self.url
+            if let server = self.server {
+                self.retiring = server
+                self.server = nil
+            }
+            self.url = nil
+            self.closePeer()
+            self.startListener(config: config) { result in
+                switch result {
+                case let .failure(error):
+                    completion(.failure(error))
+                case let .success(newUrl):
+                    if newUrl.isEmpty || newUrl == oldUrl {
+                        completion(.failure(LocalMediaError(
+                            "SoftAP ingest rebind did not mint a new listener (old=\(oldUrl ?? "none") new=\(newUrl))"
+                        )))
+                        return
+                    }
+                    self.forceCloseIngestLocked()
+                    let closed = self.awaitIngestClosedLocked(timeoutMs: timeoutMs)
+                    NSLog("SOFTAP_TRACE stage=ingest_rebind oldUrl=\(oldUrl ?? "none") newUrl=\(newUrl) closed=\(closed)")
+                    if !closed {
+                        completion(.failure(LocalMediaError("SoftAP ingest rebind did not release the old listener")))
+                        return
+                    }
+                    completion(.success(newUrl))
+                }
+            }
+        }
+    }
+
+    public func forceCloseIngest() {
+        if DispatchQueue.getSpecific(key: queueKey) == true {
+            forceCloseIngestLocked()
+        } else {
+            queue.sync { self.forceCloseIngestLocked() }
+        }
+    }
+
+    public func awaitIngestClosed(timeoutMs: Int) -> Bool {
+        if DispatchQueue.getSpecific(key: queueKey) == true {
+            return awaitIngestClosedLocked(timeoutMs: timeoutMs)
+        }
+        return queue.sync { self.awaitIngestClosedLocked(timeoutMs: timeoutMs) }
+    }
+
+    private func forceCloseIngestLocked() {
+        retiring?.stop {}
+    }
+
+    private func awaitIngestClosedLocked(timeoutMs: Int) -> Bool {
+        guard let retiring else { return true }
+        let done = DispatchSemaphore(value: 0)
+        retiring.stop { done.signal() }
+        return done.wait(timeout: .now() + .milliseconds(max(timeoutMs, 0))) == .success
+    }
+
     /// Resolves only after the HTTP listener is bound. The owner can then tell the glasses to publish.
     public func prepare(config: SourceConfig, completion: @escaping (Result<String, Error>) -> Void) {
         queue.async {
-            guard self.server == nil, !self.stopping, let address = config.bindAddress, LocalMediaPolicy.isPrivate(address) else {
+            guard self.server == nil, !self.stopping else {
                 completion(.failure(LocalMediaError("A free receiver and the phone's hotspot address are required"))); return
             }
-            self.address = address
-            self.generation += 1
-            let gen = self.generation
-            self.transition(.connecting, "listening")
+            self.startListener(config: config, completion: completion)
+        }
+    }
+
+    private func startListener(config: SourceConfig, completion: @escaping (Result<String, Error>) -> Void) {
+        guard let address = config.bindAddress, LocalMediaPolicy.isPrivate(address) else {
+            completion(.failure(LocalMediaError("A free receiver and the phone's hotspot address are required"))); return
+        }
+        self.address = address
+        generation += 1
+        let gen = generation
+        transition(.connecting, "listening")
+        if factory == nil {
             RTCInitializeSSL()
             let factory = GlassesPeerFactory.make(audioDevice: ReceiveOnlyAudioDevice())
             let options = RTCPeerConnectionFactoryOptions()
@@ -75,31 +155,33 @@ public final class LocalWhipIngestSource: NSObject, DecodedGlassesMediaSource {
             options.ignoreEthernetNetworkAdapter = true
             factory.setOptions(options)
             self.factory = factory
-            let server = WhipIngestServer(
-                negotiate: { [weak self] offer, reply in
-                    guard let self else { reply(.failure(LocalMediaError("Receiver released"))); return }
-                    self.queue.async { self.negotiate(offer, completion: reply) }
-                },
-                terminate: { [weak self] in
-                    self?.queue.async {
-                        guard let self else { return }
-                        self.closePeer()
-                        if self.currentState != .idle { self.transition(.failed, "publisher_terminated") }
-                    }
-                },
-                publisherFailed: { [weak self] in self?.state == .failed }
-            )
-            self.server = server
-            server.start(address: address) { [weak self] result in
-                guard let self else { completion(.failure(LocalMediaError("Receiver released"))); return }
-                self.queue.async {
-                    guard gen == self.generation, !self.stopping else { completion(.failure(LocalMediaError("Receiver cancelled"))); return }
-                    switch result {
-                    case let .success(url): self.url = url
-                    case let .failure(error): self.transition(.failed, error.localizedDescription)
-                    }
-                    completion(result)
+        }
+        let server = WhipIngestServer(
+            negotiate: { [weak self] offer, reply in
+                guard let self else { reply(.failure(LocalMediaError("Receiver released"))); return }
+                self.queue.async { self.negotiate(offer, completion: reply) }
+            },
+            terminate: { [weak self] in
+                self?.queue.async {
+                    guard let self else { return }
+                    self.closePeer()
+                    if self.currentState != .idle { self.transition(.failed, "publisher_terminated") }
                 }
+            },
+            publisherFailed: { [weak self] in self?.state == .failed }
+        )
+        self.server = server
+        // Keep the listener bound to the verified hotspot IP on iOS-on-Mac.
+        // Requiring the Wi-Fi interface type rejects that local route on this host.
+        server.start(address: address, wifiOnly: !ProcessInfo.processInfo.isiOSAppOnMac) { [weak self] result in
+            guard let self else { completion(.failure(LocalMediaError("Receiver released"))); return }
+            self.queue.async {
+                guard gen == self.generation, !self.stopping else { completion(.failure(LocalMediaError("Receiver cancelled"))); return }
+                switch result {
+                case let .success(url): self.url = url
+                case let .failure(error): self.transition(.failed, error.localizedDescription)
+                }
+                completion(result)
             }
         }
     }
@@ -121,6 +203,10 @@ public final class LocalWhipIngestSource: NSObject, DecodedGlassesMediaSource {
             self.url = nil
             self.closePeer()
             self.transition(.idle, "stop")
+            if let retiring = self.retiring {
+                self.retiring = nil
+                retiring.stop {}
+            }
             let server = self.server
             self.server = nil
             let finish = {
