@@ -109,9 +109,9 @@ function nativeCheckpointAcknowledged(checkpoint: string, publish: () => Promise
     nativeInput!,
     checkpoint,
     publish,
-    // Background verification adds 30 seconds of media observation and two
-    // recorded native transitions; keep its larger budget explicit and bounded.
-    started + BROWSER_CONTROLLER_TIMEOUT_MS + (values.background ? 90000 : 0),
+    // The complete background/audio/rejoin routine includes recorded native
+    // transitions and spoken listener checks. Keep its ten-minute limit explicit.
+    started + (values.background ? 600000 : BROWSER_CONTROLLER_TIMEOUT_MS),
     nativeClosed.signal,
   )
 }
