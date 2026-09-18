@@ -70,4 +70,18 @@ test("mobile links can mix a historical GitHub APK and a new CDN IPA", (t) => {
   )
   assert.ok(text.includes(apk))
   assert.ok(text.includes(ipa))
+  const examples = JSON.stringify(
+    notification("examples", {
+      PATH: `${bin}:${process.env.PATH}`,
+      MOBILE_APK_URL: apk,
+      MOBILE_IPA_URL: ipa,
+      APK_NAME: "app.apk",
+      IPA_NAME: "app.ipa",
+      EXAMPLE_GOOGLE_PLAY_RESULT: "failure",
+    }),
+  )
+  assert.ok(examples.includes("Mentra App downloads"))
+  assert.ok(examples.includes(apk))
+  assert.ok(examples.includes(ipa))
+  assert.match(examples, /Google Play: :x: failed/)
 })

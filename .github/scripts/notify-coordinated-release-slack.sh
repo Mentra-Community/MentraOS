@@ -155,6 +155,7 @@ asg_line="*$(icon "${OTA_RESULT:-unknown}") ASG + OTA* - $(label "${OTA_RESULT:-
 starter_line="*$(icon "${FINALIZE_EXAMPLE_RESULT:-unknown}") Bluetooth example* - $(label "${FINALIZE_EXAMPLE_RESULT:-unknown}") - Starter Kit build: $(icon "${STARTER_KIT_RESULT:-unknown}") $(label "${STARTER_KIT_RESULT:-unknown}") - ${starter_detail}${newline}React Native iOS TestFlight: ${example_testflight_icon} ${example_testflight_detail}"
 starter_line+="${newline}React Native Android Google Play: $(icon "${EXAMPLE_GOOGLE_PLAY_RESULT:-unknown}") ${example_play_detail}"
 docs_line="*$(icon "${DOCS_RESULT:-unknown}") Docs* - $(label "${DOCS_RESULT:-unknown}") - ${docs_detail}"
+main_app_line="*Mentra App downloads*${newline}Android phone APK: ${android_detail}${newline}iOS IPA: ${ios_detail}"
 scope="${RELEASE_SCOPE:-core}"
 if [[ "$scope" == examples ]]; then
   if [[ "${FINALIZE_EXAMPLE_RESULT:-}" == success && "${DOCS_RESULT:-}" == success ]]; then
@@ -183,6 +184,7 @@ payload=$(jq -n \
   --arg asg "$asg_line" \
   --arg starter "$starter_line" \
   --arg docs "$docs_line" \
+  --arg main_app "$main_app_line" \
   --arg checks "$checks_line" \
   --arg context "Commit <${commit_url}|\`${commit_short}\`> by ${commit_author} - <${run_url}|View workflow>" \
   '{
@@ -192,6 +194,7 @@ payload=$(jq -n \
       {type: "section", text: {type: "mrkdwn", text: $release}},
       {type: "divider"},
       (if $scope == "examples" then
+        {type: "section", text: {type: "mrkdwn", text: $main_app}},
         {type: "section", text: {type: "mrkdwn", text: $starter}},
         {type: "section", text: {type: "mrkdwn", text: $docs}}
       else

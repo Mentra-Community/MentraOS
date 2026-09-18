@@ -88,6 +88,20 @@ test("release finalization reads the preserved OTA artifact layout", () => {
   )
 })
 
+test("completed releases publish a version page and example notices carry the main app links", () => {
+  const finalize = jobBlock(workflow("coordinated-release.yml"), "finalize")
+  const page = finalize.indexOf("- name: Publish versioned release page with direct app downloads")
+  assert.ok(page > finalize.indexOf("- name: Tag and verify the completed release set"))
+  assert.ok(finalize.indexOf("name: coordinated-release-result-", page) > page)
+  assert.match(finalize.slice(page), /if: needs.plan.outputs.dry_run != 'true'/)
+  assert.match(finalize.slice(page), /publish-coordinated-release-page.mjs/)
+  const examples = workflow("coordinated-example-release.yml")
+  for (const kind of ["apk", "ipa"]) {
+    assert.ok(examples.includes(`mobile_${kind}_url: \${{ steps.load.outputs.mobile_${kind}_url }}`))
+    assert.ok(examples.includes(`MOBILE_${kind.toUpperCase()}_URL: \${{ needs.plan.outputs.mobile_${kind}_url }}`))
+  }
+})
+
 test("production promotion is resumable and keeps irreversible actions behind separate environments", () => {
   const prepare = workflow("production-release-prepare.yml")
   const compatibilityLab = workflow("production-release-compatibility-lab.yml")
