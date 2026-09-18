@@ -43,6 +43,7 @@ interface LauncherDeps {
 /** Hints the host may pass from a view's props to avoid re-deriving them. */
 export interface LaunchHints {
   devUrl?: string
+  /** Retained for caller compatibility; released launches use the active version. */
   version?: string
   devPort?: string
 }
@@ -187,7 +188,9 @@ class MiniappLauncher {
     }
 
     // --- Released: resolve from the installed file:// snapshot. ---
-    const version = hints?.version ?? (await appRegistry.getActiveVersion(packageName))
+    // A view can retain its old version prop across an install or rollback.
+    // Resolve the committed pointer here, including after an installation wait.
+    const version = await appRegistry.getActiveVersion(packageName)
     if (!version) return null
     return this.resolveInstalledBundle(packageName, version)
   }
