@@ -500,6 +500,28 @@ jobs:
                      CODE_SIGNING_ALLOWED=NO \
                      "${MENTRA_IOS_COMPILE_CHECK_SETTINGS[@]}"
 
+      - name: Verify compile-check build outputs
+        if: steps.xcode-build.outcome == 'success' || steps.xcode-build-clean.outcome == 'success'
+        env:
+          TIMING1: ${{ steps.xcode-build.outputs.timing_summary }}
+          TIMING2: ${{ steps.xcode-build-clean.outputs.timing_summary }}
+        run: |
+          app="mobile/ios/build-device/Build/Products/Release-iphoneos/Mentra.app"
+          test -d "$app" || { echo "::error::$app missing after a successful build"; exit 1; }
+          if [ "$MENTRA_IOS_PR_COMPILE_MODE" = "true" ]; then
+            # dSYM generation is disabled in PR compile mode; the timing summary
+            # lists every task type xcodebuild ran, so GenerateDSYMFile must be absent.
+            for t in "$TIMING1" "$TIMING2"; do
+              if [ -n "$t" ] && [ -s "$t" ] && grep -q '^GenerateDSYMFile' "$t"; then
+                echo "::error::GenerateDSYMFile ran in PR compile mode (DEBUG_INFORMATION_FORMAT=dwarf not applied)"
+                exit 1
+              fi
+            done
+            echo "PR compile mode: no dSYM generation, as expected."
+          else
+            echo "Full build mode: default debug-info settings."
+          fi
+
       - name: Summarize iOS build attempts
         if: always()
         continue-on-error: true
