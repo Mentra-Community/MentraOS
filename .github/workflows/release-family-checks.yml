@@ -7,6 +7,7 @@ on:
       - ".github/release-family.json"
       - ".github/production-release/**"
       - ".github/scripts/*.mjs"
+      - ".github/artifact-storage/**"
       - ".github/workflows/coordinated-*.yml"
       - ".github/workflows/release-family-checks.yml"
       - ".github/workflows/reusable-coordinated-*.yml"

@@ -7,6 +7,7 @@ import {pathToFileURL} from "node:url"
 
 import {exampleTestflightDestination} from "./example-release-records.mjs"
 import {finalizeReleaseManifest, releaseRecordSha256} from "./release-family.mjs"
+import {artifactUrl, legacyArtifactUrl, listReleaseAssets} from "./release-artifact-storage.mjs"
 
 export function selectCoreReleaseArtifacts({run, jobs, artifacts, repository, branch, runId}) {
   if (!/^[1-9]\d*$/.test(String(runId)) || !["dev", "staging"].includes(branch)) {
@@ -57,8 +58,12 @@ export function validateCoreReleaseHandoff({plan, manifest, run, selection, repo
   // checks that the manifest binds the exact plan digest, source and identity.
   assert.deepEqual(finalizeReleaseManifest({plan, results: manifest, completedAt: manifest.completedAt}), manifest)
   assert.equal(manifest.releasePlanSha256, releaseRecordSha256(plan))
-  const assetBase = `https://github.com/${repository}/releases/download/${plan.artifactContainerTag}`
-  assert.equal(manifest.otaManifest.url, `${assetBase}/${plan.artifactNames.otaManifest}`)
+  assert.ok(
+    [artifactUrl, legacyArtifactUrl].some(
+      (url) => manifest.otaManifest.url === url(repository, plan.artifactContainerTag, plan.artifactNames.otaManifest),
+    ),
+    "OTA manifest URL must identify this release's exact artifact",
+  )
   const destination = exampleTestflightDestination(plan.channel)
   return {
     source_commit: plan.sourceCommit,
@@ -73,7 +78,7 @@ export function validateCoreReleaseHandoff({plan, manifest, run, selection, repo
   }
 }
 
-function main() {
+async function main() {
   const {GITHUB_REPOSITORY: repository, BRANCH: branch, SOURCE_RUN_ID: runId, GITHUB_OUTPUT: output} = process.env
   if (!/^[A-Za-z0-9_.-]+\/[A-Za-z0-9_.-]+$/.test(repository || "") || !/^[1-9]\d*$/.test(runId || "")) {
     throw new Error("Repository and numeric SOURCE_RUN_ID are required")
@@ -113,6 +118,9 @@ function main() {
     throw new Error("Core release container must be a public prerelease")
   }
   // Compare the uploaded result with the immutable, publicly downloadable record.
+  const assets = await listReleaseAssets(repository, release)
+  const matches = assets.filter((asset) => asset.name === plan.artifactNames.releaseManifest)
+  if (matches.length !== 1) throw new Error("Expected exactly one published core manifest")
   execFileSync(
     process.execPath,
     [
@@ -120,7 +128,7 @@ function main() {
       "--file",
       manifestPath,
       "--url",
-      `https://github.com/${repository}/releases/download/${plan.artifactContainerTag}/${plan.artifactNames.releaseManifest}`,
+      matches[0].browser_download_url,
     ],
     {stdio: "inherit"},
   )
@@ -132,4 +140,4 @@ function main() {
   console.log(`Loaded finalized ${plan.releaseIdentity} from core run ${runId}`)
 }
 
-if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) main()
+if (process.argv[1] && import.meta.url === pathToFileURL(path.resolve(process.argv[1])).href) await main()

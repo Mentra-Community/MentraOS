@@ -1,0 +1,11 @@
+{
+  "ref": "mentra_public_artifact_cdn",
+  "description": "Serve current release artifacts and never cache pre-publication 404s",
+  "expression": "(http.host eq \"artifactscdn.mentraglass.com\")",
+  "action": "set_cache_settings",
+  "action_parameters": {
+    "cache": false,
+    "browser_ttl": {"mode": "bypass"}
+  },
+  "enabled": true
+}
