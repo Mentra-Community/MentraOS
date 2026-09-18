@@ -18,6 +18,7 @@ import {engine, isSystemMiniappPackage, useApps, useRefresh} from "@mentra/engin
 
 import {ThemedStyle} from "@/theme"
 import {showAlert} from "@/utils/AlertUtils"
+import {blockUpdatingMiniapp} from "@/utils/miniappUpdatingAlert"
 import {captureRef} from "react-native-view-shot"
 
 // App info screen for installed (local/offline) miniapps. The Cloud V1
@@ -111,6 +112,7 @@ export default function AppSettings() {
   }, true)
 
   const handleUninstallApp = () => {
+    if (blockUpdatingMiniapp(packageName)) return
     console.log(`Uninstalling app: ${packageName}`)
 
     showAlert(
@@ -125,6 +127,7 @@ export default function AppSettings() {
           text: translate("appSettings:uninstall"),
           style: "destructive",
           onPress: async () => {
+            if (blockUpdatingMiniapp(packageName)) return
             try {
               setIsUninstalling(true)
               // First stop the app if it's running
@@ -133,6 +136,7 @@ export default function AppSettings() {
               }
 
               // Then uninstall it via the island app store
+              if (blockUpdatingMiniapp(packageName)) return
               const res = await engine.miniapps.uninstall(packageName)
               if (res.is_error()) {
                 throw res.error

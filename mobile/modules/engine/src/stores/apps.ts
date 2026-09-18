@@ -63,6 +63,7 @@ export interface AppStoreHooks {
 }
 
 let hostHooks: AppStoreHooks = {}
+const uninstallingPackages = new Set<string>()
 
 export function installAppStoreHooks(hooks: AppStoreHooks): void {
   hostHooks = {...hostHooks, ...hooks}
@@ -294,6 +295,7 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
 
   runUpdate: async (packageName, update) => {
     if (get().updatingPackages.has(packageName)) throw new Error(`${packageName} is already updating`)
+    if (uninstallingPackages.has(packageName)) throw new Error(`${packageName} is being uninstalled`)
     const setUpdating = (updating: boolean) => {
       set((state) => {
         const updatingPackages = new Set(state.updatingPackages)
@@ -531,9 +533,16 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
 
   uninstall: (packageName, version) => {
     return Res.try_async(async () => {
-      const res = await appRegistry.uninstall(packageName, version)
-      if (res.is_error()) throw res.error
-      set((s) => ({apps: s.apps.filter((a) => a.packageName !== packageName)}))
+      if (get().updatingPackages.has(packageName)) throw new Error(`${packageName} is updating; try again shortly`)
+      if (uninstallingPackages.has(packageName)) throw new Error(`${packageName} is already being uninstalled`)
+      uninstallingPackages.add(packageName)
+      try {
+        const res = await appRegistry.uninstall(packageName, version)
+        if (res.is_error()) throw res.error
+        set((s) => ({apps: s.apps.filter((a) => a.packageName !== packageName)}))
+      } finally {
+        uninstallingPackages.delete(packageName)
+      }
     })
   },
 

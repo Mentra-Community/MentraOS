@@ -6175,7 +6175,12 @@ class LocalMiniappRuntime {
         // Only mark an automatic update after the idle guard accepts it. A
         // deferred update must not make the running miniapp appear unavailable.
         await miniappLauncher.installWhenIdle(target, (beforeActivate) =>
-          useAppStatusStore.getState().runUpdate(target, () => install(beforeActivate)),
+          useAppStatusStore.getState().runUpdate(target, () => {
+            // The user may have removed the app after the Store selected it,
+            // including while the active-version lookup above was in flight.
+            if (appRegistry.wasUserUninstalled(target)) throw new Error(`${target} was uninstalled`)
+            return install(beforeActivate)
+          }),
         )
       } else {
         await useAppStatusStore.getState().runUpdate(target, () =>

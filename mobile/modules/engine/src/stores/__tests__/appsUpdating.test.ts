@@ -1,12 +1,19 @@
 import {beforeAll, beforeEach, describe, expect, mock, test} from "bun:test"
+import {result as Res} from "typesafe-ts"
 
 import type {ClientApp} from "../../types/applet"
 
 const compatible = {isCompatible: true, missingRequired: [], missingOptional: [], warnings: []}
 const installedApps = mock(async (): Promise<ClientApp[]> => [])
 const ensureRunning = mock(async () => ({}))
+const uninstall = mock(async () => Res.ok(undefined))
 mock.module("../../services/AppRegistry", () => ({
-  default: {getInstalledMiniapps: installedApps, requiresLocalSttModel: () => false, subscribe: () => () => {}},
+  default: {
+    getInstalledMiniapps: installedApps,
+    uninstall,
+    requiresLocalSttModel: () => false,
+    subscribe: () => () => {},
+  },
 }))
 mock.module("../../services/MiniappLauncher", () => ({miniappLauncher: {ensureRunning}}))
 mock.module("../../services/MiniappRunningRegistry", () => ({
@@ -68,6 +75,8 @@ beforeEach(() => {
   blocked.mockClear()
   opened.mockClear()
   ensureRunning.mockClear()
+  uninstall.mockReset()
+  uninstall.mockImplementation(async () => Res.ok(undefined))
   installedApps.mockReset()
   installedApps.mockResolvedValue([target])
   apps.setState({apps: [target], updatingPackages: new Set(), foregroundedPackage: null})
@@ -75,6 +84,37 @@ beforeEach(() => {
 })
 
 describe("miniapp update availability", () => {
+  test("uninstall cannot delete a package while its update is downloading", async () => {
+    const download = deferred()
+    const update = apps.getState().runUpdate(target.packageName, () => download.promise)
+    const result = await apps.getState().uninstall(target.packageName)
+    expect(result.is_error()).toBe(true)
+    expect(uninstall).not.toHaveBeenCalled()
+    expect(apps.getState().apps).toHaveLength(1)
+    download.resolve()
+    await update
+    expect((await apps.getState().uninstall(target.packageName)).is_ok()).toBe(true)
+    expect(uninstall).toHaveBeenCalledTimes(1)
+  })
+
+  test("an update cannot start while uninstall is in progress", async () => {
+    const deleting = deferred()
+    uninstall.mockImplementationOnce(async () => {
+      await deleting.promise
+      return Res.ok(undefined)
+    })
+    const removal = apps.getState().uninstall(target.packageName)
+    const install = mock(async () => {})
+    try {
+      await expect(apps.getState().runUpdate(target.packageName, install)).rejects.toThrow("being uninstalled")
+      expect(install).not.toHaveBeenCalled()
+    } finally {
+      deleting.resolve()
+      await removal
+    }
+    expect(apps.getState().apps).toHaveLength(0)
+  })
+
   test.each([false, true])(
     "blocks opens until update settles, without queueing a launch (failure=%s)",
     async (fail) => {
