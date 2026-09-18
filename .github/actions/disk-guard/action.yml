@@ -93,6 +93,9 @@ runs:
           pkill -f 'GradleDaemon' >/dev/null 2>&1 || true
           rm -rf ~/.bun/install/cache/* 2>/dev/null || true
           rm -rf ~/Library/Caches/CocoaPods/* 2>/dev/null || true
+          # iOS compile-check ccache (mentra-app-ios-build.yml). Rebuilt on the
+          # next run; only worth dropping at this emergency tier.
+          rm -rf ~/.ccache-mentra-ci 2>/dev/null || true
           rm -rf ~/Library/Caches/org.swift.swiftpm/* 2>/dev/null || true
           rm -rf ~/Library/Caches/Homebrew/* 2>/dev/null || true
           rm -rf ~/.gradle/caches/build-cache-* ~/.gradle/caches/transforms-* ~/.gradle/caches/journal-* ~/.gradle/daemon 2>/dev/null || true
