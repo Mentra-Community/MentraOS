@@ -35,7 +35,7 @@ production backend and makes no backend changes. Repacked from merged main; ever
 - [x] Pass 234 host tests for ACS, SoftAP sequencing, and host lifecycle.
 - [x] Build the USB WebDriverAgent runner and read the physical iPhone accessibility tree.
 - [x] Build and install the Release candidate on iPhone 15, build `302018310`.
-- [ ] Verify Mentra Call is visible with `EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS=true`.
+- [x] Verify Mentra Call is visible with `EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS=true`.
 - [ ] Qualify the physical handoff and record the run.
 
 Local test override: `mobile/.env` sets `EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS=true`.
@@ -92,6 +92,32 @@ pass or silently patch the executable's SDK identity.
 
 The installed test candidate is `com.mentra.mentra` build `302018310` on iPhone 15
 UDID ending `E1A01E`. The local `candidate.json` records hashes and the exact device.
+Xcode 26.6 (17F113, iOS SDK 26.5) built the same candidate with the normal iOS
+15.5 deployment target. That installed build opens successfully and displays
+Mentra Call. The installed ZIP is verified against the merged-source package.
+
 No live Call attempt was consumed during preparation. iPhone `devicectl`
-screenshots work, but native `screen-record` reports the capability unsupported;
-the recording path still needs verification before a routine is declared ready.
+screenshots work, but native `screen-record` reports the capability unsupported.
+WebDriverAgent's XCTest recording exports H.264 successfully when
+`UserAttachmentLifetime=keepAlways`; the 78.798-second preflight contains 1,062
+frames and passes complete decoding. This is recorder preparation, not a Call pass.
+
+The USB connection subsequently interrupted both XCTest and the app console.
+macOS `usbmuxd` reports repeated `kIOReturnNoDevice`, `kIOReturnNotResponding`,
+and USB pipe errors for the iPhone. Keep this distinct from the glasses' ADB
+investigation and stabilize the phone connection before starting a live attempt.
+
+## Pairing preparation
+
+The iPhone initially discovered other glasses but not 03BE. macOS reported 03BE
+under connected devices with BLE service, and the Mac Mentra process was running.
+Gracefully closing that app changed 03BE to not connected on the Mac; the wearer
+then confirmed 03BE appeared in the iPhone scan. Both iPhone BLE and Bluetooth
+audio pairing completed. The native app reports `Mentra_Live_03BE` as its active
+Bluetooth A2DP output. Include competing-controller checks in the routine, not
+only the Mac's Classic audio connection.
+
+Local discovery evidence includes English-labelled JSON steps, `phone-step.ts`,
+fresh accessibility snapshots, per-step screenshots, command receipts, XCTest
+result bundles, and exported recordings. Failed preparation steps remain failed;
+they must not be presented as a complete replay or successful Call qualification.
