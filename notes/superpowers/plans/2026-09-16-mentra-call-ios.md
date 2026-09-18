@@ -86,16 +86,17 @@ Use text to speech when a listener or other user action is needed.
 | --- | --- | --- |
 | iOS visibility | Three deterministic default/override/restored-default runs, 47 steps with screenshots/video and stable focus | Recheck if visibility behavior changes |
 | Native code | 223 Android tests; 116 Bluetooth Swift tests; two native session concurrency tests under Thread Sanitizer | New device build after source changes |
-| Call bundle | Merged-source typecheck and 473 miniapp tests, 1,355 assertions; ZIP/permissions/backend verified | Android microphone accessibility on device |
-| Android OTA | Recorded ASG update and independent up-to-date replay; MTK/BES identity verified | Re-run exact new candidate pin if targets change |
-| Android Call | Razr/SIM + 03BE: hotspot association, first glasses frame and ACS CONNECTED on candidate 01f22fc | Browser guest stayed in lobby; new admission path and complete media routine unqualified |
+| Call bundle | Merged-source typecheck and 473 miniapp tests, 1,355 assertions; ZIP/permissions/backend verified; named Android mute/unmute controls exercised on eaaa568 | Audible mute/unmute still requires admitted peer |
+| Android OTA | Recorded ASG update and independent up-to-date replay on earlier fixture | User explicitly deferred the separate OTA routine until after merge; current instrumented fixture is not a release-OTA qualification |
+| Android Call | eaaa568 on Razr/SIM + 03BE: hotspot association, first glasses frame, ACS CONNECTED, named mute/unmute controls | Selected guest admission failed: UI roster showed IN_LOBBY but lookup through CallLobby.participants rejected it. Resolve selection from the same live remoteParticipants roster, retaining state/capability checks. New APK and complete media routine still required |
 | Mac Call | Recorded admission, roster changes and advancing browser video; user confirmed glasses speech at laptop | Audible return path, Local Network permission persistence, physical iPhone behavior and app-owned retirement remain unqualified |
 
 Do not merge before Android device qualification. Prior successful tests and
 recordings describe their captured builds, not later artifacts. At the last live
-checkpoint, 12 of 20 authorized attempts were consumed; eight remain. The user's
-separate USB investigation currently holds the hardware fixture. No stream is
-needed for this code cleanup.
+checkpoint, 13 of 20 authorized attempts were consumed; seven remain. The user
+released the hardware hold and requested continued Call testing despite another
+USB drop; leave that failure state for the separate USB investigation. Preserve
+the instrumented MTK `MentraLive_20260917.1` and ASG `302016752`; no OTA during Call.
 
 Cleanup validation: 49 focused mobile tests and full mobile TypeScript passed.
 Product media-core tests passed (22); the harness branch passed 20, including the

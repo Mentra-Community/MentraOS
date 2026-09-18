@@ -16,7 +16,9 @@ internal fun admitLobbyParticipant(
   try {
     check(isCurrent() && active.state == CallState.CONNECTED) { "No connected meeting" }
     check(allowed) { "This meeting does not allow you to admit guests" }
-    val guest = active.callLobby.participants.firstOrNull {
+    // Resolve against the same live roster that supplies the UI. For Teams interop,
+    // an IN_LOBBY remote participant can be absent from CallLobby.participants.
+    val guest = active.remoteParticipants.firstOrNull {
       it.identifier.rawId == participantId && it.state == ParticipantState.IN_LOBBY
     } ?: throw IllegalStateException("This guest is no longer waiting in the lobby")
     active.callLobby.admit(listOf(guest.identifier)).whenComplete { result, error ->

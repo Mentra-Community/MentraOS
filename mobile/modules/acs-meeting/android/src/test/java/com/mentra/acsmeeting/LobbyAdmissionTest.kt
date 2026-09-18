@@ -27,7 +27,8 @@ class LobbyAdmissionTest {
       `when`(call.callLobby).thenReturn(lobby)
       `when`(guest.identifier).thenReturn(id)
       `when`(guest.state).thenReturn(ParticipantState.IN_LOBBY)
-      `when`(lobby.participants).thenReturn(listOf(guest))
+      `when`(call.remoteParticipants).thenReturn(listOf(guest))
+      `when`(lobby.participants).thenReturn(emptyList())
       `when`(lobby.admit(listOf(id))).thenReturn(pending)
     }
     fun start(allowed: Boolean = true, selected: String = id.rawId) {
@@ -61,8 +62,12 @@ class LobbyAdmissionTest {
     }
   }
 
-  @Test fun admitsOnlySelectedGuestAndWaitsForAcsResult() {
+  @Test fun admitsSelectedRosterGuestWhenSeparateLobbyCollectionIsEmpty() {
     val h = Harness()
+    val other = mock(RemoteParticipant::class.java)
+    `when`(other.identifier).thenReturn(CommunicationUserIdentifier("8:acs:other-guest"))
+    `when`(other.state).thenReturn(ParticipantState.IN_LOBBY)
+    `when`(h.call.remoteParticipants).thenReturn(listOf(other, h.guest))
     h.start()
     assertThat(h.completed).isFalse()
     verify(h.lobby).admit(listOf(h.id))
