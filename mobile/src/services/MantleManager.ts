@@ -648,69 +648,47 @@ class MantleManager {
    * is HTTP-only) and hand the local zip to AppRegistry, which unzips and
    * installs it.
    */
-  private async installBundledMiniapps(onlyPackage?: string) {
-    const deployment = deploymentStore.getActive()
-    const approved = deployment.manifest.systemMiniapps.approvedPackageNamesOverride
+  private async installBundledMiniapps() {
     for (const module of BUNDLED_MINIAPPS) {
       try {
         const asset = Asset.fromModule(module)
         const parsed = parseBundledMiniappName(asset.name)
-        if (onlyPackage && parsed?.packageName !== onlyPackage) continue
-        if (parsed && approved !== null && !approved.includes(parsed.packageName)) {
-          if (onlyPackage) throw new Error(`${onlyPackage} is outside the workspace allowlist`)
-          console.log(`MANTLE: skipping bundled miniapp outside workspace allowlist: ${parsed.packageName}`)
-          continue
-        }
-        if (!parsed) {
-          console.warn(`MANTLE: bundled miniapp asset name "${asset.name}" is not <packageName>-<version>`)
-          continue
-        }
-        const {packageName, version} = parsed
         // iOS Call is installed by its serialized visibility controller.
-        if (!onlyPackage && Platform.OS === "ios" && packageName === mentraCallPackageName) continue
-
-        // Don't install region-hidden bundled miniapps.
-        if (shouldHideMiniapp(packageName)) {
-          if (onlyPackage) return
-          continue
-        }
-
-        if (appRegistry.getInstalledVersions(packageName).includes(version)) {
-          if (onlyPackage) return
-          continue
-        }
-
-        let superMode = await engine.settings.get(SETTINGS.super_mode.key)
-        if (!superMode && packageName === "com.mentra.example") {
-          // skip installing the example miniapp if super mode is not enabled
-          continue
-        }
-
-        await asset.downloadAsync()
-        if (shouldHideMiniapp(packageName)) {
-          if (onlyPackage) return
-          continue
-        }
-        if (!asset.localUri) {
-          if (onlyPackage) throw new Error(`Bundled ${onlyPackage} has no local URI`)
-          console.warn(`MANTLE: bundled miniapp ${packageName} has no localUri after download`)
-          continue
-        }
-
-        const res = await appRegistry.installFromLocalZip(asset.localUri)
-        if (res.is_error()) {
-          if (onlyPackage) throw res.error
-          console.error(`MANTLE: failed to install bundled miniapp ${packageName}@${version}:`, res.error)
-          continue
-        }
-        console.log(`MANTLE: installed bundled miniapp ${res.value.packageName}@${res.value.version}`)
-        if (onlyPackage) return
+        if (Platform.OS === "ios" && parsed?.packageName === mentraCallPackageName) continue
+        await this.installBundledMiniapp(asset)
       } catch (error) {
-        if (onlyPackage) throw error
-        console.error(`MANTLE: error installing bundled miniapp:`, error)
+        console.error("MANTLE: error installing bundled miniapp:", error)
       }
     }
-    if (onlyPackage) throw new Error(`Missing bundled miniapp: ${onlyPackage}`)
+  }
+
+  private async installBundledCall() {
+    const asset = BUNDLED_MINIAPPS.map((module) => Asset.fromModule(module)).find(
+      (asset) => parseBundledMiniappName(asset.name)?.packageName === mentraCallPackageName,
+    )
+    if (!asset) throw new Error(`Missing bundled miniapp: ${mentraCallPackageName}`)
+    await this.installBundledMiniapp(asset)
+  }
+
+  /** Install one bundle, or skip it when current policy/version makes it unnecessary. */
+  private async installBundledMiniapp(asset: Asset) {
+    const parsed = parseBundledMiniappName(asset.name)
+    if (!parsed) throw new Error(`Bundled miniapp asset name "${asset.name}" is not <packageName>-<version>`)
+    const {packageName, version} = parsed
+    const approved = deploymentStore.getActive().manifest.systemMiniapps.approvedPackageNamesOverride
+    if (approved !== null && !approved.includes(packageName)) {
+      throw new Error(`${packageName} is outside the workspace allowlist`)
+    }
+    if (shouldHideMiniapp(packageName) || appRegistry.getInstalledVersions(packageName).includes(version)) return
+    if (packageName === "com.mentra.example" && !engine.settings.get(SETTINGS.super_mode.key)) return
+
+    await asset.downloadAsync()
+    // The user can disable Call while the bundle is being materialized.
+    if (shouldHideMiniapp(packageName)) return
+    if (!asset.localUri) throw new Error(`Bundled ${packageName} has no local URI`)
+    const result = await appRegistry.installFromLocalZip(asset.localUri)
+    if (result.is_error()) throw result.error
+    console.log(`MANTLE: installed bundled miniapp ${result.value.packageName}@${result.value.version}`)
   }
 
   private setupIosCallVisibility(): void {
@@ -728,7 +706,7 @@ class MantleManager {
       },
       setHidden: (hidden) => engine.miniapps.setHiddenStatus(mentraCallPackageName, hidden),
       clearRunningState: () => saveLocalAppRunningState(mentraCallPackageName, false),
-      install: () => this.installBundledMiniapps(mentraCallPackageName),
+      install: () => this.installBundledCall(),
       stop: async () => {
         if (useAppStatusStore.getState().foregroundedPackage === mentraCallPackageName) {
           engine.miniapps.clearForeground()
