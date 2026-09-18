@@ -39,6 +39,8 @@ export interface StartOptions {
 }
 
 export interface AppStoreHooks {
+  /** The host renders an explanation when an update blocks a user open. */
+  onUpdateBlocked?: (app: ClientApp) => void
   /**
    * A start was blocked because the app is hardware-incompatible. Engine made
    * the decision (and raised the `version_incompatible` notification); the host
@@ -72,6 +74,8 @@ export function installAppStoreHooks(hooks: AppStoreHooks): void {
 
 interface AppStatusState {
   apps: ClientApp[]
+  updatingPackages: ReadonlySet<string>
+  runUpdate: <T>(packageName: string, update: () => Promise<T>) => Promise<T>
   /**
    * Source of truth for which app is foregrounded in the Compositor overlay.
    * The per-app `foregrounded` boolean is derived from this in `projectApps`
@@ -237,6 +241,7 @@ function projectApps(previousState: AppStatusState, localApps: ClientApp[]): Cli
       // through to the root router (restart). Deriving here keeps the flag stable
       // across both passes.
       foregrounded: app.packageName === previousState.foregroundedPackage,
+      updating: previousState.updatingPackages.has(app.packageName),
     }
     const prev = previousByPackage.get(app.packageName)
     return prev && shallowEqualApp(prev, next) ? prev : next
@@ -278,12 +283,34 @@ function compatibilityEqual(a?: CompatibilityResult, b?: CompatibilityResult): b
 
 export const useAppStatusStore = create<AppStatusState>((set, get) => ({
   apps: [],
+  updatingPackages: new Set(),
   foregroundedPackage: null,
 
   refresh: async () => {
-    const previousState = get()
     const localApps = await appRegistry.getInstalledMiniapps()
-    set({apps: projectApps(previousState, localApps)})
+    // Installation/foreground state may have changed while reading the registry.
+    set((state) => ({apps: projectApps(state, localApps)}))
+  },
+
+  runUpdate: async (packageName, update) => {
+    if (get().updatingPackages.has(packageName)) throw new Error(`${packageName} is already updating`)
+    const setUpdating = (updating: boolean) => {
+      set((state) => {
+        const updatingPackages = new Set(state.updatingPackages)
+        if (updating) updatingPackages.add(packageName)
+        else updatingPackages.delete(packageName)
+        return {
+          updatingPackages,
+          apps: state.apps.map((app) => (app.packageName === packageName ? {...app, updating} : app)),
+        }
+      })
+    }
+    setUpdating(true)
+    try {
+      return await update()
+    } finally {
+      setUpdating(false)
+    }
   },
 
   start: async (clientApp: ClientApp, opts?: StartOptions) => {
@@ -292,6 +319,10 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
     const app = state.apps.find((a) => a.packageName === packageName)
     if (!app) {
       console.error(`ISLAND: app not found for package name: ${packageName}`)
+      return false
+    }
+    if (get().updatingPackages.has(packageName)) {
+      hostHooks.onUpdateBlocked?.(app)
       return false
     }
 
@@ -340,6 +371,12 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
         timestamp: Date.now(),
       })
       hostHooks.onMissingSpeechModel?.(app)
+      return false
+    }
+
+    // A model/permission check above may have yielded while an update started.
+    if (get().updatingPackages.has(packageName)) {
+      hostHooks.onUpdateBlocked?.(app)
       return false
     }
 
@@ -446,6 +483,10 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
       console.error(`ISLAND: setForeground — app not found: ${packageName}`)
       return
     }
+    if (get().updatingPackages.has(packageName)) {
+      hostHooks.onUpdateBlocked?.(app)
+      return
+    }
 
     // Flip the foreground flag synchronously so the Compositor's open
     // animation starts on the same frame as the tap. We do NOT await start()
@@ -527,7 +568,8 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
     return value
   },
 
-  setApps: (apps) => set({apps}),
+  setApps: (apps) =>
+    set((state) => ({apps: apps.map((app) => ({...app, updating: state.updatingPackages.has(app.packageName)}))})),
 }))
 
 // Project miniappRunningRegistry membership into the store's `running` field

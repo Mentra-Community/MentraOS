@@ -7,6 +7,8 @@ import {withUniwind} from "uniwind"
 import {Icon} from "@/components/ignite"
 import {DevIcon, DevMiniappBadge} from "@/components/miniapps/DevIcons"
 import {useAppTheme} from "@/contexts/ThemeContext"
+import {translate} from "@/i18n"
+import {blockUpdatingMiniapp} from "@/utils/miniappUpdatingAlert"
 import {
   isRemoteImageSourceFailed,
   markRemoteImageSourceFailed,
@@ -47,7 +49,8 @@ const AppIcon = ({app, onClick, style, disableLoader, instant, resolveCachedSour
   const [iconFailed, setIconFailed] = useState(() => isRemoteImageSourceFailed(app.logoUrl))
   const isRemoteLogo =
     typeof app.logoUrl === "string" && (app.logoUrl.startsWith("http://") || app.logoUrl.startsWith("https://"))
-  const imageUri = typeof imageSource === "object" && imageSource !== null && "uri" in imageSource ? imageSource.uri : null
+  const imageUri =
+    typeof imageSource === "object" && imageSource !== null && "uri" in imageSource ? imageSource.uri : null
   const remoteUnavailable = isRemoteLogo && !imageUri
 
   useEffect(() => {
@@ -63,10 +66,23 @@ const AppIcon = ({app, onClick, style, disableLoader, instant, resolveCachedSour
   return (
     <View className={`items-center justify-center ${app.compatibility?.isCompatible ? "" : "opacity-15"}`}>
       <WrapperComponent
-        onPress={onClick}
+        onPress={
+          onClick
+            ? () => {
+                if (!blockUpdatingMiniapp(app.packageName)) onClick()
+              }
+            : undefined
+        }
         activeOpacity={onClick ? 0.7 : undefined}
         style={style}
-        accessibilityLabel={onClick ? `Launch ${app.name}` : undefined}
+        accessibilityLabel={
+          app.updating
+            ? translate("home:miniappUpdatingLabel", {app: app.name})
+            : onClick
+            ? `Launch ${app.name}`
+            : undefined
+        }
+        accessibilityState={{busy: Boolean(app.updating)}}
         accessibilityRole={onClick ? "button" : undefined}
         className="overflow-hidden">
         <SquircleView
@@ -78,8 +94,12 @@ const AppIcon = ({app, onClick, style, disableLoader, instant, resolveCachedSour
             justifyContent: "center",
             ...iconSize,
           }}>
-          {app.loading && !disableLoader && (
-            <View className="absolute inset-0 justify-center items-center z-10 bg-black/40">
+          {(app.updating || (app.loading && !disableLoader)) && (
+            <View
+              pointerEvents="none"
+              className="absolute inset-0 justify-center items-center z-10 bg-black/40"
+              accessibilityRole="progressbar"
+              accessibilityLabel={app.updating ? translate("home:miniappUpdating") : undefined}>
               <ActivityIndicator size="large" color={theme.colors.palette.white} />
             </View>
           )}

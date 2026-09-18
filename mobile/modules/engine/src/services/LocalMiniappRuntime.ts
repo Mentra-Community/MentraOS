@@ -6172,22 +6172,28 @@ class LocalMiniappRuntime {
         return installed
       }
       if (payload.onlyIfStopped === true) {
-        await miniappLauncher.installWhenIdle(target, install)
+        // Only mark an automatic update after the idle guard accepts it. A
+        // deferred update must not make the running miniapp appear unavailable.
+        await miniappLauncher.installWhenIdle(target, (beforeActivate) =>
+          useAppStatusStore.getState().runUpdate(target, () => install(beforeActivate)),
+        )
       } else {
-        await installWithRuntimeReload(miniappLauncher, target, install, {
-          restorePreviousVersion: () => {
-            if (!activeVersion) throw new Error(`No prior active version is available for ${target}`)
-            const restored = appRegistry.setActiveVersion(target, activeVersion)
-            if (restored.is_error()) throw restored.error
-          },
-          onRecoveryError: (recoveryError) => {
-            console.warn(
-              `${LOG_TAG}: failed to restore ${target} after Store install: ${
-                (recoveryError as Error)?.message ?? recoveryError
-              }`,
-            )
-          },
-        })
+        await useAppStatusStore.getState().runUpdate(target, () =>
+          installWithRuntimeReload(miniappLauncher, target, install, {
+            restorePreviousVersion: () => {
+              if (!activeVersion) throw new Error(`No prior active version is available for ${target}`)
+              const restored = appRegistry.setActiveVersion(target, activeVersion)
+              if (restored.is_error()) throw restored.error
+            },
+            onRecoveryError: (recoveryError) => {
+              console.warn(
+                `${LOG_TAG}: failed to restore ${target} after Store install: ${
+                  (recoveryError as Error)?.message ?? recoveryError
+                }`,
+              )
+            },
+          }),
+        )
       }
       appRegistry.gcReleaseVersions(target, [version, ...(activeVersion ? [activeVersion] : [])])
       this.sendToMiniapp(storePackageName, {

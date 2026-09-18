@@ -24,11 +24,25 @@ import {BlurView} from "expo-blur"
 import {Icon, Text} from "@/components/ignite"
 import AppIcon from "@/components/home/AppIcon"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {DUMMY_APPLET, HardwareType, getAppsOrder, isSystemMiniappPackage, saveAppsOrder, sortAppsByPackageNamePriority, engine, type ClientApp, type OrderMap, useSetForeground, useStart, useStop} from "@mentra/engine"
+import {
+  DUMMY_APPLET,
+  HardwareType,
+  getAppsOrder,
+  isSystemMiniappPackage,
+  saveAppsOrder,
+  sortAppsByPackageNamePriority,
+  engine,
+  type ClientApp,
+  type OrderMap,
+  useSetForeground,
+  useStart,
+  useStop,
+} from "@mentra/engine"
 
 import {isOfflineHosted} from "@/components/miniapp/offlineHostedPackages"
 import {useForegroundApps} from "@/hooks/useAppsExtras"
 import {uninstallAppUI} from "@/utils/uninstallAppUI"
+import {blockUpdatingMiniapp} from "@/utils/miniappUpdatingAlert"
 import {askPermissionsUI, checkPermissionsUI} from "@/utils/PermissionsUtils"
 import {SETTINGS, useSetting} from "@mentra/engine"
 import {storage} from "@/utils/storage"
@@ -599,10 +613,13 @@ export function AppsGrid({
 
   const openApp = useCallback(
     async (app: ClientApp) => {
+      if (blockUpdatingMiniapp(app.packageName)) return
       if (await showCompatibilityAlert(app)) return
+      if (blockUpdatingMiniapp(app.packageName)) return
 
       const started = app.running || (await startApplet(app, {skipNavigation: true}))
       if (!started) return
+      if (blockUpdatingMiniapp(app.packageName)) return
 
       if (isOfflineHosted(app.packageName) || app.local) {
         await setForeground(app.packageName)
@@ -719,6 +736,7 @@ export function AppsGrid({
   const handlePress = useCallback(
     async (app: ClientApp) => {
       if (app.packageName.includes("@empty")) return // ignore dummy apps
+      if (blockUpdatingMiniapp(app.packageName)) return
       if (await showCompatibilityAlert(app)) return
 
       // Overlay-hosted app types (local miniapps + offline-hosted built-ins) get
@@ -731,6 +749,7 @@ export function AppsGrid({
         if (result !== 1) return
       }
 
+      if (blockUpdatingMiniapp(app.packageName)) return
       if (overlayForegrounded) {
         await setForeground(app.packageName)
       }
@@ -831,6 +850,9 @@ export function AppsGrid({
             itemRefs.current[item.packageName] = ref
           }}
           className="flex-1 items-center justify-center pt-3"
+          accessibilityRole="button"
+          accessibilityLabel={item.updating ? translate("home:miniappUpdatingLabel", {app: item.name}) : item.name}
+          accessibilityState={{busy: Boolean(item.updating)}}
           onPress={() => {
             // if (showAllApps) {
             //   showPopover(item.packageName)
@@ -856,10 +878,11 @@ export function AppsGrid({
                 textShadowOffset: {width: 0, height: 0},
                 textShadowRadius: 30,
               }}
-              numberOfLines={2}
+              numberOfLines={item.updating ? 1 : 2}
               ellipsizeMode="tail"
               text={item.name}
             />
+            {item.updating && <Text className="text-muted-foreground text-[10px]" tx="home:miniappUpdating" />}
           </View>
         </TouchableOpacity>
       )

@@ -111,6 +111,8 @@ export interface ClientApp extends AppletInterface {
   offlineRoute: string
   compatibility?: CompatibilityResult
   loading: boolean
+  /** A Store update is in progress; user opens are blocked until it settles. */
+  updating?: boolean
   local: boolean
   hidden: boolean
   onStart?: () => void
