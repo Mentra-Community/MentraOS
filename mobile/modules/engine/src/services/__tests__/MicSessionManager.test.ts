@@ -59,6 +59,17 @@ describe("MicSessionManager", () => {
     )
   })
 
+  test("stopping a livestream preserves another owner's glasses microphone", () => {
+    const captions = micSessionManager.acquire({owner: "com.captions", source: "glasses", useCase: "transcription"})
+    const stream = micSessionManager.acquire({owner: "engine:managed-relay:test", source: "glasses", useCase: "livestream"})
+    setMicSourcePin.mockClear()
+    stream.release()
+    expect(setMicSourcePin).not.toHaveBeenCalled()
+    expect(setSessionRequirement).toHaveBeenLastCalledWith(true)
+    captions.release()
+    expect(setMicSourcePin).toHaveBeenCalledWith(null)
+  })
+
   /**
    * The PCM claim turns hardware VAD off, so Barrier is the only thing left between the far end
    * and its own echo. It has to arrive with the claim, not after it.

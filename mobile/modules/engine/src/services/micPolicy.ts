@@ -11,7 +11,7 @@
  */
 
 /** What an application is doing with the microphone. */
-export type MicUseCase = "voice_call" | "transcription" | "voice_assistant" | "diagnostic"
+export type MicUseCase = "voice_call" | "transcription" | "voice_assistant" | "diagnostic" | "livestream"
 
 /** Which microphone the audio comes from. */
 export type MicSource = "glasses" | "phone"
@@ -117,6 +117,7 @@ export const MIC_USE_CASE_PROFILES: Record<MicUseCase, MicTuningProfile> = {
   transcription: {},
   voice_assistant: {},
   diagnostic: {},
+  livestream: {}, // Preserve the configured capture gain; there is no call return audio.
 }
 
 /**
@@ -135,6 +136,7 @@ export const MIC_USE_CASE_LOUDNESS_GATE: Record<MicUseCase, boolean> = {
   transcription: false,
   voice_assistant: false,
   diagnostic: false,
+  livestream: false,
 }
 
 /**
@@ -151,13 +153,14 @@ export const MIC_USE_CASES: readonly MicUseCase[] = [
   "transcription",
   "voice_assistant",
   "diagnostic",
+  "livestream",
 ]
 
 /** Owners of engine-internal sessions. Miniapps cannot claim these use cases. */
 export const ENGINE_OWNER_PREFIX = "engine:"
 
 /** Use cases only engine features may acquire. */
-export const ENGINE_ONLY_USE_CASES: readonly MicUseCase[] = ["diagnostic"]
+export const ENGINE_ONLY_USE_CASES: readonly MicUseCase[] = ["diagnostic", "livestream"]
 
 /**
  * Resolve every live session into one hardware state.

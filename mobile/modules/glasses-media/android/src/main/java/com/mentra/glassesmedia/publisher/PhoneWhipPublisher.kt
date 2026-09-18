@@ -40,6 +40,7 @@ class PhoneWhipPublisher(
   private val closeDone = CountDownLatch(1)
   @Volatile private var cleanupFailure: Throwable? = null
   private val pcm = RelayPcmBuffer()
+  private val audioInput = RelayAudioInput(pcm)
   private var factory: PeerConnectionFactory? = null
   private var egl: EglBase? = null
   private var adm: JavaAudioDeviceModule? = null
@@ -78,12 +79,10 @@ class PhoneWhipPublisher(
         adm = JavaAudioDeviceModule.builder(context)
           .setInputSampleRate(48_000).setUseStereoInput(false)
           .setUseHardwareAcousticEchoCanceler(false).setUseHardwareNoiseSuppressor(false)
-          .setAudioBufferCallback { buffer, _, channels, sampleRate, bytes, _ ->
-            if (channels == 1 && sampleRate == 48_000) pcm.read(buffer, bytes)
-            else for (i in 0 until minOf(bytes, buffer.capacity())) buffer.put(i, 0)
-            System.nanoTime()
+          .setAudioBufferCallback { buffer, _, channels, sampleRate, _, _ ->
+            audioInput.read(buffer, channels, sampleRate)
           }.createAudioDeviceModule().also {
-            // WebRTC's external-buffer mode: paced callbacks without AudioRecord/microphone.
+            // External mode has no blocking AudioRecord.read; our callback supplies the clock.
             it.setAudioRecordEnabled(false)
           }
         factory = PeerConnectionFactory.builder()
