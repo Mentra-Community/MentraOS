@@ -1052,6 +1052,7 @@ class AcsMeetingSession(
         dispatch = { executor.execute(it) },
         complete = { error ->
           if (error == null) onState(snapshot())
+          else Log.e(TAG, "Selected lobby participant admission failed", error)
           complete(error)
         },
       )

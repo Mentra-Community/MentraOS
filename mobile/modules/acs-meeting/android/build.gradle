@@ -71,7 +71,9 @@ dependencies {
   implementation 'com.squareup.okhttp3:okhttp:4.12.0'
   implementation 'org.jetbrains.kotlinx:kotlinx-coroutines-android:1.8.1'
   // ACS Calling SDK with raw-media APIs (I420 VirtualOutgoingVideoStream).
-  implementation 'com.azure.android:azure-communication-calling:2.16.0'
+  // 2.16.0 returns an invalid native result handle when admitting Teams guests.
+  // 2.16.1-beta.7 has verified selected-guest admission; see the Android lobby plan.
+  implementation 'com.azure.android:azure-communication-calling:2.16.1-beta.7'
   implementation 'com.azure.android:azure-communication-common:1.3.0'
   // Same libwebrtc AAR as @livekit/react-native-webrtc so Gradle dedupes instead
   // of shipping two WebRTC stacks. P4 confirms remote AudioTrackSink.
