@@ -65,6 +65,8 @@ const {
   setSoftapBleLc3UplinkForTests,
 } = require("../AcsMeetingService") as typeof import("../AcsMeetingService")
 
+const micSessionManager = require("../MicSessionManager").default as typeof import("../MicSessionManager").default
+
 type PhoneNetworkInfo = import("../AcsMeetingService").PhoneNetworkInfo
 
 function fakePhoneNetwork() {
@@ -836,6 +838,7 @@ describe("glasses LC3 microphone uplink", () => {
 
   afterEach(async () => {
     await acsMeetingService.leave("com.mentra.call")
+    micSessionManager.releaseAll()
     setAcsMeetingNativeForTests(undefined)
     setSoftapBleLc3UplinkForTests(null)
     bluetoothSdk.addListener = previousSdk.addListener
@@ -863,7 +866,7 @@ describe("glasses LC3 microphone uplink", () => {
     expect(glassesLc3UplinkSupported({...supported, glassesSession: false})).toBe(false)
   })
 
-  test("a SoftAP join reads the glasses mic without claiming it", async () => {
+  test("a SoftAP join takes a voice_call lease rather than configuring the mic itself", async () => {
     const native = lc3Native()
     const state = await joinedOnSoftap(native)
 
@@ -871,9 +874,10 @@ describe("glasses LC3 microphone uplink", () => {
     expect(acsMeetingService.glassesLc3UplinkActive()).toBe(true)
     expect(micListeners.has("mic_pcm")).toBe(true)
     expect(native.join).toHaveBeenCalledWith(expect.objectContaining({audioDelayMs: SOFTAP_LC3_AUDIO_DELAY_MS}))
-    // The microphone belongs to whoever leased it. A sink that pins or claims it is how hardware
-    // policy ends up owned by one audio consumer.
-    expect(setMicSourcePin).not.toHaveBeenCalled()
+    // Reading the mic with no session leaves the call on the OS default of VAD-on, and the GX8002
+    // then gates the wearer out whenever it disagrees. The sink names the use case and nothing
+    // else: micPolicy still decides what voice_call costs the hardware.
+    expect(micSessionManager.hasGlassesSession("engine:acs-uplink")).toBe(true)
   })
 
   test("a join without a microphone session keeps the published audio track", async () => {
@@ -909,13 +913,21 @@ describe("glasses LC3 microphone uplink", () => {
     expect(native.join.mock.calls[0]?.[0]).not.toHaveProperty("audioDelayMs")
   })
 
-  test("leaving a call releases nothing it does not own", async () => {
-    // The lease outlives the sink on purpose: the miniapp releases after leave, so unpinning here
-    // would hand the still-subscribed call phone frames and report the wearer's mic as gone.
+  test("leaving a call releases its own lease and nothing else", async () => {
+    // The miniapp's lease outlives the sink on purpose: it releases after leave, so dropping it
+    // here would hand the still-subscribed call phone frames and report the wearer's mic as gone.
     await joinedOnSoftap(lc3Native())
-    setMicSourcePin.mockClear()
+    const miniapp = micSessionManager.acquire({
+      owner: "com.mentra.call",
+      source: "glasses",
+      useCase: "voice_call",
+    })
+
     await acsMeetingService.leave("com.mentra.call")
-    expect(setMicSourcePin).not.toHaveBeenCalled()
+
+    expect(micSessionManager.hasGlassesSession("engine:acs-uplink")).toBe(false)
+    expect(micSessionManager.hasGlassesSession("com.mentra.call")).toBe(true)
+    miniapp.release()
   })
 
   /**

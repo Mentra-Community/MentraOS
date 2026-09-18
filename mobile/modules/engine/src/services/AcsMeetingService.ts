@@ -11,6 +11,8 @@ import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 import audioPlaybackService from "./AudioPlaybackService"
 import {getCallGainSweep} from "./CallGainSweep"
 import micStateCoordinator from "./MicStateCoordinator"
+import micSessionManager, {type MicSession} from "./MicSessionManager"
+import {ENGINE_OWNER_PREFIX} from "./micPolicy"
 import {SETTINGS, useSettingsStore} from "../stores/settings"
 import {Pcm16LevelMeter, pcm16WindowStats} from "../utils/pcm16"
 import {softapTrace, softapTraceFailure, softapTraceId} from "../utils/softapTrace"
@@ -620,6 +622,8 @@ class AcsMeetingService {
   private callOrigin: AcsCallOrigin = "unknown"
   private micTransport: MicTransport = "whip"
   private micSub: {remove: () => void} | null = null
+  /** Backstop lease, held only while this call is actually reading the glasses mic. */
+  private micSession: MicSession | null = null
   /** True between the pin/requirement being taken and released, so release is exactly once. */
   private micUplinkActive = false
   private micFramesForwarded = 0
@@ -1302,10 +1306,12 @@ class AcsMeetingService {
   /**
    * Start forwarding the glasses microphone into ACS for this call.
    *
-   * This class is a sink. The microphone is pinned, claimed and tuned by MicSessionManager on
-   * behalf of whoever leased it; all that happens here is reading the PCM that produces. Reaching
-   * past that to the Bluetooth SDK or MicStateCoordinator would put hardware policy back in the
-   * hands of one audio consumer.
+   * This class is a sink: it never names a gain, a pin or a setting. It does take a semantic
+   * voice_call lease first, because reading the glasses mic without one is what put this call on
+   * the OS default of VAD-on — a speech gate that drops the wearer's uplink whenever the GX8002
+   * disagrees, which during a call is most of the time the far end is talking. The lease is a
+   * backstop: when the miniapp already holds one this simply merges with it, and micPolicy still
+   * decides what voice_call means for the hardware.
    *
    * `generation` is captured by the listener so a frame that lands after this call ended is
    * dropped rather than pushed at a native session that has left the meeting.
@@ -1327,6 +1333,7 @@ class AcsMeetingService {
     this.micLevel.take()
     this.lastMicLevel = null
     try {
+      this.acquireMicSession()
       this.micUplinkActive = true
       this.micSub = BluetoothSdk.addListener("mic_pcm", (event: {pcm?: ArrayBuffer; sampleRate?: number; source?: string}) => {
         if (generation !== this.callGeneration) {
@@ -1378,13 +1385,14 @@ class AcsMeetingService {
   /**
    * Stop reading the glasses microphone. Safe to call when this call never started.
    *
-   * Only the subscription is dropped. The microphone itself belongs to whoever leased it through
-   * MicSessionManager, and unsubscribing here before that owner releases is what keeps a normal
-   * hang-up from looking like the wearer's microphone disappearing.
+   * Only this call's own backstop lease is dropped. A lease the miniapp took is its to release,
+   * and letting go of ours before that owner releases is what keeps a normal hang-up from looking
+   * like the wearer's microphone disappearing.
    */
   private stopGlassesMicUplink(): void {
     this.micSub?.remove()
     this.micSub = null
+    this.releaseMicSession()
     if (this.micUplinkActive) {
       this.micUplinkActive = false
       console.log("[AcsMeeting] phase=glasses-mic-uplink-stop", {
@@ -1396,6 +1404,39 @@ class AcsMeetingService {
       })
     }
     this.micTransport = "whip"
+  }
+
+  /**
+   * Guarantee a voice_call session for as long as this call reads the glasses mic.
+   *
+   * The miniapp asking for one is the intended path; this covers the builds where it cannot,
+   * because a bundled Call that predates MIC_ACQUIRE joins anyway rather than failing. Without
+   * this the uplink runs under whatever the OS settings say, and the shipped default is VAD-on.
+   */
+  private acquireMicSession(): void {
+    if (this.micSession) return
+    try {
+      this.micSession = micSessionManager.acquire({
+        owner: `${ENGINE_OWNER_PREFIX}acs-uplink`,
+        source: "glasses",
+        useCase: "voice_call",
+      })
+    } catch (error) {
+      // A source conflict means something else already owns the microphone. Forwarding whatever
+      // it captures is still better than dropping the wearer from the call.
+      console.warn("[AcsMeeting] glasses mic session unavailable", error)
+    }
+  }
+
+  private releaseMicSession(): void {
+    const session = this.micSession
+    if (!session) return
+    this.micSession = null
+    try {
+      session.release()
+    } catch (error) {
+      console.warn("[AcsMeeting] releasing the glasses mic session failed", error)
+    }
   }
 
   /**
