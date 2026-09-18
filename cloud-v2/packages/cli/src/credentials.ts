@@ -1,7 +1,7 @@
 import { existsSync, mkdirSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { homedir } from "node:os";
 import { join } from "node:path";
-import { getConfig, resolveStoreUrlForCore } from "./config";
+import { deriveStoreUrl, getConfig, resolveStoreUrlForCore } from "./config";
 
 const SERVICE = "mentra-cli-v2";
 const LEGACY_NAME = "credentials";
@@ -61,7 +61,10 @@ export async function saveCredentials(credentials: CliCredentials): Promise<"key
   return "file";
 }
 
-export async function loadCredentials(coreUrl?: string): Promise<CliCredentials | null> {
+export async function loadCredentials(
+  coreUrl?: string,
+  options: { applyStoreOverride?: boolean } = {},
+): Promise<CliCredentials | null> {
   const targetCoreUrl = coreUrl ? normalizeCoreUrl(coreUrl) : undefined;
   if (process.env.MENTRA_CLI_TOKEN) {
     return {
@@ -76,7 +79,7 @@ export async function loadCredentials(coreUrl?: string): Promise<CliCredentials 
     };
   }
 
-  const scoped = targetCoreUrl ? await loadScopedCredentials(targetCoreUrl) : null;
+  const scoped = targetCoreUrl ? await loadScopedCredentials(targetCoreUrl, options.applyStoreOverride !== false) : null;
   if (scoped) return scoped;
 
   try {
@@ -87,7 +90,9 @@ export async function loadCredentials(coreUrl?: string): Promise<CliCredentials 
       });
       if (value) {
         const legacy = JSON.parse(value) as CliCredentials;
-        if (!targetCoreUrl || normalizeCoreUrl(legacy.coreUrl) === targetCoreUrl) return withCurrentStoreUrl(legacy);
+        if (!targetCoreUrl || normalizeCoreUrl(legacy.coreUrl) === targetCoreUrl) {
+          return withCurrentStoreUrl(legacy, options.applyStoreOverride !== false);
+        }
       }
     }
   } catch {
@@ -97,7 +102,9 @@ export async function loadCredentials(coreUrl?: string): Promise<CliCredentials 
   try {
     if (existsSync(LEGACY_CREDS_FILE)) {
       const legacy = JSON.parse(readFileSync(LEGACY_CREDS_FILE, "utf8")) as CliCredentials;
-      if (!targetCoreUrl || normalizeCoreUrl(legacy.coreUrl) === targetCoreUrl) return withCurrentStoreUrl(legacy);
+      if (!targetCoreUrl || normalizeCoreUrl(legacy.coreUrl) === targetCoreUrl) {
+        return withCurrentStoreUrl(legacy, options.applyStoreOverride !== false);
+      }
     }
   } catch {
     // Treat corrupt credentials as logged out.
@@ -173,14 +180,14 @@ export async function loadSigningKey(storeUrl: string): Promise<CliSigningKey | 
   return null;
 }
 
-async function loadScopedCredentials(coreUrl: string): Promise<CliCredentials | null> {
+async function loadScopedCredentials(coreUrl: string, applyStoreOverride: boolean): Promise<CliCredentials | null> {
   try {
     if (typeof Bun !== "undefined" && Bun.secrets) {
       const value = await Bun.secrets.get({
         service: SERVICE,
         name: credentialName(coreUrl),
       });
-      if (value) return withCurrentStoreUrl(JSON.parse(value) as CliCredentials);
+      if (value) return withCurrentStoreUrl(JSON.parse(value) as CliCredentials, applyStoreOverride);
     }
   } catch {
     // Fall through.
@@ -188,7 +195,9 @@ async function loadScopedCredentials(coreUrl: string): Promise<CliCredentials | 
 
   try {
     const path = credentialsFile(coreUrl);
-    if (existsSync(path)) return withCurrentStoreUrl(JSON.parse(readFileSync(path, "utf8")) as CliCredentials);
+    if (existsSync(path)) {
+      return withCurrentStoreUrl(JSON.parse(readFileSync(path, "utf8")) as CliCredentials, applyStoreOverride);
+    }
   } catch {
     // Treat corrupt credentials as logged out.
   }
@@ -196,8 +205,13 @@ async function loadScopedCredentials(coreUrl: string): Promise<CliCredentials | 
   return null;
 }
 
-function withCurrentStoreUrl(credentials: CliCredentials): CliCredentials {
-  return {...credentials, storeUrl: resolveStoreUrlForCore(credentials.coreUrl, credentials.storeUrl)};
+function withCurrentStoreUrl(credentials: CliCredentials, applyStoreOverride: boolean): CliCredentials {
+  return {
+    ...credentials,
+    storeUrl: applyStoreOverride
+      ? resolveStoreUrlForCore(credentials.coreUrl, credentials.storeUrl)
+      : credentials.storeUrl || deriveStoreUrl(credentials.coreUrl),
+  };
 }
 
 function credentialName(coreUrl: string): string {

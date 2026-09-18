@@ -769,7 +769,8 @@ class MantleManager {
       if (
         identity?.source === "bundled_asset" &&
         appRegistry.getPublisherKeyFingerprint(packageName) ===
-          BUNDLED_SYSTEM_MINIAPP_PUBLISHER_KEYS[packageName as keyof typeof BUNDLED_SYSTEM_MINIAPP_PUBLISHER_KEYS]
+          (BUNDLED_SYSTEM_MINIAPP_PUBLISHER_KEYS[packageName as keyof typeof BUNDLED_SYSTEM_MINIAPP_PUBLISHER_KEYS] ??
+            null)
       ) {
         return
       }

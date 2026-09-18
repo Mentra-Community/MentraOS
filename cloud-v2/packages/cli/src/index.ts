@@ -28,7 +28,7 @@ import {
   submitRelease,
   upsertOrg,
 } from "./api";
-import { getConfig } from "./config";
+import { getConfig, resolveStoreUrlForCore } from "./config";
 import { clearCredentials, loadCredentials, saveCredentials, type CliCredentials } from "./credentials";
 import { openBrowser } from "./open-browser";
 import { encodeDevAttestation, ensureSigningKey, signDevAttestation } from "./signing";
@@ -144,7 +144,7 @@ program
     if (creds.organizationId) console.log(`Organization: ${creds.organizationId}`);
     if (creds.developerOrgId) console.log(`Developer org: ${creds.developerOrgId}`);
     console.log(`Core: ${config.coreUrl}`);
-    console.log(`Store: ${config.storeUrl}`);
+    console.log(`Store: ${creds.storeUrl}`);
     if (creds.expiresAt) console.log(`Expires: ${new Date(creds.expiresAt).toLocaleString()}`);
   });
 
@@ -516,10 +516,16 @@ program
   .description("Pack the current miniapp into build/<packageName>-<version>.zip")
   .option("--cwd <path>", "miniapp project directory", process.cwd())
   .option("--no-build", "skip production build before packing")
+  .option("--sign", "sign with the stored publisher key (unsigned by default)")
   .option("--signing-key <path>", "publisher signing key file (CI/non-persistent use)")
-  .action(async (options: { cwd: string; build: boolean; signingKey?: string }) => {
+  .action(async (options: { cwd: string; build: boolean; sign?: boolean; signingKey?: string }) => {
     try {
-      await packMiniapp({ cwd: resolve(options.cwd), build: options.build, signingKeyPath: options.signingKey });
+      await packMiniapp({
+        cwd: resolve(options.cwd),
+        build: options.build,
+        sign: options.sign,
+        signingKeyPath: options.signingKey,
+      });
     } catch (error) {
       fail(error);
     }
@@ -527,7 +533,7 @@ program
 
 program
   .command("publish")
-  .description("Build, pack, and upload the current miniapp release bundle")
+  .description("Build, sign, and upload the current miniapp release bundle to the Store")
   .option("--cwd <path>", "miniapp project directory", process.cwd())
   .option("--no-build", "skip running bun run build before packing")
   .option("--no-pack", "skip running bun run pack and upload the existing build zip")
@@ -565,6 +571,8 @@ program
           cwd,
           build: options.build,
           silent: options.json,
+          // Store publication requires a signed archive; local pack/release stay opt-in.
+          sign: true,
           signingKeyPath: options.signingKey,
         });
       } else if (options.build) {
@@ -636,8 +644,10 @@ async function requireCredentials(): Promise<CliCredentials | null> {
 }
 
 async function loadFreshCredentials(config = getConfig()): Promise<CliCredentials | null> {
-  const creds = await loadCredentials(config.coreUrl);
-  if (!creds) return null;
+  // Keep the persisted origin separate from a one-command Store override.
+  const stored = await loadCredentials(config.coreUrl, {applyStoreOverride: false});
+  if (!stored) return null;
+  const creds = {...stored, storeUrl: resolveStoreUrlForCore(stored.coreUrl, stored.storeUrl)};
   if (!shouldRefresh(creds)) return creds;
 
   if (!creds.refreshToken) {
@@ -647,7 +657,11 @@ async function loadFreshCredentials(config = getConfig()): Promise<CliCredential
   }
 
   try {
-    const refreshed = await refreshLoginToken(config, creds.refreshToken, creds.organizationId);
+    const refreshed = await refreshLoginToken(
+      {...config, coreUrl: creds.coreUrl, storeUrl: creds.storeUrl},
+      creds.refreshToken,
+      creds.organizationId,
+    );
     const storedAt = new Date();
     const expiresAt =
       typeof refreshed.expires_in === "number"
@@ -663,13 +677,13 @@ async function loadFreshCredentials(config = getConfig()): Promise<CliCredential
       organizationId: refreshed.organization_id,
       developerOrgId: creds.developerOrgId,
       authenticationMethod: refreshed.authentication_method ?? creds.authenticationMethod,
-      coreUrl: config.coreUrl,
-      storeUrl: config.storeUrl,
+      coreUrl: stored.coreUrl,
+      storeUrl: stored.storeUrl,
       storedAt: storedAt.toISOString(),
       expiresAt: expiresAt?.toISOString(),
     };
     await saveCredentials(nextCredentials);
-    return nextCredentials;
+    return {...nextCredentials, storeUrl: creds.storeUrl};
   } catch (error) {
     console.error(error instanceof Error ? error.message : String(error));
     process.exitCode = 1;

@@ -76,6 +76,16 @@ export async function signBundleArchive(unsignedArchive: Uint8Array, key: Packag
   });
 }
 
+/** Validate an unsigned local release without silently accepting a cached signed bundle. */
+export async function verifyUnsignedBundleArchive(archive: Uint8Array) {
+  inspectRawZipNames(archive);
+  const zip = await loadZip(archive);
+  if (Object.values(zip.files).some(entry => entry.name.toLowerCase() === MENTRA_BUNDLE_SIGNATURE_PATH.toLowerCase())) {
+    throw new Error('Unsigned release must not contain a publisher signature');
+  }
+  return bundleStatement(zip);
+}
+
 export async function verifySignedBundleArchive(archive: Uint8Array): Promise<VerifiedSignedBundle> {
   inspectRawZipNames(archive);
   const zip = await loadZip(archive);

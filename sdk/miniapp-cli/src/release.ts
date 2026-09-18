@@ -26,7 +26,7 @@ import {readFileSync, existsSync, statSync, readdirSync, unlinkSync} from 'fs'
 import os from 'os'
 import {resolve, join} from 'path'
 import {buildProduction} from './build.js'
-import {verifySignedBundleArchive} from './bundle-signing.js'
+import {verifySignedBundleArchive, verifyUnsignedBundleArchive} from './bundle-signing.js'
 import {pack} from './pack.js'
 import {printQR, writeQRPng} from './qr.js'
 import {getLanIp} from './lan.js'
@@ -226,12 +226,16 @@ export async function isCachedReleaseBundleValid(
   expectedPublisherFingerprint: string | null,
 ): Promise<boolean> {
   try {
-    const verified = await verifySignedBundleArchive(archive)
-    return (
-      verified.packageName === packageName &&
-      verified.version === version &&
-      (!expectedPublisherFingerprint || verified.publisherKeyFingerprint === expectedPublisherFingerprint)
-    )
+    if (expectedPublisherFingerprint) {
+      const verified = await verifySignedBundleArchive(archive)
+      return (
+        verified.packageName === packageName &&
+        verified.version === version &&
+        verified.publisherKeyFingerprint === expectedPublisherFingerprint
+      )
+    }
+    const verified = await verifyUnsignedBundleArchive(archive)
+    return verified.packageName === packageName && verified.version === version
   } catch {
     return false
   }

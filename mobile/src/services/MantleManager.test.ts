@@ -675,6 +675,41 @@ describe("MantleManager", () => {
     stop.mockRestore()
   })
 
+  it("does not reinstall an unsigned bundled version on subsequent startups", async () => {
+    const methods = [
+      "getInstalledVersions",
+      "getActiveVersion",
+      "getReleaseIdentity",
+      "getPublisherKeyFingerprint",
+      "wasUserUninstalled",
+      "installFromLocalZip",
+    ] as const
+    const originals = Object.fromEntries(methods.map((key) => [key, appRegistry[key]]))
+    const install = jest.fn()
+    Object.assign(appRegistry, {
+      getInstalledVersions: () => ["1.0.0"],
+      getActiveVersion: async () => "1.0.0",
+      getReleaseIdentity: () => ({source: "bundled_asset"}),
+      getPublisherKeyFingerprint: () => null,
+      wasUserUninstalled: () => false,
+      installFromLocalZip: install,
+    })
+    const asset = {
+      name: "com.example.fixture-1.0.0.zip",
+      localUri: "file:///fixture.zip",
+      downloadAsync: jest.fn(),
+    } as unknown as Asset
+    const instance = mantle as unknown as {installBundledMiniapp: (asset: Asset) => Promise<void>}
+    try {
+      await instance.installBundledMiniapp(asset)
+      await instance.installBundledMiniapp(asset)
+      expect(asset.downloadAsync).not.toHaveBeenCalled()
+      expect(install).not.toHaveBeenCalled()
+    } finally {
+      Object.assign(appRegistry, originals)
+    }
+  })
+
   it("continues startup bundle installation after one asset fails", async () => {
     const instance = new (mantle.constructor as new () => {
       installBundledMiniapps: () => Promise<void>

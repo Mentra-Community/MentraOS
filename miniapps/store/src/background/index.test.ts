@@ -19,6 +19,20 @@ interface TestController {
 }
 
 describe("Store backend resolution", () => {
+  test.each(["localhost", "127.0.0.1", "[::1]", "192.168.1.42", "10.0.2.2"])(
+    "routes local Core %s to the local Store instead of production",
+    (host) => {
+      expect(resolveStoreBackendOrigin(`http://${host}:3000`, "https://store.mentraglass.com")).toBe(
+        `http://${host}:3003`,
+      )
+    },
+  )
+  test("preserves an explicitly configured OEM Store with a local Core", () => {
+    expect(resolveStoreBackendOrigin("http://192.168.1.42:3000", "https://apps.oem.example")).toBe(
+      "https://apps.oem.example",
+    )
+  })
+
   test("derives official environments but preserves an OEM build-configured Store", () => {
     expect(
       resolveStoreBackendOrigin("https://core.dev.us-west-2.mentraglass.com", "https://store.mentraglass.com"),

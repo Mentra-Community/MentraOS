@@ -825,6 +825,8 @@ const mockIslandEntries = () => {
 
   // --- "@mentra/engine-host-internal": raw stores + service singletons ---
   const internal = {
+    isHostTrustedSystemMiniapp: realSystemMiniappPolicy.isHostTrustedSystemMiniapp,
+    shouldActivateBundledVersion: realSystemMiniappPolicy.shouldActivateBundledVersion,
     __esModule: true,
     // Real glasses store + its selectors/helpers (useGlassesStore, selectors,
     // waitForGlassesState, getGlasesInfoPartial, getGlassesSystemTimeMs, predicates)
