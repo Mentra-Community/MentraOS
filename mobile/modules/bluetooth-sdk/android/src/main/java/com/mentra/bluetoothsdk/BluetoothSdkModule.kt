@@ -660,6 +660,10 @@ class BluetoothSdkModule : Module() {
 
         // MARK: - Gallery Commands
 
+        SdkCoroutineFunction("setGalleryServerEnabled") { enabled: Boolean ->
+            requireSdk().setGalleryServerEnabled(enabled).values
+        }
+
         SdkCoroutineFunction("setGalleryModeEnabled") { enabled: Boolean ->
             requireSdk().setGalleryModeEnabled(enabled).values
         }

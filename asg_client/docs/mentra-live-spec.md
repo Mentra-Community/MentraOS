@@ -218,7 +218,11 @@ Streaming endpoints on the active Mentra Live hotspot subnet are reachable witho
 
 ### Local media sync server
 
-While the Mentra Live hotspot is active, `asg_client` runs an embedded HTTP server that lets the phone enumerate, download, ZIP, and delete captured media. The server is stopped with the hotspot and binds only to the hotspot gateway address; it must never expose media through a WiFi network that the glasses join. This is used for gallery sync and avoids relying on cloud connectivity for local media transfer.
+By default, while the Mentra Live hotspot is active, `asg_client` runs an embedded HTTP server that lets the phone enumerate, download, ZIP, and delete captured media. That server stops with the hotspot and binds only to the hotspot gateway address. This is the default gallery behavior and avoids relying on cloud connectivity for local media transfer.
+
+Enterprise clients can explicitly keep that same server running using the Bluetooth SDK's `setGalleryServerEnabled(enabled)` command. This setting defaults off and is saved across BLE reconnects and glasses restarts until explicitly disabled. When enabled, the existing server binds port 8089 on all local interfaces, so clients can use the glasses' site-network IP without joining a hotspot. The HTTP API is identical in both modes, including capture, listing, downloads, sync, deletion, restore, and browser assets. Completed-media filtering, resumable downloads, and camera callbacks are unchanged.
+
+Persistent gallery access has no authentication or encryption: any reachable client can use the full camera/gallery API. Enable it only where that access is acceptable. The server remains running through Wi-Fi disconnection and address changes, and retries startup failures every five seconds. Disabling restores hotspot-only behavior, rebinding to the active hotspot address or stopping if no hotspot is active. Mode changes restart the listener and can interrupt in-flight HTTP requests. The command acknowledgement distinguishes the saved `enabled` setting from current site-network availability (`listening`) and includes `url` only when a station Wi-Fi endpoint is available.
 
 ### Audio and microphone
 

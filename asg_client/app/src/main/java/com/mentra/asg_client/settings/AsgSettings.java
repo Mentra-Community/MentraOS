@@ -65,6 +65,18 @@ public class AsgSettings {
         Log.d(TAG, "AsgSettings initialized");
     }
 
+    /** Whether site-network HTTP gallery access is enabled across restarts. Defaults off. */
+    public boolean isGalleryServerEnabled() {
+        return prefs.getBoolean(AsgConstants.GALLERY_SERVER_ENABLED_PREFERENCE, false);
+    }
+
+    /** Persist the explicit site-network gallery opt-in; return whether storage succeeded. */
+    public boolean setGalleryServerEnabled(boolean enabled) {
+        return prefs.edit()
+                .putBoolean(AsgConstants.GALLERY_SERVER_ENABLED_PREFERENCE, enabled)
+                .commit();
+    }
+
     /**
      * One-time migration from coupled global and button-photo keys into independent ZSL/MFNR
      * preferences.

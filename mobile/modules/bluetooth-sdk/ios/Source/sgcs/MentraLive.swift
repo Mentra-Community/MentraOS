@@ -3829,6 +3829,14 @@ class MentraLive: NSObject, SGCManager {
         sendJson(json, wakeUp: true)
     }
 
+    func sendGalleryServerEnabled(requestId: String, enabled: Bool) {
+        sendJson([
+            "type": "set_gallery_server_enabled",
+            "request_id": requestId,
+            "enabled": enabled,
+        ], wakeUp: true)
+    }
+
     func sendGalleryMode() {
         let active = DeviceStore.shared.get("bluetooth", "gallery_mode") as! Bool
         sendGalleryMode(requestId: nil, active: active)

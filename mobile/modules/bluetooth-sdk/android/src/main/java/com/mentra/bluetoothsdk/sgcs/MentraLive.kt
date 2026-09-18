@@ -6147,6 +6147,14 @@ class MentraLive : SGCManager() {
         }
     }
 
+    fun sendGalleryServerEnabled(requestId: String, enabled: Boolean) {
+        val json = JSONObject()
+            .put("type", "set_gallery_server_enabled")
+            .put("request_id", requestId)
+            .put("enabled", enabled)
+        sendJson(json, true)
+    }
+
     override fun sendGalleryMode() {
         val active = DeviceStore.get("bluetooth", "gallery_mode") as Boolean
         sendGalleryMode(null, active)
