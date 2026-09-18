@@ -34,15 +34,13 @@ import {
   engine,
   type ClientApp,
   type OrderMap,
-  useSetForeground,
-  useStart,
   useStop,
 } from "@mentra/engine"
 
-import {isOfflineHosted} from "@/components/miniapp/offlineHostedPackages"
 import {useForegroundApps} from "@/hooks/useAppsExtras"
 import {uninstallAppUI} from "@/utils/uninstallAppUI"
 import {blockUpdatingMiniapp} from "@/utils/miniappUpdatingAlert"
+import {openMiniappFromHome} from "@/utils/openMiniappFromHome"
 import {askPermissionsUI, checkPermissionsUI} from "@/utils/PermissionsUtils"
 import {SETTINGS, useSetting} from "@mentra/engine"
 import {storage} from "@/utils/storage"
@@ -298,9 +296,7 @@ export function AppsGrid({
 }: AppsGridProps) {
   const {themed, theme} = useAppTheme()
 
-  const startApplet = useStart()
   const stopApplet = useStop()
-  const setForeground = useSetForeground()
   const apps = useForegroundApps()
 
   const [orderMap, setOrderMap] = useState<OrderMap>({})
@@ -615,23 +611,9 @@ export function AppsGrid({
     async (app: ClientApp) => {
       if (blockUpdatingMiniapp(app.packageName)) return
       if (await showCompatibilityAlert(app)) return
-      if (blockUpdatingMiniapp(app.packageName)) return
-
-      const started = app.running || (await startApplet(app, {skipNavigation: true}))
-      if (!started) return
-      if (blockUpdatingMiniapp(app.packageName)) return
-
-      if (isOfflineHosted(app.packageName) || app.local) {
-        await setForeground(app.packageName)
-      } else if (app.offlineRoute) {
-        push(app.offlineRoute, {transition: "fade"})
-      }
-      // (Cloud V1 apps opened /applet/webview here; removed with Cloud V1 app
-      // end-of-life. Installed apps are local/offline-hosted.)
-
-      onOpenApp?.(app)
+      if (await openMiniappFromHome(app)) onOpenApp?.(app)
     },
-    [onOpenApp, push, setForeground, startApplet],
+    [onOpenApp],
   )
 
   const placeAppOnHome = useCallback(
@@ -739,23 +721,16 @@ export function AppsGrid({
       if (blockUpdatingMiniapp(app.packageName)) return
       if (await showCompatibilityAlert(app)) return
 
-      // Overlay-hosted app types (local miniapps + offline-hosted built-ins) get
-      // their splash painted by foregrounding the Compositor overlay. Check
-      // permissions first so that splash never sits behind a permission prompt.
-      const overlayForegrounded = app.local || isOfflineHosted(app.packageName)
+      // Check permissions before accepting a launch or showing its overlay.
       const neededPermissions = await checkPermissionsUI(app)
       if (neededPermissions.length > 0) {
         const result = await askPermissionsUI(app, theme)
         if (result !== 1) return
       }
 
-      if (blockUpdatingMiniapp(app.packageName)) return
-      if (overlayForegrounded) {
-        await setForeground(app.packageName)
-      }
       await openApp(app)
     },
-    [openApp, setForeground, theme],
+    [openApp, theme],
   )
 
   const showPopover = useCallback(
