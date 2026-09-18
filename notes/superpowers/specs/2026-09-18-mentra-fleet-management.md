@@ -12,10 +12,11 @@ to refine in an implementation plan referencing this spec.
 
 ## Product contract
 
-Mentra Fleet Management is a portal that Core administrators use to view all
-devices reporting to that particular Core. The Mentra App sends observations to
-its configured Core. Core owns ingestion, persistence, aggregation, access
-control, and the portal API.
+Mentra Fleet Management starts as a **Fleet section in the existing Core admin
+panel** (`cloud-v2/websites/admin`). Existing Core administrators use their
+existing login to view all devices reporting to that particular Core. The Mentra
+App sends observations to its configured Core. Core owns ingestion, persistence,
+aggregation, and the Fleet admin API.
 
 Mentra uses the same product for all devices using Mentra Core, including consumer
 devices. It is not limited to Mentra employees. A customer hosting its own Core
@@ -26,13 +27,15 @@ observes. There is no glasses-side fleet journal, direct glasses-to-Core upload,
 or reconstruction of activity that the phone did not observe. The phone does
 buffer its own observations while Core is unreachable.
 
-**Fleet displays actual device serial numbers.** Serial numbers are stored in
-Fleet's protected Core records and shown to authorized Core administrators.
-They must not be added to existing PostHog exports as a side effect.
+**Fleet displays actual device serial numbers.** Store the serial as a normal
+device field and show/search it through the existing Core admin permissions.
+There is no separate serial-number permission or protection system. Do not add
+serials to existing PostHog exports as a side effect.
 
 Existing PostHog, support-profile, and other analytics integrations continue to
-operate under their existing configuration. Fleet is an additive reporting path
-with its own collection policy and durable storage.
+operate under their existing configuration. Fleet adds phone-to-Core reporting
+and durable storage. V1 does not introduce a reporting-policy service, separate
+Fleet login, permission framework, or device-enrollment flow.
 
 ## Goals and boundaries
 
@@ -63,7 +66,7 @@ flowchart LR
     C --> D[(Core fleet collections)]
     D --> A[Usage aggregation]
     A --> D
-    W[Fleet portal] -->|Core administrator session| C
+    W[Fleet section in existing admin panel] -->|Existing Core admin session| C
     E --> S[Existing support-profile reporting]
     S --> SC[Existing Core support-profile service]
     SC --> P[Existing PostHog integration]
@@ -73,8 +76,12 @@ flowchart LR
 | --- | --- | --- |
 | Mentra Core and Mentra Runtime | Mentra Core | Authorized Mentra Core administrators see all reporting devices. |
 | Customer Core and customer Runtime | Customer Core | Customer Core administrators see their devices; no automatic fleet export to Mentra. |
-| Mentra Core and customer Runtime, Fleet enabled | Mentra Core | Enabled fleet observations are stored on Mentra infrastructure. |
-| Mentra Core and customer Runtime, Fleet disabled | No Fleet upload | Core authentication and future licensing can operate without Fleet reporting; no historical Fleet dashboard is promised for unreported activity. |
+| Mentra Core and customer Runtime | Mentra Core | Fleet observations are stored on Mentra infrastructure, following the phone's configured Core. |
+
+The V1 product contract includes Fleet reporting to the selected Core. A future
+customer requirement for hosted authentication without Fleet reporting can add a
+Core setting or scoped control then; a policy API and configurable reporting
+tiers are not prerequisites for the initial product.
 
 Runtime does not gain Fleet ingestion or a Fleet database. Core uses its existing
 MongoDB infrastructure with dedicated Fleet collections. No new database engine,
@@ -241,9 +248,6 @@ lets the portal distinguish unsupported paths from measured inactivity.
   subject to retention. Do not retain reusable old credentials just for upload.
 - Coalesce superseded snapshots while preserving supported activity history
   within the queue bounds. Report expired/dropped records as coverage gaps.
-- On disabled collection, stop producing/uploading Fleet records and clear that
-  scope's pending queue. Re-enabling starts fresh; it does not retroactively
-  collect activity from the disabled period.
 - Delete accepted records after Core acknowledges durable storage. A lost
   response may cause a retry, which must have the same record identities.
 
@@ -254,18 +258,19 @@ using the existing Core authentication lifecycle and HTTPS transport.
 
 | Route | Access | Purpose |
 | --- | --- | --- |
-| `GET /api/client/fleet/policy` | Core-authenticated client | Discover enabled state, supported schema, batch bounds, and replay window. |
 | `POST /api/client/fleet/report` | Core-authenticated client | Submit a bounded batch of snapshots, events, and usage checkpoints. |
 | `GET /api/admin/fleet/devices` | Core administrator | Paginated list, serial/email search, filters, freshness. |
 | `GET /api/admin/fleet/devices/:deviceId` | Core administrator | Device identity, associations, current state, history, related reports. |
 | `GET /api/admin/fleet/usage` | Core administrator | Time-bounded device/user/miniapp summaries. |
 
 These routes are proposed, not existing APIs. Uploads use Core-audience tokens,
-not Runtime tokens. A Core without Fleet support leaves Fleet reporting dormant;
-the phone must not fall back to a Mentra endpoint or continuously retry a missing
-feature. Refresh policy on startup and periodically while enabled. If policy
-cannot be refreshed beyond its advertised validity, pause collection/upload until
-it can be re-established.
+not Runtime tokens. Fleet reporting starts with the authenticated engine session.
+If the report endpoint is unavailable on an older Core, mark Fleet unsupported
+for that Core, stop queuing Fleet records, and recheck on a later authenticated
+session. Keep this distinct from temporary connectivity failures, which retain
+the bounded retry queue. Never fall back to a Mentra endpoint. Use versioned
+schemas and documented batch/replay bounds without a separate policy-discovery
+or policy-expiration protocol.
 
 Core validates strict event schemas, request/record size limits, counts, time
 windows, and association provenance; enforce per-account/installation rate limits.
@@ -318,53 +323,48 @@ events. Define account-deletion/tombstone behavior before rollout so delayed
 uploads cannot resurrect deleted personal history. A shared device may retain its
 inventory record without retaining a deleted account's identity/usage linkage.
 
-## Portal and administrator authentication
+## Fleet in the existing Core admin panel
 
-The V1 portal has:
+Add a Fleet navigation item to `cloud-v2/websites/admin/src/App.tsx`, alongside
+the existing miniapp review, preinstalled miniapps, audit log, and incident pages.
+Reuse its shell, login gate, `/api/admin/me` check, and Core `adminAuth`
+middleware. Mount Fleet routes behind the same admin gate as existing admin
+routes. No new website, login flow, role model, or serial-specific permission is
+needed for Mentra's first release.
 
-1. **Fleet overview:** device/user activity totals, freshness/coverage, version
-   distribution, and filters by model, version, user, and deployment.
-2. **Device list:** serial number, model, associated email/account, battery,
+Build the device list and detail view first, then add the summary/usage views:
+
+1. **Device list:** serial number, model, associated email/account, battery,
    connection state, last observation, and major software versions.
-3. **Device detail:** displayed serial, phone/account association history,
+2. **Device detail:** displayed serial, phone/account association history,
    component versions, usage charts, running/installed miniapps, and related
    support reports with explicit association provenance.
+3. **Fleet overview:** device/user activity totals, freshness/coverage, version
+   distribution, and filters by model, version, user, and deployment.
 4. **Usage views:** device/user/miniapp breakdowns for the defined date ranges,
    with metric definitions and incomplete-data indicators.
 
-Serve a deployable frontend with Core-backed admin APIs; reuse existing admin
-components where useful. Private deployments must be able to host the UI and API
-locally without relying on a Mentra-hosted frontend or login service.
+Server-side Core admin authorization applies to every Fleet read/search, including
+serials and emails. A normal phone token only authorizes uploading observations.
+Follow the existing admin audit conventions.
 
-Authentication establishes who the administrator is. Authorization explicitly
-grants access to that Core's fleet. Reuse Core's trusted identity/session
-infrastructure and an operator-configured administrator allowlist keyed to trusted
-identities. A future role model can add scoped viewers. Existing hosted admin
-login can serve Mentra; private Core needs a browser login/session integration
-with its configured provider. The current mobile OIDC exchange is not by itself
-a finished private administrator login flow.
+Customer-hosted Core uses the same admin panel and Fleet backend. Qualifying that
+deployment includes hosting the panel against the customer's Core and ensuring
+customer Core administrators can sign in through their configured provider. The
+current admin login uses the hosted console login; the phone's private OIDC flow
+does not establish private browser admin support. Any required private-login
+work belongs to the shared Core admin authentication layer, not a second Fleet
+authentication system. This is a private-deployment packaging prerequisite and
+does not block dogfooding Fleet in Mentra's existing admin panel.
 
-API authorization is enforced server-side for every Fleet read/search, including
-serial numbers and emails. Do not infer administrator access from possession of a
-normal Core token or an unverified email/domain. Use secure browser sessions,
-protect any administrative mutations, and record administrator access through
-Core's audit conventions. The identity-provider/browser-session implementation
-must be resolved in the implementation plan before the portal ships.
-
-## Collection policy and PostHog coexistence
-
-Fleet enablement is an explicit Core operator setting, advertised to the phone by
-the authenticated Fleet policy endpoint. Existing installations do not start
-Fleet collection merely because a newer phone build supports it. Once enabled,
-collection covers all supported reporting clients using that Core; manual device
-enrollment is not required. Core also enforces its current enabled state on every
-upload; a phone with cached policy cannot continue ingesting after disablement.
+## PostHog coexistence
 
 The deployment's existing `telemetry` setting retains its meaning for external
-Mentra analytics. Local Fleet collection has separate enablement. A private Core
-can enable Fleet while external analytics remain disabled. Using hosted Core for
-authentication does not implicitly enable Fleet activity reporting. Fleet does
-not collect photo/audio/transcript contents, media URLs, location histories,
+Mentra analytics. Fleet reports to the configured Core and is not gated by whether
+PostHog is enabled. A private Core receives local Fleet data while external
+analytics remain disabled. This distinction requires separate delivery paths,
+not a new enablement UI or reporting-policy service. Fleet collects operational
+metadata, not photo/audio/transcript contents, media URLs, location histories,
 network credentials, or arbitrary diagnostic payloads.
 
 Preserve `SupportProfileSync`, its Core endpoint/schema, and existing PostHog
@@ -386,10 +386,10 @@ merge devices from ambiguous old support records.
 | Area | Responsibility / reference |
 | --- | --- |
 | `mobile/modules/engine` | New Fleet collector/queue and lifecycle integration. Existing [glasses facade](../../../mobile/modules/engine/src/facades/glasses.ts), [support sync](../../../mobile/modules/engine/src/services/SupportProfileSync.ts), and [miniapp running registry](../../../mobile/modules/engine/src/services/MiniappRunningRegistry.ts) provide source patterns. |
-| `cloud-v2/packages/cloud-client` | Typed Fleet policy/report client using existing Core auth and transport. See [current support-profile client](../../../cloud-v2/packages/cloud-client/src/modules/core/support-profile.ts). |
-| `cloud-v2/packages/core` | Fleet policy, ingestion, device identity, collections, aggregation, admin API, and private admin login integration. See [support-profile service](../../../cloud-v2/packages/core/src/services/support-profile.service.ts) and [admin authentication](../../../cloud-v2/packages/core/src/api/middleware/admin-auth.middleware.ts). |
-| `cloud-v2/websites` | Fleet frontend, reusing admin UI components and providing a customer-hostable artifact. |
-| Deployment configuration | Explicit Fleet policy, private portal hosting/login, storage retention, and upgrade configuration. See the [private deployment contract](../../../cloud-v2/deploy/private-deployment.md). |
+| `cloud-v2/packages/cloud-client` | Typed Fleet report client using existing Core auth and transport. See [current support-profile client](../../../cloud-v2/packages/cloud-client/src/modules/core/support-profile.ts). |
+| `cloud-v2/packages/core` | Ingestion, device identity, collections, aggregation, and Fleet routes behind existing admin authentication. See [support-profile service](../../../cloud-v2/packages/core/src/services/support-profile.service.ts) and [admin authentication](../../../cloud-v2/packages/core/src/api/middleware/admin-auth.middleware.ts). |
+| `cloud-v2/websites/admin` | Fleet section in the [existing admin panel](../../../cloud-v2/websites/admin/src/App.tsx), using its login and navigation. |
+| Deployment configuration | Customer hosting of the shared admin panel, shared Core admin login, storage retention, and upgrades. See the [private deployment contract](../../../cloud-v2/deploy/private-deployment.md). |
 
 No glasses firmware, Runtime persistence, or individual miniapp backend changes
 are required by this design. Gaps in phone-observable metrics are represented as
@@ -397,9 +397,10 @@ coverage limits rather than introducing a glasses telemetry system.
 
 ## Acceptance criteria
 
-- Mentra Core's Fleet portal lists all reporting devices across its users, not
-  just staff accounts or currently connected devices. Private Core demonstrates
-  the same behavior with its own accounts and storage.
+- The Fleet section in Mentra's existing Core admin panel lists all reporting
+  devices across its users, not just staff accounts or currently connected
+  devices. Private Core demonstrates the same behavior with its own accounts
+  and storage.
 - Valid serial numbers are persisted, displayed, and searchable by Core admins.
   Two same-model devices with different serials stay separate; missing/placeholder
   serials stay provisional and never collapse into a model-wide record.
@@ -407,7 +408,8 @@ coverage limits rather than introducing a glasses telemetry system.
   history and temporal account attribution. Reconciliation does not double-count.
 - Unauthenticated clients cannot report. Ordinary Core clients cannot browse
   Fleet. Forged account/device identifiers cannot overwrite other source records.
-  Private browser admin login works without a Mentra-hosted login dependency.
+  Existing Core admin sessions can read Fleet without another login. Private
+  browser admin login is qualified before the customer-hosted release.
 - Battery/version observations retain their age after disconnection or delayed
   upload. A recently contacted phone with old peripheral state does not make that
   peripheral appear freshly observed.
@@ -418,9 +420,9 @@ coverage limits rather than introducing a glasses telemetry system.
 - Phone restart/termination closes confirmed measurement at the last checkpoint.
   Clock changes and sessions crossing midnight/timezone transitions have bounded,
   correctly attributed durations. Overlapping miniapps do not inflate device time.
-- Account/Core switching, policy disablement, queue expiration, retention, and
-  deletion are exercised without cross-account/Core uploads or resurrection of
-  deleted history.
+- Account/Core switching, unsupported older Core versions, queue expiration,
+  retention, and deletion are exercised without cross-account/Core uploads or
+  resurrection of deleted history.
 - Existing PostHog events and properties remain compatible and are not duplicated
   by Fleet. New serial-number storage never appears in those exports.
 - With external analytics disabled, private Fleet collection, login, and queries
@@ -430,13 +432,31 @@ coverage limits rather than introducing a glasses telemetry system.
   and miniapp flows. Measure collector battery/network overhead and ingestion
   throughput before setting production cadence/retention defaults.
 
-## Follow-up implementation decisions
+## Delivery sequence and next step
+
+Write an implementation plan referencing this spec, with these incremental
+deliverables:
+
+1. **Device visibility in the existing admin panel.** Add Core device records and
+   snapshot upload, then a Fleet list/detail view showing serial, model, email,
+   battery, versions, and freshness. Use existing Core admin login throughout.
+2. **Usage history.** Add durable phone events/checkpoints and reporting for
+   connected time, miniapp usage, and observed photo/video activity. Preserve
+   existing PostHog behavior and validate the metric definitions above.
+3. **Dogfooding and private deployment.** Use Mentra's full reporting fleet to
+   validate usefulness, volume, and phone overhead. Package the same admin panel
+   and Core module for customers, qualifying shared admin authentication and data
+   locality. Resolve any private-login gap in Core admin infrastructure.
+
+The first deliverable is intentionally useful before every V1 history/chart is
+finished. No application implementation is part of this specification PR.
 
 An execution plan should settle bounded queue sizes, upload cadence/batch limits,
-raw/aggregate retention defaults, policy validity, clock-skew/replay windows,
-database indexes/aggregation strategy, private administrator browser auth, and
-the frontend hosting path. Validate phone-observable photo/video stages and
-system-miniapp hooks against supported devices before promising complete metric
-coverage. These decisions refine implementation; Core ownership, phone-only
+raw/aggregate retention defaults, clock-skew/replay windows, and database indexes/
+aggregation strategy. The private-deployment deliverable should settle shared
+administrator browser auth and panel hosting. Validate phone-observable
+photo/video stages and system-miniapp hooks against supported devices before
+promising complete metric coverage. These decisions refine implementation;
+Core ownership, phone-only
 collection, all-Core admin scope, displayed serial numbers, and PostHog
 coexistence are fixed requirements.
