@@ -2,6 +2,7 @@
 
 import {afterAll, beforeAll, beforeEach, describe, expect, test, mock} from "bun:test"
 
+import {installWithRuntimeReload} from "../../utils/storeInstallRuntime"
 import {configure, resetForTests} from "../../runtime/bootstrap"
 import type {MentraJSRouter} from "../MentraJSRouter"
 
@@ -9,6 +10,7 @@ import type {MentraJSRouter} from "../MentraJSRouter"
 
 // getActiveVersion is mutable so a test can force an "unresolvable" bundle.
 let activeVersion = "1.0.0"
+let bgSource = "BG SOURCE"
 let releaseSource = "bundled_asset"
 let releaseStorePackageName: string | undefined
 
@@ -54,7 +56,7 @@ mock.module("expo-file-system", () => ({
       this.uri = uri
     }
     textSync() {
-      return "BG SOURCE"
+      return bgSource
     }
   },
 }))
@@ -125,11 +127,69 @@ describe("MiniappLauncher", () => {
 
   beforeEach(() => {
     activeVersion = "1.0.0"
+    bgSource = "BG SOURCE"
     releaseSource = "bundled_asset"
     releaseStorePackageName = undefined
     waitForConnectCalls = []
     mockRouter = buildMockRouter()
     miniappLauncher.configure({router: mockRouter.router})
+  })
+
+  test.each([false, true])("explicit updates hold launches through install/rollback (failure=%s)", async (fail) => {
+    let finish!: () => void
+    const pending = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    let began!: () => void
+    const downloading = new Promise<void>((resolve) => {
+      began = resolve
+    })
+    const update = installWithRuntimeReload(
+      miniappLauncher,
+      "com.x",
+      async () => {
+        began()
+        await pending
+        if (fail) throw new Error("install failed")
+        activeVersion = "2.0.0"
+        bgSource = "UPDATED SOURCE"
+      },
+      {
+        restorePreviousVersion: () => {
+          activeVersion = "1.0.0"
+        },
+      },
+    )
+    const outcome = update.catch((error) => error)
+    await downloading
+    const launch = miniappLauncher.ensureRunning("com.x")
+    await Promise.resolve()
+    expect(mockRouter.spawnCalls).toHaveLength(0)
+    finish()
+    const result = await outcome
+    if (fail) expect(result.message).toBe("install failed")
+    await launch
+    expect(mockRouter.spawnCalls.map((call) => call.src)).toEqual([fail ? "BG SOURCE" : "UPDATED SOURCE"])
+  })
+
+  test("explicit updates wait for an already-starting context and restart the new bundle", async () => {
+    const launch = miniappLauncher.ensureRunning("com.x")
+    const update = installWithRuntimeReload(
+      miniappLauncher,
+      "com.x",
+      async () => {
+        activeVersion = "2.0.0"
+        bgSource = "UPDATED SOURCE"
+      },
+      {
+        restorePreviousVersion: () => {
+          activeVersion = "1.0.0"
+        },
+      },
+    )
+    await Promise.all([launch, update])
+    expect(mockRouter.spawnCalls.map((call) => call.src)).toEqual(["BG SOURCE", "UPDATED SOURCE"])
+    expect(mockRouter.unregisterCalls).toEqual(["com.x"])
   })
 
   test("automatic installs skip a running background context without stopping it", async () => {

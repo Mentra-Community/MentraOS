@@ -6,6 +6,7 @@ function launcher(running: boolean, startFailures = 0) {
   const calls: string[] = []
   let isRunning = running
   const value: StoreInstallRuntimeLauncher = {
+    pauseLaunches: async () => () => {},
     isRunning: () => isRunning,
     stop: async () => {
       calls.push("stop")

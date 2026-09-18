@@ -84,7 +84,7 @@ class MiniappLauncher {
    */
   private readonly inFlight = new Map<string, Promise<LaunchResult>>()
 
-  /** Only the short activation transaction blocks new launches, never the download. */
+  /** Automatic updates reserve activation only; explicit updates reserve the whole install. */
   private readonly installing = new Map<string, Promise<void>>()
 
   /**
@@ -101,18 +101,33 @@ class MiniappLauncher {
     try {
       return await install(() => {
         assertIdle()
-        this.installing.set(
-          packageName,
-          new Promise<void>((resolve) => {
-            release = resolve
-          }),
-        )
+        release = this.reserveInstall(packageName)
       })
     } finally {
-      if (release) {
-        this.installing.delete(packageName)
-        release()
-      }
+      release?.()
+    }
+  }
+
+  /** Stabilize existing launches and hold new ones until an explicit install finishes. */
+  async pauseLaunches(packageName: string): Promise<() => void> {
+    const release = this.reserveInstall(packageName)
+    // Launches already resolving a bundle must settle before the updater decides
+    // whether a context needs stopping/restarting. A failed launch is also settled.
+    await this.inFlight.get(packageName)?.catch(() => {})
+    return release
+  }
+
+  private reserveInstall(packageName: string): () => void {
+    if (this.installing.has(packageName)) throw new Error(`An install is already activating ${packageName}`)
+    let resume!: () => void
+    const pending = new Promise<void>((resolve) => {
+      resume = resolve
+    })
+    this.installing.set(packageName, pending)
+    return () => {
+      if (this.installing.get(packageName) !== pending) return
+      this.installing.delete(packageName)
+      resume()
     }
   }
 

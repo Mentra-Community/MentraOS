@@ -7,6 +7,7 @@ export class MiniappRunningError extends Error {
 }
 
 export interface StoreInstallRuntimeLauncher {
+  pauseLaunches(packageName: string): Promise<() => void>
   isRunning(packageName: string): boolean
   stop(packageName: string): Promise<void>
   ensureRunning(packageName: string): Promise<unknown>
@@ -27,6 +28,33 @@ export interface StoreInstallRuntimeRecovery {
  * restores the prior active-version pointer before the old context is started.
  */
 export async function installWithRuntimeReload<T>(
+  launcher: StoreInstallRuntimeLauncher,
+  packageName: string,
+  install: () => Promise<T>,
+  recovery: StoreInstallRuntimeRecovery,
+): Promise<T> {
+  const resumeLaunches = await launcher.pauseLaunches(packageName)
+  try {
+    return await installWithPausedLaunches(
+      launcher,
+      packageName,
+      async () => {
+        try {
+          return await install()
+        } finally {
+          // Resume only after the installer has committed or rolled back. Release
+          // before restarting so both the updater and waiting UI can ensureRunning.
+          resumeLaunches()
+        }
+      },
+      recovery,
+    )
+  } finally {
+    resumeLaunches()
+  }
+}
+
+async function installWithPausedLaunches<T>(
   launcher: StoreInstallRuntimeLauncher,
   packageName: string,
   install: () => Promise<T>,
