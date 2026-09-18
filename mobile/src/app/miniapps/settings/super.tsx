@@ -1,4 +1,4 @@
-import {useEffect} from "react"
+import {useEffect, useRef} from "react"
 import {ScrollView, View} from "react-native"
 import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
 
@@ -7,6 +7,8 @@ import ToggleSetting from "@/components/settings/ToggleSetting"
 import {Group} from "@/components/ui/Group"
 import {useNavigationStore} from "@/stores/navigation"
 import {SETTINGS, useSetting} from "@mentra/engine"
+import {micSessionManager} from "@mentra/engine-host-internal"
+import {SettingsCommandButton} from "@/components/glasses/settings/SettingsCommandButton"
 import {RouteButton} from "@/components/ui/RouteButton"
 
 export default function SuperSettingsScreen() {
@@ -21,8 +23,13 @@ export default function SuperSettingsScreen() {
     SETTINGS.ios_app_switcher_bottom_swipe.key,
   )
 
+  // Only the on -> off edge should reset the glasses. Firing on mount with
+  // super mode already off sent a cs_weartun reset every time this screen
+  // opened, whether or not anything had been tuned.
+  const previousSuperMode = useRef<boolean>(!!superMode)
   useEffect(() => {
-    if (!superMode) void BluetoothSdk.resetWearTuning()
+    if (previousSuperMode.current && !superMode) void BluetoothSdk.resetWearTuning()
+    previousSuperMode.current = !!superMode
   }, [superMode])
 
   return (
@@ -72,6 +79,15 @@ export default function SuperSettingsScreen() {
 
           <Group title="Mentra Live">
             <RouteButton label="Mic Tuning" onPress={() => push("/miniapps/settings/mic-tuning")} />
+            <SettingsCommandButton
+              label="Call gain sweep 15 → 14 → 15 → 13"
+              subtitle="Needs a live Mentra Call. Talk normally for ~100s. Watch CALL_GAIN_SWEEP logs."
+              onPress={() => {
+                if (!micSessionManager.startCallGainSweep()) {
+                  console.warn("CALL_GAIN_SWEEP: join Mentra Call first, then tap again")
+                }
+              }}
+            />
           </Group>
 
           <Group title="Miniapps">

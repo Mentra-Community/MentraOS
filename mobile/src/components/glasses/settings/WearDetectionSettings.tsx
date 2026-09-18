@@ -1,11 +1,12 @@
 import {useCallback, useEffect, useState} from "react"
-import {Pressable, View} from "react-native"
+import {View} from "react-native"
 
 import BluetoothSdk from "@mentra/bluetooth-sdk-internal"
 import type {WearStateEvent, WearTuningEvent} from "@mentra/bluetooth-sdk-internal"
 import {DeviceTypes, SETTINGS, useSetting} from "@mentra/engine"
 
 import {Text} from "@/components/ignite"
+import {SettingsCommandButton} from "@/components/glasses/settings/SettingsCommandButton"
 import SelectSetting from "@/components/settings/SelectSetting"
 import SliderSetting from "@/components/settings/SliderSetting"
 import ToggleSetting from "@/components/settings/ToggleSetting"
@@ -127,9 +128,17 @@ export function WearDetectionSettings() {
   return (
     <View className="gap-6">
       <View className="gap-1">
-        <Text text={`worn: ${worn === null ? "unknown" : worn ? "yes" : "no"}`} className="text-text text-sm" />
         <Text
-          text={`applied: ${vote.interval}ms × ${vote.count}, majority ${vote.majority} (gen ${applied?.generation ?? 0})`}
+          text={`Worn: ${worn === null ? "unknown" : worn ? "yes" : "no"}`}
+          className="text-text text-sm"
+        />
+        <Text
+          text="Current voted state from sr_wrst."
+          style={{color: theme.colors.textDim}}
+          className="text-xs"
+        />
+        <Text
+          text={`Applied: ${vote.interval}ms × ${vote.count}, majority ${vote.majority} (gen ${applied?.generation ?? 0})`}
           style={{color: theme.colors.textDim}}
           className="text-sm"
         />
@@ -141,7 +150,7 @@ export function WearDetectionSettings() {
 
       <ToggleSetting
         label="Reporting"
-        subtitle="RAM-only. The glasses forget this on disconnect."
+        subtitle="RAM-only session switch. Starts off; forgotten on disconnect. Not the NV cs_swit type 1 bit."
         value={enabled}
         onValueChange={setReporting}
         isFirst
@@ -151,6 +160,7 @@ export function WearDetectionSettings() {
       <View className="gap-2">
         <SelectSetting
           label="Preset"
+          description="Fast polls quicker. Sticky needs more agreeing samples before don/doff flips."
           value={preset}
           options={[
             {label: "Fast (150ms × 5, majority 4)", value: "fast"},
@@ -167,6 +177,7 @@ export function WearDetectionSettings() {
         />
         <SliderSetting
           label="Interval (ms)"
+          subtitle="Poll period, clamped 50–2000 ms. Faster is snappier don/doff and uses more BLE."
           value={vote.interval}
           min={50}
           max={2000}
@@ -176,7 +187,7 @@ export function WearDetectionSettings() {
         />
         <SliderSetting
           label="Count"
-          subtitle="Sliding-window length (3–15)."
+          subtitle="Sliding-window length, clamped 3–15. More samples make the vote stickier."
           value={vote.count}
           min={3}
           max={15}
@@ -185,7 +196,7 @@ export function WearDetectionSettings() {
         />
         <SliderSetting
           label="Majority"
-          subtitle="Votes needed to flip. Must be more than count/2."
+          subtitle="Votes needed to flip. Must be > count/2 and ≤ count. Higher is harder to flip."
           value={vote.majority}
           min={2}
           max={15}
@@ -196,19 +207,19 @@ export function WearDetectionSettings() {
       </View>
 
       <View className="gap-2">
-        <Pressable
+        <SettingsCommandButton
+          label="Query state"
+          subtitle="Request the current voted wear state (cs_wrst)."
           onPress={() => void send("queryWearState", () => BluetoothSdk.queryWearState())}
-          className="bg-primary-foreground rounded-2xl px-4 py-4">
-          <Text text="Query state" className="text-sm font-semibold text-foreground" />
-        </Pressable>
-        <Pressable
+        />
+        <SettingsCommandButton
+          label="Reset to firmware defaults"
+          subtitle="Restore 300 ms × 5, majority 4, and turn reporting off."
           onPress={() => {
             setPending({enabled: false, ...DEFAULTS})
             void send("resetWearTuning", () => BluetoothSdk.resetWearTuning())
           }}
-          className="bg-primary-foreground rounded-2xl px-4 py-4">
-          <Text text="Reset to firmware defaults" className="text-sm font-semibold text-foreground" />
-        </Pressable>
+        />
       </View>
     </View>
   )

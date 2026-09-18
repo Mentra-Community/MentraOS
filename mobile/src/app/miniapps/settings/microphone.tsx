@@ -27,7 +27,7 @@ export default function MicrophoneScreen() {
           {superMode && isMentraLive && (
             <RouteButton
               label={translate("microphoneSettings:tuningTitle")}
-              subtitle={translate("microphoneSettings:tuningGainSubtitle")}
+              subtitle={translate("microphoneSettings:tuningEntrySubtitle")}
               onPress={() => push("/miniapps/settings/mic-tuning")}
             />
           )}

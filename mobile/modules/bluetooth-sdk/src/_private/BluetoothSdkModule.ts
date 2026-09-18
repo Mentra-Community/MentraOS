@@ -583,6 +583,16 @@ NativeBluetoothSdkModule.setMicTuning = function (tuning: MicTuning | null) {
   return this.updateBluetoothSettings({mic_tuning: tuning ?? {}})
 }
 
+const nativeMicModule = NativeBluetoothSdkModule as unknown as Record<string, unknown>
+NativeBluetoothSdkModule.requestMicTuningState = bindNativeMethod<() => Promise<void>>(
+  nativeMicModule,
+  "requestMicTuningState",
+)
+NativeBluetoothSdkModule.setMicRmsTelemetry = bindNativeMethod<(enabled: boolean) => Promise<void>>(
+  nativeMicModule,
+  "setMicRmsTelemetry",
+)
+
 const nativeSetCameraFov = bindNativeMethod<(fov: CameraFovSetting) => MaybePromise<CameraFovResult>>(
   NativeBluetoothSdkModule as unknown as Record<string, unknown>,
   "setCameraFov",

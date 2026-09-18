@@ -72,8 +72,8 @@ class MicSessionManager {
    * glasses voice_call session drops so the next join can measure again.
    */
   private sweepFinished = false
-  /** Test seam. Production leaves this on so a call join is the comparison. */
-  private sweepEnabled = true
+  /** One-shot A/B walk. Off now that 15/14/13 is measured; Super Mode can still start it. */
+  private sweepEnabled = false
 
   private constructor() {}
 

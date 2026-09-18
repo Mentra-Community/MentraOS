@@ -482,6 +482,9 @@ export const SETTINGS: Record<string, Setting> = {
    *
    * `{}` rather than null for "no tuning": the native store drops null writes,
    * so null would leave a previously applied value in place.
+   *
+   * The empty object is a stable singleton so GlassesSettingsSync's reference
+   * diff does not treat every unrelated settings write as a mic_tuning change.
    */
   mic_tuning_desired: {
     key: "mic_tuning_desired",
@@ -853,6 +856,9 @@ export const BLUETOOTH_SETTING_KEYS: string[] = [
 export const PAIRING_IDENTITY_KEYS: string[] = Object.values(SETTINGS)
   .filter((setting) => setting.nativeAuthoritative)
   .map((setting) => setting.key)
+
+/** Stable empty effective tuning. Native reads this as `{"reset":1}`. */
+const EMPTY_MIC_TUNING: Record<string, number> = Object.freeze({})
 
 // const PER_GLASSES_SETTINGS_KEYS: string[] = [SETTINGS.preferred_mic.key]
 
@@ -1246,16 +1252,16 @@ export const useSettingsStore = create<SettingsState>()(
     },
     getEffectiveMicTuning: () => {
       const state = get()
-      if (!state.getSetting(SETTINGS.super_mode.key)) return {}
+      if (!state.getSetting(SETTINGS.super_mode.key)) return EMPTY_MIC_TUNING
       const desired = state.getSetting(SETTINGS.mic_tuning_desired.key)
-      if (!desired || typeof desired !== "object") return {}
+      if (!desired || typeof desired !== "object") return EMPTY_MIC_TUNING
       const effective: Record<string, number> = {}
       for (const [key, value] of Object.entries(desired as Record<string, unknown>)) {
         if (typeof value === "number" && Number.isFinite(value)) {
           effective[key] = Math.round(value)
         }
       }
-      return effective
+      return Object.keys(effective).length === 0 ? EMPTY_MIC_TUNING : effective
     },
     resetAllSettingsLocally: () => {
       set((_state) => ({

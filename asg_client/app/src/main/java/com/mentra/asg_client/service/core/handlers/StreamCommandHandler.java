@@ -10,6 +10,8 @@ import android.os.Looper;
 import android.os.SystemClock;
 import android.util.Log;
 import com.mentra.asg_client.AsgConstants;
+import com.mentra.asg_client.io.bes.log.BesLivenessLog;
+import com.mentra.asg_client.io.bes.log.BesLivenessMonitor;
 import com.mentra.asg_client.io.bluetooth.managers.K900BluetoothManager;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.LinkStateMachine;
 import com.mentra.asg_client.io.streaming.StreamPhonePresencePolicy;
@@ -67,6 +69,14 @@ public class StreamCommandHandler implements ICommandHandler {
     private final StreamControllerLease mControllerLease = new StreamControllerLease(
             AsgConstants.STREAM_CONTROLLER_RESPONSE_TIMEOUT_MS,
             () -> java.util.UUID.randomUUID().toString());
+    /**
+     * Probe/ack accounting for the lease. Without it, a lease expiry cannot be told apart from a
+     * wedged BES that never delivered the probes, a phone that stopped answering them, or a phone
+     * whose answers never made it back — all three look identical in the logs today.
+     */
+    private int mControllerProbesSent;
+    private int mControllerAcks;
+    private long mLastControllerAckMs;
     private final LinkStateMachine.Listener mPresenceListener = (state, caps, presence) ->
             mLifecycleHandler.post(() -> {
                 // Read the latest signal after dispatch; queued reports may predate a start or
@@ -131,12 +141,17 @@ public class StreamCommandHandler implements ICommandHandler {
                 case "keep_stream_alive":
                     return handleKeepAliveCommand(data);
                 case "stream_controller_response":
-                    return Integer.valueOf(1).equals(data.opt("protocolVersion"))
+                    boolean acknowledged = Integer.valueOf(1).equals(data.opt("protocolVersion"))
                             && mOwnedStreamId != null
                             && mOwnedStreamId.equals(data.opt("streamId"))
                             && mOwnedControllerId.equals(data.opt("controllerId"))
                             && mControllerLease.acknowledge(data.optString("probeId", ""),
                                     SystemClock.elapsedRealtime());
+                    if (acknowledged) {
+                        mControllerAcks++;
+                        mLastControllerAckMs = SystemClock.elapsedRealtime();
+                    }
+                    return acknowledged;
                 default:
                     Log.e(TAG, "Unsupported stream command: " + commandType);
                     return false;
@@ -593,11 +608,18 @@ public class StreamCommandHandler implements ICommandHandler {
         streamingManager.beginStreamSession(streamId);
         mOwnedStartRevision = streamingManager.getStreamSnapshot().optLong("revision", -1);
         mControllerLease.start(SystemClock.elapsedRealtime());
+        mControllerProbesSent = 0;
+        mControllerAcks = 0;
+        mLastControllerAckMs = SystemClock.elapsedRealtime();
+        // BES carries BLE, A2DP and the LC3 mic uplink at once while a stream runs; the liveness
+        // watchdog records that as context for any stall it sees.
+        BesLivenessMonitor.get().setStreamActive(true);
         mControllerProbeTick = new Runnable() {
             @Override public void run() {
                 if (mDisposed || mOwnedStreamId == null
                         || generation != mPhonePolicy.getGeneration()) return;
                 if (mControllerLease.expired(SystemClock.elapsedRealtime())) {
+                    recordControllerLeaseExpiry();
                     streamingManager.getStreamingStatusCallback().onStreamError(
                             "Controlling phone app stopped responding", mOwnedStreamId);
                     stopAllServices();
@@ -613,6 +635,7 @@ public class StreamCommandHandler implements ICommandHandler {
                     if (mServiceManager != null && mServiceManager.getBluetoothManager() != null) {
                         mServiceManager.getBluetoothManager().sendMessage(
                                 probe.toString().getBytes(java.nio.charset.StandardCharsets.UTF_8));
+                        mControllerProbesSent++;
                     }
                 } catch (Exception error) {
                     Log.w(TAG, "Unable to send native stream controller probe", error);
@@ -637,8 +660,32 @@ public class StreamCommandHandler implements ICommandHandler {
         mResourceRefresh.run();
     }
 
+    /**
+     * Records why the lease ran out, so the teardown that follows can be attributed.
+     *
+     * <p>Kept in the BES liveness ring rather than only in logcat: teardown plays a sound, stops
+     * the encoder and restarts BLE discovery, and the resulting burst evicts this line from the
+     * 600-line window the report uploads.
+     */
+    private void recordControllerLeaseExpiry() {
+        try {
+            JSONObject fields = new JSONObject();
+            fields.put("streamId", mOwnedStreamId);
+            fields.put("probesSent", mControllerProbesSent);
+            fields.put("acks", mControllerAcks);
+            fields.put("msSinceLastAck", SystemClock.elapsedRealtime() - mLastControllerAckMs);
+            fields.put("leaseTimeoutMs", AsgConstants.STREAM_CONTROLLER_RESPONSE_TIMEOUT_MS);
+            fields.put("phonePresence",
+                    mPhoneLink != null ? String.valueOf(mPhoneLink.getPhonePresence()) : "unknown");
+            BesLivenessLog.warn("stream_controller_lease_expired", fields);
+        } catch (Exception error) {
+            Log.w(TAG, "Unable to record controller lease expiry", error);
+        }
+    }
+
     private void releaseStreamOwnership() {
         if (mOwnedStreamId != null) restoreEisAfterStreaming();
+        BesLivenessMonitor.get().setStreamActive(false);
         mControllerLease.stop();
         if (mControllerProbeTick != null) mLifecycleHandler.removeCallbacks(mControllerProbeTick);
         mControllerProbeTick = null;

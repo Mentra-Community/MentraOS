@@ -539,6 +539,15 @@ class MentraLive : SGCManager() {
     // related goes on the wire until this is seen.
     private var peerMicTuning = false
     private var peerWearTuning = false
+    // Connect-time dedupe. Three paths push mic tuning when a link comes up
+    // (sendUserSettings, the wire_caps advertisement, the engine's settings
+    // replay) and the wire_caps parse re-runs on every glasses_ready, so a
+    // single connect used to cost two identical cs_mictun and several
+    // cs_wearst. The glasses only lose tuning state on BLE disconnect, so an
+    // identical body within one link is a no-op and is dropped here. Both
+    // reset when the link drops (updateConnectionState -> DISCONNECTED).
+    private var lastSentMicTuningBody: String? = null
+    private var wearTuningQueriedThisLink = false
     // Tuning generation echoed by the last sr_mictun / sr_micst. An sr_micrms
     // measured before that revision describes a config we already replaced.
     private var micTuningGeneration = 0
@@ -1229,6 +1238,10 @@ class MentraLive : SGCManager() {
             DeviceStore.apply("glasses", "signalStrengthUpdatedAt", 0L)
             resetWireNegotiationState()
             resetPendingAckState()
+            // The glasses reset mic and wear tuning on BLE disconnect, so the
+            // next link must be allowed to send them again.
+            lastSentMicTuningBody = null
+            wearTuningQueriedThisLink = false
             sendQueue.clear() // see the disconnect reset above: stale writes die with the session
 
             // Drop OTA caches when fully disconnected — avoids leaking session/step state
@@ -9055,8 +9068,13 @@ class MentraLive : SGCManager() {
             if (peerWearTuning) {
                 Bridge.log("LIVE: wire_caps wear_tuning supported")
                 // Nothing to push: wear reporting starts off on the glasses
-                // and stays off until the tuning screen asks for it.
-                requestWearTuning()
+                // and stays off until the tuning screen asks for it. One read
+                // per link: the flag is cleared on every wire epoch, but the
+                // glasses only forget tuning on BLE disconnect.
+                if (!wearTuningQueriedThisLink) {
+                    wearTuningQueriedThisLink = true
+                    requestWearTuning()
+                }
             }
         }
         if (caps.has("mic_tuning") && !peerMicTuning) {
@@ -10816,8 +10834,7 @@ class MentraLive : SGCManager() {
             return
         }
         if (!peerMicTuning) {
-            // Older firmware answers cs_mictun with an error; say nothing.
-            return
+            Bridge.log("LIVE: mic_tuning cap not advertised; sending cs_mictun anyway")
         }
 
         try {
@@ -10838,7 +10855,13 @@ class MentraLive : SGCManager() {
                 body.put("reset", 1)
             }
 
-            Bridge.log("LIVE: 🎚️ Sending mic tuning to glasses: " + body.toString())
+            val serialized = body.toString()
+            if (serialized == lastSentMicTuningBody) {
+                Bridge.log("LIVE: 🎚️ Mic tuning unchanged this link, not resending: " + serialized)
+                return
+            }
+
+            Bridge.log("LIVE: 🎚️ Sending mic tuning to glasses: " + serialized)
 
             val cmdObject = JSONObject()
             cmdObject.put("C", "cs_mictun")
@@ -10856,6 +10879,7 @@ class MentraLive : SGCManager() {
                 return
             }
             queueData(packedData)
+            lastSentMicTuningBody = serialized
         } catch (e: JSONException) {
             Log.e(TAG, "Error creating mic tuning command", e)
         }
@@ -10863,7 +10887,13 @@ class MentraLive : SGCManager() {
 
     /** Ask the glasses what tuning they are actually running (sr_micst). */
     override fun requestMicTuningState() {
-        if (!isConnected || !peerMicTuning) return
+        if (!isConnected) {
+            Bridge.log("LIVE: Cannot send cs_micst - not connected")
+            return
+        }
+        if (!peerMicTuning) {
+            Bridge.log("LIVE: mic_tuning cap not advertised; sending cs_micst anyway")
+        }
         sendMicTuningCommand("cs_micst", JSONObject())
     }
 

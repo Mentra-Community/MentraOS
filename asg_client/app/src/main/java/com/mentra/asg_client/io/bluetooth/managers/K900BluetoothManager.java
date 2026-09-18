@@ -9,6 +9,7 @@ import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.io.bes.BesOtaStateStore;
 import com.mentra.asg_client.io.bes.BesOtaUartListener;
 import com.mentra.asg_client.io.bes.events.BesOtaProgressEvent;
+import com.mentra.asg_client.io.bes.log.BesLivenessMonitor;
 import com.mentra.asg_client.io.bluetooth.core.BaseBluetoothManager;
 import com.mentra.asg_client.io.bluetooth.interfaces.SerialListener;
 import com.mentra.asg_client.io.bluetooth.managers.mentralive.internal.BesMessageParser;
@@ -472,6 +473,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
         Log.d(TAG, "📡 📤 Sending " + data.length + " bytes via K900 serial");
         BleTraceLogger.logK900Frame("asg_to_bes", "asg_uart_output", data);
+        BesLivenessMonitor.get().onOutboundWrite();
 
         // Send the data via the serial port
         boolean sent = comManager.write(data);
@@ -747,7 +749,12 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
      */
     public void addPhoneWireCapsIfSupported(JSONObject response) {
         LinkStateMachine.BesCaps besCaps = linkState.getNegotiatedCaps();
-        if (response == null || (!besCaps.k900Le && !besCaps.binary && !besCaps.filePayloadV2)) {
+        if (response == null
+                || (!besCaps.k900Le
+                        && !besCaps.binary
+                        && !besCaps.filePayloadV2
+                        && !besCaps.micTuning
+                        && !besCaps.wearTuning)) {
             return;
         }
         try {
@@ -763,6 +770,12 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                 caps.put("file_payload_v2", true);
                 caps.put("file_payload_gatt_max", BesWireFormat.FILE_PACK_SIZE_GATT_MAX);
                 caps.put("file_payload_coc_max", BesWireFormat.FILE_PACK_SIZE_COC_MAX);
+            }
+            if (besCaps.micTuning) {
+                caps.put("mic_tuning", true);
+            }
+            if (besCaps.wearTuning) {
+                caps.put("wear_tuning", true);
             }
             response.put("wire_caps", caps);
         } catch (Exception e) {
@@ -1452,6 +1465,15 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
      * baud), and upgrade the UART link to little-endian K900 STRING lengths when the firmware
      * advertises it. {@code wire_caps} may sit at the top level or inside the {@code B} body.
      */
+    /**
+     * Read a wire_caps flag that the BES may encode either as a JSON boolean or as a 0/1 number.
+     * {@code optBoolean} ignores numbers and {@code optInt} ignores booleans, so a single-typed
+     * read silently drops half the advertisements.
+     */
+    private static boolean wireCapFlagOn(JSONObject caps, String name) {
+        return caps.optBoolean(name, false) || caps.optInt(name, 0) != 0;
+    }
+
     private LinkStateMachine.BesCaps applyBesWireCaps(JSONObject json) {
         if (json == null) {
             return null;
@@ -1483,7 +1505,9 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                             // Big-pack support ships with the file_payload_v2 advertisement.
                             filePayloadV2,
                             caps.optInt("proto", BesWireFormat.PROTOCOL_VERSION_V2),
-                            caps.optInt("notify_cap", 0));
+                            caps.optInt("notify_cap", 0),
+                            wireCapFlagOn(caps, "mic_tuning"),
+                            wireCapFlagOn(caps, "wear_tuning"));
         }
         if (advertised != null && advertised.k900Le) {
             if (uartToBesEndian != K900LengthCodec.Endian.LE) {
@@ -2028,6 +2052,7 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
                         break;
                     }
                     BleTraceLogger.logK900Frame("bes_to_asg", "asg_uart_input", message);
+                    BesLivenessMonitor.get().onInboundFrame();
 
                     // Check for file transfer acknowledgments first
                     processReceivedMessage(message);

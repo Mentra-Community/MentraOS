@@ -1060,6 +1060,10 @@ extension MentraLive: CBCentralManagerDelegate {
             self.readinessCompletedThisBleSession = false
             self.updateConnectionState(ConnTypes.DISCONNECTED)
             self.rgbLedAuthorityClaimed = false
+            // The glasses reset mic and wear tuning on BLE disconnect, so the
+            // next link must be allowed to send them again.
+            self.lastSentMicTuningBody = nil
+            self.wearTuningQueriedThisLink = false
 
             self.stopAllTimers()
             self.closeL2capFileChannel()
@@ -1707,6 +1711,12 @@ class MentraLive: NSObject, SGCManager {
     /// Tuning generation echoed by the last sr_mictun / sr_micst. An sr_micrms
     /// measured before that revision describes a config we already replaced.
     private var micTuningGeneration = 0
+    /// Connect-time dedupe, mirroring Android. Several paths push mic tuning
+    /// when a link comes up and the wire_caps parse re-runs per glasses_ready;
+    /// the glasses only forget tuning on BLE disconnect, so an identical body
+    /// within one link is dropped. Both reset in didDisconnectPeripheral.
+    private var lastSentMicTuningBody: String?
+    private var wearTuningQueriedThisLink = false
     /// Last observed glasses process session id (`sid` in glasses_ready / version_info_1).
     /// The BES keeps the BLE link alive across asg_client restarts, so transport state
     /// cannot signal a restart - a CHANGED (or newly appearing) sid is the restart signal.
@@ -6164,8 +6174,13 @@ extension MentraLive {
                 peerWearTuning = true
                 Bridge.log("LIVE: wire_caps wear_tuning supported")
                 // Nothing to push: wear reporting starts off on the glasses
-                // and stays off until the tuning screen asks for it.
-                requestWearTuning()
+                // and stays off until the tuning screen asks for it. One read
+                // per link: the flag is cleared on every wire epoch, but the
+                // glasses only forget tuning on BLE disconnect.
+                if !wearTuningQueriedThisLink {
+                    wearTuningQueriedThisLink = true
+                    requestWearTuning()
+                }
             }
         }
         if caps.keys.contains("mic_tuning"), !peerMicTuning {
@@ -6869,8 +6884,9 @@ extension MentraLive {
             Bridge.log("LIVE: Cannot send mic tuning - BLE write path not ready")
             return
         }
-        // Older firmware answers cs_mictun with an error; say nothing.
-        guard peerMicTuning else { return }
+        if !peerMicTuning {
+            Bridge.log("LIVE: mic_tuning cap not advertised; sending cs_mictun anyway")
+        }
 
         var body: [String: Any] = [:]
         if let fields = DeviceStore.shared.get("bluetooth", "mic_tuning") as? [String: Any] {
@@ -6884,13 +6900,27 @@ extension MentraLive {
             body["reset"] = 1
         }
 
+        // Key order is fixed so equal bodies serialize identically.
+        let serialized = body.keys.sorted().map { "\($0)=\(body[$0]!)" }.joined(separator: ",")
+        if serialized == lastSentMicTuningBody {
+            Bridge.log("LIVE: 🎚️ Mic tuning unchanged this link, not resending: \(serialized)")
+            return
+        }
+
         Bridge.log("LIVE: 🎚️ Sending mic tuning to glasses: \(body)")
         sendMicTuningCommand("cs_mictun", body: body)
+        lastSentMicTuningBody = serialized
     }
 
     /// Ask the glasses what tuning they are actually running (sr_micst).
     func requestMicTuningState() {
-        guard connectedPeripheral != nil, txCharacteristic != nil, peerMicTuning else { return }
+        guard connectedPeripheral != nil, txCharacteristic != nil else {
+            Bridge.log("LIVE: Cannot send cs_micst - BLE write path not ready")
+            return
+        }
+        if !peerMicTuning {
+            Bridge.log("LIVE: mic_tuning cap not advertised; sending cs_micst anyway")
+        }
         sendMicTuningCommand("cs_micst", body: [:])
     }
 
