@@ -50,6 +50,10 @@ const flushMicRequirementsPatch = createDebouncedPatchFlusher<Record<string, unk
     // gate override during the debounce window, and a captured stale value
     // must not win after that lifecycle transition.
     const runtimePatch = micStateCoordinator.applyEffectiveGatePolicy(patch)
+    // The merged patch, not the intent that produced it. Everything above this line is a
+    // preference; this is the only record of what the glasses were actually told, and the three
+    // keys a call depends on (VAD off, Barrier on, the tuning) are only decided here at flush.
+    console.log(`${LOG_TAG}: write`, runtimePatch)
     void Promise.resolve(BluetoothSdk.updateBluetoothSettings(runtimePatch)).catch((err) => {
       console.error(`${LOG_TAG}: failed to apply mic requirements:`, err)
     })
@@ -151,6 +155,11 @@ class MicStateCoordinator {
   /** Last session profile queued, or null when the OS value is in force. */
   public getSessionMicTuning(): MicTuningProfile | null {
     return this.sessionMicTuning
+  }
+
+  /** Last session Barrier queued, or null when the OS value is in force. For call logging. */
+  public getSessionLoudnessGate(): boolean | null {
+    return this.sessionLoudnessGate
   }
 
   /**

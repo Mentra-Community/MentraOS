@@ -624,6 +624,15 @@ class AcsMeetingService {
   private micSub: {remove: () => void} | null = null
   /** Backstop lease, held only while this call is actually reading the glasses mic. */
   private micSession: MicSession | null = null
+  private micTuningSub: {remove: () => void} | null = null
+  private micRmsSub: {remove: () => void} | null = null
+  /** Only turn telemetry off again if this call is what turned it on. */
+  private micRmsEnabled = false
+  private gateSamples = 0
+  private gateClosed = 0
+  private gateElevated = 0
+  private gateClosedElevated = 0
+  private gateRmsMax = 0
   /** True between the pin/requirement being taken and released, so release is exactly once. */
   private micUplinkActive = false
   private micFramesForwarded = 0
@@ -1334,6 +1343,7 @@ class AcsMeetingService {
     this.lastMicLevel = null
     try {
       this.acquireMicSession()
+      this.startMicGateTelemetry()
       this.micUplinkActive = true
       this.micSub = BluetoothSdk.addListener("mic_pcm", (event: {pcm?: ArrayBuffer; sampleRate?: number; source?: string}) => {
         if (generation !== this.callGeneration) {
@@ -1401,9 +1411,78 @@ class AcsMeetingService {
         dropsNonGlasses: this.micDropsNonGlasses,
         gaps: this.micGaps,
         gapMsMax: this.micGapMsMax,
+        ...this.gateSummary(),
       })
     }
+    this.stopMicGateTelemetry()
     this.micTransport = "whip"
+  }
+
+  /**
+   * Watch what the glasses are actually running for the length of the call.
+   *
+   * Two different questions, both unanswerable from this side otherwise. `mic_tuning_state` is
+   * the post-clamp reply, so it catches a profile the firmware rewrote rather than accepted.
+   * `mic_rms` carries the Barrier's own verdict per frame, which is the only way to tell a gate
+   * that is suppressing speaker leak from one that is suppressing the wearer.
+   */
+  private startMicGateTelemetry(): void {
+    this.gateSamples = 0
+    this.gateClosed = 0
+    this.gateElevated = 0
+    this.gateClosedElevated = 0
+    this.gateRmsMax = 0
+
+    try {
+      this.micTuningSub = BluetoothSdk.addListener("mic_tuning_state", (event: Record<string, unknown>) => {
+        console.log("[AcsMeeting] phase=glasses-mic-tuning-applied", event)
+      })
+      this.micRmsSub = BluetoothSdk.addListener(
+        "mic_rms",
+        (event: {rms?: number; gateOpen?: boolean; speakerElevated?: boolean}) => {
+          this.gateSamples += 1
+          if (event.gateOpen === false) this.gateClosed += 1
+          if (event.speakerElevated) {
+            this.gateElevated += 1
+            if (event.gateOpen === false) this.gateClosedElevated += 1
+          }
+          if (typeof event.rms === "number" && event.rms > this.gateRmsMax) this.gateRmsMax = event.rms
+        },
+      )
+      void Promise.resolve(BluetoothSdk.setMicRmsTelemetry?.(true))
+        .then(() => {
+          this.micRmsEnabled = true
+        })
+        .catch((error) => console.warn("[AcsMeeting] mic RMS telemetry unavailable", error))
+      void Promise.resolve(BluetoothSdk.requestMicTuningState?.()).catch(() => {})
+    } catch (error) {
+      console.warn("[AcsMeeting] mic gate telemetry unavailable", error)
+    }
+  }
+
+  private stopMicGateTelemetry(): void {
+    this.micTuningSub?.remove()
+    this.micTuningSub = null
+    this.micRmsSub?.remove()
+    this.micRmsSub = null
+    if (!this.micRmsEnabled) return
+    this.micRmsEnabled = false
+    // Super Mode may have the readout open behind this call; it re-requests on focus.
+    void Promise.resolve(BluetoothSdk.setMicRmsTelemetry?.(false)).catch(() => {})
+  }
+
+  /** Barrier's behaviour over the window, as percentages a listening test can be checked against. */
+  private gateSummary(): Record<string, number> {
+    if (this.gateSamples === 0) return {}
+    const pct = (n: number, of: number) => (of === 0 ? 0 : Math.round((n / of) * 1000) / 10)
+    return {
+      gateSamples: this.gateSamples,
+      gateClosedPct: pct(this.gateClosed, this.gateSamples),
+      speakerElevatedPct: pct(this.gateElevated, this.gateSamples),
+      // The number that matters: closed while the far end was quiet means the wearer was cut.
+      gateClosedQuietPct: pct(this.gateClosed - this.gateClosedElevated, this.gateSamples - this.gateElevated),
+      gateRmsMax: this.gateRmsMax,
+    }
   }
 
   /**
@@ -1489,32 +1568,14 @@ class AcsMeetingService {
       nearClip: stats.nearClip,
       nearClipPct: stats.nearClipPct,
       gain,
+      barrier: micStateCoordinator.getSessionLoudnessGate(),
       sweep: sweep.currentLabel(),
       dropsStale: this.micDropsStale,
       dropsNonGlasses: this.micDropsNonGlasses,
       gaps: this.micGaps,
       gapMsMax: this.micGapMsMax,
+      ...this.gateSummary(),
     })
-    // #region agent log
-    fetch("http://127.0.0.1:7905/ingest/5a9713c9-45ff-4d09-9435-2adc5db5e91d", {
-      method: "POST",
-      headers: {"Content-Type": "application/json", "X-Debug-Session-Id": "828181"},
-      body: JSON.stringify({
-        sessionId: "828181",
-        runId: "run1",
-        hypothesisId: "E",
-        location: "AcsMeetingService.ts:logMicUplink",
-        message: "phone decoded glasses PCM window",
-        data: {
-          fps: Math.round((this.micFramesWindow * 1000) / elapsed),
-          meanAbs: level.meanAbs,
-          peak: level.peak,
-          frames: this.micFramesForwarded,
-        },
-        timestamp: Date.now(),
-      }),
-    }).catch(() => {})
-    // #endregion
     this.micFramesWindow = 0
   }
 

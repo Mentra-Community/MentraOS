@@ -913,6 +913,42 @@ describe("glasses LC3 microphone uplink", () => {
     expect(native.join.mock.calls[0]?.[0]).not.toHaveProperty("audioDelayMs")
   })
 
+  /**
+   * These percentages are what a threshold change gets argued from, so they have to separate the
+   * two cases that look identical in a recording: Barrier holding back speaker leak, and Barrier
+   * holding back the wearer.
+   */
+  test("the stop summary separates gating the far end from gating the wearer", async () => {
+    await joinedOnSoftap(lc3Native())
+    const emitRms = micListeners.get("mic_rms")!
+    // Four samples: two with the speaker up (one gated), two quiet (one gated).
+    emitRms({rms: 900, gateOpen: false, speakerElevated: true})
+    emitRms({rms: 4000, gateOpen: true, speakerElevated: true})
+    emitRms({rms: 300, gateOpen: false, speakerElevated: false})
+    emitRms({rms: 2200, gateOpen: true, speakerElevated: false})
+
+    const lines: unknown[][] = []
+    const original = console.log
+    console.log = (...args: unknown[]) => void lines.push(args)
+    try {
+      await acsMeetingService.leave("com.mentra.call")
+    } finally {
+      console.log = original
+    }
+
+    const stop = lines.find((line) => line[0] === "[AcsMeeting] phase=glasses-mic-uplink-stop")
+    expect(stop?.[1]).toEqual(
+      expect.objectContaining({
+        gateSamples: 4,
+        gateClosedPct: 50,
+        speakerElevatedPct: 50,
+        // Half the quiet samples were gated: that is the wearer being cut, not leak suppression.
+        gateClosedQuietPct: 50,
+        gateRmsMax: 4000,
+      }),
+    )
+  })
+
   test("leaving a call releases its own lease and nothing else", async () => {
     // The miniapp's lease outlives the sink on purpose: it releases after leave, so dropping it
     // here would hand the still-subscribed call phone frames and report the wearer's mic as gone.
