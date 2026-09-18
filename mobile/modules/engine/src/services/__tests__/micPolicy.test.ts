@@ -17,11 +17,11 @@ describe("resolveMicPolicy", () => {
     expect(resolveMicPolicy([], ANDROID)).toEqual({rawPcm: false, pinGlasses: false, micTuning: null})
   })
 
-  test("a glasses voice call claims PCM, pins, and lowers the gain", () => {
+  test("a glasses voice call claims PCM, pins, and applies the call gain", () => {
     expect(resolveMicPolicy([session("voice_call", "glasses")], ANDROID)).toEqual({
       rawPcm: true,
       pinGlasses: true,
-      micTuning: {gain: 14},
+      micTuning: {gain: 13},
     })
   })
 
@@ -43,12 +43,12 @@ describe("resolveMicPolicy", () => {
 
   test("the lowest gain wins, because clipping is the irreversible failure", () => {
     const profiles = {...MIC_USE_CASE_PROFILES}
-    expect(profiles.voice_call.gain).toBe(14)
+    expect(profiles.voice_call.gain).toBe(13)
     const resolved = resolveMicPolicy(
       [session("voice_call", "glasses"), session("transcription", "glasses")],
       ANDROID,
     )
-    expect(resolved.micTuning).toEqual({gain: 14})
+    expect(resolved.micTuning).toEqual({gain: 13})
   })
 
   test("a captions subscriber alongside a call still runs at the call's gain", () => {
@@ -56,7 +56,7 @@ describe("resolveMicPolicy", () => {
       [session("transcription", "glasses"), session("voice_call", "glasses")],
       ANDROID,
     )
-    expect(resolved).toEqual({rawPcm: true, pinGlasses: true, micTuning: {gain: 14}})
+    expect(resolved).toEqual({rawPcm: true, pinGlasses: true, micTuning: {gain: 13}})
   })
 
   test("without a glasses PCM uplink a glasses lease has no hardware effect", () => {

@@ -46,11 +46,11 @@ describe("MicSessionManager", () => {
     setSessionMicTuning.mockClear()
   })
 
-  test("a voice call pins the glasses, claims PCM and lowers the gain", () => {
+  test("a voice call pins the glasses, claims PCM and applies the call gain", () => {
     micSessionManager.acquire({owner: "com.mentra.call", source: "glasses", useCase: "voice_call"})
     expect(setMicSourcePin).toHaveBeenCalledWith("glasses")
     expect(setSessionRequirement).toHaveBeenLastCalledWith(true)
-    expect(setSessionMicTuning).toHaveBeenLastCalledWith({gain: 14})
+    expect(setSessionMicTuning).toHaveBeenLastCalledWith({gain: 13})
   })
 
   test("releasing the last session unpins and hands the tuning back", () => {

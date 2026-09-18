@@ -60,10 +60,12 @@ export type MicPlatformCaps = {
  * branch, so the RMS thresholds cannot affect a call.
  *
  * Index 14 is +26 dB: one step down, and the step that removes the table's
- * anomalous jump. If calls still clip, 13 (+24 dB) is the next move.
+ * anomalous jump. A same-voice sweep showed 15 rails hard (2.5–4.2% clip);
+ * 14/13/12 still kiss the rail on syllable tips. 13 is +24 dB, the middle
+ * of that band, while we listen for loudness vs residual clip.
  */
 export const MIC_USE_CASE_PROFILES: Record<MicUseCase, MicTuningProfile> = {
-  voice_call: {gain: 14},
+  voice_call: {gain: 13},
   transcription: {},
   voice_assistant: {},
   diagnostic: {},
