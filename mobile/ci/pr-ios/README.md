@@ -3,7 +3,9 @@
 The final **#pr-builds** Slack message has two downloads from one signed iOS
 Release app. These are ad hoc builds for registered test devices. They do not
 use TestFlight or require a source build or local re-signing. They use the dev
-backend and normal product defaults.
+backend and normal product defaults. Settings identifies the canonical app version,
+PR branch and actual checkout commit; the receipt also records the PR head and
+numeric native build.
 
 ## iPhone
 
@@ -81,5 +83,5 @@ embedded Apple profile inherently contains them). Downloads may expire after
 
 The signed outputs are handed off as a GitHub Actions artifact. If CDN
 publication fails, rerun failed jobs to reuse those exact bytes. If signing is
-missing, fix the certificate or PR profile secret and rerun the build. The source archive and
-upload bytes are never re-signed by the publication job.
+missing, fix the certificate or PR profile secret and rerun the build. The
+source archive and upload bytes are never re-signed by the publication job.
