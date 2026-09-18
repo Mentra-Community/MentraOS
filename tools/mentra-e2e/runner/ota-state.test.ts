@@ -3,7 +3,7 @@ import type {Snapshot} from "./driver"
 import {checkOtaObservedVersions, freshBesProof, otaFirmwareRoute, otaPage, selectUsbTransport} from "./ota-state"
 
 const screen = (...labels: string[]) =>
-  ({elements: labels.map((description) => ({visible: true, description}))}) as Snapshot
+  ({elements: labels.map((description) => ({visible: true, description}))} as Snapshot)
 
 test("only versions on the pinned firmware route are valid intermediate boots", () => {
   const before = "MentraLive_20260113"
@@ -86,4 +86,23 @@ test("BES qualification rejects stale, previous-boot and conflicting current-boo
       1011,
     ).version,
   ).toBe("26.9.15.0")
+})
+
+test("route and observed firmware share canonicalization across mixed prefixes", () => {
+  const route = otaFirmwareRoute("20260113", "MentraLive_20260915.0", [
+    {start_firmware: "MentraLive_20260113", end_firmware: "20260709"},
+    {start_firmware: "20260709", end_firmware: "20260915.0"},
+  ])
+  for (const version of [
+    "20260113",
+    "MentraLive_20260113",
+    "20260709",
+    "MentraLive_20260709",
+    "20260915.0",
+    "MentraLive_20260915.0",
+  ])
+    expect(() => checkOtaObservedVersions(version, 2, route, [2], false)).not.toThrow()
+  expect(() => checkOtaObservedVersions("MentraLive_20260709", 2, ["20260709"], [2], false)).not.toThrow()
+  for (const version of ["20260114", "MentraLive_20260114", "20260915.1", "bad_20260709", "20260709bad"])
+    expect(() => checkOtaObservedVersions(version, 2, route, [2], true)).toThrow()
 })

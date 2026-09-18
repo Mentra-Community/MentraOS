@@ -18,6 +18,7 @@ export interface Step {
   instruction: string
   expected: string
   action?: Command | ((context: Context, state: Snapshot) => Command)
+  preconditions?: Check[]
   checks: Check[] | ((context: Context) => Check[])
   timeoutMs?: number
   stableForMs?: number
@@ -39,6 +40,7 @@ export async function waitFor(
   let unmet = ""
   while (performance.now() < deadline) {
     last = await readSnapshot()
+    if (performance.now() >= deadline) break
     const terminalFailure = failOn.find((failure) => visible(last!, failure.selector).length > 0)
     if (terminalFailure) throw new Error(terminalFailure.message)
     const failure = checks.find((check) => {
@@ -63,7 +65,7 @@ export async function waitFor(
   throw new Error(`${unmet || "No snapshot available"} within ${timeoutMs} ms`)
 }
 
-export async function executeSteps(steps: Step[], context: Context, report: Report) {
+export async function executeSteps(steps: Step[], context: Context, report: Report, driver = {snapshot, command}) {
   const checkSize = (state: Snapshot) => {
     if (state.frontmostBundleId === "com.apple.loginwindow")
       throw new Error("The macOS session is locked; unlock it before starting another replay")
@@ -85,26 +87,46 @@ export async function executeSteps(steps: Step[], context: Context, report: Repo
       continue
     }
     const start = performance.now()
+    const deadline = start + (step.timeoutMs ?? 10000)
+    const remaining = () => {
+      const budget = deadline - performance.now()
+      if (budget <= 0) throw new Error("Step deadline expired")
+      return budget
+    }
     let state: Snapshot | undefined
     let videoStart: number | undefined
     let focusBefore: string | undefined
     try {
       context.signal?.throwIfAborted()
       videoStart = await report.video?.mark()
-      state = await snapshot()
+      state = await driver.snapshot()
       checkSize(state)
       focusBefore = state.frontmostBundleId
+      if (step.preconditions) {
+        state = await waitFor(
+          step.preconditions,
+          remaining(),
+          0,
+          async () => {
+            context.signal?.throwIfAborted()
+            return driver.snapshot()
+          },
+          step.failOn,
+        )
+        checkSize(state)
+      }
+      context.signal?.throwIfAborted()
       const action = typeof step.action === "function" ? step.action(context, state) : step.action
       if (action?.op === "relaunch") await report.video?.park()
-      if (action) await command(action)
+      if (action) await driver.command(action, step.preconditions ? remaining() : undefined)
       if (action?.op === "relaunch") await report.video?.reattach()
       state = await waitFor(
         typeof step.checks === "function" ? step.checks(context) : step.checks,
-        step.timeoutMs,
+        step.preconditions ? remaining() : step.timeoutMs,
         step.stableForMs,
         async () => {
           context.signal?.throwIfAborted()
-          return snapshot()
+          return driver.snapshot()
         },
         step.failOn,
       )
@@ -126,7 +148,7 @@ export async function executeSteps(steps: Step[], context: Context, report: Repo
       )
       failed = result.status === "failed"
     } catch (error) {
-      state = await snapshot().catch(() => state)
+      state = await driver.snapshot().catch(() => state)
       await report.record(
         {
           id: step.id,

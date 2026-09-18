@@ -91,6 +91,7 @@ export class Report {
   constructor(
     readonly suite: string,
     readonly secrets: string[],
+    private readonly readFinalApp = () => command<Doctor>({op: "doctor"}),
   ) {}
 
   async start(doctor: Doctor, fixture: string, buildManifestPath?: string) {
@@ -177,9 +178,18 @@ export class Report {
 
   async record(result: StepResult, state?: Snapshot) {
     const stem = `${String(this.results.length + 1).padStart(3, "0")}-${result.id}-${result.status}`
-    if (state) {
-      result.accessibility = `accessibility/${stem}.json`
-      await writeFile(join(this.directory, result.accessibility), JSON.stringify(redact(state, this.secrets), null, 2))
+    try {
+      if (state) {
+        result.accessibility = `accessibility/${stem}.json`
+        await writeFile(
+          join(this.directory, result.accessibility),
+          JSON.stringify(redact(state, this.secrets), null, 2),
+        )
+      }
+    } catch (error) {
+      result.status = "failed"
+      result.error = [result.error, `Accessibility evidence failed: ${String(error)}`].filter(Boolean).join("; ")
+      delete result.accessibility
     }
     if (result.status !== "not-applicable" && result.status !== "not-run") {
       try {
@@ -275,11 +285,18 @@ export class Report {
   }
 
   async finish(status: string, cleanup: string) {
+    if (this.results.some((step) => step.status === "failed")) status = "failed"
+    else if (status === "passed" && (!this.results.length || this.results.some((step) => step.status === "not-run")))
+      status = "incomplete"
+    if (status === "passed" && !this.video) {
+      status = "incomplete"
+      cleanup += "; no continuous recording was started"
+    }
     if (this.video) {
       try {
         this.metadata.video = {...(this.metadata.video as object), ...(await this.video.stop())}
       } catch (error) {
-        status = "incomplete"
+        if (status !== "failed") status = "incomplete"
         cleanup += `; video finalization failed: ${String(error)}`
       }
       this.video = undefined
@@ -291,7 +308,7 @@ export class Report {
     }
     if (status === "passed") {
       try {
-        const finalApp = await command<Doctor>({op: "doctor"})
+        const finalApp = await this.readFinalApp()
         this.metadata.finalApp = finalApp
         const executableHash = createHash("sha256")
           .update(await readFile(finalApp.executablePath))
@@ -316,5 +333,6 @@ export class Report {
         this.results.map((step) => `- ${step.id}: ${step.status}${step.error ? ` — ${step.error}` : ""}`).join("\n") +
         "\n",
     )
+    return status
   }
 }

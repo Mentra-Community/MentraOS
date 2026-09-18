@@ -69,3 +69,103 @@ test("cancellation interrupts sustained observation even while the success contr
   ).rejects.toThrow("Cancelled by operator")
   expect(reads).toBe(2)
 })
+
+test("admission waits for the named enabled host control before a single press", async () => {
+  const {executeSteps} = await import("./suite")
+  let reads = 0,
+    presses = 0
+  const selector = {role: "AXButton", description: "Admit Mentra E2E Observer", enabled: true}
+  const report = {metadata: {}, record: async (step: any) => step} as any
+  const driver = {
+    snapshot: async () => {
+      reads++
+      return {
+        ...state(false),
+        elements: [
+          {role: "AXButton", description: "Admit Another Guest", enabled: true, actions: ["AXPress"], visible: true},
+          ...(reads < 3 ? [] : [{...selector, enabled: reads >= 5, actions: ["AXPress"], visible: true}]),
+          ...(presses ? [{description: "Guest admitted", visible: true}] : []),
+        ],
+      } as Snapshot
+    },
+    command: async () => {
+      expect(reads).toBeGreaterThanOrEqual(5)
+      presses++
+      return {} as any
+    },
+  }
+  expect(
+    await executeSteps(
+      [
+        {
+          id: "admit",
+          instruction: "Admit selected guest",
+          expected: "Admitted",
+          preconditions: [{selector, action: "AXPress", count: 1}],
+          action: {op: "press", selector},
+          checks: [{selector: {description: "Guest admitted"}}],
+          timeoutMs: 2000,
+        },
+      ],
+      {fixture: "", email: "", password: ""},
+      report,
+      driver,
+    ),
+  ).toBe(true)
+  expect(presses).toBe(1)
+})
+
+test("admission expiry or cancellation never presses and readiness shares the postcondition budget", async () => {
+  const {executeSteps} = await import("./suite")
+  for (const scenario of ["timeout", "cancel", "slow-postcondition"]) {
+    let presses = 0,
+      reads = 0
+    const selector = {description: "Admit Mentra E2E Observer", enabled: true}
+    const abort = new AbortController()
+    const driver = {
+      snapshot: async () => {
+        reads++
+        if (scenario === "cancel" && reads === 2) abort.abort(new Error("Operator stopped"))
+        return {
+          ...state(false),
+          elements:
+            scenario === "slow-postcondition" && reads >= 3 ? [{...selector, visible: true, actions: ["AXPress"]}] : [],
+        } as unknown as Snapshot
+      },
+      command: async () => {
+        presses++
+        return {} as any
+      },
+    }
+    const results: any[] = []
+    const report = {
+      metadata: {},
+      record: async (step: any) => {
+        results.push(step)
+        return step
+      },
+    } as any
+    const start = performance.now()
+    expect(
+      await executeSteps(
+        [
+          {
+            id: "admit",
+            instruction: "Admit",
+            expected: "Admitted",
+            preconditions: [{selector}],
+            action: {op: "press", selector},
+            checks: [{selector: {description: "Not yet admitted"}}],
+            timeoutMs: 350,
+          },
+        ],
+        {fixture: "", email: "", password: "", signal: abort.signal},
+        report,
+        driver,
+      ),
+    ).toBe(false)
+    expect(presses).toBe(scenario === "slow-postcondition" ? 1 : 0)
+    expect(performance.now() - start).toBeLessThan(650)
+    expect(results[0].status).toBe("failed")
+  }
+})

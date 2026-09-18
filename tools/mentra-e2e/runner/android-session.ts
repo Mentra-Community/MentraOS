@@ -1,16 +1,22 @@
 import {createHash, randomUUID} from "node:crypto"
 import {mkdir, readFile, stat, writeFile} from "node:fs/promises"
 import {join, resolve} from "node:path"
+import {stopOwnedProcess} from "./owned-process"
 
 export async function androidCommand(args: string[], timeout = 20_000): Promise<Buffer> {
   const child = Bun.spawn(args, {stdout: "pipe", stderr: "pipe"})
-  const timer = setTimeout(() => child.kill(), timeout)
+  let timedOut = false
+  const timer = setTimeout(() => {
+    timedOut = true
+    child.kill()
+  }, timeout)
   try {
     const [out, err, code] = await Promise.all([
       new Response(child.stdout).arrayBuffer(),
       new Response(child.stderr).text(),
       child.exited,
     ])
+    if (timedOut) throw new Error(`${args[0]} exceeded ${timeout} ms`)
     if (code) throw new Error(`${args[0]} exited ${code}: ${err.slice(-1200)}`)
     return Buffer.from(out)
   } finally {
@@ -18,10 +24,17 @@ export async function androidCommand(args: string[], timeout = 20_000): Promise<
   }
 }
 
+type Recorder = Pick<Bun.Subprocess, "pid" | "exitCode" | "signalCode" | "exited" | "kill" | "terminal">
+const androidRuntime = {
+  command: androidCommand,
+  startRecorder: (args: string[], onData: (chunk: Uint8Array) => void): Recorder =>
+    Bun.spawn(args, {terminal: {cols: 120, rows: 30, data: (_terminal, chunk) => onData(chunk)}}),
+}
+
 const unescape = (text: string) =>
   text.replace(
     /&(amp|quot|apos|lt|gt);/g,
-    (_match, name: string) => ({amp: "&", quot: '"', apos: "'", lt: "<", gt: ">"})[name]!,
+    (_match, name: string) => ({amp: "&", quot: '"', apos: "'", lt: "<", gt: ">"}[name]!),
   )
 export function androidNodes(xml: string) {
   if (!xml.includes("<hierarchy") || !xml.includes("</hierarchy>"))
@@ -50,14 +63,15 @@ export type AndroidStep = {
   error?: string
 }
 const escape = (value: string) =>
-  value.replace(/[&<>"']/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"})[c]!)
+  value.replace(/[&<>"']/g, (c) => ({"&": "&amp;", "<": "&lt;", ">": "&gt;", '"': "&quot;", "'": "&#39;"}[c]!))
 
 /** One phone, one recorder, sequential semantic operations and evidence per step. */
 export class AndroidSession {
   readonly directory: string
   readonly steps: AndroidStep[] = []
-  private recorder?: Bun.Subprocess
-  private recorderExit?: Promise<number | null>
+  private recorder?: Recorder
+  private recorderStopRequested = false
+  private recordingFailure?: string
   private recordingLog = ""
   private recordingOriginMs = 0
   private dimensions?: string
@@ -68,13 +82,14 @@ export class AndroidSession {
     readonly suite: string,
     directory: string,
     readonly executionMode: "deterministic-replay" | "interactive-discovery" = "deterministic-replay",
+    private readonly runtime = androidRuntime,
   ) {
     if (!/^[A-Za-z0-9._:-]+$/.test(serial) || !/^\d+$/.test(display))
       throw new Error("Explicit phone serial and physical display ID required")
     this.directory = resolve(directory)
   }
   adb(...args: string[]) {
-    return androidCommand(["adb", "-s", this.serial, ...args])
+    return this.runtime.command(["adb", "-s", this.serial, ...args])
   }
   async snapshot() {
     const remote = `/sdcard/mentra-e2e-${randomUUID()}.xml`
@@ -97,7 +112,7 @@ export class AndroidSession {
     // Signals target this owned process only, never the global ADB server.
     await new Promise<void>((resolveReady, reject) => {
       const timer = setTimeout(() => reject(new Error("Android recorder readiness timed out")), 20_000)
-      const child = Bun.spawn(
+      const child = this.runtime.startRecorder(
         [
           "scrcpy",
           "--serial",
@@ -109,23 +124,18 @@ export class AndroidSession {
           "--record",
           join(this.directory, "routine.mp4"),
         ],
-        {
-          terminal: {
-            cols: 120,
-            rows: 30,
-            data: (_terminal, chunk) => {
-              this.recordingLog += Buffer.from(chunk).toString()
-              if (this.recordingLog.includes("Recording started")) {
-                clearTimeout(timer)
-                resolveReady()
-              }
-            },
-          },
+        (chunk) => {
+          this.recordingLog += Buffer.from(chunk).toString()
+          if (this.recordingLog.includes("Recording started")) {
+            clearTimeout(timer)
+            resolveReady()
+          }
         },
       )
       this.recorder = child
-      this.recorderExit = child.exited
-      void child.exited.then(() => {
+      void child.exited.then((code) => {
+        if (!this.recorderStopRequested)
+          this.recordingFailure = `Recorder exited unexpectedly (${code}, ${child.signalCode})`
         clearTimeout(timer)
         reject(new Error("Recorder exited before readiness"))
       })
@@ -133,13 +143,18 @@ export class AndroidSession {
     this.recordingOriginMs = (await stat(join(this.directory, "routine.mp4"))).birthtimeMs
     await this.flush("running")
   }
+  private requireRecorder() {
+    if (this.recordingFailure) throw new Error(this.recordingFailure)
+    if (!this.recorder || this.recorder.exitCode !== null || this.recorder.signalCode !== null)
+      throw new Error("Recorder is not running")
+  }
   async step(id: string, instruction: string, expected: string, action: () => Promise<void>) {
     if (!/^[A-Za-z0-9_-]+$/.test(id) || this.steps.some((s) => s.id === id))
       throw new Error("Step IDs must be unique safe filenames")
     const step: AndroidStep = {id, instruction, expected, startedAt: new Date().toISOString(), status: "passed"}
     this.steps.push(step)
     try {
-      if (!this.recorder || this.recorder.exitCode !== null) throw new Error("Recorder is not running")
+      this.requireRecorder()
       await action()
     } catch (error) {
       step.status = "failed"
@@ -161,19 +176,25 @@ export class AndroidSession {
       step.status = "failed"
       step.error = [step.error, String(error)].filter(Boolean).join("; ")
     }
+    try {
+      this.requireRecorder()
+    } catch (error) {
+      step.status = "failed"
+      step.error = [step.error, String(error)].filter(Boolean).join("; ")
+    }
     step.finishedAt = new Date().toISOString()
     await this.flush("running")
     console.log(`${id}: ${step.status} — ${instruction}`)
     if (step.status === "failed") throw new Error(step.error)
   }
-  async flow(id: string, commands: Record<string, unknown>[]) {
+  async flow(id: string, commands: Record<string, unknown>[], timeoutMs = 90_000) {
     if (!/^[A-Za-z0-9_-]+$/.test(id)) throw new Error("Flow IDs must be safe filenames")
     const file = join(this.directory, "replay", `${id}.yaml`)
     await writeFile(
       file,
       `appId: com.mentra.mentra\n---\n${commands.map((c) => `- ${JSON.stringify(c)}`).join("\n")}\n`,
     )
-    const output = await androidCommand(
+    const output = await this.runtime.command(
       [
         "maestro",
         "--device",
@@ -185,7 +206,7 @@ export class AndroidSession {
         join(this.directory, "maestro"),
         file,
       ],
-      90_000,
+      timeoutMs,
     )
     await writeFile(join(this.directory, "replay", `${id}.log`), output)
   }
@@ -194,6 +215,7 @@ export class AndroidSession {
       join(this.directory, "result.json"),
       JSON.stringify(
         {
+          ...extra,
           suite: this.suite,
           phone: this.serial,
           display: this.display,
@@ -203,7 +225,6 @@ export class AndroidSession {
           chapterTiming: "Approximate host clock relative to recorder file creation; links start 0.5 seconds early.",
           recordingOriginMs: this.recordingOriginMs,
           steps: this.steps,
-          ...extra,
         },
         null,
         2,
@@ -213,46 +234,96 @@ export class AndroidSession {
   async finish(status: "passed" | "failed", extra: Record<string, unknown> = {}) {
     // A failed start against an existing run must never rewrite its evidence.
     if (!this.ownsDirectory) return
-    if (this.recorder?.pid && this.recorder.exitCode === null) {
-      this.recorder.kill("SIGINT")
-      const timer = setTimeout(() => {
-        this.recorder?.kill("SIGKILL")
-      }, 10_000)
-      await this.recorderExit
-      clearTimeout(timer)
+    const errors: string[] = []
+    try {
+      this.requireRecorder()
+    } catch (error) {
+      errors.push(String(error))
     }
-    this.recorder?.terminal?.close()
+    this.recorderStopRequested = true
+    if (this.recorder) {
+      try {
+        await stopOwnedProcess(this.recorder, "SIGINT", 10_000)
+        if (this.recorder.exitCode !== 0 && this.recorder.signalCode !== "SIGINT")
+          throw new Error(`Recorder finalization exited ${this.recorder.exitCode}`)
+      } catch (error) {
+        errors.push(String(error))
+      } finally {
+        this.recorder.terminal?.close()
+      }
+    }
+    if (this.recordingFailure) errors.push(this.recordingFailure)
     await writeFile(join(this.directory, "recording.log"), this.recordingLog)
     const video = join(this.directory, "routine.mp4")
-    let probe
+    let duration: number | undefined
+    let hash: string | undefined
+    const requiredDuration = Math.max(
+      0,
+      ...this.steps.map((step) => (Date.parse(step.finishedAt ?? step.startedAt) - this.recordingOriginMs) / 1000),
+    )
     try {
-      probe = JSON.parse(
+      const probe = JSON.parse(
         (
-          await androidCommand(["ffprobe", "-v", "error", "-show_format", "-show_streams", "-of", "json", video])
+          await this.runtime.command(["ffprobe", "-v", "error", "-show_format", "-show_streams", "-of", "json", video])
         ).toString(),
       )
+      duration = Number(probe.format.duration)
+      if (
+        !Number.isFinite(duration) ||
+        !(duration > 0) ||
+        !probe.streams.some((s: {codec_type: string}) => s.codec_type === "video")
+      )
+        throw new Error("Recording has no video")
+      hash = createHash("sha256")
+        .update(await readFile(video))
+        .digest("hex")
+      // File creation/host clocks are approximate. A one-second alignment
+      // allowance cannot excuse an early recorder exit (checked separately).
+      if (!this.recordingOriginMs || duration + 1 < requiredDuration)
+        throw new Error(`Recording ends at ${duration}s before the routine ends at ${requiredDuration}s`)
     } catch (error) {
-      await this.flush("failed", {...extra, recordingError: String(error)})
-      throw error
+      errors.push(String(error))
     }
-    const duration = Number(probe.format.duration)
-    if (!(duration > 0) || !probe.streams.some((s: {codec_type: string}) => s.codec_type === "video"))
-      throw new Error("Recording has no video")
+    if (errors.length || !this.steps.length || this.steps.some((step) => step.status !== "passed")) status = "failed"
     const chapters = this.steps.map((step) => ({
       ...step,
-      videoSeconds: Math.min(duration, Math.max(0, (Date.parse(step.startedAt) - this.recordingOriginMs) / 1000 - 0.5)),
+      videoSeconds: Math.max(0, (Date.parse(step.startedAt) - this.recordingOriginMs) / 1000 - 0.5),
     }))
-    const hash = createHash("sha256")
-      .update(await readFile(video))
-      .digest("hex")
     await writeFile(join(this.directory, "chapters.json"), JSON.stringify(chapters, null, 2) + "\n")
-    await this.flush(status, {...extra, durationSeconds: duration, videoSha256: hash})
+    await this.flush(status, {
+      ...extra,
+      durationSeconds: duration,
+      videoSha256: hash,
+      requiredDurationSeconds: requiredDuration,
+      recordingCoverageToleranceSeconds: 1,
+      recordingError: errors.join("; ") || undefined,
+    })
     await writeFile(
       join(this.directory, "index.html"),
       `<!doctype html><html lang="en"><meta charset="utf-8"><title>${escape(this.suite)}</title>
 <style>body{background:#101b24;color:#eff6ff;font:16px system-ui;margin:2rem}main{display:flex;gap:2rem;align-items:flex-start}video{width:min(36vw,400px);max-height:85vh;position:sticky;top:1rem}nav{max-width:700px}button{display:block;width:100%;background:#213547;color:inherit;border:1px solid #58718a;border-radius:6px;padding:1rem;margin:.6rem 0;text-align:left;cursor:pointer}small{color:#b8c9da}a{color:#9dd4ff}img{max-height:180px}</style>
-<h1>${escape(this.suite)}</h1><p>${escape(status)} · Phone ${escape(this.serial)} · ${this.executionMode === "deterministic-replay" ? "Zero model calls during replay" : "Interactive discovery; not a qualified full replay"}.</p><p>Chapter times use approximate recorder startup alignment. Each step includes its original screenshot and accessibility evidence. Hardware observations and listener checks remain separate from UI success.</p><main><video controls src="routine.mp4"></video><nav>${chapters.map((step) => `<button data-seek="${step.videoSeconds}"><b>${escape(step.id)} · ${escape(step.instruction)}</b><br><small>${escape(step.expected)} · ${escape(step.status)} · ${step.videoSeconds.toFixed(1)} s</small></button>${step.screenshot ? `<a href="${step.screenshot}">Screenshot</a> ` : ""}${step.accessibility ? `<a href="${step.accessibility}">Accessibility</a>` : ""}`).join("")}</nav></main><script>const v=document.querySelector('video');document.querySelectorAll('[data-seek]').forEach(b=>b.onclick=()=>{v.currentTime=Number(b.dataset.seek);v.play()})</script></html>`,
+<h1>${escape(this.suite)}</h1><p>${escape(status)} · Phone ${escape(this.serial)} · ${
+        this.executionMode === "deterministic-replay"
+          ? "Zero model calls during replay"
+          : "Interactive discovery; not a qualified full replay"
+      }.</p><p>Chapter times use approximate recorder startup alignment. Each step includes its original screenshot and accessibility evidence. Hardware observations and listener checks remain separate from UI success.</p><main><video controls src="routine.mp4"></video><nav>${chapters
+        .map(
+          (step) =>
+            `<button data-seek="${step.videoSeconds}"><b>${escape(step.id)} · ${escape(
+              step.instruction,
+            )}</b><br><small>${escape(step.expected)} · ${escape(step.status)} · ${step.videoSeconds.toFixed(
+              1,
+            )} s</small></button>${step.screenshot ? `<a href="${step.screenshot}">Screenshot</a> ` : ""}${
+              step.accessibility ? `<a href="${step.accessibility}">Accessibility</a>` : ""
+            }`,
+        )
+        .join(
+          "",
+        )}</nav></main><script>const v=document.querySelector('video');document.querySelectorAll('[data-seek]').forEach(b=>b.onclick=()=>{v.currentTime=Number(b.dataset.seek);v.play()})</script></html>`,
     )
     console.log(`Report: ${join(this.directory, "index.html")}`)
+    if (errors.length) throw new Error(errors.join("; "))
+    if (status !== "passed") throw new Error("Android routine failed; see recorded evidence")
+    return status
   }
 }

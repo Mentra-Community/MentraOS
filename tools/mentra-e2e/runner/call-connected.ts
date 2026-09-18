@@ -812,7 +812,17 @@ export async function runConnectedCall(
             id: event.id.startsWith("recovery-") ? "CALL-RECOVERY-ADMIT" : rejoining ? "CALL-READMIT" : "CALL-ADMIT",
             instruction: "Admit only the named Mentra E2E Observer from this replay.",
             expected: "The guest leaves the lobby through the capability-gated Admit control.",
-            action: {op: "press", selector: {role: "AXButton", description: "Admit Mentra E2E Observer"}},
+            preconditions: [
+              {
+                selector: {role: "AXButton", description: "Admit Mentra E2E Observer", enabled: true},
+                action: "AXPress",
+                count: 1,
+              },
+            ],
+            action: {
+              op: "press",
+              selector: {role: "AXButton", description: "Admit Mentra E2E Observer", enabled: true},
+            },
             checks: [
               {selector: {description: "Waiting in lobby"}, absent: true},
               {selector: {description: "Mentra E2E Observer"}},

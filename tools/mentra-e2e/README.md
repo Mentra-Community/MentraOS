@@ -108,6 +108,8 @@ bun run tools/mentra-e2e/run.ts run --suite failure-proof --build-manifest mobil
 
 Run `bun tools/mentra-e2e/verify-run.ts <run-folder>` with FFmpeg/ffprobe installed to independently check the MP4, PNG dimensions, secure-value redaction, chapter timestamps, unique IDs, viewer links and version 2 frame liveness. Older recordings explicitly report that liveness was not recorded. This validates artifact structure, not browser playback interaction. The deliberate failure run `2026-09-15T23-05-20-659Z-failure-proof-bdb364` exited 1, retained the failure, restored home, and passed these artifact checks (9 screenshots, 16.98-second video).
 
+A requested passing verdict is provisional until finalization: failed steps remain failed, incomplete execution or capture/identity failures cannot pass, and the OTA CLI exits nonzero for every non-passing result. Native lobby admission waits for exactly one named, enabled Admit control exposing `AXPress`; readiness, the press and its postconditions share the admission deadline.
+
 ## Development validation
 
 ```sh

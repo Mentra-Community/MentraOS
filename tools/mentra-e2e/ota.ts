@@ -8,6 +8,7 @@ import {
   checkOtaObservedVersions,
   freshBesProof,
   otaFirmwareRoute,
+  normalizeFirmware,
   otaPage,
   selectUsbTransport,
 } from "./runner/ota-state"
@@ -50,7 +51,7 @@ const app = manifest.apps?.["com.mentra.asg_client"]
 const target = {
   asgVersion: app?.versionCode,
   asgSha256: app?.sha256,
-  firmware: manifest.mtk_full_ota?.end_firmware,
+  firmware: normalizeFirmware(manifest.mtk_full_ota?.end_firmware),
   bes: manifest.bes_firmware?.version,
 }
 if (
@@ -109,7 +110,7 @@ async function hardware(observingActivePass = false) {
     throw new Error("HARDWARE_IDENTITY_MISMATCH")
   const bluetooth = await shell("getprop", "persist.mentra.live.mac")
   if (bluetooth.toUpperCase() !== fixture.bluetooth.toUpperCase()) throw new Error("HARDWARE_BLUETOOTH_MISMATCH")
-  const firmware = await shell("getprop", "ro.custom.ota.version")
+  const firmware = normalizeFirmware(await shell("getprop", "ro.custom.ota.version"))
   const bootId = await shell("cat", "/proc/sys/kernel/random/boot_id")
   const slot = await shell("getprop", "ro.boot.slot_suffix")
   const bootCompleted = await shell("getprop", "sys.boot_completed")
@@ -152,7 +153,7 @@ async function hardware(observingActivePass = false) {
 }
 async function observe(instruction: string, state: Snapshot, expected = instruction) {
   const mark = await report.video!.mark()
-  await report.record(
+  const result = await report.record(
     {
       id: `OTA-${String(++index).padStart(2, "0")}`,
       instruction,
@@ -166,6 +167,7 @@ async function observe(instruction: string, state: Snapshot, expected = instruct
     },
     state,
   )
+  if (result.status !== "passed") throw new Error(result.error ?? "OTA observation evidence failed")
 }
 async function press(identifier: string, instruction: string) {
   const ok = await executeSteps(
@@ -390,10 +392,11 @@ try {
     await Bun.sleep(750)
   }
   if (!finished) throw new Error("OTA observation deadline reached; installation was not interrupted or retried")
-  await report.finish(
+  const status = await report.finish(
     "passed",
     "All pinned component versions and the ASG artifact hash verified; paired home restored.",
   )
+  if (status !== "passed") process.exitCode = 1
 } catch (error) {
   if (report.directory) {
     const state = await snapshot().catch(() => undefined)
