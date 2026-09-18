@@ -50,6 +50,14 @@ export interface Setting {
 }
 
 export const SETTINGS: Record<string, Setting> = {
+  // Optional detailed app usage only. Basic Bluetooth SDK usage reporting is independent.
+  telemetry_enabled: {
+    key: "telemetry_enabled",
+    defaultValue: () => false,
+    writable: true,
+    saveOnServer: false,
+    persist: true,
+  },
   // feature flags / mantle settings:
   dev_mode: {key: "dev_mode", defaultValue: () => __DEV__, writable: true, saveOnServer: true, persist: true}, // deprecated
   debug_mode: {key: "debug_mode", defaultValue: () => __DEV__, writable: true, saveOnServer: true, persist: true},
