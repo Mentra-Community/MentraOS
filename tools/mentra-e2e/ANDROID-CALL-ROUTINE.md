@@ -2,7 +2,7 @@
 
 This routine tests Call on an explicitly recorded firmware fixture. It performs no updates. The separate [OTA routine](ANDROID-OTA-ROUTINE.md) qualifies installation and target compliance. A user-approved instrumented fixture may be used for Call testing; record its actual firmware and APK hashes, its differences from the release targets, and the deferred OTA status. Do not label this as a pass on the release firmware.
 
-For the September 17 replacement-candidate run, the user explicitly deferred OTA until after PR4078 is merged. Preserve the instrumented 03BE firmware and run only Call. Missing fresh BES readback remains unverified; it must not be reported as an OTA pass.
+The September 17 Call investigation uses the explicitly approved instrumented 03BE fixture. PR4078 is now merged; the separate OTA routine remains pending. Preserve the instrumentation during Call diagnosis. Missing fresh BES readback remains unverified; it must not be reported as an OTA pass.
 
 The English acceptance routine is saved below. Android launch discovery and hardware verification have been exercised; a complete Android meeting/media replay is still being qualified. An executed UI action is not evidence of successful media delivery.
 
@@ -58,3 +58,5 @@ The browser companion's optional `--background` check emits `background-ready` a
 The user extended the original ten-attempt allowance by ten, for twenty total. Attempts 11 and 12 are completed; eight remain at this checkpoint. A failed start counts. Increasing backend quota never increases this budget. Attempt 12's owned meeting was retired (DELETE 204 / GET 404); the browser left the lobby, glasses reported stream stopped, and hotspot teardown completed. USB disappeared again during cleanup; a later network ADB read verified the same boot ID/CID and `ap0` down. This is not a completed media qualification or a reboot claim.
 
 Current local discovery evidence is under `.test-results/pr-4078-android-qualification-01f22fc/android-call-discovery-01/`. The five-step compiled preparation replay passed under `android-call-preparation-01/`, including the required firmware checks, settings, meeting-name editing and cancellation, with zero model calls. No meeting or stream was created. The complete live replay command will be added after the remaining actions have been exercised on the candidate.
+
+The `55378ed` replay resolved the displayed guest but failed inside Microsoft Calling SDK 2.16.0 with `The cookie is not valid: {0}.` An isolated Android SDK comparison reproduced this and verified selected anonymous-guest admission on 2.16.1-beta.7. Follow-up PR4094 pins the tested SDK. Full Call media qualification is still pending. The compiled native admission step must fail on an error and require the selected guest to leave the lobby before marking that step passed; the browser must independently confirm its connected state.
