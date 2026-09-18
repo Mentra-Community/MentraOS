@@ -69,8 +69,20 @@ def configure(output, keychain):
         probe = Path(temporary) / "probe"
         subprocess.run(["xcrun", "clang", "-x", "c", "-", "-o", str(probe)],
                        input=b"int main(void) { return 0; }\n", check=True)
-        run("codesign", "--force", "--sign", certificate, "--keychain", keychain,
-            "--timestamp=none", probe)
+        try:
+            run("codesign", "--force", "--verbose=4", "--sign", certificate, "--keychain", keychain,
+                "--timestamp=none", probe)
+        except subprocess.CalledProcessError:
+            # Public metadata and codesign-specific security diagnostics only;
+            # never dump keychain contents, private keys or passwords.
+            subprocess.run(["security", "list-keychains", "-d", "user"], check=False)
+            subprocess.run(["security", "default-keychain", "-d", "user"], check=False)
+            subprocess.run(["security", "show-keychain-info", keychain], check=False)
+            subprocess.run(["/usr/bin/log", "show", "--last", "1m", "--style", "compact", "--predicate",
+                            'process == "securityd" AND (eventMessage CONTAINS[c] "codesign" OR '
+                            'eventMessage CONTAINS[c] "CSSM" OR eventMessage CONTAINS[c] "interaction")'],
+                           check=False, timeout=20)
+            raise
         run("codesign", "--verify", "--strict", "-R", "=anchor apple generic", probe)
     # Xcode 16+ reads profiles here. Keep the named profile separate from the
     # App Store profile; concurrent jobs can use the same Apple-issued UUID.

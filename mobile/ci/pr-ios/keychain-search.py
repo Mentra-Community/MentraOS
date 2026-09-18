@@ -16,5 +16,5 @@ with lock.open("a") as stream:
     current = shlex.split(subprocess.check_output(["security", "list-keychains", "-d", "user"], text=True))
     updated = [item for item in current if item != keychain]
     if operation == "add":
-        updated.append(keychain)
+        updated.insert(0, keychain)
     subprocess.run(["security", "list-keychains", "-d", "user", "-s", *updated], check=True)
