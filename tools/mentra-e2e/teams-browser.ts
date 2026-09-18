@@ -35,6 +35,7 @@ const {positionals, values} = parseArgs({
     "rejoin": {type: "boolean", default: false},
     "capture-devices": {type: "string"},
     "audio-only": {type: "boolean", default: false},
+    "background": {type: "boolean", default: false},
     "name": {type: "string", default: "Mentra E2E Observer"},
     "remote-name": {type: "string", default: "Mentra Live"},
     "admission-seconds": {type: "string", default: "90"},
@@ -98,7 +99,9 @@ let audioDeviceSelections = 0
 let freshLinkRecovery: {status: "passed" | "failed"; error?: string} | undefined
 const browserErrors: {type: string; text: string}[] = []
 const nativeInput =
-  (values.rejoin || values["audio-only"]) && mode === "run" ? createInterface({input: process.stdin}) : undefined
+  (values.rejoin || values["audio-only"] || values.background) && mode === "run"
+    ? createInterface({input: process.stdin})
+    : undefined
 const nativeClosed = new AbortController()
 nativeInput?.once("close", () => nativeClosed.abort(new Error("Native controller closed its acknowledgement pipe")))
 function nativeCheckpointAcknowledged(checkpoint: string, publish: () => Promise<void>) {
@@ -106,7 +109,9 @@ function nativeCheckpointAcknowledged(checkpoint: string, publish: () => Promise
     nativeInput!,
     checkpoint,
     publish,
-    started + BROWSER_CONTROLLER_TIMEOUT_MS,
+    // Background verification adds 30 seconds of media observation and two
+    // recorded native transitions; keep its larger budget explicit and bounded.
+    started + BROWSER_CONTROLLER_TIMEOUT_MS + (values.background ? 90000 : 0),
     nativeClosed.signal,
   )
 }
@@ -268,6 +273,36 @@ try {
         await evidence(prefix + "video", "Verify advancing remote video with the laptop camera off.")
       }
       await verifyIncomingVideo("initial-")
+      if (values.background) {
+        await nativeCheckpointAcknowledged("background-ready", () =>
+          evidence("background-ready", "Wait for the native controller to background the phone app."),
+        )
+        const before = await videoSamples(runPage)
+        const mediaBefore = await sampleMediaDiagnostics(runPage)
+        await new Promise((resolve) => setTimeout(resolve, 30000))
+        const after = await videoSamples(runPage)
+        await writeFile(
+          join(output, "background-media.json"),
+          JSON.stringify(
+            {
+              before,
+              after,
+              mediaBefore,
+              mediaAfter: await sampleMediaDiagnostics(runPage),
+            },
+            null,
+            2,
+          ),
+        )
+        if ((await teamsPhase(runPage)) !== "connected" || !hasAdvancingVideo(before, after))
+          throw new Error("Remote video stopped during the 30-second phone background check")
+        await nativeCheckpointAcknowledged("background-finished", () =>
+          evidence(
+            "background-finished",
+            "Verify advancing remote video, then return the phone app to the foreground. Audible audio still requires a listener.",
+          ),
+        )
+      }
       if (captureDevices) {
         if (values["audio-only"])
           await nativeCheckpointAcknowledged("audio-return-ready", () =>
