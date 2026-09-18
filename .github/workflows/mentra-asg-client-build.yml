@@ -30,6 +30,8 @@ on:
       - ".github/scripts/repackage-pr-apk*"
       - ".github/scripts/test_repackage_pr_apk.py"
       - ".github/scripts/notify-pr-builds*"
+      - ".github/workflows/mentra-app-ios-build.yml"
+      - ".github/scripts/pr-ios-artifacts*"
       - ".github/scripts/select-pr-asg.mjs"
       - ".github/scripts/compute-asg-build-identity.mjs"
       - ".github/scripts/allocate-asg-version.mjs"

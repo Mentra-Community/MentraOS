@@ -1,6 +1,6 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import {buildPost, matchingAsgRun, notifyPrBuilds, readOtaTargets} from "./notify-pr-builds.mjs"
+import {iosBuildRequired, buildPost, matchingAsgRun, notifyPrBuilds, readOtaTargets} from "./notify-pr-builds.mjs"
 
 const sha = "a".repeat(40)
 const pr = {
@@ -29,6 +29,7 @@ const manifest = {
 }
 const run = {
   id: 1,
+  run_attempt: 1,
   status: "completed",
   conclusion: "success",
   event: "pull_request",
@@ -63,27 +64,72 @@ test("Slack escapes PR text and includes all three firmware targets", () => {
   assert.doesNotMatch(body, /WRONG|TestFlight|Google Play/)
 })
 
-function harness({asg = run, comments = [], currentPr = pr, artifactStatus = 200} = {}) {
+const iosRun = {...run, id: 3}
+const iosReceipt = {
+  schemaVersion: 1,
+  pr: 123,
+  headSha: sha,
+  buildSha: "b".repeat(40),
+  runId: 3,
+  runAttempt: 1,
+  artifacts: Object.fromEntries(
+    [
+      ["iphone", "ipa"],
+      ["mac", "zip"],
+    ].map(([kind, ext]) => [
+      kind,
+      {
+        name: `mentra-ios-${kind}-pr-123-${sha}-3-1.${ext}`,
+        size: 10,
+        sha256: "c".repeat(64),
+      },
+    ]),
+  ),
+}
+function harness({
+  asg = run,
+  ios = iosRun,
+  files = [],
+  receipt = iosReceipt,
+  comments = [],
+  currentPr = pr,
+  artifactStatus = 200,
+  missingMac = false,
+} = {}) {
   const posts = [],
     written = []
   const github = {
     rest: {
-      pulls: {get: async () => ({data: currentPr})},
-      actions: {listWorkflowRuns: async () => ({data: {workflow_runs: [asg]}})},
+      pulls: {get: async () => ({data: currentPr}), listFiles: "files"},
+      actions: {
+        listWorkflowRuns: async ({workflow_id}) => ({
+          data: {
+            workflow_runs: [
+              workflow_id === "mentra-app-ios-build.yml" ? (typeof ios === "function" ? ios() : ios) : asg,
+            ].filter(Boolean),
+          },
+        }),
+      },
       issues: {
         listComments: {},
         createComment: async (v) => written.push(v),
         updateComment: async (v) => written.push(v),
       },
     },
-    paginate: async () => comments,
+    paginate: async (method) => (method === "files" ? files : comments),
   }
   const fetchImpl = async (url, options) => {
     if (options.method === "POST") {
       posts.push(JSON.parse(options.body))
       return new Response("ok")
     }
-    return new Response(options.method === "HEAD" ? null : JSON.stringify(manifest), {status: artifactStatus})
+    return new Response(
+      options.method === "HEAD" ? null : JSON.stringify(url.includes("mentra-ios-pr-") ? receipt : manifest),
+      {
+        status: missingMac && url.endsWith(".zip") ? 404 : artifactStatus,
+        headers: {"content-length": "10"},
+      },
+    )
   }
   return {
     posts,
@@ -125,4 +171,61 @@ test("notification waits for both outputs, deduplicates reruns, suppresses super
   const recovered = harness({comments: [{...comment, body: failed.written[0].body}]})
   await notifyPrBuilds(recovered.args)
   assert.match(recovered.posts[0].text, /ready to test/)
+})
+
+test("iOS path applicability matches its filtered workflow", () => {
+  assert.equal(iosBuildRequired([{filename: "cloud-v2/core/index.ts"}]), false)
+  for (const filename of [
+    "mobile/app.config.ts",
+    ".github/workflows/mentra-app-ios-build.yml",
+    ".github/scripts/pr-ios-artifacts.test.mjs",
+  ])
+    assert.equal(iosBuildRequired([{filename}]), true)
+})
+
+test("waits for slow iOS and includes both verified downloads", async () => {
+  let polls = 0
+  const h = harness({
+    files: [{filename: "mobile/app.config.ts"}],
+    ios: () => (++polls < 3 ? {...iosRun, status: "in_progress", conclusion: null} : iosRun),
+  })
+  await notifyPrBuilds({...h.args, attempts: 4})
+  assert.equal(polls, 3)
+  assert.equal(h.posts.length, 1)
+  assert.match(h.written[0].body, /Download iPhone IPA/)
+  assert.match(h.written[0].body, /Download Mac app/)
+  assert.match(h.posts[0].text, /ready to test/)
+})
+
+test("iOS failure, missing or stale publication never advertises either download as ready", async () => {
+  for (const options of [
+    {ios: {...iosRun, conclusion: "failure"}},
+    {ios: undefined},
+    {missingMac: true},
+    {receipt: {...iosReceipt, runAttempt: 2}},
+    {receipt: {...iosReceipt, headSha: "d".repeat(40)}},
+  ]) {
+    const h = harness({...options, files: [{filename: "mobile/app.config.ts"}]})
+    // Explicit absence, rather than the default fixture.
+    if (options.ios === undefined && "ios" in options)
+      h.args.github.rest.actions.listWorkflowRuns = async ({workflow_id}) => ({
+        data: {workflow_runs: workflow_id.includes("ios") ? [] : [run]},
+      })
+    await notifyPrBuilds(h.args)
+    assert.match(h.posts[0].text, /incomplete/)
+    assert.doesNotMatch(h.written[0].body, /Download iPhone IPA|Download Mac app/)
+    assert.match(h.written[0].body, /Download Android APK/)
+  }
+})
+
+test("Android failure still allows verified iOS links; cancelled iOS suppresses stale post", async () => {
+  process.env.ANDROID_RESULT = "failure"
+  const h = harness({files: [{filename: "mobile/app.config.ts"}]})
+  await notifyPrBuilds(h.args)
+  assert.match(h.written[0].body, /Download iPhone IPA/)
+  assert.match(h.posts[0].text, /incomplete/)
+  process.env.ANDROID_RESULT = "success"
+  const cancelled = harness({files: [{filename: "mobile/app.config.ts"}], ios: {...iosRun, conclusion: "cancelled"}})
+  await notifyPrBuilds(cancelled.args)
+  assert.equal(cancelled.posts.length, 0)
 })
