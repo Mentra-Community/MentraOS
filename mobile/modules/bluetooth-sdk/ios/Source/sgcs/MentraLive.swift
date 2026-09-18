@@ -6931,7 +6931,7 @@ extension MentraLive {
     }
 
     /// Read the current wear state (sr_wrst). Always available.
-    func queryWearState() {
+    @objc func queryWearState() {
         sendWearCommandIfReady("cs_wrst", body: [:])
     }
 
@@ -6940,12 +6940,12 @@ extension MentraLive {
     /// Deliberately not the NV-backed cs_swit type 1: the glasses must forget
     /// this on disconnect, and any later switch write would re-persist a wear
     /// bit that had been enabled once.
-    func setWearReporting(_ enabled: Bool) {
+    @objc func setWearReporting(_ enabled: Bool) {
         sendWearCommandIfReady("cs_weartun", body: ["enabled": enabled ? 1 : 0])
     }
 
     /// Move the debounce vote. Negative means "leave this one alone".
-    func setWearTuning(intervalMs: Int, count: Int, majority: Int) {
+    @objc func setWearTuning(intervalMs: Int, count: Int, majority: Int) {
         var body: [String: Any] = [:]
         if intervalMs >= 0 { body["interval"] = intervalMs }
         if count >= 0 { body["count"] = count }
@@ -6955,13 +6955,13 @@ extension MentraLive {
     }
 
     /// Ask what the poll loop is actually running (sr_weartun).
-    func requestWearTuning() {
+    @objc func requestWearTuning() {
         sendWearCommandIfReady("cs_wearst", body: [:])
     }
 
     /// Restore firmware defaults and disable reporting. Distinct from sending
     /// the default vote values, which would leave reporting on.
-    func resetWearTuning() {
+    @objc func resetWearTuning() {
         sendWearCommandIfReady("cs_weartun", body: ["reset": 1])
     }
 
