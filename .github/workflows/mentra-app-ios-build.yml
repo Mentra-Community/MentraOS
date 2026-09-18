@@ -5,6 +5,7 @@ on:
     paths:
       - "mobile/**"
       - ".github/workflows/mentra-app-ios-build.yml"
+      - ".github/workflows/reusable-pr-build-notification.yml"
       - ".github/scripts/pr-ios-artifacts*"
   push:
     branches:
@@ -638,3 +639,14 @@ jobs:
           ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
           ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
         run: node .github/scripts/pr-ios-artifacts.mjs pr-ios-output
+
+  notify-pr-builds:
+    needs: [build, publish]
+    if: ${{ always() && !cancelled() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
+    uses: ./.github/workflows/reusable-pr-build-notification.yml
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
+    secrets:
+      SLACK_WEBHOOK_PR_BUILDS: ${{ secrets.SLACK_WEBHOOK_PR_BUILDS }}

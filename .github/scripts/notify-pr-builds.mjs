@@ -6,6 +6,7 @@ export function iosBuildRequired(files) {
     ({filename}) =>
       filename.startsWith("mobile/") ||
       filename === ".github/workflows/mentra-app-ios-build.yml" ||
+      filename === ".github/workflows/reusable-pr-build-notification.yml" ||
       filename.startsWith(".github/scripts/pr-ios-artifacts"),
   )
 }
@@ -13,7 +14,6 @@ export function iosBuildRequired(files) {
 const escape = (value) => String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
 const link = (url, label) => `<${url}|${escape(label).replaceAll("|", " ")}>`
 const marker = "<!-- mentra-pr-builds-slack -->"
-const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms))
 
 export function readOtaTargets(manifest, number, sha) {
   if (manifest.releaseVersion !== `pr-${number}-${sha}`)
@@ -85,7 +85,7 @@ export function buildPost({pr, sha, androidUrl, manifestUrl, targets, androidRun
   }
 }
 
-export function matchingAsgRun(runs, pr, sha) {
+export function matchingBuildRun(runs, pr, sha) {
   return runs
     .filter(
       (run) =>
@@ -97,13 +97,63 @@ export function matchingAsgRun(runs, pr, sha) {
     .sort((a, b) => b.id - a.id || b.run_attempt - a.run_attempt)[0]
 }
 
-export async function notifyPrBuilds({github, context, core, fetchImpl = fetch, wait = sleep, attempts = 240}) {
+// Inspect artifact-producing jobs, not the whole workflow: its notification
+// job can still be running or waiting for the shared concurrency lock. Pending
+// notification jobs can also be superseded without cancelling a valid build.
+const producers = {
+  android: {workflow: "mentra-app-android-build.yml", jobs: ["build"]},
+  asg: {workflow: "mentra-asg-client-build.yml", jobs: ["select", "build"]},
+  ios: {workflow: "mentra-app-ios-build.yml", jobs: ["build", "publish"]},
+}
+
+async function readBuild(github, context, pr, sha, lane) {
+  const producer = producers[lane]
+  const {data} = await github.rest.actions.listWorkflowRuns({
+    ...context.repo,
+    workflow_id: producer.workflow,
+    head_sha: sha,
+    event: "pull_request",
+    per_page: 100,
+  })
+  const run = matchingBuildRun(data.workflow_runs, pr, sha)
+  if (!run || run.status === "queued") return {pending: true}
+  // Failed-jobs reruns retain successful jobs from an earlier attempt. Select
+  // the latest execution of each producer, excluding all notification jobs.
+  const all = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
+    ...context.repo,
+    run_id: run.id,
+    filter: "all",
+    per_page: 100,
+  })
+  const jobs = producer.jobs.map(
+    (name) =>
+      all
+        .filter((job) => job.name === name && job.run_attempt <= run.run_attempt)
+        .sort((a, b) => b.run_attempt - a.run_attempt || b.id - a.id)[0],
+  )
+  if (jobs.some((job) => !job || job.status !== "completed")) return {pending: true}
+  // A downstream job from before a newly rerun dependency is stale. Also wait
+  // while another workflow's new attempt has not exposed its producer jobs.
+  if (
+    jobs.some((job, index) => jobs.slice(0, index).some((upstream) => upstream.run_attempt > job.run_attempt)) ||
+    (run.status !== "completed" && run.id !== context.runId && jobs.every((job) => job.run_attempt < run.run_attempt))
+  )
+    return {pending: true}
+  const cancelled = jobs.some((job) => job.conclusion === "cancelled")
+  const success = jobs.every(
+    (job) => job.conclusion === "success" || (lane === "asg" && job.name === "build" && job.conclusion === "skipped"),
+  )
+  // The receipt belongs to the publication job's attempt, which can precede a
+  // notification-only retry. Never require re-exporting just to resend a post.
+  return {run, attempt: jobs.at(-1).run_attempt, conclusion: cancelled ? "cancelled" : success ? "success" : "failure"}
+}
+
+export async function notifyPrBuilds({github, context, core, fetchImpl = fetch}) {
   const webhook = process.env.SLACK_WEBHOOK_PR_BUILDS
   if (!webhook) throw new Error("SLACK_WEBHOOK_PR_BUILDS is missing; configure the #pr-builds incoming webhook")
   const repo = context.repo
   let pr = context.payload.pull_request
   const sha = pr.head.sha
-  const androidRunUrl = `https://github.com/${repo.owner}/${repo.repo}/actions/runs/${context.runId}`
   const current = async () => {
     pr = (await github.rest.pulls.get({...repo, pull_number: pr.number})).data
     return pr.state === "open" && pr.head.sha === sha
@@ -112,50 +162,34 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch, 
     core.info("PR closed or superseded; no notification.")
     return
   }
-  let error =
-    process.env.ANDROID_RESULT === "success"
-      ? null
-      : `Android build ${process.env.ANDROID_RESULT}; no ready-to-test build is available.`
   const files = await github.paginate(github.rest.pulls.listFiles, {...repo, pull_number: pr.number, per_page: 100})
   const ios = {required: iosBuildRequired(files)}
-  let asgRun, iosRun
-  for (let attempt = 0; attempt < attempts; attempt++) {
-    if (!(await current())) {
-      core.info("PR superseded while awaiting publication.")
-      return
-    }
-    const find = async (workflow_id) => {
-      const {data} = await github.rest.actions.listWorkflowRuns({
-        ...repo,
-        workflow_id,
-        head_sha: sha,
-        event: "pull_request",
-        per_page: 100,
-      })
-      return matchingAsgRun(data.workflow_runs, pr, sha)
-    }
-    ;[asgRun, iosRun] = await Promise.all([
-      error ? undefined : find("mentra-asg-client-build.yml"),
-      ios.required ? find("mentra-app-ios-build.yml") : undefined,
-    ])
-    if (asgRun?.conclusion === "cancelled" || iosRun?.conclusion === "cancelled") {
-      core.info("A matching workflow was cancelled; no notification.")
-      return
-    }
-    if ((error || asgRun?.status === "completed") && (!ios.required || iosRun?.status === "completed")) break
-    core.info("Waiting for this PR revision's ASG and applicable iOS publication.")
-    await wait(30_000)
+  const [androidBuild, asgBuild, iosBuild] = await Promise.all([
+    readBuild(github, context, pr, sha, "android"),
+    readBuild(github, context, pr, sha, "asg"),
+    ios.required ? readBuild(github, context, pr, sha, "ios") : undefined,
+  ])
+  const builds = [androidBuild, asgBuild, iosBuild].filter(Boolean)
+  if (builds.some((build) => build.pending)) {
+    core.info("Build/publication still pending; its completion will reconcile the notification.")
+    return
   }
-  if (!error && asgRun?.conclusion !== "success")
-    error = `ASG + OTA ${
-      asgRun?.conclusion || "did not complete before the notification timeout"
-    }; Android is not ready to test.`
+  if (builds.some((build) => build.conclusion === "cancelled")) {
+    core.info("An artifact-producing job was cancelled; no notification.")
+    return
+  }
+  const androidRunUrl = androidBuild.run.html_url
+  const asgRun = asgBuild.run
+  const iosRun = iosBuild?.run
+  let error =
+    androidBuild.conclusion !== "success"
+      ? `Android build ${androidBuild.conclusion}; no ready-to-test build is available.`
+      : asgBuild.conclusion !== "success"
+      ? `ASG + OTA ${asgBuild.conclusion}; Android is not ready to test.`
+      : null
   if (ios.required) {
-    ios.runUrl = iosRun?.html_url
-    if (iosRun?.conclusion !== "success")
-      ios.error = `iOS ${
-        iosRun?.conclusion || "did not complete before the notification timeout"
-      }; downloads are not ready.`
+    ios.runUrl = iosRun.html_url
+    if (iosBuild.conclusion !== "success") ios.error = `iOS ${iosBuild.conclusion}; downloads are not ready.`
   }
   const base = `https://artifactscdn.mentraglass.com/${repo.owner}/${repo.repo}/releases/pr-builds`
   const androidUrl = `${base}/mobile-pr-${pr.number}-${sha.slice(0, 7)}.apk`
@@ -180,11 +214,11 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch, 
   }
   if (ios.required && !ios.error) {
     try {
-      const coordinates = {pr: pr.number, sha, runId: iosRun.id, attempt: iosRun.run_attempt}
+      const coordinates = {pr: pr.number, sha, runId: iosRun.id, attempt: iosBuild.attempt}
       const receiptUrl = artifactUrl(
         `${repo.owner}/${repo.repo}`,
         "pr-builds",
-        iosReceiptName(pr.number, sha, iosRun.id, iosRun.run_attempt),
+        iosReceiptName(pr.number, sha, iosRun.id, iosBuild.attempt),
       )
       const receipt = await (await request(receiptUrl)).json()
       const assets = validateIosReceipt(receipt, coordinates)
@@ -208,9 +242,9 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch, 
   })
   const comment = comments.find((item) => item.user?.type === "Bot" && item.body?.startsWith(marker))
   const incomplete = Boolean(error || ios.error)
-  const identity = `${sha}:${incomplete ? "incomplete" : "ready"}:ios-${iosRun?.id || "skipped"}-${
-    iosRun?.run_attempt || 0
-  }`
+  const identity = `${sha}:${incomplete ? "incomplete" : "ready"}:${builds
+    .map((build) => `${build.run.id}-${build.attempt}`)
+    .join(":")}`
   if (comment?.body.includes(`<!-- ${identity} -->`)) {
     core.info("This PR revision's notification was already delivered.")
     return

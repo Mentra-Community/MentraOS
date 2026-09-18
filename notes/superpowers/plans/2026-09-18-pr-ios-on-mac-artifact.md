@@ -37,3 +37,9 @@ Signing now uses the existing Homebrew Ruby, a job-specific unlocked keychain pl
 ## Runtime metadata follow-up
 
 The installed candidate exposed a pre-existing compile-only configuration problem: native version `3.2.1` was correct, but Settings inherited sample `3.2.0` from `.env.example` and displayed undefined build details. The PR archive now explicitly exports the canonical root version, PR branch, actual checkout commit, builder and timestamp through the existing Xcode environment helper. It validates the built JavaScript against those expected values before export. The next CI run qualifies that metadata correction; the installation/signing/publication evidence above remains tied to its exact candidate rather than being relabeled as a newer build.
+
+## Notification recovery review
+
+Review [5253051904](https://github.com/Mentra-Community/MentraOS/pull/4101#pullrequestreview-5253051904) identified that a successful iOS-only publication retry did not refresh an already-posted incomplete Android-owned notification. Android, iOS and ASG now call `reusable-pr-build-notification.yml` after their producer jobs finish. The shared job serializes per PR, queues simultaneous callers, checks the latest producer job executions across attempts, and defers pending work without holding a polling job. Notification-only retries use the successful publication's receipt attempt.
+
+The regression suite checks the actual workflow call sites and reproduces failure → completed incomplete notification → iOS-only publication recovery, retaining the original archive bytes and Android run. It also covers ASG-only recovery, notification-only retries, duplicate completions, active producer retries, stale receipts and cancellation. Signing, exported app bytes, installer behavior and coordinated releases are unchanged by this correction; the device qualification above still covers those paths.

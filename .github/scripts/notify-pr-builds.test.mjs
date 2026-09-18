@@ -1,6 +1,7 @@
 import assert from "node:assert/strict"
 import test from "node:test"
-import {iosBuildRequired, buildPost, matchingAsgRun, notifyPrBuilds, readOtaTargets} from "./notify-pr-builds.mjs"
+import {readFileSync} from "node:fs"
+import {iosBuildRequired, buildPost, matchingBuildRun, notifyPrBuilds, readOtaTargets} from "./notify-pr-builds.mjs"
 
 const sha = "a".repeat(40)
 const pr = {
@@ -44,8 +45,8 @@ test("uses explicit full MTK target and rejects stale/incomplete manifests", () 
   assert.throws(() => readOtaTargets(manifest, 124, sha), /different PR/)
   assert.throws(() => readOtaTargets({...manifest, mtk_full_ota: undefined}, 123, sha), /missing/)
 })
-test("ASG reuse accepts overall workflow success; unrelated runs are ignored", () => {
-  assert.equal(matchingAsgRun([run, {...run, id: 2, head_sha: "other"}], pr, sha), run)
+test("matching runs require the exact PR head and repository", () => {
+  assert.equal(matchingBuildRun([run, {...run, id: 2, head_sha: "other"}], pr, sha), run)
 })
 test("Slack escapes PR text and includes all three firmware targets", () => {
   const payload = buildPost({
@@ -86,91 +87,145 @@ const iosReceipt = {
     ]),
   ),
 }
-function harness({
-  asg = run,
-  ios = iosRun,
-  files = [],
-  receipt = iosReceipt,
-  comments = [],
-  currentPr = pr,
-  artifactStatus = 200,
-  missingMac = false,
-} = {}) {
+const androidRun = {...run, id: 2, html_url: "https://github.com/o/r/actions/runs/2"}
+const job = (name, conclusion = "success", attempt = 1, id = attempt) => ({
+  name,
+  conclusion,
+  run_attempt: attempt,
+  id,
+  status: "completed",
+})
+function harness(options = {}) {
+  const state = {
+    android: androidRun,
+    asg: run,
+    ios: iosRun,
+    files: [],
+    receipt: iosReceipt,
+    comments: [],
+    currentPr: pr,
+    artifactStatus: 200,
+    missingMac: false,
+    jobs: {},
+    ...options,
+  }
   const posts = [],
-    written = []
+    written = [],
+    requests = []
+  const runs = () => [state.asg, state.android, state.ios].filter(Boolean)
   const github = {
     rest: {
-      pulls: {get: async () => ({data: currentPr}), listFiles: "files"},
+      pulls: {get: async () => ({data: state.currentPr}), listFiles: "files"},
       actions: {
         listWorkflowRuns: async ({workflow_id}) => ({
           data: {
             workflow_runs: [
-              workflow_id === "mentra-app-ios-build.yml" ? (typeof ios === "function" ? ios() : ios) : asg,
+              state[
+                workflow_id === "mentra-app-ios-build.yml"
+                  ? "ios"
+                  : workflow_id === "mentra-app-android-build.yml"
+                  ? "android"
+                  : "asg"
+              ],
             ].filter(Boolean),
           },
         }),
+        listJobsForWorkflowRun: "jobs",
       },
       issues: {
-        listComments: {},
-        createComment: async (v) => written.push(v),
-        updateComment: async (v) => written.push(v),
+        listComments: "comments",
+        createComment: async (v) => {
+          written.push(v)
+          state.comments.push({id: 1, user: {type: "Bot"}, body: v.body})
+        },
+        updateComment: async (v) => {
+          written.push(v)
+          state.comments.find((c) => c.id === v.comment_id).body = v.body
+        },
       },
     },
-    paginate: async (method) => (method === "files" ? files : comments),
+    paginate: async (method, args) => {
+      if (method === "files") return state.files
+      if (method === "comments") return state.comments
+      assert.equal(method, "jobs")
+      assert.equal(args.filter, "all")
+      if (state.jobs[args.run_id]) return state.jobs[args.run_id]
+      const source = runs().find((r) => r.id === args.run_id)
+      const names = source === state.ios ? ["build", "publish"] : source === state.asg ? ["select", "build"] : ["build"]
+      return names.map((name, index) =>
+        job(name, index === names.length - 1 ? source.conclusion : "success", source.run_attempt),
+      )
+    },
   }
   const fetchImpl = async (url, options) => {
+    requests.push(url)
     if (options.method === "POST") {
       posts.push(JSON.parse(options.body))
       return new Response("ok")
     }
     return new Response(
-      options.method === "HEAD" ? null : JSON.stringify(url.includes("mentra-ios-pr-") ? receipt : manifest),
+      options.method === "HEAD" ? null : JSON.stringify(url.includes("mentra-ios-pr-") ? state.receipt : manifest),
       {
-        status: missingMac && url.endsWith(".zip") ? 404 : artifactStatus,
+        status: state.missingMac && url.endsWith(".zip") ? 404 : state.artifactStatus,
         headers: {"content-length": "10"},
       },
     )
   }
   return {
+    state,
     posts,
     written,
+    requests,
     args: {
       github,
       context: {repo: {owner: "o", repo: "r"}, payload: {pull_request: pr}, runId: 2},
       core: {info() {}, warning() {}},
       fetchImpl,
-      wait: async () => {},
-      attempts: 1,
     },
   }
 }
+process.env.SLACK_WEBHOOK_PR_BUILDS = "https://example.com/webhook"
 
-test("notification waits for both outputs, deduplicates reruns, suppresses superseded/cancelled runs", async () => {
-  process.env.SLACK_WEBHOOK_PR_BUILDS = "https://example.com/webhook"
-  process.env.ANDROID_RESULT = "success"
+// Exercise the completion route declared by each real caller, not a fictional
+// second Android invocation. Actionlint additionally validates workflow syntax,
+// reusable-workflow permissions and secret declarations.
+async function reconcileFromWorkflow(file, h, sourceId) {
+  const workflow = readFileSync(new URL(`../workflows/${file}`, import.meta.url), "utf8")
+  const notification = workflow.split("\n  notify-pr-builds:\n")[1]
+  assert.ok(notification, `${file} must reconcile after its own completion/retry`)
+  assert.match(notification, /if:.*always\(\).*?!cancelled\(\).*?head.repo.full_name == github.repository/)
+  assert.match(notification, /uses: \.\/\.github\/workflows\/reusable-pr-build-notification.yml/)
+  const dependencies = file.includes("ios") ? "[build, publish]" : file.includes("asg") ? "[select, build]" : "build"
+  assert.ok(notification.includes(`needs: ${dependencies}`))
+  const shared = readFileSync(new URL("../workflows/reusable-pr-build-notification.yml", import.meta.url), "utf8")
+  assert.match(shared, /workflow_call:/)
+  assert.match(shared, /queue: max/)
+  assert.match(
+    shared,
+    /concurrency:\s+group: pr-builds-slack-\$\{\{ github.event.pull_request.number \}\}\s+cancel-in-progress: false/,
+  )
+  assert.match(shared, /await notifyPrBuilds\(\{github, context, core\}\)/)
+  await notifyPrBuilds({...h.args, context: {...h.args.context, runId: sourceId}})
+}
+
+test("deduplicates completion events and suppresses closed/superseded/cancelled builds", async () => {
   const ready = harness()
   await notifyPrBuilds(ready.args)
   assert.equal(ready.posts.length, 1)
   assert.match(ready.posts[0].text, /ready to test/)
-  const comment = {id: 1, user: {type: "Bot"}, body: ready.written[0].body}
-  const duplicate = harness({comments: [comment]})
-  await notifyPrBuilds(duplicate.args)
-  assert.equal(duplicate.posts.length, 0)
-  const stale = harness({currentPr: {...pr, head: {...pr.head, sha: "other"}}})
-  await notifyPrBuilds(stale.args)
-  assert.equal(stale.posts.length, 0)
+  await notifyPrBuilds(ready.args)
+  assert.equal(ready.posts.length, 1)
+  for (const currentPr of [
+    {...pr, head: {...pr.head, sha: "other"}},
+    {...pr, state: "closed"},
+  ]) {
+    const stale = harness({currentPr})
+    await notifyPrBuilds(stale.args)
+    assert.equal(stale.posts.length, 0)
+  }
   const cancelled = harness({asg: {...run, conclusion: "cancelled"}})
   await notifyPrBuilds(cancelled.args)
   assert.equal(cancelled.posts.length, 0)
-  const unavailable = harness({artifactStatus: 404})
-  await notifyPrBuilds(unavailable.args)
-  assert.match(unavailable.posts[0].text, /incomplete/)
-  const failed = harness({asg: {...run, conclusion: "failure"}})
-  await notifyPrBuilds(failed.args)
-  assert.match(failed.posts[0].text, /incomplete/)
-  const recovered = harness({comments: [{...comment, body: failed.written[0].body}]})
-  await notifyPrBuilds(recovered.args)
-  assert.match(recovered.posts[0].text, /ready to test/)
 })
 
 test("iOS path applicability matches its filtered workflow", () => {
@@ -178,39 +233,95 @@ test("iOS path applicability matches its filtered workflow", () => {
   for (const filename of [
     "mobile/app.config.ts",
     ".github/workflows/mentra-app-ios-build.yml",
+    ".github/workflows/reusable-pr-build-notification.yml",
     ".github/scripts/pr-ios-artifacts.test.mjs",
   ])
     assert.equal(iosBuildRequired([{filename}]), true)
 })
 
-test("waits for slow iOS and includes both verified downloads", async () => {
-  let polls = 0
+test("pending/missing producers defer to their completion without posting an incomplete result", async () => {
+  for (const options of [
+    {ios: undefined},
+    {ios: {...iosRun, status: "queued"}},
+    {jobs: {3: [job("build"), {...job("publish"), status: "in_progress", conclusion: null}]}},
+  ]) {
+    const h = harness({...options, files: [{filename: "mobile/app.config.ts"}]})
+    await reconcileFromWorkflow("mentra-app-android-build.yml", h, 2)
+    assert.equal(h.posts.length, 0)
+  }
+})
+
+test("iOS-only retry refreshes an already-completed incomplete notification without rerunning Android", async () => {
+  const h = harness({files: [{filename: "mobile/app.config.ts"}], ios: {...iosRun, conclusion: "failure"}})
+  await reconcileFromWorkflow("mentra-app-android-build.yml", h, 2)
+  assert.match(h.posts[0].text, /incomplete/)
+  assert.doesNotMatch(h.written[0].body, /Download iPhone IPA|Download Mac app/)
+
+  // Only failed iOS publication reruns; successful archive/Android are retained.
+  // Its workflow is still in progress because its notification is executing.
+  h.state.ios = {...iosRun, run_attempt: 2, status: "in_progress", conclusion: null}
+  h.state.jobs[3] = [job("build"), job("publish", "failure"), job("publish", "success", 2)]
+  h.state.receipt = {...iosReceipt, runAttempt: 2, buildAttempt: 1}
+  await reconcileFromWorkflow("mentra-app-ios-build.yml", h, 3)
+  assert.equal(h.posts.length, 2)
+  assert.match(h.posts[1].text, /ready to test/)
+  assert.match(h.written[1].body, /Download iPhone IPA/)
+  assert.match(h.written[1].body, /Download Mac app/)
+  assert.match(h.written[1].body, /actions\/runs\/2/) // Android link must not become iOS's run.
+  assert.ok(h.requests.some((url) => url.endsWith(`mentra-ios-pr-123-${sha}-3-2.json`)))
+  assert.match(h.written[1].body, /-3-1\.ipa/) // Original build bytes.
+  assert.equal(h.state.comments.length, 1)
+
+  await reconcileFromWorkflow("mentra-asg-client-build.yml", h, 1)
+  assert.equal(h.posts.length, 2) // Peer completion is serialized and deduplicated.
+  // Rerunning only notification increments the workflow attempt, not the receipt.
+  h.state.ios = {...h.state.ios, run_attempt: 3}
+  await reconcileFromWorkflow("mentra-app-ios-build.yml", h, 3)
+  assert.equal(h.posts.length, 2)
+})
+
+test("ASG-only recovery and reused ASG completion use the same reconciliation route", async () => {
+  const h = harness({asg: {...run, conclusion: "failure"}})
+  await reconcileFromWorkflow("mentra-app-android-build.yml", h, 2)
+  assert.match(h.posts[0].text, /incomplete/)
+  h.state.asg = {...run, run_attempt: 2, status: "in_progress", conclusion: null}
+  h.state.jobs[1] = [job("select", "success", 2), job("build", "skipped", 2)]
+  await reconcileFromWorkflow("mentra-asg-client-build.yml", h, 1)
+  assert.match(h.posts[1].text, /ready to test/)
+})
+
+test("a cancelled notification does not invalidate successful producer jobs", async () => {
   const h = harness({
-    files: [{filename: "mobile/app.config.ts"}],
-    ios: () => (++polls < 3 ? {...iosRun, status: "in_progress", conclusion: null} : iosRun),
+    asg: {...run, conclusion: "cancelled"},
+    jobs: {1: [job("select"), job("build", "skipped"), job("notify-pr-builds / reconcile", "cancelled")]},
   })
-  await notifyPrBuilds({...h.args, attempts: 4})
-  assert.equal(polls, 3)
-  assert.equal(h.posts.length, 1)
-  assert.match(h.written[0].body, /Download iPhone IPA/)
-  assert.match(h.written[0].body, /Download Mac app/)
+  await notifyPrBuilds(h.args)
   assert.match(h.posts[0].text, /ready to test/)
 })
 
-test("iOS failure, missing or stale publication never advertises either download as ready", async () => {
+test("an active producer retry cannot advertise a previous attempt's success", async () => {
+  for (const jobs of [
+    [job("build"), job("publish")],
+    [job("build", "success", 2), job("publish")],
+  ]) {
+    const h = harness({
+      files: [{filename: "mobile/app.config.ts"}],
+      ios: {...iosRun, status: "in_progress", conclusion: null, run_attempt: 2},
+      jobs: {3: jobs},
+    })
+    await notifyPrBuilds(h.args)
+    assert.equal(h.posts.length, 0)
+  }
+})
+
+test("iOS failure, missing downloads or stale receipts never advertise Apple downloads as ready", async () => {
   for (const options of [
     {ios: {...iosRun, conclusion: "failure"}},
-    {ios: undefined},
     {missingMac: true},
     {receipt: {...iosReceipt, runAttempt: 2}},
     {receipt: {...iosReceipt, headSha: "d".repeat(40)}},
   ]) {
     const h = harness({...options, files: [{filename: "mobile/app.config.ts"}]})
-    // Explicit absence, rather than the default fixture.
-    if (options.ios === undefined && "ios" in options)
-      h.args.github.rest.actions.listWorkflowRuns = async ({workflow_id}) => ({
-        data: {workflow_runs: workflow_id.includes("ios") ? [] : [run]},
-      })
     await notifyPrBuilds(h.args)
     assert.match(h.posts[0].text, /incomplete/)
     assert.doesNotMatch(h.written[0].body, /Download iPhone IPA|Download Mac app/)
@@ -219,12 +330,10 @@ test("iOS failure, missing or stale publication never advertises either download
 })
 
 test("Android failure still allows verified iOS links; cancelled iOS suppresses stale post", async () => {
-  process.env.ANDROID_RESULT = "failure"
-  const h = harness({files: [{filename: "mobile/app.config.ts"}]})
+  const h = harness({files: [{filename: "mobile/app.config.ts"}], android: {...androidRun, conclusion: "failure"}})
   await notifyPrBuilds(h.args)
   assert.match(h.written[0].body, /Download iPhone IPA/)
   assert.match(h.posts[0].text, /incomplete/)
-  process.env.ANDROID_RESULT = "success"
   const cancelled = harness({files: [{filename: "mobile/app.config.ts"}], ios: {...iosRun, conclusion: "cancelled"}})
   await notifyPrBuilds(cancelled.args)
   assert.equal(cancelled.posts.length, 0)

@@ -82,6 +82,10 @@ embedded Apple profile inherently contains them). Downloads may expire after
 7 days; the provisioning expiration is separate.
 
 The signed outputs are handed off as a GitHub Actions artifact. If CDN
-publication fails, rerun failed jobs to reuse those exact bytes. If signing is
+publication fails, rerun failed jobs to reuse those exact bytes. Android, iOS
+and ASG each invoke the shared notification job after their build/publication
+jobs finish, including retries. An iOS-only recovery automatically updates the
+PR build comment and sends the ready Slack post; Android does not need rerunning.
+Repeated completion events are deduplicated. If signing is
 missing, fix the certificate or PR profile secret and rerun the build. The
 source archive and upload bytes are never re-signed by the publication job.
