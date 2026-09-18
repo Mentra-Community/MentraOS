@@ -263,11 +263,15 @@ if [[ "$PLATFORM" == "mac" ]]; then
     # applesimutils lives in the wix tap.
     brew tap wix/brew >/dev/null 2>&1 || true
 
+    # ccache: the iOS PR compile check (mentra-app-ios-build.yml) enables React
+    # Native's ccache wrappers for C/C++/ObjC and keeps the cache host-local in
+    # ~/.ccache-mentra-ci, shared by every runner process on this machine.
     brew install \
         git \
         git-lfs \
         gh \
         cocoapods \
+        ccache \
         watchman \
         swiftformat \
         openjdk@17 \

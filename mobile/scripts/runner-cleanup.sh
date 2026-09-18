@@ -251,6 +251,10 @@ if [[ "$TIER" == "2" || "$TIER" == "all" ]]; then
     # We explicitly skip a few subdirs that aren't really caches:
     #   - gh: GH CLI auth state ("hosts.yml" → re-auth required if nuked)
     #   - rbenv: holds downloaded Ruby tarballs but also build dirs in progress
+    # Deliberately NOT under this root, and so preserved by Tier 2:
+    #   - ~/.ccache-mentra-ci: the iOS compile check's ccache (capped at 20 GB
+    #     by CCACHE_MAXSIZE in the workflow; disk-guard's deep tier removes it
+    #     when the host is critically low on space).
     if [[ "$PLATFORM" == "mac" ]]; then
         CACHE_ROOT="$HOME/Library/Caches"
     else

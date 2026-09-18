@@ -121,6 +121,51 @@ jobs:
       - name: Free disk space if low
         uses: ./.github/actions/disk-guard
 
+      - name: Configure ccache for the compile check
+        id: ccache
+        run: |
+          # Host-persistent compiler cache for C/C++/ObjC (the largest share of
+          # this build: ~980 CPU-s of CompileC vs ~480 of SwiftCompile). Enabled
+          # only in PR compile mode and only when ccache is installed on the
+          # host (setup-runner.sh installs it; `brew install ccache` on older
+          # hosts). Without it the job runs exactly as before.
+          #
+          # - USE_CCACHE=1 is read by the generated Podfile
+          #   (ccache_enabled? -> react_native_post_install :ccache_enabled),
+          #   which points CC/CXX/LD/LDPLUSPLUS at React Native's ccache-clang
+          #   wrappers. No generated file is edited.
+          # - CCACHE_DIR lives outside ~/Library/Caches so the weekly Tier-2
+          #   cleanup keeps it; disk-guard's deep tier removes it when the host
+          #   is critically low. All runner processes on the host share it.
+          # - CCACHE_BASEDIR makes paths under this runner's workspace
+          #   relative, so actions-runner-1/2/3 produce identical hashes.
+          # - compiler_check=content: CI clang timestamps are not stable.
+          # - CCACHE_STATSLOG gives this job its own hit/miss log; the shared
+          #   global counters are never zeroed (other jobs are using them).
+          if [ "$MENTRA_IOS_PR_COMPILE_MODE" != "true" ]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "Full build mode: ccache not used."
+            exit 0
+          fi
+          if ! command -v ccache >/dev/null 2>&1; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::ccache is not installed on ${RUNNER_NAME:-this runner}; compiling without it (see mobile/scripts/README.md)."
+            exit 0
+          fi
+          ccache_dir="$HOME/.ccache-mentra-ci"
+          mkdir -p "$ccache_dir"
+          {
+            echo "USE_CCACHE=1"
+            echo "CCACHE_DIR=$ccache_dir"
+            echo "CCACHE_BASEDIR=$GITHUB_WORKSPACE"
+            echo "CCACHE_COMPILERCHECK=content"
+            echo "CCACHE_MAXSIZE=20G"
+            echo "CCACHE_STATSLOG=$RUNNER_TEMP/ccache-stats.log"
+          } >> "$GITHUB_ENV"
+          echo "enabled=true" >> "$GITHUB_OUTPUT"
+          echo "ccache $(ccache --version | head -1 | awk '{print $NF}') enabled; cache dir $ccache_dir"
+          CCACHE_DIR="$ccache_dir" ccache --show-stats 2>/dev/null | head -12 || true
+
       - name: Setup Bun
         uses: oven-sh/setup-bun@v1
         with:
@@ -369,6 +414,19 @@ jobs:
             pod install --repo-update 2>&1 | tee -a "$RUNNER_TEMP/pod-install.log"
           }
 
+      - name: Verify ccache wiring in the generated Pods project
+        if: steps.ccache.outputs.enabled == 'true'
+        run: |
+          # react_native_post_install logs exactly one of these. With
+          # USE_CCACHE=1 and ccache on PATH it must be the "Setting" line.
+          if grep -qF '[Ccache]: Setting CC, LD, CXX & LDPLUSPLUS' "$RUNNER_TEMP/pod-install.log"; then
+            echo "ccache wrappers applied to CC/CXX/LD/LDPLUSPLUS."
+          else
+            echo "::error::USE_CCACHE=1 was set but pod install did not apply the ccache wrappers:"
+            grep -F '[Ccache]' "$RUNNER_TEMP/pod-install.log" || echo "(no [Ccache] line at all)"
+            exit 1
+          fi
+
       - name: Verify vendored Sherpa ONNX framework is integrated from the module
         working-directory: ./mobile/ios
         run: |
@@ -564,6 +622,7 @@ jobs:
           EVENT_NAME: ${{ github.event_name }}
           PR_COMPILE_MODE: ${{ env.MENTRA_IOS_PR_COMPILE_MODE }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
+          CCACHE_ENABLED: ${{ steps.ccache.outputs.enabled }}
         run: "$GITHUB_WORKSPACE/.github/scripts/ios-build-summary.sh"
 
       - name: Upload xcodebuild logs

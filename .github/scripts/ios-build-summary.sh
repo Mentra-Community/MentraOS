@@ -15,6 +15,7 @@
 #   ATTEMPT1_OUTCOME, ATTEMPT1_SECONDS, ATTEMPT1_TIMING
 #   ATTEMPT2_OUTCOME, ATTEMPT2_SECONDS, ATTEMPT2_TIMING
 #   EVENT_NAME, PR_COMPILE_MODE, HEAD_SHA
+#   CCACHE_ENABLED, CCACHE_STATSLOG, CCACHE_DIR   per-job ccache stats when enabled
 set -u
 
 summary="${GITHUB_STEP_SUMMARY:-/dev/stdout}"
@@ -101,6 +102,23 @@ emit_timing() {
 }
 emit_timing "First build" "${ATTEMPT1_TIMING:-}"
 emit_timing "Clean-cache retry" "${ATTEMPT2_TIMING:-}"
+
+if [ "${CCACHE_ENABLED:-false}" = "true" ] && command -v ccache >/dev/null 2>&1; then
+  {
+    echo "### ccache (this job only, from CCACHE_STATSLOG)"
+    echo ""
+    echo '```'
+    if [ -n "${CCACHE_STATSLOG:-}" ] && [ -s "$CCACHE_STATSLOG" ]; then
+      ccache --show-log-stats 2>&1 | head -40
+    else
+      echo "(no stats log written; no compiler invocation went through ccache)"
+    fi
+    echo '```'
+    echo ""
+    echo "Shared cache dir: \`${CCACHE_DIR:-?}\` — $(ccache --show-stats 2>/dev/null | grep -iE 'cache size|max cache size' | tr -s ' ' | paste -sd ';' - || echo 'size unavailable')"
+    echo ""
+  } >> "$summary"
+fi
 
 if [[ "${CACHE_SIZE_BYTES:-}" =~ ^[0-9]+$ ]]; then
   {

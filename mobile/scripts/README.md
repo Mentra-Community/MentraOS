@@ -124,6 +124,8 @@ Three manual steps the script can't automate:
 
 3. **Verify the runner shows up** at https://github.com/Mentra-Community/MentraOS/settings/actions/runners with the labels `self-hosted, macOS, ARM64`. If you used custom labels, also confirm those.
 
+4. **Confirm `ccache` is installed** (`command -v ccache`). The iOS PR compile check (`.github/workflows/mentra-app-ios-build.yml`) enables React Native's ccache wrappers when the binary is present and keeps the cache in `~/.ccache-mentra-ci`, shared by every runner process on the host and capped at 20 GB. Without ccache the workflow still passes, just slower. On an existing runner that predates this: `brew install ccache`.
+
 ### Verify it actually works
 
 Trigger a manual workflow run:
@@ -143,7 +145,7 @@ Watch the run and confirm a job picks the new runner.
 ### Tiers
 
 - **Tier 1** (cheap caches): bun install cache, gradle build-cache + transforms, Android emulator system images, stale `_work` dirs older than 7 days. Next build is _not_ noticeably slower.
-- **Tier 2** (expensive caches): everything in Tier 1, plus the whole `~/.gradle/caches`, the user cache dir (`~/Library/Caches` on macOS, `~/.cache` on Linux), `~/.android/avd`, and `~/Library/Developer/Xcode/DerivedData/Mentra-*`. First build after Tier 2 is _significantly_ slower (5-15 min cold gradle, ~10 min cold iOS archive).
+- **Tier 2** (expensive caches): everything in Tier 1, plus the whole `~/.gradle/caches`, the user cache dir (`~/Library/Caches` on macOS, `~/.cache` on Linux), `~/.android/avd`, and `~/Library/Developer/Xcode/DerivedData/Mentra-*`. First build after Tier 2 is _significantly_ slower (5-15 min cold gradle, ~10 min cold iOS archive). `~/.ccache-mentra-ci` (the iOS compile check's ccache) sits outside the cache root on purpose and survives Tier 2; only the per-job disk-guard deep tier (<20 GiB free) removes it.
 
 Both tiers are run by the weekly scheduler.
 
