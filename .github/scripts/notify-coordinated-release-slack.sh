@@ -73,11 +73,11 @@ artifact_link() {
 android_result="${ANDROID_RESULT:-${MOBILE_RESULT:-unknown}}"
 ios_result="${IOS_RESULT:-${MOBILE_RESULT:-unknown}}"
 
-apk_url=""
-ipa_url=""
+apk_url="${MOBILE_APK_URL:-}"
+ipa_url="${MOBILE_IPA_URL:-}"
 if [[ -n "${MOBILE_ASSET_BASE_URL:-}" ]]; then
-  [[ -z "${APK_NAME:-}" ]] || apk_url="${MOBILE_ASSET_BASE_URL}/${APK_NAME}"
-  [[ -z "${IPA_NAME:-}" ]] || ipa_url="${MOBILE_ASSET_BASE_URL}/${IPA_NAME}"
+  [[ -n "$apk_url" || -z "${APK_NAME:-}" ]] || apk_url="${MOBILE_ASSET_BASE_URL}/${APK_NAME}"
+  [[ -n "$ipa_url" || -z "${IPA_NAME:-}" ]] || ipa_url="${MOBILE_ASSET_BASE_URL}/${IPA_NAME}"
 fi
 
 android_detail=$(artifact_link "$apk_url" "${APK_NAME:-Android APK}")

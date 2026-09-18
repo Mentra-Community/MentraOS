@@ -1,0 +1,21 @@
+diff --git a/ios/Downloader.mm b/ios/Downloader.mm
+--- a/ios/Downloader.mm
++++ b/ios/Downloader.mm
+@@ -81,11 +81,12 @@
+     _contentLength = [NSNumber numberWithLong:httpResponse.expectedContentLength];
+ 
+     if (_params.beginCallback) {
+-      return _params.beginCallback(_statusCode, _contentLength, httpResponse.allHeaderFields);
+-    }
+-  }
+-
+-  if (_params.progressCallback && [_statusCode isEqualToNumber:[NSNumber numberWithInt:200]]) {
++      _params.beginCallback(_statusCode, _contentLength, httpResponse.allHeaderFields);
++    }
++  }
++
++  // Range downloads use 206; they need the same incremental progress as full downloads.
++  if (_params.progressCallback && ([_statusCode integerValue] == 200 || [_statusCode integerValue] == 206)) {
+     _bytesWritten = @(totalBytesWritten);
+ 
+     if(_params.progressInterval.integerValue > 0){

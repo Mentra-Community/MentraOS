@@ -7,6 +7,7 @@ import OtaVersionUrl from "@/components/dev/OtaVersionUrl"
 import {Header, Icon, Screen, Text} from "@/components/ignite"
 import SelectSetting from "@/components/settings/SelectSetting"
 import ToggleSetting from "@/components/settings/ToggleSetting"
+import IosCallSetting from "@/components/settings/IosCallSetting"
 import {Group} from "@/components/ui/Group"
 import {RouteButton} from "@/components/ui/RouteButton"
 import {Spacer} from "@/components/ui/Spacer"
@@ -85,6 +86,7 @@ export default function DebugSettingsScreen() {
                 onValueChange={(value) => setAndroidNotificationListenerEnabled(value)}
               />
             )}
+            <IosCallSetting />
             <ToggleSetting
               label={translate("settings:reconnectOnAppForeground")}
               subtitle={translate("settings:reconnectOnAppForegroundSubtitle")}
@@ -177,7 +179,7 @@ export default function DebugSettingsScreen() {
           </Group>
 
           <Group title="Misc">
-            <RouteButton label="Test Mini App" subtitle="Test the Mini App" onPress={() => push("/test/mini-app")} />
+            <RouteButton label="Test miniapp" subtitle="Test the miniapp" onPress={() => push("/test/mini-app")} />
 
             <RouteButton
               label={navRunning ? "Stop Test Nav" : "Start Test Nav"}

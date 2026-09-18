@@ -140,6 +140,37 @@ function fakeNative() {
 }
 
 describe("AcsMeetingService", () => {
+  test("admission is owner-scoped and a rejected admission leaves the call intact", async () => {
+    const admitParticipant = mock(async () => {throw new Error("not allowed")})
+    const native = {...fakeNative(), admitParticipant}
+    setAcsMeetingNativeForTests(native)
+    await expect(acsMeetingService.admitParticipant("com.mentra.call", "guest")).rejects.toThrow("does not own")
+    await acsMeetingService.join("com.mentra.call", {
+      meetingUrl: "https://teams.microsoft.com/l/meetup-join/x", token: "tok",
+      videoSource: {type: "whep", url: "https://example.com/whep"},
+    })
+    await expect(acsMeetingService.admitParticipant("com.other.app", "guest")).rejects.toThrow("does not own")
+    expect(admitParticipant).not.toHaveBeenCalled()
+    await expect(acsMeetingService.admitParticipant("com.mentra.call", "guest")).rejects.toThrow("not allowed")
+    expect(admitParticipant).toHaveBeenCalledWith("guest")
+    expect(acsMeetingService.ownerPackage()).toBe("com.mentra.call")
+    expect(native.leave).not.toHaveBeenCalled()
+  })
+
+  test("an admission result cannot succeed after the owning call ends", async () => {
+    let finish!: () => void
+    const native = {...fakeNative(), admitParticipant: () => new Promise<void>(resolve => {finish = resolve})}
+    setAcsMeetingNativeForTests(native)
+    await acsMeetingService.join("com.mentra.call", {
+      meetingUrl: "https://teams.microsoft.com/l/meetup-join/x", token: "tok",
+      videoSource: {type: "whep", url: "https://example.com/whep"},
+    })
+    const result = acsMeetingService.admitParticipant("com.mentra.call", "guest").catch(error => error)
+    await acsMeetingService.leave("com.mentra.call")
+    finish()
+    expect((await result).message).toBe("The meeting changed during admission")
+  })
+
   test("cleanup can wait for restored Wi-Fi without changing the live cellular requirement", async () => {
     const cellular = {usable: true, detail: "cellular", transport: "cellular", present: true, validated: true}
     const wifi = {...cellular, detail: "wifi", transport: "wifi"}

@@ -74,7 +74,7 @@ export default function SuperSettingsScreen() {
             <RouteButton label="Mic Tuning" onPress={() => push("/miniapps/settings/mic-tuning")} />
           </Group>
 
-          <Group title="Mini Apps">
+          <Group title="Miniapps">
             <RouteButton label="Miniapp Developer" onPress={() => push("/miniapps/settings/miniapp-dev")} />
           </Group>
         </View>

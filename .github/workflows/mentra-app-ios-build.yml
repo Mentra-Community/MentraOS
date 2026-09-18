@@ -130,6 +130,9 @@ jobs:
           rm -rf node_modules
           bun install --no-frozen-lockfile
 
+      - name: Test native gallery download progress
+        run: mobile/scripts/test-gallery-download-progress.sh
+
       - name: Validate CocoaPods post-install project integrity
         working-directory: ./mobile
         run: bun ./scripts/check-mapbox-pods-project.ts

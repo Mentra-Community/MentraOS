@@ -23,6 +23,10 @@ concurrency:
   group: coordinated-mentra-release-publication-${{ github.ref_name }}
   cancel-in-progress: false
 
+env:
+  ARTIFACTS_R2_ACCOUNT_ID: ${{ vars.ARTIFACTS_R2_ACCOUNT_ID }}
+  ARTIFACTS_R2_BUCKET: artifactscdn
+
 jobs:
   plan:
     name: Allocate immutable release identity
@@ -123,6 +127,8 @@ jobs:
       - name: Allocate the family build number
         id: family-number
         env:
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
@@ -135,7 +141,7 @@ jobs:
           assets='[]'
           if release=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/$tag" 2>/dev/null); then
             release_id=$(jq -er .id <<< "$release")
-            assets=$(gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases/$release_id/assets?per_page=100" | jq 'add // []')
+            assets=$(node .github/scripts/release-assets.mjs list --repository "${GITHUB_REPOSITORY}" --release-id "$release_id")
           fi
           printf '%s\n' "$assets" > family-only-assets.json
           # ASG pairs numbered before markers existed live in the shared ASG
@@ -144,8 +150,7 @@ jobs:
           # per-argument limit of the runner.
           echo '[]' > asg-release-assets.json
           if asg_release_id=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/mentra-coordinated-asg" --jq .id 2>/dev/null); then
-            gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases/$asg_release_id/assets?per_page=100" \
-              | jq 'add // []' > asg-release-assets.json
+            node .github/scripts/release-assets.mjs list --repository "${GITHUB_REPOSITORY}" --release-id "$asg_release_id" > asg-release-assets.json
           fi
           jq -s 'add' family-only-assets.json asg-release-assets.json > family-container-assets.json
           node .github/scripts/allocate-family-build-sequence.mjs allocate \
@@ -247,11 +252,6 @@ jobs:
           [[ "$(jq -r .draft <<< "$release")" == "false" ]]
           [[ "$(jq -r .prerelease <<< "$release")" == "true" ]]
           release_id=$(jq -er .id <<< "$release")
-          asset_count=$(gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases/$release_id/assets?per_page=100" | jq 'add | length')
-          if (( asset_count >= 900 )); then
-            echo "Release container $tag has $asset_count assets; advance the family base version before GitHub's 1000-asset limit." >&2
-            exit 1
-          fi
           echo "release_id=$release_id" >> "$GITHUB_OUTPUT"
 
       # Recorded before any build starts, so a run that fails halfway never
@@ -260,6 +260,8 @@ jobs:
       - name: Record the family build number in the release container
         if: steps.release.outputs.dry_run != 'true'
         env:
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
@@ -511,7 +513,7 @@ jobs:
             "${private_deployment_args[@]}" \
             --asg-selection "$asg_selection" \
             --engine-package "$engine_package" \
-            --release-asset-base-url "https://github.com/${GITHUB_REPOSITORY}/releases/download/$tag" \
+            --release-asset-base-url "https://artifactscdn.mentraglass.com/${GITHUB_REPOSITORY}/releases/$tag" \
             --output finalized-release/publication-results.json
           cp "$plan" "finalized-release/$(jq -er .artifactNames.releasePlan "$plan")"
           cp "$engine_package" "finalized-release/$(jq -er .artifactNames.enginePackage "$plan")"
@@ -550,6 +552,8 @@ jobs:
       - name: Publish immutable plan, package, and manifest assets
         if: needs.plan.outputs.dry_run != 'true'
         env:
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
@@ -577,7 +581,7 @@ jobs:
               -f sha="${{ needs.plan.outputs.source_commit }}")
           fi
           [[ "$(jq -r .object.sha <<< "$ref")" == "${{ needs.plan.outputs.source_commit }}" ]]
-          url="https://github.com/${GITHUB_REPOSITORY}/releases/download/${{ steps.results.outputs.tag }}/${{ steps.results.outputs.manifest_name }}"
+          url="https://artifactscdn.mentraglass.com/${GITHUB_REPOSITORY}/releases/${{ steps.results.outputs.tag }}/${{ steps.results.outputs.manifest_name }}"
           node .github/scripts/verify-public-release-asset.mjs \
             --file "finalized-release/${{ steps.results.outputs.manifest_name }}" \
             --url "$url"
@@ -683,7 +687,8 @@ jobs:
           FINALIZE_RESULT: ${{ needs.finalize.result }}
           APK_NAME: ${{ needs.mobile.outputs.apk_name }}
           IPA_NAME: ${{ needs.mobile.outputs.ipa_name }}
-          MOBILE_ASSET_BASE_URL: ${{ needs.mobile.outputs.asset_base_url }}
+          MOBILE_APK_URL: ${{ needs.mobile.outputs.apk_url }}
+          MOBILE_IPA_URL: ${{ needs.mobile.outputs.ipa_url }}
           ASG_APK_NAME: ${{ needs.ota.outputs.asg_apk_name }}
           ASG_APK_URL: ${{ needs.ota.outputs.asg_apk_url }}
         run: .github/scripts/notify-coordinated-release-slack.sh

@@ -31,6 +31,10 @@ concurrency:
   group: production-release-${{ inputs.release_identity }}-attempt-${{ inputs.attempt }}
   cancel-in-progress: false
 
+env:
+  ARTIFACTS_R2_ACCOUNT_ID: ${{ vars.ARTIFACTS_R2_ACCOUNT_ID }}
+  ARTIFACTS_R2_BUCKET: artifactscdn
+
 jobs:
   preflight:
     name: Validate production Cloud configuration contract
@@ -142,6 +146,8 @@ jobs:
 
       - name: Publish sanitized preflight evidence and next state
         env:
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
@@ -188,19 +194,19 @@ jobs:
       - name: Download frozen production plan
         id: plan
         env:
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
           [[ "$(jq -er .state promotion-input/current.json)" == "production-config-ready" ]]
           name="production-release-plan-${{ inputs.release_identity }}.json"
-          assets=$(gh api --paginate --slurp \
-            "repos/${GITHUB_REPOSITORY}/releases/${{ steps.promotion.outputs.release_id }}/assets?per_page=100" | jq 'add')
+          assets=$(node .github/scripts/release-assets.mjs list --repository "${GITHUB_REPOSITORY}" --release-id "${{ steps.promotion.outputs.release_id }}")
           matches=$(jq --arg name "$name" '[.[] | select(.name == $name)]' <<< "$assets")
           [[ "$(jq 'length' <<< "$matches")" == "1" ]]
           asset_id=$(jq -er '.[0].id' <<< "$matches")
           mkdir -p deployment-input
-          gh api -H "Accept: application/octet-stream" \
-            "repos/${GITHUB_REPOSITORY}/releases/assets/$asset_id" > deployment-input/release-plan.json
+          node .github/scripts/release-assets.mjs fetch --repository "${GITHUB_REPOSITORY}" --asset-id "$asset_id" > deployment-input/release-plan.json
           source_commit=$(jq -er .sourceCommit deployment-input/release-plan.json)
           [[ "$source_commit" == "$(jq -er .source.mentraosCommit promotion-input/current.json)" ]]
           artifact="production-release-plan-${GITHUB_RUN_ID}"
@@ -294,6 +300,8 @@ jobs:
 
       - name: Publish deployment evidence and state transition
         env:
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
