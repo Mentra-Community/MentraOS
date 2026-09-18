@@ -473,10 +473,12 @@ public class K900BluetoothManager extends BaseBluetoothManager implements Serial
 
         Log.d(TAG, "📡 📤 Sending " + data.length + " bytes via K900 serial");
         BleTraceLogger.logK900Frame("asg_to_bes", "asg_uart_output", data);
-        BesLivenessMonitor.get().onOutboundWrite();
 
         // Send the data via the serial port
         boolean sent = comManager.write(data);
+        if (sent) {
+            BesLivenessMonitor.get().onOutboundWrite();
+        }
         Log.d(
                 TAG,
                 "📡 "

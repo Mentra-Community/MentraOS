@@ -21,6 +21,16 @@ public class BesTraceUptimeTest {
     }
 
     @Test
+    public void newestUptimeFollowsTheLastLineNotTheLargestCounter() {
+        // Right after a watchdog reboot the ring still holds the previous boot's larger counters.
+        String mixed =
+                "   49391/I/NONE  /  6 | old boot still in the ring\n"
+                        + "    1200/I/NONE  /  6 | <<<boot banner after watchdog\n";
+        assertEquals(1200L, BesTraceUptime.newestUptimeMs(mixed));
+        assertTrue(BesTraceUptime.rebooted(49_391L, BesTraceUptime.newestUptimeMs(mixed)));
+    }
+
+    @Test
     public void ignoresInterleavedHexDumps() {
         // A byte dump from a concurrent buffer contains bare "7/ 11 |" runs that must not be read
         // as an uptime, or a crash gets dated to the wrong second.

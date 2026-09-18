@@ -6098,6 +6098,8 @@ extension MentraLive {
         peerWireCapsBinary = false
         peerFilePayloadV2 = false
         peerWearTuning = false
+        peerMicTuning = false
+        micTuningGeneration = 0
         BleJsonCompact.resetSession()
         wireHandshakeSentGeneration = -1
     }

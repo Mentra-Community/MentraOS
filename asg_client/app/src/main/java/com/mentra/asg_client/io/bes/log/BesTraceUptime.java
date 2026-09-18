@@ -29,13 +29,18 @@ public final class BesTraceUptime {
 
     private BesTraceUptime() {}
 
-    /** Highest uptime in the snapshot: how long BES had been up when the buffer was read. */
+    /**
+     * Uptime on the last parseable line: how long BES had been up when the buffer was read.
+     *
+     * <p>Must not take the maximum counter. After a watchdog reboot the ring still holds pre-reboot
+     * lines with larger values, and those would hide {@code bes_reboot_confirmed}.
+     */
     public static long newestUptimeMs(String trace) {
         long newest = UNKNOWN;
         Matcher matcher = matcher(trace);
         while (matcher != null && matcher.find()) {
             long uptime = parse(matcher.group(1));
-            if (uptime > newest) {
+            if (uptime >= 0) {
                 newest = uptime;
             }
         }

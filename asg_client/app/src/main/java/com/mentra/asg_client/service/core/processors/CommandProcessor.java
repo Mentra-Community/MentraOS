@@ -626,8 +626,7 @@ public class CommandProcessor {
         if (k900CommandHandler == null) {
             return false;
         }
-        k900CommandHandler.requestSystemVersion();
-        return true;
+        return k900CommandHandler.requestSystemVersion();
     }
 
     public void cleanup() {
