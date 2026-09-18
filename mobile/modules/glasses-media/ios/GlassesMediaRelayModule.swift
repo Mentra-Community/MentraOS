@@ -83,7 +83,7 @@ private final class ManagedRelaySession {
                     self.hotspot.awaitInternet { usable, _ in
                         self.queue.async {
                             guard !self.stopped else { return }
-                            guard usable else { self.finish(.failure(LocalMediaError("Turn on phone mobile data to stream through the glasses hotspot"))); return }
+                            guard usable else { self.finish(.failure(LocalMediaError("Connect cellular or Ethernet internet to stream through the glasses hotspot"))); return }
                             let publisher = PhoneWhipPublisher(endpoint: endpoint, captureAudio: captureAudio, bitrate: bitrate, onState: onState)
                             self.publisher = publisher
                             let receiver = LocalWhipIngestSource()

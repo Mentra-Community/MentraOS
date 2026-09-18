@@ -37,7 +37,7 @@ export type AcsMeetingState = {
   endReason_subcode?: number
   /** Local WHIP endpoint, available after a SoftAP join or `rebindSoftApIngest`. */
   ingestUrl?: string
-  /** Remote roster (Android emits this; iOS does not yet). */
+  /** Remote roster, including participant state, mute state and speaking updates. */
   participants?: AcsMeetingParticipant[]
 }
 

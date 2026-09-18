@@ -202,6 +202,7 @@ export interface MeetingCapability {
 export interface MeetingCapabilities {
   /** Whether `meeting.end()` will be honoured: presenters only, on Teams. */
   hangUpForEveryone: MeetingCapability
+  manageLobby?: MeetingCapability
 }
 
 /** Tolerant parse of a host `capabilities` payload. A malformed payload reads as absent. */
@@ -210,7 +211,13 @@ export function parseMeetingCapabilities(raw: unknown): MeetingCapabilities | un
   const value = (raw as Record<string, unknown>).hangUpForEveryone
   if (!value || typeof value !== "object") return undefined
   const capability = value as Record<string, unknown>
+  const rawLobby = (raw as Record<string, unknown>).manageLobby
+  const lobby = rawLobby && typeof rawLobby === "object" ? rawLobby as Record<string, unknown> : undefined
   return {
+    ...(lobby ? {manageLobby: {
+      allowed: typeof lobby.allowed === "boolean" ? lobby.allowed : null,
+      reason: typeof lobby.reason === "string" && lobby.reason ? lobby.reason : null,
+    }} : {}),
     hangUpForEveryone: {
       allowed: typeof capability.allowed === "boolean" ? capability.allowed : null,
       reason: typeof capability.reason === "string" && capability.reason ? capability.reason : null,
@@ -425,6 +432,16 @@ export class MeetingModule {
   async end(): Promise<void> {
     try {
       await this.session.sendRequest<void>({type: MiniappRequestType.MEETING_END}, {timeoutMs: 0})
+    } catch (error) {
+      mapHostError(error)
+    }
+  }
+
+  /** Admit one guest; callers must wait for the roster to report connected. */
+  async admit(participantId: string): Promise<void> {
+    if (!participantId.trim()) throw new Error("A participant ID is required")
+    try {
+      await this.session.sendRequest<void>({type: MiniappRequestType.MEETING_ADMIT, participantId})
     } catch (error) {
       mapHostError(error)
     }

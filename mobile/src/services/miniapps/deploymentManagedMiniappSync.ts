@@ -1,7 +1,7 @@
 import {appRegistry} from "@mentra/engine-host-internal"
 import {Directory, File, Paths} from "expo-file-system"
 
-import {shouldHideMiniapp} from "@/constants/miniapps"
+import {shouldHideMiniapp} from "./miniappVisibility"
 import type {ActiveDeployment, DeploymentManagedMiniapp} from "@/services/deployment"
 
 import {sha256Hex} from "./preinstalledMiniappSync"
@@ -185,6 +185,7 @@ async function installEntry(
   const desiredWasInstalled = installedVersions.includes(entry.version)
   try {
     const zipPath = await downloadVerifiedBundle(entry)
+    if (shouldHideMiniapp(entry.packageName)) return false
     const result = await appRegistry.installFromLocalZip(zipPath, {
       expectedPackageName: entry.packageName,
       expectedVersion: entry.version,

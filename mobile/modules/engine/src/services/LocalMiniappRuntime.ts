@@ -1391,6 +1391,9 @@ class LocalMiniappRuntime {
       case MiniappRequestType.MEETING_LEAVE:
         void this.handleMeetingLeave(packageName, requestId)
         break
+      case MiniappRequestType.MEETING_ADMIT:
+        void this.handleMeetingAdmit(packageName, payload, requestId)
+        break
       case MiniappRequestType.MEETING_END:
         void this.handleMeetingEnd(packageName, requestId)
         break
@@ -4856,6 +4859,19 @@ class LocalMiniappRuntime {
       this.sendResult(packageName, requestId, false, undefined, {
         code: MiniappErrorCode.INTERNAL,
         message: err instanceof Error ? err.message : "Could not end the meeting for everyone",
+      })
+    }
+  }
+
+  private async handleMeetingAdmit(packageName: string, payload: Record<string, unknown>, requestId?: string): Promise<void> {
+    try {
+      if (typeof payload.participantId !== "string") throw new Error("A participant ID is required")
+      await acsMeetingService.admitParticipant(packageName, payload.participantId)
+      this.sendResult(packageName, requestId, true)
+    } catch (error) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: error instanceof Error ? error.message : "Could not admit this guest",
       })
     }
   }

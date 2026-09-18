@@ -10,7 +10,10 @@ import {preinstalledMiniappSync} from "@/services/miniapps/preinstalledMiniappSy
 import {deploymentManagedMiniappSync} from "@/services/miniapps/deploymentManagedMiniappSync"
 import builtInMiniappCatalog from "@/services/miniapps/BuiltInMiniappCatalog"
 import {BUNDLED_MINIAPPS} from "@/generated/bundledMiniapps"
-import {CHINA_HIDDEN_APPS, IOS_HIDDEN_APPS, notifyPackageName, shouldHideMiniapp} from "@/constants/miniapps"
+import {CHINA_HIDDEN_APPS, mentraCallPackageName, notifyPackageName} from "@/constants/miniapps"
+import {IosCallVisibility} from "@/services/miniapps/IosCallVisibility"
+import {shouldHideMiniapp} from "@/services/miniapps/miniappVisibility"
+import {storage} from "@/utils/storage"
 import {migrate} from "@/services/Migrations"
 import {buildSpokenNotification} from "@/services/notifications/spokenNotification"
 import {deploymentCloudConfigValues} from "@/services/cloudClient"
@@ -94,6 +97,7 @@ const SPOKEN_NOTIFICATION_MAX_MS = 30_000
 const SPOKEN_NOTIFICATION_GAP_MS = 10_000
 
 class MantleManager {
+  private iosCallVisibility: IosCallVisibility | null = null
   private static instance: MantleManager | null = null
   private calendarSyncTimer: ReturnType<typeof BgTimer.setInterval> | null = null
   private micDataTimeout: ReturnType<typeof BgTimer.setTimeout> | null = null
@@ -470,6 +474,7 @@ class MantleManager {
       },
     })
     await engine.start()
+    this.setupIosCallVisibility()
 
     // iOS: require a second swipe across the bottom edge to invoke the Home
     // indicator / app switcher, so users don't accidentally background the
@@ -524,12 +529,14 @@ class MantleManager {
     // PhoneNotificationsSync, started by engine.start().)
 
     this.initServices()
-    this.initMiniapps()
+    void this.initMiniapps().catch((error) => console.warn("MANTLE: miniapp initialization failed", error))
     this.setupPeriodicTasks()
     this.setupSubscriptions()
   }
 
   public async cleanup() {
+    this.iosCallVisibility?.dispose()
+    this.iosCallVisibility = null
     // Stop timers
     if (this.calendarSyncTimer) {
       clearInterval(this.calendarSyncTimer)
@@ -597,6 +604,8 @@ class MantleManager {
     // Initialize local miniapp runtime
     localMiniappRuntime.initialize()
 
+    await this.iosCallVisibility?.reconcile().catch((error) => this.reportMiniappVisibilityError(error))
+
     // Install any bundled miniapps that ship with the app and aren't on disk
     // yet (or are an older version). Runs after the registry is warm so the
     // already-installed check below sees the real on-disk state.
@@ -613,9 +622,9 @@ class MantleManager {
       await preinstalledMiniappSync.sync()
     }
 
-    // Mentra Call still ships in the binary, but iOS must not show a leftover
-    // copy (or a cloud-pushed one) on the home screen or autostart it.
+    // Region-restricted miniapps must not surface or autostart from an old install.
     this.hidePlatformBlockedMiniapps()
+    this.iosCallVisibility?.applyRestriction()
 
     // Re-spawn local miniapps that were running when the app was last killed.
     // Cloud apps get resurrected by the cloud on reconnect; local (phone-hosted)
@@ -640,63 +649,85 @@ class MantleManager {
    * installs it.
    */
   private async installBundledMiniapps() {
-    const deployment = deploymentStore.getActive()
-    const approved = deployment.manifest.systemMiniapps.approvedPackageNamesOverride
     for (const module of BUNDLED_MINIAPPS) {
       try {
         const asset = Asset.fromModule(module)
         const parsed = parseBundledMiniappName(asset.name)
-        if (parsed && approved !== null && !approved.includes(parsed.packageName)) {
-          console.log(`MANTLE: skipping bundled miniapp outside workspace allowlist: ${parsed.packageName}`)
-          continue
-        }
-        if (!parsed) {
-          console.warn(`MANTLE: bundled miniapp asset name "${asset.name}" is not <packageName>-<version>`)
-          continue
-        }
-        const {packageName, version} = parsed
-
-        // China / iOS: don't install platform-hidden bundled miniapps.
-        if (shouldHideMiniapp(packageName)) {
-          continue
-        }
-
-        if (appRegistry.getInstalledVersions(packageName).includes(version)) {
-          continue
-        }
-
-        let superMode = await engine.settings.get(SETTINGS.super_mode.key)
-        if (!superMode && packageName === "com.mentra.example") {
-          // skip installing the example miniapp if super mode is not enabled
-          continue
-        }
-
-        await asset.downloadAsync()
-        if (!asset.localUri) {
-          console.warn(`MANTLE: bundled miniapp ${packageName} has no localUri after download`)
-          continue
-        }
-
-        const res = await appRegistry.installFromLocalZip(asset.localUri)
-        if (res.is_error()) {
-          console.error(`MANTLE: failed to install bundled miniapp ${packageName}@${version}:`, res.error)
-          continue
-        }
-        console.log(`MANTLE: installed bundled miniapp ${res.value.packageName}@${res.value.version}`)
+        // iOS Call is installed by its serialized visibility controller.
+        if (Platform.OS === "ios" && parsed?.packageName === mentraCallPackageName) continue
+        await this.installBundledMiniapp(asset)
       } catch (error) {
-        console.error(`MANTLE: error installing bundled miniapp:`, error)
+        console.error("MANTLE: error installing bundled miniapp:", error)
       }
     }
   }
 
+  private async installBundledCall() {
+    const asset = BUNDLED_MINIAPPS.map((module) => Asset.fromModule(module)).find(
+      (asset) => parseBundledMiniappName(asset.name)?.packageName === mentraCallPackageName,
+    )
+    if (!asset) throw new Error(`Missing bundled miniapp: ${mentraCallPackageName}`)
+    await this.installBundledMiniapp(asset)
+  }
+
+  /** Install one bundle, or skip it when current policy/version makes it unnecessary. */
+  private async installBundledMiniapp(asset: Asset) {
+    const parsed = parseBundledMiniappName(asset.name)
+    if (!parsed) throw new Error(`Bundled miniapp asset name "${asset.name}" is not <packageName>-<version>`)
+    const {packageName, version} = parsed
+    const approved = deploymentStore.getActive().manifest.systemMiniapps.approvedPackageNamesOverride
+    if (approved !== null && !approved.includes(packageName)) {
+      throw new Error(`${packageName} is outside the workspace allowlist`)
+    }
+    if (shouldHideMiniapp(packageName) || appRegistry.getInstalledVersions(packageName).includes(version)) return
+    if (packageName === "com.mentra.example" && !engine.settings.get(SETTINGS.super_mode.key)) return
+
+    await asset.downloadAsync()
+    // The user can disable Call while the bundle is being materialized.
+    if (shouldHideMiniapp(packageName)) return
+    if (!asset.localUri) throw new Error(`Bundled ${packageName} has no local URI`)
+    const result = await appRegistry.installFromLocalZip(asset.localUri)
+    if (result.is_error()) throw result.error
+    console.log(`MANTLE: installed bundled miniapp ${result.value.packageName}@${result.value.version}`)
+  }
+
+  private setupIosCallVisibility(): void {
+    if (Platform.OS !== "ios") return
+    const policyKey = "mentra_call_ios_last_enabled"
+    const visibility = new IosCallVisibility({
+      isEnabled: () => !shouldHideMiniapp(mentraCallPackageName),
+      wasEnabled: () => {
+        const result = storage.load<boolean>(policyKey)
+        return result.is_ok() && result.value === true
+      },
+      saveEnabled: (enabled) => {
+        const result = storage.save(policyKey, enabled)
+        if (result.is_error()) throw result.error
+      },
+      setHidden: (hidden) => engine.miniapps.setHiddenStatus(mentraCallPackageName, hidden),
+      clearRunningState: () => saveLocalAppRunningState(mentraCallPackageName, false),
+      install: () => this.installBundledCall(),
+      stop: async () => {
+        if (useAppStatusStore.getState().foregroundedPackage === mentraCallPackageName) {
+          engine.miniapps.clearForeground()
+        }
+        await miniappLauncher.stop(mentraCallPackageName)
+      },
+    })
+    this.iosCallVisibility = visibility
+    visibility.applyRestriction()
+  }
+
+  private reportMiniappVisibilityError(error: unknown): void {
+    console.warn("MANTLE: miniapp visibility reconciliation failed", error)
+    showAlert(translate("common:error"), translate("debugSettings:mentraCallVisibilityError"))
+  }
+
   /**
-   * Hide (and stop) miniapps this platform must not surface. Bundled install
-   * already skips them, but iOS users may still have an older Mentra Call on
-   * disk from a previous build.
+   * Hide (and stop) miniapps this build must not surface, including leftover installs.
    */
   private hidePlatformBlockedMiniapps() {
-    const blocked = new Set([...CHINA_HIDDEN_APPS, ...IOS_HIDDEN_APPS])
-    for (const packageName of blocked) {
+    for (const packageName of CHINA_HIDDEN_APPS) {
       if (!shouldHideMiniapp(packageName)) continue
       engine.miniapps.setHiddenStatus(packageName, true)
       saveLocalAppRunningState(packageName, false)
@@ -752,6 +783,15 @@ class MantleManager {
     // Remove old event subscriptions
     this.subs.forEach((sub) => sub.remove())
     this.subs = []
+
+    const callVisibility = this.iosCallVisibility
+    if (callVisibility) {
+      this.subs.push({
+        remove: engine.settings.onChanged(SETTINGS.show_mentra_call_ios.key, () => {
+          void callVisibility.reconcile().catch((error) => this.reportMiniappVisibilityError(error))
+        }),
+      })
+    }
 
     // LocalDisplayManager arbitrates foreground miniapp frames against
     // temporary background frames (notably phone notifications). Keep its
