@@ -6,11 +6,17 @@
  * Local miniapps subscribe to audio_chunk / transcription streams.
  * This coordinator pushes the aggregate local requirement set to BluetoothSdk
  * so the mic runs whenever at least one local consumer needs it.
+ *
+ * It also merges what the live microphone sessions require (MicSessionManager,
+ * via `setSessionRequirement` / `setSessionMicTuning`) with the OS preferences
+ * the settings store derives. Applications go through MicSessionManager; this
+ * class is an engine implementation detail.
  */
 
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 
 import {createDebouncedPatchFlusher} from "../utils/debouncedPatch"
+import type {MicTuningProfile} from "./micPolicy"
 
 const LOG_TAG = "MIC_COORDINATOR"
 
@@ -24,6 +30,7 @@ interface GateOverride {
 interface ConfiguredMicGates {
   vadEnabled?: boolean | null
   loudnessGateEnabled?: boolean | null
+  micTuning?: Record<string, number> | null
 }
 
 /** Mic-requirement flips are debounced (300ms) and merged into one BLE write
@@ -49,15 +56,28 @@ class MicStateCoordinator {
   private localWantsPcm = false
   private localWantsLc3 = false
   /**
-   * A live ACS call taking the wearer's voice off the glasses over BLE LC3.
+   * A live microphone session held through MicSessionManager — a voice call today.
    *
    * Tracked separately from the miniapp requirement because the two have independent lifetimes:
    * the call miniapp does not subscribe to `audio_chunk`, and a captions miniapp that stops mid-call
    * must not take the call's microphone with it.
    */
-  private callWantsPcm = false
+  private sessionWantsPcm = false
   private configuredVad: boolean | undefined
   private configuredLoudnessGate: boolean | undefined
+  /** `mic_tuning` as the settings store last derived it: `super_mode ? desired : {}`. */
+  private configuredMicTuning: Record<string, number> = {}
+  /** Tuning required by the live sessions, resolved by micPolicy. */
+  private sessionMicTuning: MicTuningProfile | null = null
+  /**
+   * Latched once a session profile has actually been written.
+   *
+   * Before that, `mic_tuning` stays out of every patch, so a device that never
+   * runs a profile does not carry the key on unrelated mic writes. After it,
+   * the OS value keeps being restated, which is what stops a reconnect after a
+   * call from resurrecting the profile.
+   */
+  private sessionMicTuningWritten = false
   private readonly miniappVadOverrides = new Map<string, GateOverride>()
   private readonly miniappLoudnessGateOverrides = new Map<string, GateOverride>()
   private overrideSequence = 0
@@ -84,18 +104,48 @@ class MicStateCoordinator {
   }
 
   /**
-   * Claim or release raw PCM on behalf of an active call.
+   * Claim or release raw PCM on behalf of the live microphone sessions.
    *
-   * Called by AcsMeetingService around a call whose uplink is the glasses microphone over BLE LC3.
+   * MicSessionManager only. Applications acquire a session; they do not reach past it to here.
    * Releasing is a claim release, not a mic shutdown: if a captions miniapp still wants PCM the
    * microphone stays on, which is the whole reason this is a separate flag rather than a setter on
    * the local requirement.
    */
-  public setCallRequirement(pcm: boolean): void {
-    if (this.callWantsPcm === pcm) return
-    this.callWantsPcm = pcm
-    console.log(`${LOG_TAG}: call requirement updated — pcm=${pcm}`)
+  public setSessionRequirement(pcm: boolean): void {
+    if (this.sessionWantsPcm === pcm) return
+    this.sessionWantsPcm = pcm
+    console.log(`${LOG_TAG}: session requirement updated — pcm=${pcm}`)
     this.applyUnion()
+  }
+
+  /**
+   * Apply or drop the tuning the live sessions require.
+   *
+   * MicSessionManager only. Rides `applyUnion` so the profile and the PCM claim land in one
+   * debounced write, resolved at flush time: a session released inside the debounce window wins
+   * over the value that was queued.
+   */
+  public setSessionMicTuning(profile: MicTuningProfile | null): void {
+    if (profile?.gain === this.sessionMicTuning?.gain) return
+    this.sessionMicTuning = profile
+    if (profile) this.sessionMicTuningWritten = true
+    // Nothing was ever written, so there is nothing to restore.
+    else if (!this.sessionMicTuningWritten) return
+    console.log(`${LOG_TAG}: session mic tuning ${profile ? JSON.stringify(profile) : "cleared"}`)
+    this.applyUnion()
+  }
+
+  /** Last session profile queued, or null when the OS value is in force. */
+  public getSessionMicTuning(): MicTuningProfile | null {
+    return this.sessionMicTuning
+  }
+
+  /**
+   * Super Mode sliders outrank a session profile. A live override means a gain
+   * sweep would write to the coordinator and the glasses would ignore it.
+   */
+  public hasConfiguredMicTuning(): boolean {
+    return Object.keys(this.configuredMicTuning).length > 0
   }
 
   /**
@@ -103,7 +153,20 @@ class MicStateCoordinator {
    * forces hardware VAD off: a gate that drops silence turns a call into clipped half-words.
    */
   private get wantsRawPcm(): boolean {
-    return this.localWantsPcm || this.callWantsPcm
+    return this.localWantsPcm || this.sessionWantsPcm
+  }
+
+  /**
+   * The session profile, but only when it wins.
+   *
+   * A live Super Mode tuning value outranks it: that screen is how a profile's numbers get found
+   * on a real call in the first place. Emptiness is by key count — the settings store hands back a
+   * fresh `{}` every time, so reference checks would never match.
+   */
+  private winningSessionMicTuning(): Record<string, number> | undefined {
+    if (!this.sessionMicTuning) return undefined
+    if (Object.keys(this.configuredMicTuning).length > 0) return undefined
+    return {...this.sessionMicTuning} as Record<string, number>
   }
 
   /**
@@ -168,6 +231,10 @@ class MicStateCoordinator {
           : undefined,
       loudnessGateEnabled:
         typeof settings.loudness_gate_enabled === "boolean" ? settings.loudness_gate_enabled : undefined,
+      micTuning:
+        settings.mic_tuning && typeof settings.mic_tuning === "object"
+          ? (settings.mic_tuning as Record<string, number>)
+          : undefined,
     })
 
     return this.applyActiveRuntimeOverrides(settings)
@@ -198,6 +265,12 @@ class MicStateCoordinator {
     if (loudnessOverride) {
       runtimeSettings.loudness_gate_enabled = loudnessOverride.enabled
     }
+
+    // BES forgets mic_tuning on disconnect, so the on-connect replay is what
+    // puts a live session's profile back.
+    const sessionTuning = this.winningSessionMicTuning()
+    if (sessionTuning) runtimeSettings.mic_tuning = sessionTuning
+    else if (this.sessionMicTuningWritten) runtimeSettings.mic_tuning = this.configuredMicTuning
 
     return runtimeSettings
   }
@@ -235,6 +308,9 @@ class MicStateCoordinator {
     if (configured.loudnessGateEnabled !== undefined) {
       this.configuredLoudnessGate = configured.loudnessGateEnabled ?? undefined
     }
+    if (configured.micTuning !== undefined) {
+      this.configuredMicTuning = configured.micTuning ?? {}
+    }
   }
 
   private overridesFor(gate: MicGate): Map<string, GateOverride> {
@@ -265,6 +341,10 @@ class MicStateCoordinator {
       patch.loudness_gate_enabled = this.configuredLoudnessGate
     }
 
+    const sessionTuning = this.winningSessionMicTuning()
+    if (sessionTuning) patch.mic_tuning = sessionTuning
+    else if (this.sessionMicTuningWritten) patch.mic_tuning = this.configuredMicTuning
+
     return patch
   }
 
@@ -274,7 +354,8 @@ class MicStateCoordinator {
   public reset(): void {
     this.localWantsPcm = false
     this.localWantsLc3 = false
-    this.callWantsPcm = false
+    this.sessionWantsPcm = false
+    this.sessionMicTuning = null
     this.applyUnion()
   }
 

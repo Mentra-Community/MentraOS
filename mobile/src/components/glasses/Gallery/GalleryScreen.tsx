@@ -1669,6 +1669,7 @@ const $photoItemDisabled: ThemedStyle<ViewStyle> = () => ({
 })
 
 const $settingsButton: ThemedStyle<ViewStyle> = ({spacing}) => ({
+  marginLeft: spacing.s2,
   paddingHorizontal: spacing.s3,
   paddingVertical: spacing.s2,
   borderRadius: spacing.s3,

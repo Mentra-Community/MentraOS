@@ -9,9 +9,10 @@ import {Platform} from "react-native"
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 
 import audioPlaybackService from "./AudioPlaybackService"
+import {getCallGainSweep} from "./CallGainSweep"
 import micStateCoordinator from "./MicStateCoordinator"
 import {SETTINGS, useSettingsStore} from "../stores/settings"
-import {Pcm16LevelMeter} from "../utils/pcm16"
+import {Pcm16LevelMeter, pcm16WindowStats} from "../utils/pcm16"
 import {softapTrace, softapTraceFailure, softapTraceId} from "../utils/softapTrace"
 import {ACS_CALL_MIC, type AcsAudioSource, type ResolvedAudioSource, type SourceReason} from "./acsAudioSource"
 import type {SoftapProgress} from "./SoftapCallTransport"
@@ -204,8 +205,13 @@ export function glassesLc3UplinkSupported(args: {
   audioSource: AcsAudioSource
   hasPushOutgoingPcm: boolean
   platform: string
+  /** Somebody holds a glasses microphone session through MicSessionManager. */
+  glassesSession: boolean
 }): boolean {
   if (!(softapBleLc3UplinkForTests ?? SOFTAP_BLE_LC3_UPLINK)) return false
+  // The microphone belongs to whoever leased it. Without a lease nothing has pinned the glasses
+  // or claimed raw PCM, so this call has no wearer audio to read off them.
+  if (!args.glassesSession) return false
   // iOS has no `setMicSourcePin` yet, so it cannot promise the phone microphone stays shut.
   if (args.platform !== "android") return false
   // WHEP audio comes back from Cloudflare already mixed into the subscribed track; there is no
@@ -537,6 +543,8 @@ const GLASSES_MIC_SOURCE = "glasses"
 const GLASSES_MIC_GRACE_MS = 1000
 /** Cadence of the uplink health line, matching the native P8 ladder. */
 const MIC_UPLINK_LOG_INTERVAL_MS = 5000
+/** During a gain sweep, one-second windows so each 25 s phase has enough speech samples. */
+const MIC_UPLINK_SWEEP_LOG_INTERVAL_MS = 1000
 /** A 50 ms LC3 frame arriving more than this late is a missed beat, not jitter. */
 const MIC_GAP_WARN_MS = 90
 
@@ -972,6 +980,12 @@ class AcsMeetingService {
       displayName?: string
       video?: AcsOutgoingVideo
       origin?: AcsCallOrigin
+      /**
+       * Whether the caller holds a glasses microphone session. The uplink is the wearer's voice,
+       * so it is only taken off the glasses when somebody has actually claimed that microphone
+       * through MicSessionManager; this class never claims it itself.
+       */
+      glassesSession?: boolean
     },
   ): Promise<MeetingState> {
     const native = getNative()
@@ -998,6 +1012,7 @@ class AcsMeetingService {
       audioSource: resolved.source,
       hasPushOutgoingPcm: typeof native.pushOutgoingPcm === "function",
       platform: Platform.OS,
+      glassesSession: args.glassesSession ?? false,
     })
     this.micTransport = lc3Uplink ? "ble-lc3" : resolved.source === "phone" ? "phone" : "whip"
     this.bindNative(native, packageName)
@@ -1287,11 +1302,13 @@ class AcsMeetingService {
   /**
    * Start forwarding the glasses microphone into ACS for this call.
    *
-   * Order matters and is the whole point: pin the Bluetooth SDK to the glasses *before* asking it
-   * for PCM, so the first frame the mic requirement produces is already from the right source and
-   * the phone microphone is never opened even for one buffer. `generation` is captured by the
-   * listener so a frame that lands after this call ended is dropped rather than pushed at a native
-   * session that has left the meeting.
+   * This class is a sink. The microphone is pinned, claimed and tuned by MicSessionManager on
+   * behalf of whoever leased it; all that happens here is reading the PCM that produces. Reaching
+   * past that to the Bluetooth SDK or MicStateCoordinator would put hardware policy back in the
+   * hands of one audio consumer.
+   *
+   * `generation` is captured by the listener so a frame that lands after this call ended is
+   * dropped rather than pushed at a native session that has left the meeting.
    */
   private startGlassesMicUplink(generation: number): void {
     if (this.micTransport !== "ble-lc3") return
@@ -1310,11 +1327,7 @@ class AcsMeetingService {
     this.micLevel.take()
     this.lastMicLevel = null
     try {
-      void Promise.resolve(BluetoothSdk.setMicSourcePin?.(GLASSES_MIC_SOURCE)).catch((error) => {
-        console.warn("[AcsMeeting] pinning the glasses microphone failed", error)
-      })
       this.micUplinkActive = true
-      micStateCoordinator.setCallRequirement(true)
       this.micSub = BluetoothSdk.addListener("mic_pcm", (event: {pcm?: ArrayBuffer; sampleRate?: number; source?: string}) => {
         if (generation !== this.callGeneration) {
           this.micDropsStale += 1
@@ -1362,18 +1375,18 @@ class AcsMeetingService {
     }
   }
 
-  /** Release the microphone claims this call took. Safe to call when it never took them. */
+  /**
+   * Stop reading the glasses microphone. Safe to call when this call never started.
+   *
+   * Only the subscription is dropped. The microphone itself belongs to whoever leased it through
+   * MicSessionManager, and unsubscribing here before that owner releases is what keeps a normal
+   * hang-up from looking like the wearer's microphone disappearing.
+   */
   private stopGlassesMicUplink(): void {
     this.micSub?.remove()
     this.micSub = null
     if (this.micUplinkActive) {
       this.micUplinkActive = false
-      micStateCoordinator.setCallRequirement(false)
-      // Last, and unconditionally: while the pin is set no other consumer can pick a microphone,
-      // so leaving it behind would leave captions and the cloud uplink stuck on the glasses.
-      void Promise.resolve(BluetoothSdk.setMicSourcePin?.(null)).catch((error) => {
-        console.warn("[AcsMeeting] releasing the glasses microphone pin failed", error)
-      })
       console.log("[AcsMeeting] phase=glasses-mic-uplink-stop", {
         frames: this.micFramesForwarded,
         dropsStale: this.micDropsStale,
@@ -1413,17 +1426,29 @@ class AcsMeetingService {
   private logMicUplink(): void {
     const now = Date.now()
     const elapsed = now - this.lastMicUplinkLogAt
-    if (elapsed < MIC_UPLINK_LOG_INTERVAL_MS) return
+    const sweep = getCallGainSweep()
+    const interval = sweep.isActive() ? MIC_UPLINK_SWEEP_LOG_INTERVAL_MS : MIC_UPLINK_LOG_INTERVAL_MS
+    if (elapsed < interval) return
     this.lastMicUplinkLogAt = now
     // Level, not just cadence: a 20 Hz stream of the noise floor and a 20 Hz stream of speech
     // have the same framesPerSecond. Quiet room on Mentra Live LC3 is meanAbs ≈30–60.
     const level = this.micLevel.take()
+    const stats = pcm16WindowStats(level)
     this.lastMicLevel = {meanAbs: level.meanAbs, peak: level.peak}
+    const gain = sweep.currentGain() ?? micStateCoordinator.getSessionMicTuning()?.gain ?? null
+    if (sweep.isActive()) sweep.ingest(level)
     console.log("[AcsMeeting] phase=glasses-mic-uplink", {
       framesPerSecond: Math.round((this.micFramesWindow * 1000) / elapsed),
       frames: this.micFramesForwarded,
-      meanAbs: level.meanAbs,
-      peak: level.peak,
+      meanAbs: stats.meanAbs,
+      peak: stats.peak,
+      peakPct: stats.peakPct,
+      clipped: stats.clipped,
+      clipPct: stats.clipPct,
+      nearClip: stats.nearClip,
+      nearClipPct: stats.nearClipPct,
+      gain,
+      sweep: sweep.currentLabel(),
       dropsStale: this.micDropsStale,
       dropsNonGlasses: this.micDropsNonGlasses,
       gaps: this.micGaps,

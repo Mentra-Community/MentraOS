@@ -464,6 +464,42 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: true,
     persist: true,
   },
+  /*
+   * Mentra Live mic tuning, split in two on purpose.
+   *
+   * `mic_tuning_desired` is what the super user set. It persists so that
+   * turning super mode off and on again does not lose the calibration, and it
+   * stays out of BLUETOOTH_SETTING_KEYS so it can never reach the glasses on
+   * its own. It is device-local: this is a hardware calibration aid, not
+   * something that should follow an account onto another pair of glasses.
+   *
+   * `mic_tuning` is the effective value, derived in getBluetoothSettings as
+   * `super_mode ? desired : {}`. It is the only one native ever sees. Because
+   * it is not persisted and native seeds no default for it, a process that
+   * connects before the engine has authorized anything can only send a reset
+   * -- the super-mode guarantee is then a property of what native can hold,
+   * not of which initialiser happened to run first.
+   *
+   * `{}` rather than null for "no tuning": the native store drops null writes,
+   * so null would leave a previously applied value in place.
+   *
+   * The empty object is a stable singleton so GlassesSettingsSync's reference
+   * diff does not treat every unrelated settings write as a mic_tuning change.
+   */
+  mic_tuning_desired: {
+    key: "mic_tuning_desired",
+    defaultValue: () => null,
+    writable: true,
+    saveOnServer: false,
+    persist: true,
+  },
+  mic_tuning: {
+    key: "mic_tuning",
+    defaultValue: () => ({}),
+    writable: true,
+    saveOnServer: false,
+    persist: false,
+  },
   always_on_status_bar: {
     key: "always_on_status_bar",
     defaultValue: () => false,
@@ -757,6 +793,8 @@ export const BLUETOOTH_SETTING_KEYS: string[] = [
   SETTINGS.power_saving_mode.key,
   SETTINGS.voice_activity_detection_enabled.key,
   SETTINGS.loudness_gate_enabled.key,
+  // Effective tuning only; mic_tuning_desired deliberately stays engine-side.
+  SETTINGS.mic_tuning.key,
   SETTINGS.lc3_frame_size.key,
   SETTINGS.preferred_mic.key,
   SETTINGS.screen_disabled.key,
@@ -819,6 +857,9 @@ export const PAIRING_IDENTITY_KEYS: string[] = Object.values(SETTINGS)
   .filter((setting) => setting.nativeAuthoritative)
   .map((setting) => setting.key)
 
+/** Stable empty effective tuning. Native reads this as `{"reset":1}`. */
+const EMPTY_MIC_TUNING: Record<string, number> = Object.freeze({})
+
 // const PER_GLASSES_SETTINGS_KEYS: string[] = [SETTINGS.preferred_mic.key]
 
 export interface SettingsState {
@@ -834,6 +875,11 @@ export interface SettingsState {
   loadAllSettings: () => AsyncResult<void, Error>
   // Utility methods
   getBluetoothSettings: () => Record<string, any>
+  /**
+   * The mic tuning native is allowed to send: the desired value while super
+   * mode is on, `{}` (meaning "reset to firmware defaults") otherwise.
+   */
+  getEffectiveMicTuning: () => Record<string, number>
   resetAllSettingsLocally: () => void
 }
 
@@ -1193,9 +1239,29 @@ export const useSettingsStore = create<SettingsState>()(
         if (key === SETTINGS.core_token.key && (typeof value !== "string" || value.trim().length === 0)) {
           continue
         }
+        if (key === SETTINGS.mic_tuning.key) {
+          // Derived here rather than stored, so there is no path that can push
+          // a persisted tuning to the glasses while super mode is off. Every
+          // sync route (change diff, on-connect replay, full seed) reads this.
+          bluetoothSettings[key] = state.getEffectiveMicTuning()
+          continue
+        }
         bluetoothSettings[key] = value
       }
       return bluetoothSettings
+    },
+    getEffectiveMicTuning: () => {
+      const state = get()
+      if (!state.getSetting(SETTINGS.super_mode.key)) return EMPTY_MIC_TUNING
+      const desired = state.getSetting(SETTINGS.mic_tuning_desired.key)
+      if (!desired || typeof desired !== "object") return EMPTY_MIC_TUNING
+      const effective: Record<string, number> = {}
+      for (const [key, value] of Object.entries(desired as Record<string, unknown>)) {
+        if (typeof value === "number" && Number.isFinite(value)) {
+          effective[key] = Math.round(value)
+        }
+      }
+      return Object.keys(effective).length === 0 ? EMPTY_MIC_TUNING : effective
     },
     resetAllSettingsLocally: () => {
       set((_state) => ({

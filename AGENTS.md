@@ -243,3 +243,4 @@ After **every** BES firmware source change, run the OTA sanity gates in that rep
 - Mintlify docs: `/mintlify-docs/`
 - Architecture specs, design docs, and working notes: `/notes/` (convention: [`notes/README.md`](notes/README.md))
 - Module-specific implementation details: See module-specific `AGENTS.md` files
+- Teams calling (ACS) native pipeline, end to end: [`mobile/modules/acs-meeting/README.md`](mobile/modules/acs-meeting/README.md), with the shared transport in [`mobile/modules/glasses-media/README.md`](mobile/modules/glasses-media/README.md)
