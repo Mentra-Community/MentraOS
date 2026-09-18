@@ -29,3 +29,9 @@ Proposed final experience: open the PR Slack post → choose iPhone IPA or Mac Z
 - Draft PR: https://github.com/Mentra-Community/MentraOS/pull/4101. First CI run reached and passed the artifact tests, then exposed that hosted Ruby installation tries `/Users/runner` on the self-hosted Mac. Switched to the runner's existing Homebrew Ruby with job-local gems. A real Xcode project fixture also confirmed the signing edit preserves Debug and framework configurations.
 
 - CI run `35386230120` passed the self-hosted Ruby setup and decrypted Match successfully, then stopped at the confirmed missing `AdHoc_com.mentra.mentra.mobileprovision`. The job cleaned up its keychain. Added explicit Mac inclusion to profile setup instructions and the Apple intermediate-certificate imports used by coordinated signing to the isolated PR keychain. No installable artifacts have been produced yet.
+
+## Apple account setup completed (2026-09-18)
+
+The signed-in Apple Developer portal allowed creation of `match AdHoc com.mentra.mentra` with the existing May 2027 distribution certificate and all 19 registered devices, including the exact MacBook and paired iPhone. The downloaded Apple profile passed validation and retains hotspot, Wi-Fi information, sustained execution, keychain, associated-domain and sign-in capabilities.
+
+Stored the profile in MentraOS's encrypted `IOS_PR_PROFILE_BASE64` Actions secret. CI now reads only the existing distribution identity from Match and installs this explicit profile, rather than needing write access to `match-certs`. There is one source for the PR profile and no fallback to a stale installed profile. This resolves the missing-profile setup gate above; exact CI export/install qualification remains.

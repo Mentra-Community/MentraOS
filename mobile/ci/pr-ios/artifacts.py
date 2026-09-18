@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 """PR-only ad hoc export validation and portable iPhone/Mac packaging."""
 import argparse
+import base64
 import datetime as dt
 import hashlib
 import json
@@ -47,23 +48,26 @@ def validate_profile(profile, now=None):
 
 
 def configure(output, keychain):
-    profiles = []
-    for directory in [Path.home() / "Library/Developer/Xcode/UserData/Provisioning Profiles",
-                      Path.home() / "Library/MobileDevice/Provisioning Profiles"]:
-        for file in directory.glob("*.mobileprovision"):
-            profile = read_profile(file)
-            if profile.get("Name") == PROFILE_NAME:
-                profiles.append(profile)
-    if not profiles:
-        raise ValueError(f"Missing {PROFILE_NAME}. Run fastlane match adhoc with the test devices first; App Store profiles cannot be used.")
-    profile = max(profiles, key=lambda value: value["ExpirationDate"])
+    encoded = os.environ.get("IOS_PR_PROFILE_BASE64")
+    if not encoded:
+        raise ValueError("Missing IOS_PR_PROFILE_BASE64 Actions secret; upload the registered-device ad hoc profile first")
+    output.mkdir(parents=True, exist_ok=True)
+    file = output / "PR.mobileprovision"
+    file.write_bytes(base64.b64decode(encoded, validate=True))
+    profile = read_profile(file)
+    if profile.get("Name") != PROFILE_NAME:
+        raise ValueError(f"Expected {PROFILE_NAME}")
     team = validate_profile(profile)
     identities = run("security", "find-identity", "-v", "-p", "codesigning", keychain).decode()
     certificates = [hashlib.sha1(cert).hexdigest().upper() for cert in profile["DeveloperCertificates"]]
     certificate = next((cert for cert in certificates if cert in identities), None)
     if certificate is None:
         raise ValueError("No usable private signing identity matches the ad hoc profile in the job keychain")
-    output.mkdir(parents=True, exist_ok=True)
+    # Xcode 16+ reads profiles here. Keep the named profile separate from the
+    # App Store profile; concurrent jobs can use the same Apple-issued UUID.
+    installed = Path.home() / "Library/Developer/Xcode/UserData/Provisioning Profiles"
+    installed.mkdir(parents=True, exist_ok=True)
+    shutil.copy2(file, installed / f"{profile['UUID']}.mobileprovision")
     signing = {"profile": profile["UUID"], "team": team, "certificate": certificate}
     (output / "signing.json").write_text(json.dumps(signing))
     with (output / "ExportOptions.plist").open("wb") as stream:

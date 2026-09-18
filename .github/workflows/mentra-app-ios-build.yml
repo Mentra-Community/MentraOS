@@ -121,6 +121,7 @@ jobs:
           FASTLANE_SKIP_UPDATE_CHECK: "true"
           MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
           RAW_MATCH_GIT_BASIC_AUTHORIZATION: ${{ secrets.MATCH_GIT_BASIC_AUTHORIZATION }}
+          IOS_PR_PROFILE_BASE64: ${{ secrets.IOS_PR_PROFILE_BASE64 }}
         run: |
           set -euo pipefail
           keychain="$RUNNER_TEMP/mentra-pr-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.keychain-db"
@@ -141,7 +142,7 @@ jobs:
           done
           MATCH_GIT_BASIC_AUTHORIZATION="$(printf '%s' "$RAW_MATCH_GIT_BASIC_AUTHORIZATION" | tr -d '\r\n')"
           export MATCH_GIT_BASIC_AUTHORIZATION
-          bundle exec fastlane match adhoc --readonly --include_mac_in_profiles true --keychain_name "$keychain" --keychain_password "$password"
+          bundle exec fastlane match adhoc --readonly --skip_provisioning_profiles true --keychain_name "$keychain" --keychain_password "$password"
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain" >/dev/null
           python3 ci/pr-ios/artifacts.py configure --keychain "$keychain" --output build/pr-ios
 

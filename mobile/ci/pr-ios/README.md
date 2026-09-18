@@ -35,29 +35,40 @@ macOS may require its normal first-use approvals. The installer does not change
 privacy settings or disable Gatekeeper. If a launch approval delays opening,
 the verified app remains installed; approve through macOS and open it again.
 
-## One-time signing setup (maintainer)
+## Signing setup (maintainer)
 
-Use the existing Apple Distribution certificate and add an **ad hoc** profile
-for `com.mentra.mentra` to the encrypted `Mentra-Community/match-certs` store.
-Include the test iPhones and test Macs in this same profile. For a Mac, get the
-**Provisioning UDID** from System Information → Hardware (not Hardware UUID).
-For an iPhone use Xcode's Devices and Simulators identifier.
+The distribution certificate/private key stays in the encrypted
+`Mentra-Community/match-certs` store. PR CI fetches only that existing identity
+with `match adhoc --readonly --skip_provisioning_profiles true`.
 
-From an authorized checkout's `mobile` directory, with Match credentials loaded
-securely and the devices registered in Apple Developer:
+The PR-specific ad hoc profile is stored separately in the MentraOS Actions
+secret **`IOS_PR_PROFILE_BASE64`**. This lets an Apple Developer administrator
+maintain test-device authorization without write access to the certificate
+repository. The App Store profile is unchanged.
+
+To create or renew it in Apple Developer → Certificates, Identifiers & Profiles:
+
+1. Choose **Profiles → Add → Ad Hoc** and App ID `com.mentra.mentra`.
+2. Select the Apple Distribution certificate used by CI (its fingerprint must
+   match the identity in Match). Do not create or revoke a certificate.
+3. Check **Include Mac Devices** and select the registered test devices. For a
+   new Mac, register its **Provisioning UDID** from System Information → Hardware,
+   not Hardware UUID. For an iPhone use Xcode's Devices and Simulators identifier.
+4. Name it **`match AdHoc com.mentra.mentra`**, generate it and download it.
+5. Upload the profile as base64 without putting it in the repository:
 
 ```sh
-bundle exec fastlane match adhoc --include_mac_in_profiles true --force_for_new_devices
+base64 < /path/to/profile.mobileprovision | tr -d '\r\n' |
+  gh secret set IOS_PR_PROFILE_BASE64 --repo Mentra-Community/MentraOS
 ```
 
-The Mac inclusion flag is required: Match excludes Macs by default even when
-they are registered. This requires write access to the signing store and Apple Developer profile
-management. CI only runs `match adhoc --readonly`: it never creates devices,
-profiles or certificates and never changes the App Store profile. The self-hosted runner uses its existing Homebrew Ruby (`brew --prefix ruby`),
-with gems installed into a job-local Bundler directory. The existing
-`MATCH_PASSWORD` and `MATCH_GIT_BASIC_AUTHORIZATION` GitHub secrets are reused.
-New devices require a refreshed profile and export; existing downloaded IPAs
-cannot acquire a new device authorization. Profile expiration also requires a
+The runner uses its existing Homebrew Ruby (`brew --prefix ruby`) with job-local
+Bundler gems. Existing `MATCH_PASSWORD` and `MATCH_GIT_BASIC_AUTHORIZATION`
+secrets are reused. CI never creates devices, profiles or certificates.
+
+New devices require registering them, regenerating the profile, replacing this
+secret and rerunning the build/export. Already downloaded IPAs cannot acquire
+new device authorization. Profile or certificate expiration also requires a
 fresh export. No new certificate per tester is needed.
 
 ## Evidence and recovery
@@ -70,5 +81,5 @@ embedded Apple profile inherently contains them). Downloads may expire after
 
 The signed outputs are handed off as a GitHub Actions artifact. If CDN
 publication fails, rerun failed jobs to reuse those exact bytes. If signing is
-missing, fix Match provisioning and rerun the build. The source archive and
+missing, fix the certificate or PR profile secret and rerun the build. The source archive and
 upload bytes are never re-signed by the publication job.
