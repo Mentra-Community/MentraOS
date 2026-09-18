@@ -160,8 +160,10 @@ fixture check.
 
 For further media investigation, `bun ios:mac --build-only --e2e-host-network`
 explicitly compiles `MENTRA_E2E` and marks the build manifest as
-`mac-host-verified-test-only`. This requires the matching product source from
-#4078. Normal local builds and CI omit the adapter entirely. The host routine must:
+`mac-host-verified-test-only`. The prejoined-network adapter and its native tests live with this harness
+in #4069; the remaining Call integration fixes come from #4078. Build the
+combined source for Mac media qualification. Normal local builds and CI omit
+the lease adapter entirely. The host routine must:
 
 1. Verify the USB/Bluetooth fixture, Ethernet, hotspot credentials and association
    using the existing checks above.
@@ -241,3 +243,12 @@ Run `2026-09-17T02-24-34-538Z-mac-fixed-build-media-e6641d` passed its 16 setup/
 cleanup steps (70.04 seconds) before creating a meeting; it was stopped to sync
 latest dev. Audio, hotspot and ADB restoration passed. This is a capture/setup
 qualification only, not a successful media call.
+
+## Source ownership
+
+The Mac prejoined-network reuse path, configuration ownership, lease validation
+and related Swift tests are maintained in harness PR4069. Product PR4078 keeps
+normal native association, Ethernet routing and IP-bound local media. Preserve
+both changes when integrating the PRs; use the combined source for Mac test
+builds. Detailed ACS PCM peak diagnostics also require `MENTRA_E2E`; ordinary
+builds retain only bounded event counters.
