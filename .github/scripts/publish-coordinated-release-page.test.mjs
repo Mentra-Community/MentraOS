@@ -74,3 +74,22 @@ test("managed notes are replaceable and preserve surrounding content", () => {
   assert.equal(updateDownloadNotes(body, notes), body)
   assert.throws(() => updateDownloadNotes("<!-- mentra-release-downloads:start -->", notes), /Malformed/)
 })
+
+test("a failed page publication can retry the same archived manifest without changing its bytes", () => {
+  const input = fixture()
+  const before = JSON.stringify({plan: input.plan, manifest: input.manifest})
+  const api = input.api
+  let failed = false
+  input.api = (route, options) => {
+    if (options?.method === "POST" && !failed) {
+      failed = true
+      throw new Error("GitHub temporarily unavailable")
+    }
+    return api(route, options)
+  }
+  assert.throws(() => publishCoordinatedReleasePage(input), /temporarily unavailable/)
+  assert.equal(JSON.stringify({plan: input.plan, manifest: input.manifest}), before)
+  publishCoordinatedReleasePage(input)
+  assert.equal(input.writes.length, 1)
+  assert.equal(JSON.stringify({plan: input.plan, manifest: input.manifest}), before)
+})

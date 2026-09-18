@@ -89,12 +89,17 @@ test("release finalization reads the preserved OTA artifact layout", () => {
 })
 
 test("completed releases publish a version page and example notices carry the main app links", () => {
-  const finalize = jobBlock(workflow("coordinated-release.yml"), "finalize")
-  const page = finalize.indexOf("- name: Publish versioned release page with direct app downloads")
-  assert.ok(page > finalize.indexOf("- name: Tag and verify the completed release set"))
-  assert.ok(finalize.indexOf("name: coordinated-release-result-", page) > page)
-  assert.match(finalize.slice(page), /if: needs.plan.outputs.dry_run != 'true'/)
-  assert.match(finalize.slice(page), /publish-coordinated-release-page.mjs/)
+  const core = workflow("coordinated-release.yml")
+  const finalize = jobBlock(core, "finalize")
+  assert.doesNotMatch(finalize, /publish-coordinated-release-page/)
+  const page = jobBlock(core, "publish-release-page")
+  assert.match(page, /needs: \[plan, finalize\]/)
+  assert.match(page, /if: needs.plan.outputs.dry_run != 'true'/)
+  assert.match(page, /actions\/download-artifact@v4/)
+  assert.match(page, /name: coordinated-release-result-/)
+  assert.match(page, /publish-coordinated-release-page.mjs/)
+  assert.doesNotMatch(page, /finalize-release-manifest|publish-immutable-release-asset|date -u/)
+  assert.doesNotMatch(jobBlock(core, "dispatch-examples"), /publish-release-page/)
   const examples = workflow("coordinated-example-release.yml")
   for (const kind of ["apk", "ipa"]) {
     assert.ok(examples.includes(`mobile_${kind}_url: \${{ steps.load.outputs.mobile_${kind}_url }}`))

@@ -586,16 +586,6 @@ jobs:
             --file "finalized-release/${{ steps.results.outputs.manifest_name }}" \
             --url "$url"
 
-      - name: Publish versioned release page with direct app downloads
-        if: needs.plan.outputs.dry_run != 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: >-
-          node .github/scripts/publish-coordinated-release-page.mjs
-          --plan release-input/plan/release-plan.json
-          --manifest "finalized-release/${{ steps.results.outputs.manifest_name }}"
-          --repository "${{ github.repository }}"
-
       - uses: actions/upload-artifact@v4
         with:
           name: coordinated-release-result-${{ needs.plan.outputs.release_set_id }}
@@ -621,6 +611,35 @@ jobs:
               echo "- GitHub release: https://github.com/${GITHUB_REPOSITORY}/releases/tag/mentra-v${{ steps.results.outputs.identity }}"
             fi
           } >> "$GITHUB_STEP_SUMMARY"
+
+  publish-release-page:
+    name: Publish versioned release download page
+    needs: [plan, finalize]
+    if: needs.plan.outputs.dry_run != 'true'
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "24"
+
+      # Retry page creation from archived, completed evidence. It must never
+      # regenerate timestamps or republish immutable artifacts on a retry.
+      - uses: actions/download-artifact@v4
+        with:
+          name: coordinated-release-result-${{ needs.plan.outputs.release_set_id }}
+          path: release-page-input
+
+      - name: Publish direct app downloads from the completed release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: >-
+          node .github/scripts/publish-coordinated-release-page.mjs
+          --plan "release-page-input/mentra-release-plan-${{ needs.plan.outputs.release_identity }}.json"
+          --manifest "release-page-input/mentra-release-${{ needs.plan.outputs.release_identity }}.json"
+          --repository "${{ github.repository }}"
 
   dispatch-examples:
     name: Start independent example and docs release
@@ -655,6 +674,7 @@ jobs:
         mobile,
         engine-consumer,
         finalize,
+        publish-release-page,
         dispatch-examples,
       ]
     if: always() && github.event_name == 'push'
@@ -668,6 +688,7 @@ jobs:
           STAGING_SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_NIGHTLY_BUILDS }}
           DEV_SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_DEV_BUILDS }}
           RELEASE_SCOPE: core
+          RELEASE_PAGE_RESULT: ${{ needs.publish-release-page.result }}
           EXAMPLES_DISPATCH_RESULT: ${{ needs.dispatch-examples.result }}
           BRANCH: ${{ github.ref_name }}
           REPOSITORY: ${{ github.repository }}

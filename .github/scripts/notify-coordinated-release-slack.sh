@@ -31,6 +31,9 @@ commit_subject="${commit_subject%%$'\n'*}"
 commit_author="${COMMIT_AUTHOR:-unknown}"
 release_identity="${RELEASE_IDENTITY:-unknown}"
 release_url="https://github.com/${REPOSITORY}/releases/tag/mentra-v${release_identity}"
+if [[ "${RELEASE_PAGE_RESULT:-}" == "failure" || "${RELEASE_PAGE_RESULT:-}" == "cancelled" ]]; then
+  release_url="https://github.com/${REPOSITORY}/releases/tag/mentra-builds-v${release_identity%-*}"
+fi
 if [[ "$release_identity" == "unknown" ]]; then
   release_text="*Release:* identity allocation failed"
 else
@@ -171,6 +174,9 @@ if [[ "$scope" == examples ]]; then
 else
   checks_line="*Release checks*${newline}Plan: $(icon "${PLAN_RESULT:-unknown}") $(label "${PLAN_RESULT:-unknown}") | Cloud V2: $(icon "${CLOUD_V2_RESULT:-unknown}") $(label "${CLOUD_V2_RESULT:-unknown}") | Mentra Cloud image: $(icon "${RUNTIME_IMAGE_RESULT:-unknown}") $(label "${RUNTIME_IMAGE_RESULT:-unknown}") | Private deployment: $(icon "${PRIVATE_DEPLOYMENT_RESULT:-skipped}") $(label "${PRIVATE_DEPLOYMENT_RESULT:-skipped}") | Packages: $(icon "${NPM_RESULT:-unknown}") $(label "${NPM_RESULT:-unknown}") | Native SDK: $(icon "${SDK_NATIVE_RESULT:-unknown}") $(label "${SDK_NATIVE_RESULT:-unknown}") | Engine consumer: $(icon "${ENGINE_RESULT:-unknown}") $(label "${ENGINE_RESULT:-unknown}") | Finalize: $(icon "${FINALIZE_RESULT:-unknown}") $(label "${FINALIZE_RESULT:-unknown}")"
   examples_url="https://github.com/${REPOSITORY}/actions/workflows/coordinated-example-release.yml?query=branch%3A${BRANCH}"
+  if [[ -n "${RELEASE_PAGE_RESULT:-}" ]]; then
+    checks_line+=" | Download page: $(icon "$RELEASE_PAGE_RESULT") $(label "$RELEASE_PAGE_RESULT")"
+  fi
   checks_line+="${newline}Examples and docs dispatch: $(icon "${EXAMPLES_DISPATCH_RESULT:-unknown}") $(label "${EXAMPLES_DISPATCH_RESULT:-unknown}") - <${examples_url}|View separate workflow>"
 fi
 
