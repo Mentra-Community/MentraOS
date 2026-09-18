@@ -52,7 +52,8 @@ bundle exec fastlane match adhoc --force_for_new_devices
 
 This requires write access to the signing store and Apple Developer profile
 management. CI only runs `match adhoc --readonly`: it never creates devices,
-profiles or certificates and never changes the App Store profile. The existing
+profiles or certificates and never changes the App Store profile. The self-hosted runner uses its existing Homebrew Ruby (`brew --prefix ruby`),
+with gems installed into a job-local Bundler directory. The existing
 `MATCH_PASSWORD` and `MATCH_GIT_BASIC_AUTHORIZATION` GitHub secrets are reused.
 New devices require a refreshed profile and export; existing downloaded IPAs
 cannot acquire a new device authorization. Profile expiration also requires a

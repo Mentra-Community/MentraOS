@@ -97,17 +97,22 @@ jobs:
           node --test .github/scripts/pr-ios-artifacts.test.mjs .github/scripts/notify-pr-builds.test.mjs
           python3 mobile/ci/pr-ios/test_artifacts.py
 
-      - name: Set up signing tools
+      - name: Use the self-hosted Mac's Ruby for signing
         if: env.PR_IOS_SIGNED == 'true'
-        uses: ruby/setup-ruby@v1
-        with:
-          ruby-version: "3.3"
-          bundler-cache: true
-          working-directory: mobile
-
-      - name: Install CocoaPods for signing Ruby
-        if: env.PR_IOS_SIGNED == 'true'
-        run: gem install cocoapods --version 1.16.2 --no-document
+        working-directory: mobile
+        run: |
+          set -euo pipefail
+          ruby_bin="$(brew --prefix ruby)/bin"
+          export PATH="$ruby_bin:$PATH"
+          echo "$ruby_bin" >> "$GITHUB_PATH"
+          ruby --version
+          # Do not install hosted-runner Ruby under /Users/runner on this Mac.
+          # Keep gems and Bundler configuration scoped to this job.
+          export BUNDLE_PATH="$RUNNER_TEMP/mentra-pr-signing-gems"
+          export BUNDLE_FROZEN=true
+          echo "BUNDLE_PATH=$BUNDLE_PATH" >> "$GITHUB_ENV"
+          echo "BUNDLE_FROZEN=true" >> "$GITHUB_ENV"
+          bundle install --jobs 4 --retry 3
 
       - name: Install PR ad hoc signing assets
         if: env.PR_IOS_SIGNED == 'true'
@@ -407,7 +412,8 @@ jobs:
 
       - name: Configure only the app target for PR signing
         if: env.PR_IOS_SIGNED == 'true'
-        run: ruby mobile/ci/pr-ios/configure-signing.rb mobile/ios/Mentra.xcodeproj mobile/build/pr-ios/signing.json
+        working-directory: mobile
+        run: bundle exec ruby ci/pr-ios/configure-signing.rb ios/Mentra.xcodeproj build/pr-ios/signing.json
 
       - name: Ensure iOS platform is installed
         working-directory: ./mobile/ios
