@@ -429,6 +429,8 @@ jobs:
           # Full log + Build Timing Summary land in $RUNNER_TEMP (uploaded as an
           # artifact below); the console shows errors/warnings/result only.
           # Exit status is xcodebuild's own (PIPESTATUS), never tee's.
+          # shellcheck source=.github/scripts/ios-compile-check-settings.sh
+          . "$GITHUB_WORKSPACE/.github/scripts/ios-compile-check-settings.sh"
           "$GITHUB_WORKSPACE/.github/scripts/ios-xcodebuild-attempt.sh" attempt-1 -- \
                      -workspace Mentra.xcworkspace \
                      -scheme Mentra \
@@ -438,7 +440,8 @@ jobs:
                      -showBuildTimingSummary \
                      CODE_SIGN_IDENTITY="" \
                      CODE_SIGNING_REQUIRED=NO \
-                     CODE_SIGNING_ALLOWED=NO
+                     CODE_SIGNING_ALLOWED=NO \
+                     "${MENTRA_IOS_COMPILE_CHECK_SETTINGS[@]}"
 
       - name: Retry build with clean caches (if first attempt failed)
         id: xcode-build-clean
@@ -482,6 +485,8 @@ jobs:
           # Retry serially. The fallback only runs after a failed cached build,
           # and limiting concurrency avoids the observed CocoaPods VFS overlay
           # disappearing while parallel compile and XCFramework copy jobs run.
+          # shellcheck source=.github/scripts/ios-compile-check-settings.sh
+          . "$GITHUB_WORKSPACE/.github/scripts/ios-compile-check-settings.sh"
           "$GITHUB_WORKSPACE/.github/scripts/ios-xcodebuild-attempt.sh" attempt-2 -- \
                      -workspace Mentra.xcworkspace \
                      -scheme Mentra \
@@ -492,7 +497,8 @@ jobs:
                      -showBuildTimingSummary \
                      CODE_SIGN_IDENTITY="" \
                      CODE_SIGNING_REQUIRED=NO \
-                     CODE_SIGNING_ALLOWED=NO
+                     CODE_SIGNING_ALLOWED=NO \
+                     "${MENTRA_IOS_COMPILE_CHECK_SETTINGS[@]}"
 
       - name: Summarize iOS build attempts
         if: always()
