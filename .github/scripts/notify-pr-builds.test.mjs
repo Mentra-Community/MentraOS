@@ -94,6 +94,8 @@ const job = (name, conclusion = "success", attempt = 1, id = attempt) => ({
   run_attempt: attempt,
   id,
   status: "completed",
+  started_at: new Date(Date.UTC(2026, 8, 18, 0, attempt, 0)).toISOString(),
+  completed_at: new Date(Date.UTC(2026, 8, 18, 0, attempt, 10)).toISOString(),
 })
 function harness(options = {}) {
   const state = {
@@ -260,7 +262,12 @@ test("iOS-only retry refreshes an already-completed incomplete notification with
   // Only failed iOS publication reruns; successful archive/Android are retained.
   // Its workflow is still in progress because its notification is executing.
   h.state.ios = {...iosRun, run_attempt: 2, status: "in_progress", conclusion: null}
-  h.state.jobs[3] = [job("build"), job("publish", "failure"), job("publish", "success", 2)]
+  h.state.jobs[3] = [
+    job("build"),
+    job("publish", "failure"),
+    {...job("build"), id: 22, run_attempt: 2}, // Retained job copied by GitHub.
+    job("publish", "success", 2),
+  ]
   h.state.receipt = {...iosReceipt, runAttempt: 2, buildAttempt: 1}
   await reconcileFromWorkflow("mentra-app-ios-build.yml", h, 3)
   assert.equal(h.posts.length, 2)
@@ -276,6 +283,10 @@ test("iOS-only retry refreshes an already-completed incomplete notification with
   assert.equal(h.posts.length, 2) // Peer completion is serialized and deduplicated.
   // Rerunning only notification increments the workflow attempt, not the receipt.
   h.state.ios = {...h.state.ios, run_attempt: 3}
+  h.state.jobs[3].push(
+    {...job("build"), id: 32, run_attempt: 3},
+    {...job("publish", "success", 2), id: 33, run_attempt: 3},
+  )
   await reconcileFromWorkflow("mentra-app-ios-build.yml", h, 3)
   assert.equal(h.posts.length, 2)
 })

@@ -143,9 +143,25 @@ async function readBuild(github, context, pr, sha, lane) {
   const success = jobs.every(
     (job) => job.conclusion === "success" || (lane === "asg" && job.name === "build" && job.conclusion === "skipped"),
   )
-  // The receipt belongs to the publication job's attempt, which can precede a
-  // notification-only retry. Never require re-exporting just to resend a post.
-  return {run, attempt: jobs.at(-1).run_attempt, conclusion: cancelled ? "cancelled" : success ? "success" : "failure"}
+  // GitHub copies retained successful jobs into a rerun with new IDs/attempts,
+  // but keeps their execution timestamps. Use the first matching execution so
+  // a notification-only retry still reads the original publication receipt.
+  const last = jobs.at(-1)
+  const attempt = Math.min(
+    last.run_attempt,
+    ...all
+      .filter(
+        (job) =>
+          job.name === last.name &&
+          job.started_at &&
+          job.completed_at &&
+          job.started_at === last.started_at &&
+          job.completed_at === last.completed_at &&
+          job.conclusion === last.conclusion,
+      )
+      .map((job) => job.run_attempt),
+  )
+  return {run, attempt, conclusion: cancelled ? "cancelled" : success ? "success" : "failure"}
 }
 
 export async function notifyPrBuilds({github, context, core, fetchImpl = fetch}) {
