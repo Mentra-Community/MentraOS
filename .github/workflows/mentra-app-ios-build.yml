@@ -128,8 +128,11 @@ jobs:
           password="$(openssl rand -hex 32)"
           echo "::add-mask::$password"
           echo "PR_IOS_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+          echo "PR_IOS_KEYCHAIN_PASSWORD=$password" >> "$GITHUB_ENV"
           security create-keychain -p "$password" "$keychain"
-          security set-keychain-settings -lut 7200 "$keychain"
+          # Match release signing: keep only this disposable job keychain
+          # unlocked through archive/export; always delete it at job cleanup.
+          security set-keychain-settings "$keychain"
           security unlock-keychain -p "$password" "$keychain"
           python3 ci/pr-ios/keychain-search.py add "$keychain"
           # A fresh job keychain needs the Apple certificate chain as well as
@@ -573,6 +576,7 @@ jobs:
         if: success() && env.PR_IOS_SIGNED == 'true'
         run: |
           set -euo pipefail
+          security unlock-keychain -p "$PR_IOS_KEYCHAIN_PASSWORD" "$PR_IOS_KEYCHAIN"
           xcodebuild -exportArchive -archivePath mobile/build/pr-ios/Mentra.xcarchive \
             -exportOptionsPlist mobile/build/pr-ios/ExportOptions.plist \
             -exportPath mobile/build/pr-ios/export

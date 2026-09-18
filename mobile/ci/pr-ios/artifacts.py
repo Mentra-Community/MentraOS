@@ -63,6 +63,15 @@ def configure(output, keychain):
     certificate = next((cert for cert in certificates if cert in identities), None)
     if certificate is None:
         raise ValueError("No usable private signing identity matches the ad hoc profile in the job keychain")
+    # Listing an identity does not prove codesign can use its private key in a
+    # headless runner session. Fail here instead of after compiling the app.
+    with tempfile.TemporaryDirectory(prefix="mentra-signing-probe-") as temporary:
+        probe = Path(temporary) / "probe"
+        subprocess.run(["xcrun", "clang", "-x", "c", "-", "-o", str(probe)],
+                       input=b"int main(void) { return 0; }\n", check=True)
+        run("codesign", "--force", "--sign", certificate, "--keychain", keychain,
+            "--timestamp=none", probe)
+        run("codesign", "--verify", "--strict", "-R", "=anchor apple generic", probe)
     # Xcode 16+ reads profiles here. Keep the named profile separate from the
     # App Store profile; concurrent jobs can use the same Apple-issued UUID.
     installed = Path.home() / "Library/Developer/Xcode/UserData/Provisioning Profiles"
