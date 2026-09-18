@@ -420,10 +420,12 @@ async function unpackMiniApp(
     activation: ActivatedInstall<{packageName: string; version: string}>,
   ) => InstallFinalization | Promise<InstallFinalization>,
   beforeActivate?: () => void,
+  validate?: () => void,
 ): Promise<{packageName: string; version: string}> {
   return completeInstallFilesystemTransaction(
     () => unpackMiniAppExclusive(zipPath, versionOverride, expected, onProgress, beforeActivate),
     finalize,
+    validate,
   )
 }
 
@@ -687,6 +689,7 @@ async function downloadAndInstallMiniApp(
           activation,
         ),
       opts?.beforeActivate,
+      () => assertPublisherContinuity(manifest.packageName, manifest.publisherKeyFingerprint, releaseIdentity),
     )
     return {
       ...installed,
@@ -993,6 +996,7 @@ class AppRegistry {
         ({packageName, version}, activation) =>
           this.finalizeInstall(packageName, version, releaseIdentity, (state) => activation.recordRecoveryState(state)),
         opts?.beforeActivate,
+        () => assertPublisherContinuity(manifest.packageName, manifest.publisherKeyFingerprint, releaseIdentity),
       )
       console.log("APP_REGISTRY: Installed mini app from local zip")
       return {packageName, version}

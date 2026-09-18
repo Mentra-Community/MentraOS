@@ -9,7 +9,63 @@ import {
   runInstallFilesystemTransaction,
 } from "../../modules/engine/src/services/installOperation"
 
+import {assertPublisherIdentityPolicy} from "../../modules/engine/src/services/publisherIdentityPolicy"
+
 describe("AppRegistry install operation ids", () => {
+  test.each([undefined, "key-b"])(
+    "rechecks queued publisher identity before filesystem changes (%s)",
+    async (candidate) => {
+      let publisher: string | null = null
+      let finishFirst!: () => void
+      const pending = new Promise<void>((resolve) => {
+        finishFirst = resolve
+      })
+      const first = completeInstallFilesystemTransaction(
+        async () => {
+          await pending
+          return {value: "key-a", commit: () => {}, rollback: () => {}, recordRecoveryState: () => {}}
+        },
+        (key) => ({
+          apply: () => {
+            publisher = key
+          },
+          rollback: () => {
+            publisher = null
+          },
+        }),
+      )
+      let mutated = false
+      // This candidate passed its initial check while no publisher was installed.
+      const validate = () =>
+        assertPublisherIdentityPolicy({
+          packageName: "com.example.app",
+          system: false,
+          candidateFingerprint: candidate,
+          installedFingerprint: publisher,
+        })
+      validate()
+      const second = completeInstallFilesystemTransaction(
+        async () => {
+          mutated = true
+          return {value: candidate, commit: () => {}, rollback: () => {}, recordRecoveryState: () => {}}
+        },
+        () => ({
+          apply: () => {
+            publisher = candidate ?? null
+          },
+          rollback: () => {},
+        }),
+        validate,
+      )
+      const rejected = expect(second).rejects.toThrow(candidate ? "signature mismatch" : "Unsigned bundle")
+      finishFirst()
+      await first
+      await rejected
+      expect(mutated).toBe(false)
+      expect(publisher).toBe("key-a")
+    },
+  )
+
   test("isolates concurrent installs started in the same millisecond", () => {
     const first = nextInstallOperationId(1_800_000_000_000)
     const second = nextInstallOperationId(1_800_000_000_000)

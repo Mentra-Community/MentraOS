@@ -31,7 +31,7 @@ import {pack} from './pack.js'
 import {printQR, writeQRPng} from './qr.js'
 import {getLanIp} from './lan.js'
 import {validateManifest} from './manifest.js'
-import {publisherKeyFingerprint, resolvePackageSigningKey} from './package-signing-key.js'
+import {missingSigningKeyError, publisherKeyFingerprint, resolvePackageSigningKey} from './package-signing-key.js'
 
 const DEFAULT_PORT_START = 6789
 const PORT_SCAN_LIMIT = 10
@@ -86,6 +86,7 @@ export async function release(opts: ReleaseOptions = {}): Promise<void> {
   const signingKey = wantsSignature
     ? await resolvePackageSigningKey(packageName, {inputPath: opts.signingKeyPath})
     : null
+  if (wantsSignature && !signingKey) throw missingSigningKeyError(packageName)
   const expectedPublisherFingerprint = signingKey ? publisherKeyFingerprint(signingKey.publicKeyJwk) : null
 
   let cacheValid = !opts.noCache && isCacheFresh(cachedZipPath, cwd)

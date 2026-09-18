@@ -113,8 +113,11 @@ export interface InstallFinalization {
 export function completeInstallFilesystemTransaction<T>(
   activate: () => Promise<ActivatedInstall<T>>,
   finalize: (value: T, activation: ActivatedInstall<T>) => InstallFinalization | Promise<InstallFinalization>,
+  validate?: () => void,
 ): Promise<T> {
   return runInstallFilesystemTransaction(async () => {
+    // Read mutable trust state after earlier installs commit, before changing files.
+    validate?.()
     const activation = await activate()
     let finalization: InstallFinalization
     try {
