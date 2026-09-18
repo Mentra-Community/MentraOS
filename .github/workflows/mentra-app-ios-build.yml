@@ -118,6 +118,7 @@ jobs:
         if: env.PR_IOS_SIGNED == 'true'
         working-directory: mobile
         env:
+          FASTLANE_SKIP_UPDATE_CHECK: "true"
           MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
           RAW_MATCH_GIT_BASIC_AUTHORIZATION: ${{ secrets.MATCH_GIT_BASIC_AUTHORIZATION }}
         run: |
@@ -130,9 +131,17 @@ jobs:
           security set-keychain-settings -lut 7200 "$keychain"
           security unlock-keychain -p "$password" "$keychain"
           python3 ci/pr-ios/keychain-search.py add "$keychain"
+          # A fresh job keychain needs the Apple certificate chain as well as
+          # the distribution identity, matching the coordinated signing setup.
+          for wwdr in G2 G3 G4 G5 G6; do
+            certificate="$RUNNER_TEMP/AppleWWDRCA${wwdr}.cer"
+            curl --fail --silent --show-error --location --retry 2 \
+              "https://www.apple.com/certificateauthority/AppleWWDRCA${wwdr}.cer" -o "$certificate"
+            security import "$certificate" -k "$keychain" -T /usr/bin/codesign
+          done
           MATCH_GIT_BASIC_AUTHORIZATION="$(printf '%s' "$RAW_MATCH_GIT_BASIC_AUTHORIZATION" | tr -d '\r\n')"
           export MATCH_GIT_BASIC_AUTHORIZATION
-          bundle exec fastlane match adhoc --readonly --keychain_name "$keychain" --keychain_password "$password"
+          bundle exec fastlane match adhoc --readonly --include_mac_in_profiles true --keychain_name "$keychain" --keychain_password "$password"
           security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain" >/dev/null
           python3 ci/pr-ios/artifacts.py configure --keychain "$keychain" --output build/pr-ios
 

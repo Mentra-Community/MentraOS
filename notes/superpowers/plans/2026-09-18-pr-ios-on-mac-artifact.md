@@ -27,3 +27,5 @@ Proposed final experience: open the PR Slack post → choose iPhone IPA or Mac Z
 - Exact CI download installation on iPhone/Mac is pending that signing setup. The paired iPhone is available for qualification. No phone or running Mac app has been replaced by this work yet.
 
 - Draft PR: https://github.com/Mentra-Community/MentraOS/pull/4101. First CI run reached and passed the artifact tests, then exposed that hosted Ruby installation tries `/Users/runner` on the self-hosted Mac. Switched to the runner's existing Homebrew Ruby with job-local gems. A real Xcode project fixture also confirmed the signing edit preserves Debug and framework configurations.
+
+- CI run `35386230120` passed the self-hosted Ruby setup and decrypted Match successfully, then stopped at the confirmed missing `AdHoc_com.mentra.mentra.mobileprovision`. The job cleaned up its keychain. Added explicit Mac inclusion to profile setup instructions and the Apple intermediate-certificate imports used by coordinated signing to the isolated PR keychain. No installable artifacts have been produced yet.

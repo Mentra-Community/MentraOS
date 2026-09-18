@@ -47,10 +47,11 @@ From an authorized checkout's `mobile` directory, with Match credentials loaded
 securely and the devices registered in Apple Developer:
 
 ```sh
-bundle exec fastlane match adhoc --force_for_new_devices
+bundle exec fastlane match adhoc --include_mac_in_profiles true --force_for_new_devices
 ```
 
-This requires write access to the signing store and Apple Developer profile
+The Mac inclusion flag is required: Match excludes Macs by default even when
+they are registered. This requires write access to the signing store and Apple Developer profile
 management. CI only runs `match adhoc --readonly`: it never creates devices,
 profiles or certificates and never changes the App Store profile. The self-hosted runner uses its existing Homebrew Ruby (`brew --prefix ruby`),
 with gems installed into a job-local Bundler directory. The existing
