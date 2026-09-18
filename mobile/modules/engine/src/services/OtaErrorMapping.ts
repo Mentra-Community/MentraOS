@@ -33,10 +33,10 @@ export const OTA_ERROR_BES_RESTART_REQUIRED_COPY_KEY = "ota:errorBesRestartRequi
 
 /** English copy for every OTA error key above. Mirrored in the Mentra App's `ota` i18n namespace. */
 export const OTA_ERROR_ENGLISH_COPY: Readonly<Record<string, string>> = {
-  "ota:errorNoInternet": "Glasses WiFi has no internet connection",
+  "ota:errorNoInternet": "Glasses Wi-Fi has no internet connection",
   "ota:errorClockSkew": "Glasses clock is wrong — syncing time from your phone, then retrying update check",
-  "ota:errorSslError": "Secure connection failed — try a different WiFi network",
-  "ota:errorDownloadFailed": "Download failed — check glasses WiFi connection",
+  "ota:errorSslError": "Secure connection failed — try a different Wi-Fi network",
+  "ota:errorDownloadFailed": "Download failed — check glasses Wi-Fi connection",
   "ota:errorInsufficientStorage": "Not enough storage on your glasses — free up space before trying again",
   "ota:errorFirmwareTooLarge": "Firmware file is unexpectedly large — please contact support",
   "ota:errorFirmwareVerifyFailed": "Firmware verification failed — please try again or contact support",

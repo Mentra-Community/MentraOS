@@ -328,6 +328,33 @@ class Bridge {
         Bridge.sendTypedMessage("switch_status", body: body)
     }
 
+    /// Mic tuning values the glasses report as actually in force (post-clamp),
+    /// from sr_mictun / sr_micst.
+    static func sendMicTuningState(_ state: [String: Any]) {
+        Bridge.sendTypedMessage("mic_tuning_state", body: state)
+    }
+
+    /// Wear state from sr_wrst, or from a wear transition on the glasses.
+    static func sendWearState(worn: Bool) {
+        Bridge.sendTypedMessage("wear_state", body: ["worn": worn])
+    }
+
+    /// Wear vote config the glasses report as in force, from sr_weartun.
+    static func sendWearTuningState(_ state: [String: Any]) {
+        Bridge.sendTypedMessage("wear_tuning", body: state)
+    }
+
+    /// Disposable mic RMS sample from sr_micrms.
+    static func sendMicRms(rms: Int, gateOpen: Bool, speakerElevated: Bool, generation: Int) {
+        let body: [String: Any] = [
+            "rms": rms,
+            "gateOpen": gateOpen,
+            "speakerElevated": speakerElevated,
+            "generation": generation,
+        ]
+        Bridge.sendTypedMessage("mic_rms", body: body)
+    }
+
     static func sendRgbLedControlResponse(requestId: String, success: Bool, error: String?) {
         guard !requestId.isEmpty else { return }
         var body: [String: Any] = [

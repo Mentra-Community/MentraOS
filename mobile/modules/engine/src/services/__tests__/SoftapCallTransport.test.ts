@@ -1405,7 +1405,7 @@ describe("createSoftapCallDeps", () => {
     expect(calls).toEqual([true, false, true])
   })
 
-  test("the join waits for the phone's internet to come back before asking ACS for anything", async () => {
+  test.each(["cellular", "ethernet"])("the join waits for %s internet before asking ACS for anything", async (transport) => {
     // Joining the hotspot takes this phone off Wi-Fi, and signing in to ACS is the very next thing
     // that needs the internet. On device that ordering cost a 30s stall plus the join step's own
     // timeout, so the wait has to happen first, not concurrently.
@@ -1413,7 +1413,7 @@ describe("createSoftapCallDeps", () => {
     const {deps: real} = deps({
       awaitValidatedDefaultNetwork: async () => {
         order.push("awaitDefault")
-        return {usable: true, detail: "cellular (validated)"}
+        return {usable: true, detail: `${transport} (validated)`}
       },
       joinMeeting: async () => {
         order.push("joinMeeting")
@@ -1427,8 +1427,8 @@ describe("createSoftapCallDeps", () => {
     )
 
     expect(order).toEqual(["awaitDefault", "joinMeeting"])
-    expect(details.some((d) => d.includes("mobile data"))).toBe(true)
-    expect(details.some((d) => d.includes("Internet is on cellular (validated)"))).toBe(true)
+    expect(details.some((d) => d.includes("internet route outside the glasses hotspot"))).toBe(true)
+    expect(details.some((d) => d.includes(`Internet is on ${transport} (validated)`))).toBe(true)
   })
 
   test("an unvalidated default network is narrated but does not abort the join", async () => {

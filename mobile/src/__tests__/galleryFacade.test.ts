@@ -45,6 +45,12 @@ describe("gallery facade", () => {
     expect(gallery.status()).toEqual(expect.objectContaining({queueLength: 0, queue: []}))
   })
 
+  it("publishes preparation as an active sync", () => {
+    useGallerySyncStore.getState().setSyncState("preparing")
+
+    expect(gallery.status()).toEqual(expect.objectContaining({syncState: "preparing", isSyncing: true}))
+  })
+
   it("publishes preflight start completion through the reactive status surface", () => {
     const statuses: Array<{isStarting: boolean}> = []
     const unsubscribe = gallery.onStatus((status) => statuses.push(status))

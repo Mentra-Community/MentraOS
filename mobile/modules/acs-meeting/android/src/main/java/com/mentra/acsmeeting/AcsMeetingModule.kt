@@ -12,6 +12,7 @@ import com.mentra.glassesmedia.trace.SoftApTrace
 import com.mentra.acsmeeting.video.VideoProfile
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition
+import expo.modules.kotlin.Promise
 
 class AcsMeetingModule : Module() {
   private var session: AcsMeetingSession? = null
@@ -408,6 +409,18 @@ class AcsMeetingModule : Module() {
      */
     Function("pushOutgoingPcm") { base64: String, sampleRate: Int, channels: Int ->
       session?.pushOutgoingPcm(base64, sampleRate, channels) ?: false
+    }
+
+    AsyncFunction("admitParticipant") { participantId: String, promise: Promise ->
+      val meeting = session
+      if (meeting == null) {
+        promise.reject("ADMISSION_FAILED", "No connected meeting", null)
+      } else {
+        meeting.admitParticipant(participantId) { error ->
+          if (error != null) promise.reject("ADMISSION_FAILED", error.message, error)
+          else promise.resolve(null)
+        }
+      }
     }
 
     AsyncFunction("setMuted") { muted: Boolean ->

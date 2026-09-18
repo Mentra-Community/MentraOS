@@ -118,7 +118,13 @@ public final class GlassesHotspotNetwork {
             guard let address = self.localAddress else { completion(false, "No joined hotspot"); return }
             let gateway = self.gatewayAddress ?? address.split(separator: ".").prefix(3).joined(separator: ".") + ".1"
             let parameters = NWParameters.tcp
-            parameters.requiredInterfaceType = .wifi
+            if ProcessInfo.processInfo.isiOSAppOnMac {
+                // The Mac route probe rejects the Wi-Fi type constraint on an otherwise
+                // usable en0 route. Restrict this connection to the verified source IP.
+                parameters.requiredLocalEndpoint = .hostPort(host: NWEndpoint.Host(address), port: .any)
+            } else {
+                parameters.requiredInterfaceType = .wifi
+            }
             let connection = NWConnection(host: NWEndpoint.Host(gateway), port: 8089, using: parameters)
             var finished = false
             let finish: (Bool, String) -> Void = { reachable, detail in
@@ -140,7 +146,7 @@ public final class GlassesHotspotNetwork {
         }
     }
 
-    public func awaitInternet(requireCellular: Bool = true, completion: @escaping (Bool, String) -> Void) {
+    public func awaitInternet(allowWifiAfterRelease: Bool = false, completion: @escaping (Bool, String) -> Void) {
         queue.async {
             let monitor = NWPathMonitor()
             var finished = false
@@ -151,21 +157,29 @@ public final class GlassesHotspotNetwork {
                 completion(usable, detail)
             }
             monitor.pathUpdateHandler = { path in
-                if path.status == .satisfied, path.usesInterfaceType(.cellular) { finish(true, "cellular") }
+                if let route = HotspotInternetPolicy.route(satisfied: path.status == .satisfied,
+                                                           cellular: path.usesInterfaceType(.cellular),
+                                                           ethernet: path.usesInterfaceType(.wiredEthernet))
+                {
+                    finish(true, route)
+                    return
+                }
                 // Once the hotspot is released, a return to the user's Wi-Fi is also valid.
                 // Do not mistake the departing glasses AP's local-only path for restored internet.
-                if !requireCellular, path.status == .satisfied, path.usesInterfaceType(.wifi) {
+                if allowWifiAfterRelease, path.status == .satisfied, path.usesInterfaceType(.wifi) {
                     NEHotspotNetwork.fetchCurrent { network in
                         self.queue.async {
-                            guard let network, !network.ssid.isEmpty, network.ssid != self.lastHotspotSSID else { return }
-                            finish(true, "wifi")
+                            guard let route = HotspotInternetPolicy.route(satisfied: true, cellular: false, ethernet: false,
+                                                                          restoredWifiSSID: network?.ssid, glassesSSID: self.lastHotspotSSID)
+                            else { return }
+                            finish(true, route)
                         }
                     }
                 }
             }
             monitor.start(queue: self.queue)
             self.queue.asyncAfter(deadline: .now() + 15) {
-                finish(false, requireCellular ? "Cellular internet did not become the default route" : "Internet did not return after leaving the glasses hotspot")
+                finish(false, allowWifiAfterRelease ? "Internet did not return after leaving the glasses hotspot" : "Cellular or Ethernet internet did not become the default route")
             }
         }
     }
@@ -225,10 +239,10 @@ public final class GlassesHotspotNetwork {
         let monitor = NWPathMonitor(requiredInterfaceType: .wifi)
         self.monitor = monitor
         monitor.pathUpdateHandler = { [weak self] _ in
-            guard let self, gen == self.generation, !self.cancelled else { return }
+            guard let self, gen == generation, !self.cancelled else { return }
             // This AP intentionally has no internet. Loss of its default internet path is not
             // loss of the local link; use the actual interface address instead.
-            if Self.wifiAddress() != self.localAddress { self.onLost?("Glasses hotspot connection was lost") }
+            if Self.wifiAddress() != localAddress { onLost?("Glasses hotspot connection was lost") }
         }
         monitor.start(queue: queue)
     }

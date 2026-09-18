@@ -171,7 +171,9 @@ public final class LocalWhipIngestSource: NSObject, DecodedGlassesMediaSource {
             publisherFailed: { [weak self] in self?.state == .failed }
         )
         self.server = server
-        server.start(address: address) { [weak self] result in
+        // Keep the listener bound to the verified hotspot IP on iOS-on-Mac.
+        // Requiring the Wi-Fi interface type rejects that local route on this host.
+        server.start(address: address, wifiOnly: !ProcessInfo.processInfo.isiOSAppOnMac) { [weak self] result in
             guard let self else { completion(.failure(LocalMediaError("Receiver released"))); return }
             self.queue.async {
                 guard gen == self.generation, !self.stopping else { completion(.failure(LocalMediaError("Receiver cancelled"))); return }

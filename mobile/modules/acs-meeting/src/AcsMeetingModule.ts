@@ -7,6 +7,7 @@ declare class AcsMeetingNativeModule extends NativeModule<AcsMeetingModuleEvents
   /** Sign in to ACS before SoftAP so Teams is not resolved through glasses DNS. */
   prepareAgent(options: {token: string; displayName?: string}): Promise<AcsMeetingState>
   leave(): Promise<void>
+  admitParticipant?(participantId: string): Promise<void>
   /**
    * Leave, and resolve only once the hang-up, the agent disposal, and the network releases have
    * finished. Use this explicit barrier across platforms; Android `leave()` only queues cleanup.

@@ -71,6 +71,22 @@ export {
 // Speech/audio coordinators and model managers.
 export {default as localSttFallbackCoordinator} from "./services/LocalSttFallbackCoordinator"
 export {default as micStateCoordinator} from "./services/MicStateCoordinator"
+// Microphone ownership. Applications acquire a semantic session here; the
+// engine decides what the use case requires of the hardware.
+export {default as micSessionManager, MIC_SOURCE_CONFLICT} from "./services/MicSessionManager"
+export type {MicSession, MicSessionOptions} from "./services/MicSessionManager"
+export {
+  GAIN_DB,
+  MIC_TUNING_FIRMWARE_DEFAULTS,
+  MIC_USE_CASE_LOUDNESS_GATE,
+  MIC_USE_CASE_PROFILES,
+  VOICE_CALL_PACKAGES,
+  ENGINE_ONLY_USE_CASES,
+  ENGINE_OWNER_PREFIX,
+  resolveMicPolicy,
+  scaleMicTuningToGain,
+} from "./services/micPolicy"
+export type {MicSource, MicTuningProfile, MicUseCase} from "./services/micPolicy"
 export {default as audioPlaybackService} from "./services/AudioPlaybackService"
 export {default as sttModelManager, STTModelManager} from "./services/STTModelManager"
 export {default as ttsModelManager, TTSModelManager} from "./services/TTSModelManager"

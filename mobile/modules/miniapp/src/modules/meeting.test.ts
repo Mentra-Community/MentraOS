@@ -7,6 +7,7 @@ import {
   MEETING_HOST_UPDATE_MESSAGE,
   MeetingModule,
   parseMeetingEndReason,
+  parseMeetingCapabilities,
   parseMeetingMediaSource,
   parseMeetingRecovery,
   parseMeetingSoftApProgress,
@@ -34,6 +35,27 @@ const joinArgs = {
 }
 
 describe("MeetingModule", () => {
+  test("admission preserves guest identity and propagates host rejection", async () => {
+    const requests: unknown[] = []
+    const {session} = mockSession(async (payload) => {
+      requests.push(payload)
+      throw new Error("This meeting does not allow you to admit guests")
+    })
+    const meeting = new MeetingModule(session)
+    await expect(meeting.admit("guest-1")).rejects.toThrow("does not allow")
+    expect(requests).toEqual([{type: MiniappRequestType.MEETING_ADMIT, participantId: "guest-1"}])
+    await expect(meeting.admit(" ")).rejects.toThrow("participant ID")
+    expect(requests).toHaveLength(1)
+  })
+
+  test("lobby permission distinguishes granted, denied and unreported", () => {
+    expect(parseMeetingCapabilities({hangUpForEveryone: {}})?.manageLobby).toBeUndefined()
+    for (const allowed of [true, false, null]) {
+      expect(parseMeetingCapabilities({hangUpForEveryone: {}, manageLobby: {allowed}})?.manageLobby?.allowed).toBe(allowed)
+    }
+    expect(parseMeetingCapabilities({hangUpForEveryone: {}, manageLobby: {allowed: "true"}})?.manageLobby?.allowed).toBeNull()
+  })
+
   test("getState preserves provider termination details", async () => {
     const endReason = {code: 404, subcode: 8543}
     const {session} = mockSession(async () => ({state: "error", muted: false, endReason}))

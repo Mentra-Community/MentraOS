@@ -96,3 +96,21 @@ test("PR comment updates retain previous APK links with either success label", (
     }
   }
 })
+
+test("mobile and ASG progress/failure comments retain both GitHub and CDN download links", () => {
+  for (const [file, label] of [
+    ["mentra-app-android-build.yml", "Download APK"],
+    ["mentra-asg-client-build.yml", "Download ASG APK"],
+  ]) {
+    const workflow = readFileSync(new URL(`../workflows/${file}`, import.meta.url), "utf8")
+    for (const variable of ["existingDownloadMatch", "previousDownloadMatch"]) {
+      const expression = workflow.match(new RegExp(`const ${variable} = comment.body.match\\((/.+/)\\)`))[1]
+      const pattern = runInNewContext(expression)
+      for (const origin of ["github.com", "artifactscdn.mentraglass.com"]) {
+        const url = `https://${origin}/Mentra-Community/MentraOS/releases/pr-builds/app.apk`
+        assert.equal(pattern.exec(`[📥 **${label}**](${url})`)[1], url)
+      }
+      assert.equal(pattern.exec(`[📥 **${label}**](https://github.com.example.org/app.apk)`), null)
+    }
+  }
+})

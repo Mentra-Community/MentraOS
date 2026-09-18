@@ -64,7 +64,7 @@ export function examplePlayCoordinates(plan, starterKit, track) {
     build_number: plan.native.buildNumber,
     container_tag: plan.artifactContainerTag,
     aab_name: aabName,
-    aab_url: `https://github.com/Mentra-Community/MentraOS/releases/download/${plan.artifactContainerTag}/${aabName}`,
+    aab_url: `https://artifactscdn.mentraglass.com/Mentra-Community/MentraOS/releases/${plan.artifactContainerTag}/${aabName}`,
     result_artifact: `coordinated-example-google-play-${plan.releaseSetId}`,
     install_url: installUrl,
   }
@@ -104,7 +104,12 @@ export function validateExampleGooglePlay(plan, starterKit, record) {
     record.distribution?.status !== "submitted" ||
     record.distribution?.audience !== examplePlayAudience(plan.channel) ||
     record.distribution?.installUrl !== installUrl ||
-    record.aab?.url !== coordinates.aab_url ||
+    ![
+      coordinates.aab_url,
+      coordinates.aab_url
+        .replace("https://artifactscdn.mentraglass.com/", "https://github.com/")
+        .replace("/releases/", "/releases/download/"),
+    ].includes(record.aab?.url) ||
     !/^[0-9a-f]{64}$/.test(record.aab?.sha256 || "") ||
     !Number.isSafeInteger(record.aab?.size) ||
     record.aab.size < 1 ||

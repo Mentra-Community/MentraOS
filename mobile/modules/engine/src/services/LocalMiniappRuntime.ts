@@ -46,6 +46,8 @@ import type {DisplayPayload} from "./LocalDisplayManager"
 import headingService from "./HeadingService"
 import localSttFallbackCoordinator from "./LocalSttFallbackCoordinator"
 import micStateCoordinator from "./MicStateCoordinator"
+import micSessionManager, {MIC_SOURCE_CONFLICT, type MicSession} from "./MicSessionManager"
+import {ENGINE_ONLY_USE_CASES, MIC_USE_CASES, VOICE_CALL_PACKAGES, type MicUseCase} from "./micPolicy"
 import {BlobStore} from "./BlobStore"
 import {CloudAudioSubscriptionSync} from "./CloudAudioSubscriptionSync"
 import {phoneCameraFovCoordinator} from "./PhoneCameraFovCoordinator"
@@ -574,6 +576,14 @@ class LocalMiniappRuntime {
    */
   private transcriptionHintsByApp = new Map<string, string[]>()
 
+  /**
+   * Microphone sessions taken through session.mic.acquire, by session id.
+   *
+   * Bookkeeping only, so a release can be matched to its owner; MicSessionManager holds the real
+   * leases and resolves them into hardware state.
+   */
+  private micSessionsByApp = new Map<number, {packageName: string; session: MicSession}>()
+
   /** Ping interval handle. */
   private pingIntervalId: number | null = null
   private foregroundProbeTimers: Map<string, number> = new Map()
@@ -980,6 +990,10 @@ class LocalMiniappRuntime {
   public unregisterApp(packageName: string): void {
     console.log(`${LOG_TAG}: unregisterApp(${packageName})`)
     const releasedMicGateOverride = micStateCoordinator.clearMiniappGateOverrides(packageName)
+    // Backstop for a miniapp that crashed or was killed mid-call: the microphone profile and the
+    // PCM claim must not outlive the app that asked for them.
+    this.forgetMicSessions(packageName)
+    micSessionManager.releaseOwner(packageName)
     this.clearForegroundProbe(packageName)
     this.clearMiniappAuthRefresh(packageName)
     this.clearMiniappAuthDeliveryRetry(packageName)
@@ -1259,6 +1273,12 @@ class LocalMiniappRuntime {
       case MiniappRequestType.MIC_SET_LOUDNESS_GATE_ENABLED:
         void this.handleMicSetLoudnessGateEnabled(packageName, payload, requestId)
         break
+      case MiniappRequestType.MIC_ACQUIRE:
+        this.handleMicAcquire(packageName, payload, requestId)
+        break
+      case MiniappRequestType.MIC_RELEASE:
+        this.handleMicRelease(packageName, payload, requestId)
+        break
       case MiniappRequestType.PING:
         // SDK should handle this itself; reply PONG just in case
         this.sendToMiniapp(packageName, {type: MiniappResponseType.PONG}, requestId)
@@ -1390,6 +1410,9 @@ class LocalMiniappRuntime {
         break
       case MiniappRequestType.MEETING_LEAVE:
         void this.handleMeetingLeave(packageName, requestId)
+        break
+      case MiniappRequestType.MEETING_ADMIT:
+        void this.handleMeetingAdmit(packageName, payload, requestId)
         break
       case MiniappRequestType.MEETING_END:
         void this.handleMeetingEnd(packageName, requestId)
@@ -3218,6 +3241,100 @@ class LocalMiniappRuntime {
   }
 
   /**
+   * session.mic.acquire — take a semantic microphone session.
+   *
+   * The miniapp names a use case; MicSessionManager and micPolicy decide what that means for the
+   * hardware. This handler is only the gate: who is allowed to ask for what.
+   */
+  private handleMicAcquire(packageName: string, payload: Record<string, unknown>, requestId?: string): void {
+    const app = this.connectedApps.get(packageName)
+    const hasMicPermission = app?.installedManifest?.permissions?.some((p) => p.type === "MICROPHONE")
+    if (!hasMicPermission) {
+      logPermissionNotDeclared(packageName, "MICROPHONE", "to acquire a microphone session", `{"type": "MICROPHONE"}`)
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.PERMISSION_NOT_DECLARED,
+        message: `MICROPHONE permission not declared in miniapp.json. Add {"type": "MICROPHONE"} to the "permissions" array.`,
+        permission: "MICROPHONE",
+        operation: MiniappRequestType.MIC_ACQUIRE,
+      })
+      return
+    }
+
+    const source = payload.source
+    const useCase = payload.useCase
+    if (source !== "glasses" && source !== "phone") {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INVALID_ARGUMENT,
+        message: `source must be "glasses" or "phone"`,
+      })
+      return
+    }
+    if (!MIC_USE_CASES.includes(useCase as MicUseCase)) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INVALID_ARGUMENT,
+        message: `useCase must be one of ${MIC_USE_CASES.join(", ")}`,
+      })
+      return
+    }
+
+    // A voice call gets a microphone profile tuned for close-talk speech, so which app may ask for
+    // one is a product decision, not a permission a manifest can grant itself.
+    if (useCase === "voice_call" && !VOICE_CALL_PACKAGES.includes(packageName)) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.PERMISSION_DENIED,
+        message: `${packageName} is not allowed to acquire a voice_call microphone session`,
+      })
+      return
+    }
+    // Diagnostic leases exist so the mic probe measures what users actually get. Handing one to a
+    // miniapp would also hand it a glasses lease it could pair with a meeting join.
+    if (ENGINE_ONLY_USE_CASES.includes(useCase as MicUseCase)) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.PERMISSION_DENIED,
+        message: `the ${useCase} microphone use case is reserved for the Mentra App`,
+      })
+      return
+    }
+
+    try {
+      const session = micSessionManager.acquire({owner: packageName, source, useCase: useCase as MicUseCase})
+      this.micSessionsByApp.set(session.id, {packageName, session})
+      console.log(`${LOG_TAG}: mic_acquire #${session.id} ${useCase}/${source} (by ${packageName})`)
+      this.sendResult(packageName, requestId, true, {sessionId: session.id})
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "mic acquire error"
+      console.warn(`${LOG_TAG}: mic_acquire failed for ${packageName}:`, message)
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: message.startsWith(MIC_SOURCE_CONFLICT) ? MiniappErrorCode.MIC_SOURCE_CONFLICT : MiniappErrorCode.INTERNAL,
+        message,
+      })
+    }
+  }
+
+  /** session.mic.acquire(...).release() — drop one session, if the caller owns it. */
+  private handleMicRelease(packageName: string, payload: Record<string, unknown>, requestId?: string): void {
+    const sessionId = payload.sessionId
+    const entry = typeof sessionId === "number" ? this.micSessionsByApp.get(sessionId) : undefined
+    if (!entry || entry.packageName !== packageName) {
+      // Idempotent by design: a miniapp releasing twice, or releasing after unregister already
+      // dropped its sessions, is not an error worth failing a teardown path over.
+      this.sendResult(packageName, requestId, true)
+      return
+    }
+    this.micSessionsByApp.delete(entry.session.id)
+    entry.session.release()
+    console.log(`${LOG_TAG}: mic_release #${entry.session.id} (by ${packageName})`)
+    this.sendResult(packageName, requestId, true)
+  }
+
+  /** Drop the bookkeeping for every session an app owns. The manager is the source of truth. */
+  private forgetMicSessions(packageName: string): void {
+    for (const [id, entry] of this.micSessionsByApp) {
+      if (entry.packageName === packageName) this.micSessionsByApp.delete(id)
+    }
+  }
+
+  /**
    * session.system.scanQr — host camera overlay. Must not clear miniapp
    * foreground; the host seam is responsible for presenting a Modal on top.
    */
@@ -3746,6 +3863,18 @@ class LocalMiniappRuntime {
     // asked too late to explain itself, and ACS fails the join outright without the camera.
     if (!(await this.requireOsPermission(packageName, requestId, PermissionFeatures.CAMERA, "camera"))) return
     if (!(await this.requireOsPermission(packageName, requestId, PermissionFeatures.MICROPHONE, "microphone"))) return
+    // The wearer's voice rides a microphone session, not the meeting. An app allowed to make voice
+    // calls must hold one before the sink starts, or it would get a call configured for dictation.
+    // Other joiners are not required to: without a session the BLE LC3 uplink is simply not
+    // selected and the audio rides the WHIP capture path, exactly as it did before.
+    const glassesSession = micSessionManager.hasGlassesSession(packageName)
+    if (VOICE_CALL_PACKAGES.includes(packageName) && !glassesSession) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.MIC_SESSION_REQUIRED,
+        message: "acquire a glasses microphone session before joining a meeting",
+      })
+      return
+    }
     const meetingUrl = typeof payload.meetingUrl === "string" ? payload.meetingUrl : ""
     const token = typeof payload.token === "string" ? payload.token : ""
     const displayName = typeof payload.displayName === "string" ? payload.displayName : undefined
@@ -3796,7 +3925,14 @@ class LocalMiniappRuntime {
         })
         const startedAt = Date.now()
         try {
-          const state = await this.joinSoftapMeeting(packageName, {meetingUrl, token, displayName, video, origin})
+          const state = await this.joinSoftapMeeting(packageName, {
+            meetingUrl,
+            token,
+            displayName,
+            video,
+            origin,
+            glassesSession,
+          })
           softapTrace("meeting_join_result", {
             packageName,
             requestId: requestId ?? "none",
@@ -3824,6 +3960,7 @@ class LocalMiniappRuntime {
         videoSource,
         displayName,
         origin,
+        glassesSession,
         ...(video ? {video} : {}),
       })
       this.sendResult(packageName, requestId, true, state)
@@ -3852,7 +3989,14 @@ class LocalMiniappRuntime {
    */
   private async joinSoftapMeeting(
     packageName: string,
-    args: {meetingUrl: string; token: string; displayName?: string; video?: AcsOutgoingVideo; origin?: AcsCallOrigin},
+    args: {
+      meetingUrl: string
+      token: string
+      displayName?: string
+      video?: AcsOutgoingVideo
+      origin?: AcsCallOrigin
+      glassesSession: boolean
+    },
   ): Promise<MeetingState> {
     // Reserve before awaiting retirement: a second Start or Cancel must see this request,
     // including while it is waiting for its predecessor's native cleanup.
@@ -4012,7 +4156,14 @@ class LocalMiniappRuntime {
   private async runSoftapAttempt(
     attempt: SoftapAttempt,
     previous: SoftapAttempt | null,
-    args: {meetingUrl: string; token: string; displayName?: string; video?: AcsOutgoingVideo; origin?: AcsCallOrigin},
+    args: {
+      meetingUrl: string
+      token: string
+      displayName?: string
+      video?: AcsOutgoingVideo
+      origin?: AcsCallOrigin
+      glassesSession: boolean
+    },
   ): Promise<MeetingState> {
     const packageName = attempt.packageName
     if (previous) {
@@ -4128,6 +4279,7 @@ class LocalMiniappRuntime {
               videoSource: options.videoSource,
               displayName: options.displayName,
               origin: args.origin,
+              glassesSession: args.glassesSession,
               ...(args.video ? {video: args.video} : {}),
             }),
           leaveMeeting: (pkg) => acsMeetingService.leave(pkg),
@@ -4856,6 +5008,19 @@ class LocalMiniappRuntime {
       this.sendResult(packageName, requestId, false, undefined, {
         code: MiniappErrorCode.INTERNAL,
         message: err instanceof Error ? err.message : "Could not end the meeting for everyone",
+      })
+    }
+  }
+
+  private async handleMeetingAdmit(packageName: string, payload: Record<string, unknown>, requestId?: string): Promise<void> {
+    try {
+      if (typeof payload.participantId !== "string") throw new Error("A participant ID is required")
+      await acsMeetingService.admitParticipant(packageName, payload.participantId)
+      this.sendResult(packageName, requestId, true)
+    } catch (error) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: error instanceof Error ? error.message : "Could not admit this guest",
       })
     }
   }

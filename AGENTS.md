@@ -206,6 +206,10 @@ you are otherwise asked to change one of those miniapps:
 
 ## Bug Report Logs
 
+Use [the investigate-incident skill](.agents/skills/investigate-incident/SKILL.md)
+for report IDs and incident Slack links. Fetch reports and artifacts through
+the API script below, not admin-console browser or computer-use automation.
+
 Bug reports and feedback filed from the Mentra App land in the Cloud V2 reports system. Report ids look like `rep_01...` and appear in the reports Slack notifications and in the admin console's Incident system page (admin.mentraglass.com).
 
 1. Get the report id (from Slack, the admin console, or the user)
@@ -239,3 +243,4 @@ After **every** BES firmware source change, run the OTA sanity gates in that rep
 - Mintlify docs: `/mintlify-docs/`
 - Architecture specs, design docs, and working notes: `/notes/` (convention: [`notes/README.md`](notes/README.md))
 - Module-specific implementation details: See module-specific `AGENTS.md` files
+- Teams calling (ACS) native pipeline, end to end: [`mobile/modules/acs-meeting/README.md`](mobile/modules/acs-meeting/README.md), with the shared transport in [`mobile/modules/glasses-media/README.md`](mobile/modules/glasses-media/README.md)

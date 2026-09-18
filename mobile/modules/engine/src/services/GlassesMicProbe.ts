@@ -12,7 +12,7 @@
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
 
 import audioPlaybackService from "./AudioPlaybackService"
-import micStateCoordinator from "./MicStateCoordinator"
+import micSessionManager, {type MicSession} from "./MicSessionManager"
 import {SETTINGS, useSettingsStore} from "../stores/settings"
 import {summarizePcm16} from "../utils/pcm16"
 import {BgTimer} from "../utils/timers"
@@ -85,6 +85,8 @@ export type MicProbeSample = {
 type Listener = (sample: MicProbeSample) => void
 
 const GLASSES = "glasses"
+/** Lease owner for probe runs. Engine features own their sessions; miniapps cannot claim this. */
+const MIC_PROBE_OWNER = "engine:mic-probe"
 const A2DP_RATE = 16000
 const A2DP_CHUNK_MS = 60
 const TONE_HZ = 440
@@ -133,6 +135,8 @@ class GlassesMicProbe {
   private nonGlasses = 0
   /** `preferred_mic` before a `source=phone` control run changed it. */
   private savedPreferredMic: string | null = null
+  /** The probe's microphone lease, which owns the pin and the PCM claim while a run is live. */
+  private micSession: MicSession | null = null
   private listeners = new Set<Listener>()
   private lastSample: MicProbeSample | null = null
 
@@ -164,21 +168,22 @@ class GlassesMicProbe {
     const source = options.source ?? GLASSES
     console.log("[MIC_PROBE] start", options)
 
-    if (source === GLASSES) {
-      // Same order as AcsMeetingService.startGlassesMicUplink: pin first so the first frame the
-      // requirement produces is already from the glasses and the phone mic is never opened.
-      await Promise.resolve(BluetoothSdk.setMicSourcePin?.(GLASSES)).catch((error) => {
-        console.warn("[MIC_PROBE] pin failed", error)
-      })
-    } else {
-      // Control run: no pin (only the glasses can be pinned); steer the ranking with the
-      // user preference and put it back on stop.
+    if (source !== GLASSES) {
+      // Control run: the manager cannot pin a phone (only the glasses can be pinned), so steer the
+      // ranking with the user preference and put it back on stop. That is probe behaviour, not mic
+      // policy, which is why it stays here rather than moving into MicSessionManager.
       const settings = useSettingsStore.getState()
       this.savedPreferredMic = settings.getSetting(SETTINGS.preferred_mic.key) ?? "auto"
       await settings.setSetting(SETTINGS.preferred_mic.key, source, false)
     }
     if (this.generation !== generation) return
-    micStateCoordinator.setCallRequirement(true)
+    // `diagnostic` carries no tuning profile on purpose: the probe has to measure the gain users
+    // actually get, not one it asked for.
+    this.micSession = micSessionManager.acquire({
+      owner: MIC_PROBE_OWNER,
+      source: source === GLASSES ? "glasses" : "phone",
+      useCase: "diagnostic",
+    })
     this.micSub = BluetoothSdk.addListener("mic_pcm", (event: {pcm?: unknown; source?: string}) => {
       this.lastSource = event.source ?? ""
       if (event.source !== source) {
@@ -206,13 +211,11 @@ class GlassesMicProbe {
     this.report()
     this.micSub?.remove()
     this.micSub = null
-    micStateCoordinator.setCallRequirement(false)
+    // Releasing the lease is what unpins the glasses and drops the PCM claim.
+    this.micSession?.release()
+    this.micSession = null
     this.stopping = (async () => {
-      if ((this.options?.source ?? GLASSES) === GLASSES) {
-        await Promise.resolve(BluetoothSdk.setMicSourcePin?.(null)).catch((error) => {
-          console.warn("[MIC_PROBE] unpin failed", error)
-        })
-      } else if (this.savedPreferredMic !== null) {
+      if ((this.options?.source ?? GLASSES) !== GLASSES && this.savedPreferredMic !== null) {
         const restore = this.savedPreferredMic
         this.savedPreferredMic = null
         await useSettingsStore.getState().setSetting(SETTINGS.preferred_mic.key, restore, false)

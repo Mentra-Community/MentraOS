@@ -108,7 +108,7 @@ describe("progress.tsx display states", () => {
   it("starts in starting state", () => {
     setGlassesConnected()
     const {getByText} = render(<OtaProgressScreen />)
-    expect(getByText("Starting update...")).toBeDefined()
+    expect(getByText("Starting update…")).toBeDefined()
   })
 
   it("transitions to updating on in_progress ota_status", () => {
@@ -128,7 +128,7 @@ describe("progress.tsx display states", () => {
       })
     })
 
-    expect(getByText("Downloading...")).toBeDefined()
+    expect(getByText("Downloading…")).toBeDefined()
     expect(getByText("25%")).toBeDefined()
   })
 
@@ -373,7 +373,7 @@ describe("progress.tsx display states", () => {
     })
 
     expect(getByText("Update Failed")).toBeDefined()
-    expect(getByText("Glasses WiFi has no internet connection")).toBeDefined()
+    expect(getByText("Glasses Wi-Fi has no internet connection")).toBeDefined()
     expect(getByText("Retry")).toBeDefined()
   })
 
@@ -398,7 +398,7 @@ describe("progress.tsx display states", () => {
         })
       })
 
-      fireEvent.press(getByText("Change WiFi"))
+      fireEvent.press(getByText("Change Wi-Fi"))
 
       expect(isOtaAutoChainActive()).toBe(false)
       expect(useConnectionOverlayConfig.getState().suppressOverlay).toBe(false)
@@ -426,7 +426,7 @@ describe("progress.tsx display states", () => {
       })
     })
 
-    fireEvent.press(getByText("Change WiFi"))
+    fireEvent.press(getByText("Change Wi-Fi"))
     expect(useConnectionOverlayConfig.getState().suppressOverlay).toBe(false)
 
     fireEvent.press(getByText("Retry"))

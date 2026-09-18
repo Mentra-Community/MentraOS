@@ -225,6 +225,15 @@ export function DeviceSettingsSection() {
         onPress={() => push("/miniapps/settings/microphone")}
       />
 
+      {superMode &&
+        (defaultWearable === DeviceTypes.LIVE || String(defaultWearable || "").includes(DeviceTypes.LIVE)) && (
+          <RouteButton
+            label="Wear Detection"
+            subtitle="Tune the don/doff vote window (cs_weartun)."
+            onPress={() => push("/miniapps/settings/wear-tuning")}
+          />
+        )}
+
       {/* WiFi — connected glasses that support WiFi */}
       {showAr99OtaEntry && (
         <>

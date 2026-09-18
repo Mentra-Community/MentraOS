@@ -733,6 +733,74 @@ describe("GallerySyncService", () => {
       consoleLogSpy.mockRestore()
     })
 
+    it("shows preparation while the gallery inventory is loading", async () => {
+      const retainedPhoto = {
+        name: "retained.jpg",
+        url: "file:///retained.jpg",
+        download: "file:///retained.jpg",
+        filePath: "/retained.jpg",
+        size: 100,
+        modified: 1,
+      }
+      useGallerySyncStore.getState().setSyncing([retainedPhoto])
+      useGallerySyncStore.getState().setConnectingWifi()
+      mockGetV3Manifest.mockImplementationOnce(async () => {
+        const state = useGallerySyncStore.getState()
+        expect(state.syncState).toBe("preparing")
+        expect(state.totalFiles).toBe(1)
+        expect(state.queue).toEqual([retainedPhoto])
+        expect(gallerySyncService.isSyncing()).toBe(true)
+        return null
+      })
+      mockSyncWithServer.mockResolvedValueOnce(CAPTURE_SYNC_RESPONSE)
+
+      await startFileDownload()
+
+      expect(executeCaptureDownloadSpy).toHaveBeenCalledWith([FAKE_CAPTURE], 2000)
+    })
+
+    it.each(["request failure", "unresolved inventory"])(
+      "retains the display queue and recovery progress after %s",
+      async (failure) => {
+        const store = useGallerySyncStore.getState()
+        store.setSyncing([
+          {name: "saved.jpg", url: "file:///saved.jpg", download: "", filePath: "/saved.jpg", size: 100, modified: 1},
+          {name: "failed.jpg", url: "", download: "", size: 100, modified: 2},
+        ])
+        store.onFileComplete("saved.jpg")
+        store.onFileFailed("failed.jpg")
+        store.onFileProcessing("saved.jpg")
+        store.setSyncError("Previous transfer interrupted")
+        const previous = useGallerySyncStore.getState()
+        mockGetSyncState.mockResolvedValue({last_sync_time: 0, client_id: "test", total_downloaded: 1, total_size: 100})
+        if (failure === "request failure") {
+          mockGetV3Manifest.mockRejectedValueOnce(new Error("Inventory unavailable"))
+        }
+
+        await startFileDownload()
+
+        const state = useGallerySyncStore.getState()
+        expect(state.syncState).toBe("error")
+        expect(state.queue).toBe(previous.queue)
+        expect(state.failedFiles).toEqual(previous.failedFiles)
+        expect(state.processingFiles).toEqual(previous.processingFiles)
+        expect(state.completedFiles).toBe(previous.completedFiles)
+        expect(state.totalFiles).toBe(previous.totalFiles)
+        expect(state.queueIndex).toBe(previous.queueIndex)
+        expect(executeCaptureDownloadSpy).not.toHaveBeenCalled()
+      },
+    )
+
+    it("does not start a second sync during preparation", async () => {
+      useGallerySyncStore.getState().setSyncState("preparing")
+
+      await gallerySyncService.startSync()
+
+      expect(useGallerySyncStore.getState().syncState).toBe("preparing")
+      expect(BluetoothSdk.setHotspotState).not.toHaveBeenCalled()
+      expect(mockGetV3Manifest).not.toHaveBeenCalled()
+    })
+
     it("retries with last_sync_time=0 when glasses have content but incremental sync is empty", async () => {
       mockGetSyncState.mockResolvedValue({
         last_sync_time: 1500,
