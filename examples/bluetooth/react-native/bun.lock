@@ -5,8 +5,8 @@
     "": {
       "name": "mentra-bluetooth-sdk-rn-example",
       "dependencies": {
-        "@mentra/bluetooth-sdk": "3.2.1-dev.285",
-        "@mentra/engine": "3.2.1-dev.285",
+        "@mentra/bluetooth-sdk": "3.2.1-dev.286",
+        "@mentra/engine": "3.2.1-dev.286",
         "@mentra/react-native-barcode-scanner": "file:modules/mentra-barcode-scanner",
         "@mentra/react-native-video-stream-receiver": "file:modules/mentra-video-stream-receiver",
         "expo": "~55.0.24",
@@ -348,23 +348,23 @@
 
     "@jsamr/react-native-li": ["@jsamr/react-native-li@2.3.1", "", { "peerDependencies": { "@jsamr/counter-style": "^1.0.0 || ^2.0.0", "react": "*", "react-native": "*" } }, "sha512-Qbo4NEj48SQ4k8FZJHFE2fgZDKTWaUGmVxcIQh3msg5JezLdTMMHuRRDYctfdHI6L0FZGObmEv3haWbIvmol8w=="],
 
-    "@mentra/acs-meeting": ["@mentra/acs-meeting@3.2.1-dev.285", "", { "dependencies": { "@expo/config-plugins": "~55.0.10", "@mentra/glasses-media": "3.2.1-dev.285" }, "peerDependencies": { "expo": "*", "react": "*", "react-native": "*" } }, "sha512-tnkykrdcAHX0eVaaYK+PsUTv8Hw9tIr0WU8kVGX5fI83TM/K/fDbOoPvSObcSpvvz9aLbNhVUwWmJCeMGFW1GA=="],
+    "@mentra/acs-meeting": ["@mentra/acs-meeting@3.2.1-dev.286", "", { "dependencies": { "@expo/config-plugins": "~55.0.10", "@mentra/glasses-media": "3.2.1-dev.286" }, "peerDependencies": { "expo": "*", "react": "*", "react-native": "*" } }, "sha512-s2ueQPF04bmXW25iDp5CQIAz8vJ4ebShDrQSLzkJBgbFLscpSNtDCqlHqGlzq6ir6RBHr5eq0GnExJIg41K41w=="],
 
-    "@mentra/bluetooth-sdk": ["@mentra/bluetooth-sdk@3.2.1-dev.285", "", { "dependencies": { "@mentra/cloud-protocol": "3.2.1-dev.285" }, "peerDependencies": { "@expo/config-plugins": ">=8.0.0", "@types/react": ">=18.0.0", "expo": ">=49.0.0", "react": ">=18.0.0", "react-native": ">=0.72.0" } }, "sha512-Imv35tRReGFtmI/LzvvgpW71/FJKTdMs8M2yCV27JKIMb8ySxb41yXYN/JoaoWG/+NQKkGTuA3WyX6RpInbbzw=="],
+    "@mentra/bluetooth-sdk": ["@mentra/bluetooth-sdk@3.2.1-dev.286", "", { "dependencies": { "@mentra/cloud-protocol": "3.2.1-dev.286" }, "peerDependencies": { "@expo/config-plugins": ">=8.0.0", "@types/react": ">=18.0.0", "expo": ">=49.0.0", "react": ">=18.0.0", "react-native": ">=0.72.0" } }, "sha512-6pAU30pLQma2B35Wu517i2/JS4UpzzbsLD0P6e6q/RJ3qPY1akDpIz/d7JtYMoZtly2fKcpX33WuJG7v6QUc6A=="],
 
-    "@mentra/cloud-client": ["@mentra/cloud-client@3.2.1-dev.285", "", { "dependencies": { "@mentra/cloud-protocol": "3.2.1-dev.285", "tweetnacl": "^1.0.3" }, "peerDependencies": { "ws": "^8.18.0" }, "optionalPeers": ["ws"] }, "sha512-/TI4IDUBfbqJ6KbEkNEl9Z2Cy3hSAlKBud7+cQpCbFdxAbHRP9+JWze5kC5Djk3sb/xEfTfZRNdFWvePZJeQ0w=="],
+    "@mentra/cloud-client": ["@mentra/cloud-client@3.2.1-dev.286", "", { "dependencies": { "@mentra/cloud-protocol": "3.2.1-dev.286", "tweetnacl": "^1.0.3" }, "peerDependencies": { "ws": "^8.18.0" }, "optionalPeers": ["ws"] }, "sha512-GLpP6kK8u2lHLqxIepfY4X71EHh8W21ZESdPBzUbM8Wf1PReBENZM36GnGquB9M1U7HlARod1kSMHzwJw0cfrw=="],
 
-    "@mentra/cloud-protocol": ["@mentra/cloud-protocol@3.2.1-dev.285", "", { "dependencies": { "zod": "^3.24.1" } }, "sha512-JMeKiQSdb623CoDKh6/uTCldXYOK+4zh0fjjSAjQq1RNG9T2xKsgWpSDvrwJ2RizLaX9kyqxDaaDf0cxirqUDA=="],
+    "@mentra/cloud-protocol": ["@mentra/cloud-protocol@3.2.1-dev.286", "", { "dependencies": { "zod": "^3.24.1" } }, "sha512-ULz+Lq1iAbQ/QVWq+sSFh2OBJ77xLO0VIvwdKNBdRI8rcIoweE9qGwHGdSbPLnES8rwmDqoiZ1wqqZ+D/IyA7w=="],
 
-    "@mentra/crust": ["@mentra/crust@3.2.1-dev.285", "", { "dependencies": { "@mentra/jspolyfill": "3.2.1-dev.285" }, "peerDependencies": { "@types/react": "*", "expo": "*", "react": "*", "react-native": "*" } }, "sha512-brV7bDUGSUm6ihMrIj/+SlqoOuSdHpXG3DGdRf0rG5xVycRpF2NY3/GXMCj7fAFmi8VZBkiQa9i420Htt39/Qg=="],
+    "@mentra/crust": ["@mentra/crust@3.2.1-dev.286", "", { "dependencies": { "@mentra/jspolyfill": "3.2.1-dev.286" }, "peerDependencies": { "@types/react": "*", "expo": "*", "react": "*", "react-native": "*" } }, "sha512-IAmINR19eqYugLAgRn2R2SSsY8KziJdoKGU56WmPXvGwa1c82cXX/8VLCwSb7CkSf53L+Xntsj+CJ2qOLg8JbQ=="],
 
-    "@mentra/engine": ["@mentra/engine@3.2.1-dev.285", "", { "dependencies": { "@mentra/acs-meeting": "3.2.1-dev.285", "@mentra/bluetooth-sdk": "3.2.1-dev.285", "@mentra/cloud-client": "3.2.1-dev.285", "@mentra/cloud-protocol": "3.2.1-dev.285", "@mentra/crust": "3.2.1-dev.285", "@mentra/glasses-media": "3.2.1-dev.285", "@mentra/miniapp": "3.2.1-dev.285", "buffer": "^6.0.3", "events": "^3.3.0", "react-native-marked": "8.1.1", "semver": "^7.7.4", "typesafe-ts": "^1.7.1" }, "peerDependencies": { "@craftzdog/react-native-buffer": "*", "@dr.pogodin/react-native-fs": "*", "@react-native-community/netinfo": "*", "@types/react": "*", "axios": "*", "expo": "~55.0.24", "expo-audio": "~55.0.14", "expo-battery": "^55.0.13", "expo-calendar": "~55.0.14", "expo-clipboard": "~55.0.13", "expo-constants": "~55.0.16", "expo-device": "~55.0.17", "expo-file-system": "~55.0.20", "expo-location": "~55.1.10", "expo-modules-core": "~55.0.25", "expo-notifications": "~55.0.23", "expo-task-manager": "~55.0.16", "react": "*", "react-native": "*", "react-native-ble-manager": "*", "react-native-localize": "*", "react-native-mmkv": "*", "react-native-nitro-bg-timer": "*", "react-native-nitro-modules": "*", "react-native-permissions": "*", "react-native-reanimated": "4.2.1", "react-native-safe-area-context": "*", "react-native-share": "*", "react-native-svg": "*", "react-native-udp": "*", "react-native-wifi-reborn": "*", "react-native-worklets": "0.7.4", "react-native-zip-archive": "7.1.1", "zustand": "*" } }, "sha512-DOdWxdtMGfvRhkex0YKCwTaX5vsuYATtGo0rkV09XhXmiJ/X1eg+aBqSX01BNqilO67WNmg5OOiTDvqMY/drBQ=="],
+    "@mentra/engine": ["@mentra/engine@3.2.1-dev.286", "", { "dependencies": { "@mentra/acs-meeting": "3.2.1-dev.286", "@mentra/bluetooth-sdk": "3.2.1-dev.286", "@mentra/cloud-client": "3.2.1-dev.286", "@mentra/cloud-protocol": "3.2.1-dev.286", "@mentra/crust": "3.2.1-dev.286", "@mentra/glasses-media": "3.2.1-dev.286", "@mentra/miniapp": "3.2.1-dev.286", "buffer": "^6.0.3", "events": "^3.3.0", "react-native-marked": "8.1.1", "semver": "^7.7.4", "typesafe-ts": "^1.7.1" }, "peerDependencies": { "@craftzdog/react-native-buffer": "*", "@dr.pogodin/react-native-fs": "*", "@react-native-community/netinfo": "*", "@types/react": "*", "axios": "*", "expo": "~55.0.24", "expo-audio": "~55.0.14", "expo-battery": "^55.0.13", "expo-calendar": "~55.0.14", "expo-clipboard": "~55.0.13", "expo-constants": "~55.0.16", "expo-device": "~55.0.17", "expo-file-system": "~55.0.20", "expo-location": "~55.1.10", "expo-modules-core": "~55.0.25", "expo-notifications": "~55.0.23", "expo-task-manager": "~55.0.16", "react": "*", "react-native": "*", "react-native-ble-manager": "*", "react-native-localize": "*", "react-native-mmkv": "*", "react-native-nitro-bg-timer": "*", "react-native-nitro-modules": "*", "react-native-permissions": "*", "react-native-reanimated": "4.2.1", "react-native-safe-area-context": "*", "react-native-share": "*", "react-native-svg": "*", "react-native-udp": "*", "react-native-wifi-reborn": "*", "react-native-worklets": "0.7.4", "react-native-zip-archive": "7.1.1", "zustand": "*" } }, "sha512-bDuxPg7QyGsWuQ7W+fC3mfgLlF7HUiGxOSrgrui8i0l66/v6D8yqhRkKTlcX3Tlb84YQ4foGZyp6pOgGOu3Dag=="],
 
-    "@mentra/glasses-media": ["@mentra/glasses-media@3.2.1-dev.285", "", {}, "sha512-+K7+FgtLzuH3/wcWokc8My6qqYcBMLcC2vbt+HwC8bx2f6FhJERz03NvgRMcGJpr/TqlLzAyLgaYSG45jpcD/Q=="],
+    "@mentra/glasses-media": ["@mentra/glasses-media@3.2.1-dev.286", "", {}, "sha512-lCO27ysYjFMiSTdo2rqC1lvhnVGvm/Lme8GEdyPRHolcyXacBe1OZmjgxNb+NPEsZD30d3T/ARQAGfBUuyYyHQ=="],
 
-    "@mentra/jspolyfill": ["@mentra/jspolyfill@3.2.1-dev.285", "", {}, "sha512-gtm5TzKVcaaLfDYsP/OiqqE+ukDadHqAgZjuXddYutPCvPxyT1a20/HfOjdVeyNRMAuyJKp5SZbLQYftFs994w=="],
+    "@mentra/jspolyfill": ["@mentra/jspolyfill@3.2.1-dev.286", "", {}, "sha512-p+2feroeHzd5F3wg0aDO1pP1siQjxUy7uhedymudedhR2LuMDhN2p2ULfOGXIhEueRQbHSDYpa4XUCnR8Vnl8w=="],
 
-    "@mentra/miniapp": ["@mentra/miniapp@3.2.1-dev.285", "", { "dependencies": { "@mentra/cloud-protocol": "3.2.1-dev.285", "eventemitter3": "^5.0.1" }, "peerDependencies": { "react": ">=18.0.0" }, "optionalPeers": ["react"] }, "sha512-j0JlmoVeC/Z6olnltKrLixf9MIUfpfNxrBporU1osjKD64/CnEZNwOdwo192sMOy4Rd9mrtcr6/nzowy0ru+Sg=="],
+    "@mentra/miniapp": ["@mentra/miniapp@3.2.1-dev.286", "", { "dependencies": { "@mentra/cloud-protocol": "3.2.1-dev.286", "eventemitter3": "^5.0.1" }, "peerDependencies": { "react": ">=18.0.0" }, "optionalPeers": ["react"] }, "sha512-xk3JjVOkPSwEltrJYzxws5+8gWLipVOSiSq52U5w9dl5kv0JOGEXua/ldmHKMrRXXRD5TKFNyIK8gOSEwKXHsQ=="],
 
     "@mentra/react-native-barcode-scanner": ["@mentra/react-native-barcode-scanner@file:modules/mentra-barcode-scanner", { "peerDependencies": { "expo": "*", "react": "*", "react-native": "*" } }],
 
