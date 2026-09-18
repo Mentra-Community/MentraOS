@@ -73,6 +73,8 @@ export interface InstallMiniappRequest {
    * the bundle's publisher signature.
    */
   bundleAuthorization?: string
+  /** Defer with APP_RUNNING if the target is running or starts before activation. */
+  onlyIfStopped?: boolean
   /** Minimum Mentra App/host version declared by the release manifest. */
   minHostVersion?: string
   /** Mentra Miniapp SDK ABI version declared by the release manifest. */

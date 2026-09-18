@@ -132,6 +132,74 @@ describe("MiniappLauncher", () => {
     miniappLauncher.configure({router: mockRouter.router})
   })
 
+  test("automatic installs skip a running background context without stopping it", async () => {
+    await miniappLauncher.ensureRunning("com.x", undefined, {projectRunning: false})
+    const install = mock(async () => {})
+    await expect(miniappLauncher.installWhenIdle("com.x", install)).rejects.toThrow("is running")
+    expect(install).not.toHaveBeenCalled()
+    expect(mockRouter.unregisterCalls).toEqual([])
+    expect(miniappLauncher.isRunning("com.x")).toBe(true)
+  })
+
+  test("a launch during download wins and defers activation", async () => {
+    let activate!: () => void
+    let finishDownload!: () => void
+    const downloading = new Promise<void>((resolve) => {
+      finishDownload = resolve
+    })
+    const install = miniappLauncher.installWhenIdle("com.x", async (beforeActivate) => {
+      activate = beforeActivate
+      await downloading
+      activate()
+    })
+    // It need not have finished spawning to reserve the old bundle.
+    const launch = miniappLauncher.ensureRunning("com.x")
+    finishDownload()
+    await expect(install).rejects.toThrow("is running")
+    await launch
+    expect(mockRouter.spawnCalls).toHaveLength(1)
+    expect(mockRouter.unregisterCalls).toEqual([])
+  })
+
+  test.each([false, true])("launch waits for activation to commit or roll back (failure=%s)", async (fail) => {
+    let finish!: () => void
+    const pending = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    const install = miniappLauncher.installWhenIdle("com.x", async (beforeActivate) => {
+      beforeActivate()
+      await pending
+      if (fail) throw new Error("activation failed")
+      activeVersion = "2.0.0"
+    })
+    let launched = false
+    const launch = miniappLauncher.ensureRunning("com.x").then(() => {
+      launched = true
+    })
+    await Promise.resolve()
+    expect(launched).toBe(false)
+    expect(mockRouter.spawnCalls).toHaveLength(0)
+    finish()
+    if (fail) await expect(install).rejects.toThrow("activation failed")
+    else await install
+    await launch
+    expect(launched).toBe(true)
+    expect(mockRouter.spawnCalls).toHaveLength(1)
+    expect(mockRouter.unregisterCalls).toEqual([])
+  })
+
+  test("an automatic update becomes eligible once the miniapp stops", async () => {
+    await miniappLauncher.ensureRunning("com.x")
+    await miniappLauncher.stop("com.x")
+    const install = mock(async (beforeActivate: () => void) => {
+      beforeActivate()
+      return "updated"
+    })
+    await expect(miniappLauncher.installWhenIdle("com.x", install)).resolves.toBe("updated")
+    expect(install).toHaveBeenCalledTimes(1)
+    expect(miniappLauncher.isRunning("com.x")).toBe(false)
+  })
+
   test("ensureRunning spawns the background context when not registered", async () => {
     const result = await miniappLauncher.ensureRunning("com.x")
     expect(mockRouter.spawnCalls.length).toBe(1)

@@ -160,6 +160,8 @@ export interface InstallBundleOptions {
    * is the Store's business, so the host needs no Store address of its own.
    */
   bundleAuthorization?: string
+  /** Synchronous idle check/reservation, after extraction and before any installed files change. */
+  beforeActivate?: () => void
   onProgress?: (phase: "downloading" | "verifying" | "extracting" | "activating") => void
 }
 
@@ -417,9 +419,10 @@ async function unpackMiniApp(
     installed: {packageName: string; version: string},
     activation: ActivatedInstall<{packageName: string; version: string}>,
   ) => InstallFinalization | Promise<InstallFinalization>,
+  beforeActivate?: () => void,
 ): Promise<{packageName: string; version: string}> {
   return completeInstallFilesystemTransaction(
-    () => unpackMiniAppExclusive(zipPath, versionOverride, expected, onProgress),
+    () => unpackMiniAppExclusive(zipPath, versionOverride, expected, onProgress, beforeActivate),
     finalize,
   )
 }
@@ -429,6 +432,7 @@ async function unpackMiniAppExclusive(
   versionOverride?: string,
   expected?: MiniappInstallExpectations,
   onProgress?: InstallBundleOptions["onProgress"],
+  beforeActivate?: () => void,
 ): Promise<ActivatedInstall<{packageName: string; version: string}>> {
   const operationId = nextInstallOperationId()
   const unzipDir = new Directory(Paths.cache, `lma_unzip-${operationId}`)
@@ -447,6 +451,7 @@ async function unpackMiniAppExclusive(
       versionOverride,
       expected,
       onProgress,
+      beforeActivate,
     )
   } finally {
     try {
@@ -464,6 +469,7 @@ async function unpackMiniAppFromScratchDirectory(
   versionOverride?: string,
   expected?: MiniappInstallExpectations,
   onProgress?: InstallBundleOptions["onProgress"],
+  beforeActivate?: () => void,
 ): Promise<ActivatedInstall<{packageName: string; version: string}>> {
   try {
     onProgress?.("extracting")
@@ -533,6 +539,15 @@ async function unpackMiniAppFromScratchDirectory(
     console.error("Error moving the contents of the folder to the destination directory", error)
     if (directory(stagingName).exists) directory(stagingName).delete()
     throw "INSTALL_CONTENTS_FAILED"
+  }
+
+  // The guard may reserve the package against launches until commit/rollback.
+  // Preserve its error so the Store can distinguish a deferral from an install failure.
+  try {
+    beforeActivate?.()
+  } catch (error) {
+    if (directory(stagingName).exists) directory(stagingName).delete()
+    throw error
   }
 
   // Swap only after the complete bundle is staged. If activation fails,
@@ -671,6 +686,7 @@ async function downloadAndInstallMiniApp(
           },
           activation,
         ),
+      opts?.beforeActivate,
     )
     return {
       ...installed,
@@ -976,6 +992,7 @@ class AppRegistry {
         opts?.onProgress,
         ({packageName, version}, activation) =>
           this.finalizeInstall(packageName, version, releaseIdentity, (state) => activation.recordRecoveryState(state)),
+        opts?.beforeActivate,
       )
       console.log("APP_REGISTRY: Installed mini app from local zip")
       return {packageName, version}

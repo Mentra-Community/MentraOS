@@ -413,6 +413,8 @@ export enum MiniappErrorCode {
   INSTALL_FAILED = "INSTALL_FAILED",
   /** Another host installation is already mutating the registry. */
   INSTALL_IN_PROGRESS = "INSTALL_IN_PROGRESS",
+  /** An idle-only install was deferred because the target is running or starting. */
+  APP_RUNNING = "APP_RUNNING",
   /** Another Store owns the installed package's update provenance. */
   STORE_OWNERSHIP_CONFLICT = "STORE_OWNERSHIP_CONFLICT",
   /** Target miniapp does not declare the requested action. */

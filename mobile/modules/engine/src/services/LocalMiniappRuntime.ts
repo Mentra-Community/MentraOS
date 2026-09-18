@@ -70,7 +70,13 @@ import {
   type MiniappAuthToken,
   type TtsSynthesisResult,
 } from "../runtime/config"
-import {getAnalytics, getConfigValues, getMiniappConfiguration, getUiSeams, isFeatureEnabled} from "../runtime/bootstrap"
+import {
+  getAnalytics,
+  getConfigValues,
+  getMiniappConfiguration,
+  getUiSeams,
+  isFeatureEnabled,
+} from "../runtime/bootstrap"
 import {invokeScanQrSeam} from "../runtime/scanQrSeam"
 import {
   normalizeStreamAudioConfig,
@@ -96,7 +102,7 @@ import {
   isSystemMiniappPackage,
   systemMiniappStoreOwner,
 } from "./SystemMiniappPolicy"
-import {installWithRuntimeReload} from "../utils/storeInstallRuntime"
+import {installWithRuntimeReload, MiniappRunningError} from "../utils/storeInstallRuntime"
 import {checkMiniappInstallCompatibility} from "./miniappInstallCompatibility"
 import {TransientActionWakeCoordinator} from "./TransientActionWakeCoordinator"
 import {projectSystemActions} from "./manifestActions"
@@ -3350,7 +3356,9 @@ class LocalMiniappRuntime {
       const message = err instanceof Error ? err.message : "mic acquire error"
       console.warn(`${LOG_TAG}: mic_acquire failed for ${packageName}:`, message)
       this.sendResult(packageName, requestId, false, undefined, {
-        code: message.startsWith(MIC_SOURCE_CONFLICT) ? MiniappErrorCode.MIC_SOURCE_CONFLICT : MiniappErrorCode.INTERNAL,
+        code: message.startsWith(MIC_SOURCE_CONFLICT)
+          ? MiniappErrorCode.MIC_SOURCE_CONFLICT
+          : MiniappErrorCode.INTERNAL,
         message,
       })
     }
@@ -4165,12 +4173,14 @@ class LocalMiniappRuntime {
     })
   }
 
-  private softapRecoveryFields(attempt: SoftapAttempt | null | undefined): {recovery?: {
-    active: boolean
-    generation?: number
-    deadlineAt?: number
-    phase?: string
-  }} {
+  private softapRecoveryFields(attempt: SoftapAttempt | null | undefined): {
+    recovery?: {
+      active: boolean
+      generation?: number
+      deadlineAt?: number
+      phase?: string
+    }
+  } {
     if (!attempt?.recoveryDeadlineAt) return {}
     return {
       recovery: {
@@ -4267,8 +4277,7 @@ class LocalMiniappRuntime {
         token: args.token,
         displayName: args.displayName,
         video: args.video,
-        awaitFirstFrame: (_report, options) =>
-          acsMeetingService.waitForFirstFrame(SOFTAP_FIRST_FRAME_MS, options),
+        awaitFirstFrame: (_report, options) => acsMeetingService.waitForFirstFrame(SOFTAP_FIRST_FRAME_MS, options),
         waitUntilLive: (timeoutMs) => acsMeetingService.waitUntilMediaLive(timeoutMs),
         subsystems: {
           setHotspotState: async (enabled) => {
@@ -4524,7 +4533,10 @@ class LocalMiniappRuntime {
     while (!cancelled()) {
       const remaining = deadlineAt - Date.now()
       if (remaining <= 0) return false
-      if (!isGlassesReady(useGlassesStore.getState().connection) && !(await this.awaitGlassesReady(remaining, cancelled))) {
+      if (
+        !isGlassesReady(useGlassesStore.getState().connection) &&
+        !(await this.awaitGlassesReady(remaining, cancelled))
+      ) {
         return false
       }
       const settleMs = Math.min(GLASSES_LINK_SETTLE_MS, Math.max(0, deadlineAt - Date.now()))
@@ -5057,7 +5069,11 @@ class LocalMiniappRuntime {
     }
   }
 
-  private async handleMeetingAdmit(packageName: string, payload: Record<string, unknown>, requestId?: string): Promise<void> {
+  private async handleMeetingAdmit(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
     try {
       if (typeof payload.participantId !== "string") throw new Error("A participant ID is required")
       await acsMeetingService.admitParticipant(packageName, payload.participantId)
@@ -6125,39 +6141,40 @@ class LocalMiniappRuntime {
         return
       }
 
-      await installWithRuntimeReload(
-        miniappLauncher,
-        target,
-        async () => {
-          const installed = await appRegistry.installFromUrl(bundleUrl, {
-            expectedPackageName: target,
-            expectedVersion: version,
-            expectedBundleSha256: bundleSha256,
-            ...(bundleAuthorization ? {bundleAuthorization} : {}),
-            compatibilityPolicy: {
-              hostVersion,
-              supportedSdkRange: supportedMiniappSdkRange,
-              hardwareCapabilities: this.currentInstallHardwareCapabilities(),
-            },
-            onProgress: (phase) =>
-              this.sendToMiniapp(storePackageName, {
-                type: MiniappResponseType.MINIAPPS_INSTALL_PROGRESS,
-                packageName: target,
-                version,
-                phase,
-              }),
-            releaseIdentity: {
-              source: isSystemMiniappPackage(target) ? "system_store" : "store",
-              storePackageName,
-              bundleSha256,
-              ...(typeof payload.releaseId === "string" ? {releaseId: payload.releaseId} : {}),
-              ...(typeof payload.channel === "string" ? {channel: payload.channel} : {}),
-            },
-          })
-          if (installed.is_error()) throw installed.error
-          return installed
-        },
-        {
+      const install = async (beforeActivate?: () => void) => {
+        const installed = await appRegistry.installFromUrl(bundleUrl, {
+          beforeActivate,
+          expectedPackageName: target,
+          expectedVersion: version,
+          expectedBundleSha256: bundleSha256,
+          ...(bundleAuthorization ? {bundleAuthorization} : {}),
+          compatibilityPolicy: {
+            hostVersion,
+            supportedSdkRange: supportedMiniappSdkRange,
+            hardwareCapabilities: this.currentInstallHardwareCapabilities(),
+          },
+          onProgress: (phase) =>
+            this.sendToMiniapp(storePackageName, {
+              type: MiniappResponseType.MINIAPPS_INSTALL_PROGRESS,
+              packageName: target,
+              version,
+              phase,
+            }),
+          releaseIdentity: {
+            source: isSystemMiniappPackage(target) ? "system_store" : "store",
+            storePackageName,
+            bundleSha256,
+            ...(typeof payload.releaseId === "string" ? {releaseId: payload.releaseId} : {}),
+            ...(typeof payload.channel === "string" ? {channel: payload.channel} : {}),
+          },
+        })
+        if (installed.is_error()) throw installed.error
+        return installed
+      }
+      if (payload.onlyIfStopped === true) {
+        await miniappLauncher.installWhenIdle(target, install)
+      } else {
+        await installWithRuntimeReload(miniappLauncher, target, install, {
           restorePreviousVersion: () => {
             if (!activeVersion) throw new Error(`No prior active version is available for ${target}`)
             const restored = appRegistry.setActiveVersion(target, activeVersion)
@@ -6170,8 +6187,8 @@ class LocalMiniappRuntime {
               }`,
             )
           },
-        },
-      )
+        })
+      }
       appRegistry.gcReleaseVersions(target, [version, ...(activeVersion ? [activeVersion] : [])])
       this.sendToMiniapp(storePackageName, {
         type: MiniappResponseType.MINIAPPS_INSTALL_PROGRESS,
@@ -6187,8 +6204,9 @@ class LocalMiniappRuntime {
       })
       this.auditInterop({caller: storePackageName, op: "install", target, ok: true})
     } catch (error) {
+      const code = error instanceof MiniappRunningError ? MiniappErrorCode.APP_RUNNING : MiniappErrorCode.INSTALL_FAILED
       this.sendResult(storePackageName, requestId, false, undefined, {
-        code: MiniappErrorCode.INSTALL_FAILED,
+        code,
         message: (error as Error)?.message ?? "miniapp installation failed",
       })
       this.auditInterop({
@@ -6196,7 +6214,7 @@ class LocalMiniappRuntime {
         op: "install",
         target,
         ok: false,
-        errorCode: MiniappErrorCode.INSTALL_FAILED,
+        errorCode: code,
       })
     } finally {
       this.storeMutationInFlight = null

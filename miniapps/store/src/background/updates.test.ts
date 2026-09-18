@@ -10,7 +10,6 @@ const storePackageName = "com.mentra.store"
 function installed(overrides: Partial<InstalledApp> = {}): InstalledApp {
   return {
     packageName: "com.example.weather",
-    visibility: "public",
     name: "Weather",
     version: "1.0.0",
     running: false,
@@ -22,6 +21,7 @@ function installed(overrides: Partial<InstalledApp> = {}): InstalledApp {
 
 function app(overrides: Partial<StoreApp> = {}): StoreApp {
   return {
+    visibility: "public",
     packageName: "com.example.weather",
     name: "Weather",
     subtitle: null,
@@ -59,6 +59,16 @@ function app(overrides: Partial<StoreApp> = {}): StoreApp {
 }
 
 describe("automatic Store updates", () => {
+  test("defers running apps, including SYSTEM apps, until they stop", () => {
+    for (const ownership of [
+      {storeOwnerPackageName: storePackageName},
+      {system: true, systemStoreOwnerPackageName: storePackageName},
+    ]) {
+      expect(isAutomaticUpdateCandidate(app(), installed({...ownership, running: true}), storePackageName)).toBe(false)
+      expect(isAutomaticUpdateCandidate(app(), installed({...ownership, running: false}), storePackageName)).toBe(true)
+    }
+  })
+
   test("updates releases owned by this Store", () => {
     expect(
       isAutomaticUpdateCandidate(app(), installed({storeOwnerPackageName: storePackageName}), storePackageName),

@@ -5,7 +5,7 @@ import type {StoreApp, StoreSnapshot} from "../shared/types"
 
 interface TestController {
   start(): void
-  install(packageName: string, query?: string, selectedApp?: StoreApp): Promise<StoreSnapshot>
+  install(packageName: string, query?: string, selectedApp?: StoreApp, onlyIfStopped?: boolean): Promise<StoreSnapshot>
   uninstall(packageName: string, query?: string): Promise<StoreSnapshot>
   setTrack(packageName: string, track: "stable" | "beta", query?: string): Promise<StoreSnapshot>
   load(query?: string, clearOperation?: boolean, refreshAutomaticCatalog?: boolean): Promise<StoreSnapshot>
@@ -119,7 +119,10 @@ describe("StoreController refresh serialization", () => {
     }
 
     controller.start()
-    const result = (await actionHandlers.get("reconcile_updates")?.({})) as {checkedAt: number; candidateCount: number}
+    const result = (await actionHandlers.get("reconcile_updates")?.({}, {callerPackageName: "host"})) as {
+      checkedAt: number
+      candidateCount: number
+    }
 
     expect([...actionHandlers.keys()]).toEqual([
       "reconcile_updates",
@@ -135,7 +138,10 @@ describe("StoreController refresh serialization", () => {
   })
 
   test("exposes catalog-backed search, details, and install actions without accepting bundle metadata", async () => {
-    const actionHandlers = new Map<string, (params: Record<string, unknown>) => Promise<unknown>>()
+    const actionHandlers = new Map<
+      string,
+      (params: Record<string, unknown>, context: {callerPackageName: string}) => Promise<unknown>
+    >()
     let installed = false
     let installDescriptor: Record<string, unknown> | undefined
     const catalogApp = {
@@ -410,32 +416,79 @@ describe("StoreController refresh serialization", () => {
     expect(snapshots.at(-1)).toMatchObject({operation: null, error: "Host refused uninstall"})
   })
 
-  test("continues automatic updates after one candidate fails", async () => {
-    const session = {ui: {send: () => undefined}} as unknown as MiniappSession
+  test("rechecks running state, continues past failures, and retries stopped apps later", async () => {
+    const rows = ["broken", "healthy", "running"].map((name) => ({
+      packageName: `com.example.${name}`,
+      version: "1.0.0",
+      running: name === "running",
+      storeOwnerPackageName: "com.mentra.store",
+      system: false,
+    }))
+    const session = {
+      miniapps: {list: async () => rows},
+      ui: {send: () => undefined},
+    } as unknown as MiniappSession
     const controller = new StoreController(session) as unknown as TestController
-    controller.snapshot = {
-      ...controller.snapshot,
-      installed: [
-        {packageName: "com.example.broken", version: "1.0.0"},
-        {packageName: "com.example.healthy", version: "1.0.0"},
-      ] as StoreSnapshot["installed"],
-    }
-    const candidates = [
-      {packageName: "com.example.broken", name: "Broken", release: {version: "2.0.0"}},
-      {packageName: "com.example.healthy", name: "Healthy", release: {version: "2.0.0"}},
-    ] as StoreApp[]
+    const candidates = rows.map((row) => ({
+      packageName: row.packageName,
+      name: row.packageName,
+      release: {version: "2.0.0", installable: true, installCompatibility: {compatible: true}},
+    })) as StoreApp[]
+    // Simulate a stale candidate list collected before the last app started.
     controller.automaticUpdateCandidates = () => candidates
     const attempted: string[] = []
-    controller.install = async (packageName) => {
+    controller.install = async (packageName, _query, _app, onlyIfStopped) => {
+      expect(onlyIfStopped).toBe(true)
       attempted.push(packageName)
       if (packageName === "com.example.broken") throw new Error("bad bundle")
       return controller.snapshot
     }
-
     await controller.scheduleAutomaticUpdates()
-
     expect(attempted).toEqual(["com.example.broken", "com.example.healthy"])
-    expect(controller.snapshot.error).toContain("Broken: bad bundle")
+    expect(controller.snapshot.error).toContain("bad bundle")
+    rows[2]!.running = false
+    await controller.scheduleAutomaticUpdates()
+    expect(attempted.at(-1)).toBe("com.example.running")
+  })
+
+  test("treats the host's running-app deferral as a normal refresh", async () => {
+    let descriptor: Record<string, unknown> | undefined
+    const session = {
+      miniapps: {
+        install: async (request: Record<string, unknown>) => {
+          descriptor = request
+          throw {code: "APP_RUNNING", message: "Miniapp started while downloading"}
+        },
+      },
+      auth: {getToken: async () => "store-token"},
+      ui: {send: () => undefined},
+    } as unknown as MiniappSession
+    const controller = new StoreController(session) as unknown as TestController
+    let refreshed = false
+    controller.refresh = async (_query, _automatic, clearOperation) => {
+      refreshed = true
+      expect(clearOperation).toBe(true)
+      controller.snapshot = {...controller.snapshot, operation: null}
+      return controller.snapshot
+    }
+    await controller.install(
+      "com.example.app",
+      undefined,
+      {
+        packageName: "com.example.app",
+        release: {
+          version: "2.0.0",
+          installable: true,
+          bundleUrl: "https://example.com/app.zip",
+          bundleSha256: "a".repeat(64),
+        },
+      } as StoreApp,
+      true,
+    )
+    expect(descriptor?.onlyIfStopped).toBe(true)
+    expect(refreshed).toBe(true)
+    expect(controller.snapshot.error).toBeNull()
+    expect(controller.snapshot.operation).toBeNull()
   })
 
   test("does not install a discoverable beta offer before enrollment", async () => {

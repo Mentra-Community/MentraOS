@@ -1,3 +1,11 @@
+/** A normal deferral: an automatic update must leave this session alone. */
+export class MiniappRunningError extends Error {
+  constructor(packageName: string) {
+    super(`${packageName} is running; its automatic update will be retried later`)
+    this.name = "MiniappRunningError"
+  }
+}
+
 export interface StoreInstallRuntimeLauncher {
   isRunning(packageName: string): boolean
   stop(packageName: string): Promise<void>

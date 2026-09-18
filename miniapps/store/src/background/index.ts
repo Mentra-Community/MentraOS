@@ -1,4 +1,4 @@
-import {registerMiniapp, type ActionContext, type MiniappSession} from "@mentra/miniapp/background"
+import {MiniappErrorCode, registerMiniapp, type ActionContext, type MiniappSession} from "@mentra/miniapp/background"
 import {isNewerVersion, loadCompleteCatalog, parseCatalog, trustedBackendOrigin} from "./catalog"
 import {isAutomaticUpdateCandidate, isAutomaticUpdateOwnedRelease} from "./updates"
 import type {StoreChannels} from "../shared/channels"
@@ -391,10 +391,14 @@ export class StoreController {
     const updateRun = this.enqueueMutation(async () => {
       const failures: string[] = []
       for (const app of candidates) {
-        const installed = this.snapshot.installed.find((candidate) => candidate.packageName === app.packageName)
-        if (!installed || !isNewerVersion(app.release.version, installed.version)) continue
         try {
-          await this.install(app.packageName, undefined, app)
+          // Refresh after waiting behind other Store operations: the user may
+          // have launched an app since the catalog snapshot was loaded.
+          const installed = (await this.session.miniapps.list({includeIncompatible: true})).find(
+            (candidate) => candidate.packageName === app.packageName,
+          )
+          if (!isAutomaticUpdateCandidate(app, installed, MENTRA_STORE_PACKAGE_NAME)) continue
+          await this.install(app.packageName, undefined, app, true)
         } catch (error) {
           failures.push(`${app.name}: ${error instanceof Error ? error.message : "update failed"}`)
         }
@@ -440,7 +444,7 @@ export class StoreController {
     return result
   }
 
-  private async install(packageName: string, query?: string, selectedApp?: StoreApp) {
+  private async install(packageName: string, query?: string, selectedApp?: StoreApp, onlyIfStopped = false) {
     if (query !== undefined) this.lastQuery = query
     const app = selectedApp ?? this.requireApp(packageName)
     if (!app.release.installable || !app.release.bundleUrl || !app.release.bundleSha256) {
@@ -454,6 +458,7 @@ export class StoreController {
         version: app.release.version,
         bundleUrl: app.release.bundleUrl,
         bundleSha256: app.release.bundleSha256,
+        ...(onlyIfStopped ? {onlyIfStopped: true} : {}),
         // Our own Store credential. The host attaches it to the download and
         // never mints one of its own, so it needs no Store address to trust.
         bundleAuthorization: await this.session.auth.getToken(),
@@ -465,6 +470,17 @@ export class StoreController {
       })
       return this.refresh(this.lastQuery, false, true)
     } catch (error) {
+      if (
+        onlyIfStopped &&
+        error &&
+        typeof error === "object" &&
+        "code" in error &&
+        error.code === MiniappErrorCode.APP_RUNNING
+      ) {
+        // A launch won the race. Keep the current session and retry on the
+        // next normal reconciliation without showing an update failure.
+        return this.refresh(this.lastQuery, false, true)
+      }
       const failure = error instanceof Error ? error : new Error("Install failed")
       this.snapshot = {
         ...this.snapshot,

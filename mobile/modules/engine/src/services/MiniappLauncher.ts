@@ -28,6 +28,7 @@ import {File} from "expo-file-system"
 import {isInstalledMiniappAllowed, isLocalMiniappPackageAllowed} from "../runtime/bootstrap"
 import {resolveDevBundleSource} from "../utils/devMiniappSnapshot"
 import {storage} from "../utils/storage/storage"
+import {MiniappRunningError} from "../utils/storeInstallRuntime"
 import appRegistry, {getLocalAppRunningState, saveLocalAppRunningState, unregisterDevApp} from "./AppRegistry"
 import devServerBridge from "./DevServerBridge"
 import localMiniappRuntime, {type InstalledMiniappManifest} from "./LocalMiniappRuntime"
@@ -82,6 +83,38 @@ class MiniappLauncher {
    * callers share the same promise.
    */
   private readonly inFlight = new Map<string, Promise<LaunchResult>>()
+
+  /** Only the short activation transaction blocks new launches, never the download. */
+  private readonly installing = new Map<string, Promise<void>>()
+
+  /**
+   * Prepare an automatic update while idle, then reserve the package immediately
+   * before its files change. Launches during preparation win and defer the update;
+   * launches during activation wait for commit/rollback and read the resulting bundle.
+   */
+  async installWhenIdle<T>(packageName: string, install: (beforeActivate: () => void) => Promise<T>): Promise<T> {
+    const assertIdle = () => {
+      if (this.isRunning(packageName) || this.inFlight.has(packageName)) throw new MiniappRunningError(packageName)
+    }
+    assertIdle()
+    let release: (() => void) | undefined
+    try {
+      return await install(() => {
+        assertIdle()
+        this.installing.set(
+          packageName,
+          new Promise<void>((resolve) => {
+            release = resolve
+          }),
+        )
+      })
+    } finally {
+      if (release) {
+        this.installing.delete(packageName)
+        release()
+      }
+    }
+  }
 
   /** Wire the router in. Called once from MiniappEngine construction. */
   configure(deps: LauncherDeps): void {
@@ -278,6 +311,8 @@ class MiniappLauncher {
     hints?: LaunchHints,
     runtimeOptions?: RuntimeLaunchOptions,
   ): Promise<LaunchResult> {
+    const installation = this.installing.get(packageName)
+    if (installation) await installation
     if (!isLocalMiniappPackageAllowed(packageName)) {
       throw new Error(`MiniappLauncher: ${packageName} is disabled by deployment policy`)
     }

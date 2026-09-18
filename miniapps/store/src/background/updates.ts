@@ -20,6 +20,7 @@ export function isAutomaticUpdateCandidate(
   storePackageName: string,
 ): boolean {
   return (
+    installed?.running === false &&
     isAutomaticUpdateOwnedRelease(app, installed, storePackageName) &&
     app.release.installCompatibility?.compatible === true
   )
