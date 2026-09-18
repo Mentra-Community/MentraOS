@@ -88,6 +88,8 @@ jobs:
       - name: Set up Android SDK
         if: steps.availability.outputs.available == 'true'
         uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
 
       - name: Free disk space
         if: steps.availability.outputs.available == 'true'
@@ -271,6 +273,8 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
 
       - name: Free disk space
         run: |
@@ -379,6 +383,8 @@ jobs:
 
       - name: Set up Android SDK
         uses: android-actions/setup-android@v3
+        with:
+          packages: platform-tools
 
       - name: Free disk space
         run: |
