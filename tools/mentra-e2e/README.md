@@ -2,6 +2,14 @@
 
 Start with the [English coverage checklist](ROUTINE.md), [exact compiled routine](COMPILED-ROUTINE.md), [design and technology choices](../../notes/superpowers/specs/2026-09-15-mentra-app-e2e-harness.md), [accessibility contract](ACCESSIBILITY.md), and [Mac Mini setup](SETUP.md).
 
+To review a recording in an embedded browser, serve its report over localhost:
+
+```sh
+bun tools/mentra-e2e/view.ts /absolute/path/to/run
+```
+
+Open the printed URL and keep the process running while reviewing. This serves the existing video, English chapter links and screenshots without changing the evidence or starting a device test. Direct `file://` preview can display the HTML while failing to play its video; the local viewer supports video byte ranges for seeking. It binds only to `127.0.0.1` and exposes report assets, not private native logs or meeting URLs. Stop it with Ctrl-C.
+
 The [Android setup guide](ANDROID.md) documents phone preparation, identity checks and desktop-independent recording. Android has separate [OTA update](ANDROID-OTA-ROUTINE.md) and [Call without OTA](ANDROID-CALL-ROUTINE.md) routines: Call requires the pinned firmware but never installs it. The actual Android ASG update and a compiled already-current verification are recorded; complete Android meeting/media qualification is still pending.
 
 The [Mentra Call English routine](MENTRA-CALL-ROUTINE.md) targets the real iOS app on this Mac. Product branch `codex/enable-mentra-call-ios` restores availability and fixes Mac audio pairing; use that build for Call suites. The five-step `mentra-call-availability` verifies host search. The 13-step `mentra-call-ui` exercises paired settings, empty meeting forms and minimize/reopen. Pairing and camera/microphone permissions are complete. A September 17 user-assisted Direct link call delivered changing 960×540 glasses video and audible glasses microphone audio to Teams in the browser. Return audio and full deterministic meeting replay remain unqualified; the rebuilt iOS roster now verifies guest arrival/departure, while browser admission remains a separate gate. The Mac run used the explicitly marked host-verified test network adapter, so it does not qualify native iPhone hotspot association. Field editing remains unqualified.

@@ -169,7 +169,7 @@ bun run tools/mentra-e2e/run.ts run --suite driver-proof
 
 The current proof requires the new `navigation.back` identifier. The original legacy proof passed twice on dev.235; those old passes do not qualify the stricter current revision. This opens Log In, enters a deliberately malformed email, verifies the real app's validation, dismisses it, clears the field, and returns to the welcome screen. It does not send bad-password requests or need account credentials.
 
-Each run prints its unique artifact folder. Both runs must exit zero. Open `index.html`, play `routine.mp4`, and click the English step descriptions to check that seeking works. Inspect the input/validation screenshots. Merely compiling or seeing a successful `doctor` is insufficient.
+Each run prints its unique artifact folder. Both runs must exit zero. Run `bun tools/mentra-e2e/view.ts /absolute/path/to/run`, open its printed localhost URL, play the video, and click the English step descriptions to check that seeking works. Keep the viewer process running until review is finished. Use this HTTP viewer for embedded browsers that display `file://` HTML but fail to play its video. Inspect the input/validation screenshots. Merely compiling or seeing a successful `doctor` is insufficient.
 
 The capture implementation takes screenshots from the same live stream as the video. Starting independent screenshot capture processes while recording caused recording-connection failures during development; use the runner's capture path rather than another recorder alongside it.
 
