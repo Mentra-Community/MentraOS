@@ -1,15 +1,18 @@
 /// <reference types="bun-types" />
 import {beforeEach, describe, expect, mock, test} from "bun:test"
 
+import {bluetoothSdk} from "./bluetoothSdkTestMock"
+
 const platform = {OS: "android"}
 mock.module("react-native", () => ({Platform: platform}))
 const configure = mock(() => Promise.resolve())
 const send = mock(() => Promise.resolve())
 const capture = mock(() => Promise.resolve())
 mock.module("@mentra/crust", () => ({default: {setNotificationConfig: capture}}))
-mock.module("@mentra/bluetooth-sdk/internal", () => ({
-  default: {configureNativeNotifications: configure, sendPhoneNotification: send},
-}))
+// Assign onto the shared stub rather than registering a second factory for the SDK module: bun's
+// registry is process-wide and last-one-wins, so a private factory here hands every suite that
+// loads afterwards an object missing the methods they installed (see bluetoothSdkTestMock).
+Object.assign(bluetoothSdk, {configureNativeNotifications: configure, sendPhoneNotification: send})
 const values: Record<string, unknown> = {}
 let settingsChanged: (() => void) | undefined
 let glassesChanged: (() => void) | undefined

@@ -65,10 +65,6 @@ const {
   setSoftapBleLc3UplinkForTests,
 } = require("../AcsMeetingService") as typeof import("../AcsMeetingService")
 
-const micStateCoordinator = require("../MicStateCoordinator").default as {
-  setCallRequirement(pcm: boolean): void
-}
-
 type PhoneNetworkInfo = import("../AcsMeetingService").PhoneNetworkInfo
 
 function fakePhoneNetwork() {
@@ -820,6 +816,8 @@ describe("glasses LC3 microphone uplink", () => {
       meetingUrl: "https://teams.microsoft.com/l/meetup-join/x",
       token: "tok",
       videoSource: {type: "softap"},
+      // The host resolves this from MicSessionManager before it calls join.
+      glassesSession: true,
     })
   }
 
@@ -840,18 +838,18 @@ describe("glasses LC3 microphone uplink", () => {
     await acsMeetingService.leave("com.mentra.call")
     setAcsMeetingNativeForTests(undefined)
     setSoftapBleLc3UplinkForTests(null)
-    micStateCoordinator.setCallRequirement(false)
     bluetoothSdk.addListener = previousSdk.addListener
     bluetoothSdk.setMicSourcePin = previousSdk.setMicSourcePin
   })
 
-  test("the gate needs Android, SoftAP, the glasses mic, and a native that can take PCM", () => {
+  test("the gate needs Android, SoftAP, the glasses mic, a native that can take PCM, and a session", () => {
     const softap = {type: "softap"} as const
     const supported = {
       videoSource: softap,
       audioSource: "glasses" as const,
       hasPushOutgoingPcm: true,
       platform: "android",
+      glassesSession: true,
     }
     expect(glassesLc3UplinkSupported(supported)).toBe(true)
     // iOS has no mic pin, so it cannot promise the phone microphone stays shut.
@@ -861,21 +859,25 @@ describe("glasses LC3 microphone uplink", () => {
     expect(glassesLc3UplinkSupported({...supported, audioSource: "phone"})).toBe(false)
     // An older Mentra App keeps the audio track it has always used rather than joining mute.
     expect(glassesLc3UplinkSupported({...supported, hasPushOutgoingPcm: false})).toBe(false)
+    // Nobody leased the microphone, so nothing has pinned it or claimed raw PCM to read.
+    expect(glassesLc3UplinkSupported({...supported, glassesSession: false})).toBe(false)
   })
 
-  test("a SoftAP join pins the glasses mic and reports the BLE transport", async () => {
+  test("a SoftAP join reads the glasses mic without claiming it", async () => {
     const native = lc3Native()
     const state = await joinedOnSoftap(native)
 
-    expect(setMicSourcePin).toHaveBeenCalledWith("glasses")
     expect(state.micTransport).toBe("ble-lc3")
     expect(acsMeetingService.glassesLc3UplinkActive()).toBe(true)
     expect(micListeners.has("mic_pcm")).toBe(true)
     expect(native.join).toHaveBeenCalledWith(expect.objectContaining({audioDelayMs: SOFTAP_LC3_AUDIO_DELAY_MS}))
+    // The microphone belongs to whoever leased it. A sink that pins or claims it is how hardware
+    // policy ends up owned by one audio consumer.
+    expect(setMicSourcePin).not.toHaveBeenCalled()
   })
 
-  test("a host that cannot take PCM keeps the published audio track and never pins", async () => {
-    const {pushOutgoingPcm: _absent, ...native} = lc3Native()
+  test("a join without a microphone session keeps the published audio track", async () => {
+    const native = lc3Native()
     setAcsMeetingNativeForTests(native)
 
     const state = await acsMeetingService.join("com.mentra.call", {
@@ -886,9 +888,34 @@ describe("glasses LC3 microphone uplink", () => {
 
     expect(state.micTransport).toBe("whip")
     expect(acsMeetingService.glassesLc3UplinkActive()).toBe(false)
+    expect(micListeners.has("mic_pcm")).toBe(false)
+  })
+
+  test("a host that cannot take PCM keeps the published audio track", async () => {
+    const {pushOutgoingPcm: _absent, ...native} = lc3Native()
+    setAcsMeetingNativeForTests(native)
+
+    const state = await acsMeetingService.join("com.mentra.call", {
+      meetingUrl: "https://teams.microsoft.com/l/meetup-join/x",
+      token: "tok",
+      videoSource: {type: "softap"},
+      glassesSession: true,
+    })
+
+    expect(state.micTransport).toBe("whip")
+    expect(acsMeetingService.glassesLc3UplinkActive()).toBe(false)
     expect(setMicSourcePin).not.toHaveBeenCalled()
     expect(micListeners.has("mic_pcm")).toBe(false)
     expect(native.join.mock.calls[0]?.[0]).not.toHaveProperty("audioDelayMs")
+  })
+
+  test("leaving a call releases nothing it does not own", async () => {
+    // The lease outlives the sink on purpose: the miniapp releases after leave, so unpinning here
+    // would hand the still-subscribed call phone frames and report the wearer's mic as gone.
+    await joinedOnSoftap(lc3Native())
+    setMicSourcePin.mockClear()
+    await acsMeetingService.leave("com.mentra.call")
+    expect(setMicSourcePin).not.toHaveBeenCalled()
   })
 
   /**
@@ -1010,14 +1037,13 @@ describe("glasses LC3 microphone uplink", () => {
     expect(pushOutgoingPcm).not.toHaveBeenCalled()
   })
 
-  test("leave releases the pin and the listener, and late frames go nowhere", async () => {
+  test("leave drops the listener, and late frames go nowhere", async () => {
     const native = lc3Native()
     await joinedOnSoftap(native)
     const listener = micListeners.get("mic_pcm")!
 
     await acsMeetingService.leave("com.mentra.call")
 
-    expect(setMicSourcePin).toHaveBeenLastCalledWith(null)
     expect(micListeners.has("mic_pcm")).toBe(false)
     expect(acsMeetingService.glassesLc3UplinkActive()).toBe(false)
     // A frame already queued on the JS thread when the call ended still runs; the generation check
@@ -1027,54 +1053,45 @@ describe("glasses LC3 microphone uplink", () => {
   })
 
   /**
-   * A remote hang-up never goes through `leave`. Without a release on the terminal native state the
-   * pin outlives the meeting, and the next call — or the captions miniapp — inherits a microphone
-   * it cannot reassign.
+   * A remote hang-up never goes through `leave`. Without dropping the subscription on the terminal
+   * native state, this call keeps reading a microphone whose owner is about to release it — and
+   * the frames that arrive after the unpin are what `GLASSES_MIC_UNAVAILABLE` is built from.
    */
-  test("a remote hang-up releases the pin, and the leave that follows it does not double-release", async () => {
+  test("a remote hang-up drops the listener before the owner releases", async () => {
     const native = lc3Native()
     await joinedOnSoftap(native)
-    setMicSourcePin.mockClear()
 
     native.emit("onState", {state: "disconnected", muted: false})
     await flush()
 
-    expect(setMicSourcePin).toHaveBeenCalledTimes(1)
-    expect(setMicSourcePin).toHaveBeenCalledWith(null)
     expect(micListeners.has("mic_pcm")).toBe(false)
-
-    await acsMeetingService.leave("com.mentra.call")
-    expect(setMicSourcePin).toHaveBeenCalledTimes(1)
+    expect(acsMeetingService.glassesLc3UplinkActive()).toBe(false)
   })
 
-  test("a terminal error releases the pin and keeps the reason on the state", async () => {
+  test("a terminal error drops the listener and keeps the reason on the state", async () => {
     const native = lc3Native()
     await joinedOnSoftap(native)
-    setMicSourcePin.mockClear()
 
     native.emit("onState", {state: "error", muted: false, error: "ACS_TOKEN_EXPIRED"})
     await flush()
 
-    expect(setMicSourcePin).toHaveBeenCalledWith(null)
     expect(micListeners.has("mic_pcm")).toBe(false)
   })
 
-  test("a second terminal state is a no-op rather than a second release", async () => {
-    // Two `disconnected` events for one call are ordinary; releasing twice would clear a pin the
-    // *next* call had already taken.
+  test("a second terminal state is a no-op rather than a second teardown", async () => {
+    // Two `disconnected` events for one call are ordinary.
     const native = lc3Native()
     await joinedOnSoftap(native)
-    setMicSourcePin.mockClear()
 
     native.emit("onState", {state: "disconnected", muted: false})
     native.emit("onState", {state: "disconnected", muted: false})
     await flush()
 
-    expect(setMicSourcePin).toHaveBeenCalledTimes(1)
+    expect(micListeners.has("mic_pcm")).toBe(false)
   })
 
-  /** End can fail and still have left this device; the claims have to go either way. */
-  test("a rejected endForEveryone still releases the microphone claims", async () => {
+  /** End can fail and still have left this device; the subscription has to go either way. */
+  test("a rejected endForEveryone still drops the microphone subscription", async () => {
     const native = {
       ...lc3Native(),
       endForEveryone: mock(async () => {
@@ -1082,26 +1099,22 @@ describe("glasses LC3 microphone uplink", () => {
       }),
     }
     await joinedOnSoftap(native)
-    setMicSourcePin.mockClear()
 
     await expect(acsMeetingService.endForEveryone("com.mentra.call")).rejects.toThrow("refused")
 
-    expect(setMicSourcePin).toHaveBeenCalledWith(null)
     expect(micListeners.has("mic_pcm")).toBe(false)
     expect(acsMeetingService.ownerPackage()).toBeNull()
   })
 
-  test("a miniapp stopping releases the claims through leaveIfOwner", async () => {
+  test("a miniapp stopping drops the subscription through leaveIfOwner", async () => {
     const native = lc3Native()
     await joinedOnSoftap(native)
-    setMicSourcePin.mockClear()
 
     // Another miniapp stopping must not touch this call.
     await acsMeetingService.leaveIfOwner("com.other.app")
-    expect(setMicSourcePin).not.toHaveBeenCalled()
+    expect(micListeners.has("mic_pcm")).toBe(true)
 
     await acsMeetingService.leaveIfOwner("com.mentra.call")
-    expect(setMicSourcePin).toHaveBeenCalledWith(null)
     expect(micListeners.has("mic_pcm")).toBe(false)
   })
 
@@ -1147,7 +1160,7 @@ describe("glasses LC3 microphone uplink", () => {
     expect(acsMeetingService.ownerPackage()).toBeNull()
   })
 
-  test("a rejoin takes the pin again and forwards on the new generation", async () => {
+  test("a rejoin resubscribes and forwards on the new generation", async () => {
     const native = lc3Native()
     await joinedOnSoftap(native)
     const stale = micListeners.get("mic_pcm")!
@@ -1156,7 +1169,6 @@ describe("glasses LC3 microphone uplink", () => {
     const state = await joinedOnSoftap(native)
 
     expect(state.micTransport).toBe("ble-lc3")
-    expect(setMicSourcePin.mock.calls.map((call) => call[0])).toEqual(["glasses", null, "glasses"])
     // The previous call's listener was removed; only the current one forwards.
     stale({pcm: pcm(0x06), sampleRate: 16000, source: "glasses"})
     emitMic({pcm: pcm(0x07), sampleRate: 16000, source: "glasses"})
@@ -1170,9 +1182,8 @@ describe("glasses LC3 microphone uplink", () => {
 
     const state = await acsMeetingService.setMuted("com.mentra.call", true)
 
-    // Mute is an ACS-side gate; the glasses microphone stays open and pinned.
+    // Mute is an ACS-side gate; the glasses microphone stays open and the uplink keeps reading it.
     expect(state.micTransport).toBe("ble-lc3")
-    expect(setMicSourcePin).toHaveBeenCalledTimes(1)
     emitMic({pcm: pcm(0x08), sampleRate: 16000, source: "glasses"})
     expect(pushOutgoingPcm).toHaveBeenCalledTimes(1)
   })
@@ -1220,7 +1231,6 @@ describe("SoftAP microphone transport (production default)", () => {
     await acsMeetingService.leave("com.mentra.call")
     setAcsMeetingNativeForTests(undefined)
     setSoftapBleLc3UplinkForTests(null)
-    micStateCoordinator.setCallRequirement(false)
     bluetoothSdk.addListener = previousSdk.addListener
     bluetoothSdk.setMicSourcePin = previousSdk.setMicSourcePin
   })
@@ -1232,6 +1242,7 @@ describe("SoftAP microphone transport (production default)", () => {
       audioSource: "glasses" as const,
       hasPushOutgoingPcm: true,
       platform: "android",
+      glassesSession: true,
     }
     expect(glassesLc3UplinkSupported(supported)).toBe(true)
 
@@ -1241,6 +1252,7 @@ describe("SoftAP microphone transport (production default)", () => {
       meetingUrl: "https://teams.microsoft.com/l/meetup-join/x",
       token: "tok",
       videoSource: {type: "softap"},
+      glassesSession: true,
     })
 
     expect(state.micTransport).toBe("ble-lc3")
@@ -1255,6 +1267,7 @@ describe("SoftAP microphone transport (production default)", () => {
         audioSource: "glasses",
         hasPushOutgoingPcm: true,
         platform: "android",
+        glassesSession: true,
       }),
     ).toBe(false)
   })

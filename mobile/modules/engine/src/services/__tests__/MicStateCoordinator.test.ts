@@ -250,7 +250,7 @@ describe("MicStateCoordinator", () => {
    * mid-meeting would take the wearer's voice off the call with it.
    */
   test("a call claim turns raw PCM on with VAD off, the same as a local one", async () => {
-    MicStateCoordinator.setCallRequirement(true)
+    MicStateCoordinator.setSessionRequirement(true)
     await flushMicWrite()
 
     expect(mockUpdateBluetoothSettings).toHaveBeenLastCalledWith(
@@ -260,17 +260,17 @@ describe("MicStateCoordinator", () => {
         voice_activity_detection_enabled: false,
       }),
     )
-    MicStateCoordinator.setCallRequirement(false)
+    MicStateCoordinator.setSessionRequirement(false)
     await flushMicWrite()
   })
 
   test("releasing the call claim leaves a miniapp's PCM subscription running", async () => {
     MicStateCoordinator.setLocalRequirements({pcm: true, lc3: false, vadEnabled: true})
-    MicStateCoordinator.setCallRequirement(true)
+    MicStateCoordinator.setSessionRequirement(true)
     await flushMicWrite()
     mockUpdateBluetoothSettings.mockClear()
 
-    MicStateCoordinator.setCallRequirement(false)
+    MicStateCoordinator.setSessionRequirement(false)
     await flushMicWrite()
 
     expect(mockUpdateBluetoothSettings).toHaveBeenLastCalledWith(
@@ -282,7 +282,7 @@ describe("MicStateCoordinator", () => {
 
   test("a miniapp unsubscribing mid-call does not take the microphone with it", async () => {
     MicStateCoordinator.setLocalRequirements({pcm: true, lc3: false, vadEnabled: true})
-    MicStateCoordinator.setCallRequirement(true)
+    MicStateCoordinator.setSessionRequirement(true)
     await flushMicWrite()
     mockUpdateBluetoothSettings.mockClear()
 
@@ -292,16 +292,16 @@ describe("MicStateCoordinator", () => {
     expect(mockUpdateBluetoothSettings).toHaveBeenLastCalledWith(
       expect.objectContaining({should_send_pcm: true, voice_activity_detection_enabled: false}),
     )
-    MicStateCoordinator.setCallRequirement(false)
+    MicStateCoordinator.setSessionRequirement(false)
     await flushMicWrite()
   })
 
   test("both claims released turns raw PCM off and restores the VAD preference", async () => {
     MicStateCoordinator.setLocalRequirements({pcm: true, lc3: false, vadEnabled: true})
-    MicStateCoordinator.setCallRequirement(true)
+    MicStateCoordinator.setSessionRequirement(true)
     await flushMicWrite()
 
-    MicStateCoordinator.setCallRequirement(false)
+    MicStateCoordinator.setSessionRequirement(false)
     MicStateCoordinator.setLocalRequirements({pcm: false, lc3: false, vadEnabled: true})
     await flushMicWrite()
 
@@ -312,7 +312,7 @@ describe("MicStateCoordinator", () => {
 
   test("a call claim keeps VAD off through a settings replay", async () => {
     // Hardware VAD drops silence, which on a call is heard as clipped first syllables.
-    MicStateCoordinator.setCallRequirement(true)
+    MicStateCoordinator.setSessionRequirement(true)
 
     expect(
       MicStateCoordinator.applyRuntimeOverrides({
@@ -321,12 +321,12 @@ describe("MicStateCoordinator", () => {
       }),
     ).toEqual({brightness: 50, voice_activity_detection_enabled: false})
 
-    MicStateCoordinator.setCallRequirement(false)
+    MicStateCoordinator.setSessionRequirement(false)
     await flushMicWrite()
   })
 
   test("reset clears a call claim that a crashed call would otherwise leave behind", async () => {
-    MicStateCoordinator.setCallRequirement(true)
+    MicStateCoordinator.setSessionRequirement(true)
     await flushMicWrite()
 
     MicStateCoordinator.reset()
@@ -350,6 +350,82 @@ describe("MicStateCoordinator", () => {
       }),
     ).toEqual({
       voice_activity_detection_enabled: false,
+    })
+  })
+
+  describe("session mic tuning", () => {
+    beforeEach(async () => {
+      // Back to "no profile has ever been written" between cases.
+      MicStateCoordinator.setSessionMicTuning(null)
+      MicStateCoordinator.applyRuntimeOverrides({mic_tuning: {}})
+      await flushMicWrite()
+      mockUpdateBluetoothSettings.mockClear()
+    })
+
+    // Must stay first in this block: the coordinator is a process-wide singleton, and the latch
+    // this asserts on is one-way by design, so any earlier case that writes a profile sets it.
+    test("mic_tuning stays out of writes until a profile is actually used", async () => {
+      // A device that never runs a profile should not carry the key on unrelated mic writes.
+      MicStateCoordinator.setLocalRequirements({pcm: true, lc3: false})
+      await flushMicWrite()
+      expect(mockUpdateBluetoothSettings).toHaveBeenLastCalledWith(
+        expect.not.objectContaining({mic_tuning: expect.anything()}),
+      )
+      MicStateCoordinator.setLocalRequirements({pcm: false, lc3: false})
+      await flushMicWrite()
+    })
+
+    test("a session profile is written to the glasses", async () => {
+      MicStateCoordinator.setSessionMicTuning({gain: 14})
+      await flushMicWrite()
+      expect(mockUpdateBluetoothSettings).toHaveBeenLastCalledWith(
+        expect.objectContaining({mic_tuning: {gain: 14}}),
+      )
+    })
+
+    test("clearing the profile hands the OS value back", async () => {
+      MicStateCoordinator.setSessionMicTuning({gain: 14})
+      await flushMicWrite()
+      MicStateCoordinator.setSessionMicTuning(null)
+      await flushMicWrite()
+      expect(mockUpdateBluetoothSettings).toHaveBeenLastCalledWith(
+        expect.objectContaining({mic_tuning: {}}),
+      )
+    })
+
+    test("a settings replay re-applies the profile", async () => {
+      // BES forgets mic_tuning on disconnect, so the on-connect replay is the only thing that
+      // puts a live call's gain back after the wearer walks away and returns.
+      MicStateCoordinator.setSessionMicTuning({gain: 14})
+      await flushMicWrite()
+      expect(MicStateCoordinator.applyRuntimeOverrides({brightness: 50, mic_tuning: {}})).toEqual(
+        expect.objectContaining({brightness: 50, mic_tuning: {gain: 14}}),
+      )
+      MicStateCoordinator.setSessionMicTuning(null)
+      await flushMicWrite()
+    })
+
+    test("a live Super Mode tuning outranks the session profile", async () => {
+      // That screen is how a profile's numbers get found on a real call in the first place.
+      MicStateCoordinator.applyRuntimeOverrides({mic_tuning: {gain: 9, open: 700}})
+      MicStateCoordinator.setSessionMicTuning({gain: 14})
+      await flushMicWrite()
+      expect(mockUpdateBluetoothSettings).toHaveBeenLastCalledWith(
+        expect.objectContaining({mic_tuning: {gain: 9, open: 700}}),
+      )
+      MicStateCoordinator.setSessionMicTuning(null)
+      MicStateCoordinator.applyRuntimeOverrides({mic_tuning: {}})
+      await flushMicWrite()
+    })
+
+    test("reset drops a profile a crashed call would otherwise leave behind", async () => {
+      MicStateCoordinator.setSessionMicTuning({gain: 14})
+      await flushMicWrite()
+      MicStateCoordinator.reset()
+      await flushMicWrite()
+      expect(mockUpdateBluetoothSettings).toHaveBeenLastCalledWith(
+        expect.objectContaining({mic_tuning: {}}),
+      )
     })
   })
 })
