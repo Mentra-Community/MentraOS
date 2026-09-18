@@ -954,12 +954,18 @@ class AcsMeetingService {
   }
 
   /**
-   * Sign in to ACS before the glasses hotspot exists.
+   * On Android, pin cellular and sign in before the glasses hotspot exists.
    *
    * SoftAP DNS cannot resolve Teams hosts. Doing this on the phone's existing internet is what
    * stops `createCallAgent` from hanging until the hotspot is torn down.
    */
   async prepareAgent(args: {token: string; displayName?: string}): Promise<void> {
+    // iOS creates its agent after the host's hotspot/default-route wait so signaling starts
+    // on the post-handoff route instead of reusing an agent signed in over the previous Wi-Fi.
+    if (Platform.OS === "ios") {
+      softapTrace("acs_prepare_agent_deferred", {reason: "ios_hotspot_handoff"})
+      return
+    }
     const native = getNative()
     if (!native?.prepareAgent) {
       // A host that cannot pre-sign-in still joins; it just does the sign-in inside the SoftAP

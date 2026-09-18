@@ -406,6 +406,7 @@ final class AcsMeetingSession {
                                                   sourceConfig: sourceConfig, dumpWav: dumpWav, video: video) } catch { self.failJoinLocked(error, generation: generation) }
             }
             if let prepared {
+                NSLog("ACS-SPIKE iOS agent reused generation=\(generation)")
                 self.callClient = preparedClient
                 useAgent(prepared)
             } else {
@@ -415,8 +416,12 @@ final class AcsMeetingSession {
                     self.callClient = client
                     let options = CallAgentOptions()
                     options.displayName = displayName ?? "Mentra Call"
+                    let agentStartedAt = ProcessInfo.processInfo.systemUptime
+                    NSLog("ACS-SPIKE iOS agent creation started generation=\(generation)")
                     client.createCallAgent(userCredential: credential, options: options) { agent, error in
                         self.queue.async {
+                            let elapsedMs = Int((ProcessInfo.processInfo.systemUptime - agentStartedAt) * 1000)
+                            NSLog("ACS-SPIKE iOS agent creation completed generation=\(generation) elapsedMs=\(elapsedMs) success=\(agent != nil && error == nil)")
                             guard self.joinGeneration == generation else { agent?.dispose(); return }
                             guard let agent, error == nil else {
                                 agent?.dispose()

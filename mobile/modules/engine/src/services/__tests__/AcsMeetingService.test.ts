@@ -1411,6 +1411,21 @@ describe("scoped network passthrough", () => {
 
     await expect(acsMeetingService.prepareAgent({token: "tok"})).resolves.toBeUndefined()
   })
+
+  test("iOS defers agent creation until join after the hotspot handoff", async () => {
+    const prepareAgent = mock(async () => ({state: "connecting" as const, muted: false}))
+    const native = {...fakeNative(), prepareAgent}
+    setAcsMeetingNativeForTests(native)
+    const os = reactNative.Platform.OS
+    reactNative.Platform.OS = "ios"
+    try {
+      await acsMeetingService.prepareAgent({token: "tok", displayName: "Mentra Call"})
+      expect(prepareAgent).not.toHaveBeenCalled()
+      expect(native.join).not.toHaveBeenCalled()
+    } finally {
+      reactNative.Platform.OS = os
+    }
+  })
 })
 
 /**

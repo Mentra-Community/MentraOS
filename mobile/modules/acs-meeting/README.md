@@ -332,6 +332,13 @@ from a separate stream start.
 
 ### prepareAgent, and why it exists
 
+This early preparation is Android-only. On iOS, `AcsMeetingService.prepareAgent`
+defers creation to the native join, after hotspot association and the default-route
+wait. This avoids carrying an agent signed in over the previous Wi-Fi connection
+across the handoff. The native log records agent creation duration and whether an
+agent was reused. The route probe does not establish ACS signaling health; the
+physical-iPhone handoff still needs device qualification.
+
 `createCallAgent` after the scoped join sat for the full 20 s deadline on device and only
 completed once SoftAP was released — glasses dnsmasq cannot resolve ACS hosts. Token mint
 already proved the internet worked *before* the hotspot, so signing in there makes the later
