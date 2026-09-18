@@ -1,8 +1,9 @@
+import {waitFor} from "@testing-library/react-native"
 import {Platform} from "react-native"
 
 import {appRegistry} from "@mentra/engine-host-internal"
 
-import {miniappDeveloperPackageName, notifyPackageName} from "@/constants/miniapps"
+import {mentraCallPackageName, miniappDeveloperPackageName, notifyPackageName} from "@/constants/miniapps"
 import {SETTINGS, engine} from "@mentra/engine"
 
 import builtInMiniappCatalog from "./BuiltInMiniappCatalog"
@@ -78,5 +79,43 @@ describe("BuiltInMiniappCatalog", () => {
     settingListener(undefined)
     expect(appRegistry.setOfflineAppHidden).toHaveBeenLastCalledWith(miniappDeveloperPackageName, true)
     expect(engine.miniapps.setHiddenStatus).toHaveBeenLastCalledWith(miniappDeveloperPackageName, true)
+  })
+
+  it("removes persisted Call menu entries when the iOS opt-in is turned off", async () => {
+    Object.defineProperty(Platform, "OS", {configurable: true, value: "ios"})
+    const override = process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS
+    delete process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS
+    const notes = {name: "Notes", packageName: "com.mentra.notes", running: false}
+    try {
+      await engine.settings.set(SETTINGS.show_mentra_call_ios.key, true)
+      await engine.settings.set(SETTINGS.menu_apps.key, [
+        {name: "Call", packageName: mentraCallPackageName, running: true},
+        notes,
+      ])
+      await engine.settings.set(SETTINGS.show_mentra_call_ios.key, false)
+      await waitFor(() => expect(engine.settings.get(SETTINGS.menu_apps.key)).toEqual([notes]))
+    } finally {
+      if (override === undefined) delete process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS
+      else process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS = override
+      Object.defineProperty(Platform, "OS", {configurable: true, value: "android"})
+    }
+  })
+
+  it.each(["android", "ios"])("keeps permitted saved Call menu entries on %s", async (os) => {
+    Object.defineProperty(Platform, "OS", {configurable: true, value: os})
+    const override = process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS
+    if (os === "ios") process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS = "true"
+    else delete process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS
+    const menu = [{name: "Call", packageName: mentraCallPackageName, running: false}]
+    try {
+      await engine.settings.set(SETTINGS.show_mentra_call_ios.key, false)
+      await engine.settings.set(SETTINGS.menu_apps.key, menu)
+      await (builtInMiniappCatalog as unknown as {syncGlassesMenuApps: () => Promise<void>}).syncGlassesMenuApps()
+      expect(engine.settings.get(SETTINGS.menu_apps.key)).toEqual(menu)
+    } finally {
+      if (override === undefined) delete process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS
+      else process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS = override
+      Object.defineProperty(Platform, "OS", {configurable: true, value: "android"})
+    }
   })
 })

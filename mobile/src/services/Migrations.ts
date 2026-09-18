@@ -1,5 +1,4 @@
 import {AsyncResult, result as Res} from "typesafe-ts"
-
 import {storage} from "@/utils/storage"
 import {SETTINGS, engine} from "@mentra/engine"
 
@@ -58,6 +57,14 @@ const migrations: Migration[] = [
       if (res.is_error()) {
         throw res.error
       }
+    },
+  },
+  {
+    version: 5,
+    run: async () => {
+      // Reserved: earlier PR builds unconditionally unhid iOS Call here.
+      // Current visibility is reconciled at every boot and explicit opt-in,
+      // including on devices that already ran this migration.
     },
   },
 ]

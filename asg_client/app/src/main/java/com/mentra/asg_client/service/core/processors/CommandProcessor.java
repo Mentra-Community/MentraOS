@@ -4,6 +4,7 @@ import android.content.Context;
 import android.util.Log;
 
 import com.mentra.asg_client.AsgConstants;
+import com.mentra.asg_client.io.bes.log.BesLivenessMonitor;
 import com.mentra.asg_client.io.bes.log.BesTracePoller;
 import com.mentra.asg_client.io.file.core.FileManager;
 import com.mentra.asg_client.io.peripheral.IPeripheralBus;
@@ -122,6 +123,9 @@ public class CommandProcessor {
                         serviceManager, stateManager, communicationManager, peripheralBus);
         this.besTracePoller = new BesTracePoller();
         this.responseSender = new ResponseSender(serviceManager);
+        // A wedged BES is otherwise silent on Android's side; this is what turns the stall into a
+        // record that survives to the incident report.
+        BesLivenessMonitor.get().start(this::probeBesForLiveness);
         this.chunkReassembler = new ChunkReassembler();
 
         // Register vendor-supplied protocol strategies (e.g. the Mentra Live MCU wire format)
@@ -610,8 +614,24 @@ public class CommandProcessor {
         }
     }
 
+    /**
+     * Pokes BES with the cheap system-version request when the liveness watchdog sees a stall.
+     *
+     * <p>An answer proves the chip is alive; continued silence is itself the evidence. This used to
+     * pull the whole trace ring instead, which cost ~480 UART chunks and ~900 log lines per stall
+     * and pushed glasses load average past 9 — it flooded out the very window it was preserving,
+     * and still could not capture a boot banner because the fetch outlives the ring.
+     */
+    private boolean probeBesForLiveness() {
+        if (k900CommandHandler == null) {
+            return false;
+        }
+        return k900CommandHandler.requestSystemVersion();
+    }
+
     public void cleanup() {
         besTracePoller.stop();
+        BesLivenessMonitor.get().stop();
         if (streamCommandHandler != null) streamCommandHandler.cleanup();
     }
 

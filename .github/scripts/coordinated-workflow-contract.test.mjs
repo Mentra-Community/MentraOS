@@ -29,6 +29,40 @@ function jobBlock(source, name) {
   return next === -1 ? rest : rest.slice(0, next + 1)
 }
 
+test("example finalization authenticates historical asset URL lookup", () => {
+  const finalize = jobBlock(workflow("coordinated-example-release.yml"), "finalize-example")
+  const step = finalize
+    .split("      - name: Assemble the example release record against the finalized beta\n")[1]
+    .split("\n      - name:")[0]
+  assert.match(step, /env:\n(?:          .*\n)*          GH_TOKEN: \$\{\{ github.token \}\}/)
+  assert.match(step, /release-assets\.mjs url .*--existing true/)
+})
+
+test("ASG publication restores Node and npm after runner disk cleanup", () => {
+  const build = jobBlock(workflow("mentra-asg-client-build.yml"), "build")
+  const cleanup = build.indexOf("/usr/local/lib/node_modules")
+  const setup = build.indexOf("uses: actions/setup-node@v4", cleanup)
+  assert.ok(cleanup > 0 && setup > cleanup)
+  assert.ok(build.indexOf("publish-immutable-release-asset.mjs", setup) > setup)
+})
+
+test("mobile records and notifications use per-artifact storage URLs", () => {
+  const mobile = workflow("reusable-coordinated-mobile.yml")
+  const prepare = jobBlock(mobile, "prepare")
+  assert.match(prepare, /release-assets\.mjs" urls/)
+  assert.match(prepare, /--allow-missing true/)
+  for (const kind of ["apk", "aab", "ipa"]) {
+    assert.ok(
+      prepare.includes(`${kind}_url: \${{ steps.container.outputs.${kind}_url || steps.release.outputs.${kind}_url }}`),
+    )
+    assert.ok(mobile.includes(`--${kind}-url "\${{ needs.prepare.outputs.${kind}_url }}"`))
+  }
+  assert.doesNotMatch(mobile, /asset_base_url/)
+  const coordinator = workflow("coordinated-release.yml")
+  assert.match(coordinator, /MOBILE_APK_URL: \$\{\{ needs.mobile.outputs.apk_url \}\}/)
+  assert.match(coordinator, /MOBILE_IPA_URL: \$\{\{ needs.mobile.outputs.ipa_url \}\}/)
+})
+
 test("coordinated OTA assets have bounded release ownership", () => {
   const coordinator = workflow("coordinated-release.yml")
   const ota = workflow("reusable-coordinated-ota.yml")
@@ -52,6 +86,25 @@ test("release finalization reads the preserved OTA artifact layout", () => {
     finalize,
     /asg_selection="release-input\/ota\/release-assets\/\$\(jq -er \.artifactNames\.asgSelection "\$plan"\)"/,
   )
+})
+
+test("completed releases publish a version page and example notices carry the main app links", () => {
+  const core = workflow("coordinated-release.yml")
+  const finalize = jobBlock(core, "finalize")
+  assert.doesNotMatch(finalize, /publish-coordinated-release-page/)
+  const page = jobBlock(core, "publish-release-page")
+  assert.match(page, /needs: \[plan, finalize\]/)
+  assert.match(page, /if: needs.plan.outputs.dry_run != 'true'/)
+  assert.match(page, /actions\/download-artifact@v4/)
+  assert.match(page, /name: coordinated-release-result-/)
+  assert.match(page, /publish-coordinated-release-page.mjs/)
+  assert.doesNotMatch(page, /finalize-release-manifest|publish-immutable-release-asset|date -u/)
+  assert.doesNotMatch(jobBlock(core, "dispatch-examples"), /publish-release-page/)
+  const examples = workflow("coordinated-example-release.yml")
+  for (const kind of ["apk", "ipa"]) {
+    assert.ok(examples.includes(`mobile_${kind}_url: \${{ steps.load.outputs.mobile_${kind}_url }}`))
+    assert.ok(examples.includes(`MOBILE_${kind.toUpperCase()}_URL: \${{ needs.plan.outputs.mobile_${kind}_url }}`))
+  }
 })
 
 test("production promotion is resumable and keeps irreversible actions behind separate environments", () => {
@@ -136,7 +189,7 @@ test("production promotion is resumable and keeps irreversible actions behind se
   assert.match(rollout, /\.artifactNames\.releasePlan/)
   assert.match(rollout, /\.artifactNames\.releaseManifest/)
   assert.match(rollout, /checkpoint_name=.*promotionAssetName/)
-  assert.match(rollout, /releases\/download\/\$tag\/\$checkpoint_name/)
+  assert.match(rollout, /artifactscdn\.mentraglass\.com\/\$\{GITHUB_REPOSITORY\}\/releases\/\$tag\/\$checkpoint_name/)
   assert.match(rollout, /--to completed/)
   assert.doesNotMatch(rollout, /releases\/\$\{\{ steps\.promotion\.outputs\.release_id \}\}\/assets/)
   for (const source of [compatibilityLab, cloud, mobile, submit, release, rollout]) {
@@ -464,10 +517,9 @@ test("coordinated docs publish only after finalization to the matching channel",
     /candidate_parent=\$\(gh api "repos\/\$STARTER_KIT_REPOSITORY\/commits\/coordinated\/\$identity" --jq '\.parents\[0\]\.sha'/,
   )
   assert.match(starterKit, /commits\/sdk-\$identity" --jq '\.parents\[0\]\.sha'/)
-  assert.match(finalizeExample, /--output existing-record\.json/)
-  assert.match(finalizeExample, /completed_at=\$\(jq -er \.completedAt existing-record\.json\)/)
-  assert.match(finalizeExample, /cmp existing-record\.json "finalized-example\/\$record_name"/)
-  assert.match(finalizeExample, /--completed-at "\$completed_at"/)
+  assert.match(finalizeExample, /release-assets\.mjs fetch --asset-id/)
+  assert.match(finalizeExample, /example-release-records\.mjs reconcile/)
+  assert.match(finalizeExample, /if: steps.results.outputs.published != 'true'/)
   assert.match(plan, /Restore the release plan selected by an earlier attempt/)
   assert.match(plan, /actions\/runs\/\$GITHUB_RUN_ID\/artifacts/)
   assert.match(plan, /gh run download "\$GITHUB_RUN_ID"/)
@@ -759,7 +811,8 @@ test("iOS status reports the failed phase instead of downstream skips", (t) => {
         IOS_STORE_RESULT: store,
         APK_NAME: "app.apk",
         IPA_NAME: "app.ipa",
-        ASSET_BASE_URL: "https://example.com",
+        APK_URL: "https://example.com/app.apk",
+        IPA_URL: "https://example.com/app.ipa",
       },
     })
     assert.equal(result.status, 0, result.stderr)

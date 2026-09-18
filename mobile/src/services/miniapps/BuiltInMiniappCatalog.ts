@@ -25,8 +25,8 @@ import {
   mirrorPackageName,
   notifyPackageName,
   settingsPackageName,
-  shouldHideMiniapp,
 } from "@/constants/miniapps"
+import {shouldHideMiniapp} from "./miniappVisibility"
 
 /**
  * Registers the Mentra app's built-in/offline miniapps.
@@ -78,6 +78,9 @@ class BuiltInMiniappCatalog {
     }
     syncMiniappDeveloperVisibility(Boolean(engine.settings.get(SETTINGS.miniapp_dev_mode.key)))
     engine.settings.onChanged<boolean>(SETTINGS.miniapp_dev_mode.key, syncMiniappDeveloperVisibility)
+    engine.settings.onChanged(SETTINGS.show_mentra_call_ios.key, () => {
+      void this.syncGlassesMenuApps()
+    })
 
     void this.syncGlassesMenuApps()
   }
@@ -151,10 +154,12 @@ class BuiltInMiniappCatalog {
         menuItems = await getDefaultMenuApps(apps)
       }
 
-      const itemsForNative = menuItems.map((item) => {
-        const app = apps.find((candidate) => candidate.packageName === item.packageName)
-        return {name: item.name, packageName: item.packageName, running: app?.running ?? false}
-      })
+      const itemsForNative = menuItems
+        .filter((item) => !shouldHideMiniapp(item.packageName))
+        .map((item) => {
+          const app = apps.find((candidate) => candidate.packageName === item.packageName)
+          return {name: item.name, packageName: item.packageName, running: app?.running ?? false}
+        })
 
       const changed =
         menuItems.length !== itemsForNative.length ||
@@ -164,7 +169,7 @@ class BuiltInMiniappCatalog {
         })
 
       if (changed) {
-        engine.settings.set(SETTINGS.menu_apps.key, itemsForNative)
+        await engine.settings.set(SETTINGS.menu_apps.key, itemsForNative)
       }
     } finally {
       this.syncInFlight = false

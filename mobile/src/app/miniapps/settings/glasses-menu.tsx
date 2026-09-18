@@ -10,7 +10,8 @@ import {RouteButton} from "@/components/ui/RouteButton"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n/translate"
-import {SETTINGS, sortAppsByLastOpenTime, useApps, useSetting, type ClientApp} from "@mentra/engine"
+import {SETTINGS, sortAppsByLastOpenTime, useSetting, type ClientApp} from "@mentra/engine"
+import {useAvailableApps} from "@/hooks/useAppsExtras"
 
 import {GLASSES_MENU_EXCLUDED_APPS} from "@/constants/miniapps"
 import {buildMenuItems, filterCompatibleMenuItems, getDefaultMenuApps, type GlassesMenuItem} from "@/utils/glassesMenu"
@@ -20,7 +21,7 @@ const MAX_MENU_ITEMS = 10
 export default function GlassesMenuScreen() {
   const {theme} = useAppTheme()
   const {goBack} = useNavigationStore.getState()
-  const applets = useApps()
+  const applets = useAvailableApps()
   const [savedMenuApps, setSavedMenuApps] = useSetting<GlassesMenuItem[] | null>(SETTINGS.menu_apps.key)
   const [menuItems, setMenuItems] = useState<GlassesMenuItem[]>([])
   const [showPicker, setShowPicker] = useState(false)
@@ -125,9 +126,7 @@ export default function GlassesMenuScreen() {
             ) : (
               <View style={{width: 32, height: 32, borderRadius: 8, backgroundColor: theme.colors.border}} />
             )}
-            <Text style={{color: theme.colors.foreground}}>
-              {item.name}
-            </Text>
+            <Text style={{color: theme.colors.foreground}}>{item.name}</Text>
           </View>
           <Pressable onPress={() => removeItem(item.packageName)} hitSlop={8}>
             <Icon name="x" size={18} color={theme.colors.secondary_foreground} />
@@ -160,9 +159,7 @@ export default function GlassesMenuScreen() {
             paddingHorizontal: theme.spacing.s4,
           }}>
           <Icon name="plus" size={20} color={theme.colors.primary} />
-          <Text style={{color: theme.colors.primary}}>
-            {translate("settings:glassesMenuAddApp")}
-          </Text>
+          <Text style={{color: theme.colors.primary}}>{translate("settings:glassesMenuAddApp")}</Text>
         </Pressable>
       )}
 
@@ -191,9 +188,7 @@ export default function GlassesMenuScreen() {
                 borderBottomColor: theme.colors.border,
               }}>
               <AppIcon app={app} style={{width: 28, height: 28, borderRadius: 6}} disableLoader />
-              <Text style={{color: theme.colors.foreground}}>
-                {app.name}
-              </Text>
+              <Text style={{color: theme.colors.foreground}}>{app.name}</Text>
             </Pressable>
           ))}
         </Group>

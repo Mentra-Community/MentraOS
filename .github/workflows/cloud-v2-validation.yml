@@ -9,6 +9,7 @@ on:
     paths:
       - "cloud-v2/**"
       - "sdk/miniapp-cli/**"
+      - ".dockerignore"
       - ".github/workflows/cloud-v2-validation.yml"
   workflow_dispatch:
 
@@ -20,6 +21,18 @@ permissions:
   contents: read
 
 jobs:
+  deployment-image:
+    name: Build deployment image
+    runs-on: blacksmith-4vcpu-ubuntu-2404
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+
+      # Exercise the same isolated dependency layer used by Porter and GHCR.
+      # Installing in the checkout cannot detect missing workspace COPY entries.
+      - name: Build Cloud V2 Docker image
+        run: docker build --progress=plain -f cloud-v2/docker/Dockerfile .
+
   validate:
     name: Typecheck, test, and build
     runs-on: blacksmith-4vcpu-ubuntu-2404

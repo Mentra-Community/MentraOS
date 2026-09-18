@@ -167,21 +167,42 @@ if [[ -e "$wt" ]]; then
   # Drop leftovers from a previous run (test artifacts, an aborted checkout). Ignored
   # files such as node_modules are kept so dependencies need not be reinstalled.
   git -C "$wt" reset -q --hard && git -C "$wt" clean -fdq
+  # Submodules a previous run checked out are repositories of their own: the parent's
+  # reset and clean never touch what is inside them, so each one is reset separately and
+  # then moved to the commit the PR head records. Only submodules that exist inside THIS
+  # worktree are touched: a submodule the main checkout happens to have initialised is
+  # never cloned here, so a repeat review needs no extra network access. Nested
+  # submodules are not descended into; if one is dirty its parent gitlink stays dirty
+  # and the status check below fails closed.
+  subs=$(populated_submodules "$wt")
+  while IFS= read -r sub; do
+    [[ -n "$sub" ]] || continue
+    git -C "$wt/$sub" reset -q --hard && git -C "$wt/$sub" clean -fdq \
+      || fail "cannot reset submodule $sub in $wt"
+  done <<<"$subs"
   git -C "$wt" checkout -q --detach "$head_sha"
+  while IFS= read -r sub; do
+    [[ -n "$sub" && -e "$wt/$sub/.git" ]] || continue
+    git -C "$wt" submodule update --quiet -- "$sub" \
+      || fail "cannot restore submodule $sub in $wt to the commit recorded at ${head_sha:0:8}"
+  done <<<"$subs"
 else
   git -C "$repo_dir" worktree add -q --detach "$wt" "$head_sha"
   echo "created by codex-pr-review.sh on $(date -u +%Y-%m-%dT%H:%M:%SZ); safe to delete together with $wt" > "$owned"
 fi
 [[ "$(git -C "$wt" rev-parse HEAD)" == "$head_sha" ]] || fail "worktree $wt is not at ${head_sha:0:8}"
-# Right after a hard reset and clean, nothing a previous run left behind can remain:
-# untracked files would mean the clean failed, so that is fatal. Tracked paths that
-# still show as modified are a property of the checkout itself (case-colliding paths
-# on a case-insensitive filesystem, line-ending or mode normalisation), not leftovers;
-# they are reported and the review proceeds.
-wt_status=$(git -C "$wt" status --porcelain)
-if grep -q '^??' <<<"$wt_status"; then
-  fail "worktree $wt still has untracked files after clean"
-fi
+# Right after the resets above, nothing a previous run left behind can remain, so what
+# `git status` still reports is judged by kind. Untracked files mean the clean failed,
+# and a submodule that still differs from the PR head holds source this run did not
+# ask for: both are fatal. Ordinary tracked paths that still show as modified are a
+# property of the checkout itself (case-colliding paths on a case-insensitive
+# filesystem, line-ending or mode normalisation), not leftovers; they are reported
+# and the review proceeds.
+wt_status=$(git -C "$wt" status --porcelain=v2)
+leftover=$(untracked_paths <<<"$wt_status")
+[[ -z "$leftover" ]] || fail "worktree $wt still has untracked files after clean: $(head -3 <<<"$leftover" | tr '\n' ' ')"
+gitlinks=$(dirty_gitlinks <<<"$wt_status")
+[[ -z "$gitlinks" ]] || fail "submodule(s) in $wt still differ from the PR head after reset: $(tr '\n' ' ' <<<"$gitlinks")"
 if [[ -n "$wt_status" ]]; then
   echo "codex-pr-review: note: $(grep -c . <<<"$wt_status") tracked path(s) show as modified right after a hard reset (intrinsic to this checkout, e.g. case-colliding paths); continuing" >&2
 fi

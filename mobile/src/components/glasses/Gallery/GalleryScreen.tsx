@@ -1048,14 +1048,16 @@ export function GalleryScreen() {
   // The performance trade-off is acceptable for correct scrolling behavior.
 
   // UI state
-  const isLoading = syncState === "connecting_wifi" || syncState === "requesting_hotspot" || isInitialLoading
+  const isLoading =
+    syncState === "connecting_wifi" ||
+    syncState === "requesting_hotspot" ||
+    syncState === "preparing" ||
+    isInitialLoading
   const isSyncing = syncState === "syncing"
 
   const shouldShowSyncButton =
     glassesGalleryStatus.hasContent ||
-    syncState === "requesting_hotspot" ||
-    syncState === "connecting_wifi" ||
-    syncState === "syncing" ||
+    galleryStatus.isSyncing ||
     syncState === "complete" ||
     syncState === "error"
 
@@ -1109,12 +1111,13 @@ export function GalleryScreen() {
             </View>
           )
 
+        case "preparing":
         case "syncing":
-          if (totalFiles === 0) {
+          if (syncState === "preparing" || totalFiles === 0) {
             return (
               <View style={themed($syncButtonRow)}>
                 <ActivityIndicator size="small" color={theme.colors.foreground} style={{marginRight: spacing.s2}} />
-                <Text style={themed($syncButtonText)}>Preparing sync...</Text>
+                <Text style={themed($syncButtonText)} tx="glasses:preparingGallerySync" />
               </View>
             )
           }
@@ -1666,6 +1669,7 @@ const $photoItemDisabled: ThemedStyle<ViewStyle> = () => ({
 })
 
 const $settingsButton: ThemedStyle<ViewStyle> = ({spacing}) => ({
+  marginLeft: spacing.s2,
   paddingHorizontal: spacing.s3,
   paddingVertical: spacing.s2,
   borderRadius: spacing.s3,

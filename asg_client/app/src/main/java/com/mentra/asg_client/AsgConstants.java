@@ -1,6 +1,8 @@
 package com.mentra.asg_client;
 
 public class AsgConstants {
+    /** Bound manifest responses while letting a several-hundred-item gallery use one scan. */
+    public static final int GALLERY_MAX_MANIFEST_PAGE_SIZE = 500;
     /** Keep BES receiving across the prep-to-snap gap and successive short cues. */
     public static final long I2S_IDLE_CLOSE_MS = 750L;
 
@@ -393,6 +395,41 @@ public class AsgConstants {
 
     /** Time allowed for BES to reboot at the rendezvous baud after applying an OTA image. */
     public static final long BES_OTA_RECONNECT_DELAY_MS = 2500;
+
+    /** How often the BES liveness watchdog re-evaluates how long the UART has been quiet. */
+    public static final long BES_LIVENESS_TICK_MS = 1000;
+
+    /**
+     * Silence durations that each earn one {@code bes_uart_silent} record.
+     *
+     * <p>Starts at 3s because BES pushes unsolicited battery/BT/RSSI traffic more often than that,
+     * and runs to 120s so a stall that outlives the watchdog is still bounded in the log.
+     */
+    public static final long[] BES_LIVENESS_SILENCE_RUNGS_MS = {
+        3_000, 6_000, 10_000, 15_000, 20_000, 30_000, 45_000, 60_000, 90_000, 120_000
+    };
+
+    /**
+     * Silence that is already a fault while a stream runs.
+     *
+     * <p>Streaming BES delivers the LC3 mic uplink and stream-controller probe acks continuously,
+     * so it is never legitimately quiet this long. Off-stream the same gap is routine: an idle
+     * Classic link parks in sniff mode and BES can stay silent for 30s or more.
+     */
+    public static final long BES_STREAM_SILENCE_FAULT_MS = 4_000;
+
+    /**
+     * Silence after which a stalled BES is poked once with the cheap system-version request.
+     *
+     * <p>Deliberately a probe and not a {@code mh_logs} trace dump: the dump streams the whole
+     * ~65KB ring back in ~450-byte chunks that each fan out to several log lines, which spiked
+     * glasses CPU and evicted the crash window it was meant to preserve. It also cannot capture a
+     * boot banner — the fetch takes long enough that the ring has already rotated past it.
+     */
+    public static final long BES_STALL_PROBE_SILENCE_MS = 6_000;
+
+    /** Minimum spacing between stall probes, so a wedged chip cannot be polled in a tight loop. */
+    public static final long BES_STALL_PROBE_MIN_SPACING_MS = 15_000;
 
     // RGB LED Control Constants (Glasses BES Chipset - Remote Control via Bluetooth)
     // NOTE: These are different from the local MTK recording LED

@@ -54,6 +54,10 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             "heartbeat_received",
             "swipe_volume_status",
             "switch_status",
+            "mic_tuning_state",
+            "mic_rms",
+            "wear_state",
+            "wear_tuning",
             "rgb_led_control_response",
             "settings_ack",
             "version_info",
@@ -281,6 +285,57 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
 
         Function("getMemoryMB") { () -> Double in
             MemoryMonitor.currentMemoryMB()
+        }
+
+        // MARK: - Mic tuning (internal SDK surface only)
+
+        AsyncFunction("setMicRmsTelemetry") { (enabled: Bool) in
+            await MainActor.run {
+                DeviceManager.shared.sgc?.setMicRmsTelemetry(enabled)
+            }
+        }
+
+        // Fire-and-forget: the answer arrives as a mic_tuning_state event, which
+        // the screen is subscribed to anyway.
+        AsyncFunction("requestMicTuningState") {
+            await MainActor.run {
+                DeviceManager.shared.sgc?.requestMicTuningState()
+            }
+        }
+
+        // MARK: - Wear detection (internal SDK surface only)
+
+        // All fire-and-forget; answers arrive as wear_state / wear_tuning events.
+        // Call through DeviceManager so the SGCManager-typed reference hits the
+        // protocol requirement (extension-only methods would silently no-op).
+        AsyncFunction("queryWearState") {
+            await MainActor.run {
+                DeviceManager.shared.queryWearState()
+            }
+        }
+
+        AsyncFunction("setWearReporting") { (enabled: Bool) in
+            await MainActor.run {
+                DeviceManager.shared.setWearReporting(enabled)
+            }
+        }
+
+        AsyncFunction("setWearTuning") { (intervalMs: Int, count: Int, majority: Int) in
+            await MainActor.run {
+                DeviceManager.shared.setWearTuning(intervalMs: intervalMs, count: count, majority: majority)
+            }
+        }
+
+        AsyncFunction("requestWearTuning") {
+            await MainActor.run {
+                DeviceManager.shared.requestWearTuning()
+            }
+        }
+
+        AsyncFunction("resetWearTuning") {
+            await MainActor.run {
+                DeviceManager.shared.resetWearTuning()
+            }
         }
 
         Function("jscSpawn") { (count: Int) -> Int in

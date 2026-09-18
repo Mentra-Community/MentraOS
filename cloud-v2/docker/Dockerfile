@@ -29,6 +29,7 @@ COPY cloud-v2/packages/protocol/package.json ./packages/protocol/
 COPY cloud-v2/packages/runtime/package.json ./packages/runtime/
 COPY cloud-v2/packages/proxy/package.json ./packages/proxy/
 COPY cloud-v2/packages/cloud-client/package.json ./packages/cloud-client/
+COPY cloud-v2/packages/console-mcp/package.json ./packages/console-mcp/
 COPY cloud-v2/test/test-oem/package.json ./test/test-oem/
 COPY cloud-v2/test/test-client/package.json ./test/test-client/
 COPY cloud-v2/websites/admin/package.json ./websites/admin/

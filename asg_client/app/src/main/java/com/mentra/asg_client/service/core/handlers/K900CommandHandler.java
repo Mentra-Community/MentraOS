@@ -285,17 +285,17 @@ public class K900CommandHandler {
      * <p>This ensures version info is cached before phone connects, making it available for OTA
      * patch matching and version_info messages to the phone.
      */
-    public void requestSystemVersion() {
+    public boolean requestSystemVersion() {
         Log.i(TAG, "🔧 Requesting BES system version (sh_syvr)");
 
         if (serviceManager == null || serviceManager.getBluetoothManager() == null) {
             Log.w(TAG, "⚠️ ServiceManager or Bluetooth manager unavailable");
-            return;
+            return false;
         }
 
         if (!serviceManager.getBluetoothManager().isConnected()) {
             Log.w(TAG, "⚠️ Bluetooth not connected; cannot request BES system version");
-            return;
+            return false;
         }
 
         try {
@@ -320,8 +320,10 @@ public class K900CommandHandler {
             } else {
                 Log.e(TAG, "❌ Failed to send BES system version request");
             }
+            return sent;
         } catch (JSONException e) {
             Log.e(TAG, "💥 Failed to build sh_syvr request", e);
+            return false;
         }
     }
 

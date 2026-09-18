@@ -31,6 +31,9 @@ commit_subject="${commit_subject%%$'\n'*}"
 commit_author="${COMMIT_AUTHOR:-unknown}"
 release_identity="${RELEASE_IDENTITY:-unknown}"
 release_url="https://github.com/${REPOSITORY}/releases/tag/mentra-v${release_identity}"
+if [[ "${RELEASE_PAGE_RESULT:-}" == "failure" || "${RELEASE_PAGE_RESULT:-}" == "cancelled" ]]; then
+  release_url="https://github.com/${REPOSITORY}/releases/tag/mentra-builds-v${release_identity%-*}"
+fi
 if [[ "$release_identity" == "unknown" ]]; then
   release_text="*Release:* identity allocation failed"
 else
@@ -73,11 +76,11 @@ artifact_link() {
 android_result="${ANDROID_RESULT:-${MOBILE_RESULT:-unknown}}"
 ios_result="${IOS_RESULT:-${MOBILE_RESULT:-unknown}}"
 
-apk_url=""
-ipa_url=""
+apk_url="${MOBILE_APK_URL:-}"
+ipa_url="${MOBILE_IPA_URL:-}"
 if [[ -n "${MOBILE_ASSET_BASE_URL:-}" ]]; then
-  [[ -z "${APK_NAME:-}" ]] || apk_url="${MOBILE_ASSET_BASE_URL}/${APK_NAME}"
-  [[ -z "${IPA_NAME:-}" ]] || ipa_url="${MOBILE_ASSET_BASE_URL}/${IPA_NAME}"
+  [[ -n "$apk_url" || -z "${APK_NAME:-}" ]] || apk_url="${MOBILE_ASSET_BASE_URL}/${APK_NAME}"
+  [[ -n "$ipa_url" || -z "${IPA_NAME:-}" ]] || ipa_url="${MOBILE_ASSET_BASE_URL}/${IPA_NAME}"
 fi
 
 android_detail=$(artifact_link "$apk_url" "${APK_NAME:-Android APK}")
@@ -155,6 +158,7 @@ asg_line="*$(icon "${OTA_RESULT:-unknown}") ASG + OTA* - $(label "${OTA_RESULT:-
 starter_line="*$(icon "${FINALIZE_EXAMPLE_RESULT:-unknown}") Bluetooth example* - $(label "${FINALIZE_EXAMPLE_RESULT:-unknown}") - Starter Kit build: $(icon "${STARTER_KIT_RESULT:-unknown}") $(label "${STARTER_KIT_RESULT:-unknown}") - ${starter_detail}${newline}React Native iOS TestFlight: ${example_testflight_icon} ${example_testflight_detail}"
 starter_line+="${newline}React Native Android Google Play: $(icon "${EXAMPLE_GOOGLE_PLAY_RESULT:-unknown}") ${example_play_detail}"
 docs_line="*$(icon "${DOCS_RESULT:-unknown}") Docs* - $(label "${DOCS_RESULT:-unknown}") - ${docs_detail}"
+main_app_line="*Mentra App downloads*${newline}Android phone APK: ${android_detail}${newline}iOS IPA: ${ios_detail}"
 scope="${RELEASE_SCOPE:-core}"
 if [[ "$scope" == examples ]]; then
   if [[ "${FINALIZE_EXAMPLE_RESULT:-}" == success && "${DOCS_RESULT:-}" == success ]]; then
@@ -170,6 +174,9 @@ if [[ "$scope" == examples ]]; then
 else
   checks_line="*Release checks*${newline}Plan: $(icon "${PLAN_RESULT:-unknown}") $(label "${PLAN_RESULT:-unknown}") | Cloud V2: $(icon "${CLOUD_V2_RESULT:-unknown}") $(label "${CLOUD_V2_RESULT:-unknown}") | Mentra Cloud image: $(icon "${RUNTIME_IMAGE_RESULT:-unknown}") $(label "${RUNTIME_IMAGE_RESULT:-unknown}") | Private deployment: $(icon "${PRIVATE_DEPLOYMENT_RESULT:-skipped}") $(label "${PRIVATE_DEPLOYMENT_RESULT:-skipped}") | Packages: $(icon "${NPM_RESULT:-unknown}") $(label "${NPM_RESULT:-unknown}") | Native SDK: $(icon "${SDK_NATIVE_RESULT:-unknown}") $(label "${SDK_NATIVE_RESULT:-unknown}") | Engine consumer: $(icon "${ENGINE_RESULT:-unknown}") $(label "${ENGINE_RESULT:-unknown}") | Finalize: $(icon "${FINALIZE_RESULT:-unknown}") $(label "${FINALIZE_RESULT:-unknown}")"
   examples_url="https://github.com/${REPOSITORY}/actions/workflows/coordinated-example-release.yml?query=branch%3A${BRANCH}"
+  if [[ -n "${RELEASE_PAGE_RESULT:-}" ]]; then
+    checks_line+=" | Download page: $(icon "$RELEASE_PAGE_RESULT") $(label "$RELEASE_PAGE_RESULT")"
+  fi
   checks_line+="${newline}Examples and docs dispatch: $(icon "${EXAMPLES_DISPATCH_RESULT:-unknown}") $(label "${EXAMPLES_DISPATCH_RESULT:-unknown}") - <${examples_url}|View separate workflow>"
 fi
 
@@ -183,6 +190,7 @@ payload=$(jq -n \
   --arg asg "$asg_line" \
   --arg starter "$starter_line" \
   --arg docs "$docs_line" \
+  --arg main_app "$main_app_line" \
   --arg checks "$checks_line" \
   --arg context "Commit <${commit_url}|\`${commit_short}\`> by ${commit_author} - <${run_url}|View workflow>" \
   '{
@@ -192,6 +200,7 @@ payload=$(jq -n \
       {type: "section", text: {type: "mrkdwn", text: $release}},
       {type: "divider"},
       (if $scope == "examples" then
+        {type: "section", text: {type: "mrkdwn", text: $main_app}},
         {type: "section", text: {type: "mrkdwn", text: $starter}},
         {type: "section", text: {type: "mrkdwn", text: $docs}}
       else
