@@ -11,6 +11,7 @@ describe("available miniapps for home, All Apps, and glasses menu", () => {
     delete process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS
     jest.spyOn(Engine, "useApps").mockReturnValue([
       {packageName: "com.mentra.call", hidden: false},
+      {packageName: "cloud.augmentos.notify", hidden: false},
       {packageName: "com.mentra.notes", hidden: true},
     ] as Engine.ClientApp[])
     await Engine.engine.settings.set(Engine.SETTINGS.show_mentra_call_ios.key, false)
@@ -20,7 +21,7 @@ describe("available miniapps for home, All Apps, and glasses menu", () => {
     if (originalOverride === undefined) delete process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS
     else process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS = originalOverride
   })
-  it("removes a cached Call entry but preserves ordinary user-hidden apps for All Apps", async () => {
+  it("filters cached iOS-restricted entries even when Call is enabled or All Apps shows hidden apps", async () => {
     const {result} = renderHook(useAvailableApps)
     expect(result.current.map((app) => app.packageName)).toEqual(["com.mentra.notes"])
     await act(async () => {
@@ -34,9 +35,16 @@ describe("available miniapps for home, All Apps, and glasses menu", () => {
   })
   it("permits the build override and keeps Android unchanged", () => {
     process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS = "true"
-    expect(renderHook(useAvailableApps).result.current).toHaveLength(2)
+    expect(renderHook(useAvailableApps).result.current.map((app) => app.packageName)).toEqual([
+      "com.mentra.call",
+      "com.mentra.notes",
+    ])
     delete process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS
     jest.replaceProperty(Platform, "OS", "android")
-    expect(renderHook(useAvailableApps).result.current).toHaveLength(2)
+    expect(renderHook(useAvailableApps).result.current.map((app) => app.packageName)).toEqual([
+      "com.mentra.call",
+      "cloud.augmentos.notify",
+      "com.mentra.notes",
+    ])
   })
 })

@@ -1,4 +1,4 @@
-import {mentraCallPackageName, navigationPackageName, shouldHideMiniapp} from "@/constants/miniapps"
+import {mentraCallPackageName, navigationPackageName, notifyPackageName, shouldHideMiniapp} from "@/constants/miniapps"
 
 describe("shouldHideMiniapp", () => {
   const originalRegion = process.env.EXPO_PUBLIC_DEPLOYMENT_REGION
@@ -19,6 +19,10 @@ describe("shouldHideMiniapp", () => {
     expect(shouldHideMiniapp(mentraCallPackageName, "android", false)).toBe(false)
     expect(shouldHideMiniapp(mentraCallPackageName, "android", true)).toBe(false)
     expect(shouldHideMiniapp(navigationPackageName, "ios")).toBe(false)
+    expect(shouldHideMiniapp(notifyPackageName, "ios", false)).toBe(true)
+    expect(shouldHideMiniapp(notifyPackageName, "ios", true)).toBe(true)
+    expect(shouldHideMiniapp(notifyPackageName, "android", false)).toBe(false)
+    expect(shouldHideMiniapp(notifyPackageName, "android", true)).toBe(false)
   })
 
   it("retains the China distribution restrictions", () => {
@@ -26,6 +30,8 @@ describe("shouldHideMiniapp", () => {
     process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS = "true"
     expect(shouldHideMiniapp(navigationPackageName, "ios", true)).toBe(true)
     expect(shouldHideMiniapp(navigationPackageName, "android", true)).toBe(true)
+    expect(shouldHideMiniapp(notifyPackageName, "ios", true)).toBe(true)
+    expect(shouldHideMiniapp(notifyPackageName, "android", true)).toBe(true)
     expect(shouldHideMiniapp(mentraCallPackageName, "ios")).toBe(false)
     expect(shouldHideMiniapp("com.mentra.notes")).toBe(false)
   })

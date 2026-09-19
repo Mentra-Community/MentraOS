@@ -35,7 +35,7 @@ describe("BuiltInMiniappCatalog", () => {
     )
   })
 
-  it("provides the same Notify owner on iOS without requesting Android capture access", () => {
+  it("does not register Notifications on iOS", () => {
     Object.defineProperty(Platform, "OS", {configurable: true, value: "ios"})
     try {
       const apps = (
@@ -43,9 +43,7 @@ describe("BuiltInMiniappCatalog", () => {
           buildOfflineApps: () => Array<{packageName: string; type: string; permissions: unknown[]}>
         }
       ).buildOfflineApps()
-      expect(apps.find((app) => app.packageName === notifyPackageName)).toEqual(
-        expect.objectContaining({type: "background", permissions: []}),
-      )
+      expect(apps.find((app) => app.packageName === notifyPackageName)).toBeUndefined()
     } finally {
       Object.defineProperty(Platform, "OS", {configurable: true, value: "android"})
     }
