@@ -98,8 +98,10 @@ does not initiate installation. No signing or device-enrollment change is needed
 
 The version 2 publication receipt includes hashes and sizes for the IPA, Mac
 ZIP, manifest and page, and is published only after all four uploads verify.
-The notifier checks availability and the installation files' MIME types before
-advertising the link. Existing version 1 receipts remain download-only.
+The notifier downloads the small installation files and verifies their decoded
+sizes, SHA-256 hashes and MIME types before advertising the link. CDN compression
+can omit or change the HTTP Content-Length header. The large IPA and ZIP retain
+their HEAD availability checks. Existing version 1 receipts remain download-only.
 
 CI publishes a JSON receipt with PR head and actual checkout SHA, run/attempt,
 profile expiration, app and archive hashes. Slack links only verified downloads

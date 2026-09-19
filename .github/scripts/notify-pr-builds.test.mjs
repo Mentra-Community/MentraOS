@@ -1,7 +1,18 @@
 import assert from "node:assert/strict"
+import {createHash} from "node:crypto"
+import {once} from "node:events"
+import {createServer} from "node:http"
 import test from "node:test"
 import {readFileSync} from "node:fs"
-import {iosBuildRequired, buildPost, matchingBuildRun, notifyPrBuilds, readOtaTargets} from "./notify-pr-builds.mjs"
+import {brotliCompressSync} from "node:zlib"
+import {
+  iosBuildRequired,
+  buildPost,
+  matchingBuildRun,
+  notifyPrBuilds,
+  readOtaTargets,
+  verifyIosTextArtifact,
+} from "./notify-pr-builds.mjs"
 
 const sha = "a".repeat(40)
 const pr = {
@@ -110,6 +121,7 @@ function harness(options = {}) {
     missingMac: false,
     missingInstall: false,
     wrongInstallType: false,
+    corruptInstall: false,
     jobs: {},
     ...options,
   }
@@ -167,15 +179,22 @@ function harness(options = {}) {
       posts.push(JSON.parse(options.body))
       return new Response("ok")
     }
+    const isInstallFile = /\.(html|plist)$/.test(url)
     return new Response(
-      options.method === "HEAD" ? null : JSON.stringify(url.includes("mentra-ios-pr-") ? state.receipt : manifest),
+      options.method === "HEAD"
+        ? null
+        : isInstallFile
+        ? state.corruptInstall
+          ? "bad bytes!"
+          : "test bytes"
+        : JSON.stringify(url.includes("mentra-ios-pr-") ? state.receipt : manifest),
       {
         status:
           (state.missingMac && url.endsWith(".zip")) || (state.missingInstall && url.endsWith(".html"))
             ? 404
             : state.artifactStatus,
         headers: {
-          "content-length": "10",
+          ...(isInstallFile ? {"content-encoding": "br"} : {"content-length": "10"}),
           "content-type": state.wrongInstallType
             ? "application/octet-stream"
             : url.endsWith(".html")
@@ -207,14 +226,18 @@ test("publishes Safari installation links only when the complete install set is 
     ["install", "html"],
     ["manifest", "plist"],
   ])
-    receipt.artifacts[kind] = {name: `mentra-ios-${kind}-pr-123-${sha}-3-1.${ext}`, size: 10, sha256: "d".repeat(64)}
+    receipt.artifacts[kind] = {
+      name: `mentra-ios-${kind}-pr-123-${sha}-3-1.${ext}`,
+      size: 10,
+      sha256: createHash("sha256").update("test bytes").digest("hex"),
+    }
   const ready = harness({files: [{filename: "mobile/app.config.ts"}], receipt})
   await notifyPrBuilds(ready.args)
   assert.match(JSON.stringify(ready.posts[0]), /Install on iPhone/)
   assert.match(ready.written[0].body, /\[Install on iPhone\]\(https:\/\/artifactscdn.*\.html\)/)
   assert.ok(ready.requests.some((url) => url.endsWith(".plist")))
   assert.ok(ready.requests.some((url) => url.endsWith(".html")))
-  for (const failure of [{missingInstall: true}, {wrongInstallType: true}]) {
+  for (const failure of [{missingInstall: true}, {wrongInstallType: true}, {corruptInstall: true}]) {
     const incomplete = harness({files: ready.state.files, receipt, ...failure})
     await notifyPrBuilds(incomplete.args)
     assert.match(incomplete.posts[0].text, /incomplete/)
@@ -224,6 +247,45 @@ test("publishes Safari installation links only when the complete install set is 
   await notifyPrBuilds(legacy.args)
   assert.match(legacy.written[0].body, /Download iPhone IPA/)
   assert.doesNotMatch(legacy.written[0].body, /Install on iPhone/)
+})
+
+test("verifies decoded install files through real HTTP compression with missing or compressed Content-Length", async (t) => {
+  const body = Buffer.from("<plist>" + "manifest content ".repeat(30) + "</plist>")
+  const compressed = brotliCompressSync(body)
+  const asset = {size: body.length, sha256: createHash("sha256").update(body).digest("hex")}
+  const server = createServer((request, response) => {
+    response.setHeader("Content-Type", "text/xml; charset=utf-8")
+    response.setHeader("Content-Encoding", "br")
+    if (request.url === "/length") response.setHeader("Content-Length", compressed.length)
+    response.write(compressed)
+    response.end()
+  })
+  t.after(() => {
+    server.closeAllConnections()
+    server.close()
+  })
+  server.listen(0, "127.0.0.1")
+  await once(server, "listening")
+  const origin = `http://127.0.0.1:${server.address().port}`
+  for (const endpoint of ["/length", "/chunked"]) {
+    const response = await fetch(origin + endpoint)
+    assert.notEqual(Number(response.headers.get("content-length")), asset.size)
+    await verifyIosTextArtifact(response, "manifest", asset)
+  }
+  await assert.rejects(
+    verifyIosTextArtifact(new Response(body, {headers: {"content-type": "text/xml"}}), "manifest", {
+      ...asset,
+      size: asset.size + 1,
+    }),
+    /size disagrees/,
+  )
+  await assert.rejects(
+    verifyIosTextArtifact(new Response(body, {headers: {"content-type": "text/xml"}}), "manifest", {
+      ...asset,
+      sha256: "0".repeat(64),
+    }),
+    /hash disagrees/,
+  )
 })
 
 // Exercise the completion route declared by each real caller, not a fictional

@@ -1,3 +1,4 @@
+import {createHash} from "node:crypto"
 import {iosReceiptName, validateIosReceipt} from "./pr-ios-artifacts.mjs"
 import {artifactUrl} from "./release-artifact-storage.mjs"
 
@@ -14,6 +15,18 @@ export function iosBuildRequired(files) {
 const escape = (value) => String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
 const link = (url, label) => `<${url}|${escape(label).replaceAll("|", " ")}>`
 const marker = "<!-- mentra-pr-builds-slack -->"
+const iosTextTypes = {install: "text/html", manifest: "text/xml"}
+
+export async function verifyIosTextArtifact(response, kind, asset) {
+  if (response.headers.get("content-type")?.split(";")[0] !== iosTextTypes[kind])
+    throw new Error(`Published ${kind} has an incorrect content type`)
+  // Fetch decodes CDN compression. Content-Length may be absent or describe
+  // compressed bytes, while the receipt describes the original uploaded file.
+  const bytes = Buffer.from(await response.arrayBuffer())
+  if (bytes.length !== asset.size) throw new Error(`Published ${kind} download size disagrees with its receipt`)
+  if (createHash("sha256").update(bytes).digest("hex") !== asset.sha256)
+    throw new Error(`Published ${kind} download hash disagrees with its receipt`)
+}
 
 export function readOtaTargets(manifest, number, sha) {
   if (manifest.releaseVersion !== `pr-${number}-${sha}`)
@@ -244,12 +257,10 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
       const urls = {}
       for (const [kind, asset] of Object.entries(assets)) {
         urls[kind] = artifactUrl(`${repo.owner}/${repo.repo}`, "pr-builds", asset.name)
-        const response = await request(urls[kind], "HEAD")
-        if (Number(response.headers.get("content-length")) !== asset.size)
+        const response = await request(urls[kind], iosTextTypes[kind] ? "GET" : "HEAD")
+        if (iosTextTypes[kind]) await verifyIosTextArtifact(response, kind, asset)
+        else if (Number(response.headers.get("content-length")) !== asset.size)
           throw new Error(`Published ${kind} download size disagrees with its receipt`)
-        const expectedType = {install: "text/html", manifest: "text/xml"}[kind]
-        if (expectedType && response.headers.get("content-type")?.split(";")[0] !== expectedType)
-          throw new Error(`Published ${kind} has an incorrect content type`)
       }
       ios.assets = urls
       ios.instructionsUrl = `https://github.com/${repo.owner}/${repo.repo}/blob/${receipt.buildSha}/mobile/ci/pr-ios/README.md`
