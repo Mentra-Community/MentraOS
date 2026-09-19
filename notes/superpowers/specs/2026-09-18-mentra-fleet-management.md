@@ -176,11 +176,29 @@ records update the period when activity occurred, not the upload day.
 Maintain separate identifiers for the physical device, phone installation,
 authenticated user, and each connection/execution session.
 
-Core issues an opaque Fleet device ID. When valid, use a manufacturer/product
-identity namespace plus the canonical serial to reconcile repeated observations
-of the same hardware within this Core. Store the actual serial for display and
-exact search. Preserve the reported canonical value; do not silently normalize
-different serials into one identity.
+Core issues an opaque Fleet device ID. A manufacturer/product namespace plus the
+canonical serial identifies a candidate hardware match; matching a serial does
+not authorize joining another account's device record. Store the actual serial
+for display and exact search. Preserve the reported canonical value; do not
+silently normalize different serials into one identity.
+
+The initial authenticated reporter creates a device record associated with its
+Core account. Repeated observations, including a new phone installation under
+that same account, can join that record. A different account reporting the same
+serial creates a separately attributed, unresolved match. Its observations must
+not change the established device's current state, account associations, or usage
+totals merely because their timestamps are newer. Show the unresolved match
+separately; exclude it from deduplicated physical-device totals and disclose that
+coverage gap until resolved. This does not affect pairing or use of the glasses.
+
+For a legitimate account transfer or shared device, an existing Core admin can
+link the separately reported source to the device through the Fleet detail view.
+Record the accepted source, effective association interval, and admin audit
+entry. Reconcile the explicitly accepted history without double-counting or
+rewriting the identity that originally reported it. An admin can also correct an
+incorrect initial match. This uses the existing Core admin permission, not a new
+device ownership/attestation system. Observations from an accepted account remain
+client-reported data; Fleet does not guarantee their physical authenticity.
 
 Blank, unknown, or known placeholder serials cannot identify hardware. Use a
 persisted phone-local peripheral binding for a provisional device record, scoped
@@ -261,6 +279,7 @@ using the existing Core authentication lifecycle and HTTPS transport.
 | `POST /api/client/fleet/report` | Core-authenticated client | Submit a bounded batch of snapshots, events, and usage checkpoints. |
 | `GET /api/admin/fleet/devices` | Core administrator | Paginated list, serial/email search, filters, freshness. |
 | `GET /api/admin/fleet/devices/:deviceId` | Core administrator | Device identity, associations, current state, history, related reports. |
+| `POST /api/admin/fleet/devices/:deviceId/associations` | Core administrator | Resolve a matching-serial source for a legitimate transfer/shared device, using existing admin mutation protections and audit conventions. |
 | `GET /api/admin/fleet/usage` | Core administrator | Time-bounded device/user/miniapp summaries. |
 
 These routes are proposed, not existing APIs. Uploads use Core-audience tokens,
@@ -338,7 +357,8 @@ Build the device list and detail view first, then add the summary/usage views:
    connection state, last observation, and major software versions.
 2. **Device detail:** displayed serial, phone/account association history,
    component versions, usage charts, running/installed miniapps, and related
-   support reports with explicit association provenance.
+   support reports with explicit association provenance. Show unresolved
+   matching-serial sources for the admin to reconcile.
 3. **Fleet overview:** device/user activity totals, freshness/coverage, version
    distribution, and filters by model, version, user, and deployment.
 4. **Usage views:** device/user/miniapp breakdowns for the defined date ranges,
@@ -405,7 +425,13 @@ coverage limits rather than introducing a glasses telemetry system.
   Two same-model devices with different serials stay separate; missing/placeholder
   serials stay provisional and never collapse into a model-wide record.
 - Using the same identified glasses with another phone/account preserves device
-  history and temporal account attribution. Reconciliation does not double-count.
+  history and temporal account attribution. A new phone under the same account
+  reconciles automatically. A different account remains separate until a Core
+  admin confirms the transfer/shared-device association; reconciliation does not
+  double-count.
+- A different authenticated account submitting an established device's exact
+  serial cannot change that device's state, associations, or totals before admin
+  reconciliation, even with matching model data and newer valid timestamps.
 - Unauthenticated clients cannot report. Ordinary Core clients cannot browse
   Fleet. Forged account/device identifiers cannot overwrite other source records.
   Existing Core admin sessions can read Fleet without another login. Private
