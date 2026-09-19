@@ -178,3 +178,40 @@ active runtime bundle still needs confirmation before the next live attempt.
 Regression checks: 25 native core tests, 235 host tests and 481 miniapp source tests
 pass. The miniapp typechecks. Keep the host PR draft until a fresh coordinated Call
 run verifies media, admission, audio, cancellation, background behavior and cleanup.
+
+## Physical iPhone follow-up
+
+The user authorized ten more attempts, extending the local ledger to 30. Run
+`iphone-call-live-02` aborted during its first accessibility query when the
+iPhone USB/developer connection disappeared. No join was dispatched and no
+attempt was consumed. The later 03BE USB loss was associated with the user's
+reported accidental drop; do not label it a spontaneous Call regression.
+
+Run `iphone-call-live-03` consumed attempt 21 on the same installed host source
+`9652b43c5a` / build `302018310`, with active Call 2.1.21. All seven extracted
+miniapp files matched the packaged ZIP. The identified 03BE glasses entered this
+run with USB already unavailable, so it cannot qualify USB regression behavior.
+
+- Local network access completed at 00:40:54.221 UTC on September 19.
+- A fresh ACS agent started at 00:40:57.301 and completed at 00:40:58.062.
+- The iPhone received its first glasses frame at 00:40:59.760, trace `1e5d36b4`.
+  The call reached connected state at 00:41:01.078; the original pre-admission
+  disconnect did not recur in this one run.
+- The selected browser guest was admitted. Received video advanced from 77 to
+  347 decoded frames at 960 × 540. Incoming audio packets advanced from 309 to
+  1,065, and outgoing laptop audio packets from 39 to 982.
+- The browser's combined audio/video sending assertion failed because outgoing
+  video stayed at zero despite a live built-in camera track. The iOS host has no
+  remote-video renderer; this is also a previously documented limitation of that
+  browser check. Preserve the failure and use the existing audio-only companion
+  for audible return audio and mute/unmute qualification.
+- The phone stayed connected through the complete 240-second diagnostic hold.
+  It left normally at 00:45:00.612; hotspot shutdown was reported at 00:45:04.968.
+  Home returned at 00:45:22.954, followed by a 120-second observation tail ending
+  at 00:47:22.959. Backend meeting retirement was not independently verified.
+
+The native 716.802-second recording exported successfully. Its review copy trims
+preparation waiting and uses source frame timestamps for English chapter offsets.
+Raw video, browser evidence, screenshots, command receipts and frozen replay
+sources remain in the ignored run directory. Audible duplex, background,
+mute/unmute, failed-join retry and permission cancellation remain unqualified.
