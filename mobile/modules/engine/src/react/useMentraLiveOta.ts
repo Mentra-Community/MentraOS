@@ -5,6 +5,7 @@ import {
   beginOtaAutoChain,
   clearOtaAutoChainReconnectWait,
   isOtaAutoChainActive,
+  OTA_AUTO_CHAIN_RECONNECT_TIMEOUT_MS,
   otaAutoChainFingerprint,
   otaAutoChainReleaseRange,
   otaAutoChainReconnectWaitRemaining,
@@ -364,6 +365,7 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
           waitForBuildNumberMs: MAX_WAIT_FOR_VERSION_INFO_MS,
           waitForBesVersionMs: 5000,
           waitForMtkVersionMs: 2000,
+          waitForLegacyMigrationMs: isOtaAutoChainActive() ? OTA_AUTO_CHAIN_RECONNECT_TIMEOUT_MS : 0,
           refreshVersionInfo: true,
           fixClockBeforeCheck: false,
         }
@@ -411,7 +413,9 @@ export function useMentraLiveOta(options: UseMentraLiveOtaOptions = {}): MentraL
           return
         }
         if (!result.hasCheckCompleted) {
-          stopOtaAutoChain()
+          // A failed device verification is not a completed chain. Retain its
+          // approval so Retry still verifies the release pin after legacy rescue.
+          if (result.checkFailureReason !== "version_info") stopOtaAutoChain()
           checkCompletedRef.current = true
           setErrorKind(result.checkFailureReason === "pin_unavailable" ? "pin_unavailable" : "network")
           setCheckState("error")
