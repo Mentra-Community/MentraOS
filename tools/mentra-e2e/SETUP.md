@@ -220,6 +220,14 @@ The first wired attempt enabled the 03BE hotspot but failed native association w
 ### Routine operation
 
 - Run one harness at a time. A per-user lock prevents two checkouts from driving the same app concurrently.
+  Acquisition and dead-owner recovery share an exclusive `.reclaim` directory;
+  ownership is read again on every attempt while that guard is held. Concurrent
+  attempts fail instead of replacing a live owner's lock. The guard is removed
+  after acquisition or an ordinary error. If a process crashes inside that short
+  critical section, stop all harness runs before manually removing
+  `~/.cache/mentra-e2e/com.mentra.mentra.lock.reclaim`. It is never reclaimed
+  automatically. An unreadable or invalid main lock also fails closed; remove
+  it manually only after confirming all harness runs have stopped.
 - Keep the app window at the same size during a run. Capture targets the window independently of its desktop position. Before a normal relaunch, the recorder switches temporarily to an empty window allowlist; it then attaches the new Mentra window to the same video. Other applications stay excluded.
 - An assertion failure produces a nonzero exit and preserves the video, screenshots, accessibility snapshots, expected result, and timing. Inspect the failing step before rerunning.
 - A recording failure makes the run incomplete even if some UI assertions passed.

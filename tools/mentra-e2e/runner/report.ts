@@ -1,5 +1,5 @@
 import {createHash, randomUUID} from "node:crypto"
-import {appendFile, mkdir, readFile, readdir, writeFile, open, statfs, unlink} from "node:fs/promises"
+import {appendFile, mkdir, readFile, readdir, rmdir, writeFile, open, statfs, unlink} from "node:fs/promises"
 import {homedir} from "node:os"
 import {join, relative, resolve} from "node:path"
 import {bin, command, root, type Doctor, type Snapshot} from "./driver"
@@ -52,23 +52,26 @@ async function treeHash(directory: string): Promise<string> {
   return hash.digest("hex")
 }
 
-export async function acquireLock() {
-  const folder = join(homedir(), ".cache/mentra-e2e")
+export async function acquireLock(folder = join(homedir(), ".cache/mentra-e2e")) {
   await mkdir(folder, {recursive: true})
   const path = join(folder, "com.mentra.mentra.lock")
+  const guard = `${path}.reclaim`
   const token = randomUUID()
-  for (let attempt = 0; attempt < 2; attempt++) {
+  // Serialize inspection, stale-owner removal and new-owner publication. Never
+  // reclaim this guard automatically: doing so would recreate the same race.
+  try {
+    await mkdir(guard, {mode: 0o700})
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error
+    throw new Error(
+      `Another harness run is acquiring the app lock; retry shortly. If abandoned, stop all runs before removing ${guard}`,
+    )
+  }
+  try {
     try {
-      const file = await open(path, "wx", 0o600)
-      await file.writeFile(JSON.stringify({pid: process.pid, token}))
-      await file.close()
-      return async () => {
-        const current = JSON.parse(await readFile(path, "utf8"))
-        if (current.token === token) await unlink(path)
-      }
-    } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error
       const owner = JSON.parse(await readFile(path, "utf8"))
+      if (!Number.isSafeInteger(owner.pid) || owner.pid <= 0 || typeof owner.token !== "string" || !owner.token)
+        throw new Error("Cannot verify the app lock owner; stop all runs before removing the lock")
       try {
         process.kill(owner.pid, 0)
         throw new Error(`Another harness run owns the app (PID ${owner.pid})`)
@@ -76,9 +79,24 @@ export async function acquireLock() {
         if ((probe as NodeJS.ErrnoException).code !== "ESRCH") throw probe
         await unlink(path)
       }
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
     }
+    const file = await open(path, "wx", 0o600)
+    try {
+      await file.writeFile(JSON.stringify({pid: process.pid, token}))
+    } finally {
+      await file.close()
+    }
+    let released: Promise<void> | undefined
+    return () =>
+      (released ??= (async () => {
+        const current = JSON.parse(await readFile(path, "utf8"))
+        if (current.token === token) await unlink(path)
+      })())
+  } finally {
+    await rmdir(guard)
   }
-  throw new Error("Could not acquire app interaction lock")
 }
 
 export class Report {
