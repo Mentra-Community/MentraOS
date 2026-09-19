@@ -149,7 +149,9 @@ permission has no media deadline and remains cancellable. The miniapp's admissio
 deadline also waits for native setup to finish. The replacement bundle is 2.1.21,
 packed for the existing production backend from published source commit `3009ca8`
 in [Mentra-Call #39](https://github.com/Mentra-Community/Mentra-Call/pull/39).
-Merge that source PR before this host PR; no backend change is included.
+That PR merged to `main` as `fede2a4` on September 19. Its complete source tree
+matches packaged commit `3009ca8`, so no repack or reinstall is needed. No backend
+change is included.
 
 A separate physical-iPhone permission probe uses the exact production gate against
 a temporary TCP listener on the Mac. The real alert stayed pending for 80.404
@@ -215,3 +217,40 @@ preparation waiting and uses source frame timestamps for English chapter offsets
 Raw video, browser evidence, screenshots, command receipts and frozen replay
 sources remain in the ignored run directory. Audible duplex, background,
 mute/unmute, failed-join retry and permission cancellation remain unqualified.
+
+## Follow-up with the audio-only browser routine
+
+Run `iphone-call-live-04` consumed attempt 22 with the same installed candidate.
+The phone developer connection interrupted preparation; recovering XCTest
+required the user to enter the iPhone passcode to enable UI automation. Finish
+this system authentication before starting a Call or its admission deadline.
+The recovered recording and native console passed preflight before Join.
+
+The iPhone USB transport stopped responding at 01:16:41.751 UTC, before the
+hotspot approval at 01:16:44.805. Both XCTest and the native console disconnected.
+Do not classify this as a proven consequence of the Wi-Fi handoff. The separate
+glasses collector confirmed WHIP/ICE at 01:16:58.476–478 and a camera frame at
+01:16:58.605, trace `120a1ee6`; 03BE's USB remained healthy. The phone controller
+could not independently verify its first frame or extract the meeting link, so
+no browser joined and no audible check occurred.
+
+The controller preserved its hold until the operator release at 01:20:43.540.
+With phone automation unavailable, the user pressed the current Call's Leave
+button. The glasses collector verified `stop_stream` at 01:21:06.656, camera stop
+at 01:21:06.937, capture close at 01:21:07.011, WHIP stop at 01:21:07.183 and
+playback close at 01:21:11.310. After the iPhone cable was reconnected, a screenshot
+independently confirmed “You left the call.” Preserve a two-minute tail after the
+actual stop, separate from the failed controller's automatic tail.
+
+Neither interrupted XCTest result contained a video attachment. The run retains
+screenshots, commands, frozen sources, the native-console prefix, host USB logs,
+manual-cleanup receipt and the independent glasses observations. It is a tooling
+failure, not a passing routine, and the earlier run03 video is not substituted
+for it. Stabilize the phone transport before another live qualification attempt.
+
+Preparation also exposed covered Home elements in the accessibility tree while
+Settings was foreground. Require visible targets and distinct step IDs across
+preparation retries; otherwise a hidden tile can receive a positional click and
+a later screenshot can overwrite earlier failure evidence. The local preparation
+manifest records the affected overwritten screenshot rather than claiming it was
+preserved.
