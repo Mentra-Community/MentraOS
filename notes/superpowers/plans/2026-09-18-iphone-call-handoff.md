@@ -57,6 +57,10 @@ is separate; this Call routine must not update the glasses.
 4. Prepare a browser guest using the laptop's microphone, camera, and speakers.
    Reserve one authorized live attempt only when both endpoints and collectors
    are ready. Create/join the meeting and approve the glasses hotspot if asked.
+   On first use, leave Local Network permission open for at least 65 seconds.
+   Verify the phone remains in setup, with the glasses camera still off. Approve
+   access and verify setup resumes. Exercise denial/cancellation separately;
+   permission response time must not consume media or Teams admission deadlines.
 5. Verify hotspot association and internet routing, then inspect the logs for
    fresh ACS agent creation after the route wait. Verify lobby or connected state;
    retain the complete error if admission fails.
@@ -121,3 +125,40 @@ Local discovery evidence includes English-labelled JSON steps, `phone-step.ts`,
 fresh accessibility snapshots, per-step screenshots, command receipts, XCTest
 result bundles, and exported recordings. Failed preparation steps remain failed;
 they must not be presented as a complete replay or successful Call qualification.
+
+## First device attempt and permission fix
+
+The September 18 attempt on build `302018310` / Call 2.1.20 started the glasses
+camera briefly, but Local Network permission was still awaiting the user. The
+phone displayed `ICE did not connect; WHIP media path failed`. The glasses logs
+show camera start at 23:49:18.705 UTC, ICE timeout at 23:49:27.242, camera stop at
+23:49:27.445, and hotspot disabled at 23:49:27.995. These are app-driven cleanup,
+not the later controller return to Home. No browser joined and no phone first
+frame was verified. This does not qualify the original ACS handoff fix.
+
+The iPhone USB hardware connection was lost during the attempt. The native console
+and XCTest recorder disconnected; no live video attachment survived. Screenshots,
+English steps, exact commands, source hashes and hold/cleanup receipts remain in
+the ignored `iphone-call-live-01` run folder. Never substitute the earlier setup
+video for the missing Call video. The glasses' independent USB capture remained
+healthy. Attempt 20 of 20 was consumed; another stream requires renewed approval.
+
+The product fix waits for iOS local access before the hotspot join resolves, using
+a real TCP connection to the glasses' existing port 8089 endpoint. Local Network
+permission has no media deadline and remains cancellable. The miniapp's admission
+deadline also waits for native setup to finish. The replacement bundle is 2.1.21,
+packed for the existing production backend from published source commit `3009ca8`
+in [Mentra-Call #39](https://github.com/Mentra-Community/Mentra-Call/pull/39).
+Merge that source PR before this host PR; no backend change is included.
+
+A separate physical-iPhone permission probe uses the exact production gate against
+a temporary TCP listener on the Mac. The real alert stayed pending for 80.404
+seconds, then Allow completed the connection without restarting the request.
+It used no camera, microphone, Bluetooth command or Call stream. An initial UDP
+Network.framework approach reported ready without requesting permission; that
+approach was rejected and is not the shipped gate. The retained screenshots and
+native timestamps establish the permission result, not full Call qualification.
+
+Regression checks: 25 native core tests, 235 host tests and 481 miniapp source tests
+pass. The miniapp typechecks. Keep the host PR draft until a fresh coordinated Call
+run verifies media, admission, audio, cancellation, background behavior and cleanup.

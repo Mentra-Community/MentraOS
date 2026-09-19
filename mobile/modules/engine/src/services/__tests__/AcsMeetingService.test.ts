@@ -1426,6 +1426,37 @@ describe("scoped network passthrough", () => {
       reactNative.Platform.OS = os
     }
   })
+
+  test("iOS narrates permission while native join is pending and removes the progress listener afterward", async () => {
+    let finish!: (address: string) => void
+    const pending = new Promise<string>((resolve) => {
+      finish = resolve
+    })
+    const native = {...fakeNative(), joinScopedNetwork: mock(() => pending)}
+    setAcsMeetingNativeForTests(native)
+    const os = reactNative.Platform.OS
+    reactNative.Platform.OS = "ios"
+    const report = mock((_detail: string) => {})
+    try {
+      let completed = false
+      const joined = acsMeetingService.joinScopedNetwork("MentraLive-1234", "pw", undefined, report).then((address) => {
+        completed = true
+        return address
+      })
+      await Promise.resolve()
+      native.emit("onScopedNetworkProgress", {permissionRequired: true})
+      expect(report).toHaveBeenCalledWith(expect.stringContaining("Allow Local Network access"))
+      expect(completed).toBe(false)
+      expect(native.join).not.toHaveBeenCalled()
+      finish("192.168.43.20")
+      expect(await joined).toBe("192.168.43.20")
+      expect(native.handlerFor("onScopedNetworkProgress")).toBeUndefined()
+    } finally {
+      await acsMeetingService.leaveScopedNetwork()
+      reactNative.Platform.OS = os
+      finish("192.168.43.20")
+    }
+  })
 })
 
 /**

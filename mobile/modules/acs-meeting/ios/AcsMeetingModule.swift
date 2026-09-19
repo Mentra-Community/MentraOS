@@ -22,6 +22,9 @@ public class AcsMeetingModule: Module {
     }
 
     private func joinHotspot(ssid: String, passphrase: String, gateway: String?, promise: Promise) {
+        hotspot.onPermissionRequired = { [weak self] in
+            self?.sendEvent("onScopedNetworkProgress", ["permissionRequired": true])
+        }
         hotspot.onLost = { [weak self] reason in
             self?.sendEvent("onScopedNetworkLost", ["code": "SOFTAP_LOST", "message": reason])
         }
@@ -35,7 +38,7 @@ public class AcsMeetingModule: Module {
 
     public func definition() -> ModuleDefinition {
         Name("MentraAcsMeeting")
-        Events("onState", "onIncomingPcm", "onScopedNetworkLost")
+        Events("onState", "onIncomingPcm", "onScopedNetworkLost", "onScopedNetworkProgress")
 
         AsyncFunction("prepareAgent") { (options: [String: Any], promise: Promise) in
             let token = try requireString(options, "token")

@@ -339,6 +339,22 @@ across the handoff. The native log records agent creation duration and whether a
 agent was reused. The route probe does not establish ACS signaling health; the
 physical-iPhone handoff still needs device qualification.
 
+On iOS, hotspot association is followed by `LocalNetworkAccessRequest` before the
+join resolves. It connects to the glasses' existing HTTP endpoint on port 8089,
+bound to the verified local address. Only successful local connectivity releases
+the gate and allows ACS/media startup. The diagnostic gateway probe alone is not
+authorization to start the camera.
+
+Network.framework can report `localNetworkDenied` while its permission alert is
+still unanswered ([Apple TN3179](https://developer.apple.com/documentation/technotes/tn3179-understanding-local-network-privacy)).
+That state waits for access and reports instructions through
+`onScopedNetworkProgress`; it does not spend the 60-second hotspot-association
+deadline or a camera deadline. Denial and an unanswered alert cannot be reliably
+distinguished by this API. The wearer can enable Local Network in Settings or
+cancel; cancellation releases the request and ignores late approval. Other
+connection failures still fail the join. The miniapp starts its two-minute ACS
+admission deadline after native setup returns (Mentra Call 2.1.21).
+
 `createCallAgent` after the scoped join sat for the full 20 s deadline on device and only
 completed once SoftAP was released — glasses dnsmasq cannot resolve ACS hosts. Token mint
 already proved the internet worked *before* the hotspot, so signing in there makes the later

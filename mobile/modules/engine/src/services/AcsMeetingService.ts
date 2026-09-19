@@ -744,7 +744,12 @@ class AcsMeetingService {
    * A host without the native function is not a host that silently skips the join — the SoftAP call
    * has no network to run on, so this reports the reason instead.
    */
-  async joinScopedNetwork(ssid: string, passphrase: string, gateway?: string): Promise<string | undefined> {
+  async joinScopedNetwork(
+    ssid: string,
+    passphrase: string,
+    gateway?: string,
+    report?: (detail: string) => void,
+  ): Promise<string | undefined> {
     const native = getNative()
     if (!native?.joinScopedNetwork) {
       throw new Error("This host cannot join the glasses hotspot; SoftAP calling is unavailable")
@@ -753,11 +758,25 @@ class AcsMeetingService {
     this.bindScopedNetworkLost(native)
     await native.beginTrace?.(softapTraceId())
     if (this.scopedTerminating) throw new Error("Hotspot join cancelled")
-    if (native.joinScopedNetworkWithGateway) {
-      if (!gateway) throw new Error("The glasses did not report a hotspot gateway")
-      return await native.joinScopedNetworkWithGateway(ssid, passphrase, gateway)
+    const progress =
+      Platform.OS === "ios" && report
+        ? native.addListener("onScopedNetworkProgress", (event) => {
+            if (!this.scopedTerminating && event.permissionRequired === true) {
+              report(
+                "Allow Local Network access to connect to your glasses. If you previously denied access, enable it in Settings, or cancel to return home.",
+              )
+            }
+          })
+        : undefined
+    try {
+      if (native.joinScopedNetworkWithGateway) {
+        if (!gateway) throw new Error("The glasses did not report a hotspot gateway")
+        return await native.joinScopedNetworkWithGateway(ssid, passphrase, gateway)
+      }
+      return await native.joinScopedNetwork(ssid, passphrase)
+    } finally {
+      progress?.remove()
     }
-    return await native.joinScopedNetwork(ssid, passphrase)
   }
 
   /**
