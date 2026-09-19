@@ -26,6 +26,7 @@ test("keeps restart signals and correlated OTA status on the public root", () =>
     '"glasses_session_changed"',
     '"mtk_update_complete"',
     "queryOtaStatus",
+    "sendReboot",
     "subscribeGlassesStatus",
     "subscribeBluetoothStatus",
     "setSystemTime",

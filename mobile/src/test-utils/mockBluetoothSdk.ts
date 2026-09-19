@@ -49,6 +49,7 @@ export const mentraLocalNetworkMock = {
 }
 
 export const bluetoothSdkMock = {
+  sendReboot: jest.fn(() => Promise.resolve()),
   configureNativeNotifications: jest.fn(() => Promise.resolve()),
   getNativeNotificationStatus: jest.fn(() => Promise.resolve({supported: false, state: "unavailable"})),
   sendPhoneNotification: jest.fn(() => Promise.resolve()),

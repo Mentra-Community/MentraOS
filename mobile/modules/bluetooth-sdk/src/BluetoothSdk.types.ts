@@ -1503,6 +1503,8 @@ export interface BluetoothSdkPublicModule {
   getReleaseChangelogs(fromVersion?: string | null, toVersion?: string | null): ReleaseChangelog[]
   /** Start OTA from the configured or explicitly supplied manifest URL. */
   startOtaUpdate(otaVersionUrl?: string | null): Promise<OtaStartAckEvent>
+  /** Request a glasses reboot. Resolves on dispatch, before the glasses restart. */
+  sendReboot(): Promise<void>
   /** Query the active OTA session and return the correlated status response. */
   queryOtaStatus(): Promise<OtaQueryResult>
   startAr99OtaFromFile(path: string): Promise<boolean>

@@ -86,6 +86,22 @@ export function isLegacyShapedOtaStatus(otaStatus: OtaStatus | null): boolean {
   return !!otaStatus && otaStatus.sessionId === "" && otaStatus.status !== "idle"
 }
 
+/** ASG 38 added the MTK-only reboot; older clients relied on a following BES update. */
+export function needsPhoneMtkReboot(
+  buildNumber: string,
+  status: OtaStatus | null,
+  selectedUpdates: readonly string[] | undefined,
+): boolean {
+  const build = Number(buildNumber)
+  if (!Number.isInteger(build) || build <= 0 || build >= 38) return false
+  if (status?.stepType !== "mtk" || status.phase !== "install" || status.status !== "complete") return false
+  if (selectedUpdates?.includes("bes")) return false
+  // Legacy progress has no real step count. Only the selected offer can prove
+  // that BES will not follow. Unified sessions declare their final step.
+  if (isLegacyShapedOtaStatus(status)) return selectedUpdates?.includes("mtk") === true
+  return status.totalSteps > 0 && status.currentStep === status.totalSteps
+}
+
 /**
  * Is the current install session legacy-shaped? Event shape wins when events exist
  * (per the WP 8C rule: key off legacy-shaped inputs, not a build flag, where possible);
