@@ -3,6 +3,9 @@ import {artifactUrl} from "./release-artifact-storage.mjs"
 const escape = (value) =>
   String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;").replaceAll('"', "&quot;")
 
+export const iosInstallUrl = (manifestUrl) =>
+  `itms-services://?action=download-manifest&url=${encodeURIComponent(manifestUrl)}`
+
 // Called only after the publisher validates the handoff receipt and IPA bytes.
 export function iosInstallationFiles(receipt, repository) {
   const {app} = receipt
@@ -18,7 +21,7 @@ export function iosInstallationFiles(receipt, repository) {
   const pageName = ipaName.replace("mentra-ios-iphone-", "mentra-ios-install-").replace(/\.ipa$/, ".html")
   const ipaUrl = artifactUrl(repository, "pr-builds", ipaName)
   const manifestUrl = artifactUrl(repository, "pr-builds", manifestName)
-  const installUrl = `itms-services://?action=download-manifest&url=${encodeURIComponent(manifestUrl)}`
+  const installUrl = iosInstallUrl(manifestUrl)
   const prUrl = `https://github.com/${repository}/pull/${receipt.pr}`
   return {
     manifest: {

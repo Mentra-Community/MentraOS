@@ -9,11 +9,15 @@ numeric native build.
 
 ## iPhone
 
-In **#pr-builds**, tap **Install on iPhone**. Open the linked page in **Safari**
-(use Slack's browser menu if it opens inside Slack), tap **Install on iPhone**
-on that page, and confirm **Install** in the iOS prompt. Return to the Home
-Screen, wait for installation to finish, then open the Mentra App. No Mac or
-TestFlight is needed. The page identifies the PR, commit, version and native build.
+In **#pr-builds** on your iPhone, tap **Install on iPhone** and confirm **Install**
+in the iOS prompt. This direct link skips the intermediate webpage. Return to
+the Home Screen, wait for installation to finish, then open the Mentra App.
+No Mac or TestFlight is needed.
+
+If the direct link does not open, use **Install via Safari** beside it. Open that
+page in Safari (use Slack's browser menu if needed), tap **Install on iPhone**,
+and confirm Install. The page identifies the PR, commit, version and native
+build. The GitHub PR comment links to this HTTPS page as well.
 
 Your iPhone must already be included in the build's ad hoc provisioning profile;
 registering it after this build was exported requires a refreshed profile and a

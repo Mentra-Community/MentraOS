@@ -1,4 +1,5 @@
 import {createHash} from "node:crypto"
+import {iosInstallUrl} from "./pr-ios-artifacts-install.mjs"
 import {iosReceiptName, validateIosReceipt} from "./pr-ios-artifacts.mjs"
 import {artifactUrl} from "./release-artifact-storage.mjs"
 
@@ -76,13 +77,17 @@ export function buildPost({pr, sha, androidUrl, manifestUrl, targets, androidRun
   }
   if (ios?.assets) {
     lines.push(
-      `📱 *iPhone* — ${ios.assets.install ? `${link(ios.assets.install, "Install on iPhone")} · ` : ""}${link(
-        ios.assets.iphone,
-        "Download IPA",
-      )}\n🖥️ *Mac* — ${link(ios.assets.mac, "Download app")}\nRegistered devices only · Backend: *Dev* · ${link(
-        ios.instructionsUrl,
-        "Installation instructions",
-      )}`,
+      `📱 *iPhone* — ${
+        ios.assets.install
+          ? `${link(iosInstallUrl(ios.assets.manifest), "Install on iPhone")} · ${link(
+              ios.assets.install,
+              "Install via Safari",
+            )} · `
+          : ""
+      }${link(ios.assets.iphone, "Download IPA")}\n🖥️ *Mac* — ${link(
+        ios.assets.mac,
+        "Download app",
+      )}\nRegistered devices only · Backend: *Dev* · ${link(ios.instructionsUrl, "Installation instructions")}`,
     )
   } else if (ios?.error) lines.push(`*iPhone / Mac:* ${escape(ios.error)}`)
   else if (ios) lines.push("*iPhone / Mac:* not built for these changed paths.")

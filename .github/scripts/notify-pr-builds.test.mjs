@@ -219,7 +219,7 @@ function harness(options = {}) {
 }
 process.env.SLACK_WEBHOOK_PR_BUILDS = "https://example.com/webhook"
 
-test("publishes Safari installation links only when the complete install set is downloadable", async () => {
+test("publishes a direct Slack install link and Safari fallback only after verifying the complete install set", async () => {
   const receipt = structuredClone(iosReceipt)
   receipt.schemaVersion = 2
   for (const [kind, ext] of [
@@ -233,8 +233,14 @@ test("publishes Safari installation links only when the complete install set is 
     }
   const ready = harness({files: [{filename: "mobile/app.config.ts"}], receipt})
   await notifyPrBuilds(ready.args)
-  assert.match(JSON.stringify(ready.posts[0]), /Install on iPhone/)
+  const slack = ready.posts[0].blocks.map((block) => block.text.text).join("\n")
+  const direct = new URL(slack.match(/<(itms-services:[^|]+)\|Install on iPhone>/)[1])
+  assert.equal(direct.searchParams.get("action"), "download-manifest")
+  const verifiedManifest = ready.requests.find((url) => url.endsWith(".plist"))
+  assert.equal(direct.searchParams.get("url"), verifiedManifest)
+  assert.match(slack, /<https:\/\/artifactscdn[^|]+\.html\|Install via Safari>/)
   assert.match(ready.written[0].body, /\[Install on iPhone\]\(https:\/\/artifactscdn.*\.html\)/)
+  assert.doesNotMatch(ready.written[0].body, /itms-services:/)
   assert.ok(ready.requests.some((url) => url.endsWith(".plist")))
   assert.ok(ready.requests.some((url) => url.endsWith(".html")))
   for (const failure of [{missingInstall: true}, {wrongInstallType: true}, {corruptInstall: true}]) {
@@ -242,11 +248,13 @@ test("publishes Safari installation links only when the complete install set is 
     await notifyPrBuilds(incomplete.args)
     assert.match(incomplete.posts[0].text, /incomplete/)
     assert.doesNotMatch(JSON.stringify(incomplete.posts[0]), /Install on iPhone/)
+    assert.doesNotMatch(JSON.stringify(incomplete.posts[0]), /itms-services:/)
   }
   const legacy = harness({files: ready.state.files})
   await notifyPrBuilds(legacy.args)
   assert.match(legacy.written[0].body, /Download iPhone IPA/)
   assert.doesNotMatch(legacy.written[0].body, /Install on iPhone/)
+  assert.doesNotMatch(JSON.stringify(legacy.posts[0]), /itms-services:/)
 })
 
 test("verifies decoded install files through real HTTP compression with missing or compressed Content-Length", async (t) => {
