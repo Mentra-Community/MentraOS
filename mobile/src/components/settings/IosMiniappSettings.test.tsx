@@ -22,7 +22,13 @@ jest.mock("./ToggleSetting", () => {
 })
 
 describe("iOS miniapp debug settings", () => {
+  const originalOverride = process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS
+  afterEach(() => {
+    if (originalOverride === undefined) delete process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS
+    else process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS = originalOverride
+  })
   beforeEach(async () => {
+    delete process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS
     jest.replaceProperty(Platform, "OS", "ios")
     await engine.settings.set(SETTINGS.show_mentra_call_ios.key, false)
     await engine.settings.set(SETTINGS.show_notify_ios.key, false)
@@ -53,5 +59,19 @@ describe("iOS miniapp debug settings", () => {
     const screen = render(<IosMiniappSettings />)
     expect(screen.queryByTestId("debug-show-mentra-call-ios")).toBeNull()
     expect(screen.queryByTestId("debug-show-notify-ios")).toBeNull()
+  })
+  it("forces only Call on for the build override and preserves its saved preference", async () => {
+    process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS = "true"
+    const screen = render(<IosMiniappSettings />)
+    expect(screen.getByTestId("debug-show-mentra-call-ios").props).toMatchObject({value: true, disabled: true})
+    expect(screen.getByText("debugSettings:mentraCallBuildOverride")).toBeTruthy()
+    expect(screen.getByTestId("debug-show-notify-ios").props.value).toBe(false)
+    await act(async () => fireEvent(screen.getByTestId("debug-show-notify-ios"), "valueChange", true))
+    expect(engine.settings.get(SETTINGS.show_notify_ios.key)).toBe(true)
+    expect(engine.settings.get(SETTINGS.show_mentra_call_ios.key)).toBe(false)
+    delete process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS
+    screen.rerender(<IosMiniappSettings />)
+    expect(screen.getByTestId("debug-show-mentra-call-ios").props).toMatchObject({value: false, disabled: false})
+    expect(screen.getByTestId("debug-show-notify-ios").props.value).toBe(true)
   })
 })

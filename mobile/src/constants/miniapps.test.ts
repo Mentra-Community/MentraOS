@@ -2,7 +2,13 @@ import {mentraCallPackageName, navigationPackageName, notifyPackageName, shouldH
 
 describe("shouldHideMiniapp", () => {
   const originalRegion = process.env.EXPO_PUBLIC_DEPLOYMENT_REGION
+  const originalOverride = process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS
+  afterEach(() => {
+    if (originalOverride === undefined) delete process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS
+    else process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS = originalOverride
+  })
   beforeEach(() => {
+    delete process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS
     delete process.env.EXPO_PUBLIC_DEPLOYMENT_REGION
   })
   afterEach(() => {
@@ -36,5 +42,12 @@ describe("shouldHideMiniapp", () => {
     expect(shouldHideMiniapp(notifyPackageName, os, optIns)).toBe(true)
     expect(shouldHideMiniapp(mentraCallPackageName, os, optIns)).toBe(false)
     expect(shouldHideMiniapp("com.mentra.notes", os, optIns)).toBe(false)
+  })
+  it.each([undefined, "", "false", "TRUE", "true"])("limits build override %s to Call", (override) => {
+    if (override === undefined) delete process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS
+    else process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS = override
+    expect(shouldHideMiniapp(mentraCallPackageName, "ios")).toBe(override !== "true")
+    expect(shouldHideMiniapp(notifyPackageName, "ios")).toBe(true)
+    expect(shouldHideMiniapp(notifyPackageName, "ios", {showIosNotify: true})).toBe(false)
   })
 })

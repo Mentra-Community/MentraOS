@@ -9,6 +9,14 @@ import {SETTINGS, engine} from "@mentra/engine"
 import builtInMiniappCatalog from "./BuiltInMiniappCatalog"
 
 describe("BuiltInMiniappCatalog", () => {
+  const originalOverride = process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS
+  beforeAll(() => {
+    delete process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS
+  })
+  afterAll(() => {
+    if (originalOverride === undefined) delete process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS
+    else process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS = originalOverride
+  })
   const originalPlatform = Platform.OS
 
   beforeAll(() => {

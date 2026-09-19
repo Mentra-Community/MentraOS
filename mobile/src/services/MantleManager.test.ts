@@ -116,6 +116,14 @@ let syncCoreDisplayOwner: () => void
 let syncGlassesPresentationState: (status: {state: string}) => void
 
 describe("MantleManager", () => {
+  const originalOverride = process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS
+  beforeAll(() => {
+    delete process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS
+  })
+  afterAll(() => {
+    if (originalOverride === undefined) delete process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS
+    else process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS = originalOverride
+  })
   const originalPlatform = Platform.OS
   beforeAll(() => {
     Object.defineProperty(Platform, "OS", {configurable: true, value: "android"})

@@ -4,7 +4,13 @@ import {mentraCallPackageName, notifyPackageName} from "@/constants/miniapps"
 import {shouldHideMiniapp} from "./miniappVisibility"
 
 describe("live iOS miniapp visibility policy", () => {
+  const originalOverride = process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS
+  afterEach(() => {
+    if (originalOverride === undefined) delete process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS
+    else process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS = originalOverride
+  })
   beforeEach(async () => {
+    delete process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS
     jest.replaceProperty(Platform, "OS", "ios")
     await engine.settings.set(SETTINGS.show_mentra_call_ios.key, false)
     await engine.settings.set(SETTINGS.show_notify_ios.key, false)
@@ -31,4 +37,13 @@ describe("live iOS miniapp visibility policy", () => {
       expect(descriptor.defaultValue()).toBe(false)
     },
   )
+  it("applies the build override only to Call without changing either saved setting", async () => {
+    process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS = "true"
+    expect(shouldHideMiniapp(mentraCallPackageName)).toBe(false)
+    expect(shouldHideMiniapp(notifyPackageName)).toBe(true)
+    expect(engine.settings.get(SETTINGS.show_mentra_call_ios.key)).toBe(false)
+    expect(engine.settings.get(SETTINGS.show_notify_ios.key)).toBe(false)
+    delete process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS
+    expect(shouldHideMiniapp(mentraCallPackageName)).toBe(true)
+  })
 })

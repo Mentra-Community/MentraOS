@@ -32,7 +32,7 @@ try {
     if (values.suite === "ios-call-visibility" || values.suite === "ios-call-build-override") {
       const steps = values.suite === "ios-call-visibility" ? iosCallVisibility : iosCallBuildOverride
       console.log(
-        "# iOS Call visibility routine\n\nStart on English paired home with Debug Mode unlocked and the saved Call switch off. Use the matching default or environment-enabled build. No meeting or stream is created.\n",
+        "# iOS Call visibility routine\n\nStart on English paired home with Debug Mode unlocked and both Call and Notify switches off. Use the matching default or environment-enabled build. No meeting or stream is created.\n",
       )
       console.log(
         steps
@@ -134,7 +134,7 @@ try {
       }
       const restored =
         values.suite === "ios-call-visibility"
-          ? "Default hiding, debug opt-in, restart persistence and All Apps exclusion verified. Call switch off; home restored; no meeting or stream created."
+          ? "Default hiding, independent Call/Notify opt-ins, restart persistence and All Apps exclusion verified. Both switches off; home restored; no meeting or stream created."
           : values.suite === "ios-call-build-override"
             ? "Build override and disabled debug switch verified; saved preference unchanged and home restored. No meeting or stream created."
             : values.suite === "mentra-call-ui"
