@@ -159,6 +159,22 @@ Network.framework approach reported ready without requesting permission; that
 approach was rejected and is not the shipped gate. The retained screenshots and
 native timestamps establish the permission result, not full Call qualification.
 
+A second, scripted permission-only run left the alert open for 65 seconds and
+completed after Allow. Its 76.407-second H.264 recording passes full decoding,
+browser playback and all four English chapter seeks. Screenshots, accessibility
+trees, command receipts and frozen replay inputs are saved beside the video in
+the ignored `permission-probe/tcp-replay` folder. Set both XCTest
+`SystemAttachmentLifetime` and `UserAttachmentLifetime` to `keepAlways`, then
+allow attachment transfer to finish before shutting down the runner. Check the
+exported file itself: a result bundle can contain an attachment-error text file
+instead of the requested video even when the XCTest run succeeds.
+
+The replacement host source `9652b43c5a`, build `302018310`, with bundled Call
+2.1.21 installed and launched successfully on the same iPhone at 00:15:47 UTC
+on September 19. The 00:18:38 screenshot confirms Mentra Home and visible Call.
+Installation and this permission probe started no additional Call stream. The
+active runtime bundle still needs confirmation before the next live attempt.
+
 Regression checks: 25 native core tests, 235 host tests and 481 miniapp source tests
 pass. The miniapp typechecks. Keep the host PR draft until a fresh coordinated Call
 run verifies media, admission, audio, cancellation, background behavior and cleanup.
