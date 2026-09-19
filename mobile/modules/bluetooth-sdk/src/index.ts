@@ -127,6 +127,7 @@ export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
   setHotspotState: bindPublicMethod("setHotspotState"),
   setSystemTime: bindPublicMethod("setSystemTime"),
   setWifiAdbState: bindPublicMethod("setWifiAdbState"),
+  setGalleryServerEnabled: bindPublicMethod("setGalleryServerEnabled"),
   setGalleryModeEnabled: bindPublicMethod("setGalleryModeEnabled"),
   setVoiceActivityDetectionEnabled: bindPublicMethod("setVoiceActivityDetectionEnabled"),
   setLoudnessGateEnabled: bindPublicMethod("setLoudnessGateEnabled"),
