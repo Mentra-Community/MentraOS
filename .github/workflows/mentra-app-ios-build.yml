@@ -84,9 +84,11 @@ jobs:
         uses: ./.github/actions/disk-guard
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v1
+        uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          # Match coordinated mobile builds. v2 reuses this installed version
+          # or downloads from GitHub Releases, avoiding the flaky bun.sh alias.
+          bun-version: 1.4.0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
