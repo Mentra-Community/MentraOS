@@ -8,8 +8,8 @@ import {fileURLToPath} from "node:url"
 
 const scripts = path.dirname(fileURLToPath(import.meta.url))
 const owner = "mentra-ios-mac-v1"
-const command = (name, args) =>
-  execFileSync(name, args, {encoding: "utf8", stdio: ["ignore", "pipe", "pipe"], timeout: 180_000}).trim()
+const command = (name, args, options = {}) =>
+  execFileSync(name, args, {encoding: "utf8", stdio: ["pipe", "pipe", "pipe"], timeout: 180_000, ...options}).trim()
 const exists = async (file) =>
   access(file).then(
     () => true,
@@ -43,9 +43,36 @@ export async function verifyApp(app, manifest) {
   // original signature and UUID; permission stability is not a reason to resign.
   command("/usr/bin/codesign", ["--verify", "-R", "=anchor apple generic", app])
   const codeRequirement = command("/usr/bin/codesign", ["-dr", "-", app])
-  const executableUUID = command("/usr/bin/xcrun", ["dwarfdump", "--uuid", path.join(app, executable)])
-  if (!/^UUID: [A-F0-9-]+ /im.test(executableUUID)) throw new Error("The executable has no Mach-O UUID")
-  return {codeRequirement, executableUUID}
+  // Portable PR downloads must not require Xcode on the receiving Mac.
+  const executableUUID = manifest.launcherPath
+    ? undefined
+    : command("/usr/bin/xcrun", ["dwarfdump", "--uuid", path.join(app, executable)])
+  if (executableUUID !== undefined && !/^UUID: [A-F0-9-]+ /im.test(executableUUID))
+    throw new Error("The executable has no Mach-O UUID")
+  return {codeRequirement, ...(executableUUID === undefined ? {} : {executableUUID})}
+}
+
+export function validateMacProvisioning(profile, deviceId, now = Date.now()) {
+  if (!Number.isFinite(Date.parse(profile.ExpirationDate)) || Date.parse(profile.ExpirationDate) <= now)
+    throw new Error("The app provisioning profile has expired; download a fresh PR build")
+  if (!deviceId || !profile.ProvisionedDevices?.includes(deviceId))
+    throw new Error(
+      "This Mac is not in the app provisioning profile. Register its provisioning UDID and re-export the PR build",
+    )
+}
+
+function verifyMacProvisioning(app) {
+  const xml = command("/usr/bin/security", ["cms", "-D", "-i", path.join(app, "embedded.mobileprovision")])
+  const profile = {
+    ExpirationDate: command("/usr/bin/plutil", ["-extract", "ExpirationDate", "raw", "-o", "-", "--", "-"], {
+      input: xml,
+    }),
+    ProvisionedDevices: JSON.parse(
+      command("/usr/bin/plutil", ["-extract", "ProvisionedDevices", "json", "-o", "-", "--", "-"], {input: xml}),
+    ),
+  }
+  const hardware = JSON.parse(command("/usr/sbin/system_profiler", ["SPHardwareDataType", "-json"]))
+  validateMacProvisioning(profile, hardware.SPHardwareDataType?.[0]?.provisioning_UDID)
 }
 
 export async function archiveBuild(app, manifest, directory) {
@@ -130,7 +157,7 @@ export async function installBuild(manifestPath, {launch = true} = {}) {
   const previous = path.join(lock, "previous.app")
   try {
     staging = await mkdtemp(path.join(root, ".staging-"))
-    let source = manifest.app
+    let source = path.resolve(path.dirname(manifestPath), manifest.app)
     if (manifest.archivePath) {
       if ((await hash(manifest.archivePath)) !== manifest.archiveSha256) throw new Error("Archive hash mismatch")
       const unpacked = path.join(staging, "unpacked")
@@ -141,21 +168,31 @@ export async function installBuild(manifestPath, {launch = true} = {}) {
       source = path.join(unpacked, manifest.archivedAppName)
     }
     await verifyApp(source, manifest)
+    if (manifest.launcherPath) verifyMacProvisioning(source)
     const wrapper = path.join(staging, "Mentra.app")
     const inner = path.join(wrapper, "Wrapper", "Mentra.app")
     await mkdir(path.dirname(inner), {recursive: true})
     command("/bin/cp", ["-cR", source, inner])
     await symlink("Wrapper/Mentra.app", path.join(wrapper, "WrappedBundle"))
     const identity = await verifyApp(inner, manifest)
-    const launcher = path.join(staging, "launch-ios-on-mac")
-    command("/usr/bin/xcrun", [
-      "swiftc",
-      "-parse-as-library",
-      "-O",
-      path.join(scripts, "launch-ios-on-mac.swift"),
-      "-o",
-      launcher,
-    ])
+    const launcher = manifest.launcherPath
+      ? path.resolve(path.dirname(manifestPath), manifest.launcherPath)
+      : path.join(staging, "launch-ios-on-mac")
+    if (manifest.launcherPath) {
+      if (
+        path.basename(manifest.launcherPath) !== manifest.launcherPath ||
+        (await hash(launcher)) !== manifest.launcherSha256
+      )
+        throw new Error("Bundled launcher path or hash mismatch")
+    } else
+      command("/usr/bin/xcrun", [
+        "swiftc",
+        "-parse-as-library",
+        "-O",
+        path.join(scripts, "launch-ios-on-mac.swift"),
+        "-o",
+        launcher,
+      ])
     if (await exists(destination)) {
       await regularDirectory(destination)
       if ((await readlink(path.join(destination, "WrappedBundle"))) !== "Wrapper/Mentra.app")

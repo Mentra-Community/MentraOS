@@ -1584,6 +1584,10 @@ struct ViewState {
         return live
     }
 
+    func sendGalleryServerEnabled(requestId: String, enabled: Bool) throws {
+        try liveSgc().sendGalleryServerEnabled(requestId: requestId, enabled: enabled)
+    }
+
     func sendGalleryMode(requestId: String, enabled: Bool) throws {
         try liveSgc().sendGalleryMode(requestId: requestId, active: enabled)
     }

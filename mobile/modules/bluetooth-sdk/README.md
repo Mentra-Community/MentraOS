@@ -478,6 +478,34 @@ await sdk.setDashboardContent("")
 
 Settings commands that return `SettingsAckSuccessEvent` reject when the ASG reports an error ack. The SDK updates its local settings store only after that ASG ack resolves successfully, so observed SDK state reflects the acknowledged glasses state rather than a queued request. Raw `settings_ack` listener events still use `SettingsAckEvent` because they can include both success and failure statuses. `rgbLedControl(...)` resolves from a successful ASG `rgb_led_control_response` and rejects when the ASG reports `state: "error"`; raw `settings_ack` and `rgb_led_control_response` events remain available through listeners.
 
+### Persistent HTTP gallery server (Mentra Live)
+
+Use `setGalleryServerEnabled(true)` to keep the existing camera/gallery HTTP server available over the Wi-Fi network the glasses have already joined. This opt-in defaults off and persists across BLE reconnects and glasses restarts until explicitly disabled. It has no idle timeout and does not start or join a hotspot.
+
+**This server uses HTTP without authentication. Any client that can reach the glasses can use the full camera/gallery API, including capture and deletion, while it is enabled.** Use it only where your network policy permits that access.
+
+```ts
+const server = await BluetoothSdk.setGalleryServerEnabled(true)
+if (server.listening && server.url) {
+  const gallery = await fetch(`${server.url}/api/gallery`).then((response) => response.json())
+  console.log(gallery)
+  // Download using /api/download?file=<URL-encoded gallery filename>.
+}
+
+// Leave enabled for persistent access, or explicitly turn it off:
+await BluetoothSdk.setGalleryServerEnabled(false)
+```
+
+Native Swift: `try await sdk.setGalleryServerEnabled(true)`; Kotlin: `sdk.setGalleryServerEnabled(true)`. Both return `SettingsAckEvent`, with `enabled`, `listening`, and `url` properties. React Native returns `SettingsAckSuccessEvent` with the same fields.
+
+The acknowledgement confirms the saved setting. `enabled:true, listening:false` means the setting is enabled but no station endpoint is currently available, for example before Wi-Fi connects or while a bind is being retried. `url` is present only when the server is running and station Wi-Fi has an address. Repeat the same enable call to obtain a fresh endpoint without restarting a healthy server.
+
+The same server listens on port 8089 on all local interfaces in persistent mode. Its complete HTTP API is unchanged: listing, downloads, sync, deletion, restore, camera control, and browser UI all work as on the hotspot. Existing response formats, resumable downloads, and in-progress-media filtering remain intact. No HTTP client changes are needed beyond choosing the site-network URL.
+
+Disabling restores normal hotspot-only behavior: the server rebinds to an active hotspot address or stops if no hotspot is active. Changing binding modes can interrupt in-flight requests, so switch modes between transfers or retry interrupted requests.
+
+Both the native SDK and ASG client need this command; older glasses firmware times out without claiming success. The client app must have local-network access and permit cleartext HTTP to the local device under its platform/MDM policy.
+
 WiFi, hotspot, and version-info commands resolve from the ASG response path, not local dispatch:
 `requestWifiScan()` resolves from the ASG `wifi_scan_result` completion response with the updated scan list, including `[]` when no networks are found. Intermediate `wifi_scan_result` events can arrive with `scanComplete: false` while the glasses stream discovered networks; the final event uses `scanComplete: true`. If older glasses stream non-empty scan results but never send the completion event, the request resolves with the accumulated scan list when the request times out. `sendWifiCredentials()` resolves when the requested SSID is connected, `forgetWifiNetwork()` returns a semantic `WifiForgetResult`, `getSavedWifiNetworks()` returns a semantic `SavedWifiNetworksResult`, `setHotspotState()` resolves when the requested hotspot state is reported, and `requestVersionInfo()` waits for all chunks declared by the correlated response's `chunkCount`, `chunkIndex`, and `final` metadata. Legacy single-message responses complete immediately; legacy chunked responses complete on `version_info_3` after `version_info_1`. Missing final chunks time out rather than returning partial data after a quiet period.
 

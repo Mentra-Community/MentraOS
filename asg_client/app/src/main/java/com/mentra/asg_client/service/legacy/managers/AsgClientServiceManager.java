@@ -1,11 +1,14 @@
 package com.mentra.asg_client.service.legacy.managers;
 
 import android.content.Context;
+import android.os.Handler;
+import android.os.Looper;
 import android.util.Log;
 
 import androidx.annotation.NonNull;
 
 import com.mentra.asg_client.AsgConstants;
+import com.mentra.asg_client.NetworkUtils;
 import com.mentra.asg_client.io.bes.BesOtaManager;
 import com.mentra.asg_client.io.bluetooth.core.BluetoothManagerFactory;
 import com.mentra.asg_client.io.bluetooth.interfaces.ICompanionTransport;
@@ -28,6 +31,7 @@ import com.mentra.asg_client.service.core.handlers.RgbLedCommandHandler;
 import com.mentra.asg_client.service.core.processors.CommandProcessor;
 import com.mentra.asg_client.service.system.interfaces.IStateManager;
 import com.mentra.asg_client.service.utils.DeviceProfile;
+import com.mentra.asg_client.service.utils.ServiceConstants;
 import com.mentra.asg_client.settings.AsgSettings;
 
 import java.util.Objects;
@@ -53,6 +57,9 @@ public class AsgClientServiceManager {
     private ImuManager imuManager;
     private AsgServerManager serverManager;
     private AsgCameraServer cameraServer;
+    private boolean galleryServerClosed = false;
+    private final Handler galleryServerHandler = new Handler(Looper.getMainLooper());
+    private final Runnable galleryServerReconcile = this::reconcileGalleryServer;
     private BesOtaManager besOtaManager;
 
     // State tracking
@@ -114,6 +121,7 @@ public class AsgClientServiceManager {
         }
 
         Log.i(TAG, "🔧 Starting AsgClientService components initialization");
+        galleryServerClosed = false;
 
         try {
             // Initialize settings first
@@ -136,11 +144,10 @@ public class AsgClientServiceManager {
             Log.d(TAG, "📸 Step 6: Initializing media capture service");
             initializeMediaCaptureService();
 
-            // The gallery server is a hotspot-only service. Re-read the adopted/current state
-            // after the media dependencies are ready, then start it only if the AP is active.
+            // Adopt hotspot state and the saved persistent-gallery setting after media is ready.
             isWebServerEnabled = networkManager != null && networkManager.isHotspotEnabled();
             Log.d(TAG, "🌐 Step 7: Synchronizing camera web server with hotspot state");
-            initializeCameraWebServer();
+            reconcileGalleryServer();
 
             isInitialized = true;
             Log.i(TAG, "✅ All service components initialized successfully");
@@ -163,28 +170,16 @@ public class AsgClientServiceManager {
     }
 
     /** Clean up all service components */
-    public void cleanup() {
+    public synchronized void cleanup() {
+        galleryServerClosed = true;
+        galleryServerHandler.removeCallbacks(galleryServerReconcile);
         Log.d(
                 TAG,
                 "🧹 cleanup() called - Current state: "
                         + (isInitialized ? "initialized" : "not initialized"));
         Log.i(TAG, "🔄 Starting service components cleanup");
 
-        // Stop camera web server
-        if (cameraServer != null) {
-            Log.d(TAG, "🛑 Stopping camera web server");
-            if (serverManager != null) {
-                Log.d(TAG, "📡 Using server manager to stop camera server");
-                serverManager.stopServer("camera");
-            } else {
-                Log.d(TAG, "🛑 Directly stopping camera server");
-                cameraServer.stopServer();
-            }
-            cameraServer = null;
-            Log.d(TAG, "✅ Camera web server stopped and nullified");
-        } else {
-            Log.d(TAG, "⏭️ Camera web server already null - skipping");
-        }
+        stopCameraWebServer();
 
         // Clean up server manager
         if (serverManager != null) {
@@ -584,28 +579,31 @@ public class AsgClientServiceManager {
         Log.d(TAG, "✅ ImuManager initialized");
     }
 
-    public void initializeCameraWebServer() {
+    public synchronized void initializeCameraWebServer() {
         Log.d(TAG, "🌐 initializeCameraWebServer() started");
         Log.d(TAG, "📊 Web server enabled: " + isWebServerEnabled);
 
-        if (!isWebServerEnabled) {
-            Log.d(TAG, "⏭️ Web server is disabled - skipping initialization");
+        boolean persistent = isGalleryServerEnabled();
+        if (galleryServerClosed || (!persistent
+                && (!isWebServerEnabled || networkManager == null || !networkManager.isHotspotEnabled()))) {
+            stopCameraWebServer();
             return;
         }
 
-        if (networkManager == null || !networkManager.isHotspotEnabled()) {
-            Log.w(TAG, "🔒 Hotspot is inactive - refusing to start camera web server");
+        // The same server/API listens on all local interfaces only after explicit opt-in.
+        // Otherwise preserve the default hotspot-address-only binding.
+        String hotspotGatewayIp = networkManager != null ? networkManager.getHotspotGatewayIp() : null;
+        if (!persistent && (hotspotGatewayIp == null || hotspotGatewayIp.isEmpty())) {
+            stopCameraWebServer();
             return;
         }
-
-        if (mediaCaptureService == null) {
-            Log.d(TAG, "⏭️ Media capture service is not ready - deferring camera web server");
-            return;
+        String bindAddress = persistent ? null : hotspotGatewayIp;
+        if (cameraServer != null && (!cameraServer.isAlive()
+                || !Objects.equals(cameraServer.getHostname(), bindAddress))) {
+            stopCameraWebServer();
         }
-
-        String hotspotGatewayIp = networkManager.getHotspotGatewayIp();
-        if (hotspotGatewayIp == null || hotspotGatewayIp.isEmpty()) {
-            Log.e(TAG, "🔒 Hotspot gateway is unavailable - refusing to start camera web server");
+        if (mediaCaptureService == null || networkManager == null) {
+            Log.d(TAG, "Media/network services are not ready - deferring camera web server");
             return;
         }
 
@@ -624,14 +622,13 @@ public class AsgClientServiceManager {
                 Logger logger = DefaultServerFactory.createLogger();
                 Log.d(TAG, "📝 Logger created: " + logger.getClass().getSimpleName());
 
-                cameraServer =
-                        DefaultServerFactory.createHotspotCameraWebServer(
-                                8089,
-                                "CameraWebServer",
-                                context,
-                                logger,
-                                fileManager,
-                                hotspotGatewayIp);
+                cameraServer = persistent
+                        ? DefaultServerFactory.createCameraWebServer(
+                                ServiceConstants.CAMERA_WEB_SERVER_PORT, "CameraWebServer",
+                                context, logger, fileManager)
+                        : DefaultServerFactory.createHotspotCameraWebServer(
+                                ServiceConstants.CAMERA_WEB_SERVER_PORT, "CameraWebServer",
+                                context, logger, fileManager, hotspotGatewayIp);
                 Log.d(
                         TAG,
                         "✅ Camera web server created: " + cameraServer.getClass().getSimpleName());
@@ -825,43 +822,64 @@ public class AsgClientServiceManager {
         return isWebServerEnabled;
     }
 
-    public void setWebServerEnabled(boolean enabled) {
-        Log.d(
-                TAG,
-                "⚙️ setWebServerEnabled() called - Current: "
-                        + isWebServerEnabled
-                        + ", New: "
-                        + enabled);
-
-        if (isWebServerEnabled != enabled) {
-            Log.i(
-                    TAG,
-                    "🔄 Web server enabled state changing from "
-                            + isWebServerEnabled
-                            + " to "
-                            + enabled);
+    /**
+     * Persist the default-off site-network HTTP gallery setting and reconcile the listener.
+     * Access is unauthenticated and unencrypted; the caller must trust the joined network.
+     * A saved enable starts the existing full API and keeps it running without a hotspot.
+     */
+    public synchronized boolean setGalleryServerEnabled(boolean enabled) {
+        if (asgSettings == null || galleryServerClosed) {
+            return false;
         }
-        isWebServerEnabled = enabled;
+        boolean saved = asgSettings.setGalleryServerEnabled(enabled);
+        reconcileGalleryServer();
+        return saved;
+    }
 
-        // Reconcile the actual server on every event, even if the cached state already matches.
-        // This keeps repeated hotspot-disable notifications fail-closed.
-        if (enabled && cameraServer == null) {
-            Log.d(TAG, "🚀 Enabling web server - initializing camera server");
-            initializeCameraWebServer();
-        } else if (!enabled && cameraServer != null) {
-            Log.d(TAG, "🛑 Disabling web server - stopping camera server");
+    /** Whether persistent gallery access is configured, independently of current connectivity. */
+    public synchronized boolean isGalleryServerEnabled() {
+        return asgSettings != null && asgSettings.isGalleryServerEnabled();
+    }
+
+    /** Return the persistent server's current station URL, or null without station connectivity. */
+    public synchronized String getGalleryServerUrl() {
+        if (!isGalleryServerEnabled() || cameraServer == null || !cameraServer.isAlive()
+                || networkManager == null || !networkManager.isConnectedToWifi()) {
+            return null;
+        }
+        String address = NetworkUtils.getWifiIpAddress(context);
+        return address != null && !address.isEmpty() && !"0.0.0.0".equals(address)
+                ? "http://" + address + ":" + cameraServer.getListeningPort() : null;
+    }
+
+    /** Retry server startup while persistent access is enabled; retain normal hotspot behavior. */
+    public synchronized void reconcileGalleryServer() {
+        galleryServerHandler.removeCallbacks(galleryServerReconcile);
+        if (galleryServerClosed) {
+            return;
+        }
+        initializeCameraWebServer();
+        if (isGalleryServerEnabled()) {
+            galleryServerHandler.postDelayed(
+                    galleryServerReconcile, AsgConstants.GALLERY_SERVER_RECONCILE_INTERVAL_MS);
+        }
+    }
+
+    private void stopCameraWebServer() {
+        if (cameraServer != null) {
             if (serverManager != null) {
-                Log.d(TAG, "📡 Using server manager to stop camera server");
                 serverManager.stopServer("camera");
             } else {
-                Log.d(TAG, "🛑 Directly stopping camera server");
                 cameraServer.stopServer();
             }
             cameraServer = null;
-            Log.d(TAG, "✅ Camera server stopped and nullified");
-        } else {
-            Log.d(TAG, "⏭️ Camera server already matches the hotspot state");
         }
+    }
+
+    /** Reconcile hotspot availability without overriding the saved persistent-gallery setting. */
+    public synchronized void setWebServerEnabled(boolean enabled) {
+        isWebServerEnabled = enabled;
+        initializeCameraWebServer();
     }
 
     // The heartbeat-inference pass-throughs (isConnected / onPhoneReadyHandshakeComplete /

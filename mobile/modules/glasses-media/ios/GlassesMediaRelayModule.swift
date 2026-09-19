@@ -74,6 +74,12 @@ private final class ManagedRelaySession {
     {
         ready = completion
         hotspot.onLost = { reason in onState("failed", reason) }
+        hotspot.onPermissionRequired = { [weak self] in
+            self?.queue.async {
+                guard let self, !self.stopped else { return }
+                onState("permission_required", "Allow Local Network access to connect to your glasses. If you previously denied access, enable it in Settings, or cancel to return home.")
+            }
+        }
         hotspot.join(ssid: ssid, passphrase: password, gateway: gateway) { result in
             self.queue.async {
                 guard !self.stopped else { return }
@@ -117,6 +123,7 @@ private final class ManagedRelaySession {
         stopped = true
         finish(.failure(LocalMediaError("Relay cancelled")))
         hotspot.onLost = nil
+        hotspot.onPermissionRequired = nil
         let group = DispatchGroup()
         if let receiver {
             group.enter(); receiver.stop { group.leave() }

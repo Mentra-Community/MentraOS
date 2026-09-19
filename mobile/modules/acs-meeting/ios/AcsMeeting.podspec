@@ -23,9 +23,9 @@ Pod::Spec.new do |s|
   s.pod_target_xcconfig = {
     'DEFINES_MODULE' => 'YES',
     # Calling's umbrella does #import <AzureCommunicationCommon/AzureCommunicationCommon-Swift.h>.
-    # Vendored Common headers must resolve inside their framework module.
-    # Source-built pods retain the public-header compatibility fallback, and
-    # only the static-lib fallback needs a header-only framework.
+    # Common headers must resolve inside their framework module, whether the
+    # framework is vendored or built from source. Only the static-lib fallback
+    # needs a public header and a header-only framework.
     'FRAMEWORK_SEARCH_PATHS' => '$(inherited) "${PODS_XCFRAMEWORKS_BUILD_DIR}/AzureCommunicationCommon" "${PODS_CONFIGURATION_BUILD_DIR}/AzureCommunicationCommon" "${PODS_CONFIGURATION_BUILD_DIR}/AcsMeeting"',
     'HEADER_SEARCH_PATHS' => '$(inherited) "${PODS_CONFIGURATION_BUILD_DIR}" "${PODS_CONFIGURATION_BUILD_DIR}/AzureCommunicationCommon"',
   }
@@ -67,11 +67,12 @@ Pod::Spec.new do |s|
         # then codesign an empty header-only bundle ("bundle format unrecognized").
         rm -rf "${PODS_CONFIGURATION_BUILD_DIR}/AzureCommunicationCommon.framework"
         PUBLIC_HDR="${PODS_ROOT}/Headers/Public/AzureCommunicationCommon/AzureCommunicationCommon-Swift.h"
-        if [ -f "$XC_HDR" ]; then
-          # A loose copy shadows the vendored framework's modular header. Clang
+        if [ -f "$XC_HDR" ] || [ -f "$FW_HDR" ]; then
+          # A loose copy shadows the framework's modular header. Clang
           # then imports its credential into Calling as a second Swift type,
-          # incompatible with Common.CommunicationTokenCredential. Remove copies
-          # left by earlier builds and let the framework search path resolve it.
+          # and its CommunicationIdentifier loses the Swift rawId property.
+          # Remove copies left by earlier builds and let the framework search
+          # path resolve both vendored and source-built Common frameworks.
           rm -f "$PUBLIC_HDR"
         else
           copy_if_changed "$SRC" "$PUBLIC_HDR"

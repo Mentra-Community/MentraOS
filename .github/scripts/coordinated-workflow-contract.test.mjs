@@ -88,6 +88,25 @@ test("release finalization reads the preserved OTA artifact layout", () => {
   )
 })
 
+test("completed releases publish a version page and example notices carry the main app links", () => {
+  const core = workflow("coordinated-release.yml")
+  const finalize = jobBlock(core, "finalize")
+  assert.doesNotMatch(finalize, /publish-coordinated-release-page/)
+  const page = jobBlock(core, "publish-release-page")
+  assert.match(page, /needs: \[plan, finalize\]/)
+  assert.match(page, /if: needs.plan.outputs.dry_run != 'true'/)
+  assert.match(page, /actions\/download-artifact@v4/)
+  assert.match(page, /name: coordinated-release-result-/)
+  assert.match(page, /publish-coordinated-release-page.mjs/)
+  assert.doesNotMatch(page, /finalize-release-manifest|publish-immutable-release-asset|date -u/)
+  assert.doesNotMatch(jobBlock(core, "dispatch-examples"), /publish-release-page/)
+  const examples = workflow("coordinated-example-release.yml")
+  for (const kind of ["apk", "ipa"]) {
+    assert.ok(examples.includes(`mobile_${kind}_url: \${{ steps.load.outputs.mobile_${kind}_url }}`))
+    assert.ok(examples.includes(`MOBILE_${kind.toUpperCase()}_URL: \${{ needs.plan.outputs.mobile_${kind}_url }}`))
+  }
+})
+
 test("production promotion is resumable and keeps irreversible actions behind separate environments", () => {
   const prepare = workflow("production-release-prepare.yml")
   const compatibilityLab = workflow("production-release-compatibility-lab.yml")

@@ -140,6 +140,7 @@ declare class BluetoothSdkNativeModule extends NativeModule<BluetoothSdkModuleEv
   logCurrentWifiFrequency(): Promise<void>
 
   // Gallery Commands
+  setGalleryServerEnabled(enabled: boolean): Promise<SettingsAckSuccessEvent>
   setGalleryModeEnabled(enabled: boolean): Promise<SettingsAckSuccessEvent>
   setVoiceActivityDetectionEnabled(enabled: boolean): Promise<void>
   /** Mentra Live center-mic loudness / Barrier gate (cs_swit type 10). */
@@ -677,7 +678,7 @@ const nativeStopScan = NativeBluetoothSdkModule.stopScan.bind(NativeBluetoothSdk
 const activeScanCancellations = new Set<() => Promise<void>>()
 NativeBluetoothSdkModule.stopScan = async function () {
   if (activeScanCancellations.size === 0) return nativeStopScan()
-  await Promise.all([...activeScanCancellations].map(cancel => cancel()))
+  await Promise.all([...activeScanCancellations].map((cancel) => cancel()))
 }
 
 NativeBluetoothSdkModule.scan = async function (modelOrOptions: DeviceModel | ScanOptions, options?: ScanModelOptions) {

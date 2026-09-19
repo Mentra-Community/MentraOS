@@ -1149,7 +1149,7 @@ export function createSoftapCallDeps(args: {
     setHotspotState: (enabled: boolean) => Promise<{state: string; ssid?: string; password?: string; localIp?: string}>
     /** Whether this phone's Wi-Fi radio is on. Optional: only Android hosts can answer it. */
     isWifiEnabled?: () => Promise<boolean>
-    joinScopedNetwork: (ssid: string, passphrase: string, gateway?: string) => Promise<string | undefined>
+    joinScopedNetwork: (ssid: string, passphrase: string, gateway?: string, report?: SoftapStepReporter) => Promise<string | undefined>
     leaveScopedNetwork: () => Promise<void>
     cancelScopedNetworkJoin?: () => Promise<void>
     joinMeeting: (
@@ -1275,8 +1275,8 @@ export function createSoftapCallDeps(args: {
     joinScopedNetwork: async (ssid, passphrase, report) => {
       const joinOnce = (nextSsid: string, nextPassphrase: string) =>
         gatewayAddress
-          ? subsystems.joinScopedNetwork(nextSsid, nextPassphrase, gatewayAddress)
-          : subsystems.joinScopedNetwork(nextSsid, nextPassphrase)
+          ? subsystems.joinScopedNetwork(nextSsid, nextPassphrase, gatewayAddress, report)
+          : subsystems.joinScopedNetwork(nextSsid, nextPassphrase, undefined, report)
       let address: string | undefined
       try {
         address = await joinOnce(ssid, passphrase)

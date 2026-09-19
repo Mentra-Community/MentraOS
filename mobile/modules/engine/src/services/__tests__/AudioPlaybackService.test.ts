@@ -63,7 +63,6 @@ describe("AudioPlaybackService live PCM streams", () => {
     stopAudioCloudUplink()
     resetAudioTestMocks()
     reactNativeAppState.currentState = "active"
-    Object.assign(audioPlaybackService, {audioRouteWarmUntil: 0})
     tailTimerCallbacks.length = 0
     startAudioCloudUplink()
     setAudioModeAsync.mockClear()
@@ -79,17 +78,17 @@ describe("AudioPlaybackService live PCM streams", () => {
     stopAudioCloudUplink()
   })
 
-  test("prewarms a cold Android route by aborting silence before URL playback", async () => {
+  test("plays a cold Android URL without a silent PCM warmup", async () => {
     await audioPlaybackService.play({audioUrl: "https://example.test/click.wav", requestId: "click"}, () => {})
 
-    expect(pcmStreamOpen).toHaveBeenCalledTimes(1)
-    expect(pcmStreamWrite).toHaveBeenCalledTimes(1)
-    expect(pcmStreamAbort).toHaveBeenCalledTimes(1)
+    expect(pcmStreamOpen).not.toHaveBeenCalled()
+    expect(pcmStreamWrite).not.toHaveBeenCalled()
+    expect(pcmStreamAbort).not.toHaveBeenCalled()
     expect(pcmStreamClose).not.toHaveBeenCalled()
     expect(audioPlayer.play).toHaveBeenCalledTimes(1)
   })
 
-  test("skips optional route prewarm so background URL playback cannot stall", async () => {
+  test("plays a background URL without a silent PCM warmup", async () => {
     reactNativeAppState.currentState = "background"
     await audioPlaybackService.play(
       {audioUrl: "https://example.test/background.wav", requestId: "background"},
@@ -103,7 +102,7 @@ describe("AudioPlaybackService live PCM streams", () => {
     expect(audioPlayer.play).toHaveBeenCalledTimes(1)
   })
 
-  test("prewarms a cold Android route before opening a live PCM stream", async () => {
+  test("opens a cold live PCM stream without a silent warmup", async () => {
     const coldNow = Date.now() + 10_000
     const dateNow = spyOn(Date, "now").mockReturnValue(coldNow)
     try {
@@ -119,11 +118,10 @@ describe("AudioPlaybackService live PCM streams", () => {
       dateNow.mockRestore()
     }
 
-    expect(pcmStreamOpen).toHaveBeenCalledTimes(2)
-    expect(pcmStreamOpen).toHaveBeenNthCalledWith(1, expect.stringContaining("audio-route-prewarm-"), 16_000, 1, 1)
-    expect(pcmStreamWrite).toHaveBeenCalledTimes(1)
-    expect(pcmStreamAbort).toHaveBeenCalledTimes(1)
-    expect(pcmStreamOpen).toHaveBeenNthCalledWith(2, "stream-cold", 24_000, 1, 0.75, undefined)
+    expect(pcmStreamOpen).toHaveBeenCalledTimes(1)
+    expect(pcmStreamWrite).not.toHaveBeenCalled()
+    expect(pcmStreamAbort).not.toHaveBeenCalled()
+    expect(pcmStreamOpen).toHaveBeenNthCalledWith(1, "stream-cold", 24_000, 1, 0.75, undefined)
   })
 
   test("forwards a requested jitter budget to native", async () => {

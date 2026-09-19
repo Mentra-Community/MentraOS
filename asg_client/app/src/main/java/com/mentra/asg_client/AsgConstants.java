@@ -1,6 +1,10 @@
 package com.mentra.asg_client;
 
 public class AsgConstants {
+    /** Saved, default-off opt-in to unauthenticated HTTP gallery access on site Wi-Fi. */
+    public static final String GALLERY_SERVER_ENABLED_PREFERENCE = "gallery_server_enabled";
+    /** Retry persistent gallery server startup after a transient failure. */
+    public static final long GALLERY_SERVER_RECONCILE_INTERVAL_MS = 5_000L;
     /** Bound manifest responses while letting a several-hundred-item gallery use one scan. */
     public static final int GALLERY_MAX_MANIFEST_PAGE_SIZE = 500;
     /** Keep BES receiving across the prep-to-snap gap and successive short cues. */
