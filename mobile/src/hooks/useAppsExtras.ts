@@ -1,16 +1,16 @@
 import {useMemo} from "react"
-import {useActiveApps, useApps} from "@mentra/engine"
+import {SETTINGS, useActiveApps, useApps, useSetting} from "@mentra/engine"
 
-import {SETTINGS, useSetting} from "@mentra/engine"
 import {shouldHideMiniapp} from "@/constants/miniapps"
 
 /** Platform restrictions also apply to All Apps, which ignores home hiding. */
 export const useAvailableApps = () => {
   const apps = useApps()
   const [showIosCall] = useSetting<boolean>(SETTINGS.show_mentra_call_ios.key)
+  const [showIosNotify] = useSetting<boolean>(SETTINGS.show_notify_ios.key)
   return useMemo(
-    () => apps.filter((app) => !shouldHideMiniapp(app.packageName, undefined, showIosCall === true)),
-    [apps, showIosCall],
+    () => apps.filter((app) => !shouldHideMiniapp(app.packageName, undefined, {showIosCall, showIosNotify})),
+    [apps, showIosCall, showIosNotify],
   )
 }
 

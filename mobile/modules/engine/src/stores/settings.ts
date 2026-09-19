@@ -60,6 +60,13 @@ export const SETTINGS: Record<string, Setting> = {
     saveOnServer: false,
     persist: true,
   },
+  show_notify_ios: {
+    key: "show_notify_ios",
+    defaultValue: () => false,
+    writable: true,
+    saveOnServer: false,
+    persist: true,
+  },
   android_notification_listener_enabled: {
     key: "android_notification_listener_enabled",
     // Operational kill switch. The listener now runs in a guarded lightweight

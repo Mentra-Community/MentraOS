@@ -1,4 +1,4 @@
-import {IosCallVisibility} from "./IosCallVisibility"
+import {IosMiniappVisibility} from "./IosMiniappVisibility"
 
 function fixture(initialEnabled = false, previouslyEnabled = false) {
   let enabled = initialEnabled
@@ -12,7 +12,7 @@ function fixture(initialEnabled = false, previouslyEnabled = false) {
   const stop = jest.fn(async () => {
     events.push("stop")
   })
-  const controller = new IosCallVisibility({
+  const controller = new IosMiniappVisibility({
     isEnabled: () => enabled,
     wasEnabled: () => savedEnabled,
     saveEnabled: (value) => {
@@ -43,7 +43,7 @@ function fixture(initialEnabled = false, previouslyEnabled = false) {
   }
 }
 
-describe("iOS Call visibility lifecycle", () => {
+describe("iOS miniapp visibility lifecycle", () => {
   it("hides a cached visible/running entry synchronously before startup restoration", async () => {
     const f = fixture(false, true) // Earlier PR build already ran migration 5.
     const pending = f.controller.reconcile()

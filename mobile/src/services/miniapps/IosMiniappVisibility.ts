@@ -8,8 +8,8 @@ interface Dependencies {
   stop: () => Promise<void>
 }
 
-/** Serializes Call visibility changes with bundle installation and teardown. */
-export class IosCallVisibility {
+/** Serializes visibility changes with miniapp installation and teardown. */
+export class IosMiniappVisibility {
   private pending: Promise<void> = Promise.resolve()
   private disposed = false
 

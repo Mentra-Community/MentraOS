@@ -26,20 +26,22 @@ beforeEach(() => {
   saved.clear()
 })
 afterEach(() => logSpy.mockRestore())
-describe("iOS Call local setting hydration", () => {
-  test("defaults off even in development and preserves explicit choices across restarts", async () => {
-    const key = "show_mentra_call_ios"
-    let state = restartSettings().useSettingsStore
-    await state.getState().loadAllSettings()
-    expect(state.getState().getSetting(key)).toBe(false)
-    await state.getState().setSetting(key, true)
-    expect(saved.get(key)).toBe(true)
-    state = restartSettings().useSettingsStore
-    await state.getState().loadAllSettings()
-    expect(state.getState().getSetting(key)).toBe(true)
-    await state.getState().setSetting(key, false)
-    state = restartSettings().useSettingsStore
-    await state.getState().loadAllSettings()
-    expect(state.getState().getSetting(key)).toBe(false)
-  })
+describe("iOS miniapp local setting hydration", () => {
+  test.each(["show_mentra_call_ios", "show_notify_ios"])(
+    "%s defaults off in development and survives restarts",
+    async (key) => {
+      let state = restartSettings().useSettingsStore
+      await state.getState().loadAllSettings()
+      expect(state.getState().getSetting(key)).toBe(false)
+      await state.getState().setSetting(key, true)
+      expect(saved.get(key)).toBe(true)
+      state = restartSettings().useSettingsStore
+      await state.getState().loadAllSettings()
+      expect(state.getState().getSetting(key)).toBe(true)
+      await state.getState().setSetting(key, false)
+      state = restartSettings().useSettingsStore
+      await state.getState().loadAllSettings()
+      expect(state.getState().getSetting(key)).toBe(false)
+    },
+  )
 })
