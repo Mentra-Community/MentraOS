@@ -50,6 +50,14 @@ describe("scaleMicTuningToGain", () => {
 })
 
 describe("resolveMicPolicy", () => {
+  test("livestreams pin continuous glasses PCM without call echo gating or a gain override", () => {
+    expect(resolveMicPolicy([session("livestream", "glasses")], ANDROID)).toEqual({
+      rawPcm: true,
+      pinGlasses: true,
+      micTuning: null,
+      loudnessGate: false,
+    })
+  })
   test("no sessions claims nothing", () => {
     expect(resolveMicPolicy([], ANDROID)).toEqual({
       rawPcm: false,

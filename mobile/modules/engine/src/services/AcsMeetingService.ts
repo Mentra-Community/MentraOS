@@ -15,11 +15,13 @@ import micSessionManager, {type MicSession} from "./MicSessionManager"
 import {ENGINE_OWNER_PREFIX} from "./micPolicy"
 import {SETTINGS, useSettingsStore} from "../stores/settings"
 import {Pcm16LevelMeter, pcm16WindowStats} from "../utils/pcm16"
+import {pcmToBase64} from "../utils/pcmToBase64"
 import {softapTrace, softapTraceFailure, softapTraceId} from "../utils/softapTrace"
 import {ACS_CALL_MIC, type AcsAudioSource, type ResolvedAudioSource, type SourceReason} from "./acsAudioSource"
 import type {SoftapProgress} from "./SoftapCallTransport"
 
 export {ACS_CALL_MIC}
+export {pcmToBase64}
 export type {ResolvedAudioSource, SourceReason}
 
 type MeetingPhase = "idle" | "connecting" | "lobby" | "connected" | "disconnected" | "error"
@@ -549,24 +551,6 @@ const MIC_UPLINK_LOG_INTERVAL_MS = 5000
 const MIC_UPLINK_SWEEP_LOG_INTERVAL_MS = 1000
 /** A 50 ms LC3 frame arriving more than this late is a missed beat, not jitter. */
 const MIC_GAP_WARN_MS = 90
-
-/**
- * Encode one microphone buffer for `pushOutgoingPcm`.
- *
- * Hermes has no Node `Buffer`. Using it here is how a live SoftAP call selected `ble-lc3`,
- * pinned the glasses, and still sent Teams a minute of silence: every `mic_pcm` event threw
- * `Property 'Buffer' doesn't exist` before native saw a byte. `btoa` is what React Native
- * actually has.
- */
-export function pcmToBase64(pcm: ArrayBuffer): string {
-  const bytes = new Uint8Array(pcm)
-  let binary = ""
-  const step = 0x8000
-  for (let i = 0; i < bytes.length; i += step) {
-    binary += String.fromCharCode(...bytes.subarray(i, i + step))
-  }
-  return btoa(binary)
-}
 
 class AcsMeetingService {
   private owner: string | null = null
