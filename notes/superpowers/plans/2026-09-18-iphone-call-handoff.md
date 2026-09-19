@@ -277,3 +277,25 @@ All 25 Swift core tests pass, including cancellation followed by late approval.
 The Xcode 26.6 iOS Release build and formatting checks pass. No live stream was
 started for this review fix; physical qualification above
 remains partial, and the installed phone candidate is unchanged.
+
+## Transient local-network waiting review
+
+Review 5254213633 confirmed that an ordinary `NWConnection.State.waiting` was
+incorrectly treated as terminal. The regression test reproduced a failed join
+for `waiting(.ENETUNREACH)` followed by `ready`, including a nil current path.
+The request now consumes the actual Network.framework states and path reasons;
+the adapter also forwards path changes so later permission information is seen.
+Transient waiting keeps the same connection alive for Network.framework to retry.
+
+Ordinary local connection setup gets a cumulative 30-second budget, matching the
+existing allowance for a verified hotspot address. Permission waiting pauses
+the budget without resetting it; repeated waiting/preparing updates cannot
+extend it indefinitely. Ready, terminal failure and cancellation finish once,
+cancel the timer and ignore late callbacks. Both Call and managed relay use the
+same request, with no extra consumer-specific retry loop.
+
+All 30 Swift core tests and 310 focused host tests pass. Deterministic clock tests
+cover ordinary timeout, repeated updates, 200 seconds of excluded permission
+waiting, resuming the remaining budget and cancellation followed by late ready
+and timeout events. The Xcode 26.6 iOS Release build and Swift formatting pass.
+This source review adds no physical qualification result.

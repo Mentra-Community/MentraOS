@@ -351,9 +351,12 @@ That state waits for access and reports instructions through
 `onScopedNetworkProgress`; it does not spend the 60-second hotspot-association
 deadline or a camera deadline. Denial and an unanswered alert cannot be reliably
 distinguished by this API. The wearer can enable Local Network in Settings or
-cancel; cancellation releases the request and ignores late approval. Other
-connection failures still fail the join. The miniapp starts its two-minute ACS
-admission deadline after native setup returns (Mentra Call 2.1.21).
+cancel; cancellation releases the request and ignores late approval. Ordinary
+connection setup has a cumulative 30-second budget, paused during permission
+waiting. Network.framework's nonfatal `.waiting` states keep the connection
+alive so a settling route can recover; repeated state updates do not reset that
+budget. A terminal `.failed` state still fails the join. The miniapp starts its
+two-minute ACS admission deadline after native setup returns (Mentra Call 2.1.21).
 
 `createCallAgent` after the scoped join sat for the full 20 s deadline on device and only
 completed once SoftAP was released — glasses dnsmasq cannot resolve ACS hosts. Token mint
