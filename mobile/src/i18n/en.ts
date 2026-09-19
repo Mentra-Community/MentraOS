@@ -584,6 +584,8 @@ const en = {
     activateAnAppMessage: "Switch the toggle to run an app on your glasses.",
     search: "Search",
     noAppsFoundForQuery: 'No apps found for "{{query}}"',
+    openAllApps: "Open all miniapps",
+    closeAllApps: "Close all miniapps list",
     clearSearch: "Clear Search",
     movedToActive: "Moved to Active",
     movedToInactive: "Moved to Inactive",
@@ -1236,6 +1238,8 @@ const en = {
     },
   },
   navigation: {
+    minimizeMiniapp: "Minimize miniapp",
+    closeMiniapp: "Close miniapp",
     home: "Home",
     glasses: "Glasses",
     mirror: "Mirror",
@@ -1243,6 +1247,8 @@ const en = {
     account: "Account",
   },
   appSwitcher: {
+    open: "Open running miniapps",
+    close: "Close running miniapps list",
     swipeUpToClose: "Swipe up to close miniapps",
     noAppsOpen: "No miniapps open",
     yourRecentlyUsedAppsWillAppearHere: "Your recently used miniapps will appear here",

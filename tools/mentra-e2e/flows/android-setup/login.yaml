@@ -1,0 +1,15 @@
+appId: com.mentra.mentra
+---
+- tapOn: "Email address"
+- inputText: ${MAESTRO_E2E_EMAIL}
+- tapOn:
+    text: "Password"
+    index: 1
+- inputText: ${MAESTRO_E2E_PASSWORD}
+- hideKeyboard
+- tapOn:
+    text: ".*, Log In"
+- extendedWaitUntil:
+    notVisible: "Log in to MentraOS"
+    timeout: 30000
+- takeScreenshot: setup-authenticated

@@ -1,0 +1,5 @@
+appId: com.mentra.mentra
+---
+- assertVisible: "Mentra Live connected"
+- tapOn: "Continue setup"
+- takeScreenshot: setup-continue

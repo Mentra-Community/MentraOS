@@ -14,6 +14,7 @@ The Mentra App is a React Native app built with Expo and expo-router for file-ba
 - Start dev server: `bun start` (expo start --dev-client)
 - Run on Android: `bun android` (expo run:android)
 - Run on iOS: `bun ios` (expo run:ios)
+- Run the iOS app directly on an Apple Silicon Mac: `bun ios:mac` (local Release build with bundled JavaScript, background launch). Use `--build-only` to compile without replacing the running app, or `--debug` with a separate Metro server. Requires Xcode development signing; does not upload to TestFlight.
 - Setup ADB port forwarding: `bun adb`
 
 ### Building
