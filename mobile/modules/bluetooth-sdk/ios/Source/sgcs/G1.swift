@@ -453,6 +453,8 @@ class G1: NSObject, SGCManager {
 
     private var leftPeripheral: CBPeripheral?
     private var rightPeripheral: CBPeripheral?
+    private let serialIdentity = G1SerialIdentity()
+    private var discoveredSerials: [UUID: String] = [:]
     private var connectedDevices: [String: (CBPeripheral?, CBPeripheral?)] = [:]
     var lastConnectionTimestamp: Date = .distantPast
     private var leftInitialized: Bool = false
@@ -509,6 +511,9 @@ class G1: NSObject, SGCManager {
         if let right = rightPeripheral {
             centralManager?.cancelPeripheralConnection(right)
         }
+
+        serialIdentity.forget()
+        discoveredSerials.removeAll()
 
         // Clear all references
         leftGlassUUID = nil
@@ -590,38 +595,22 @@ class G1: NSObject, SGCManager {
         return (style, color)
     }
 
-    /// Decodes serial number from manufacturer data bytes
-    /// - Parameter manufacturerData: The manufacturer data bytes
-    /// - Returns: Decoded serial number string or nil if not found
-    private func decodeSerialFromManufacturerData(_ manufacturerData: Data) -> String? {
-        guard manufacturerData.count >= 10 else {
-            return nil
-        }
-
-        // Convert bytes to ASCII string
-        var serialBuilder = ""
-        for byte in manufacturerData {
-            if byte == 0x00 {
-                // Stop at null terminator
-                break
-            }
-            if byte >= 0x20, byte <= 0x7E {
-                // Only include CoreCommsService.logable ASCII characters
-                serialBuilder.append(Character(UnicodeScalar(byte)))
-            }
-        }
-
-        let decodedString = serialBuilder.trimmingCharacters(in: .whitespacesAndNewlines)
-
-        // Check if it looks like a valid Even G1 serial number
-        if decodedString.count >= 12,
-           decodedString.hasPrefix("S1") || decodedString.hasPrefix("100")
-           || decodedString.hasPrefix("110")
-        {
-            return decodedString
-        }
-
-        return nil
+    /// Android uses the left arm's advertising serial; use that same hardware
+    /// identity on iOS, including when CoreBluetooth reconnects without a scan.
+    private func restoreSerial(from peripheral: CBPeripheral) {
+        let cachedSerial = serialIdentity.resolve(peripheralID: peripheral.identifier, searchID: DEVICE_SEARCH_ID)
+        let matchesName = peripheral.name?.contains("_L_") == true
+            && peripheral.name?.contains(DEVICE_SEARCH_ID) == true
+        // CoreBluetooth may return a cached peripheral without its name. An
+        // exact persisted UUID + search id match is still sufficient.
+        guard matchesName || cachedSerial != nil else { return }
+        let serial = discoveredSerials[peripheral.identifier] ?? cachedSerial
+        guard let serial else { return }
+        serialIdentity.remember(serial: serial, peripheralID: peripheral.identifier, searchID: DEVICE_SEARCH_ID)
+        let (style, color) = G1.decodeEvenG1SerialNumber(serial)
+        DeviceStore.shared.apply("glasses", "serialNumber", serial)
+        DeviceStore.shared.apply("glasses", "style", style)
+        DeviceStore.shared.apply("glasses", "color", color)
     }
 
     /// Emits serial number information to React Native
@@ -672,6 +661,7 @@ class G1: NSObject, SGCManager {
                 Bridge.log("G1: Connected to device: \(name)")
                 if name.contains("_L_") && name.contains(DEVICE_SEARCH_ID) {
                     leftPeripheral = device
+                    restoreSerial(from: device)
                     device.delegate = self
                     device.discoverServices([UART_SERVICE_UUID])
                 } else if name.contains("_R_") && name.contains(DEVICE_SEARCH_ID) {
@@ -686,8 +676,10 @@ class G1: NSObject, SGCManager {
         // First try: Connect by UUID (works in background)
         if connectByUUID() {
             Bridge.log("G1: 🔄 Found and attempting to connect to stored glasses UUIDs")
-            // Wait for connection to complete - no need to scan
-            return true
+            // Existing installs may only have UUIDs, without an advertising
+            // serial yet. Keep connecting in the background, but allow a scan
+            // to recover the serial when an advertisement is available.
+            if !serialNumber.isEmpty { return true }
         }
 
         let scanOptions: [String: Any] = [
@@ -699,7 +691,13 @@ class G1: NSObject, SGCManager {
     }
 
     func connectById(_ id: String) {
-        DEVICE_SEARCH_ID = "_" + id + "_"
+        let searchID = "_" + id + "_"
+        if DEVICE_SEARCH_ID != searchID {
+            DeviceStore.shared.apply("glasses", "serialNumber", "")
+            DeviceStore.shared.apply("glasses", "style", "")
+            DeviceStore.shared.apply("glasses", "color", "")
+        }
+        DEVICE_SEARCH_ID = searchID
         startScan()
     }
 
@@ -981,6 +979,9 @@ class G1: NSObject, SGCManager {
         connected = leftReady && rightReady
         if fullyBooted {
             stopReconnectionTimer()
+            // Do not keep an unfiltered scan running for telemetry after the
+            // connection is ready. A legacy pairing may need one fresh scan.
+            centralManager?.stopScan()
         }
     }
 
@@ -1007,6 +1008,7 @@ class G1: NSObject, SGCManager {
 
     func disconnect() {
         isDisconnecting = true
+        centralManager?.stopScan()
         leftGlassUUID = nil
         rightGlassUUID = nil
         stopReconnectionTimer()
@@ -2271,43 +2273,30 @@ extension G1: CBCentralManagerDelegate, CBPeripheralDelegate {
 
         Bridge.log("G1: found peripheral: \(name) - SEARCH_ID: \(DEVICE_SEARCH_ID)")
 
-        // Only process serial number for devices that match our search ID
-        if name.contains(DEVICE_SEARCH_ID) {
-            // Extract manufacturer data to decode serial number
-            if let manufacturerData = advertisementData[CBAdvertisementDataManufacturerDataKey]
-                as? Data
-            {
-                Bridge.log("G1: 📱 Found manufacturer data: \(manufacturerData.hexEncodedString())")
-
-                // Try to decode serial number from manufacturer data
-                if let decodedSerial = decodeSerialFromManufacturerData(manufacturerData) {
-                    Bridge.log("G1: 📱 Decoded serial number: \(decodedSerial)")
-
-                    // Decode style and color from serial number
-                    let (decodedStyle, decodedColor) = G1.decodeEvenG1SerialNumber(decodedSerial)
-                    Bridge.log("G1: 📱 Style: \(style), Color: \(color)")
-
-                    // Store the information
-                    DeviceStore.shared.apply("glasses", "serialNumber", decodedSerial)
-                    DeviceStore.shared.apply("glasses", "style", decodedStyle)
-                    DeviceStore.shared.apply("glasses", "color", decodedColor)
-                } else {
-                    Bridge.log("G1: 📱 Could not decode serial number from manufacturer data")
-                }
-            } else {
-                Bridge.log("G1: 📱 No manufacturer data found in advertisement")
-            }
+        // Cache advertisements during the picker scan too: selecting an
+        // already-discovered pair need not produce another advertisement.
+        if name.contains("_L_"),
+           let data = advertisementData[CBAdvertisementDataManufacturerDataKey] as? Data,
+           let serial = G1SerialIdentity.decodeManufacturerData(data)
+        {
+            discoveredSerials[peripheral.identifier] = serial
         }
+
+        emitDiscoveredDevice(name)
+        guard !isDisconnecting, name.contains(DEVICE_SEARCH_ID) else { return }
+        // The numeric pairing id can collide with another nearby pair. Once we
+        // know an arm's UUID, only its advertisement may update this connection.
+        if name.contains("_L_"), let expected = leftGlassUUID, expected != peripheral.identifier { return }
+        if name.contains("_R_"), let expected = rightGlassUUID, expected != peripheral.identifier { return }
 
         if name.contains("_L_"), name.contains(DEVICE_SEARCH_ID) {
             Bridge.log("G1: Found left arm: \(name)")
             leftPeripheral = peripheral
+            restoreSerial(from: peripheral)
         } else if name.contains("_R_"), name.contains(DEVICE_SEARCH_ID) {
             Bridge.log("G1: Found right arm: \(name)")
             rightPeripheral = peripheral
         }
-
-        emitDiscoveredDevice(name)
 
         if leftPeripheral != nil, rightPeripheral != nil {
             //      central.stopScan()
@@ -2407,12 +2396,13 @@ extension G1: CBCentralManagerDelegate, CBPeripheralDelegate {
             Bridge.log("G1: 🔵 Found stored left glass UUID: \(leftUUID.uuidString)")
             let leftDevices = centralManager!.retrievePeripherals(withIdentifiers: [leftUUID])
 
-            if let leftDevice = leftDevices.first {
+            if let leftDevice = leftDevices.first, leftDevice.name?.contains(DEVICE_SEARCH_ID) != false {
                 Bridge.log(
                     "G1: 🔵 Successfully retrieved left glass: \(leftDevice.name ?? "Unknown")"
                 )
                 foundAny = true
                 leftPeripheral = leftDevice
+                restoreSerial(from: leftDevice)
                 leftDevice.delegate = self
                 centralManager!.connect(
                     leftDevice,
@@ -2421,6 +2411,8 @@ extension G1: CBCentralManagerDelegate, CBPeripheralDelegate {
                         CBConnectPeripheralOptionNotifyOnDisconnectionKey: true,
                     ]
                 )
+            } else if leftDevices.first?.name?.contains(DEVICE_SEARCH_ID) == false {
+                leftGlassUUID = nil
             }
         }
 
@@ -2428,7 +2420,7 @@ extension G1: CBCentralManagerDelegate, CBPeripheralDelegate {
             Bridge.log("G1: 🔵 Found stored right glass UUID: \(rightUUID.uuidString)")
             let rightDevices = centralManager!.retrievePeripherals(withIdentifiers: [rightUUID])
 
-            if let rightDevice = rightDevices.first {
+            if let rightDevice = rightDevices.first, rightDevice.name?.contains(DEVICE_SEARCH_ID) != false {
                 Bridge.log(
                     "G1: 🔵 Successfully retrieved right glass: \(rightDevice.name ?? "Unknown")"
                 )
@@ -2442,6 +2434,8 @@ extension G1: CBCentralManagerDelegate, CBPeripheralDelegate {
                         CBConnectPeripheralOptionNotifyOnDisconnectionKey: true,
                     ]
                 )
+            } else if rightDevices.first?.name?.contains(DEVICE_SEARCH_ID) == false {
+                rightGlassUUID = nil
             }
         }
 
