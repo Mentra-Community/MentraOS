@@ -1,7 +1,18 @@
 import assert from "node:assert/strict"
+import {createHash} from "node:crypto"
+import {once} from "node:events"
+import {createServer} from "node:http"
 import test from "node:test"
 import {readFileSync} from "node:fs"
-import {iosBuildRequired, buildPost, matchingBuildRun, notifyPrBuilds, readOtaTargets} from "./notify-pr-builds.mjs"
+import {brotliCompressSync} from "node:zlib"
+import {
+  iosBuildRequired,
+  buildPost,
+  matchingBuildRun,
+  notifyPrBuilds,
+  readOtaTargets,
+  verifyIosTextArtifact,
+} from "./notify-pr-builds.mjs"
 
 const sha = "a".repeat(40)
 const pr = {
@@ -108,6 +119,9 @@ function harness(options = {}) {
     currentPr: pr,
     artifactStatus: 200,
     missingMac: false,
+    missingInstall: false,
+    wrongInstallType: false,
+    corruptInstall: false,
     jobs: {},
     ...options,
   }
@@ -165,11 +179,28 @@ function harness(options = {}) {
       posts.push(JSON.parse(options.body))
       return new Response("ok")
     }
+    const isInstallFile = /\.(html|plist)$/.test(url)
     return new Response(
-      options.method === "HEAD" ? null : JSON.stringify(url.includes("mentra-ios-pr-") ? state.receipt : manifest),
+      options.method === "HEAD"
+        ? null
+        : isInstallFile
+        ? state.corruptInstall
+          ? "bad bytes!"
+          : "test bytes"
+        : JSON.stringify(url.includes("mentra-ios-pr-") ? state.receipt : manifest),
       {
-        status: state.missingMac && url.endsWith(".zip") ? 404 : state.artifactStatus,
-        headers: {"content-length": "10"},
+        status:
+          (state.missingMac && url.endsWith(".zip")) || (state.missingInstall && url.endsWith(".html"))
+            ? 404
+            : state.artifactStatus,
+        headers: {
+          ...(isInstallFile ? {"content-encoding": "br"} : {"content-length": "10"}),
+          "content-type": state.wrongInstallType
+            ? "application/octet-stream"
+            : url.endsWith(".html")
+            ? "text/html; charset=utf-8"
+            : "text/xml; charset=utf-8",
+        },
       },
     )
   }
@@ -187,6 +218,100 @@ function harness(options = {}) {
   }
 }
 process.env.SLACK_WEBHOOK_PR_BUILDS = "https://example.com/webhook"
+
+test("publishes a direct Slack install link and Safari fallback only after verifying the complete install set", async () => {
+  const receipt = structuredClone(iosReceipt)
+  receipt.schemaVersion = 2
+  for (const [kind, ext] of [
+    ["install", "html"],
+    ["manifest", "plist"],
+  ])
+    receipt.artifacts[kind] = {
+      name: `mentra-ios-${kind}-pr-123-${sha}-3-1.${ext}`,
+      size: 10,
+      sha256: createHash("sha256").update("test bytes").digest("hex"),
+    }
+  const ready = harness({files: [{filename: "mobile/app.config.ts"}], receipt})
+  await notifyPrBuilds(ready.args)
+  const platformBlock = ready.posts[0].blocks[3]
+  assert.equal(platformBlock.type, "rich_text")
+  const platformRows = platformBlock.elements
+  assert.equal(platformRows.length, 3)
+  assert.deepEqual(
+    platformRows.map((row) => row.elements[1].text),
+    [" Android", " iOS", " macOS"],
+  )
+  assert.ok(platformRows.every((row) => row.type === "rich_text_section" && row.elements[1].style.bold))
+  assert.equal(platformRows[0].elements[3].text, "Download APK")
+  assert.equal(platformRows[2].elements[3].text, "Download ZIP")
+  const iphoneLinks = platformRows[1].elements.filter((element) => element.type === "link")
+  assert.deepEqual(
+    iphoneLinks.map((element) => element.text),
+    ["Install on iPhone", "Install via Safari", "Download IPA"],
+  )
+  // A structured link is required: webhook mrkdwn escapes this URL scheme.
+  const direct = new URL(iphoneLinks[0].url)
+  assert.equal(direct.protocol, "itms-services:")
+  assert.equal(direct.searchParams.get("action"), "download-manifest")
+  const verifiedManifest = ready.requests.find((url) => url.endsWith(".plist"))
+  assert.equal(direct.searchParams.get("url"), verifiedManifest)
+  assert.match(iphoneLinks[1].url, /^https:\/\/artifactscdn.*\.html$/)
+  assert.match(ready.written[0].body, /\[Install on iPhone\]\(https:\/\/artifactscdn.*\.html\)/)
+  assert.doesNotMatch(ready.written[0].body, /itms-services:/)
+  assert.ok(ready.requests.some((url) => url.endsWith(".plist")))
+  assert.ok(ready.requests.some((url) => url.endsWith(".html")))
+  for (const failure of [{missingInstall: true}, {wrongInstallType: true}, {corruptInstall: true}]) {
+    const incomplete = harness({files: ready.state.files, receipt, ...failure})
+    await notifyPrBuilds(incomplete.args)
+    assert.match(incomplete.posts[0].text, /incomplete/)
+    assert.doesNotMatch(JSON.stringify(incomplete.posts[0]), /Install on iPhone/)
+    assert.doesNotMatch(JSON.stringify(incomplete.posts[0]), /itms-services:/)
+  }
+  const legacy = harness({files: ready.state.files})
+  await notifyPrBuilds(legacy.args)
+  assert.match(legacy.written[0].body, /Download iPhone IPA/)
+  assert.doesNotMatch(legacy.written[0].body, /Install on iPhone/)
+  assert.doesNotMatch(JSON.stringify(legacy.posts[0]), /itms-services:/)
+})
+
+test("verifies decoded install files through real HTTP compression with missing or compressed Content-Length", async (t) => {
+  const body = Buffer.from("<plist>" + "manifest content ".repeat(30) + "</plist>")
+  const compressed = brotliCompressSync(body)
+  const asset = {size: body.length, sha256: createHash("sha256").update(body).digest("hex")}
+  const server = createServer((request, response) => {
+    response.setHeader("Content-Type", "text/xml; charset=utf-8")
+    response.setHeader("Content-Encoding", "br")
+    if (request.url === "/length") response.setHeader("Content-Length", compressed.length)
+    response.write(compressed)
+    response.end()
+  })
+  t.after(() => {
+    server.closeAllConnections()
+    server.close()
+  })
+  server.listen(0, "127.0.0.1")
+  await once(server, "listening")
+  const origin = `http://127.0.0.1:${server.address().port}`
+  for (const endpoint of ["/length", "/chunked"]) {
+    const response = await fetch(origin + endpoint)
+    assert.notEqual(Number(response.headers.get("content-length")), asset.size)
+    await verifyIosTextArtifact(response, "manifest", asset)
+  }
+  await assert.rejects(
+    verifyIosTextArtifact(new Response(body, {headers: {"content-type": "text/xml"}}), "manifest", {
+      ...asset,
+      size: asset.size + 1,
+    }),
+    /size disagrees/,
+  )
+  await assert.rejects(
+    verifyIosTextArtifact(new Response(body, {headers: {"content-type": "text/xml"}}), "manifest", {
+      ...asset,
+      sha256: "0".repeat(64),
+    }),
+    /hash disagrees/,
+  )
+})
 
 // Exercise the completion route declared by each real caller, not a fictional
 // second Android invocation. Actionlint additionally validates workflow syntax,
@@ -335,6 +460,10 @@ test("iOS failure, missing downloads or stale receipts never advertise Apple dow
     const h = harness({...options, files: [{filename: "mobile/app.config.ts"}]})
     await notifyPrBuilds(h.args)
     assert.match(h.posts[0].text, /incomplete/)
+    const platformRows = h.posts[0].blocks[3].elements
+    assert.equal(platformRows[1].elements.at(-1).text, "Unavailable")
+    assert.equal(platformRows[2].elements.at(-1).text, "Unavailable")
+    assert.ok(platformRows.slice(1).every((row) => row.elements.every((element) => element.type !== "link")))
     assert.doesNotMatch(h.written[0].body, /Download iPhone IPA|Download Mac app/)
     assert.match(h.written[0].body, /Download Android APK/)
   }

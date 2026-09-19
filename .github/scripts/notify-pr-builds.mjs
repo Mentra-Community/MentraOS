@@ -1,3 +1,5 @@
+import {createHash} from "node:crypto"
+import {iosInstallUrl} from "./pr-ios-artifacts-install.mjs"
 import {iosReceiptName, validateIosReceipt} from "./pr-ios-artifacts.mjs"
 import {artifactUrl} from "./release-artifact-storage.mjs"
 
@@ -14,6 +16,18 @@ export function iosBuildRequired(files) {
 const escape = (value) => String(value).replaceAll("&", "&amp;").replaceAll("<", "&lt;").replaceAll(">", "&gt;")
 const link = (url, label) => `<${url}|${escape(label).replaceAll("|", " ")}>`
 const marker = "<!-- mentra-pr-builds-slack -->"
+const iosTextTypes = {install: "text/html", manifest: "text/xml"}
+
+export async function verifyIosTextArtifact(response, kind, asset) {
+  if (response.headers.get("content-type")?.split(";")[0] !== iosTextTypes[kind])
+    throw new Error(`Published ${kind} has an incorrect content type`)
+  // Fetch decodes CDN compression. Content-Length may be absent or describe
+  // compressed bytes, while the receipt describes the original uploaded file.
+  const bytes = Buffer.from(await response.arrayBuffer())
+  if (bytes.length !== asset.size) throw new Error(`Published ${kind} download size disagrees with its receipt`)
+  if (createHash("sha256").update(bytes).digest("hex") !== asset.sha256)
+    throw new Error(`Published ${kind} download hash disagrees with its receipt`)
+}
 
 export function readOtaTargets(manifest, number, sha) {
   if (manifest.releaseVersion !== `pr-${number}-${sha}`)
@@ -45,8 +59,48 @@ export function buildPost({pr, sha, androidUrl, manifestUrl, targets, androidRun
     link(pr.html_url, `#${pr.number} — ${pr.title}`),
     `${escape(pr.head.ref)} → ${escape(pr.base.ref)} · by ${escape(pr.user.login)} · commit \`${sha.slice(0, 7)}\``,
   ]
+  const appleStatus = ios?.error ? "Unavailable" : "Not built for these changes"
+  const richLink = (url, text) => ({type: "link", url, text})
+  const iphoneLinks = []
+  if (ios?.assets) {
+    if (ios.assets.install)
+      iphoneLinks.push(
+        richLink(iosInstallUrl(ios.assets.manifest), "Install on iPhone"),
+        richLink(ios.assets.install, "Install via Safari"),
+      )
+    iphoneLinks.push(richLink(ios.assets.iphone, "Download IPA"))
+  }
+  // Slack's webhook mrkdwn parser escapes itms-services links as literal text.
+  // Rich-text link elements preserve the direct install action and aligned rows.
+  const platforms = {
+    type: "rich_text",
+    elements: [
+      ["iphone", "Android", error ? [] : [richLink(androidUrl, "Download APK")], "Unavailable"],
+      ["iphone", "iOS", iphoneLinks, appleStatus],
+      ["computer", "macOS", ios?.assets ? [richLink(ios.assets.mac, "Download ZIP")] : [], appleStatus],
+    ].map(([icon, name, links, status]) => ({
+      type: "rich_text_section",
+      elements: [
+        {type: "emoji", name: icon},
+        {type: "text", text: ` ${name}`, style: {bold: true}},
+        {type: "text", text: " — "},
+        ...(links.length
+          ? links.flatMap((item, index) => (index ? [{type: "text", text: " · "}, item] : [item]))
+          : [{type: "text", text: status}]),
+      ],
+    })),
+  }
+  if (error) lines.push(`*Android:* ${escape(error)}`)
+  if (ios?.error) lines.push(`*iOS / macOS:* ${escape(ios.error)}`)
+  if (!error || ios?.assets)
+    lines.push(
+      `Backend: *Dev*${!error ? " · Android ARM64" : ""}${
+        ios?.assets
+          ? ` · Apple devices must be registered · ${link(ios.instructionsUrl, "Installation instructions")}`
+          : ""
+      }`,
+    )
   if (!error) {
-    lines.push(`📱 *Android* — ${link(androidUrl, "Download APK")}\nBackend: *Dev* · Android ARM64`)
     lines.push(
       `🕶️ *Glasses OTA — ready*\n*ASG:* ${escape(targets.asg.versionName)} · build ${
         targets.asg.versionCode
@@ -58,30 +112,20 @@ export function buildPost({pr, sha, androidUrl, manifestUrl, targets, androidRun
     lines.push(
       "Install the APK, connect your Mentra Live glasses, and follow the update prompt if shown. This app targets the versions above.",
     )
-  } else {
-    lines.push(escape(error))
   }
-  if (ios?.assets) {
-    lines.push(
-      `📱 *iPhone* — ${link(ios.assets.iphone, "Download IPA")}\n🖥️ *Mac* — ${link(
-        ios.assets.mac,
-        "Download app",
-      )}\nRegistered devices only · Backend: *Dev* · ${link(ios.instructionsUrl, "Installation instructions")}`,
-    )
-  } else if (ios?.error) lines.push(`*iPhone / Mac:* ${escape(ios.error)}`)
-  else if (ios) lines.push("*iPhone / Mac:* not built for these changed paths.")
-  if (ios?.runUrl) lines.push(link(ios.runUrl, "iOS build logs"))
   lines.push(
     `${link(pr.html_url, "View PR and checks")} · ${link(androidRunUrl, "Android build logs")}${
-      asgRunUrl ? ` · ${link(asgRunUrl, "ASG build logs")}` : ""
-    }`,
+      ios?.runUrl ? ` · ${link(ios.runUrl, "iOS / macOS build logs")}` : ""
+    }${asgRunUrl ? ` · ${link(asgRunUrl, "ASG build logs")}` : ""}`,
   )
   if (ready) lines.push("Downloads may be cleaned up after 7 days.")
+  const blocks = lines.map((text) => ({type: "section", text: {type: "mrkdwn", text}}))
+  blocks.splice(3, 0, platforms)
   return {
     text: `${title}: #${pr.number} ${pr.title} (${sha.slice(0, 7)})`,
     unfurl_links: false,
     unfurl_media: false,
-    blocks: lines.map((text) => ({type: "section", text: {type: "mrkdwn", text}})),
+    blocks,
   }
 }
 
@@ -241,8 +285,9 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
       const urls = {}
       for (const [kind, asset] of Object.entries(assets)) {
         urls[kind] = artifactUrl(`${repo.owner}/${repo.repo}`, "pr-builds", asset.name)
-        const response = await request(urls[kind], "HEAD")
-        if (Number(response.headers.get("content-length")) !== asset.size)
+        const response = await request(urls[kind], iosTextTypes[kind] ? "GET" : "HEAD")
+        if (iosTextTypes[kind]) await verifyIosTextArtifact(response, kind, asset)
+        else if (Number(response.headers.get("content-length")) !== asset.size)
           throw new Error(`Published ${kind} download size disagrees with its receipt`)
       }
       ios.assets = urls
@@ -292,7 +337,9 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
   const downloads = [error || `[Download Android APK](${androidUrl}) · [Glasses OTA manifest](${manifestUrl})`]
   if (ios.assets)
     downloads.push(
-      `[Download iPhone IPA](${ios.assets.iphone}) · [Download Mac app](${ios.assets.mac}) · [Installation instructions](${ios.instructionsUrl})`,
+      `${ios.assets.install ? `[Install on iPhone](${ios.assets.install}) · ` : ""}[Download iPhone IPA](${
+        ios.assets.iphone
+      }) · [Download Mac app](${ios.assets.mac}) · [Installation instructions](${ios.instructionsUrl})`,
     )
   else downloads.push(ios.error || "iPhone / Mac: not built for these changed paths.")
   const body = `${marker}\n<!-- ${identity} -->\n${

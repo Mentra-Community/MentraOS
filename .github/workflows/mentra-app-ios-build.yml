@@ -84,9 +84,11 @@ jobs:
         uses: ./.github/actions/disk-guard
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v1
+        uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          # Match coordinated mobile builds. v2 reuses this installed version
+          # or downloads from GitHub Releases, avoiding the flaky bun.sh alias.
+          bun-version: 1.4.0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
@@ -633,7 +635,7 @@ jobs:
         with:
           name: pr-ios-${{ github.run_id }}-${{ needs.build.outputs.upload_attempt }}
           path: pr-ios-output
-      - name: Publish verified iPhone IPA, Mac ZIP and receipt
+      - name: Publish verified iPhone installer, IPA, Mac ZIP and receipt
         env:
           GH_TOKEN: ${{ github.token }}
           ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
