@@ -1,6 +1,2 @@
-miniapps/ @AryanFP @isaiahb
-mobile/ @AryanFP
-cloud-v2/ @AryanFP @isaiahb
-mintlify-docs/ @isaiahb
-mintlify-docs/bluetooth-sdk/ @isaiahb @PhilippeFerreiraDeSousa
-mobile/modules/bluetooth-sdk/ @AryanFP @PhilippeFerreiraDeSousa
+mintlify-docs/bluetooth-sdk/ @PhilippeFerreiraDeSousa
+mobile/modules/bluetooth-sdk/ @PhilippeFerreiraDeSousa
