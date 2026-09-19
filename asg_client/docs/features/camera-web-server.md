@@ -36,6 +36,19 @@ Response when the setting is saved and a site-network endpoint is available:
 
 Commands require a nonempty `request_id` and a JSON boolean `enabled`. Malformed input returns an `invalid_request` error ack without changing the setting. Settings storage failure returns `settings_unavailable`. Native SDKs expose this as `setGalleryServerEnabled`; older firmware that does not handle the command will time out rather than claim success.
 
+### End-to-end device qualification
+
+Use updated glasses firmware and a native SDK build on a managed iPad with both devices joined to the same site Wi-Fi:
+
+1. With the hotspot off and the setting disabled, confirm port 8089 is unavailable on the glasses' site-network IP.
+2. Call `setGalleryServerEnabled(true)` through the client SDK. Check `enabled:true`, `listening:true`, and the returned station URL; list `/api/gallery` and download a finished recording through `/api/download`.
+3. Background the client and disconnect BLE. Confirm the HTTP transfer completes. Restart the glasses and reconnect Wi-Fi; confirm the server returns without another enable command. Repeat enable after reconnecting BLE to obtain the current URL if DHCP changed it.
+4. Exercise capture, deletion, and restore with disposable media using the same HTTP requests as on the hotspot.
+5. Call `setGalleryServerEnabled(false)` and confirm `enabled:false`, `listening:false`, no URL, and no station-network access. Start the hotspot and verify the original gallery APIs still work; stop it and verify the server stops.
+6. Switch modes during a transfer and verify the client retries an interrupted request. On older firmware, verify the SDK reports a timeout rather than success.
+
+Automated tests complement this hardware path: `GalleryServerCommandTests` replays native SDK commands and raw receive bytes through the real Swift event bridge and request resolver; `galleryServerBridge.test.ts` checks the public TypeScript adapter; ASG lifecycle and HTTP tests cover the device side. Radio, MDM policy, and background execution still require the physical run above.
+
 ## Construction
 
 `AsgCameraServer` uses dependency injection — you don't pass `Context` and a port directly. The factory in `io/server/core/DefaultServerFactory.java` builds the dependencies; the typical wiring is:

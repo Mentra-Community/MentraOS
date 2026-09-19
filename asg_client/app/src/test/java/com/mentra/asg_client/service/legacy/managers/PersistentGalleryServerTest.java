@@ -1,12 +1,16 @@
 package com.mentra.asg_client.service.legacy.managers;
 
 import static org.assertj.core.api.Assertions.assertThat;
+import static org.mockito.AdditionalAnswers.delegatesTo;
 import static org.mockito.ArgumentMatchers.any;
 import static org.mockito.ArgumentMatchers.eq;
 import static org.mockito.Mockito.*;
 import static org.robolectric.Shadows.shadowOf;
 
 import android.app.Application;
+import android.content.Context;
+import android.content.ContextWrapper;
+import android.content.SharedPreferences;
 import android.os.Looper;
 import androidx.test.core.app.ApplicationProvider;
 import com.mentra.asg_client.NetworkUtils;
@@ -148,6 +152,67 @@ public class PersistentGalleryServerTest {
         assertThat(manager.getGalleryServerUrl()).isNull();
         shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(5));
         assertThat(manager.getGalleryServerUrl()).isNotNull();
+    }
+
+    @Test
+    public void failedEnableCannotStartPersistentServerOnLaterReconciliation() throws Exception {
+        Context failingStorage = failPreferenceWrites();
+
+        assertThat(manager.setGalleryServerEnabled(true)).isFalse();
+        assertThat(manager.isGalleryServerEnabled()).isFalse();
+        assertThat(new AsgSettings(failingStorage).isGalleryServerEnabled()).isFalse();
+        assertThat(manager.getGalleryServerUrl()).isNull();
+        manager.reconcileGalleryServer();
+        when(network.isHotspotEnabled()).thenReturn(true);
+        manager.setWebServerEnabled(true);
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(10));
+
+        verify(server, never()).startServer();
+        assertThat(manager.getCameraServer()).isSameAs(hotspotServer);
+    }
+
+    @Test
+    public void failedDisablePreservesThePreviouslySavedSettingAndListener() throws Exception {
+        manager.setGalleryServerEnabled(true);
+        Context failingStorage = failPreferenceWrites();
+
+        assertThat(manager.setGalleryServerEnabled(false)).isFalse();
+        assertThat(manager.isGalleryServerEnabled()).isTrue();
+        assertThat(new AsgSettings(failingStorage).isGalleryServerEnabled()).isTrue();
+        shadowOf(Looper.getMainLooper()).idleFor(Duration.ofSeconds(10));
+
+        assertThat(manager.getGalleryServerUrl()).isEqualTo("http://10.1.2.3:8089");
+        verify(server, times(1)).startServer();
+        verify(server, never()).stopServer();
+    }
+
+    private Context failPreferenceWrites() throws Exception {
+        SharedPreferences backing = context.getSharedPreferences("asg_settings", Context.MODE_PRIVATE);
+        SharedPreferences preferences = mock(SharedPreferences.class, delegatesTo(backing));
+        doAnswer(call -> {
+            SharedPreferences.Editor backingEditor = backing.edit();
+            SharedPreferences.Editor editor = mock(SharedPreferences.Editor.class);
+            doAnswer(commit -> {
+                // Reproduce Android's in-memory mutation before reporting a failed write,
+                // including failure of the rollback write itself.
+                backingEditor.commit();
+                return false;
+            }).when(editor).commit();
+            doAnswer(put -> {
+                backingEditor.putBoolean(put.getArgument(0), put.getArgument(1));
+                return editor;
+            }).when(editor).putBoolean(anyString(), anyBoolean());
+            return editor;
+        }).when(preferences).edit();
+        Context failingStorage = new ContextWrapper(context) {
+            @Override
+            public SharedPreferences getSharedPreferences(String name, int mode) {
+                return preferences;
+            }
+        };
+        settings = new AsgSettings(failingStorage);
+        setField("asgSettings", settings);
+        return failingStorage;
     }
 
     @Test

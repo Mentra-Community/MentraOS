@@ -224,6 +224,8 @@ Enterprise clients can explicitly keep that same server running using the Blueto
 
 Persistent gallery access has no authentication or encryption: any reachable client can use the full camera/gallery API. Enable it only where that access is acceptable. The server remains running through Wi-Fi disconnection and address changes, and retries startup failures every five seconds. Disabling restores hotspot-only behavior, rebinding to the active hotspot address or stopping if no hotspot is active. Mode changes restart the listener and can interrupt in-flight HTTP requests. The command acknowledgement distinguishes the saved `enabled` setting from current site-network availability (`listening`) and includes `url` only when a station Wi-Fi endpoint is available.
 
+If saving the gallery setting fails, the command returns an error and restores the previous in-memory value before reconciling the server. A failed enable must not expose the site-network API immediately or on later hotspot events or retries.
+
 ### Audio and microphone
 
 Mentra Live exposes microphone/audio paths used for recording, streaming, and device audio cues. Battery warnings and other local prompts can use bundled audio assets. Audio behavior spans both MTK Android code and BES-controlled audio/Bluetooth firmware behavior.

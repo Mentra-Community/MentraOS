@@ -2665,7 +2665,8 @@ class MentraLive: NSObject, SGCManager {
 
     // MARK: - Data Processing
 
-    private func processReceivedData(_ data: Data) {
+    // Internal so native integration tests can replay the actual BLE receive path.
+    func processReceivedData(_ data: Data) {
         guard data.count > 0 else { return }
 
         let bytes = [UInt8](data)

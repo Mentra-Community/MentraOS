@@ -67,14 +67,27 @@ public class AsgSettings {
 
     /** Whether site-network HTTP gallery access is enabled across restarts. Defaults off. */
     public boolean isGalleryServerEnabled() {
-        return prefs.getBoolean(AsgConstants.GALLERY_SERVER_ENABLED_PREFERENCE, false);
+        synchronized (prefs) {
+            return prefs.getBoolean(AsgConstants.GALLERY_SERVER_ENABLED_PREFERENCE, false);
+        }
     }
 
     /** Persist the explicit site-network gallery opt-in; return whether storage succeeded. */
     public boolean setGalleryServerEnabled(boolean enabled) {
-        return prefs.edit()
-                .putBoolean(AsgConstants.GALLERY_SERVER_ENABLED_PREFERENCE, enabled)
-                .commit();
+        synchronized (prefs) {
+            boolean previous = isGalleryServerEnabled();
+            if (prefs.edit().putBoolean(AsgConstants.GALLERY_SERVER_ENABLED_PREFERENCE, enabled)
+                    .commit()) {
+                return true;
+            }
+            // commit() changes the in-memory value even when the disk write fails. Restore it
+            // before readers (including other AsgSettings instances) can observe the failed edit.
+            if (!prefs.edit().putBoolean(AsgConstants.GALLERY_SERVER_ENABLED_PREFERENCE, previous)
+                    .commit()) {
+                Log.e(TAG, "Gallery setting rollback was restored in memory but could not be saved");
+            }
+            return false;
+        }
     }
 
     /**
