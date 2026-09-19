@@ -633,7 +633,7 @@ jobs:
         with:
           name: pr-ios-${{ github.run_id }}-${{ needs.build.outputs.upload_attempt }}
           path: pr-ios-output
-      - name: Publish verified iPhone IPA, Mac ZIP and receipt
+      - name: Publish verified iPhone installer, IPA, Mac ZIP and receipt
         env:
           GH_TOKEN: ${{ github.token }}
           ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}

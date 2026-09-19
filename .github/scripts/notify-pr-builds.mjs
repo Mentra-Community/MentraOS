@@ -63,10 +63,13 @@ export function buildPost({pr, sha, androidUrl, manifestUrl, targets, androidRun
   }
   if (ios?.assets) {
     lines.push(
-      `📱 *iPhone* — ${link(ios.assets.iphone, "Download IPA")}\n🖥️ *Mac* — ${link(
-        ios.assets.mac,
-        "Download app",
-      )}\nRegistered devices only · Backend: *Dev* · ${link(ios.instructionsUrl, "Installation instructions")}`,
+      `📱 *iPhone* — ${ios.assets.install ? `${link(ios.assets.install, "Install on iPhone")} · ` : ""}${link(
+        ios.assets.iphone,
+        "Download IPA",
+      )}\n🖥️ *Mac* — ${link(ios.assets.mac, "Download app")}\nRegistered devices only · Backend: *Dev* · ${link(
+        ios.instructionsUrl,
+        "Installation instructions",
+      )}`,
     )
   } else if (ios?.error) lines.push(`*iPhone / Mac:* ${escape(ios.error)}`)
   else if (ios) lines.push("*iPhone / Mac:* not built for these changed paths.")
@@ -244,6 +247,9 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
         const response = await request(urls[kind], "HEAD")
         if (Number(response.headers.get("content-length")) !== asset.size)
           throw new Error(`Published ${kind} download size disagrees with its receipt`)
+        const expectedType = {install: "text/html", manifest: "text/xml"}[kind]
+        if (expectedType && response.headers.get("content-type")?.split(";")[0] !== expectedType)
+          throw new Error(`Published ${kind} has an incorrect content type`)
       }
       ios.assets = urls
       ios.instructionsUrl = `https://github.com/${repo.owner}/${repo.repo}/blob/${receipt.buildSha}/mobile/ci/pr-ios/README.md`
@@ -292,7 +298,9 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
   const downloads = [error || `[Download Android APK](${androidUrl}) · [Glasses OTA manifest](${manifestUrl})`]
   if (ios.assets)
     downloads.push(
-      `[Download iPhone IPA](${ios.assets.iphone}) · [Download Mac app](${ios.assets.mac}) · [Installation instructions](${ios.instructionsUrl})`,
+      `${ios.assets.install ? `[Install on iPhone](${ios.assets.install}) · ` : ""}[Download iPhone IPA](${
+        ios.assets.iphone
+      }) · [Download Mac app](${ios.assets.mac}) · [Installation instructions](${ios.instructionsUrl})`,
     )
   else downloads.push(ios.error || "iPhone / Mac: not built for these changed paths.")
   const body = `${marker}\n<!-- ${identity} -->\n${

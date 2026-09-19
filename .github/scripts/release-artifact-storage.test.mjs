@@ -103,6 +103,22 @@ async function fixture(t) {
   }
 }
 
+test("serves iPhone installation pages and manifests with browser-compatible MIME types", async (t) => {
+  const {file} = await fixture(t)
+  for (const [ext, type] of [
+    ["html", "text/html; charset=utf-8"],
+    ["plist", "text/xml; charset=utf-8"],
+    ["ipa", "application/octet-stream"],
+    ["json", "application/json"],
+  ]) {
+    const candidate = `${file}.${ext}`
+    await writeFile(candidate, "test bytes")
+    const headers = artifactHeaders(candidate, digest)
+    assert.equal(headers.ContentType, type)
+    assert.equal(headers.CacheControl, "no-store")
+  }
+})
+
 test("artifact keys preserve release identity and reject traversal/reserved index names", () => {
   assert.equal(
     artifactUrl(repository, "v1.2.3", "file name.apk"),

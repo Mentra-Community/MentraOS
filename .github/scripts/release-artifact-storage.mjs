@@ -349,7 +349,10 @@ export async function createR2Store(env = process.env) {
 export function artifactHeaders(file, digest, fingerprint) {
   return {
     ContentLength: statSync(file).size,
-    ContentType: file.endsWith(".json") ? "application/json" : "application/octet-stream",
+    ContentType:
+      {".json": "application/json", ".html": "text/html; charset=utf-8", ".plist": "text/xml; charset=utf-8"}[
+        path.extname(file)
+      ] || "application/octet-stream",
     // Recovery can discard an incomplete artifact pair or failed deployment
     // record and rebuild that key. Keep no-store even if the hostname's cache
     // bypass rule changes: the zone default rewrites no-cache to four hours.

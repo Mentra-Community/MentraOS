@@ -108,6 +108,8 @@ function harness(options = {}) {
     currentPr: pr,
     artifactStatus: 200,
     missingMac: false,
+    missingInstall: false,
+    wrongInstallType: false,
     jobs: {},
     ...options,
   }
@@ -168,8 +170,18 @@ function harness(options = {}) {
     return new Response(
       options.method === "HEAD" ? null : JSON.stringify(url.includes("mentra-ios-pr-") ? state.receipt : manifest),
       {
-        status: state.missingMac && url.endsWith(".zip") ? 404 : state.artifactStatus,
-        headers: {"content-length": "10"},
+        status:
+          (state.missingMac && url.endsWith(".zip")) || (state.missingInstall && url.endsWith(".html"))
+            ? 404
+            : state.artifactStatus,
+        headers: {
+          "content-length": "10",
+          "content-type": state.wrongInstallType
+            ? "application/octet-stream"
+            : url.endsWith(".html")
+            ? "text/html; charset=utf-8"
+            : "text/xml; charset=utf-8",
+        },
       },
     )
   }
@@ -187,6 +199,32 @@ function harness(options = {}) {
   }
 }
 process.env.SLACK_WEBHOOK_PR_BUILDS = "https://example.com/webhook"
+
+test("publishes Safari installation links only when the complete install set is downloadable", async () => {
+  const receipt = structuredClone(iosReceipt)
+  receipt.schemaVersion = 2
+  for (const [kind, ext] of [
+    ["install", "html"],
+    ["manifest", "plist"],
+  ])
+    receipt.artifacts[kind] = {name: `mentra-ios-${kind}-pr-123-${sha}-3-1.${ext}`, size: 10, sha256: "d".repeat(64)}
+  const ready = harness({files: [{filename: "mobile/app.config.ts"}], receipt})
+  await notifyPrBuilds(ready.args)
+  assert.match(JSON.stringify(ready.posts[0]), /Install on iPhone/)
+  assert.match(ready.written[0].body, /\[Install on iPhone\]\(https:\/\/artifactscdn.*\.html\)/)
+  assert.ok(ready.requests.some((url) => url.endsWith(".plist")))
+  assert.ok(ready.requests.some((url) => url.endsWith(".html")))
+  for (const failure of [{missingInstall: true}, {wrongInstallType: true}]) {
+    const incomplete = harness({files: ready.state.files, receipt, ...failure})
+    await notifyPrBuilds(incomplete.args)
+    assert.match(incomplete.posts[0].text, /incomplete/)
+    assert.doesNotMatch(JSON.stringify(incomplete.posts[0]), /Install on iPhone/)
+  }
+  const legacy = harness({files: ready.state.files})
+  await notifyPrBuilds(legacy.args)
+  assert.match(legacy.written[0].body, /Download iPhone IPA/)
+  assert.doesNotMatch(legacy.written[0].body, /Install on iPhone/)
+})
 
 // Exercise the completion route declared by each real caller, not a fictional
 // second Android invocation. Actionlint additionally validates workflow syntax,

@@ -4,6 +4,7 @@ import {readFile, stat, writeFile} from "node:fs/promises"
 import path from "node:path"
 import {fileURLToPath} from "node:url"
 import {artifactUrl} from "./release-artifact-storage.mjs"
+import {iosInstallationFiles} from "./pr-ios-artifacts-install.mjs"
 
 export function iosReceiptName(pr, sha, runId, attempt) {
   if (
@@ -22,7 +23,7 @@ export function iosReceiptName(pr, sha, runId, attempt) {
 export function validateIosReceipt(receipt, {pr, sha, runId, attempt}) {
   iosReceiptName(pr, sha, runId, attempt)
   if (
-    receipt.schemaVersion !== 1 ||
+    ![1, 2].includes(receipt.schemaVersion) ||
     receipt.pr !== pr ||
     receipt.headSha !== sha ||
     receipt.runId !== runId ||
@@ -33,12 +34,29 @@ export function validateIosReceipt(receipt, {pr, sha, runId, attempt}) {
     throw new Error("iOS receipt belongs to a different revision or workflow attempt")
   const sourceName = iosReceiptName(pr, sha, runId, receipt.buildAttempt ?? receipt.runAttempt)
   const suffix = sourceName.slice("mentra-ios-".length, -".json".length)
-  if (Object.keys(receipt.artifacts || {}).sort().join(",") !== "iphone,mac")
+  const kinds =
+    receipt.schemaVersion === 2
+      ? [
+          ["iphone", "ipa"],
+          ["mac", "zip"],
+          ["manifest", "plist"],
+          ["install", "html"],
+        ]
+      : [
+          ["iphone", "ipa"],
+          ["mac", "zip"],
+        ]
+  if (
+    Object.keys(receipt.artifacts || {})
+      .sort()
+      .join(",") !==
+    kinds
+      .map(([kind]) => kind)
+      .sort()
+      .join(",")
+  )
     throw new Error("Invalid iOS artifact set")
-  for (const [kind, ext] of [
-    ["iphone", "ipa"],
-    ["mac", "zip"],
-  ]) {
+  for (const [kind, ext] of kinds) {
     const asset = receipt.artifacts?.[kind]
     if (
       asset?.name !== `mentra-ios-${kind}-${suffix}.${ext}` ||
@@ -51,7 +69,7 @@ export function validateIosReceipt(receipt, {pr, sha, runId, attempt}) {
   return receipt.artifacts
 }
 
-export async function publishIosArtifacts(directory, env = process.env) {
+export async function publishIosArtifacts(directory, env = process.env, {exec = execFileSync} = {}) {
   const coordinates = {
     pr: Number(env.PR_NUMBER),
     sha: env.PR_HEAD_SHA,
@@ -62,7 +80,7 @@ export async function publishIosArtifacts(directory, env = process.env) {
   const receipt = JSON.parse(await readFile(path.join(directory, receiptName), "utf8"))
   const assets = validateIosReceipt(receipt, coordinates)
   const repository = env.GITHUB_REPOSITORY
-  const releaseId = execFileSync("gh", ["api", `repos/${repository}/releases/tags/pr-builds`, "--jq", ".id"], {
+  const releaseId = exec("gh", ["api", `repos/${repository}/releases/tags/pr-builds`, "--jq", ".id"], {
     encoding: "utf8",
   }).trim()
   for (const asset of Object.values(assets)) {
@@ -80,12 +98,17 @@ export async function publishIosArtifacts(directory, env = process.env) {
   receipt.buildAttempt = coordinates.attempt
   receipt.runAttempt = Number(env.GITHUB_RUN_ATTEMPT)
   receiptName = iosReceiptName(coordinates.pr, coordinates.sha, coordinates.runId, receipt.runAttempt)
+  for (const [kind, {name, content}] of Object.entries(iosInstallationFiles(receipt, repository))) {
+    await writeFile(path.join(directory, name), content)
+    assets[kind] = {name, size: Buffer.byteLength(content), sha256: createHash("sha256").update(content).digest("hex")}
+  }
+  receipt.schemaVersion = 2
   validateIosReceipt(receipt, {...coordinates, attempt: receipt.runAttempt})
   await writeFile(path.join(directory, receiptName), JSON.stringify(receipt, null, 2) + "\n")
   // The existing publisher verifies uploaded bytes and recovers ambiguous uploads.
-  // Commit the receipt last: it signifies that both immutable assets were verified.
+  // Commit the receipt last, after the IPA, ZIP, install manifest and page are verified.
   for (const name of [...Object.values(assets).map((asset) => asset.name), receiptName]) {
-    execFileSync(
+    exec(
       process.execPath,
       [
         fileURLToPath(new URL("./publish-immutable-release-asset.mjs", import.meta.url)),

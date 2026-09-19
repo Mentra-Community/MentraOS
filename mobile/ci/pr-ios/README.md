@@ -1,7 +1,7 @@
 # Install a PR build on iPhone or Mac
 
-The final **#pr-builds** Slack message has two downloads from one signed iOS
-Release app. These are ad hoc builds for registered test devices. They do not
+The final **#pr-builds** Slack message offers iPhone installation and iPhone/Mac
+downloads from one signed iOS Release app. These are ad hoc builds for registered test devices. They do not
 use TestFlight or require a source build or local re-signing. They use the dev
 backend and normal product defaults. Settings identifies the canonical app version,
 PR branch and actual checkout commit; the receipt also records the PR head and
@@ -9,10 +9,25 @@ numeric native build.
 
 ## iPhone
 
-Download the **iPhone IPA** to a Mac. Connect and trust your registered iPhone,
+In **#pr-builds**, tap **Install on iPhone**. Open the linked page in **Safari**
+(use Slack's browser menu if it opens inside Slack), tap **Install on iPhone**
+on that page, and confirm **Install** in the iOS prompt. Return to the Home
+Screen, wait for installation to finish, then open the Mentra App. No Mac or
+TestFlight is needed. The page identifies the PR, commit, version and native build.
+
+Your iPhone must already be included in the build's ad hoc provisioning profile;
+registering it after this build was exported requires a refreshed profile and a
+new build. The installation replaces the existing Mentra App. Keep the app
+installed to preserve its data. PR download links may expire after 7 days.
+
+If there is no installation prompt, open the page in Safari and tap Install
+again. If installation fails, verify device inclusion and profile validity and
+use a fresh PR link. Downloading an IPA into Files does not install it.
+
+For USB installation, download the **iPhone IPA** to a Mac. Connect and trust your registered iPhone,
 then add the IPA to the phone with Apple Configurator, or Xcode → Window →
 Devices and Simulators → Installed Apps → `+`. Launch the Mentra App on the
-phone. The browser download itself is not an over-the-air installer.
+phone. Older PR messages that only offer **Download IPA** use this USB method.
 
 ## Apple Silicon Mac
 
@@ -74,6 +89,17 @@ new device authorization. Profile or certificate expiration also requires a
 fresh export. No new certificate per tester is needed.
 
 ## Evidence and recovery
+
+The publisher generates a static HTML installation page and an Apple XML
+manifest referencing the exact verified IPA. It serves them over the existing
+HTTPS artifact CDN as `text/html` and `text/xml`. The page starts installation
+only when the tester taps its `itms-services` link; opening a Slack preview
+does not initiate installation. No signing or device-enrollment change is needed.
+
+The version 2 publication receipt includes hashes and sizes for the IPA, Mac
+ZIP, manifest and page, and is published only after all four uploads verify.
+The notifier checks availability and the installation files' MIME types before
+advertising the link. Existing version 1 receipts remain download-only.
 
 CI publishes a JSON receipt with PR head and actual checkout SHA, run/attempt,
 profile expiration, app and archive hashes. Slack links only verified downloads
