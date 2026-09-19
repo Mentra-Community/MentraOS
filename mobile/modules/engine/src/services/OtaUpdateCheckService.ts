@@ -2,7 +2,7 @@ import BluetoothSdk, {type OtaUpdateInfo} from "@mentra/bluetooth-sdk"
 import {ENGINE_RELEASE_METADATA} from "../generated/releaseMetadata"
 import {getGlassesSystemTimeMs, isGlassesConnected, useGlassesStore, waitForGlassesState} from "../stores/glasses"
 import {maybeFixGlassesClockFromVersionInfo} from "./glassesClockSync"
-import {hasConfiguredModernOtaManifestPin, resolveOtaManifestUrl} from "./otaManifestUrl"
+import {hasConfiguredModernOtaManifestPin, isLegacyOtaManifestSelected, resolveOtaManifestUrl} from "./otaManifestUrl"
 import {resolveOtaReleaseVersion} from "./otaReleaseVersion"
 
 /**
@@ -90,8 +90,9 @@ export interface OtaCheckResult {
    * Why the check failed, when it did. "network" is retryable (connection/server
    * trouble); "pin_unavailable" is permanent for this app build (manifest 404/gone,
    * unparseable, or carrying no valid ASG pin) — the remedy is updating the app.
+   * "version_info" means fresh device versions or the legacy migration could not be verified.
    */
-  checkFailureReason?: "network" | "pin_unavailable"
+  checkFailureReason?: "network" | "pin_unavailable" | "version_info"
 }
 
 /**
@@ -120,6 +121,8 @@ export interface OtaCheckCurrentGlassesOptions {
   waitForBuildNumberMs?: number
   waitForBesVersionMs?: number
   waitForMtkVersionMs?: number
+  /** During an approved chain, wait for legacy rescue to hand off to the release pin. */
+  waitForLegacyMigrationMs?: number
   refreshVersionInfo?: boolean
   fixClockBeforeCheck?: boolean
   /** Downgrade floor override (defaults to DOWNGRADE_FLOOR_VERSION_CODE); for tests. */
@@ -382,7 +385,9 @@ export async function checkForOtaUpdate(
       !(typeof pinnedVersion === "number" && pinnedVersion > 0)
     ) {
       console.error(
-        `OTA: manifest at ${otaVersionUrl} has no valid ASG pin (versionCode=${String(pinnedVersion)}) - treating check as failed`,
+        `OTA: manifest at ${otaVersionUrl} has no valid ASG pin (versionCode=${String(
+          pinnedVersion,
+        )}) - treating check as failed`,
       )
       return {
         hasCheckCompleted: false,
@@ -401,7 +406,9 @@ export async function checkForOtaUpdate(
     const apkDirection = getApkUpdateDirection(currentBuildNumber, versionJson, floorVersionCode)
     const apkUpdateAvailable = apkDirection !== null
     console.log(
-      `OTA: APK update available: ${apkUpdateAvailable} (current: ${currentBuildNumber}, direction: ${apkDirection ?? "none"})`,
+      `OTA: APK update available: ${apkUpdateAvailable} (current: ${currentBuildNumber}, direction: ${
+        apkDirection ?? "none"
+      })`,
     )
 
     const mtkPatch = selectMtkUpdate(versionJson, currentMtkVersion)
@@ -456,6 +463,21 @@ export async function checkForOtaUpdate(
   }
 }
 
+let versionInfoRefresh: Promise<void> | null = null
+
+function refreshGlassesVersionInfo(): Promise<void> {
+  // The background checker and mounted flow may check together. The native SDK
+  // allows one version request at a time, so share its fresh response.
+  versionInfoRefresh ??= BluetoothSdk.requestVersionInfo()
+    .then((versionInfo) => {
+      useGlassesStore.getState().setGlassesInfo(versionInfo)
+    })
+    .finally(() => {
+      versionInfoRefresh = null
+    })
+  return versionInfoRefresh
+}
+
 export async function checkCurrentGlassesForUpdate(
   options: OtaCheckCurrentGlassesOptions = {},
 ): Promise<OtaCheckCurrentGlassesResult> {
@@ -463,6 +485,7 @@ export async function checkCurrentGlassesForUpdate(
     waitForBuildNumberMs = 0,
     waitForBesVersionMs = 5000,
     waitForMtkVersionMs = 2000,
+    waitForLegacyMigrationMs = 0,
     refreshVersionInfo = true,
     fixClockBeforeCheck = true,
     floorVersionCode = DOWNGRADE_FLOOR_VERSION_CODE,
@@ -478,13 +501,12 @@ export async function checkCurrentGlassesForUpdate(
   }
 
   if (refreshVersionInfo) {
-    void BluetoothSdk.requestVersionInfo()
-      .then((versionInfo) => {
-        useGlassesStore.getState().setGlassesInfo(versionInfo)
-      })
-      .catch((error) => {
-        console.warn("OTA: Failed to request version_info from glasses:", error)
-      })
+    try {
+      await refreshGlassesVersionInfo()
+    } catch (error) {
+      console.warn("OTA: Failed to request version_info from glasses:", error)
+      return emptyCheckResult(undefined, {checkFailureReason: "version_info"})
+    }
   }
 
   let buildNumber = useGlassesStore.getState().buildNumber
@@ -572,6 +594,33 @@ export async function checkCurrentGlassesForUpdate(
       mtkFirmwareVersion,
       besFirmwareVersion,
     }
+  }
+
+  if (!result.updateAvailable && waitForLegacyMigrationMs > 0 && isLegacyOtaManifestSelected(buildNumber)) {
+    // The legacy MTK rescue can boot ASG 37 before its bundled ASG 39 takes over.
+    // An empty rescue manifest does not verify the app's selected release. Keep
+    // the approved flow open until the device reports the modern client, then
+    // refresh all versions and check the release pin before declaring success.
+    console.log("OTA: Legacy rescue finished - waiting for the release-manifest handoff")
+    const migrated = await waitForGlassesState(
+      "buildNumber",
+      (value) => Number.parseInt(value, 10) >= 39,
+      waitForLegacyMigrationMs,
+    )
+    if (!glassesConnectedNow()) return emptyCheckResult("disconnected")
+    if (!migrated) {
+      console.warn("OTA: Legacy rescue did not hand off to the release manifest")
+      return emptyCheckResult(undefined, {checkFailureReason: "version_info"})
+    }
+    const recheck = await checkCurrentGlassesForUpdate({
+      ...options,
+      waitForLegacyMigrationMs: 0,
+      refreshVersionInfo: true,
+    })
+    if (recheck.hasCheckCompleted && isLegacyOtaManifestSelected(recheck.buildNumber)) {
+      return emptyCheckResult(undefined, {checkFailureReason: "version_info"})
+    }
+    return recheck
   }
 
   const mtkUpdatedThisSession = useGlassesStore.getState().mtkUpdatedThisSession
