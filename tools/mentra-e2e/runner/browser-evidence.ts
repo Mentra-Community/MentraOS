@@ -142,7 +142,7 @@ export async function finishBrowserEvidence(
   await writeFile(join(directory, "chapters.json"), JSON.stringify(metadata, null, 2) + "\n")
   await writeFile(
     join(directory, "index.html"),
-    `<!doctype html><html lang="en"><meta charset="utf-8"><title>Mentra Call browser evidence</title><style>body{margin:2rem;background:#101b24;color:#eff6ff;font:16px system-ui}video{width:min(100%,1000px);display:block}button{display:block;margin:.5rem 0;padding:.7rem;text-align:left;background:#213547;color:inherit;border:1px solid #58718a;border-radius:6px;cursor:pointer}small{color:#b8c9da}</style><h1>Mentra Call browser routine</h1><p>Continuous browser recording. Incoming video only; microphone and camera capture are off. Chapter calibration uncertainty: ±${Math.ceil(
+    `<!doctype html><html lang="en"><meta charset="utf-8"><title>Mentra Call browser evidence</title><style>body{margin:2rem;background:#101b24;color:#eff6ff;font:16px system-ui}video{width:min(100%,1000px);display:block}button{display:block;margin:.5rem 0;padding:.7rem;text-align:left;background:#213547;color:inherit;border:1px solid #58718a;border-radius:6px;cursor:pointer}small{color:#b8c9da}</style><h1>Mentra Call browser routine</h1><p>Continuous browser recording. Chapters describe the device selections and media checks performed in this run. Audible audio requires a listener check. Chapter calibration uncertainty: ±${Math.ceil(
       uncertaintyMs,
     )} ms.</p><video controls src="routine.mp4"></video><nav>${chapters
       .map(
