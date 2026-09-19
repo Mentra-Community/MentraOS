@@ -16,7 +16,7 @@ hidden by default with explicit testing opt-ins described in
 - One shared visibility policy combines the local iOS debug setting with the
   optional Expo build override. Installation, Home/All Apps, autostart and saved
   glasses menus apply the policy. Android availability is unchanged.
-- `IosCallVisibility` serializes installation and teardown, immediately hides
+- `IosMiniappVisibility` serializes installation and teardown, immediately hides
   disabled Call, and rechecks policy after asynchronous installation. Its last
   effective-policy marker clears an old forced hide once while preserving later
   user hiding. Migration slot 5 remains reserved for existing test installations.
