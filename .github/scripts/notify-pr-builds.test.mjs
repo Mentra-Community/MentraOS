@@ -233,18 +233,29 @@ test("publishes a direct Slack install link and Safari fallback only after verif
     }
   const ready = harness({files: [{filename: "mobile/app.config.ts"}], receipt})
   await notifyPrBuilds(ready.args)
-  const slack = ready.posts[0].blocks.map((block) => block.text.text).join("\n")
-  const platformRows = ready.posts[0].blocks[3].text.text.split("\n")
+  const platformBlock = ready.posts[0].blocks[3]
+  assert.equal(platformBlock.type, "rich_text")
+  const platformRows = platformBlock.elements
   assert.equal(platformRows.length, 3)
-  assert.match(platformRows[0], /^📱 \*Android\* — <https:.*\|Download APK>$/)
-  assert.match(platformRows[1], /^📱 \*iOS\* — <itms-services:/)
-  assert.match(platformRows[2], /^💻 \*macOS\* — <https:.*\|Download ZIP>$/)
-  assert.ok(slack.indexOf("*macOS*") < slack.indexOf("*Glasses OTA"))
-  const direct = new URL(slack.match(/<(itms-services:[^|]+)\|Install on iPhone>/)[1])
+  assert.deepEqual(
+    platformRows.map((row) => row.elements[1].text),
+    [" Android", " iOS", " macOS"],
+  )
+  assert.ok(platformRows.every((row) => row.type === "rich_text_section" && row.elements[1].style.bold))
+  assert.equal(platformRows[0].elements[3].text, "Download APK")
+  assert.equal(platformRows[2].elements[3].text, "Download ZIP")
+  const iphoneLinks = platformRows[1].elements.filter((element) => element.type === "link")
+  assert.deepEqual(
+    iphoneLinks.map((element) => element.text),
+    ["Install on iPhone", "Install via Safari", "Download IPA"],
+  )
+  // A structured link is required: webhook mrkdwn escapes this URL scheme.
+  const direct = new URL(iphoneLinks[0].url)
+  assert.equal(direct.protocol, "itms-services:")
   assert.equal(direct.searchParams.get("action"), "download-manifest")
   const verifiedManifest = ready.requests.find((url) => url.endsWith(".plist"))
   assert.equal(direct.searchParams.get("url"), verifiedManifest)
-  assert.match(slack, /<https:\/\/artifactscdn[^|]+\.html\|Install via Safari>/)
+  assert.match(iphoneLinks[1].url, /^https:\/\/artifactscdn.*\.html$/)
   assert.match(ready.written[0].body, /\[Install on iPhone\]\(https:\/\/artifactscdn.*\.html\)/)
   assert.doesNotMatch(ready.written[0].body, /itms-services:/)
   assert.ok(ready.requests.some((url) => url.endsWith(".plist")))
@@ -449,9 +460,10 @@ test("iOS failure, missing downloads or stale receipts never advertise Apple dow
     const h = harness({...options, files: [{filename: "mobile/app.config.ts"}]})
     await notifyPrBuilds(h.args)
     assert.match(h.posts[0].text, /incomplete/)
-    const platformRows = h.posts[0].blocks[3].text.text.split("\n")
-    assert.equal(platformRows[1], "📱 *iOS* — Unavailable")
-    assert.equal(platformRows[2], "💻 *macOS* — Unavailable")
+    const platformRows = h.posts[0].blocks[3].elements
+    assert.equal(platformRows[1].elements.at(-1).text, "Unavailable")
+    assert.equal(platformRows[2].elements.at(-1).text, "Unavailable")
+    assert.ok(platformRows.slice(1).every((row) => row.elements.every((element) => element.type !== "link")))
     assert.doesNotMatch(h.written[0].body, /Download iPhone IPA|Download Mac app/)
     assert.match(h.written[0].body, /Download Android APK/)
   }

@@ -60,22 +60,36 @@ export function buildPost({pr, sha, androidUrl, manifestUrl, targets, androidRun
     `${escape(pr.head.ref)} → ${escape(pr.base.ref)} · by ${escape(pr.user.login)} · commit \`${sha.slice(0, 7)}\``,
   ]
   const appleStatus = ios?.error ? "Unavailable" : "Not built for these changes"
+  const richLink = (url, text) => ({type: "link", url, text})
   const iphoneLinks = []
   if (ios?.assets) {
     if (ios.assets.install)
       iphoneLinks.push(
-        link(iosInstallUrl(ios.assets.manifest), "Install on iPhone"),
-        link(ios.assets.install, "Install via Safari"),
+        richLink(iosInstallUrl(ios.assets.manifest), "Install on iPhone"),
+        richLink(ios.assets.install, "Install via Safari"),
       )
-    iphoneLinks.push(link(ios.assets.iphone, "Download IPA"))
+    iphoneLinks.push(richLink(ios.assets.iphone, "Download IPA"))
   }
-  lines.push(
-    [
-      `📱 *Android* — ${error ? "Unavailable" : link(androidUrl, "Download APK")}`,
-      `📱 *iOS* — ${iphoneLinks.length ? iphoneLinks.join(" · ") : appleStatus}`,
-      `💻 *macOS* — ${ios?.assets ? link(ios.assets.mac, "Download ZIP") : appleStatus}`,
-    ].join("\n"),
-  )
+  // Slack's webhook mrkdwn parser escapes itms-services links as literal text.
+  // Rich-text link elements preserve the direct install action and aligned rows.
+  const platforms = {
+    type: "rich_text",
+    elements: [
+      ["iphone", "Android", error ? [] : [richLink(androidUrl, "Download APK")], "Unavailable"],
+      ["iphone", "iOS", iphoneLinks, appleStatus],
+      ["computer", "macOS", ios?.assets ? [richLink(ios.assets.mac, "Download ZIP")] : [], appleStatus],
+    ].map(([icon, name, links, status]) => ({
+      type: "rich_text_section",
+      elements: [
+        {type: "emoji", name: icon},
+        {type: "text", text: ` ${name}`, style: {bold: true}},
+        {type: "text", text: " — "},
+        ...(links.length
+          ? links.flatMap((item, index) => (index ? [{type: "text", text: " · "}, item] : [item]))
+          : [{type: "text", text: status}]),
+      ],
+    })),
+  }
   if (error) lines.push(`*Android:* ${escape(error)}`)
   if (ios?.error) lines.push(`*iOS / macOS:* ${escape(ios.error)}`)
   if (!error || ios?.assets)
@@ -105,11 +119,13 @@ export function buildPost({pr, sha, androidUrl, manifestUrl, targets, androidRun
     }${asgRunUrl ? ` · ${link(asgRunUrl, "ASG build logs")}` : ""}`,
   )
   if (ready) lines.push("Downloads may be cleaned up after 7 days.")
+  const blocks = lines.map((text) => ({type: "section", text: {type: "mrkdwn", text}}))
+  blocks.splice(3, 0, platforms)
   return {
     text: `${title}: #${pr.number} ${pr.title} (${sha.slice(0, 7)})`,
     unfurl_links: false,
     unfurl_media: false,
-    blocks: lines.map((text) => ({type: "section", text: {type: "mrkdwn", text}})),
+    blocks,
   }
 }
 
