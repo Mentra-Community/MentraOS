@@ -5,6 +5,13 @@ owner: aisraelov
 
 # Mentra Fleet Management
 
+- Original product brief: [Mentra Fleet Management Plan](https://docs.google.com/document/d/1f951XX6q5p_ild8Fj6IlLOvccuXGjocnTCa6mBFRtdU/edit?usp=sharing).
+- Delivery tracking: [Mentra Fleet Management in Linear](https://linear.app/mentralabs/project/mentra-fleet-management-36f3e6c31e4b/issues).
+- Product DRI named in the brief: Philippe Ferreira De Sousa.
+- Planning target from the brief: usable internally by **November 15, 2026**.
+  This is an internal-readiness target, not a promise that every later feature or
+  private-deployment configuration ships on that date.
+
 This is the design and requirements source of truth for Mentra Fleet Management.
 The architecture and product scope below are agreed; implementation has not
 started. API names, storage layout, and reporting cadence are proposed contracts
@@ -114,6 +121,7 @@ actually expose; unavailable values must remain unavailable.
 | Battery | Glasses percentage and charging state; case/controller battery where supported | Latest observed value and observation time. | V1 |
 | Battery history | Charge trend, low-battery occurrences, observed drain during usage | Sampled readings; drain estimates disclose their observation window. | Later |
 | Glasses usage | Connected minutes, session count/duration, days active | Intervals when the active phone engine observes glasses connected. | V1 |
+| Mentra App usage | Foreground duration, active engine duration, phone session count | Phone app/engine lifecycle; distinguish a visible app from background engine operation and from glasses-connected time. | V1 |
 | Miniapp inventory | Installed packages and versions, observed install/update/remove times | Engine app registry; an initial inventory does not prove the original installation date. | V1 |
 | Running miniapps | Packages, versions, execution start times | Actual engine lifecycle with freshness indicators. | V1 |
 | Miniapp launches | Attempts, successful starts, failures, user starts versus automatic restarts | Engine outcomes, rather than UI button presses alone. | V1 |
@@ -122,6 +130,7 @@ actually expose; unavailable values must remain unavailable.
 | Photos | Requests, confirmed captures where observable, delivery successes, failures, initiating package | Phone-observed stages of one operation; capture and delivery remain distinct. | V1 |
 | Video recording | Count, observed duration, failures, initiating package | Phone-observed recording start/stop/status. | V1 |
 | Streaming and calls | Sessions, connected duration, failures, initiating package | Phone-observed stream/meeting lifecycle; no media content. | Later |
+| Mentra Call outcomes | Calls created, successfully joined, connected call duration | Narrow typed feature outcomes observed by the phone, with client-side Mentra Call hooks where needed; count actual results, not button taps or credential requests. | V1 |
 | Speech features | Transcription/translation duration, local/cloud mode, language | Phone-observed feature sessions; no transcript content. | Later |
 | Gallery/storage | Reported media count, storage used/free where exposed, sync outcomes | Phone gallery/transfer services; stored media count is not historical capture count. | Later |
 | Connectivity quality | Disconnect/reconnect counts, pairing failures, connection setup time | Connection transitions and normalized error categories. | V1 |
@@ -133,6 +142,7 @@ actually expose; unavailable values must remain unavailable.
 | Adoption | Daily/weekly/monthly active devices and users, repeat usage, miniapp adoption | Core-derived summaries with the metric definitions below. | V1 |
 | License status | Entitlements, activated seats/devices, expiration, license failures | Future authoritative Core licensing records; independent of optional analytics. | Later |
 | Administrative metadata | Asset tag, site/team, notes, explicit assignee, retired status | Admin-entered facts, separate from observed account associations. | Later |
+| Device whereabouts | Assigned site/team; potentially last phone-observed location | The brief asks where devices are. Site fields and any phone-location feature need separate scope decisions; permission, precision, freshness, and retention must be defined before collecting location. No independent glasses tracking is implied. | Later |
 | Reporting quality | Last sync, observation age, collector version, metric capabilities, gaps | Phone and Core metadata; unavailable is distinct from zero. | V1 |
 
 ### Metric definitions
@@ -146,6 +156,15 @@ actually expose; unavailable values must remain unavailable.
   complete coverage. An optimistic UI running flag is not a successful start.
 - **Miniapp time with glasses:** intersection of execution and observed glasses
   connection intervals. Phone-only execution has no fabricated glasses identity.
+- **Mentra App time:** foreground intervals and active engine intervals are
+  separate metrics. Neither a signed-in account nor a network heartbeat proves
+  foreground use. Stop confirmed duration at the last lifecycle checkpoint.
+- **Mentra Call outcomes:** use a stable phone-side operation/call-session ID to
+  deduplicate create and successful-join outcomes. Count a successful join once
+  per call session; reconnects do not create new joins. Measure connected call
+  intervals separately from lobby time. If the engine cannot observe creation,
+  add a narrow typed client hook from Mentra Call; do not infer it from requesting
+  a meeting credential. Do not upload meeting URLs, participant lists, or content.
 - **Device totals:** union overlapping device connection intervals across phone
   observations. Per-miniapp durations may overlap; two miniapps running for an
   hour produce two app-hours and one hour of device connected time.
@@ -229,6 +248,11 @@ inventory and actual lifecycle, connection transitions, media coordinators, and
 normalized failures. Collection belongs inside the engine boundary so all hosts
 can use it; do not add raw engine-store subscriptions throughout the host UI or
 require each miniapp to integrate analytics separately.
+
+General miniapp inventory/execution metrics come from the engine automatically.
+Feature-specific outcomes such as Mentra Call creation may use a small registered
+typed hook into this same phone collector. This does not introduce an arbitrary
+miniapp analytics event API or another network destination.
 
 Fleet operates independently of cloud audio, media upload, and the Runtime
 WebSocket. Existing background infrastructure supports collection while the
@@ -415,7 +439,31 @@ No glasses firmware, Runtime persistence, or individual miniapp backend changes
 are required by this design. Gaps in phone-observable metrics are represented as
 coverage limits rather than introducing a glasses telemetry system.
 
-## Acceptance criteria
+## Testing strategy
+
+The following tests validate the implementation; Markdown checks on this design
+document do not substitute for them.
+
+| Layer | What to exercise | Evidence required |
+| --- | --- | --- |
+| Phone collector unit tests | Snapshot projection, local queue/retry behavior, lifecycle intervals, account/Core switching, missing serials, normalized photo stages, miniapp/Call deduplication | Focused engine/mobile tests with deterministic clocks, fake storage/network, and lifecycle fixtures. |
+| Core unit/integration tests | Schema limits, authentication/admin authorization, serial source reconciliation, duplicate/partial batches, concurrent replicas, interrupted aggregation, clock/calendar boundaries, retention/deletion | Bun tests under `cloud-v2/tests/` or relevant packages, with a real isolated MongoDB for persistence/concurrency cases and mocked external providers. |
+| Admin UI checks | Existing login, Fleet navigation, serial/email search, list/detail views, usage filters, stale/unknown values, unresolved serial matches | UI tests where appropriate plus a browser walkthrough of the existing admin panel, with screenshots attached to the implementation PR. |
+| End-to-end/device checks | Phone observation through Core storage to admin display; successful/failed photos, video, app usage, miniapp usage, and Call outcomes | iOS and Android device runs, including screen-off/background, force termination, reconnect, offline upload, and account/Core changes; retain scenario results and logs. |
+| Compatibility and deployment | Existing PostHog event/property behavior, older Core without Fleet, private Core/admin hosting, configured customer admin login | Regression assertions and a private deployment run with Mentra endpoints blocked and external analytics disabled. |
+| Capacity and overhead | Representative full-fleet ingestion, dashboard queries, database growth, phone battery/network overhead | Recorded load/device measurements; establish and meet agreed batch, cadence, retention, and latency budgets before rollout. |
+
+For each phase, retain the relevant test results and implementation PRs in its
+Linear ticket. Investigate gaps or unsupported hardware paths and surface them in
+the portal; do not mark a metric complete based only on a successful upload.
+
+## Definition of done
+
+The project is done when the V1 tracking catalog and checks below work end to end
+in Mentra's existing Core admin panel, and the same capability is qualified for a
+customer-hosted Core. The internal-use milestone can complete before the private
+packaging milestone. Later catalog rows, remote management, and licensing are
+outside this completion gate.
 
 - The Fleet section in Mentra's existing Core admin panel lists all reporting
   devices across its users, not just staff accounts or currently connected
@@ -441,6 +489,9 @@ coverage limits rather than introducing a glasses telemetry system.
   peripheral appear freshly observed.
 - Local miniapps and devices with Runtime realtime features disabled still report
   through Core. Capture/usage coverage honestly reflects what the phone observed.
+- Mentra App foreground/engine time is distinguishable from glasses-connected
+  time. Mentra Call created/joined counts and connected duration are verified with
+  successful, failed, retried, and reconnected call scenarios.
 - A lost network response, repeated batch, partial rejection, out-of-order event,
   Core replica change, or aggregation restart cannot inflate totals.
 - Phone restart/termination closes confirmed measurement at the last checkpoint.
@@ -467,8 +518,9 @@ deliverables:
    snapshot upload, then a Fleet list/detail view showing serial, model, email,
    battery, versions, and freshness. Use existing Core admin login throughout.
 2. **Usage history.** Add durable phone events/checkpoints and reporting for
-   connected time, miniapp usage, and observed photo/video activity. Preserve
-   existing PostHog behavior and validate the metric definitions above.
+   connected time, Mentra App time, miniapp usage, observed photo/video activity,
+   and the specified Mentra Call outcomes. Preserve existing PostHog behavior and
+   validate the metric definitions above.
 3. **Dogfooding and private deployment.** Use Mentra's full reporting fleet to
    validate usefulness, volume, and phone overhead. Package the same admin panel
    and Core module for customers, qualifying shared admin authentication and data
@@ -476,6 +528,12 @@ deliverables:
 
 The first deliverable is intentionally useful before every V1 history/chart is
 finished. No application implementation is part of this specification PR.
+
+| Phase | Completion gate |
+| --- | --- |
+| Phase 1: device visibility | A Core admin uses the existing login to find a reporting device by serial/email and inspect accurate identity, battery, versions, account association, and freshness; authentication, identity, and snapshot tests pass. |
+| Phase 2: usage history | Defined time ranges show verified device/user/app/miniapp activity and photo/video/Call outcomes; offline replay, duplicate events, restarts, and clock boundaries preserve correct counts/durations; PostHog regression checks pass. |
+| Phase 3: dogfooding and private deployment | Mentra has used the reporting across its fleet with measured capacity/phone overhead; customer-hosted Core and the same admin panel pass local-login/data-locality checks; deployment/retention/upgrade guidance and validation evidence are recorded. |
 
 An execution plan should settle bounded queue sizes, upload cadence/batch limits,
 raw/aggregate retention defaults, clock-skew/replay windows, and database indexes/
