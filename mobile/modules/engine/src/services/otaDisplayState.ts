@@ -49,6 +49,8 @@ export function deriveDisplayState(args: {
   apkCompletedViaBuildIncrease?: boolean
   /** Phone-observed BES disconnect/reconnect recovery, independent of stale OTA progress. */
   besRestartRecovery?: "awaiting" | "complete" | null
+  /** Pre-38 MTK-only reboot is complete only after fresh firmware version proof. */
+  mtkRestartRecovery?: "awaiting" | "complete" | null
   /** Downgrade detour: the reconnected glasses reported exactly the pinned target version. */
   versionChangeConverged?: boolean
   /** True for the whole downgrade (version-change) session. */
@@ -62,11 +64,14 @@ export function deriveDisplayState(args: {
     legacyApkSettleHold,
     apkCompletedViaBuildIncrease,
     besRestartRecovery,
+    mtkRestartRecovery,
     versionChangeConverged,
     versionChangeSession,
   } = args
 
   if (errorMsg) return "failed"
+  if (mtkRestartRecovery === "awaiting") return "restarting"
+  if (mtkRestartRecovery === "complete") return "complete"
 
   // Downgrade detour completion: exact-version convergence after reconnect is the
   // only completion signal (the wipe destroys ASG's ota_session, and the target is

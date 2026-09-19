@@ -54,6 +54,7 @@ import {
   RETRY_INTERVAL_MS,
   isLegacyShapedOtaSession,
   isLegacyShapedOtaStatus,
+  needsPhoneMtkReboot,
   selectOtaProtocolProfile,
   type OtaProtocolProfile,
 } from "./otaInstallPolicy"
@@ -225,6 +226,16 @@ class OtaInstallCoordinator {
   private besRestartDisconnectObserved = false
   private besRestartRecovery: "awaiting" | "complete" | null = null
 
+  // Survives a progress-screen remount: duplicate completion packets must not
+  // send another reboot. A newly approved install resets this in prepare().
+  private mtkRestartRecovery: {
+    phase: "awaiting" | "complete"
+    sourceVersion: string
+    targetVersion: string | null
+  } | null = null
+  private mtkVersionPoll: ReturnType<typeof setInterval> | null = null
+  private mtkVersionRequestInFlight = false
+
   // Downgrade detour (version-change mode). Captured at attach from the selected
   // update: the pinned target is a LOWER build, executed by the recovery worker via
   // uninstall->reinstall, so the phone must NOT drive ota_start on the intermediate
@@ -306,6 +317,8 @@ class OtaInstallCoordinator {
       throw new Error("Connected glasses require Wi-Fi for OTA")
     }
     this.preparedCheckResult = checkResult
+    this.clearMtkVersionPolling()
+    this.mtkRestartRecovery = null
     this.selectedTransport = wifiConnected ? "wifi" : "hotspot"
     this.hotspotManifestUrl = null
     this.hotspotPhase = "idle"
@@ -379,6 +392,14 @@ class OtaInstallCoordinator {
 
   /** Retry after a failure: clear state and re-send ota_start (if connected). */
   retry(): void {
+    if (this.mtkRestartRecovery?.phase === "awaiting") {
+      // Explicit recovery retries reboot/verification, never the already staged install.
+      if (!this.errorMsg) return
+      this.setErrorMsg("")
+      this.startMtkVersionPolling()
+      if (isGlassesConnected(useGlassesStore.getState().connection)) this.sendMtkReboot()
+      return
+    }
     // While the recovery worker owns the detour (apk install latched, not yet
     // converged), the phone must not drive: an ota_start now would push the
     // factory/surviving build into a parallel download-install, and a second
@@ -485,6 +506,7 @@ class OtaInstallCoordinator {
     const store = useGlassesStore.getState()
     store.setOtaStatus(null)
     store.setOtaProgress(null)
+    this.mtkRestartRecovery = null
   }
 
   snapshot(): OtaInstallSnapshot {
@@ -502,12 +524,16 @@ class OtaInstallCoordinator {
         legacyApkSettleHold: this.legacyApkSettleHold,
         apkCompletedViaBuildIncrease: this.apkCompletedViaBuildIncrease,
         besRestartRecovery: this.besRestartRecovery,
+        mtkRestartRecovery: this.mtkRestartRecovery?.phase,
         versionChangeConverged: this.versionChangeConverged,
         versionChangeSession: this.versionChangeSession,
       }),
       errorMsg: this.errorMsg,
-      // Keep Continue disabled while the expected BES reboot is still in flight.
-      continueButtonDisabled: this.continueButtonDisabled || this.besRestartRecovery === "awaiting",
+      // Keep Continue disabled while a firmware reboot is still in flight.
+      continueButtonDisabled:
+        this.continueButtonDisabled ||
+        this.besRestartRecovery === "awaiting" ||
+        this.mtkRestartRecovery?.phase === "awaiting",
       connected,
       // Copies: the snapshot must not hand callers mutable references into the store.
       otaStatus: otaStatus ? {...otaStatus} : null,
@@ -736,6 +762,8 @@ class OtaInstallCoordinator {
       this.handleLegacyInstallCompleteEdge(otaStatus)
     }
 
+    this.handleMtkRestart(connected, otaStatus)
+
     const legacySession = this.isLegacySessionShapeNow()
 
     if (this.isBesRestartExpected(otaStatus, otaProgress, legacySession)) {
@@ -761,6 +789,7 @@ class OtaInstallCoordinator {
       legacyApkSettleHold: this.legacyApkSettleHold,
       apkCompletedViaBuildIncrease: this.apkCompletedViaBuildIncrease,
       besRestartRecovery: this.besRestartRecovery,
+      mtkRestartRecovery: this.mtkRestartRecovery?.phase,
       versionChangeConverged: this.versionChangeConverged,
       versionChangeSession: this.versionChangeSession,
     })
@@ -831,6 +860,7 @@ class OtaInstallCoordinator {
     // and the legacy screen marked MTK as updated this session right there.
     if (
       otaStatusChanged &&
+      !this.mtkRestartRecovery &&
       isLegacyShapedOtaStatus(otaStatus) &&
       otaStatus?.stepType === "mtk" &&
       otaStatus.phase === "install" &&
@@ -1067,6 +1097,7 @@ class OtaInstallCoordinator {
       (displayState === "complete" || displayState === "restarting" || displayState === "failed")
     ) {
       if (displayState === "failed") {
+        this.clearMtkVersionPolling()
         this.clearPerStepTimers()
       }
       useGlassesStore.getState().setOtaUpdateAvailable(null)
@@ -1092,6 +1123,11 @@ class OtaInstallCoordinator {
     // a duplicate ota_start. Clearing here is a no-op on the physical path.
     this.clearQueryReplyTimeout()
     this.setSawReconnectEdge(true)
+
+    if (this.mtkRestartRecovery) {
+      if (this.mtkRestartRecovery.phase === "awaiting") this.pollMtkVersion()
+      return true
+    }
 
     if (this.besRestartDisconnectObserved) {
       console.log(`[OTA_PROGRESS] ${label}: BES reboot reconnect observed — no ota_query_status`)
@@ -1131,6 +1167,10 @@ class OtaInstallCoordinator {
     }
 
     const becameConnected = prev === false && connected === true
+    if (this.mtkRestartRecovery) {
+      if (this.mtkRestartRecovery.phase === "awaiting") this.pollMtkVersion()
+      return
+    }
     if (becameConnected && this.runReconnectArbitration("connect-edge")) {
       return
     }
@@ -1196,12 +1236,94 @@ class OtaInstallCoordinator {
   }
 
   private readonly handleMtkComplete = (): void => {
+    if (this.mtkRestartRecovery) {
+      this.pollMtkVersion()
+      return
+    }
     console.log("[OTA_PROGRESS] mtk_update_complete received")
     this.clearProgressTimeout()
     this.onFirstActivity()
     this.onFirstNonZeroProgress()
     void BluetoothSdk.queryOtaStatus().catch(() => {})
     useGlassesStore.getState().setMtkUpdatedThisSession(true)
+  }
+
+  private handleMtkRestart(connected: boolean, status: OtaStatus | null): void {
+    const state = useGlassesStore.getState()
+    const current = state.mtkFirmwareVersion?.trim().split("_").pop() || ""
+    const recovery = this.mtkRestartRecovery
+    if (recovery) {
+      if (recovery.phase !== "awaiting") return
+      const applied = recovery.targetVersion ? current === recovery.targetVersion : current !== recovery.sourceVersion
+      if (connected && current && applied) {
+        recovery.phase = "complete"
+        this.clearMtkVersionPolling()
+        this.clearContinueLockoutTimer()
+        this.continueButtonDisabled = false
+        this.errorMsg = ""
+        state.setMtkUpdatedThisSession(false)
+        console.log(`[OTA_PROGRESS] MTK restart verified: ${recovery.sourceVersion} -> ${current}`)
+      } else if (!this.errorMsg) {
+        this.startMtkVersionPolling()
+      }
+      return
+    }
+    if (
+      !connected ||
+      !current ||
+      !needsPhoneMtkReboot(
+        state.buildNumber,
+        status,
+        this.preparedCheckResult?.updates ?? state.otaUpdateAvailable?.updates,
+      )
+    )
+      return
+    const target = this.preparedCheckResult?.mtkPatch?.end_firmware.trim().split("_").pop() || null
+    if (target === current) return
+    this.mtkRestartRecovery = {phase: "awaiting", sourceVersion: current, targetVersion: target}
+    this.clearPerStepTimers()
+    state.setMtkUpdatedThisSession(true)
+    console.log("[OTA_PROGRESS] Pre-38 MTK final step complete — rebooting to apply staged firmware")
+    this.sendMtkReboot()
+    this.startMtkVersionPolling()
+  }
+
+  private sendMtkReboot(): void {
+    const recovery = this.mtkRestartRecovery
+    void BluetoothSdk.sendReboot().catch(() => {
+      if (!this.attached || this.mtkRestartRecovery !== recovery || recovery?.phase !== "awaiting") return
+      this.clearMtkVersionPolling()
+      this.setErrorMsg(OtaProgressMessages.restartTimeout)
+    })
+  }
+
+  private startMtkVersionPolling(): void {
+    if (this.mtkVersionPoll) return
+    // ASG 37 has no process SID. Polling also covers an Android restart that
+    // leaves the BES BLE connection intact.
+    this.mtkVersionPoll = setInterval(() => this.pollMtkVersion(), 2000)
+  }
+
+  private pollMtkVersion(): void {
+    if (
+      !this.attached ||
+      this.errorMsg ||
+      this.mtkRestartRecovery?.phase !== "awaiting" ||
+      this.mtkVersionRequestInFlight ||
+      !isGlassesConnected(useGlassesStore.getState().connection)
+    )
+      return
+    this.mtkVersionRequestInFlight = true
+    void BluetoothSdk.requestVersionInfo()
+      .catch(() => {})
+      .finally(() => {
+        this.mtkVersionRequestInFlight = false
+      })
+  }
+
+  private clearMtkVersionPolling(): void {
+    if (this.mtkVersionPoll) clearInterval(this.mtkVersionPoll)
+    this.mtkVersionPoll = null
   }
 
   // --- legacy (< 37) compatibility, ported from progress-legacy.tsx (WP 8C) ---
@@ -1217,6 +1339,7 @@ class OtaInstallCoordinator {
    *   starting/failed (post-reboot explicit signal) completion is immediate.
    */
   private handleLegacyInstallCompleteEdge(otaStatus: OtaStatus | null): void {
+    if (this.mtkRestartRecovery) return
     if (!isLegacyShapedOtaStatus(otaStatus) || otaStatus?.phase !== "install" || otaStatus.status !== "complete") {
       return
     }
@@ -1363,6 +1486,7 @@ class OtaInstallCoordinator {
       legacyApkSettleHold: this.legacyApkSettleHold,
       apkCompletedViaBuildIncrease: this.apkCompletedViaBuildIncrease,
       besRestartRecovery: this.besRestartRecovery,
+      mtkRestartRecovery: this.mtkRestartRecovery?.phase,
       versionChangeConverged: this.versionChangeConverged,
       versionChangeSession: this.versionChangeSession,
     })
@@ -1752,6 +1876,7 @@ class OtaInstallCoordinator {
   }
 
   private clearAllOtaTimers(): void {
+    this.clearMtkVersionPolling()
     this.clearPerStepTimers()
     this.clearGlobalTimeout()
     this.clearPingInterval()

@@ -143,6 +143,7 @@ beforeEach(() => {
   otaInstallCoordinator.detach()
   useGlassesStore.getState().reset()
   bluetoothSdkMock.startOtaUpdate.mockReset().mockResolvedValue(undefined)
+  bluetoothSdkMock.sendReboot.mockReset().mockResolvedValue(undefined)
   bluetoothSdkMock.queryOtaStatus.mockClear()
   bluetoothSdkMock.requestVersionInfo.mockClear()
   bluetoothSdkMock.ping.mockClear()
@@ -158,6 +159,133 @@ afterEach(() => {
   })
   otaInstallCoordinator.prepare(checkResult())
   jest.useRealTimers()
+})
+
+describe("ASG 37 MTK-only reboot (rep_01M2V5X4T59HJDV8X7F003XRYZ)", () => {
+  const completedMtk = () =>
+    inProgressStatus({
+      stepType: "mtk",
+      phase: "install",
+      status: "complete",
+      stepPercent: 100,
+      overallPercent: 100,
+    })
+
+  function prepareMtk(updates = ["mtk"], buildNumber = "37") {
+    useGlassesStore.getState().setGlassesInfo({
+      connection: {state: "connected", fullyBooted: true},
+      wifi: {state: "connected", ssid: "test"},
+      buildNumber,
+      mtkFirmwareVersion: "MentraLive_20260113",
+    })
+    otaInstallCoordinator.prepare({
+      ...checkResult(),
+      updates,
+      mtkPatch: {
+        start_firmware: "MentraLive_20260113",
+        end_firmware: "MentraLive_20260709",
+        url: "https://ota.example/mtk.zip",
+      },
+    })
+    otaInstallCoordinator.attach()
+  }
+
+  it("reboots once, holds completion across reconnect, and verifies the target MTK version", async () => {
+    prepareMtk()
+    await flushNativeStartPromise()
+    useGlassesStore.getState().setOtaStatus(completedMtk())
+    expect(bluetoothSdkMock.sendReboot).toHaveBeenCalledTimes(1)
+    expect(otaInstallCoordinator.snapshot()).toMatchObject({displayState: "restarting", continueButtonDisabled: true})
+    useGlassesStore.getState().setOtaStatus(completedMtk())
+    otaInstallCoordinator.detach()
+    otaInstallCoordinator.attach()
+    expect(bluetoothSdkMock.sendReboot).toHaveBeenCalledTimes(1)
+
+    useGlassesStore.getState().setGlassesInfo({connection: {state: "disconnected"}})
+    setGlassesConnected()
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("restarting")
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+    useGlassesStore.getState().setGlassesInfo({mtkFirmwareVersion: "MentraLive_20260709"})
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("complete")
+    expect(useGlassesStore.getState().mtkUpdatedThisSession).toBe(false)
+    expect(bluetoothSdkMock.sendReboot).toHaveBeenCalledTimes(1)
+  })
+
+  it("verifies an Android reboot that keeps the BES Bluetooth connection alive", async () => {
+    prepareMtk()
+    useGlassesStore.getState().setOtaStatus(completedMtk())
+    await jest.advanceTimersByTimeAsync(2000)
+    expect(bluetoothSdkMock.requestVersionInfo).toHaveBeenCalled()
+    useGlassesStore.getState().setGlassesInfo({mtkFirmwareVersion: "MentraLive_20260204"})
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("restarting")
+    useGlassesStore.getState().setGlassesInfo({mtkFirmwareVersion: "MentraLive_20260709"})
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("complete")
+  })
+
+  it.each(["38", "39", "302010011", ""])("does not reboot build %s", (build) => {
+    prepareMtk(["mtk"], build)
+    useGlassesStore.getState().setOtaStatus(completedMtk())
+    expect(bluetoothSdkMock.sendReboot).not.toHaveBeenCalled()
+  })
+
+  it("does not reboot while BES follows", () => {
+    prepareMtk(["mtk", "bes"])
+    useGlassesStore.getState().setOtaStatus({...completedMtk(), status: "step_complete", totalSteps: 2})
+    useGlassesStore.getState().setOtaStatus(completedMtk())
+    expect(bluetoothSdkMock.sendReboot).not.toHaveBeenCalled()
+  })
+
+  it("requires successful final installation, not download completion or an intermediate step", () => {
+    prepareMtk()
+    useGlassesStore.getState().setOtaStatus({...completedMtk(), phase: "download"})
+    useGlassesStore.getState().setOtaStatus({...completedMtk(), status: "failed"})
+    useGlassesStore.getState().setOtaStatus({...completedMtk(), status: "in_progress"})
+    useGlassesStore.getState().setOtaStatus({...completedMtk(), totalSteps: 2})
+    expect(bluetoothSdkMock.sendReboot).not.toHaveBeenCalled()
+  })
+
+  it("handles pre-37 progress when the approved offer proves no BES follows", () => {
+    prepareMtk(["mtk"], "33")
+    emitLegacyOtaProgress({stage: "install", status: "FINISHED", progress: 100, currentUpdate: "mtk"})
+    expect(bluetoothSdkMock.sendReboot).toHaveBeenCalledTimes(1)
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("restarting")
+    useGlassesStore.getState().setGlassesInfo({mtkFirmwareVersion: "MentraLive_20260709"})
+    GlobalEventEmitter.emit("mtk_update_complete", {message: "done", timestamp: Date.now()})
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("complete")
+    expect(useGlassesStore.getState().mtkUpdatedThisSession).toBe(false)
+  })
+
+  it("does not reboot an already applied target from stale completion", () => {
+    prepareMtk()
+    useGlassesStore.getState().setGlassesInfo({mtkFirmwareVersion: "MentraLive_20260709"})
+    useGlassesStore.getState().setOtaStatus(completedMtk())
+    expect(bluetoothSdkMock.sendReboot).not.toHaveBeenCalled()
+  })
+
+  it("times out without version proof instead of silently completing or repeating ota_start", async () => {
+    prepareMtk()
+    useGlassesStore.getState().setOtaStatus(completedMtk())
+    await jest.advanceTimersByTimeAsync(120_001)
+    expect(otaInstallCoordinator.snapshot()).toMatchObject({
+      displayState: "failed",
+      errorMsg: OtaProgressMessages.restartTimeout,
+    })
+    expect(bluetoothSdkMock.sendReboot).toHaveBeenCalledTimes(1)
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+  })
+
+  it("reports a rejected reboot and only resends on explicit retry", async () => {
+    prepareMtk()
+    bluetoothSdkMock.sendReboot.mockRejectedValueOnce(new Error("disconnected"))
+    useGlassesStore.getState().setOtaStatus(completedMtk())
+    await flushNativeStartPromise()
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("failed")
+    useGlassesStore.getState().setOtaStatus(completedMtk())
+    expect(bluetoothSdkMock.sendReboot).toHaveBeenCalledTimes(1)
+    otaInstallCoordinator.retry()
+    expect(bluetoothSdkMock.sendReboot).toHaveBeenCalledTimes(2)
+    expect(bluetoothSdkMock.startOtaUpdate).toHaveBeenCalledTimes(1)
+  })
 })
 
 describe("OtaInstallCoordinator hotspot transport selection", () => {
