@@ -254,3 +254,26 @@ preparation retries; otherwise a hidden tile can receive a positional click and
 a later screenshot can overwrite earlier failure evidence. The local preparation
 manifest records the affected overwritten screenshot rather than claiming it was
 preserved.
+
+## Managed-relay cancellation review
+
+Review 5254129154 found another consumer of the shared permission gate: managed
+WHIP relay preparation also waits for Local Network access. Its Stop previously
+waited for preparation before calling native stop, leaving denied permission,
+the hotspot lease and the coordinator's transition lock stuck indefinitely.
+
+Cancel now interrupts only the owned, pending native preparation immediately,
+before waiting for that transition lock. Stop awaits the same native cleanup
+promise before disabling the glasses hotspot and releasing its lease. Cleanup
+failure retains ownership for another Stop; a late successful prepare cannot
+start the glasses. The iOS relay forwards `permission_required` with instructions
+and drops queued permission notifications after cancellation. This reuses the
+existing native stop/leave barrier, without a new deadline or permission API.
+
+The denied-permission regression failed on the previous implementation and now
+passes. The focused host suites pass 302 tests, including real lease ownership,
+cancellation/approval ordering, cleanup retry and a subsequent managed stream.
+All 25 Swift core tests pass, including cancellation followed by late approval.
+The Xcode 26.6 iOS Release build and formatting checks pass. No live stream was
+started for this review fix; physical qualification above
+remains partial, and the installed phone candidate is unchanged.
