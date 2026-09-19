@@ -24,7 +24,6 @@ if (signed) {
 }
 await appendXcodeEnvironment(path.join(mobile, "ios/.xcode.env.local"), env, process.execPath)
 const args = [
-  "-quiet",
   signed ? "archive" : "build",
   "-workspace",
   "Mentra.xcworkspace",
@@ -37,6 +36,9 @@ const args = [
   "-derivedDataPath",
   "build-device",
 ]
+// Signed archives need the full CodeSign command in CI logs when macOS rejects
+// a framework. -quiet hid the identity and keychain behind errSecInternalComponent.
+if (!signed) args.unshift("-quiet")
 if (process.argv.includes("--serial")) args.push("-jobs", "1")
 if (signed) {
   args.push(
@@ -48,6 +50,15 @@ if (signed) {
 args.push(...xcodeBuildSettings(env, process.execPath))
 const result = spawnSync("xcodebuild", args, {cwd: path.join(mobile, "ios"), env, stdio: "inherit"})
 if (result.error) throw result.error
+if (signed && result.status !== 0) {
+  // Public signing metadata only; never dump keychain contents or credentials.
+  for (const args of [
+    ["list-keychains", "-d", "user"],
+    ["show-keychain-info", env.PR_IOS_KEYCHAIN],
+    ["find-identity", "-v", "-p", "codesigning", env.PR_IOS_KEYCHAIN],
+  ])
+    spawnSync("security", args, {stdio: "inherit", timeout: 20_000})
+}
 if (signed && result.status === 0) {
   const bundle = readFileSync(
     path.join(mobile, "build/pr-ios/Mentra.xcarchive/Products/Applications/Mentra.app/main.jsbundle"),
