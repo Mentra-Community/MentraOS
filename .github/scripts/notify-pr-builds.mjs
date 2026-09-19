@@ -59,8 +59,34 @@ export function buildPost({pr, sha, androidUrl, manifestUrl, targets, androidRun
     link(pr.html_url, `#${pr.number} — ${pr.title}`),
     `${escape(pr.head.ref)} → ${escape(pr.base.ref)} · by ${escape(pr.user.login)} · commit \`${sha.slice(0, 7)}\``,
   ]
+  const appleStatus = ios?.error ? "Unavailable" : "Not built for these changes"
+  const iphoneLinks = []
+  if (ios?.assets) {
+    if (ios.assets.install)
+      iphoneLinks.push(
+        link(iosInstallUrl(ios.assets.manifest), "Install on iPhone"),
+        link(ios.assets.install, "Install via Safari"),
+      )
+    iphoneLinks.push(link(ios.assets.iphone, "Download IPA"))
+  }
+  lines.push(
+    [
+      `📱 *Android* — ${error ? "Unavailable" : link(androidUrl, "Download APK")}`,
+      `📱 *iOS* — ${iphoneLinks.length ? iphoneLinks.join(" · ") : appleStatus}`,
+      `💻 *macOS* — ${ios?.assets ? link(ios.assets.mac, "Download ZIP") : appleStatus}`,
+    ].join("\n"),
+  )
+  if (error) lines.push(`*Android:* ${escape(error)}`)
+  if (ios?.error) lines.push(`*iOS / macOS:* ${escape(ios.error)}`)
+  if (!error || ios?.assets)
+    lines.push(
+      `Backend: *Dev*${!error ? " · Android ARM64" : ""}${
+        ios?.assets
+          ? ` · Apple devices must be registered · ${link(ios.instructionsUrl, "Installation instructions")}`
+          : ""
+      }`,
+    )
   if (!error) {
-    lines.push(`📱 *Android* — ${link(androidUrl, "Download APK")}\nBackend: *Dev* · Android ARM64`)
     lines.push(
       `🕶️ *Glasses OTA — ready*\n*ASG:* ${escape(targets.asg.versionName)} · build ${
         targets.asg.versionCode
@@ -72,30 +98,11 @@ export function buildPost({pr, sha, androidUrl, manifestUrl, targets, androidRun
     lines.push(
       "Install the APK, connect your Mentra Live glasses, and follow the update prompt if shown. This app targets the versions above.",
     )
-  } else {
-    lines.push(escape(error))
   }
-  if (ios?.assets) {
-    lines.push(
-      `📱 *iPhone* — ${
-        ios.assets.install
-          ? `${link(iosInstallUrl(ios.assets.manifest), "Install on iPhone")} · ${link(
-              ios.assets.install,
-              "Install via Safari",
-            )} · `
-          : ""
-      }${link(ios.assets.iphone, "Download IPA")}\n🖥️ *Mac* — ${link(
-        ios.assets.mac,
-        "Download app",
-      )}\nRegistered devices only · Backend: *Dev* · ${link(ios.instructionsUrl, "Installation instructions")}`,
-    )
-  } else if (ios?.error) lines.push(`*iPhone / Mac:* ${escape(ios.error)}`)
-  else if (ios) lines.push("*iPhone / Mac:* not built for these changed paths.")
-  if (ios?.runUrl) lines.push(link(ios.runUrl, "iOS build logs"))
   lines.push(
     `${link(pr.html_url, "View PR and checks")} · ${link(androidRunUrl, "Android build logs")}${
-      asgRunUrl ? ` · ${link(asgRunUrl, "ASG build logs")}` : ""
-    }`,
+      ios?.runUrl ? ` · ${link(ios.runUrl, "iOS / macOS build logs")}` : ""
+    }${asgRunUrl ? ` · ${link(asgRunUrl, "ASG build logs")}` : ""}`,
   )
   if (ready) lines.push("Downloads may be cleaned up after 7 days.")
   return {
