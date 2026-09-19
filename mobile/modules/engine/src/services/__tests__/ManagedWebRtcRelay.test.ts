@@ -62,8 +62,8 @@ function harness(overrides: Partial<RelayDependencies> = {}, options: Partial<Re
     failure,
     deps,
   )
-  const emit = (attempt = 1, state = "failed") =>
-    listener({attemptId: `phone-m-1-relay-${attempt}`, state, reason: "lost network"})
+  const emit = (attempt = 1, state = "failed", reason = "lost network") =>
+    listener({attemptId: `phone-m-1-relay-${attempt}`, state, reason})
   return {relay, deps, native, calls, emit, failure, status, startGlasses}
 }
 
@@ -224,18 +224,91 @@ describe("ManagedWebRtcRelay", () => {
     expect(h.calls).toContain("release")
   })
 
-  test("cancel during native prepare cleans a late receiver without starting the camera", async () => {
+  test("cancel interrupts a denied permission wait and retains the lease until native cleanup completes", async () => {
     const gate = deferred<string>()
+    const cleanup = deferred<void>()
+    const h = harness({acquire: acquireGlassesHotspot})
+    h.native.prepare.mockImplementationOnce(() => gate.promise)
+    h.native.stop.mockImplementationOnce(async (id) => {
+      h.calls.push(`native-stop:${id}`)
+      gate.reject(new Error("Relay cancelled"))
+      await cleanup.promise
+    })
+    const start = h.relay.start().catch((error) => error)
+    await tick()
+    h.emit(1, "permission_required", "Allow Local Network access")
+    expect(h.status).toHaveBeenCalledWith("permission_required", "Allow Local Network access")
+    // The coordinator calls cancel before its transition can reach stop().
+    h.relay.cancel()
+    const stop = h.relay.stop()
+    try {
+      expect(h.relay.stop()).toBe(stop)
+      expect(h.native.stop).toHaveBeenCalledTimes(1)
+      expect(await start).toBeInstanceOf(Error)
+      expect(() => acquireGlassesHotspot()).toThrow("already in use")
+      expect(h.calls).not.toContain("hotspot-off")
+      expect(h.calls).not.toContain("release")
+      // Ignore permission notifications from the cancelled native attempt.
+      h.emit(1, "permission_required")
+      expect(h.status).toHaveBeenCalledTimes(1)
+      cleanup.resolve()
+      await stop
+      expect(h.native.stop).toHaveBeenCalledTimes(1)
+      expect(h.startGlasses).not.toHaveBeenCalled()
+      expect(h.calls).toContain("hotspot-off")
+      const release = acquireGlassesHotspot()
+      release()
+    } finally {
+      gate.reject(new Error("test cleanup"))
+      cleanup.resolve()
+      await stop
+    }
+  })
+
+  test("approval racing cancellation cannot start the glasses before native cleanup finishes", async () => {
+    const gate = deferred<string>()
+    const cleanup = deferred<void>()
     const h = harness()
     h.native.prepare.mockImplementationOnce(() => gate.promise)
+    h.native.stop.mockImplementationOnce(() => cleanup.promise)
     const start = h.relay.start().catch((error) => error)
     await tick()
     const stop = h.relay.stop()
-    expect(h.native.stop).not.toHaveBeenCalled()
-    gate.resolve("http://192.168.43.2/whip")
-    await start
-    await stop
-    expect(h.native.stop).toHaveBeenCalledTimes(1)
+    try {
+      // A successful prepare was already crossing the bridge when Cancel arrived.
+      gate.resolve("http://192.168.43.2/whip")
+      expect(await start).toBeInstanceOf(Error)
+      expect(h.startGlasses).not.toHaveBeenCalled()
+      expect(h.calls).not.toContain("release")
+      cleanup.resolve()
+      await stop
+      expect(h.native.stop).toHaveBeenCalledTimes(1)
+      expect(h.calls).toContain("hotspot-off")
+      expect(h.calls).toContain("release")
+    } finally {
+      gate.reject(new Error("test cleanup"))
+      cleanup.resolve()
+      await stop
+    }
+  })
+
+  test("failed prepare cancellation retains ownership and a second stop retries cleanup", async () => {
+    const gate = deferred<string>()
+    const h = harness()
+    h.native.prepare.mockImplementationOnce(() => gate.promise)
+    h.native.stop.mockImplementationOnce(async () => {
+      gate.reject(new Error("Relay cancelled"))
+      throw new Error("native cleanup failed")
+    })
+    const start = h.relay.start().catch((error) => error)
+    await tick()
+    await expect(h.relay.stop()).rejects.toThrow("native cleanup failed")
+    expect(await start).toBeInstanceOf(Error)
+    expect(h.calls).not.toContain("release")
+    expect(h.calls).not.toContain("hotspot-off")
+    await h.relay.stop()
+    expect(h.native.stop).toHaveBeenCalledTimes(2)
+    expect(h.calls).toContain("release")
     expect(h.startGlasses).not.toHaveBeenCalled()
   })
 

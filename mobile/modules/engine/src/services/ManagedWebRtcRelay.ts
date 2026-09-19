@@ -67,6 +67,8 @@ export class ManagedWebRtcRelay implements ManagedRelay {
   private attemptError: Error | null = null
   private hotspotTouched = false
   private nativeTouched = false
+  private preparing = false
+  private prepareStop: Promise<void> | null = null
   private glassesTouched = false
   private release: (() => void) | null = null
   private listener: {remove(): void} | null = null
@@ -101,6 +103,13 @@ export class ManagedWebRtcRelay implements ManagedRelay {
 
   cancel(): void {
     this.cancelled = true
+    if (this.preparing && this.attemptId && !this.prepareStop) {
+      // Local Network permission can wait indefinitely. Interrupt this owned prepare
+      // before the coordinator's transition lock can reach stop(). Native stop rejects
+      // prepare and resolves only after its peers and hotspot join have been released.
+      this.prepareStop = this.deps.native.stop(this.attemptId)
+      void this.prepareStop.catch(() => undefined) // stop() awaits and reports cleanup failure.
+    }
   }
 
   owns(streamId: string): boolean {
@@ -136,16 +145,22 @@ export class ManagedWebRtcRelay implements ManagedRelay {
     await this.deps.sleep(3_000) // Same beacon/DHCP startup allowance as ACS.
     this.checkpoint()
     this.nativeTouched = true
-    const url = await this.deps.native.prepare({
-      attemptId: this.attemptId,
-      ingestUrl: this.options.ingestUrl,
-      ssid: hotspot.ssid,
-      password: hotspot.password,
-      gatewayAddress: hotspot.localIp,
-      captureAudio,
-      audioTransport: lc3 ? "ble-lc3" : captureAudio ? "whip" : "none",
-      bitrate: this.options.video?.bitrate ?? 2_000_000,
-    })
+    this.preparing = true
+    let url: string
+    try {
+      url = await this.deps.native.prepare({
+        attemptId: this.attemptId,
+        ingestUrl: this.options.ingestUrl,
+        ssid: hotspot.ssid,
+        password: hotspot.password,
+        gatewayAddress: hotspot.localIp,
+        captureAudio,
+        audioTransport: lc3 ? "ble-lc3" : captureAudio ? "whip" : "none",
+        bitrate: this.options.video?.bitrate ?? 2_000_000,
+      })
+    } finally {
+      this.preparing = false
+    }
     this.checkpoint()
     if (lc3) {
       const id = this.attemptId
@@ -237,14 +252,15 @@ export class ManagedWebRtcRelay implements ManagedRelay {
     if (this.stopping) return this.stopping
     this.listener?.remove()
     this.listener = null
-    this.stopping = this.operation
-      .catch(() => undefined)
+    this.stopping = Promise.resolve(this.prepareStop)
+      .then(() => this.operation.catch(() => undefined))
       .then(async () => {
         await this.cleanupAttempt()
         this.release?.()
         this.release = null
       })
       .finally(() => {
+        this.prepareStop = null
         this.stopping = null
       })
     return this.stopping
@@ -276,7 +292,7 @@ export class ManagedWebRtcRelay implements ManagedRelay {
       })
     if (this.nativeTouched && id)
       await step(async () => {
-        await this.deps.native.stop(id)
+        await (this.prepareStop ?? this.deps.native.stop(id))
         this.nativeTouched = false
       })
     if (this.hotspotTouched)

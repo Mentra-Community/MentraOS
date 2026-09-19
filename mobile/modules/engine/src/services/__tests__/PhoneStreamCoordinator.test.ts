@@ -987,6 +987,46 @@ describe("PhoneStreamCoordinator", () => {
 })
 
 describe("managed relay ownership", () => {
+  test("Stop interrupts pending permission preparation before waiting for the transition lock", async () => {
+    const coord = new PhoneStreamCoordinator()
+    let cancelPrepare!: (error: Error) => void
+    let finishCleanup!: () => void
+    const cleanup = new Promise<void>((resolve) => {
+      finishCleanup = resolve
+    })
+    relayPrepare.mockImplementationOnce(
+      () =>
+        new Promise<string>((_resolve, reject) => {
+          cancelPrepare = reject
+        }),
+    )
+    relayStop.mockImplementationOnce(async () => {
+      cancelPrepare(new Error("Relay cancelled"))
+      await cleanup
+    })
+    const starting = coord.startManaged("com.a", {ingest: "whip"}).catch((error) => error)
+    await settle()
+    const beforeStop = relayStop.mock.calls.length
+    const stopping = coord.stop("com.a")
+    try {
+      await settle()
+      expect(relayStop.mock.calls.length - beforeStop).toBe(1)
+      expect(coord.getDiagnosticSnapshot().active).toBe(true)
+      expect(startStream).not.toHaveBeenCalled()
+      finishCleanup()
+      expect(await starting).toBeInstanceOf(Error)
+      await stopping
+      expect(coord.getDiagnosticSnapshot().active).toBe(false)
+      expect(teardownManagedStream).toHaveBeenCalled()
+      await coord.startManaged("com.b", {ingest: "whip"})
+      await coord.stop("com.b")
+    } finally {
+      cancelPrepare(new Error("test cleanup"))
+      finishCleanup()
+      await stopping
+    }
+  })
+
   test("two WHIP subscribers share one receiver and last stop releases it", async () => {
     const coord = new PhoneStreamCoordinator()
     const beforeStart = relayPrepare.mock.calls.length

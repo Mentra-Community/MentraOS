@@ -728,7 +728,12 @@ class AcsMeetingService {
    * A host without the native function is not a host that silently skips the join — the SoftAP call
    * has no network to run on, so this reports the reason instead.
    */
-  async joinScopedNetwork(ssid: string, passphrase: string, gateway?: string): Promise<string | undefined> {
+  async joinScopedNetwork(
+    ssid: string,
+    passphrase: string,
+    gateway?: string,
+    report?: (detail: string) => void,
+  ): Promise<string | undefined> {
     const native = getNative()
     if (!native?.joinScopedNetwork) {
       throw new Error("This host cannot join the glasses hotspot; SoftAP calling is unavailable")
@@ -737,11 +742,25 @@ class AcsMeetingService {
     this.bindScopedNetworkLost(native)
     await native.beginTrace?.(softapTraceId())
     if (this.scopedTerminating) throw new Error("Hotspot join cancelled")
-    if (native.joinScopedNetworkWithGateway) {
-      if (!gateway) throw new Error("The glasses did not report a hotspot gateway")
-      return await native.joinScopedNetworkWithGateway(ssid, passphrase, gateway)
+    const progress =
+      Platform.OS === "ios" && report
+        ? native.addListener("onScopedNetworkProgress", (event) => {
+            if (!this.scopedTerminating && event.permissionRequired === true) {
+              report(
+                "Allow Local Network access to connect to your glasses. If you previously denied access, enable it in Settings, or cancel to return home.",
+              )
+            }
+          })
+        : undefined
+    try {
+      if (native.joinScopedNetworkWithGateway) {
+        if (!gateway) throw new Error("The glasses did not report a hotspot gateway")
+        return await native.joinScopedNetworkWithGateway(ssid, passphrase, gateway)
+      }
+      return await native.joinScopedNetwork(ssid, passphrase)
+    } finally {
+      progress?.remove()
     }
-    return await native.joinScopedNetwork(ssid, passphrase)
   }
 
   /**
@@ -938,12 +957,18 @@ class AcsMeetingService {
   }
 
   /**
-   * Sign in to ACS before the glasses hotspot exists.
+   * On Android, pin cellular and sign in before the glasses hotspot exists.
    *
    * SoftAP DNS cannot resolve Teams hosts. Doing this on the phone's existing internet is what
    * stops `createCallAgent` from hanging until the hotspot is torn down.
    */
   async prepareAgent(args: {token: string; displayName?: string}): Promise<void> {
+    // iOS creates its agent after the host's hotspot/default-route wait so signaling starts
+    // on the post-handoff route instead of reusing an agent signed in over the previous Wi-Fi.
+    if (Platform.OS === "ios") {
+      softapTrace("acs_prepare_agent_deferred", {reason: "ios_hotspot_handoff"})
+      return
+    }
     const native = getNative()
     if (!native?.prepareAgent) {
       // A host that cannot pre-sign-in still joins; it just does the sign-in inside the SoftAP

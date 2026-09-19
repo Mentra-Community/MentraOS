@@ -4239,8 +4239,8 @@ class LocalMiniappRuntime {
             const enabled = await acsMeetingService.isWifiEnabled()
             return enabled ?? true
           },
-          joinScopedNetwork: (ssid, passphrase, gateway) =>
-            acsMeetingService.joinScopedNetwork(ssid, passphrase, gateway),
+          joinScopedNetwork: (ssid, passphrase, gateway, report) =>
+            acsMeetingService.joinScopedNetwork(ssid, passphrase, gateway, report),
           leaveScopedNetwork: () => acsMeetingService.leaveScopedNetwork(),
           cancelScopedNetworkJoin: () => acsMeetingService.cancelScopedNetworkJoin(),
           probeGateway: async () => {

@@ -18,7 +18,9 @@ public final class GlassesHotspotNetwork {
     private var joinReply: ((Result<String, Error>) -> Void)?
     private var leaveReplies: [() -> Void] = []
     private var monitor: NWPathMonitor?
+    private var localAccess: LocalNetworkAccessRequest?
     public var onLost: ((String) -> Void)?
+    public var onPermissionRequired: (() -> Void)?
     public init() {}
 
     public func join(ssid: String, passphrase: String, gateway: String? = nil, completion: @escaping (Result<String, Error>) -> Void) {
@@ -36,7 +38,9 @@ public final class GlassesHotspotNetwork {
             self.joinReply = completion
             self.applyConfiguration(ssid: ssid, passphrase: passphrase, generation: gen)
             self.queue.asyncAfter(deadline: .now() + 60) {
-                guard gen == self.generation, self.joinReply != nil else { return }
+                // Once associated, the user may still be reading the Local Network alert.
+                // Its response time is not a hotspot association timeout.
+                guard gen == self.generation, self.joinReply != nil, self.localAccess == nil else { return }
                 self.cancelled = true
                 self.finishJoin(.failure(LocalMediaError("Hotspot join timed out")))
                 // apply() cannot be cancelled. Retain the reservation until its callback and remove the
@@ -176,7 +180,7 @@ public final class GlassesHotspotNetwork {
                 {
                     self.localAddress = address
                     self.startMonitor(generation: gen)
-                    self.finishJoin(.success(address))
+                    self.waitForLocalAccess(address: address, generation: gen)
                 } else if remaining > 0 {
                     self.queue.asyncAfter(deadline: .now() + 0.5) { self.waitForAddress(ssid: ssid, generation: gen, remaining: remaining - 1) }
                 } else {
@@ -201,6 +205,27 @@ public final class GlassesHotspotNetwork {
         monitor.start(queue: queue)
     }
 
+    private func waitForLocalAccess(address: String, generation gen: Int) {
+        let gateway = gatewayAddress ?? address.split(separator: ".").prefix(3).joined(separator: ".") + ".1"
+        let request = LocalNetworkAccessRequest(localAddress: address, gateway: gateway, queue: queue)
+        localAccess = request
+        request.start(onPermissionRequired: { [weak self] in
+            guard let self, gen == generation, !cancelled else { return }
+            NSLog("GLASSES-MEDIA local_network_permission=waiting")
+            onPermissionRequired?()
+        }) { [weak self] result in
+            guard let self, gen == generation, !cancelled else { return }
+            switch result {
+            case .success:
+                NSLog("GLASSES-MEDIA local_network_permission=ready")
+                finishJoin(.success(address))
+            case let .failure(error):
+                finishJoin(.failure(error))
+                finishLeave()
+            }
+        }
+    }
+
     private func finishJoin(_ result: Result<String, Error>) {
         let reply = joinReply
         joinReply = nil
@@ -209,6 +234,7 @@ public final class GlassesHotspotNetwork {
 
     private func finishLeave() {
         generation += 1
+        localAccess?.cancel(); localAccess = nil
         monitor?.cancel(); monitor = nil
         if let ssid { NEHotspotConfigurationManager.shared.removeConfiguration(forSSID: ssid) }
         ssid = nil
