@@ -138,6 +138,14 @@ the expected ASG build, and final success still requires the exact target APK
 hash, firmware and fresh BES response. USB, CID and Bluetooth identity checks
 remain active throughout.
 
+Polling tolerates only explicitly classified downtime: the expected USB device
+is absent/offline, or a required firmware/ASG value is empty while boot is still
+incomplete. A failed shell read is reconnect downtime only when a fresh USB
+inventory confirms absence/offline status or reconnection with a new transport ID.
+Nonempty malformed or off-route
+firmware, identity mismatches, other command failures and evidence-write failures
+stop the run. A later valid target cannot erase an invalid observation.
+
 Before installation, the runner briefly defers an initial offer, opens Device
 info and matches the app's serial/Bluetooth address to USB. It then relaunches the
 same signed build to obtain the normal update offer again. No build replacement,

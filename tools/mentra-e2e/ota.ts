@@ -4,14 +4,8 @@ import {appendFile, chmod, copyFile, mkdir} from "node:fs/promises"
 import {join} from "node:path"
 import {parseArgs} from "node:util"
 import {buildDriver, command, snapshot, type Doctor, type Snapshot} from "./runner/driver"
-import {
-  checkOtaObservedVersions,
-  freshBesProof,
-  otaFirmwareRoute,
-  normalizeFirmware,
-  otaPage,
-  selectUsbTransport,
-} from "./runner/ota-state"
+import {freshBesProof, otaFirmwareRoute, normalizeFirmware, otaPage} from "./runner/ota-state"
+import {observeOtaHardware, otaCommand as run, readOtaHardware} from "./runner/ota-hardware"
 import {acquireLock, Report} from "./runner/report"
 import {executeSteps} from "./runner/suite"
 
@@ -86,44 +80,14 @@ let finished = false
 let index = 0
 let lastHardware = ""
 
-async function run(args: string[]): Promise<string> {
-  const process = Bun.spawn(args, {stdout: "pipe", stderr: "pipe"})
-  const timer = setTimeout(() => process.kill(), 10000)
-  try {
-    const [stdout, stderr, code] = await Promise.all([
-      new Response(process.stdout).text(),
-      new Response(process.stderr).text(),
-      process.exited,
-    ])
-    if (code) throw new Error(`${args[0]} failed: ${stderr.slice(0, 200)}`)
-    return stdout.trim()
-  } finally {
-    clearTimeout(timer)
-  }
-}
 async function hardware(observingActivePass = false) {
-  const transport = selectUsbTransport(await run(["adb", "devices", "-l"]), fixture.serial, fixture.usb)
-  const shell = (...args: string[]) => run(["adb", "-t", transport, "shell", ...args])
-  const cid = await shell("cat", "/sys/block/mmcblk0/device/cid")
-  const serial = await shell("getprop", "ro.serialno")
-  if (cid.toLowerCase() !== fixture.cid.toLowerCase() || serial !== fixture.serial)
-    throw new Error("HARDWARE_IDENTITY_MISMATCH")
-  const bluetooth = await shell("getprop", "persist.mentra.live.mac")
-  if (bluetooth.toUpperCase() !== fixture.bluetooth.toUpperCase()) throw new Error("HARDWARE_BLUETOOTH_MISMATCH")
-  const firmware = normalizeFirmware(await shell("getprop", "ro.custom.ota.version"))
-  const bootId = await shell("cat", "/proc/sys/kernel/random/boot_id")
-  const slot = await shell("getprop", "ro.boot.slot_suffix")
-  const bootCompleted = await shell("getprop", "sys.boot_completed")
-  const packageInfo = await shell("dumpsys", "package", "com.mentra.asg_client")
-  const asgVersion = Number(/versionCode=(\d+)/.exec(packageInfo)?.[1])
-  if (!asgVersion && bootCompleted !== "1") throw new Error("ASG is not yet available during boot")
-  checkOtaObservedVersions(
-    firmware,
-    asgVersion,
+  const {shell, ...state} = await readOtaHardware(
+    fixture,
     allowedFirmware,
     [fixture.before.asgVersion, target.asgVersion],
     observingActivePass,
   )
+  const {transport, asgVersion, firmware, bootId} = state
   if (transport !== loggingTransport || !logger || logger.exitCode !== null) {
     if (logger && logger.exitCode === null) {
       logger.kill()
@@ -138,7 +102,6 @@ async function hardware(observingActivePass = false) {
     })
     loggingTransport = transport
   }
-  const state = {transport, serial, cid, bluetooth, firmware, bootId, slot, bootCompleted, asgVersion}
   const encoded = JSON.stringify(state)
   if (encoded !== lastHardware) {
     await appendFile(
@@ -373,20 +336,19 @@ try {
     else if (performance.now() - unknownSince > 60000)
       throw new Error("Unrecognized OTA screen persisted for 60 seconds")
     if (performance.now() - lastHardwareCheck > 5000) {
-      try {
-        await hardware((started || values.resume) && ["working", "checking", "pass-complete"].includes(page.kind))
-      } catch (error) {
-        if (/MISMATCH|UNEXPECTED/.test(String(error))) throw error
-        await appendFile(
-          join(hardwareFolder, "timeline.jsonl"),
-          JSON.stringify({
-            at: new Date().toISOString(),
-            observation: "USB unavailable during update",
-            error: String(error),
-          }) + "\n",
-          {mode: 0o600},
-        )
-      }
+      await observeOtaHardware(
+        () => hardware((started || values.resume) && ["working", "checking", "pass-complete"].includes(page.kind)),
+        (error) =>
+          appendFile(
+            join(hardwareFolder, "timeline.jsonl"),
+            JSON.stringify({
+              at: new Date().toISOString(),
+              observation: error.kind === "transport" ? "USB unavailable during update" : "Glasses boot in progress",
+              error: String(error),
+            }) + "\n",
+            {mode: 0o600},
+          ),
+      )
       lastHardwareCheck = performance.now()
     }
     await Bun.sleep(750)

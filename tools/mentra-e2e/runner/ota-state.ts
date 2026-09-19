@@ -1,8 +1,15 @@
 import type {Snapshot} from "./driver"
 
+export class OtaValidationError extends Error {}
+export class OtaHardwareUnavailable extends Error {
+  constructor(readonly kind: "transport" | "boot", message: string) {
+    super(message)
+  }
+}
+
 export function normalizeFirmware(version: string) {
   if (typeof version !== "string" || !/^(?:MentraLive_)?\d{8}(?:\.\d{1,9})?$/.test(version))
-    throw new Error("Invalid firmware version in OTA route")
+    throw new OtaValidationError("Invalid firmware version in OTA route or observation")
   return "MentraLive_" + version.split("_").at(-1)
 }
 
@@ -34,9 +41,14 @@ export function checkOtaObservedVersions(
   asgVersions: number[],
   observingActivePass: boolean,
 ) {
-  if (!allowedFirmware.map(normalizeFirmware).includes(normalizeFirmware(firmware)))
-    throw new Error("UNEXPECTED_FIRMWARE")
-  if (!asgVersions.includes(asgVersion) && !observingActivePass) throw new Error("UNEXPECTED_ASG_VERSION")
+  checkOtaObservedFirmware(firmware, allowedFirmware)
+  if (!asgVersions.includes(asgVersion) && !observingActivePass) throw new OtaValidationError("UNEXPECTED_ASG_VERSION")
+}
+
+export function checkOtaObservedFirmware(firmware: string, allowedFirmware: string[]) {
+  const normalized = normalizeFirmware(firmware)
+  if (!allowedFirmware.map(normalizeFirmware).includes(normalized)) throw new OtaValidationError("UNEXPECTED_FIRMWARE")
+  return normalized
 }
 
 export type OtaPage =
@@ -115,13 +127,20 @@ export function otaPage(state: Snapshot): {kind: OtaPage; title: string; finishC
 }
 
 export function selectUsbTransport(inventory: string, serial: string, usb: string): string {
-  const rows = inventory.split("\n").filter((line) => {
-    const parts = line.trim().split(/\s+/)
-    return parts[0] === serial && parts[1] === "device" && parts.includes(`usb:${usb}`)
-  })
-  if (rows.length !== 1) throw new Error("Expected USB fixture is absent or ambiguous")
-  const transport = /\btransport_id:(\d+)\b/.exec(rows[0])?.[1]
-  if (!transport) throw new Error("USB fixture has no transport id")
+  const rows = inventory
+    .split("\n")
+    .map((line) => line.trim().split(/\s+/))
+    .filter((parts) => parts[0] === serial)
+  if (rows.length === 0) throw new OtaHardwareUnavailable("transport", "Expected USB fixture is absent")
+  if (rows.length !== 1) throw new OtaValidationError("Expected USB fixture is ambiguous")
+  const parts = rows[0]
+  if (parts.some((part) => part.startsWith("usb:") && part !== `usb:${usb}`))
+    throw new OtaValidationError("USB fixture path mismatch")
+  if (parts[1] === "offline") throw new OtaHardwareUnavailable("transport", "Expected USB fixture is offline")
+  if (parts[1] !== "device" || !parts.includes(`usb:${usb}`))
+    throw new OtaValidationError("USB fixture is unauthorized or has no verified USB path")
+  const transport = /\btransport_id:(\d+)\b/.exec(parts.join(" "))?.[1]
+  if (!transport) throw new OtaValidationError("USB fixture has no transport id")
   return transport
 }
 

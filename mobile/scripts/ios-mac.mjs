@@ -4,6 +4,7 @@ import {createHash} from "node:crypto"
 import {archiveBuild, installBuild, installationRoot} from "./install-ios-mac.mjs"
 import {runPodInstallIfNeeded} from "./cocoapods-install.mjs"
 import {setBuildEnv} from "./set-build-env.mjs"
+import {writeMacXcodeEnvironment} from "./ios-mac-environment.mjs"
 
 const args = process.argv.slice(2)
 if (args.includes("--help")) {
@@ -50,9 +51,7 @@ await runPodInstallIfNeeded({
   projectRoot,
   force: process.env.MENTRA_POD_INSTALL === "force",
 })
-const localEnv = (await fs.readFile(".env", "utf8")).replace(/^EXPO_PUBLIC_MENTRAOS_VERSION=.*\n?/m, "")
-await fs.writeFile("ios/.xcode.env.local", `${localEnv}\nexport EXPO_PUBLIC_MENTRAOS_VERSION=${localVersion}\n`)
-await fs.chmod("ios/.xcode.env.local", 0o600)
+process.env.NODE_BINARY = await writeMacXcodeEnvironment("ios/.xcode.env.local")
 
 const workspaces = await glob("ios/*.xcworkspace", {onlyDirectories: true})
 if (workspaces.length !== 1) throw new Error(`Expected one iOS workspace, found ${workspaces.length}`)

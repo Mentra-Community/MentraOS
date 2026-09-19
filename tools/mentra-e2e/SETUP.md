@@ -53,6 +53,12 @@ bun ios:mac
 
 `ios:mac` runs Expo prebuild without deleting the native project, the shared CocoaPods installer, then `xcodebuild` for this Mac's iOS-on-Mac destination. It defaults to **Release** with bundled JavaScript: subsequent runs need no Metro server. Development signing is local; this command does not upload to TestFlight. After a successful build it normally quits any running app with the same bundle ID, installs into the fixed `~/Applications/Mentra E2E/Mentra.app` path, and opens it with foreground activation disabled. It preserves the app's existing container and does not clear account or pairing data.
 
+Explicit environment settings take precedence over `mobile/.env`. The build writes
+the effective public settings as quoted exports to `ios/.xcode.env.local`, keeping
+spaces and shell metacharacters literal. It uses an explicit `NODE_BINARY` when
+provided, otherwise a working prebuild Node pin or Node from `PATH`; Bun is never
+used as the Node executable for Xcode build phases.
+
 The Mac build applies the app's configured deployment minimum to dependency targets, because Xcode 27 rejects old Pod minimums below iOS 15 on this destination. The checked-in Expo Router patch adds its missing iOS 16 availability check; it does not upgrade the dependency or raise the app's support minimum. Derived data lives outside `mobile/ios/` so CocoaPods' project scan cannot try to rewrite read-only Swift package checkouts.
 
 For a compile without replacing the running process, use `bun ios:mac --build-only`. For iteration with Metro, run `bun start` separately and use `bun ios:mac --debug`. Do not use the repository's release/upload scripts for this local lane.
