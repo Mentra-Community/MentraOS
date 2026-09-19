@@ -44,15 +44,33 @@ export interface RenderRectStyle {
   radius?: number
 }
 
+export interface RenderListStyle {
+  /** Border width in px around the whole list (0/absent = none). */
+  border?: number
+  /** Border corner radius in px. */
+  radius?: number
+  /** Outline the highlighted row (default true). */
+  selectionBorder?: boolean
+}
+
 /**
  * One element of a rendered scene. `id` is optional but recommended for
  * anything that updates over time: elements with a stable id update in place on
  * the glasses (no flicker); the host matches unnamed elements by geometry.
+ *
+ * `list` is a glasses-native selectable list: the firmware owns scrolling and
+ * the highlighted row, and each tap reaches the miniapp as a touch event
+ * carrying `selectedItemIndex` / `selectedItemName` (see `session.input.onTouch`).
+ * One row per `items` entry, in order; re-rendering with different rows rebuilds
+ * the list with the first row highlighted. Devices without a native list widget
+ * render the rows as plain text (reported as `degraded`). Budgets live in
+ * `session.capabilities.display.maxListElements` / `maxListItems`.
  */
 export type RenderElement =
   | {type: "text"; id?: string; box: RenderBox; text: string; style?: RenderTextStyle}
   | {type: "image"; id?: string; box: RenderBox; data: string}
   | {type: "rect"; id?: string; box: RenderBox; style?: RenderRectStyle}
+  | {type: "list"; id?: string; box: RenderBox; items: string[]; style?: RenderListStyle}
 
 export interface RenderOptions {
   view?: ViewType

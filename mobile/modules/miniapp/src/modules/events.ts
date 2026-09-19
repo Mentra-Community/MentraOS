@@ -154,6 +154,13 @@ export interface VadData {
 export interface TouchData {
   /** The gesture: single_tap, double_tap, triple_tap, long_press, swipe_up, or swipe_down. */
   kind: "single_tap" | "double_tap" | "triple_tap" | "long_press" | "swipe_up" | "swipe_down" | string
+  /**
+   * Zero-based row of a rendered `list` element the gesture landed on, when the
+   * glasses reported one (a tap on a native list). Absent for plain touchpad gestures.
+   */
+  selectedItemIndex?: number
+  /** The row's text, as rendered, when `selectedItemIndex` is present. */
+  selectedItemName?: string
 }
 
 export interface AudioChunkData {

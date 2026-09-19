@@ -72,6 +72,7 @@ export type {
   RenderElement,
   RenderOptions,
   RenderRectStyle,
+  RenderListStyle,
   RenderResult,
   RenderTextStyle,
   ViewType,

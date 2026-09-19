@@ -31,6 +31,8 @@ const CAPS: SceneDisplayCapabilities = {
   maxTextElements: 6,
   maxImageElements: 4,
   maxImagePx: {width: 200, height: 200},
+  maxListElements: 0,
+  maxListItems: 0,
   shapes: ["rect"],
   intensityLevels: 2,
   partialUpdate: true,

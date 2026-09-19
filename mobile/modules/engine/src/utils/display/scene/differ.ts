@@ -25,6 +25,7 @@ export interface DiffableElement {
   box: SceneBox
   text?: string
   data?: string
+  items?: string[]
   style?: FrameElement["style"]
   contentHash: string
 }
@@ -53,6 +54,7 @@ function buildFrameElement(el: DiffableElement, id: string, change: SceneChange)
   const out: FrameElement = {id, type: el.type, box: el.box, contentHash: el.contentHash, change}
   if (el.text !== undefined) out.text = el.text
   if (el.data !== undefined) out.data = el.data
+  if (el.items !== undefined) out.items = el.items
   if (el.style !== undefined) out.style = el.style
   return out
 }

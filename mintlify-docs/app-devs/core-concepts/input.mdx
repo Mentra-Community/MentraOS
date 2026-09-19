@@ -71,6 +71,8 @@ Each `TouchData` has:
 | Field | Type | Notes |
 |---|---|---|
 | `kind` | `string` | The gesture. See the values below. |
+| `selectedItemIndex` | `number?` | Zero-based row of a rendered [`list` element](/app-devs/core-concepts/display/layouts#lists) the gesture landed on. Absent for plain touchpad gestures. |
+| `selectedItemName` | `string?` | That row's text, present together with `selectedItemIndex`. |
 
 The gesture values the runtime reports:
 
@@ -85,6 +87,11 @@ The gesture values the runtime reports:
 
 Glasses can send other `kind` strings, so `kind` is typed as `string`. Match the
 values you handle and ignore the rest.
+
+On the Even Realities G2, a double tap normally opens the glasses' own
+dashboard. While a running miniapp listens for touches (any `onTouch`, or
+`onTouch("double_tap", ...)`), the gesture goes to the miniapp instead and the
+dashboard stays closed.
 
 ## Cleaning up
 
