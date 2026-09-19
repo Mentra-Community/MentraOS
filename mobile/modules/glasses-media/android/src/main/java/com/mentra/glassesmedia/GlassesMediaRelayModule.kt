@@ -5,8 +5,11 @@ import android.os.Handler
 import android.os.Looper
 import android.os.PowerManager
 import android.provider.Settings
+import android.util.Base64
+import android.util.Log
 import com.mentra.glassesmedia.network.*
 import com.mentra.glassesmedia.publisher.PhoneWhipPublisher
+import com.mentra.glassesmedia.publisher.RelayPcmInput
 import com.mentra.glassesmedia.source.*
 import expo.modules.kotlin.Promise
 import expo.modules.kotlin.modules.Module
@@ -22,6 +25,7 @@ class GlassesMediaRelayModule : Module() {
   private var source: LocalWhipIngestSource? = null
   private var publisher: PhoneWhipPublisher? = null
   private var wakeLock: PowerManager.WakeLock? = null
+  private val pcmInput = RelayPcmInput()
 
   override fun definition() = ModuleDefinition {
     Name("MentraGlassesMediaRelay")
@@ -64,14 +68,21 @@ class GlassesMediaRelayModule : Module() {
           val outgoing = PhoneWhipPublisher(context, endpoint, options["captureAudio"] != false,
             (options["bitrate"] as? Number)?.toInt() ?: 2_000_000) { state, reason -> emit(id, state, reason) }
           publisher = outgoing
+          val bleAudio = options["captureAudio"] != false && options["audioTransport"] == "ble-lc3"
+          if (bleAudio) pcmInput.attach(id, outgoing::onPcm)
+          Log.i("ManagedRelay", "Audio transport=${options["audioTransport"] ?: "whip"} attempt=$id")
           val incoming = LocalWhipIngestSource(context, VideoFrameListener(outgoing::onVideoFrame),
             PcmListener(outgoing::onPcm), scopedNetwork = scoped)
           source = incoming
           incoming.setStateListener { state, reason ->
             if (state == SourceState.FAILED) emit(id, "failed", "Glasses receiver: $reason")
           }
-          incoming.setPcmDeliveryEnabled(options["captureAudio"] != false)
-          incoming.start(SourceConfig("", SourceKind.SOFTAP, scoped.localIpv4()))
+          incoming.setPcmDeliveryEnabled(options["captureAudio"] != false && !bleAudio)
+          // A listener created while pinned to cellular cannot reply to the glasses over Wi-Fi.
+          // Restore cellular before opening the outgoing publisher, including when the bind fails.
+          hold.withProcessUnpinned {
+            incoming.start(SourceConfig("", SourceKind.SOFTAP, scoped.localIpv4()))
+          }
           wakeLock = context.getSystemService(PowerManager::class.java)
             .newWakeLock(PowerManager.PARTIAL_WAKE_LOCK, "Mentra:managed-relay").apply { acquire() }
           outgoing.start()
@@ -81,6 +92,11 @@ class GlassesMediaRelayModule : Module() {
           promise.reject("RELAY_PREPARE_FAILED", error.message, error)
         }
       }
+    }
+
+    Function("pushOutgoingPcm") { attemptId: String, base64: String, sampleRate: Int, channels: Int ->
+      val bytes = try { Base64.decode(base64, Base64.DEFAULT) } catch (_: IllegalArgumentException) { null }
+      bytes != null && pcmInput.push(attemptId, bytes, sampleRate, channels)
     }
 
     AsyncFunction("stop") { attemptId: String, promise: Promise ->
@@ -100,6 +116,7 @@ class GlassesMediaRelayModule : Module() {
   }
 
   private fun cleanup() {
+    pcmInput.detach()
     source?.setStateListener(null)
     // Try every cleanup even if one fails. Keep the slot occupied on any failure.
     var failure: Exception? = null

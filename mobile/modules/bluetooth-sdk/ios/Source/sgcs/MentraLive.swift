@@ -2665,7 +2665,8 @@ class MentraLive: NSObject, SGCManager {
 
     // MARK: - Data Processing
 
-    private func processReceivedData(_ data: Data) {
+    // Internal so native integration tests can replay the actual BLE receive path.
+    func processReceivedData(_ data: Data) {
         guard data.count > 0 else { return }
 
         let bytes = [UInt8](data)
@@ -3827,6 +3828,14 @@ class MentraLive: NSObject, SGCManager {
         ]
 
         sendJson(json, wakeUp: true)
+    }
+
+    func sendGalleryServerEnabled(requestId: String, enabled: Bool) {
+        sendJson([
+            "type": "set_gallery_server_enabled",
+            "request_id": requestId,
+            "enabled": enabled,
+        ], wakeUp: true)
     }
 
     func sendGalleryMode() {

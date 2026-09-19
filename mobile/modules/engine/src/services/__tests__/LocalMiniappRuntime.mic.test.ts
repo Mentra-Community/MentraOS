@@ -110,10 +110,10 @@ describe("mic session host gate", () => {
     })
   })
 
-  test("a diagnostic lease is reserved for the Mentra App", () => {
+  test.each(["diagnostic", "livestream"])("a %s lease is reserved for the Mentra App", (useCase) => {
     // Otherwise a dev miniapp could pair a glasses diagnostic lease with a meeting join.
-    expect(ENGINE_ONLY_USE_CASES).toContain("diagnostic")
-    harness.host.handleMicAcquire("com.other.app", {source: "glasses", useCase: "diagnostic"}, "r1")
+    expect(ENGINE_ONLY_USE_CASES).toContain(useCase)
+    harness.host.handleMicAcquire("com.other.app", {source: "glasses", useCase}, "r1")
     expect(harness.results.at(-1)).toMatchObject({ok: false, error: {code: "PERMISSION_DENIED"}})
   })
 

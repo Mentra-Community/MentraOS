@@ -2001,6 +2001,11 @@ class DeviceManager {
         ar99.sendFactoryReset()
     }
 
+    fun sendGalleryServerEnabled(requestId: String, enabled: Boolean) {
+        val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
+        live.sendGalleryServerEnabled(requestId, enabled)
+    }
+
     fun sendGalleryMode(requestId: String, enabled: Boolean) {
         val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
         live.sendGalleryMode(requestId, enabled)

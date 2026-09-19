@@ -1,6 +1,6 @@
 import {describe, expect, mock, test} from "bun:test"
 import "./bluetoothSdkTestMock"
-import type {RelayDependencies} from "../ManagedWebRtcRelay"
+import type {RelayDependencies, RelayOptions} from "../ManagedWebRtcRelay"
 import type {StreamStartRequest} from "@mentra/bluetooth-sdk/internal"
 const {ManagedWebRtcRelay} = await import("../ManagedWebRtcRelay")
 import {acquireGlassesHotspot} from "../GlassesHotspotLease"
@@ -16,7 +16,7 @@ function deferred<T>() {
 }
 const tick = () => new Promise((resolve) => setTimeout(resolve, 2))
 
-function harness(overrides: Partial<RelayDependencies> = {}) {
+function harness(overrides: Partial<RelayDependencies> = {}, options: Partial<RelayOptions> = {}) {
   const calls: string[] = []
   let listener: Parameters<RelayDependencies["native"]["addListener"]>[1] = () => {}
   const native = {
@@ -27,6 +27,7 @@ function harness(overrides: Partial<RelayDependencies> = {}) {
     stop: mock(async (id: string) => {
       calls.push(`native-stop:${id}`)
     }),
+    pushOutgoingPcm: mock((_id: string, _pcm: string, _rate: number, _channels: number) => true),
     addListener: mock((_name: string, cb: typeof listener) => {
       listener = cb
       return {remove: () => calls.push("unsubscribe")}
@@ -56,7 +57,7 @@ function harness(overrides: Partial<RelayDependencies> = {}) {
     ...overrides,
   }
   const relay = new ManagedWebRtcRelay(
-    {streamId: "phone-m-1", ingestUrl: "https://cloudflare.test/whip"},
+    {streamId: "phone-m-1", ingestUrl: "https://cloudflare.test/whip", ...options},
     status,
     failure,
     deps,
@@ -66,7 +67,128 @@ function harness(overrides: Partial<RelayDependencies> = {}) {
   return {relay, deps, native, calls, emit, failure, status, startGlasses}
 }
 
+function microphone() {
+  const listeners: Array<Parameters<NonNullable<RelayDependencies["microphone"]>["subscribe"]>[0]> = []
+  const release = mock(() => {})
+  const remove = mock(() => {})
+  return {
+    listeners,
+    release,
+    remove,
+    acquire: mock(() => release),
+    subscribe: mock((listener: (typeof listeners)[number]) => {
+      listeners.push(listener)
+      return {remove}
+    }),
+  }
+}
+
 describe("ManagedWebRtcRelay", () => {
+  test("BLE LC3 feeds the phone publisher while glasses capture video only", async () => {
+    const mic = microphone()
+    const h = harness({microphone: mic})
+    await h.relay.start()
+    expect(mic.acquire).toHaveBeenCalledTimes(1)
+    expect(h.native.prepare.mock.calls[0][0]).toMatchObject({captureAudio: true, audioTransport: "ble-lc3"})
+    expect(h.startGlasses.mock.calls[0][0].captureAudio).toBe(false)
+    mic.listeners[0]({source: "glasses", pcm: new Uint8Array([0, 127, 255, 128]).buffer, sampleRate: 16000})
+    expect(h.native.pushOutgoingPcm).toHaveBeenCalledWith("phone-m-1-relay-1", "AH//gA==", 16000, 1)
+    await h.relay.stop()
+    expect(mic.remove).toHaveBeenCalledTimes(1)
+    expect(mic.release).toHaveBeenCalledTimes(1)
+    mic.listeners[0]({source: "glasses", pcm: new ArrayBuffer(4)})
+    expect(h.native.pushOutgoingPcm).toHaveBeenCalledTimes(1)
+  })
+
+  test("explicit video-only capture never acquires or publishes microphone audio", async () => {
+    const mic = microphone()
+    const h = harness({microphone: mic}, {captureAudio: false})
+    await h.relay.start()
+    expect(mic.acquire).not.toHaveBeenCalled()
+    expect(h.native.prepare.mock.calls[0][0]).toMatchObject({captureAudio: false, audioTransport: "none"})
+    expect(h.startGlasses.mock.calls[0][0].captureAudio).toBe(false)
+    await h.relay.stop()
+  })
+
+  test("an older native publisher retains WHIP audio instead of losing the microphone", async () => {
+    const mic = microphone()
+    const h = harness({microphone: mic})
+    h.deps.native.pushOutgoingPcm = undefined
+    await h.relay.start()
+    expect(mic.acquire).not.toHaveBeenCalled()
+    expect(h.native.prepare.mock.calls[0][0]).toMatchObject({captureAudio: true, audioTransport: "whip"})
+    expect(h.startGlasses.mock.calls[0][0].captureAudio).toBe(true)
+    await h.relay.stop()
+  })
+
+  test("failed preparation releases the microphone during coordinator cleanup", async () => {
+    const mic = microphone()
+    const h = harness({microphone: mic})
+    h.native.prepare.mockImplementation(async () => {
+      throw new Error("prepare failed")
+    })
+    await expect(h.relay.start()).rejects.toThrow("prepare failed")
+    await h.relay.stop()
+    expect(mic.release).toHaveBeenCalledTimes(1)
+    expect(mic.subscribe).not.toHaveBeenCalled()
+  })
+
+  test("retry replaces the microphone lease and rejects callbacks from its predecessor", async () => {
+    const mic = microphone()
+    const h = harness({microphone: mic})
+    await h.relay.start()
+    h.emit()
+    await tick()
+    expect(mic.acquire).toHaveBeenCalledTimes(2)
+    expect(mic.release).toHaveBeenCalledTimes(1)
+    const frame = {source: "glasses", pcm: new ArrayBuffer(4)}
+    mic.listeners[0](frame)
+    expect(h.native.pushOutgoingPcm).not.toHaveBeenCalled()
+    mic.listeners[1](frame)
+    expect(h.native.pushOutgoingPcm.mock.calls[0][0]).toBe("phone-m-1-relay-2")
+    await h.relay.stop()
+    expect(mic.release).toHaveBeenCalledTimes(2)
+  })
+
+  test("cancelling during preparation releases the mic without starting glasses capture", async () => {
+    const mic = microphone()
+    const prepared = deferred<string>()
+    const h = harness({microphone: mic})
+    h.native.prepare.mockImplementation(() => prepared.promise)
+    const started = h.relay.start()
+    await tick()
+    const stopped = h.relay.stop()
+    prepared.resolve("http://192.168.43.2:8080/whip")
+    await expect(started).rejects.toThrow("cancelled")
+    await stopped
+    expect(mic.release).toHaveBeenCalledTimes(1)
+    expect(mic.subscribe).not.toHaveBeenCalled()
+    expect(h.startGlasses).not.toHaveBeenCalled()
+  })
+
+  test("a microphone source conflict fails before starting the hotspot or disabling WHIP audio", async () => {
+    const mic = microphone()
+    mic.acquire.mockImplementation(() => {
+      throw new Error("MIC_SOURCE_CONFLICT")
+    })
+    const h = harness({microphone: mic})
+    await expect(h.relay.start()).rejects.toThrow("MIC_SOURCE_CONFLICT")
+    await h.relay.stop()
+    expect(h.deps.hotspot).not.toHaveBeenCalled()
+    expect(h.startGlasses).not.toHaveBeenCalled()
+    expect(mic.release).not.toHaveBeenCalled()
+  })
+
+  test("phone microphone frames never enter a stream that selected glasses audio", async () => {
+    const mic = microphone()
+    const h = harness({microphone: mic})
+    await h.relay.start()
+    mic.listeners[0]({source: "phone", pcm: new ArrayBuffer(4)})
+    expect(h.native.pushOutgoingPcm).not.toHaveBeenCalled()
+    await h.relay.stop()
+    expect(mic.release).toHaveBeenCalledTimes(1)
+  })
+
   test("Cloudflare credentials stay on the phone; glasses publish host-only to the local receiver", async () => {
     const h = harness()
     await h.relay.start()
