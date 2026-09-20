@@ -260,6 +260,17 @@ jobs:
           fi
           echo "enabled=true" >> "$GITHUB_OUTPUT"
           echo "namespace=$toolchain" >> "$GITHUB_OUTPUT"
+          echo "CCACHE_BINARY=$(command -v ccache)" >> "$GITHUB_ENV"
+          # Xcode 16 CompileC does not export CCACHE_BINARY, so RN's wrapper
+          # does `exec $CCACHE_BINARY clang` with an empty binary and never
+          # reaches ccache. Bake the path + cache env into our own wrappers
+          # and pass them as CC/CXX on the xcodebuild command line.
+          wrapper_dir="$RUNNER_TEMP/mentra-ccache-wrappers"
+          CCACHE_DIR="$ccache_dir" CCACHE_CONFIGPATH="$conf" \
+            CCACHE_BASEDIR="$GITHUB_WORKSPACE" CCACHE_STATSLOG="$RUNNER_TEMP/ccache-stats.log" \
+            bash "$GITHUB_WORKSPACE/.github/scripts/ios-ccache-wrappers.sh" "$(command -v ccache)" "$wrapper_dir"
+          echo "MENTRA_IOS_CCACHE_CC=$wrapper_dir/mentra-ccache-clang.sh" >> "$GITHUB_ENV"
+          echo "MENTRA_IOS_CCACHE_CXX=$wrapper_dir/mentra-ccache-clang++.sh" >> "$GITHUB_ENV"
           echo "ccache $(ccache --version | head -1 | awk '{print $NF}') enabled; cache dir $ccache_dir (namespace $toolchain)"
           CCACHE_DIR="$ccache_dir" CCACHE_CONFIGPATH="$conf" ccache --show-stats 2>/dev/null | head -12 || true
           echo "Existing namespaces under $HOME/.ccache-mentra-ci:"; du -sh "$HOME/.ccache-mentra-ci"/* 2>/dev/null || true
@@ -278,7 +289,7 @@ jobs:
 
       - name: Test PR artifact and notification contracts
         run: |
-          node --test .github/scripts/pr-ios-artifacts.test.mjs .github/scripts/notify-pr-builds.test.mjs .github/scripts/ios-ensure-ccache.test.mjs
+          node --test .github/scripts/pr-ios-artifacts.test.mjs .github/scripts/notify-pr-builds.test.mjs .github/scripts/ios-ensure-ccache.test.mjs .github/scripts/ios-ccache-wrappers.test.mjs
           python3 mobile/ci/pr-ios/test_artifacts.py
 
       - name: Use the self-hosted Mac's Ruby for signing
@@ -597,6 +608,16 @@ jobs:
             fi
           done
           echo "CCACHE_BINARY and ccache-clang wrappers present in Pods and app project build settings."
+          if [ -z "${MENTRA_IOS_CCACHE_CC:-}" ] || [ ! -x "${MENTRA_IOS_CCACHE_CC:-}" ]; then
+            echo "::error::mentra ccache clang wrapper missing or not executable: ${MENTRA_IOS_CCACHE_CC:-}"
+            exit 1
+          fi
+          if [ -z "${MENTRA_IOS_CCACHE_CXX:-}" ] || [ ! -x "${MENTRA_IOS_CCACHE_CXX:-}" ]; then
+            echo "::error::mentra ccache clang++ wrapper missing or not executable: ${MENTRA_IOS_CCACHE_CXX:-}"
+            exit 1
+          fi
+          echo "Command-line wrappers: CC=$MENTRA_IOS_CCACHE_CC CXX=$MENTRA_IOS_CCACHE_CXX"
+          grep -E 'exec |CCACHE_' "$MENTRA_IOS_CCACHE_CC"
 
       - name: Verify vendored Sherpa ONNX framework is integrated from the module
         working-directory: ./mobile/ios
@@ -727,6 +748,7 @@ jobs:
           TIMING2: ${{ steps.xcode-build-clean.outputs.timing_summary }}
           LOG1: ${{ steps.xcode-build.outputs.log }}
           LOG2: ${{ steps.xcode-build-clean.outputs.log }}
+          CCACHE_WAS_ENABLED: ${{ steps.ccache.outputs.enabled }}
         run: |
           # Signed PR builds archive; compile checks build. Both must leave an app.
           if [ "$PR_IOS_SIGNED" = "true" ]; then
@@ -770,6 +792,15 @@ jobs:
               exit 1
             fi
             echo "Full build mode: JS bundle embedded ($(du -h "$app/main.jsbundle" | cut -f1)), default debug-info settings."
+          fi
+          # ccache is a no-op if CompileC never reaches it (RN 0.83 + Xcode 16:
+          # empty CCACHE_BINARY). Fail rather than report a fake cache.
+          if [ "$CCACHE_WAS_ENABLED" = "true" ]; then
+            if [ -z "${CCACHE_STATSLOG:-}" ] || [ ! -s "$CCACHE_STATSLOG" ]; then
+              echo "::error::ccache was enabled but $CCACHE_STATSLOG is missing or empty; compilers did not go through ccache."
+              exit 1
+            fi
+            echo "ccache stats log written ($(wc -l < "$CCACHE_STATSLOG") lines)."
           fi
 
       - name: Summarize iOS build attempts

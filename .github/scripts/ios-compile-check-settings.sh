@@ -73,6 +73,19 @@ if [ "${MENTRA_IOS_PR_BUILD:-false}" = "true" ]; then
     # compilation unit changes. Push and release builds keep whole-module.
     MENTRA_IOS_PR_BUILD_SETTINGS+=(SWIFT_COMPILATION_MODE=singlefile)
   fi
+  # Xcode 16 CompileC does not export CCACHE_BINARY, so RN's ccache-clang.sh
+  # falls through to plain clang. Command-line CC/CXX point at wrappers that
+  # bake the ccache path in (ios-ccache-wrappers.sh). Push/release untouched.
+  if [ -n "${MENTRA_IOS_CCACHE_CC:-}" ] && [ -x "$MENTRA_IOS_CCACHE_CC" ] \
+    && [ -n "${MENTRA_IOS_CCACHE_CXX:-}" ] && [ -x "$MENTRA_IOS_CCACHE_CXX" ]; then
+    MENTRA_IOS_PR_BUILD_SETTINGS+=(
+      "CC=$MENTRA_IOS_CCACHE_CC"
+      "CXX=$MENTRA_IOS_CCACHE_CXX"
+      "LD=$MENTRA_IOS_CCACHE_CC"
+      "LDPLUSPLUS=$MENTRA_IOS_CCACHE_CXX"
+    )
+    echo "ccache wrappers on xcodebuild: CC=$MENTRA_IOS_CCACHE_CC CXX=$MENTRA_IOS_CCACHE_CXX"
+  fi
   if [ "${#MENTRA_IOS_PR_BUILD_SETTINGS[@]}" -gt 0 ] || [ "${#MENTRA_IOS_XCODEBUILD_EXTRA_ARGS[@]}" -gt 0 ]; then
     echo "PR build experiments: args [${MENTRA_IOS_XCODEBUILD_EXTRA_ARGS[*]}] settings [${MENTRA_IOS_PR_BUILD_SETTINGS[*]}]"
   fi
