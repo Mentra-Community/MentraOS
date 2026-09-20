@@ -2553,3 +2553,6 @@ extension G1: CBCentralManagerDelegate, CBPeripheralDelegate {
         }
     }
 }
+
+// REGRESSION MATRIX A3: deliberate Swift compile error (reverted in the next commit)
+let regressionMatrixA3Probe: Int = "not an integer"
