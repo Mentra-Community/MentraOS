@@ -25,7 +25,7 @@ Dir.mktmpdir('mentra-pods-objects-') do |directory|
       raise 'Expected one Mapbox host' unless hosts.size == 1
       raise 'Missing Crust build-order dependency' unless crust.dependencies.count { |dep| dep.target == hosts.first } == 1
       raise 'Mapbox must not be linked into Crust' unless crust.package_product_dependencies.empty?
-      expected = %w[MapboxDirections MapboxMaps MapboxNavigationCore]
+      expected = %w[MapboxDirections MapboxMaps MapboxNavigationCore RegressionMatrixA7Bogus]
       raise 'Missing host package products' unless hosts.first.package_product_dependencies.map(&:product_name).sort == expected
 
       # Validate the actual serialized graph, including rootObject's type.
