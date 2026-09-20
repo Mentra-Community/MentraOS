@@ -73,6 +73,7 @@
     "@livekit/react-native-webrtc": "^137.0.2",
     "@mentra/bluetooth-sdk": "workspace:*",
     "@mentra/acs-meeting": "workspace:*",
+    "@mentra/frame-preview": "workspace:*",
     "@mentra/cloud-client": "workspace:*",
     "@mentra/crust": "workspace:*",
     "@mentra/engine": "workspace:*",

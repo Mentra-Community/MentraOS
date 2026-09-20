@@ -1,0 +1,9 @@
+{
+  "platforms": ["apple", "android"],
+  "apple": {
+    "modules": ["FramePreviewModule"]
+  },
+  "android": {
+    "modules": ["com.mentra.framepreview.FramePreviewModule"]
+  }
+}

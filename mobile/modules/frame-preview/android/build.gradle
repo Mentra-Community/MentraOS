@@ -1,0 +1,63 @@
+apply plugin: 'com.android.library'
+
+group = 'com.mentra.framepreview'
+version = '0.1.0'
+
+def expoModulesCorePlugin = new File(project(":expo-modules-core").projectDir.absolutePath, "ExpoModulesCorePlugin.gradle")
+apply from: expoModulesCorePlugin
+applyKotlinExpoModulesCorePlugin()
+useCoreDependencies()
+useExpoPublishing()
+
+def useManagedAndroidSdkVersions = false
+if (useManagedAndroidSdkVersions) {
+  useDefaultAndroidSdkVersions()
+} else {
+  buildscript {
+    ext.safeExtGet = { prop, fallback ->
+      rootProject.ext.has(prop) ? rootProject.ext.get(prop) : fallback
+    }
+  }
+  project.android {
+    compileSdkVersion safeExtGet("compileSdkVersion", 36)
+    defaultConfig {
+      minSdkVersion safeExtGet("minSdkVersion", 24)
+      targetSdkVersion safeExtGet("targetSdkVersion", 36)
+    }
+  }
+}
+
+android {
+  namespace "com.mentra.framepreview"
+  defaultConfig {
+    versionCode 1
+    versionName "0.1.0"
+  }
+  compileOptions {
+    coreLibraryDesugaringEnabled true
+  }
+  buildTypes {
+    internal {
+      initWith release
+      matchingFallbacks = ['release']
+    }
+  }
+  testOptions {
+    unitTests {
+      includeAndroidResources = true
+      // The pacer and packer are pure, but they log through android.util.Log on the way past.
+      returnDefaultValues = true
+    }
+  }
+}
+
+dependencies {
+  // DecodedFrameTap and I420Packer live with the decoders; this module only borrows them.
+  implementation project(':mentra-glasses-media')
+  coreLibraryDesugaring 'com.android.tools:desugar_jdk_libs:2.1.4'
+  // Binary WebMessage delivery (JavaScriptReplyProxy.postMessage(byte[])) and its feature
+  // probes. react-native-webview already links the same artifact.
+  implementation 'androidx.webkit:webkit:1.14.0'
+  testImplementation 'junit:junit:4.13.2'
+  testImplementation 'org.assertj:assertj-core:3.24.2'
+}

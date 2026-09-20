@@ -7,14 +7,14 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {getMentraJS} from "@/services/mentraJsBootstrap"
 import {useStressTestStore} from "@/stores/stressTest"
 import MiniappSplash from "@/components/miniapp/MiniappSplash"
-import {BgTimer, engine} from "@mentra/engine"
+import {BgTimer, engine, SETTINGS, useSetting} from "@mentra/engine"
 import {buildMentraUiShim, buildMiniappGlobalsScript, miniappLauncher} from "@mentra/engine-host-internal"
 import {devServerBridge} from "@mentra/engine-host-internal/devtools"
 import {useNavigationStore} from "@/stores/navigation"
 import CapsuleMenu from "@/effects/CapsuleMenu"
 import {useRegisterCapsule} from "@/stores/capsule"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
-import {SETTINGS, useSetting} from "@mentra/engine"
+import framePreviewHost from "@/services/framePreview/FramePreviewHost"
 
 /**
  * LocalMiniappView — the UI half of a local (or dev) miniapp.
@@ -147,6 +147,10 @@ function LocalMiniappView({
 
   // Fresh handshake + retry budget — used on (re)launch and dev hot-reload.
   const resetLoadState = useCallback(() => {
+    // A genuinely new document, which is the point at which the preview experiment's
+    // per-document credential has to be replaced. onLoadEnd is not that point: one page load
+    // fires it several times, and rotating the token there would revoke a working consumer.
+    framePreviewHost.beginDocument()
     connectedRef.current = false
     setConnected(false)
     attemptsRef.current = 0
@@ -179,6 +183,12 @@ function LocalMiniappView({
       appStateRef.current = nextState
       if (prevState !== "active" && nextState === "active") {
         refreshUiBinding("app-active", true, true)
+      }
+      if (nextState !== "active") {
+        // Host visibility is the authority. The patched Android WebView deliberately reports
+        // itself visible while the app is hidden, so asking it would keep frames flowing into
+        // a page nobody is looking at.
+        framePreviewHost.stop("host-inactive")
       }
     })
 
@@ -316,6 +326,7 @@ function LocalMiniappView({
       ac.abort()
       clearReadyTimer()
       getMentraJS()?.uiRouter.unbindWebView(packageName)
+      void framePreviewHost.teardown("miniapp-unmounted")
     }
   }, [packageName, version, devUrl, devPort, resetLoadState, clearReadyTimer, fail])
 
@@ -342,6 +353,32 @@ function LocalMiniappView({
         if (webViewRef.current === instance) {
           refreshUiBinding("bind", false, true)
         }
+        // Deferred deliberately. React attaches refs child-first, so on the first mount
+        // viewShotRef is still null while this WebView ref is running, and the native side
+        // would be handed nothing to search.
+        if (webViewRef.current !== instance || !framePreviewHost.isEligible(packageName)) return
+        void framePreviewHost
+          .bind({
+            packageName,
+            // The WebView's own ref is an imperative handle, not a host component, so the
+            // native side is given this wrapper's tag and walks down to the real WebView.
+            hostView: viewShotRef.current,
+            inject: (js: string) => {
+              try {
+                instance.injectJavaScript(js)
+              } catch (e) {
+                console.warn(`LocalMiniappView: frame-preview inject failed for ${packageName}:`, e)
+              }
+            },
+          })
+          .then(() => {
+            // An Android WebMessageListener does not appear in a document that already loaded.
+            // Exactly one reload fixes that; the native side never asks again for this view.
+            if (framePreviewHost.consumeInstallReload() && webViewRef.current === instance) {
+              console.log("LocalMiniappView: reloading once to publish the frame-preview port")
+              instance.reload()
+            }
+          })
       }, 250)
     },
     [packageName, refreshUiBinding],
@@ -368,6 +405,7 @@ function LocalMiniappView({
       // LocalMiniappView (the two-layer path) lacked the equivalent
       // until now.
       if (forwardWebViewDevLog(packageName, event.nativeEvent.data)) return
+      if (forwardFramePreviewCommand(packageName, event.nativeEvent.data)) return
       const mj = getMentraJS()
       mj?.uiRouter.routeFromWebView(packageName, event.nativeEvent.data)
     },
@@ -415,6 +453,7 @@ function LocalMiniappView({
 
   const handleTerminate = useCallback(() => {
     if (!packageName) return
+    framePreviewHost.beginDocument()
     useStressTestStore.getState().recordEvent({
       packageName,
       at: Date.now(),
@@ -577,6 +616,28 @@ function isReadyEnvelope(raw: string): boolean {
   } catch {
     return false
   }
+}
+
+/**
+ * Intercept the raw-frame preview experiment's control envelope.
+ *
+ * These are host-level commands, not miniapp messages: `MentraUIRouter` only bridges
+ * `ready`/`msg`/`cancel` through to the background JSContext, and the preview's transport lives
+ * in native code next to the decoder. Same seam as `dev_log` above, for the same reason.
+ *
+ * Returns true when the frame was handled and must not be routed onward.
+ */
+function forwardFramePreviewCommand(packageName: string, raw: string): boolean {
+  if (!raw.includes("frame_preview")) return false
+  let envelope: {type?: string; cmd?: string; args?: Record<string, unknown>}
+  try {
+    envelope = JSON.parse(raw)
+  } catch {
+    return false
+  }
+  if (envelope.type !== "frame_preview" || typeof envelope.cmd !== "string") return false
+  framePreviewHost.handleCommand(packageName, {cmd: envelope.cmd, args: envelope.args})
+  return true
 }
 
 /**

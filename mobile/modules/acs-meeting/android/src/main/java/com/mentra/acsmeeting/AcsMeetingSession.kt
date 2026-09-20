@@ -70,6 +70,7 @@ import com.mentra.glassesmedia.source.OutgoingRateArm
 import com.mentra.glassesmedia.source.PixelFormatArm
 import com.mentra.glassesmedia.source.GlassesMediaController
 import com.mentra.glassesmedia.network.ScopedSoftApNetwork
+import com.mentra.glassesmedia.source.DecodedFrameTap
 import com.mentra.glassesmedia.source.GlassesMediaSourceFactory
 import com.mentra.glassesmedia.source.LocalWhipIngestSource
 import com.mentra.acsmeeting.source.MeetingVideoSourceSpec
@@ -632,6 +633,9 @@ class AcsMeetingSession(
           bindIngestUnpinned {
             media.attach(
               video = { planes ->
+                // Preview first, deliberately: the tap must see frames ACS's pacing and
+                // readiness gates would otherwise hide, and it cannot delay or break this call.
+                DecodedFrameTap.offer(planes)
                 frameSender.sendPlanes(planes)
               },
               pcm = { pcm, rate, channels -> feedOutgoingPcm(pcm, rate, channels) },
@@ -654,6 +658,7 @@ class AcsMeetingSession(
         if (videoSource !is MeetingVideoSourceSpec.SoftAp) {
           media.attach(
             video = { planes ->
+              DecodedFrameTap.offer(planes)
               frameSender.sendPlanes(planes)
             },
             pcm = { pcm, rate, channels -> feedOutgoingPcm(pcm, rate, channels) },
