@@ -84,6 +84,14 @@ if [ "${MENTRA_IOS_PR_BUILD:-false}" = "true" ]; then
       "LD=$MENTRA_IOS_CCACHE_CC"
       "LDPLUSPLUS=$MENTRA_IOS_CCACHE_CXX"
     )
+    # Keep Clang's module cache inside the workspace so CCACHE_BASEDIR can
+    # rewrite it. The default /var/folders/... path is unique per runner
+    # process and makes every CompileC a miss across actions-runner-1/2/3.
+    if [ -n "${GITHUB_WORKSPACE:-}" ]; then
+      MENTRA_IOS_PR_BUILD_SETTINGS+=(
+        "MODULE_CACHE_DIR=$GITHUB_WORKSPACE/mobile/ios/build-device/ModuleCache"
+      )
+    fi
     echo "ccache wrappers on xcodebuild: CC=$MENTRA_IOS_CCACHE_CC CXX=$MENTRA_IOS_CCACHE_CXX"
   fi
   if [ "${#MENTRA_IOS_PR_BUILD_SETTINGS[@]}" -gt 0 ] || [ "${#MENTRA_IOS_XCODEBUILD_EXTRA_ARGS[@]}" -gt 0 ]; then

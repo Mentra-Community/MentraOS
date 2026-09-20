@@ -58,6 +58,7 @@ export CCACHE_DIR=$(quote "$CCACHE_DIR")
 export CCACHE_CONFIGPATH=$(quote "$CCACHE_CONFIGPATH")
 export CCACHE_BASEDIR=$(quote "$CCACHE_BASEDIR")
 export CCACHE_STATSLOG=$(quote "$CCACHE_STATSLOG")
+export CCACHE_NOHASHDIR=1
 exec $(quote "$ccache_bin") $compiler "\$@"
 EOF
   chmod +x "$path"

@@ -40,6 +40,7 @@ test("writes executable wrappers that exec the given ccache binary", () => {
   assert.match(clangpp, /exec '.*\/ccache' clang\+\+ "\$@"/)
   assert.match(clang, new RegExp(`export CCACHE_DIR='${join(dir, "cache")}'`))
   assert.match(clang, new RegExp(`export CCACHE_STATSLOG='${join(dir, "stats.log")}'`))
+  assert.match(clang, /export CCACHE_NOHASHDIR=1/)
   assert.doesNotMatch(clang, /CCACHE_BINARY/)
 
   const invoked = spawnSync("sh", [clangSh, "-c", "noop"], {encoding: "utf8"})
