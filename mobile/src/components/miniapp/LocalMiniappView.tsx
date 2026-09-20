@@ -4,6 +4,7 @@ import {AppState, Platform, View, type AppStateStatus} from "react-native"
 import {WebView, type WebViewMessageEvent} from "react-native-webview"
 
 import {Text} from "@/components/ignite"
+import {translate} from "@/i18n"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {getMentraJS} from "@/services/mentraJsBootstrap"
 import {useStressTestStore} from "@/stores/stressTest"
@@ -234,13 +235,17 @@ function LocalMiniappView({
     if (Platform.OS === "ios") onShouldCapture()
     else beginExit()
   }, [tryHistoryBack, beginExit, onShouldCapture])
+  const handleWebViewBackRef = useRef(handleWebViewBack)
+  handleWebViewBackRef.current = handleWebViewBack
   useEffect(() => {
     if (Platform.OS !== "android") return
+    // Register once per mount. Changing presentation callbacks during dismissal
+    // must not reactivate the departing miniapp on the next screen.
     navigationActive.current = true
     const interceptor: NavInterceptor = {
       goBack: () => {
         if (!navigationActive.current) return false
-        handleWebViewBack()
+        handleWebViewBackRef.current()
         return true
       },
       push: () => {
@@ -259,7 +264,7 @@ function LocalMiniappView({
         useNavigationStore.getState().setInterceptor(null)
       }
     }
-  }, [handleWebViewBack, beginExit])
+  }, [beginExit])
 
   // Block native back gesture/button — route through handleWebViewBack for Android.
   // focusEffectPreventBack(handleWebViewBack, false)
@@ -280,8 +285,14 @@ function LocalMiniappView({
     viewShotRef,
     visibleOnRoutes: ["/intentionally-not-a-real-route"],
     onBackPress: handleWebViewBack,
-    onClosePress: onClose,
-    onMinimizePress: onMinimize,
+    onClosePress: () => {
+      navigationActive.current = false
+      onClose()
+    },
+    onMinimizePress: () => {
+      navigationActive.current = false
+      onMinimize()
+    },
   })
 
   useEffect(() => {
@@ -337,6 +348,8 @@ function LocalMiniappView({
       // the WebView from continuing to show a stale / previous URL.
       setUiUri(result.uiUri)
       setUiBaseDir(result.uiBaseDir)
+      // No WebView means no ready event or timeout can expose escape controls.
+      if (!result.uiUri) fail(translate("common:miniappUiUnavailable"))
     }
 
     launch().catch((e: Error) => {
