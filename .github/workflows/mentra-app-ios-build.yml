@@ -56,8 +56,7 @@ permissions:
   actions: read
 
 env:
-  # REGRESSION MATRIX A9 (reverted next): unsigned compile-check path as a fork PR gets it.
-  PR_IOS_SIGNED: "false"
+  PR_IOS_SIGNED: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
   PR_NUMBER: ${{ github.event.pull_request.number }}
   PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
 
@@ -76,8 +75,7 @@ jobs:
       # signed and published (fork PRs, or same-repo PRs without signing), and
       # for dispatches that ask for PR behaviour. Signed PR archives are
       # installed by testers, so they build like a full build.
-      # REGRESSION MATRIX A9 (reverted next)
-      MENTRA_IOS_PR_COMPILE_MODE: "true"
+      MENTRA_IOS_PR_COMPILE_MODE: ${{ ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || inputs.pr_compile_mode == true) && 'true' || 'false' }}
       # ccache eligibility is broader: every pull_request build (signed or
       # not) may use the host compiler cache; push builds to dev/main and
       # full-mode dispatches never do.
