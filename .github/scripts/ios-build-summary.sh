@@ -133,6 +133,15 @@ if [ "${CCACHE_ENABLED:-false}" = "true" ] && command -v ccache >/dev/null 2>&1;
     echo "Shared cache dir: \`${CCACHE_DIR:-?}\` — $(ccache --show-stats 2>/dev/null | grep -iE 'cache size|max cache size' | tr -s ' ' | paste -sd ';' - || echo 'size unavailable')"
     echo ""
   } >> "$summary"
+  # Also print to the job log. GITHUB_STEP_SUMMARY is not in `gh run view --log`.
+  echo "ccache-stats-start"
+  if [ -n "${CCACHE_STATSLOG:-}" ] && [ -s "$CCACHE_STATSLOG" ]; then
+    ccache --show-log-stats 2>&1 | head -40
+  else
+    echo "(no stats log written; no compiler invocation went through ccache)"
+  fi
+  ccache --show-stats 2>&1 | head -20 || true
+  echo "ccache-stats-end"
 fi
 
 if [[ "${CACHE_SIZE_BYTES:-}" =~ ^[0-9]+$ ]]; then
