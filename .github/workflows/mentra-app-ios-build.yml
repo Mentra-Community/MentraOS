@@ -87,7 +87,7 @@ jobs:
       # paired runs before it ships; see ios-compile-check-settings.sh.
       MENTRA_IOS_EXPERIMENT_PARALLEL: "0"
       MENTRA_IOS_EXPERIMENT_EXPLICIT_MODULES: "0"
-      MENTRA_IOS_EXPERIMENT_SWIFT_SINGLEFILE: "1"
+      MENTRA_IOS_EXPERIMENT_SWIFT_SINGLEFILE: "0"
       # Repository variable: set MENTRA_IOS_CCACHE=false to disable ccache on
       # every PR run at once (kill switch); unset or any other value enables.
       MENTRA_IOS_CCACHE_VAR: ${{ vars.MENTRA_IOS_CCACHE }}
