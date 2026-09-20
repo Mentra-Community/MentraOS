@@ -61,6 +61,8 @@ if [ "$1" != "install" ] || [ "$2" != "ccache" ]; then
   echo "unexpected brew args: $*" >&2
   exit 8
 fi
+# Homebrew writes progress to stdout. The helper must not forward that.
+echo "==> Pouring ccache: 4.11.2"
 mkdir -p "$(dirname "${candidate}")"
 printf '#!/bin/sh\\necho fake-ccache\\n' > "${candidate}"
 chmod +x "${candidate}"
@@ -78,4 +80,6 @@ chmod +x "${candidate}"
   assert.equal(result.status, 0, result.stderr)
   assert.equal(result.stdout.trim(), candidate)
   assert.match(result.stderr, /installing via Homebrew/)
+  assert.match(result.stderr, /Pouring ccache/)
+  assert.doesNotMatch(result.stdout, /Pouring/)
 })

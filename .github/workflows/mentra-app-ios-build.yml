@@ -227,8 +227,12 @@ jobs:
             exit 0
           fi
           if ! command -v ccache >/dev/null 2>&1; then
+            # The helper prints only the binary path on stdout. Take the first
+            # line that is an executable `.../ccache` so a leaked log line
+            # cannot land in GITHUB_PATH.
             ccache_path="$(bash "$GITHUB_WORKSPACE/.github/scripts/ios-ensure-ccache.sh" || true)"
-            if [ -n "$ccache_path" ]; then
+            ccache_path="$(printf '%s\n' "$ccache_path" | awk '/\/ccache$/ { print; exit }')"
+            if [ -n "$ccache_path" ] && [ -x "$ccache_path" ]; then
               echo "$(dirname "$ccache_path")" >> "$GITHUB_PATH"
               export PATH="$(dirname "$ccache_path"):$PATH"
             fi

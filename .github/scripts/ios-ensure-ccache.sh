@@ -6,6 +6,9 @@
 # setup-runner.sh uses), serializing concurrent installs on this host so two
 # runner processes cannot corrupt Homebrew. Exit 1 if ccache is still missing;
 # the workflow then compiles without it.
+#
+# stdout is the ccache path only. Homebrew and status lines go to stderr so
+# the workflow can `dirname` the capture into GITHUB_PATH.
 set -euo pipefail
 
 log() { echo "$*" >&2; }
@@ -88,7 +91,12 @@ with open(lock_path, "a+") as fh:
     env = os.environ.copy()
     env.setdefault("HOMEBREW_NO_AUTO_UPDATE", "1")
     env.setdefault("HOMEBREW_NO_INSTALLED_DEPENDENTS_CHECK", "1")
-    sys.exit(subprocess.call([brew_bin, "install", "ccache"], env=env))
+    # Keep brew's progress on stderr. The caller captures stdout as the path.
+    sys.exit(subprocess.call(
+        [brew_bin, "install", "ccache"],
+        env=env,
+        stdout=sys.stderr,
+    ))
 PY
 
 if path="$(find_ccache)"; then
