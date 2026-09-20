@@ -184,9 +184,11 @@ jobs:
           # Host-persistent compiler cache for C/C++/ObjC (the largest share of
           # this build: ~980 CPU-s of CompileC vs ~480 of SwiftCompile). Enabled
           # for pull_request builds (signed or compile-check) and only when
-          # ccache is installed on the host (setup-runner.sh installs it;
-          # `brew install ccache` on older hosts). Push builds to dev/main never
-          # use it. Without ccache the job runs exactly as before.
+          # ccache is available. setup-runner.sh installs it on new hosts;
+          # this step also `brew install ccache` if an older host is missing
+          # it (serialized across runner processes). Push builds to
+          # dev/main never use it. If install fails the job still compiles,
+          # just without the compiler cache.
           #
           # - USE_CCACHE=1 is read by the generated Podfile
           #   (ccache_enabled? -> react_native_post_install :ccache_enabled),
@@ -225,8 +227,15 @@ jobs:
             exit 0
           fi
           if ! command -v ccache >/dev/null 2>&1; then
+            ccache_path="$(bash "$GITHUB_WORKSPACE/.github/scripts/ios-ensure-ccache.sh" || true)"
+            if [ -n "$ccache_path" ]; then
+              echo "$(dirname "$ccache_path")" >> "$GITHUB_PATH"
+              export PATH="$(dirname "$ccache_path"):$PATH"
+            fi
+          fi
+          if ! command -v ccache >/dev/null 2>&1; then
             echo "enabled=false" >> "$GITHUB_OUTPUT"
-            echo "::notice::ccache is not installed on ${RUNNER_NAME:-this runner}; compiling without it (see mobile/scripts/README.md)."
+            echo "::notice::ccache is not available on ${RUNNER_NAME:-this runner}; compiling without it (see mobile/scripts/README.md)."
             exit 0
           fi
           conf="$GITHUB_WORKSPACE/.github/ccache/ios-compile-check.conf"
@@ -265,7 +274,7 @@ jobs:
 
       - name: Test PR artifact and notification contracts
         run: |
-          node --test .github/scripts/pr-ios-artifacts.test.mjs .github/scripts/notify-pr-builds.test.mjs
+          node --test .github/scripts/pr-ios-artifacts.test.mjs .github/scripts/notify-pr-builds.test.mjs .github/scripts/ios-ensure-ccache.test.mjs
           python3 mobile/ci/pr-ios/test_artifacts.py
 
       - name: Use the self-hosted Mac's Ruby for signing
