@@ -22,19 +22,20 @@ export const isChinaBuild = (): boolean => process.env.EXPO_PUBLIC_DEPLOYMENT_RE
  */
 export const CHINA_HIDDEN_APPS = [navigationPackageName, notifyPackageName, feedbackPackageName]
 
-export const IOS_HIDDEN_APPS = [mentraCallPackageName]
-
-/** Expo inlines this optional override into the JS bundle. */
+/** Expo inlines this optional Call-only override into the JS bundle. */
 export const isIosCallBuildEnabled = (): boolean => process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS === "true"
 
-/** Pure policy; host callers supply the hydrated, device-local debug setting. */
+/** Pure policy; host callers supply the hydrated, device-local debug settings. */
 export const shouldHideMiniapp = (
   packageName: string,
   os: typeof Platform.OS = Platform.OS,
-  showIosCall = false,
+  {showIosCall = false, showIosNotify = false}: {showIosCall?: boolean; showIosNotify?: boolean} = {},
 ): boolean => {
   if (isChinaBuild() && CHINA_HIDDEN_APPS.includes(packageName)) return true
-  return os === "ios" && IOS_HIDDEN_APPS.includes(packageName) && !isIosCallBuildEnabled() && !showIosCall
+  if (os !== "ios") return false
+  if (packageName === mentraCallPackageName) return !isIosCallBuildEnabled() && !showIosCall
+  if (packageName === notifyPackageName) return !showIosNotify
+  return false
 }
 
 // these apps cannot be uninstalled:

@@ -65,6 +65,8 @@ const {
   setSoftapBleLc3UplinkForTests,
 } = require("../AcsMeetingService") as typeof import("../AcsMeetingService")
 
+const micSessionManager = require("../MicSessionManager").default as typeof import("../MicSessionManager").default
+
 type PhoneNetworkInfo = import("../AcsMeetingService").PhoneNetworkInfo
 
 function fakePhoneNetwork() {
@@ -836,6 +838,7 @@ describe("glasses LC3 microphone uplink", () => {
 
   afterEach(async () => {
     await acsMeetingService.leave("com.mentra.call")
+    micSessionManager.releaseAll()
     setAcsMeetingNativeForTests(undefined)
     setSoftapBleLc3UplinkForTests(null)
     bluetoothSdk.addListener = previousSdk.addListener
@@ -863,7 +866,7 @@ describe("glasses LC3 microphone uplink", () => {
     expect(glassesLc3UplinkSupported({...supported, glassesSession: false})).toBe(false)
   })
 
-  test("a SoftAP join reads the glasses mic without claiming it", async () => {
+  test("a SoftAP join takes a voice_call lease rather than configuring the mic itself", async () => {
     const native = lc3Native()
     const state = await joinedOnSoftap(native)
 
@@ -871,9 +874,10 @@ describe("glasses LC3 microphone uplink", () => {
     expect(acsMeetingService.glassesLc3UplinkActive()).toBe(true)
     expect(micListeners.has("mic_pcm")).toBe(true)
     expect(native.join).toHaveBeenCalledWith(expect.objectContaining({audioDelayMs: SOFTAP_LC3_AUDIO_DELAY_MS}))
-    // The microphone belongs to whoever leased it. A sink that pins or claims it is how hardware
-    // policy ends up owned by one audio consumer.
-    expect(setMicSourcePin).not.toHaveBeenCalled()
+    // Reading the mic with no session leaves the call on the OS default of VAD-on, and the GX8002
+    // then gates the wearer out whenever it disagrees. The sink names the use case and nothing
+    // else: micPolicy still decides what voice_call costs the hardware.
+    expect(micSessionManager.hasGlassesSession("engine:acs-uplink")).toBe(true)
   })
 
   test("a join without a microphone session keeps the published audio track", async () => {
@@ -909,13 +913,57 @@ describe("glasses LC3 microphone uplink", () => {
     expect(native.join.mock.calls[0]?.[0]).not.toHaveProperty("audioDelayMs")
   })
 
-  test("leaving a call releases nothing it does not own", async () => {
-    // The lease outlives the sink on purpose: the miniapp releases after leave, so unpinning here
-    // would hand the still-subscribed call phone frames and report the wearer's mic as gone.
+  /**
+   * These percentages are what a threshold change gets argued from, so they have to separate the
+   * two cases that look identical in a recording: Barrier holding back speaker leak, and Barrier
+   * holding back the wearer.
+   */
+  test("the stop summary separates gating the far end from gating the wearer", async () => {
     await joinedOnSoftap(lc3Native())
-    setMicSourcePin.mockClear()
+    const emitRms = micListeners.get("mic_rms")!
+    // Four samples: two with the speaker up (one gated), two quiet (one gated).
+    emitRms({rms: 900, gateOpen: false, speakerElevated: true})
+    emitRms({rms: 4000, gateOpen: true, speakerElevated: true})
+    emitRms({rms: 300, gateOpen: false, speakerElevated: false})
+    emitRms({rms: 2200, gateOpen: true, speakerElevated: false})
+
+    const lines: unknown[][] = []
+    const original = console.log
+    console.log = (...args: unknown[]) => void lines.push(args)
+    try {
+      await acsMeetingService.leave("com.mentra.call")
+    } finally {
+      console.log = original
+    }
+
+    const stop = lines.find((line) => line[0] === "[AcsMeeting] phase=glasses-mic-uplink-stop")
+    expect(stop?.[1]).toEqual(
+      expect.objectContaining({
+        gateSamples: 4,
+        gateClosedPct: 50,
+        speakerElevatedPct: 50,
+        // Half the quiet samples were gated: that is the wearer being cut, not leak suppression.
+        gateClosedQuietPct: 50,
+        gateRmsMax: 4000,
+      }),
+    )
+  })
+
+  test("leaving a call releases its own lease and nothing else", async () => {
+    // The miniapp's lease outlives the sink on purpose: it releases after leave, so dropping it
+    // here would hand the still-subscribed call phone frames and report the wearer's mic as gone.
+    await joinedOnSoftap(lc3Native())
+    const miniapp = micSessionManager.acquire({
+      owner: "com.mentra.call",
+      source: "glasses",
+      useCase: "voice_call",
+    })
+
     await acsMeetingService.leave("com.mentra.call")
-    expect(setMicSourcePin).not.toHaveBeenCalled()
+
+    expect(micSessionManager.hasGlassesSession("engine:acs-uplink")).toBe(false)
+    expect(micSessionManager.hasGlassesSession("com.mentra.call")).toBe(true)
+    miniapp.release()
   })
 
   /**
@@ -1362,6 +1410,52 @@ describe("scoped network passthrough", () => {
     setAcsMeetingNativeForTests(native)
 
     await expect(acsMeetingService.prepareAgent({token: "tok"})).resolves.toBeUndefined()
+  })
+
+  test("iOS defers agent creation until join after the hotspot handoff", async () => {
+    const prepareAgent = mock(async () => ({state: "connecting" as const, muted: false}))
+    const native = {...fakeNative(), prepareAgent}
+    setAcsMeetingNativeForTests(native)
+    const os = reactNative.Platform.OS
+    reactNative.Platform.OS = "ios"
+    try {
+      await acsMeetingService.prepareAgent({token: "tok", displayName: "Mentra Call"})
+      expect(prepareAgent).not.toHaveBeenCalled()
+      expect(native.join).not.toHaveBeenCalled()
+    } finally {
+      reactNative.Platform.OS = os
+    }
+  })
+
+  test("iOS narrates permission while native join is pending and removes the progress listener afterward", async () => {
+    let finish!: (address: string) => void
+    const pending = new Promise<string>((resolve) => {
+      finish = resolve
+    })
+    const native = {...fakeNative(), joinScopedNetwork: mock(() => pending)}
+    setAcsMeetingNativeForTests(native)
+    const os = reactNative.Platform.OS
+    reactNative.Platform.OS = "ios"
+    const report = mock((_detail: string) => {})
+    try {
+      let completed = false
+      const joined = acsMeetingService.joinScopedNetwork("MentraLive-1234", "pw", undefined, report).then((address) => {
+        completed = true
+        return address
+      })
+      await Promise.resolve()
+      native.emit("onScopedNetworkProgress", {permissionRequired: true})
+      expect(report).toHaveBeenCalledWith(expect.stringContaining("Allow Local Network access"))
+      expect(completed).toBe(false)
+      expect(native.join).not.toHaveBeenCalled()
+      finish("192.168.43.20")
+      expect(await joined).toBe("192.168.43.20")
+      expect(native.handlerFor("onScopedNetworkProgress")).toBeUndefined()
+    } finally {
+      await acsMeetingService.leaveScopedNetwork()
+      reactNative.Platform.OS = os
+      finish("192.168.43.20")
+    }
   })
 })
 

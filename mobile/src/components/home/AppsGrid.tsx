@@ -24,7 +24,19 @@ import {BlurView} from "expo-blur"
 import {Icon, Text} from "@/components/ignite"
 import AppIcon from "@/components/home/AppIcon"
 import {useAppTheme} from "@/contexts/ThemeContext"
-import {DUMMY_APPLET, HardwareType, getAppsOrder, saveAppsOrder, sortAppsByPackageNamePriority, engine, type ClientApp, type OrderMap, useSetForeground, useStart, useStop} from "@mentra/engine"
+import {
+  DUMMY_APPLET,
+  HardwareType,
+  getAppsOrder,
+  saveAppsOrder,
+  sortAppsByPackageNamePriority,
+  engine,
+  type ClientApp,
+  type OrderMap,
+  useSetForeground,
+  useStart,
+  useStop,
+} from "@mentra/engine"
 
 import {isOfflineHosted} from "@/components/miniapp/offlineHostedPackages"
 import {SYSTEM_APPS} from "@/constants/miniapps"
@@ -829,6 +841,9 @@ export function AppsGrid({
           ref={(ref) => {
             itemRefs.current[item.packageName] = ref
           }}
+          accessibilityRole="button"
+          accessibilityLabel={item.name}
+          testID={`${showAllApps ? "allApps" : "home"}.miniapp.${item.packageName}`}
           className="flex-1 items-center justify-center pt-3"
           onPress={() => {
             // if (showAllApps) {

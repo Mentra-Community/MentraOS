@@ -1,0 +1,6 @@
+appId: com.mentra.mentra
+---
+- assertVisible: "Select Model"
+- tapOn:
+    id: pairing-model-mentra_live
+- takeScreenshot: setup-live-selected

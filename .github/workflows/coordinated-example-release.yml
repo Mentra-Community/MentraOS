@@ -38,6 +38,10 @@ jobs:
       source_commit: ${{ steps.load.outputs.source_commit }}
       release_identity: ${{ steps.load.outputs.release_identity }}
       release_set_id: ${{ steps.load.outputs.release_set_id }}
+      mobile_apk_url: ${{ steps.load.outputs.mobile_apk_url }}
+      mobile_apk_name: ${{ steps.load.outputs.mobile_apk_name }}
+      mobile_ipa_url: ${{ steps.load.outputs.mobile_ipa_url }}
+      mobile_ipa_name: ${{ steps.load.outputs.mobile_ipa_name }}
       plan_artifact: ${{ steps.load.outputs.plan_artifact }}
       release_id: ${{ steps.load.outputs.release_id }}
       manifest_url: ${{ steps.load.outputs.manifest_url }}
@@ -451,6 +455,10 @@ jobs:
           STAGING_SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_NIGHTLY_BUILDS }}
           DEV_SLACK_WEBHOOK_URL: ${{ secrets.SLACK_WEBHOOK_DEV_BUILDS }}
           RELEASE_SCOPE: examples
+          MOBILE_APK_URL: ${{ needs.plan.outputs.mobile_apk_url }}
+          APK_NAME: ${{ needs.plan.outputs.mobile_apk_name }}
+          MOBILE_IPA_URL: ${{ needs.plan.outputs.mobile_ipa_url }}
+          IPA_NAME: ${{ needs.plan.outputs.mobile_ipa_name }}
           BRANCH: ${{ github.ref_name }}
           REPOSITORY: ${{ github.repository }}
           RUN_ID: ${{ github.run_id }}

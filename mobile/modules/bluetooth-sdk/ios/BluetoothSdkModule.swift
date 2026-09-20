@@ -445,6 +445,11 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
 
         // MARK: - Gallery Commands
 
+        AsyncFunction("setGalleryServerEnabled") { (enabled: Bool) in
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            return try await sdk.setGalleryServerEnabled(enabled).values
+        }
+
         AsyncFunction("setGalleryModeEnabled") { (enabled: Bool) in
             let sdk = await MainActor.run { self.bluetoothSdk() }
             return try await sdk.setGalleryModeEnabled(enabled).values

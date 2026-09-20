@@ -601,6 +601,18 @@ class MentraBluetoothSdk private constructor(
         DeviceStore.apply(ObservableStore.BLUETOOTH_CATEGORY, "screen_disabled", disabled)
     }
 
+    /**
+     * Enable or disable persistent, unauthenticated HTTP gallery access on the glasses' Wi-Fi.
+     * Defaults off and survives glasses restarts. Only enable on a trusted network.
+     * The ack reports saved enabled state and current listening/url separately.
+     */
+    suspend fun setGalleryServerEnabled(enabled: Boolean): SettingsAckEvent =
+        performSettingsCommand(
+            setting = "gallery_server",
+            updateStore = {},
+            send = { requestId -> deviceManager.sendGalleryServerEnabled(requestId, enabled) },
+        )
+
     suspend fun setGalleryModeEnabled(enabled: Boolean): SettingsAckEvent =
         performSettingsCommand(
             setting = "gallery_mode",

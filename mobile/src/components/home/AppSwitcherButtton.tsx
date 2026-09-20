@@ -105,9 +105,12 @@ export default function AppSwitcherButton({swipeProgress, onGridButtonPress, blu
       translateY.value = 0
     })
 
-  const tapGesture = Gesture.Tap().onEnd(() => {
+  const openSwitcher = () => {
+    "worklet"
     swipeProgress.value = withSpring(1, {damping: 20, stiffness: 1000, overshootClamping: true})
-  })
+  }
+
+  const tapGesture = Gesture.Tap().onEnd(openSwitcher)
 
   // let composedGesture
   // if (Platform.OS === "android") {
@@ -207,7 +210,12 @@ export default function AppSwitcherButton({swipeProgress, onGridButtonPress, blu
   const renderGridButton = () => {
     return (
       <GlassView className={`h-16 rounded-2xl`} tintColor={buttonTint} style={{marginBottom: bottomPadding}}>
-        <TouchableOpacity onPress={onGridButtonPress} className="items-center justify-center w-16 h-16">
+        <TouchableOpacity
+          accessibilityRole="button"
+          accessibilityLabel={translate("home:openAllApps")}
+          testID="home.allApps.open"
+          onPress={onGridButtonPress}
+          className="items-center justify-center w-16 h-16">
           <Icon name="grid" color={theme.colors.foreground} size={26} />
         </TouchableOpacity>
       </GlassView>
@@ -220,7 +228,12 @@ export default function AppSwitcherButton({swipeProgress, onGridButtonPress, blu
         className="w-screen flex-row justify-between items-center gap-4 bottom-0 -ml-6 px-6 absolute"
         style={{paddingTop: paddingTop}}>
         {renderBackground()}
-        <TouchableOpacity onPress={handleNoAppsPress} className="flex-1">
+        <TouchableOpacity
+          accessibilityRole="button"
+          accessibilityLabel={translate("appSwitcher:open")}
+          testID="home.runningApps.open"
+          onPress={handleNoAppsPress}
+          className="flex-1">
           <View className="flex-1" style={{paddingBottom: bottomPadding}}>
             <GlassView
               tintColor={buttonTint}
@@ -243,7 +256,18 @@ export default function AppSwitcherButton({swipeProgress, onGridButtonPress, blu
         style={{paddingTop: paddingTop}}>
         {renderBackground()}
         <GestureDetector gesture={composedGesture}>
-          <View className="flex-1" style={{paddingBottom: bottomPadding}}>
+          <View
+            accessible
+            accessibilityRole="button"
+            accessibilityLabel={translate("appSwitcher:open")}
+            testID="home.runningApps.open"
+            onAccessibilityTap={openSwitcher}
+            accessibilityActions={[{name: "activate"}]}
+            onAccessibilityAction={({nativeEvent}) => {
+              if (nativeEvent.actionName === "activate") openSwitcher()
+            }}
+            className="flex-1"
+            style={{paddingBottom: bottomPadding}}>
             <GlassView
               tintColor={buttonTint}
               className={`flex-1 py-1.5 pl-3 min-h-16 rounded-2xl flex-row justify-between items-center`}>
@@ -265,11 +289,23 @@ export default function AppSwitcherButton({swipeProgress, onGridButtonPress, blu
       style={{paddingTop: paddingTop}}>
       {renderBackground()}
       <GestureDetector gesture={composedGesture}>
-        <View className="flex-1" style={{paddingBottom: bottomPadding}}>
+        <View
+          accessible
+          accessibilityRole="button"
+          accessibilityLabel={translate("appSwitcher:open")}
+          testID="home.runningApps.open"
+          onAccessibilityTap={openSwitcher}
+          accessibilityValue={{text: translate("home:appsCount", {count: appsCount})}}
+          accessibilityActions={[{name: "activate"}]}
+          onAccessibilityAction={({nativeEvent}) => {
+            if (nativeEvent.actionName === "activate") openSwitcher()
+          }}
+          className="flex-1"
+          style={{paddingBottom: bottomPadding}}>
           <GlassView
             tintColor={buttonTint}
             className={`flex-1 pl-5 pr-1.5 rounded-2xl flex-row justify-between items-center min-h-16`}>
-            <Pressable style={({pressed}) => [{opacity: pressed ? 0.7 : 1}]} className="flex-1 flex-row">
+            <Pressable accessible={false} style={({pressed}) => [{opacity: pressed ? 0.7 : 1}]} className="flex-1 flex-row">
               <View className="flex-row flex-1">
                 <View className="flex-col gap-1 flex-1 justify-center">
                   <Text

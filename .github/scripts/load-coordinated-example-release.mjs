@@ -8,6 +8,7 @@ import {pathToFileURL} from "node:url"
 import {exampleTestflightDestination} from "./example-release-records.mjs"
 import {finalizeReleaseManifest, releaseRecordSha256} from "./release-family.mjs"
 import {artifactUrl, legacyArtifactUrl, listReleaseAssets} from "./release-artifact-storage.mjs"
+import {completedReleaseDownloads} from "./publish-coordinated-release-page.mjs"
 
 export function selectCoreReleaseArtifacts({run, jobs, artifacts, repository, branch, runId}) {
   if (!/^[1-9]\d*$/.test(String(runId)) || !["dev", "staging"].includes(branch)) {
@@ -65,10 +66,15 @@ export function validateCoreReleaseHandoff({plan, manifest, run, selection, repo
     "OTA manifest URL must identify this release's exact artifact",
   )
   const destination = exampleTestflightDestination(plan.channel)
+  const downloads = completedReleaseDownloads(plan, manifest)
   return {
     source_commit: plan.sourceCommit,
     release_identity: plan.releaseIdentity,
     release_set_id: plan.releaseSetId,
+    mobile_apk_url: downloads.apk.url,
+    mobile_apk_name: downloads.apk.coordinate,
+    mobile_ipa_url: downloads.ipa.url,
+    mobile_ipa_name: downloads.ipa.coordinate,
     plan_artifact: selection.planName,
     manifest_url: manifest.otaManifest.url,
     manifest_sha256: manifest.otaManifest.sha256,

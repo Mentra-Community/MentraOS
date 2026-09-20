@@ -235,6 +235,9 @@ class MicSessionManager {
     }
 
     micStateCoordinator.setSessionRequirement(policy.rawPcm)
+    // Barrier is the only echo control left once the PCM claim turns hardware VAD off, so it
+    // rides with the claim rather than with the tuning a sweep may be rewriting.
+    micStateCoordinator.setSessionLoudnessGate(policy.loudnessGate)
 
     if (getCallGainSweep().isActive()) {
       const gain = getCallGainSweep().currentGain()

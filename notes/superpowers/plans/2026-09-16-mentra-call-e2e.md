@@ -1,0 +1,62 @@
+---
+status: active
+owner: philippe
+---
+
+# Mentra Call recorded routine
+
+Design and English steps: [Mentra Call routine](../../../tools/mentra-e2e/MENTRA-CALL-ROUTINE.md). Reuses the [Mac harness design](../specs/2026-09-15-mentra-app-e2e-harness.md).
+
+- [x] Fetch and merge current `origin/dev` in the isolated harness worktree, preserving the primary checkout. Merge commit: `283992c8541ee6c6c97c62043085b6f626a0c6d0`.
+- [x] Clone Mentra Call `main` and compare source/bundled manifest identities (2.1.13).
+- [x] Read host launch policy, miniapp connection guards, Settings controls and existing source test boundaries.
+- [x] Write the proposed English routine, with normal-iOS availability, disconnected UI and connected-device extensions separated.
+- [x] Resolve target: the user requested iOS enablement and a real Mac test with Mentra Live, followed by a browser participant. Product changes live on `codex/enable-mentra-call-ios` and are integrated into the harness for local testing.
+- [x] Build latest host and record its identity; running binary contains Call 2.1.13 with the expected ZIP hash.
+- [x] Record the old dev exclusion, then replace it with the five-step `mentra-call-availability` check for the enabled host. Three passes have verified launcher/search behavior; no Call WebView/meeting coverage claimed.
+- [x] Fix the Clear Search activation failure discovered in the real-app probe. React Native's `TouchableOpacity` drops `onAccessibilityTap`; a native `Pressable` forwards it to the same handler as touch.
+- [x] Discover actual actions for paired navigation/settings/form inspection. Text entry and radio-selection semantics remain unresolved.
+- [x] Compile 13 observed paired UI steps with per-step evidence and explicit editing/media exclusions.
+- [x] Qualify three paired UI replays, inspect evidence and document new-Mac setup and server diagnostic steps.
+- [x] Update PR #4069 with paired UI scope, validation and explicit remaining meeting/editing gaps.
+
+The user explicitly authorized restoring iOS availability, supplied USB target `ML396102B` / Bluetooth `Mentra_Live_03BE`, and authorized joining the resulting Teams link in a browser. Pairing is complete after the user entered pairing mode and the native iOS-on-Mac audio readiness fix was installed. ADB identity and the app success screen agree on 03BE. The user completed camera/microphone grants and Call now opens; the prior system-dialog access gate is resolved. Call 2.1.14 removes an unrelated required-calendar launch gate. The external source commit is saved locally but publishing requires write access to Mentra-Community/Mentra-Call. No firmware or glasses network configuration was changed. Do not claim Call UI coverage from host visibility or meeting success from local state alone.
+
+Source validation: 71 existing Mentra Call tests passed across `call-ui.link.test.ts`, `meeting-hosts.test.ts` and `video-profile.test.ts`; these are supporting checks, not device/media proof. Harness TypeScript and ten runner/native checks passed, including packaged archive byte identity and keep-awake lifecycle.
+
+Discovery `2026-09-16T18-36-23-092Z-discovery-c77226` and native replay `2026-09-16T18-39-22-641Z-mentra-call-ios-availability-667c36` retained the original Clear Search failure. Adding a prop to the old wrapper still failed (`2026-09-16T18-41-44-817Z-mentra-call-ios-availability-a1008a`); inspecting the React Native wrapper confirmed that it does not forward that prop. After replacing only that control with `Pressable`, all five steps passed (`2026-09-16T18-43-54-655Z-mentra-call-ios-availability-a19d83`, 6.465 seconds); MP4, screenshots, chapters and capture liveness passed artifact checks.
+
+Full regression after the fix: `2026-09-16T18-44-23-699Z-no-glasses-f84f75`, 70 passed, three declared exclusions, 85.86 seconds, zero model calls. All artifact/liveness checks passed and no step recorded Mentra as foreground. Full mobile TypeScript also passed. This build's local source diff is recorded; it is not represented as a clean committed app build.
+
+Enabled-host qualification: `2026-09-16T19-07-26-868Z-mentra-call-availability-5b7785`, `2026-09-16T19-07-54-008Z-mentra-call-availability-fff46b`, and `2026-09-16T19-08-09-417Z-mentra-call-availability-a956b0`: five steps each, 5.841667/5.963333/5.84-second videos, zero model calls, all artifact and liveness checks passed. The actual fixture is recorded as pairing-incomplete. The failed Call launch discovery and successful guard dismissal remain preserved separately.
+
+Updated-build host qualification: `2026-09-16T20-38-10-217Z-mentra-call-availability-41c677`, `2026-09-16T20-38-17-138Z-mentra-call-availability-1412b7`, and `2026-09-16T20-38-23-929Z-mentra-call-availability-cd0b3e`: five steps each, 6.025 / 5.881667 / 5.906667 seconds, zero model calls, artifact/liveness checks passed. Screenshots visually fill the canvas. The installed 2.1.14 app subsequently opened Call after permission completion; see the paired UI and real-join findings below.
+
+## Paired Call UI and cloud provisioning diagnosis
+
+Paired UI qualification: `2026-09-16T21-22-42-981Z-mentra-call-ui-a9b90f`, `2026-09-16T21-23-09-891Z-mentra-call-ui-613b4a`, and `2026-09-16T21-24-19-512Z-mentra-call-ui-4e9f73`: 13 steps each in 11.855 / 11.75 / 12.196667 seconds, zero model calls. All 39 screenshots/AX snapshots, videos, chapters and frame-liveness checks passed. The installed app, replay code and native driver were unchanged; intervening documentation edits changed the broader harness-directory hash. No step recorded Mentra as foreground. Representative Settings, Join and final-home screenshots were visually inspected. The Settings Teams-status text runs together at this narrow viewport; this is retained as a layout finding, not a visual approval. Ten runner/native checks and harness TypeScript pass.
+
+The first create-and-join made a Teams meeting through the production Call backend, then failed in the MentraOS dev runtime before ACS join. Cloudflare rejected Stream access (403/code 10000) even though token verification returned active. Porter `cloud-dev` maps to Doppler `cloud-v2/dev_aws`; both that config and root `dev` have identical Stream account/token values. This is separate from the external miniapp backend. No credentials or deployment were changed. The exact owned meeting was retired separately (Graph DELETE 204, GET 404); app cleanup is not qualified. See the English routine and run `2026-09-16T21-05-39-830Z-discovery-6bcdc6` for sanitized diagnosis and cleanup evidence. Original transport and three Mac audio defaults were restored.
+
+Android success was reported after this diagnosis. Read-only comparison found the current Porter `cloud-prod` and `cloud-dev` merged configs, plus Doppler root `dev`, `dev_aws` and `prod`, contain the same Stream account/token pair. This does not prove the running Android client takes this path, nor the exact credential loaded by older deployed pods. Direct link bypasses Cloudflare provisioning. The later Fold inspection found Direct link on, no ready SIM, and a mismatched 023B fixture; see `tools/mentra-e2e/ANDROID.md`. That attempt does not establish Android success on the matched fixture.
+
+The user subsequently connected Ethernet and selected original 03BE for a Mac Direct link test. Clean integration source `8c840639d1` built successfully with the product Ethernet fix. Wired default routing and bound HTTPS probes passed. Discovery `2026-09-16T23-13-54-664Z-discovery-7d93c2` recorded 11 steps / 180.355 seconds; hotspot enablement succeeded, native association failed with `SCOPED_JOIN_FAILED: internal error.`, and ACS was not reached. Failed-run artifacts/liveness verified, hotspot teardown completed, Mac audio defaults restored, and the exact Mac meeting retired separately (DELETE 204 / GET 404). Location Services and Mentra access are off; `nehelper` denies Wi-Fi information. Apple's SDK allows SSID reads for an app-configured current network without Location, so the initial permission prerequisite was withdrawn. Privacy settings remain unchanged; denied reads on the ordinary Wi-Fi do not explain the association error. The English routine and new-Mac setup retain this distinction and the failed evidence. Fold meeting cleanup remains pending after its development backend credential returned 403 on verification GET.
+
+Two further nine-step diagnostic runs retained the same failure with verified artifacts and cleanup: `2026-09-16T23-29-37-580Z-discovery-873164` / 105.281667 seconds and `2026-09-16T23-33-50-907Z-discovery-261f81` / 145.973333 seconds. The final run on clean source `dee7f2e6a0` captured `NEHotspotConfigurationErrorDomain` code 8, no underlying error, helper result 107, immediately after native apply. The earlier missing log strings were Foundation privacy redaction, not proof of different wiring. Only non-sensitive error identity is now explicitly public in native logs.
+
+The authorized foreground comparison then failed with the same error in `2026-09-16T23-42-30-164Z-discovery-4dfadc` (12 steps, 227.74 seconds). All four Mac hotspot-created meetings have separate operator DELETE 204 / GET 404 verification. A minimal signed UIKit app reproduced error 8 in 0.006 seconds without Call, BLE or Teams code. Desktop focus did not resolve the issue; normal replay remains in the background.
+
+## Real hotspot route isolation
+
+After USB reconnection, the existing ASG command started original 03BE's hotspot and macOS joined it successfully. A Wi-Fi-bound Mac health request passed while Ethernet retained Teams HTTPS access. A minimal iOS request using the system route also passed on `en0`. In the same process, requiring the Wi-Fi interface type produced no network route and a 10-second timeout. A subsequent source-IP-bound request reported Local Network denial; permission acceptance is unresolved. SSID proof remains unavailable, so product reuse and incoming media are not qualified.
+
+The [English diagnostic routine and cache index](../../../tools/mentra-e2e/MAC-HOTSPOT-DIAGNOSTICS.md) retain the recordings, fixture limitations, cleanup, distinct network/assertion deadlines and requirements for another Mac. Hotspot state was temporarily changed through existing ASG commands and stopped after each run; no firmware, account or Teams meeting was changed.
+
+A later same-process comparison proved both system-selected routing and source-IP binding, then reproduced the required-Wi-Fi failure. The actual production WHIP HTTP server also accepted a request from the real glasses: ten steps / 42.831667 seconds, verified artifacts and cleanup. Product commit `4f1c87dd57` is pushed to draft #4078. Its full app passed a signed Release build and the 13-step paired UI replay in 11.753333 seconds; the candidate remains running with all three original Mac audio defaults restored. CoreKit has 24 passing tests. Exact-SSID reuse and Teams media remain unqualified. Temporary Location Services/Mentra location approval is pending for this macOS-established network; spoken attention was requested by the user and used, but no privacy setting changed.
+
+- [x] Record macOS association and health independently of iOS configuration submission.
+- [x] Compare system-selected and required-Wi-Fi requests in one signed iOS process.
+- [x] Qualify explicit IP binding in the same process after a successful system-route request.
+- [x] Verify incoming HTTP from the real glasses to the actual iOS WHIP server.
+- [ ] Qualify exact-SSID reuse, media, Teams browser participation and cleanup.
+- [ ] Package the local experiment cache as a portable diagnostic after resolving these gates.

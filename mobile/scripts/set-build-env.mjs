@@ -163,7 +163,7 @@ export async function setBuildEnv({syncAutolinking = true} = {}) {
   Object.entries(updatedEnv).forEach(([key, value]) => {
     if (key in buildVars || !inheritedEnv.has(key)) {
       process.env[key] = value
-      console.log(`  ${key}: ${value}`)
+      console.log(`  ${key}: (loaded)`)
     } else {
       console.log(`  ${key}: (kept from environment)`)
     }

@@ -5,6 +5,12 @@ on:
     paths:
       - "mobile/**"
       - ".github/workflows/mentra-app-ios-build.yml"
+      - ".github/workflows/reusable-pr-build-notification.yml"
+      - ".github/scripts/pr-ios-artifacts*"
+      # Scripts and config this job executes; a change to them must run it.
+      - ".github/scripts/ios-*"
+      - ".github/ccache/**"
+      - ".github/actions/disk-guard/**"
   push:
     branches:
       - main
@@ -34,23 +40,37 @@ concurrency:
   group: ios-build-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
-# This is a compile check: it never writes to the repository. `actions: read`
-# lets the timing summary read its own job's step timestamps.
+# The build job never writes to the repository. `actions: read` lets the
+# timing summary read its own job's step timestamps.
 permissions:
   contents: read
   actions: read
+
+env:
+  PR_IOS_SIGNED: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
+  PR_NUMBER: ${{ github.event.pull_request.number }}
+  PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
 
 jobs:
   build:
     runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 90
+    outputs:
+      upload_attempt: ${{ github.run_attempt }}
     env:
       EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID }}
       EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY }}
-      # True for pull_request runs and for dispatches that ask for PR
-      # behaviour. Every PR-only compile-check shortcut keys off this single
-      # value so a workflow_dispatch can reproduce a PR run exactly.
-      MENTRA_IOS_PR_COMPILE_MODE: ${{ (github.event_name == 'pull_request' || inputs.pr_compile_mode == true) && 'true' || 'false' }}
+      # Compile-check mode: the build is disposable (unsigned `build`, nothing
+      # published), so PR-only shortcuts apply (no JS bundle, no dSYM/debug
+      # info, no index store). True for pull_request runs whose build is NOT
+      # signed and published (fork PRs, or same-repo PRs without signing), and
+      # for dispatches that ask for PR behaviour. Signed PR archives are
+      # installed by testers, so they build like a full build.
+      MENTRA_IOS_PR_COMPILE_MODE: ${{ ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || inputs.pr_compile_mode == true) && 'true' || 'false' }}
+      # ccache eligibility is broader: every pull_request build (signed or
+      # not) may use the host compiler cache; push builds to dev/main and
+      # full-mode dispatches never do.
+      MENTRA_IOS_CCACHE_ELIGIBLE: ${{ (github.event_name == 'pull_request' || inputs.pr_compile_mode == true) && 'true' || 'false' }}
       MENTRA_IOS_FORCE_CLEAN_RETRY: ${{ inputs.force_clean_retry == true && 'true' || 'false' }}
 
     steps:
@@ -126,9 +146,10 @@ jobs:
         run: |
           # Host-persistent compiler cache for C/C++/ObjC (the largest share of
           # this build: ~980 CPU-s of CompileC vs ~480 of SwiftCompile). Enabled
-          # only in PR compile mode and only when ccache is installed on the
-          # host (setup-runner.sh installs it; `brew install ccache` on older
-          # hosts). Without it the job runs exactly as before.
+          # for pull_request builds (signed or compile-check) and only when
+          # ccache is installed on the host (setup-runner.sh installs it;
+          # `brew install ccache` on older hosts). Push builds to dev/main never
+          # use it. Without ccache the job runs exactly as before.
           #
           # - USE_CCACHE=1 is read by the generated Podfile
           #   (ccache_enabled? -> react_native_post_install :ccache_enabled),
@@ -142,9 +163,9 @@ jobs:
           # - compiler_check=content: CI clang timestamps are not stable.
           # - CCACHE_STATSLOG gives this job its own hit/miss log; the shared
           #   global counters are never zeroed (other jobs are using them).
-          if [ "$MENTRA_IOS_PR_COMPILE_MODE" != "true" ]; then
+          if [ "$MENTRA_IOS_CCACHE_ELIGIBLE" != "true" ]; then
             echo "enabled=false" >> "$GITHUB_OUTPUT"
-            echo "Full build mode: ccache not used."
+            echo "Not a pull_request build: ccache not used."
             exit 0
           fi
           if ! command -v ccache >/dev/null 2>&1; then
@@ -167,16 +188,77 @@ jobs:
           CCACHE_DIR="$ccache_dir" ccache --show-stats 2>/dev/null | head -12 || true
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v1
+        uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          # Match coordinated mobile builds. v2 reuses this installed version
+          # or downloads from GitHub Releases, avoiding the flaky bun.sh alias.
+          bun-version: 1.4.0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "20"
 
-      # No actions/cache here on purpose. Measured over the last twelve runs:
+      - name: Test PR artifact and notification contracts
+        run: |
+          node --test .github/scripts/pr-ios-artifacts.test.mjs .github/scripts/notify-pr-builds.test.mjs
+          python3 mobile/ci/pr-ios/test_artifacts.py
+
+      - name: Use the self-hosted Mac's Ruby for signing
+        if: env.PR_IOS_SIGNED == 'true'
+        working-directory: mobile
+        run: |
+          set -euo pipefail
+          ruby_bin="$(brew --prefix ruby)/bin"
+          export PATH="$ruby_bin:$PATH"
+          echo "$ruby_bin" >> "$GITHUB_PATH"
+          ruby --version
+          # Do not install hosted-runner Ruby under /Users/runner on this Mac.
+          # Keep gems and Bundler configuration scoped to this job.
+          export BUNDLE_PATH="$RUNNER_TEMP/mentra-pr-signing-gems"
+          export BUNDLE_FROZEN=true
+          echo "BUNDLE_PATH=$BUNDLE_PATH" >> "$GITHUB_ENV"
+          echo "BUNDLE_FROZEN=true" >> "$GITHUB_ENV"
+          bundle install --jobs 4 --retry 3
+
+      - name: Install PR ad hoc signing assets
+        if: env.PR_IOS_SIGNED == 'true'
+        working-directory: mobile
+        env:
+          FASTLANE_SKIP_UPDATE_CHECK: "true"
+          MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+          RAW_MATCH_GIT_BASIC_AUTHORIZATION: ${{ secrets.MATCH_GIT_BASIC_AUTHORIZATION }}
+          IOS_PR_PROFILE_BASE64: ${{ secrets.IOS_PR_PROFILE_BASE64 }}
+        run: |
+          set -euo pipefail
+          keychain="$RUNNER_TEMP/mentra-pr-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.keychain-db"
+          password="$(openssl rand -hex 32)"
+          echo "::add-mask::$password"
+          echo "PR_IOS_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+          echo "PR_IOS_KEYCHAIN_PASSWORD=$password" >> "$GITHUB_ENV"
+          security create-keychain -p "$password" "$keychain"
+          # Match release signing: keep only this disposable job keychain
+          # unlocked through archive/export; always delete it at job cleanup.
+          security set-keychain-settings "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          python3 ci/pr-ios/keychain-search.py add "$keychain"
+          # A fresh job keychain needs the Apple certificate chain as well as
+          # the distribution identity, matching the coordinated signing setup.
+          for wwdr in G2 G3 G4 G5 G6; do
+            certificate="$RUNNER_TEMP/AppleWWDRCA${wwdr}.cer"
+            curl --fail --silent --show-error --location --retry 2 \
+              "https://www.apple.com/certificateauthority/AppleWWDRCA${wwdr}.cer" -o "$certificate"
+            security import "$certificate" -k "$keychain" -T /usr/bin/codesign
+          done
+          MATCH_GIT_BASIC_AUTHORIZATION="$(printf '%s' "$RAW_MATCH_GIT_BASIC_AUTHORIZATION" | tr -d '\r\n')"
+          export MATCH_GIT_BASIC_AUTHORIZATION
+          bundle exec fastlane match adhoc --readonly --skip_provisioning_profiles true --keychain_name "$keychain" --keychain_password "$password"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain" >/dev/null
+          python3 ci/pr-ios/artifacts.py configure --keychain "$keychain" --output build/pr-ios
+
+      # No actions/cache here on purpose. Measured over the last twelve runs
+      # before the signed PR flow, and worse since (DerivedData saves of 27 and
+      # 59 minutes were observed in the week of 2026-09-18):
       #   - DerivedData (3.5 GB) hit 2/12 times; a hit saved 30–60 s of
       #     xcodebuild but cost 100–210 s to restore and 105–660 s to save.
       #   - Installed Pods: pod install took 18 s with or without the cache,
@@ -222,8 +304,8 @@ jobs:
           # Pin which cloud this binary talks to (OS-1875).
           #
           # main is production-configured; dev, PRs and feature branches use dev
-          # cloud. Nothing uploads from this workflow, so these are compile checks,
-          # but they should still match the environment they claim to check.
+          # cloud. Trusted PRs publish ad hoc iPhone/Mac downloads; other events
+          # remain compile checks. No TestFlight export or upload occurs here.
           #
           # .env.example ships dev URLs so a local checkout builds with no setup.
           # A lane that produces a distributable must not inherit that silently.
@@ -448,6 +530,11 @@ jobs:
           fi
           echo "Vendored sherpa-onnx.xcframework integrated from the bluetooth-sdk module."
 
+      - name: Configure only the app target for PR signing
+        if: env.PR_IOS_SIGNED == 'true'
+        working-directory: mobile
+        run: bundle exec ruby ci/pr-ios/configure-signing.rb ios/Mentra.xcodeproj build/pr-ios/signing.json
+
       - name: Ensure iOS platform is installed
         working-directory: ./mobile/ios
         run: |
@@ -484,22 +571,17 @@ jobs:
             echo "status=99" >> "$GITHUB_OUTPUT"
             exit 99
           fi
-          # Full log + Build Timing Summary land in $RUNNER_TEMP (uploaded as an
-          # artifact below); the console shows errors/warnings/result only.
-          # Exit status is xcodebuild's own (PIPESTATUS), never tee's.
+          # mobile/ci/pr-ios/build.mjs runs xcodebuild: a signed `archive` for
+          # trusted PRs (published as iPhone/Mac downloads) or an unsigned
+          # `build` compile check otherwise. The wrapper keeps the full log and
+          # Build Timing Summary in $RUNNER_TEMP (uploaded as an artifact
+          # below), shows errors/warnings/result on the console, and exits
+          # with xcodebuild's own status (PIPESTATUS), never tee's.
           # shellcheck source=.github/scripts/ios-compile-check-settings.sh
           . "$GITHUB_WORKSPACE/.github/scripts/ios-compile-check-settings.sh"
+          cd "$GITHUB_WORKSPACE"
           "$GITHUB_WORKSPACE/.github/scripts/ios-xcodebuild-attempt.sh" attempt-1 -- \
-                     -workspace Mentra.xcworkspace \
-                     -scheme Mentra \
-                     -configuration Release \
-                     -destination 'generic/platform=iOS' \
-                     -derivedDataPath build-device \
-                     -showBuildTimingSummary \
-                     CODE_SIGN_IDENTITY="" \
-                     CODE_SIGNING_REQUIRED=NO \
-                     CODE_SIGNING_ALLOWED=NO \
-                     "${MENTRA_IOS_COMPILE_CHECK_SETTINGS[@]}"
+            node mobile/ci/pr-ios/build.mjs
 
       - name: Retry build with clean caches (if first attempt failed)
         id: xcode-build-clean
@@ -545,20 +627,11 @@ jobs:
           # disappearing while parallel compile and XCFramework copy jobs run.
           # shellcheck source=.github/scripts/ios-compile-check-settings.sh
           . "$GITHUB_WORKSPACE/.github/scripts/ios-compile-check-settings.sh"
+          cd "$GITHUB_WORKSPACE"
           "$GITHUB_WORKSPACE/.github/scripts/ios-xcodebuild-attempt.sh" attempt-2 -- \
-                     -workspace Mentra.xcworkspace \
-                     -scheme Mentra \
-                     -jobs 1 \
-                     -configuration Release \
-                     -destination 'generic/platform=iOS' \
-                     -derivedDataPath build-device \
-                     -showBuildTimingSummary \
-                     CODE_SIGN_IDENTITY="" \
-                     CODE_SIGNING_REQUIRED=NO \
-                     CODE_SIGNING_ALLOWED=NO \
-                     "${MENTRA_IOS_COMPILE_CHECK_SETTINGS[@]}"
+            node mobile/ci/pr-ios/build.mjs --serial
 
-      - name: Verify compile-check build outputs
+      - name: Verify build outputs
         if: steps.xcode-build.outcome == 'success' || steps.xcode-build-clean.outcome == 'success'
         env:
           TIMING1: ${{ steps.xcode-build.outputs.timing_summary }}
@@ -566,7 +639,12 @@ jobs:
           LOG1: ${{ steps.xcode-build.outputs.log }}
           LOG2: ${{ steps.xcode-build-clean.outputs.log }}
         run: |
-          app="mobile/ios/build-device/Build/Products/Release-iphoneos/Mentra.app"
+          # Signed PR builds archive; compile checks build. Both must leave an app.
+          if [ "$PR_IOS_SIGNED" = "true" ]; then
+            app="mobile/build/pr-ios/Mentra.xcarchive/Products/Applications/Mentra.app"
+          else
+            app="mobile/ios/build-device/Build/Products/Release-iphoneos/Mentra.app"
+          fi
           test -d "$app" || { echo "::error::$app missing after a successful build"; exit 1; }
           # The log of the attempt that produced the app: the retry's if it ran.
           log="$LOG1"
@@ -637,10 +715,87 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
-      - name: Fail if both builds failed
-        if: steps.xcode-build.outcome == 'failure'
+      - name: Require a successful build attempt
+        if: always()
+        env:
+          CACHED_RESULT: ${{ steps.xcode-build.outcome }}
+          RETRY_RESULT: ${{ steps.xcode-build-clean.outcome }}
+        run: test "$CACHED_RESULT" = success || test "$RETRY_RESULT" = success
+
+      - name: Export and package iPhone and Mac downloads
+        if: success() && env.PR_IOS_SIGNED == 'true'
         run: |
-          if [ ! -d "mobile/ios/build-device/Build/Products/Release-iphoneos/Mentra.app" ]; then
-            echo "Both build attempts failed"
-            exit 1
-          fi
+          set -euo pipefail
+          security unlock-keychain -p "$PR_IOS_KEYCHAIN_PASSWORD" "$PR_IOS_KEYCHAIN"
+          xcodebuild -exportArchive -archivePath mobile/build/pr-ios/Mentra.xcarchive \
+            -exportOptionsPlist mobile/build/pr-ios/ExportOptions.plist \
+            -exportPath mobile/build/pr-ios/export
+          python3 mobile/ci/pr-ios/artifacts.py package \
+            --ipa mobile/build/pr-ios/export/Mentra.ipa --output pr-ios-output
+
+      - name: Hand off signed PR downloads
+        id: handoff
+        if: success() && env.PR_IOS_SIGNED == 'true'
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-ios-${{ github.run_id }}-${{ github.run_attempt }}
+          path: pr-ios-output
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Retry signed download handoff
+        if: steps.handoff.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-ios-${{ github.run_id }}-${{ github.run_attempt }}
+          path: pr-ios-output
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+          overwrite: true
+
+      - name: Remove this job's signing keychain
+        if: always() && env.PR_IOS_KEYCHAIN != ''
+        run: |
+          python3 mobile/ci/pr-ios/keychain-search.py remove "$PR_IOS_KEYCHAIN"
+          security delete-keychain "$PR_IOS_KEYCHAIN"
+
+  publish:
+    needs: build
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      ARTIFACTS_R2_ACCOUNT_ID: ${{ vars.ARTIFACTS_R2_ACCOUNT_ID }}
+      ARTIFACTS_R2_BUCKET: artifactscdn
+      SOURCE_RUN_ID: ${{ github.run_id }}
+      SOURCE_RUN_ATTEMPT: ${{ needs.build.outputs.upload_attempt }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm ci --prefix .github/artifact-storage
+      - uses: actions/download-artifact@v4
+        with:
+          name: pr-ios-${{ github.run_id }}-${{ needs.build.outputs.upload_attempt }}
+          path: pr-ios-output
+      - name: Publish verified iPhone installer, IPA, Mac ZIP and receipt
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
+        run: node .github/scripts/pr-ios-artifacts.mjs pr-ios-output
+
+  notify-pr-builds:
+    needs: [build, publish]
+    if: ${{ always() && !cancelled() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
+    uses: ./.github/workflows/reusable-pr-build-notification.yml
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
+    secrets:
+      SLACK_WEBHOOK_PR_BUILDS: ${{ secrets.SLACK_WEBHOOK_PR_BUILDS }}

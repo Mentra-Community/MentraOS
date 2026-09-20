@@ -1,6 +1,7 @@
 import {Button, Icon, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useCapsuleStore} from "@/stores/capsule"
+import {translate} from "@/i18n"
 
 import {Dimensions, InteractionManager, PixelRatio, Platform, Share, View} from "react-native"
 import {Pressable} from "react-native-gesture-handler"
@@ -64,6 +65,14 @@ function CapsuleButton({onRightPress, onLeftPress}: CapsuleButtonProps) {
       className="flex-row justify-between rounded-full h-8 w-20 items-center bg-background/60"
       style={androidStyle}>
       <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={translate("navigation:minimizeMiniapp")}
+        testID="miniapp.minimize"
+        onAccessibilityTap={onLeftPress}
+        accessibilityActions={[{name: "activate"}]}
+        onAccessibilityAction={({nativeEvent}) => {
+          if (nativeEvent.actionName === "activate") onLeftPress?.()
+        }}
         hitSlop={10}
         onPress={onLeftPress}
         // className="w-8 h-full items-center justify-center rounded-l-full bg-red-500"
@@ -90,6 +99,14 @@ function CapsuleButton({onRightPress, onLeftPress}: CapsuleButtonProps) {
       </Pressable>
       <View className="h-4 w-px bg-primary-foreground absolute left-1/2 -translate-x-1/2" />
       <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={translate("navigation:closeMiniapp")}
+        testID="miniapp.close"
+        onAccessibilityTap={onRightPress}
+        accessibilityActions={[{name: "activate"}]}
+        onAccessibilityAction={({nativeEvent}) => {
+          if (nativeEvent.actionName === "activate") onRightPress?.()
+        }}
         hitSlop={10}
         onPress={onRightPress}
         style={({pressed}) => [

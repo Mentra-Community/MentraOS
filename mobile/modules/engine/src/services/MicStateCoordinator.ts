@@ -20,6 +20,15 @@ import type {MicTuningProfile} from "./micPolicy"
 
 const LOG_TAG = "MIC_COORDINATOR"
 
+/** Field-wise compare, so a profile that moves a threshold without the gain still lands. */
+function sameProfile(a: MicTuningProfile | null, b: MicTuningProfile | null): boolean {
+  if (a === b) return true
+  if (!a || !b) return false
+  const keys = new Set([...Object.keys(a), ...Object.keys(b)]) as Set<keyof MicTuningProfile>
+  for (const key of keys) if (a[key] !== b[key]) return false
+  return true
+}
+
 type MicGate = "vad" | "loudnessGate"
 
 interface GateOverride {
@@ -41,6 +50,10 @@ const flushMicRequirementsPatch = createDebouncedPatchFlusher<Record<string, unk
     // gate override during the debounce window, and a captured stale value
     // must not win after that lifecycle transition.
     const runtimePatch = micStateCoordinator.applyEffectiveGatePolicy(patch)
+    // The merged patch, not the intent that produced it. Everything above this line is a
+    // preference; this is the only record of what the glasses were actually told, and the three
+    // keys a call depends on (VAD off, Barrier on, the tuning) are only decided here at flush.
+    console.log(`${LOG_TAG}: write`, runtimePatch)
     void Promise.resolve(BluetoothSdk.updateBluetoothSettings(runtimePatch)).catch((err) => {
       console.error(`${LOG_TAG}: failed to apply mic requirements:`, err)
     })
@@ -78,6 +91,10 @@ class MicStateCoordinator {
    * call from resurrecting the profile.
    */
   private sessionMicTuningWritten = false
+  /** Barrier required by the live sessions, or null when they have no opinion. */
+  private sessionLoudnessGate: boolean | null = null
+  /** Latched like the tuning, so the OS value is restated once a session has moved it. */
+  private sessionLoudnessGateWritten = false
   private readonly miniappVadOverrides = new Map<string, GateOverride>()
   private readonly miniappLoudnessGateOverrides = new Map<string, GateOverride>()
   private overrideSequence = 0
@@ -126,7 +143,7 @@ class MicStateCoordinator {
    * over the value that was queued.
    */
   public setSessionMicTuning(profile: MicTuningProfile | null): void {
-    if (profile?.gain === this.sessionMicTuning?.gain) return
+    if (sameProfile(profile, this.sessionMicTuning)) return
     this.sessionMicTuning = profile
     if (profile) this.sessionMicTuningWritten = true
     // Nothing was ever written, so there is nothing to restore.
@@ -138,6 +155,28 @@ class MicStateCoordinator {
   /** Last session profile queued, or null when the OS value is in force. */
   public getSessionMicTuning(): MicTuningProfile | null {
     return this.sessionMicTuning
+  }
+
+  /** Last session Barrier queued, or null when the OS value is in force. For call logging. */
+  public getSessionLoudnessGate(): boolean | null {
+    return this.sessionLoudnessGate
+  }
+
+  /**
+   * Run or stop the center-mic loudness gate on behalf of the live sessions.
+   *
+   * MicSessionManager only, and the counterpart to the PCM claim rather than a second opinion on
+   * it: raw PCM turns hardware VAD off, which leaves Barrier as the only thing standing between
+   * the far end and its own echo. Unlike VAD this never stops the stream, so the worst a wrong
+   * threshold costs is a zeroed frame instead of a dropped word.
+   */
+  public setSessionLoudnessGate(enabled: boolean | null): void {
+    if (this.sessionLoudnessGate === enabled) return
+    this.sessionLoudnessGate = enabled
+    if (enabled !== null) this.sessionLoudnessGateWritten = true
+    else if (!this.sessionLoudnessGateWritten) return
+    console.log(`${LOG_TAG}: session loudness gate ${enabled === null ? "cleared" : enabled}`)
+    this.applyUnion()
   }
 
   /**
@@ -167,6 +206,19 @@ class MicStateCoordinator {
     if (!this.sessionMicTuning) return undefined
     if (Object.keys(this.configuredMicTuning).length > 0) return undefined
     return {...this.sessionMicTuning} as Record<string, number>
+  }
+
+  /**
+   * The session's Barrier, but only when it wins.
+   *
+   * Suppressed by a live Super Mode tuning value for the same reason the gain is: that screen is
+   * the manual override, and a gate running against hand-entered thresholds is the one case where
+   * the session's numbers are the wrong ones.
+   */
+  private winningSessionLoudnessGate(): boolean | undefined {
+    if (this.sessionLoudnessGate === null) return undefined
+    if (Object.keys(this.configuredMicTuning).length > 0) return undefined
+    return this.sessionLoudnessGate
   }
 
   /**
@@ -262,8 +314,11 @@ class MicStateCoordinator {
     } else if (vadOverride) {
       runtimeSettings.voice_activity_detection_enabled = vadOverride.enabled
     }
+    const sessionGate = this.winningSessionLoudnessGate()
     if (loudnessOverride) {
       runtimeSettings.loudness_gate_enabled = loudnessOverride.enabled
+    } else if (sessionGate !== undefined) {
+      runtimeSettings.loudness_gate_enabled = sessionGate
     }
 
     // BES forgets mic_tuning on disconnect, so the on-connect replay is what
@@ -336,9 +391,15 @@ class MicStateCoordinator {
     else if (vadOverride) patch.voice_activity_detection_enabled = vadOverride.enabled
     else if (this.configuredVad !== undefined) patch.voice_activity_detection_enabled = this.configuredVad
 
+    const sessionGate = this.winningSessionLoudnessGate()
     if (loudnessOverride) patch.loudness_gate_enabled = loudnessOverride.enabled
+    else if (sessionGate !== undefined) patch.loudness_gate_enabled = sessionGate
     else if (this.configuredLoudnessGate !== undefined) {
       patch.loudness_gate_enabled = this.configuredLoudnessGate
+    } else if (this.sessionLoudnessGateWritten) {
+      // A session moved it and the device carries no preference, so restate the product default
+      // rather than leaving the call's gate running after it ended.
+      patch.loudness_gate_enabled = false
     }
 
     const sessionTuning = this.winningSessionMicTuning()
@@ -356,6 +417,7 @@ class MicStateCoordinator {
     this.localWantsLc3 = false
     this.sessionWantsPcm = false
     this.sessionMicTuning = null
+    this.sessionLoudnessGate = null
     this.applyUnion()
   }
 

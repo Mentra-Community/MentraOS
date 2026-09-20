@@ -22,6 +22,10 @@
 # and the asset copy are skipped on the Mac. The iOS Metro bundle is validated
 # on Linux by the "Validate the iOS Metro bundle" step in
 # .github/workflows/augmentos-manager-jest.yml instead.
+#
+# mobile/ci/pr-ios/build.mjs reads the settings from
+# MENTRA_IOS_COMPILE_CHECK_SETTINGS_STR and applies them only to unsigned
+# builds; signed PR archives (installed by testers) are never affected.
 MENTRA_IOS_COMPILE_CHECK_SETTINGS=()
 if [ "${MENTRA_IOS_PR_COMPILE_MODE:-false}" = "true" ]; then
   MENTRA_IOS_COMPILE_CHECK_SETTINGS+=(
@@ -33,5 +37,7 @@ if [ "${MENTRA_IOS_PR_COMPILE_MODE:-false}" = "true" ]; then
   echo "PR compile mode: SKIP_BUNDLING=1; applying ${#MENTRA_IOS_COMPILE_CHECK_SETTINGS[@]} compile-check build settings: ${MENTRA_IOS_COMPILE_CHECK_SETTINGS[*]}"
 else
   unset SKIP_BUNDLING
-  echo "Full build mode (non-PR): JS bundle embedded; no compile-check build settings applied."
+  echo "Full build mode: JS bundle embedded; no compile-check build settings applied."
 fi
+MENTRA_IOS_COMPILE_CHECK_SETTINGS_STR="${MENTRA_IOS_COMPILE_CHECK_SETTINGS[*]}"
+export MENTRA_IOS_COMPILE_CHECK_SETTINGS_STR

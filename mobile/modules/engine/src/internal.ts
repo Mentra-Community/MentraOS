@@ -76,11 +76,15 @@ export {default as micStateCoordinator} from "./services/MicStateCoordinator"
 export {default as micSessionManager, MIC_SOURCE_CONFLICT} from "./services/MicSessionManager"
 export type {MicSession, MicSessionOptions} from "./services/MicSessionManager"
 export {
+  GAIN_DB,
+  MIC_TUNING_FIRMWARE_DEFAULTS,
+  MIC_USE_CASE_LOUDNESS_GATE,
   MIC_USE_CASE_PROFILES,
   VOICE_CALL_PACKAGES,
   ENGINE_ONLY_USE_CASES,
   ENGINE_OWNER_PREFIX,
   resolveMicPolicy,
+  scaleMicTuningToGain,
 } from "./services/micPolicy"
 export type {MicSource, MicTuningProfile, MicUseCase} from "./services/micPolicy"
 export {default as audioPlaybackService} from "./services/AudioPlaybackService"

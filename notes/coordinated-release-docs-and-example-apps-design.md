@@ -391,8 +391,8 @@ schema versions fail closed.
 
 ## GitHub Release Containers
 
-Coordinated prereleases do not create one visible GitHub release per commit.
-MentraOS keeps its existing base-version container:
+MentraOS stores coordinated prerelease artifacts in its existing base-version
+container (with new binaries hosted on the artifact CDN):
 
 ```text
 mentra-builds-v3.1.0
@@ -410,6 +410,13 @@ as `sdk-3.1.0-dev.42` and `sdk-3.1.0-beta.57` identify the exact Starter Kit
 commit even though their downloadable assets share one visible release page.
 The grouped container tag is fixed when the container is created and is never
 used as source provenance or force-moved to the newest example commit.
+
+Each completed Mentra dev/beta build also has a GitHub prerelease page at its
+`mentra-v<release identity>` source tag. Its description links directly to the
+main Mentra App APK/AAB/IPA, glasses artifacts, SDK packages, and manifest in
+the shared container. It does not duplicate binaries. Page creation consumes
+the archived final manifest in a separate job, so a GitHub API failure can be
+retried without republishing immutable artifacts or blocking example dispatch.
 
 Stable publication uses the stable containers `mentra-v3.1.0` and
 `sdk-3.1.0`. It does not rename a prerelease artifact and pretend its embedded
@@ -546,7 +553,8 @@ The existing channel mapping remains:
 - `dev` posts to `dev-builds` through `SLACK_WEBHOOK_DEV_BUILDS`;
 - `staging` posts to `staging-builds` through the existing staging webhook.
 
-One final coordinated message reports the full release, including:
+Core release completion and the independently dispatched examples/docs workflow
+post separate messages. Together they report:
 
 - release identity and source commit;
 - success or failure of OTA, npm, native SDK, MentraOS, Engine consumer,
@@ -560,6 +568,11 @@ One final coordinated message reports the full release, including:
 
 Slack never guesses an artifact URL. It uses the validated release plan,
 MentraOS outputs, and Starter Kit result.
+
+The examples message repeats the main Mentra App APK and IPA links from the
+completed core manifest, so an example store failure does not hide the phone
+app downloads. A failed release-page job is reported separately from core
+completion; the core message falls back to the shared artifact container link.
 
 ## Concurrency and Retries
 

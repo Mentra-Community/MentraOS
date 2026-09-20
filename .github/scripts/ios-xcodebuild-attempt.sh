@@ -1,7 +1,11 @@
 #!/usr/bin/env bash
-# Run one xcodebuild attempt for the iOS compile check with full logging.
+# Run one xcodebuild attempt for the iOS PR build with full logging.
 #
-# Usage: ios-xcodebuild-attempt.sh <attempt-id> -- <xcodebuild args...>
+# Usage: ios-xcodebuild-attempt.sh <attempt-id> -- <command that runs xcodebuild...>
+#   e.g. ios-xcodebuild-attempt.sh attempt-1 -- node mobile/ci/pr-ios/build.mjs
+#
+# The command is expected to run xcodebuild with -showBuildTimingSummary and
+# without -quiet (this wrapper does the console filtering).
 #
 # - Full stdout+stderr goes to $RUNNER_TEMP/xcodebuild-<attempt-id>.log so the
 #   artifact carries every compiler line while the console stays readable.
@@ -33,9 +37,14 @@ else
   filter=(grep --line-buffered -E 'error:|warning:|\*\* BUILD|Build Timing Summary')
 fi
 
+if [ "$#" -eq 0 ]; then
+  echo "ios-xcodebuild-attempt.sh: no command given" >&2
+  exit 2
+fi
+
 started_at="$(date +%s)"
 set +e
-xcodebuild "$@" 2>&1 | tee "$log" | "${filter[@]}"
+"$@" 2>&1 | tee "$log" | "${filter[@]}"
 status="${PIPESTATUS[0]}"
 set -e
 duration="$(( $(date +%s) - started_at ))"

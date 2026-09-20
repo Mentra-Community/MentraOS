@@ -577,6 +577,7 @@ export type RgbLedControlSuccessResponseEvent = Extract<RgbLedControlResponseEve
 export type SettingsAckStatus = "applied" | "ready" | "error" | "failed" | "failure" | "rejected"
 
 export type SettingsAckSetting =
+  | "gallery_server"
   | "gallery_mode"
   | "button_photo"
   | "button_video_recording"
@@ -602,6 +603,10 @@ export type SettingsAckEvent = {
   fps?: number
   enabled?: boolean
   minutes?: number
+  /** Current site-network listener state; present for gallery_server acknowledgements. */
+  listening?: boolean
+  /** Current HTTP base URL; present for gallery_server only while listening. */
+  url?: string
   /** ANR enabled flag; present when setting === "camera_tuning" */
   anr?: boolean
   /** Stock-gain flag; present when setting === "camera_tuning" */
@@ -1403,6 +1408,12 @@ export interface BluetoothSdkPublicModule {
   /** Enable or disable Wi-Fi ADB on Mentra Live (no-op on other devices). */
   setWifiAdbState(enabled: boolean): Promise<void>
 
+  /**
+   * Persistently enable/disable unauthenticated HTTP gallery access on the glasses' Wi-Fi.
+   * Default off; survives reconnects/restarts until disabled. Only use on trusted networks.
+   * Returns saved enabled state plus current listening/url. No Wi-Fi means listening=false.
+   */
+  setGalleryServerEnabled(enabled: boolean): Promise<SettingsAckSuccessEvent>
   setGalleryModeEnabled(enabled: boolean): Promise<SettingsAckSuccessEvent>
   setVoiceActivityDetectionEnabled(enabled: boolean): Promise<void>
   setLoudnessGateEnabled(enabled: boolean): Promise<void>

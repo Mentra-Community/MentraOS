@@ -4,6 +4,11 @@ import type {MicTuning} from "@mentra/bluetooth-sdk-internal"
  * Firmware defaults, mirrored from center_mic_vad_get_default_config and
  * CODEC_SADC_VOL. A slider has to show something before the glasses answer,
  * and "what the firmware would do" is the honest placeholder.
+ *
+ * Kept in step by hand with MIC_TUNING_FIRMWARE_DEFAULTS and GAIN_DB in the
+ * engine's micPolicy, which derives the voice-call profile from the same
+ * numbers. Importing them would pull the engine entry into a pure-math screen
+ * helper; micPolicy's tests pin the values on the other side.
  */
 export const MIC_TUNING_DEFAULTS: Required<MicTuning> = {
   gain: 15,
