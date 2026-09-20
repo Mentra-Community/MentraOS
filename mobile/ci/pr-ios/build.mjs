@@ -43,6 +43,9 @@ const args = [
 // errSecInternalComponent on signing failures. The timing summary feeds the
 // job summary's CompileC vs SwiftCompile breakdown.
 args.push("-showBuildTimingSummary")
+// Per-attempt result bundle for diagnosis; the wrapper removes any stale path
+// first because xcodebuild refuses to overwrite one.
+if (process.env.MENTRA_IOS_RESULT_BUNDLE) args.push("-resultBundlePath", process.env.MENTRA_IOS_RESULT_BUNDLE)
 if (process.argv.includes("--serial")) args.push("-jobs", "1")
 // Compile-check-only build settings (no dSYM/debug info/index store) come
 // from .github/scripts/ios-compile-check-settings.sh. They never apply to a

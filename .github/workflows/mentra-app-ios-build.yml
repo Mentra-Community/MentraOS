@@ -749,11 +749,17 @@ jobs:
           ATTEMPT2_OUTCOME: ${{ steps.xcode-build-clean.outcome }}
           ATTEMPT2_SECONDS: ${{ steps.xcode-build-clean.outputs.duration_seconds }}
           ATTEMPT2_TIMING: ${{ steps.xcode-build-clean.outputs.timing_summary }}
+          ATTEMPT1_TIMELINE: ${{ steps.xcode-build.outputs.timeline }}
+          ATTEMPT1_MEMORY: ${{ steps.xcode-build.outputs.memory }}
+          ATTEMPT2_TIMELINE: ${{ steps.xcode-build-clean.outputs.timeline }}
+          ATTEMPT2_MEMORY: ${{ steps.xcode-build-clean.outputs.memory }}
           EVENT_NAME: ${{ github.event_name }}
           PR_COMPILE_MODE: ${{ env.MENTRA_IOS_PR_COMPILE_MODE }}
           HEAD_SHA: ${{ github.event.pull_request.head.sha || github.sha }}
           CCACHE_ENABLED: ${{ steps.ccache.outputs.enabled }}
-        run: "$GITHUB_WORKSPACE/.github/scripts/ios-build-summary.sh"
+        run: |
+          echo "- Signed PR build: \`${PR_IOS_SIGNED:-false}\`  ccache namespace: \`${{ steps.ccache.outputs.namespace }}\`" >> "$GITHUB_STEP_SUMMARY"
+          "$GITHUB_WORKSPACE/.github/scripts/ios-build-summary.sh"
 
       - name: Upload xcodebuild logs
         if: always()
@@ -761,9 +767,14 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: ios-xcodebuild-logs-${{ github.run_id }}-${{ github.run_attempt }}
+          # The .xcresult bundles are included deliberately so their upload
+          # cost is visible in this step's duration; drop them if it grows.
           path: |
             ${{ runner.temp }}/xcodebuild-attempt-*.log
             ${{ runner.temp }}/xcodebuild-attempt-*.timing.txt
+            ${{ runner.temp }}/xcodebuild-attempt-*.timeline
+            ${{ runner.temp }}/xcodebuild-attempt-*.memory
+            ${{ runner.temp }}/xcodebuild-attempt-*.xcresult
           if-no-files-found: ignore
           retention-days: 7
 

@@ -12,8 +12,8 @@
 #   JOB_STARTED_AT            epoch seconds recorded by the first step
 #   CACHE_SIZE_BYTES, CACHE_COUNT   Actions cache usage at job start
 #   DERIVED_CACHE_HIT         optional; printed when set
-#   ATTEMPT1_OUTCOME, ATTEMPT1_SECONDS, ATTEMPT1_TIMING
-#   ATTEMPT2_OUTCOME, ATTEMPT2_SECONDS, ATTEMPT2_TIMING
+#   ATTEMPT1_OUTCOME, ATTEMPT1_SECONDS, ATTEMPT1_TIMING, ATTEMPT1_TIMELINE, ATTEMPT1_MEMORY
+#   ATTEMPT2_OUTCOME, ATTEMPT2_SECONDS, ATTEMPT2_TIMING, ATTEMPT2_TIMELINE, ATTEMPT2_MEMORY
 #   EVENT_NAME, PR_COMPILE_MODE, HEAD_SHA
 #   CCACHE_ENABLED, CCACHE_STATSLOG, CCACHE_DIR   per-job ccache stats when enabled
 set -u
@@ -102,6 +102,21 @@ emit_timing() {
 }
 emit_timing "First build" "${ATTEMPT1_TIMING:-}"
 emit_timing "Clean-cache retry" "${ATTEMPT2_TIMING:-}"
+
+emit_timeline() {
+  local title="$1" file="$2" mem="$3"
+  local script="${GITHUB_WORKSPACE:-.}/.github/scripts/ios-build-timeline.py"
+  if [ -n "$file" ] && [ -s "$file" ] && [ -f "$script" ]; then
+    {
+      echo "### ${title}: task timeline"
+      echo ""
+      python3 "$script" "$file" "${mem:-}" --top=12 2>/dev/null || echo "_timeline analysis failed_"
+      echo ""
+    } >> "$summary"
+  fi
+}
+emit_timeline "First build" "${ATTEMPT1_TIMELINE:-}" "${ATTEMPT1_MEMORY:-}"
+emit_timeline "Clean-cache retry" "${ATTEMPT2_TIMELINE:-}" "${ATTEMPT2_MEMORY:-}"
 
 if [ "${CCACHE_ENABLED:-false}" = "true" ] && command -v ccache >/dev/null 2>&1; then
   {
