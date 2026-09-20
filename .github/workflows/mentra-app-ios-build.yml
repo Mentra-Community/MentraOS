@@ -56,7 +56,8 @@ permissions:
   actions: read
 
 env:
-  PR_IOS_SIGNED: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
+  # REGRESSION MATRIX A8 (reverted next): force the unsigned build path.
+  PR_IOS_SIGNED: "false"
   PR_NUMBER: ${{ github.event.pull_request.number }}
   PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
 
@@ -655,6 +656,7 @@ jobs:
           # with xcodebuild's own status (PIPESTATUS), never tee's.
           # shellcheck source=.github/scripts/ios-compile-check-settings.sh
           . "$GITHUB_WORKSPACE/.github/scripts/ios-compile-check-settings.sh"
+          export SKIP_BUNDLING=1  # REGRESSION MATRIX A8 (reverted next): full mode with bundling skipped must fail Verify
           cd "$GITHUB_WORKSPACE"
           "$GITHUB_WORKSPACE/.github/scripts/ios-xcodebuild-attempt.sh" attempt-1 -- \
             node mobile/ci/pr-ios/build.mjs
