@@ -85,7 +85,7 @@ jobs:
       MENTRA_IOS_PR_BUILD: ${{ (github.event_name == 'pull_request' || inputs.pr_compile_mode == true) && 'true' || 'false' }}
       # Experiment switches (0/1). Each is a one-line change measured with
       # paired runs before it ships; see ios-compile-check-settings.sh.
-      MENTRA_IOS_EXPERIMENT_PARALLEL: "0"
+      MENTRA_IOS_EXPERIMENT_PARALLEL: "1"
       MENTRA_IOS_EXPERIMENT_EXPLICIT_MODULES: "0"
       MENTRA_IOS_EXPERIMENT_SWIFT_SINGLEFILE: "0"
       # Repository variable: set MENTRA_IOS_CCACHE=false to disable ccache on

@@ -124,7 +124,10 @@ Three manual steps the script can't automate:
 
 3. **Verify the runner shows up** at https://github.com/Mentra-Community/MentraOS/settings/actions/runners with the labels `self-hosted, macOS, ARM64`. If you used custom labels, also confirm those.
 
-4. **Confirm `ccache` is installed** (`command -v ccache`). The iOS PR compile check (`.github/workflows/mentra-app-ios-build.yml`) enables React Native's ccache wrappers when the binary is present and keeps the cache in `~/.ccache-mentra-ci`, shared by every runner process on the host and capped at 20 GB. Without ccache the workflow still passes, just slower. On an existing runner that predates this: `brew install ccache`.
+4. **Confirm `ccache` is installed** (`command -v ccache`). The iOS PR build (`.github/workflows/mentra-app-ios-build.yml`) enables React Native's ccache wrappers on pull_request builds when the binary is present. The cache lives in `~/.ccache-mentra-ci/<namespace>/`, where the namespace is a hash of Xcode, macOS, arch, ccache version and the repo's ccache config, so a toolchain update starts a fresh namespace; each namespace is capped at 20 GB by `.github/ccache/ios-compile-check.conf`. All runner processes on the host share it. Without ccache the workflow still passes, just slower. On an existing runner that predates this: `brew install ccache`.
+   - **Kill switch**: set the repository variable `MENTRA_IOS_CCACHE` to `false` (Settings → Secrets and variables → Actions → Variables) to disable ccache on every PR run immediately; delete it or set any other value to re-enable.
+   - **Diagnosis**: `workflow_dispatch` input `ccache_mode` — `recache` recompiles everything and overwrites cache entries (use when a stale hit is suspected), `off` builds without ccache for that run only.
+   - **Wipe**: `rm -rf ~/.ccache-mentra-ci` on the host; the next PR run refills it.
 
 ### Verify it actually works
 
