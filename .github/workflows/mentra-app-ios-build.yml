@@ -32,6 +32,15 @@ on:
         required: false
         type: boolean
         default: false
+      ccache_mode:
+        description: >-
+          ccache behaviour for this dispatch: default (use the host cache),
+          recache (recompile everything and overwrite cache entries; use to
+          diagnose a suspected stale hit), off (do not use ccache).
+        required: false
+        type: choice
+        options: [default, recache, off]
+        default: default
 
 # Cancel a branch's in-flight build when a newer commit is pushed to it.
 # Scoped per-ref so branches never cancel each other; keeps the Mac runner
@@ -71,6 +80,10 @@ jobs:
       # not) may use the host compiler cache; push builds to dev/main and
       # full-mode dispatches never do.
       MENTRA_IOS_CCACHE_ELIGIBLE: ${{ (github.event_name == 'pull_request' || inputs.pr_compile_mode == true) && 'true' || 'false' }}
+      # Repository variable: set MENTRA_IOS_CCACHE=false to disable ccache on
+      # every PR run at once (kill switch); unset or any other value enables.
+      MENTRA_IOS_CCACHE_VAR: ${{ vars.MENTRA_IOS_CCACHE }}
+      MENTRA_IOS_CCACHE_MODE: ${{ inputs.ccache_mode || 'default' }}
       MENTRA_IOS_FORCE_CLEAN_RETRY: ${{ inputs.force_clean_retry == true && 'true' || 'false' }}
 
     steps:
@@ -158,14 +171,33 @@ jobs:
           # - CCACHE_DIR lives outside ~/Library/Caches so the weekly Tier-2
           #   cleanup keeps it; disk-guard's deep tier removes it when the host
           #   is critically low. All runner processes on the host share it.
+          #   It is namespaced by a hash of the toolchain (Xcode, macOS, arch,
+          #   ccache) and of our ccache config + compile-check settings, so a
+          #   toolchain or configuration change can never reuse old objects.
+          # - CCACHE_CONFIGPATH points at .github/ccache/ios-compile-check.conf
+          #   (RN's wrapper honours a pre-set value): sloppiness, depend_mode,
+          #   compiler_check=content and the 20 GB cap live there, under our
+          #   control rather than in node_modules.
           # - CCACHE_BASEDIR makes paths under this runner's workspace
           #   relative, so actions-runner-1/2/3 produce identical hashes.
-          # - compiler_check=content: CI clang timestamps are not stable.
           # - CCACHE_STATSLOG gives this job its own hit/miss log; the shared
           #   global counters are never zeroed (other jobs are using them).
+          # Switches: repository variable MENTRA_IOS_CCACHE=false disables
+          # ccache on every PR run (kill switch); workflow_dispatch input
+          # ccache_mode=off|recache is per-run diagnosis.
           if [ "$MENTRA_IOS_CCACHE_ELIGIBLE" != "true" ]; then
             echo "enabled=false" >> "$GITHUB_OUTPUT"
             echo "Not a pull_request build: ccache not used."
+            exit 0
+          fi
+          if [ "${MENTRA_IOS_CCACHE_VAR:-}" = "false" ]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "::notice::ccache disabled for all PR runs by repository variable MENTRA_IOS_CCACHE=false."
+            exit 0
+          fi
+          if [ "${MENTRA_IOS_CCACHE_MODE:-default}" = "off" ]; then
+            echo "enabled=false" >> "$GITHUB_OUTPUT"
+            echo "ccache_mode=off: compiling without ccache for this dispatch."
             exit 0
           fi
           if ! command -v ccache >/dev/null 2>&1; then
@@ -173,19 +205,27 @@ jobs:
             echo "::notice::ccache is not installed on ${RUNNER_NAME:-this runner}; compiling without it (see mobile/scripts/README.md)."
             exit 0
           fi
-          ccache_dir="$HOME/.ccache-mentra-ci"
+          conf="$GITHUB_WORKSPACE/.github/ccache/ios-compile-check.conf"
+          settings="$GITHUB_WORKSPACE/.github/scripts/ios-compile-check-settings.sh"
+          toolchain="$( { xcodebuild -version; sw_vers -productVersion; uname -m; ccache --version | head -1; cat "$conf" "$settings"; } | shasum -a 256 | cut -c1-16 )"
+          ccache_dir="$HOME/.ccache-mentra-ci/$toolchain"
           mkdir -p "$ccache_dir"
           {
             echo "USE_CCACHE=1"
             echo "CCACHE_DIR=$ccache_dir"
+            echo "CCACHE_CONFIGPATH=$conf"
             echo "CCACHE_BASEDIR=$GITHUB_WORKSPACE"
-            echo "CCACHE_COMPILERCHECK=content"
-            echo "CCACHE_MAXSIZE=20G"
             echo "CCACHE_STATSLOG=$RUNNER_TEMP/ccache-stats.log"
           } >> "$GITHUB_ENV"
+          if [ "${MENTRA_IOS_CCACHE_MODE:-default}" = "recache" ]; then
+            echo "CCACHE_RECACHE=1" >> "$GITHUB_ENV"
+            echo "ccache_mode=recache: every compilation runs and overwrites its cache entry."
+          fi
           echo "enabled=true" >> "$GITHUB_OUTPUT"
-          echo "ccache $(ccache --version | head -1 | awk '{print $NF}') enabled; cache dir $ccache_dir"
-          CCACHE_DIR="$ccache_dir" ccache --show-stats 2>/dev/null | head -12 || true
+          echo "namespace=$toolchain" >> "$GITHUB_OUTPUT"
+          echo "ccache $(ccache --version | head -1 | awk '{print $NF}') enabled; cache dir $ccache_dir (namespace $toolchain)"
+          CCACHE_DIR="$ccache_dir" CCACHE_CONFIGPATH="$conf" ccache --show-stats 2>/dev/null | head -12 || true
+          echo "Existing namespaces under $HOME/.ccache-mentra-ci:"; du -sh "$HOME/.ccache-mentra-ci"/* 2>/dev/null || true
 
       - name: Setup Bun
         uses: oven-sh/setup-bun@v2
@@ -498,16 +538,28 @@ jobs:
 
       - name: Verify ccache wiring in the generated Pods project
         if: steps.ccache.outputs.enabled == 'true'
+        working-directory: ./mobile/ios
         run: |
           # react_native_post_install logs exactly one of these. With
           # USE_CCACHE=1 and ccache on PATH it must be the "Setting" line.
           if grep -qF '[Ccache]: Setting CC, LD, CXX & LDPLUSPLUS' "$RUNNER_TEMP/pod-install.log"; then
-            echo "ccache wrappers applied to CC/CXX/LD/LDPLUSPLUS."
+            echo "ccache wrappers applied to CC/CXX/LD/LDPLUSPLUS (pod install log)."
           else
             echo "::error::USE_CCACHE=1 was set but pod install did not apply the ccache wrappers:"
             grep -F '[Ccache]' "$RUNNER_TEMP/pod-install.log" || echo "(no [Ccache] line at all)"
             exit 1
           fi
+          # The integration writes CCACHE_BINARY and the wrapper paths into the
+          # projects' build settings (not xcconfig files), so check the
+          # project files themselves.
+          for proj in Pods/Pods.xcodeproj/project.pbxproj Mentra.xcodeproj/project.pbxproj; do
+            if ! grep -q 'CCACHE_BINARY' "$proj" || ! grep -q 'ccache-clang.sh' "$proj"; then
+              echo "::error::$proj lacks CCACHE_BINARY / ccache-clang.sh build settings"
+              grep -n -i 'ccache' "$proj" | head -5 || true
+              exit 1
+            fi
+          done
+          echo "CCACHE_BINARY and ccache-clang wrappers present in Pods and app project build settings."
 
       - name: Verify vendored Sherpa ONNX framework is integrated from the module
         working-directory: ./mobile/ios
