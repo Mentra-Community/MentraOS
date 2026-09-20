@@ -18,6 +18,7 @@ import {getGlassesImage} from "@/utils/getGlassesImage"
 import OtaProgressSection from "@/components/glasses/OtaProgressSection"
 import {Ar99OtaModal} from "@/components/settings/Ar99OtaModal"
 import BrightnessSetting from "@/components/settings/BrightnessSetting"
+import ToggleSetting from "@/components/settings/ToggleSetting"
 
 const formatGlassesTitle = (title: string) => title.replace(/_/g, " ").replace(/\b\w/g, (char) => char.toUpperCase())
 
@@ -69,6 +70,7 @@ export function DeviceSettingsSection() {
   // )
   // const [defaultButtonActionApp, setDefaultButtonActionApp] = useSetting(SETTINGS.default_button_action_app.key)
   const [superMode] = useSetting(SETTINGS.super_mode.key)
+  const [autoPowerOff, setAutoPowerOff] = useSetting<boolean>(SETTINGS.auto_power_off_enabled.key)
   const [ar99OtaVisible, setAr99OtaVisible] = useState(false)
   const glassesStatus = useEngineSnapshot(engine.glasses.status, (onChange) => engine.glasses.onStatus(onChange))
   const otaSnapshot = useEngineSnapshot(engine.ota.snapshot, engine.ota.onSnapshot)
@@ -82,6 +84,8 @@ export function DeviceSettingsSection() {
     isAr99Identifier(defaultWearable) ||
     isAr99Identifier(glassesInfo.model) ||
     isAr99Identifier(glassesInfo.bluetoothName)
+  const isMentraLive =
+    defaultWearable === DeviceTypes.LIVE || String(defaultWearable || "").includes(DeviceTypes.LIVE)
   const showAr99OtaEntry =
     deploymentStore.getActive().kind === "consumer" &&
     glassesConnected &&
@@ -225,14 +229,28 @@ export function DeviceSettingsSection() {
         onPress={() => push("/miniapps/settings/microphone")}
       />
 
-      {superMode &&
-        (defaultWearable === DeviceTypes.LIVE || String(defaultWearable || "").includes(DeviceTypes.LIVE)) && (
-          <RouteButton
-            label="Wear Detection"
-            subtitle="Tune the don/doff vote window (cs_weartun)."
-            onPress={() => push("/miniapps/settings/wear-tuning")}
-          />
-        )}
+      {/* Auto power-off — Mentra Live only. Shown whether or not the glasses
+          are currently connected, so the value is already staged for the next
+          connect; the firmware defaults this on. */}
+      {isMentraLive && (
+        <ToggleSetting
+          icon={<Icon name="battery-2" size={24} color={theme.colors.secondary_foreground} />}
+          label={translate("deviceSettings:autoPowerOff")}
+          subtitle={translate("deviceSettings:autoPowerOffSubtitle")}
+          value={autoPowerOff}
+          onValueChange={(enabled) => {
+            void setAutoPowerOff(enabled)
+          }}
+        />
+      )}
+
+      {superMode && isMentraLive && (
+        <RouteButton
+          label="Wear Detection"
+          subtitle="Tune the don/doff vote window (cs_weartun)."
+          onPress={() => push("/miniapps/settings/wear-tuning")}
+        />
+      )}
 
       {/* WiFi — connected glasses that support WiFi */}
       {showAr99OtaEntry && (

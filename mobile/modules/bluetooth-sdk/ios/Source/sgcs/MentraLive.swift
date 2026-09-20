@@ -1414,6 +1414,7 @@ class MentraLive: NSObject, SGCManager {
     private let BLOCK_AUDIO_DUPLEX = false
     private static let voiceActivityDetectionSwitchType = 8
     private static let loudnessGateSwitchType = 10
+    private static let autoPowerOffSwitchType = 11
     private func pairingAdvertisement(
         _ advertisementData: [String: Any]
     ) -> MentraLivePairingAdvertisement? {
@@ -6874,6 +6875,9 @@ extension MentraLive {
         // Send glasses-side loudness / Barrier gate setting.
         sendLoudnessGateSetting()
 
+        // Send glasses-side auto power-off setting.
+        sendAutoPowerOffSetting()
+
         // Send mic tuning. With nothing authorized this sends a reset, which is
         // what returns a freshly connected pair of glasses to stock behaviour.
         sendMicTuningSetting()
@@ -7097,6 +7101,38 @@ extension MentraLive {
             }
         } catch {
             Bridge.log("LIVE: Error encoding loudness gate payload: \(error)")
+        }
+    }
+
+    func sendAutoPowerOffSetting() {
+        let enabled = DeviceStore.shared.get("bluetooth", "auto_power_off_enabled") as? Bool
+            ?? BluetoothSdkDefaults.autoPowerOffEnabled
+        Bridge.log("LIVE: 🔋 Sending auto power-off setting to glasses: \(enabled)")
+
+        guard connectedPeripheral != nil, txCharacteristic != nil else {
+            Bridge.log("Cannot send auto power-off setting - BLE write path not ready")
+            return
+        }
+
+        do {
+            let bodyData = try JSONSerialization.data(withJSONObject: [
+                "type": Self.autoPowerOffSwitchType,
+                "switch": enabled ? 1 : 0,
+            ])
+            guard let bodyString = String(data: bodyData, encoding: .utf8) else {
+                Bridge.log("LIVE: Failed to encode auto power-off payload")
+                return
+            }
+            let command: [String: Any] = [
+                "C": "cs_swit",
+                "V": 1,
+                "B": bodyString,
+            ]
+            if !sendRawK900Command(command, wakeUp: true) {
+                Bridge.log("LIVE: Failed to send auto power-off setting command")
+            }
+        } catch {
+            Bridge.log("LIVE: Error encoding auto power-off payload: \(error)")
         }
     }
 

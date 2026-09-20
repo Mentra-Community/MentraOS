@@ -1417,6 +1417,7 @@ export interface BluetoothSdkPublicModule {
   setGalleryModeEnabled(enabled: boolean): Promise<SettingsAckSuccessEvent>
   setVoiceActivityDetectionEnabled(enabled: boolean): Promise<void>
   setLoudnessGateEnabled(enabled: boolean): Promise<void>
+  setAutoPowerOffEnabled(enabled: boolean): Promise<void>
   /**
    * @deprecated Sticky action-button photo presets are deprecated. Prefer per-request
    * `requestPhoto(...)` options (e.g. `mode: "text"` for text sensor size/crop, or explicit per-shot
@@ -1798,6 +1799,7 @@ export type BluetoothSettingsUpdate = Partial<{
   gallery_mode: boolean
   voice_activity_detection_enabled: boolean
   loudness_gate_enabled: boolean
+  auto_power_off_enabled: boolean
   /** Effective mic tuning only. `{}` means "reset to firmware defaults". */
   mic_tuning: MicTuning
   button_photo_size: ButtonPhotoSize

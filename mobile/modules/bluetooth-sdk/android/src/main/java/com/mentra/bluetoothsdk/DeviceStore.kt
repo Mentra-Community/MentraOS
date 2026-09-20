@@ -142,6 +142,7 @@ object DeviceStore {
         store.set("bluetooth", "gallery_mode", true)
         store.set("bluetooth", "voice_activity_detection_enabled", BluetoothSdkDefaults.VOICE_ACTIVITY_DETECTION_ENABLED)
         store.set("bluetooth", "loudness_gate_enabled", BluetoothSdkDefaults.LOUDNESS_GATE_ENABLED)
+        store.set("bluetooth", "auto_power_off_enabled", BluetoothSdkDefaults.AUTO_POWER_OFF_ENABLED)
         store.set("bluetooth", "screen_disabled", false)
         store.set("bluetooth", "button_photo_size", "max")
         store.set("bluetooth", "button_max_recording_time", 10)
@@ -290,6 +291,9 @@ object DeviceStore {
             }
             "bluetooth" to "loudness_gate_enabled" -> {
                 DeviceManager.getInstance().sgc?.sendLoudnessGateSetting()
+            }
+            "bluetooth" to "auto_power_off_enabled" -> {
+                DeviceManager.getInstance().sgc?.sendAutoPowerOffSetting()
             }
             // Deliberately has no seeded default above: the key starts absent so
             // that a session where the engine has not authorized tuning can only

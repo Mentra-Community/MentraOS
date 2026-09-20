@@ -141,6 +141,7 @@ class MentraLive : SGCManager() {
         private const val LC3_FRAME_SIZE = 40
         private const val VOICE_ACTIVITY_DETECTION_SWITCH_TYPE = 8
         private const val LOUDNESS_GATE_SWITCH_TYPE = 10
+        private const val AUTO_POWER_OFF_SWITCH_TYPE = 11
         // Mic tuning field names, matching the BES cs_mictun body.
         private val MIC_TUNING_FIELDS =
                 listOf("gain", "open", "close", "attack", "hang", "sp_open", "sp_close", "sp_hold")
@@ -10825,6 +10826,9 @@ class MentraLive : SGCManager() {
         // Send glasses-side loudness / Barrier gate setting.
         sendLoudnessGateSetting()
 
+        // Send glasses-side auto power-off setting.
+        sendAutoPowerOffSetting()
+
         // Send mic tuning. With nothing authorized this sends a reset, which is
         // what returns a freshly connected pair of glasses to stock behaviour.
         sendMicTuningSetting()
@@ -11105,6 +11109,45 @@ class MentraLive : SGCManager() {
             queueData(packedData)
         } catch (e: JSONException) {
             Log.e(TAG, "Error creating loudness gate setting command", e)
+        }
+    }
+
+    override fun sendAutoPowerOffSetting() {
+        val value = DeviceStore.get("bluetooth", "auto_power_off_enabled")
+        val enabled =
+                if (value is Boolean) value
+                else BluetoothSdkDefaults.AUTO_POWER_OFF_ENABLED
+
+        Bridge.log("LIVE: 🔋 Sending auto power-off setting to glasses: " + enabled)
+
+        if (!isConnected) {
+            Bridge.log("LIVE: Cannot send auto power-off setting - not connected")
+            return
+        }
+
+        try {
+            val body = JSONObject()
+            body.put("type", AUTO_POWER_OFF_SWITCH_TYPE)
+            body.put("switch", if (enabled) 1 else 0)
+
+            val cmdObject = JSONObject()
+            cmdObject.put("C", "cs_swit")
+            cmdObject.put("V", 1)
+            cmdObject.put("B", body.toString())
+
+            val packedData =
+                    K900ProtocolUtils.packDataToK900(
+                            cmdObject.toString().toByteArray(StandardCharsets.UTF_8),
+                            K900ProtocolUtils.CMD_TYPE_STRING,
+                            k900LengthEndian()
+                    )
+            if (packedData == null) {
+                Bridge.log("LIVE: Failed to pack auto power-off setting command")
+                return
+            }
+            queueData(packedData)
+        } catch (e: JSONException) {
+            Log.e(TAG, "Error creating auto power-off setting command", e)
         }
     }
 
