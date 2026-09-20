@@ -138,8 +138,17 @@ even while another consumer's uplink lease pins the process to cellular.
 
 ```ts
 export interface GlassesPublisher {
-  /** Rejects with publisher_busy (details.owner) while another stream is active. */
-  start(request: StreamStartRequest & {owner: string}): Promise<{streamId: string; status: StreamStatusEvent}>
+  /**
+   * Atomic admission. Claims the single slot for an owner synchronously, before any side effect,
+   * or throws publisher_busy naming the current owner. Every entry point reserves here first:
+   * the public startStream (url and phone arms), PhoneStreamCoordinator under its transition lock,
+   * and direct glasses-media callers. The reservation is held from acceptance through startup,
+   * recovery and settled cleanup, and is released only when the owner's close settles (a blocked
+   * cleanup keeps it). Nothing can win the slot during a phone join or an agent preparation.
+   */
+  reserve(owner: {owner: string; operationId: string}): PublisherReservation
+  /** Sends start_stream for the reservation's owner. Recovery republishes reuse the same reservation, so an owner never contends with itself. */
+  start(reservation: PublisherReservation, request: StreamStartRequest): Promise<{streamId: string; status: StreamStatusEvent}>
   stop(streamId: string): Promise<void>
   /**
    * If the BLE link is down, queue the stop; `hotspotSessionId` ties it to that session so it is retired with it.
@@ -152,7 +161,13 @@ export interface GlassesPublisher {
   deferStop(streamId: string, opts: {hotspotSessionId?: string}): void
   owns(streamId: string): boolean
   subscribe(listener: (event: StreamStatusEvent & {streamId: string}) => void): () => void
-  current(): {streamId: string; owner: string} | null
+  current(): {owner: string; operationId: string; streamId: string | null; phase: "reserved" | "starting" | "publishing" | "closing" | "blocked"} | null
+}
+export interface PublisherReservation {
+  readonly owner: string
+  readonly operationId: string
+  /** Releases the slot once cleanup has settled; no-op if already released. */
+  release(): void
 }
 export const glassesPublisher: GlassesPublisher
 ```
@@ -292,8 +307,8 @@ operation, so the provider owns one:
 ```ts
 // SDK-internal provider contract, implemented by glasses-media
 export interface PhoneStreamProvider {
-  /** Called on admission, before anything starts. Returns synchronously so stop() can reach it during startup. */
-  begin(request: StreamStartRequest): PhoneStreamOperation
+  /** Called after the SDK has reserved the publisher slot, before anything starts. Returns synchronously so stop() can reach it during startup; the operation publishes only with this reservation. */
+  begin(reservation: PublisherReservation, request: StreamStartRequest): PhoneStreamOperation
 }
 export interface PhoneStreamOperation {
   readonly streamSessionId: string
@@ -304,8 +319,13 @@ export interface PhoneStreamOperation {
 }
 ```
 
-`BluetoothSdk.startStream` with `kind: "phone"` registers the operation before it awaits
-`started`, and `BluetoothSdk.stopStream()` routes by what is active: with a phone operation
+`BluetoothSdk.startStream` first calls `glassesPublisher.reserve` for either arm, so a `url`
+start and a `phone` start, from the SDK, the coordinator or glasses-media directly, exclude
+each other from the moment of acceptance and not from the moment the glasses are told to
+publish; a second `phone` begin, a `url` start or an engine start during a phone join or an
+agent preparation rejects with `publisher_busy` before any side effect. With `kind: "phone"` it
+then registers the provider's operation before it awaits `started`, and `BluetoothSdk.stopStream()`
+routes by what is active: with a phone operation
 registered, including one still starting or recovering, it calls `operation.stop()` and
 resolves with the final `stopped` status once the session has closed; with a `url` stream it
 does exactly what it does today. The stream service stops the glasses through
@@ -622,7 +642,9 @@ steps:
   named, never a hang. Tests cover the SDK alone (the `url` arm and `stopStream` behave exactly
   as today), the SDK plus glasses-media, the deprecated flat `streamUrl` mixed with
   `destination`, start then stop, stop during start and during recovery, stop with the BLE link
-  down, and a blocked close followed by a successful retry.
+  down, a blocked close followed by a successful retry, and the admission races: phone versus
+  phone, and phone versus a `url` or engine start, while open or prepare is still pending, each
+  rejected before any side effect with the first owner keeping stop access.
 - **Two published services.** Moving the services out of the engine means their tests and
   their release gates live in the SDK and glasses-media packages; the engine's suites keep only
   the flow tests.

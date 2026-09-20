@@ -55,6 +55,11 @@ LocalMiniappRuntime (MEETING_* requests, MEETING_STATE fanout)
    which releases the reservation but not the caller's lease; a meeting already joined is left
    by the call session afterwards, and the lease is released last.
    Meeting-first was considered and rejected for the reason above.
+   Platform qualification: on iOS today `prepareAgent` before the hotspot is deliberately a
+   no-op and agent creation follows hotspot and default-route readiness, and #4104 adds a
+   cancellable local-network access request gate before the join completes, with the
+   permission wait excluded from media deadlines. The iOS driver keeps both behaviours
+   unchanged when it is extracted; the advisory gateway probe is not a substitute for either.
 2. **The miniapp-facing contract does not change.** `MEETING_STATE` keeps `softap: {traceId,
    phase, steps[hotspot, scopedJoin, acsJoin, publish, live], elapsedMs, mediaGeneration}` and
    the `recovery: {active, generation, deadlineAt, phase}` fields, and join failures keep

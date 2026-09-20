@@ -252,7 +252,8 @@ leaves the ACS meeting joined.
 
 ## Native contract
 
-Lives in glasses-media (app code, not the public SDK), on top of the hotspot core in the SDK.
+Lives in `@mentra/glasses-media`, a published package (public surface spec, decision 2), on
+top of the hotspot core in the SDK.
 
 ```kotlin
 // Android — registry for decoded media, keyed by the JS MediaRef. In-process only.
@@ -345,7 +346,7 @@ endpoint is on the active hotspot. Only additions: emit `route` in `stream_statu
 
 | Consumer | Sequence |
 |---|---|
-| Mentra Call | Runtime: `streamService.open({owner: "call", uplink: "cellular", captureAudio: false, recovery: callDefaults, adapter: acsAdapter})` (reserves the hotspot and pins cellular) → `prepareAgent` over the pinned route → `await stream.start()` resolves on `live`, report ready; if `prepareAgent` fails or is cancelled, `stream.close()` releases the reservation and the pin. `acsAdapter.attach(media)` joins the ACS meeting whenever `meetingJoined` is false (cellular already held) and then borrows the `MediaRef` and wires `AcsFrameSender` and PCM, all before the glasses publish; once joined, later attaches only reattach media; `detach` releases the lease and keeps the meeting. See the Call spec. On `recovery_exhausted` the stream has already released the hotspot; the meeting stays joined (audio continues) until Leave; Leave → `stream.close()` (settled: returns the recorded result; blocked: retries the release) → ACS leave. `SoftapCallTransport` keeps only meeting ordering (`acsJoin`, attach, `live`); `hotspot`, `scopedJoin`, `publish` and `preserveMeeting` disappear. |
+| Mentra Call | Authoritative sequence and lifetimes are in the Call spec: the call session holds its own `UplinkLease` and passes it as `uplink`, creates the attempt through the coordinator's `startLocal`, prepares the agent between open and start, and releases the lease only after ACS leave; the stream never owns Call's cellular route. `acsAdapter.attach(media)` joins the ACS meeting whenever `meetingJoined` is false (cellular already held) and then borrows the `MediaRef` and wires `AcsFrameSender` and PCM, all before the glasses publish; once joined, later attaches only reattach media; `detach` releases the lease and keeps the meeting. See the Call spec. On `recovery_exhausted` the stream has already released the hotspot; the meeting stays joined (audio continues) until Leave; Leave → `stream.close()` (settled: returns the recorded result; blocked: retries the release) → ACS leave. `SoftapCallTransport` keeps only meeting ordering (`acsJoin`, attach, `live`); `hotspot`, `scopedJoin`, `publish` and `preserveMeeting` disappear. |
 | Managed WHIP | `PhoneStreamCoordinator.startManaged` with `ingest: "whip"`: provision Cloudflare → `streamService.open({owner: "managed_whip", uplink: "cellular", captureAudio, adapter: republisher})` → `republisher.attach(media)` borrows the `MediaRef` and starts `PhoneWhipPublisher` toward `webrtcPublishUrl` before the glasses publish → status fans out tagged `route: "phone"`. `ManagedWebRtcRelay`'s attempt/retry loop is replaced by the stream service's recovery. |
 | Direct WHIP over the phone (new for miniapps) | Same as managed WHIP with the caller's WHIP URL as the republisher destination and `owner: "local"`. |
 | Local preview (future) | `open({owner: "local", uplink: "none"})`, adapter renders. |
@@ -394,5 +395,5 @@ Depends on hotspot spec steps 1 and 2 (native core, reservation gate).
 ## Out of scope
 
 - Phone-side RTMP or SRT republishing.
-- Shipping glasses-media as a public SDK package so Bluetooth SDK integrators get a ready-made
-  phone WHIP receiver. Worth a separate decision once the stream service exists.
+- A same-LAN network source for the phone destination (public surface spec); glasses-media is
+  already a published package and ships the receiver and adapters.
