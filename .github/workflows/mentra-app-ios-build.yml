@@ -56,7 +56,7 @@ permissions:
   actions: read
 
 env:
-  # REGRESSION MATRIX A8 (reverted next): force the unsigned build path.
+  # REGRESSION MATRIX A9 (reverted next): unsigned compile-check path as a fork PR gets it.
   PR_IOS_SIGNED: "false"
   PR_NUMBER: ${{ github.event.pull_request.number }}
   PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
@@ -76,7 +76,8 @@ jobs:
       # signed and published (fork PRs, or same-repo PRs without signing), and
       # for dispatches that ask for PR behaviour. Signed PR archives are
       # installed by testers, so they build like a full build.
-      MENTRA_IOS_PR_COMPILE_MODE: ${{ ((github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name != github.repository) || inputs.pr_compile_mode == true) && 'true' || 'false' }}
+      # REGRESSION MATRIX A9 (reverted next)
+      MENTRA_IOS_PR_COMPILE_MODE: "true"
       # ccache eligibility is broader: every pull_request build (signed or
       # not) may use the host compiler cache; push builds to dev/main and
       # full-mode dispatches never do.
@@ -656,7 +657,6 @@ jobs:
           # with xcodebuild's own status (PIPESTATUS), never tee's.
           # shellcheck source=.github/scripts/ios-compile-check-settings.sh
           . "$GITHUB_WORKSPACE/.github/scripts/ios-compile-check-settings.sh"
-          export SKIP_BUNDLING=1  # REGRESSION MATRIX A8 (reverted next): full mode with bundling skipped must fail Verify
           cd "$GITHUB_WORKSPACE"
           "$GITHUB_WORKSPACE/.github/scripts/ios-xcodebuild-attempt.sh" attempt-1 -- \
             node mobile/ci/pr-ios/build.mjs
