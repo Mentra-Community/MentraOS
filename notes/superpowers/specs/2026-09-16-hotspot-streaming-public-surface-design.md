@@ -5,8 +5,9 @@ owner: philippe
 
 # Public surface for hotspot sessions and glasses-to-phone streaming
 
-Fourth of four specs. The hotspot spec owns the network, the streaming spec owns the stream,
-the Call spec owns Mentra Call. This one says what the published packages expose so that an
+Fourth of five specs. The hotspot spec owns the network, the streaming spec owns the stream,
+the Call spec owns Mentra Call, and `2026-09-16-glasses-gallery-design.md` owns the gallery
+client and the gallery sync controller. This one says what the published packages expose so that an
 integrator, not only the Mentra App, can use both: a Bluetooth SDK user building their own
 phone app in React Native, Kotlin or Swift, and an app that embeds the Mentra engine (the
 pattern in `sdk/example-oem-app`, which depends on `@mentra/engine`, `@mentra/bluetooth-sdk`,
@@ -22,7 +23,7 @@ flows inside them.
 
 | Audience | Installs | Needs |
 |---|---|---|
-| Bluetooth SDK integrator, own app | `@mentra/bluetooth-sdk` (npm, Maven AAR, CocoaPod) | a hotspot session primitive with network-bound HTTP; the glasses `startStream` command it already has |
+| Bluetooth SDK integrator, own app | `@mentra/bluetooth-sdk` (npm, Maven AAR, CocoaPod) | a hotspot session primitive with network-bound HTTP; a typed gallery client over it (gallery spec); the glasses `startStream` command it already has |
 | Bluetooth SDK integrator who wants glasses video on the phone | `@mentra/glasses-media` in addition | a stream primitive that receives the glasses' WHIP publish over the hotspot and hands decoded media to a sink, a view or a republisher, with recovery built in |
 | Engine embedder (OEM app) | `@mentra/engine` | the same two services re-exported, plus ready-made flows: relay to a WHIP destination, render locally, custom sink; gallery sync and OTA keep working on top of them |
 | Miniapp developer | Miniapp SDK | the `route` option already specified in the streaming spec |
@@ -433,7 +434,7 @@ export interface EngineHotspotSnapshot {
   owner: {purpose: "gallery_sync" | "hotspot_ota" | "video_streaming" | string; operationId: string} | null
   uplink: {held: boolean; holders: number}
   flows: {
-    gallerySync: GallerySyncFlowState        // the gallery store's status, queue progress, last error, plus `hotspot: HotspotState | null`
+    gallerySync: GallerySyncState            // the gallery spec's controller state, which already carries `hotspot`
     ota: MentraLiveOtaState & {hotspot: HotspotState | null}   // the controller's semantic state (screen, transport, hotspotPhase, step, error) plus the session
     stream: StreamState | null               // the active phone-route stream, if any
   }
@@ -444,14 +445,10 @@ export interface EngineHotspotFacade {
   /** Delivers the current snapshot immediately, then one event per change in any flow or in the session. */
   subscribe(listener: (snapshot: EngineHotspotSnapshot) => void): () => void
 
-  gallerySync: {
-    /** Starts a sync: acquires the hotspot as gallery_sync, downloads the queue, releases. Rejects with busy naming the owner if another flow holds it. */
-    start(): Promise<void>
-    /** Resumes the saved queue after a loss or an app restart, reusing the session if still ready. */
-    resume(): Promise<void>
-    cancel(): Promise<void>
-    snapshot(): GallerySyncFlowState
-    subscribe(listener: (state: GallerySyncFlowState) => void): () => void
+  /** The gallery spec's GallerySyncController, unchanged, with the hotspot session attached to its state. */
+  gallerySync: Pick<GallerySyncController, "refreshStatus" | "sync" | "resume" | "cancel" | "retry" | "removeFromQueue"> & {
+    snapshot(): GallerySyncState
+    subscribe(listener: (state: GallerySyncState) => void): () => void
   }
 
   /**
@@ -542,6 +539,7 @@ play) is deliberately out of scope; it would add a phone-side WHEP server to gla
 | Spec | Change |
 |---|---|
 | Hotspot spec | the TypeScript service's home is `mobile/modules/bluetooth-sdk/src/hotspot/`, not the engine; `HotspotConsumer` is `purpose: string` at the SDK boundary with the engine's three reserved values; nothing else changes |
+| Gallery spec | `@mentra/bluetooth-sdk/gallery` is the primitive under the engine's sync service; `engineHotspot.gallerySync` delegates to `createGallerySyncController`, as `ota` delegates to the OTA controller |
 | Streaming spec | the TypeScript service's home is `mobile/modules/glasses-media/src/`, not the engine; it publishes through the SDK's `GlassesPublisher` port instead of calling `startStream` itself; `PhoneStreamCoordinator` is a consumer of the same slot, not the service's caller; the "SDK surface" section is superseded by this spec except the Miniapp SDK `route` option and `stream_status.route`, which stand |
 | Call spec | `AcsMediaAdapter` implements the same `StreamAdapter` interface the packaged adapters implement; `SoftapCallSession` calls the coordinator's `startLocal` |
 
