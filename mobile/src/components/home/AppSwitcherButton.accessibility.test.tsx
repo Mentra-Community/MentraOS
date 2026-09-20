@@ -10,6 +10,7 @@ jest.mock("@mentra/engine", () => ({
   useSetting: () => [false],
   useActiveBackgroundApps: () => mockApps,
   useActiveForegroundApp: () => null,
+  useForegroundApp: () => null,
   sortAppsByLastOpenTime: async (apps: ClientApp[]) => apps,
 }))
 jest.mock("@/i18n", () => ({translate: (key: string) => key}))
