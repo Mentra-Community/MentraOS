@@ -47,12 +47,16 @@ args.push("-showBuildTimingSummary")
 // first because xcodebuild refuses to overwrite one.
 if (process.env.MENTRA_IOS_RESULT_BUNDLE) args.push("-resultBundlePath", process.env.MENTRA_IOS_RESULT_BUNDLE)
 if (process.argv.includes("--serial")) args.push("-jobs", "1")
+const words = (value) => (value ? value.split(/\s+/).filter(Boolean) : [])
 // Compile-check-only build settings (no dSYM/debug info/index store) come
 // from .github/scripts/ios-compile-check-settings.sh. They never apply to a
 // signed archive: testers install that app and its crash logs need symbols.
-if (!signed && process.env.MENTRA_IOS_COMPILE_CHECK_SETTINGS_STR) {
-  args.push(...process.env.MENTRA_IOS_COMPILE_CHECK_SETTINGS_STR.split(/\s+/).filter(Boolean))
-}
+if (!signed) args.push(...words(process.env.MENTRA_IOS_COMPILE_CHECK_SETTINGS_STR))
+// PR-build experiments (scheduling flags, Swift compilation mode) from the
+// same script apply to every pull_request build; the workflow leaves both
+// variables empty for push builds. Flags go before the action's settings.
+args.push(...words(process.env.MENTRA_IOS_XCODEBUILD_EXTRA_ARGS_STR))
+args.push(...words(process.env.MENTRA_IOS_PR_BUILD_SETTINGS_STR))
 if (signed) {
   args.push(
     "-archivePath",

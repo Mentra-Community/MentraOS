@@ -41,3 +41,42 @@ else
 fi
 MENTRA_IOS_COMPILE_CHECK_SETTINGS_STR="${MENTRA_IOS_COMPILE_CHECK_SETTINGS[*]}"
 export MENTRA_IOS_COMPILE_CHECK_SETTINGS_STR
+
+# ---------------------------------------------------------------------------
+# PR-build experiments (apply to every pull_request build, signed or not;
+# never to push/full builds). Each is a single flag set in the workflow's job
+# env so a one-line commit turns it on or off; the timeline in the job
+# summary is the evidence. Thresholds: scheduling flags ship at >=30 s
+# repeatable saving, Swift compilation mode at >=60 s, both with no rise in
+# first-attempt failures/retries and acceptable memory pressure.
+# ---------------------------------------------------------------------------
+MENTRA_IOS_PR_BUILD_SETTINGS=()
+MENTRA_IOS_XCODEBUILD_EXTRA_ARGS=()
+if [ "${MENTRA_IOS_PR_BUILD:-false}" = "true" ]; then
+  if [ "${MENTRA_IOS_EXPERIMENT_PARALLEL:-0}" = "1" ]; then
+    # Explicit job count and independent-target parallelism. xcodebuild
+    # already defaults to both in the new build system; this makes the
+    # intent visible and lets a paired run confirm there is nothing left.
+    ncpu="$(sysctl -n hw.ncpu 2>/dev/null || echo 8)"
+    MENTRA_IOS_XCODEBUILD_EXTRA_ARGS+=(-parallelizeTargets -jobs "$ncpu")
+  fi
+  if [ "${MENTRA_IOS_EXPERIMENT_EXPLICIT_MODULES:-0}" = "1" ]; then
+    # Explicit Clang/Swift modules: scanning becomes visible work so module
+    # builds are shared and scheduled up front. Judge on elapsed time, not on
+    # ScanDependencies alone.
+    MENTRA_IOS_PR_BUILD_SETTINGS+=(CLANG_ENABLE_EXPLICIT_MODULES=YES SWIFT_ENABLE_EXPLICIT_MODULES=YES)
+  fi
+  if [ "${MENTRA_IOS_EXPERIMENT_SWIFT_SINGLEFILE:-0}" = "1" ]; then
+    # Per-file Swift compilation (batched) instead of one whole-module job
+    # per target. Targets the ~3m50s critical-path SwiftCompile of
+    # MentraBluetoothSDK seen in the task timeline. Keeps -O; only the
+    # compilation unit changes. Push and release builds keep whole-module.
+    MENTRA_IOS_PR_BUILD_SETTINGS+=(SWIFT_COMPILATION_MODE=singlefile)
+  fi
+  if [ "${#MENTRA_IOS_PR_BUILD_SETTINGS[@]}" -gt 0 ] || [ "${#MENTRA_IOS_XCODEBUILD_EXTRA_ARGS[@]}" -gt 0 ]; then
+    echo "PR build experiments: args [${MENTRA_IOS_XCODEBUILD_EXTRA_ARGS[*]}] settings [${MENTRA_IOS_PR_BUILD_SETTINGS[*]}]"
+  fi
+fi
+MENTRA_IOS_PR_BUILD_SETTINGS_STR="${MENTRA_IOS_PR_BUILD_SETTINGS[*]}"
+MENTRA_IOS_XCODEBUILD_EXTRA_ARGS_STR="${MENTRA_IOS_XCODEBUILD_EXTRA_ARGS[*]}"
+export MENTRA_IOS_PR_BUILD_SETTINGS_STR MENTRA_IOS_XCODEBUILD_EXTRA_ARGS_STR

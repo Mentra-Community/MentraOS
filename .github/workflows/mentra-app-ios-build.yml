@@ -80,6 +80,14 @@ jobs:
       # not) may use the host compiler cache; push builds to dev/main and
       # full-mode dispatches never do.
       MENTRA_IOS_CCACHE_ELIGIBLE: ${{ (github.event_name == 'pull_request' || inputs.pr_compile_mode == true) && 'true' || 'false' }}
+      # Same predicate, read by ios-compile-check-settings.sh for PR-build
+      # experiments (signed or unsigned PR builds; never push builds).
+      MENTRA_IOS_PR_BUILD: ${{ (github.event_name == 'pull_request' || inputs.pr_compile_mode == true) && 'true' || 'false' }}
+      # Experiment switches (0/1). Each is a one-line change measured with
+      # paired runs before it ships; see ios-compile-check-settings.sh.
+      MENTRA_IOS_EXPERIMENT_PARALLEL: "0"
+      MENTRA_IOS_EXPERIMENT_EXPLICIT_MODULES: "0"
+      MENTRA_IOS_EXPERIMENT_SWIFT_SINGLEFILE: "0"
       # Repository variable: set MENTRA_IOS_CCACHE=false to disable ccache on
       # every PR run at once (kill switch); unset or any other value enables.
       MENTRA_IOS_CCACHE_VAR: ${{ vars.MENTRA_IOS_CCACHE }}
