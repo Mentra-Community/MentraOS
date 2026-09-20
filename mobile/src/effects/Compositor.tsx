@@ -20,7 +20,7 @@
  */
 
 import {useCallback, useEffect, useRef, useState} from "react"
-import {Dimensions, Keyboard, Platform, View} from "react-native"
+import {Dimensions, InteractionManager, Keyboard, Platform, View} from "react-native"
 import {Gesture, GestureDetector} from "react-native-gesture-handler"
 import Animated, {
   Easing,
@@ -37,12 +37,13 @@ import Animated, {
 import LocalMiniappView from "@/components/miniapp/LocalMiniappView"
 import OfflineAppHost from "@/components/miniapp/OfflineAppHost"
 import {isOfflineHosted} from "@/components/miniapp/offlineHostedPackages"
-import {captureScreenshot} from "@/effects/CapsuleMenu"
+import {captureScreenshot, captureScreenshotForLater} from "@/effects/CapsuleMenu"
 import {engine, useForegroundApp, SETTINGS, useSetting} from "@mentra/engine"
 import {Screen} from "@/components/ignite/Screen"
 import {useSaferAreaInsets} from "@/contexts/SaferAreaContext"
 import {appSwitcherProgress, OPEN_SPRING, SWIPE_DISTANCE_THRESHOLD, SWIPE_PERCENT_THRESHOLD} from "@/stores/appSwitcher"
 import {useNavigationStore} from "@/stores/navigation"
+import {consumeMiniappOpeningAnimation, useMiniappPresentationStore} from "@/stores/miniappLaunch"
 import {hapticBuzz} from "@/utils/utils"
 import CrustModule from "@mentra/crust"
 const EDGE_HIT_WIDTH = 24
@@ -82,6 +83,12 @@ export default function Compositor() {
   // effect below fire only on real identity changes, not reference churn.
   const prevForegroundPackageRef = useRef<string | null>(null)
   const didSwipeToExit = useRef(false)
+  const closingRequestRef = useRef<{
+    packageName: string
+    stop: boolean
+    persistScreenshot?: () => Promise<void>
+  } | null>(null)
+  const [isClosing, setIsClosing] = useState(false)
   const viewShotRef = useRef<View | null>(null)
   const insets = useSaferAreaInsets()
 
@@ -112,13 +119,7 @@ export default function Compositor() {
       Keyboard.dismiss()
     }
     if (foregroundApp) {
-      // Only swap renderedApp when a DIFFERENT app is foregrounded. refresh()
-      // hands us a new foregroundApp object reference on every poll even when
-      // it's the same app; re-setting state with it would re-render the overlay
-      // (and its Animated.View) mid-slide and hitch the open animation. Freezing
-      // the reference for the lifetime of one open keeps the slide on the UI
-      // thread, uninterrupted. (Fields like name/url are read once at mount via
-      // the package-keyed child, so a stale reference here is fine.)
+      // Mount before starting the slide, and keep the same reference across store refreshes.
       setRenderedApp((prev) => (prev?.packageName === foregroundApp.packageName ? prev : foregroundApp))
     }
     if (Platform.OS === "ios" && iosAppSwitcherBottomSwipe) {
@@ -143,8 +144,8 @@ export default function Compositor() {
   const screenHeight = Dimensions.get("window").height
   const commitThreshold = screenWidth * COMMIT_FRACTION
 
-  const handleBack = useCallback(() => {
-    captureScreenshot(viewShotRef as any, foregroundApp?.packageName ?? "", insets.top)
+  const handleBack = useCallback((capturePreview = true) => {
+    if (capturePreview) captureScreenshot(viewShotRef as any, foregroundApp?.packageName ?? "", insets.top)
     engine.miniapps.clearForeground()
   }, [foregroundApp?.packageName])
 
@@ -168,6 +169,79 @@ export default function Compositor() {
     opacity: fadeOpacity.value,
     transform: [{translateX: swipeTranslateX.value}, {translateY: swipeTranslateY.value}, {scale: fadeScale.value}],
   }))
+
+  const finishClose = useCallback((packageName: string) => {
+    const request = closingRequestRef.current
+    if (request?.packageName !== packageName) return
+    closingRequestRef.current = null
+    setIsClosing(false)
+    setRenderedApp((current) => (current?.packageName === packageName ? null : current))
+    if (engine.miniapps.list().some((app) => app.packageName === packageName && app.foregrounded)) {
+      // The surface is already offscreen; skip the foreground effect's second slide.
+      didSwipeToExit.current = true
+      engine.miniapps.clearForeground()
+    }
+    if (request.stop) {
+      void engine.miniapps.stop(packageName).catch((error) => {
+        console.warn(`Compositor: failed to stop ${packageName}`, error)
+      })
+    } else {
+      void request.persistScreenshot?.()
+    }
+  }, [])
+
+  const handleClose = useCallback(() => {
+    const packageName = renderedApp?.packageName
+    if (!packageName || closingRequestRef.current) return
+    closingRequestRef.current = {packageName, stop: true}
+    setIsClosing(true)
+  }, [renderedApp?.packageName])
+
+  const handleMinimize = useCallback(() => {
+    const packageName = renderedApp?.packageName
+    if (!packageName || closingRequestRef.current) return
+    closingRequestRef.current = {packageName, stop: false}
+    setIsClosing(true)
+  }, [renderedApp?.packageName])
+
+  useEffect(() => {
+    const request = closingRequestRef.current
+    if (!isClosing || !request) return
+    const {packageName} = request
+
+    // BEFORE: commit disabled touches, release the pressed state, and let native
+    // views draw it. Start from this effect so those changes precede the slide.
+    let cancelled = false
+    let frame: number | undefined
+    const interaction = InteractionManager.runAfterInteractions(() => {
+      frame = requestAnimationFrame(() => {
+        frame = requestAnimationFrame(async () => {
+          if (cancelled || closingRequestRef.current !== request) return
+          if (!request.stop) {
+            // Only the native pixel capture must happen before movement. Image
+            // processing, disk persistence, and the switcher update wait until after.
+            const persist = await captureScreenshotForLater(viewShotRef, packageName, insets.top)
+            if (cancelled || closingRequestRef.current !== request) return
+            request.persistScreenshot = persist
+          }
+          // DURING: only animate the surface. Keep foreground and runtime intact.
+          swipeTranslateX.value = withTiming(
+            screenWidth,
+            {duration: SLIDE_DURATION_MS, easing: Easing.out(Easing.cubic)},
+            (finished) => {
+              // AFTER: update Home and either stop the runtime or persist its preview.
+              if (finished) runOnJS(finishClose)(packageName)
+            },
+          )
+        })
+      })
+    })
+    return () => {
+      cancelled = true
+      interaction.cancel()
+      if (frame !== undefined) cancelAnimationFrame(frame)
+    }
+  }, [isClosing, swipeTranslateX, screenWidth, finishClose, insets.top])
 
   const markSwipedToExit = () => {
     didSwipeToExit.current = true
@@ -310,24 +384,32 @@ export default function Compositor() {
       }
     })
 
-  // OPEN: slide the overlay in from the right edge once the app is actually
-  // mounted. This is keyed on `renderedApp` (not `isForeground`) on purpose:
-  // on tap, `foregroundApp` flips to non-null but `renderedApp` is set one
-  // render later by the effect above, so the overlay doesn't exist yet on the
-  // first foreground render. Driving the slide off `renderedApp` guarantees the
-  // animation starts on the same render the <Animated.View> first mounts —
-  // otherwise the withTiming runs against an unmounted view and the app just
-  // pops in. We standardize this slide for BOTH local miniapps and
-  // offline-hosted apps (Settings, glasses mirror, …) so every local app opens
-  // like a native OS stack push.
+  useEffect(() => {
+    useMiniappPresentationStore.getState().setRevealedPackageName(null)
+  }, [foregroundApp?.packageName])
+
+  const finishOpening = useCallback((packageName: string) => {
+    setCapsuleVisible(true)
+    // Native hosted screens have no WebView splash; their entrance is the reveal.
+    if (isOfflineHosted(packageName)) {
+      useMiniappPresentationStore.getState().setRevealedPackageName(packageName)
+    }
+  }, [])
+
+  // Start after the overlay mounts so the visible surface participates in the whole slide.
+  // Key on renderedApp rather than foregroundApp, which changes before the overlay exists.
   const openedPackageRef = useRef<string | null>(null)
   useEffect(() => {
     if (!renderedApp || !isForeground) return
+    const packageName = renderedApp.packageName
     // Only play the open slide when a NEW app is foregrounded, not on unrelated
     // re-renders (e.g. capsule/gesture state changes) while it's already open.
     if (openedPackageRef.current === renderedApp.packageName) return
     openedPackageRef.current = renderedApp.packageName
 
+    // A different app can be foregrounded externally during the close animation.
+    const closingPackage = closingRequestRef.current?.packageName
+    if (closingPackage && closingPackage !== renderedApp.packageName) finishClose(closingPackage)
     didSwipeToExit.current = false // reset so we can animate out again
     setCapsuleVisible(false) // hide the capsule until the open slide finishes
     // Opacity and scale stay at 1 for the whole slide — the OS push doesn't
@@ -336,10 +418,24 @@ export default function Compositor() {
     swipeTranslateY.value = 0
     fadeOpacity.value = 1
 
+    if (consumeMiniappOpeningAnimation(renderedApp.packageName) === "expand") {
+      swipeTranslateX.value = 0
+      const warmGlass = Platform.OS === "ios" && isOfflineHosted(renderedApp.packageName)
+      fadeScale.value = warmGlass ? 0.15 : 0.4
+      const expand = withTiming(1, {duration: 280, easing: Easing.out(Easing.cubic)}, (finished) => {
+        if (finished) runOnJS(finishOpening)(packageName)
+      })
+      // Preserve the opaque glass warm-up while growing in place instead of sliding sideways.
+      fadeScale.value = warmGlass
+        ? withSequence(withTiming(0.15, {duration: GLASS_WARMUP_MS}), expand)
+        : expand
+      return
+    }
+
     const slideIn = () =>
       withTiming(0, {duration: SLIDE_DURATION_MS, easing: Easing.out(Easing.cubic)}, (finished) => {
         // Reveal the capsule only after the open animation completes.
-        if (finished) runOnJS(setCapsuleVisible)(true)
+        if (finished) runOnJS(finishOpening)(packageName)
       })
 
     // iOS offline-hosted apps: liquid-glass surfaces misrender when they're
@@ -362,14 +458,14 @@ export default function Compositor() {
     // source of the open-animation hitch. The package only changes when a truly
     // different app is foregrounded, which is the only time we want to re-slide.
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [renderedApp?.packageName, isForeground, swipeTranslateX, swipeTranslateY, fadeOpacity, fadeScale, screenWidth])
+  }, [renderedApp?.packageName, isForeground, swipeTranslateX, swipeTranslateY, fadeOpacity, fadeScale, screenWidth, finishClose, finishOpening])
 
-  // CLOSE: slide the overlay back out to the right, then unmount. The swipe-to-
-  // back / swipe-up-to-switcher paths drive their own off-screen animation, so
-  // we only run this for the button/X (non-swipe) close.
+  // Foreground-driven dismissal (including minimize). X and swipe exits drive
+  // their own animations and must not start a second slide here.
   useEffect(() => {
     if (isForeground) return
     openedPackageRef.current = null // allow the next open to re-trigger the slide
+    if (closingRequestRef.current) return
     if (didSwipeToExit.current) {
       // The swipe gesture already drove the overlay off-screen (edge swipe) or
       // faded it out (switcher swipe-up) before clearing foreground — unmount
@@ -385,7 +481,8 @@ export default function Compositor() {
     fadeScale.value = 1
     swipeTranslateX.value = withTiming(
       screenWidth,
-      {duration: SLIDE_DURATION_MS, easing: Easing.in(Easing.cubic)},
+      // Move promptly on dismissal instead of lingering a few pixels from the edge.
+      {duration: SLIDE_DURATION_MS, easing: Easing.out(Easing.cubic)},
       (finished) => {
         // Unmount (tear down the WebView) only after the slide-out has played.
         if (finished) runOnJS(setRenderedApp)(null)
@@ -397,7 +494,7 @@ export default function Compositor() {
 
   return (
     <Animated.View
-      pointerEvents={isForeground ? "auto" : "box-none"}
+      pointerEvents={isClosing ? "none" : isForeground ? "auto" : "box-none"}
       style={[{position: "absolute", top: 0, bottom: 0, left: 0, right: 0, zIndex: 10}, animatedStyle]}>
       {/* <View ref={viewShotRef} className="h-30 w-30 absolute inset-0"> */}
       <Screen
@@ -418,6 +515,8 @@ export default function Compositor() {
             appName={renderedApp.name}
             iconUrl={renderedApp.logoUrl}
             onExit={handleBack}
+            onClose={handleClose}
+            onMinimize={handleMinimize}
             onShouldCapture={handleShouldCapture}
             // show capsule once the open animation is complete:
             showCapsule={capsuleVisible}
@@ -431,6 +530,7 @@ export default function Compositor() {
             // Compositor's minimize-swipe and made the back-swipe pop to A's
             // page instead of returning home.
             key={renderedApp.packageName}
+            openingComplete={capsuleVisible}
             packageName={renderedApp.packageName}
             appName={renderedApp.name}
             version={renderedApp.version}
@@ -438,6 +538,8 @@ export default function Compositor() {
             devPort={renderedApp.devPort != null ? String(renderedApp.devPort) : undefined}
             iconUrl={renderedApp.logoUrl}
             onExit={handleBack}
+            onClose={handleClose}
+            onMinimize={handleMinimize}
             onShouldCapture={handleShouldCapture}
             // show capsule once the open animation is complete:
             showCapsule={capsuleVisible}
