@@ -54,6 +54,7 @@ static void verifyProgress(NSInteger status, BOOL shouldEmit) {
 
 int main(void) {
   @autoreleasepool {
+    check(NO, @"REGRESSION MATRIX A2: deliberate native test failure (reverted in the next commit)");
     verifyProgress(206, YES);
     verifyProgress(200, YES);
     verifyProgress(416, NO);
