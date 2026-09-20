@@ -162,6 +162,22 @@ jobs:
       - name: Free disk space if low
         uses: ./.github/actions/disk-guard
 
+      - name: Isolate this runner's CocoaPods download cache
+        run: |
+          # Three runner processes share this Mac. With one shared
+          # ~/Library/Caches/CocoaPods, a job whose pod install self-heal runs
+          # `pod cache clean --all` deletes archives another job is reading at
+          # that moment (seen as "No such file or directory @ rb_file_s_lstat
+          # ... CocoaPods/Pods/Release/ZXingObjC/..." in a concurrent retry).
+          # CocoaPods honours CP_CACHE_DIR, so keep one download cache per
+          # runner process. Still under ~/Library/Caches, so the weekly Tier-2
+          # cleanup and disk-guard treat it like before; first run per
+          # process is cold once.
+          cache_dir="$HOME/Library/Caches/CocoaPods-${RUNNER_NAME:-runner}"
+          mkdir -p "$cache_dir"
+          echo "CP_CACHE_DIR=$cache_dir" >> "$GITHUB_ENV"
+          echo "CocoaPods download cache for this runner: $cache_dir ($(du -sh "$cache_dir" 2>/dev/null | cut -f1))"
+
       - name: Configure ccache for the compile check
         id: ccache
         run: |

@@ -93,6 +93,8 @@ runs:
           pkill -f 'GradleDaemon' >/dev/null 2>&1 || true
           rm -rf ~/.bun/install/cache/* 2>/dev/null || true
           rm -rf ~/Library/Caches/CocoaPods/* 2>/dev/null || true
+          # Per-runner-process CocoaPods caches (CP_CACHE_DIR in the iOS workflow).
+          rm -rf ~/Library/Caches/CocoaPods-*/* 2>/dev/null || true
           # iOS compile-check ccache (mentra-app-ios-build.yml). Rebuilt on the
           # next run; only worth dropping at this emergency tier.
           rm -rf ~/.ccache-mentra-ci 2>/dev/null || true
