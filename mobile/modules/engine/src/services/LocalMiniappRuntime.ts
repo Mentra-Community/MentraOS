@@ -72,6 +72,7 @@ import {
 } from "../runtime/config"
 import {getAnalytics, getMiniappConfiguration, getUiSeams, isFeatureEnabled} from "../runtime/bootstrap"
 import {invokeScanQrSeam} from "../runtime/scanQrSeam"
+import {invokePhoneWifiSeam} from "../runtime/phoneWifiSeam"
 import {
   normalizeStreamAudioConfig,
   normalizeStreamVideoConfig,
@@ -1425,6 +1426,10 @@ class LocalMiniappRuntime {
         break
       case MiniappRequestType.MEETING_GET_STATE:
         void this.handleMeetingGetState(packageName, requestId)
+        break
+      case MiniappRequestType.PHONE_IS_WIFI_ENABLED:
+      case MiniappRequestType.PHONE_REQUEST_WIFI_ENABLE:
+        void this.handlePhoneWifiRequest(packageName, payload, requestId)
         break
       case REQUEST_WIFI_SETUP_TYPE:
         void this.handleRequestWifiSetup(packageName, payload, requestId)
@@ -5097,6 +5102,25 @@ class LocalMiniappRuntime {
       this.sendResult(packageName, requestId, false, undefined, {
         code: MiniappErrorCode.INTERNAL,
         message: err instanceof Error ? err.message : "ACS getState failed",
+      })
+    }
+  }
+
+  /**
+   * Phone Wi-Fi requests use host seams and never change miniapp foreground.
+   */
+  private async handlePhoneWifiRequest(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    try {
+      const result = await invokePhoneWifiSeam(getUiSeams(), payload)
+      this.sendResult(packageName, requestId, true, result)
+    } catch (err) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: (err as {code?: string} | null)?.code || MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "Phone Wi-Fi request failed",
       })
     }
   }
