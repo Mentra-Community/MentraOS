@@ -431,7 +431,9 @@ describe("OtaUpdateCheckService", () => {
             resolveVersions = resolve
           }),
       )
-      global.fetch = jest.fn(async () => ({ok: true, json: async () => releaseManifest}) as Response)
+      global.fetch = jest.fn(
+        async () => ({ok: true, json: async () => releaseManifest}) as Response,
+      ) as unknown as typeof fetch
 
       const first = checkCurrentGlassesForUpdate(options)
       const second = checkCurrentGlassesForUpdate(options)
@@ -450,27 +452,41 @@ describe("OtaUpdateCheckService", () => {
 
     it("does not declare cached versions up to date when the fresh request fails", async () => {
       bluetoothSdkMock.requestVersionInfo.mockRejectedValueOnce(new Error("request_timeout"))
-      global.fetch = jest.fn()
+      global.fetch = jest.fn() as unknown as typeof fetch
       const result = await checkCurrentGlassesForUpdate(options)
       expect(result).toMatchObject({hasCheckCompleted: false, checkFailureReason: "version_info"})
       expect(global.fetch).not.toHaveBeenCalled()
     })
 
-    it("waits through the empty legacy manifest and checks the release pin when ASG 39 arrives", async () => {
-      useGlassesStore.getState().setGlassesInfo({...freshVersions, buildNumber: "37", appVersion: "37.0"})
-      bluetoothSdkMock.requestVersionInfo
-        .mockResolvedValueOnce({...freshVersions, buildNumber: "37", appVersion: "37.0"})
-        .mockResolvedValueOnce(freshVersions)
+    it.each([false, true])("waits for the release pin with a pending MTK reboot: %s", async (pendingMtkReboot) => {
+      const legacyVersions = {
+        ...freshVersions,
+        buildNumber: "37",
+        appVersion: "37.0",
+        mtkFirmwareVersion: pendingMtkReboot ? "MentraLive_20260418" : freshVersions.mtkFirmwareVersion,
+      }
+      useGlassesStore.getState().setGlassesInfo(legacyVersions)
+      useGlassesStore.getState().setMtkUpdatedThisSession(pendingMtkReboot)
+      bluetoothSdkMock.requestVersionInfo.mockResolvedValueOnce(legacyVersions).mockResolvedValueOnce(freshVersions)
       global.fetch = jest.fn(
         async (url) =>
           ({
             ok: true,
             json: async () =>
               url === "https://ota.example/legacy.json"
-                ? {apps: {"com.mentra.asg_client": {versionCode: 37, versionName: "37.0"}}}
+                ? {
+                    apps: {"com.mentra.asg_client": {versionCode: 37, versionName: "37.0"}},
+                    mtk_patches: [
+                      {
+                        start_firmware: "MentraLive_20260418",
+                        end_firmware: freshVersions.mtkFirmwareVersion,
+                        url: "https://ota.example/mtk.zip",
+                      },
+                    ],
+                  }
                 : releaseManifest,
           }) as Response,
-      )
+      ) as unknown as typeof fetch
       let settled = false
       const pending = checkCurrentGlassesForUpdate(options).then((result) => {
         settled = true
@@ -480,6 +496,7 @@ describe("OtaUpdateCheckService", () => {
       await jest.advanceTimersByTimeAsync(7_000)
       expect(settled).toBe(false)
       expect(global.fetch).toHaveBeenCalledTimes(1)
+      useGlassesStore.getState().setMtkUpdatedThisSession(false)
       useGlassesStore.getState().setGlassesInfo({buildNumber: "39", appVersion: "39.0"})
       const result = await pending
       expect(result).toMatchObject({
@@ -504,7 +521,7 @@ describe("OtaUpdateCheckService", () => {
             ok: true,
             json: async () => ({apps: {"com.mentra.asg_client": {versionCode: 37, versionName: "37.0"}}}),
           }) as Response,
-      )
+      ) as unknown as typeof fetch
       const pending = checkCurrentGlassesForUpdate(options)
       await jest.advanceTimersByTimeAsync(120_000)
       expect(await pending).toMatchObject({hasCheckCompleted: false, checkFailureReason: "version_info"})
@@ -520,7 +537,7 @@ describe("OtaUpdateCheckService", () => {
             ok: true,
             json: async () => ({apps: {"com.mentra.asg_client": {versionCode: 37, versionName: "37.0"}}}),
           }) as Response,
-      )
+      ) as unknown as typeof fetch
       const pending = checkCurrentGlassesForUpdate(options)
       await jest.advanceTimersByTimeAsync(0)
       useGlassesStore.getState().setGlassesInfo({buildNumber: "39", appVersion: "39.0"})

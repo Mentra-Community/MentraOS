@@ -596,11 +596,33 @@ export async function checkCurrentGlassesForUpdate(
     }
   }
 
-  if (!result.updateAvailable && waitForLegacyMigrationMs > 0 && isLegacyOtaManifestSelected(buildNumber)) {
+  const mtkUpdatedThisSession = useGlassesStore.getState().mtkUpdatedThisSession
+  let filteredUpdates = result.updates
+  if (mtkUpdatedThisSession && filteredUpdates.includes("mtk")) {
+    console.log("OTA: Filtering out MTK - already updated this session (pending reboot)")
+    filteredUpdates = filteredUpdates.filter((update) => update !== "mtk")
+  }
+
+  // Pre-migration parity: an update is only surfaced when the manifest also
+  // carries APK version metadata. A firmware-only manifest (mtk_patches /
+  // bes_firmware with no APK entry) is therefore dropped here — same as the
+  // legacy host check. Loud-log it so the case is visible in the field;
+  // surfacing firmware-only updates is a deliberate behavior change to make
+  // separately, not silently inside the boundary migration.
+  if (filteredUpdates.length > 0 && !result.latestVersionInfo) {
+    console.warn(
+      `OTA: manifest lists updates [${filteredUpdates.join(", ")}] but has no APK version metadata - ` +
+        "reporting no update (legacy behavior)",
+    )
+  }
+  const updateAvailable = filteredUpdates.length > 0 && !!result.latestVersionInfo
+
+  if (!updateAvailable && waitForLegacyMigrationMs > 0 && isLegacyOtaManifestSelected(buildNumber)) {
     // The legacy MTK rescue can boot ASG 37 before its bundled ASG 39 takes over.
-    // An empty rescue manifest does not verify the app's selected release. Keep
-    // the approved flow open until the device reports the modern client, then
-    // refresh all versions and check the release pin before declaring success.
+    // Having no remaining updates (including MTK filtered while awaiting reboot)
+    // does not verify the app's selected release. Keep the approved flow open
+    // until the device reports the modern client, then refresh all versions
+    // and check the release pin before declaring success.
     console.log("OTA: Legacy rescue finished - waiting for the release-manifest handoff")
     const migrated = await waitForGlassesState(
       "buildNumber",
@@ -623,26 +645,6 @@ export async function checkCurrentGlassesForUpdate(
     return recheck
   }
 
-  const mtkUpdatedThisSession = useGlassesStore.getState().mtkUpdatedThisSession
-  let filteredUpdates = result.updates
-  if (mtkUpdatedThisSession && filteredUpdates.includes("mtk")) {
-    console.log("OTA: Filtering out MTK - already updated this session (pending reboot)")
-    filteredUpdates = filteredUpdates.filter((update) => update !== "mtk")
-  }
-
-  // Pre-migration parity: an update is only surfaced when the manifest also
-  // carries APK version metadata. A firmware-only manifest (mtk_patches /
-  // bes_firmware with no APK entry) is therefore dropped here — same as the
-  // legacy host check. Loud-log it so the case is visible in the field;
-  // surfacing firmware-only updates is a deliberate behavior change to make
-  // separately, not silently inside the boundary migration.
-  if (filteredUpdates.length > 0 && !result.latestVersionInfo) {
-    console.warn(
-      `OTA: manifest lists updates [${filteredUpdates.join(", ")}] but has no APK version metadata - ` +
-        "reporting no update (legacy behavior)",
-    )
-  }
-  const updateAvailable = filteredUpdates.length > 0 && !!result.latestVersionInfo
   const isApkDowngrade = result.isApkDowngrade && filteredUpdates.includes("apk")
   const updateInfo = updateAvailable
     ? {
