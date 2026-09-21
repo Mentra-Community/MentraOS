@@ -79,3 +79,41 @@ jobs:
         run: bun test
         env:
           CI: true
+
+      - name: Validate the iOS Metro bundle (release, platform=ios)
+        # The Mac PR compile check runs xcodebuild with SKIP_BUNDLING=1, so the
+        # iOS-platform Metro bundle (.ios.ts resolution, iOS-only imports and
+        # assets) is validated here instead, with the same `expo export:embed`
+        # invocation Expo's "Bundle React Native code and images" phase uses.
+        # Hermes bytecode compilation (hermesc) still happens on push/release
+        # builds; this step covers Metro resolution and transformation.
+        working-directory: ./mobile
+        env:
+          CI: true
+          NODE_ENV: production
+        run: |
+          set -euo pipefail
+          # app.config.ts reads EXPO_PUBLIC_* from .env; the dummy example is
+          # what the Mac compile check starts from too.
+          [ -f .env ] || cp .env.example .env
+          out="$RUNNER_TEMP/ios-metro-bundle"
+          mkdir -p "$out"
+          # Resolve the entry the way expo/scripts/react-native-xcode.sh does;
+          # fall back to package.json "main" if the helper is unavailable.
+          entry="$(node -e "require('expo/scripts/resolveAppEntry')" "$PWD" ios absolute 2>/dev/null | tail -n 1 || true)"
+          if [ -z "$entry" ] || [ ! -f "$entry" ]; then
+            entry="$(node -p "require.resolve(require('./package.json').main)")"
+          fi
+          echo "Entry file: $entry"
+          bun expo export:embed \
+            --platform ios \
+            --dev false \
+            --reset-cache \
+            --entry-file "$entry" \
+            --bundle-output "$out/main.jsbundle" \
+            --assets-dest "$out"
+          if [ ! -s "$out/main.jsbundle" ]; then
+            echo "::error::iOS Metro bundle was not produced"
+            exit 1
+          fi
+          echo "iOS Metro bundle: $(du -h "$out/main.jsbundle" | cut -f1), assets: $(find "$out" -type f | wc -l | tr -d ' ') files"
