@@ -46,9 +46,9 @@
     "managed": [
       {
         "packageName": "com.mentra.call",
-        "version": "2.1.27",
-        "bundleUrl": "https://enterprisedev.mentraglass.com/miniapps/com.mentra.call-2.1.27.zip",
-        "sha256": "75a9668d6e51aac12a066af88cac9cdc271ef540a3bb0806e2382860bdd73e4c"
+        "version": "2.1.28",
+        "bundleUrl": "https://enterprisedev.mentraglass.com/miniapps/com.mentra.call-2.1.28.zip",
+        "sha256": "51f8a76f13554a28fdef4b7cb159cbd66a80eb7f4b511b932da49ec3cc47f1d9"
       }
     ],
     "configuration": {}

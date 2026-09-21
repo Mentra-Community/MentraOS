@@ -128,7 +128,7 @@ literal zero-internet air-gapped profile.
 
 ## Mentra Call
 
-The reference manifest pins Mentra Call 2.1.27. Its ZIP is included in the Runtime
+The reference manifest pins Mentra Call 2.1.28. Its ZIP is included in the Runtime
 image under `miniapps/` and is byte-identical to the Mentra App's bundled ZIP.
 The coordinated deployment passes that managed list to Bicep and verifies the
 served bundle's SHA-256. Updating Call requires updating both copies and the pin.
@@ -138,7 +138,9 @@ workspace to refresh an already cached deployment manifest. Call uses the select
 Runtime for credentials and a direct glasses link for media. It prefers the Entra
 Teams identity and automatically uses guest mode for an absent identity or a
 confirmed missing Teams license; the call screen reports the selected mode.
-Existing consumer clients continue using the existing Call backend routes.
+Existing installed consumer clients continue using the existing Call backend routes.
+The new Call bundle requires host meeting-policy discovery; hosts lacking that API
+show an update message and cannot send requests to a public Call backend.
 
 Before releasing, qualify licensed and unlicensed joins on both Android and iOS,
 including lobby admission, remote identity, two-way audio/video and cancellation.
