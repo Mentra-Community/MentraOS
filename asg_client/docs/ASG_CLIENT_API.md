@@ -880,6 +880,14 @@ Persists the FOV/ROI, applies them to the camera HAL via `DevApi.setCameraFov`, 
 
 The missing/factory base is the full sensor at `fov: 118`, `roi_position: 0`; existing saved values are preserved.
 
+For 16:9 WHIP streaming on Mentra Live, `fov: 118, roi_position: 1` preserves the
+full horizontal view and places the video crop at the bottom before the HAL
+delivers the camera surface. This also applies to an active temporary override.
+For example, apply that setting and wait for `ready`, then start a 960×540 stream
+at 15 FPS / 2 Mbps. ASG captures a supported 16:9 surface (1280×720 on IMX681) and
+scales it to 960×540 with stabilization disabled. Center remains the default;
+other aspect ratios, narrower FOVs, and other capture paths retain their behavior.
+
 #### `camera_fov_override` / `camera_fov_override_release`
 
 ```json

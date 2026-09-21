@@ -63,7 +63,7 @@ public class ZslFeasibilityProbeTest {
         // (CameraNeoService.wakeUpScreen() does this before every open). Mirror it, then poll
         // for the device to appear.
         com.mentra.asg_client.utils.WakeLockManager.acquireFullWakeLockAndBringToForeground(
-                ctx, 120000, 30000);
+                ctx, com.mentra.asg_client.utils.WakeLockManager.WakeOwner.CAMERA, 120000, 30000);
         String id = null;
         long tWake = System.nanoTime();
         for (int i = 0; i < 50; i++) {

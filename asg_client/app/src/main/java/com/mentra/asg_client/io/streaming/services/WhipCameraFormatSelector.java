@@ -2,6 +2,7 @@ package com.mentra.asg_client.io.streaming.services;
 
 import android.content.Context;
 import android.graphics.SurfaceTexture;
+import android.graphics.Rect;
 import android.hardware.camera2.CameraAccessException;
 import android.hardware.camera2.CameraCharacteristics;
 import android.hardware.camera2.CameraManager;
@@ -320,6 +321,57 @@ public final class WhipCameraFormatSelector {
     }
 
     return new SelectionResult(bestRawSize, bestNormalizedSize, bestTransformPenalty, outputSizes);
+  }
+
+  /**
+   * Select a landscape surface with the requested aspect ratio, without upscaling or exceeding
+   * 1080p. A 4:3 surface would add a second HAL crop after the full-width 16:9 sensor crop.
+   */
+  public static SelectionResult selectBottomAlignedCaptureSize(CameraCharacteristics characteristics,
+      int requestedWidth, int requestedHeight) {
+    StreamConfigurationMap map = characteristics.get(
+        CameraCharacteristics.SCALER_STREAM_CONFIGURATION_MAP);
+    return selectBottomAlignedCaptureSize(
+        map == null ? null : map.getOutputSizes(SurfaceTexture.class), requestedWidth, requestedHeight);
+  }
+
+  static SelectionResult selectBottomAlignedCaptureSize(Size[] outputSizes,
+      int requestedWidth, int requestedHeight) {
+    Size best = null;
+    if (outputSizes != null) {
+      for (Size size : outputSizes) {
+        int width = size.getWidth();
+        int height = size.getHeight();
+        if (width < requestedWidth || height < requestedHeight || width > 1920 || height > 1080
+            || (long) width * requestedHeight != (long) height * requestedWidth) {
+          continue;
+        }
+        if (best == null || (long) width * height < (long) best.getWidth() * best.getHeight()) {
+          best = size;
+        }
+      }
+    }
+    if (best == null) {
+      throw new IllegalArgumentException("No supported full-width WHIP camera surface for "
+          + requestedWidth + "x" + requestedHeight);
+    }
+    int penalty = best.getWidth() == requestedWidth && best.getHeight() == requestedHeight ? 0 : 1;
+    return new SelectionResult(best, best, penalty, outputSizes);
+  }
+
+  /** Full-width crop in active-array coordinates; even height for the camera's YUV pipeline. */
+  static Rect getBottomAlignedCrop(Rect activeArray, int outputWidth, int outputHeight) {
+    if (activeArray == null || activeArray.width() <= 0 || activeArray.height() <= 0
+        || outputWidth <= 0 || outputHeight <= 0) {
+      throw new IllegalArgumentException("Missing or invalid camera crop dimensions");
+    }
+    long height = (long) activeArray.width() * outputHeight / outputWidth;
+    if (height < 2 || height > activeArray.height()) {
+      throw new IllegalArgumentException("Requested aspect ratio cannot retain the full sensor width");
+    }
+    int cropHeight = (int) height & ~1;
+    return new Rect(activeArray.left, activeArray.bottom - cropHeight,
+        activeArray.right, activeArray.bottom);
   }
 
   private static boolean isPreferredSourceArea(int transformPenalty, long candidateArea,

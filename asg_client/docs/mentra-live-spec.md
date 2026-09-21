@@ -214,6 +214,18 @@ unit tests.
 
 WHIP streams seed WebRTC with an explicit initial send bitrate capped by the caller's configured maximum. Congestion control remains enabled so the sender can still reduce bitrate on constrained networks instead of treating the configured bitrate as a fixed rate.
 
+On Mentra Live, a successfully applied camera setting or temporary override with
+`fov: 118, roiPosition: "bottom"` also bottom-aligns 16:9 WHIP capture. The camera
+request retains the full active-array width and bottom edge, with unity zoom and
+stabilization disabled. ASG selects a supported landscape 16:9 camera surface up
+to 1920×1080, then scales to the requested stream size; 960×540 uses 1280×720 on
+the IMX681 configuration. This positions the crop before ASG receives the frame.
+The feature follows the applied override lease, not only saved preferences.
+Centered settings, narrower vendor FOVs, other aspect ratios, and other capture
+paths retain their current behavior. The IMX681 HAL advertises CENTER_ONLY, but
+the full-width offset was verified in delivered frames on Mentra Live; it is not
+a generic Camera2 FREEFORM capability claim.
+
 Streaming endpoints on the active Mentra Live hotspot subnet are reachable without a separate STA WiFi connection. `asg_client` derives that subnet from the live hotspot interface rather than assuming fixed client addresses. For WHIP, the WebRTC network inventory must also expose the hotspot interface so ICE can gather a directly reachable local candidate.
 
 ### Local media sync server
