@@ -19,7 +19,7 @@
  * enough to produce real transcripts from real audio; refinements come from
  * observing actual usage.
  *
- * Spec: https://github.com/Mentra-Community/Mentra-Specs/blob/main/INDEX.md
+ * Spec: https://github.com/Mentra-Community/Mentra-Specs/blob/main/INDEX.md.
  */
 
 import {

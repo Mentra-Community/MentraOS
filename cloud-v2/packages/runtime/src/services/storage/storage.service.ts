@@ -22,7 +22,7 @@
  *     to the provider; completion arrives via the event webhook.
  *
  * See https://github.com/Mentra-Community/Mentra-Specs/blob/main/cloud/runtime/camera/spec.md and
- * https://github.com/Mentra-Community/Mentra-Specs/blob/main/INDEX.md
+ * https://github.com/Mentra-Community/Mentra-Specs/blob/main/cloud/core/storage-service/README.md.
  */
 
 import { createLocalProvider } from "./providers/local.provider";

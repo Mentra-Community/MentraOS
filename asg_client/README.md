@@ -142,7 +142,7 @@ custom ASG Client:
 The script preserves the third-party APK and its app data, updates the glasses with Mentra-signed
 firmware, and returns to the existing third-party launcher after verifying the update. If the
 update fails, it leaves the stock launcher active as a safe recovery path. See
-[maintaining customized Mentra Live devices](https://github.com/Mentra-Community/Mentra-Specs/blob/main/INDEX.md) for setup,
+[maintaining customized Mentra Live devices](docs/features/dev-firmware-update.md) for setup,
 firmware update, reconnect, and recovery guidance.
 
 ### Restoring Stock Firmware
@@ -159,7 +159,7 @@ Must use Java SDK 17. To set this, in Android Studio, go to Settings > Build, Ex
 
 ### Documentation
 
-See [docs/](https://github.com/Mentra-Community/Mentra-Specs/blob/main/INDEX.md) for architecture overview, command API reference, and feature docs.
+See [docs/](docs/README.md) for architecture overview, command API reference, and feature docs.
 
 ### Photo compression
 

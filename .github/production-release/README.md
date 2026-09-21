@@ -398,7 +398,7 @@ Google, always in the Console (this step has no API path):
 
 1. Play Console -> app -> Production -> the draft release that names the exact
    candidate version code (do not create another release).
-2. Complete release https://github.com/Mentra-Community/Mentra-Specs/blob/main/INDEX.md, Review release, then Send for review.
+2. Complete release notes/declarations, Review release, then Send for review.
 3. For existing apps, confirm the change remains in managed publishing.
 
 Check without holding a runner:

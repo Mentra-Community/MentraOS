@@ -2,7 +2,7 @@
  * `@mentra/cloud-proxy` — Forwarder / reverse proxy. OEM-deployable.
  * Handles REST + WS + UDP relay with per-traffic-type upstream config.
  *
- * Spec + design pending: https://github.com/Mentra-Community/Mentra-Specs/blob/main/INDEX.md
+ * Spec + design pending: https://github.com/Mentra-Community/Mentra-Specs/blob/main/INDEX.md.
  */
 
 import { createHealthApp, createLogger } from "@mentra/cloud-shared";

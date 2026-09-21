@@ -7,7 +7,7 @@
 // the shared ASG release (numbers taken before markers existed, seen on the
 // 3.2.0 family: runs 34904296139 and 34904687939 collided with them). The
 // caller passes the assets of both releases. Sequences restart at 1 for every
-// family; see https://github.com/Mentra-Community/Mentra-Specs/blob/main/INDEX.md
+// family; see https://github.com/Mentra-Community/Mentra-Specs/blob/main/platform/releases/family-build-numbers/spec.md.
 //
 // A marker names the owner of the reservation (a coordinated run, a promotion
 // attempt's candidate or lab, an example release). Two owners choosing the same

@@ -36,7 +36,7 @@ asg_client/app/libs/temp_check/*
 .idea/
 .vscode/
 .zed/
-node_modules/
+node_modules
 # React/Web build directories (not MCU builds)
 **/node_modules/**/build/
 web-build/

@@ -9,7 +9,7 @@
  * Security: never pass a token, refresh token, or encryption key into any of
  * these calls. The library does not log credentials, and neither should hosts.
  *
- * See https://github.com/Mentra-Community/Mentra-Specs/blob/main/INDEX.md
+ * See https://github.com/Mentra-Community/Mentra-Specs/blob/main/sdk/cloud-client/design.md.
  */
 
 /** The shape a host must provide (or accept the no-op below). */
