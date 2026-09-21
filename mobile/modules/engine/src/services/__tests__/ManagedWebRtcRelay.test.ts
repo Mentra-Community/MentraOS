@@ -84,6 +84,14 @@ function microphone() {
 }
 
 describe("ManagedWebRtcRelay", () => {
+  test("native diagnostics do not change the user-visible stream lifecycle", async () => {
+    const h = harness()
+    await h.relay.start()
+    h.emit(1, "diagnostic", "Posting WHIP offer (2 candidates)")
+    expect(h.status).not.toHaveBeenCalled()
+    expect(h.failure).not.toHaveBeenCalled()
+    await h.relay.stop()
+  })
   test("BLE LC3 feeds the phone publisher while glasses capture video only", async () => {
     const mic = microphone()
     const h = harness({microphone: mic})
