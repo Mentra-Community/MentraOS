@@ -8,6 +8,7 @@ import json
 import os
 from pathlib import Path
 import plistlib
+import re
 import shutil
 import subprocess
 import tempfile
@@ -45,6 +46,27 @@ def validate_profile(profile, now=None):
             or entitlements.get("application-identifier") != f"{team}.{BUNDLE_ID}"):
         raise ValueError("Expected an unexpired ad hoc profile for com.mentra.mentra with registered devices")
     return team
+
+
+def verify_pr_ota(app, repository, pr, head_sha):
+    """Check the shipped pin independently of the build process's environment."""
+    if (not re.fullmatch(r"[A-Za-z0-9_.-]+/[A-Za-z0-9_.-]+", repository)
+            or not isinstance(pr, int) or pr <= 0 or not re.fullmatch(r"[a-f0-9]{40}", head_sha)):
+        raise ValueError("Invalid PR OTA coordinates")
+    expected = f"https://artifactscdn.mentraglass.com/{repository}/releases/pr-builds/ota-pr-{pr}-{head_sha}.json"
+    config = json.loads((app / "EXConstants.bundle/app.config").read_text())
+    extra = config.get("extra") or {}
+    # Match packagedOtaPin: a packaged PR contract overrides the JS env pin,
+    # including an empty intermediate that disables OTA. Never accept that
+    # intermediate just because the correct URL also appears in the bundle.
+    if "mentraPrBuild" in extra:
+        pin = extra["mentraPrBuild"]
+        valid = isinstance(pin, dict) and pin.get("schemaVersion") == 1 and pin.get("otaManifestUrl") == expected
+    else:
+        valid = expected.encode() in (app / "main.jsbundle").read_bytes()
+    if not valid:
+        raise ValueError("Exported PR app is missing its exact-head glasses OTA pin (OTA disabled or stale)")
+    return expected
 
 
 def configure(output, keychain):
@@ -125,10 +147,11 @@ def package(ipa, output):
         run("codesign", "--verify", "-R", "=anchor apple generic", app)
         profile = read_profile(app / "embedded.mobileprovision")
         team = validate_profile(profile)
+        ota_url = verify_pr_ota(app, os.environ["GITHUB_REPOSITORY"], context["pr"], context["headSha"])
         executable = app / info["CFBundleExecutable"]
         if executable.parent != app:
             raise ValueError("Invalid executable name")
-        manifest = {**context, "bundleId": BUNDLE_ID, "app": "Mentra.app", "backend": "dev",
+        manifest = {**context, "bundleId": BUNDLE_ID, "app": "Mentra.app", "backend": "dev", "otaManifestUrl": ota_url,
                     "version": info["CFBundleShortVersionString"], "build": info["CFBundleVersion"],
                     "executableSha256": digest(executable), "javascriptSha256": digest(app / "main.jsbundle"),
                     "profileUUID": profile["UUID"], "profileExpires": profile["ExpirationDate"].isoformat(), "teamId": team}
@@ -153,6 +176,7 @@ def package(ipa, output):
         run("ditto", "-x", "-k", output / files["mac"], root / "verify")
         delivered = root / "verify/Mentra PR/Mentra.app"
         run("codesign", "--verify", "--deep", "--strict", delivered)
+        verify_pr_ota(delivered, os.environ["GITHUB_REPOSITORY"], context["pr"], context["headSha"])
         if digest(delivered / info["CFBundleExecutable"]) != manifest["executableSha256"] or digest(delivered / "main.jsbundle") != manifest["javascriptSha256"]:
             raise ValueError("Mac ZIP no longer contains the exported signed app")
         receipt = {"schemaVersion": 1, **context, "app": manifest,

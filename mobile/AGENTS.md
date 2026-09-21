@@ -37,13 +37,14 @@ derives `X.Y.Z-dev.N` or `X.Y.Z-beta.N` identities without source edits.
 - Beta store builds target staging services and are not production-promotable
   binaries. Production candidates are rebuilt from the selected source with
   production configuration and new store build numbers after Cloud promotion.
-- Automatic glasses OTA uses `EXPO_PUBLIC_ASG_OTA_VERSION_URL` for releases or
+- Automatic glasses OTA uses `EXPO_PUBLIC_ASG_OTA_VERSION_URL` for releases and
+  signed iOS PR builds (iPhone and Mac), or
   the packaged `extra.mentraPrBuild.otaManifestUrl` in Expo's `app.config` asset
   for PR APKs. Local and compile-only builds
   without a pin fail closed; a Super Mode manifest override remains available
   for deliberate local OTA testing.
-- Pull request Android APKs are pinned to `ota-pr-<n>-<head sha>.json` on the
-  `pr-builds` GitHub release, published by the `MentraOS ASG Client Build`
+- Pull request Android APKs and signed iPhone/Mac apps are pinned to
+  `ota-pr-<n>-<head sha>.json` in the `pr-builds` artifact CDN release, published by the `MentraOS ASG Client Build`
   workflow for the same PR head. It points at the coordinated ASG artifact
   whose source fingerprint matches the PR (no ASG build needed) or, when none
   exists, at an ASG client built from the PR. Installing a PR ASG over a

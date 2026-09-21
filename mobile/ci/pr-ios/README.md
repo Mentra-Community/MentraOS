@@ -7,6 +7,14 @@ backend and normal product defaults. Settings identifies the canonical app versi
 PR branch and actual checkout commit; the receipt also records the PR head and
 numeric native build.
 
+Glasses OTA is enabled on both iPhone and Mac. Each build embeds
+`ota-pr-<PR number>-<full head SHA>.json`, the same manifest used by that PR's
+Android APK. The ASG workflow publishes it with the matching ASG client and
+BES/MTK firmware targets. Wait for the ready Slack post before testing updates.
+CI checks the pin in the exported IPA and delivered Mac app, and records it as
+`app.otaManifestUrl` in the receipt. An absent or stale pin fails packaging.
+Unsigned compile checks and unconfigured local builds keep OTA disabled.
+
 ## iPhone
 
 In **#pr-builds** on your iPhone, tap **Install on iPhone** and confirm **Install**

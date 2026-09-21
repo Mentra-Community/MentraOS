@@ -27,6 +27,10 @@ env:
   PR_IOS_SIGNED: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
   PR_NUMBER: ${{ github.event.pull_request.number }}
   PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+  # iPhone and Mac use the same exact-head glasses OTA manifest as Android.
+  # Override inherited runner values before Expo/prebuild and Xcode bundling;
+  # unsigned compile checks remain unpinned.
+  EXPO_PUBLIC_ASG_OTA_VERSION_URL: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository && format('https://artifactscdn.mentraglass.com/{0}/releases/pr-builds/ota-pr-{1}-{2}.json', github.repository, github.event.pull_request.number, github.event.pull_request.head.sha) || '' }}
 
 jobs:
   build:
@@ -97,7 +101,7 @@ jobs:
 
       - name: Test PR artifact and notification contracts
         run: |
-          node --test .github/scripts/pr-ios-artifacts.test.mjs .github/scripts/notify-pr-builds.test.mjs
+          node --test .github/scripts/pr-ios-artifacts.test.mjs .github/scripts/notify-pr-builds.test.mjs mobile/scripts/release-bundle-config.test.mjs
           python3 mobile/ci/pr-ios/test_artifacts.py
 
       - name: Use the self-hosted Mac's Ruby for signing
