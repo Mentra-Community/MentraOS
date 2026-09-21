@@ -36,7 +36,9 @@ if (signed) {
   args.push(
     "-archivePath",
     path.join(mobile, "build/pr-ios/Mentra.xcarchive"),
-    `OTHER_CODE_SIGN_FLAGS=--keychain ${process.env.PR_IOS_KEYCHAIN}`,
+    // Match the probe and repackaging signer. Ad hoc iOS distribution does not
+    // need a timestamp authority; avoid a system-dependent network dependency.
+    `OTHER_CODE_SIGN_FLAGS=--keychain ${process.env.PR_IOS_KEYCHAIN} --timestamp=none`,
   )
 } else args.push("CODE_SIGN_IDENTITY=", "CODE_SIGNING_REQUIRED=NO", "CODE_SIGNING_ALLOWED=NO")
 args.push(...xcodeBuildSettings(env, process.execPath))
@@ -59,6 +61,19 @@ if (signed && result.status !== 0) {
     ["find-identity", "-v", "-p", "codesigning", env.PR_IOS_KEYCHAIN],
   ])
     spawnSync("security", args, {stdio: "inherit", timeout: 20_000})
+  spawnSync(
+    "/usr/bin/log",
+    [
+      "show",
+      "--last",
+      "2m",
+      "--style",
+      "compact",
+      "--predicate",
+      'process == "securityd" AND (eventMessage CONTAINS[c] "codesign" OR eventMessage CONTAINS[c] "CSSM" OR eventMessage CONTAINS[c] "interaction")',
+    ],
+    {stdio: "inherit", timeout: 20_000},
+  )
 }
 if (signed && result.status === 0) {
   const bundle = readFileSync(
