@@ -2,19 +2,25 @@ import NetInfo from "@react-native-community/netinfo"
 import {AppState, Linking, Platform, type AppStateStatus} from "react-native"
 import WifiManager from "react-native-wifi-reborn"
 
-import {showAlert} from "@/utils/AlertUtils"
+import {
+  completePhoneWifiPrompt,
+  getPhoneWifiPrompt,
+  registerPhoneWifiPromptHost,
+  requestPhoneWifiPrompt,
+} from "./phoneWifiPrompt"
 import {isPhoneWifiEnabled, requestPhoneWifiEnable} from "./phoneWifi"
 
 jest.mock("@/i18n", () => ({translate: (key: string) => key}))
-jest.mock("@/utils/AlertUtils", () => ({showAlert: jest.fn()}))
 jest.mock("react-native-wifi-reborn", () => ({__esModule: true, default: {isEnabled: jest.fn()}}))
 jest.mock("@react-native-community/netinfo", () => ({__esModule: true, default: {refresh: jest.fn()}}))
 
 const events = new Map<string, (state?: AppStateStatus) => void>()
 const removed = jest.fn()
 const originalPlatform = Platform.OS
+let unmountHost: () => void
 
 beforeEach(() => {
+  unmountHost = registerPhoneWifiPromptHost()
   jest.useFakeTimers()
   jest.clearAllMocks()
   events.clear()
@@ -32,6 +38,7 @@ beforeEach(() => {
 })
 
 afterEach(() => {
+  unmountHost()
   jest.useRealTimers()
   jest.restoreAllMocks()
   Object.defineProperty(Platform, "OS", {configurable: true, value: originalPlatform})
@@ -39,8 +46,8 @@ afterEach(() => {
 
 async function acceptPrompt() {
   await jest.advanceTimersByTimeAsync(0)
-  const buttons = (showAlert as jest.Mock).mock.calls.at(-1)![2]
-  buttons[1].onPress()
+  expect(getPhoneWifiPrompt()).not.toBeNull()
+  completePhoneWifiPrompt(true)
   await jest.advanceTimersByTimeAsync(0)
 }
 
@@ -61,16 +68,15 @@ test("iOS reports unknown on cellular, never a false Wi-Fi-off diagnosis", async
 test("enabled Wi-Fi skips the prompt and settings", async () => {
   ;(WifiManager.isEnabled as jest.Mock).mockResolvedValue(true)
   await expect(requestPhoneWifiEnable()).resolves.toEqual({enabled: true, cancelled: false})
-  expect(showAlert).not.toHaveBeenCalled()
+  expect(getPhoneWifiPrompt()).toBeNull()
   expect(Linking.sendIntent).not.toHaveBeenCalled()
 })
 
 test("cancel keeps settings closed", async () => {
   const pending = requestPhoneWifiEnable("Calling needs Wi-Fi")
   await jest.advanceTimersByTimeAsync(0)
-  const [, message, buttons] = (showAlert as jest.Mock).mock.calls.at(-1)!
-  expect(message).toContain("Calling needs Wi-Fi")
-  buttons[0].onPress()
+  expect(getPhoneWifiPrompt()?.message).toContain("Calling needs Wi-Fi")
+  completePhoneWifiPrompt(false)
   await expect(pending).resolves.toEqual({enabled: false, cancelled: true})
   expect(Linking.sendIntent).not.toHaveBeenCalled()
 })
@@ -128,4 +134,39 @@ test("concurrent prompts are rejected and an abandoned settings visit is bounded
   await jest.advanceTimersByTimeAsync(5 * 60_000)
   await expect(pending).resolves.toEqual({enabled: null, cancelled: true})
   expect(removed).toHaveBeenCalledTimes(3)
+})
+
+test("replacement and host unmount settle the prompt and release its lock", async () => {
+  const pending = requestPhoneWifiEnable()
+  await jest.advanceTimersByTimeAsync(0)
+  const firstId = getPhoneWifiPrompt()!.id
+  const replacement = requestPhoneWifiPrompt({title: "Wi-Fi", message: "Replacement", actionLabel: "Settings"})
+  await expect(pending).resolves.toEqual({enabled: false, cancelled: true})
+  completePhoneWifiPrompt(true, firstId)
+  expect(getPhoneWifiPrompt()).not.toBeNull()
+  completePhoneWifiPrompt(false)
+  await expect(replacement).resolves.toBe(false)
+  const next = requestPhoneWifiEnable()
+  await jest.advanceTimersByTimeAsync(0)
+  expect(getPhoneWifiPrompt()).not.toBeNull()
+  completePhoneWifiPrompt(false)
+  await expect(next).resolves.toEqual({enabled: false, cancelled: true})
+})
+
+test("host unmount during a Wi-Fi read cannot create an orphaned prompt", async () => {
+  let finishRead!: (enabled: boolean) => void
+  ;(WifiManager.isEnabled as jest.Mock).mockReturnValueOnce(
+    new Promise<boolean>((resolve) => {
+      finishRead = resolve
+    }),
+  )
+  const pending = requestPhoneWifiEnable()
+  unmountHost()
+  unmountHost = () => {}
+  finishRead(false)
+  await expect(pending).resolves.toEqual({enabled: false, cancelled: true})
+  expect(getPhoneWifiPrompt()).toBeNull()
+  unmountHost = registerPhoneWifiPromptHost()
+  ;(WifiManager.isEnabled as jest.Mock).mockResolvedValue(true)
+  await expect(requestPhoneWifiEnable()).resolves.toEqual({enabled: true, cancelled: false})
 })
