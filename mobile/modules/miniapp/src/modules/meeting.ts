@@ -29,7 +29,7 @@ export interface MeetingWhepVideoSource {
  * hotspot, binds a local WHIP endpoint, and tells the glasses where to publish. The miniapp only
  * chooses the transport.
  *
- * Android only for now. iOS hosts reject this with `NOT_IMPLEMENTED`.
+ * Supported by current Android and iOS hosts.
  */
 export interface MeetingSoftApVideoSource {
   type: "softap"

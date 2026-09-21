@@ -130,7 +130,8 @@ nor ACS credential is returned to miniapp JavaScript.
 Workspace Mentra Call supports joining work/school Teams links using direct
 local glasses video. It does not contact the public Call backend for startup,
 restore, credentials, or meeting creation. Existing consumer token pass-through
-and Call backend routes remain supported; older clients need no backend change.
+and Call backend routes remain supported; consumer joins still require the
+miniapp-supplied credential. Older clients need no backend change.
 A Mentra App native build containing Teams-user agent support is required for
 employee identity. Install the matching managed miniapp ZIP and re-select the
 workspace to refresh the cached manifest.
