@@ -1,5 +1,5 @@
 import {describe, expect, it} from "bun:test"
-import {packagedBuildInfo} from "./packagedBuildInfo"
+import {packagedBuildInfo} from "../packagedBuildInfo"
 
 const embedded = {appVersion: "3.2.1", buildCommit: "old", buildBranch: "old", buildUser: "old", buildTime: "old"}
 describe("build identity for reused Android/iOS apps", () => {

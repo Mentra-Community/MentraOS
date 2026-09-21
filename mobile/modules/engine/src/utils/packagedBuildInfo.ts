@@ -1,4 +1,4 @@
-export interface AppBuildInfo {
+export type AppBuildInfo = {
   appVersion: string
   buildCommit: string
   buildBranch: string
