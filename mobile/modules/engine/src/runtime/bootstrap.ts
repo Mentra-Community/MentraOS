@@ -90,6 +90,10 @@ export interface IslandUiSeams {
    * flow. Absent ⇒ miniapps get NOT_IMPLEMENTED for the request.
    */
   requestWifiSetup?: (reason?: string, packageName?: string) => Promise<void> | void
+  /** Phone Wi-Fi availability; null when the platform cannot read the radio state. */
+  isPhoneWifiEnabled?: () => Promise<boolean | null>
+  /** Host prompt + system settings round trip. Keep the requesting miniapp mounted. */
+  requestPhoneWifiEnable?: (reason?: string) => Promise<{enabled: boolean | null; cancelled: boolean}>
   /**
    * `session.system.scanQr` — open a phone-camera QR scanner overlay. Must NOT
    * clear miniapp foreground: UI_CLOSE on a live call hangs it up. Absent ⇒

@@ -94,7 +94,7 @@ export type {
   VadData,
   WifiData,
 } from "./modules/events"
-export type {CalendarEvent, CalendarListOptions, CalendarListResult} from "./modules/phone"
+export type {CalendarEvent, CalendarListOptions, CalendarListResult, PhoneWifiEnableResult} from "./modules/phone"
 export type {
   PlayAudioOptions,
   SpeakOptions,
