@@ -18,6 +18,7 @@ import {migrate} from "@/services/Migrations"
 import {buildSpokenNotification} from "@/services/notifications/spokenNotification"
 import {deploymentCloudConfigValues} from "@/services/cloudClient"
 import {requestPhoneQrScan} from "@/services/qrScanRequest"
+import {isPhoneWifiEnabled, requestPhoneWifiEnable} from "@/services/phoneWifi"
 import {engine, BgTimer, SETTINGS} from "@mentra/engine"
 import {
   appRegistry,
@@ -437,6 +438,8 @@ class MantleManager {
       // Named host-UI seams: island dispatches the miniapp request, the host
       // owns the screen (branding/navigation).
       ui: {
+        isPhoneWifiEnabled,
+        requestPhoneWifiEnable,
         requestWifiSetup: (reason?: string, packageName?: string) =>
           new Promise<void>((resolve) => {
             // Wi-Fi setup drives the glasses over Bluetooth (scan, credentials,

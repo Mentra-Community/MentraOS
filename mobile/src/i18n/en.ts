@@ -1172,6 +1172,15 @@ const en = {
     pairingCouldNotStart:
       "Couldn't start connecting to your {{glassesModel}}. Please make sure Bluetooth is turned on and try again.",
   },
+  phoneWifi: {
+    title: "Wi-Fi required",
+    reason: "Mentra uses your phone’s Wi-Fi to connect to your glasses.",
+    instructionsAndroid: "Turn on Wi-Fi, then return to Mentra. Your glasses will connect automatically.",
+    instructionsIos:
+      "Open Settings, go back to the main Settings screen, then tap Wi-Fi and turn it on. Return to Mentra to continue.",
+    turnOn: "Turn on Wi-Fi",
+    openSettings: "Open Settings",
+  },
   common: {
     miniappUiUnavailable: "This miniapp has no page to display. You can minimize or close it.",
     ok: "OK",
