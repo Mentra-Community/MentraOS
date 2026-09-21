@@ -1,15 +1,14 @@
+import {MOBILE_PR_PATHS} from "./pr-mobile-build.mjs"
 import {createHash} from "node:crypto"
 import {iosInstallUrl} from "./pr-ios-artifacts-install.mjs"
 import {iosReceiptName, validateIosReceipt} from "./pr-ios-artifacts.mjs"
 import {artifactUrl} from "./release-artifact-storage.mjs"
 
 export function iosBuildRequired(files) {
-  return files.some(
-    ({filename}) =>
-      filename.startsWith("mobile/") ||
-      filename === ".github/workflows/mentra-app-ios-build.yml" ||
-      filename === ".github/workflows/reusable-pr-build-notification.yml" ||
-      filename.startsWith(".github/scripts/pr-ios-artifacts"),
+  return files.some(({filename}) =>
+    MOBILE_PR_PATHS.some((pattern) =>
+      pattern.endsWith("*") ? filename.startsWith(pattern.replace(/\*+$/, "")) : filename === pattern,
+    ),
   )
 }
 
@@ -66,12 +65,13 @@ export function buildPost({pr, sha, androidUrl, manifestUrl, targets, androidRun
     if (ios.assets.install)
       iphoneLinks.push(
         richLink(iosInstallUrl(ios.assets.manifest), "Install on iPhone"),
-        richLink(ios.assets.install, "Install via Safari"),
+        richLink(ios.assets.install, "Share install link"),
       )
-    iphoneLinks.push(richLink(ios.assets.iphone, "Download IPA"))
+    else iphoneLinks.push(richLink(ios.assets.iphone, "Download IPA"))
   }
   // Slack's webhook mrkdwn parser escapes itms-services links as literal text.
-  // Rich-text link elements preserve the direct install action and aligned rows.
+  // Rich-text links open the installer on iPhone; Slack renders them as plain
+  // text on Mac, so also include the HTTPS installation page for sharing.
   const platforms = {
     type: "rich_text",
     elements: [
@@ -110,7 +110,7 @@ export function buildPost({pr, sha, androidUrl, manifestUrl, targets, androidRun
       )}`,
     )
     lines.push(
-      "Install the APK, connect your Mentra Live glasses, and follow the update prompt if shown. This app targets the versions above.",
+      "Install the app, connect your Mentra Live glasses, and follow the update prompt if shown. This app targets the versions above.",
     )
   }
   lines.push(

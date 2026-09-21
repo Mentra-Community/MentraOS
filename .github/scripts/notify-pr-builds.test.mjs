@@ -219,7 +219,7 @@ function harness(options = {}) {
 }
 process.env.SLACK_WEBHOOK_PR_BUILDS = "https://example.com/webhook"
 
-test("publishes a direct Slack install link and Safari fallback only after verifying the complete install set", async () => {
+test("publishes direct iPhone installation and a shareable Safari link without the raw IPA download", async () => {
   const receipt = structuredClone(iosReceipt)
   receipt.schemaVersion = 2
   for (const [kind, ext] of [
@@ -244,18 +244,18 @@ test("publishes a direct Slack install link and Safari fallback only after verif
   assert.ok(platformRows.every((row) => row.type === "rich_text_section" && row.elements[1].style.bold))
   assert.equal(platformRows[0].elements[3].text, "Download APK")
   assert.equal(platformRows[2].elements[3].text, "Download ZIP")
+  assert.deepEqual(platformRows.map((row) => row.elements.filter((element) => element.type === "link").length), [1, 2, 1])
   const iphoneLinks = platformRows[1].elements.filter((element) => element.type === "link")
-  assert.deepEqual(
-    iphoneLinks.map((element) => element.text),
-    ["Install on iPhone", "Install via Safari", "Download IPA"],
-  )
+  assert.deepEqual(iphoneLinks.map((element) => element.text), ["Install on iPhone", "Share install link"])
   // A structured link is required: webhook mrkdwn escapes this URL scheme.
   const direct = new URL(iphoneLinks[0].url)
   assert.equal(direct.protocol, "itms-services:")
   assert.equal(direct.searchParams.get("action"), "download-manifest")
   const verifiedManifest = ready.requests.find((url) => url.endsWith(".plist"))
   assert.equal(direct.searchParams.get("url"), verifiedManifest)
-  assert.match(iphoneLinks[1].url, /^https:\/\/artifactscdn.*\.html$/)
+  assert.equal(iphoneLinks[1].url, ready.requests.find((url) => url.endsWith(".html")))
+  assert.doesNotMatch(JSON.stringify(ready.posts[0]), /Download IPA/)
+  assert.match(JSON.stringify(ready.posts[0]), /Install the app, connect your Mentra Live glasses/)
   assert.match(ready.written[0].body, /\[Install on iPhone\]\(https:\/\/artifactscdn.*\.html\)/)
   assert.doesNotMatch(ready.written[0].body, /itms-services:/)
   assert.ok(ready.requests.some((url) => url.endsWith(".plist")))
@@ -356,9 +356,11 @@ test("deduplicates completion events and suppresses closed/superseded/cancelled 
 })
 
 test("iOS path applicability matches its filtered workflow", () => {
-  assert.equal(iosBuildRequired([{filename: "cloud-v2/core/index.ts"}]), false)
+  assert.equal(iosBuildRequired([{filename: "README.md"}]), false)
   for (const filename of [
     "mobile/app.config.ts",
+    "asg_client/ota_manifests/firmware_live.json",
+    "cloud-v2/core/index.ts",
     ".github/workflows/mentra-app-ios-build.yml",
     ".github/workflows/reusable-pr-build-notification.yml",
     ".github/scripts/pr-ios-artifacts.test.mjs",

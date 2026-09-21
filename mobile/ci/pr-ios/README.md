@@ -3,9 +3,17 @@
 The final **#pr-builds** Slack message offers iPhone installation and iPhone/Mac
 downloads from one signed iOS Release app. These are ad hoc builds for registered test devices. They do not
 use TestFlight or require a source build or local re-signing. They use the dev
-backend and normal product defaults. Settings identifies the canonical app version,
-PR branch and actual checkout commit; the receipt also records the PR head and
-numeric native build.
+backend and normal product defaults. Settings identifies the canonical app version and current PR branch/head. The
+receipt separately records the actual candidate checkout, original compilation
+revision, fingerprint and numeric native build.
+
+Glasses OTA is enabled on both iPhone and Mac. Each packaged app selects
+`ota-pr-<PR number>-<full head SHA>.json`, the same manifest used by that PR's
+Android APK. The ASG workflow publishes it with the matching ASG client and
+BES/MTK firmware targets. Wait for the ready Slack post before testing updates.
+CI checks the pin in the exported IPA and delivered Mac app, and records it as
+`app.otaManifestUrl` in the receipt. An absent or stale pin fails packaging.
+Unsigned compile checks and unconfigured local builds keep OTA disabled.
 
 ## iPhone
 
@@ -55,6 +63,27 @@ No Xcode is required on the Mac for this installation: the launcher is included.
 macOS may require its normal first-use approvals. The installer does not change
 privacy settings or disable Gatekeeper. If a launch approval delays opening,
 the verified app remains installed; approve through macOS and open it again.
+
+## Compilation reuse
+
+Android and iOS use the same fingerprint/selection and PR configuration contract.
+CI searches published signed apps for matching source, dependency, toolchain and
+compiled-environment inputs. A verified iOS match skips dependency installation,
+Pods, prebuild and Xcode compilation. It then updates Expo's packaged
+`extra.mentraPrBuild` configuration and `CFBundleVersion` and signs with the
+current distribution identity/profile. Both fresh and reused apps use this path.
+
+The packaged OTA target and current PR identity are independent of the JavaScript
+bundle. Settings and reports therefore identify the current candidate while the
+receipt retains `mobileSourceCommit` for the original compilation. CI compares
+all other resources/frameworks byte-for-byte and the main executable with its
+signature removed, then checks the final signatures and unchanged entitlements.
+A mismatched or unavailable cached app results in a fresh compilation.
+
+The delivered IPA is the reusable artifact; no separate permanent iOS binary
+cache is published. The existing seven-day retention applies. The build summary
+and receipt state whether compilation was reused. A device-only profile refresh
+can reuse compiled code when its capabilities and signing identity still match.
 
 ## Signing setup (maintainer)
 
