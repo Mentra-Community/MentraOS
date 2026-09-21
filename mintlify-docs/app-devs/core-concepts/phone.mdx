@@ -149,7 +149,7 @@ Neither method requires a miniapp manifest permission.
 
 ```typescript
 const enabled = await session.phone.isWifiEnabled()
-if (enabled !== true) {
+if (enabled === false) {
   const result = await session.phone.requestWifiEnable(
     "Live video needs your phone’s Wi-Fi to connect to your glasses.",
   )
@@ -176,5 +176,7 @@ A `null` result after returning on iOS lets you attempt the normal system hotspo
 join; it does not verify the radio is enabled. Call from a user-initiated flow
 while the Mentra App is active. Concurrent prompts reject with `REQUEST_ABORTED`.
 Older hosts or hosts without this capability reject with `NOT_IMPLEMENTED`.
+Only prompt automatically when the state is `false`. When it is `null`, try the normal hotspot join; call `requestWifiEnable()` from an explicit recovery action if the connection fails.
+
 Neither function switches Wi-Fi on itself, joins an SSID, or requires internet
 access through Wi-Fi.

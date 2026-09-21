@@ -4,7 +4,7 @@ import {AppState, Linking, Platform} from "react-native"
 import WifiManager from "react-native-wifi-reborn"
 
 import {translate} from "@/i18n"
-import {showAlert} from "@/utils/AlertUtils"
+import {requestPhoneWifiPrompt} from "./phoneWifiPrompt"
 
 /** Read the radio directly on Android; NetInfo's cached isWifiEnabled can be stale. */
 export async function isPhoneWifiEnabled(): Promise<boolean | null> {
@@ -104,14 +104,10 @@ export async function requestPhoneWifiEnable(reason?: string): Promise<PhoneWifi
       reason?.trim() || translate("phoneWifi:reason"),
       translate(Platform.OS === "ios" ? "phoneWifi:instructionsIos" : "phoneWifi:instructionsAndroid"),
     ].join("\n\n")
-    const confirmed = await new Promise<boolean>((resolve) => {
-      showAlert(translate("phoneWifi:title"), message, [
-        {text: translate("common:cancel"), style: "cancel", onPress: () => resolve(false)},
-        {
-          text: translate(Platform.OS === "ios" ? "phoneWifi:openSettings" : "phoneWifi:turnOn"),
-          onPress: () => resolve(true),
-        },
-      ])
+    const confirmed = await requestPhoneWifiPrompt({
+      title: translate("phoneWifi:title"),
+      message,
+      actionLabel: translate(Platform.OS === "ios" ? "phoneWifi:openSettings" : "phoneWifi:turnOn"),
     })
     if (!confirmed) return {enabled, cancelled: true}
     return await visitWifiSettings()

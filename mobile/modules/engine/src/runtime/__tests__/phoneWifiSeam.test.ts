@@ -1,5 +1,5 @@
 import {expect, mock, test} from "bun:test"
-import {invokePhoneWifiSeam} from "./phoneWifiSeam"
+import {invokePhoneWifiSeam} from "../phoneWifiSeam"
 
 test("status and prompt route to distinct host capabilities", async () => {
   const ui = {
