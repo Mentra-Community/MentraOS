@@ -10,6 +10,7 @@ from pathlib import Path
 import plistlib
 import re
 import shutil
+import sys
 import subprocess
 import tempfile
 import zipfile
@@ -17,6 +18,8 @@ import zipfile
 BUNDLE_ID = "com.mentra.mentra"
 PROFILE_NAME = f"match AdHoc {BUNDLE_ID}"
 HERE = Path(__file__).resolve().parent
+sys.path.insert(0, str(HERE.parents[2] / ".github/scripts"))
+from pr_mobile_config import read_build
 
 
 def run(*args):
@@ -148,10 +151,14 @@ def package(ipa, output):
         profile = read_profile(app / "embedded.mobileprovision")
         team = validate_profile(profile)
         ota_url = verify_pr_ota(app, os.environ["GITHUB_REPOSITORY"], context["pr"], context["headSha"])
+        compilation = read_build(json.loads((app / "EXConstants.bundle/app.config").read_text()))
         executable = app / info["CFBundleExecutable"]
         if executable.parent != app:
             raise ValueError("Invalid executable name")
         manifest = {**context, "bundleId": BUNDLE_ID, "app": "Mentra.app", "backend": "dev", "otaManifestUrl": ota_url,
+                    "mobileFingerprint": compilation["mobileFingerprint"],
+                    "mobileSourceCommit": compilation["mobileSourceCommit"],
+                    "reusedCompilation": os.environ.get("PR_IOS_REUSED") == "true",
                     "version": info["CFBundleShortVersionString"], "build": info["CFBundleVersion"],
                     "executableSha256": digest(executable), "javascriptSha256": digest(app / "main.jsbundle"),
                     "profileUUID": profile["UUID"], "profileExpires": profile["ExpirationDate"].isoformat(), "teamId": team}

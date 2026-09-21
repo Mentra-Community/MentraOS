@@ -356,9 +356,11 @@ test("deduplicates completion events and suppresses closed/superseded/cancelled 
 })
 
 test("iOS path applicability matches its filtered workflow", () => {
-  assert.equal(iosBuildRequired([{filename: "cloud-v2/core/index.ts"}]), false)
+  assert.equal(iosBuildRequired([{filename: "README.md"}]), false)
   for (const filename of [
     "mobile/app.config.ts",
+    "asg_client/ota_manifests/firmware_live.json",
+    "cloud-v2/core/index.ts",
     ".github/workflows/mentra-app-ios-build.yml",
     ".github/workflows/reusable-pr-build-notification.yml",
     ".github/scripts/pr-ios-artifacts.test.mjs",

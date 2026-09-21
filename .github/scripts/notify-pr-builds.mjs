@@ -1,15 +1,14 @@
+import {MOBILE_PR_PATHS} from "./pr-mobile-build.mjs"
 import {createHash} from "node:crypto"
 import {iosInstallUrl} from "./pr-ios-artifacts-install.mjs"
 import {iosReceiptName, validateIosReceipt} from "./pr-ios-artifacts.mjs"
 import {artifactUrl} from "./release-artifact-storage.mjs"
 
 export function iosBuildRequired(files) {
-  return files.some(
-    ({filename}) =>
-      filename.startsWith("mobile/") ||
-      filename === ".github/workflows/mentra-app-ios-build.yml" ||
-      filename === ".github/workflows/reusable-pr-build-notification.yml" ||
-      filename.startsWith(".github/scripts/pr-ios-artifacts"),
+  return files.some(({filename}) =>
+    MOBILE_PR_PATHS.some((pattern) =>
+      pattern.endsWith("*") ? filename.startsWith(pattern.replace(/\*+$/, "")) : filename === pattern,
+    ),
   )
 }
 

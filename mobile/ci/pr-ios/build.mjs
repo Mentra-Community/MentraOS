@@ -12,15 +12,6 @@ const mobile = path.resolve("mobile")
 const env = {...process.env, NODE_ENV: "production", SENTRY_DISABLE_AUTO_UPLOAD: "true"}
 if (signed) {
   execFileSync("security", ["unlock-keychain", "-p", env.PR_IOS_KEYCHAIN_PASSWORD, env.PR_IOS_KEYCHAIN])
-  // The old compile-only workflow inherited a sample version and no build
-  // identity from .env.example. Published PR apps need the checkout's identity.
-  Object.assign(env, {
-    EXPO_PUBLIC_MENTRAOS_VERSION: JSON.parse(readFileSync("package.json", "utf8")).version,
-    EXPO_PUBLIC_BUILD_BRANCH: env.GITHUB_HEAD_REF,
-    EXPO_PUBLIC_BUILD_COMMIT: execFileSync("git", ["rev-parse", "--short", "HEAD"], {encoding: "utf8"}).trim(),
-    EXPO_PUBLIC_BUILD_USER: env.GITHUB_ACTOR,
-    EXPO_PUBLIC_BUILD_TIME: new Date().toISOString(),
-  })
 }
 await appendXcodeEnvironment(path.join(mobile, "ios/.xcode.env.local"), env, process.execPath)
 const args = [
@@ -50,6 +41,7 @@ if (signed) {
 args.push(...xcodeBuildSettings(env, process.execPath))
 const result = spawnSync("xcodebuild", args, {cwd: path.join(mobile, "ios"), env, stdio: "inherit"})
 if (result.error) throw result.error
+if (result.signal) console.error(`xcodebuild terminated by ${result.signal}`)
 if (signed && result.status !== 0) {
   // Public signing metadata only; never dump keychain contents or credentials.
   for (const args of [

@@ -120,6 +120,9 @@ export async function publishIosArtifacts(directory, env = process.env, {exec = 
         releaseId,
         "--repository",
         repository,
+        ...(name === assets.iphone.name && receipt.app.mobileFingerprint
+          ? ["--fingerprint", receipt.app.mobileFingerprint]
+          : []),
       ],
       {stdio: "inherit", env},
     )
