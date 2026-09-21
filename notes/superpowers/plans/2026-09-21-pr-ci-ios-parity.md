@@ -22,8 +22,9 @@ requirement of PR CI.
       where feasible. Repackage fresh and reused artifacts through the same path,
       preserving compiled code and capabilities while updating PR configuration,
       native build number and signing.
-- [ ] Keep compilation evidence separate from packaging/publication success;
-      recover signing or upload failures without unnecessary recompilation.
+- [x] Avoid a clean rebuild for confirmed signing-only failures: retry with the
+      existing build outputs and report a persistent signing error separately.
+      Publication remains a separate job that can be rerun independently.
 - [x] Align workflow triggers and notification applicability so either platform
       can deliver a complete candidate for the same PR changes.
 - [ ] Verify cold and reuse CI paths, effective OTA pins, artifact integrity and
@@ -31,11 +32,21 @@ requirement of PR CI.
 - [ ] Validate the exact iPhone/Mac downloads, document remaining Mac installer
       friction, and update the PR description around the complete change.
 
-Current CI evidence: run `35632234805` for initial head `292ef6571c` failed. Its
-first archive attempt failed signing Mapbox frameworks with
-`errSecInternalComponent`; the clean retry also failed. The failure of the
-second attempt needs separate diagnosis. No new iOS download from this run has
-been verified. Android, ASG and mobile quality checks passed.
+CI evidence for head `f94ff0b7be`: Android run `35642899369` passed a fresh build
+and an unchanged-input rerun. Publication took about 8 minutes initially and
+1 minute on reuse; the rerun skipped compilation. Independent checks of both
+downloaded APKs verified their hashes, current PR/OTA configuration and unchanged
+compiled payload. Mobile quality, OEM typecheck and ASG checks passed.
+
+iOS run `35642899514` failed signing `Turf.framework` after compilation with
+`errSecInternalComponent`, with the correct identity and job keychain present.
+This reproduced the initial candidate's signing failure and motivated the
+targeted incremental retry. A successful Apple artifact and real reuse run are
+still required; local re-signing fixtures do not establish production signing.
+
+ASG run `35642899395` rebuilt on rerun: the existing selector only searches
+coordinated release artifacts, not previously published PR ASG builds. Preserve
+this as a remaining optimization gap rather than claiming universal ASG reuse.
 
 Local validation: shared selection/fingerprint and publication tests, real signed
 Android APK repackaging, real Mach-O re-signing/payload checks, metadata resolver

@@ -121,6 +121,7 @@ jobs:
           node --test .github/scripts/pr-ios-artifacts.test.mjs .github/scripts/notify-pr-builds.test.mjs mobile/scripts/release-bundle-config.test.mjs
           python3 mobile/ci/pr-ios/test_artifacts.py
           python3 mobile/ci/pr-ios/test_repackage.py
+          node --test mobile/ci/pr-ios/xcode-attempt.test.mjs
           node --test .github/scripts/pr-mobile-build.test.mjs
 
       - name: Setup environment
@@ -536,7 +537,7 @@ jobs:
 
       - name: Retry build with clean caches (if first attempt failed)
         id: xcode-build-clean
-        if: steps.xcode-build.outcome == 'failure'
+        if: steps.xcode-build.outcome == 'failure' && steps.xcode-build.outputs.failure_kind != 'signing'
         working-directory: ./mobile/ios
         env:
           SENTRY_DISABLE_AUTO_UPLOAD: "true"

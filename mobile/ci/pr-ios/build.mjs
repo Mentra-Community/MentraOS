@@ -1,11 +1,12 @@
 import {execFileSync, spawnSync} from "node:child_process"
-import {readFileSync} from "node:fs"
+import {appendFileSync, readFileSync} from "node:fs"
 import path from "node:path"
 import {
   appendXcodeEnvironment,
   assertBundleEnvironment,
   xcodeBuildSettings,
 } from "../../scripts/release-bundle-config.mjs"
+import {runXcode, signingOnlyFailure} from "./xcode-attempt.mjs"
 
 const signed = process.env.PR_IOS_SIGNED === "true"
 const mobile = path.resolve("mobile")
@@ -39,8 +40,16 @@ if (signed) {
   )
 } else args.push("CODE_SIGN_IDENTITY=", "CODE_SIGNING_REQUIRED=NO", "CODE_SIGNING_ALLOWED=NO")
 args.push(...xcodeBuildSettings(env, process.execPath))
-const result = spawnSync("xcodebuild", args, {cwd: path.join(mobile, "ios"), env, stdio: "inherit"})
-if (result.error) throw result.error
+let result = await runXcode(args, {cwd: path.join(mobile, "ios"), env})
+if (signed && signingOnlyFailure(result)) {
+  console.log("Signing failed after compilation. Unlocking the job keychain and retrying with existing build outputs.")
+  execFileSync("security", ["unlock-keychain", "-p", env.PR_IOS_KEYCHAIN_PASSWORD, env.PR_IOS_KEYCHAIN])
+  result = await runXcode(args, {cwd: path.join(mobile, "ios"), env})
+}
+if (signed && signingOnlyFailure(result) && env.GITHUB_OUTPUT) {
+  appendFileSync(env.GITHUB_OUTPUT, "failure_kind=signing\n")
+  console.error("Signing still failed; preserving compilation outputs instead of deleting caches and recompiling.")
+}
 if (result.signal) console.error(`xcodebuild terminated by ${result.signal}`)
 if (signed && result.status !== 0) {
   // Public signing metadata only; never dump keychain contents or credentials.
