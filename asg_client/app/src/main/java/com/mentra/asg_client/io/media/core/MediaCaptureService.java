@@ -2229,6 +2229,7 @@ public class MediaCaptureService {
 
         // TESTING: Check for fake camera capture failure
         if (PhotoCaptureTestHooks.shouldFail("CAMERA_CAPTURE")) {
+            photoLightController.finish(captureLightToken);
             photoFeedbackController.stopForFailure(captureFeedbackToken);
             Log.e(TAG, "TESTING: Simulating camera capture failure");
             sendPhotoErrorResponse(
@@ -2345,6 +2346,7 @@ public class MediaCaptureService {
 
                     @Override
                     public void onPhotoFailureDetected() {
+                        photoLightController.finish(captureLightToken);
                         photoFeedbackController.stopForFailure(captureFeedbackToken);
                     }
 
@@ -2355,6 +2357,7 @@ public class MediaCaptureService {
 
                     @Override
                     public void onPhotoError(CameraOperationError error) {
+                        photoLightController.finish(captureLightToken);
                         photoFeedbackController.stopForFailure(captureFeedbackToken);
                         Log.e(TAG, "Failed to capture offline photo: " + error.message());
                         sendPhotoStatus(requestId, "failed", null, error.code(), error.message());
@@ -2370,6 +2373,7 @@ public class MediaCaptureService {
                     }
                 });
         } catch (Exception e) {
+            photoLightController.finish(captureLightToken);
             photoFeedbackController.stopForFailure(captureFeedbackToken);
             Log.e(TAG, "Failed to enqueue button photo", e);
             sendPhotoStatus(
@@ -2634,6 +2638,7 @@ public class MediaCaptureService {
 
                         @Override
                         public void onPhotoFailureDetected() {
+                            photoLightController.finish(captureLightToken);
                             photoFeedbackController.stopForFailure(captureFeedbackToken);
                         }
 
@@ -2644,6 +2649,7 @@ public class MediaCaptureService {
 
                         @Override
                         public void onPhotoError(CameraOperationError error) {
+                            photoLightController.finish(captureLightToken);
                             photoFeedbackController.stopForFailure(captureFeedbackToken);
                             try {
                                 Log.e(
@@ -2667,6 +2673,7 @@ public class MediaCaptureService {
                     });
             return true;
         } catch (Exception e) {
+            photoLightController.finish(captureLightToken);
             photoFeedbackController.stopForFailure(captureFeedbackToken);
             try {
                 Log.e(TAG, "Error taking local-save photo", e);
@@ -3129,6 +3136,7 @@ public class MediaCaptureService {
 
                         @Override
                         public void onPhotoFailureDetected() {
+                            photoLightController.finish(captureLightToken);
                             photoFeedbackController.stopForFailure(captureFeedbackToken);
                         }
 
@@ -3139,6 +3147,7 @@ public class MediaCaptureService {
 
                         @Override
                         public void onPhotoError(CameraOperationError error) {
+                            photoLightController.finish(captureLightToken);
                             photoFeedbackController.stopForFailure(captureFeedbackToken);
                             cleanupPhotoArtifacts(requestId, photoFilePath, false);
                             clearPhotoTracking(requestId);
@@ -3161,6 +3170,7 @@ public class MediaCaptureService {
                     });
             return true;
         } catch (Exception e) {
+            photoLightController.finish(captureLightToken);
             photoFeedbackController.stopForFailure(feedbackToken);
             cleanupPhotoArtifacts(requestId, photoFilePath, false);
             clearPhotoTracking(requestId);
@@ -5389,6 +5399,7 @@ public class MediaCaptureService {
 
                         @Override
                         public void onPhotoFailureDetected() {
+                            photoLightController.finish(captureLightToken);
                             photoFeedbackController.stopForFailure(captureFeedbackToken);
                         }
 
@@ -5399,6 +5410,7 @@ public class MediaCaptureService {
 
                         @Override
                         public void onPhotoError(CameraOperationError error) {
+                            photoLightController.finish(captureLightToken);
                             photoFeedbackController.stopForFailure(captureFeedbackToken);
                             BlePhotoTimingLog.unbindPhaseSink(capturePhaseSink);
                             cleanupPhotoArtifacts(requestId, photoFilePath, false);
@@ -5422,6 +5434,7 @@ public class MediaCaptureService {
                     });
             return true;
         } catch (Exception e) {
+            photoLightController.finish(captureLightToken);
             photoFeedbackController.stopForFailure(captureFeedbackToken);
             BlePhotoTimingLog.unbindPhaseSink(null);
             cleanupPhotoArtifacts(requestId, photoFilePath, false);
@@ -7151,6 +7164,7 @@ public class MediaCaptureService {
 
         try {
             photoFeedbackController.cleanup();
+            photoLightController.cleanup();
 
             // Stop battery monitoring
             stopBatteryMonitoring();

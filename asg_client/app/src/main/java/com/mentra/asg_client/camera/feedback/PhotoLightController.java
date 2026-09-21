@@ -1,85 +1,88 @@
 package com.mentra.asg_client.camera.feedback;
 
 import android.os.Handler;
+import android.os.SystemClock;
 import android.util.Log;
-
 import androidx.annotation.Nullable;
-
 import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
 import com.mentra.asg_client.io.hardware.interfaces.RgbLedConstants;
+import java.util.HashSet;
+import java.util.Set;
 
-import java.util.concurrent.atomic.AtomicBoolean;
-
-/** Synchronizes the user-visible photo LED with the first reliable capture boundary. */
+/** Owns paired photo indicators from request acceptance through final frame availability. */
 public final class PhotoLightController {
-    private static final String TAG = "PhotoLight";
-
-    /** Request-scoped state that guarantees fallback callbacks cannot flash the LED twice. */
+    /** Per-request ownership prevents a completed shot from extinguishing a later shot. */
     public static final class Token {
-        private final boolean mEnabled;
-        private final AtomicBoolean mTriggered = new AtomicBoolean();
+        private long startedMs;
+        private boolean finishing;
+        private Runnable release;
+    }
 
-        private Token(boolean enabled) {
-            mEnabled = enabled;
+    @Nullable private final IHardwareManager hardware;
+    private final Handler handler;
+    private final Set<Token> active = new HashSet<>();
+
+    public PhotoLightController(@Nullable IHardwareManager hardware, Handler handler) {
+        this.hardware = hardware;
+        this.handler = handler;
+    }
+
+    /** Turn on both indicators at request acceptance, retaining existing privacy ownership. */
+    public synchronized Token prepare(boolean enabled) {
+        Token token = new Token();
+        if (!enabled || hardware == null) return token;
+        if (hardware.supportsRecordingLed() && !hardware.acquireRecordingLed(token)) {
+            // The camera's submission-time privacy gate will still reject a failed LED.
+            Log.e("PhotoLight", "Could not acquire request-time privacy light");
+            return token;
+        }
+        token.startedMs = SystemClock.uptimeMillis();
+        if (hardware.supportsRgbLed()) {
+            // BES interprets count=0 as disabled, despite the Android interface comment.
+            // Use a solid single cycle and explicitly release it at the final frame.
+            hardware.setRgbLedSolidWhite(AsgConstants.PHOTO_LIGHT_FAILSAFE_MS,
+                    RgbLedConstants.DEFAULT_BRIGHTNESS);
+        }
+        active.add(token);
+        Log.i("PhotoLight", "[PHOTO-LIGHT] paired on t_ms=" + token.startedMs);
+        return token;
+    }
+
+    /** Exposure starts do not end the indication; final JPEG availability does. */
+    public void onCaptureBoundary(Token token, String source, long exposureNs) {
+        // Keep both indicators on through the full capture, including HDR/MFNR work.
+    }
+
+    /** Final-frame and completion fallbacks share the same idempotent release. */
+    public void onCaptureBoundary(Token token, String source) {
+        finish(token);
+    }
+
+    /** End a completed or failed request after its minimum indication time. */
+    public synchronized void finish(Token token) {
+        if (!active.contains(token) || token.finishing) return;
+        token.finishing = true;
+        long remaining = Math.max(0L, AsgConstants.PHOTO_LIGHT_DURATION_MS
+                - (SystemClock.uptimeMillis() - token.startedMs));
+        if (remaining == 0L) release(token);
+        else {
+            token.release = () -> release(token);
+            handler.postDelayed(token.release, remaining);
         }
     }
 
-    @Nullable private final IHardwareManager mHardwareManager;
-    private final Handler mHandler;
-
-    public PhotoLightController(@Nullable IHardwareManager hardwareManager, Handler handler) {
-        mHardwareManager = hardwareManager;
-        mHandler = handler;
+    private synchronized void release(Token token) {
+        if (!active.remove(token)) return;
+        if (token.release != null) handler.removeCallbacks(token.release);
+        hardware.releaseRecordingLed(token);
+        if (active.isEmpty() && hardware.supportsRgbLed()
+                && !hardware.isRecordingLedOwned()) hardware.setRgbLedOff();
+        Log.i("PhotoLight", "[PHOTO-LIGHT] released t_ms=" + SystemClock.uptimeMillis());
     }
 
-    /** Prepares one capture. Disabled tokens preserve the camera-restart cooldown behavior. */
-    public Token prepare(boolean enabled) {
-        return new Token(enabled);
-    }
-
-    /** Flashes once at exposure start, or at the first later boundary when exposure is unavailable. */
-    public void onCaptureBoundary(Token token, String timingSource) {
-        onCaptureBoundary(token, timingSource, 0L);
-    }
-
-    /**
-     * Flashes once without blocking Camera2's capture callback. A known exposure duration keeps
-     * the indicator lit through long low-light captures.
-     */
-    public void onCaptureBoundary(
-            Token token, String timingSource, long estimatedExposureDurationNs) {
-        if (!token.mEnabled || !token.mTriggered.compareAndSet(false, true)) {
-            return;
-        }
-        int durationMs = lightDurationMs(estimatedExposureDurationNs);
-        mHandler.post(
-                () -> {
-                    if (mHardwareManager == null || !mHardwareManager.supportsRgbLed()) {
-                        Log.w(TAG, "RGB photo LED is not supported");
-                        return;
-                    }
-                    Log.i(
-                            TAG,
-                            "Flashing photo LED from "
-                                    + timingSource
-                                    + " for "
-                                    + durationMs
-                                    + "ms");
-                    mHardwareManager.flashRgbLedWhite(
-                            durationMs, RgbLedConstants.DEFAULT_BRIGHTNESS);
-                });
-    }
-
-    static int lightDurationMs(long estimatedExposureDurationNs) {
-        long exposureMs =
-                estimatedExposureDurationNs <= 0L
-                        ? 0L
-                        : estimatedExposureDurationNs / 1_000_000L
-                                + (estimatedExposureDurationNs % 1_000_000L == 0L ? 0L : 1L);
-        return (int)
-                Math.min(
-                        Integer.MAX_VALUE,
-                        Math.max(AsgConstants.PHOTO_LIGHT_DURATION_MS, exposureMs));
+    /** Service teardown releases every request immediately, ignoring minimum display time. */
+    public synchronized void cleanup() {
+        for (Token token : new HashSet<>(active)) release(token);
     }
 }

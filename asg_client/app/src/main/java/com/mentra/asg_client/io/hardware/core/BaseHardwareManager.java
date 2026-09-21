@@ -86,6 +86,13 @@ public class BaseHardwareManager implements IHardwareManager {
     }
 
     @Override
+    public boolean isRecordingLedOwned() {
+        synchronized (mRecordingLedOwnerLock) {
+            return !mRecordingLedOwners.isEmpty();
+        }
+    }
+
+    @Override
     public void setRecordingLedOn() {
         Log.d(TAG, "setRecordingLedOn() called - no-op on base hardware");
     }
