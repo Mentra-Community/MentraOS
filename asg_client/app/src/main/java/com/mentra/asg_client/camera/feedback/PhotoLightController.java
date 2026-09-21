@@ -14,9 +14,14 @@ import java.util.Set;
 public final class PhotoLightController {
     /** Per-request ownership prevents a completed shot from extinguishing a later shot. */
     public static final class Token {
+        private final String requestId;
         private long startedMs;
         private boolean finishing;
         private Runnable release;
+
+        private Token(String requestId) {
+            this.requestId = requestId;
+        }
     }
 
     @Nullable private final IHardwareManager hardware;
@@ -29,8 +34,8 @@ public final class PhotoLightController {
     }
 
     /** Turn on both indicators at request acceptance, retaining existing privacy ownership. */
-    public synchronized Token prepare(boolean enabled) {
-        Token token = new Token();
+    public synchronized Token prepare(String requestId, boolean enabled) {
+        Token token = new Token(requestId);
         if (!enabled || hardware == null) return token;
         if (hardware.supportsRecordingLed() && !hardware.acquireRecordingLed(token)) {
             // The camera's submission-time privacy gate will still reject a failed LED.
@@ -69,6 +74,14 @@ public final class PhotoLightController {
         else {
             token.release = () -> release(token);
             handler.postDelayed(token.release, remaining);
+        }
+    }
+
+    /** Release a timed-out job's feedback lease even when its camera callback never arrives. */
+    public synchronized void finishForTimeout(String requestId) {
+        if (requestId == null) return;
+        for (Token token : new HashSet<>(active)) {
+            if (requestId.equals(token.requestId)) finish(token);
         }
     }
 

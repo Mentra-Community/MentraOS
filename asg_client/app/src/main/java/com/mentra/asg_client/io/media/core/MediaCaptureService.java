@@ -2215,7 +2215,7 @@ public class MediaCaptureService {
         // Skip sound and flash during camera HAL restart cooldown (e.g. after FOV change)
         boolean suppressPhotoFeedback = shouldSuppressPhotoFeedback();
         final PhotoLightController.Token captureLightToken =
-                photoLightController.prepare(!suppressPhotoFeedback);
+                photoLightController.prepare(requestId, !suppressPhotoFeedback);
         PhotoFeedbackController.Token feedbackToken = null;
         if (!suppressPhotoFeedback) {
             if (effectiveSound) {
@@ -2471,7 +2471,7 @@ public class MediaCaptureService {
 
         boolean suppressPhotoFeedback = shouldSuppressPhotoFeedback();
         final PhotoLightController.Token captureLightToken =
-                photoLightController.prepare(!suppressPhotoFeedback);
+                photoLightController.prepare(requestId, !suppressPhotoFeedback);
         PhotoFeedbackController.Token feedbackToken = null;
         if (!suppressPhotoFeedback) {
             if (enableSound) {
@@ -2885,7 +2885,7 @@ public class MediaCaptureService {
 
         boolean suppressPhotoFeedback = shouldSuppressPhotoFeedback();
         final PhotoLightController.Token captureLightToken =
-                photoLightController.prepare(!suppressPhotoFeedback);
+                photoLightController.prepare(requestId, !suppressPhotoFeedback);
         PhotoFeedbackController.Token feedbackToken = null;
         try {
             // Skip sound and flash during camera HAL restart cooldown (e.g. after FOV change)
@@ -3247,6 +3247,7 @@ public class MediaCaptureService {
                                 captureSafetyTimeoutRequestId = null;
                             }
                         }
+                        photoLightController.finishForTimeout(requestId);
                         photoFeedbackController.stopForTimeout(requestId);
                         Log.e(
                                 TAG,
@@ -5218,7 +5219,7 @@ public class MediaCaptureService {
         // Skip sound and flash during camera HAL restart cooldown (e.g. after FOV change)
         boolean suppressPhotoFeedback = shouldSuppressPhotoFeedback();
         final PhotoLightController.Token captureLightToken =
-                photoLightController.prepare(!suppressPhotoFeedback);
+                photoLightController.prepare(requestId, !suppressPhotoFeedback);
         PhotoFeedbackController.Token feedbackToken = null;
         if (!suppressPhotoFeedback) {
             if (enableSound) {
