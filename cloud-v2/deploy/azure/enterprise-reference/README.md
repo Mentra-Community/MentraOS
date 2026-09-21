@@ -125,3 +125,20 @@ ACS, the customer workspace, and customer Core remain expected egress.
 
 This qualifies private infrastructure and restricted networking; it is not a
 literal zero-internet air-gapped profile.
+
+## Mentra Call
+
+The reference manifest pins Mentra Call 2.1.26. Its ZIP is included in the Runtime
+image under `miniapps/` and is byte-identical to the Mentra App's bundled ZIP.
+The coordinated deployment passes that managed list to Bicep and verifies the
+served bundle's SHA-256. Updating Call requires updating both copies and the pin.
+
+Use the matching Mentra App native build from this change, then re-select the
+workspace to refresh an already cached deployment manifest. Call uses the selected
+Runtime for credentials and a direct glasses link for media. It prefers the Entra
+Teams identity and automatically uses guest mode for an absent identity or a
+confirmed missing Teams license; the call screen reports the selected mode.
+Existing consumer clients continue using the existing Call backend routes.
+
+Before releasing, qualify licensed and unlicensed joins on both Android and iOS,
+including lobby admission, remote identity, two-way audio/video and cancellation.

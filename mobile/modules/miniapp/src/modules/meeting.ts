@@ -1,9 +1,8 @@
 /**
  * @fileoverview MeetingModule — phone-native meeting (ACS Teams).
  *
- * V1 token pass-through is deliberate technical debt (identity ticket):
- * later, join(meetingUrl, whepUrl) and the host fetches the credential from
- * Porter. Miniapps must not persist the token.
+ * Workspace credentials belong to the host. Consumer token pass-through remains
+ * available for older hosts and Call backends. Never persist credentials.
  */
 
 import {MiniappErrorCode, MiniappRequestType} from "../protocol"
@@ -102,8 +101,8 @@ export interface MeetingJoinOptions {
   provider: MeetingProvider
   meetingUrl: string
   videoSource: MeetingVideoSource
-  /** V1-only: Porter-minted ACS guest token. Do not persist. */
-  token: string
+  /** Legacy consumer credential. Omit when getConfiguration().credentialSource is runtime. */
+  token?: string
   displayName?: string
   video?: MeetingOutgoingVideo
   origin?: MeetingOrigin
@@ -121,7 +120,21 @@ export interface MeetingParticipant {
   isSpeaking: boolean
 }
 
+export type MeetingIdentityMode = "guest" | "teams-user"
+export type MeetingGuestReason = "no-entra-identity" | "teams-license-unavailable" | "legacy-credential"
+
+/** Host policy; this contains no credentials or deployment endpoints. */
+export interface MeetingConfiguration {
+  enabled: boolean
+  credentialSource: "runtime" | "miniapp"
+  externalBackendAllowed: boolean
+  managedStreams: boolean
+}
+
 export interface MeetingState {
+  /** Omitted by older hosts. Tokens never cross this boundary. */
+  identityMode?: MeetingIdentityMode
+  guestReason?: MeetingGuestReason
   state: MeetingPhase
   muted: boolean
   error?: string
@@ -386,9 +399,7 @@ export class MeetingModule {
       throw {code: MiniappErrorCode.INVALID_ARGUMENT, message: "meetingUrl is required"}
     }
     const videoSource = validateMeetingVideoSource(options.videoSource)
-    if (!options.token?.trim()) {
-      throw {code: MiniappErrorCode.INVALID_ARGUMENT, message: "token is required"}
-    }
+
     try {
       const result = await this.session.sendRequest<MeetingState | null>(
         {
@@ -396,7 +407,7 @@ export class MeetingModule {
           provider: options.provider,
           meetingUrl: options.meetingUrl,
           videoSource,
-          token: options.token,
+          ...(options.token ? {token: options.token} : {}),
           displayName: options.displayName,
           ...(options.origin ? {origin: options.origin} : {}),
           ...(options.video ? {video: options.video} : {}),
@@ -408,6 +419,11 @@ export class MeetingModule {
     } catch (error) {
       mapHostError(error)
     }
+  }
+
+  /** Query before using a separate Call backend. Older hosts return NOT_IMPLEMENTED. */
+  async getConfiguration(): Promise<MeetingConfiguration> {
+    return this.session.sendRequest<MeetingConfiguration>({type: MiniappRequestType.MEETING_GET_CONFIGURATION})
   }
 
   async leave(): Promise<void> {
@@ -502,6 +518,9 @@ export class MeetingModule {
   /** @internal — applied by MiniappSession on inbound MEETING_STATE. */
   _applyState(event: MeetingState): void {
     this._state = {
+      identityMode:
+        event.identityMode === "guest" || event.identityMode === "teams-user" ? event.identityMode : undefined,
+      guestReason: event.identityMode === "guest" ? event.guestReason : undefined,
       state: event.state,
       muted: Boolean(event.muted),
       error: event.error,

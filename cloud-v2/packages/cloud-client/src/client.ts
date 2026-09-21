@@ -33,6 +33,7 @@ import {RuntimeEmitter} from "./modules/runtime/emitter"
 import {Subscriptions} from "./modules/runtime/subscriptions"
 import {Camera} from "./modules/runtime/camera"
 import {Maps} from "./modules/runtime/maps"
+import {Meetings} from "./modules/runtime/meetings"
 import {Tts} from "./modules/runtime/tts"
 import {UdpAudio} from "./modules/runtime/audio-udp"
 import {Core} from "./modules/core/core"
@@ -247,6 +248,7 @@ export class CloudClient {
       camera,
       tts,
       maps,
+      meetings: new Meetings(runtimeHttp),
       audio,
       timers,
       logger,

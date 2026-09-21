@@ -138,6 +138,38 @@ function fakeNative() {
 }
 
 describe("AcsMeetingService", () => {
+  for (const identity of [
+    {identityMode: "teams-user" as const},
+    {identityMode: "guest" as const, guestReason: "teams-license-unavailable" as const},
+  ]) test(`preserves ${identity.identityMode} identity across joins, state reads and native events`, async () => {
+    const native = {...fakeNative(), supportsTeamsIdentity: () => true}
+    setAcsMeetingNativeForTests(native)
+    const seen: unknown[] = []
+    acsMeetingService.setStateHandler((_pkg, state) => seen.push(state))
+    const state = await acsMeetingService.join("com.mentra.call", {
+      meetingUrl: "https://teams.microsoft.com/l/meetup-join/x", token: "host-token", identity,
+      videoSource: {type: "whep", url: "https://example.com/whep"},
+    })
+    expect(native.join).toHaveBeenCalledWith(expect.objectContaining({identityMode: identity.identityMode}))
+    expect(state).toMatchObject(identity)
+    expect(await acsMeetingService.readState("com.mentra.call")).toMatchObject(identity)
+    native.emit("onState", {state: "connected", muted: true})
+    expect(seen.at(-1)).toMatchObject({...identity, muted: true})
+    acsMeetingService.setStateHandler(() => {})
+  })
+
+  test("does not hand employee credentials to a guest-only native binary", async () => {
+    const native = fakeNative()
+    setAcsMeetingNativeForTests(native)
+    await expect(acsMeetingService.join("com.mentra.call", {
+      meetingUrl: "https://teams.microsoft.com/l/meetup-join/x", token: "employee-token",
+      identity: {identityMode: "teams-user"},
+      videoSource: {type: "whep", url: "https://example.com/whep"},
+    })).rejects.toThrow("Update the Mentra App")
+    expect(native.join).not.toHaveBeenCalled()
+    expect(acsMeetingService.ownerPackage()).toBeNull()
+  })
+
   test("admission is owner-scoped and a rejected admission leaves the call intact", async () => {
     const admitParticipant = mock(async () => {throw new Error("not allowed")})
     const native = {...fakeNative(), admitParticipant}
