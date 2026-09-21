@@ -1173,6 +1173,7 @@ const en = {
       "Couldn't start connecting to your {{glassesModel}}. Please make sure Bluetooth is turned on and try again.",
   },
   common: {
+    miniappUiUnavailable: "This miniapp has no page to display. You can minimize or close it.",
     ok: "OK",
     no: "No",
     cancel: "Cancel",
