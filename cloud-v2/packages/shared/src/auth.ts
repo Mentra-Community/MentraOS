@@ -7,7 +7,7 @@
  * actual revocation surface is the refresh token, which core owns.
  *
  * Both Mentra-issued private and public keys are PEM bodies (base64, no
- * BEGIN/END wrapper) in env. See cloud-v2/docs/issues/001-oem-auth/design.md
+ * BEGIN/END wrapper) in env. See https://github.com/Mentra-Community/Mentra-Specs/blob/main/INDEX.md
  * "Mentra-issued access token" for the claim shape.
  */
 

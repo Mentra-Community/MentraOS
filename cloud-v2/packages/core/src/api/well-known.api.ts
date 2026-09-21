@@ -14,7 +14,7 @@
  * This endpoint is public and unauthenticated by design: a JWKS only ever
  * exposes public halves, and any verifier must be able to fetch it.
  *
- * Spec: docs/issues/001-cloud-core/auth/spec.md ("GET /.well-known/jwks.json",
+ * Spec: https://github.com/Mentra-Community/Mentra-Specs/blob/main/cloud/core/auth/spec.md ("GET /.well-known/jwks.json",
  *       "Signing keys")
  */
 

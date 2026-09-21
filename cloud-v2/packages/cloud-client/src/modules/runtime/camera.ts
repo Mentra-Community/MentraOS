@@ -13,8 +13,8 @@
  * stream is fully answered by the REST response, so it just returns the
  * provisioned coordinates.
  *
- * See docs/issues/002-cloud-runtime/camera/spec.md and
- * docs/issues/004-cloud-client/design.md ("Camera").
+ * See https://github.com/Mentra-Community/Mentra-Specs/blob/main/cloud/runtime/camera/spec.md and
+ * https://github.com/Mentra-Community/Mentra-Specs/blob/main/sdk/cloud-client/design.md ("Camera").
  */
 import type { HttpClient } from "../../http";
 import { systemTimers, type CloudClientTimers } from "../../timers";

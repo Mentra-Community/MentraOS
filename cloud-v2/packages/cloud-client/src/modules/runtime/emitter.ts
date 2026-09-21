@@ -7,7 +7,7 @@
  * Keying by an event map (`RuntimeEvents`) means event names are checked by the
  * compiler and payloads are typed, so there are no magic strings to mistype.
  *
- * See docs/issues/004-cloud-client/design.md ("src/modules/runtime/emitter.ts").
+ * See https://github.com/Mentra-Community/Mentra-Specs/blob/main/sdk/cloud-client/design.md ("src/modules/runtime/emitter.ts").
  */
 import type {
   TranscriptionData,

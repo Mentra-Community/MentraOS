@@ -4,7 +4,7 @@
 // JSC memory-spike harness for ongoing measurements on new hardware
 // tiers (the WebView-jetsam experiment that settled the architecture
 // decision lived here previously — see
-// agents/spike-results/jsc-spike-iphone15-release-50ctx.log).
+// https://github.com/Mentra-Community/Mentra-Specs/blob/main/sdk/miniapp/runtime-isolation/assets/jsc-spike-iphone15-release-50ctx.log).
 
 import {useEffect} from "react"
 import {ScrollView, View, Text} from "react-native"

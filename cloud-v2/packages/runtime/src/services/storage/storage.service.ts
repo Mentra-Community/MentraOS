@@ -21,8 +21,8 @@
  *     OSS's S3 endpoint) via Bun's native S3 client. The byte path goes straight
  *     to the provider; completion arrives via the event webhook.
  *
- * See docs/issues/002-cloud-runtime/camera/spec.md and
- * docs/issues/001-cloud-core/storage-service/.
+ * See https://github.com/Mentra-Community/Mentra-Specs/blob/main/cloud/runtime/camera/spec.md and
+ * https://github.com/Mentra-Community/Mentra-Specs/blob/main/cloud/core/storage-service/README.md.
  */
 
 import { createLocalProvider } from "./providers/local.provider";

@@ -5,7 +5,7 @@
  * (`react-native`, `node`) supply `transports` for you, so a host using one of
  * those imports passes everything here except `transports`.
  *
- * See docs/issues/004-cloud-client/spec.md ("Construction") and design.md.
+ * See https://github.com/Mentra-Community/Mentra-Specs/blob/main/sdk/cloud-client/spec.md ("Construction") and design.md.
  */
 import type {Logger} from "./logger"
 import type {CloudClientTransports} from "./transports"

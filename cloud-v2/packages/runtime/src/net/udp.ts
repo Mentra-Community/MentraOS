@@ -19,7 +19,7 @@
  * to the user's stream. Pod A's dispatch loop will then consume it (when
  * dispatch lands).
  *
- * Spec: docs/issues/003-audio/design.md ("UDP ingress")
+ * Spec: https://github.com/Mentra-Community/Mentra-Specs/blob/main/INDEX.md ("UDP ingress")
  */
 
 import type { udp } from "bun";

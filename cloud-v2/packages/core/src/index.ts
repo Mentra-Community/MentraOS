@@ -13,7 +13,7 @@
  * `bun packages/core/src/index.ts`, the `import.meta.main` block at the
  * bottom drives the boot from env vars.
  *
- * Specs: cloud-v2/docs/issues/001-oem-auth/, 002-oem-portal/, miniapp store work.
+ * Specs: https://github.com/Mentra-Community/Mentra-Specs/blob/main/INDEX.md, 002-oem-portal/, miniapp store work.
  */
 
 import {createLogger} from "@mentra/cloud-shared"

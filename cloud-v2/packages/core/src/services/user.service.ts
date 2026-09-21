@@ -6,7 +6,7 @@
  * mint a new one. Created on first sight during token exchange; thereafter
  * reused for every session that user opens under that OEM.
  *
- * Spec: docs/issues/001-oem-auth/design.md ("Lifecycles" / "Issue session" step 6)
+ * Spec: https://github.com/Mentra-Community/Mentra-Specs/blob/main/INDEX.md ("Lifecycles" / "Issue session" step 6)
  */
 
 import { ulid } from "ulid";

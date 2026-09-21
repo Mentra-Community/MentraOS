@@ -2,7 +2,7 @@
 #
 # This is also the TEMPLATE for other environments: clone it and replace
 # cloud-debug with cloud-<env> in metadata.name, metadata.labels, and
-# spec.selector. Full steps: docs/runbooks/deploy/udp-nlb-aws.md.
+# spec.selector. Full steps: https://github.com/Mentra-Community/Mentra-Specs/blob/main/operations/cloud/deploy/udp-nlb-aws.md.
 #
 # Apply after the Porter app exists, with DIRECT kubectl (aws eks
 # update-kubeconfig first; `porter kubectl` is read-only and cannot create

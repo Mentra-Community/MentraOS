@@ -12,9 +12,9 @@
  *     auto-reply with synthetic results for any request that needs one.
  *   - Does NOT emit any glasses events. Subscribing succeeds silently.
  *
- * This is the Stage-1 stopgap from `agents/miniapp-quick-fixes-spec.md` #6.
+ * This is the Stage-1 stopgap from `https://github.com/Mentra-Community/Mentra-Specs/blob/main/sdk/miniapp/miniapp-quick-fixes/spec.md` #6.
  * The full simulator (event injection, glasses-display preview, hardware bridge)
- * is Stage 2 — see `agents/miniapp-browser-testing-simulator-spec.md`.
+ * is Stage 2 — see `https://github.com/Mentra-Community/Mentra-Specs/blob/main/sdk/miniapp/miniapp-browser-testing-simulator/spec.md`.
  */
 
 import {parseEnvelope, serializeEnvelope, type MiniappEnvelope} from "../envelope"

@@ -11,7 +11,7 @@
  * `@mentra/cloud-protocol` directly, so there is one source of truth and
  * the client cannot drift from what the cloud accepts.
  *
- * See docs/issues/004-cloud-client/spec.md and design.md.
+ * See https://github.com/Mentra-Community/Mentra-Specs/blob/main/sdk/cloud-client/spec.md and design.md.
  */
 
 // The top-level object. Implemented in ./client by the client agent; re-exported

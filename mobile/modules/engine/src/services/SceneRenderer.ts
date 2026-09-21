@@ -8,7 +8,7 @@
  * devices that can't position elements.
  *
  * Everything device-specific here is DATA (capability fields, display profile);
- * the code paths are generic. Spec: notes/miniapp-display-render-implementation-spec.md
+ * the code paths are generic. Spec: https://github.com/Mentra-Community/Mentra-Specs/blob/main/sdk/miniapp/miniapp-display-render-implementation/spec.md
  */
 
 import displayProcessor from "./DisplayProcessor"

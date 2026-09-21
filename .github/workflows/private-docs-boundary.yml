@@ -1,0 +1,20 @@
+name: Private Documentation Boundary
+
+on:
+  pull_request:
+  push:
+    branches: [dev]
+
+permissions:
+  contents: read
+
+jobs:
+  check:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: node --test scripts/check-private-docs.test.mjs
+      - run: node scripts/check-private-docs.mjs

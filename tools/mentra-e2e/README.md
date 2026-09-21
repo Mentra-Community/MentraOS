@@ -1,6 +1,6 @@
 # Mentra App E2E harness
 
-Start with the [English coverage checklist](ROUTINE.md), [exact compiled routine](COMPILED-ROUTINE.md), [design and technology choices](../../notes/superpowers/specs/2026-09-15-mentra-app-e2e-harness.md), [accessibility contract](ACCESSIBILITY.md), and [Mac Mini setup](SETUP.md).
+Start with the [English coverage checklist](ROUTINE.md), [exact compiled routine](COMPILED-ROUTINE.md), [design and technology choices](https://github.com/Mentra-Community/Mentra-Specs/blob/main/platform/testing/mentra-app-e2e-harness/spec.md), [accessibility contract](ACCESSIBILITY.md), and [Mac Mini setup](SETUP.md).
 
 To review a recording in an embedded browser, serve its report over localhost:
 
@@ -135,7 +135,7 @@ bun run compile
 bun run test --runInBand --runTestsByPath src/components/home/AppSwitcherButton.accessibility.test.tsx src/constants/miniapps.test.ts
 ```
 
-The native rejection checks, redaction test, mobile type check, four mobile tests, and signed local Release build have passed during development. See the [implementation plan](../../notes/superpowers/plans/2026-09-15-mentra-app-e2e-harness.md) for remaining qualification and known limits. This lane does not qualify physical glasses, Phone Mode, iPhone background operation, or a headless Mac Mini.
+The native rejection checks, redaction test, mobile type check, four mobile tests, and signed local Release build have passed during development. See the [implementation plan](https://github.com/Mentra-Community/Mentra-Specs/blob/main/platform/testing/mentra-app-e2e-harness/plan.md) for remaining qualification and known limits. This lane does not qualify physical glasses, Phone Mode, iPhone background operation, or a headless Mac Mini.
 
 For three unattended repetitions with one hidden credential prompt:
 

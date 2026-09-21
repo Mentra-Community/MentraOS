@@ -22,8 +22,8 @@
  * Security: the access token is never written to storage, never given to a
  * miniapp, and no token is ever logged.
  *
- * See docs/issues/004-cloud-client/spec.md ("cloud.auth"), design.md, and
- * docs/issues/001-cloud-core/auth/spec.md (endpoints + token shapes).
+ * See https://github.com/Mentra-Community/Mentra-Specs/blob/main/sdk/cloud-client/spec.md ("cloud.auth"), design.md, and
+ * https://github.com/Mentra-Community/Mentra-Specs/blob/main/cloud/core/auth/spec.md (endpoints + token shapes).
  */
 import type {AuthConfig, CoreAuthConfig, RuntimeAuthConfig, SubjectTokenType} from "../../config"
 import type {HttpClient} from "../../http"

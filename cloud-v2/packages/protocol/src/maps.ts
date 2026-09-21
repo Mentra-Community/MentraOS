@@ -13,7 +13,7 @@
  * NEUTRAL types; each provider (Mapbox, Google) normalizes its own response into
  * these inside its provider file, so this contract never leaks a vendor's shape.
  *
- * See docs/issues/002-cloud-runtime/maps/spec.md.
+ * See https://github.com/Mentra-Community/Mentra-Specs/blob/main/INDEX.md.
  */
 import { z } from "zod";
 

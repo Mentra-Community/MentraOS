@@ -211,8 +211,8 @@ fi
 need_step="
 4b. Also evaluate whether the change is needed or desirable at all, independently of its quality:
    what problem it solves and whether that problem is real for this project, whether the
-   repository already has or is moving toward a different solution (check AGENTS.md, notes/,
-   agents/, docs and recent commits on the base branch), whether the added surface area,
+   repository already has or is moving toward a different solution (check AGENTS.md, the private spec workflow it links, public
+   docs and recent commits on the base branch), whether the added surface area,
    dependencies or maintenance burden are justified by the benefit, and whether a smaller change
    would do. State your conclusion explicitly in the review body under a heading \"Is this change
    needed?\" and let it weigh in the verdict: a clean implementation of an unneeded or undesirable
@@ -241,7 +241,10 @@ Do the following, in order:
    behaviour.${need_step}
 5. You may run cheap local tests or compile checks in the touched packages if they help you decide,
    but do not spend more than a few minutes on builds.
-6. Do NOT edit any files, do NOT commit, and do NOT push.
+6. Do NOT edit any files, do NOT commit, and do NOT push. Read private specs through
+   authenticated access when available; report an access gap instead of inventing requirements.
+   Never reproduce confidential spec or customer/business content in the public review.
+   Explain public code findings and link the private document when needed.
 7. Finish by posting your verdict on the PR itself using exactly one of:
    \`gh pr review ${pr} -R ${slug} --approve --body "<body>"\` or
    \`gh pr review ${pr} -R ${slug} --request-changes --body "<body>"\`.

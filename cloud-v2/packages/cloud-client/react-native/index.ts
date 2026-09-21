@@ -10,7 +10,7 @@
  * neither). The host wires them once at startup via `setNativeUdp` and
  * `setSecureStorage`, which are re-exported here for convenience.
  *
- * See docs/issues/004-cloud-client/design.md ("react-native/index.ts").
+ * See https://github.com/Mentra-Community/Mentra-Specs/blob/main/sdk/cloud-client/design.md ("react-native/index.ts").
  */
 import { CloudClient as Base } from "@mentra/cloud-client";
 import type { CloudClientConfig } from "@mentra/cloud-client";

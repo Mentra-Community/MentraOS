@@ -8,7 +8,7 @@
  * crypto knowledge.
  *
  * Frame layout (big-endian header, see
- * docs/issues/002-cloud-runtime/audio/wire.md "UDP audio frames"):
+ * https://github.com/Mentra-Community/Mentra-Specs/blob/main/cloud/runtime/audio/wire.md "UDP audio frames"):
  *
  *   offset 0   u32   sessionTag   (routes the datagram to the right session)
  *   offset 4   u16   seq          (per-session packet counter)

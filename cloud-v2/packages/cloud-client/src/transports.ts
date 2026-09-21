@@ -7,7 +7,7 @@
  * runs on the device and in a Node/Bun test harness. The `react-native` and
  * `node` wrappers each supply concrete implementations.
  *
- * See docs/issues/004-cloud-client/spec.md ("Construction") and design.md.
+ * See https://github.com/Mentra-Community/Mentra-Specs/blob/main/sdk/cloud-client/spec.md ("Construction") and design.md.
  */
 
 /**

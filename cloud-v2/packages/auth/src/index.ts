@@ -5,7 +5,7 @@ import * as jose from "jose";
  * A miniapp token is signed by exactly one environment, but environments reuse
  * the same `kid`s with different key material, so we cannot pick the right key
  * by `kid` alone. Verification tries each endpoint in order and accepts the
- * first whose key validates the signature. See docs/issues/017.
+ * first whose key validates the signature. See https://github.com/Mentra-Community/Mentra-Specs/blob/main/INDEX.md.
  */
 export const MENTRA_JWKS_URLS = [
   "https://core.mentraglass.com/.well-known/jwks.json", // prod

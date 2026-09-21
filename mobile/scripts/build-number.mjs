@@ -1,7 +1,7 @@
 // Single source of truth for build numbers across iOS and Android.
 //
 // Every build number belongs to the release family of the checkout (see
-// notes/superpowers/specs/2026-09-14-family-build-numbers.md):
+// https://github.com/Mentra-Community/Mentra-Specs/blob/main/platform/releases/family-build-numbers/spec.md):
 //
 //   MAJOR × 100,000,000 + MINOR × 1,000,000 + PATCH × 10,000 + sequence
 //

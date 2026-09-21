@@ -11,7 +11,7 @@
  * since after that point the token fails the `exp` check on its own and the
  * blacklist entry is redundant.
  *
- * Spec: docs/issues/001-oem-auth/design.md ("Data model" / "revokedJtis")
+ * Spec: https://github.com/Mentra-Community/Mentra-Specs/blob/main/INDEX.md ("Data model" / "revokedJtis")
  */
 
 import { Schema, type InferSchemaType } from "mongoose";

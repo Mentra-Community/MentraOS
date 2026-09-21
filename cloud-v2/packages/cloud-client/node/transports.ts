@@ -8,7 +8,7 @@
  * storage. Nothing here knows about the protocol or the modules above; it only
  * adapts socket and storage shapes.
  *
- * See docs/issues/004-cloud-client/design.md ("node/transports.ts" and "The
+ * See https://github.com/Mentra-Community/Mentra-Specs/blob/main/sdk/cloud-client/design.md ("node/transports.ts" and "The
  * pieces passed in per platform").
  */
 import WebSocket from "ws";

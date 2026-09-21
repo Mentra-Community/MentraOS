@@ -1,7 +1,7 @@
 /**
  * @fileoverview The transport envelope shared by every WebSocket message.
  *
- * Mirrors docs/issues/002-cloud-runtime/protocol.md ("Envelope"). Pure +
+ * Mirrors https://github.com/Mentra-Community/Mentra-Specs/blob/main/cloud/runtime/protocol.md ("Envelope"). Pure +
  * isomorphic: no server imports.
  */
 import { z } from "zod";

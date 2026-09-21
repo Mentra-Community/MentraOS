@@ -10,7 +10,7 @@
  *
  * Provider is chosen by `STREAM_PROVIDER` (default "cloudflare").
  *
- * Spec: docs/issues/002-cloud-runtime/camera/spec.md ("Managed stream").
+ * Spec: https://github.com/Mentra-Community/Mentra-Specs/blob/main/cloud/runtime/camera/spec.md ("Managed stream").
  */
 
 import type { ManagedStream, StreamOptions, StreamStatusResult } from "@mentra/cloud-protocol/camera";

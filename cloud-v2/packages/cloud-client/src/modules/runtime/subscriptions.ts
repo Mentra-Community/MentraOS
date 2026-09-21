@@ -13,8 +13,8 @@
  *   - `sessionId`: tied to the current session from `connection.ack`, so a write
  *     from a stale session is ignored by the cloud.
  *
- * See docs/issues/002-cloud-runtime/audio/wire.md ("Subscription REST endpoint")
- * and docs/issues/004-cloud-client/design.md ("Subscriptions").
+ * See https://github.com/Mentra-Community/Mentra-Specs/blob/main/cloud/runtime/audio/wire.md ("Subscription REST endpoint")
+ * and https://github.com/Mentra-Community/Mentra-Specs/blob/main/sdk/cloud-client/design.md ("Subscriptions").
  */
 import type { HttpClient } from "../../http";
 import { systemTimers, type CloudClientTimers } from "../../timers";

@@ -17,9 +17,6 @@ cloud-v2/
 │   ├── audio/     Audio Stack (UDP ingress, workers, transcription/translation)
 │   ├── proxy/     Forwarder / reverse proxy (OEM-deployable)
 │   └── shared/    Types, config, observability primitives
-├── docs/
-│   ├── issues/    Spec + design per work item (see cloud-v2/docs/issues/)
-│   └── ...        runbooks, architecture, protocols, deployment (TBD)
 ├── test/          Cross-package integration, TEST OEM, e2e suite (TBD)
 ├── deploy/        K8s, Helm, Porter, Docker (TBD)
 ├── scripts/       bun-based dev tooling (setup, etc.)
@@ -63,9 +60,7 @@ Iteration: save a file, Bun restarts the affected package in well under a second
 
 - [Mentra Private Deployment contract](./deploy/private-deployment.md) —
   portable OCI image, configuration, manifest, health, and verification contract
-- [`docs/issues/`](./docs/issues/) — spec + design per work item
-  - [001-oem-auth](./docs/issues/001-oem-auth/) — runtime OEM auth (JWT exchange)
-  - [002-oem-portal](./docs/issues/002-oem-portal/) — OEM admin portal (planning)
-  - [003-audio](./docs/issues/003-audio/) — audio path architecture
+- [Internal specs and designs](https://github.com/Mentra-Community/Mentra-Specs/blob/main/INDEX.md#cloud) and [cloud operations](https://github.com/Mentra-Community/Mentra-Specs/blob/main/operations/cloud/README.md) (private)
+- [Shared spec workflow](https://github.com/Mentra-Community/Mentra-Specs/blob/main/AGENTS.md) — read before creating or implementing internal specs
 - Linear project: [Cloud V2](https://linear.app/mentralabs/project/cloud-v2-3bd87f2acfdc)
 - Tracking PR: [#2766](https://github.com/Mentra-Community/MentraOS/pull/2766)

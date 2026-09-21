@@ -12,7 +12,7 @@
  * reconnect/backoff settings (so the live socket's timing is tuned here, not
  * scattered across the runtime internals).
  *
- * See docs/issues/004-cloud-client/design.md ("The top-level CloudClient").
+ * See https://github.com/Mentra-Community/Mentra-Specs/blob/main/sdk/cloud-client/design.md ("The top-level CloudClient").
  */
 import {noopLogger} from "./logger"
 import type {Logger} from "./logger"

@@ -18,7 +18,7 @@
  * targets the user's WS on this pod; cross-pod push routing lands with the same
  * work the audio path needs.
  *
- * Spec: docs/issues/002-cloud-runtime/camera/spec.md.
+ * Spec: https://github.com/Mentra-Community/Mentra-Specs/blob/main/cloud/runtime/camera/spec.md.
  */
 
 import { ulid } from "ulid";

@@ -1,7 +1,7 @@
 /**
  * @fileoverview Control payloads: control.ping and control.pong.
  *
- * Mirrors docs/issues/002-cloud-runtime/protocol.md ("Control"). Liveness and
+ * Mirrors https://github.com/Mentra-Community/Mentra-Specs/blob/main/cloud/runtime/protocol.md ("Control"). Liveness and
  * RTT, separate from the WebSocket ping frame. Pure + isomorphic.
  */
 import { z } from "zod";

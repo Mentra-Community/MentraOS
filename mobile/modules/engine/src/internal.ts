@@ -11,7 +11,7 @@
  *
  * Every `/internal` import in mobile/src is counted (report-only) by
  * scripts/check-mobile-runtime-boundary.sh; the burn-down plan is
- * cloud-v2/docs/issues/020-glasses-status-boundary/integration-review.md §D.
+ * https://github.com/Mentra-Community/Mentra-Specs/blob/main/mobile/engine/glasses-status-boundary/integration-review.md §D.
  * Types that only describe these internal surfaces live here with them;
  * types host UI renders with stay on the main entry.
  */

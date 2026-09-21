@@ -4,7 +4,7 @@ Android application that runs on Android-based smart glasses like Mentra Live. P
 
 ## Required Mentra Live Reference
 
-Before working on any code, docs, tests, or behavior under `asg_client`, read and apply [`docs/mentra-live-spec.md`](docs/mentra-live-spec.md). That spec is the standing product/platform reference for what Mentra Live is, its supported features, and how the glasses are expected to work. Keep it updated when product-level Mentra Live behavior changes.
+Before working on any code, docs, tests, or behavior under `asg_client`, read the [private Mentra Live product spec](https://github.com/Mentra-Community/Mentra-Specs/blob/main/hardware/live/product/spec.md). Keep it updated when product-level behavior changes. First fetch and read the [shared spec workflow](https://github.com/Mentra-Community/Mentra-Specs/blob/main/AGENTS.md), following the [root access instructions](../AGENTS.md#internal-specs-and-design-docs). If access is unavailable, report the limitation and continue only independently supported work.
 
 ## Compatible Devices
 
@@ -132,7 +132,7 @@ asg_client/
 │   ├── utils/          # Utility classes
 │   ├── di/             # Dependency injection
 │   └── receiver/       # Broadcast receivers
-├── docs/               # ASG documentation, including feature docs and agent scratchpad
+├── docs/               # ASG documentation, public feature and API references
 ├── StreamPackLite/     # RTMP streaming library (git submodule)
 ├── credentials/        # Debug keystore (not committed)
 ├── AGENTS.md           # Development guide
@@ -203,7 +203,7 @@ Examples already in that file: `ENABLE_PHOTO_TIMING_LOGS`, `ENABLE_GRAYSCALE_BLE
 - **docs/features/bes-ota.md** - BES OTA update system
 - **docs/features/camera-web-server.md** - Camera web server documentation, including the `/api/delete-files` endpoint
 - **docs/ASG_CLIENT_API.md** - ASG command surface, including audio and RGB LED commands
-- **docs/agents/PHOTO_TESTING_GUIDE.md** - Photo capture testing guide
+- [Private photo capture testing guide](https://github.com/Mentra-Community/Mentra-Specs/blob/main/hardware/live/photo-testing-guide/research.md)
 - **docs/features/led-control.md** - K900 local LED and RGB LED control details
 - **app/src/main/java/com/mentra/asg_client/reporting/SENTRY_CONFIGURATION.md** - Sentry error reporting setup
 - **app/src/main/java/com/mentra/asg_client/reporting/README.md** - Comprehensive reporting system guide

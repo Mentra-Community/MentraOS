@@ -11,7 +11,7 @@
  * 2. Merges columns line-by-line with pixel-precise space padding
  * 3. Returns a single pre-composed string ready for native to chunk & send
  *
- * @see notes/miniapp-display-api-redesign.md for the current display design
+ * @see https://github.com/Mentra-Community/Mentra-Specs/blob/main/sdk/miniapp/miniapp-display-api-redesign/research.md for the current display design
  */
 
 import type { DisplayProfile } from "../profiles/types";

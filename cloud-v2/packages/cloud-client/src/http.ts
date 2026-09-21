@@ -10,7 +10,7 @@
  * Uses the global `fetch`, which exists on both a modern phone and a modern
  * server, so REST needs no platform input (unlike sockets and storage).
  *
- * See docs/issues/004-cloud-client/design.md ("The shared HTTP helper").
+ * See https://github.com/Mentra-Community/Mentra-Specs/blob/main/sdk/cloud-client/design.md ("The shared HTTP helper").
  */
 import { HttpError } from "./errors";
 import type { Logger } from "./logger";

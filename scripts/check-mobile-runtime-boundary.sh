@@ -50,7 +50,7 @@ echo "mobile runtime boundary check passed ($(wc -l <"$TMP_ACTUAL" | tr -d ' ') 
 
 # ---------------------------------------------------------------------------
 # Report-only patterns (next boundary campaigns; see
-# cloud-v2/docs/issues/020-glasses-status-boundary/integration-review.md §D/§F).
+# https://github.com/Mentra-Community/Mentra-Specs/blob/main/mobile/engine/glasses-status-boundary/integration-review.md §D/§F).
 # These do NOT fail the check yet — they measure the burn-down surface. Turn
 # each into a failing pattern above once its migration completes.
 # ---------------------------------------------------------------------------

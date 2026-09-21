@@ -37,8 +37,8 @@
  *      ever leaves us `closed`, not host-closed, with no reconnect pending. Even
  *      if reasoning (1) misses a case, the watchdog guarantees we never sit dead.
  *
- * See docs/issues/004-cloud-client/design.md ("src/modules/runtime/connection.ts")
- * and docs/issues/002-cloud-runtime/protocol.md (envelope, handshake, control).
+ * See https://github.com/Mentra-Community/Mentra-Specs/blob/main/sdk/cloud-client/design.md ("src/modules/runtime/connection.ts")
+ * and https://github.com/Mentra-Community/Mentra-Specs/blob/main/cloud/runtime/protocol.md (envelope, handshake, control).
  */
 import {
   PROTOCOL_MAJOR,

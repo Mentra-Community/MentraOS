@@ -14,7 +14,7 @@
  *     provider (Soniox) accepts as language hints. Passing a BCP-47 tag kills
  *     the session with "Invalid language hint." (verified live 2026-07-21).
  *
- * Design doc: docs/issues/021-typed-language-subscriptions/README.md
+ * Design doc: https://github.com/Mentra-Community/Mentra-Specs/blob/main/sdk/miniapp/typed-language-subscriptions/README.md
  */
 
 /**

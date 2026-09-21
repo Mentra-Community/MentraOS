@@ -11,7 +11,7 @@
  * Programmatic boot: `startTestOem({ port, tenantId })` — used by integration
  * tests so they can drive the OEM-side of the handshake in-process.
  *
- * Spec: docs/issues/001-oem-auth/design.md ("TEST OEM")
+ * Spec: https://github.com/Mentra-Community/Mentra-Specs/blob/main/INDEX.md ("TEST OEM")
  */
 
 import { loadKeypair, type TestOemKeypair } from "./keypair";

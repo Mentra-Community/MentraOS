@@ -111,7 +111,7 @@ runtime registry to violate.
 
 ## See also
 
-- [transport architecture](../agents/mentrajs-two-layer-miniapp-architecture.md)
+- [transport architecture](https://github.com/Mentra-Community/Mentra-Specs/blob/main/sdk/miniapp/mentrajs-two-layer-miniapp-architecture/research.md)
   — full design, including the underlying envelope shapes (`UI_OPEN`,
   `UI_MESSAGE`, `UI_SEND`).
 - [`@mentra/miniapp/ui` types](../mobile/modules/miniapp/src/ui/index.ts)

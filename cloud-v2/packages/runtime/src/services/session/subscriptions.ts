@@ -7,7 +7,7 @@
  * server-side `subscriptionKey()` canonicalization used for structural
  * equality + Map keys.
  *
- * Per the design (docs/issues/002-cloud-runtime/audio/spec.md "Subscription
+ * Per the design (https://github.com/Mentra-Community/Mentra-Specs/blob/main/cloud/runtime/audio/spec.md "Subscription
  * model"): "Phone aggregates and dedupes across local miniapps; sends a flat
  * list to cloud on every (re)connect. Identity is structural."
  */

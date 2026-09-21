@@ -172,7 +172,7 @@ Every store build number of the family, the Mentra App's iOS build and Android
 version code and the ASG client's version code, is derived from the family
 base version: `MAJOR × 100,000,000 + MINOR × 1,000,000 + PATCH × 10,000 +
 sequence`, with major between 2 and 20 and minor and patch at most 99. Design:
-`notes/superpowers/specs/2026-09-14-family-build-numbers.md`.
+`https://github.com/Mentra-Community/Mentra-Specs/blob/main/platform/releases/family-build-numbers/spec.md`.
 
 Sequences restart at 1 for every family. Each coordinated run allocates one
 sequence from the family's build container (`mentra-builds-vX.Y.Z`): the next

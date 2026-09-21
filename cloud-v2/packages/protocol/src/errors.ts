@@ -1,7 +1,7 @@
 /**
  * @fileoverview The error payload and transport-level error codes.
  *
- * Mirrors docs/issues/002-cloud-runtime/protocol.md ("Errors"). Services may
+ * Mirrors https://github.com/Mentra-Community/Mentra-Specs/blob/main/cloud/runtime/protocol.md ("Errors"). Services may
  * define additional codes for their own payloads (documented in the service
  * doc). Pure + isomorphic.
  */

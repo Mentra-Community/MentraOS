@@ -167,4 +167,4 @@ The `compress` field accepts exactly `none`, `low`, `medium`, or `high`, default
 to `none`. Delivered JPEG qualities are Q95, Q88, Q78, and Q60 on both direct
 upload and BLE. Compression does not resize images; `size` and crop policy own
 pixel limits. Invalid compression is rejected before capture; no aliases are
-accepted. See [Mentra Live spec](docs/mentra-live-spec.md) for metadata and preview behavior.
+accepted. See [Mentra Live spec](https://github.com/Mentra-Community/Mentra-Specs/blob/main/hardware/live/product/spec.md) for metadata and preview behavior.

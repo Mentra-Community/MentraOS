@@ -9,7 +9,7 @@
  * pair has no existing record, generate a new ULID-prefixed `mentraUserId`
  * and insert. Subsequent exchanges for the same pair reuse the existing row.
  *
- * Spec: docs/issues/001-oem-auth/design.md ("Data model" / "Collection: users")
+ * Spec: https://github.com/Mentra-Community/Mentra-Specs/blob/main/INDEX.md ("Data model" / "Collection: users")
  */
 
 import {Schema, type InferSchemaType} from "mongoose"

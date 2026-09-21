@@ -4,7 +4,7 @@ Android application that runs on Mentra Live smart glasses, bridging hardware an
 
 ## Getting started
 
-- [Mentra Live product and platform spec](mentra-live-spec.md) — required reference for Mentra Live behavior when working in `asg_client`
+- [Mentra Live product and platform spec](https://github.com/Mentra-Community/Mentra-Specs/blob/main/hardware/live/product/spec.md) — private reference for Mentra Live behavior when working in `asg_client`
 - [Overview](overview.md) — architecture, K900/Mentra Live naming, key components
 - [Top-level README](../README.md) — environment setup, ADB (USB + WiFi), building and installing your fork
 
@@ -26,13 +26,15 @@ Android application that runs on Mentra Live smart glasses, bridging hardware an
 
 ## Testing and characterization
 
-- [Mentra Live WHIP battery and thermal characterization](mentra-live-whip-battery-tests.md) — runtime, stability, bitrate, and peak internal-temperature matrix
-- [Recording FPS vs. thermals](fps-thermal-test/README.md) — controlled local-recording thermal sweep
+- [Mentra Live WHIP battery and thermal characterization](https://github.com/Mentra-Community/Mentra-Specs/blob/main/hardware/live/streaming/whip-characterization/research.md) — runtime, stability, bitrate, and peak internal-temperature matrix
+- [Recording FPS vs. thermals](https://github.com/Mentra-Community/Mentra-Specs/blob/main/hardware/live/recording-thermals/README.md) — controlled local-recording thermal sweep
 
 ## Compatibility
 
 - **Mentra Live** is the only officially supported device. The codebase uses `K900` as the internal codename for Mentra Live's hardware platform — see [overview.md → K900 = Mentra Live](overview.md#a-naming-note-k900--mentra-live).
 
-## Internal scratchpad
+## Internal planning
 
-The [`agents/`](agents/) folder is an LLM planning scratchpad. **It is not part of the public docs** — see [`agents/README.md`](agents/README.md) for the policy.
+Specs, design work, investigations, and test evidence live in [Mentra-Specs](https://github.com/Mentra-Community/Mentra-Specs/blob/main/INDEX.md#hardware) (private). Read its [shared workflow](https://github.com/Mentra-Community/Mentra-Specs/blob/main/AGENTS.md) before planning or implementing spec-driven work. Keep public API and contributor references here.
+
+The reproducible recording sweep remains available at [`scripts/recording-thermal-sweep.sh`](../scripts/recording-thermal-sweep.sh).

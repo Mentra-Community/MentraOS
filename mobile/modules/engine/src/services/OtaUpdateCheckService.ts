@@ -16,7 +16,7 @@ import {resolveOtaReleaseVersion} from "./otaReleaseVersion"
 // Mentra 3.0: matches OtaConstants and RecoveryConstants on the glasses.
 // Coordinated releases guarantee higher supported ASG builds can downgrade; no source gate is needed.
 // The shipped floor may increase, never decrease, and must stay aligned across all checkers.
-// See asg_client/docs/mentra-live-spec.md#ota-and-updates.
+// See https://github.com/Mentra-Community/Mentra-Specs/blob/main/hardware/live/product/spec.md#ota-and-updates.
 export const DOWNGRADE_FLOOR_VERSION_CODE = 51518114
 
 export interface VersionInfo {

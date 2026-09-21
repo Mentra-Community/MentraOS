@@ -851,7 +851,7 @@ private object EvenAIProto {
 
 /**
  * Control plane for the on-glasses notification centre. Content does not travel here — it goes
- * over the file service below. Wire formats: `notes/g2-notification-service.md`.
+ * over the file service below. Wire formats: `https://github.com/Mentra-Community/Mentra-Specs/blob/main/hardware/display-glasses/g2-notification-service/research.md`.
  */
 internal object NotificationProto {
     const val CMD_CTRL = 1
@@ -4680,7 +4680,7 @@ class G2 : SGCManager() {
     /**
      * Notification service (0x04). Reports control refusals and the
      * glasses' own notification activity; content never travels here. Field map in
-     * `notes/g2-notification-service.md`.
+     * `https://github.com/Mentra-Community/Mentra-Specs/blob/main/hardware/display-glasses/g2-notification-service/research.md`.
      */
     private fun handleNotificationResponse(payload: ByteArray) {
         val fields = ProtobufReader(payload).parseFields()

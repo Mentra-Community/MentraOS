@@ -13,7 +13,7 @@
  * Guardrail: this is device-facing only. It deliberately carries none of the
  * Dev Console / OEM Portal / store web UI surface; those are separate clients.
  *
- * See docs/issues/004-cloud-client/spec.md ("cloud.core") and design.md
+ * See https://github.com/Mentra-Community/Mentra-Specs/blob/main/sdk/cloud-client/spec.md ("cloud.core") and design.md
  * ("src/modules/core/core.ts").
  */
 import type { HttpClient } from "../../http";

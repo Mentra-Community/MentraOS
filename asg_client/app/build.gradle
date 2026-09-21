@@ -51,7 +51,7 @@ if (envFile.exists()) {
 // PATCH*10_000 + (3000 + minutes since Jan 1 2025 UTC of the HEAD committer
 // time, mod 7000), so the app and the ASG client built from the same commit
 // share a code. CI pins ASG_VERSION_CODE so generated manifests exactly match
-// the built APK. See notes/superpowers/specs/2026-09-14-family-build-numbers.md.
+// the built APK. See https://github.com/Mentra-Community/Mentra-Specs/blob/main/platform/releases/family-build-numbers/spec.md.
 def asgBuildEpochMs = 1735689600000L
 
 def pinnedAsgVersionCode = (

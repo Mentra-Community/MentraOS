@@ -13,7 +13,7 @@
  * only on explicit revocation and TTLs out when the longer-lived Mentra
  * access token would have expired.
  *
- * Spec: docs/issues/001-oem-auth/design.md ("Data model" / "seenJtis")
+ * Spec: https://github.com/Mentra-Community/Mentra-Specs/blob/main/INDEX.md ("Data model" / "seenJtis")
  */
 
 import { Schema, type InferSchemaType } from "mongoose";

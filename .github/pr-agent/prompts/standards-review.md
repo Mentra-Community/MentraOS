@@ -46,3 +46,7 @@ The orchestrator may provide:
   that entry's exact `id`. Omit `ref` for anything new. Never invent ids.
 
 Use `changes_requested` if any **blocking** finding exists. Use `approve` otherwise.
+
+## Private design context
+
+Follow the private spec workflow linked from root `AGENTS.md`. Use authenticated access when available; state any access gap. Public reviews, comments, and fixes must not reproduce confidential spec content, customer/business context, or private attachments. Explain the public code issue and link the private spec. Do not create internal planning documents in this repository.

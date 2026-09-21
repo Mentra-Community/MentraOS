@@ -15,7 +15,7 @@
  * Security: the access token is never written to storage and neither token is
  * ever logged.
  *
- * See docs/issues/004-cloud-client/design.md ("cloud.auth").
+ * See https://github.com/Mentra-Community/Mentra-Specs/blob/main/sdk/cloud-client/design.md ("cloud.auth").
  */
 import type {KeyValueStore} from "../../transports"
 import {decodeClaims} from "./jwt"

@@ -6,7 +6,7 @@
  * RFC-defined shapes. Services throw `OauthError` subtypes; the API layer
  * catches them and renders the wire response.
  *
- * Spec: docs/issues/001-cloud-core/auth/spec.md ("Endpoints")
+ * Spec: https://github.com/Mentra-Community/Mentra-Specs/blob/main/cloud/core/auth/spec.md ("Endpoints")
  *       RFC 6749 §5.2 (token endpoint error response)
  *       RFC 8693 §2.2.2 (token-exchange error response — same shape)
  */

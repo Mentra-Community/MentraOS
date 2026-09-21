@@ -1,7 +1,7 @@
 // @generated MentraJS polyfill bundle — see mobile/modules/jspolyfill
 "use strict";
 (() => {
-  // src/startup.ts
+  // mobile/modules/jspolyfill/src/startup.ts
   (function installMentraJSRuntime() {
     const g = globalThis;
     function installConsole() {
@@ -424,7 +424,7 @@
     if (!cryptoNs.subtle) {
       const notImplemented = () => {
         throw new Error(
-          "crypto.subtle is not yet implemented in MentraJS \u2014 see agents/mentrajs-two-layer-miniapp-architecture.md (Polyfill strategy section). Use a pure-JS hash/encrypt library for now."
+          "crypto.subtle is not yet implemented in MentraJS. Use a pure-JS hash/encrypt library for now."
         );
       };
       cryptoNs.subtle = new Proxy(

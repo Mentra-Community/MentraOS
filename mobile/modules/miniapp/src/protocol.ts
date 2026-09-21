@@ -346,7 +346,7 @@ export enum MiniappStreamType {
    *
    * Android-only today. iOS does not expose dismiss callbacks to apps
    * (Apple privacy restriction); subscribing on iOS succeeds but no events
-   * fire. See agents/miniapp-speaker-state-and-notif-dismissed-plan.md.
+   * fire. See https://github.com/Mentra-Community/Mentra-Specs/blob/main/sdk/miniapp/miniapp-speaker-state-and-notif-dismissed/plan.md.
    */
   PHONE_NOTIFICATION_DISMISSED = "phone_notification_dismissed",
   // Photos, streaming

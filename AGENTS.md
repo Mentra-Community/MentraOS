@@ -37,7 +37,7 @@ Consult module-specific AGENTS.md when working within that module.
 
 ## Project Structure & Module Organization
 
-Core client app lives in `mobile/` (Expo React Native). Backend services, the Cloud Client, protocol package, CLI, web portals, and cloud tests live in `cloud-v2/`. The local Mentra Miniapp SDK is `mobile/modules/miniapp/`; developer tooling is in `sdk/`. Platform SDKs are in `mobile/modules/bluetooth-sdk/` and `sdk_ios/`; hardware tooling lives in `mcu_client/`. Public Mintlify docs live in `mintlify-docs/`; notes and plans live in `agents/` and `notes/` — see [`notes/README.md`](notes/README.md) for the specs/plans convention.
+Core client app lives in `mobile/` (Expo React Native). Backend services, the Cloud Client, protocol package, CLI, web portals, and cloud tests live in `cloud-v2/`. The local Mentra Miniapp SDK is `mobile/modules/miniapp/`; developer tooling is in `sdk/`. Platform SDKs are in `mobile/modules/bluetooth-sdk/` and `sdk_ios/`; hardware tooling lives in `mcu_client/`. Public Mintlify docs live in `mintlify-docs/`; internal specs and plans live in the private [Mentra-Specs repository](https://github.com/Mentra-Community/Mentra-Specs). See "Internal specs and design docs" below for access and workflow.
 
 First-party miniapps and their backends also live in `miniapps/`. All of those
 miniapps are part of this repository's source scope. For example,
@@ -48,6 +48,28 @@ component directories contain backend and deployment files. A separate backend
 hostname does not imply a separate repository or third-party ownership.
 The external first-party miniapp repositories are listed under
 "Related Miniapp Repositories" below; their source can be private.
+
+## Internal specs and design docs
+
+Internal requirements, designs, plans, research, and handoffs live in the private
+[Mentra-Specs repository](https://github.com/Mentra-Community/Mentra-Specs).
+Before spec-driven work, **fetch and read its canonical [AGENTS.md](https://github.com/Mentra-Community/Mentra-Specs/blob/main/AGENTS.md)**,
+then find the relevant document. For example:
+
+```bash
+gh api 'repos/Mentra-Community/Mentra-Specs/contents/AGENTS.md?ref=main' -H 'Accept: application/vnd.github.raw+json'
+```
+
+Use authenticated GitHub access or an ignored checkout at `.context/mentra-specs`;
+use separate branches/worktrees for concurrent writers. Do not vendor the specs,
+add a submodule, or commit new internal planning documents in this repository.
+If private access fails, report the gap and continue independently supported work;
+do not recreate the private document here or claim to have reviewed it.
+
+Public PRs contain a brief public-safe code/testing summary and a private spec
+link (pin the intended commit when requirements could drift). Never copy
+confidential spec or customer/business content into public descriptions,
+comments, reviews, commits, logs, or attachments. Keep detailed design discussion private.
 
 ## Build Commands
 
@@ -241,6 +263,6 @@ After **every** BES firmware source change, run the OTA sanity gates in that rep
 ## Additional Documentation
 
 - Mintlify docs: `/mintlify-docs/`
-- Architecture specs, design docs, and working notes: `/notes/` (convention: [`notes/README.md`](notes/README.md))
+- Internal specs, designs, plans, and research: [Mentra-Specs](https://github.com/Mentra-Community/Mentra-Specs); [canonical workflow](https://github.com/Mentra-Community/Mentra-Specs/blob/main/AGENTS.md)
 - Module-specific implementation details: See module-specific `AGENTS.md` files
 - Teams calling (ACS) native pipeline, end to end: [`mobile/modules/acs-meeting/README.md`](mobile/modules/acs-meeting/README.md), with the shared transport in [`mobile/modules/glasses-media/README.md`](mobile/modules/glasses-media/README.md)

@@ -67,6 +67,7 @@ on:
       - "Bun Lockfile Checks"
       - "Bluetooth SDK Apple Platforms"
       - "Cloud V2 Validation"
+      - "Private Documentation Boundary"
     types: [completed]
 
 concurrency:
@@ -121,6 +122,7 @@ jobs:
               "Bun Lockfile Checks",
               "Bluetooth SDK Apple Platforms",
               "Cloud V2 Validation",
+              "Private Documentation Boundary",
             ]);
 
             // Resolve the head SHA for whichever event triggered us.

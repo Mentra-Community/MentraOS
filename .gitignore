@@ -36,7 +36,7 @@ asg_client/app/libs/temp_check/*
 .idea/
 .vscode/
 .zed/
-node_modules/
+node_modules
 # React/Web build directories (not MCU builds)
 **/node_modules/**/build/
 web-build/
@@ -382,8 +382,6 @@ nicelogs.txt
 
 
 issues
-!cloud-v2/docs/issues/
-!cloud-v2/docs/issues/**
 
 # Local pulled text-detection debug dumps (adb / analysis artifacts)
 mobile/textdetect_debug_pulled/
@@ -423,3 +421,6 @@ asg_client/StreamPackLite.zip
 # Local temp artifacts and generated decks
 tmp/
 output/
+
+# Private documentation checkouts and local working files
+.context/
