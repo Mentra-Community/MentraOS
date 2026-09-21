@@ -10,7 +10,7 @@
  * 2. Wrap text using the correct device profile (G1, etc.)
  * 3. Ensure GlassesDisplayMirror shows exactly what glasses will show
  *
- * @see notes/miniapp-display-api-redesign.md for the current display design
+ * @see https://github.com/Mentra-Community/Mentra-Specs/blob/main/sdk/miniapp/miniapp-display-api-redesign/research.md for the current display design
  */
 
 import {

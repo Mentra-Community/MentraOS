@@ -5,7 +5,7 @@
  * and result types. These are the single source of truth; `src/audio.types.ts`
  * re-exports the subscription types from here and adds `subscriptionKey()`.
  *
- * Mirrors docs/issues/002-cloud-runtime/audio/spec.md
+ * Mirrors https://github.com/Mentra-Community/Mentra-Specs/blob/main/cloud/runtime/audio/spec.md
  * ("Subscription model" and "Result types"). Pure + isomorphic: no server
  * imports, safe to bundle into the RN client.
  */

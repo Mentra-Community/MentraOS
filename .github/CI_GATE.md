@@ -26,7 +26,9 @@ posts a single `ci-gate-dev` commit status:
 | A gated workflow that ran is still in progress / queued                  | ⏳ pending          |
 | A gated workflow **did not run** (path filter didn't match this PR)      | not gated — ignored |
 
-All aggregated workflows are path-filtered. iOS/Android/ASG/jest,
+The `Private Documentation Boundary` workflow runs on every PR and prevents internal planning documents from being reintroduced. It uses only the public checkout; it does not access the private spec repository.
+
+The component build workflows are path-filtered. iOS/Android/ASG/jest,
 `Bun Lockfile Checks`, coordinated release-family checks, and
 `Cloud V2 Validation` run only when their area changes. A workflow that does not
 match the PR does not run, so the gate never waits on it. A Cloud V2-only PR does
@@ -57,6 +59,7 @@ below. `Recovery Worker Build` is deliberately excluded.
 | Release     | `Coordinated Release Family Checks` | coordinated release definitions and workflows             |
 | Lockfiles   | `Bun Lockfile Checks`               | root/mobile/sdk lockfiles and workspace package manifests |
 | Cloud V2    | `Cloud V2 Validation`               | `cloud-v2/**`, `sdk/miniapp-cli/**`, or its workflow      |
+| Docs | `Private Documentation Boundary` | every PR |
 
 If you add or remove a builder, update the `GATED` set **and** the `workflow_run`
 `workflows:` list in `ci-gate.yml` — both must list the same workflow names.

@@ -172,7 +172,7 @@ Every store build number of the family, the Mentra App's iOS build and Android
 version code and the ASG client's version code, is derived from the family
 base version: `MAJOR × 100,000,000 + MINOR × 1,000,000 + PATCH × 10,000 +
 sequence`, with major between 2 and 20 and minor and patch at most 99. Design:
-`notes/superpowers/specs/2026-09-14-family-build-numbers.md`.
+`https://github.com/Mentra-Community/Mentra-Specs/blob/main/platform/releases/family-build-numbers/spec.md`.
 
 Sequences restart at 1 for every family. Each coordinated run allocates one
 sequence from the family's build container (`mentra-builds-vX.Y.Z`): the next
@@ -398,7 +398,7 @@ Google, always in the Console (this step has no API path):
 
 1. Play Console -> app -> Production -> the draft release that names the exact
    candidate version code (do not create another release).
-2. Complete release notes/declarations, Review release, then Send for review.
+2. Complete release https://github.com/Mentra-Community/Mentra-Specs/blob/main/INDEX.md, Review release, then Send for review.
 3. For existing apps, confirm the change remains in managed publishing.
 
 Check without holding a runner:

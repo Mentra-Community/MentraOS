@@ -15,7 +15,7 @@
  * (`REFRESH_TOKEN_PEPPER`) before storage; the plaintext exists only on
  * the SDK that received it.
  *
- * Spec: docs/issues/001-oem-auth/design.md
+ * Spec: https://github.com/Mentra-Community/Mentra-Specs/blob/main/INDEX.md
  *       ("Lifecycles" / "Token formats" / "Endpoints")
  */
 

@@ -7,7 +7,7 @@ SDK for building Mentra miniapps — local JavaScript running in the Mentra App 
 > Companion package: **[`@mentra/miniapp-cli`](../../../sdk/miniapp-cli/README.md)** — `mentra-miniapp` CLI (`dev`, `release`, `pack`, `manifest`, `permission`, `hardware`, `schema`). Per-command docs live there.
 > Scaffolder: `bunx create-mentra-miniapp my-app`.
 > Reference miniapp: [`sdk/example-miniapp/`](../../../sdk/example-miniapp).
-> High-level walkthrough: [`agents/miniapp-sdk-overview.md`](../../../agents/miniapp-sdk-overview.md).
+> Internal walkthrough (private): [`https://github.com/Mentra-Community/Mentra-Specs/blob/main/sdk/miniapp/miniapp-sdk-overview/research.md`](https://github.com/Mentra-Community/Mentra-Specs/blob/main/sdk/miniapp/miniapp-sdk-overview/research.md).
 
 ## Install
 

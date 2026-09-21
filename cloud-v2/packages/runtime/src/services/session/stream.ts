@@ -13,7 +13,7 @@
  *   3. **Stream consumer-group name** (constant). All worker pools across
  *      pods join one group so XAUTOCLAIM can rebalance work after pod death.
  *
- * Wire-format and lifecycle decisions live in `docs/issues/003-audio/`.
+ * Wire-format and lifecycle decisions live in `https://github.com/Mentra-Community/Mentra-Specs/blob/main/INDEX.md`.
  */
 
 import nacl from "tweetnacl";

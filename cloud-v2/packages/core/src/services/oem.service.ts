@@ -15,7 +15,7 @@
  *   - Issuing Mentra access/refresh tokens (session.service).
  *   - User row creation (user.service).
  *
- * Spec: docs/issues/001-oem-auth/design.md
+ * Spec: https://github.com/Mentra-Community/Mentra-Specs/blob/main/INDEX.md
  *       ("Endpoints" / "Token formats" / "Lifecycles: Issue session" steps 1–5)
  */
 

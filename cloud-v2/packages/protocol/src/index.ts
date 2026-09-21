@@ -5,7 +5,7 @@
  * protocol. Zero server imports (no `node:*`, no service code) so the client
  * can import the contract without pulling in server code.
  *
- * See docs/issues/002-cloud-runtime/protocol.md.
+ * See https://github.com/Mentra-Community/Mentra-Specs/blob/main/INDEX.md
  */
 export * from "./envelope";
 export * from "./handshake";

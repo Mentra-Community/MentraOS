@@ -5,7 +5,7 @@
  * payload from the cloud). These are JS errors thrown locally so a host can
  * branch with `instanceof` instead of string-matching messages.
  *
- * See docs/issues/004-cloud-client/design.md.
+ * See https://github.com/Mentra-Community/Mentra-Specs/blob/main/INDEX.md
  */
 
 /** Base class so a host can catch every cloud-client error with one check. */

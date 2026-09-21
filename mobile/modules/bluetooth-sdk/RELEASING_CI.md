@@ -118,4 +118,4 @@ new coordinates do not exist publicly before then; failure leaves the GitHub
 release incomplete and prevents release-manifest finalization.
 
 The full contract, artifact naming rules, and verification gates are documented
-in `notes/coordinated-release-system-proposal.md`.
+in `https://github.com/Mentra-Community/Mentra-Specs/blob/main/platform/releases/coordinated-release-system/spec.md`.

@@ -1,5 +1,5 @@
 # PR Agent Orchestrator configuration
-# See notes/pr-agent-orchestrator-setup.md
+# See https://github.com/Mentra-Community/Mentra-Specs/blob/main/operations/review-automation/setup.md
 
 dryRun: false
 
@@ -63,3 +63,8 @@ ciGates:
       - "asg_client/**"
     workflows:
       - "MentraOS ASG Client Build"
+
+  - paths:
+      - "**"
+    workflows:
+      - "Private Documentation Boundary"

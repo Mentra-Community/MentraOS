@@ -19,7 +19,7 @@
  * Security: tokens and keys flow through `storage` and the UDP frames, so the
  * adapters here never log their values.
  *
- * See docs/issues/004-cloud-client/design.md ("react-native/transports.ts").
+ * See https://github.com/Mentra-Community/Mentra-Specs/blob/main/sdk/cloud-client/design.md ("react-native/transports.ts").
  */
 import type {
   CloudClientTransports,

@@ -7,7 +7,7 @@
  * validators the typed module surfaces (`transcription.*`, `translation.*`)
  * call on every language parameter.
  *
- * Contract (design doc docs/issues/021-typed-language-subscriptions):
+ * Contract (design doc https://github.com/Mentra-Community/Mentra-Specs/blob/main/INDEX.md):
  *   - Valid by construction: params are typed as literal unions, so TS users
  *     get autocomplete and compile errors.
  *   - Loud at runtime: JS users (or `any` casts) get a thrown

@@ -10,7 +10,7 @@
  *     caches the keys here on this document; cache refreshes on a TTL and
  *     on verification failure. Supports multi-key rotation windows.
  *
- * Spec: docs/issues/001-oem-auth/design.md ("Data model" / "Collection: oems")
+ * Spec: https://github.com/Mentra-Community/Mentra-Specs/blob/main/INDEX.md ("Data model" / "Collection: oems")
  */
 
 import { Schema, type InferSchemaType } from "mongoose";

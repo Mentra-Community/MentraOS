@@ -43,7 +43,7 @@ resolve live TypeScript source):
   SDK `react`, `types`, `photo-receiver`, `ota-transport`, and `debug` subpaths are mirrored
   below this path. The SDK's `internal` entrypoint is deliberately not exposed.
 
-See `cloud-v2/docs/issues/020-glasses-status-boundary/integration-review.md`
+See `https://github.com/Mentra-Community/Mentra-Specs/blob/main/mobile/engine/glasses-status-boundary/integration-review.md`
 §D for the burn-down plan.
 
 This module owns the pieces of miniapp logic and handling that aren't tied to

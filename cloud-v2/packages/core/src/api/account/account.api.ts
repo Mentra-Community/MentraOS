@@ -1,6 +1,6 @@
 /**
  * @fileoverview Mentra first-party account endpoints (issue 019).
- * Mounted at /api/account. Contract: docs/issues/019-mentra-account-auth/spec.md.
+ * Mounted at /api/account. Contract: https://github.com/Mentra-Community/Mentra-Specs/blob/main/INDEX.md
  */
 import { Hono } from "hono";
 import type { AppContext, AppEnv } from "../../types/hono.types";

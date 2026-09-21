@@ -12,7 +12,7 @@ is for engineers working **on** the SDK itself or running the in-repo example.
 | **Use the SDK** to build a miniapp (API, session, modules, React hooks) | [`../mobile/modules/miniapp/README.md`](../mobile/modules/miniapp/README.md) — the package reference |
 | **Per-module deep dives** (return shapes, events, error codes) | [`docs/`](./docs/README.md) — start with [`two-layer.md`](./docs/two-layer.md) |
 | **Use the CLI** (`dev` / `release` / `pack` / `manifest` / …) | [`miniapp-cli/README.md`](./miniapp-cli/README.md) |
-| **Architecture / status walkthrough** | [`../agents/miniapp-sdk-overview.md`](../agents/miniapp-sdk-overview.md) |
+| **Internal architecture / status (private)** | [`https://github.com/Mentra-Community/Mentra-Specs/blob/main/sdk/miniapp/miniapp-sdk-overview/research.md`](https://github.com/Mentra-Community/Mentra-Specs/blob/main/sdk/miniapp/miniapp-sdk-overview/research.md) |
 | **Develop the SDK / run the example from a fresh clone** | this file (below) |
 
 ## Layout

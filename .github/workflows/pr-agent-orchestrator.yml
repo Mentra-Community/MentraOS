@@ -6,6 +6,7 @@ on:
   workflow_run:
     workflows:
       - "Cloud V2 Validation"
+      - "Private Documentation Boundary"
       - "Mobile App Quality Checks"
       - "Bun Lockfile Checks"
       - "MentraOS ASG Client Build"

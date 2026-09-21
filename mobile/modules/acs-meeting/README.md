@@ -1089,5 +1089,5 @@ telemetry ladder, and `maxBitrateBps` is not applied to the outgoing stream.
 - **Downlink preroll is not yet tuned on hardware.** 160 ms is one step up from a 120 ms that
   underran, not a measured optimum; walk `PREROLL_LADDER_MS`.
 
-The original spike runbook is preserved at [spike/README.md](spike/README.md). The shared
+The original spike runbook is preserved at [spike/README.md](https://github.com/Mentra-Community/Mentra-Specs/blob/main/miniapps/call/acs-media-spike/research.md). The shared
 transport library is documented in [`glasses-media`](../glasses-media/README.md).

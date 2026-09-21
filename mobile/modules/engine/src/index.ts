@@ -7,7 +7,7 @@
  * capability tables, timers). Judgment rule: read models, commands, pure
  * functions and types belong here; anything that mutates runtime state or
  * exposes a raw store/service remains private to the MentraOS host.
- * See cloud-v2/docs/issues/020-glasses-status-boundary/integration-review.md §D.
+ * See https://github.com/Mentra-Community/Mentra-Specs/blob/main/mobile/engine/glasses-status-boundary/integration-review.md §D.
  */
 
 // The namespaced OEM-facing engine API (the "(A) host API"). See ./engine.

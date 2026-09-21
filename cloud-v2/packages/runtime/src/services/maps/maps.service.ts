@@ -24,7 +24,7 @@
  * provider-agnostic. Failures are never cached, so one upstream blip can't pin an
  * error. Ported from the retired V1 navigation service.
  *
- * See docs/issues/002-cloud-runtime/maps/spec.md.
+ * See https://github.com/Mentra-Community/Mentra-Specs/blob/main/INDEX.md
  */
 import type {
   DirectionsRequest,

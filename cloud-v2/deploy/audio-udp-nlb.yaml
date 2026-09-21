@@ -5,7 +5,7 @@
 # app name. Kept only as annotated reference for the NLB annotations and the
 # externalTrafficPolicy rationale below.
 #
-# See docs/runbooks/deploy/udp-nlb-aws.md for current provisioning steps.
+# See https://github.com/Mentra-Community/Mentra-Specs/blob/main/operations/cloud/deploy/udp-nlb-aws.md for current provisioning steps.
 # Note: applying requires direct kubectl (aws eks update-kubeconfig);
 # `porter kubectl` is read-only and cannot create Services.
 

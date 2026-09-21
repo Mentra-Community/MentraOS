@@ -10,7 +10,7 @@
  * is exactly the decision the fallback in `@mentra/auth` makes.
  *
  * Usage:
- *   bun run cloud-v2/docs/issues/017-auth-jwks-multi-env-fallback/verify-token-env.ts <token>
+ *   bun run cloud-v2/packages/auth/scripts/verify-token-env.ts <token>
  *   MENTRA_TOKEN=<token> bun run .../verify-token-env.ts
  *   # optional: override the endpoint list (comma-separated) for local/self-hosted
  *   MENTRA_JWKS_URLS=http://localhost:3000/.well-known/jwks.json bun run .../verify-token-env.ts <token>

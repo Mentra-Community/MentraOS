@@ -7,8 +7,8 @@
  * timing), and we deliberately skip signature checks. Doing a real verification
  * would mean shipping the cloud's public keys to the device, which buys nothing.
  *
- * See docs/issues/004-cloud-client/design.md ("cloud.auth", identity) and
- * docs/issues/001-cloud-core/auth/spec.md (access-token claims).
+ * See https://github.com/Mentra-Community/Mentra-Specs/blob/main/sdk/cloud-client/design.md ("cloud.auth", identity) and
+ * https://github.com/Mentra-Community/Mentra-Specs/blob/main/cloud/core/auth/spec.md (access-token claims).
  */
 
 /**

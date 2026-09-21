@@ -75,7 +75,7 @@ internal object FileService {
 
 /**
  * The JSON document the glasses expect on the file service — these nine fields, exactly. Schema
- * confirmed against a BLE capture of the Even app; see `notes/g2-notification-service.md`.
+ * confirmed against a BLE capture of the Even app; see `https://github.com/Mentra-Community/Mentra-Specs/blob/main/hardware/display-glasses/g2-notification-service/research.md`.
  *
  * `time_s` is UTC epoch seconds while `date` is **device-local** wall time; formatting `date` in
  * UTC would skew every displayed timestamp by the device's offset.

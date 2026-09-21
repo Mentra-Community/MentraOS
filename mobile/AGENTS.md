@@ -3,6 +3,8 @@
 This file is the module-local contributor and agent guidance for work under
 `mobile/`.
 
+Internal specs and implementation plans use the [root repository spec workflow](../AGENTS.md#internal-specs-and-design-docs). Fetch and read the private canonical instructions before spec-driven work; do not create mobile-local planning folders.
+
 ## Overview
 
 The Mentra App is a React Native app built with Expo and expo-router for file-based routing.

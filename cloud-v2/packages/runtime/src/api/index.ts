@@ -11,7 +11,7 @@
  *
  * Client-initiated commands are REST (stateless, pod-agnostic) per the runtime
  * protocol; the WebSocket stays a downstream push channel. See
- * docs/issues/002-cloud-runtime/protocol.md ("Channels").
+ * https://github.com/Mentra-Community/Mentra-Specs/blob/main/cloud/runtime/protocol.md ("Channels").
  */
 
 import { Hono } from "hono";

@@ -1,7 +1,7 @@
 /**
  * @fileoverview Handshake payloads: connection.init and connection.ack.
  *
- * Mirrors docs/issues/002-cloud-runtime/protocol.md ("Auth and handshake").
+ * Mirrors https://github.com/Mentra-Community/Mentra-Specs/blob/main/cloud/runtime/protocol.md ("Auth and handshake").
  * Service-scoped config rides in scoped blocks; audio is the only one today.
  * Pure + isomorphic: no server imports.
  */

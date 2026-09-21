@@ -48,3 +48,7 @@ review to write this instead.
 
 - If changed files are outside your area of concern and look correct, approve.
 - Prefer actionable, minimal findings over exhaustive nitpicks.
+
+## Private design context
+
+Follow the private spec workflow linked from root `AGENTS.md`. Use authenticated access when available; state any access gap. Public reviews, comments, and fixes must not reproduce confidential spec content, customer/business context, or private attachments. Explain the public code issue and link the private spec. Do not create internal planning documents in this repository.

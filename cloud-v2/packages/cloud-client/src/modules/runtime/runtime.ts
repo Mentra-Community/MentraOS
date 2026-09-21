@@ -14,7 +14,7 @@
  * each piece is testable on its own and this file reads as the protocol flow:
  * connect, route inbound messages to events, re-send subscriptions on reconnect.
  *
- * See docs/issues/004-cloud-client/spec.md ("cloud.runtime") and design.md.
+ * See https://github.com/Mentra-Community/Mentra-Specs/blob/main/sdk/cloud-client/spec.md ("cloud.runtime") and design.md.
  */
 import type {
   AudioSubscription,

@@ -19,7 +19,7 @@
  *     what the routing/failover tests assert against without needing a
  *     provider in the loop.
  *
- * Spec: cloud-v2/docs/issues/002-cloud-runtime/design.md ("Workers handle
+ * Spec: https://github.com/Mentra-Community/Mentra-Specs/blob/main/cloud/runtime/design.md ("Workers handle
  * their own stream reads.")
  */
 

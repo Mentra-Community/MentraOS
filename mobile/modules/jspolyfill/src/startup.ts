@@ -584,9 +584,7 @@ declare const __nativeClearTimer: (token: number) => void
   if (!cryptoNs.subtle) {
     const notImplemented = () => {
       throw new Error(
-        "crypto.subtle is not yet implemented in MentraJS — see " +
-          "agents/mentrajs-two-layer-miniapp-architecture.md (Polyfill " +
-          "strategy section). Use a pure-JS hash/encrypt library for now.",
+        "crypto.subtle is not yet implemented in MentraJS. Use a pure-JS hash/encrypt library for now.",
       )
     }
     cryptoNs.subtle = new Proxy(

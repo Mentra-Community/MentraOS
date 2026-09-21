@@ -12,7 +12,7 @@
  * When imported, nothing runs — call `startRuntime(...)`. When executed
  * directly, the bottom block drives boot from env vars.
  *
- * Spec + design: cloud-v2/docs/issues/002-cloud-runtime/.
+ * Spec + design: https://github.com/Mentra-Community/Mentra-Specs/blob/main/INDEX.md
  */
 
 import {

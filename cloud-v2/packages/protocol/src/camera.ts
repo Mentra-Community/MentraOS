@@ -6,7 +6,7 @@
  * registered into the message union (messages.ts). Pure + isomorphic: no server
  * imports, safe to bundle into the client.
  *
- * Mirrors docs/issues/002-cloud-runtime/camera/spec.md.
+ * Mirrors https://github.com/Mentra-Community/Mentra-Specs/blob/main/INDEX.md
  */
 import { z } from "zod";
 export type { PhotoCompression } from "./photo-compression";

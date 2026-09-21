@@ -23,7 +23,7 @@
  * miniapp-token takes a JSON body. Errors are translated to the RFC body shape
  * by the global error handler in `api/app.ts`.
  *
- * Spec: docs/issues/001-cloud-core/auth/spec.md ("Endpoints")
+ * Spec: https://github.com/Mentra-Community/Mentra-Specs/blob/main/cloud/core/auth/spec.md ("Endpoints")
  */
 
 import {Hono} from "hono"

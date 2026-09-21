@@ -25,7 +25,7 @@
  * **TTL.** A TTL index on `expiresAt` lets Mongo auto-delete expired
  * sessions; no background cleanup job needed.
  *
- * Spec: docs/issues/001-oem-auth/design.md ("Data model" / "refreshTokens")
+ * Spec: https://github.com/Mentra-Community/Mentra-Specs/blob/main/INDEX.md ("Data model" / "refreshTokens")
  */
 
 import {Schema, type InferSchemaType} from "mongoose"

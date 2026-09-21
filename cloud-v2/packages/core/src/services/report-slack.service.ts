@@ -470,7 +470,7 @@ function environmentLabel(): string {
 /**
  * Deep link to this report in the admin console (Incident system page).
  * An explicit CLOUD_ADMIN_CONSOLE_URL wins; otherwise the URL is derived from
- * the deployment environment per docs/runbooks/cloudflare/pages-websites.md
+ * the deployment environment per https://github.com/Mentra-Community/Mentra-Specs/blob/main/operations/cloud/cloudflare/pages-websites.md
  * (admin.<env>.mentraglass.com, admin.mentraglass.com for prod). Unknown
  * environments get no link rather than a wrong one.
  */
