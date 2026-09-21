@@ -16,12 +16,14 @@ export async function isPhoneWifiEnabled(): Promise<boolean | null> {
   return null
 }
 
-async function openPhoneWifiSettings(): Promise<void> {
+type WifiSettingsTarget = "panel" | "settings"
+
+async function openPhoneWifiSettings(): Promise<WifiSettingsTarget> {
   if (Platform.OS === "android") {
     if (Number(Platform.Version) >= 29) {
       try {
         await Linking.sendIntent("android.settings.panel.action.WIFI")
-        return
+        return "panel"
       } catch {
         // Some OEMs don't implement the panel. The full settings page is the fallback.
       }
@@ -32,12 +34,18 @@ async function openPhoneWifiSettings(): Promise<void> {
     // there from the app's Settings page. Avoid private App-prefs URLs.
     await Linking.openSettings()
   }
+  return "settings"
 }
 
 /** Listen before launching Settings so a fast blur/resume cannot be missed. */
 function visitWifiSettings(): Promise<PhoneWifiEnableResult> {
   return new Promise((resolve, reject) => {
-    let leftApp = false
+    let target: WifiSettingsTarget | undefined
+    let sawBackground = false
+    let sawBlur = false
+    let active = AppState.currentState === "active"
+    let focused = true
+    let generation = 0
     let settled = false
     let checking = false
     let recheckTimer: ReturnType<typeof setTimeout> | undefined
@@ -53,31 +61,52 @@ function visitWifiSettings(): Promise<PhoneWifiEnableResult> {
       cleanup()
       reject(error)
     }
+    const interrupted = () => {
+      generation++
+      clearTimeout(recheckTimer)
+      checking = false
+    }
+    const hasReturned = () =>
+      active && focused && (target === "panel" ? sawBlur || sawBackground : target === "settings" && sawBackground)
     const returned = () => {
-      if (!leftApp || checking || settled) return
+      if (!hasReturned() || checking || settled) return
       checking = true
+      const checkGeneration = generation
       // Let the radio state catch up to closing Android's settings panel.
       recheckTimer = setTimeout(() => {
-        void isPhoneWifiEnabled().then((enabled) => {
-          if (settled) return
-          cleanup()
-          resolve({enabled, cancelled: false})
-        }, fail)
+        void isPhoneWifiEnabled().then(
+          (enabled) => {
+            if (settled || generation !== checkGeneration || !hasReturned()) return
+            cleanup()
+            resolve({enabled, cancelled: false})
+          },
+          (error: unknown) => {
+            if (generation === checkGeneration) fail(error)
+          },
+        )
       }, 500)
     }
     subscriptions.push(
       AppState.addEventListener("change", (state) => {
-        if (state !== "active") leftApp = true
-        else returned()
+        active = state === "active"
+        // iOS inactive also means Control Center or a brief system interruption.
+        if (state === "background") sawBackground = true
+        if (active) returned()
+        else interrupted()
       }),
     )
     if (Platform.OS === "android") {
       // An inline settings panel can only blur the Activity, without backgrounding it.
       subscriptions.push(
         AppState.addEventListener("blur", () => {
-          leftApp = true
+          focused = false
+          sawBlur = true
+          interrupted()
         }),
-        AppState.addEventListener("focus", returned),
+        AppState.addEventListener("focus", () => {
+          focused = true
+          returned()
+        }),
       )
     }
     const deadline = setTimeout(() => {
@@ -85,7 +114,10 @@ function visitWifiSettings(): Promise<PhoneWifiEnableResult> {
       cleanup()
       resolve({enabled: null, cancelled: true})
     }, 5 * 60_000)
-    void openPhoneWifiSettings().catch(fail)
+    void openPhoneWifiSettings().then((openedTarget) => {
+      target = openedTarget
+      returned()
+    }, fail)
   })
 }
 
