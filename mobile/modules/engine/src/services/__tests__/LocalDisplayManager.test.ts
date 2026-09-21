@@ -165,6 +165,23 @@ describe("LocalDisplayManager", () => {
       expect(dashboard.displayToken).toBeUndefined()
       expect(render("ai", frame("next", first.displayToken)).status).toBe("displayed")
     })
+    test("a core dashboard update cannot save a background notice as its main frame", () => {
+      mgr.onCoreAppChange("core")
+      render("core", frame("original core frame"))
+      render("notice", {...frame("temporary notice"), durationMs: 1000})
+      render("core", {...frame("core dashboard"), view: "dashboard"})
+      advance(1000)
+      expect(lastText()).toBe("original core frame")
+    })
+    test("a core dashboard update during boot cannot become the saved main frame", () => {
+      mgr.onCoreAppChange("core")
+      render("core", frame("original core frame"))
+      mgr.onMount("new-app", "New app")
+      render("core", {...frame("core dashboard"), view: "dashboard"})
+      render("new-app", {...frame("temporary new app"), durationMs: 1000})
+      advance(1000)
+      expect(lastText()).toBe("original core frame")
+    })
     test("conditional clears forfeit the frame and do not return a reusable token", () => {
       const first = render("ai", frame("answer"))
       const result = render("ai", {scene: [], ifDisplayToken: first.displayToken})

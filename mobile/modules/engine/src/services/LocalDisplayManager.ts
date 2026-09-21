@@ -499,7 +499,7 @@ class LocalDisplayManager {
 
     // If core app fired, refresh the saved snapshot with the actual processed
     // event so restore uses the wrapped text (legacy) / the retained scene.
-    if (packageName === this.coreApp && this.currentDisplay) {
+    if (view === "main" && packageName === this.coreApp && this.currentDisplay?.packageName === packageName) {
       this.coreAppDisplay = {
         packageName,
         processedEvent: this.currentDisplay.processedEvent,
