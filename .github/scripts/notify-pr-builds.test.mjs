@@ -219,7 +219,7 @@ function harness(options = {}) {
 }
 process.env.SLACK_WEBHOOK_PR_BUILDS = "https://example.com/webhook"
 
-test("publishes one action per platform with direct iPhone installation after verifying the complete install set", async () => {
+test("publishes direct iPhone installation and a shareable Safari link without the raw IPA download", async () => {
   const receipt = structuredClone(iosReceipt)
   receipt.schemaVersion = 2
   for (const [kind, ext] of [
@@ -244,16 +244,17 @@ test("publishes one action per platform with direct iPhone installation after ve
   assert.ok(platformRows.every((row) => row.type === "rich_text_section" && row.elements[1].style.bold))
   assert.equal(platformRows[0].elements[3].text, "Download APK")
   assert.equal(platformRows[2].elements[3].text, "Download ZIP")
-  assert.ok(platformRows.every((row) => row.elements.filter((element) => element.type === "link").length === 1))
+  assert.deepEqual(platformRows.map((row) => row.elements.filter((element) => element.type === "link").length), [1, 2, 1])
   const iphoneLinks = platformRows[1].elements.filter((element) => element.type === "link")
-  assert.deepEqual(iphoneLinks.map((element) => element.text), ["Install on iPhone"])
+  assert.deepEqual(iphoneLinks.map((element) => element.text), ["Install on iPhone", "Install via Safari"])
   // A structured link is required: webhook mrkdwn escapes this URL scheme.
   const direct = new URL(iphoneLinks[0].url)
   assert.equal(direct.protocol, "itms-services:")
   assert.equal(direct.searchParams.get("action"), "download-manifest")
   const verifiedManifest = ready.requests.find((url) => url.endsWith(".plist"))
   assert.equal(direct.searchParams.get("url"), verifiedManifest)
-  assert.doesNotMatch(JSON.stringify(ready.posts[0]), /Install via Safari|Download IPA/)
+  assert.equal(iphoneLinks[1].url, ready.requests.find((url) => url.endsWith(".html")))
+  assert.doesNotMatch(JSON.stringify(ready.posts[0]), /Download IPA/)
   assert.match(JSON.stringify(ready.posts[0]), /Install the app, connect your Mentra Live glasses/)
   assert.match(ready.written[0].body, /\[Install on iPhone\]\(https:\/\/artifactscdn.*\.html\)/)
   assert.doesNotMatch(ready.written[0].body, /itms-services:/)

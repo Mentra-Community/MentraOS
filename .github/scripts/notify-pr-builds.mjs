@@ -63,12 +63,15 @@ export function buildPost({pr, sha, androidUrl, manifestUrl, targets, androidRun
   const iphoneLinks = []
   if (ios?.assets) {
     if (ios.assets.install)
-      iphoneLinks.push(richLink(iosInstallUrl(ios.assets.manifest), "Install on iPhone"))
+      iphoneLinks.push(
+        richLink(iosInstallUrl(ios.assets.manifest), "Install on iPhone"),
+        richLink(ios.assets.install, "Install via Safari"),
+      )
     else iphoneLinks.push(richLink(ios.assets.iphone, "Download IPA"))
   }
   // Slack's webhook mrkdwn parser escapes itms-services links as literal text.
   // Rich-text links open the installer on iPhone; Slack renders them as plain
-  // text on Mac. Keep one download/install action per platform.
+  // text on Mac, so also include the HTTPS installation page for sharing.
   const platforms = {
     type: "rich_text",
     elements: [
