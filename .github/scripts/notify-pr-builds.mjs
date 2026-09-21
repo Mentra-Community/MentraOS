@@ -63,14 +63,12 @@ export function buildPost({pr, sha, androidUrl, manifestUrl, targets, androidRun
   const iphoneLinks = []
   if (ios?.assets) {
     if (ios.assets.install)
-      iphoneLinks.push(
-        richLink(iosInstallUrl(ios.assets.manifest), "Install on iPhone"),
-        richLink(ios.assets.install, "Install via Safari"),
-      )
-    iphoneLinks.push(richLink(ios.assets.iphone, "Download IPA"))
+      iphoneLinks.push(richLink(iosInstallUrl(ios.assets.manifest), "Install on iPhone"))
+    else iphoneLinks.push(richLink(ios.assets.iphone, "Download IPA"))
   }
   // Slack's webhook mrkdwn parser escapes itms-services links as literal text.
-  // Rich-text link elements preserve the direct install action and aligned rows.
+  // Rich-text links open the installer on iPhone; Slack renders them as plain
+  // text on Mac. Keep one download/install action per platform.
   const platforms = {
     type: "rich_text",
     elements: [
@@ -109,7 +107,7 @@ export function buildPost({pr, sha, androidUrl, manifestUrl, targets, androidRun
       )}`,
     )
     lines.push(
-      "Install the APK, connect your Mentra Live glasses, and follow the update prompt if shown. This app targets the versions above.",
+      "Install the app, connect your Mentra Live glasses, and follow the update prompt if shown. This app targets the versions above.",
     )
   }
   lines.push(
