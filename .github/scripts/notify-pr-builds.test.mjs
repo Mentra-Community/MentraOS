@@ -246,7 +246,7 @@ test("publishes direct iPhone installation and a shareable Safari link without t
   assert.equal(platformRows[2].elements[3].text, "Download ZIP")
   assert.deepEqual(platformRows.map((row) => row.elements.filter((element) => element.type === "link").length), [1, 2, 1])
   const iphoneLinks = platformRows[1].elements.filter((element) => element.type === "link")
-  assert.deepEqual(iphoneLinks.map((element) => element.text), ["Install on iPhone", "Install via Safari"])
+  assert.deepEqual(iphoneLinks.map((element) => element.text), ["Install on iPhone", "Share install link"])
   // A structured link is required: webhook mrkdwn escapes this URL scheme.
   const direct = new URL(iphoneLinks[0].url)
   assert.equal(direct.protocol, "itms-services:")

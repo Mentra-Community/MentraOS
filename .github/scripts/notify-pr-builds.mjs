@@ -65,7 +65,7 @@ export function buildPost({pr, sha, androidUrl, manifestUrl, targets, androidRun
     if (ios.assets.install)
       iphoneLinks.push(
         richLink(iosInstallUrl(ios.assets.manifest), "Install on iPhone"),
-        richLink(ios.assets.install, "Install via Safari"),
+        richLink(ios.assets.install, "Share install link"),
       )
     else iphoneLinks.push(richLink(ios.assets.iphone, "Download IPA"))
   }
