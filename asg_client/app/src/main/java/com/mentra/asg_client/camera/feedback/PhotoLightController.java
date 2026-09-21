@@ -88,9 +88,10 @@ public final class PhotoLightController {
     private synchronized void release(Token token) {
         if (!active.remove(token)) return;
         if (token.release != null) handler.removeCallbacks(token.release);
+        // Queue OFF while we still hold the lease. If the camera outlives the job watchdog,
+        // the shared owner completes it on its last release without needing another callback.
+        if (active.isEmpty()) hardware.setRgbLedOffWhenRecordingIdle();
         hardware.releaseRecordingLed(token);
-        if (active.isEmpty() && hardware.supportsRgbLed()
-                && !hardware.isRecordingLedOwned()) hardware.setRgbLedOff();
         Log.i("PhotoLight", "[PHOTO-LIGHT] released t_ms=" + SystemClock.uptimeMillis());
     }
 

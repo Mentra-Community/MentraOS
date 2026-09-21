@@ -2,11 +2,12 @@ package com.mentra.asg_client.camera.feedback;
 
 import android.os.Handler;
 import android.os.Looper;
+import androidx.test.core.app.ApplicationProvider;
 import static org.mockito.Mockito.*;
 import static org.mockito.ArgumentMatchers.*;
 import static org.robolectric.Shadows.shadowOf;
 import java.time.Duration;
-import com.mentra.asg_client.io.hardware.interfaces.IHardwareManager;
+import com.mentra.asg_client.io.hardware.core.BaseHardwareManager;
 import com.mentra.asg_client.io.hardware.interfaces.RgbLedConstants;
 import org.junit.Before;
 import org.junit.Test;
@@ -17,13 +18,12 @@ import org.robolectric.annotation.Config;
 @RunWith(RobolectricTestRunner.class)
 @Config(sdk = 33)
 public class PhotoLightControllerTest {
-    private IHardwareManager hardware;
+    private BaseHardwareManager hardware;
     private PhotoLightController controller;
     @Before public void setup() {
-        hardware = mock(IHardwareManager.class);
-        when(hardware.supportsRecordingLed()).thenReturn(true);
-        when(hardware.supportsRgbLed()).thenReturn(true);
-        when(hardware.acquireRecordingLed(any())).thenReturn(true);
+        hardware = spy(new BaseHardwareManager(ApplicationProvider.getApplicationContext()));
+        doReturn(true).when(hardware).supportsRecordingLed();
+        doReturn(true).when(hardware).supportsRgbLed();
         controller = new PhotoLightController(hardware, new Handler(Looper.getMainLooper()));
     }
     private void advance(long ms) {
@@ -102,10 +102,13 @@ public class PhotoLightControllerTest {
     }
     @Test public void otherRecordingOwnerKeepsItsIndicator() {
         PhotoLightController.Token token = controller.prepare("request", true);
-        when(hardware.isRecordingLedOwned()).thenReturn(true);
+        Object recordingOwner = new Object();
+        hardware.acquireRecordingLed(recordingOwner);
         controller.cleanup();
         verify(hardware).releaseRecordingLed(token);
         verify(hardware, never()).setRgbLedOff();
+        hardware.releaseRecordingLed(recordingOwner);
+        verify(hardware).setRgbLedOff();
     }
     @Test public void disabledRequestDoesNotAcquireOrToggle() {
         controller.finish(controller.prepare("request", false));
@@ -114,7 +117,7 @@ public class PhotoLightControllerTest {
         verify(hardware, never()).setRgbLedOff();
     }
     @Test public void failedPrivacyAcquisitionDoesNotStartRgb() {
-        when(hardware.acquireRecordingLed(any())).thenReturn(false);
+        doReturn(false).when(hardware).acquireRecordingLed(any());
         controller.finish(controller.prepare("request", true));
         controller.cleanup();
         verify(hardware, never()).setRgbLedSolidWhite(anyInt(), anyInt());

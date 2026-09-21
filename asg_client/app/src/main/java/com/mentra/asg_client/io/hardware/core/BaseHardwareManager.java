@@ -23,6 +23,7 @@ public class BaseHardwareManager implements IHardwareManager {
     private final Object mRecordingLedOwnerLock = new Object();
     private final Set<Object> mRecordingLedOwners =
             Collections.newSetFromMap(new IdentityHashMap<>());
+    private boolean mRgbLedOffPending;
 
     /**
      * Create a new BaseHardwareManager
@@ -82,6 +83,22 @@ public class BaseHardwareManager implements IHardwareManager {
                     && supportsRecordingLed()) {
                 setRecordingLedOff();
             }
+            flushPendingRgbLedOffLocked();
+        }
+    }
+
+    @Override
+    public void setRgbLedOffWhenRecordingIdle() {
+        synchronized (mRecordingLedOwnerLock) {
+            mRgbLedOffPending = true;
+            flushPendingRgbLedOffLocked();
+        }
+    }
+
+    private void flushPendingRgbLedOffLocked() {
+        if (mRgbLedOffPending && mRecordingLedOwners.isEmpty()) {
+            mRgbLedOffPending = false;
+            if (supportsRgbLed()) setRgbLedOff();
         }
     }
 

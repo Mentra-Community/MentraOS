@@ -49,6 +49,13 @@ public interface IHardwareManager {
      */
     void releaseRecordingLed(Object owner);
 
+    /**
+     * Request RGB OFF once every recording/privacy LED owner has released its lease.
+     * Call before releasing the last photo feedback lease so a camera still capturing can
+     * retain the indicator and complete the pending OFF when it subsequently releases.
+     */
+    void setRgbLedOffWhenRecordingIdle();
+
     /** Logical privacy ownership, independent of delayed hardware OFF execution. */
     default boolean isRecordingLedOwned() { return isRecordingLedOn(); }
 

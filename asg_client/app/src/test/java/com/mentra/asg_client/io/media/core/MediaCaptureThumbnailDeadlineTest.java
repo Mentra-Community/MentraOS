@@ -125,7 +125,30 @@ public class MediaCaptureThumbnailDeadlineTest {
     verify(mHardware, never()).releaseRecordingLed(cameraOwner);
     verify(mHardware, never()).setRecordingLedOff();
     verify(mHardware, never()).setRgbLedOff();
+    // The camera's own timeout/teardown releases later, with no photo callback.
     mHardware.releaseRecordingLed(cameraOwner);
+    verify(mHardware).setRecordingLedOff();
+    verify(mHardware).setRgbLedOff();
+    assertFalse(mHardware.isRecordingLedOwned());
+    mLights.onCaptureBoundary(light, "late JPEG");
+    verify(mHardware).setRgbLedOff();
+  }
+
+  @Test
+  public void pendingRgbOffCannotExtinguishNextPhotoAfterCameraReleases() throws Exception {
+    Object cameraOwner = new Object();
+    mHardware.acquireRecordingLed(cameraOwner);
+    invoke("startCaptureSafetyTimeout");
+    mLights.prepare("request", true);
+    advance(45);
+    PhotoLightController.Token next = mLights.prepare("next", true);
+    mHardware.releaseRecordingLed(cameraOwner);
+    verify(mHardware, never()).setRgbLedOff();
+    assertTrue(mHardware.isRecordingLedOwned());
+    mLights.onCaptureBoundary(next, "JPEG");
+    advance(2);
+    verify(mHardware).setRgbLedOff();
+    assertFalse(mHardware.isRecordingLedOwned());
   }
 
   private void advance(long seconds) {
