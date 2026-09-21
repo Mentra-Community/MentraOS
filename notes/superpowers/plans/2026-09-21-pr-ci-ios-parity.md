@@ -44,6 +44,12 @@ This reproduced the initial candidate's signing failure and motivated the
 targeted incremental retry. A successful Apple artifact and real reuse run are
 still required; local re-signing fixtures do not establish production signing.
 
+Head `a01529dba2`, run `35645419649`, subsequently archived and exported
+successfully on the first attempt. Packaging caught an incorrect optional
+`codesign --extract-certificates` argument. The corrected extraction is shared
+with the early signing probe and was checked against an actual Apple-signed
+app locally. Delivered Apple artifact/reuse qualification remains pending.
+
 ASG run `35642899395` rebuilt on rerun: the existing selector only searches
 coordinated release artifacts, not previously published PR ASG builds. Preserve
 this as a remaining optimization gap rather than claiming universal ASG reuse.

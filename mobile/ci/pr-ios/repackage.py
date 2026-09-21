@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
 """Reuse a signed iOS PR app, replacing packaging metadata without compiling."""
-import hashlib
 import json
 import os
 from pathlib import Path
@@ -11,7 +10,7 @@ import sys
 import tempfile
 import zipfile
 
-from artifacts import BUNDLE_ID, HERE, digest, read_profile, run, validate_profile
+from artifacts import BUNDLE_ID, HERE, digest, read_profile, run, signer_certificate, validate_profile
 sys.path.insert(0, str(HERE.parents[2] / '.github/scripts'))
 from pr_mobile_config import read_build, packaged_config, build_info
 
@@ -56,12 +55,8 @@ def verify_base(app, fingerprint, signing, profile):
     # A changed capability grant requires a fresh build; never silently drop it.
     if original_profile['Entitlements'] != profile['Entitlements']:
         raise ValueError('Cached app provisioning capabilities differ from the current profile')
-    with tempfile.TemporaryDirectory(prefix='mentra-ios-certificate-') as temp:
-        prefix = Path(temp) / 'certificate'
-        run('codesign', '-d', '--extract-certificates', prefix, app)
-        certificate = hashlib.sha1(Path(str(prefix) + '0').read_bytes()).hexdigest().upper()
-        if certificate != signing['certificate']:
-            raise ValueError('Cached app signer differs from the current distribution identity')
+    if signer_certificate(app) != signing['certificate']:
+        raise ValueError('Cached app signer differs from the current distribution identity')
 
 
 def rewrite_app(app, *, fingerprint, ota_url, head_sha, build_number, metadata):

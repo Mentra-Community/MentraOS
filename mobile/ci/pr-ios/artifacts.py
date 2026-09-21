@@ -38,6 +38,15 @@ def read_profile(file):
     return plistlib.loads(run("security", "cms", "-D", "-i", file))
 
 
+def signer_certificate(app):
+    with tempfile.TemporaryDirectory(prefix="mentra-ios-certificate-") as temp:
+        prefix = Path(temp) / "certificate"
+        # codesign accepts optional option values only with '='; a separate
+        # argument is interpreted as another code object to inspect.
+        run("codesign", "-d", f"--extract-certificates={prefix}", app)
+        return hashlib.sha1(Path(str(prefix) + "0").read_bytes()).hexdigest().upper()
+
+
 def validate_profile(profile, now=None):
     now = now or dt.datetime.now(dt.timezone.utc)
     entitlements = profile["Entitlements"]
@@ -109,6 +118,8 @@ def configure(output, keychain):
                            check=False, timeout=20)
             raise
         run("codesign", "--verify", "--strict", "-R", "=anchor apple generic", probe)
+        if signer_certificate(probe) != certificate:
+            raise ValueError("Signing probe used a different certificate")
     # Xcode 16+ reads profiles here. Keep the named profile separate from the
     # App Store profile; concurrent jobs can use the same Apple-issued UUID.
     installed = Path.home() / "Library/Developer/Xcode/UserData/Provisioning Profiles"
