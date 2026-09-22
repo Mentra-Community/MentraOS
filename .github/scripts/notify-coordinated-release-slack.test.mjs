@@ -93,3 +93,11 @@ test("mobile links can mix a historical GitHub APK and a new CDN IPA", (t) => {
   assert.ok(examples.includes(ipa))
   assert.match(examples, /Google Play: :x: failed/)
 })
+
+
+test("store phase failures remain visible even when downloadable artifacts are ready", () => {
+  const payload = notification("core", {IOS_RESULT: "failure", ANDROID_RESULT: "failure", FINALIZE_RESULT: "failure"})
+  const text = JSON.stringify(payload)
+  assert.match(text, /iOS: :x: failed · TestFlight:/)
+  assert.match(text, /Android: :x: failed · Google Play:/)
+})
