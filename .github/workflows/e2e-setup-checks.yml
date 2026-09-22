@@ -54,6 +54,7 @@ jobs:
           sudo apt-get update
           sudo apt-get install --yes ffmpeg
       - run: python3 -m unittest discover -s tools/mentra-e2e -p test_mac_ci.py -v
+      - run: python3 -m unittest discover -s tools/mentra-e2e -p test_ci_selection_mac.py -v
       - name: Verify January setup with fake hardware
         run: python3 -m unittest discover -s tools/mentra-e2e/adapters/day1-setup -p 'test_*.py' -v
       - name: Verify compact January BES setup with fake hardware
@@ -69,6 +70,7 @@ jobs:
           bun test tools/mentra-e2e/runner/day1-full-ota-runtime.test.ts
           bun test tools/mentra-e2e/runner/day1-bes.test.ts tools/mentra-e2e/runner/day1-bes-runtime.test.ts
           bun test tools/mentra-e2e/runner/mtk-full-restore.test.ts
+          bun test tools/mentra-e2e/runner/ci-selection.test.ts
           node --test .github/scripts/request-e2e-routine.test.mjs
 
   native-recorder:

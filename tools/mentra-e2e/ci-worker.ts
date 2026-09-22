@@ -3,6 +3,7 @@ import {execFileSync} from "node:child_process"
 import {constants} from "node:fs"
 import {open} from "node:fs/promises"
 import {parseArgs} from "node:util"
+import {resolveDay1CiSelection} from "./runner/ci-selection"
 import {
   assertRequestTrust,
   consumeRoutineRequest,
@@ -14,15 +15,22 @@ import {
   type RequestEvidence,
 } from "./runner/ci-request"
 
-const HELP = `Authenticated CI request intake. This does not install an app or run hardware.
+const HELP = `Authenticated CI request intake and cached artifact preparation.
+These commands do not install an app or run hardware.
 
 bun ci-worker.ts list
 bun ci-worker.ts inspect --run ID --attempt N --trust PRIVATE.json
+bun ci-worker.ts prepare --run ID --attempt N --trust PRIVATE.json \\
+  --cache-index PRIVATE.json --cache-index-sha256 SHA256 --output NEW_DIRECTORY \\
+  --python /absolute/trusted/python3
 bun ci-worker.ts consume --run ID --attempt N --trust PRIVATE.json --state PRIVATE_DIRECTORY
 
 Use a reviewed local checkout. The trust file explicitly pins each allowed PR,
 head/base SHA, workflow SHA and merge checkout SHA; a PR label is insufficient.
-Inspect verifies the GitHub run and request ZIP. Consume writes an exclusive
+Inspect verifies the GitHub run and request ZIP. Prepare additionally verifies
+the operator's cached Mac ZIP, receipt, OTA artifacts and reviewed legacy route,
+then freezes their selection without consuming the request. See CI-SELECTION.md.
+Consume writes an exclusive
 durable claim and a no-artifact or blocked-unqualified result. It cannot pass a
 device test. Existing claims are never dispatched again, including after crashes.
 
@@ -87,7 +95,7 @@ with zipfile.ZipFile(io.BytesIO(sys.stdin.buffer.read())) as z:
   )
 }
 
-async function inspect(runId: number, attempt: number, trustPath: string) {
+export async function inspectRoutineRequest(runId: number, attempt: number, trustPath: string) {
   const trust = await trustFile(trustPath)
   const run = api(`actions/runs/${runId}/attempts/${attempt}`)
   if (
@@ -143,13 +151,17 @@ async function main() {
       attempt: {type: "string"},
       trust: {type: "string"},
       state: {type: "string"},
+      "cache-index": {type: "string"},
+      "cache-index-sha256": {type: "string"},
+      output: {type: "string"},
+      python: {type: "string"},
     },
   })
   if (values.help || !positionals.length) {
     console.log(HELP)
     return
   }
-  if (positionals.length !== 1 || !["list", "inspect", "consume"].includes(positionals[0])) throw new Error(HELP)
+  if (positionals.length !== 1 || !["list", "inspect", "prepare", "consume"].includes(positionals[0])) throw new Error(HELP)
   if (positionals[0] === "list") {
     if (Object.keys(values).length) throw new Error("list takes no options")
     const response = api(`actions/workflows/request-e2e-routine.yml/runs?per_page=30`)
@@ -172,8 +184,34 @@ async function main() {
   }
   if (!values.trust) throw new Error("--trust is required")
   if (positionals[0] === "consume" && !values.state) throw new Error("consume requires --state")
-  if (positionals[0] === "inspect" && values.state) throw new Error("inspect does not write state; omit --state")
-  const verified = await inspect(positive(values.run, "run ID"), positive(values.attempt, "attempt"), values.trust)
+  if (positionals[0] !== "consume" && values.state) throw new Error("Only consume accepts --state")
+  const preparing = positionals[0] === "prepare"
+  const prepareKeys = ["cache-index", "cache-index-sha256", "output", "python"] as const
+  if (preparing && prepareKeys.some((key) => !values[key])) throw new Error("prepare requires cache index/hash, output and trusted Python path")
+  if (!preparing && prepareKeys.some((key) => values[key])) throw new Error("Cached artifact options are only valid for prepare")
+  const verified = await inspectRoutineRequest(positive(values.run, "run ID"), positive(values.attempt, "attempt"), values.trust)
+  if (preparing) {
+    // Authentication precedes reading any operator cache. Preparation does not
+    // create the worker lease/claim or register a hardware implementation.
+    const path = values["cache-index"]!
+    const file = await open(path, constants.O_RDONLY | constants.O_NONBLOCK | constants.O_NOFOLLOW)
+    let size: number
+    try {
+      const stat = await file.stat()
+      if (!stat.isFile() || stat.size <= 0 || stat.size > 1024 * 1024 || stat.mode & 0o022)
+        throw new Error("Cache index must be a private regular file under 1 MiB")
+      size = stat.size
+    } finally {
+      await file.close()
+    }
+    const prepared = await resolveDay1CiSelection(verified.request, {
+      cacheIndex: {path, sha256: values["cache-index-sha256"]!, size},
+      outputDirectory: values.output!,
+      python: values.python!,
+    })
+    console.log(JSON.stringify({requestId: verified.request.requestId, authenticated: true, prepared: prepared.reference, hardwareStarted: false, requestConsumed: false}, null, 2))
+    return
+  }
   if (positionals[0] === "inspect") {
     console.log(
       JSON.stringify(
