@@ -758,21 +758,33 @@ def activate(cfg, args, helper, audit):
 def main():
     os.umask(0o077)
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('mode', choices=('stage', 'activate'))
+    parser.add_argument('mode', choices=('stage', 'activate', 'observe'))
     parser.add_argument('--run', required=True, type=Path)
     parser.add_argument('--owner')
+    parser.add_argument('--out', type=Path)
+    parser.add_argument('--stage-missing-probe', action='store_true')
     config.arguments(parser)
     args = parser.parse_args()
     cfg = config.from_arguments(args)
     args.run = args.run.absolute()
     require(args.mode == 'stage' or args.owner is None, 'activation_uses_bound_stage_owner')
+    require((args.mode == 'observe') == (args.out is not None)
+            and (args.mode == 'observe' or not args.stage_missing_probe), 'observation_options_invalid')
+    if args.out is not None:
+        args.out = config.absolute(str(args.out))
+        require(args.out != args.run and args.run not in args.out.parents, 'observation_must_not_create_stage_directory')
     cfg.require_lease()
-    audit = Audit(cfg, args.run if args.mode == 'stage' else args.run/'activation')
+    audit = Audit(cfg, args.out if args.mode == 'observe' else args.run if args.mode == 'stage' else args.run/'activation')
     def stopped(_signum, _frame): raise InterruptedError('controller_interrupted')
     signal.signal(signal.SIGTERM, stopped)
     try:
         save(audit.path/'adapter-inputs.json', cfg.public_inputs())
         helper = pin_tools(cfg)
+        if args.mode == 'observe':
+            import observe
+            result = observe.collect(cfg, args.run, audit, helper, stage_missing_probe=args.stage_missing_probe)
+            print(json.dumps({'current':result, 'firmwareWrites':0}))
+            return
         (stage if args.mode == 'stage' else activate)(cfg, args, helper, audit)
     except BaseException as exc:
         save(audit.path/'failure.json', {'status': 'failed', 'mode': args.mode, 'at': time.time(),

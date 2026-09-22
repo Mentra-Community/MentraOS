@@ -28,7 +28,7 @@ HELPER_SHA = '00f586a648c96383a9545145d7b44b25bbd2696ce24b8efb166238dde59a8698'
 PROBE_SHA = 'c0488244fe62e24f0ca2c855355de01bc687d1d8ae762336e2fc0405e5e42a8e'
 PROBE_BYTES = 2143
 DEFINITION_FILES = frozenset(('__init__.py', 'config.py', 'ble_support.py', 'factory_asg.py',
-    'recover_wiped.py', 'bes_continuity.py', 'observe_power.py', 'query_bes_version.py', 'full_january.py', 'reconcile.py'))
+    'recover_wiped.py', 'bes_continuity.py', 'observe_power.py', 'query_bes_version.py', 'full_january.py', 'reconcile.py', 'observe.py'))
 SHA = r'[0-9a-f]{64}'
 UUID = r'[0-9a-f]{8}(?:-[0-9a-f]{4}){3}-[0-9a-f]{12}'
 

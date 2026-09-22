@@ -1,7 +1,7 @@
 # January full-OTA setup adapter
 
 This Python adapter prepares the January 13 factory baseline beneath an existing
-routine lease. It has two mutating entry points: **stage** (transfer and apply),
+routine lease. It has two firmware mutation entry points: **stage** (transfer and apply),
 and **activate** (one reboot, bounded network recovery and baseline checks).
 It does not acquire a lease, run the customer routine, restore the selected
 modern firmware, publish results, or mark a fixture ready.
@@ -180,3 +180,66 @@ current `UPDATED_NEED_REBOOT` give `settled`. Once the activation directory
 exists, it cannot become permission to resend. A known busy engine on the exact
 owned source is `active`; missing/stale/contradictory evidence is `unknown`.
 A successful setup remains separate from final selected-manifest return checks.
+
+## Actual current-state runtime
+
+`runner/day1-full-ota-runtime.ts` supplies the actual command and current-state
+callbacks for `createDay1FullOtaSteps`; the same outer worker remains the lease
+owner and immediate Python parent:
+
+```ts
+const runtime = createDay1FullOtaRuntime(inputs, {stageMissingProbe: true})
+const setupSteps = createDay1FullOtaSteps(inputs, runtime)
+```
+
+Construction performs no I/O. Every invocation freezes private argv, stdout,
+stderr, start/end times and exit status under the lifecycle run directory. The
+runtime has no timeout that kills a firmware writer, no automatic retry and no
+second lease. Python still validates the complete config/definition, identity,
+artifact and admission gates. The config's `definition` now includes
+`observe.py`; freeze its actual hash with the other adapter modules.
+
+The observer entry point is:
+
+```text
+<python> <adapter>/full_january.py observe
+  --config <same-frozen-config.json> --config-sha256 <sha256>
+  --run <stage-evidence-directory>
+  --out <fresh-observation-directory-outside-stage>
+  [--stage-missing-probe]
+```
+
+Without `--stage-missing-probe`, this performs read-only device operations. It
+uses `update_engine_client --status` when present, otherwise verifies and runs
+the exact pinned read-only status JAR at its SHA-named path. A missing helper is
+an error, never an inferred `IDLE` result.
+
+The explicit option stages only that diagnostic JAR when missing. It is needed
+before the first stage reconciliation and again after this profile's POWERWASH
+removes `/data/local/tmp`. Before a push the observer rechecks the parent lease,
+local helper hash and complete current fixture identity. It records a durable
+intent and shared claim under `claimsRoot/<cid>/status-probe/<boot>-<sha>.json`.
+A matching existing regular file is reused. Conflicting bytes, symlinks, an
+unknown presence check, an existing claim with absent bytes, or an ambiguous
+push fail without replacement or resend. The unrelated generic probe path is
+never touched. Probe writes are recorded separately from `firmwareWrites:0`.
+
+Probe preparation finishes **before** the fresh current-state bracket begins.
+The observer then independently rereads identity, obtains actual engine status
+through the existing pinned parser, closes the identity/boot/transport bracket,
+and saves a hashed private `current.json`. No state is derived from a successful
+boot alone. The stage directory remains absent during initial observation.
+
+For January, the observer requires the original owned activation receipt and
+successful recovery result, then rereads the exact stock ASG, CID, both serials,
+MTK and slot using `recovery.identity`. The retained BLE bridge is usable only
+on its same recorded new boot and endpoint. `freshBleReadPerformed:false`
+explicitly distinguishes this from a new BLE query; no pairing or provisioning
+is performed. A current same-PID/start-ticks log closes the state reads. Missing
+January startup/no-admission evidence still makes the canonical reconciler
+return unknown; the observer does not restart ASG to create it.
+
+This observer proves identity and update-engine status. It does not replace the
+stage/activation ASG activity, admission-generation, BES continuity, power or
+managed-app-absence gates. The extracted runtime still requires hardware
+qualification; its tests use fake device responses and real local subprocesses.

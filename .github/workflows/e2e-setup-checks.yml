@@ -66,6 +66,7 @@ jobs:
           bun test tools/mentra-e2e/runner/ota-state.test.ts tools/mentra-e2e/runner/ota-legacy-route.test.ts tools/mentra-e2e/runner/return-observer.test.ts tools/mentra-e2e/runner/day1-run-exporter.test.ts
           bun test tools/mentra-e2e/runner/day1-full-ota.test.ts tools/mentra-e2e/runner/ota-customer-sequence.test.ts tools/mentra-e2e/runner/ota-recording.test.ts tools/mentra-e2e/runner/return-collector.test.ts tools/mentra-e2e/runner/return-app-observer.test.ts tools/mentra-e2e/runner/ci-run-exporter.test.ts tools/mentra-e2e/runner/ota-january-identity.test.ts tools/mentra-e2e/runner/ota-january-pairing.test.ts
           bun test tools/mentra-e2e/runner/ota-customer-step.test.ts
+          bun test tools/mentra-e2e/runner/day1-full-ota-runtime.test.ts
           node --test .github/scripts/request-e2e-routine.test.mjs
 
   native-recorder:
