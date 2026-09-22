@@ -10,6 +10,7 @@ import {acquireLock, Report} from "./runner/report"
 import {executeSteps} from "./runner/suite"
 import {legacyAppPairChecks, loadLegacyRoute, verifyPublishedLegacyManifests} from "./runner/ota-legacy-route"
 import {runLifecycle, type AssertionObservation, type Json, type Reconciliation} from "./runner/lifecycle"
+import {runOtaCustomerSequence, type OtaCustomerProgress} from "./runner/ota-customer-sequence"
 
 const {values} = parseArgs({
   args: process.argv.slice(2),
@@ -95,9 +96,7 @@ let logger: ReturnType<typeof Bun.spawn> | undefined
 let loggingTransport = ""
 let logSegment = 0
 let hardwareFolder = ""
-let started = false
-let installPasses = 0
-let finished = false
+const progress: OtaCustomerProgress = {started: false, installPasses: 0, finished: false}
 let index = 0
 let lastHardware = ""
 
@@ -249,152 +248,49 @@ try {
     nativeAssociationQualified: false,
   }
   await report.startVideo()
-  async function customerSequence() {
-    const before = await hardware(
-      values.resume && ["working", "checking", "pass-complete"].includes(otaPage(await snapshot()).kind),
-    )
-    // ASG and MTK can stay unchanged in a BES-only release. Require a fresh BES
-    // response before deciding to skip the app's normal installation flow.
-    let alreadyCurrent = false
-    if (!values.resume && before.asgVersion === target.asgVersion && before.firmware === target.firmware) {
-      const logs = await run(["adb", "-t", before.transport, "logcat", "-d", "-v", "epoch", "-t", "12000"])
-      const proof = freshBesProof(logs, before.bootId, Number(await before.shell("date", "+%s")))
-      alreadyCurrent = proof.version === target.bes
-    }
-    if (
-      !alreadyCurrent &&
-      !values.resume &&
-      (before.bootId !== fixture.before.bootId || before.slot !== fixture.before.slot)
-    )
-      throw new Error("Initial boot or slot differs from the reviewed fixture")
-    await observe("Verify the app's OTA pin and exact fixture identity before any installation.", await snapshot())
-    if (!values.resume) {
-      const initialPage = otaPage(await snapshot())
-      if (initialPage.kind === "offered") {
-        const ok = await executeSteps(
-          [
-            {
-              id: `OTA-${String(++index).padStart(2, "0")}`,
-              instruction: "Defer the update offer briefly to verify the paired device.",
-              expected: "The offer closes without starting installation.",
-              action: {op: "press", selector: {role: "AXButton", description: "Later"}},
-              checks: [{selector: {role: "AXButton", description: "Install"}, absent: true}],
-            },
-          ],
-          {fixture: fixture.serial, email: "", password: ""},
-          report,
-        )
-        if (!ok) throw new Error("Could not reach home for pairing verification")
-      } else if (initialPage.kind !== "home")
-        throw new Error("Start a new OTA routine at paired home or its initial update offer")
-      await verifyAppPair()
-      if (values.install && !alreadyCurrent) {
-        const ok = await executeSteps(
-          [
-            {
-              id: `OTA-${String(++index).padStart(2, "0")}`,
-              instruction: "Relaunch the same signed app to repeat its normal update check.",
-              expected: "The same app relaunches; the observer handles home, checking and update offers.",
-              action: {op: "relaunch"},
-              checks: [],
-              timeoutMs: 20000,
-            },
-          ],
-          {fixture: fixture.serial, email: "", password: ""},
-          report,
-        )
-        if (!ok) throw new Error("Same-build OTA check relaunch failed")
-      }
-    }
-    const deadline = performance.now() + minutes * 60000
-    let lastPage = ""
-    let unknownSince = performance.now()
-    let lastHardwareCheck = performance.now()
-    while (performance.now() < deadline) {
-      const state = await snapshot()
-      const page = otaPage(state)
-      if (page.title !== lastPage) {
-        await observe(`Observe OTA: ${page.title || "transitioning"}.`, state)
-        console.log(`OTA: ${page.kind} — ${page.title}`)
-        lastPage = page.title
-      }
-      if (page.kind === "failed") throw new Error(`OTA stopped on ${page.title}; app and glasses left untouched`)
-      if (page.kind === "complete" || page.kind === "current" || (page.kind === "home" && alreadyCurrent && !started)) {
-        await verifyTarget()
-        if (page.kind !== "home")
-          await press(
-            page.kind === "complete" ? "button-Done" : "button-Continue",
-            "Finish the verified update and return to paired home.",
+  const customerSequence = () =>
+    runOtaCustomerSequence(
+      {install: values.install, resume: values.resume, minutes, before: fixture.before, target},
+      progress,
+      report.metadata,
+      {
+        snapshot,
+        hardware,
+        observe,
+        press,
+        verifyAppPair,
+        verifyTarget,
+        readBesVersion: async (identity) => {
+          const logs = await run(["adb", "-t", identity.transport, "logcat", "-d", "-v", "epoch", "-t", "12000"])
+          return freshBesProof(logs, identity.bootId, Number(await identity.shell("date", "+%s"))).version
+        },
+        executeStep: (step) =>
+          executeSteps(
+            [{...step, id: `OTA-${String(++index).padStart(2, "0")}`}],
+            {fixture: fixture.serial, email: "", password: ""},
+            report,
+          ),
+        verifyPublishedManifests: legacy ? () => verifyPublishedLegacyManifests(legacy!.route.manifests) : undefined,
+        observeHardware: async (observingActivePass) => {
+          await observeOtaHardware(
+            () => hardware(observingActivePass),
+            (error) =>
+              appendFile(
+                join(hardwareFolder, "timeline.jsonl"),
+                JSON.stringify({
+                  at: new Date().toISOString(),
+                  observation:
+                    error.kind === "transport"
+                      ? "Selected ADB transport unavailable during update"
+                      : "Glasses boot in progress",
+                  error: String(error),
+                }) + "\n",
+                {mode: 0o600},
+              ),
           )
-        if (otaPage(await snapshot()).kind !== "home") throw new Error("Verified update did not return to home")
-        if (values.resume || started) await verifyAppPair()
-        report.metadata.otaOutcome = started ? "updated" : values.resume ? "resumed-and-verified" : "already-current"
-        finished = true
-        break
-      }
-      if (page.kind === "pass-complete") {
-        if (!started && !values.resume)
-          throw new Error("An existing update completed; use --resume to finish observing it")
-        await press(page.finishControl!, "Finish this installation pass and let the app check for remaining updates.")
-      } else if (page.kind === "offered") {
-        if (!values.install || values.resume)
-          throw new Error("An update is offered; --install is required to start a new update")
-        const ok = await executeSteps(
-          [
-            {
-              id: `OTA-${String(++index).padStart(2, "0")}`,
-              instruction: "Open the offered Mentra Live update.",
-              expected: "Update Now is available.",
-              action: {op: "press", selector: {role: "AXButton", description: "Install", enabled: true}},
-              checks: [{selector: {identifier: "button-Update Now", enabled: true}}],
-              timeoutMs: 30000,
-            },
-          ],
-          {fixture: fixture.serial, email: "", password: ""},
-          report,
-        )
-        if (!ok) throw new Error("Update offer did not open")
-      } else if (page.kind === "available") {
-        if (!values.install || values.resume) throw new Error("--install is required to start an update pass")
-        // Match the app's eight-pass auto-chain bound; every pass retains the same pinned targets.
-        if (installPasses >= 8) throw new Error("Pinned OTA sequence exceeded eight installation passes")
-        if (legacy) await verifyPublishedLegacyManifests(legacy.route.manifests)
-        await hardware()
-        started = true
-        report.metadata.installPasses = ++installPasses
-        await press(
-          "button-Update Now",
-          `Start pass ${installPasses} of the pinned OTA sequence through the Mentra App.`,
-        )
-      } else if (page.kind === "working") {
-        if (!started && !values.resume) throw new Error("An existing update is active; use --resume to observe it")
-      }
-      if (page.kind !== "unknown") unknownSince = performance.now()
-      else if (performance.now() - unknownSince > 60000)
-        throw new Error("Unrecognized OTA screen persisted for 60 seconds")
-      if (performance.now() - lastHardwareCheck > 5000) {
-        await observeOtaHardware(
-          () => hardware((started || values.resume) && ["working", "checking", "pass-complete"].includes(page.kind)),
-          (error) =>
-            appendFile(
-              join(hardwareFolder, "timeline.jsonl"),
-              JSON.stringify({
-                at: new Date().toISOString(),
-                observation:
-                  error.kind === "transport"
-                    ? "Selected ADB transport unavailable during update"
-                    : "Glasses boot in progress",
-                error: String(error),
-              }) + "\n",
-              {mode: 0o600},
-            ),
-        )
-        lastHardwareCheck = performance.now()
-      }
-      await Bun.sleep(750)
-    }
-    if (!finished) throw new Error("OTA observation deadline reached; installation was not interrupted or retried")
-  }
+        },
+      },
+    )
   if (!legacy) {
     await customerSequence()
     const status = await report.finish(
@@ -422,7 +318,7 @@ try {
       await verifyTarget()
       return {
         ...observation("exact target components and paired home", {target, page: otaPage(await snapshot()).kind}),
-        passed: finished && otaPage(await snapshot()).kind === "home",
+        passed: progress.finished && otaPage(await snapshot()).kind === "home",
       }
     }
     const reconcile = async (_: unknown, intent?: unknown): Promise<Reconciliation> => {
@@ -442,9 +338,9 @@ try {
       }
       // Recovery must never execute the UI loop. Completion must have been
       // independently verified in this process; otherwise retain ownership.
-      if (!finished || customerError)
+      if (!progress.finished || customerError)
         return {
-          ...observation("verified customer sequence", {finished, error: customerError ?? null}),
+          ...observation("verified customer sequence", {finished: progress.finished, error: customerError ?? null}),
           status: "unknown",
         }
       const proof = await targetAssertion()
@@ -505,7 +401,7 @@ try {
                 )
                 throw error
               }
-              return {finished, installPasses}
+              return {finished: progress.finished, installPasses: progress.installPasses}
             },
           },
         ],
@@ -539,7 +435,7 @@ try {
             instruction: "Finalize actual customer evidence separately from unresolved fixture readiness.",
             observe: async () => {
               const status = await report.finish(
-                customerError || !finished ? "failed" : "incomplete",
+                customerError || !progress.finished ? "failed" : "incomplete",
                 "Customer-only replay; setup was external, no restoration was performed, fixture readiness remains unverified.",
               )
               const integrity = await run(["bun", resolve(import.meta.dir, "verify-run.ts"), report.directory])
