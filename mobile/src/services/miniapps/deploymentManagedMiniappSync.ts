@@ -3,6 +3,7 @@ import {Directory, File, Paths} from "expo-file-system"
 
 import {shouldSkipMiniappInstall} from "./miniappVisibility"
 import type {ActiveDeployment, DeploymentManagedMiniapp} from "@/services/deployment"
+import {deploymentStore} from "@/services/deployment/store"
 
 import {sha256Hex} from "./preinstalledMiniappSync"
 import {preflightMiniappZip} from "./miniappZipPreflight"
@@ -12,6 +13,38 @@ const STATE_FILE_NAME = "deployment-managed-miniapps.json"
 // Matches Runtime's managed-bundle ceiling. The archive is hashed in memory,
 // so refuse oversized downloads before reading them.
 const MAX_BUNDLE_BYTES = 64 * 1024 * 1024
+
+class SupersededSync extends Error {}
+
+interface SyncContext {
+  id: number
+  signal: AbortSignal
+  assertCurrent(): void
+}
+
+let nextSyncId = 0
+let activeSync: AbortController | undefined
+let reconciliation = Promise.resolve()
+
+// Downloads may outlive cancellation in Expo. Stop waiting for them so a new
+// workspace can proceed, but keep every registry/state mutation serialized.
+async function waitForDownload<T>(download: Promise<T>, signal: AbortSignal): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const cancel = () => reject(new SupersededSync())
+    signal.addEventListener("abort", cancel, {once: true})
+    if (signal.aborted) cancel()
+    download.then(
+      (value) => {
+        signal.removeEventListener("abort", cancel)
+        resolve(value)
+      },
+      (error) => {
+        signal.removeEventListener("abort", cancel)
+        reject(error)
+      },
+    )
+  })
+}
 
 interface ManagedInstallRecord {
   packageName: string
@@ -93,12 +126,13 @@ function discoverOwnedEntries(deploymentId: string, workspaceOrigin: string): Ma
     )
 }
 
-async function uninstallOwnedEntries(state: ManagedInstallState): Promise<boolean> {
+async function uninstallOwnedEntries(state: ManagedInstallState, context: SyncContext): Promise<boolean> {
   const entries = new Map<string, ManagedInstallRecord>()
   for (const entry of [...state.entries, ...discoverOwnedEntries(state.deploymentId, state.workspaceOrigin)]) {
     entries.set(recordKey(entry), entry)
   }
   for (const entry of entries.values()) {
+    context.assertCurrent()
     if (!hasExactOwnership(state.deploymentId, state.workspaceOrigin, entry)) {
       console.warn(`${LOG_TAG}: refusing to remove unowned ${entry.packageName}@${entry.version}`)
       continue
@@ -112,39 +146,39 @@ async function uninstallOwnedEntries(state: ManagedInstallState): Promise<boolea
   return true
 }
 
-async function downloadVerifiedBundle(entry: DeploymentManagedMiniapp): Promise<string> {
+function removeCachedBundle(file: File): void {
+  try {
+    if (file.exists) file.delete()
+  } catch {
+    // Cache cleanup must never change the outcome of an installation.
+  }
+}
+
+async function downloadVerifiedBundle(entry: DeploymentManagedMiniapp, context: SyncContext): Promise<string> {
   const downloadDir = new Directory(Paths.cache, "deployment_managed_miniapps")
   if (!downloadDir.exists) downloadDir.create()
-  const target = new File(downloadDir, `${entry.packageName}-${entry.version}.zip`)
+  const target = new File(downloadDir, `${context.id}-${entry.packageName}-${entry.version}.zip`)
   if (target.exists) target.delete()
 
-  let output: File
   try {
-    output = await File.downloadFileAsync(entry.bundleUrl, target, {idempotent: true})
+    const output = await File.downloadFileAsync(entry.bundleUrl, target, {idempotent: true})
+    context.assertCurrent()
+    const size = output.size
+    if (size == null || size > MAX_BUNDLE_BYTES) {
+      throw new Error(`bundle exceeds ${MAX_BUNDLE_BYTES} bytes (${size ?? "unknown"})`)
+    }
+    const bytes = await output.bytes()
+    const actualSha256 = await sha256Hex(bytes)
+    context.assertCurrent()
+    if (actualSha256 !== entry.sha256.toLowerCase()) {
+      throw new Error(`bundle SHA-256 mismatch: expected ${entry.sha256}, got ${actualSha256}`)
+    }
+    preflightMiniappZip(bytes)
+    return output.uri
   } catch (error) {
-    throw new Error(`bundle download failed: ${(error as Error)?.message ?? error}`)
+    removeCachedBundle(target)
+    throw error
   }
-  const size = output.size
-  if (size == null || size > MAX_BUNDLE_BYTES) {
-    try {
-      output.delete()
-    } catch {
-      // Best-effort cache cleanup.
-    }
-    throw new Error(`bundle exceeds ${MAX_BUNDLE_BYTES} bytes (${size ?? "unknown"})`)
-  }
-  const bytes = await output.bytes()
-  const actualSha256 = await sha256Hex(bytes)
-  if (actualSha256 !== entry.sha256.toLowerCase()) {
-    try {
-      output.delete()
-    } catch {
-      // Best-effort cache cleanup. The bundle is never passed to AppRegistry.
-    }
-    throw new Error(`bundle SHA-256 mismatch: expected ${entry.sha256}, got ${actualSha256}`)
-  }
-  preflightMiniappZip(bytes)
-  return output.uri
 }
 
 async function installEntry(
@@ -152,7 +186,9 @@ async function installEntry(
   workspaceOrigin: string,
   entry: DeploymentManagedMiniapp,
   previous: ManagedInstallRecord | undefined,
+  context: SyncContext,
 ): Promise<boolean> {
+  context.assertCurrent()
   const installedVersions = appRegistry.getInstalledVersions(entry.packageName)
   const desiredIdentity = appRegistry.getReleaseIdentity(entry.packageName, entry.version)
   const desiredOwnedByDeployment =
@@ -186,9 +222,10 @@ async function installEntry(
     return false
   }
 
-  const desiredWasInstalled = installedVersions.includes(entry.version)
+  let zipPath: string | undefined
   try {
-    const zipPath = await downloadVerifiedBundle(entry)
+    zipPath = await waitForDownload(downloadVerifiedBundle(entry, context), context.signal)
+    context.assertCurrent()
     if (shouldSkipMiniappInstall(entry.packageName)) return false
     const result = await appRegistry.installFromLocalZip(zipPath, {
       expectedPackageName: entry.packageName,
@@ -205,22 +242,29 @@ async function installEntry(
     if (result.is_error()) throw result.error
     return true
   } catch (error) {
-    if (!desiredWasInstalled && appRegistry.getInstalledVersions(entry.packageName).includes(entry.version)) {
-      const cleanup = await appRegistry.uninstall(entry.packageName, entry.version)
-      if (cleanup.is_error()) console.warn(`${LOG_TAG}: failed to clean partial install`, cleanup.error)
-    }
+    if (error instanceof SupersededSync) throw error
+    // AppRegistry owns rollback of the directory it creates. A pre-download
+    // existence snapshot cannot establish ownership of a later installation.
     console.warn(`${LOG_TAG}: failed to install ${entry.packageName}@${entry.version}`, error)
     return false
+  } finally {
+    if (zipPath) {
+      removeCachedBundle(new File(zipPath))
+    }
   }
 }
 
-async function syncWorkspace(deployment: Extract<ActiveDeployment, {kind: "workspace"}>): Promise<void> {
+async function syncWorkspace(
+  deployment: Extract<ActiveDeployment, {kind: "workspace"}>,
+  context: SyncContext,
+): Promise<void> {
   let state = readState()
   if (
     state &&
     (state.deploymentId !== deployment.manifest.deploymentId || state.workspaceOrigin !== deployment.workspaceOrigin)
   ) {
-    if (!(await uninstallOwnedEntries(state))) return
+    if (!(await uninstallOwnedEntries(state, context))) return
+    context.assertCurrent()
     state = null
     writeState(null)
   }
@@ -236,6 +280,7 @@ async function syncWorkspace(deployment: Extract<ActiveDeployment, {kind: "works
   )
 
   for (const entry of deployment.manifest.miniapps.managed) {
+    context.assertCurrent()
     if (shouldSkipMiniappInstall(entry.packageName)) {
       console.log(`${LOG_TAG}: skipping platform-hidden ${entry.packageName}@${entry.version}`)
       continue
@@ -243,7 +288,8 @@ async function syncWorkspace(deployment: Extract<ActiveDeployment, {kind: "works
     const previous = [...currentEntries.values()].find(
       (candidate) => candidate.packageName === entry.packageName && candidate.version === entry.version,
     )
-    if (!(await installEntry(deployment.manifest.deploymentId, deployment.workspaceOrigin, entry, previous))) continue
+    if (!(await installEntry(deployment.manifest.deploymentId, deployment.workspaceOrigin, entry, previous, context)))
+      continue
 
     const next = {packageName: entry.packageName, version: entry.version, sha256: entry.sha256.toLowerCase()}
     nextEntries.set(recordKey(next), next)
@@ -255,7 +301,12 @@ async function syncWorkspace(deployment: Extract<ActiveDeployment, {kind: "works
       workspaceOrigin: deployment.workspaceOrigin,
       entries: [...nextEntries.values()],
     })
+    // An unzip already committing when cancelled must finish before the next
+    // reconciliation. Record its ownership so that reconciliation can remove
+    // it; no newer workspace can have written state while we hold the queue.
+    context.assertCurrent()
     for (const old of [...nextEntries.values()]) {
+      context.assertCurrent()
       if (old.packageName !== entry.packageName || old.version === entry.version) continue
       if (!hasExactOwnership(deployment.manifest.deploymentId, deployment.workspaceOrigin, old)) {
         nextEntries.delete(recordKey(old))
@@ -268,6 +319,7 @@ async function syncWorkspace(deployment: Extract<ActiveDeployment, {kind: "works
       }
       nextEntries.delete(recordKey(old))
     }
+    context.assertCurrent()
     writeState({
       schemaVersion: 1,
       deploymentId: deployment.manifest.deploymentId,
@@ -277,6 +329,7 @@ async function syncWorkspace(deployment: Extract<ActiveDeployment, {kind: "works
   }
 
   for (const previous of [...nextEntries.values()]) {
+    context.assertCurrent()
     if (desiredNames.has(previous.packageName)) continue
     if (!hasExactOwnership(deployment.manifest.deploymentId, deployment.workspaceOrigin, previous)) {
       nextEntries.delete(recordKey(previous))
@@ -288,6 +341,7 @@ async function syncWorkspace(deployment: Extract<ActiveDeployment, {kind: "works
       continue
     }
     nextEntries.delete(recordKey(previous))
+    context.assertCurrent()
     writeState({
       schemaVersion: 1,
       deploymentId: deployment.manifest.deploymentId,
@@ -296,6 +350,7 @@ async function syncWorkspace(deployment: Extract<ActiveDeployment, {kind: "works
     })
   }
 
+  context.assertCurrent()
   writeState({
     schemaVersion: 1,
     deploymentId: deployment.manifest.deploymentId,
@@ -305,27 +360,57 @@ async function syncWorkspace(deployment: Extract<ActiveDeployment, {kind: "works
 }
 
 export const deploymentManagedMiniappSync = {
-  async sync(deployment: ActiveDeployment): Promise<void> {
-    try {
-      if (deployment.kind === "workspace") {
-        await syncWorkspace(deployment)
-        return
-      }
+  cancel(): Promise<void> {
+    activeSync?.abort()
+    return reconciliation
+  },
 
-      const state = readState()
-      if (state) {
-        if (await uninstallOwnedEntries(state)) writeState(null)
-        return
-      }
-      // Recover installs created before the ownership state file was flushed.
-      const orphaned = appRegistry.getDeploymentOwnedReleases()
-      for (const {packageName, version} of orphaned) {
-        const result = await appRegistry.uninstall(packageName, version)
-        if (result.is_error())
-          console.warn(`${LOG_TAG}: failed to remove orphan ${packageName}@${version}`, result.error)
-      }
-    } catch (error) {
-      console.warn(`${LOG_TAG}: reconciliation failed`, error)
+  sync(deployment: ActiveDeployment): Promise<void> {
+    if (deploymentStore.getActive() !== deployment) return Promise.resolve()
+    activeSync?.abort()
+    const controller = new AbortController()
+    activeSync = controller
+    const context: SyncContext = {
+      id: ++nextSyncId,
+      signal: controller.signal,
+      assertCurrent: () => {
+        if (controller.signal.aborted || deploymentStore.getActive() !== deployment) throw new SupersededSync()
+      },
     }
+    const unsubscribe = deploymentStore.subscribe(() => {
+      if (deploymentStore.getActive() !== deployment) controller.abort()
+    })
+    reconciliation = reconciliation.then(async () => {
+      try {
+        context.assertCurrent()
+        if (deployment.kind === "workspace") {
+          await syncWorkspace(deployment, context)
+          return
+        }
+
+        const state = readState()
+        if (state) {
+          if (await uninstallOwnedEntries(state, context)) {
+            context.assertCurrent()
+            writeState(null)
+          }
+          return
+        }
+        // Recover installs created before the ownership state file was flushed.
+        const orphaned = appRegistry.getDeploymentOwnedReleases()
+        for (const {packageName, version} of orphaned) {
+          context.assertCurrent()
+          const result = await appRegistry.uninstall(packageName, version)
+          if (result.is_error())
+            console.warn(`${LOG_TAG}: failed to remove orphan ${packageName}@${version}`, result.error)
+        }
+      } catch (error) {
+        if (!(error instanceof SupersededSync)) console.warn(`${LOG_TAG}: reconciliation failed`, error)
+      } finally {
+        unsubscribe()
+        if (activeSync === controller) activeSync = undefined
+      }
+    })
+    return reconciliation
   },
 }

@@ -275,6 +275,10 @@ async function unpackMiniApp(
     }
   } catch (error) {
     console.error("Error moving the contents of the folder to the destination directory", error)
+    // With rejectExistingVersion, this invocation created the destination.
+    // Roll back here while the install queue is held, never from a caller's
+    // stale pre-download snapshot of which versions used to exist.
+    if (expected?.rejectExistingVersion && versionDir.exists) versionDir.delete()
     throw "INSTALL_CONTENTS_FAILED"
   }
 

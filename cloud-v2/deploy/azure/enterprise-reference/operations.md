@@ -247,6 +247,12 @@ Installation provenance is stored separately from session data so logout retains
 ownership alongside the bundle files. Older missing metadata is recovered only
 through verified comparison, never by trusting a version number.
 
+Workspace changes and logout cancel pending managed downloads. Installation and
+ownership cleanup run in sequence, so a late download cannot remove another
+workspace's release. An unzip already committing finishes and records ownership
+before the next workspace cleans it up. Consumer registry downloads also stop
+installing when their deployment changes.
+
 If the same Call version is already installed from the consumer deployment, the
 host downloads and verifies the workspace ZIP, compares the complete extracted
 file tree, and adopts the existing release only when every file matches. It does

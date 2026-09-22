@@ -107,6 +107,7 @@ class MantleManager {
   private lastMicDataAt: number = 0
   private subs: Array<any> = []
   private initialized: boolean = false
+  private miniappGeneration = 0
   private activePhoneNotificationId: string | null = null
   /** A notification is being read aloud right now. */
   private speakingNotification: boolean = false
@@ -353,6 +354,7 @@ class MantleManager {
       return
     }
     this.initialized = true
+    const miniappGeneration = this.miniappGeneration
 
     // Island front door: hand island the host's auth provider and config, then
     // start the runtime. The remaining work below is Mentra-app UI/v1-cloud
@@ -537,6 +539,7 @@ class MantleManager {
     // (Initial notification-config push now happens in island's
     // PhoneNotificationsSync, started by engine.start().)
 
+    if (miniappGeneration !== this.miniappGeneration) return
     this.initServices()
     void this.initMiniapps().catch((error) => console.warn("MANTLE: miniapp initialization failed", error))
     this.setupPeriodicTasks()
@@ -544,6 +547,8 @@ class MantleManager {
   }
 
   public async cleanup() {
+    this.miniappGeneration += 1
+    const managedSyncStopped = deploymentManagedMiniappSync.cancel()
     for (const visibility of this.iosMiniappVisibility.values()) visibility.dispose()
     this.iosMiniappVisibility.clear()
     // Stop timers
@@ -582,6 +587,7 @@ class MantleManager {
     this.speakingNotification = false
     this.lastSpokenAt = 0
 
+    await managedSyncStopped
     localMiniappRuntime.cleanup()
     micStateCoordinator.cleanup()
 
@@ -605,28 +611,35 @@ class MantleManager {
   }
 
   private async initMiniapps() {
+    const generation = this.miniappGeneration
+    const deployment = deploymentStore.getActive()
+    const isCurrent = () => generation === this.miniappGeneration && deploymentStore.getActive() === deployment
     // Warm the local miniapp registry by reading lmas/ off disk. Cheap call —
     // it populates AppRegistry's cache so the first refreshApplets() doesn't
     // pay the disk-walk cost in the UI thread.
     await appRegistry.getInstalledMiniapps()
+    if (!isCurrent()) return
 
     // Initialize local miniapp runtime
     localMiniappRuntime.initialize()
 
     // Remove previous workspace releases before restoring consumer bundles,
     // including an identical bundled release adopted by a workspace.
-    await deploymentManagedMiniappSync.sync(deploymentStore.getActive())
+    await deploymentManagedMiniappSync.sync(deployment)
+    if (!isCurrent()) return
 
     // Install any bundled miniapps that ship with the app and aren't on disk
     // yet (or are an older version). Runs after the registry is warm so the
     // already-installed check below sees the real on-disk state.
     await this.installBundledMiniapps()
+    if (!isCurrent()) return
 
     // Publish iOS enablement only after managed installation has finished.
     // Every startup/retry follows this order, including recovery from a failed
     // download with a previously forced-hidden Call entry.
     for (const visibility of this.iosMiniappVisibility.values()) {
       await visibility.reconcile().catch((error) => this.reportMiniappVisibilityError(error))
+      if (!isCurrent()) return
     }
 
     // Then reconcile the admin-managed preinstall registry from Cloud V2. This
@@ -634,6 +647,7 @@ class MantleManager {
     // new mobile binary.
     if (deploymentStore.getActive().kind === "consumer") {
       await preinstalledMiniappSync.sync()
+      if (!isCurrent()) return
     }
 
     // Region-restricted miniapps must not surface or autostart from an old install.
@@ -663,7 +677,9 @@ class MantleManager {
    * installs it.
    */
   private async installBundledMiniapps() {
+    const generation = this.miniappGeneration
     for (const module of BUNDLED_MINIAPPS) {
+      if (generation !== this.miniappGeneration) return
       try {
         const asset = Asset.fromModule(module)
         const parsed = parseBundledMiniappName(asset.name)
@@ -697,6 +713,7 @@ class MantleManager {
 
   /** Install one bundle, or skip it when current policy/version makes it unnecessary. */
   private async installBundledMiniapp(asset: Asset) {
+    const generation = this.miniappGeneration
     const parsed = parseBundledMiniappName(asset.name)
     if (!parsed) throw new Error(`Bundled miniapp asset name "${asset.name}" is not <packageName>-<version>`)
     const {packageName, version} = parsed
@@ -717,7 +734,12 @@ class MantleManager {
 
     await asset.downloadAsync()
     // The user can disable Call while the bundle is being materialized.
-    if (deploymentStore.getActive() !== deployment || shouldHideMiniapp(packageName)) return
+    if (
+      generation !== this.miniappGeneration ||
+      deploymentStore.getActive() !== deployment ||
+      shouldHideMiniapp(packageName)
+    )
+      return
     if (!asset.localUri) throw new Error(`Bundled ${packageName} has no local URI`)
     const result = await appRegistry.installFromLocalZip(asset.localUri)
     if (result.is_error()) throw result.error

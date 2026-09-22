@@ -701,6 +701,49 @@ describe("MantleManager", () => {
     }
   })
 
+  it("does not resume miniapp startup after cleanup cancels its managed synchronization", async () => {
+    const internal = require("@mentra/engine-host-internal") as {
+      phoneLocationService?: {stopPhoneLocation: () => void}
+    }
+    const previousLocationService = internal.phoneLocationService
+    internal.phoneLocationService = {stopPhoneLocation: jest.fn()}
+    const active = jest.spyOn(deploymentStore, "getActive").mockReturnValue(createConsumerDeployment())
+    let entered!: () => void
+    let finish!: () => void
+    const started = new Promise<void>((resolve) => {
+      entered = resolve
+    })
+    const pending = new Promise<void>((resolve) => {
+      finish = resolve
+    })
+    const sync = jest.spyOn(deploymentManagedMiniappSync, "sync").mockImplementation(() => {
+      entered()
+      return pending
+    })
+    const cancel = jest.spyOn(deploymentManagedMiniappSync, "cancel")
+    const instance = new (mantle.constructor as new () => {
+      initMiniapps: () => Promise<void>
+      cleanup: () => Promise<void>
+      installBundledMiniapps: () => Promise<void>
+    })()
+    instance.installBundledMiniapps = jest.fn(async () => {})
+    try {
+      const initialization = instance.initMiniapps()
+      await started
+      await instance.cleanup()
+      finish()
+      await initialization
+      expect(cancel).toHaveBeenCalledTimes(1)
+      expect(instance.installBundledMiniapps).not.toHaveBeenCalled()
+    } finally {
+      finish()
+      internal.phoneLocationService = previousLocationService
+      active.mockRestore()
+      sync.mockRestore()
+      cancel.mockRestore()
+    }
+  })
+
   it.each([true, false])(
     "publishes Enterprise Call after startup recovery (previously enabled=%s)",
     async (previouslyEnabled) => {
