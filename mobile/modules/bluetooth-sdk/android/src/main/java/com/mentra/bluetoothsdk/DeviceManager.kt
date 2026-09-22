@@ -45,7 +45,8 @@ import java.util.concurrent.Executors
 import java.util.concurrent.TimeUnit
 import kotlin.jvm.JvmStatic
 
-class DeviceManager {
+class DeviceManager internal constructor(initializeHardware: Boolean) {
+    constructor() : this(initializeHardware = true)
     companion object {
 
         @Volatile
@@ -79,7 +80,8 @@ class DeviceManager {
     // MARK: - End Unique
 
     // MARK: - Properties
-    var sgc: SGCManager? = null
+    // Read by the welcome executor as well as device lifecycle handlers.
+    @Volatile var sgc: SGCManager? = null
     var controller: ControllerManager? = null
 
     // settings:
@@ -284,6 +286,12 @@ class DeviceManager {
     init {
         Bridge.log("DeviceManager: init()")
         initializeViewStates()
+        if (initializeHardware) initializeHardwareServices()
+    }
+
+    // Keep host routing usable without starting audio codecs, receivers or services.
+    // The public constructor always initializes the hardware environment.
+    private fun initializeHardwareServices() {
         startForegroundService()
         // setupPermissionMonitoring()
         setupBluetoothStateMonitoring()
@@ -1518,13 +1526,18 @@ class DeviceManager {
             2000
         )
 
-        // Show welcome message on first connect for all display glasses
+        // A full-canvas device can opt out so this temporary message does not
+        // erase the host's connected-edge scene replay.
         if (shouldSendBootingMessage) {
             shouldSendBootingMessage = false
-            executor.execute {
-                sgc?.sendTextWall("// MentraOS Connected")
-                Thread.sleep(3000)
-                sgc?.clearDisplay()
+            val device = sgc
+            if (device?.showConnectionConfirmation == true) {
+                executor.execute {
+                    if (sgc !== device) return@execute
+                    device.sendTextWall("// MentraOS Connected")
+                    Thread.sleep(3000)
+                    if (sgc === device) device.clearDisplay()
+                }
             }
         }
 
@@ -1677,7 +1690,7 @@ class DeviceManager {
         dashboardSceneCleanupPending = false
         val elementIds = pendingDashboardSceneElementIds.toList()
         pendingDashboardSceneElementIds.clear()
-        if (elementIds.isNotEmpty()) {
+        if (elementIds.isNotEmpty() && sgc?.sceneHandoffRequiresClear == true) {
             sgc?.clearSceneElements(elementIds)
         }
     }
@@ -1714,7 +1727,7 @@ class DeviceManager {
             sceneStates[stateIndex] = null
             if (stateIndex == 1 && dashboardSceneCleanupPending) {
                 pendingDashboardSceneElementIds.addAll(prevFrame.elements.map { it.id })
-            } else if (layoutType != "clear_view") {
+            } else if (layoutType != "clear_view" && shouldClearSceneHandoff(stateIndex)) {
                 sgc?.clearSceneElements(prevFrame.elements.map { it.id })
             }
         }
@@ -1781,7 +1794,7 @@ class DeviceManager {
             val prevLegacyType = viewStates[stateIndex].layoutType
             val cleanupDeferred = stateIndex == 1 && dashboardSceneCleanupPending
             if (
-                !cleanupDeferred &&
+                !cleanupDeferred && shouldClearSceneHandoff(stateIndex) &&
                     prevLegacyType.isNotEmpty() &&
                     prevLegacyType != "clear_view" &&
                     prevLegacyType != "scene"
@@ -1797,7 +1810,7 @@ class DeviceManager {
             // blank.
             if (stateIndex == 1 && dashboardSceneCleanupPending) {
                 pendingDashboardSceneElementIds.addAll(prevFrame.elements.map { it.id })
-            } else {
+            } else if (shouldClearSceneHandoff(stateIndex)) {
                 sgc?.clearSceneElements(prevFrame.elements.map { it.id })
             }
             frame = frame.copy(replay = true, elements = frame.elements.map { it.copy(change = "created") })
@@ -1814,6 +1827,15 @@ class DeviceManager {
         if ((stateIndex == 0 && !hUp) || (stateIndex == 1 && hUp)) {
             dispatchSceneFrame(stateIndex, frame)
         }
+    }
+
+    // Hidden-view updates only change their replay slot. They must never clear
+    // the visible view, and full-frame adapters need no separate handoff sweep.
+    private fun shouldClearSceneHandoff(stateIndex: Int): Boolean {
+        val visibleIndex = if (headUp && contextualDashboard) 1 else 0
+        val device = sgc ?: return false
+        return stateIndex == visibleIndex && !screenDisabled && device.fullyBooted &&
+            !device.type.contains(DeviceTypes.SIMULATED) && device.sceneHandoffRequiresClear
     }
 
     /** Guarded scene dispatch — mirrors sendCurrentState's send conditions. */
@@ -2390,7 +2412,10 @@ class DeviceManager {
 
     fun disconnect(clearPendingIdentity: Boolean = true) {
         sgc?.clearDisplay()
-        sgc?.disconnect()
+        // NIMO owns a background canvas encoder and this path discards its instance.
+        // A link-level reconnect keeps the instance (and encoder) through disconnect().
+        val device = sgc
+        if (device is Nimo) device.cleanup() else device?.disconnect()
         sgc = null // Clear the SGC reference after disconnect
         resetSystemTimeSync()
         resetMicHealth()

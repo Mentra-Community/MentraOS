@@ -219,14 +219,30 @@ object DeviceStore {
             }
 
             // BLUETOOTH:
+            "bluetooth" to "contextual_dashboard" -> {
+                if (value is Boolean) {
+                    CoroutineScope(Dispatchers.Main.immediate).launch {
+                        // The setting changes the selected view even without a new head event.
+                        // Re-read state on Main and retain the manager's readiness/display guards.
+                        if (store.get("glasses", "headUp") == true) {
+                            DeviceManager.getInstance().sendCurrentState()
+                        }
+                    }
+                }
+            }
             "bluetooth" to "brightness" -> {
                 val b = (value as? Number)?.toInt()  ?: 50
                 val auto = (store.get("bluetooth", "auto_brightness") as? Boolean) ?: true
                 CoroutineScope(Dispatchers.Main).launch {
-                    DeviceManager.getInstance().sgc?.setBrightness(b, auto)
-                    DeviceManager.getInstance().sgc?.sendTextWall("Set brightness to $b%")
-                    delay(800) // 0.8 seconds
-                    DeviceManager.getInstance().sgc?.clearDisplay()
+                    val device = DeviceManager.getInstance().sgc ?: return@launch
+                    device.setBrightness(b, auto)
+                    if (device.showBrightnessConfirmation) {
+                        device.sendTextWall("Set brightness to $b%")
+                        delay(800) // 0.8 seconds
+                        if (DeviceManager.getInstance().sgc === device) {
+                            device.clearDisplay()
+                        }
+                    }
                 }
             }
             "bluetooth" to "auto_brightness" -> {
@@ -234,16 +250,17 @@ object DeviceStore {
                 val auto = (value as? Boolean) ?: true
                 val autoBrightnessChanged = (oldValue as? Boolean) != auto
                 CoroutineScope(Dispatchers.Main).launch {
-                    DeviceManager.getInstance().sgc?.setBrightness(b, auto)
-                    if (autoBrightnessChanged) {
-                        DeviceManager.getInstance()
-                                .sgc
-                                ?.sendTextWall(
-                                        if (auto) "Enabled auto brightness"
-                                        else "Disabled auto brightness"
-                                )
+                    val device = DeviceManager.getInstance().sgc ?: return@launch
+                    device.setBrightness(b, auto)
+                    if (autoBrightnessChanged && device.showBrightnessConfirmation) {
+                        device.sendTextWall(
+                                if (auto) "Enabled auto brightness"
+                                else "Disabled auto brightness"
+                        )
                         delay(800) // 0.8 seconds
-                        DeviceManager.getInstance().sgc?.clearDisplay()
+                        if (DeviceManager.getInstance().sgc === device) {
+                            device.clearDisplay()
+                        }
                     }
                 }
             }

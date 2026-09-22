@@ -104,7 +104,8 @@ def configure(output, keychain):
         subprocess.run(["xcrun", "clang", "-x", "c", "-", "-o", str(probe)],
                        input=b"int main(void) { return 0; }\n", check=True)
         try:
-            run("codesign", "--force", "--verbose=4", "--sign", certificate, "--keychain", keychain,
+            run(sys.executable, HERE / "keychain-search.py", "run", keychain,
+                "codesign", "--force", "--verbose=4", "--sign", certificate, "--keychain", keychain,
                 "--timestamp=none", probe)
         except subprocess.CalledProcessError:
             # Public metadata and codesign-specific security diagnostics only;

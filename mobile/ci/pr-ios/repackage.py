@@ -126,7 +126,8 @@ def main():
         entitlement_file.write_bytes(plistlib.dumps(plistlib.loads(entitlements)))
         rewrite_app(app, **inputs)
         shutil.copy2(profile_file, app / 'embedded.mobileprovision')
-        run('codesign', '--force', '--sign', signing['certificate'], '--keychain', os.environ['PR_IOS_KEYCHAIN'],
+        run(sys.executable, HERE / 'keychain-search.py', 'run', os.environ['PR_IOS_KEYCHAIN'],
+            'codesign', '--force', '--sign', signing['certificate'], '--keychain', os.environ['PR_IOS_KEYCHAIN'],
             '--entitlements', entitlement_file, '--preserve-metadata=requirements,flags,runtime', '--timestamp=none', app)
         verify_base(app, fingerprint, signing, profile)
         if plistlib.loads(run('codesign', '-d', '--entitlements', ':-', app)) != plistlib.loads(entitlements):
