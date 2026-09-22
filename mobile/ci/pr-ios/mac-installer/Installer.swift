@@ -108,11 +108,15 @@ final class InstallerDelegate: NSObject, NSApplicationDelegate {
                     if options.verifyOnly {
                         print("Verified \(candidate.manifest.summary.replacingOccurrences(of: "\n", with: "; "))")
                     } else {
+                        setReplacing(true)
+                        defer { setReplacing(false) }
+                        let launch = options.launch
                         let destination = try await Task.detached {
-                            try await install(candidate) { try await quitMentraNormally() }
+                            try await install(candidate, quit: { try await quitMentraNormally() }, launch: { destination in
+                                if launch { try await openMentra(destination) }
+                            })
                         }.value
                         print("Installed app: \(destination.path)")
-                        if options.launch { try await openMentra(destination) }
                     }
                     NSApp.terminate(nil)
                     return
@@ -249,8 +253,9 @@ final class InstallerDelegate: NSObject, NSApplicationDelegate {
                 }
                 if installed == nil, let candidate = verified {
                     try await installCandidate(candidate)
+                } else {
+                    await openInstalled()
                 }
-                await openInstalled()
                 if let permanentHelper {
                     try await handoff(to: permanentHelper, requests: pending)
                 }
@@ -272,15 +277,26 @@ final class InstallerDelegate: NSObject, NSApplicationDelegate {
         defer { setReplacing(false) }
         statusLabel.stringValue = "Installing Mentra and preserving your app data…"
         installed = try await Task.detached {
-            try await install(candidate) { try await quitMentraNormally() }
+            try await install(candidate, quit: { try await quitMentraNormally() }, launch: { destination in
+                await self.finishOpening(destination)
+            })
         }.value
     }
 
     private func openInstalled() async {
         guard let installed else { return }
+        setReplacing(true)
+        defer { setReplacing(false) }
+        do {
+            try await withAppOwnership { await finishOpening(installed) }
+        } catch { statusLabel.stringValue = error.localizedDescription }
+    }
+
+    private func finishOpening(_ destination: URL) async {
+        installed = destination
         installButton.title = "Open Mentra"
         statusLabel.stringValue = "Mentra is installed. Approve any macOS developer trust or Bluetooth request to finish first-time setup."
-        do { try await openMentra(installed) }
+        do { try await openMentra(destination) }
         catch { statusLabel.stringValue = "Mentra is installed, but macOS did not open it. \(error.localizedDescription) You can finish first-time setup and click Open Mentra again." }
     }
 
@@ -355,7 +371,6 @@ final class InstallerDelegate: NSObject, NSApplicationDelegate {
                 prepared = candidate
                 buildLabel.stringValue = candidate.manifest.summary
                 try await installCandidate(candidate)
-                await openInstalled()
             } catch {
                 if case InstallerError.recovery = error { retainRecovery = true }
                 statusLabel.stringValue = error.localizedDescription

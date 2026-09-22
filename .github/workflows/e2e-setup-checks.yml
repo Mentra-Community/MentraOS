@@ -10,6 +10,7 @@ on:
       - ".github/workflows/request-e2e-routine.yml"
       - "mobile/scripts/install-ios-mac.mjs"
       - "mobile/scripts/install-ios-mac.test.mjs"
+      - "mobile/scripts/app-ownership.*"
       - "mobile/ci/pr-ios/mac_installer.py"
       - "mobile/ci/pr-ios/test_mac_installer.py"
       - ".github/workflows/e2e-setup-checks.yml"
@@ -23,6 +24,7 @@ on:
       - ".github/workflows/request-e2e-routine.yml"
       - "mobile/scripts/install-ios-mac.mjs"
       - "mobile/scripts/install-ios-mac.test.mjs"
+      - "mobile/scripts/app-ownership.*"
       - "mobile/ci/pr-ios/mac_installer.py"
       - "mobile/ci/pr-ios/test_mac_installer.py"
       - ".github/workflows/e2e-setup-checks.yml"
@@ -65,6 +67,7 @@ jobs:
       - run: python3 mobile/ci/pr-ios/test_mac_installer.py
       - name: Verify routine lifecycle, firmware assertions and request guards
         run: |
+          bun test tools/mentra-e2e/runner/lock.test.ts
           bun test tools/mentra-e2e/runner/lifecycle.test.ts tools/mentra-e2e/runner/firmware-profile.test.ts tools/mentra-e2e/runner/firmware-state-cli.test.ts tools/mentra-e2e/runner/ci-request.test.ts tools/mentra-e2e/runner/test-run-publisher.test.ts
           bun test tools/mentra-e2e/runner/ota-state.test.ts tools/mentra-e2e/runner/ota-legacy-route.test.ts tools/mentra-e2e/runner/return-observer.test.ts tools/mentra-e2e/runner/day1-run-exporter.test.ts
           bun test tools/mentra-e2e/runner/day1-full-ota.test.ts tools/mentra-e2e/runner/ota-customer-sequence.test.ts tools/mentra-e2e/runner/ota-recording.test.ts tools/mentra-e2e/runner/return-collector.test.ts tools/mentra-e2e/runner/return-app-observer.test.ts tools/mentra-e2e/runner/ci-run-exporter.test.ts tools/mentra-e2e/runner/ota-january-identity.test.ts tools/mentra-e2e/runner/ota-january-pairing.test.ts

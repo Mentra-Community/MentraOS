@@ -98,6 +98,26 @@ describe("test run authentication and immutable ingestion", () => {
     expect((await post(changed)).status).toBe(409);
     expect((await service.detail(changed.runId)).provenance.buildSha).toBe("a".repeat(40));
   });
+  test("preserves optional firmware phases and failed test checks after a successful return", async () => {
+    const run = fixture();
+    expect(testRunSchema.parse(run).firmwareAssertions[0].phase).toBeUndefined();
+    run.outcome = "failed";
+    run.outcomes.test = "failed";
+    run.firmwareAssertions = [
+      { component: "BES version", expected: "26.9.21.3", actual: "17.26.1.13", status: "failed", phase: "final-assertions" },
+      { component: "BES version", expected: "26.9.21.3", actual: "26.9.21.3", status: "passed", phase: "return-verification" },
+    ];
+    expect((await post(run)).status).toBe(201);
+    const response = await admin.request(`/${run.runId}`);
+    expect(response.status).toBe(200);
+    const detail = await response.json();
+    expect(detail.firmwareAssertions).toEqual(run.firmwareAssertions);
+    expect(detail.outcomes).toMatchObject({ test: "failed", teardown: "passed", fixture: "ready" });
+    const changed = structuredClone(run);
+    changed.firmwareAssertions[0].phase = "teardown";
+    expect((await post(changed)).status).toBe(409);
+    expect(testRunSchema.safeParse({ ...run, firmwareAssertions: [{ ...run.firmwareAssertions[0], phase: "unknown" }] }).success).toBe(false);
+  });
   test("rejects path IDs, active content, undeclared chapter targets and contradictory pass", async () => {
     const variants = [
       { ...fixture(), runId: "../escape" },

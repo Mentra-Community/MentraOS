@@ -326,18 +326,81 @@ func verifyPackage(_ directory: URL, expected: Data) throws -> VerifiedBuild {
     return VerifiedBuild(directory: directory, manifest: manifest, codeRequirement: requirement)
 }
 
-func install(_ verified: VerifiedBuild, quit: () async throws -> Void) async throws -> URL {
-    let root = FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Applications/Mentra E2E")
+/// Same atomic protocol as mobile/scripts/app-ownership.mjs. Installers never
+/// reclaim an existing owner; interruption requires explicit recovery.
+final class AppOwnershipLease {
+    private let path: URL
+    private let token = UUID().uuidString
+    private var released = false
+
+    init(homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser) throws {
+        let folder = homeDirectory.appendingPathComponent(".cache/mentra-e2e")
+        try InstallerFiles.manager.createDirectory(at: folder, withIntermediateDirectories: true)
+        try InstallerFiles.requirePath(folder, directory: true)
+        path = folder.appendingPathComponent("com.mentra.mentra.lock")
+        let guardPath = path.path + ".reclaim"
+        guard Darwin.mkdir(guardPath, 0o700) == 0 else {
+            throw InstallerError.invalid("Another app owner is acquiring the lock; stop all runs before recovering \(guardPath).")
+        }
+        defer { Darwin.rmdir(guardPath) }
+        let descriptor = Darwin.open(path.path, O_WRONLY | O_CREAT | O_EXCL | O_NOFOLLOW, 0o600)
+        guard descriptor >= 0 else {
+            throw InstallerError.invalid("Mentra is owned by a test or installation. Finish it or recover its retained lease before installing: \(path.path).")
+        }
+        let file = FileHandle(fileDescriptor: descriptor, closeOnDealloc: true)
+        defer { try? file.close() }
+        try file.write(contentsOf: JSONSerialization.data(withJSONObject: ["pid": getpid(), "token": token, "retainOnExit": true]))
+        try file.synchronize()
+    }
+
+    func release() throws {
+        guard !released else { return }
+        let owner = try InstallerFiles.dictionary(InstallerFiles.read(path))
+        if owner["token"] as? String == token, owner["pid"] as? Int == Int(getpid()) {
+            try InstallerFiles.manager.removeItem(at: path)
+        }
+        released = true
+    }
+}
+
+func withAppOwnership<T>(homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
+                         operation: () async throws -> T) async throws -> T
+{
+    let lease = try AppOwnershipLease(homeDirectory: homeDirectory)
+    let result: T
+    do { result = try await operation() }
+    catch {
+        if case InstallerError.recovery = error { throw error }
+        try lease.release()
+        throw error
+    }
+    try lease.release()
+    return result
+}
+
+func install(_ verified: VerifiedBuild, homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
+             quit: () async throws -> Void, launch: (URL) async throws -> Void = { _ in }) async throws -> URL
+{
+    try await withAppOwnership(homeDirectory: homeDirectory) {
+        try await installOwned(verified, homeDirectory: homeDirectory, quit: quit, launch: launch)
+    }
+}
+
+private func installOwned(_ verified: VerifiedBuild, homeDirectory: URL,
+                          quit: () async throws -> Void, launch: (URL) async throws -> Void) async throws -> URL
+{
+    let root = homeDirectory.appendingPathComponent("Applications/Mentra E2E")
     try InstallerFiles.claim(root)
     let lock = root.appendingPathComponent(".install-lock")
     do { try InstallerFiles.manager.createDirectory(at: lock, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700]) }
     catch { throw InstallerError.invalid("Another installation is running or needs recovery: \(lock.path). Quit the other installer before trying again; retain this folder if an earlier install failed.") }
     let staging = root.appendingPathComponent(".staging-\(UUID().uuidString)")
-    var preserveRecovery = false
-    defer {
-        if !preserveRecovery {
-            try? InstallerFiles.manager.removeItem(at: staging)
-            try? InstallerFiles.manager.removeItem(at: lock)
+    func cleanup() throws {
+        do {
+            if InstallerFiles.exists(staging) { try InstallerFiles.manager.removeItem(at: staging) }
+            try InstallerFiles.manager.removeItem(at: lock)
+        } catch {
+            throw InstallerError.recovery("Installation cleanup failed. Keep the app lease and recovery files at \(lock.path): \(error.localizedDescription)")
         }
     }
     do {
@@ -381,9 +444,12 @@ func install(_ verified: VerifiedBuild, quit: () async throws -> Void) async thr
         try InstallerFiles.writeJSON(installed, to: staging.appendingPathComponent("installed-build.json"))
         try await quit()
         try InstallerFiles.commit(root: root, staging: staging, lock: lock)
+        try await launch(destination)
+        try cleanup()
         return destination
     } catch {
-        if case InstallerError.recovery = error { preserveRecovery = true }
+        if case InstallerError.recovery = error { throw error }
+        try cleanup()
         throw error
     }
 }

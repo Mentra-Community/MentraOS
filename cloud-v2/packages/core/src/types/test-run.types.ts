@@ -38,7 +38,10 @@ export const testRunSchema = z.object({
   }).strict(),
   provenance: z.object({ repository: text }).catchall(z.string().max(2000)),
   fixture: z.object({ alias: text }).strict(),
-  firmwareAssertions: z.array(z.object({ component: text, expected: text, actual: text, status: verdict }).strict()).max(100),
+  firmwareAssertions: z.array(z.object({
+    component: text, expected: text, actual: text, status: verdict,
+    phase: z.enum(["preflight", "setup", "test", "final-assertions", "teardown", "return-verification", "evidence"]).optional(),
+  }).strict()).max(100),
   chapters: z.array(z.object({
     id: testRunIdSchema, instruction: text, expected: text.optional(), status: verdict,
     phase: z.enum(["setup", "test", "verify", "teardown"]),

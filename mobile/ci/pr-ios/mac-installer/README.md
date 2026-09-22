@@ -37,6 +37,17 @@ expected original format; their bundled `Install.command`, Bun script and
 launcher are never executed. The new bootstrap's embedded manifest must remain
 version 2 and match its adjacent `build.json` exactly.
 
+All installation and app-opening paths also share
+`~/.cache/mentra-e2e/com.mentra.mentra.lock` with the automated harness and repository
+installer. The native lease mirrors `mobile/scripts/app-ownership.mjs`: an atomic
+`.reclaim` directory serializes ownership publication, and an exclusive private
+PID/token record remains held through launch and installation cleanup. An existing
+test or installer lease prevents these operations. An interrupted installer writes
+retained ownership that the harness will not reclaim solely because its PID exited;
+an abandoned `.reclaim` guard is not automatically removed either. Explicit recovery
+must reconcile the app, installed manifest and retained transaction files before
+clearing these records. Releasing ownership removes only the matching PID/token.
+
 Downloads use an owned private cache instead of Downloads. Successful runs and
 ordinary failed installs remove their request directories; an unfinished tool's
 recovery files are retained. The downloader prunes old owned request directories

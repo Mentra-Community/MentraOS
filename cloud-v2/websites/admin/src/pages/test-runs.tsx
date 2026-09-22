@@ -8,6 +8,7 @@ import { testRunAssetPath, type TestRunLink } from "../lib/test-run-links";
 import {
   chapterSeekTime,
   EMPTY_FILTERS,
+  FIRMWARE_PHASE_LABELS,
   initialChapter,
   safeProducerUrl,
   testRunListPath,
@@ -514,7 +515,7 @@ export function TestRunView({
             <table className="w-full text-left text-sm">
               <thead className="bg-[#fafbfa] text-xs text-[#747780]">
                 <tr>
-                  {["Check", "Expected", "Observed", "Result"].map((label) => (
+                  {["Phase", "Check", "Expected", "Observed", "Result"].map((label) => (
                     <th key={label} className="px-5 py-3 font-semibold">
                       {label}
                     </th>
@@ -524,6 +525,9 @@ export function TestRunView({
               <tbody className="divide-y divide-[#eceeeb]">
                 {run.firmwareAssertions.map((assertion, index) => (
                   <tr key={`${assertion.component}-${index}`}>
+                    <td className="px-5 py-4 align-top">
+                      {assertion.phase ? FIRMWARE_PHASE_LABELS[assertion.phase] : "Not recorded"}
+                    </td>
                     <th className="max-w-48 break-words px-5 py-4 align-top font-medium">{assertion.component}</th>
                     <td className="max-w-72 px-5 py-4 align-top">
                       <pre className="max-h-40 overflow-auto whitespace-pre-wrap break-all font-mono text-xs">

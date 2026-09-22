@@ -1,11 +1,18 @@
 import {expect, test} from "bun:test"
 import {chmod, mkdtemp, readFile, rm, symlink, writeFile} from "node:fs/promises"
-import {tmpdir} from "node:os"
+import {homedir, tmpdir} from "node:os"
 import {join} from "node:path"
 import {main} from "../day1-local"
 import {root} from "./driver"
 import {file, hash, reference} from "./day1-local-io"
-import {loadLocalConfig, verifyLocalAdmission, productRestoreBaseline, type LocalConfig} from "./day1-local-runtime"
+import {
+  loadLocalConfig,
+  verifyLocalAdmission,
+  productRestoreBaseline,
+  day1ReturnSources,
+  type LocalConfig,
+} from "./day1-local-runtime"
+import {simulatedReturnCollection} from "./return-collector.test-support"
 import {runLifecycle} from "./lifecycle"
 
 async function fixture(body: (f: Awaited<ReturnType<typeof setup>>) => Promise<void>) {
@@ -163,6 +170,22 @@ test("CLI check rejects a foreign checkout without claiming or invoking hardware
     await expect(readFile(join(f.config.stateDirectory, "claims", "request.json"))).rejects.toThrow()
   }))
 
+test("local config rejects an alternate app lease before request parsing or ownership acquisition", () =>
+  fixture(async (f) => {
+    const canonical = join(homedir(), ".cache/mentra-e2e/com.mentra.mentra.lock")
+    for (const leasePath of [join(f.folder, "com.mentra.mentra.lock"), `${canonical}.other`, undefined]) {
+      const runtimeInputs = await f.freeze("runtime-inputs.json", {leasePath})
+      const config = await f.freeze("config.json", {...f.config, runtimeInputs})
+      await expect(loadLocalConfig(config)).rejects.toThrow("canonical app ownership lease")
+    }
+    const runtimeInputs = await f.freeze("runtime-inputs.json", {leasePath: canonical})
+    const config = await f.freeze("config.json", {...f.config, runtimeInputs})
+    // The canonical path passes the file-only gate, then this deliberately
+    // invalid request fails. The test never opens or acquires the real lease.
+    await expect(loadLocalConfig(config)).rejects.toThrow("Request contains unsupported fields")
+    await expect(readFile(join(f.folder, "com.mentra.mentra.lock"))).rejects.toThrow()
+  }))
+
 test("evidence bytes are verified, not just the packet's claimed hashes", () =>
   fixture(async (f) => {
     await writeFile(f.ref.path, JSON.stringify({changed: true}))
@@ -209,4 +232,24 @@ test("product restoration accepts only selected MTK, eligible versions and indep
   ]) {
     expect(() => productRestoreBaseline({...source, ...change} as any, fixture, profile)).toThrow()
   }
+})
+
+test("return observations allow only frozen source versions and pinned setup MTK/BES while preserving target", () => {
+  const {profile} = simulatedReturnCollection("unused-offline-path").config
+  const source = structuredClone(profile)
+  source.mtk.version = "MentraLive_20260709"
+  source.asg.versionCode = 303006000
+  source.bes.version = "26.9.20.1"
+  const before = structuredClone(profile)
+  expect(
+    day1ReturnSources(profile, {
+      sourceProfiles: [source, profile],
+      setupBaseline: {mtkVersion: "20260113", besVersion: "17.26.1.13"},
+    }),
+  ).toEqual({
+    mtkVersions: ["MentraLive_20260921.0", "MentraLive_20260709", "MentraLive_20260113"],
+    asgVersions: [303006291, 303006000],
+    besVersions: ["26.9.21.3", "26.9.20.1", "17.26.1.13"],
+  })
+  expect(profile).toEqual(before)
 })

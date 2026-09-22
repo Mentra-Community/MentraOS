@@ -15,7 +15,8 @@ import {
   type AppObserver,
   type ReturnCollectorConfig,
 } from "./return-collector"
-import {TestReturnRecorder} from "./return-collector.test-support"
+import {TestReturnRecorder, simulatedReturnCollection} from "./return-collector.test-support"
+import {day1ReturnSources} from "./day1-local-runtime"
 
 const owned: string[] = []
 afterEach(async () => {
@@ -161,132 +162,7 @@ test("actual release output replies use the exact BLE trace envelope and monoton
 async function simulatedCollection() {
   const output = await mkdtemp(join(tmpdir(), "mentra-return-collector-"))
   owned.push(output)
-  let uptime = 100
-  const sid = "0123abcd"
-  const digest = "d".repeat(64)
-  const remote = `/data/local/tmp/mentra-update-engine-status-${PROBE_SHA}.jar`
-  const apk = "/data/app/owned/base.apk"
-  const logs: string[] = []
-  const queries: Record<string, unknown>[] = []
-  const flags = {
-    busy: false,
-    staged: false,
-    wrongSid: false,
-    wrongApk: false,
-    duplicateReply: false,
-    firmware: "MentraLive_20260921.0",
-    asgVersion: 303006291,
-    besVersion: "26.9.21.3",
-  }
-  const record = (value: unknown, tag: string, prefix = "") => {
-    logs.push(line(prefix + JSON.stringify(value), uptime.toFixed(6), processRead.pid, tag))
-  }
-  const ble = (value: Record<string, unknown>) =>
-    record(
-      value,
-      "MentraBleTrace",
-      `BLE_TRACE direction=glasses_to_phone layer=asg_ble_output source=asg_client type=${value.type} bytes=500 payload=`,
-    )
-  const recorder = new TestReturnRecorder(output, (argv) => {
-    uptime = Math.round((uptime + 0.005) * 1000) / 1000
-    if (JSON.stringify(argv) === JSON.stringify(["adb", "devices", "-l"]))
-      return `List of devices attached\n${fixture.serial} device usb:${fixture.usb} transport_id:1\n`
-    if (argv.slice(0, 4).join(" ") !== "adb -t 1 shell") throw new Error("Unapproved simulated command")
-    const cmd = argv.slice(4).join(" ")
-    const values: Record<string, string> = {
-      "cat /sys/block/mmcblk0/device/cid": fixture.cid,
-      "getprop ro.serialno": fixture.serial,
-      "getprop persist.mentra.live.mac": fixture.bluetooth,
-      "getprop ro.custom.ota.version": flags.firmware,
-      "getprop sys.boot_completed": "1",
-      "cat /proc/sys/kernel/random/boot_id": processRead.bootId,
-      "getprop ro.boot.slot_suffix": "_a",
-      "dumpsys package com.mentra.asg_client": `versionCode=${flags.asgVersion}`,
-      "pidof com.mentra.asg_client": String(processRead.pid),
-      [`cat /proc/${processRead.pid}/stat`]: `${processRead.pid} (asg) S ${Array(18).fill("0").join(" ")} ${processRead.startTicks} 0`,
-      "getconf CLK_TCK": "100",
-      "cat /proc/uptime": `${uptime} 0`,
-      [`test ! -L ${remote}`]: "",
-      [`sha256sum ${remote}`]: PROBE_SHA + " " + remote,
-      [`stat -c %s ${remote}`]: String(PROBE_BYTES),
-      "pm path com.mentra.asg_client": "package:" + apk,
-      [`sha256sum ${apk}`]: (flags.wrongApk ? "e".repeat(64) : digest) + " " + apk,
-      [`CLASSPATH='${remote}' app_process /system/bin UpdateEngineStatus`]: flags.staged
-        ? "CURRENT_OP=UPDATE_STATUS_UPDATED_NEED_REBOOT\nSTATUS_CODE=6\n"
-        : "CURRENT_OP=UPDATE_STATUS_IDLE\nSTATUS_CODE=0\n",
-    }
-    if (cmd in values) return values[cmd]
-    if (cmd === "logcat -b main -d -v threadtime -v monotonic -v usec")
-      return [line(proof(flags.besVersion), "99.500000"), ...logs].join("\n")
-    const query = /--es json '(.*)'$/.exec(cmd)
-    if (query && cmd.startsWith("am broadcast -n com.mentra.asg_client/.receiver.IntentCommandReceiver ")) {
-      const value = JSON.parse(query[1])
-      queries.push(value)
-      if (value.type === "request_version") {
-        ble({
-          type: "version_info_1",
-          package_name: "com.mentra.asg_client",
-          build_number: String(flags.asgVersion),
-          sid,
-          request_id: value.request_id,
-        })
-        if (flags.duplicateReply) logs.push(logs.at(-1)!)
-      } else if (value.type === "get_stream_status") {
-        ble({
-          type: "stream_status",
-          kind: "snapshot",
-          sid,
-          revision: 0,
-          status: "stopped",
-          terminal: true,
-          streaming: false,
-          reconnecting: false,
-        })
-      } else if (value.type === "ota_query_status" && value.include_activity === true) {
-        record(
-          {
-            schema: 1,
-            request_id: value.request_id,
-            process_sid: flags.wrongSid ? "deadbeef" : sid,
-            elapsed_realtime_ms: Math.round(uptime * 1000),
-            admission_generation: 0,
-            admission_held: false,
-            updating: false,
-            mtk_in_progress: false,
-            bes_in_progress: flags.busy,
-            consistent: true,
-            session: {session_id: "", status: "idle", restart_pending: false},
-          },
-          "OtaCommandHandler",
-          "OTA activity snapshot: ",
-        )
-      } else throw new Error("Unapproved query type")
-      return "Broadcast completed: result=0"
-    }
-    throw new Error("Unexpected simulated command: " + cmd)
-  })
-  const artifact = {url: "https://example.com/frozen", sha256: digest, size: 10}
-  const config: ReturnCollectorConfig = {
-    fixture,
-    recorder,
-    probe: {path: remote, sha256: PROBE_SHA, size: PROBE_BYTES},
-    profile: {
-      manifest: artifact,
-      asg: {versionCode: 303006291, artifact},
-      bes: {version: "26.9.21.3", artifact},
-      mtk: {version: "MentraLive_20260921.0", artifact},
-    },
-  }
-  const app: AppObserver = {
-    prepare: async () => {},
-    capture: async () => ({
-      connected: true,
-      evidence: "offline-app-proof",
-      capturedAt: Array(3).fill(new Date().toISOString()),
-    }),
-    finish: async (_context, value) => value,
-  }
-  return {config, app, flags, queries}
+  return simulatedReturnCollection(output)
 }
 
 test("the extracted collector evaluates all 14 assertions using one read-only batch and never reuses its evidence", async () => {
@@ -325,11 +201,11 @@ test("an explicit source observation can prove idle without declaring off-target
   s.flags.firmware = "MentraLive_20260113"
   s.flags.asgVersion = 303006000
   s.flags.besVersion = "17.26.1.13"
-  s.config.allowedSource = {
-    mtkVersions: [s.flags.firmware],
-    asgVersions: [s.flags.asgVersion],
-    besVersions: [s.flags.besVersion],
-  }
+  const source = structuredClone(s.config.profile)
+  source.mtk.version = s.flags.firmware
+  source.asg.versionCode = s.flags.asgVersion
+  source.bes.version = s.flags.besVersion
+  s.config.allowedSource = day1ReturnSources(s.config.profile, {sourceProfiles: [source]})
   const result = await collectReturnObservation(s.config, s.app)
   expect(result.returnObservationPassed).toBe(false)
   expect(result.adbQualified).toBe(false)
@@ -340,6 +216,32 @@ test("an explicit source observation can prove idle without declaring off-target
   const saved = JSON.parse(await readFile(join(s.config.recorder.output, "inputs.json"), "utf8"))
   expect(saved.profile).toEqual(s.config.profile)
   expect(saved.allowedSource).toEqual(s.config.allowedSource)
+})
+
+test("known source observation does not permit unknown versions, wrong identity or busy writers", async () => {
+  for (const [flag, value, error] of [
+    ["firmware", "MentraLive_20200101", "UNEXPECTED_FIRMWARE"],
+    ["asgVersion", 37, "UNEXPECTED_ASG_VERSION"],
+    ["besVersion", "99.1.1.1", "Fresh BES target mismatch"],
+    ["wrongCid", true, "HARDWARE_IDENTITY_MISMATCH"],
+    ["wrongBluetooth", true, "HARDWARE_BLUETOOTH_MISMATCH"],
+  ] as const) {
+    const s = await simulatedCollection()
+    s.config.allowedSource = day1ReturnSources(s.config.profile, {
+      sourceProfiles: [s.config.profile],
+      setupBaseline: {mtkVersion: "MentraLive_20260113", besVersion: "17.26.1.13"},
+    })
+    Object.assign(s.flags, {[flag]: value})
+    await expect(collectReturnObservation(s.config, s.app)).rejects.toThrow(error)
+    expect(s.queries).toHaveLength(0)
+  }
+  const busy = await simulatedCollection()
+  busy.config.allowedSource = day1ReturnSources(busy.config.profile, {sourceProfiles: []})
+  busy.flags.busy = true
+  const result = await collectReturnObservation(busy.config, busy.app)
+  expect(result.returnObservationPassed).toBe(false)
+  expect(result.adbQualified).toBe(false)
+  expect(result.firmwareAssertions.find((c) => c.id === "update.idle")?.status).toBe("failed")
 })
 
 test("unknown source versions still fail and cannot cherry-pick an older BES match", async () => {

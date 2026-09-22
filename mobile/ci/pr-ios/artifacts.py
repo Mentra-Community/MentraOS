@@ -182,6 +182,7 @@ def package_mac_app(app, output, manifest, folder_name="Mentra PR", readme=None)
         mac.mkdir()
         run("ditto", app, mac / "Mentra.app")
         shutil.copy2(HERE.parent.parent / "scripts/install-ios-mac.mjs", mac / "install.mjs")
+        shutil.copy2(HERE.parent.parent / "scripts/app-ownership.mjs", mac / "app-ownership.mjs")
         launcher = mac / "launch-ios-on-mac"
         run("xcrun", "swiftc", "-parse-as-library", "-O", "-target", "arm64-apple-macosx14.0",
             HERE.parent.parent / "scripts/launch-ios-on-mac.swift", "-o", launcher)

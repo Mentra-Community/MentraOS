@@ -150,6 +150,40 @@ describe("recording and chapter integrity", () => {
     expect(markup).toContain("&lt;script&gt;");
     expect(markup).not.toContain("<script>");
     expect(markup).not.toContain("<iframe");
+    expect(markup).toContain("Not recorded"); // Existing manual assertions have no phase.
+  });
+  test("shows the original failed firmware check separately from a successful return", () => {
+    const markup = renderToStaticMarkup(
+      <TestRunView
+        run={{
+          ...run,
+          firmwareAssertions: [
+            {
+              component: "BES version",
+              expected: "26.9.21.3",
+              actual: "17.26.1.13",
+              status: "failed",
+              phase: "final-assertions",
+            },
+            {
+              component: "BES version",
+              expected: "26.9.21.3",
+              actual: "26.9.21.3",
+              status: "passed",
+              phase: "return-verification",
+            },
+          ],
+        }}
+        onStep={() => {}}
+      />,
+    );
+    const rows = [...markup.matchAll(/<tr[\s>][\s\S]*?<\/tr>/g)].map((match) => match[0]);
+    const original = rows.find((row) => row.includes("Final test checks"))!;
+    const returned = rows.find((row) => row.includes("Return verification"))!;
+    expect(original).toContain("17.26.1.13");
+    expect(original).toContain(">failed<");
+    expect(returned).toContain("26.9.21.3");
+    expect(returned).toContain(">passed<");
   });
   test("incomplete media gets explicit text and is never requested as a playable recording", () => {
     const markup = renderToStaticMarkup(

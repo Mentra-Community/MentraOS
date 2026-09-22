@@ -15,7 +15,11 @@ import {
   type LocalRoutineRegistration,
 } from "./ci-request"
 import {ciRecordingBinding, exportCiRun, finalizeCiRecording} from "./ci-run-exporter"
-import type {AssertionStep, LifecycleStep} from "./lifecycle"
+import {assertFirmwareState, type FirmwareObservation, type FirmwareProfile} from "./firmware-profile"
+import type {AssertionStep, Json, LifecycleContext, LifecycleStep} from "./lifecycle"
+import {day1ReturnSources} from "./day1-local-runtime"
+import {collectReturnObservation} from "./return-collector"
+import {simulatedReturnCollection} from "./return-collector.test-support"
 const directories: string[] = []
 afterEach(async () => {
   for (const path of directories.splice(0)) await rm(path, {recursive: true, force: true})
@@ -158,6 +162,11 @@ async function actualRun(
     teardownPassed?: boolean
     manual?: boolean
     mutation?: "satisfied" | "unknown"
+    firmware?: {final?: Json[]; returned?: Json[]; teardown?: Json[]; mutation?: Json[]}
+    collectFirmware?: (
+      phase: "final" | "teardown" | "return",
+      c: LifecycleContext,
+    ) => ReturnType<typeof collectReturnObservation>
   } = {},
 ) {
   const root = await realpath(await mkdtemp(join(tmpdir(), "ci-run-export-")))
@@ -216,19 +225,19 @@ async function actualRun(
   const trust = {path: trustPath, sha256: sha256(json(f.trust))}
   let reportDirectory = "",
     claim = {path: "", sha256: ""}
-  const observation = (passed: boolean) => ({
+  const observation = (passed: boolean, actual: Json = passed) => ({
     passed,
     expected: true,
-    actual: passed,
+    actual,
     observedAt: new Date().toISOString(),
     source: "offline fixture",
     evidence: ["offline assertion"],
   })
-  const assertion = (id: string, passed = true): AssertionStep => ({
+  const assertion = (id: string, passed = true, actual?: Json): AssertionStep => ({
     id,
     instruction: `Verify ${id}`,
     kind: "assertion",
-    observe: async () => observation(passed),
+    observe: async () => observation(passed, actual),
   })
   const local: LocalRoutineRegistration = {
     verify: async (request) => ({
@@ -331,7 +340,10 @@ async function actualRun(
             },
             reconcile: async () => ({
               expected: true,
-              actual: dispatched,
+              actual:
+                dispatched && options.firmware?.mutation
+                  ? {target: {firmwareAssertions: options.firmware.mutation}}
+                  : dispatched,
               observedAt: new Date().toISOString(),
               source: "offline mutation fixture",
               evidence: ["offline receipt"],
@@ -339,6 +351,34 @@ async function actualRun(
             }),
           }
         : assertion("product", options.testPassed !== false)
+      const final = assertion(
+        "final",
+        !options.firmware?.final?.some((c) => (c as any).status === "failed"),
+        options.firmware?.final
+          ? {target: {firmwareAssertions: options.firmware.final}, rawLog: "PRIVATE-RAW-LOG"}
+          : undefined,
+      )
+      const teardown = assertion(
+        "teardown",
+        options.teardownPassed !== false,
+        options.firmware?.teardown ? {target: {firmwareAssertions: options.firmware.teardown}} : undefined,
+      )
+      const returned = assertion(
+        "return",
+        true,
+        options.firmware?.returned ? {firmwareAssertions: options.firmware.returned} : undefined,
+      )
+      if (options.collectFirmware)
+        for (const [phase, step] of [
+          ["final", final],
+          ["teardown", teardown],
+          ["return", returned],
+        ] as const)
+          step.observe = async (c) => {
+            const result = await options.collectFirmware!(phase, c)
+            const actual = JSON.parse(JSON.stringify(result)) as Json
+            return observation(result.returnObservationPassed, phase === "return" ? actual : {target: actual})
+          }
       return {
         inputs: {offlineTest: true},
         acquireLease: async () => async () => {},
@@ -348,9 +388,9 @@ async function actualRun(
           preflight: [assertion("preflight")],
           setup: [],
           test: [product],
-          finalAssertions: [assertion("final")],
-          teardown: [assertion("teardown", options.teardownPassed !== false)],
-          returnVerification: [assertion("return")],
+          finalAssertions: [final],
+          teardown: [teardown],
+          returnVerification: [returned],
           evidence: [evidence],
         },
       }
@@ -384,7 +424,189 @@ async function journalEdit(directory: string, change: (events: any[]) => void) {
   await writeFile(path, events.map((e) => JSON.stringify(e)).join("\n") + "\n")
 }
 
+function firmwareChecks(passed: boolean, raw?: {mtk: string; bes: string}): Json[] {
+  const artifact = {url: "https://example.invalid/firmware", sha256: hash},
+    profile: FirmwareProfile = {
+      manifest: artifact,
+      asg: {versionCode: 303006687, artifact},
+      mtk: {version: "MentraLive_20260921.0", artifact},
+      bes: {version: "26.9.21.3", artifact},
+    },
+    fixture = {usb: "PRIVATE-USB", cid: "1234".repeat(8), bluetooth: "AA:BB:CC:DD:EE:FF", serials: ["PRIVATE-SERIAL"]},
+    at = new Date().toISOString(),
+    bootId = "11111111-2222-3333-4444-555555555555",
+    actual: FirmwareObservation = {
+      at,
+      evidence: "PRIVATE-EVIDENCE-PATH",
+      usb: fixture.usb,
+      cid: fixture.cid,
+      bluetooth: fixture.bluetooth,
+      serial: fixture.serials[0],
+      bootId,
+      bootCompleted: true,
+      firmware: raw?.mtk ?? (passed ? profile.mtk.version : "MentraLive_20260709"),
+      asgVersion: passed ? profile.asg.versionCode : 37,
+      activeApkSha256: passed ? hash : "0".repeat(64),
+      bes: {
+        version: raw?.bes ?? (passed ? profile.bes.version : "17.26.1.13"),
+        at,
+        bootId,
+        evidence: "PRIVATE-BES-PROOF",
+      },
+      updateIdle: true,
+      appConnected: true,
+    }
+  // Exercise the actual 14-check producer, including private identity rows that must never be published.
+  return JSON.parse(JSON.stringify(assertFirmwareState(profile, fixture, actual)))
+}
+
+async function adminView(record: unknown) {
+  // Exercise the real ingest/detail schema and SSR viewer without network, MongoDB, or a device.
+  const child = Bun.spawnSync(
+    [
+      process.execPath,
+      "-e",
+      `
+    import React from "react";
+    import {renderToStaticMarkup} from "react-dom/server";
+    import {TestRunView} from "./src/pages/test-runs.tsx";
+    import {TestRunService} from "../../packages/core/src/services/test-run.service.ts";
+    import {createTestRunIngestApi} from "../../packages/core/src/api/internal/test-runs.api.ts";
+    import {createTestRunAdminApi} from "../../packages/core/src/api/admin/test-runs.api.ts";
+    const record = JSON.parse(await Bun.stdin.text()), rows = new Map();
+    const repository = {
+      get: async id => rows.get(id) ?? null, assets: async () => [],
+      insert: async (run, payloadSha256) => {
+        const stored = structuredClone({run, payloadSha256}); rows.set(run.runId, stored);
+        return {stored, created: true};
+      }, markUploadsComplete: async () => {},
+    };
+    const service = new TestRunService(repository, () => {throw new Error("No storage access expected")});
+    process.env.TEST_RUN_INGEST_TOKEN = "offline-test-only-" + "x".repeat(32);
+    const ingest = await createTestRunIngestApi(service).request("/", {
+      method: "POST", headers: {authorization: "Bearer " + process.env.TEST_RUN_INGEST_TOKEN, "content-type": "application/json"},
+      body: JSON.stringify(record),
+    });
+    if (ingest.status !== 201) throw new Error(await ingest.text());
+    const response = await createTestRunAdminApi(service).request("/" + record.runId);
+    if (response.status !== 200) throw new Error(await response.text());
+    const detail = await response.json();
+    console.log(JSON.stringify({detail, markup: renderToStaticMarkup(React.createElement(TestRunView, {run: detail, onStep: () => {}}))}));
+  `,
+    ],
+    {
+      cwd: resolve(sourceHarnessDirectory, "../../cloud-v2/websites/admin"),
+      stdin: json(record),
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 15000,
+    },
+  )
+  expect(child.exitCode, child.stderr.toString()).toBe(0)
+  return JSON.parse(child.stdout.toString().trim())
+}
+
 describe("consumed CI lifecycle export", () => {
+  test("preserves valid raw version encodings accepted by the actual firmware checker", async () => {
+    for (const raw of [
+      {mtk: "20260921.0", bes: "026.09.021.003"},
+      {mtk: "MentraLive_20260921.0", bes: "26.9.21.3"},
+    ]) {
+      const checks = firmwareChecks(true, raw)
+      expect(checks.every((c) => (c as any).status === "passed")).toBe(true)
+      const f = await actualRun({record: false, firmware: {final: checks, returned: checks}}),
+        exported = await exportCiRun(f.options)
+      expect(exported.result.outcomes.test).toBe("passed")
+      expect(exported.result.firmwareAssertions).toHaveLength(8)
+      expect(exported.result.firmwareAssertions.find((r) => r.component === "MTK version")?.actual).toBe(raw.mtk)
+      expect(exported.result.firmwareAssertions.find((r) => r.component === "BES version")?.actual).toBe(raw.bes)
+    }
+  })
+  test("publishes all four final firmware failures beside successful cleanup through the admin API and viewer", async () => {
+    const f = await actualRun({
+        record: false,
+        collectFirmware: async (phase, c) => {
+          const output = join(c.runDirectory, `simulated-collector-${phase}`)
+          await mkdir(output)
+          const s = simulatedReturnCollection(output)
+          const source = structuredClone(s.config.profile)
+          source.mtk.version = "MentraLive_20260709"
+          source.asg.versionCode = 303006000
+          source.asg.artifact.sha256 = "e".repeat(64)
+          source.bes.version = "17.26.1.13"
+          s.config.allowedSource = day1ReturnSources(s.config.profile, {sourceProfiles: [source]})
+          if (phase === "final") {
+            s.flags.firmware = source.mtk.version
+            s.flags.asgVersion = source.asg.versionCode
+            s.flags.wrongApk = true
+            s.flags.besVersion = source.bes.version
+          }
+          const result = await collectReturnObservation(s.config, s.app)
+          expect(result.firmwareAssertions).toHaveLength(14)
+          expect(result.returnObservationPassed).toBe(phase !== "final")
+          expect(result.idleChecks.every((check) => check.passed)).toBe(true)
+          expect(result.fixtureStateChanged).toBe(false)
+          return result
+        },
+      }),
+      exported = await exportCiRun(f.options),
+      rows = exported.result.firmwareAssertions
+    expect(exported.result.outcomes).toMatchObject({test: "failed", teardown: "passed", fixture: "ready"})
+    expect(rows).toHaveLength(12)
+    for (const phase of ["final-assertions", "teardown", "return-verification"])
+      expect(rows.filter((r) => r.phase === phase).map((r) => r.status)).toEqual(
+        Array(4).fill(phase === "final-assertions" ? "failed" : "passed"),
+      )
+    expect(rows.slice(0, 4).map((r) => [r.component, r.actual])).toEqual([
+      ["MTK version", "MentraLive_20260709"],
+      ["ASG version", "303006000"],
+      ["ASG APK SHA-256", "e".repeat(64)],
+      ["BES version", "17.26.1.13"],
+    ])
+    const summary = JSON.parse(await readFile(join(exported.outputDirectory, "lifecycle-summary.json"), "utf8"))
+    expect(summary.firmwareAssertions).toEqual(rows)
+    for (const privateValue of [
+      "PRIVATE-",
+      "AA:BB:CC:DD:EE:01",
+      "0123456789abcdef0123456789abcdef",
+      "TEST012345",
+      "da1ae189-2166-4d4b-8069-806e570bb530",
+    ])
+      expect(JSON.stringify({record: exported.result, summary})).not.toContain(privateValue)
+    const {detail, markup} = await adminView(exported.result)
+    expect(detail.firmwareAssertions).toEqual(rows)
+    expect(detail.outcomes).toEqual(exported.result.outcomes)
+    expect(markup).toContain("Final test checks")
+    expect(markup).toContain("Teardown")
+    expect(markup).toContain("Return verification")
+    expect(markup).toContain("17.26.1.13")
+    expect(markup).toContain("26.9.21.3")
+  })
+  test("projects owned reconciliation checks and sanitizes absent or malformed failed observations", async () => {
+    const checks = firmwareChecks(true)
+    const f = await actualRun({record: false, mutation: "satisfied", firmware: {mutation: checks}}),
+      exported = await exportCiRun(f.options)
+    expect(exported.result.firmwareAssertions).toHaveLength(4)
+    expect(exported.result.firmwareAssertions.every((r) => r.phase === "test" && r.status === "passed")).toBe(true)
+    const absent = firmwareChecks(false)
+    ;(absent.find((r) => (r as any).id === "firmware.bes.version") as any).actual = null
+    ;(absent.find((r) => (r as any).id === "firmware.mtk") as any).actual = {credential: "PRIVATE-CREDENTIAL"}
+    const missing = await actualRun({record: false, firmware: {final: absent}}),
+      safe = await exportCiRun(missing.options)
+    expect(safe.result.firmwareAssertions.find((r) => r.component === "BES version")?.actual).toBe("Not observed")
+    expect(safe.result.firmwareAssertions.find((r) => r.component === "MTK version")?.actual).toBe(
+      "Invalid observation",
+    )
+    expect(JSON.stringify(safe.result)).not.toContain("PRIVATE-CREDENTIAL")
+  })
+  test("rejects malformed expected firmware and a passed check without a publishable value", async () => {
+    for (const field of ["expected", "actual"] as const) {
+      const checks = firmwareChecks(true)
+      ;(checks.find((r) => (r as any).id === "firmware.mtk") as any)[field] = "PRIVATE-INVALID"
+      const f = await actualRun({record: false, firmware: {final: checks}})
+      await expect(exportCiRun(f.options)).rejects.toThrow(field === "expected" ? "expected firmware" : "valid value")
+    }
+  })
   test("exports actual completed intake/lifecycle with independently verified recording and immutable asset bytes", async () => {
     const f = await actualRun(),
       exported = await exportCiRun(f.options)

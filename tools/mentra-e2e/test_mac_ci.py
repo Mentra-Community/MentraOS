@@ -27,6 +27,26 @@ class MacArtifactTests(unittest.TestCase):
                         "artifacts": {"mac": {"name": f"mentra-ios-mac-pr-123-{'a' * 40}-456-1.zip",
                                              "sha256": "e" * 64, "size": 1000}}}
 
+    def test_trusted_installer_evidence_includes_the_shared_ownership_dependency(self):
+        installer = self.root / "install-ios-mac.mjs"
+        dependency = self.root / "app-ownership.mjs"
+        installer.write_text("synthetic installer")
+        dependency.write_text("synthetic ownership protocol")
+        proof = mac_ci.installer_evidence(installer)
+        self.assertEqual(proof["installerSha256"], mac_ci.digest(installer))
+        self.assertEqual(proof["installerDependencies"],
+                         [{"path": str(dependency), "sha256": mac_ci.digest(dependency)}])
+        dependency.write_text("changed protocol")
+        changed = mac_ci.installer_evidence(installer)
+        self.assertEqual(changed["installerSha256"], proof["installerSha256"])
+        self.assertNotEqual(changed["installerDependencies"], proof["installerDependencies"])
+        dependency.unlink()
+        with self.assertRaisesRegex(ValueError, "regular file"):
+            mac_ci.installer_evidence(installer)
+        dependency.symlink_to(installer)
+        with self.assertRaisesRegex(ValueError, "regular file"):
+            mac_ci.installer_evidence(installer)
+
     def test_receipt_binds_both_app_and_archive_to_exact_selection(self):
         mac_ci.validate_receipt(self.receipt, self.selection)
         for mutation in (lambda r: r.update(headSha="f" * 40),

@@ -2,7 +2,7 @@ import {createHash} from "node:crypto"
 import {mkdir, readdir, writeFile} from "node:fs/promises"
 import {basename, dirname, join, relative, resolve} from "node:path"
 import {isDeepStrictEqual} from "node:util"
-import {testRunSchema} from "../../../cloud-v2/packages/core/src/types/test-run.types"
+import {testRunSchema, type TestRun} from "../../../cloud-v2/packages/core/src/types/test-run.types"
 import {verifyBuildManifest} from "./build-manifest"
 import {
   assertRequestTrust,
@@ -10,7 +10,9 @@ import {
   parseRoutineRequest,
   type VerifiedRoutineRegistration,
 } from "./ci-request"
+import {normalizeBesVersion} from "./firmware-profile"
 import type {AssertionObservation, Json, LifecycleEvent, LifecycleResult, LifecycleState} from "./lifecycle"
+import {normalizeFirmware} from "./ota-state"
 import {child, copyRecordedEvidence, hash, noLinks, stableBytes, type ChapterPhase} from "./recorded-evidence"
 import {MAX_ASSET_BYTES, MAX_METADATA_BYTES, object, requireThat, type TestRunAsset} from "./test-run-record"
 
@@ -38,6 +40,78 @@ const PHASES = [
 const VERDICTS = ["not-run", "passed", "failed", "cancelled", "deferred"]
 const json = (value: unknown) => Buffer.from(JSON.stringify(value, null, 2) + "\n")
 const equal = (a: unknown, b: unknown, reason: string) => requireThat(isDeepStrictEqual(a, b), reason)
+function validVersion(value: unknown, normalize: (value: string) => string) {
+  if (typeof value !== "string") return false
+  try {
+    normalize(value)
+    return true
+  } catch {
+    return false
+  }
+}
+const FIRMWARE_CHECKS: Record<string, {component: string; valid: (value: unknown) => boolean}> = {
+  "firmware.mtk": {
+    component: "MTK version",
+    valid: (v) => validVersion(v, normalizeFirmware),
+  },
+  "firmware.asg.version": {
+    component: "ASG version",
+    valid: (v) => typeof v === "number" && Number.isSafeInteger(v) && v > 0,
+  },
+  "firmware.asg.active-apk": {
+    component: "ASG APK SHA-256",
+    valid: (v) => typeof v === "string" && HASH.test(v),
+  },
+  "firmware.bes.version": {
+    component: "BES version",
+    valid: (v) => validVersion(v, normalizeBesVersion),
+  },
+}
+/** Called only after verifying the consumed claim and complete lifecycle journal.
+ * Copy the collector's four public comparisons, never identity, logs or arbitrary
+ * nested payloads. Identical observations in one phase need one row; a later
+ * success cannot replace an earlier failure or a check from a different phase. */
+function projectFirmwareAssertions(events: LifecycleEvent[]): TestRun["firmwareAssertions"] {
+  const rows: TestRun["firmwareAssertions"] = [],
+    seen = new Set<string>()
+  for (const event of events) {
+    if (event.type !== "assertion" && event.type !== "reconciliation") continue
+    const actual = (event.details as Row)?.actual
+    for (const checks of [actual?.firmwareAssertions, actual?.target?.firmwareAssertions]) {
+      if (!Array.isArray(checks)) continue
+      for (const check of checks) {
+        const rule =
+          typeof check?.id === "string" && Object.hasOwn(FIRMWARE_CHECKS, check.id)
+            ? FIRMWARE_CHECKS[check.id]
+            : undefined
+        if (!rule) continue
+        requireThat(rule.valid(check.expected), "Invalid expected firmware comparison")
+        requireThat(["passed", "failed"].includes(check.status), "Invalid firmware comparison status")
+        requireThat(
+          check.status !== "passed" || rule.valid(check.actual),
+          "Passed firmware comparison lacks a valid value",
+        )
+        const row = {
+          phase: event.phase,
+          component: rule.component,
+          expected: String(check.expected),
+          actual: rule.valid(check.actual)
+            ? String(check.actual)
+            : check.actual == null
+              ? "Not observed"
+              : "Invalid observation",
+          status: check.status as "passed" | "failed",
+        }
+        const key = JSON.stringify(row)
+        if (!seen.has(key)) {
+          seen.add(key)
+          rows.push(row)
+        }
+      }
+    }
+  }
+  return rows
+}
 function time(value: unknown) {
   requireThat(
     typeof value === "string" && /^\d{4}-\d{2}-\d{2}T.*Z$/.test(value) && Number.isFinite(Date.parse(value)),
@@ -652,6 +726,7 @@ export async function exportCiRun(options: CiExportInputs & {outputDirectory: st
         : lifecycle.outcome === "passed" && complete
           ? "passed"
           : "blocked"
+  const firmwareAssertions = projectFirmwareAssertions(events)
   const summary = {
     schemaVersion: 1,
     executionMode: "ci-registered",
@@ -663,6 +738,7 @@ export async function exportCiRun(options: CiExportInputs & {outputDirectory: st
     recordedStatus: recordedStatus ?? null,
     journalSha256: hash(journal),
     terminalSequence: events.at(-1)!.sequence,
+    firmwareAssertions,
     assertions: events
       .filter((e) => e.type === "assertion")
       .map((e) => ({
@@ -733,11 +809,11 @@ export async function exportCiRun(options: CiExportInputs & {outputDirectory: st
       returnVerification: lifecycle.returnVerification,
     },
     fixture: {alias: c.registration.fixtureID},
-    firmwareAssertions: [],
+    firmwareAssertions,
     chapters: media?.chapters ?? [],
     assets,
     notes: complete
-      ? "Recorded registered CI lifecycle; phase verdicts and fixture restoration are independent. Final/return assertion verdicts are preserved in the sanitized lifecycle summary."
+      ? "Recorded registered CI lifecycle; phase verdicts and fixture restoration are independent. Firmware comparisons retain their original lifecycle phase, including failed checks before successful cleanup."
       : "Terminal registered CI lifecycle without complete verified recorded evidence. Metadata-only export cannot qualify the routine as passed.",
   })
   requireThat(json(result).length <= MAX_METADATA_BYTES, "Export metadata exceeds 1 MiB")

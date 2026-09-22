@@ -2,6 +2,23 @@ export type RunOutcome = "passed" | "failed" | "blocked" | "aborted";
 export type CheckOutcome = "passed" | "failed" | "blocked" | "not-run";
 export type RunChannel = "pr" | "dev" | "staging" | "local";
 export type RunPlatform = "ios-mac" | "ios" | "android";
+export type FirmwareCheckPhase =
+  | "preflight"
+  | "setup"
+  | "test"
+  | "final-assertions"
+  | "teardown"
+  | "return-verification"
+  | "evidence";
+export const FIRMWARE_PHASE_LABELS: Record<FirmwareCheckPhase, string> = {
+  "preflight": "Preflight",
+  "setup": "Setup",
+  "test": "Test",
+  "final-assertions": "Final test checks",
+  "teardown": "Teardown",
+  "return-verification": "Return verification",
+  "evidence": "Evidence",
+};
 
 export interface TestRunSummary {
   runId: string;
@@ -59,7 +76,13 @@ export interface TestRunChapter {
 export interface TestRunDetail extends TestRunSummary {
   chapters: TestRunChapter[];
   assets: TestRunAsset[];
-  firmwareAssertions: { component: string; expected: unknown; actual: unknown; status: CheckOutcome }[];
+  firmwareAssertions: {
+    component: string;
+    expected: unknown;
+    actual: unknown;
+    status: CheckOutcome;
+    phase?: FirmwareCheckPhase;
+  }[];
   notes?: string;
 }
 

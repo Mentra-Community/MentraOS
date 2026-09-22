@@ -1,5 +1,6 @@
 // Explicit reviewed local registration. No device, UI, network or lease work runs on import.
 import {rename} from "node:fs/promises"
+import {homedir} from "node:os"
 import {basename, dirname, join} from "node:path"
 import {isDeepStrictEqual as same} from "node:util"
 import {createDay1Routine, day1RoutineSourcePaths, type Day1RoutineRuntime} from "./day1-routine"
@@ -12,7 +13,7 @@ import {createJanuaryPairVerifier} from "./ota-january-pairing"
 import {createOtaRecording, type OtaRecordingFixture} from "./ota-recording"
 import {readOtaHardware, type OtaFixture} from "./ota-hardware"
 import {loadLegacyRoute, verifyPublishedLegacyManifests} from "./ota-legacy-route"
-import {parseFirmwareProfile, type FirmwareProfile} from "./firmware-profile"
+import {normalizeBesVersion, parseFirmwareProfile, type FirmwareProfile} from "./firmware-profile"
 import {collectReturnObservation, PROBE_BYTES, PROBE_SHA, validateProbePath} from "./return-collector"
 import {appObserver} from "./return-app-observer"
 import {command, snapshot, bin, root, type Doctor} from "./driver"
@@ -64,16 +65,46 @@ const proof = (passed: boolean, actual: unknown, evidence: string[], source: str
   source,
 })
 
+/** Observation-only versions from the frozen run inputs. They do not change the
+ * selected profile, authorize restoration, or make off-target checks pass. */
+export function day1ReturnSources(
+  profile: FirmwareProfile,
+  source: Pick<MtkRestoreRuntimeConfig, "sourceProfiles" | "setupBaseline">,
+) {
+  const profiles = [profile, ...source.sourceProfiles]
+  return {
+    mtkVersions: [
+      ...new Set(
+        [...profiles.map((p) => p.mtk.version), ...(source.setupBaseline ? [source.setupBaseline.mtkVersion] : [])].map(
+          normalizeFirmware,
+        ),
+      ),
+    ],
+    asgVersions: [...new Set(profiles.map((p) => p.asg.versionCode))],
+    besVersions: [
+      ...new Set(
+        [...profiles.map((p) => p.bes.version), ...(source.setupBaseline ? [source.setupBaseline.besVersion] : [])].map(
+          normalizeBesVersion,
+        ),
+      ),
+    ],
+  }
+}
+
 /** File-only resolution. No imported request value becomes a command/module name. */
 export async function loadLocalConfig(ref: Ref) {
   const cfg = await json<LocalConfig>(ref, true)
   requireThat(cfg.schemaVersion === 1 && cfg.repositoryRoot === root, "Local config must select this trusted checkout")
   for (const path of [cfg.stateDirectory, cfg.fixtureDirectory]) absolute(path)
+  const host = await json<RuntimeInputs>(cfg.runtimeInputs, true)
+  requireThat(
+    host.leasePath === join(homedir(), ".cache/mentra-e2e/com.mentra.mentra.lock"),
+    "Local runs must use the canonical app ownership lease shared with installers",
+  )
   await file(cfg.trust)
   const request = parseRoutineRequest(await file(cfg.request))
   requireThat(request.status === "ready" && request.selection, "A real ready CI selection is required")
-  const selected = await json<Prepared>(cfg.selection, true),
-    host = await json<RuntimeInputs>(cfg.runtimeInputs, true)
+  const selected = await json<Prepared>(cfg.selection, true)
   requireThat(
     selected.kind === "day1-ci-selection" &&
       selected.requestId === request.requestId &&
@@ -189,6 +220,7 @@ export async function createLocalRegistration(ref: Ref) {
         join(import.meta.dir, "wifi-adb.ts"),
         join(import.meta.dir, "day1-status-probe.ts"),
         join(import.meta.dir, "../day1-local.ts"),
+        join(root, "mobile/scripts/app-ownership.mjs"),
         ...[
           "driver.ts",
           "report.ts",
@@ -371,6 +403,7 @@ export async function createLocalRegistration(ref: Ref) {
       const result = await collectReturnObservation(
         {
           profile,
+          allowedSource: day1ReturnSources(profile, host.restoreRuntime),
           fixture: {...firmwareFixture, serial: host.fixture.serial},
           probe: {path: host.restore.probe.remote, sha256: PROBE_SHA, size: PROBE_BYTES},
           recorder: rec,

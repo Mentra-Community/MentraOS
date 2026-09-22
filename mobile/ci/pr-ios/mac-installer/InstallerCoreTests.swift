@@ -81,15 +81,15 @@ private struct Fixture {
 
 @main
 private struct InstallerCoreTests {
-    static func main() {
-        do { try run() }
+    static func main() async {
+        do { try await run() }
         catch {
             FileHandle.standardError.write(Data("Test failed: \(error)\n".utf8))
             exit(1)
         }
     }
 
-    static func run() throws {
+    static func run() async throws {
         var count = 0
         func test(_ name: String, _ body: () throws -> Void) throws {
             try body()
@@ -99,6 +99,105 @@ private struct InstallerCoreTests {
         let data = try encode(manifestJSON())
         let manifest = try BuildManifest(data: data)
         let now = Date(timeIntervalSince1970: 1_750_000_000)
+
+        // Launch the actual shared JS implementation, without app/UI/hardware
+        // dependencies, to guard interoperability with the native entrypoint.
+        let ownershipModule = URL(fileURLWithPath: #filePath).deletingLastPathComponent()
+            .appendingPathComponent("../../../scripts/app-ownership.mjs").standardizedFileURL.absoluteString
+        func node(_ code: String, _ home: URL) throws -> (Process, Pipe) {
+            let process = Process(), output = Pipe()
+            process.executableURL = URL(fileURLWithPath: "/usr/bin/env")
+            process.arguments = ["node", "--input-type=module", "--eval", code, ownershipModule, home.appendingPathComponent(".cache/mentra-e2e").path]
+            process.standardOutput = output
+            try process.run()
+            return (process, output)
+        }
+        do {
+            let fixture = try Fixture()
+            defer { fixture.clean() }
+            let holderCode = """
+            const {acquireAppOwnership} = await import(process.argv[1]);
+            await acquireAppOwnership(process.argv[2]);
+            process.stdout.write("owned");
+            setTimeout(() => process.exit(1), 10000);
+            """
+            let (holder, output) = try node(holderCode, fixture.temporary)
+            defer { if holder.isRunning { holder.terminate() }; holder.waitUntilExit() }
+            try expect(String(decoding: output.fileHandleForReading.availableData, as: UTF8.self) == "owned", "JS worker did not acquire the lease")
+            let candidate = VerifiedBuild(directory: fixture.temporary, manifest: manifest, codeRequirement: "test")
+            var quit = false, launch = false
+            do {
+                _ = try await install(candidate, homeDirectory: fixture.temporary, quit: { quit = true }, launch: { _ in launch = true })
+                throw TestFailure(description: "Installer took an active worker's app")
+            } catch let error as InstallerError {
+                try expect(error.localizedDescription.contains("Mentra is owned"), "Did not reject at the app ownership boundary")
+            }
+            try test("JS worker lease prevents native quit, replacement and relaunch") {
+                try expect(!quit && !launch, "Installer interrupted an active worker")
+                try expect(fixture.text("Mentra.app/binary") == "old", "Worker's app was replaced")
+            }
+        }
+        try test("native installer ownership excludes the shared JS worker and release preserves a successor") {
+            let fixture = try Fixture()
+            defer { fixture.clean() }
+            let lease = try AppOwnershipLease(homeDirectory: fixture.temporary)
+            let probe = """
+            import assert from "node:assert/strict";
+            const {acquireAppOwnership} = await import(process.argv[1]);
+            await assert.rejects(acquireAppOwnership(process.argv[2]), /Mentra is owned/);
+            """
+            let (process, _) = try node(probe, fixture.temporary)
+            process.waitUntilExit()
+            try expect(process.terminationStatus == 0, "JS worker ignored the native lease")
+            let path = fixture.temporary.appendingPathComponent(".cache/mentra-e2e/com.mentra.mentra.lock")
+            try expect(InstallerFiles.dictionary(InstallerFiles.read(path))["retainOnExit"] as? Bool == true, "Interrupted install would be reclaimed")
+            try lease.release()
+            let successor = try AppOwnershipLease(homeDirectory: fixture.temporary)
+            try lease.release()
+            try expect(InstallerFiles.exists(path), "Repeated release removed a successor")
+            try successor.release()
+            try expect(!InstallerFiles.exists(path), "Lease was not released")
+        }
+        do {
+            let fixture = try Fixture()
+            defer { fixture.clean() }
+            let path = fixture.temporary.appendingPathComponent(".cache/mentra-e2e/com.mentra.mentra.lock")
+            try await withAppOwnership(homeDirectory: fixture.temporary) {
+                // Simulates awaiting the normal NSWorkspace launch completion.
+                await Task.yield()
+                try rejects("Mentra is owned") { _ = try AppOwnershipLease(homeDirectory: fixture.temporary) }
+            }
+            try test("ownership lasts through async launch completion") {
+                try expect(!InstallerFiles.exists(path), "Completed launch retained ownership")
+            }
+            do {
+                try await withAppOwnership(homeDirectory: fixture.temporary) {
+                    throw InstallerError.recovery("rollback or transaction cleanup failed")
+                }
+            } catch let error as InstallerError {
+                guard case .recovery = error else { throw error }
+            }
+            try test("failed rollback or cleanup retains app ownership for explicit recovery") {
+                try expect(InstallerFiles.exists(path), "Recovery lost app ownership")
+                try rejects("Mentra is owned") { _ = try AppOwnershipLease(homeDirectory: fixture.temporary) }
+            }
+        }
+        try test("native installer never reclaims stale owners or abandoned acquisition guards") {
+            let fixture = try Fixture()
+            defer { fixture.clean() }
+            let folder = fixture.temporary.appendingPathComponent(".cache/mentra-e2e")
+            try InstallerFiles.manager.createDirectory(at: folder, withIntermediateDirectories: true)
+            let path = folder.appendingPathComponent("com.mentra.mentra.lock")
+            let contents = try encode(["pid": 99_999_999, "token": "abandoned-owner"])
+            try contents.write(to: path)
+            try rejects("Mentra is owned") { _ = try AppOwnershipLease(homeDirectory: fixture.temporary) }
+            try expect(InstallerFiles.read(path) == contents, "Stale owner was overwritten")
+            try InstallerFiles.manager.removeItem(at: path)
+            let guardPath = folder.appendingPathComponent("com.mentra.mentra.lock.reclaim")
+            try InstallerFiles.manager.createDirectory(at: guardPath, withIntermediateDirectories: false)
+            try rejects("acquiring the lock") { _ = try AppOwnershipLease(homeDirectory: fixture.temporary) }
+            try expect(InstallerFiles.exists(guardPath), "Abandoned guard was removed")
+        }
 
         try test("bind the chosen package to the signed installer's exact manifest") {
             let actual = try BuildManifest(data: data, expected: data)

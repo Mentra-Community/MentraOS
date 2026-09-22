@@ -1,9 +1,12 @@
 import assert from "node:assert/strict"
 import {createHash} from "node:crypto"
+import {execFile} from "node:child_process"
 import {afterEach, test} from "node:test"
 import {mkdtemp, mkdir, readFile, realpath, rename, rm, symlink, writeFile} from "node:fs/promises"
 import {tmpdir} from "node:os"
 import path from "node:path"
+import {promisify} from "node:util"
+import {acquireAppOwnership} from "./app-ownership.mjs"
 import {
   claimInstallation,
   commitStagedInstallation,
@@ -23,6 +26,40 @@ const fixture = async () => {
 afterEach(async () => {
   for (const root of roots.splice(0)) await rm(root, {recursive: true, force: true})
 })
+
+test(
+  "an active worker blocks installation before the managed app is touched",
+  {skip: process.platform !== "darwin"},
+  async () => {
+    const root = await fixture()
+    const home = path.dirname(path.dirname(root))
+    const release = await acquireAppOwnership(path.join(home, ".cache/mentra-e2e"))
+    const manifest = path.join(home, "build.json")
+    await writeFile(
+      manifest,
+      JSON.stringify({app: "Mentra.app", bundleId: "com.mentra.mentra", executableSha256: "a".repeat(64)}),
+    )
+    const program = `
+    import assert from "node:assert/strict";
+    const {installBuild} = await import(process.argv[1]);
+    await assert.rejects(installBuild(process.argv[2]), /Mentra is owned/);
+  `
+    try {
+      await promisify(execFile)(
+        process.execPath,
+        ["--input-type=module", "--eval", program, new URL("./install-ios-mac.mjs", import.meta.url).href, manifest],
+        {env: {...process.env, HOME: home}, timeout: 10000},
+      )
+      await assert.rejects(readFile(path.join(root, "owner.json")), {code: "ENOENT"})
+      assert.equal(
+        JSON.parse(await readFile(path.join(home, ".cache/mentra-e2e/com.mentra.mentra.lock"))).pid,
+        process.pid,
+      )
+    } finally {
+      await release()
+    }
+  },
+)
 
 async function launcherFixture() {
   const root = await fixture()

@@ -3,6 +3,7 @@ import {mkdir, mkdtemp, readFile, rm, stat, writeFile} from "node:fs/promises"
 import {tmpdir} from "node:os"
 import {join} from "node:path"
 import {acquireLock} from "./report"
+import {acquireAppOwnership} from "../../../mobile/scripts/app-ownership.mjs"
 
 async function fixture(run: (folder: string, path: string) => Promise<void>) {
   const folder = await mkdtemp(join(tmpdir(), "mentra-lock-test-"))
@@ -115,5 +116,37 @@ test("ambiguous owners and an existing reclamation guard fail closed", async () 
     await expect(acquireLock(folder)).rejects.toThrow("stop all runs before removing")
     expect(await readFile(path, "utf8")).toBe(stale)
     expect((await stat(`${path}.reclaim`)).isDirectory()).toBe(true)
+  })
+})
+
+test("a worker excludes installers, and a retained installer excludes workers until release", async () => {
+  await fixture(async (folder, path) => {
+    const releaseWorker = await acquireLock(folder)
+    const worker = await readFile(path, "utf8")
+    await expect(acquireAppOwnership(folder, {installer: true})).rejects.toThrow("Mentra is owned")
+    expect(await readFile(path, "utf8")).toBe(worker)
+    await releaseWorker()
+    const releaseInstaller = await acquireAppOwnership(folder, {installer: true})
+    expect(JSON.parse(await readFile(path, "utf8")).retainOnExit).toBe(true)
+    await expect(acquireLock(folder)).rejects.toThrow("Mentra is owned")
+    await releaseInstaller()
+    const next = await acquireLock(folder)
+    await next()
+  })
+})
+
+test("installers cannot reclaim stale workers and workers cannot reclaim interrupted installers", async () => {
+  await fixture(async (folder, path) => {
+    await staleOwner(path)
+    const stale = await readFile(path, "utf8")
+    await expect(acquireAppOwnership(folder, {installer: true})).rejects.toThrow("Mentra is owned")
+    expect(await readFile(path, "utf8")).toBe(stale)
+    for (const retainOnExit of [true, "invalid"]) {
+      const retained = JSON.stringify({...JSON.parse(stale), retainOnExit})
+      await writeFile(path, retained)
+      await expect(acquireLock(folder)).rejects.toThrow()
+      await expect(acquireAppOwnership(folder, {installer: true})).rejects.toThrow()
+      expect(await readFile(path, "utf8")).toBe(retained)
+    }
   })
 })

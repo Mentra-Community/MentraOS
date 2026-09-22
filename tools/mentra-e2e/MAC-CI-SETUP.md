@@ -85,6 +85,17 @@ it. Every invocation requires a **new** output directory and obtains the artifac
 from authenticated GitHub; existing evidence is never overwritten. Do not run
 installation concurrently with a hardware routine or another app installer.
 
+The harness, repository installer and native installer share
+`~/.cache/mentra-e2e/com.mentra.mentra.lock`. Registered day-one runs require this
+canonical path; a private configuration cannot select a different lease directory.
+Installation and opening the app hold ownership through launch and cleanup, so
+an active routine prevents either installer from replacing or opening its app.
+Installers refuse every existing lease. An interrupted installation retains its
+lease, and the harness does not automatically reclaim it after the installer exits.
+An abandoned `.reclaim` guard also requires explicit recovery. Reconcile the
+installed app, manifest and retained recovery files before removing either record;
+the shared lease does not replace the installer's `.install-lock` recovery data.
+
 The command checks the expected repository/workflow/run/head, receipt, archive
 size/SHA256, safe extraction, app version, executable/JavaScript hashes, Apple
 signer and packaged PR OTA pin. For legacy packages it checks the bundled helper
@@ -125,7 +136,11 @@ leave a verified app installed awaiting the normal permission UI.
 
 `result.json` records artifact verification and installation, with
 `permissionReadiness: "not-tested"`. `failure.json` and `commands.jsonl` preserve
-failed attempts. The installer also records the selected launcher and actual app
+failed attempts. Before installation, the importer records the trusted installer's
+SHA-256 and the hash of its shared `mobile/scripts/app-ownership.mjs` dependency.
+Routine reports record that dependency separately as `appOwnershipHash`, and the
+registered routine definition pins its source alongside the harness sources.
+The installer also records the selected launcher and actual app
 identity in `~/Applications/Mentra E2E/installed-build.json`. Keep these receipts,
 profiles and device logs local; commit the routine source, not run output.
 

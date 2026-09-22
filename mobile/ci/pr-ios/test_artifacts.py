@@ -1,11 +1,46 @@
 import datetime as dt
 import json
 from pathlib import Path
+import plistlib
+import shutil
 import tempfile
 import unittest
 from unittest.mock import patch
 import subprocess
-from artifacts import BUNDLE_ID, probe_framework_copy, probe_signing, validate_profile, verify_pr_ota, verify_private_signing
+from artifacts import BUNDLE_ID, digest, package_mac_app, probe_framework_copy, probe_signing, validate_profile, verify_pr_ota, verify_private_signing
+
+
+class MacPackageTests(unittest.TestCase):
+    def test_legacy_download_includes_the_shared_app_lease_dependency(self):
+        with tempfile.TemporaryDirectory() as temporary:
+            root = Path(temporary)
+            app = root / "Mentra.app"
+            (app / "EXConstants.bundle").mkdir(parents=True)
+            (app / "Info.plist").write_bytes(plistlib.dumps({"CFBundleExecutable": "Mentra"}))
+            (app / "Mentra").write_bytes(b"test app")
+            (app / "main.jsbundle").write_bytes(b"test JavaScript")
+            (app / "EXConstants.bundle/app.config").write_bytes(b"{}")
+            manifest = {"executableSha256": digest(app / "Mentra"), "javascriptSha256": digest(app / "main.jsbundle")}
+            packaged = None
+
+            def command(*args):
+                nonlocal packaged
+                if args[0] == "xcrun":
+                    Path(args[-1]).write_bytes(b"test launcher")
+                elif args[:2] == ("ditto", "-c"):
+                    packaged = Path(args[-2])
+                    dependency = packaged / "app-ownership.mjs"
+                    self.assertEqual(dependency.read_bytes(), (Path(__file__).resolve().parents[2] / "scripts/app-ownership.mjs").read_bytes())
+                    self.assertIn('from "./app-ownership.mjs"', (packaged / "install.mjs").read_text())
+                elif args[:2] == ("ditto", "-x"):
+                    shutil.copytree(packaged, Path(args[-1]) / packaged.name)
+                elif args[0] == "ditto":
+                    shutil.copytree(args[1], args[2])
+                return b""
+
+            with patch("artifacts.run", side_effect=command):
+                package_mac_app(app, root / "Mentra.zip", manifest)
+            self.assertIsNotNone(packaged)
 
 
 class ProvisioningTests(unittest.TestCase):

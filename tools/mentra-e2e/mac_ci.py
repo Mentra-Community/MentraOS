@@ -40,6 +40,14 @@ def write_json(file, value):
     file.write_text(json.dumps(value, indent=2) + "\n")
 
 
+def installer_evidence(installer):
+    dependency = installer.with_name("app-ownership.mjs")
+    for file in (installer, dependency):
+        require(file.is_file() and not file.is_symlink(), "Trusted installer source must be a regular file")
+    return {"installerSha256": digest(installer),
+            "installerDependencies": [{"path": str(dependency), "sha256": digest(dependency)}]}
+
+
 def validate_run(run, selection):
     require(run.get("id") == selection.run, "GitHub run ID mismatch")
     require(run.get("repository", {}).get("full_name") == REPOSITORY, "Unexpected repository")
@@ -224,7 +232,8 @@ def main(argv=None):
                    "--launcher", launcher, "--launcher-sha256", args.launcher_sha256]
             if args.no_launch:
                 cmd.append("--no-launch")
-            proof["installerSha256"] = digest(installer)
+            proof.update(installer_evidence(installer))
+            write_json(output / "result.json", proof)
             print(command(cmd), end="")
             proof.update({"installed": True, "launcher": launcher, "launcherSha256": args.launcher_sha256})
             write_json(output / "result.json", proof)

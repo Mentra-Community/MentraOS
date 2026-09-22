@@ -18,6 +18,7 @@ import {homedir} from "node:os"
 import path from "node:path"
 import {fileURLToPath} from "node:url"
 import {parseArgs} from "node:util"
+import {acquireAppOwnership} from "./app-ownership.mjs"
 
 const scripts = path.dirname(fileURLToPath(import.meta.url))
 const owner = "mentra-ios-mac-v1"
@@ -224,6 +225,29 @@ export async function installBuild(manifestPath, {launch = true, launcherPath, l
     throw new Error(
       "For this Mac ZIP, open Install Mentra.app, or provide --launcher and --launcher-sha256 from host provisioning",
     )
+  const releaseApp = await acquireAppOwnership(undefined, {installer: true})
+  let preserveRecovery = false
+  try {
+    return await installOwnedBuild(manifestPath, {
+      manifest,
+      portablePackage,
+      preinstalledLauncher,
+      launch,
+      launcherPath,
+      launcherSha256,
+    })
+  } catch (error) {
+    preserveRecovery = error instanceof InstallationRollbackError
+    throw error
+  } finally {
+    if (!preserveRecovery) await releaseApp()
+  }
+}
+
+async function installOwnedBuild(
+  manifestPath,
+  {manifest, portablePackage, preinstalledLauncher, launch, launcherPath, launcherSha256},
+) {
   const root = installationRoot()
   const destination = path.join(root, "Mentra.app")
   await claimInstallation(root, manifest.bundleId)
@@ -316,8 +340,16 @@ export async function installBuild(manifestPath, {launch = true, launcherPath, l
     throw error
   } finally {
     if (!preserveRecovery) {
-      if (staging) await rm(staging, {recursive: true, force: true})
-      if (installedNew || !(await exists(previous))) await rm(lock, {recursive: true, force: true})
+      try {
+        if (staging) await rm(staging, {recursive: true, force: true})
+        if (installedNew || !(await exists(previous))) await rm(lock, {recursive: true, force: true})
+        else throw new Error("The prior installation still needs recovery")
+      } catch (error) {
+        throw new InstallationRollbackError(
+          [error],
+          `Installation cleanup failed; retain the app lease and recovery files at ${lock}`,
+        )
+      }
     }
   }
 }
