@@ -23,7 +23,8 @@ Source of truth:
   provenance and hashes locally. The newly supplied January target-files archive
   passes all 6,390 entry CRCs and matches the factory partition images. Its signed
   full downgrade OTA passes native signature verification and an apply check
-  against all fourteen target partitions; device qualification remains pending.
+  against all fourteen target partitions. A supervised full OTA and independent
+  January boot/ASG27 reconciliation passed; complete tracked execution remains pending.
   The prepared package explicitly uses `POWERWASH=1`, exposing the ASG27 already
   bundled in January MTK without a separate initial APK installation. Full OTA
   alone does not imply a wipe. The target-files archive itself is not installable.
@@ -106,7 +107,8 @@ Source of truth:
   January MTK downgrade with its verified wipe policy and verify bundled ASG27.
   Qualify BLE Wi-Fi reprovisioning and independent identity/boot return. Measure
   full OTA and flashing on comparable downgrades; keep staging, generation and
-  the later customer update timings separate. No full OTA device pass is claimed.
+  the later customer update timings separate. One supervised full OTA and baseline
+  reconciliation passed; the extracted setup/restoration composition is not yet qualified.
 - [x] Implement frozen manifest parsing, fourteen independent firmware/identity
   assertions and an offline verification CLI (16 focused parser/CLI tests).
   Live adapters must collect those observations; supplied JSON alone cannot
@@ -123,8 +125,10 @@ Source of truth:
 - [ ] Verify teardown, idle app connection and the next routine's entry checks.
 - [ ] Check actual HTML playback/seek and finalize the full evidence/result bundle.
 
-The full January baseline and recorded day-one test have not passed. Limited BES
-preparation and earlier ordinary OTA runs cannot substitute for this qualification.
+The full January baseline has scoped setup proof, including verified BES install
+continuity through the wipe. The complete recorded day-one routine has not passed.
+Neither that setup proof nor a later successful return observation substitutes
+for the complete routine, its original test verdict or CI request ownership.
 Do not start Mentra Call as part of this routine.
 
 The 2026-09-22 UTC setup diagnostic confirmed a parser failure before firmware
@@ -171,7 +175,9 @@ the same exact artifacts; it did not dispatch this manual qualification.
 Measured flash timings: dispatch to writes/readbacks completed was 123.974 seconds;
 first independent network boot observation was at 299.785 seconds; complete
 read-only verification was at 579.256 seconds. The latter includes the original
-USB wait and manual observation delay. Full OTA comparison remains pending.
+USB wait and manual observation delay. The later full OTA transfer/apply took
+34.334/186.218 seconds and its first verified boot was at 534.994 seconds. This
+is not a matched comparison: the OTA wiped userdata, while flashing preserved it.
 
 The replacement CI app at head `1d716af0` (build `303006206`) completed the normal
 customer update from the prepared January baseline on the same 03BE fixture.
@@ -193,7 +199,9 @@ recheck confirms correct ranges and fully buffered media without a media error,
 but the visible top-level document still reports `visibilityState=hidden` and
 does not advance decoded frames. Window/tab selection and moving between displays
 did not resolve that rendering failure. Temporary diagnostics were removed;
-normal Safari playback remains unverified. The original recording and publication
+native fullscreen playback subsequently worked, while inline playback still
+reported the hidden-document failure. Normal inline playback remains unverified.
+The original recording and publication
 remain unchanged.
 CI request `routine-35699614125-2-4136-day1-ota` selected the same successful build
 but remains context only; this supervised run did not consume it.
@@ -211,8 +219,26 @@ its bundled backup, explaining the valid `/data/app` copy. Preserve that failure
 and qualify the corrected identity check through separate read-only reconciliation;
 these observations alone do not pass the full routine or its teardown.
 
+The later customer sequence at head `e5ecea74` completed the selected firmware
+path after a single Update Now action. All fourteen independent return checks
+passed for MTK `MentraLive_20260921.0`, BES `26.9.21.3`, ASG `303006291` and its
+exact APK. The original recorder failed during an intermediate reboot; its
+verdict remains failed. The separate return recording passed its video/chapter
+checks. Fixture enrollment then stopped at the Mac lock screen before device
+commands; the fixture is still unenrolled and no CI request was consumed.
+
 - [x] Add exact PR build/receipt/archive/OTA selection and immutable request
   validation, including separate build and publication attempts.
+- [x] Add cache-only `ci-worker.ts prepare`, using canonical receipt verification,
+  Apple signature checks, selected return artifacts and reviewed legacy route.
+  The real historical e5 cache passed; this does not authenticate an obsolete
+  request as current or install anything.
+- [x] Add selected-target full-OTA restoration steps with original-source/apply
+  records and read-only recovery after a missing worker dispatch record. Their
+  real transport runtime and physical restoration pass remain to be qualified.
+- [x] Exercise the tracked BES source observer on actual glasses with temporary
+  Wi-Fi ADB enabled then restored. No firmware dispatch or fixture enrollment
+  occurred; the complete BES installation runtime remains unqualified.
 - [ ] Add coordinated-release selection through the same input interface.
 - [ ] Extend coordinated Apple exports with a Mac ZIP and receipt; preserve stable
   identity and effective OTA configuration across installs.
