@@ -16,6 +16,7 @@ const displayEventMock = mock(() => {})
 mock.module("../DisplayProcessor", () => ({
   __esModule: true,
   default: {
+    setDeviceModel: () => {},
     processDisplayEvent: (e: Record<string, unknown>) => ({...e, _processed: true}),
   },
 }))

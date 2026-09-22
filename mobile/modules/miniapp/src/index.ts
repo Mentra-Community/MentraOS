@@ -74,6 +74,8 @@ export type {
   RenderRectStyle,
   RenderResult,
   RenderTextStyle,
+  RenderTextLayout,
+  RenderTextLine,
   ViewType,
 } from "./modules/display"
 export type {

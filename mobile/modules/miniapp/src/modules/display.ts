@@ -35,6 +35,12 @@ export interface RenderTextStyle {
   radius?: number
   /** What happens to text that doesn't fit the box after wrapping. Default "clip". */
   overflow?: "clip" | "ellipsis"
+  /** Optional line limit in addition to the box's physical capacity. */
+  maxLines?: number
+  /** Which end of overflowing text stays visible. Default "start". */
+  textWindow?: "start" | "end"
+  /** Align the line region inside the box. With maxLines, reserves that many rows. Default "top". */
+  verticalAlign?: "top" | "bottom"
   /** Line-break policy for wrapping (host wraps; the box carries pre-wrapped text). */
   breakMode?: DisplayBreakMode
 }
@@ -54,8 +60,29 @@ export type RenderElement =
   | {type: "image"; id?: string; box: RenderBox; data: string}
   | {type: "rect"; id?: string; box: RenderBox; style?: RenderRectStyle}
 
+/** One visible line, with UTF-16 offsets into the element's original text (end exclusive).
+ * Inserted hyphens/ellipsis are in `text` but do not consume source characters.
+ */
+export interface RenderTextLine {
+  text: string
+  start: number
+  end: number
+}
+
+/** Host-computed text output; this is not a hardware display acknowledgment. */
+export interface RenderTextLayout {
+  lines: RenderTextLine[]
+  /** Source starts of all wrapped lines, for replacing text at line boundaries. */
+  lineStarts: number[]
+  /** Number of lines this element can show, after box and maxLines limits. */
+  capacity: number
+  truncated: boolean
+}
+
 export interface RenderOptions {
   view?: ViewType
+  /** Include text output and source offsets keyed by element id (or text[index]). */
+  includeTextLayout?: boolean
   /** Auto-clear after this many ms (same semantics as legacy display options). */
   durationMs?: number
   /** Update only while this app's accepted main-view frame is still current.
@@ -80,6 +107,7 @@ export interface RenderResult {
   /** Ids of elements the host dropped (budget/bounds/device limits) — dropped is never silent. */
   dropped?: string[]
   reason?: string
+  textLayout?: Record<string, RenderTextLayout>
 }
 
 export class DisplayManager {
@@ -117,6 +145,7 @@ export class DisplayManager {
         view: options.view ?? "main",
         elements,
         durationMs: options.durationMs,
+        includeTextLayout: options.includeTextLayout,
         ifDisplayToken: options.ifDisplayToken,
       })
       .catch((err) => ({

@@ -29,9 +29,9 @@
     },
     "../cloud-v2/packages/cloud-client": {
       "name": "@mentra/cloud-client",
-      "version": "3.2.1",
+      "version": "3.3.0",
       "dependencies": {
-        "@mentra/cloud-protocol": "3.2.1",
+        "@mentra/cloud-protocol": "3.3.0",
         "tweetnacl": "^1.0.3",
       },
       "devDependencies": {
@@ -85,7 +85,7 @@
     },
     "../cloud-v2/packages/protocol": {
       "name": "@mentra/cloud-protocol",
-      "version": "3.2.1",
+      "version": "3.3.0",
       "dependencies": {
         "zod": "^3.24.1",
       },
@@ -102,7 +102,7 @@
       "version": "0.0.0",
       "dependencies": {
         "@azure/communication-identity": "^1.3.1",
-        "@mentra/cloud-protocol": "^3.2.1",
+        "@mentra/cloud-protocol": "^3.3.0",
         "@mentra/cloud-shared": "workspace:*",
         "@soniox/node": "^2.1.0",
         "hono": "^4.11.1",
@@ -253,10 +253,10 @@
     },
     "../mobile/modules/acs-meeting": {
       "name": "@mentra/acs-meeting",
-      "version": "3.2.1",
+      "version": "3.3.0",
       "dependencies": {
         "@expo/config-plugins": "~55.0.10",
-        "@mentra/glasses-media": "3.2.1",
+        "@mentra/glasses-media": "3.3.0",
       },
       "devDependencies": {
         "expo-module-scripts": "^55.0.2",
@@ -270,9 +270,9 @@
     },
     "../mobile/modules/bluetooth-sdk": {
       "name": "@mentra/bluetooth-sdk",
-      "version": "3.2.1",
+      "version": "3.3.0",
       "dependencies": {
-        "@mentra/cloud-protocol": "3.2.1",
+        "@mentra/cloud-protocol": "3.3.0",
       },
       "devDependencies": {
         "@types/node": "^25.9.3",
@@ -289,9 +289,9 @@
     },
     "../mobile/modules/crust": {
       "name": "@mentra/crust",
-      "version": "3.2.1",
+      "version": "3.3.0",
       "dependencies": {
-        "@mentra/jspolyfill": "3.2.1",
+        "@mentra/jspolyfill": "3.3.0",
       },
       "devDependencies": {
         "@expo/config-plugins": ">=8.0.0",
@@ -308,15 +308,15 @@
     },
     "../mobile/modules/engine": {
       "name": "@mentra/engine",
-      "version": "3.2.1",
+      "version": "3.3.0",
       "dependencies": {
-        "@mentra/acs-meeting": "3.2.1",
-        "@mentra/bluetooth-sdk": "3.2.1",
-        "@mentra/cloud-client": "3.2.1",
-        "@mentra/cloud-protocol": "3.2.1",
-        "@mentra/crust": "3.2.1",
-        "@mentra/glasses-media": "3.2.1",
-        "@mentra/miniapp": "3.2.1",
+        "@mentra/acs-meeting": "3.3.0",
+        "@mentra/bluetooth-sdk": "3.3.0",
+        "@mentra/cloud-client": "3.3.0",
+        "@mentra/cloud-protocol": "3.3.0",
+        "@mentra/crust": "3.3.0",
+        "@mentra/glasses-media": "3.3.0",
+        "@mentra/miniapp": "3.3.0",
         "buffer": "^6.0.3",
         "events": "^3.3.0",
         "jszip": "^3.10.1",
@@ -371,20 +371,20 @@
     },
     "../mobile/modules/glasses-media": {
       "name": "@mentra/glasses-media",
-      "version": "3.2.1",
+      "version": "3.3.0",
     },
     "../mobile/modules/jspolyfill": {
       "name": "@mentra/jspolyfill",
-      "version": "3.2.1",
+      "version": "3.3.0",
       "devDependencies": {
         "esbuild": "^0.23.0",
       },
     },
     "../mobile/modules/miniapp": {
       "name": "@mentra/miniapp",
-      "version": "3.2.1",
+      "version": "3.3.0",
       "dependencies": {
-        "@mentra/cloud-protocol": "3.2.1",
+        "@mentra/cloud-protocol": "3.3.0",
         "eventemitter3": "^5.0.1",
       },
       "devDependencies": {

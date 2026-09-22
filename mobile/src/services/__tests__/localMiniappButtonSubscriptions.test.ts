@@ -9,8 +9,19 @@ import localMiniappRuntime from "../../../modules/engine/src/services/LocalMinia
 describe("LocalMiniappRuntime button subscriptions", () => {
   const packageName = "com.example.button-subscriber"
 
-  afterEach(() => {
-    localMiniappRuntime.unregisterApp(packageName)
+  beforeEach(() => {
+    jest.useFakeTimers()
+  })
+
+  afterEach(async () => {
+    try {
+      localMiniappRuntime.unregisterApp(packageName)
+      // Unregistering releases microphone requirements through a debounced write.
+      // Finish that teardown before Jest disposes this test's environment.
+      await jest.runOnlyPendingTimersAsync()
+    } finally {
+      jest.useRealTimers()
+    }
   })
 
   it("publishes active subscription changes independently of app running state", () => {

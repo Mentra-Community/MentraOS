@@ -143,6 +143,8 @@ export type {
   RenderRectStyle,
   RenderResult,
   RenderTextStyle,
+  RenderTextLayout,
+  RenderTextLine,
 } from "../modules/display"
 export type {DashboardMode} from "../modules/dashboard"
 export type {PlayAudioOptions, SpeakOptions, SpeakResult, SpeakerState, SpeakerStateEvent} from "../modules/speaker"

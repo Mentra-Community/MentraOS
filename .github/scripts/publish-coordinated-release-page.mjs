@@ -6,6 +6,7 @@ import path from "node:path"
 import {pathToFileURL} from "node:url"
 
 import {finalizeReleaseManifest} from "./release-family.mjs"
+import {downloadNames} from "./coordinated-install-downloads.mjs"
 import {artifactUrl} from "./release-artifact-storage.mjs"
 
 const START = "<!-- mentra-release-downloads:start -->"
@@ -20,11 +21,18 @@ export function completedReleaseDownloads(plan, manifest) {
   }
   assert.deepEqual(finalizeReleaseManifest({plan, results: manifest, completedAt: manifest.completedAt}), manifest)
   const asset = (key) => manifest.artifacts.find((entry) => entry.coordinate === plan.artifactNames[key])
-  return {apk: asset("androidApp"), aab: asset("androidStoreApp"), ipa: asset("iosApp")}
+  const names = downloadNames(plan)
+  return {
+    apk: asset("androidApp"),
+    aab: asset("androidStoreApp"),
+    ipa: asset("iosApp"),
+    install: manifest.artifacts.find((entry) => entry.coordinate === names.install),
+    mac: manifest.artifacts.find((entry) => entry.coordinate === names.mac),
+  }
 }
 
 export function releaseDownloadNotes({plan, manifest, repository}) {
-  const {apk, aab, ipa} = completedReleaseDownloads(plan, manifest)
+  const {apk, aab, ipa, install, mac} = completedReleaseDownloads(plan, manifest)
   const download = (label, asset) => `- [${label}](${asset.url})`
   const asg = manifest.artifacts.find(
     (entry) => entry.coordinate.startsWith("mentra-live-asg-") && entry.coordinate.endsWith(".apk"),
@@ -36,7 +44,8 @@ export function releaseDownloadNotes({plan, manifest, repository}) {
     "## Mentra App downloads",
     download("Android phone APK — install the Mentra App", apk),
     download("Android App Bundle (AAB)", aab),
-    download("iOS IPA", ipa),
+    ...(install ? [download("Install on iPhone / share install link", install)] : [download("iOS IPA", ipa)]),
+    ...(mac ? [download("macOS ZIP — registered Apple Silicon Macs", mac)] : []),
     "",
     "## Glasses and developer downloads",
     ...(asg ? [download("Mentra Live glasses APK (ASG)", asg)] : []),

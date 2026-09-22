@@ -96,6 +96,10 @@ protocol SGCManager {
 
     // MARK: - Display Control
 
+    /// Full-frame adapters preserve the active scene instead of showing temporary overlays.
+    var showBrightnessConfirmation: Bool { get }
+    var showConnectionConfirmation: Bool { get }
+    var sceneHandoffRequiresClear: Bool { get }
     func setBrightness(_ level: Int, autoMode: Bool)
     func clearDisplay()
     func sendText(_ text: String) async
@@ -254,6 +258,18 @@ protocol SGCManager {
 /// doesn't seem to work for concurrency reasons :(
 /// we can make read-only getters for convienence though:
 extension SGCManager {
+    var showBrightnessConfirmation: Bool {
+        true
+    }
+
+    var showConnectionConfirmation: Bool {
+        true
+    }
+
+    var sceneHandoffRequiresClear: Bool {
+        true
+    }
+
     var isMicSuspendedForAudio: Bool {
         false
     }
