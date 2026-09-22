@@ -60,6 +60,8 @@ type Lc3FrameSizeBytes = 20 | 40 | 60
 const LOCAL_AUTH_PORT = 3002
 
 let client: CloudClient | null = null
+/** Core endpoint used to construct this client, independent of later host config changes. */
+let clientCoreUrl: string | undefined
 let connected = false
 let persistentFailureTimer: ReturnType<typeof BgTimer.setTimeout> | null = null
 let persistentFailureNotified = false
@@ -433,6 +435,7 @@ function construct(): void {
     },
     logger: cloudLogger,
   })
+  clientCoreUrl = endpoints.core
 
   const c = client
   clearRuntimeEventSubscriptions()
@@ -565,6 +568,7 @@ export const cloudClientService = {
 
     const wasConnected = connected
     client = null
+    clientCoreUrl = undefined
     localDevRuntimeToken = null
     connected = false
     resetRuntimeStatus()
@@ -611,10 +615,11 @@ export const cloudClientService = {
     const c = client
     if (!c) throw new Error("cloud client not initialized")
 
-    const {token, expiresAt} = await c.auth.getMiniappToken(packageName, opts)
-    const identity = c.auth.identity
-    const coreUrl = resolveEndpoints().core
+    const coreUrl = clientCoreUrl
     if (!coreUrl) throw new Error("cloud client core is unavailable")
+    const {token, expiresAt} = await c.auth.getMiniappToken(packageName, opts)
+    if (c !== client) throw new Error("cloud client changed while obtaining miniapp credentials")
+    const identity = c.auth.identity
     return {
       mentraUserId: identity.mentraUserId,
       tenantId: identity.tenantId,
@@ -637,6 +642,7 @@ export const cloudClientService = {
     clearPersistentFailureAlarm()
     const wasConnected = connected
     client = null
+    clientCoreUrl = undefined
     // stop() is part of the logout lifecycle and runs before the host emits
     // SIGNED_OUT. Remove the persisted namespace owner here so a later account
     // can never inherit it. A force-stop/process kill does not call stop(), so
