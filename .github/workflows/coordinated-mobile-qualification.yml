@@ -4,6 +4,10 @@ on:
   pull_request:
     types: [labeled, synchronize]
 
+concurrency:
+  group: qualify-coordinated-mobile-${{ github.event.pull_request.number }}
+  cancel-in-progress: true
+
 permissions:
   contents: write
   actions: read
