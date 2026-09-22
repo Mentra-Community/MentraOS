@@ -2073,10 +2073,18 @@ class LocalMiniappRuntime {
         return
       }
 
+      if (
+        payload.ifDisplayToken !== undefined &&
+        (typeof payload.ifDisplayToken !== "string" || !payload.ifDisplayToken)
+      ) {
+        this.sendResult(packageName, requestId, true, {status: "blocked", reason: "invalid display token"})
+        return
+      }
       localDisplayManager.request(
         packageName,
         {
           view: (payload.view as DisplayPayload["view"]) ?? "main",
+          ifDisplayToken: payload.ifDisplayToken as string | undefined,
           scene: payload.elements as DisplayPayload["scene"],
           durationMs: payload.durationMs as number | undefined,
         },
