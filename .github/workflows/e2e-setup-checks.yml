@@ -11,6 +11,13 @@ on:
       - "tools/mentra-e2e/runner/ci-request*"
       - "tools/mentra-e2e/runner/test-run-*"
       - "tools/mentra-e2e/publish-test-run.ts"
+      - "tools/mentra-e2e/ota.ts"
+      - "tools/mentra-e2e/runner/ota-*"
+      - "tools/mentra-e2e/runner/return-observer*"
+      - "tools/mentra-e2e/runner/day1-run-exporter*"
+      - "tools/mentra-e2e/export-day1-run.ts"
+      - "cloud-v2/packages/core/src/types/test-run.types.ts"
+      - "cloud-v2/bun.lock"
       - ".github/scripts/request-e2e-routine*"
       - ".github/workflows/request-e2e-routine.yml"
       - "mobile/scripts/install-ios-mac.mjs"
@@ -29,6 +36,13 @@ on:
       - "tools/mentra-e2e/runner/ci-request*"
       - "tools/mentra-e2e/runner/test-run-*"
       - "tools/mentra-e2e/publish-test-run.ts"
+      - "tools/mentra-e2e/ota.ts"
+      - "tools/mentra-e2e/runner/ota-*"
+      - "tools/mentra-e2e/runner/return-observer*"
+      - "tools/mentra-e2e/runner/day1-run-exporter*"
+      - "tools/mentra-e2e/export-day1-run.ts"
+      - "cloud-v2/packages/core/src/types/test-run.types.ts"
+      - "cloud-v2/bun.lock"
       - ".github/scripts/request-e2e-routine*"
       - ".github/workflows/request-e2e-routine.yml"
       - "mobile/scripts/install-ios-mac.mjs"
@@ -42,9 +56,9 @@ permissions:
 
 jobs:
   test:
-    name: Verify Mac artifact and installer guards
+    name: Verify routine evidence and Mac installation
     runs-on: ubuntu-latest
-    timeout-minutes: 5
+    timeout-minutes: 10
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -56,10 +70,18 @@ jobs:
       - uses: oven-sh/setup-bun@v2
         with:
           bun-version: "1.3.14"
+      - name: Install canonical result schema dependencies
+        working-directory: cloud-v2
+        run: bun install --frozen-lockfile --ignore-scripts
+      - name: Install media validation tools
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes ffmpeg
       - run: python3 -m unittest discover -s tools/mentra-e2e -p test_mac_ci.py -v
       - run: node --test mobile/scripts/install-ios-mac.test.mjs
       - run: python3 mobile/ci/pr-ios/test_mac_installer.py
       - name: Verify routine lifecycle, firmware assertions and request guards
         run: |
           bun test tools/mentra-e2e/runner/lifecycle.test.ts tools/mentra-e2e/runner/firmware-profile.test.ts tools/mentra-e2e/runner/firmware-state-cli.test.ts tools/mentra-e2e/runner/ci-request.test.ts tools/mentra-e2e/runner/test-run-publisher.test.ts
+          bun test tools/mentra-e2e/runner/ota-state.test.ts tools/mentra-e2e/runner/ota-legacy-route.test.ts tools/mentra-e2e/runner/return-observer.test.ts tools/mentra-e2e/runner/day1-run-exporter.test.ts
           node --test .github/scripts/request-e2e-routine.test.mjs
