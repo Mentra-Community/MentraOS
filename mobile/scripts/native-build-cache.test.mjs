@@ -3,6 +3,7 @@ import assert from "node:assert/strict"
 import {mkdtempSync, rmSync, statSync, utimesSync, writeFileSync} from "node:fs"
 import {tmpdir} from "node:os"
 import path from "node:path"
+import {execFileSync} from "node:child_process"
 import {cacheScope, snapshotSources, restoreSourceTimes} from "./native-build-cache.mjs"
 
 test("native cache scope isolates workspace, tools, dependencies and runtime environment", () => {
@@ -28,5 +29,20 @@ test("checkout timestamps are restored only for byte-identical current sources",
     assert.equal(statSync(path.join(root, "unchanged.swift")).mtimeMs, 100000)
     assert.notEqual(statSync(path.join(root, "release.kt")).mtimeMs, 100000)
     assert.notEqual(statSync(path.join(root, "new.ts")).mtimeMs, 100000)
+  } finally { rmSync(root, {recursive: true, force: true}) }
+})
+
+
+test("source restoration preserves Xcode's full nanosecond timestamps", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "mentra-source-nanoseconds-"))
+  try {
+    const file = path.join(root, "unchanged.swift")
+    writeFileSync(file, "unchanged")
+    execFileSync("python3", ["-c", "import os, sys; os.utime(sys.argv[1], ns=(100000000123, 100000000123))", file])
+    const original = statSync(file, {bigint: true}).mtimeNs
+    const snapshot = snapshotSources(root, ["unchanged.swift"])
+    utimesSync(file, new Date(), new Date())
+    assert.equal(restoreSourceTimes(root, ["unchanged.swift"], snapshot), 1)
+    assert.equal(statSync(file, {bigint: true}).mtimeNs, original)
   } finally { rmSync(root, {recursive: true, force: true}) }
 })

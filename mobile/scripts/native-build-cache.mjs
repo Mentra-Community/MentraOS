@@ -1,6 +1,6 @@
 import {createHash} from "node:crypto"
 import {execFileSync} from "node:child_process"
-import {appendFileSync, existsSync, lstatSync, readFileSync, readdirSync, utimesSync, writeFileSync} from "node:fs"
+import {appendFileSync, existsSync, lstatSync, readFileSync, readdirSync, writeFileSync} from "node:fs"
 import path from "node:path"
 import {fileURLToPath} from "node:url"
 
@@ -12,7 +12,7 @@ const git = (args) => execFileSync("git", args, {encoding: "utf8"})
 // into a different workspace/toolchain/backend; changed source stays the native
 // build system's responsibility, including newly generated release metadata.
 export function cacheScope({workspace, xcode, node, bun, environment, dependencies}) {
-  return hash(JSON.stringify({schema: 1, workspace, xcode, node, bun, environment, dependencies}))
+  return hash(JSON.stringify({schema: 2, workspace, xcode, node, bun, environment, dependencies}))
 }
 
 export function nativeSources(root, files) {
@@ -35,26 +35,30 @@ export function snapshotSources(root, files) {
   return Object.fromEntries(files.flatMap((name) => {
     const file = path.join(root, name)
     if (!existsSync(file)) return []
-    const stat = lstatSync(file)
+    const stat = lstatSync(file, {bigint: true})
     if (!stat.isFile()) return []
-    return [[name, {sha256: hash(readFileSync(file)), mtimeMs: stat.mtimeMs}]]
+    return [[name, {sha256: hash(readFileSync(file)), mtimeNs: stat.mtimeNs.toString()}]]
   }))
 }
 
 export function restoreSourceTimes(root, currentFiles, previous) {
-  let restored = 0
+  const updates = []
   // Iterate the current Git inventory, never paths supplied by a cache entry.
   for (const name of currentFiles) {
     const record = previous[name]
-    if (!record || !Number.isFinite(record.mtimeMs)) continue
+    if (!record || !/^\d+$/.test(record.mtimeNs ?? "")) continue
     const file = path.join(root, name)
     if (!existsSync(file)) continue
-    const stat = lstatSync(file)
+    const stat = lstatSync(file, {bigint: true})
     if (!stat.isFile() || hash(readFileSync(file)) !== record.sha256) continue
-    utimesSync(file, stat.atime, new Date(record.mtimeMs))
-    restored++
+    updates.push([file, stat.atimeNs.toString(), record.mtimeNs])
   }
-  return restored
+  // Node's Date/utimes path rounds timestamps. Xcode records sub-millisecond
+  // mtimes, so restore exact nanoseconds through the host's Python stdlib.
+  if (updates.length) execFileSync("python3", ["-c",
+    "import json, os, sys\nfor file, access, modified in json.load(sys.stdin): os.utime(file, ns=(int(access), int(modified)))"],
+    {input: JSON.stringify(updates)})
+  return updates.length
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
