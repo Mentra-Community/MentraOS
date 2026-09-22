@@ -517,42 +517,70 @@ engine handler for `miniapp_stream_start` maps `route: "phone"` onto
 manifest permission and the LOCAL_WIFI runtime permission, and rejects a non-WHIP URL. Status
 arrives as today's `StreamStatus` with `route: "phone"`.
 
-**Preview the glasses on the phone.** A miniapp runs as a background JS context with an
-on-demand UI WebView, so it cannot host a native video view. The preview is a host-rendered
-surface that the Mentra App shows on the miniapp's behalf:
+**Preview in the miniapp's own page.** The mechanism is specified in Mentra-Specs
+`platform/media/miniapp-frame-preview/spec.md` (SPEC-F228CB9092A7, owner Nicolo) and
+implemented in MentraOS #4117 and Mentra-Call #40; this spec defers to it and only records
+how it plugs into the services here. An earlier revision of this section described a
+host-rendered surface over the WebView with a pip or sheet placement; that is superseded. The
+preview is not a native overlay: decoded frames are forked out of the native pipeline by a
+`DecodedFrameTap` immediately before the destination sender, packed as tight YUV behind a
+64-byte `MFPV` header, delivered to the miniapp's UI WebView over a binary channel (a
+`WebMessageListener` on Android, a loopback `ws://127.0.0.1` WebSocket on iOS), and drawn on a
+WebGL canvas by a `<StreamPreview>` component the miniapp lays out like any element. Frame
+bytes never pass through React Native JavaScript, the background JS context, JSON or base64;
+one credit at a time with an absolute schedule, so a slow page lowers the frame rate and never
+accumulates latency; a preview bug can never reach the destination sender.
+
+The SDK surface, from that spec:
 
 ```ts
-// Miniapp SDK, StreamModule
-/**
- * Show live glasses video on the phone. The host opens the glasses hotspot, receives the stream on the
- * phone and renders it in a surface it owns: "pip" floats over the miniapp UI and can be dragged, "sheet"
- * fills the miniapp's UI area. Resolves once the first frame is on screen. Only one preview can be active;
- * a second call while one is active rejects. Requires the CAMERA manifest permission and the nearby-devices
- * permission, and fails with `hotspot_busy` if gallery sync, OTA or a call holds the hotspot.
- */
-preview(options?: {placement?: "pip" | "sheet"; video?: StreamVideoConfig}): Promise<PreviewHandle>
+// Background JS context, on StreamModule: owns the source lease across UI teardown.
+export type PreviewSource = "call" | "glasses"
+preview(options?: {source?: PreviewSource; video?: StreamVideoConfig}): Promise<PreviewHandle>
+interface PreviewHandle { stop(): Promise<void> }     // release: drops the lease and the transport
 
-export interface PreviewHandle {
-  readonly previewId: string
-  /** Progress and recovery of the underlying phone-route stream: the StreamStatus the miniapp already knows, with route "phone". */
-  onStatus(handler: (status: StreamStatus) => void): () => void
-  /** Move the surface without restarting the stream. */
-  setPlacement(placement: "pip" | "sheet"): Promise<void>
-  /** Stops the stream and closes the surface. The host also stops it when the miniapp is closed or backgrounded. */
-  stop(): Promise<void>
+// UI WebView, from @mentra/miniapp/react: owns only the view.
+export interface StreamPreviewProps {
+  fit?: "contain" | "cover"
+  onStatus?: (status: PreviewStatus) => void
+  onError?: (error: PreviewError) => void
+  className?: string
+  style?: CSSProperties
 }
 ```
 
-Wire: `miniapp_stream_preview_start` with `{placement?, video?}` returning `{previewId,
-streamId}`, `miniapp_stream_preview_set_placement` with `{previewId, placement}`, and
-`miniapp_stream_preview_stop` with `{previewId}`. The engine handler calls
-`phoneStreamCoordinator.startLocal(pkg, {adapter: renderAdapter(hostSurface), ...})`, owns the
-surface lifecycle, and forwards stream status to the miniapp as `StreamStatus` with
-`route: "phone"`. Preview and a miniapp stream are mutually exclusive through the publisher
-slot, as they must be: the glasses publish once.
+How it maps onto the services in this PR:
 
-Rendering the preview inside the miniapp's own WebView (a local WHEP endpoint the WebView could
-play) is deliberately out of scope; it would add a phone-side WHEP server to glasses-media.
+- **It is the fourth adapter on the streaming port.** `frameTapAdapter` in glasses-media
+  implements `StreamAdapter`: `attach` borrows the `MediaRef` and installs the
+  `DecodedFrameTap` as a branch off the decoder; `detach` removes it, generation-checked. It
+  sits beside `whipRepublishAdapter`, `renderAdapter` and the native `FrameSinkAdapter`.
+- **`source: "call"`** taps frames already being decoded for the ACS meeting. It starts no
+  stream, acquires no hotspot and takes no publisher reservation; `AcsMediaAdapter` exposes the
+  tap branch immediately before `AcsFrameSender`, so the preview sees frames that ACS's own
+  pacing would hide. It surfaces neither `hotspot_busy` nor publisher contention.
+- **`source: "glasses"`** starts a stream: the engine handler calls
+  `phoneStreamCoordinator.startLocal(pkg, {adapter: frameTapAdapter, ...})`, which reserves
+  the publisher slot atomically and acquires the hotspot as `video_streaming`. It requires the
+  CAMERA manifest permission and nearby-devices, is mutually exclusive with a miniapp stream
+  through the slot, and fails `hotspot_busy` when gallery sync, OTA or a call holds the
+  hotspot.
+- **Three states.** Visible: lease held, production running. Hidden (the component
+  unmounted or the UI dismissed): lease held, production stopped, transport kept, resumes with
+  no handshake and, on the glasses source, no new hotspot acquisition or reservation.
+  Released (`handle.stop()`): lease dropped, the glasses-source stream closed through the
+  attempt's `close`, the reservation released. Unmounting never releases; only the background
+  does.
+- **Wire and control.** `miniapp_stream_preview_start` and `miniapp_stream_preview_stop`;
+  handshake, configure, start, stop and status ride the miniapp's existing channel bus, and
+  only the transport coordinates cross it, never frames.
+- **Eligibility** is a manifest permission plus single-holder arbitration: one preview holder
+  at a time, a second request rejected rather than queued, no package special-cased.
+
+The glasses-media `preview()` convenience and `GlassesStreamView` in this spec remain the
+React Native surface for SDK integrators and the Starter Kit; they are native views in an app
+that owns its view tree, which the frame-preview spec's rationale explicitly reserves for that
+case. For miniapps, whose UI is a WebView, the frame tap is the mechanism.
 
 ## Reconciliation with the other specs
 
@@ -634,9 +662,11 @@ steps:
 - **Facade coupling.** `engineHotspot` composes three services' state; it must stay a
   projection with no state of its own, or it becomes a fourth owner. Tests assert that every
   facade snapshot equals the composition of the underlying snapshots.
-- **Preview surface lifecycle.** The host-owned surface must close when the miniapp is closed
-  or backgrounded, and the underlying stream must close with it; tests cover both and a
-  placement change mid-recovery.
+- **Preview states.** Hidden must stop frame production without releasing the lease, and only
+  the background's `handle.stop()` may release; on the glasses source a release-and-rearm can
+  fail `hotspot_busy` through no fault of the user, which is why unmount lands in hidden. The
+  frame-preview spec's acceptance criteria cover this; the tests here add the coordinator side:
+  hidden keeps the attempt and the reservation, released closes them.
 - **Provider registration and stop routing.** The `phone` arm depends on glasses-media being
   imported before the first `startStream`; the rejection when it is not must be immediate and
   named, never a hang. Tests cover the SDK alone (the `url` arm and `stopStream` behave exactly

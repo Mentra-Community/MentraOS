@@ -284,7 +284,12 @@ Adapters:
 - **Managed WHIP republisher** (`glasses-media`): borrows by `MediaRef`, attaches
   `PhoneWhipPublisher` to the Cloudflare `webrtcPublishUrl`. `GlassesMediaRelayModule.prepare`
   takes a `MediaRef` instead of credentials and an ingest URL.
-- **Local preview** (future): borrows and renders; no network involvement.
+- **WebView frame tap** (`frameTapAdapter`, glasses-media): borrows by `MediaRef` and installs
+  a `DecodedFrameTap` as a branch off the decoder, feeding the miniapp page preview specified
+  in Mentra-Specs `platform/media/miniapp-frame-preview/spec.md` (MentraOS #4117). It never
+  blocks or throws into the pipeline and is generation-checked on detach.
+- **Native render view** (`renderAdapter` + `GlassesStreamView`): for React Native apps that
+  own their view tree, such as the Starter Kit; not for miniapps, whose UI is a WebView.
 
 ## SDK surface
 

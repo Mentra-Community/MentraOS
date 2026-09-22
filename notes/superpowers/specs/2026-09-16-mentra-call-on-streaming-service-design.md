@@ -75,8 +75,12 @@ LocalMiniappRuntime (MEETING_* requests, MEETING_STATE fanout)
    attach can advance to generation 2 before ACS ever joined, and the second attach must join.
    A join interrupted by the attach signal is awaited to its outcome: if it succeeds late the
    adapter marks `meetingJoined` and keeps the meeting; if it fails the flag stays false and the
-   error surfaces as `ACS_JOIN_FAILED` on the next attach. `detach(media)` closes the lease and
-   leaves the meeting untouched. The meeting is closed only by the call session's leave or end
+   error surfaces as `ACS_JOIN_FAILED` on the next attach. The adapter also exposes the
+   `DecodedFrameTap` branch immediately before `AcsFrameSender`, which the miniapp page preview
+   with `source: "call"` uses (Mentra-Specs `platform/media/miniapp-frame-preview/spec.md`,
+   MentraOS #4117); the tap only decides, retains and schedules bounded work, never packs and
+   never waits, and cannot delay or throw into the ACS sender. `detach(media)` closes the lease,
+   removes the tap generation-checked, and leaves the meeting untouched. The meeting is closed only by the call session's leave or end
    after `stream.close()`. ACS never sees an ingest URL, a network handle or a hotspot again.
 4. **Recovery is observed, not driven.** `beginSoftapRecovery`, `transport.recover`,
    `shouldRepublish` and `republish` are deleted. The stream service recovers under the shared
