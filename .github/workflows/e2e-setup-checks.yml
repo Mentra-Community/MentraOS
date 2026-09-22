@@ -59,6 +59,8 @@ jobs:
         run: python3 -m unittest discover -s tools/mentra-e2e/adapters/day1-setup -p 'test_*.py' -v
       - name: Verify compact January BES setup with fake hardware
         run: python3 -m unittest discover -s tools/mentra-e2e/adapters/day1-bes -p 'test_*.py' -v
+      - name: Verify selected MTK restore bridge with fake hardware
+        run: python3 -m unittest discover -s tools/mentra-e2e/adapters/mtk-full-restore -p 'test_*.py' -v
       - run: node --test mobile/scripts/install-ios-mac.test.mjs
       - run: python3 mobile/ci/pr-ios/test_mac_installer.py
       - name: Verify routine lifecycle, firmware assertions and request guards
@@ -69,7 +71,8 @@ jobs:
           bun test tools/mentra-e2e/runner/ota-customer-step.test.ts
           bun test tools/mentra-e2e/runner/day1-full-ota-runtime.test.ts
           bun test tools/mentra-e2e/runner/day1-bes.test.ts tools/mentra-e2e/runner/day1-bes-runtime.test.ts
-          bun test tools/mentra-e2e/runner/mtk-full-restore.test.ts
+          bun test tools/mentra-e2e/runner/mtk-full-restore.test.ts tools/mentra-e2e/runner/mtk-full-restore-runtime.test.ts
+          bun test tools/mentra-e2e/runner/day1-mac-app.test.ts
           bun test tools/mentra-e2e/runner/ci-selection.test.ts
           node --test .github/scripts/request-e2e-routine.test.mjs
 

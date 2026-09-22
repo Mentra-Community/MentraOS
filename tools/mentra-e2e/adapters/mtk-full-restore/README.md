@@ -82,3 +82,60 @@ the original staged operation. It never resends reboot, transfer or application.
 Re-entering teardown recognizes that completed owned activation so it does not
 wait for the old source boot again. These steps only reconcile their own MTK
 work; they do not change the frozen customer-test verdict.
+
+## Concrete local runtime
+
+`createMtkFullRestoreRuntime(inputs, config)` in
+`runner/mtk-full-restore-runtime.ts` implements the callbacks. Pass its result to
+`createMtkFullRestoreSteps(inputs, runtime)` under the existing lifecycle lease.
+There is no standalone hardware CLI. The first fixture serial is the selected
+current device serial; its USB path or Wi-Fi endpoint is used exactly as supplied.
+It never connects ADB, toggles Wi-Fi/USB or starts the app.
+
+The runtime configuration contains the current lease path, SHA-pinned ADB and
+Python, this directory's pinned `bridge.py`, the complete `day1-setup` Python
+definition pins, and any additional authenticated modern source profiles. The
+selected target profile is always accepted. `read` reuses the existing return
+collector with the **actual source profile**, checks the active APK and all source
+components, and requires its fresh process/SID/nonce/activity and stopped-stream
+proof. Only the separate engine-IDLE check is omitted from competing-writer
+checks while the owned MTK payload awaits reboot. The process and admission
+generation are retained across transfer and checked again before apply/reboot.
+
+For a non-target source, `bridge.py` reuses the January adapter's MAC-identified
+BES heartbeat reader. The subsequent ASG collection closes that BLE read; the
+heartbeat must still be fresh, with at least 50% battery and either PMU charging
+or the independently identified USB attachment. A current-target idle observation
+skips this power probe and requires no firmware artifact verification record.
+
+For writes, `artifactVerification` is a private SHA-pinned JSON record produced
+from the trusted offline package verification. It must contain:
+
+```json
+{
+  "schemaVersion": 1,
+  "otaSha256": "<selected ZIP SHA-256>",
+  "otaBytes": 123,
+  "manifestSha256": "<frozen selected manifest SHA-256>",
+  "targetVersion": "<selected MTK version>",
+  "fullPayload": true,
+  "powerwash": false,
+  "payloadSignatureVerification": "passed",
+  "targetPartitionVerification": "passed"
+}
+```
+
+These fields must derive from actual full-payload/signature/target-byte
+verification; they are not an operator approval or an assertion to fill in by
+hand. A missing record fails before transfer. The runtime rehashes the actual ZIP
+and pinned tools. Producing that selected target's verification record and
+qualifying the physical non-wiping restore remain outstanding.
+
+The bridge runs the unchanged pinned helper with the January wrapper's exact
+status-probe remapping. At its one SystemUI broadcast it waits on a private
+stdin/stdout handshake; the parent executes the lifecycle's final gate before
+approving that exact command. Command starts/results, source proofs, approvals,
+stdout/stderr and original helper files remain private and exclusive. Recovery
+only reads the originals. Reboot is sent once, followed by bounded read-only boot
+observations; another lifecycle reconciliation must independently prove the
+target and idle state.
