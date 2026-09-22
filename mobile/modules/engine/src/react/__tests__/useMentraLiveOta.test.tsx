@@ -385,6 +385,34 @@ describe("useMentraLiveOta", () => {
     await act(async () => renderer.unmount())
   })
 
+  test("keeps one version check in flight across connection snapshot updates", async () => {
+    let resolveCheck!: (result: OtaCheckCurrentGlassesResult) => void
+    fakeOta.checkForUpdates.mockImplementationOnce(
+      () =>
+        new Promise<OtaCheckCurrentGlassesResult>((resolve) => {
+          resolveCheck = resolve
+        }),
+    )
+    otaSnapshot = {...otaSnapshot, connected: true, ready: true, wifiStatusKnown: true}
+    const renderer = await renderProbe("check")
+
+    otaSnapshot = {...otaSnapshot, ready: false, wifiStatusKnown: false}
+    await act(async () => otaListeners.forEach((listener) => listener()))
+    otaSnapshot = {...otaSnapshot, ready: true, wifiStatusKnown: true}
+    await act(async () => otaListeners.forEach((listener) => listener()))
+
+    expect(fakeOta.checkForUpdates).toHaveBeenCalledTimes(1)
+
+    await act(async () => {
+      resolveCheck(checkResult)
+      await new Promise((resolve) => setTimeout(resolve, 1_150))
+    })
+
+    expect(fakeOta.checkForUpdates).toHaveBeenCalledTimes(1)
+    expect(latestController.state.screen).toBe("update_available")
+    await act(async () => renderer.unmount())
+  })
+
   test("keeps the release range across a progress-screen remount", async () => {
     const checkRenderer = await renderProbe("check")
     await act(async () => {
