@@ -110,7 +110,7 @@ describe("test run authentication and immutable ingestion", () => {
     expect((await post(run)).status).toBe(201);
     const response = await admin.request(`/${run.runId}`);
     expect(response.status).toBe(200);
-    const detail = await response.json();
+    const detail = await response.json() as Awaited<ReturnType<TestRunService["detail"]>>;
     expect(detail.firmwareAssertions).toEqual(run.firmwareAssertions);
     expect(detail.outcomes).toMatchObject({ test: "failed", teardown: "passed", fixture: "ready" });
     const changed = structuredClone(run);
