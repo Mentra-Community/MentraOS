@@ -143,7 +143,7 @@ class STTTools {
             )
 
             if !success || extractionError != nil {
-                print(
+                Bridge.log(
                     "EXTRACTION_ERROR: \(extractionError?.localizedDescription ?? "Failed to extract tar.bz2")"
                 )
                 return false

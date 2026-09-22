@@ -4,7 +4,7 @@ import android.content.Context
 import android.content.SharedPreferences
 import android.os.Handler
 import android.os.Looper
-import android.util.Log
+import com.mentra.bluetoothsdk.utils.NativeLog as Log
 import com.k2fsa.sherpa.onnx.*
 import com.mentra.bluetoothsdk.Bridge
 import java.io.File

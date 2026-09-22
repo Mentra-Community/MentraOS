@@ -20,6 +20,7 @@ import {useGlassesStore} from "../stores/glasses"
 import {createDebouncedPatchFlusher} from "../utils/debouncedPatch"
 import {isGlassesConnected} from "./GlassesReadiness"
 import micStateCoordinator from "./MicStateCoordinator"
+import {phoneCameraFovCoordinator} from "./PhoneCameraFovCoordinator"
 
 /**
  * Change-pushes are debounced (300ms) and merged so a burst of setSetting
@@ -124,9 +125,18 @@ export function startGlassesSettingsSync(): void {
     const connected = isGlassesConnected(useGlassesStore.getState().connection)
     if (connected && !wasConnected) {
       // Background sync: log-and-continue if the device drops right after connect.
-      void pushDeviceSettingsOnConnect().catch((error) => {
-        console.warn("GlassesSettingsSync: on-connect settings push failed:", error)
-      })
+      void pushDeviceSettingsOnConnect()
+        .catch((error) => {
+          console.warn("GlassesSettingsSync: on-connect settings push failed:", error)
+        })
+        .finally(() => {
+          // That push replays the persistent camera_fov, which stomps whatever
+          // override a miniapp currently owns. Re-assert after it either way:
+          // a failed push may still have written some keys.
+          void phoneCameraFovCoordinator.reapplyEffectiveOverride().catch((error) => {
+            console.warn("GlassesSettingsSync: camera FOV re-apply failed:", error)
+          })
+        })
     }
     wasConnected = connected
   })

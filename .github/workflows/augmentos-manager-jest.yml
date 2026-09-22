@@ -64,3 +64,18 @@ jobs:
         run: bun run test
         env:
           CI: true
+
+      # jest.config.js ignores modules/engine and modules/miniapp because those
+      # suites are bun:test, which Jest cannot resolve. They ran nowhere in CI
+      # until now, so they get their own steps.
+      - name: Run engine module tests (bun)
+        working-directory: ./mobile/modules/engine
+        run: bun run test
+        env:
+          CI: true
+
+      - name: Run miniapp SDK tests (bun)
+        working-directory: ./mobile/modules/miniapp
+        run: bun test
+        env:
+          CI: true

@@ -9,7 +9,12 @@ import AVFoundation
 import Combine
 import CoreBluetooth
 import Foundation
+#if os(macOS)
+import CoreAudio
+#endif
+#if canImport(UIKit)
 import UIKit
+#endif
 #if SWIFT_PACKAGE
 import MentraBluetoothSDKCoreObjC
 #endif
@@ -43,6 +48,11 @@ struct ViewState {
     // MARK: - Unique (iOS)
 
     private var cancellables = Set<AnyCancellable>()
+    #if os(macOS)
+    private var audioRouteObserver: MacAudioRouteObserver?
+    #else
+    private var audioRouteObservation: AudioRouteObservation?
+    #endif
     var sendStateWorkItem: DispatchWorkItem?
     let sendStateQueue = DispatchQueue(label: "sendStateQueue", qos: .userInitiated)
 
@@ -51,6 +61,7 @@ struct ViewState {
      * Attempts to automatically activate Mentra Live as the system audio device
      * If not paired yet, prompts user to pair in Settings
      */
+    #if !os(macOS)
     func setupAudioPairing(deviceName _: String) {
         // Don't configure audio session - PhoneMic.swift handles that
         // Just check if audio session supports Bluetooth (informational only)
@@ -83,6 +94,7 @@ struct ViewState {
             // Not found in availableInputs - not paired yet
 
             // Start monitoring for when user pairs manually
+            #if !os(macOS)
             AudioSessionMonitor.startMonitoring(devicePattern: audioDevicePattern) {
                 [weak self] (connected: Bool, _: String?) in
                 guard let self = self else { return }
@@ -96,8 +108,11 @@ struct ViewState {
                     self.glassesBluetoothClassicConnected = false
                 }
             }
+            #endif
         }
     }
+
+    #endif
 
     // MARK: - End Unique
 
@@ -314,7 +329,7 @@ struct ViewState {
     private var micReinitTimer: Timer?
 
     /// STT:
-    #if !SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT
+    #if !os(macOS) && (!SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT)
     private var transcriber: SherpaOnnxTranscriber?
     #endif
 
@@ -324,7 +339,7 @@ struct ViewState {
         ),
         ViewState(
             topText: " ", bottomText: " ", title: " ", layoutType: "text_wall",
-            text: "$TIME12$ $DATE$ $GBATT$ $CONNECTION_STATUS$"
+            text: DashboardContentFormatter.template(for: "")
         ),
         ViewState(
             topText: " ", bottomText: " ", title: " ", layoutType: "text_wall", text: "",
@@ -332,7 +347,7 @@ struct ViewState {
         ),
         ViewState(
             topText: " ", bottomText: " ", title: " ", layoutType: "text_wall",
-            text: "$TIME12$ $DATE$ $GBATT$ $CONNECTION_STATUS$", data: nil,
+            text: DashboardContentFormatter.template(for: ""), data: nil,
             animationData: nil
         ),
     ]
@@ -342,16 +357,34 @@ struct ViewState {
     // sentinel so sendCurrentState routes here. Holding the WHOLE frame keeps
     // native re-dispatch coherent (dashboard exit re-applies a complete scene).
     var sceneStates: [SceneFrame?] = [nil, nil]
+    private var dashboardSceneCleanupPending = false
+    private var dashboardSceneCleanupTask: Task<Void, Never>?
+    private var pendingDashboardSceneElementIds = Set<String>()
+    private var dashboardSceneCleanupDeferred: Bool {
+        dashboardSceneCleanupPending || dashboardSceneCleanupTask != nil
+    }
 
     override init() {
         Bridge.log("MAN: init()")
         super.init()
 
+        #if !os(macOS)
+        // Pair Audio precedes BLE readiness and microphone capture. Its audio
+        // state must not depend on the lazily created PhoneMic singleton.
+        audioRouteObservation = AudioRouteObservation(names: [
+            AVAudioSession.routeChangeNotification,
+            UIApplication.didBecomeActiveNotification,
+        ]) { [weak self] in
+            self?.refreshAudioDeviceState()
+            self?.updateMicState()
+        }
+        #endif
+
         // Start memory monitoring (logs every 30s to help detect leaks)
         // MemoryMonitor.start()
 
         // Initialize SherpaOnnx Transcriber
-        #if !SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT
+        #if !os(macOS) && (!SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT)
         if let windowScene = UIApplication.shared.connectedScenes.first as? UIWindowScene,
            let window = windowScene.windows.first,
            let rootViewController = window.rootViewController
@@ -500,7 +533,7 @@ struct ViewState {
         handleSendingPcm(pcmData)
 
         // Send PCM to local transcriber.
-#if !SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT
+#if !os(macOS) && (!SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT)
         if shouldSendTranscript || localSttFallbackActive {
             transcriber?.acceptAudio(pcm16le: pcmData)
         }
@@ -517,11 +550,13 @@ struct ViewState {
 
         var phoneMicUnavailable = systemMicUnavailable
 
+        #if !os(macOS)
         let appState = UIApplication.shared.applicationState
         if appState == .background {
             // Bridge.log("App is in background - onboard mic unavailable to start!")
             phoneMicUnavailable = true
         }
+        #endif
 
         if micEnabled {
             for micMode in micRanking {
@@ -710,12 +745,12 @@ struct ViewState {
         } else if wearable.contains(DeviceTypes.FRAME) {
             // sgc = FrameManager()
         }
-#if !SWIFT_PACKAGE || MENTRA_FEATURE_NEX
+#if !os(macOS) && (!SWIFT_PACKAGE || MENTRA_FEATURE_NEX)
         if sgc == nil && wearable.contains(DeviceTypes.NEX) {
             sgc = MentraNexSGC.getInstance()
         }
 #endif
-#if !SWIFT_PACKAGE || MENTRA_FEATURE_VUZIX
+#if !os(macOS) && (!SWIFT_PACKAGE || MENTRA_FEATURE_VUZIX)
         if sgc == nil {
             if wearable.contains(DeviceTypes.MACH1) {
                 sgc = Mach1()
@@ -747,86 +782,76 @@ struct ViewState {
         }
     }
 
-    func sendCurrentState() {
-        if screenDisabled {
-            return
-        }
+    @discardableResult
+    func sendCurrentState() -> Task<Void, Never> {
+        Task { await renderCurrentState() }
+    }
 
-        Task {
-            var currentViewState: ViewState!
-            if headUp {
-                currentViewState = self.viewStates[1]
-            } else {
-                currentViewState = self.viewStates[0]
-            }
-            if headUp && !self.contextualDashboard {
-                currentViewState = self.viewStates[0]
-            }
+    private func renderCurrentState() async {
+        guard !screenDisabled, sgc?.fullyBooted == true,
+              sgc?.type.contains(DeviceTypes.SIMULATED) == false else { return }
 
-            if sgc?.type.contains(DeviceTypes.SIMULATED) ?? true {
-                // dont send the event to glasses that aren't there:
+        await clearPendingDashboardSceneElements(for: headUp && contextualDashboard ? 1 : 0)
+
+        // Cleanup can suspend. Select the visible slot and its contents only
+        // after it finishes, including any head movement or display update.
+        guard !screenDisabled, sgc?.fullyBooted == true,
+              sgc?.type.contains(DeviceTypes.SIMULATED) == false else { return }
+        let currentStateIndex = headUp && contextualDashboard ? 1 : 0
+        let currentViewState = viewStates[currentStateIndex]
+
+        // cancel any pending clear display work item:
+        sendStateWorkItem?.cancel()
+
+        let layoutType = currentViewState.layoutType
+        switch layoutType {
+        case "text_wall":
+            let text = parsePlaceholders(currentViewState.text)
+            await sgc?.sendTextWall(text)
+        case "double_text_wall":
+            let topText = parsePlaceholders(currentViewState.topText)
+            let bottomText = parsePlaceholders(currentViewState.bottomText)
+            await sgc?.sendDoubleTextWall(topText, bottomText)
+        case "reference_card":
+            let title = parsePlaceholders(currentViewState.title)
+            let text = parsePlaceholders(currentViewState.text)
+            await sgc?.sendTextWall(title + "\n\n" + text)
+        case "bitmap_view":
+            // Bridge.log("MAN: Processing bitmap_view layout")
+            guard let data = currentViewState.data else {
+                Bridge.log("MAN: ERROR: bitmap_view missing data field")
                 return
             }
-
-            var fullyBooted = sgc?.fullyBooted ?? false
-            if !fullyBooted {
-                return
+            // Bridge.log("MAN: Processing bitmap_view with base64 data, length: \(data.count)")
+            await sgc?.displayBitmap(
+                base64ImageData: data,
+                x: currentViewState.bmpX,
+                y: currentViewState.bmpY,
+                width: currentViewState.bmpWidth,
+                height: currentViewState.bmpHeight
+            )
+        case "positioned_text":
+            let text = parsePlaceholders(currentViewState.text)
+            Bridge.log(
+                "MAN: positioned_text -> text='\(text)' rect=\(currentViewState.bmpX ?? 0),\(currentViewState.bmpY ?? 0) \(currentViewState.bmpWidth ?? 576)x\(currentViewState.bmpHeight ?? 288)"
+            )
+            await sgc?.sendPositionedText(
+                text,
+                x: currentViewState.bmpX ?? 0,
+                y: currentViewState.bmpY ?? 0,
+                width: currentViewState.bmpWidth ?? 576,
+                height: currentViewState.bmpHeight ?? 288,
+                borderWidth: currentViewState.borderWidth ?? 0,
+                borderRadius: currentViewState.borderRadius ?? 0
+            )
+        case "scene":
+            if let frame = sceneStates[currentStateIndex] {
+                await sgc?.applySceneFrame(frame)
             }
-
-            // cancel any pending clear display work item:
-            sendStateWorkItem?.cancel()
-
-            let layoutType = currentViewState.layoutType
-            switch layoutType {
-            case "text_wall":
-                let text = parsePlaceholders(currentViewState.text)
-                await sgc?.sendTextWall(text)
-            case "double_text_wall":
-                let topText = parsePlaceholders(currentViewState.topText)
-                let bottomText = parsePlaceholders(currentViewState.bottomText)
-                await sgc?.sendDoubleTextWall(topText, bottomText)
-            case "reference_card":
-                let title = parsePlaceholders(currentViewState.title)
-                let text = parsePlaceholders(currentViewState.text)
-                await sgc?.sendTextWall(title + "\n\n" + text)
-            case "bitmap_view":
-                // Bridge.log("MAN: Processing bitmap_view layout")
-                guard let data = currentViewState.data else {
-                    Bridge.log("MAN: ERROR: bitmap_view missing data field")
-                    return
-                }
-                // Bridge.log("MAN: Processing bitmap_view with base64 data, length: \(data.count)")
-                await sgc?.displayBitmap(
-                    base64ImageData: data,
-                    x: currentViewState.bmpX,
-                    y: currentViewState.bmpY,
-                    width: currentViewState.bmpWidth,
-                    height: currentViewState.bmpHeight
-                )
-            case "positioned_text":
-                let text = parsePlaceholders(currentViewState.text)
-                Bridge.log(
-                    "MAN: positioned_text -> text='\(text)' rect=\(currentViewState.bmpX ?? 0),\(currentViewState.bmpY ?? 0) \(currentViewState.bmpWidth ?? 576)x\(currentViewState.bmpHeight ?? 288)"
-                )
-                await sgc?.sendPositionedText(
-                    text,
-                    x: currentViewState.bmpX ?? 0,
-                    y: currentViewState.bmpY ?? 0,
-                    width: currentViewState.bmpWidth ?? 576,
-                    height: currentViewState.bmpHeight ?? 288,
-                    borderWidth: currentViewState.borderWidth ?? 0,
-                    borderRadius: currentViewState.borderRadius ?? 0
-                )
-            case "scene":
-                let sceneIndex = (headUp && self.contextualDashboard) ? 1 : 0
-                if let frame = self.sceneStates[sceneIndex] {
-                    await sgc?.applySceneFrame(frame)
-                }
-            case "clear_view":
-                sgc?.clearDisplay()
-            default:
-                Bridge.log("UNHANDLED LAYOUT_TYPE \(layoutType)")
-            }
+        case "clear_view":
+            sgc?.clearDisplay()
+        default:
+            Bridge.log("UNHANDLED LAYOUT_TYPE \(layoutType)")
         }
     }
 
@@ -918,6 +943,16 @@ struct ViewState {
     }
 
     func checkCurrentAudioDevice() {
+        #if os(macOS)
+        refreshAudioDeviceState()
+        #else
+        // DeviceStore calls this when the selected glasses change. Replace any
+        // pending route checks so the new target gets its own settling window.
+        audioRouteObservation?.refresh()
+        #endif
+    }
+
+    private func refreshAudioDeviceState() {
         let audioDevicePattern = getAudioDevicePattern()
         Bridge.log("MAN: checkCurrentAudioDevice: audioDevicePattern: \(audioDevicePattern)")
 
@@ -927,58 +962,15 @@ struct ViewState {
             return
         }
 
-        // check if the device disconnected:
-        let isConnected = AudioSessionMonitor.isAudioDeviceConnected(
-            devicePattern: audioDevicePattern
-        )
-
-        if !isConnected {
-            Bridge.log("MAN: Device '\(deviceName)' disconnected")
-            glassesBluetoothClassicConnected = false
-
-            let isOtherDeviceConnected = AudioSessionMonitor.isOtherAudioDeviceConnected(
-                devicePattern: audioDevicePattern
-            )
-            if isOtherDeviceConnected {
-                Bridge.log("MAN: Other device connected, returning")
-                otherBtConnected = true
-            }
-            return
-        }
-
-        let isPaired = AudioSessionMonitor.isDevicePaired(devicePattern: audioDevicePattern)
-        if isPaired {
-            let session = AVAudioSession.sharedInstance()
-            let deviceName = session.availableInputs?.first(where: {
-                $0.portName.localizedCaseInsensitiveContains(audioDevicePattern)
-            })?.portName
-            Bridge.log("MAN: Successfully detected newly paired device '\(deviceName)'")
-            glassesBluetoothClassicConnected = true
-        } else {
-            glassesBluetoothClassicConnected = false
-        }
-    }
-
-    func onRouteChange(
-        reason: AVAudioSession.RouteChangeReason, availableInputs: [AVAudioSessionPortDescription]
-    ) {
-        Bridge.log("MAN: onRouteChange: reason: \(reason)")
-        Bridge.log("MAN: onRouteChange: inputs: \(availableInputs)")
-
-        // check if our deviceName is connected:
-        // (return if deviceName is empty):
-        if deviceName.isEmpty {
-            Bridge.log("MAN: Device name is empty, returning")
-            return
-        }
-
-        // Add small delay to let iOS populate availableInputs
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.2) { [weak self] in
-            guard let self = self else { return }
-            checkCurrentAudioDevice()
-        }
-
-        updateMicState()
+        #if os(macOS)
+        glassesBluetoothClassicConnected = AudioSessionMonitor.isAudioDeviceConnected(devicePattern: audioDevicePattern)
+        otherBtConnected = AudioSessionMonitor.isOtherAudioDeviceConnected(devicePattern: audioDevicePattern)
+        #else
+        // A connected HFP input remains eligible even while another output is
+        // selected. Inspect available inputs as well as the active A2DP route.
+        glassesBluetoothClassicConnected = AudioSessionMonitor.isDevicePaired(devicePattern: audioDevicePattern)
+        otherBtConnected = AudioSessionMonitor.isOtherAudioDeviceConnected(devicePattern: audioDevicePattern)
+        #endif
     }
 
     func onInterruption(began: Bool) {
@@ -988,7 +980,7 @@ struct ViewState {
     }
 
     func restartTranscriber() {
-        #if !SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT
+        #if !os(macOS) && (!SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT)
         Bridge.log("MAN: Restarting SherpaOnnxTranscriber via command")
         transcriber?.restart()
         #else
@@ -1018,7 +1010,7 @@ struct ViewState {
 
         let connectionKey = "\(sgc.type):\(deviceName)"
         syncSystemTimeOnceForConnection(sgc, connectionKey: connectionKey)
-        
+
         // re-apply display height/depth after reconnection
         DispatchQueue.main.asyncAfter(deadline: .now() + 2) { [weak self] in
             // Re-read the current sgc rather than capturing the connect-time instance: the user may
@@ -1054,6 +1046,16 @@ struct ViewState {
         }
 
         // check current audio device:
+        #if os(macOS)
+        audioRouteObserver = MacAudioRouteObserver(selectors: [kAudioHardwarePropertyDevices,
+            kAudioHardwarePropertyDefaultInputDevice, kAudioHardwarePropertyDefaultOutputDevice]) { [weak self] in
+            Task { @MainActor in
+                guard let self, self.audioRouteObserver != nil else { return }
+                self.checkCurrentAudioDevice()
+                self.updateMicState()
+            }
+        }
+        #endif
         checkCurrentAudioDevice()
 
         // save the default_wearable now that we're connected:
@@ -1146,6 +1148,9 @@ struct ViewState {
 
     func handleDeviceDisconnected() {
         Bridge.log("MAN: Device disconnected")
+        #if os(macOS)
+        audioRouteObserver = nil
+        #endif
         resetSystemTimeSync()
         resetMicHealth()
         DeviceStore.shared.apply("glasses", "headUp", false)
@@ -1163,6 +1168,58 @@ struct ViewState {
 
         Bridge.log("MAN: Displaying text: \(text)")
         Task { await sgc?.sendTextWall(text) }
+    }
+
+    func setDashboardContent(_ content: String) async {
+        let nextState = ViewState(
+            topText: " ", bottomText: " ", title: " ", layoutType: "text_wall",
+            text: DashboardContentFormatter.template(for: content), data: nil, animationData: nil
+        )
+        let previousScene = sceneStates[1]
+        let currentState = viewStates[1]
+        if previousScene == nil,
+           currentState.layoutType == nextState.layoutType,
+           currentState.text == nextState.text,
+           currentState.topText == nextState.topText,
+           currentState.bottomText == nextState.bottomText,
+           currentState.title == nextState.title,
+           currentState.data == nextState.data
+        {
+            return
+        }
+
+        if let previousScene {
+            dashboardSceneCleanupPending = true
+            pendingDashboardSceneElementIds.formUnion(previousScene.elements.map(\.id))
+        }
+        sceneStates[1] = nil
+        viewStates[1] = nextState
+
+        if headUp && contextualDashboard {
+            await renderCurrentState()
+        }
+    }
+
+    private func clearPendingDashboardSceneElements(for stateIndex: Int) async {
+        // Share cleanup until it has fully finished; consuming the pending IDs
+        // must not let a second renderer paint while the first is still clearing.
+        if let cleanup = dashboardSceneCleanupTask {
+            await cleanup.value
+            return
+        }
+        guard stateIndex == 1, dashboardSceneCleanupPending else { return }
+
+        let cleanup = Task<Void, Never> {
+            while self.dashboardSceneCleanupPending {
+                self.dashboardSceneCleanupPending = false
+                let elementIds = Array(self.pendingDashboardSceneElementIds)
+                self.pendingDashboardSceneElementIds.removeAll()
+                await self.sgc?.clearSceneElements(elementIds)
+            }
+            self.dashboardSceneCleanupTask = nil
+        }
+        dashboardSceneCleanupTask = cleanup
+        await cleanup.value
     }
 
     func displayEvent(_ event: [String: Any]) {
@@ -1201,7 +1258,10 @@ struct ViewState {
         // wipes everything anyway.
         if let prevFrame = sceneStates[stateIndex] {
             sceneStates[stateIndex] = nil
-            if layoutType != "clear_view" {
+            if stateIndex == 1, dashboardSceneCleanupDeferred {
+                dashboardSceneCleanupPending = true
+                pendingDashboardSceneElementIds.formUnion(prevFrame.elements.map(\.id))
+            } else if layoutType != "clear_view" {
                 let ids = prevFrame.elements.map(\.id)
                 Task { [weak self] in
                     await self?.sgc?.clearSceneElements(ids)
@@ -1294,7 +1354,12 @@ struct ViewState {
             // clearDisplay is the per-device "wipe what's there" (blank-in-place
             // on G2 - no page rebuild).
             let prevLegacyType = viewStates[stateIndex].layoutType
-            if !prevLegacyType.isEmpty, prevLegacyType != "clear_view", prevLegacyType != "scene" {
+            let cleanupDeferred = stateIndex == 1 && dashboardSceneCleanupDeferred
+            if !cleanupDeferred,
+               !prevLegacyType.isEmpty,
+               prevLegacyType != "clear_view",
+               prevLegacyType != "scene"
+            {
                 sgc?.clearDisplay()
             }
         } else if let prevFrame, prevFrame.appId != frame.appId {
@@ -1303,9 +1368,14 @@ struct ViewState {
             // glasses. Sweep the old app's elements (SGC registries still map
             // them), then paint the new frame from scratch. The boot message
             // interposes between apps in practice, so this isn't visible.
-            let ids = prevFrame.elements.map(\.id)
-            Task { [weak self] in
-                await self?.sgc?.clearSceneElements(ids)
+            if stateIndex == 1, dashboardSceneCleanupDeferred {
+                dashboardSceneCleanupPending = true
+                pendingDashboardSceneElementIds.formUnion(prevFrame.elements.map(\.id))
+            } else {
+                let ids = prevFrame.elements.map(\.id)
+                Task { [weak self] in
+                    await self?.sgc?.clearSceneElements(ids)
+                }
             }
             frame = frame.asReplay()
         }
@@ -1321,12 +1391,12 @@ struct ViewState {
 
         let hUp = headUp && contextualDashboard
         if (stateIndex == 0 && !hUp) || (stateIndex == 1 && hUp) {
-            dispatchSceneFrame(frame)
+            dispatchSceneFrame(frame, stateIndex: stateIndex)
         }
     }
 
     /// Guarded scene dispatch - mirrors sendCurrentState's send conditions.
-    private func dispatchSceneFrame(_ frame: SceneFrame) {
+    private func dispatchSceneFrame(_ frame: SceneFrame, stateIndex: Int) {
         if screenDisabled { return }
         if sgc?.type.contains(DeviceTypes.SIMULATED) ?? true { return }
         guard sgc?.fullyBooted == true else {
@@ -1334,7 +1404,14 @@ struct ViewState {
             return
         }
         Task { [weak self] in
-            await self?.sgc?.applySceneFrame(frame)
+            guard let self else { return }
+            if dashboardSceneCleanupTask != nil ||
+                (stateIndex == 1 && dashboardSceneCleanupPending)
+            {
+                await renderCurrentState()
+            } else {
+                await sgc?.applySceneFrame(frame)
+            }
         }
     }
 
@@ -1389,6 +1466,26 @@ struct ViewState {
 
     func dbg2() {}
 
+    func queryWearState() {
+        sgc?.queryWearState()
+    }
+
+    func setWearReporting(_ enabled: Bool) {
+        sgc?.setWearReporting(enabled)
+    }
+
+    func setWearTuning(intervalMs: Int, count: Int, majority: Int) {
+        sgc?.setWearTuning(intervalMs: intervalMs, count: count, majority: majority)
+    }
+
+    func requestWearTuning() {
+        sgc?.requestWearTuning()
+    }
+
+    func resetWearTuning() {
+        sgc?.resetWearTuning()
+    }
+
     func startStream(_ message: [String: Any]) {
         var message = message
         Bridge.log("MAN: startStream: \(message)")
@@ -1411,6 +1508,10 @@ struct ViewState {
         sgc?.requestWifiScan(scanId: scanId)
     }
 
+    @discardableResult func requestSavedWifiNetworks(requestId: String, sid: String) -> Bool {
+        sgc?.requestSavedWifiNetworks(requestId: requestId, sid: sid) ?? false
+    }
+
     func sendIncidentId(_ incidentId: String, apiBaseUrl: String? = nil) {
         Bridge.log("MAN: Sending incidentId to glasses for log upload: \(incidentId)")
         sgc?.sendIncidentId(incidentId, apiBaseUrl: apiBaseUrl)
@@ -1421,9 +1522,8 @@ struct ViewState {
         sgc?.sendWifiCredentials(ssid, password)
     }
 
-    func forgetWifiNetwork(_ ssid: String) {
-        Bridge.log("MAN: Forgetting wifi network: \(ssid)")
-        sgc?.forgetWifiNetwork(ssid)
+    @discardableResult func forgetWifiNetwork(_ ssid: String, requestId: String? = nil, sid: String? = nil) -> Bool {
+        sgc?.forgetWifiNetwork(ssid, requestId: requestId, sid: sid) ?? false
     }
 
     func setHotspotState(_ enabled: Bool) {
@@ -1482,6 +1582,10 @@ struct ViewState {
             throw BluetoothSdkError(code: "unsupported_device", message: "This command requires Mentra Live glasses.")
         }
         return live
+    }
+
+    func sendGalleryServerEnabled(requestId: String, enabled: Bool) throws {
+        try liveSgc().sendGalleryServerEnabled(requestId: requestId, enabled: enabled)
     }
 
     func sendGalleryMode(requestId: String, enabled: Bool) throws {
@@ -1583,9 +1687,13 @@ struct ViewState {
 
     /// Request version info from glasses.
     /// Glasses will respond with version_info message containing build number, firmware version, etc.
-    func requestVersionInfo() {
+    func requestVersionInfo(requestId: String? = nil) {
         Bridge.log("MAN: 📱 Requesting version info from glasses")
-        sgc?.requestVersionInfo()
+        if let live = sgc as? MentraLive {
+            live.requestVersionInfo(requestId: requestId)
+        } else {
+            sgc?.requestVersionInfo()
+        }
     }
 
     /// Send shutdown command to glasses.
@@ -1713,7 +1821,7 @@ struct ViewState {
             transferMethod: request.transferMethod
         )
         Bridge.log(
-            "MAN: PHOTO PIPELINE [4/6] DeviceManager.requestPhoto requestId=\(routed.requestId) webhookUrl=\(routed.webhookUrl ?? "nil") size=\(routed.size.rawValue) compress=\(routed.compress?.rawValue ?? "none") save=\(routed.save) sound=\(routed.sound) exposureTimeNs=\(manualExposureNs.map { String($0) } ?? "nil") iso=\(manualIso.map { String($0) } ?? "auto") aeDivisor=\(routed.aeExposureDivisor.map { String($0) } ?? "nil") isoCap=\(routed.isoCap.map { String($0) } ?? "nil") sgc=\(sgc != nil ? String(describing: type(of: sgc!)) : "null")"
+            "MAN: PHOTO PIPELINE [4/6] DeviceManager.requestPhoto requestId=\(routed.requestId) webhookUrl=\(routed.webhookUrl ?? "nil") size=\(routed.size.rawValue) compress=\(routed.compress.rawValue) save=\(routed.save) sound=\(routed.sound) exposureTimeNs=\(manualExposureNs.map { String($0) } ?? "nil") iso=\(manualIso.map { String($0) } ?? "auto") aeDivisor=\(routed.aeExposureDivisor.map { String($0) } ?? "nil") isoCap=\(routed.isoCap.map { String($0) } ?? "nil") sgc=\(sgc != nil ? String(describing: type(of: sgc!)) : "null")"
         )
         guard let sgc else {
             Bridge.log(
@@ -1724,7 +1832,7 @@ struct ViewState {
         sgc.requestPhoto(routed)
     }
 
-    func connectDefault() {
+    func connectDefault(requiresAncs: Bool = true) {
         if defaultWearable.isEmpty {
             Bridge.log("MAN: No default wearable, returning")
             return
@@ -1740,6 +1848,7 @@ struct ViewState {
             return
         }
         initSGC(defaultWearable)
+        (sgc as? MentraLive)?.setRequiresAncs(requiresAncs)
         if let live = sgc as? MentraLive, live.isPairingYieldActive() {
             Bridge.log("MAN: connectDefault skipped — Mentra Live pairing yield active")
             return
@@ -1763,7 +1872,7 @@ struct ViewState {
         controller?.connectById(controllerDeviceName)
     }
 
-    func connectByName(_ dName: String) {
+    func connectByName(_ dName: String, requiresAncs: Bool = true) {
         Bridge.log("MAN: Connecting to wearable: \(dName)")
         var name = dName
 
@@ -1796,6 +1905,7 @@ struct ViewState {
             self.pendingDeviceName = name
 
             initSGC(self.pendingWearable)
+            (sgc as? MentraLive)?.setRequiresAncs(requiresAncs)
             sgc?.connectById(name)
         }
     }
@@ -1825,6 +1935,11 @@ struct ViewState {
     }
 
     func disconnect(clearPendingConnection: Bool = true) {
+        #if os(macOS)
+        audioRouteObserver = nil
+        glassesBluetoothClassicConnected = false
+        otherBtConnected = false
+        #endif
         sgc?.clearDisplay() // clear the screen
         sgc?.disconnect()
         sgc = nil // Clear the SGC reference after disconnect
@@ -1932,8 +2047,12 @@ struct ViewState {
     }
 
     func cleanup() {
+        #if os(macOS)
+        audioRouteObserver = nil
+        PhoneMic.shared.cleanup()
+        #endif
         // Clean up transcriber resources
-#if !SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT
+#if !os(macOS) && (!SWIFT_PACKAGE || MENTRA_FEATURE_LOCAL_STT)
         transcriber?.shutdown()
         transcriber = nil
 #endif

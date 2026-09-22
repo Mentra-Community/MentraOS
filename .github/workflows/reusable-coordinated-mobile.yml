@@ -55,6 +55,10 @@ on:
         default: false
         type: boolean
     secrets:
+      ARTIFACTS_R2_ACCESS_KEY_ID:
+        required: false
+      ARTIFACTS_R2_SECRET_ACCESS_KEY:
+        required: false
       UPLOAD_KEYSTORE_B64:
         required: false
       MENTRAOS_UPLOAD_STORE_PASSWORD:
@@ -102,8 +106,10 @@ on:
         value: ${{ jobs.status.outputs.apk_name }}
       ipa_name:
         value: ${{ jobs.status.outputs.ipa_name }}
-      asset_base_url:
-        value: ${{ jobs.status.outputs.asset_base_url }}
+      apk_url:
+        value: ${{ jobs.status.outputs.apk_url }}
+      ipa_url:
+        value: ${{ jobs.status.outputs.ipa_url }}
       play_install_url:
         value: ${{ jobs.android.outputs.play_install_url }}
       testflight_install_url:
@@ -121,6 +127,10 @@ concurrency:
   cancel-in-progress: false
   queue: max
 
+env:
+  ARTIFACTS_R2_ACCOUNT_ID: ${{ vars.ARTIFACTS_R2_ACCOUNT_ID }}
+  ARTIFACTS_R2_BUCKET: artifactscdn
+
 jobs:
   prepare:
     name: Prepare immutable mobile release
@@ -131,10 +141,13 @@ jobs:
       release_set_id: ${{ steps.release.outputs.release_set_id }}
       marketing_version: ${{ steps.release.outputs.marketing_version }}
       build_number: ${{ steps.release.outputs.build_number }}
+      upload_google_play: ${{ steps.release.outputs.upload_google_play }}
       apk_name: ${{ steps.release.outputs.apk_name }}
       aab_name: ${{ steps.release.outputs.aab_name }}
       ipa_name: ${{ steps.release.outputs.ipa_name }}
-      asset_base_url: ${{ steps.release.outputs.asset_base_url }}
+      apk_url: ${{ steps.container.outputs.apk_url || steps.release.outputs.apk_url }}
+      aab_url: ${{ steps.container.outputs.aab_url || steps.release.outputs.aab_url }}
+      ipa_url: ${{ steps.container.outputs.ipa_url || steps.release.outputs.ipa_url }}
       release_id: ${{ steps.container.outputs.release_id }}
       android_assets_exist: ${{ steps.container.outputs.android_assets_exist }}
       apk_asset_id: ${{ steps.container.outputs.apk_asset_id }}
@@ -145,6 +158,16 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.source_commit }}
+
+      - name: Checkout artifact tooling from the workflow revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: release-tooling
+          persist-credentials: false
+          sparse-checkout: |
+            .github/scripts
+            .github/artifact-storage
 
       - uses: actions/download-artifact@v4
         with:
@@ -164,6 +187,10 @@ jobs:
           identity=$(jq -er .releaseIdentity release-intent/release-plan.json)
           release_set_id=$(jq -er .releaseSetId release-intent/release-plan.json)
           plan_tag=$(jq -er .artifactContainerTag release-intent/release-plan.json)
+          upload_google_play=$(jq -r '.native.googlePlayUpload != false' release-intent/release-plan.json)
+          if [[ "$upload_google_play" == "false" ]]; then
+            [[ "$(jq -er .channel release-intent/release-plan.json)" == "dev" ]]
+          fi
           if [[ -n "$ARTIFACT_CONTAINER_TAG" || -n "$ARTIFACT_CONTAINER_NAME" ]]; then
             [[ -n "$ARTIFACT_CONTAINER_TAG" && -n "$ARTIFACT_CONTAINER_NAME" ]]
             [[ "$(jq -er .channel release-intent/release-plan.json)" == "production" ]]
@@ -177,10 +204,15 @@ jobs:
             echo "release_set_id=$release_set_id"
             echo "marketing_version=$(jq -er .native.marketingVersion release-intent/release-plan.json)"
             echo "build_number=$(jq -er .native.buildNumber release-intent/release-plan.json)"
+            echo "upload_google_play=$upload_google_play"
             echo "apk_name=$(jq -er .artifactNames.androidApp release-intent/release-plan.json)"
             echo "aab_name=$(jq -er .artifactNames.androidStoreApp release-intent/release-plan.json)"
             echo "ipa_name=$(jq -er .artifactNames.iosApp release-intent/release-plan.json)"
-            echo "asset_base_url=https://github.com/${GITHUB_REPOSITORY}/releases/download/$tag"
+            # Dry runs/lab builds have no persisted artifacts. Normal releases
+            # replace these planned URLs with storage-aware selections below.
+            echo "apk_url=https://artifactscdn.mentraglass.com/${GITHUB_REPOSITORY}/releases/$tag/$(jq -er .artifactNames.androidApp release-intent/release-plan.json)"
+            echo "aab_url=https://artifactscdn.mentraglass.com/${GITHUB_REPOSITORY}/releases/$tag/$(jq -er .artifactNames.androidStoreApp release-intent/release-plan.json)"
+            echo "ipa_url=https://artifactscdn.mentraglass.com/${GITHUB_REPOSITORY}/releases/$tag/$(jq -er .artifactNames.iosApp release-intent/release-plan.json)"
           } >> "$GITHUB_OUTPUT"
 
       - name: Verify the selected OTA manifest is live and exact
@@ -199,6 +231,8 @@ jobs:
         id: container
         if: inputs.dry_run != true && inputs.compatibility_lab != true
         env:
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
           ARTIFACT_CONTAINER_NAME: ${{ inputs.artifact_container_name }}
           GH_TOKEN: ${{ github.token }}
           RELEASE_ID: ${{ inputs.release_id }}
@@ -228,7 +262,7 @@ jobs:
           fi
 
           release_id="$RELEASE_ID"
-          assets=$(gh api --paginate --slurp "repos/${GITHUB_REPOSITORY}/releases/$release_id/assets?per_page=100" | jq 'add')
+          assets=$(node "$GITHUB_WORKSPACE/release-tooling/.github/scripts/release-assets.mjs" list --repository "${GITHUB_REPOSITORY}" --release-id "$release_id")
           asset_id() {
             local name="$1"
             local matches
@@ -247,12 +281,22 @@ jobs:
             android_assets_exist=true
           elif [[ -n "$apk_id" || -n "$aab_id" ]]; then
             echo "Removing an interrupted Android asset pair before rebuilding it."
-            [[ -z "$apk_id" ]] || gh api --method DELETE "repos/${GITHUB_REPOSITORY}/releases/assets/$apk_id"
-            [[ -z "$aab_id" ]] || gh api --method DELETE "repos/${GITHUB_REPOSITORY}/releases/assets/$aab_id"
+            [[ -z "$apk_id" ]] || node "$GITHUB_WORKSPACE/release-tooling/.github/scripts/release-assets.mjs" remove --repository "${GITHUB_REPOSITORY}" --asset-id "$apk_id"
+            [[ -z "$aab_id" ]] || node "$GITHUB_WORKSPACE/release-tooling/.github/scripts/release-assets.mjs" remove --repository "${GITHUB_REPOSITORY}" --asset-id "$aab_id"
             apk_id=""
             aab_id=""
           fi
+          # Resolve each asset separately: a release can mix reused GitHub
+          # files and new CDN files, or keep every candidate in a private draft.
+          urls=$(node "$GITHUB_WORKSPACE/release-tooling/.github/scripts/release-assets.mjs" urls \
+            --repository "$GITHUB_REPOSITORY" --release-id "$release_id" --allow-missing true \
+            --pattern "${{ steps.release.outputs.apk_name }}" \
+            --pattern "${{ steps.release.outputs.aab_name }}" \
+            --pattern "${{ steps.release.outputs.ipa_name }}")
           {
+            echo "apk_url=$(jq -er --arg name "${{ steps.release.outputs.apk_name }}" '.[$name]' <<< "$urls")"
+            echo "aab_url=$(jq -er --arg name "${{ steps.release.outputs.aab_name }}" '.[$name]' <<< "$urls")"
+            echo "ipa_url=$(jq -er --arg name "${{ steps.release.outputs.ipa_name }}" '.[$name]' <<< "$urls")"
             echo "release_id=$release_id"
             echo "android_assets_exist=$android_assets_exist"
             echo "apk_asset_id=$apk_id"
@@ -275,6 +319,16 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.source_commit }}
+
+      - name: Checkout artifact tooling from the workflow revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: release-tooling
+          persist-credentials: false
+          sparse-checkout: |
+            .github/scripts
+            .github/artifact-storage
 
       - uses: actions/download-artifact@v4
         with:
@@ -364,7 +418,7 @@ jobs:
         uses: ./.github/actions/inject-signing
         with:
           mobile: ${{ inputs.dry_run == true || needs.prepare.outputs.android_assets_exist != 'true' }}
-          play: "true"
+          play: ${{ needs.prepare.outputs.upload_google_play == 'true' || inputs.compatibility_lab == true }}
           upload-keystore-b64: ${{ secrets.UPLOAD_KEYSTORE_B64 }}
           upload-store-password: ${{ secrets.MENTRAOS_UPLOAD_STORE_PASSWORD }}
           upload-key-password: ${{ secrets.MENTRAOS_UPLOAD_KEY_PASSWORD }}
@@ -395,11 +449,9 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p mobile-release/android
-          gh api -H "Accept: application/octet-stream" \
-            "repos/${GITHUB_REPOSITORY}/releases/assets/${{ needs.prepare.outputs.apk_asset_id }}" \
+          node "$GITHUB_WORKSPACE/release-tooling/.github/scripts/release-assets.mjs" fetch --repository "${GITHUB_REPOSITORY}" --asset-id "${{ needs.prepare.outputs.apk_asset_id }}" \
             > "mobile-release/android/${{ needs.prepare.outputs.apk_name }}"
-          gh api -H "Accept: application/octet-stream" \
-            "repos/${GITHUB_REPOSITORY}/releases/assets/${{ needs.prepare.outputs.aab_asset_id }}" \
+          node "$GITHUB_WORKSPACE/release-tooling/.github/scripts/release-assets.mjs" fetch --repository "${GITHUB_REPOSITORY}" --asset-id "${{ needs.prepare.outputs.aab_asset_id }}" \
             > "mobile-release/android/${{ needs.prepare.outputs.aab_name }}"
 
       - name: Verify Android native version and production signature
@@ -462,21 +514,23 @@ jobs:
       - name: Publish immutable Android release assets
         if: inputs.dry_run != true && inputs.compatibility_lab != true && needs.prepare.outputs.android_assets_exist != 'true'
         env:
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
           GH_TOKEN: ${{ github.token }}
         run: |
-          node .github/scripts/publish-immutable-release-asset.mjs \
+          node "$GITHUB_WORKSPACE/release-tooling/.github/scripts/publish-immutable-release-asset.mjs" \
             --release-id "${{ needs.prepare.outputs.release_id }}" \
             --repository "${{ github.repository }}" \
             --file "mobile-release/android/${{ needs.prepare.outputs.apk_name }}" \
             --name "${{ needs.prepare.outputs.apk_name }}"
-          node .github/scripts/publish-immutable-release-asset.mjs \
+          node "$GITHUB_WORKSPACE/release-tooling/.github/scripts/publish-immutable-release-asset.mjs" \
             --release-id "${{ needs.prepare.outputs.release_id }}" \
             --repository "${{ github.repository }}" \
             --file "mobile-release/android/${{ needs.prepare.outputs.aab_name }}" \
             --name "${{ needs.prepare.outputs.aab_name }}"
 
       - name: Prepare Google Play upload tooling
-        if: inputs.dry_run != true
+        if: inputs.dry_run != true && needs.prepare.outputs.upload_google_play == 'true'
         run: |
           set -euo pipefail
           mkdir -p mobile-play/fastlane
@@ -486,13 +540,13 @@ jobs:
           cp mobile/Gemfile.lock mobile-play/Gemfile.lock
 
       - name: Install Google Play upload tooling
-        if: inputs.dry_run != true
+        if: inputs.dry_run != true && needs.prepare.outputs.upload_google_play == 'true'
         working-directory: mobile-play
         run: bundle install
 
       - name: Check selected Google Play track
         id: play
-        if: inputs.dry_run != true && inputs.play_track != 'internal-app-sharing'
+        if: inputs.dry_run != true && inputs.compatibility_lab != true && needs.prepare.outputs.upload_google_play == 'true' && inputs.play_track != 'internal-app-sharing'
         working-directory: mobile-play
         env:
           GOOGLE_PLAY_TRACK: ${{ inputs.play_track }}
@@ -507,7 +561,7 @@ jobs:
           fi
 
       - name: Upload exact AAB to Google Play
-        if: inputs.dry_run != true && inputs.play_track != 'internal-app-sharing' && steps.play.outputs.exists != 'true'
+        if: inputs.dry_run != true && inputs.compatibility_lab != true && needs.prepare.outputs.upload_google_play == 'true' && inputs.play_track != 'internal-app-sharing' && steps.play.outputs.exists != 'true'
         working-directory: mobile-play
         env:
           GOOGLE_PLAY_AAB: ${{ github.workspace }}/mobile-release/android/${{ needs.prepare.outputs.aab_name }}
@@ -526,7 +580,7 @@ jobs:
       # Internal App Sharing has no version-code floor, so it distributes
       # Play-signed builds whose numbers sit below what a track already serves.
       - name: Upload exact AAB to Google Play Internal App Sharing
-        if: inputs.dry_run != true && inputs.play_track == 'internal-app-sharing'
+        if: inputs.dry_run != true && inputs.play_track == 'internal-app-sharing' && needs.prepare.outputs.upload_google_play == 'true'
         run: >-
           node ${{ inputs.compatibility_lab && 'production-tools' || '.' }}/.github/scripts/google-play-internal-sharing.mjs
           --credentials "$GOOGLE_PLAY_JSON_KEY"
@@ -541,11 +595,11 @@ jobs:
           node .github/scripts/coordinated-mobile-records.mjs create-android
           --plan release-intent/release-plan.json
           --apk "mobile-release/android/${{ needs.prepare.outputs.apk_name }}"
-          --apk-url "${{ needs.prepare.outputs.asset_base_url }}/${{ needs.prepare.outputs.apk_name }}"
+          --apk-url "${{ needs.prepare.outputs.apk_url }}"
           --aab "mobile-release/android/${{ needs.prepare.outputs.aab_name }}"
-          --aab-url "${{ needs.prepare.outputs.asset_base_url }}/${{ needs.prepare.outputs.aab_name }}"
+          --aab-url "${{ needs.prepare.outputs.aab_url }}"
           --play-track "${{ inputs.play_track }}"
-          ${{ inputs.dry_run != true && inputs.play_track == 'internal-app-sharing' && '--internal-sharing mobile-release/android-internal-sharing.json' || '' }}
+          ${{ inputs.dry_run != true && inputs.play_track == 'internal-app-sharing' && needs.prepare.outputs.upload_google_play == 'true' && '--internal-sharing mobile-release/android-internal-sharing.json' || '' }}
           --status "$STATUS"
           --provenance-url "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
           --output mobile-release/android-publication.json
@@ -555,7 +609,7 @@ jobs:
         run: |
           set -euo pipefail
           url=""
-          if [[ "${{ inputs.play_track }}" == internal-app-sharing && "${{ inputs.dry_run }}" != true ]]; then
+          if [[ "${{ inputs.play_track }}" == internal-app-sharing && "${{ inputs.dry_run }}" != true && "${{ needs.prepare.outputs.upload_google_play }}" == true ]]; then
             url=$(jq -er '.publications.mentraos["google-play"].url' mobile-release/android-publication.json)
           fi
           echo "install_url=$url" >> "$GITHUB_OUTPUT"
@@ -583,6 +637,16 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ inputs.source_commit }}
+
+      - name: Checkout artifact tooling from the workflow revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: release-tooling
+          persist-credentials: false
+          sparse-checkout: |
+            .github/scripts
+            .github/artifact-storage
 
       - uses: actions/download-artifact@v4
         with:
@@ -760,8 +824,7 @@ jobs:
         run: |
           set -euo pipefail
           mkdir -p mobile-release/ios
-          gh api -H "Accept: application/octet-stream" \
-            "repos/${GITHUB_REPOSITORY}/releases/assets/${{ needs.prepare.outputs.ipa_asset_id }}" \
+          node "$GITHUB_WORKSPACE/release-tooling/.github/scripts/release-assets.mjs" fetch --repository "${GITHUB_REPOSITORY}" --asset-id "${{ needs.prepare.outputs.ipa_asset_id }}" \
             > "mobile-release/ios/${{ needs.prepare.outputs.ipa_name }}"
 
       - name: Verify iOS native version and build number
@@ -852,6 +915,16 @@ jobs:
         with:
           ref: ${{ inputs.source_commit }}
 
+      - name: Checkout artifact tooling from the workflow revision
+        uses: actions/checkout@v4
+        with:
+          ref: ${{ github.sha }}
+          path: release-tooling
+          persist-credentials: false
+          sparse-checkout: |
+            .github/scripts
+            .github/artifact-storage
+
       - uses: actions/download-artifact@v4
         with:
           name: ${{ needs.ios.outputs.upload_artifact }}
@@ -865,9 +938,11 @@ jobs:
         timeout-minutes: 5
         if: inputs.dry_run != true && inputs.compatibility_lab != true && needs.prepare.outputs.ios_asset_exists != 'true'
         env:
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
           GH_TOKEN: ${{ github.token }}
         run: >-
-          node .github/scripts/publish-immutable-release-asset.mjs
+          node "$GITHUB_WORKSPACE/release-tooling/.github/scripts/publish-immutable-release-asset.mjs"
           --release-id "${{ needs.prepare.outputs.release_id }}"
           --repository "${{ github.repository }}"
           --file "mobile-release/ios/${{ needs.prepare.outputs.ipa_name }}"
@@ -1060,7 +1135,7 @@ jobs:
           node .github/scripts/coordinated-mobile-records.mjs create-ios
           --plan release-intent/release-plan.json
           --ipa "mobile-release/ios/${{ needs.prepare.outputs.ipa_name }}"
-          --ipa-url "${{ needs.prepare.outputs.asset_base_url }}/${{ needs.prepare.outputs.ipa_name }}"
+          --ipa-url "${{ needs.prepare.outputs.ipa_url }}"
           --testflight-group "${{ inputs.testflight_group }}"
           --audience "${{ inputs.testflight_audience }}"
           --distribution-status "${{ inputs.testflight_audience == 'external' && steps.distribution.outputs.distribution_status || '' }}"
@@ -1134,7 +1209,8 @@ jobs:
       ios_result: ${{ steps.status.outputs.ios_result }}
       apk_name: ${{ steps.status.outputs.apk_name }}
       ipa_name: ${{ steps.status.outputs.ipa_name }}
-      asset_base_url: ${{ steps.status.outputs.asset_base_url }}
+      apk_url: ${{ steps.status.outputs.apk_url }}
+      ipa_url: ${{ steps.status.outputs.ipa_url }}
     steps:
       - name: Export platform conclusions and artifact coordinates
         id: status
@@ -1146,7 +1222,8 @@ jobs:
           IOS_STORE_RESULT: ${{ needs.ios-store.result }}
           APK_NAME: ${{ needs.prepare.outputs.apk_name }}
           IPA_NAME: ${{ needs.prepare.outputs.ipa_name }}
-          ASSET_BASE_URL: ${{ needs.prepare.outputs.asset_base_url }}
+          APK_URL: ${{ needs.prepare.outputs.apk_url }}
+          IPA_URL: ${{ needs.prepare.outputs.ipa_url }}
         run: |
           ios_result=success
           for stage_result in "$IOS_BUILD_RESULT" "$IOS_PUBLISH_RESULT" "$IOS_UPLOAD_RESULT" "$IOS_STORE_RESULT"; do
@@ -1160,5 +1237,6 @@ jobs:
             echo "ios_result=$ios_result"
             echo "apk_name=$APK_NAME"
             echo "ipa_name=$IPA_NAME"
-            echo "asset_base_url=$ASSET_BASE_URL"
+            echo "apk_url=$APK_URL"
+            echo "ipa_url=$IPA_URL"
           } >> "$GITHUB_OUTPUT"

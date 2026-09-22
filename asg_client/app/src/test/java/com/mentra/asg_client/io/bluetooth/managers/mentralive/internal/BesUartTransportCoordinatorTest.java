@@ -59,6 +59,22 @@ public class BesUartTransportCoordinatorTest {
     }
 
     @Test
+    public void normalUseRejectsPolicyChangeAndProofCallbackBeforeQuarantine() {
+        coordinator.onSerialReady(host.session);
+        systemVersion("17.26.7.4");
+        assertThat(coordinator.isReadyForNormalUse()).isTrue();
+        safety.policy = BesUartTransportCoordinator.SafetyPolicy.VERSION_PROBE_ONLY;
+        assertThat(coordinator.isReadyForNormalUse()).isFalse();
+        java.util.concurrent.atomic.AtomicBoolean proof = new java.util.concurrent.atomic.AtomicBoolean();
+        coordinator.onSystemVersion("17.26.7.4", host.session, () -> proof.set(true));
+        assertThat(proof.get()).isTrue();
+        assertThat(coordinator.getState()).isEqualTo(BesUartTransportCoordinator.State.QUARANTINED);
+        assertThat(coordinator.isReadyForNormalUse()).isFalse();
+        safety.policy = BesUartTransportCoordinator.SafetyPolicy.NORMAL;
+        assertThat(coordinator.isReadyForNormalUse()).isFalse();
+    }
+
+    @Test
     public void rejectedFastSwitch_returnsToStableRendezvousState() throws Exception {
         coordinator.onSerialReady(host.session);
         assertThat(systemVersion("17.26.7.23"))

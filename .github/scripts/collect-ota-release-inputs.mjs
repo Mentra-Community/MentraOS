@@ -20,6 +20,7 @@ const result = {
     sha256: createHash("sha256").update(bytes).digest("hex"),
   },
   mtkPatches: manifest.mtk_patches,
+  ...(manifest.mtk_full_ota ? {mtkFullOta: manifest.mtk_full_ota} : {}),
   besFirmware: manifest.bes_firmware,
 }
 

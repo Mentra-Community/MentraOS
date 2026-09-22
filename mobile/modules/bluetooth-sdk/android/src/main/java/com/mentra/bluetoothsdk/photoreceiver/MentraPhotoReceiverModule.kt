@@ -2,7 +2,7 @@ package com.mentra.bluetoothsdk.photoreceiver
 
 import android.content.Context
 import android.net.Uri
-import android.util.Log
+import com.mentra.bluetoothsdk.utils.NativeLog as Log
 import com.mentra.bluetoothsdk.debug.BleTraceLogger
 import com.mentra.bluetoothsdk.net.LocalIpv4
 import expo.modules.kotlin.exception.Exceptions

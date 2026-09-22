@@ -52,7 +52,7 @@ below. `Recovery Worker Build` is deliberately excluded.
 | ----------- | ----------------------------------- | --------------------------------------------------------- |
 | iOS         | `Mobile App iOS Build`              | `mobile/**`                                               |
 | Android     | `Mobile App Android Build`          | `mobile/**`                                               |
-| ASG         | `MentraOS ASG Client Build`         | `asg_client/**`                                           |
+| ASG         | `MentraOS ASG Client Build`         | `asg_client/**`, `mobile/**` (publishes the PR OTA pin)   |
 | Mobile jest | `Mobile App Quality Checks`         | `mobile/**`                                               |
 | Release     | `Coordinated Release Family Checks` | coordinated release definitions and workflows             |
 | Lockfiles   | `Bun Lockfile Checks`               | root/mobile/sdk lockfiles and workspace package manifests |

@@ -21,6 +21,11 @@ type ReviewTexts = {
 export type ReviewCommentOptions = {
   /** Allowlisted bot logins that submitted a native PR review this cycle. */
   nativeReviewers?: string[];
+  /**
+   * Whether Bugbot's check run appeared. `false` renders the slot as skipped
+   * rather than as a reviewer that returned no verdict.
+   */
+  bugbotStarted?: boolean;
 };
 
 function verdictBadge(text: string | undefined): string {
@@ -83,12 +88,26 @@ export function buildReviewComment(
   const nativeBugbot =
     (options?.nativeReviewers ?? []).includes(BUGBOT_LOGIN) ||
     bugbotFindings(state).length > 0;
+  // Bugbot never opened a check run, so it reviewed nothing this cycle and is
+  // not counted among the reviewers (see effectiveReviewPair in aggregate.ts).
+  const bugbotAbsent =
+    activePair.includes('bugbot') && options?.bugbotStarted === false && !nativeBugbot;
 
+  // Real reviews and skip notices are tracked apart: a "did not start" notice
+  // is not review signal, so it must not stop the no-reviews branch below from
+  // firing when it is the only thing to report.
   const sections: string[] = [];
+  const notices: string[] = [];
   for (const slot of activePair) {
     const raw = reviews[slot as keyof ReviewTexts];
     if (slot === 'bugbot' && !raw && nativeBugbot) {
       sections.push(nativeBugbotSection(state));
+      continue;
+    }
+    if (slot === 'bugbot' && bugbotAbsent) {
+      notices.push(
+        `_Bugbot opened no review for this PR, so the slot was not counted toward this cycle._`,
+      );
       continue;
     }
     if (!raw) continue;
@@ -96,7 +115,11 @@ export function buildReviewComment(
   }
 
   const overall = blocking > 0 ? '⚠️ Changes requested' : '✅ No blocking findings';
-  const reviewerList = activePair.length ? activePair.join(', ') : 'none';
+  const counted = bugbotAbsent
+    ? activePair.filter((slot) => slot !== 'bugbot')
+    : activePair;
+  const reviewerList = counted.length ? counted.join(', ') : 'none';
+  const noticeBlock = notices.length ? `\n${notices.join('\n')}\n` : '';
 
   // No ingested review text: showing the ledger's blocking/nit counts next to
   // "no reviews ran" reads as a contradiction. State plainly that this cycle
@@ -106,7 +129,7 @@ export function buildReviewComment(
 ## 🤖 PR Agent Review — cycle ${state.cycle}
 
 _No model reviews were ingested this cycle (scheduled: ${reviewerList}); ledger and budget counters unchanged._
-
+${noticeBlock}
 <sub>Updated automatically by the PR Agent Orchestrator each review cycle. Nits do not block merge.</sub>`;
   }
 
@@ -115,7 +138,7 @@ _No model reviews were ingested this cycle (scheduled: ${reviewerList}); ledger 
 
 **${overall}** · ${blocking} blocking · ${nits} nit${nits === 1 ? '' : 's'}
 _Reviewers this cycle: ${reviewerList}_
-
+${noticeBlock}
 ${sections.join('\n\n---\n\n')}
 
 <sub>Updated automatically by the PR Agent Orchestrator each review cycle. Nits do not block merge.</sub>`;

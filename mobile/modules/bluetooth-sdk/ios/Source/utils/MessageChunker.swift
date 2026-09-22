@@ -41,7 +41,7 @@ class MessageChunker {
         let needsChunking = messageBytes > MESSAGE_SIZE_THRESHOLD
 
         if needsChunking {
-            print("MessageChunker: Message size \(messageBytes) exceeds threshold \(MESSAGE_SIZE_THRESHOLD), will chunk")
+            Bridge.log("MessageChunker: Message size \(messageBytes) exceeds threshold \(MESSAGE_SIZE_THRESHOLD), will chunk")
         }
 
         return needsChunking
@@ -56,7 +56,7 @@ class MessageChunker {
      */
     static func createChunks(originalJson: String, messageId: Int64 = -1, wakeUp: Bool = false) -> [[String: Any]] {
         guard let messageData = originalJson.data(using: .utf8) else {
-            print("MessageChunker: Failed to convert message to data")
+            Bridge.log("MessageChunker: Failed to convert message to data")
             return []
         }
 
@@ -68,12 +68,12 @@ class MessageChunker {
         for chunkSize in stride(from: INITIAL_CHUNK_DATA_SIZE, through: MIN_CHUNK_DATA_SIZE, by: -1) {
             let chunks = buildChunks(messageData, chunkId: chunkId, messageId: messageId, chunkSize: chunkSize)
             if allChunksFit(chunks, wakeUp: wakeUp) {
-                print("MessageChunker: Creating \(chunks.count) chunks for message of size \(totalBytes) bytes using \(chunkSize)-byte UTF-8 slices")
+                Bridge.log("MessageChunker: Creating \(chunks.count) chunks for message of size \(totalBytes) bytes using \(chunkSize)-byte UTF-8 slices")
                 return chunks
             }
         }
 
-        print("MessageChunker: Unable to create K900 chunks within \(MAX_PACKED_CHUNK_SIZE) bytes")
+        Bridge.log("MessageChunker: Unable to create K900 chunks within \(MAX_PACKED_CHUNK_SIZE) bytes")
         return []
     }
 
@@ -101,7 +101,7 @@ class MessageChunker {
 
             chunks.append(chunk)
 
-            print("MessageChunker: Created chunk \(i)/\(totalChunks - 1) with \(chunkString.data(using: .utf8)?.count ?? 0) bytes")
+            Bridge.log("MessageChunker: Created chunk \(i)/\(totalChunks - 1) with \(chunkString.data(using: .utf8)?.count ?? 0) bytes")
         }
 
         return chunks
@@ -111,7 +111,7 @@ class MessageChunker {
         for (index, chunk) in chunks.enumerated() {
             let packedLength = packedK900Length(chunk, wakeUp: wakeUp && index == 0)
             if packedLength == nil || packedLength! > MAX_PACKED_CHUNK_SIZE {
-                print("MessageChunker: Chunk \(index) packed to \(packedLength ?? 0) bytes, exceeding \(MAX_PACKED_CHUNK_SIZE)")
+                Bridge.log("MessageChunker: Chunk \(index) packed to \(packedLength ?? 0) bytes, exceeding \(MAX_PACKED_CHUNK_SIZE)")
                 return false
             }
         }
@@ -191,7 +191,7 @@ class MessageChunker {
               let totalChunks = (json["total"] as? Int) ?? (json["n"] as? Int),
               let data = (json["data"] as? String) ?? (json["d"] as? String)
         else {
-            print("MessageChunker: Failed to extract chunk info from JSON")
+            Bridge.log("MessageChunker: Failed to extract chunk info from JSON")
             return nil
         }
 
@@ -255,7 +255,7 @@ class MessageChunker {
             )
         }
 
-        print("MessageChunker: Created \(fragments.count) binary fragments for \(payload.count) bytes")
+        Bridge.log("MessageChunker: Created \(fragments.count) binary fragments for \(payload.count) bytes")
         return fragments
     }
 

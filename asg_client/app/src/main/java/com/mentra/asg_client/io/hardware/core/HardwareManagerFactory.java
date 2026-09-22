@@ -62,4 +62,9 @@ public class HardwareManagerFactory {
     public static synchronized boolean hasInstance() {
         return instance != null;
     }
+
+    /** Return the already-wired manager, without creating hardware during a command check. */
+    public static synchronized IHardwareManager getInitializedInstance() {
+        return instance;
+    }
 }

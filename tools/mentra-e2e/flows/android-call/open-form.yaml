@@ -1,0 +1,5 @@
+appId: com.mentra.mentra
+---
+- assertVisible: Join a meeting
+- tapOn: New Call Create a meeting.
+- assertVisible: Create & Join

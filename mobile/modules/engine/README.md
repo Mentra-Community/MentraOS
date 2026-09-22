@@ -132,3 +132,16 @@ combined run. Per-file processes give every suite an isolated registry.
 The same rule applies when writing tests: it is fine to `mock.module` any
 specifier your suite needs, but never rely on a mock installed by a
 _different_ test file — each file must set up everything it imports.
+
+## Phone notification presentation
+
+`engine.phoneNotifications` owns native-notification configuration alongside the existing Android listener kill switch and per-app blocklist. Capture remains independent of presentation. A host starts/stops its presentation owner with `setPresentationActive(boolean)`; the Mentra App uses Notify's running state on both platforms.
+
+- `nativeCapabilities()` distinguishes native presentation, phone content access, app filtering, and removal support.
+- `nativeStatus()` / `onNativeStatus(listener)` expose native availability, authorization, desired controls, and failures.
+- `usesNativePresentation()` selects firmware presentation. A host forwards its captured event through `presentNative(event)` and skips its local card for that event. This does not replace permission-gated miniapp forwarding.
+- `onNativeDelivery(listener)` exposes Android transfer outcomes without message content.
+
+Settings are `native_notifications_enabled`, `native_notifications_auto_display`, `native_notifications_duration`, and `native_notifications_do_not_disturb`. Native presentation defaults off. The Android `notifications_blocklist` is also passed to native configuration so pending work is invalidated when filtering changes. Disconnected events are not retained for replay.
+
+On iOS, G2 receives ANCS directly; the host does not upload the app-identity relay back to the glasses. Full title/body access, editing the firmware app filter, and phone-dismissal synchronization remain unsupported. The existing G2 app-identity event is not evidence of full content access.

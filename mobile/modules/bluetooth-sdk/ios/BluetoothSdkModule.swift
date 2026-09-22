@@ -2,6 +2,16 @@ import CryptoKit
 import ExpoModulesCore
 import Foundation
 
+/// Carry the SDK's own error code across the Expo bridge.
+///
+/// `BluetoothSdkError` is a plain `Error`, not an Expo `Exception`, so `Promise.reject`
+/// wraps it in `UnexpectedException` and every code JS branches on arrives as
+/// `ERR_UNEXPECTED`. Android keeps the code because `DecoratedException` forwards
+/// `cause.code`; this is the iOS half of that guarantee.
+private func codedBridgeError(_ error: BluetoothSdkError) -> Exception {
+    Exception(name: error.code, description: error.message, code: error.code)
+}
+
 public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
     private var sdk: MentraBluetoothSDK?
 
@@ -28,6 +38,8 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             "battery_status",
             "wifi_status_change",
             "wifi_scan_result",
+            "wifi_forget_result",
+            "saved_wifi_networks",
             "hotspot_status_change",
             "hotspot_error",
             "photo_response",
@@ -42,6 +54,10 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             "heartbeat_received",
             "swipe_volume_status",
             "switch_status",
+            "mic_tuning_state",
+            "mic_rms",
+            "wear_state",
+            "wear_tuning",
             "rgb_led_control_response",
             "settings_ack",
             "version_info",
@@ -55,6 +71,8 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             "save_setting",
             "local_transcription",
             "phone_notification",
+            "native_notification_status",
+            "native_notification_delivery",
             "phone_notification_dismissed",
             "ws_text",
             "ws_bin",
@@ -133,6 +151,11 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
         AsyncFunction("displayText") { (text: String, x: Int?, y: Int?, size: Int?) in
             let sdk = await MainActor.run { self.bluetoothSdk() }
             try? await sdk.displayText(text, x: x ?? 0, y: y ?? 0, size: size ?? 24)
+        }
+
+        AsyncFunction("setDashboardContent") { (content: String) in
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            await sdk.setDashboardContent(content)
         }
 
         // MARK: - Connection Commands
@@ -215,6 +238,13 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             }
         }
 
+        AsyncFunction("getScanDiagnostic") { (model: String) -> [String: String]? in
+            await MainActor.run {
+                guard let diagnostic = self.bluetoothSdk().scanDiagnostic(for: DeviceModel.fromDeviceType(model)) else { return nil }
+                return ["code": diagnostic.code, "message": diagnostic.message]
+            }
+        }
+
         AsyncFunction("stopScan") {
             await MainActor.run {
                 self.bluetoothSdk().stopScan()
@@ -257,6 +287,57 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             MemoryMonitor.currentMemoryMB()
         }
 
+        // MARK: - Mic tuning (internal SDK surface only)
+
+        AsyncFunction("setMicRmsTelemetry") { (enabled: Bool) in
+            await MainActor.run {
+                DeviceManager.shared.sgc?.setMicRmsTelemetry(enabled)
+            }
+        }
+
+        // Fire-and-forget: the answer arrives as a mic_tuning_state event, which
+        // the screen is subscribed to anyway.
+        AsyncFunction("requestMicTuningState") {
+            await MainActor.run {
+                DeviceManager.shared.sgc?.requestMicTuningState()
+            }
+        }
+
+        // MARK: - Wear detection (internal SDK surface only)
+
+        // All fire-and-forget; answers arrive as wear_state / wear_tuning events.
+        // Call through DeviceManager so the SGCManager-typed reference hits the
+        // protocol requirement (extension-only methods would silently no-op).
+        AsyncFunction("queryWearState") {
+            await MainActor.run {
+                DeviceManager.shared.queryWearState()
+            }
+        }
+
+        AsyncFunction("setWearReporting") { (enabled: Bool) in
+            await MainActor.run {
+                DeviceManager.shared.setWearReporting(enabled)
+            }
+        }
+
+        AsyncFunction("setWearTuning") { (intervalMs: Int, count: Int, majority: Int) in
+            await MainActor.run {
+                DeviceManager.shared.setWearTuning(intervalMs: intervalMs, count: count, majority: majority)
+            }
+        }
+
+        AsyncFunction("requestWearTuning") {
+            await MainActor.run {
+                DeviceManager.shared.requestWearTuning()
+            }
+        }
+
+        AsyncFunction("resetWearTuning") {
+            await MainActor.run {
+                DeviceManager.shared.resetWearTuning()
+            }
+        }
+
         Function("jscSpawn") { (count: Int) -> Int in
             JSCExperiment.spawn(count: count)
         }
@@ -285,11 +366,37 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             }
         }
 
+        AsyncFunction("configureNativeNotifications") { (values: [String: Any]) in
+            try await MainActor.run {
+                try self.bluetoothSdk().configureNativeNotifications(NativeNotificationConfig(
+                    enabled: values["enabled"] as? Bool ?? false,
+                    autoDisplay: values["autoDisplay"] as? Bool ?? true,
+                    durationSeconds: (values["durationSeconds"] as? NSNumber)?.intValue ?? 5,
+                    doNotDisturb: values["doNotDisturb"] as? Bool ?? false,
+                    blockedApps: values["blockedApps"] as? [String] ?? []
+                ))
+            }
+        }
+        AsyncFunction("getNativeNotificationStatus") {
+            await MainActor.run { self.bluetoothSdk().getNativeNotificationStatus().dictionary }
+        }
+
+        // MARK: - Native Notification Centre
+
+        AsyncFunction("sendPhoneNotification") { (_: [String: Any]) in
+            throw NativeNotificationError.unsupported
+        }
+
         // MARK: - WiFi Commands
 
         AsyncFunction("requestWifiScan") {
             let sdk = await MainActor.run { self.bluetoothSdk() }
             return try await sdk.requestWifiScan().map(\.dictionary)
+        }
+
+        AsyncFunction("getSavedWifiNetworks") {
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            return try await sdk.getSavedWifiNetworks().values
         }
 
         AsyncFunction("sendWifiCredentials") { (ssid: String, password: String) in
@@ -302,9 +409,16 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             return try await sdk.forgetWifiNetwork(ssid: ssid).values
         }
 
+        // The host retries a hotspot command that a Wi-Fi protocol session refresh
+        // cancelled, and branches on the code to tell that apart from a real failure,
+        // so this one has to reach JS with its code intact.
         AsyncFunction("setHotspotState") { (enabled: Bool) in
             let sdk = await MainActor.run { self.bluetoothSdk() }
-            return try await sdk.setHotspotState(enabled: enabled).values
+            do {
+                return try await sdk.setHotspotState(enabled: enabled).values
+            } catch let error as BluetoothSdkError {
+                throw codedBridgeError(error)
+            }
         }
 
         AsyncFunction("setWifiAdbState") { (enabled: Bool) in
@@ -330,6 +444,11 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
         }
 
         // MARK: - Gallery Commands
+
+        AsyncFunction("setGalleryServerEnabled") { (enabled: Bool) in
+            let sdk = await MainActor.run { self.bluetoothSdk() }
+            return try await sdk.setGalleryServerEnabled(enabled).values
+        }
 
         AsyncFunction("setGalleryModeEnabled") { (enabled: Bool) in
             let sdk = await MainActor.run { self.bluetoothSdk() }
@@ -419,7 +538,7 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
         AsyncFunction("requestPhoto") { (params: [String: Any]) in
             let req = try PhotoRequest.from(params: params)
             Bridge.log(
-                "NATIVE: PHOTO PIPELINE [3/6] BluetoothSdk.requestPhoto requestId=\(req.requestId) size=\(req.size.rawValue) compress=\(req.compress?.rawValue ?? "none") aeDivisor=\(req.aeExposureDivisor.map { String($0) } ?? "nil")"
+                "NATIVE: PHOTO PIPELINE [3/6] BluetoothSdk.requestPhoto requestId=\(req.requestId) size=\(req.size.rawValue) compress=\(req.compress.rawValue) aeDivisor=\(req.aeExposureDivisor.map { String($0) } ?? "nil")"
             )
 
             let sdk = await MainActor.run { self.bluetoothSdk() }
@@ -514,12 +633,12 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             try await MainActor.run { try sdk.sendAr99FactoryReset() }
         }
 
-
         Function("buildAr99OtaSignature") { (secret: String, appName: String, currentVersion: String, serialNumber: String, nonce: String) in
             let raw = secret + appName + "juxinOTA" + currentVersion + serialNumber.trimmingCharacters(in: .whitespacesAndNewlines) + nonce
             let digest = Insecure.MD5.hash(data: Data(raw.utf8))
             return digest.map { String(format: "%02x", $0) }.joined()
         }
+
         // MARK: - Version Info Commands
 
         AsyncFunction("requestVersionInfo") {
@@ -583,20 +702,9 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             return try await sdk.startStream(StreamRequest(values: params)).values
         }
 
-        AsyncFunction("startExternallyManagedStream") { (params: [String: Any]) in
-            let sdk = await MainActor.run { self.bluetoothSdk() }
-            return try await sdk.startExternallyManagedStream(StreamRequest(values: params)).values
-        }
-
         AsyncFunction("stopStream") {
             let sdk = await MainActor.run { self.bluetoothSdk() }
             return try await sdk.stopStream().values
-        }
-
-        AsyncFunction("sendExternallyManagedStreamKeepAlive") { (params: [String: Any]) in
-            await MainActor.run {
-                self.bluetoothSdk().sendExternallyManagedStreamKeepAlive(StreamKeepAliveRequest(values: params))
-            }
         }
 
         // MARK: - Audio Playback Monitoring
@@ -609,8 +717,11 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
 
         // MARK: - Live PCM output stream (miniapp speaker.createStream)
 
+        // jitterMs is accepted for signature parity with Android and ignored: AVAudioEngine's
+        // scheduled-buffer playout has no equivalent fixed track buffer to size, so there is no
+        // knob here that would mean the same thing.
         AsyncFunction("pcmStreamOpen") {
-            (streamId: String, sampleRate: Int, channels: Int, volume: Double) async throws in
+            (streamId: String, sampleRate: Int, channels: Int, volume: Double, _: Int?) async throws in
             try PcmStreamManager.open(
                 streamId: streamId,
                 sampleRate: sampleRate,
@@ -680,6 +791,17 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
             }
         }
 
+        /**
+         * Android-only today. Present so a host that pins the microphone for a call does not have
+         * to branch on platform, and so a caller cannot mistake a missing function for a pin that
+         * was taken: the ACS capability gate excludes iOS precisely because this cannot honour it.
+         */
+        AsyncFunction("setMicSourcePin") { (source: String?) in
+            if source != nil {
+                Bridge.log("BluetoothSdkModule: setMicSourcePin(\(source ?? "")) is not implemented on iOS; ignoring")
+            }
+        }
+
         AsyncFunction("restartTranscriber") {
             await MainActor.run {
                 DeviceManager.shared.restartTranscriber()
@@ -695,6 +817,7 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
 
         // MARK: - STT Model Management
 
+        #if !os(macOS)
         AsyncFunction("setSttModelDetails") { (path: String, languageCode: String) in
             STTTools.setSttModelDetails(path, languageCode)
         }
@@ -747,6 +870,7 @@ public class BluetoothSdkModule: Module, MentraBluetoothSDKDelegate {
                 speed: speed
             )
         }
+        #endif
     }
 
     @MainActor
@@ -929,11 +1053,8 @@ private extension ConnectOptions {
     init(dictionary values: [String: Any]?) {
         self.init(
             saveAsDefault: values?["saveAsDefault"] as? Bool ?? true,
-            cancelExistingConnectionAttempt: values?["cancelExistingConnectionAttempt"] as? Bool ?? true
+            cancelExistingConnectionAttempt: values?["cancelExistingConnectionAttempt"] as? Bool ?? true,
+            requiresAncs: values?["requiresAncs"] as? Bool ?? true
         )
     }
 }
-
-
-
-

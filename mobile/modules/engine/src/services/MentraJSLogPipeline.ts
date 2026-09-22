@@ -73,6 +73,34 @@ export interface ThrottleOptions {
   now?: () => number
 }
 
+/** A per-package override of the shared budget. Both fields are absolute, not multipliers. */
+export interface PackageLogBudget {
+  tokensPerSecond: number
+  bucketCapacity: number
+}
+
+/**
+ * Budgets for miniapps under active diagnosis.
+ *
+ * The default ceiling protects the host from a miniapp that logs in a render loop, and it is the
+ * right default. It is the wrong ceiling for a miniapp someone is actively debugging: a single
+ * instrumented call join emits several hundred lines in its first few seconds, which exhausts the
+ * burst and then drops everything that follows — and the drops land exactly where the interesting
+ * part is. A log with silent holes in the failure window is worse than no log, because it is read
+ * as complete.
+ *
+ * So the ceiling is raised for named packages rather than lowered for everyone. Anything not
+ * listed here keeps the protective default.
+ */
+export const DIAGNOSTIC_LOG_BUDGETS: Readonly<Record<string, PackageLogBudget>> = {
+  // Mentra Call is instrumented end to end — UI, background, and the host call path — so the
+  // whole of a join, a cancel, and a teardown can be read back from one capture.
+  "com.mentra.call": {tokensPerSecond: 200, bucketCapacity: 5_000},
+}
+
+/** Ring-buffer window for a package in {@link DIAGNOSTIC_LOG_BUDGETS}. See `capacityFor`. */
+export const DIAGNOSTIC_RING_CAPACITY = 2_000
+
 interface PackageBucket {
   tokens: number
   lastRefillAtMs: number
@@ -85,11 +113,35 @@ export class MentraJSLogThrottle {
   private readonly bucketCapacity: number
   private readonly now: () => number
   private readonly buckets: Map<string, PackageBucket> = new Map()
+  private readonly budgets: Map<string, PackageLogBudget> = new Map(Object.entries(DIAGNOSTIC_LOG_BUDGETS))
 
   constructor(opts: ThrottleOptions = {}) {
     this.tokensPerSecond = opts.tokensPerSecond ?? 100 / 60
     this.bucketCapacity = opts.bucketCapacity ?? 500
     this.now = opts.now ?? (() => Date.now())
+  }
+
+  /**
+   * Raise (or lower) one package's budget at runtime.
+   *
+   * Exists so a support session can widen the pipe for the miniapp being investigated without a
+   * rebuild, and so tests can exercise a budget without depending on the shipped table.
+   */
+  setPackageBudget(packageName: string, budget: PackageLogBudget | null): void {
+    if (budget) this.budgets.set(packageName, budget)
+    else this.budgets.delete(packageName)
+    // The bucket holds a capacity snapshot, so a stale one would keep enforcing the old ceiling
+    // until it happened to refill. Dropping it re-derives from the new budget on the next line.
+    this.buckets.delete(packageName)
+  }
+
+  private budgetFor(packageName: string): PackageLogBudget {
+    return (
+      this.budgets.get(packageName) ?? {
+        tokensPerSecond: this.tokensPerSecond,
+        bucketCapacity: this.bucketCapacity,
+      }
+    )
   }
 
   /**
@@ -102,17 +154,18 @@ export class MentraJSLogThrottle {
    */
   consume(packageName: string): {allowed: true} | {allowed: false; throttledLine?: string} {
     const at = this.now()
+    const budget = this.budgetFor(packageName)
     let bucket = this.buckets.get(packageName)
     if (!bucket) {
       bucket = {
-        tokens: this.bucketCapacity,
+        tokens: budget.bucketCapacity,
         lastRefillAtMs: at,
         pendingDrops: 0,
       }
       this.buckets.set(packageName, bucket)
     } else {
       const elapsedSec = (at - bucket.lastRefillAtMs) / 1000
-      bucket.tokens = Math.min(this.bucketCapacity, bucket.tokens + elapsedSec * this.tokensPerSecond)
+      bucket.tokens = Math.min(budget.bucketCapacity, bucket.tokens + elapsedSec * budget.tokensPerSecond)
       bucket.lastRefillAtMs = at
     }
     if (bucket.tokens >= 1) {
@@ -146,6 +199,19 @@ export class MentraJSLogRingBuffer {
     this.capacity = capacityPerPackage
   }
 
+  /**
+   * Capacity for a package under diagnosis.
+   *
+   * This buffer is the miniapp's last words in a crash report, and 200 lines of a heavily
+   * instrumented miniapp is a couple of seconds — so the report would arrive holding the
+   * aftermath and none of the cause. A package with a raised log budget needs a window long
+   * enough to contain whatever produced the crash.
+   */
+  private capacityFor(packageName: string): number {
+    const budget = DIAGNOSTIC_LOG_BUDGETS[packageName]
+    return budget ? Math.max(this.capacity, DIAGNOSTIC_RING_CAPACITY) : this.capacity
+  }
+
   push(packageName: string, line: string): void {
     let buf = this.buffers.get(packageName)
     if (!buf) {
@@ -153,7 +219,8 @@ export class MentraJSLogRingBuffer {
       this.buffers.set(packageName, buf)
     }
     buf.push(line)
-    if (buf.length > this.capacity) buf.shift()
+    const capacity = this.capacityFor(packageName)
+    while (buf.length > capacity) buf.shift()
   }
 
   snapshot(packageName: string): string[] {

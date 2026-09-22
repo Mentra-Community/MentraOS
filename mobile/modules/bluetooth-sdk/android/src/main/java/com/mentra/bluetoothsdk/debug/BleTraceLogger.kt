@@ -3,7 +3,7 @@ package com.mentra.bluetoothsdk.debug
 import android.content.Context
 import android.os.Build
 import android.os.Process
-import android.util.Log
+import com.mentra.bluetoothsdk.utils.NativeLog as Log
 import org.json.JSONArray
 import org.json.JSONObject
 

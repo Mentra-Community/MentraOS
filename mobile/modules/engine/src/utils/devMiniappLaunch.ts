@@ -121,6 +121,10 @@ function collectAlternateHosts(packageName: string, extra?: string[]): string[] 
   }
 
   for (const h of extra ?? []) push(h)
+  // USB `adb reverse` publishes the laptop on the phone's loopback. Mentra
+  // Call's QR still advertises the Wi-Fi IP, which AP isolation drops. Try
+  // loopback last so LAN/mDNS keep winning when they work.
+  push("127.0.0.1")
   return hosts
 }
 

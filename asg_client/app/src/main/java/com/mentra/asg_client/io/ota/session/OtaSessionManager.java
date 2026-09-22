@@ -37,6 +37,8 @@ public class OtaSessionManager {
     private int mCurrentStepIndex;
     private String mCurrentPhase;
     private int mStepPercent;
+    // Live transfer state, deliberately not restored from disk after a process restart.
+    private long mDownloadBytes;
     private String mStatus;
     private String mErrorMessage;
     private String mVersionJsonUrl;
@@ -82,6 +84,7 @@ public class OtaSessionManager {
         mCurrentStepIndex = 0;
         mCurrentPhase = "download";
         mStepPercent = 0;
+        mDownloadBytes = 0;
         mStatus = "in_progress";
         mErrorMessage = null;
         mVersionJsonUrl = versionJsonUrl;
@@ -168,6 +171,7 @@ public class OtaSessionManager {
             state.put("st", getStepType(mCurrentStepIndex));
             state.put("sq", mStepSequence != null ? mStepSequence : new JSONArray());
             state.put("phase", mCurrentPhase);
+            if ("download".equals(mCurrentPhase)) state.put("bytes_downloaded", mDownloadBytes);
             state.put("sp", mStepPercent);
             state.put("op", computeOverallPercent());
             state.put("status", mStatus);
@@ -185,9 +189,17 @@ public class OtaSessionManager {
         mCurrentStepIndex = stepIndex;
         mCurrentPhase = phase;
         mStepPercent = 0;
+        mDownloadBytes = 0;
         mLastPersistedPercent = 0;
         mLastActivityAtElapsed = SystemClock.elapsedRealtime();
         persist();
+    }
+
+    /** Update live download evidence owned by the current session step. */
+    public synchronized void updateDownloadProgress(int stepPercent, long bytesDownloaded) {
+        if (!"download".equals(mCurrentPhase) || "complete".equals(mStatus) || "failed".equals(mStatus)) return;
+        mDownloadBytes = Math.max(0, bytesDownloaded);
+        updateProgress(stepPercent);
     }
 
     public synchronized void updateProgress(int stepPercent) {
@@ -333,6 +345,7 @@ public class OtaSessionManager {
     }
 
     public synchronized void clear() {
+        mDownloadBytes = 0;
         mSessionId = null;
         mTotalSteps = 0;
         mStepSequence = new JSONArray();

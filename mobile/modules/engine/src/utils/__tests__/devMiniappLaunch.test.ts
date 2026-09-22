@@ -75,8 +75,8 @@ describe("decideDevLaunchRoute", () => {
     const result = await decideDevLaunchRoute("com.dev.example", DEV_URL)
 
     expect(result.decision).toBe("offline")
-    // Two attempts on the primary URL; no alternates configured.
-    expect(fetchCalls).toBe(2)
+    // Two attempts on the primary URL, then two on the USB-reverse loopback.
+    expect(fetchCalls).toBe(4)
   })
 
   test("does not retry a definitive non-OK HTTP response on the same URL", async () => {
@@ -85,7 +85,8 @@ describe("decideDevLaunchRoute", () => {
     const result = await decideDevLaunchRoute("com.dev.example", DEV_URL)
 
     expect(result.decision).toBe("offline")
-    expect(fetchCalls).toBe(1)
+    // Definitive 404 on the QR host, then the same on 127.0.0.1.
+    expect(fetchCalls).toBe(2)
   })
 
   test("failovers to an alternate host and persists the working URL", async () => {
@@ -154,5 +155,21 @@ describe("decideDevLaunchRoute", () => {
 
     expect(result.decision).toBe("live")
     expect(result.resolvedUrl).toBe("http://mentas-macbook-pro.local:3000")
+  })
+
+  test("failovers to USB-reverse loopback when LAN is unreachable", async () => {
+    fetchImpl = async (url) => {
+      if (url.includes("192.168.1.50")) throw new TypeError("timed out")
+      if (url.includes("127.0.0.1")) {
+        return new Response(JSON.stringify({packageName: "com.dev.example", name: "Example"}), {status: 200})
+      }
+      throw new TypeError(`unexpected host: ${url}`)
+    }
+
+    const result = await decideDevLaunchRoute("com.dev.example", DEV_URL)
+
+    expect(result.decision).toBe("live")
+    expect(result.resolvedUrl).toBe("http://127.0.0.1:3000")
+    expect(savedKeys.some((s) => s.key === "com.dev.example_dev_url" && s.value === "http://127.0.0.1:3000")).toBe(true)
   })
 })

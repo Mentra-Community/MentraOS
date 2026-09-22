@@ -10,7 +10,14 @@
 // target hint) lives on the full surface, not the public entry (same reason
 // the glasses facade imports internal).
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
-import type {ConnectOptions, Device, DeviceModel, PairFailureEvent, GlassesNotReadyEvent} from "@mentra/bluetooth-sdk"
+import type {
+  ConnectOptions,
+  Device,
+  DeviceModel,
+  PairFailureEvent,
+  GlassesNotReadyEvent,
+  ScanDiagnostic,
+} from "@mentra/bluetooth-sdk"
 import {useCoreStore} from "../stores/core"
 import {useGlassesStore} from "../stores/glasses"
 import {SETTINGS, useSettingsStore} from "../stores/settings"
@@ -283,6 +290,14 @@ export const pairing = {
 
   /** Start scanning for nearby glasses. Results land on `searchResults()`/`onFound()`. */
   scan: (model: DeviceModel): Promise<void> => BluetoothSdk.startScan(model),
+  /** Best-effort advisory after a caller-managed scan completes empty. */
+  diagnoseEmptyScan: async (model: DeviceModel): Promise<ScanDiagnostic | null> => {
+    try {
+      return (await BluetoothSdk.getScanDiagnostic?.(model)) ?? null
+    } catch {
+      return null
+    }
+  },
   /** Whether a scan is currently in progress. */
   scanning: (): boolean => useCoreStore.getState().searching,
   /** Subscribe to scan-in-progress changes; fires only when it changes. Returns an unsubscribe. */

@@ -12,7 +12,7 @@ final class MessageChunkReassembler {
         cleanupTimedOutSessions()
 
         guard fragCount > 0, fragIdx >= 0, fragIdx < fragCount else {
-            print("MessageChunkReassembler: Dropping invalid binary fragment for msgId \(msgId)")
+            Bridge.log("MessageChunkReassembler: Dropping invalid binary fragment for msgId \(msgId)")
             return nil
         }
 
@@ -42,7 +42,7 @@ final class MessageChunkReassembler {
 
         let reassembled = session.reassemble()
         activeBinarySessions.removeValue(forKey: msgId)
-        print("MessageChunkReassembler: Reassembled \(reassembled.count) bytes from \(fragCount) binary fragments")
+        Bridge.log("MessageChunkReassembler: Reassembled \(reassembled.count) bytes from \(fragCount) binary fragments")
         return reassembled
     }
 
@@ -54,12 +54,12 @@ final class MessageChunkReassembler {
               info.chunkIndex >= 0,
               info.chunkIndex < info.totalChunks
         else {
-            print("MessageChunkReassembler: Dropping invalid chunk metadata for \(info.chunkId)")
+            Bridge.log("MessageChunkReassembler: Dropping invalid chunk metadata for \(info.chunkId)")
             return nil
         }
 
         if let existing = activeSessions[info.chunkId], existing.totalChunks != info.totalChunks {
-            print(
+            Bridge.log(
                 "MessageChunkReassembler: totalChunks mismatch for \(info.chunkId) (expected \(existing.totalChunks), got \(info.totalChunks)); resetting session"
             )
             activeSessions.removeValue(forKey: info.chunkId)
@@ -78,7 +78,7 @@ final class MessageChunkReassembler {
         )
 
         guard session.addChunk(index: info.chunkIndex, data: info.data) else {
-            print("MessageChunkReassembler: Failed to add chunk \(info.chunkIndex) for \(info.chunkId)")
+            Bridge.log("MessageChunkReassembler: Failed to add chunk \(info.chunkIndex) for \(info.chunkId)")
             return nil
         }
         if isNewSession {
@@ -91,7 +91,7 @@ final class MessageChunkReassembler {
 
         let reassembled = session.reassemble()
         activeSessions.removeValue(forKey: info.chunkId)
-        print("MessageChunkReassembler: Reassembled \(reassembled.count) bytes from \(info.totalChunks) chunks")
+        Bridge.log("MessageChunkReassembler: Reassembled \(reassembled.count) bytes from \(info.totalChunks) chunks")
         return reassembled
     }
 

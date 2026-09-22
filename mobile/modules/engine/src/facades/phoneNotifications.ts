@@ -10,9 +10,30 @@
  */
 import {Platform} from "react-native"
 import CrustModule from "@mentra/crust"
+import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
+import type {NativeNotificationStatus, NativeNotificationDelivery} from "@mentra/bluetooth-sdk"
+import {
+  nativeNotificationCapabilities,
+  setPhoneNotificationPresentationActive,
+  usesNativeNotificationPresentation,
+  presentNativePhoneNotification,
+} from "../services/PhoneNotificationsSync"
 import {useSettingsStore, SETTINGS} from "../stores/settings"
 
 export const phoneNotifications = {
+  nativeCapabilities: nativeNotificationCapabilities,
+  setPresentationActive: setPhoneNotificationPresentationActive,
+  usesNativePresentation: usesNativeNotificationPresentation,
+  presentNative: presentNativePhoneNotification,
+  nativeStatus: (): Promise<NativeNotificationStatus> => BluetoothSdk.getNativeNotificationStatus(),
+  onNativeStatus: (listener: (status: NativeNotificationStatus) => void) => {
+    const subscription = BluetoothSdk.addListener("native_notification_status", listener)
+    return () => subscription.remove()
+  },
+  onNativeDelivery: (listener: (event: NativeNotificationDelivery) => void) => {
+    const subscription = BluetoothSdk.addListener("native_notification_delivery", listener)
+    return () => subscription.remove()
+  },
   /** The phone's installed apps (package, name, icon). (empty on iOS) */
   installedApps: (): Promise<Array<{packageName: string; appName: string; icon: string | null}>> => {
     if (Platform.OS !== "android") return Promise.resolve([])

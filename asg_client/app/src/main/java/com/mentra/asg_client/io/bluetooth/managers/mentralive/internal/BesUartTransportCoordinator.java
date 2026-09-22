@@ -244,6 +244,13 @@ public final class BesUartTransportCoordinator {
         }
     }
 
+    /** A framed reply is not permission for normal use during OTA or recovery. */
+    public boolean isReadyForNormalUse() {
+        synchronized (monitor) {
+            return isReadyLocked() && safetyState.currentPolicy() == SafetyPolicy.NORMAL;
+        }
+    }
+
     /** Route bytes only when they belong to the descriptor currently owned by this coordinator. */
     public InboundRoute inboundRoute(SerialSession session) {
         synchronized (monitor) {

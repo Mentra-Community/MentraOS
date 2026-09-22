@@ -8,6 +8,7 @@ import {fileURLToPath} from "node:url"
 
 import {assembleCoordinatedReleaseResults} from "./assemble-coordinated-release-results.mjs"
 import {cloudRecordForPlan} from "./coordinated-cloud-v2-test-helpers.mjs"
+import {runtimeImageRecordForPlan} from "./coordinated-runtime-image-test-helpers.mjs"
 import {createReleasePlan, familyBuildNumber, finalizeReleaseManifest, loadReleaseFamily} from "./release-family.mjs"
 
 const rootDir = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "../..")
@@ -61,6 +62,8 @@ test("assembles every product target and finalizes one complete release manifest
     "@mentra/jspolyfill",
     "@mentra/cloud-protocol",
     "@mentra/crust",
+    "@mentra/glasses-media",
+    "@mentra/acs-meeting",
     "@mentra/cloud-client",
     "@mentra/bluetooth-sdk",
     "@mentra/miniapp",
@@ -140,6 +143,8 @@ test("assembles every product target and finalizes one complete release manifest
     },
     workflow: {repository: "Mentra-Community/MentraOS", runId: "123"},
   }
+  const runtimeImage = runtimeImageRecordForPlan(plan)
+
   const results = assembleCoordinatedReleaseResults({
     plan,
     ota,
@@ -147,17 +152,19 @@ test("assembles every product target and finalizes one complete release manifest
     native,
     mobile,
     cloud: cloudRecordForPlan(plan),
+    runtimeImage,
     asgSelectionFile,
     enginePackage,
     releaseAssetBaseUrl: "https://github.com/Mentra-Community/MentraOS/releases/download/mentra-builds-v3.1.0",
   })
   const manifest = finalizeReleaseManifest({plan, results, completedAt: "2026-08-25T02:00:00.000Z"})
 
-  assert.equal(Object.keys(manifest.publications).length, 8)
+  assert.equal(Object.keys(manifest.publications).length, 10)
   assert.equal(manifest.publications["@mentra/bluetooth-sdk"]["maven-central"].status, "submitted")
   assert.equal(manifest.publications.mentraos["app-store-connect"].status, "published")
   assert.ok(manifest.artifacts.some((artifact) => artifact.coordinate === plan.artifactNames.asgSelection))
   assert.equal(manifest.cloud.environment, "staging")
+  assert.equal(manifest.runtimeImage.digest, runtimeImage.digest)
   // The Mentra beta is complete without any Starter Kit or example evidence;
   // the Bluetooth example is finalized separately (example-release-records).
   assert.equal(manifest.starterKit, undefined)
@@ -173,6 +180,7 @@ test("assembles every product target and finalizes one complete release manifest
         native,
         mobile,
         cloud: cloudRecordForPlan(plan),
+        runtimeImage,
         asgSelectionFile,
         enginePackage,
         releaseAssetBaseUrl: "https://example.com/release",
@@ -190,6 +198,7 @@ test("assembles every product target and finalizes one complete release manifest
         native,
         mobile,
         cloud: cloudRecordForPlan(plan),
+        runtimeImage,
         asgSelectionFile,
         enginePackage,
         releaseAssetBaseUrl: "https://example.com/release",

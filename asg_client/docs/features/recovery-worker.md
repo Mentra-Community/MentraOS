@@ -19,6 +19,18 @@ The recovery worker is a headless companion APK (`com.mentra.recovery`) that kee
 - `COOLDOWN`
 - `FAILED_NEEDS_MANUAL`
 
+## Start contract
+
+ASG deploys the worker through the OEM installer, which leaves the package in Android's
+"stopped" state until one of its components has run. Stopped packages receive no
+broadcasts (the system adds `FLAG_EXCLUDE_STOPPED_PACKAGES` to every broadcast) and no
+`BOOT_COMPLETED`, so a freshly deployed worker cannot wake itself. Every ASG-to-worker
+intent (start request, downgrade handoff, install notifications, heartbeat pong) must
+therefore be built with `RecoveryWorkerManager.newRecoveryIntent`, which adds
+`FLAG_INCLUDE_STOPPED_PACKAGES`. Only the manifest-registered `RecoveryControlReceiver`
+actions (start request, downgrade handoff) can cold-start the worker; delivering one of
+them clears the stopped state until the next force-stop or fresh install.
+
 ## Backup contract
 
 ASG writes:

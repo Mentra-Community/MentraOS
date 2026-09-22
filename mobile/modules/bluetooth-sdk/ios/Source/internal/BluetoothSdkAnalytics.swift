@@ -8,7 +8,11 @@ public struct BluetoothSdkAnalyticsConfiguration {
 
     public init(enabled: Bool = true) {
         self.enabled = enabled
+        #if os(macOS)
+        surface = "macos"
+        #else
         surface = "ios"
+        #endif
     }
 
     var isReady: Bool {
@@ -155,14 +159,19 @@ final class BluetoothSdkAnalytics {
     }
 
     private func baseProperties(configuration: BluetoothSdkAnalyticsConfiguration) -> [String: Any] {
+        #if os(macOS)
+        let platform = "macos"
+        #else
+        let platform = "ios"
+        #endif
         var properties: [String: Any] = [
             "$process_person_profile": false,
             "event_source": "mentra_bluetooth_sdk",
-            "sdk_platform": "ios",
+            "sdk_platform": platform,
             "sdk_surface": configuration.surface,
             "app_identifier": Bundle.main.bundleIdentifier ?? "",
             "app_bundle_identifier": Bundle.main.bundleIdentifier ?? "",
-            "os_platform": "ios",
+            "os_platform": platform,
             "os_version": ProcessInfo.processInfo.operatingSystemVersionString,
         ]
         // Always present so version cohorts never collapse into a null bucket. The

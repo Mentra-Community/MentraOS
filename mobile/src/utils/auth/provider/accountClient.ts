@@ -15,6 +15,7 @@ import {MentraAuthSession, MentraAuthUser, MentraSigninResponse} from "@/utils/a
 import {AuthStateListener, createAuthStateFanout} from "@/utils/auth/provider/authStateFanout"
 import {randomUrlSafe, s256Challenge} from "@/utils/auth/pkce"
 import {resolvedEndpoints} from "@/services/cloudClient"
+import {deploymentStore} from "@/services/deployment"
 import {storage} from "@/utils/storage"
 
 const ACCESS_KEY = "mentra.account.accessToken"
@@ -61,6 +62,9 @@ function saveCachedProfile(user: MentraAuthUser): void {
 }
 
 function core(path: string): string {
+  if (deploymentStore.getActive().kind === "workspace") {
+    throw new Error("Mentra account services are unavailable in an organization workspace")
+  }
   return `${resolvedEndpoints().core.replace(/\/+$/, "")}${path}`
 }
 

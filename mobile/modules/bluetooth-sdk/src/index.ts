@@ -1,8 +1,10 @@
+import {parsePhotoCompression} from "@mentra/cloud-protocol/photo-compression"
 import PrivateBluetoothSdkModule from "./_private/BluetoothSdkModule"
 import type {
   BluetoothSdkEventListener,
   BluetoothSdkEventName,
   BluetoothSdkPublicModule,
+  PhotoCaptureDefaults,
   PublicBluetoothStatus,
   PublicGlassesStatus,
   VideoRecordingDefaults,
@@ -10,6 +12,8 @@ import type {
 import {getReleaseChangelogs} from "./changelogs"
 
 const PUBLIC_EVENT_NAMES = new Set<BluetoothSdkEventName>([
+  "native_notification_status",
+  "native_notification_delivery",
   "log",
   "device_discovered",
   "default_device_changed",
@@ -24,6 +28,8 @@ const PUBLIC_EVENT_NAMES = new Set<BluetoothSdkEventName>([
   "local_transcription",
   "wifi_status_change",
   "wifi_scan_result",
+  "wifi_forget_result",
+  "saved_wifi_networks",
   "hotspot_status_change",
   "hotspot_error",
   "photo_response",
@@ -85,6 +91,8 @@ const bindPublicMethod = <K extends keyof BluetoothSdkPublicModule>(name: K): Bl
 }
 
 export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
+  configureNativeNotifications: bindPublicMethod("configureNativeNotifications"),
+  getNativeNotificationStatus: bindPublicMethod("getNativeNotificationStatus"),
   addListener,
   getGlassesStatus: bindPublicMethod("getGlassesStatus"),
   getBluetoothStatus: bindPublicMethod("getBluetoothStatus"),
@@ -105,6 +113,7 @@ export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
   forget: bindPublicMethod("forget"),
   displayText: bindPublicMethod("displayText"),
   clearDisplay: bindPublicMethod("clearDisplay"),
+  setDashboardContent: bindPublicMethod("setDashboardContent"),
   showDashboard: bindPublicMethod("showDashboard"),
   setDashboardPosition: bindPublicMethod("setDashboardPosition"),
   setHeadUpAngle: bindPublicMethod("setHeadUpAngle"),
@@ -112,11 +121,13 @@ export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
   setScreenDisabled: bindPublicMethod("setScreenDisabled"),
   ping: bindPublicMethod("ping"),
   requestWifiScan: bindPublicMethod("requestWifiScan"),
+  getSavedWifiNetworks: bindPublicMethod("getSavedWifiNetworks"),
   sendWifiCredentials: bindPublicMethod("sendWifiCredentials"),
   forgetWifiNetwork: bindPublicMethod("forgetWifiNetwork"),
   setHotspotState: bindPublicMethod("setHotspotState"),
   setSystemTime: bindPublicMethod("setSystemTime"),
   setWifiAdbState: bindPublicMethod("setWifiAdbState"),
+  setGalleryServerEnabled: bindPublicMethod("setGalleryServerEnabled"),
   setGalleryModeEnabled: bindPublicMethod("setGalleryModeEnabled"),
   setVoiceActivityDetectionEnabled: bindPublicMethod("setVoiceActivityDetectionEnabled"),
   setLoudnessGateEnabled: bindPublicMethod("setLoudnessGateEnabled"),
@@ -125,7 +136,10 @@ export const BluetoothSdk: BluetoothSdkPublicModule = Object.freeze({
    * `requestPhoto(...)` options (e.g. `mode: "text"` for text sensor size/crop, or explicit per-shot
    * fields). Still functional until removed in a future release.
    */
-  setPhotoCaptureDefaults: bindPublicMethod("setPhotoCaptureDefaults"),
+  setPhotoCaptureDefaults: (settings: PhotoCaptureDefaults) => {
+    if (settings.compress !== undefined) parsePhotoCompression(settings.compress)
+    return bindPublicMethod("setPhotoCaptureDefaults")(settings)
+  },
   setVideoRecordingDefaults: ({width, height, fps}: VideoRecordingDefaults) => {
     const method = (PrivateBluetoothSdkModule as unknown as Record<string, unknown>).setVideoRecordingDefaults
     if (typeof method !== "function") {
@@ -275,6 +289,7 @@ export type {
   RgbLedControlResponseEvent,
   RgbLedControlSuccessResponseEvent,
   ScanModelOptions,
+  ScanDiagnostic,
   ScanOptions,
   ScanResultsCallback,
   SpeakingStatusEvent,
@@ -284,6 +299,7 @@ export type {
   SettingsAckSuccessStatus,
   SettingsAckStatus,
   StreamAudioConfig,
+  StreamDegradationPreference,
   StreamResolvedConfig,
   StreamStartRequest,
   StreamStatusEvent,
@@ -302,9 +318,19 @@ export type {
   VideoRecordingSuccessStatusEvent,
   VersionInfoEvent,
   VersionInfoResult,
+  SavedWifiNetworksEvent,
+  SavedWifiNetworksOutcome,
+  SavedWifiNetworksResult,
+  WifiForgetOutcome,
+  WifiForgetResult,
+  WifiForgetResultEvent,
+  LegacyWifiForgetResultEvent,
+  ModernWifiForgetResultEvent,
   WifiScanResultEvent,
   VoiceActivityDetectionStatusEvent,
   WifiSearchResult,
   WifiStatus,
   WifiStatusChangeEvent,
 } from "./BluetoothSdk.types"
+
+export type {NativeNotificationConfig, NativeNotificationStatus, NativeNotificationDelivery} from "./BluetoothSdk.types"

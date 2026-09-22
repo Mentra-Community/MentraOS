@@ -1,3 +1,4 @@
+import {parsePhotoCompression} from "@mentra/cloud-protocol/photo-compression"
 import type {PhotoRequestParams, PhotoSize, PhotoTransferMethod} from "../BluetoothSdk.types"
 
 const PHOTO_TRANSFER_METHODS = new Set<PhotoTransferMethod>(["auto", "direct", "ble"])
@@ -41,10 +42,13 @@ export function photoRequestParamsForNative(params: PhotoRequestParams): Record<
     mode: params.mode ?? "photo",
     transferMethod: photoTransferMethodForNative(params.transferMethod),
     webhookUrl: params.webhookUrl ?? "",
-    compress: params.compress,
+    compress: parsePhotoCompression(params.compress),
     sound: params.sound,
   }
   const requestId = nonBlankString(params.requestId)
+  if (params.presend_thumbnail === true) {
+    payload.presend_thumbnail = true
+  }
   if (requestId != null) {
     payload.requestId = requestId
   }

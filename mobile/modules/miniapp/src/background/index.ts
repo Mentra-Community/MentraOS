@@ -38,7 +38,7 @@ export type {
   TouchData,
   UnsubscribeFn,
 } from "../modules/events"
-export type {CalendarEvent, CalendarListOptions, CalendarListResult} from "../modules/phone"
+export type {CalendarEvent, CalendarListOptions, CalendarListResult, PhoneWifiEnableResult} from "../modules/phone"
 
 // Public envelope + protocol types so authors can write strongly-typed
 // glue when they need to fall back to session.sendOneShot / sendRequest.
@@ -89,6 +89,25 @@ export {BlobModule, BlobWriter, BlobReader, BLOB_WRITE_CHUNK_BYTES, BLOB_READ_AL
 export type {BlobMeta, BlobSetOptions, BlobSetFromUrlOptions, BlobImportOptions} from "../modules/blob"
 export {bytesToBase64, base64ToBytes} from "../modules/base64"
 export type {SpeakerModule} from "../modules/speaker"
+export type {
+  MeetingModule,
+  MeetingJoinOptions,
+  MeetingState,
+  MeetingPhase,
+  MeetingProvider,
+  MeetingVideoSource,
+  MeetingWhepVideoSource,
+  MeetingSoftApVideoSource,
+  MeetingParticipant,
+  MeetingParticipantState,
+  MeetingMediaSource,
+} from "../modules/meeting"
+export {
+  MEETING_HOST_UPDATE_MESSAGE,
+  parseMeetingMediaSource,
+  parseMeetingParticipants,
+  validateMeetingVideoSource,
+} from "../modules/meeting"
 export type {StreamModule} from "../modules/stream"
 export type {SystemModule} from "../modules/system"
 export type {TranscriptionModule} from "../modules/transcription"
@@ -133,10 +152,13 @@ export type {
   PermissionRecord,
   GlassesCapabilities,
   ConnectAckPayload,
+  HostFeatures,
   MiniappAuthState,
   MiniappRequestError,
 } from "../session"
 export type {AuthFetchOptions, AuthModule} from "../modules/auth"
+export {MiniappConfigurationError} from "../modules/configuration"
+export type {ConfigurationModule} from "../modules/configuration"
 export type {MiniappColorScheme} from "../globals"
 // Navigation — exported as a single block since the types reference each other.
 export type {

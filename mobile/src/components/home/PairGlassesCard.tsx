@@ -1,16 +1,18 @@
+import {DeviceTypes, engine} from "@mentra/engine"
+import {useState} from "react"
 import {View, ViewStyle} from "react-native"
 
 import {Button, Text} from "@/components/ignite"
-import {useAppTheme} from "@/contexts/ThemeContext"
-import {useNavigationStore} from "@/stores/navigation"
 import GlassView from "@/components/ui/GlassView"
-import {engine} from "@mentra/engine"
-import {useState} from "react"
+import {useAppTheme} from "@/contexts/ThemeContext"
+import {isGlassesModelAllowedByDeployment} from "@/services/deployment/glassesPolicy"
+import {useNavigationStore} from "@/stores/navigation"
 
 export const PairGlassesCard = ({style}: {style?: ViewStyle}) => {
   const {theme} = useAppTheme()
   const {push} = useNavigationStore.getState()
   const [started, setStarted] = useState(false)
+  const simulatedGlassesAllowed = isGlassesModelAllowedByDeployment(DeviceTypes.SIMULATED)
 
   if (!started) {
     return (
@@ -23,13 +25,15 @@ export const PairGlassesCard = ({style}: {style?: ViewStyle}) => {
             preset="primary"
             onPress={() => push("/pairing/select-glasses-model")}
           />
-          <Button
-            flex={false}
-            tx="home:setupWithoutGlasses"
-            preset="secondary"
-            style={{backgroundColor: theme.colors.background}}
-            onPress={() => setStarted(true)}
-          />
+          {simulatedGlassesAllowed && (
+            <Button
+              flex={false}
+              tx="home:setupWithoutGlasses"
+              preset="secondary"
+              style={{backgroundColor: theme.colors.background}}
+              onPress={() => setStarted(true)}
+            />
+          )}
         </View>
       </GlassView>
     )

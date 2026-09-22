@@ -3,8 +3,8 @@ package com.mentra.asg_client.service.communication.reliability;
 import java.util.Set;
 
 /**
- * Simple reliability checker - mirrors phone's boolean approach.
- * Determines which messages need ACK/retry based on type.
+ * Simple reliability checker - mirrors phone's boolean approach. Determines which messages need
+ * ACK/retry based on type.
  */
 public class MessageReliability {
 
@@ -18,15 +18,16 @@ public class MessageReliability {
         "video_failed",
         "auth_token_status",
 
-        // Important status changes
-        "error",
-        "wifi_connected",
-        "wifi_disconnected",
-        "settings_updated",
-        "ota_download_progress",
-        "ota_installation_progress",
-        "ota_status"
-    );
+                    // Important status changes
+                    "error",
+                    "wifi_connected",
+                    "wifi_disconnected",
+                    "wifi_forget_result",
+                    "saved_wifi_networks",
+                    "settings_updated",
+                    "ota_download_progress",
+                    "ota_installation_progress",
+                    "ota_status");
 
     // Messages that NEVER get retry (prevent loops)
     private static final Set<String> NEVER_RETRY = Set.of(
@@ -36,6 +37,7 @@ public class MessageReliability {
 
     /**
      * Simple boolean check - does this message need reliability?
+     *
      * @param messageType The message type to check
      * @return true if the message needs ACK/retry, false otherwise
      */

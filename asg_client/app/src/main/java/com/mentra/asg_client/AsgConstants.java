@@ -1,6 +1,56 @@
 package com.mentra.asg_client;
 
 public class AsgConstants {
+    /** Packaged camera feedback format, matching the BES I2S output rate. */
+    public static final int CAMERA_PCM_SAMPLE_RATE = 48000;
+    /** Bound camera cue preload memory even if a packaged asset is replaced. */
+    public static final int CAMERA_PCM_MAX_ASSET_BYTES = 256 * 1024;
+    /** Fifty 900 ms periods preserve the existing 45-second prep safety bound. */
+    public static final int CAMERA_PCM_PREP_PERIODS = 50;
+
+    /** Saved, default-off opt-in to unauthenticated HTTP gallery access on site Wi-Fi. */
+    public static final String GALLERY_SERVER_ENABLED_PREFERENCE = "gallery_server_enabled";
+    /** Retry persistent gallery server startup after a transient failure. */
+    public static final long GALLERY_SERVER_RECONCILE_INTERVAL_MS = 5_000L;
+    /** Bound manifest responses while letting a several-hundred-item gallery use one scan. */
+    public static final int GALLERY_MAX_MANIFEST_PAGE_SIZE = 500;
+    /** Keep BES receiving across the prep-to-snap gap and successive short cues. */
+    public static final long I2S_IDLE_CLOSE_MS = 750L;
+
+    /** Bound a missing readiness reply without playing into a closed BES input. */
+    public static final long I2S_READY_TIMEOUT_MS = 1500L;
+
+    /** Compatibility only for BES firmware without the readiness acknowledgement. */
+    public static final long I2S_LEGACY_SETTLE_MS = 250L;
+
+    /** Internal service extra carrying the correlated BES START request. */
+    public static final String EXTRA_I2S_REQUEST_ID = "i2s_request_id";
+
+    /** Maximum wait for Camera2 re-registration before a FOV readiness error. */
+    public static final long CAMERA_FOV_READY_TIMEOUT_MS = 20_000L;
+
+    /** BLE command/response delivery margin for the bounded FOV update contract. */
+    public static final long CAMERA_FOV_DELIVERY_MARGIN_MS = 5_000L;
+
+    /** One active restart plus one coalesced pending restart, with BLE delivery margin.
+     * Mirrored by CAMERA_FOV_REQUEST_TIMEOUT_MS / cameraFovRequestTimeoutMs in the
+     * Android/iOS MentraBluetoothSdk facades; keep the three contracts in sync.
+     */
+    public static final long CAMERA_FOV_REQUEST_TIMEOUT_MS =
+            2 * CAMERA_FOV_READY_TIMEOUT_MS + CAMERA_FOV_DELIVERY_MARGIN_MS;
+
+    /** Check registration without blocking the main lifecycle thread. */
+    public static final long CAMERA_FOV_READY_POLL_MS = 250L;
+
+    /** A charger never permits camera use at or below this known battery percentage. */
+    public static final int CAMERA_CHARGING_BATTERY_FLOOR = 3;
+
+    /** Expire the low-battery exception if fresh BES charger replies stop arriving. */
+    public static final long CAMERA_ACTIVE_CHARGE_MAX_AGE_MS = 30_000L;
+
+    /** Refresh charger evidence before expiry, without blocking camera or UART threads. */
+    public static final long CAMERA_BATTERY_REFRESH_MS = 5_000L;
+
     /** Mentra Live hotspot idle timeout after the last local HTTP activity. */
     public static final long HOTSPOT_INACTIVITY_TIMEOUT_MS = 120_000L;
 
@@ -34,6 +84,16 @@ public class AsgConstants {
     /** Protocol version for phone-served OTA artifacts over the Mentra Live hotspot. */
     public static final int HOTSPOT_OTA_VERSION = 1;
 
+    /** Bounded MTK ZIP download size, including full system OTAs (~611 MiB today). */
+    public static final long MTK_OTA_MAX_DOWNLOAD_BYTES = 1024L * 1024 * 1024;
+    /** Non-retryable until the user frees storage on the glasses. */
+    public static final String OTA_INSUFFICIENT_STORAGE = "insufficient_storage";
+    /** Protocol version for session-correlated {@code wifi_forget_result} responses. */
+    public static final int WIFI_FORGET_RESULT_VERSION = 1;
+
+    /** Protocol version for session-correlated saved WiFi network responses. */
+    public static final int SAVED_WIFI_NETWORKS_VERSION = 1;
+
     /** Canonical camera crop defaults shared with the phone and Bluetooth SDK. */
     public static final int CAMERA_FOV_DEFAULT = 118;
 
@@ -51,7 +111,10 @@ public class AsgConstants {
     /**
      * 1Hz encoder FPS/bitrate/dropped-frame telemetry ({@code [STREAM_QUALITY]} and BLE {@code
      * stream_status.stats}). Lifecycle {@code stream_status} (started/stopped/error) is unaffected.
-     * Keep false in production; flip locally to debug the Mentra Call FPS ladder.
+     * Build-time DEFAULT only: the live switch is {@link
+     * com.mentra.asg_client.io.streaming.StreamTelemetryPolicy}, which the phone flips per stream
+     * via {@code start_stream.telemetry} (compact {@code tl}). Keep false here; opt in from the
+     * phone when the temperature / FPS ladder is needed.
      *
      * <p>Double gate: reporters are not scheduled, and {@code onStreamMetrics} returns immediately
      * so accidental emission cannot reach BLE. Manual acceptance with every layer false: join
@@ -60,12 +123,37 @@ public class AsgConstants {
     public static final boolean ENABLE_PIPELINE_FPS_TELEMETRY = false;
 
     /**
-     * Local-testing stopgap that disables the 60s keep-alive watchdog for RTMP/SRT/WHIP streams.
-     * When true, {@code scheduleStreamTimeout()} early-returns and an orphaned stream (lost
-     * phone/cloud keep-alives via BLE disconnect or killed app) never auto-stops, holding the
-     * camera and draining battery/thermals. MUST stay false for production; flip locally only.
+     * 1Hz {@code [STREAM_PIPELINE]} send-side diagnosis: the encoder's own adaptation reason, the
+     * resolution it actually produced, per-frame encode cost, and link RTT/loss.
+     *
+     * <p>Separate from {@link #ENABLE_PIPELINE_FPS_TELEMETRY} because that flag gates BLE emission
+     * as well as logging, so leaving it off — which production must — also blinds us to why a call
+     * looks bad. This one is logcat-only and never reaches a callback, which is what makes it safe
+     * to leave on: the wearer's device says which stage is limiting the picture without sending
+     * anything anywhere.
      */
-    public static final boolean DISABLE_STREAM_KEEP_ALIVE_TIMEOUT = false;
+    public static final boolean ENABLE_CALL_PIPELINE_DIAGNOSTICS = true;
+
+    /** Tolerate brief phone BLE outages before releasing a remotely owned camera stream. */
+    public static final long STREAM_PHONE_DISCONNECT_GRACE_MS = 10_000L;
+
+    /** Native controller challenge cadence; retransmission never renews the response deadline. */
+    public static final long STREAM_CONTROLLER_PROBE_INTERVAL_MS = 2_000L;
+
+    /** Stop capture after sustained app unresponsiveness, even if the OS retains BLE. */
+    public static final long STREAM_CONTROLLER_RESPONSE_TIMEOUT_MS = 10_000L;
+
+    /** Glasses-owned start/stop control with process-scoped, revisioned status snapshots. */
+    public static final int STREAM_CONTROL_VERSION = 1;
+
+    /** Refresh local stream resource leases without relying on phone or cloud keep-alives. */
+    public static final long STREAM_RESOURCE_REFRESH_MS = 30_000L;
+
+    /** Bounded CPU lease renewed only while a stream session owns capture. */
+    public static final long STREAM_CPU_LEASE_MS = 90_000L;
+
+    /** Allow WebRTC to recover a brief publisher disconnect before rebuilding the connection. */
+    public static final long WHIP_PUBLISHER_DISCONNECT_GRACE_MS = 2_000L;
 
     /** Linux thermal sysfs root used to discover the Mentra Live CPU sensor. */
     public static final String THERMAL_SYSFS_ROOT = "/sys/class/thermal";
@@ -79,10 +167,26 @@ public class AsgConstants {
     /** Warm-up leases are intentionally short-lived to bound idle camera power use. */
     public static final long CAMERA_WARM_UP_DEFAULT_DURATION_MS = 15_000L;
 
-    public static final long CAMERA_WARM_UP_MAX_DURATION_MS = 60_000L;
+    public static final long CAMERA_WARM_UP_MAX_DURATION_MS = 300_000L;
+
+    /**
+     * Shortest gap between two camera-button photos. Presses inside this window are dropped.
+     *
+     * <p>Sized off camera_snap.wav (515ms) so two shutters can never overlap: every camera sound
+     * is played by ASG through the I2S bridge to BES, and starting overlapping MediaPlayers on
+     * that path is what makes rapid button mashing garble audio. One photo per second still does
+     * not feel like waiting on a cooldown.
+     */
+    public static final long BUTTON_PHOTO_MIN_INTERVAL_MS = 1_000L;
 
     /** Cadence for the short hold-still click while a cold photo spins up the camera. */
     public static final long CAMERA_PREP_CLICK_INTERVAL_MS = 900L;
+
+    /** The 186ms prep beep plus a tail margin; only stop the sequence in its silence. */
+    public static final long CAMERA_PREP_STOP_AFTER_MS = 240L;
+
+    /** Avoid stopping near the next beep when playback-position reporting is slightly behind. */
+    public static final long CAMERA_PREP_STOP_BEFORE_MS = 800L;
 
     /** Minimum AE settling time after first convergence for a cold camera photo. */
     public static final long COLD_CAMERA_EXPOSURE_SETTLE_DELAY_MS = 475L;
@@ -105,8 +209,11 @@ public class AsgConstants {
     /** Target lead before the estimated end of sensor exposure for starting the camera snap. */
     public static final long CAMERA_SNAP_TARGET_LEAD_MS = 100L;
 
-    /** Duration of the user-visible RGB photo indicator, triggered at the capture boundary. */
-    public static final int PHOTO_LIGHT_DURATION_MS = 2200;
+    /** Minimum paired photo-indicator duration from request acceptance. */
+    public static final int PHOTO_LIGHT_DURATION_MS = 1500;
+
+    /** BES auto-off backstop if Android dies; exceeds the 105-second photo job watchdog. */
+    public static final int PHOTO_LIGHT_FAILSAFE_MS = 120_000;
 
     /** Maximum wait for a submitted still capture to produce its final JPEG. */
     public static final long PHOTO_CAPTURE_TIMEOUT_MS = 45_000L;
@@ -261,9 +368,9 @@ public class AsgConstants {
     public static final long UART_BOOT_RECOVERY_INITIAL_DELAY_MS = 8000;
 
     /**
-     * Grace after bounded UART recovery is exhausted before a BES OTA timeout becomes terminal.
-     * BES can finish rebooting after the transport scan, and an exact target-version reply from
-     * that later Linux boot is authoritative.
+     * Grace after bounded UART recovery is exhausted before a BES OTA timeout becomes terminal. BES
+     * can finish rebooting after the transport scan, and an exact target-version reply from that
+     * later Linux boot is authoritative.
      */
     public static final long BES_OTA_RECOVERY_FAILURE_GRACE_MS = 30000;
 
@@ -302,6 +409,41 @@ public class AsgConstants {
 
     /** Time allowed for BES to reboot at the rendezvous baud after applying an OTA image. */
     public static final long BES_OTA_RECONNECT_DELAY_MS = 2500;
+
+    /** How often the BES liveness watchdog re-evaluates how long the UART has been quiet. */
+    public static final long BES_LIVENESS_TICK_MS = 1000;
+
+    /**
+     * Silence durations that each earn one {@code bes_uart_silent} record.
+     *
+     * <p>Starts at 3s because BES pushes unsolicited battery/BT/RSSI traffic more often than that,
+     * and runs to 120s so a stall that outlives the watchdog is still bounded in the log.
+     */
+    public static final long[] BES_LIVENESS_SILENCE_RUNGS_MS = {
+        3_000, 6_000, 10_000, 15_000, 20_000, 30_000, 45_000, 60_000, 90_000, 120_000
+    };
+
+    /**
+     * Silence that is already a fault while a stream runs.
+     *
+     * <p>Streaming BES delivers the LC3 mic uplink and stream-controller probe acks continuously,
+     * so it is never legitimately quiet this long. Off-stream the same gap is routine: an idle
+     * Classic link parks in sniff mode and BES can stay silent for 30s or more.
+     */
+    public static final long BES_STREAM_SILENCE_FAULT_MS = 4_000;
+
+    /**
+     * Silence after which a stalled BES is poked once with the cheap system-version request.
+     *
+     * <p>Deliberately a probe and not a {@code mh_logs} trace dump: the dump streams the whole
+     * ~65KB ring back in ~450-byte chunks that each fan out to several log lines, which spiked
+     * glasses CPU and evicted the crash window it was meant to preserve. It also cannot capture a
+     * boot banner — the fetch takes long enough that the ring has already rotated past it.
+     */
+    public static final long BES_STALL_PROBE_SILENCE_MS = 6_000;
+
+    /** Minimum spacing between stall probes, so a wedged chip cannot be polled in a tight loop. */
+    public static final long BES_STALL_PROBE_MIN_SPACING_MS = 15_000;
 
     // RGB LED Control Constants (Glasses BES Chipset - Remote Control via Bluetooth)
     // NOTE: These are different from the local MTK recording LED
@@ -347,7 +489,26 @@ public class AsgConstants {
      * transfer pipeline. Filter logcat on tag {@code BlePhotoTiming} or prefix {@code ⏱️ [BLE
      * PHOTO]}. Keep false in production.
      */
-    public static final boolean ENABLE_PHOTO_TIMING_LOGS = true;
+    public static final boolean ENABLE_PHOTO_TIMING_LOGS = false;
+
+    /** Opt-in SDK preview: preserve aspect ratio, never upscale. */
+    public static final int PHOTO_THUMBNAIL_LONG_EDGE = 500;
+
+    public static final int PHOTO_THUMBNAIL_JPEG_QUALITY = 50;
+
+    /** Bound the preview's wait for phone acknowledgement before starting full delivery. */
+    public static final int PHOTO_THUMBNAIL_TIMEOUT_SECONDS = 30;
+
+  /** Full-image delivery allowance after the preview ACK (includes upload or BLE fallback). */
+  public static final long PHOTO_DELIVERY_TIMEOUT_MS = 30_000L;
+  /** Glasses job budget: capture + preview transfer/retries + full delivery, without timer resets. */
+  public static final long PHOTO_THUMBNAIL_JOB_TIMEOUT_MS =
+      PHOTO_CAPTURE_TIMEOUT_MS + PHOTO_THUMBNAIL_TIMEOUT_SECONDS * 1000L + PHOTO_DELIVERY_TIMEOUT_MS;
+  /** Command/terminal-event transit margin; mirrored by both Bluetooth SDK facades. */
+  public static final long PHOTO_RESPONSE_MARGIN_MS = 5_000L;
+  /** SDK end-to-end deadline. Keep Android/iOS MentraBluetoothSDK photo constants in sync. */
+  public static final long PHOTO_THUMBNAIL_REQUEST_TIMEOUT_MS =
+      PHOTO_THUMBNAIL_JOB_TIMEOUT_MS + PHOTO_RESPONSE_MARGIN_MS;
 
     /**
      * ZSL preview/capture buffering kill switch. Disable only as an emergency; normal photo capture
@@ -427,9 +588,15 @@ public class AsgConstants {
     public static final String BLE_PHOTO_CODEC = "JPEG_FAST";
 
     /**
-     * JPEG quality for all BLE photo payloads when {@link #BLE_PHOTO_CODEC} is {@code JPEG_FAST}.
+     * Delivered JPEG quality when compression is none or omitted (still lossy JPEG).
      */
-    public static final int BLE_PHOTO_JPEG_FAST_QUALITY = 80;
+    public static final int PHOTO_JPEG_QUALITY_NONE = 95;
+    /** Delivered JPEG quality for low compression. */
+    public static final int PHOTO_JPEG_QUALITY_LOW = 88;
+    /** Delivered JPEG quality for medium compression. */
+    public static final int PHOTO_JPEG_QUALITY_MEDIUM = 78;
+    /** Delivered JPEG quality for high compression. */
+    public static final int PHOTO_JPEG_QUALITY_HIGH = 60;
 
     /**
      * Log UART file-transfer send progress every N packets. {@code 0} = off (start/end/errors
@@ -482,8 +649,8 @@ public class AsgConstants {
     public static final int BLE_PHOTO_MAX_TARGET_PX = 1920;
 
     /**
-     * Phone → glasses JSON command type to enable or disable Wi-Fi ADB (Mentra Live).
-     * Persisted via AsgSettings and applied at boot (default off).
+     * Phone → glasses JSON command type to enable or disable Wi-Fi ADB (Mentra Live). Persisted via
+     * AsgSettings and applied at boot (default off).
      */
     public static final String COMMAND_SET_WIFI_ADB_STATE = "set_wifi_adb_state";
 }

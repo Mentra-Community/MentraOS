@@ -1,7 +1,7 @@
 package com.mentra.bluetoothsdk
 
 internal fun numberValue(
-    values: Map<String, Any>,
+    values: Map<String, Any?>,
     vararg keys: String,
 ): Int? =
     keys.firstNotNullOfOrNull { key ->
@@ -9,7 +9,7 @@ internal fun numberValue(
     }
 
 internal fun doubleValue(
-    values: Map<String, Any>,
+    values: Map<String, Any?>,
     vararg keys: String,
 ): Double? =
     keys.firstNotNullOfOrNull { key ->
@@ -17,7 +17,7 @@ internal fun doubleValue(
     }
 
 internal fun stringValue(
-    values: Map<String, Any>,
+    values: Map<String, Any?>,
     vararg keys: String,
 ): String? =
     keys.firstNotNullOfOrNull { key ->
@@ -25,7 +25,7 @@ internal fun stringValue(
     }
 
 internal fun boolValue(
-    values: Map<String, Any>,
+    values: Map<String, Any?>,
     vararg keys: String,
 ): Boolean? =
     keys.firstNotNullOfOrNull { key ->
@@ -33,7 +33,7 @@ internal fun boolValue(
     }
 
 internal fun longValue(
-    values: Map<String, Any>,
+    values: Map<String, Any?>,
     vararg keys: String,
 ): Long? =
     keys.firstNotNullOfOrNull { key ->
@@ -41,7 +41,7 @@ internal fun longValue(
     }
 
 internal fun hasAnyKey(
-    values: Map<String, Any>,
+    values: Map<String, Any?>,
     vararg keys: String,
 ): Boolean = keys.any(values::containsKey)
 
@@ -53,7 +53,7 @@ internal fun Map<*, *>.stringKeyedMap(): Map<String, Any> =
     }.toMap()
 
 internal fun optionalNumberValue(
-    values: Map<String, Any>,
+    values: Map<String, Any?>,
     vararg keys: String,
 ): Int? =
     if (hasAnyKey(values, *keys)) {
@@ -63,7 +63,7 @@ internal fun optionalNumberValue(
     }
 
 internal fun optionalLongValue(
-    values: Map<String, Any>,
+    values: Map<String, Any?>,
     vararg keys: String,
 ): Long? =
     if (hasAnyKey(values, *keys)) {
@@ -73,7 +73,7 @@ internal fun optionalLongValue(
     }
 
 internal fun optionalStringValue(
-    values: Map<String, Any>,
+    values: Map<String, Any?>,
     vararg keys: String,
 ): String? =
     if (hasAnyKey(values, *keys)) {
@@ -83,7 +83,7 @@ internal fun optionalStringValue(
     }
 
 internal fun optionalBoolValue(
-    values: Map<String, Any>,
+    values: Map<String, Any?>,
     vararg keys: String,
 ): Boolean? =
     if (hasAnyKey(values, *keys)) {
@@ -93,12 +93,12 @@ internal fun optionalBoolValue(
     }
 
 internal fun stringListValue(
-    values: Map<String, Any>,
+    values: Map<String, Any?>,
     key: String,
 ): List<String> = (values[key] as? List<*>)?.mapNotNull { it as? String } ?: emptyList()
 
 internal fun optionalStringListValue(
-    values: Map<String, Any>,
+    values: Map<String, Any?>,
     key: String,
 ): List<String>? =
     if (values.containsKey(key)) {
@@ -108,13 +108,13 @@ internal fun optionalStringListValue(
     }
 
 internal fun mapListValue(
-    values: Map<String, Any>,
+    values: Map<String, Any?>,
     key: String,
 ): List<Map<String, Any>> =
     (values[key] as? List<*>)?.mapNotNull(::stringMapValue) ?: emptyList()
 
 internal fun optionalMapListValue(
-    values: Map<String, Any>,
+    values: Map<String, Any?>,
     key: String,
 ): List<Map<String, Any>>? =
     if (values.containsKey(key)) {

@@ -87,7 +87,7 @@ interface RuntimeModule {
   onTranscript(handler: (data: TranscriptionData) => void): () => void
   onTranslation(handler: (data: TranslationData) => void): () => void
 
-  requestManagedPhoto(opts: PhotoOptions): Promise<{ requestId: string; readUrl: string }>
+  requestManagedPhoto(): Promise<{ requestId: string; readUrl: string }>
   startManagedStream(opts: StreamOptions): Promise<ManagedStream>
   stopManagedStream(streamId: string): Promise<void>
 

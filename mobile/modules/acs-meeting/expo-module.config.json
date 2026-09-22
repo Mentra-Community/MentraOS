@@ -1,0 +1,9 @@
+{
+  "platforms": ["apple", "android"],
+  "apple": {
+    "modules": ["AcsMeetingModule"]
+  },
+  "android": {
+    "modules": ["com.mentra.acsmeeting.AcsMeetingModule"]
+  }
+}

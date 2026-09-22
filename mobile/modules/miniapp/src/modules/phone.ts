@@ -136,6 +136,13 @@ function normalizeCalendarDate(value: string | Date | undefined, field: string):
   return date.toISOString()
 }
 
+export interface PhoneWifiEnableResult {
+  /** True/false on Android. On iOS, true if connected to Wi-Fi, otherwise null. */
+  enabled: boolean | null
+  /** The user cancelled the prompt, or did not return from Settings within five minutes. */
+  cancelled: boolean
+}
+
 export class PhoneModule {
   public readonly notifications: PhoneNotificationsModule
   public readonly calendar: PhoneCalendarModule
@@ -143,6 +150,30 @@ export class PhoneModule {
   constructor(private readonly session: MiniappSession) {
     this.notifications = new PhoneNotificationsModule(session)
     this.calendar = new PhoneCalendarModule(session)
+  }
+
+  /**
+   * Read phone Wi-Fi availability, independent of internet or glasses Wi-Fi.
+   * Android reads the radio switch. iOS has no public radio-state API: a Wi-Fi
+   * connection returns true; otherwise null (unknown), never false.
+   */
+  isWifiEnabled(): Promise<boolean | null> {
+    return this.session.sendRequest<boolean | null>({type: MiniappRequestType.PHONE_IS_WIFI_ENABLED})
+  }
+
+  /**
+   * Present a host prompt with an optional user-facing reason, then open the
+   * Android Wi-Fi panel or iOS Settings. Resolves after returning and rechecking
+   * Wi-Fi; cancellation is explicit. Already-enabled Wi-Fi resolves immediately.
+   * A null result permits trying the normal system hotspot join on iOS; it does
+   * not confirm that Wi-Fi is on. This never toggles Wi-Fi or joins a network.
+   * Older hosts reject with NOT_IMPLEMENTED. Call from a user-initiated flow.
+   */
+  requestWifiEnable(reason?: string): Promise<PhoneWifiEnableResult> {
+    return this.session.sendRequest<PhoneWifiEnableResult>(
+      {type: MiniappRequestType.PHONE_REQUEST_WIFI_ENABLE, reason},
+      {timeoutMs: 0},
+    )
   }
 
   /**

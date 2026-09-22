@@ -4,18 +4,28 @@ public struct StreamVideoConfig {
     public let width: Int?
     public let height: Int?
     public let bitrate: Int?
+    public let minBitrateBps: Int?
+    public let initialBitrateBps: Int?
     public let fps: Int?
+    /// WHIP adaptation policy; nil preserves the glasses' MAINTAIN_FRAMERATE default.
+    public let degradationPreference: String?
 
     public init(
         width: Int? = nil,
         height: Int? = nil,
         bitrate: Int? = nil,
-        fps: Int? = nil
+        fps: Int? = nil,
+        minBitrateBps: Int? = nil,
+        initialBitrateBps: Int? = nil,
+        degradationPreference: String? = nil
     ) {
         self.width = width
         self.height = height
         self.bitrate = bitrate
+        self.minBitrateBps = minBitrateBps
+        self.initialBitrateBps = initialBitrateBps
         self.fps = fps
+        self.degradationPreference = degradationPreference
     }
 
     var dictionary: [String: Any] {
@@ -23,6 +33,9 @@ public struct StreamVideoConfig {
         if let width { values["width"] = width }
         if let height { values["height"] = height }
         if let bitrate { values["bitrate"] = bitrate }
+        if let minBitrateBps { values["minBitrateBps"] = minBitrateBps }
+        if let initialBitrateBps { values["initialBitrateBps"] = initialBitrateBps }
+        if let degradationPreference { values["degradationPreference"] = degradationPreference }
         // ASG stream parsers shipped with the BLE key named "frameRate".
         if let fps { values["frameRate"] = fps }
         return values
@@ -34,7 +47,10 @@ public struct StreamVideoConfig {
             width: intValue(values["width"]),
             height: intValue(values["height"]),
             bitrate: intValue(values["bitrate"]),
-            fps: intValue(values["fps"])
+            fps: intValue(values["fps"]),
+            minBitrateBps: intValue(values["minBitrateBps"]),
+            initialBitrateBps: intValue(values["initialBitrateBps"]),
+            degradationPreference: stringValue(values, "degradationPreference", "dp")
         )
     }
 }
@@ -77,6 +93,34 @@ public struct StreamAudioConfig {
     }
 }
 
+/// ICE overrides for a WHIP stream. Ignored by the RTMP and SRT paths.
+public struct StreamIceConfig {
+    /// STUN server the glasses use while gathering candidates.
+    ///
+    /// `nil` and empty are different answers, and both have to survive the BLE round trip. `nil`
+    /// leaves the glasses on their default Cloudflare STUN server; an empty string is an explicit
+    /// request for host-only gathering, which is what a WHIP server on the glasses' own hotspot
+    /// needs, since a reflexive candidate there is meaningless and unreachable.
+    public let stun: String?
+
+    public init(stun: String? = nil) {
+        self.stun = stun
+    }
+
+    var dictionary: [String: Any] {
+        var values: [String: Any] = [:]
+        // Not filtered on emptiness, unlike the other optional string fields here: "" is the
+        // host-only signal, so dropping it would silently restore the default STUN server.
+        if let stun { values["stun"] = stun }
+        return values
+    }
+
+    init?(values: [String: Any]?) {
+        guard let values else { return nil }
+        self.init(stun: values["stun"] as? String ?? values["s"] as? String)
+    }
+}
+
 /// Effective video settings reported by the glasses after defaults and clamps.
 public struct StreamResolvedVideoConfig: Equatable {
     /// Encoded output width sent to the stream endpoint.
@@ -91,6 +135,8 @@ public struct StreamResolvedVideoConfig: Equatable {
     public let bitrate: Int
     /// Resolved capture/encode frame rate.
     public let fps: Double
+    /// Applied WHIP adaptation policy; absent on older firmware and other transports.
+    public let degradationPreference: String?
 
     public init(
         width: Int,
@@ -98,7 +144,8 @@ public struct StreamResolvedVideoConfig: Equatable {
         captureWidth: Int? = nil,
         captureHeight: Int? = nil,
         bitrate: Int,
-        fps: Double
+        fps: Double,
+        degradationPreference: String? = nil
     ) {
         self.width = width
         self.height = height
@@ -106,6 +153,7 @@ public struct StreamResolvedVideoConfig: Equatable {
         self.captureHeight = captureHeight
         self.bitrate = bitrate
         self.fps = fps
+        self.degradationPreference = degradationPreference
     }
 
     init?(values: [String: Any]?) {
@@ -123,7 +171,8 @@ public struct StreamResolvedVideoConfig: Equatable {
             captureWidth: intValue(values["captureWidth"]),
             captureHeight: intValue(values["captureHeight"]),
             bitrate: bitrate,
-            fps: fps
+            fps: fps,
+            degradationPreference: stringValue(values, "degradationPreference", "dp")
         )
     }
 
@@ -136,6 +185,7 @@ public struct StreamResolvedVideoConfig: Equatable {
         ]
         if let captureWidth { values["captureWidth"] = captureWidth }
         if let captureHeight { values["captureHeight"] = captureHeight }
+        if let degradationPreference { values["degradationPreference"] = degradationPreference }
         return values
     }
 }
@@ -275,6 +325,12 @@ public struct StreamRequest {
     public let video: StreamVideoConfig?
     public let audio: StreamAudioConfig?
     public let authToken: String?
+    public let captureAudio: Bool
+    public let ice: StreamIceConfig?
+    /// Correlation id the glasses echo in every SOFTAP_TRACE line, so phone and glasses logs can
+    /// be joined despite unsynchronised clocks.
+    public let traceId: String?
+    public let telemetry: Bool?
 
     public init(
         streamUrl: String,
@@ -282,7 +338,11 @@ public struct StreamRequest {
         sound: Bool = true,
         video: StreamVideoConfig? = nil,
         audio: StreamAudioConfig? = nil,
-        authToken: String? = nil
+        authToken: String? = nil,
+        captureAudio: Bool = true,
+        ice: StreamIceConfig? = nil,
+        traceId: String? = nil,
+        telemetry: Bool? = nil
     ) {
         self.streamUrl = streamUrl
         self.streamId = streamId
@@ -290,9 +350,22 @@ public struct StreamRequest {
         self.video = video
         self.audio = audio
         self.authToken = authToken
+        self.captureAudio = captureAudio
+        self.ice = ice
+        self.traceId = traceId
+        self.telemetry = telemetry
     }
 
     init(values: [String: Any]) {
+        let telemetryValue: Bool?
+        if let telemetry = values["telemetry"] as? Bool {
+            telemetryValue = telemetry
+        } else if let tl = values["tl"] as? Bool {
+            telemetryValue = tl
+        } else {
+            telemetryValue = nil
+        }
+
         self.init(
             streamUrl: values["streamUrl"] as? String
                 ?? values["rtmpUrl"] as? String
@@ -303,7 +376,13 @@ public struct StreamRequest {
             sound: values["sound"] as? Bool ?? true,
             video: StreamVideoConfig(values: values["video"] as? [String: Any]),
             audio: StreamAudioConfig(values: values["audio"] as? [String: Any]),
-            authToken: values["authToken"] as? String ?? values["auth_token"] as? String
+            authToken: values["authToken"] as? String ?? values["auth_token"] as? String,
+            captureAudio: (values["captureAudio"] as? Bool) ?? (values["ca"] as? Bool) ?? true,
+            ice: StreamIceConfig(
+                values: (values["ice"] as? [String: Any]) ?? (values["i"] as? [String: Any])
+            ),
+            traceId: values["traceId"] as? String,
+            telemetry: telemetryValue
         )
     }
 
@@ -321,6 +400,18 @@ public struct StreamRequest {
         }
         if let authToken, !authToken.isEmpty {
             values["authToken"] = authToken
+        }
+        if !captureAudio {
+            values["captureAudio"] = false
+        }
+        if let iceValues = ice?.dictionary, !iceValues.isEmpty {
+            values["ice"] = iceValues
+        }
+        if let traceId, !traceId.isEmpty {
+            values["traceId"] = traceId
+        }
+        if let telemetry {
+            values["telemetry"] = telemetry
         }
         return values
     }
@@ -612,6 +703,10 @@ public enum StreamStatus: CustomStringConvertible, Equatable {
 public struct StreamStatusEvent: CustomStringConvertible {
     public let status: StreamStatus
     public let stats: StreamLiveStats?
+    public private(set) var processSessionId: String?
+    public private(set) var revision: Int?
+    public private(set) var terminal: Bool?
+    public private(set) var errorDetails: String?
     /// True when the glasses will retry the failed publisher themselves
     /// (emitting side lands in PR #3488); absent on older firmware and on
     /// events not parsed from a glasses status map. Carried here instead of
@@ -627,6 +722,10 @@ public struct StreamStatusEvent: CustomStringConvertible {
         status = StreamStatus(values: values)
         stats = StreamLiveStats(values: values["stats"] as? [String: Any])
         willRetry = boolValue(values, "willRetry")
+        processSessionId = stringValue(values, "sid")
+        revision = optionalIntValue(values, "revision")
+        terminal = boolValue(values, "terminal")
+        errorDetails = stringValue(values, "errorDetails")
     }
 
     public var state: StreamState {
@@ -644,6 +743,10 @@ public struct StreamStatusEvent: CustomStringConvertible {
     public var values: [String: Any] {
         var values = status.values
         values["type"] = "stream_status"
+        if let processSessionId { values["sid"] = processSessionId }
+        if let revision { values["revision"] = revision }
+        if let terminal { values["terminal"] = terminal }
+        if let errorDetails { values["errorDetails"] = errorDetails }
         if let stats {
             values["stats"] = stats.values
         }

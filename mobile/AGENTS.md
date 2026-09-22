@@ -14,6 +14,7 @@ The Mentra App is a React Native app built with Expo and expo-router for file-ba
 - Start dev server: `bun start` (expo start --dev-client)
 - Run on Android: `bun android` (expo run:android)
 - Run on iOS: `bun ios` (expo run:ios)
+- Run the iOS app directly on an Apple Silicon Mac: `bun ios:mac` (local Release build with bundled JavaScript, background launch). Use `--build-only` to compile without replacing the running app, or `--debug` with a separate Metro server. Requires Xcode development signing; does not upload to TestFlight.
 - Setup ADB port forwarding: `bun adb`
 
 ### Building
@@ -36,10 +37,23 @@ derives `X.Y.Z-dev.N` or `X.Y.Z-beta.N` identities without source edits.
 - Beta store builds target staging services and are not production-promotable
   binaries. Production candidates are rebuilt from the selected source with
   production configuration and new store build numbers after Cloud promotion.
-- Automatic glasses OTA is enabled only when the mobile bundle contains an
-  `EXPO_PUBLIC_ASG_OTA_VERSION_URL` release pin. Local and compile-only builds
+- Automatic glasses OTA uses `EXPO_PUBLIC_ASG_OTA_VERSION_URL` for releases, or
+  the packaged `extra.mentraPrBuild.otaManifestUrl` in Expo's `app.config` asset
+  for Android and iOS PR builds (including Mac). Local and compile-only builds
   without a pin fail closed; a Super Mode manifest override remains available
   for deliberate local OTA testing.
+- Pull request Android APKs and signed iPhone/Mac apps are pinned to
+  `ota-pr-<n>-<head sha>.json` in the `pr-builds` artifact CDN release, published by the `MentraOS ASG Client Build`
+  workflow for the same PR head. It points at the coordinated ASG artifact
+  whose source fingerprint matches the PR (no ASG build needed) or, when none
+  exists, at an ASG client built from the PR. Installing a PR ASG over a
+  coordinated build is a version-code downgrade that the exact-pin OTA flow
+  handles through the uninstall-then-reinstall detour.
+- PR CI reuses signed APKs/IPAs when mobile build fingerprints match, then replaces
+  the packaged configuration and native build number and re-signs. Android also
+  runs zipalign; iOS preserves the compiled executable and nested signatures.
+  Keep PR configuration separate from the compiled JS bundle; changing ASG or
+  firmware targets must not require recompiling unchanged mobile code.
 
 ### Testing
 

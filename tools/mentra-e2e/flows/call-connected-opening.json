@@ -1,0 +1,142 @@
+[
+  {
+    "id": "CALL-UI-02-open",
+    "instruction": "Open Mentra Call from paired home.",
+    "expected": "New Call and Settings are enabled.",
+    "action": {
+      "op": "press",
+      "selector": {
+        "identifier": "home.miniapp.com.mentra.call"
+      }
+    },
+    "checks": [
+      {
+        "selector": {
+          "role": "AXButton",
+          "description": "New Call Create a meeting.",
+          "enabled": true
+        }
+      },
+      {
+        "selector": {
+          "role": "AXButton",
+          "description": "Open settings",
+          "enabled": true
+        }
+      }
+    ],
+    "timeoutMs": 15000
+  },
+  {
+    "id": "CALL-UI-03-settings",
+    "instruction": "Open Call settings and inspect the saved call name.",
+    "expected": "Settings is open and Name in calls is Mentra Live.",
+    "action": {
+      "op": "press",
+      "selector": {
+        "role": "AXButton",
+        "description": "Open settings"
+      }
+    },
+    "checks": [
+      {
+        "selector": {
+          "role": "AXHeading",
+          "description": "Settings"
+        }
+      },
+      {
+        "selector": {
+          "role": "AXTextField",
+          "description": "Name in calls How you appear to other participants",
+          "value": "Mentra Live"
+        }
+      }
+    ]
+  },
+  {
+    "id": "CALL-UI-04-preferences",
+    "instruction": "Verify the configured Direct link and Chat TTS states.",
+    "expected": "Direct link is on; Chat TTS is off and disabled.",
+    "checks": [
+      {
+        "selector": {
+          "role": "AXCheckBox",
+          "description": "Connect work Teams straight to this phone",
+          "value": "1",
+          "enabled": true
+        }
+      },
+      {
+        "selector": {
+          "role": "AXCheckBox",
+          "description": "Chat TTS is turned off and cannot be changed",
+          "value": "0",
+          "enabled": false
+        }
+      }
+    ]
+  },
+  {
+    "id": "CALL-UI-06-back",
+    "instruction": "Return from settings to Call home.",
+    "expected": "Both meeting entry points are enabled.",
+    "action": {
+      "op": "press",
+      "selector": {
+        "role": "AXButton",
+        "description": "Go back"
+      }
+    },
+    "checks": [
+      {
+        "selector": {
+          "role": "AXButton",
+          "description": "Join via Link Microsoft Teams",
+          "enabled": true
+        }
+      },
+      {
+        "selector": {
+          "role": "AXButton",
+          "description": "New Call Create a meeting.",
+          "enabled": true
+        }
+      }
+    ]
+  },
+  {
+    "id": "CALL-UI-09-new",
+    "instruction": "Open New Call without creating a meeting.",
+    "expected": "The default meeting name is Mentra Call and Create & Join is enabled.",
+    "action": {
+      "op": "press",
+      "selector": {
+        "role": "AXButton",
+        "description": "New Call Create a meeting."
+      }
+    },
+    "checks": [
+      {
+        "selector": {
+          "role": "AXHeading",
+          "description": "New Call"
+        }
+      },
+      {
+        "selector": {
+          "role": "AXTextField",
+          "description": "MEETING NAME",
+          "value": "Mentra Call"
+        }
+      },
+      {
+        "selector": {
+          "role": "AXButton",
+          "description": "Create & Join",
+          "enabled": true
+        }
+      }
+    ]
+  }
+]

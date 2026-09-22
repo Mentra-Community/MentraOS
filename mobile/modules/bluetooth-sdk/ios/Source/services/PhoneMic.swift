@@ -5,6 +5,7 @@
 //  Created on 3/8/25.
 //
 
+#if !os(macOS)
 import AVFoundation
 import Combine
 import Foundation
@@ -358,9 +359,7 @@ class PhoneMic {
         }
 
         Bridge.log("MIC: handleRouteChange: \(reason)")
-        DeviceManager.shared.onRouteChange(
-            reason: reason, availableInputs: audioSession?.availableInputs ?? []
-        )
+        // DeviceManager observes readiness independently of microphone capture.
 
         // // If we're recording and the audio route changed (e.g., AirPods connected/disconnected)
         // if isRecording {
@@ -661,3 +660,4 @@ class PhoneMic {
         stopRecording()
     }
 }
+#endif

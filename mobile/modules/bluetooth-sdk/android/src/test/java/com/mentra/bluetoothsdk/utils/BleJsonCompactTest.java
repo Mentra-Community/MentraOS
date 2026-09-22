@@ -238,6 +238,37 @@ public class BleJsonCompactTest {
     }
 
     @Test
+    public void startStreamPreservesTelemetry() throws Exception {
+        JSONObject startTrue =
+                new JSONObject(
+                        "{\"type\":\"start_stream\",\"streamUrl\":\"https://example.test/whip\","
+                                + "\"telemetry\":true}");
+        JSONObject wireTrue = BleJsonCompact.encode(startTrue);
+        assertEquals("start_stream", wireTrue.getString("t"));
+        assertTrue(wireTrue.has("telemetry"));
+        assertTrue(wireTrue.getBoolean("telemetry"));
+        assertTrue(BleJsonCompact.decode(wireTrue).getBoolean("telemetry"));
+
+        JSONObject startFalse =
+                new JSONObject(
+                        "{\"type\":\"start_stream\",\"streamUrl\":\"https://example.test/whip\","
+                                + "\"telemetry\":false}");
+        JSONObject wireFalse = BleJsonCompact.encode(startFalse);
+        assertEquals("start_stream", wireFalse.getString("t"));
+        assertTrue(wireFalse.has("telemetry"));
+        assertFalse(wireFalse.getBoolean("telemetry"));
+        assertFalse(BleJsonCompact.decode(wireFalse).getBoolean("telemetry"));
+
+        JSONObject startOmitted =
+                new JSONObject(
+                        "{\"type\":\"start_stream\",\"streamUrl\":\"https://example.test/whip\"}");
+        JSONObject wireOmitted = BleJsonCompact.encode(startOmitted);
+        assertEquals("start_stream", wireOmitted.getString("t"));
+        assertFalse(wireOmitted.has("telemetry"));
+        assertFalse(BleJsonCompact.decode(wireOmitted).has("telemetry"));
+    }
+
+    @Test
     public void jsonValuesRoundTripAtEveryDepth() throws Exception {
         JSONObject status =
                 new JSONObject(
@@ -315,5 +346,16 @@ public class BleJsonCompactTest {
         JSONObject chunk = new JSONObject("{\"t\":\"ck\",\"id\":\"1\",\"c\":0,\"n\":2,\"d\":\"x\"}");
 
         assertEquals("ck", BleJsonCompact.decodeIfSupported(chunk).getString("type"));
+    }
+
+    @Test
+    public void captureAudioCompactsToCa() throws Exception {
+        BleJsonCompact.markSessionConnected(1_700_000_000_000L);
+        JSONObject input = new JSONObject("{\"type\":\"start_stream\",\"captureAudio\":false}");
+        JSONObject compact = BleJsonCompact.encode(input);
+        assertEquals(false, compact.getBoolean("ca"));
+        assertFalse(compact.has("captureAudio"));
+        JSONObject restored = BleJsonCompact.decode(compact);
+        assertEquals(false, restored.getBoolean("captureAudio"));
     }
 }

@@ -9,6 +9,8 @@
  * management (connect/disconnect/ping).
  */
 
+import {parsePhotoCompression} from "@mentra/cloud-protocol/photo-compression"
+import {acquireGlassesHotspot} from "./GlassesHotspotLease"
 import {AppState, Linking} from "react-native"
 import Share from "react-native-share"
 import * as Battery from "expo-battery"
@@ -33,7 +35,8 @@ import {storage as mmkvStorage} from "../utils/storage/storage"
 import {BgTimer} from "../utils/timers"
 import devServerBridge from "./DevServerBridge"
 import {islandNotifications} from "./NotificationsEmitter"
-import {isGlassesConnected} from "./GlassesReadiness"
+import {isGlassesConnected, isGlassesReady, waitForGlassesReady} from "./GlassesReadiness"
+import {toMiniappConnectionData} from "./GlassesStatusProjection"
 import audioPlaybackService from "./AudioPlaybackService"
 import {phoneLocationService} from "./PhoneLocationService"
 import {useGlassesStore} from "../stores/glasses"
@@ -43,6 +46,8 @@ import type {DisplayPayload} from "./LocalDisplayManager"
 import headingService from "./HeadingService"
 import localSttFallbackCoordinator from "./LocalSttFallbackCoordinator"
 import micStateCoordinator from "./MicStateCoordinator"
+import micSessionManager, {MIC_SOURCE_CONFLICT, type MicSession} from "./MicSessionManager"
+import {ENGINE_ONLY_USE_CASES, MIC_USE_CASES, VOICE_CALL_PACKAGES, type MicUseCase} from "./micPolicy"
 import {BlobStore} from "./BlobStore"
 import {CloudAudioSubscriptionSync} from "./CloudAudioSubscriptionSync"
 import {phoneCameraFovCoordinator} from "./PhoneCameraFovCoordinator"
@@ -65,9 +70,15 @@ import {
   type MiniappAuthToken,
   type TtsSynthesisResult,
 } from "../runtime/config"
-import {getAnalytics, getUiSeams} from "../runtime/bootstrap"
+import {getAnalytics, getMiniappConfiguration, getUiSeams, isFeatureEnabled} from "../runtime/bootstrap"
 import {invokeScanQrSeam} from "../runtime/scanQrSeam"
-import {normalizeStreamAudioConfig, normalizeStreamVideoConfig} from "../runtime/streamConfig"
+import {invokePhoneWifiSeam} from "../runtime/phoneWifiSeam"
+import {
+  normalizeStreamAudioConfig,
+  normalizeStreamVideoConfig,
+  normalizeCaptureAudio,
+  resolveCaptureAudio,
+} from "../runtime/streamConfig"
 import {toLanguageHint} from "@mentra/cloud-protocol/languages"
 import type {AudioSubscription, LanguageSource, TranscriptionData, TranslationData} from "@mentra/cloud-protocol"
 import {buildMiniappManifestSnapshot, type MiniappRuntimeDiagnosticSnapshot} from "../utils/miniappDiagnostics"
@@ -75,11 +86,33 @@ import ttsModelManager from "./TTSModelManager"
 import {NavigationHandlers} from "./NavigationHandlers"
 import type {ClientApp} from "../types/applet"
 import {useAppStatusStore} from "../stores/apps"
-import {getDevAppAttestation, getDevAppSourcePackage} from "./AppRegistry"
+import appRegistry, {getDevAppAttestation, getDevAppSourcePackage} from "./AppRegistry"
 import {resolveForegroundLocationPermission} from "./ForegroundLocationPermission"
-import {advanceMiniappPingLiveness} from "./MiniappLiveness"
+import {advanceMiniappPingLiveness, shouldHoldMiniappPingLiveness} from "./MiniappLiveness"
 import {listPhoneCalendarEvents, PhoneCalendarError} from "./PhoneCalendarService"
 import {LocalMiniappStorage} from "./LocalMiniappStorage"
+import acsMeetingService, {
+  parseAcsCallOrigin,
+  parseAcsOutgoingVideo,
+  parseAcsVideoSource,
+  resolveAcsAudioSource,
+  type AcsCallOrigin,
+  type AcsOutgoingVideo,
+  type AcsVideoSource,
+  type MeetingState,
+} from "./AcsMeetingService"
+import {
+  createSoftapCallDeps,
+  SoftapCallError,
+  SoftapCallTransport,
+  RETURN_DEADLINE_MS,
+  SOFTAP_STEPS,
+  type SoftapProgress,
+  type SoftapTeardownMode,
+} from "./SoftapCallTransport"
+import {awaitCleanupBarrier} from "./SoftapCleanupBarrier"
+import {softapTrace, softapTraceFailure} from "../utils/softapTrace"
+import {PermissionFeatures, permissions} from "../facades/permissions"
 
 // =============================================================================
 // Types
@@ -166,35 +199,11 @@ function locationRateRank(rate: string | null | undefined): number {
   return i >= 0 ? i : LOCATION_RATE_PRIORITY.indexOf("passive")
 }
 
-function withTimeout<T>(promise: Promise<T>, timeoutMs: number): Promise<T | null> {
-  return new Promise((resolve) => {
-    let settled = false
-    const done = (value: T | null) => {
-      if (settled) return
-      settled = true
-      BgTimer.clearTimeout(timer)
-      resolve(value)
-    }
-    const timer = BgTimer.setTimeout(() => done(null), timeoutMs)
-    promise.then(
-      (value) => done(value),
-      () => done(null),
-    )
-  })
-}
-
 const LOG_TAG = "LOCAL_MINIAPP"
 const DIAGNOSTIC_MAX_LIST_ITEMS = 100
 const DIAGNOSTIC_MAX_STRING_LENGTH = 512
 
-function diagnosticStringList(values: Iterable<string>): string[] {
-  return [...values]
-    .map((value) => value.slice(0, DIAGNOSTIC_MAX_STRING_LENGTH))
-    .sort()
-    .slice(0, DIAGNOSTIC_MAX_LIST_ITEMS)
-}
-
-const SYSTEM_MINIAPP_PACKAGES = new Set([
+const SYSTEM_MINIAPP_PACKAGE_SET = new Set([
   "com.mentra.camera",
   "com.mentra.gallery",
   "com.mentra.settings",
@@ -205,6 +214,14 @@ const SYSTEM_MINIAPP_PACKAGES = new Set([
   "com.mentra.feedback",
   "com.mentra.miniappdev",
 ])
+
+function diagnosticStringList(values: Iterable<string>): string[] {
+  return [...values]
+    .map((value) => value.slice(0, DIAGNOSTIC_MAX_STRING_LENGTH))
+    .sort()
+    .slice(0, DIAGNOSTIC_MAX_LIST_ITEMS)
+}
+
 const PING_INTERVAL_MS = 5_000
 const MINIAPP_AUTH_REFRESH_HEADROOM_MS = 5 * 60 * 1000
 const MINIAPP_AUTH_REFRESH_MIN_DELAY_MS = 5_000
@@ -216,6 +233,19 @@ const MINIAPP_AUTH_REFRESH_MIN_DELAY_MS = 5_000
 const MINIAPP_AUTH_RETRY_BASE_MS = 1_000
 const MINIAPP_AUTH_RETRY_MAX_MS = 15_000
 const FOREGROUND_LIVENESS_PROBE_TIMEOUT_MS = 2_500
+/**
+ * How long a SoftAP call waits for the first frame to reach ACS before failing the join.
+ *
+ * Generous because it covers the glasses' whole publish path — WHIP POST, host-only ICE, and the
+ * first decode — but bounded, since a call that connects and never paints has to fail as a join
+ * rather than sit in "connecting" while the wearer waits.
+ */
+const SOFTAP_FIRST_FRAME_MS = 20_000
+/**
+ * How long the BLE link must stay up before SoftAP recovery trusts it. Covers the gap between
+ * the hotspot dying and the phone noticing the link died with it.
+ */
+const GLASSES_LINK_SETTLE_MS = 4_000
 const REQUEST_WIFI_SETUP_TYPE = "miniapp_request_wifi_setup"
 // Unregister after this many missed pongs. Generous on purpose: a busy
 // context (heavy interim translation traffic) or OS scheduling while idle can
@@ -371,12 +401,148 @@ function resetPermissionWarnings(packageName: string): void {
   }
 }
 
+/**
+ * One attempt to start a SoftAP call, from the first permission check to the last release.
+ *
+ * The unit is the attempt rather than the transport because the transport only exists for the
+ * second half of it. Everything the wearer can cancel — the Nearby-devices prompt, the wait for
+ * mobile data, the ACS sign-in — happens before `transport.start()`, and each of those leaves
+ * something behind (a signed-in agent, a process-wide cellular pin) that only the attempt knows
+ * about.
+ */
+type SoftapAttempt = {
+  id: number
+  packageName: string
+  startedAt: number
+  /** Set by leave, end, or a superseding join. Checked after every await the join performs. */
+  cancelled: boolean
+  /** Set only after the preceding attempt has fully settled. */
+  releaseHotspot?: () => void
+  ownsResources: boolean
+  transport: SoftapCallTransport | null
+  /** The checklist as the miniapp last saw it; preflight rows live here until `start()` takes over. */
+  progress: SoftapProgress
+  scopedLostUnsub: (() => void) | null
+  /**
+   * Mid-call media rebuild. Single-flight while [recoveryActive] is true; the promise is
+   * cleared when that run settles so a later walk-away can start another. Joined to the
+   * attempt barrier so a late re-arm cannot resurrect resources after Leave/End.
+   */
+  recovery: Promise<void> | null
+  recoveryActive: boolean
+  recoveryDeadlineAt: number | null
+  /**
+   * The join itself, settled either way. A native call still in flight owns state the teardown
+   * cannot see — a `createCallAgent` mid-sign-in — so the barrier covers this as well.
+   */
+  body: Promise<void> | null
+  /** Single-flight teardown, so a leave and the join's own failure path cannot both unwind. */
+  teardown: Promise<void> | null
+  /** Opens only once the attempt *and* its cleanup are finished. The next join waits on it. */
+  settled: Promise<void>
+  settledDone: boolean
+  markSettled: () => void
+}
+
+/** How long a stalled SoftAP cleanup goes unremarked before it is logged. It is never abandoned. */
+const SOFTAP_CLEANUP_STALL_LOG_MS = 10_000
+
+/**
+ * The WHIP listener's tombstone (3s) plus a margin for the close itself.
+ *
+ * Sized to the grace period rather than picked round, so an expiry here means something actually
+ * went wrong instead of meaning we guessed short.
+ */
+const SOFTAP_INGEST_CLOSE_WAIT_MS = 3_500
+
+/** How long the glasses get to acknowledge their hotspot off, over BLE. */
+const SOFTAP_HOTSPOT_OFF_ACK_MS = 5_000
+
+/** After a forced close there is nothing left to wait for, so this only catches a real failure. */
+const SOFTAP_FORCED_VERIFY_MS = 500
+
+/**
+ * Rejection codes meaning the glasses replaced their Wi-Fi protocol session, not that the
+ * command failed.
+ *
+ * The glasses emit `wifi_protocol_session_ready` on every `glasses_ready`, which fires on BLE
+ * reconnects and ASG restarts — routine during a SoftAP teardown. The SDK cancels every pending
+ * Wi-Fi request when that lands, so a hotspot command in flight is lost even though nothing is
+ * actually wrong. `wifi_session_disconnected` is deliberately absent: that one is raised from the
+ * store update where the glasses went away, so there is nothing left to re-send to.
+ */
+const HOTSPOT_SESSION_REFRESH_CODES = new Set(["wifi_session_restarted", "wifi_session_changed"])
+
+/**
+ * Let the restarted ASG command path settle before re-sending.
+ *
+ * `handleSetHotspotState` returns false when its network manager is not up yet, which drops the
+ * command silently, so an immediate re-send would just race the same initialization. Mirrors the
+ * retry spacing `disableHotspotWithRetry` uses for the sibling ASG-replacement case.
+ */
+const HOTSPOT_SESSION_RETRY_DELAY_MS = 500
+
+/** Reject with [reason] if [work] has not settled in [ms]. The work itself is not cancellable. */
+function withTimeout<T>(work: Promise<T>, ms: number, reason: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(reason)), ms)
+    work.then(
+      (value) => {
+        clearTimeout(timer)
+        resolve(value)
+      },
+      (error) => {
+        clearTimeout(timer)
+        reject(error)
+      },
+    )
+  })
+}
+
+/** How long the next call waits for the previous one's cleanup before telling the wearer about it. */
+const SOFTAP_CLEANUP_NARRATE_AFTER_MS = 250
+
 // =============================================================================
 // LocalMiniappRuntime
 // =============================================================================
 
 class LocalMiniappRuntime {
   private static instance: LocalMiniappRuntime | null = null
+
+  /**
+   * The SoftAP call being started or running, if any.
+   *
+   * An *attempt*, not a transport, because the cancellable part of a SoftAP call begins long
+   * before the transport exists: a Nearby-devices prompt and an ACS sign-in run first, and a
+   * wearer who taps Cancel during either of them has to be obeyed. The attempt is registered
+   * before the first `await` and is what every later stage checks itself against.
+   */
+  private softapAttempt: SoftapAttempt | null = null
+  /**
+   * The outer generation. Every async callback that can outlive an attempt checks itself against
+   * it and traces `softap_stale_callback` when it loses: ACS state, SoftAP progress, glasses
+   * stream status, scoped-network loss, and each checkpoint through the join.
+   *
+   * There are inner generations below this one — `AcsMeetingSession.joinGeneration` and
+   * `LocalWhipIngestSource.generation` — and they are not redundant. They fence work inside one
+   * native session against itself; this one fences whole attempts against each other, and only it
+   * knows that the wearer pressed Cancel before any of that native work existed.
+   */
+  private softapAttemptSeq = 0
+  /**
+   * Why the previous SoftAP call's cleanup failed, if it did.
+   *
+   * Read once by the next join, which refuses rather than building on leaked state: a hotspot that
+   * would not turn off is precisely what makes the next call fail somewhere far less legible.
+   */
+  private softapCleanupError: string | null = null
+  /**
+   * SoftAP teardown disables the glasses hotspot from the transport and again
+   * from the host barrier. Native used to throw `request_in_flight` on the
+   * second call, which was recorded as a cleanup failure and refused the next
+   * join. One queue so those overlapping disables wait their turn.
+   */
+  private glassesHotspotCommand: Promise<unknown> = Promise.resolve()
 
   /** Connected miniapps keyed by packageName. */
   private connectedApps: Map<string, ConnectedMiniapp> = new Map()
@@ -411,6 +577,14 @@ class LocalMiniappRuntime {
    */
   private transcriptionHintsByApp = new Map<string, string[]>()
 
+  /**
+   * Microphone sessions taken through session.mic.acquire, by session id.
+   *
+   * Bookkeeping only, so a release can be matched to its owner; MicSessionManager holds the real
+   * leases and resolves them into hardware state.
+   */
+  private micSessionsByApp = new Map<number, {packageName: string; session: MicSession}>()
+
   /** Ping interval handle. */
   private pingIntervalId: number | null = null
   private foregroundProbeTimers: Map<string, number> = new Map()
@@ -425,8 +599,6 @@ class LocalMiniappRuntime {
    */
   public onLivenessTimeout: ((packageName: string) => void) | null = null
 
-  /** Pending cloud requests: requestId → packageName that originated the request. */
-  private pendingCloudRequests: Map<string, {packageName: string; envelopeRequestId?: string}> = new Map()
   private speechRuns = new Map<string, SpeechRun>()
 
   // Browser fallback token auth — HMAC-signed blob with a phone-local
@@ -631,90 +803,6 @@ class LocalMiniappRuntime {
     this.ensurePingLoop()
   }
 
-  /**
-   * Handle an incoming cloud message forwarded by SocketComms
-   * (phone_stream_status, phone_managed_stream_status).
-   *
-   * Routes the response back to the originating miniapp via the requestId
-   * that was stored when the miniapp first made the request.
-   */
-  public handleCloudMessage(msg: any): void {
-    const requestId = msg.requestId as string | undefined
-    const msgType = msg.type as string
-
-    console.log(`${LOG_TAG}: Cloud message: ${msgType}, requestId=${requestId ?? "none"}`)
-
-    if (!requestId) {
-      console.warn(`${LOG_TAG}: Cloud message ${msgType} has no requestId, cannot route`)
-      return
-    }
-
-    const pending = this.pendingCloudRequests.get(requestId)
-    if (!pending) {
-      console.warn(`${LOG_TAG}: No pending request for requestId=${requestId}`)
-      return
-    }
-
-    this.pendingCloudRequests.delete(requestId)
-
-    switch (msgType) {
-      case "phone_stream_status": {
-        // Unreachable for phone-orchestrated streams (the coordinator owns
-        // their lifecycle and never registers a pending cloud request).
-        // Retained as a safety net for any legacy registration path.
-        this.sendToMiniapp(pending.packageName, {
-          type: MiniappResponseType.EVENT,
-          streamType: "stream_status",
-          data: {
-            streamId: msg.streamId,
-            status: msg.status,
-            errorDetails: msg.errorDetails,
-          },
-        })
-        // Re-register for ongoing status updates (streams send multiple status messages)
-        this.pendingCloudRequests.set(requestId, pending)
-        break
-      }
-
-      case "phone_managed_stream_status": {
-        if (msg.status === "connected" || msg.status === "active") {
-          // Managed stream is ready — send back the playback URLs as the request result
-          this.sendResult(pending.packageName, pending.envelopeRequestId, true, {
-            streamId: msg.streamId,
-            hlsUrl: msg.hlsUrl,
-            dashUrl: msg.dashUrl,
-            webrtcUrl: msg.webrtcUrl,
-          })
-        }
-        // Forward all statuses as events too
-        this.sendToMiniapp(pending.packageName, {
-          type: MiniappResponseType.EVENT,
-          streamType: "stream_status",
-          data: {
-            streamId: msg.streamId,
-            status: msg.status,
-            hlsUrl: msg.hlsUrl,
-            dashUrl: msg.dashUrl,
-            webrtcUrl: msg.webrtcUrl,
-          },
-        })
-        // Re-register for ongoing updates
-        this.pendingCloudRequests.set(requestId, pending)
-        break
-      }
-
-      default:
-        console.warn(`${LOG_TAG}: Unknown cloud message type: ${msgType}`)
-    }
-  }
-
-  /**
-   * Register a pending cloud request so we can route the response back.
-   */
-  public registerPendingCloudRequest(requestId: string, packageName: string, envelopeRequestId?: string): void {
-    this.pendingCloudRequests.set(requestId, {packageName, envelopeRequestId})
-  }
-
   // ===========================================================================
   // App registration
   // ===========================================================================
@@ -758,6 +846,22 @@ class LocalMiniappRuntime {
       this.replaceStreamSubscribers(packageName, existing.subscriptions, [])
       this.recomputeMicRequirements()
       this.updateCloudSubscriptions()
+      // Managed streams and ACS meetings deliberately survive a respawn: the new
+      // incarnation re-adopts them on restore (Mentra Call does exactly this) so a
+      // WebView reload does not drop the wearer out of a live call. An unmanaged
+      // stream cannot be re-adopted — startUnmanaged rejects while any stream is
+      // active, even for the same owner — so release it or the respawned miniapp
+      // is stuck behind STREAM_ALREADY_ACTIVE until the process restarts.
+      const streamSnapshot = phoneStreamCoordinator.getDiagnosticSnapshot()
+      if (
+        streamSnapshot.active === true &&
+        streamSnapshot.kind === "unmanaged" &&
+        streamSnapshot.ownerPackageName === packageName
+      ) {
+        void phoneStreamCoordinator.stop(packageName).catch((error) => {
+          console.warn(`${LOG_TAG}: failed to stop unmanaged stream while replacing ${packageName}`, error)
+        })
+      }
     }
     this.connectedApps.set(packageName, {
       subscriptions: new Set(),
@@ -887,6 +991,10 @@ class LocalMiniappRuntime {
   public unregisterApp(packageName: string): void {
     console.log(`${LOG_TAG}: unregisterApp(${packageName})`)
     const releasedMicGateOverride = micStateCoordinator.clearMiniappGateOverrides(packageName)
+    // Backstop for a miniapp that crashed or was killed mid-call: the microphone profile and the
+    // PCM claim must not outlive the app that asked for them.
+    this.forgetMicSessions(packageName)
+    micSessionManager.releaseOwner(packageName)
     this.clearForegroundProbe(packageName)
     this.clearMiniappAuthRefresh(packageName)
     this.clearMiniappAuthDeliveryRetry(packageName)
@@ -901,18 +1009,24 @@ class LocalMiniappRuntime {
 
     // Warm-up is a request-owned camera lease. Cancel it even if the app record was already
     // removed so a close racing the camera-open promise cannot leave the sensor running.
-    // Keep camera teardown ordered: restoring FOV can restart the HAL, so the warm-up lease must
-    // finish closing the sensor before FOV reconciliation begins. Continue to FOV cleanup even if
-    // warm-up cancellation fails; phone ownership remains retryable until the ASG lease TTL.
-    void phonePhotoCoordinator
-      .stopWarmUpForApp(packageName)
-      .catch((error) => {
-        console.warn(`${LOG_TAG}: failed to stop camera warm-up for ${packageName} on unregister`, error)
-      })
-      .then(() => phoneCameraFovCoordinator.releaseForApp(packageName))
-      .catch((error) => {
-        console.warn(`${LOG_TAG}: failed to release camera FOV override for ${packageName} on unregister`, error)
-      })
+    // Close all camera consumers before restoring FOV. A shared publisher may
+    // remain active for another subscriber; a rejected FOV release then stops
+    // renewing the departed owner's lease and ASG restores it once idle.
+    const cameraCleanup = Promise.allSettled([
+      this.leaveMeetingForApp(packageName),
+      phonePhotoCoordinator.stopWarmUpForApp(packageName),
+      phoneStreamCoordinator.stop(packageName),
+      phoneVideoCoordinator.stopForApp(packageName),
+    ]).then((results) => {
+      for (const result of results) {
+        if (result.status === "rejected") {
+          console.warn(`${LOG_TAG}: failed to stop miniapp resource for ${packageName} on unregister`, result.reason)
+        }
+      }
+    })
+    void phoneCameraFovCoordinator.releaseForApp(packageName, cameraCleanup).catch((error) => {
+      console.warn(`${LOG_TAG}: failed to release camera FOV override for ${packageName} on unregister`, error)
+    })
     const app = this.connectedApps.get(packageName)
     if (!app) {
       if (releasedMicGateOverride) {
@@ -940,20 +1054,6 @@ class LocalMiniappRuntime {
     // so a crashed/closed miniapp doesn't leak partial files or file handles.
     this.blobStore.onAppGone(packageName)
 
-    // Release phone-owned camera streams. If a miniapp closes/crashes without
-    // sending STREAM_STOP, the host coordinator must drop its subscriber/owner
-    // so glasses publishing and managed Cloudflare inputs do not leak.
-    void phoneStreamCoordinator.stop(packageName).catch((error) => {
-      console.warn(`${LOG_TAG}: failed to stop stream for ${packageName} on unregister`, error)
-    })
-
-    // Stop any phone-owned video recordings for this app. A miniapp that
-    // closes/crashes mid-recording loses its recordingId, so without this the
-    // glasses keep recording until the max-recording timeout or thermal shutdown.
-    void phoneVideoCoordinator.stopForApp(packageName).catch((error) => {
-      console.warn(`${LOG_TAG}: failed to stop video recording for ${packageName} on unregister`, error)
-    })
-
     // Detach the per-app nav event forwarder but leave the native nav session
     // running. The user may have just closed the mini-app UI and will reopen
     // it; stopping the session here would kill an active trip mid-route.
@@ -976,13 +1076,6 @@ class LocalMiniappRuntime {
     // field is enough.
     app.requestedLocationRate = null
     this.recomputeLocationTier()
-
-    // Clean up any pending cloud requests from this app
-    for (const [reqId, pending] of this.pendingCloudRequests) {
-      if (pending.packageName === packageName) {
-        this.pendingCloudRequests.delete(reqId)
-      }
-    }
 
     // Release any display real estate this app held — if it owned the
     // current on-glasses frame, this clears the glasses (or restores the
@@ -1181,6 +1274,12 @@ class LocalMiniappRuntime {
       case MiniappRequestType.MIC_SET_LOUDNESS_GATE_ENABLED:
         void this.handleMicSetLoudnessGateEnabled(packageName, payload, requestId)
         break
+      case MiniappRequestType.MIC_ACQUIRE:
+        this.handleMicAcquire(packageName, payload, requestId)
+        break
+      case MiniappRequestType.MIC_RELEASE:
+        this.handleMicRelease(packageName, payload, requestId)
+        break
       case MiniappRequestType.PING:
         // SDK should handle this itself; reply PONG just in case
         this.sendToMiniapp(packageName, {type: MiniappResponseType.PONG}, requestId)
@@ -1307,6 +1406,31 @@ class LocalMiniappRuntime {
       case MiniappRequestType.MANAGED_STREAM_STOP:
         void this.handleManagedStreamStop(packageName, payload, requestId)
         break
+      case MiniappRequestType.MEETING_JOIN:
+        void this.handleMeetingJoin(packageName, payload, requestId)
+        break
+      case MiniappRequestType.MEETING_LEAVE:
+        void this.handleMeetingLeave(packageName, requestId)
+        break
+      case MiniappRequestType.MEETING_ADMIT:
+        void this.handleMeetingAdmit(packageName, payload, requestId)
+        break
+      case MiniappRequestType.MEETING_END:
+        void this.handleMeetingEnd(packageName, requestId)
+        break
+      case MiniappRequestType.MEETING_SET_MUTED:
+        void this.handleMeetingSetMuted(packageName, payload, requestId)
+        break
+      case MiniappRequestType.MEETING_UPDATE_VIDEO_SOURCE:
+        void this.handleMeetingUpdateVideoSource(packageName, payload, requestId)
+        break
+      case MiniappRequestType.MEETING_GET_STATE:
+        void this.handleMeetingGetState(packageName, requestId)
+        break
+      case MiniappRequestType.PHONE_IS_WIFI_ENABLED:
+      case MiniappRequestType.PHONE_REQUEST_WIFI_ENABLE:
+        void this.handlePhoneWifiRequest(packageName, payload, requestId)
+        break
       case REQUEST_WIFI_SETUP_TYPE:
         void this.handleRequestWifiSetup(packageName, payload, requestId)
         break
@@ -1368,7 +1492,7 @@ class LocalMiniappRuntime {
     // Register if not already
     const existing = this.connectedApps.get(packageName)
     if (!existing) {
-      console.warn(`${LOG_TAG}: CONNECT from unregistered app ${packageName}, ignoring`)
+      console.warn(`${LOG_TAG}: CONNECT from unregistered app ${packageName}, dropping — isolate already torn down`)
       return
     }
 
@@ -1394,35 +1518,25 @@ class LocalMiniappRuntime {
     existing.authDelivered = false
     this.clearMiniappAuthDeliveryRetry(packageName)
     const authPromise = this.requestMiniappAuth(packageName)
-    const initialAuth = await withTimeout(authPromise, 1_500)
-    const userId = initialAuth?.mentraUserId ?? ""
-    if (initialAuth) {
-      existing.authDelivered = true
-      this.scheduleMiniappAuthRefresh(packageName, initialAuth)
-    }
 
+    // Send CONNECT_ACK in this turn, before any await. A 1.5s auth wait let a
+    // concurrent unregister (dev respawn, tray stop, glasses-not-ready teardown)
+    // drop the ACK; Mentra Call then dies with CONNECT_ACK timeout even though
+    // CONNECT landed. Auth still arrives on AUTH_UPDATE.
     this.sendToMiniapp(
       packageName,
       {
         type: MiniappResponseType.CONNECT_ACK,
-        userId,
+        userId: "",
         packageName,
         capabilities,
         permissions: declaredPermissions,
-        ...(initialAuth ? {auth: initialAuth} : {}),
+        configuration: getMiniappConfiguration(packageName),
+        hostFeatures: {captureAudio: true},
       },
       requestId,
     )
-    if (!initialAuth) {
-      // The mint timed out or (more importantly) REJECTED — the latter happens
-      // when the cloud client hasn't finished its first-boot Core token exchange
-      // yet, which is exactly the case when a dev miniapp is scanned/launched
-      // right after app start. CONNECT_ACK already went out without auth; keep
-      // trying to mint (and re-drive on cloud-connect) so the app authenticates
-      // to its backend on its own, instead of staying dead until a full manual
-      // Cloud V2 reconnect re-runs the whole handshake.
-      this.deliverInitialMiniappAuth(packageName, authPromise, 0)
-    }
+    this.deliverInitialMiniappAuth(packageName, authPromise, 0)
     this.sendCloudStatusToMiniapp(packageName)
 
     // Handshake complete — unblock any launcher.waitForConnect() callers.
@@ -1431,6 +1545,9 @@ class LocalMiniappRuntime {
   }
 
   private async requestMiniappAuth(packageName: string, opts?: {minTtlMs?: number}): Promise<MiniappAuthToken | null> {
+    // Core owns miniapp-backend token minting. A Runtime-only deployment has
+    // no such capability, so fail once instead of entering the retry loop.
+    if (!cloudClientService.hasCore()) return null
     const authPackageName = getDevAppSourcePackage(packageName) ?? packageName
     const devAttestation = getDevAppAttestation(packageName) ?? undefined
     return cloudClientService.getMiniappAuthToken(authPackageName, {
@@ -1668,6 +1785,34 @@ class LocalMiniappRuntime {
       return
     }
 
+    for (const subscription of rawStreams ?? []) {
+      const stream = typeof subscription === "string" ? subscription : subscription.stream
+      if (stream.startsWith("translation:") && !isFeatureEnabled("cloudSpeech")) {
+        this.sendResult(packageName, requestId, false, undefined, {
+          code: MiniappErrorCode.NOT_IMPLEMENTED,
+          message: "Cloud speech is disabled by this deployment",
+        })
+        return
+      }
+      if (!stream.startsWith("transcription:")) continue
+      const forceLocal = typeof subscription === "object" && subscription.forceLocal === true
+      const includeCloud = typeof subscription === "object" && subscription.includeCloud === true
+      if (forceLocal && !isFeatureEnabled("onDeviceSpeech")) {
+        this.sendResult(packageName, requestId, false, undefined, {
+          code: MiniappErrorCode.NOT_IMPLEMENTED,
+          message: "On-device speech is disabled by this deployment",
+        })
+        return
+      }
+      if ((!forceLocal || includeCloud) && !isFeatureEnabled("cloudSpeech")) {
+        this.sendResult(packageName, requestId, false, undefined, {
+          code: MiniappErrorCode.NOT_IMPLEMENTED,
+          message: "Cloud speech is disabled by this deployment",
+        })
+        return
+      }
+    }
+
     console.log(`${LOG_TAG}: SUBSCRIBE from ${packageName}: [${streams.join(", ")}]`)
 
     // Gate each stream on the permission type its data requires. The manifest
@@ -1797,7 +1942,10 @@ class LocalMiniappRuntime {
         this.sendToMiniapp(packageName, {
           type: MiniappResponseType.EVENT,
           streamType: "glasses_connection",
-          data: glassesState,
+          data: {
+            connected: glassesState.connected,
+            modelName: glassesState.deviceModel || undefined,
+          },
         })
       } else if (stream === "glasses_wifi") {
         // Snapshot the current glasses Wi-Fi state on subscribe (like battery).
@@ -1816,6 +1964,7 @@ class LocalMiniappRuntime {
           streamType: "glasses_wifi",
           data: {
             connected,
+            linkConnected: glassesState.connected === true,
             ssid: connected ? wifi?.ssid : undefined,
             localIp: connected ? wifi?.localIp : undefined,
             timestamp: Date.now(),
@@ -2292,6 +2441,7 @@ class LocalMiniappRuntime {
 
       const playOfflineTts = async (reason?: string): Promise<boolean> => {
         if (run.cancelled) return true
+        if (!isFeatureEnabled("onDeviceSpeech")) return false
         if (!offlineSupportsVoice || !(await ttsModelManager.isModelAvailable())) {
           return false
         }
@@ -2536,7 +2686,9 @@ class LocalMiniappRuntime {
       const permission = await resolveForegroundLocationPermission(Location, () => AppState.currentState)
       const {status} = permission
       console.log(
-        `${LOG_TAG}: location poll permission status=${status} appState=${AppState.currentState} elapsed=${Date.now() - permissionStartedAt}ms`,
+        `${LOG_TAG}: location poll permission status=${status} appState=${AppState.currentState} elapsed=${
+          Date.now() - permissionStartedAt
+        }ms`,
       )
       if (status !== "granted") {
         this.sendResult(packageName, requestId, false, undefined, {
@@ -3094,14 +3246,104 @@ class LocalMiniappRuntime {
   }
 
   /**
+   * session.mic.acquire — take a semantic microphone session.
+   *
+   * The miniapp names a use case; MicSessionManager and micPolicy decide what that means for the
+   * hardware. This handler is only the gate: who is allowed to ask for what.
+   */
+  private handleMicAcquire(packageName: string, payload: Record<string, unknown>, requestId?: string): void {
+    const app = this.connectedApps.get(packageName)
+    const hasMicPermission = app?.installedManifest?.permissions?.some((p) => p.type === "MICROPHONE")
+    if (!hasMicPermission) {
+      logPermissionNotDeclared(packageName, "MICROPHONE", "to acquire a microphone session", `{"type": "MICROPHONE"}`)
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.PERMISSION_NOT_DECLARED,
+        message: `MICROPHONE permission not declared in miniapp.json. Add {"type": "MICROPHONE"} to the "permissions" array.`,
+        permission: "MICROPHONE",
+        operation: MiniappRequestType.MIC_ACQUIRE,
+      })
+      return
+    }
+
+    const source = payload.source
+    const useCase = payload.useCase
+    if (source !== "glasses" && source !== "phone") {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INVALID_ARGUMENT,
+        message: `source must be "glasses" or "phone"`,
+      })
+      return
+    }
+    if (!MIC_USE_CASES.includes(useCase as MicUseCase)) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INVALID_ARGUMENT,
+        message: `useCase must be one of ${MIC_USE_CASES.join(", ")}`,
+      })
+      return
+    }
+
+    // A voice call gets a microphone profile tuned for close-talk speech, so which app may ask for
+    // one is a product decision, not a permission a manifest can grant itself.
+    if (useCase === "voice_call" && !VOICE_CALL_PACKAGES.includes(packageName)) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.PERMISSION_DENIED,
+        message: `${packageName} is not allowed to acquire a voice_call microphone session`,
+      })
+      return
+    }
+    // Diagnostic leases exist so the mic probe measures what users actually get. Handing one to a
+    // miniapp would also hand it a glasses lease it could pair with a meeting join.
+    if (ENGINE_ONLY_USE_CASES.includes(useCase as MicUseCase)) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.PERMISSION_DENIED,
+        message: `the ${useCase} microphone use case is reserved for the Mentra App`,
+      })
+      return
+    }
+
+    try {
+      const session = micSessionManager.acquire({owner: packageName, source, useCase: useCase as MicUseCase})
+      this.micSessionsByApp.set(session.id, {packageName, session})
+      console.log(`${LOG_TAG}: mic_acquire #${session.id} ${useCase}/${source} (by ${packageName})`)
+      this.sendResult(packageName, requestId, true, {sessionId: session.id})
+    } catch (err) {
+      const message = err instanceof Error ? err.message : "mic acquire error"
+      console.warn(`${LOG_TAG}: mic_acquire failed for ${packageName}:`, message)
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: message.startsWith(MIC_SOURCE_CONFLICT) ? MiniappErrorCode.MIC_SOURCE_CONFLICT : MiniappErrorCode.INTERNAL,
+        message,
+      })
+    }
+  }
+
+  /** session.mic.acquire(...).release() — drop one session, if the caller owns it. */
+  private handleMicRelease(packageName: string, payload: Record<string, unknown>, requestId?: string): void {
+    const sessionId = payload.sessionId
+    const entry = typeof sessionId === "number" ? this.micSessionsByApp.get(sessionId) : undefined
+    if (!entry || entry.packageName !== packageName) {
+      // Idempotent by design: a miniapp releasing twice, or releasing after unregister already
+      // dropped its sessions, is not an error worth failing a teardown path over.
+      this.sendResult(packageName, requestId, true)
+      return
+    }
+    this.micSessionsByApp.delete(entry.session.id)
+    entry.session.release()
+    console.log(`${LOG_TAG}: mic_release #${entry.session.id} (by ${packageName})`)
+    this.sendResult(packageName, requestId, true)
+  }
+
+  /** Drop the bookkeeping for every session an app owns. The manager is the source of truth. */
+  private forgetMicSessions(packageName: string): void {
+    for (const [id, entry] of this.micSessionsByApp) {
+      if (entry.packageName === packageName) this.micSessionsByApp.delete(id)
+    }
+  }
+
+  /**
    * session.system.scanQr — host camera overlay. Must not clear miniapp
    * foreground; the host seam is responsible for presenting a Modal on top.
    */
-  private async handleScanQr(
-    packageName: string,
-    payload: Record<string, unknown>,
-    requestId?: string,
-  ): Promise<void> {
+  private async handleScanQr(packageName: string, payload: Record<string, unknown>, requestId?: string): Promise<void> {
     try {
       const result = await invokeScanQrSeam(getUiSeams().scanQr, payload)
       this.sendResult(packageName, requestId, true, result)
@@ -3241,6 +3483,55 @@ class LocalMiniappRuntime {
   // Photo + streaming handlers (cloud-coordinated)
   // ===========================================================================
 
+  /**
+   * Manifest permission gate shared by the camera-and-mic RPCs (streams, meetings).
+   * Sends PERMISSION_NOT_DECLARED and returns false when the miniapp did not declare
+   * `permission`; the caller must return without doing the work.
+   */
+  private requireManifestPermission(
+    packageName: string,
+    requestId: string | undefined,
+    permission: "CAMERA" | "PHONE_CAMERA" | "MICROPHONE",
+    purpose: string,
+    operation: MiniappRequestType,
+  ): boolean {
+    const app = this.connectedApps.get(packageName)
+    if (app?.installedManifest?.permissions?.some((p) => p.type === permission)) return true
+    logPermissionNotDeclared(packageName, permission, purpose, `{"type": "${permission}"}`)
+    this.sendResult(packageName, requestId, false, undefined, {
+      code: MiniappErrorCode.PERMISSION_NOT_DECLARED,
+      message: `${permission} permission not declared in miniapp.json. Add {"type": "${permission}"} to the "permissions" array.`,
+      permission,
+      operation,
+    })
+    return false
+  }
+
+  /**
+   * OS-permission gate: checked, never requested.
+   *
+   * The prompt belongs at miniapp-open time, where it can be explained. Requesting here would put
+   * a system dialog on top of a join that has already started building a hotspot, and a wearer who
+   * denies it gets a call that half-exists. Missing means the join is refused with the permission
+   * named, so the miniapp can send them to Settings.
+   */
+  private async requireOsPermission(
+    packageName: string,
+    requestId: string | undefined,
+    feature: string,
+    label: string,
+  ): Promise<boolean> {
+    if (await permissions.check(feature)) return true
+    softapTraceFailure("softap_permission_missing", {packageName, feature})
+    this.sendResult(packageName, requestId, false, undefined, {
+      code: MiniappErrorCode.PERMISSION_DENIED,
+      message: `This phone's ${label} permission is not granted. Grant it in Settings, then try again.`,
+      permission: feature,
+      operation: MiniappRequestType.MEETING_JOIN,
+    })
+    return false
+  }
+
   private async handlePhoto(packageName: string, payload: Record<string, unknown>, requestId?: string): Promise<void> {
     // Manifest CAMERA permission gate.
     const app = this.connectedApps.get(packageName)
@@ -3261,7 +3552,7 @@ class LocalMiniappRuntime {
         size: payload.size as "low" | "medium" | "high" | "max" | "small" | "large" | "full" | undefined,
         mode: payload.mode as "photo" | "text" | undefined,
         transferMethod: payload.transferMethod as "auto" | "direct" | "ble" | undefined,
-        compress: payload.compress as "none" | "low" | "medium" | "high" | undefined,
+        compress: parsePhotoCompression(payload.compress),
         sound: payload.sound as boolean | undefined,
         saveToGallery: payload.saveToGallery as boolean | undefined,
         exposureTimeNs: payload.exposureTimeNs as number | undefined,
@@ -3381,10 +3672,10 @@ class LocalMiniappRuntime {
   }
 
   /**
-   * Stream handlers — dispatched to the engine PhoneStreamCoordinator. For managed
-   * streams the coordinator additionally calls the v2 client REST route to
-   * provision Cloudflare. Cloud-SDK apps (third-party developers) use a
-   * separate cloud-side path that does not pass through here.
+   * Stream handlers — dispatched to PhoneStreamCoordinator on the phone.
+   * Managed streams also use Cloud V2 REST calls to provision resources,
+   * poll ingest status, and tear down the managed stream. Miniapp JavaScript
+   * runs locally in the Mentra App.
    */
   private async handleStreamStart(
     packageName: string,
@@ -3399,6 +3690,18 @@ class LocalMiniappRuntime {
       })
       return
     }
+    // A stream is the glasses camera (and mic) leaving the device; gate it like a photo.
+    if (
+      !this.requireManifestPermission(
+        packageName,
+        requestId,
+        "CAMERA",
+        "to stream the camera",
+        MiniappRequestType.STREAM_START,
+      )
+    ) {
+      return
+    }
     try {
       const result = await streaming.startUnmanaged(packageName, {
         streamUrl: payload.streamUrl as string,
@@ -3406,6 +3709,7 @@ class LocalMiniappRuntime {
         audio: normalizeStreamAudioConfig(payload.audio),
         sound: payload.sound as boolean | undefined,
         authToken: typeof payload.authToken === "string" ? payload.authToken : undefined,
+        captureAudio: resolveCaptureAudio(payload.captureAudio, resolveAcsAudioSource().source),
       })
       this.sendResult(packageName, requestId, true, result)
     } catch (err) {
@@ -3455,13 +3759,30 @@ class LocalMiniappRuntime {
       })
       return
     }
+    if (
+      !this.requireManifestPermission(
+        packageName,
+        requestId,
+        "CAMERA",
+        "to stream the camera",
+        MiniappRequestType.MANAGED_STREAM_START,
+      )
+    ) {
+      return
+    }
     try {
+      if (payload.ingest === "whip" && !(await permissions.check(PermissionFeatures.LOCAL_WIFI))) {
+        if (!(await permissions.request(PermissionFeatures.LOCAL_WIFI))) {
+          throw new Error("Nearby devices permission is required to join the glasses hotspot")
+        }
+      }
       const result = await streaming.startManaged(packageName, {
         restreamDestinations: payload.restreamDestinations as Array<string | {url: string; name?: string}> | undefined,
         video: normalizeStreamVideoConfig(payload.video),
         audio: normalizeStreamAudioConfig(payload.audio),
         sound: payload.sound as boolean | undefined,
-        ingest: payload.ingest as "srt" | "whip" | undefined,
+        ingest: payload.ingest as "srt" | "whip" | "rtmp" | undefined,
+        captureAudio: normalizeCaptureAudio(payload.captureAudio),
       })
       this.sendResult(packageName, requestId, true, result)
     } catch (err) {
@@ -3480,6 +3801,1320 @@ class LocalMiniappRuntime {
     requestId?: string,
   ): Promise<void> {
     return this.handleStreamStop(packageName, payload, requestId)
+  }
+
+  private ensureMeetingStateBridge(): void {
+    acsMeetingService.setStateHandler((owner, state) => {
+      const attempt = this.softapAttempt
+      // While a replacement waits for cleanup, native events still describe its predecessor.
+      if (attempt?.packageName === owner && !attempt.ownsResources) return
+      this.sendToMiniapp(owner, {
+        type: MiniappResponseType.MEETING_STATE,
+        ...state,
+        ...this.softapRecoveryFields(attempt?.packageName === owner ? attempt : null),
+      })
+      if (attempt?.ownsResources && attempt.transport?.shouldRepublish(state.mediaSource)) {
+        void attempt.transport.republish(state.mediaSourceReason ?? "mediaSource failed")
+      }
+    })
+  }
+
+  /** Startup owns the hotspot before ACS has an owner. Closing the app must retire both. */
+  private async leaveMeetingForApp(packageName: string): Promise<void> {
+    const attempt = this.softapAttempt
+    if (attempt?.packageName === packageName) {
+      await this.retireSoftapAttempt({attempt})
+    } else {
+      await acsMeetingService.leaveIfOwner(packageName)
+    }
+  }
+
+  private async handleMeetingJoin(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    this.ensureMeetingStateBridge()
+    // A meeting puts the glasses camera and mic in front of remote strangers; it
+    // needs both declared, same as photo/stream and mic capture do individually.
+    if (
+      !this.requireManifestPermission(
+        packageName,
+        requestId,
+        "CAMERA",
+        "to join a meeting",
+        MiniappRequestType.MEETING_JOIN,
+      ) ||
+      !this.requireManifestPermission(
+        packageName,
+        requestId,
+        "MICROPHONE",
+        "to join a meeting",
+        MiniappRequestType.MEETING_JOIN,
+      ) ||
+      !this.requireManifestPermission(
+        packageName,
+        requestId,
+        "PHONE_CAMERA",
+        "to join a meeting",
+        MiniappRequestType.MEETING_JOIN,
+      )
+    ) {
+      return
+    }
+    // Defensive only: these are prompted for when the wearer opens the miniapp, so by the time a
+    // join runs they are either granted or were refused minutes ago on a screen that explained
+    // them. Checked and never requested — a permission dialog on top of a half-built call is
+    // asked too late to explain itself, and ACS fails the join outright without the camera.
+    if (!(await this.requireOsPermission(packageName, requestId, PermissionFeatures.CAMERA, "camera"))) return
+    if (!(await this.requireOsPermission(packageName, requestId, PermissionFeatures.MICROPHONE, "microphone"))) return
+    // The wearer's voice rides a microphone session, not the meeting. An app allowed to make voice
+    // calls must hold one before the sink starts, or it would get a call configured for dictation.
+    // Other joiners are not required to: without a session the BLE LC3 uplink is simply not
+    // selected and the audio rides the WHIP capture path, exactly as it did before.
+    const glassesSession = micSessionManager.hasGlassesSession(packageName)
+    if (VOICE_CALL_PACKAGES.includes(packageName) && !glassesSession) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.MIC_SESSION_REQUIRED,
+        message: "acquire a glasses microphone session before joining a meeting",
+      })
+      return
+    }
+    const meetingUrl = typeof payload.meetingUrl === "string" ? payload.meetingUrl : ""
+    const token = typeof payload.token === "string" ? payload.token : ""
+    const displayName = typeof payload.displayName === "string" ? payload.displayName : undefined
+    // Diagnostic only. A miniapp that does not send it gets `unknown`, which is a third answer in
+    // the comparison rather than a default that would quietly file every old build under "created".
+    const origin = parseAcsCallOrigin(payload.origin)
+    if (!meetingUrl || !token) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INVALID_ARGUMENT,
+        message: "meetingUrl and token are required",
+      })
+      return
+    }
+    let videoSource: AcsVideoSource
+    try {
+      videoSource = parseAcsVideoSource(payload.videoSource)
+    } catch (error) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INVALID_ARGUMENT,
+        message: error instanceof Error ? error.message : "Invalid meeting video source",
+      })
+      return
+    }
+    try {
+      let video: ReturnType<typeof parseAcsOutgoingVideo>
+      try {
+        video = parseAcsOutgoingVideo(payload.video)
+      } catch (error) {
+        this.sendResult(packageName, requestId, false, undefined, {
+          code: MiniappErrorCode.INVALID_ARGUMENT,
+          message: error instanceof Error ? error.message : "Invalid meeting video",
+        })
+        return
+      }
+      // SoftAP is a sequence, not a single call: the hotspot and the scoped network have to exist
+      // before the ACS join binds a listener, and the glasses can only be told where to publish
+      // after that. The miniapp asks for the transport and the host owns the ordering.
+      if (videoSource.type === "softap") {
+        // The miniapp's `requestId` is the only identifier the two logs share until the attempt
+        // exists, so it is what joins the miniapp's own join line to the host's.
+        softapTrace("meeting_join_request", {
+          packageName,
+          requestId: requestId ?? "none",
+          transport: videoSource.type,
+          hasDisplayName: Boolean(displayName),
+          video: video ? `${video.width}x${video.height}@${video.fps}` : "default",
+          origin,
+        })
+        const startedAt = Date.now()
+        try {
+          const state = await this.joinSoftapMeeting(packageName, {
+            meetingUrl,
+            token,
+            displayName,
+            video,
+            origin,
+            glassesSession,
+          })
+          softapTrace("meeting_join_result", {
+            packageName,
+            requestId: requestId ?? "none",
+            state: state.state,
+            micTransport: state.micTransport ?? "unknown",
+            durationMs: Date.now() - startedAt,
+          })
+          this.sendResult(packageName, requestId, true, state)
+        } catch (error) {
+          softapTraceFailure("meeting_join_result", {
+            packageName,
+            requestId: requestId ?? "none",
+            step: error instanceof SoftapCallError ? error.step : "unknown",
+            code: error instanceof SoftapCallError ? error.code : "INTERNAL",
+            reason: error instanceof Error ? error.message : String(error),
+            durationMs: Date.now() - startedAt,
+          })
+          throw error
+        }
+        return
+      }
+      const state = await acsMeetingService.join(packageName, {
+        meetingUrl,
+        token,
+        videoSource,
+        displayName,
+        origin,
+        glassesSession,
+        ...(video ? {video} : {}),
+      })
+      this.sendResult(packageName, requestId, true, state)
+    } catch (err) {
+      // A SoftAP failure already knows what it was and where. Flattening every one of them to
+      // INTERNAL is what left the miniapp unable to tell "your Wi-Fi is off" — a condition with a
+      // two-tap fix — from an ACS timeout, so it showed the same shrug for both. The step comes
+      // along too: the same code at `hotspot` and at `scopedJoin` are different stories.
+      const softap = err instanceof SoftapCallError ? err : undefined
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: softap?.code ?? MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "ACS meeting join failed",
+        ...(softap ? {step: softap.step} : {}),
+      })
+    }
+  }
+
+  /**
+   * Runs the SoftAP call sequence and returns the meeting state it reached.
+   *
+   * Everything is hung off one [SoftapAttempt] registered before the first `await`, because the
+   * cancellable part of this starts immediately and the transport only exists halfway through.
+   * The attempt is also what `meeting.leave` unwinds: leaving only the ACS call would strand the
+   * glasses publishing into a listener nobody reads, the phone on a hotspot it no longer needs,
+   * and this process pinned to cellular.
+   */
+  private async joinSoftapMeeting(
+    packageName: string,
+    args: {
+      meetingUrl: string
+      token: string
+      displayName?: string
+      video?: AcsOutgoingVideo
+      origin?: AcsCallOrigin
+      glassesSession: boolean
+    },
+  ): Promise<MeetingState> {
+    // Reserve before awaiting retirement: a second Start or Cancel must see this request,
+    // including while it is waiting for its predecessor's native cleanup.
+    const previous = this.softapAttempt
+    const attempt = this.createSoftapAttempt(packageName)
+    this.softapAttempt = attempt
+    const body = this.runSoftapAttempt(attempt, previous, args)
+    // Settled, never rejected: this exists so the *next* attempt can tell when this one's native
+    // work has actually stopped, and a rejection here is already handled below.
+    attempt.body = body.then(
+      () => undefined,
+      () => undefined,
+    )
+    try {
+      return await body
+    } catch (error) {
+      softapTraceFailure("softap_attempt_failed", {
+        attempt: attempt.id,
+        step: error instanceof SoftapCallError ? error.step : "unknown",
+        code: error instanceof SoftapCallError ? error.code : "INTERNAL",
+        reason: error instanceof Error ? error.message : String(error),
+        attemptAgeMs: Date.now() - attempt.startedAt,
+      })
+      // Unwind whatever the attempt reached — including the preflight-owned agent and cellular
+      // pin, which the transport never sees — before the failure surfaces.
+      await this.retireSoftapAttempt({attempt}).catch(() => undefined)
+      throw error
+    }
+  }
+
+  private createSoftapAttempt(packageName: string): SoftapAttempt {
+    const id = ++this.softapAttemptSeq
+    let resolveSettled!: () => void
+    const settled = new Promise<void>((resolve) => {
+      resolveSettled = resolve
+    })
+    const attempt: SoftapAttempt = {
+      id,
+      packageName,
+      startedAt: Date.now(),
+      cancelled: false,
+      ownsResources: false,
+      transport: null,
+      progress: {
+        traceId: `preflight-${id}`,
+        phase: "starting",
+        steps: SOFTAP_STEPS.map((step) => ({step, status: "pending" as const})),
+        elapsedMs: 0,
+        mediaGeneration: 0,
+      },
+      scopedLostUnsub: null,
+      recovery: null,
+      recoveryActive: false,
+      recoveryDeadlineAt: null,
+      body: null,
+      teardown: null,
+      settled,
+      settledDone: false,
+      markSettled: () => {
+        if (attempt.settledDone) return
+        attempt.settledDone = true
+        softapTrace("softap_attempt_settled", {attempt: id, attemptAgeMs: Date.now() - attempt.startedAt})
+        resolveSettled()
+      },
+    }
+    softapTrace("softap_attempt_created", {attempt: id, packageName})
+    return attempt
+  }
+
+  /**
+   * Throws if this attempt has been cancelled or superseded.
+   *
+   * Called after every `await` in the join. The wearer's Cancel cannot interrupt a native call
+   * that is already in flight, so the next best thing — and the thing that actually makes Cancel
+   * work — is to refuse to take another step once they have asked.
+   *
+   * @param after the await this checkpoint follows. The whole join surfaces as one CANCELLED
+   *   error, so without a name in the log there is no way to tell a Cancel during the permission
+   *   prompt from one during a 35-second Teams sign-in.
+   */
+  private checkpointSoftapAttempt(attempt: SoftapAttempt, after: string): void {
+    if (attempt.cancelled || this.softapAttempt !== attempt) {
+      softapTraceFailure("softap_attempt_cancelled", {
+        attempt: attempt.id,
+        after,
+        attemptAgeMs: Date.now() - attempt.startedAt,
+        // Two different causes with one outcome: the wearer asked to leave, or a second join
+        // took the slot. They need different fixes, so they are not collapsed here.
+        cause: attempt.cancelled ? "retired" : "superseded",
+        current: this.softapAttempt?.id ?? "none",
+      })
+      throw new SoftapCallError("hotspot", "CANCELLED", "The call was cancelled while it was starting")
+    }
+  }
+
+  /** Publishes a checklist snapshot, unless this attempt has already been superseded. */
+  private emitSoftapProgress(attempt: SoftapAttempt, progress: SoftapProgress): void {
+    if (this.softapAttempt !== attempt || attempt.cancelled) {
+      // A dropped checklist is why a stalled join used to look like a stuck UI: the wearer's last
+      // row was written by an attempt that no longer owned the call, and nothing said so.
+      softapTrace("softap_progress_dropped", {
+        attempt: attempt.id,
+        phase: progress.phase,
+        traceId: progress.traceId,
+        cause: attempt.cancelled ? "retired" : "superseded",
+        current: this.softapAttempt?.id ?? "none",
+      })
+      return
+    }
+    attempt.progress = progress
+    // A reservation waiting behind another call must not inherit that call's connected state.
+    const current = attempt.transport ? acsMeetingService.getState() : {state: "connecting", muted: false}
+    this.sendToMiniapp(attempt.packageName, {
+      type: MiniappResponseType.MEETING_STATE,
+      ...current,
+      // Before the ACS join there is no native state yet, so the phase reads `connecting`: the
+      // join *is* in progress, and `idle` would make the miniapp think the call ended.
+      state: current.state === "idle" ? "connecting" : current.state,
+      softap: progress,
+      ...this.softapRecoveryFields(attempt),
+    })
+  }
+
+  private softapRecoveryFields(attempt: SoftapAttempt | null | undefined): {recovery?: {
+    active: boolean
+    generation?: number
+    deadlineAt?: number
+    phase?: string
+  }} {
+    if (!attempt?.recoveryDeadlineAt) return {}
+    return {
+      recovery: {
+        active: attempt.recoveryActive,
+        generation: attempt.transport?.currentMediaGeneration(),
+        deadlineAt: attempt.recoveryDeadlineAt,
+        phase: attempt.transport?.currentPhase(),
+      },
+    }
+  }
+
+  /**
+   * Narrates preflight work on the first row while it is still pending.
+   *
+   * Permissions, mobile data, and the ACS sign-in take most of a minute between them and happen
+   * before the transport exists, so without this the wearer watches five pending rows and
+   * concludes the app has hung. No new step and no protocol change: it is the `hotspot` row's
+   * detail, which the connecting screen renders as its one sub-line until step 1 starts.
+   */
+  private narrateSoftapPreflight(attempt: SoftapAttempt, detail: string): void {
+    this.emitSoftapProgress(attempt, {
+      ...attempt.progress,
+      elapsedMs: Date.now() - attempt.startedAt,
+      steps: attempt.progress.steps.map((step) => (step.step === "hotspot" ? {...step, detail} : step)),
+    })
+  }
+
+  private async runSoftapAttempt(
+    attempt: SoftapAttempt,
+    previous: SoftapAttempt | null,
+    args: {
+      meetingUrl: string
+      token: string
+      displayName?: string
+      video?: AcsOutgoingVideo
+      origin?: AcsCallOrigin
+      glassesSession: boolean
+    },
+  ): Promise<MeetingState> {
+    const packageName = attempt.packageName
+    if (previous) {
+      this.narrateSoftapPreflight(attempt, "Finishing the previous call’s cleanup…")
+      softapTrace("softap_join_superseding", {
+        previousAttempt: previous.id,
+        previousAgeMs: Date.now() - previous.startedAt,
+        previousPhase: previous.progress.phase,
+        packageName,
+      })
+      await this.retireSoftapAttempt({attempt: previous}).catch(() => undefined)
+      await awaitCleanupBarrier({
+        settled: previous.settled,
+        settledDone: previous.settledDone,
+        narrate: (detail) => this.narrateSoftapPreflight(attempt, detail),
+        narrateAfterMs: SOFTAP_CLEANUP_NARRATE_AFTER_MS,
+        attempt: attempt.id,
+        waitingFor: `attempt ${previous.id} teardown`,
+      })
+    }
+    this.checkpointSoftapAttempt(attempt, "cleanup barrier")
+    const cleanupError = this.softapCleanupError
+    if (cleanupError) {
+      // Cleared on read, so this refuses at most once and the next attempt always gets through —
+      // which is why the wearer is told to retry rather than to go power-cycle anything. The
+      // native reason stays in the trace: it names a leaked port, not something they can act on.
+      this.softapCleanupError = null
+      softapTraceFailure("softap_join_refused", {packageName, reason: cleanupError})
+      throw new Error("Previous call cleanup has not finished yet. Please try joining again.")
+    }
+    attempt.releaseHotspot = acquireGlassesHotspot()
+    attempt.ownsResources = true
+    this.narrateSoftapPreflight(attempt, "Checking the Nearby devices permission…")
+    const permissionStartedAt = Date.now()
+    if (!(await permissions.check(PermissionFeatures.LOCAL_WIFI))) {
+      this.checkpointSoftapAttempt(attempt, "permission check")
+      softapTrace("softap_permission_prompt", {attempt: attempt.id, permission: "LOCAL_WIFI"})
+      const granted = await permissions.request(PermissionFeatures.LOCAL_WIFI)
+      this.checkpointSoftapAttempt(attempt, "permission prompt")
+      softapTrace("softap_permission_result", {
+        attempt: attempt.id,
+        granted,
+        // The prompt is modal, so this is the wearer's own reaction time and the single largest
+        // unexplained gap in a first-run join.
+        durationMs: Date.now() - permissionStartedAt,
+      })
+      if (!granted) {
+        throw new Error("Nearby devices permission is required to join the glasses hotspot")
+      }
+    }
+    this.checkpointSoftapAttempt(attempt, "permissions")
+    const transport = new SoftapCallTransport(
+      createSoftapCallDeps({
+        packageName,
+        meetingUrl: args.meetingUrl,
+        token: args.token,
+        displayName: args.displayName,
+        video: args.video,
+        awaitFirstFrame: (_report, options) =>
+          acsMeetingService.waitForFirstFrame(SOFTAP_FIRST_FRAME_MS, options),
+        waitUntilLive: (timeoutMs) => acsMeetingService.waitUntilMediaLive(timeoutMs),
+        subsystems: {
+          setHotspotState: async (enabled) => {
+            const status = await this.setGlassesHotspotState(enabled)
+            if (status.state === "enabled") {
+              return {state: status.state, ssid: status.ssid, password: status.password, localIp: status.localIp}
+            }
+            return {state: status.state}
+          },
+          isWifiEnabled: async () => {
+            // A host that cannot answer reports "on" so the preflight stands aside; the native
+            // throw at scopedJoin is what covers those platforms.
+            const enabled = await acsMeetingService.isWifiEnabled()
+            return enabled ?? true
+          },
+          joinScopedNetwork: (ssid, passphrase, gateway, report) =>
+            acsMeetingService.joinScopedNetwork(ssid, passphrase, gateway, report),
+          leaveScopedNetwork: () => acsMeetingService.leaveScopedNetwork(),
+          cancelScopedNetworkJoin: () => acsMeetingService.cancelScopedNetworkJoin(),
+          probeGateway: async () => {
+            const verdict = await acsMeetingService.probeScopedGateway()
+            // No native probe means no verdict, and the orchestrator must not read that as "down".
+            return verdict ?? {reachable: true, detail: "probe unsupported on this host"}
+          },
+          awaitValidatedDefaultNetwork: () => acsMeetingService.awaitValidatedDefaultNetwork(),
+          onGlassesStreamStatus: (listener) => {
+            const sub = BluetoothSdk.addListener("stream_status", (event) => {
+              // The glasses narrate over BLE, which is slow enough that a status from the previous
+              // publish can land after this attempt was retired — and it is narration, so it would
+              // be written straight onto the new call's checklist as if it were happening now.
+              if (this.softapAttempt !== attempt || attempt.cancelled) {
+                softapTrace("softap_stale_callback", {
+                  source: "glasses_stream_status",
+                  attempt: attempt.id,
+                  status: event.status,
+                  current: this.softapAttempt?.id ?? "none",
+                })
+                return
+              }
+              listener({
+                status: event.status,
+                streamId: event.streamId,
+                reason: "reason" in event && typeof event.reason === "string" ? event.reason : undefined,
+                error: "error" in event && typeof event.error === "string" ? event.error : undefined,
+              })
+            })
+            return () => sub.remove()
+          },
+          joinMeeting: (pkg, options) =>
+            acsMeetingService.join(pkg, {
+              meetingUrl: options.meetingUrl,
+              token: options.token,
+              videoSource: options.videoSource,
+              displayName: options.displayName,
+              origin: args.origin,
+              glassesSession: args.glassesSession,
+              ...(args.video ? {video: args.video} : {}),
+            }),
+          leaveMeeting: (pkg) => acsMeetingService.leave(pkg),
+          endMeeting: async (pkg) => {
+            await acsMeetingService.endForEveryone(pkg)
+          },
+          ingestUrl: () => acsMeetingService.softApIngestUrl(),
+          glassesLc3Uplink: () => acsMeetingService.glassesLc3UplinkActive(),
+          startPublishing: (pkg, options) => phoneStreamCoordinator.startUnmanaged(pkg, options),
+          stopPublishing: (pkg) => phoneStreamCoordinator.stop(pkg),
+          discardPendingBleStop: () => phoneStreamCoordinator.discardPendingBleStop(),
+          rebindIngest: async (report) => {
+            report?.("Rebinding the glasses video receiver on the hotspot")
+            const ingestUrl = await acsMeetingService.rebindSoftApIngest()
+            if (!ingestUrl) throw new Error("the rebound meeting reported no ingest URL")
+            report?.(`Receiver rebound at ${ingestUrl}`)
+            return {ingestUrl}
+          },
+        },
+      }),
+    )
+    attempt.transport = transport
+    // A hotspot that vanishes mid-call is a real failure and a normal teardown is not, so both
+    // guards are checked: the attempt must still be the current one (a stale event from a finished
+    // call must never touch the next one) and it must not already be terminating. The unsubscribe
+    // lives on the attempt, so retiring attempt N cannot clear attempt N+1's listener. Teardown
+    // itself is left to the miniapp's terminal path, which calls `meeting.leave` — one owner.
+    attempt.scopedLostUnsub = acsMeetingService.onScopedNetworkLost((error) => {
+      if (this.softapAttempt !== attempt || attempt.cancelled) {
+        console.log("[LocalMiniappRuntime] scoped loss for a superseded SoftAP call; ignoring", error)
+        softapTrace("softap_scoped_loss_dropped", {
+          attempt: attempt.id,
+          code: error.code,
+          cause: attempt.cancelled ? "retired" : "superseded",
+          current: this.softapAttempt?.id ?? "none",
+        })
+        return
+      }
+      if (transport.isTerminating()) {
+        console.log("[LocalMiniappRuntime] scoped loss during teardown; expected", error)
+        softapTrace("softap_scoped_loss_dropped", {attempt: attempt.id, code: error.code, cause: "terminating"})
+        return
+      }
+      console.warn("[LocalMiniappRuntime] SoftAP hotspot lost mid-call", error)
+      softapTraceFailure("softap_scoped_loss_reported", {
+        attempt: attempt.id,
+        code: error.code,
+        reason: error.message,
+        attemptAgeMs: Date.now() - attempt.startedAt,
+      })
+      this.beginSoftapRecovery(attempt, transport, error)
+    })
+
+    // Sign in on the phone's current internet *before* the glasses hotspot takes DNS. On device,
+    // createCallAgent after the scoped join timed out at 20s and only finished once SoftAP was
+    // released. It also waits for validated mobile data, which is why the wearer is told one
+    // honest thing about the whole window rather than nothing at all.
+    this.narrateSoftapPreflight(attempt, "Signing in to Teams…")
+    const prepareStartedAt = Date.now()
+    softapTrace("softap_prepare_agent_begin", {attempt: attempt.id})
+    try {
+      await acsMeetingService.prepareAgent({token: args.token, displayName: args.displayName})
+    } catch (error) {
+      softapTraceFailure("softap_prepare_agent_failed", {
+        attempt: attempt.id,
+        reason: error instanceof Error ? error.message : String(error),
+        durationMs: Date.now() - prepareStartedAt,
+      })
+      throw error
+    }
+    softapTrace("softap_prepare_agent_done", {attempt: attempt.id, durationMs: Date.now() - prepareStartedAt})
+    this.checkpointSoftapAttempt(attempt, "prepareAgent")
+    await transport.start({
+      // What the wearer has been reading for the last minute, so the first snapshot does not
+      // blank it.
+      initialSteps: attempt.progress.steps,
+      // Every transition reaches the miniapp as a meeting-state event carrying the checklist.
+      onProgress: (progress) => this.emitSoftapProgress(attempt, progress),
+    })
+    this.checkpointSoftapAttempt(attempt, "transport.start")
+    const state = acsMeetingService.getState()
+    softapTrace("softap_attempt_live", {
+      attempt: attempt.id,
+      state: state.state,
+      micTransport: state.micTransport ?? "unknown",
+      attemptAgeMs: Date.now() - attempt.startedAt,
+    })
+    return state
+  }
+
+  /**
+   * SoftAP loss is a media outage. Keep ACS, destroy generation N, wait for the glasses,
+   * then build generation N+1. Duplicate losses do not renew the deadline.
+   */
+  private beginSoftapRecovery(
+    attempt: SoftapAttempt,
+    transport: SoftapCallTransport,
+    error: {code: string; message: string},
+  ): void {
+    // Gate on the live flag, not the promise: a settled Promise is still truthy, so a second
+    // walk-away after a successful re-arm was dropped as "in-flight" and the glasses kept
+    // POSTing WHIP at a hotspot the phone had already left.
+    if (attempt.recoveryActive) {
+      softapTrace("softap_recovery_dropped", {attempt: attempt.id, cause: "in-flight"})
+      return
+    }
+    if (attempt.cancelled || this.softapAttempt !== attempt) {
+      softapTrace("softap_recovery_dropped", {
+        attempt: attempt.id,
+        cause: attempt.cancelled ? "retired" : "superseded",
+      })
+      return
+    }
+    const lostAt = Date.now()
+    attempt.recoveryDeadlineAt = lostAt + RETURN_DEADLINE_MS
+    attempt.recoveryActive = true
+    this.emitSoftapProgress(attempt, transport.progress())
+    softapTrace("softap_recovery_begin", {
+      attempt: attempt.id,
+      deadlineAt: attempt.recoveryDeadlineAt,
+      mediaGeneration: transport.currentMediaGeneration(),
+      reason: error.message,
+    })
+
+    let run!: Promise<void>
+    run = (async () => {
+      try {
+        await transport.recover(`${error.code}: ${error.message}`, {
+          wait: async () => {
+            const remaining = (attempt.recoveryDeadlineAt ?? 0) - Date.now()
+            if (remaining <= 0) {
+              throw new SoftapCallError("hotspot", "RETURN_DEADLINE", "The glasses did not return in time")
+            }
+            const ready = await this.waitForGlassesReturn(remaining, () => attempt.cancelled)
+            if (attempt.cancelled || this.softapAttempt !== attempt) {
+              throw new SoftapCallError("hotspot", "CANCELLED", "SoftAP recovery was cancelled")
+            }
+            if (!ready) {
+              throw new SoftapCallError("hotspot", "RETURN_DEADLINE", "The glasses did not return in time")
+            }
+          },
+        })
+        if (attempt.cancelled || this.softapAttempt !== attempt) return
+        this.emitSoftapProgress(attempt, transport.progress())
+        const current = acsMeetingService.getState()
+        this.sendToMiniapp(attempt.packageName, {
+          type: MiniappResponseType.MEETING_STATE,
+          ...current,
+          softap: transport.progress(),
+          ...this.softapRecoveryFields(attempt),
+        })
+        softapTrace("softap_recovery_live", {
+          attempt: attempt.id,
+          mediaGeneration: transport.currentMediaGeneration(),
+          elapsedMs: Date.now() - lostAt,
+        })
+      } catch (recoveryError) {
+        if (attempt.cancelled || this.softapAttempt !== attempt) return
+        const message = recoveryError instanceof Error ? recoveryError.message : String(recoveryError)
+        softapTraceFailure("softap_recovery_failed", {
+          attempt: attempt.id,
+          reason: message,
+          elapsedMs: Date.now() - lostAt,
+        })
+        const current = acsMeetingService.getState()
+        this.sendToMiniapp(attempt.packageName, {
+          type: MiniappResponseType.MEETING_STATE,
+          ...current,
+          state: "error",
+          error: `SOFTAP_NETWORK_LOST: ${error.message}`,
+          softap: transport.progress(),
+          recovery: {
+            active: false,
+            generation: transport.currentMediaGeneration(),
+            deadlineAt: attempt.recoveryDeadlineAt ?? undefined,
+            phase: transport.currentPhase(),
+          },
+        })
+      } finally {
+        attempt.recoveryActive = false
+        if (attempt.recovery === run) attempt.recovery = null
+      }
+    })()
+    attempt.recovery = run
+  }
+
+  /**
+   * Wait for a link the hotspot commands can actually use.
+   *
+   * The hotspot goes away a couple of seconds before the phone declares the BLE link dead, so the
+   * snapshot at loss time still reads "ready". Taking that at face value sent `set_hotspot_state`
+   * into a dying link twice, and each one burned its full timeout before the wearer was even back.
+   * Requiring the link to hold steady turns that into waiting, which is what the budget is for.
+   */
+  private async waitForGlassesReturn(timeoutMs: number, cancelled: () => boolean): Promise<boolean> {
+    const deadlineAt = Date.now() + timeoutMs
+    while (!cancelled()) {
+      const remaining = deadlineAt - Date.now()
+      if (remaining <= 0) return false
+      if (!isGlassesReady(useGlassesStore.getState().connection) && !(await this.awaitGlassesReady(remaining, cancelled))) {
+        return false
+      }
+      const settleMs = Math.min(GLASSES_LINK_SETTLE_MS, Math.max(0, deadlineAt - Date.now()))
+      if (await this.glassesLinkHoldsSteady(settleMs, cancelled)) return true
+    }
+    return false
+  }
+
+  private awaitGlassesReady(timeoutMs: number, cancelled: () => boolean): Promise<boolean> {
+    const controller = new AbortController()
+    const poll = setInterval(() => {
+      if (cancelled()) controller.abort()
+    }, 250)
+    return waitForGlassesReady({
+      getConnection: () => useGlassesStore.getState().connection,
+      subscribe: (listener) => useGlassesStore.subscribe((state) => state.connection, listener),
+      timeoutMs,
+      signal: controller.signal,
+    }).finally(() => clearInterval(poll))
+  }
+
+  /** True when the link stays ready for [ms]; false the moment it drops again. */
+  private glassesLinkHoldsSteady(ms: number, cancelled: () => boolean): Promise<boolean> {
+    if (ms <= 0) return Promise.resolve(isGlassesReady(useGlassesStore.getState().connection))
+    return new Promise<boolean>((resolve) => {
+      let done = false
+      const settle = (steady: boolean) => {
+        if (done) return
+        done = true
+        clearTimeout(timer)
+        clearInterval(poll)
+        unsubscribe()
+        resolve(steady)
+      }
+      const unsubscribe = useGlassesStore.subscribe(
+        (state) => state.connection,
+        (connection) => {
+          if (!isGlassesReady(connection)) settle(false)
+        },
+      )
+      const poll = setInterval(() => {
+        if (cancelled()) settle(false)
+      }, 250)
+      const timer = setTimeout(() => settle(true), ms)
+    })
+  }
+
+  /**
+   * Cancels a SoftAP attempt and does not return until everything it owns has been released.
+   *
+   * This is the barrier the whole design rests on: "leave returned" has to mean "nothing from that
+   * call is still in flight", or the next Start races the previous call's cleanup through the same
+   * hotspot. There is deliberately no deadline — a native call that never returns holds the next
+   * call back rather than letting it race — and a watchdog only says so in the log.
+   *
+   * Safe to call when there is no attempt, and safe to call twice: the teardown is single-flight
+   * per attempt, so a leave and the join's own failure path share one unwind.
+   */
+  private async retireSoftapAttempt(options: {attempt?: SoftapAttempt; mode?: SoftapTeardownMode} = {}): Promise<void> {
+    const attempt = options.attempt ?? this.softapAttempt
+    if (!attempt) {
+      // Not an error — every terminal path calls this without checking — but a Leave that found
+      // nothing to retire and a Leave that tore a call down are very different log entries.
+      softapTrace("softap_retire_noop", {mode: options.mode ?? "leave"})
+      return
+    }
+    attempt.cancelled = true
+    // Keep the retiring attempt discoverable until both its join and cleanup settle.
+    // A newer reservation replaces it immediately, but must still wait on its barrier.
+    softapTrace("softap_retire_begin", {
+      attempt: attempt.id,
+      mode: options.mode ?? "leave",
+      attemptAgeMs: Date.now() - attempt.startedAt,
+      phase: attempt.progress.phase,
+      // Second and later callers join the first one's teardown rather than running their own, and
+      // that sharing is what makes a leave racing a failed join safe.
+      teardownAlreadyRunning: Boolean(attempt.teardown),
+    })
+    if (!attempt.teardown) {
+      attempt.teardown = this.teardownSoftapAttempt(attempt, options.mode)
+      // The barrier closes over the join body as well as the teardown, and opens only when both
+      // have stopped. A watchdog reports a cleanup that is taking too long; it never declares one
+      // finished, because "probably done by now" is exactly the assumption that broke restarts.
+      const stallWatchdog = setTimeout(() => {
+        console.warn("[LocalMiniappRuntime] softap_cleanup_stalled", {
+          attempt: attempt.id,
+          afterMs: SOFTAP_CLEANUP_STALL_LOG_MS,
+        })
+      }, SOFTAP_CLEANUP_STALL_LOG_MS)
+      void Promise.allSettled([
+        attempt.teardown,
+        attempt.body ?? Promise.resolve(),
+        attempt.recovery ?? Promise.resolve(),
+      ]).then(() => {
+        clearTimeout(stallWatchdog)
+        attempt.markSettled()
+        if (this.softapAttempt === attempt) this.softapAttempt = null
+      })
+    }
+    const awaitedFrom = Date.now()
+    try {
+      await attempt.teardown
+    } catch (error) {
+      // Only a refused End reaches here; the local unwind has completed either way, which is the
+      // distinction the wearer's copy depends on.
+      softapTraceFailure("softap_retire_done", {
+        attempt: attempt.id,
+        waitedMs: Date.now() - awaitedFrom,
+        reason: error instanceof Error ? error.message : String(error),
+      })
+      throw error
+    }
+    softapTrace("softap_retire_done", {attempt: attempt.id, waitedMs: Date.now() - awaitedFrom})
+  }
+
+  /**
+   * Releases everything one attempt could own, in the reverse of the order it was taken.
+   *
+   * The scoped network and the ACS agent are released unconditionally, not only when the transport
+   * built them: `prepareAgent` signs in and pins this whole process to cellular *before* the
+   * transport exists, so a Cancel during sign-in would otherwise leave both behind. Both releases
+   * are idempotent.
+   *
+   * Failures are collected rather than swallowed. Reporting a clean teardown that did not happen
+   * is what lets the next call start on leaked state.
+   */
+  private async teardownSoftapAttempt(attempt: SoftapAttempt, mode?: SoftapTeardownMode): Promise<void> {
+    // A cancelled reservation waiting behind another call never acquired any shared resources.
+    // Its cleanup must not release the preceding call's native agent or network.
+    if (!attempt.ownsResources) return
+    // Terminal intent before the first release, so the scoped network we are about to drop cannot
+    // be reported as a hotspot that walked away.
+    acsMeetingService.beginScopedTeardown()
+    const failures: string[] = []
+    let endFailure: unknown = null
+    const teardownStartedAt = Date.now()
+    softapTrace("softap_teardown_begin", {
+      attempt: attempt.id,
+      mode: mode ?? "leave",
+      hasTransport: Boolean(attempt.transport),
+      steps: attempt.transport?.activeSteps().join(",") ?? "",
+    })
+    /**
+     * One line per resource, whether it released or not.
+     *
+     * The releases below are sequential and every one of them can block on a native call, so a
+     * teardown that takes half a minute is only readable if each step says how long it took. A
+     * step that never reports is the one that hung.
+     */
+    const releaseStep = async (step: string, release: () => Promise<void>): Promise<unknown> => {
+      const startedAt = Date.now()
+      try {
+        await release()
+        softapTrace("softap_teardown_step", {
+          attempt: attempt.id,
+          step,
+          outcome: "ok",
+          durationMs: Date.now() - startedAt,
+        })
+        return null
+      } catch (error) {
+        softapTraceFailure("softap_teardown_step", {
+          attempt: attempt.id,
+          step,
+          outcome: "failed",
+          durationMs: Date.now() - startedAt,
+          reason: error instanceof Error ? error.message : String(error),
+        })
+        return error
+      }
+    }
+    const transport = attempt.transport
+    if (transport) {
+      // The only thing `stop()` throws is a refused End — the local teardown still completed,
+      // so this is the caller's business, not a reason to block the next call.
+      endFailure = await releaseStep("transport.stop", () => transport.stop(mode ? {mode} : {}))
+      const undoFailures = transport.lastTeardownFailures()
+      // A hotspot that did not ACK off is leftover ON — the next join wants it on and will
+      // call setHotspotState(true). Refusing that join is how we got hotspot_off_ack_timeout
+      // as a wearer-facing "power-cycle the glasses" dead end.
+      const blockingUndos = undoFailures.filter((step) => step !== "hotspot")
+      if (blockingUndos.length > 0) failures.push(`could not release ${blockingUndos.join(", ")}`)
+      if (undoFailures.includes("hotspot")) {
+        console.warn("[LocalMiniappRuntime] glasses hotspot undo timed out; next join will raise it again", {
+          attempt: attempt.id,
+        })
+      }
+    }
+    const scopedFailure = await releaseStep("leaveScopedNetwork", () => acsMeetingService.leaveScopedNetwork())
+    if (scopedFailure) {
+      failures.push(
+        `leaveScopedNetwork: ${scopedFailure instanceof Error ? scopedFailure.message : String(scopedFailure)}`,
+      )
+    }
+    // Stay pinned across this wait. Unpinning onto a leftover glasses AP is what made the next
+    // Start Call's `teams:create` return `Request failed (503)` — Cloudflare, no internet, not a
+    // Teams configuration problem.
+    const defaultNetworkStartedAt = Date.now()
+    let defaultNetworkOk = false
+    try {
+      const network = await acsMeetingService.awaitDefaultNetworkAfterHotspot()
+      defaultNetworkOk = true
+      softapTrace("softap_teardown_step", {
+        attempt: attempt.id,
+        step: "awaitValidatedDefaultNetwork",
+        outcome: "ok",
+        durationMs: Date.now() - defaultNetworkStartedAt,
+        // Null is "this host cannot tell", which is a different fact from an unusable route, and
+        // the cellular pin is dropped on the strength of this answer.
+        network: network?.detail ?? "unknown",
+        usable: network?.usable ?? "unknown",
+      })
+    } catch (error) {
+      console.warn("[LocalMiniappRuntime] default network after SoftAP teardown is unverified", {
+        attempt: attempt.id,
+        error: error instanceof Error ? error.message : String(error),
+      })
+      softapTraceFailure("softap_teardown_step", {
+        attempt: attempt.id,
+        step: "awaitValidatedDefaultNetwork",
+        outcome: "failed",
+        durationMs: Date.now() - defaultNetworkStartedAt,
+        reason: error instanceof Error ? error.message : String(error),
+      })
+    }
+    const defaultNetworkMs = Date.now() - defaultNetworkStartedAt
+    const acsLeaveStartedAt = Date.now()
+    let acsLeaveOk = false
+    try {
+      const outcome = await acsMeetingService.leaveAndAwait(attempt.packageName)
+      acsLeaveOk = outcome.completed
+      softapTrace("softap_teardown_step", {
+        attempt: attempt.id,
+        step: "acsLeaveAndAwait",
+        // `completed=false` is not a failure and is not recorded as one: the build simply cannot
+        // confirm its own cleanup, so the next call's barrier is the only guarantee left.
+        outcome: outcome.completed ? "ok" : "unconfirmed",
+        reason: outcome.reason ?? "",
+        durationMs: Date.now() - acsLeaveStartedAt,
+      })
+      if (!outcome.completed) {
+        console.warn("[LocalMiniappRuntime] ACS cleanup completion is unverified on this build", {
+          attempt: attempt.id,
+          reason: outcome.reason,
+        })
+      }
+    } catch (error) {
+      softapTraceFailure("softap_teardown_step", {
+        attempt: attempt.id,
+        step: "acsLeaveAndAwait",
+        outcome: "failed",
+        durationMs: Date.now() - acsLeaveStartedAt,
+        reason: error instanceof Error ? error.message : String(error),
+      })
+      failures.push(`ACS leave: ${error instanceof Error ? error.message : String(error)}`)
+    }
+    const hadScopedLostListener = Boolean(attempt.scopedLostUnsub)
+    attempt.scopedLostUnsub?.()
+    attempt.scopedLostUnsub = null
+    softapTrace("softap_teardown_step", {
+      attempt: attempt.id,
+      step: "scopedLostListener",
+      outcome: hadScopedLostListener ? "ok" : "not taken",
+    })
+    failures.push(
+      ...(await this.settleSoftapTeardown(attempt, {
+        acsLeave: {ok: acsLeaveOk, durationMs: Date.now() - acsLeaveStartedAt},
+        defaultNetwork: {ok: defaultNetworkOk, durationMs: defaultNetworkMs},
+      })),
+    )
+    if (failures.length > 0) {
+      this.softapCleanupError = failures.join("; ")
+      console.warn("[LocalMiniappRuntime] softap_cleanup_failed", {attempt: attempt.id, failures})
+    }
+    // The recorded failures are what the *next* join refuses on, so they are logged as the list
+    // that will be quoted back to the wearer rather than only as the individual step failures.
+    softapTrace("softap_teardown_done", {
+      attempt: attempt.id,
+      durationMs: Date.now() - teardownStartedAt,
+      refusesNextCall: failures.length > 0,
+      failures: failures.join("; "),
+      endRefused: Boolean(endFailure),
+    })
+    attempt.releaseHotspot?.()
+    attempt.releaseHotspot = undefined
+    if (endFailure) throw endFailure
+  }
+
+  /**
+   * Send one hotspot command, re-sending it once if a session refresh cancelled it.
+   *
+   * The retry lives inside the unit chained onto [glassesHotspotCommand] rather than around it,
+   * which is what holds the invariant: one logical hotspot operation issues at most two native
+   * commands, and no later operation runs between them. A retry outside the queue would let an
+   * `on` land between the two halves of an `off` and leave the glasses in the opposite state.
+   *
+   * Re-sending is free because ASG compares against current state first and answers a same-state
+   * command with its current status instead of cycling the AP.
+   */
+  private setGlassesHotspotState(enabled: boolean) {
+    const send = async () => {
+      try {
+        return await BluetoothSdk.setHotspotState(enabled)
+      } catch (error) {
+        const code = (error as {code?: string} | null | undefined)?.code
+        if (!code || !HOTSPOT_SESSION_REFRESH_CODES.has(code)) throw error
+        softapTrace("softap_hotspot_session_retry", {enabled, code})
+        await new Promise<void>((resolve) => setTimeout(resolve, HOTSPOT_SESSION_RETRY_DELAY_MS))
+        return await BluetoothSdk.setHotspotState(enabled)
+      }
+    }
+    const run = this.glassesHotspotCommand.then(send, send)
+    this.glassesHotspotCommand = run.then(
+      () => undefined,
+      () => undefined,
+    )
+    return run
+  }
+
+  /**
+   * The last two gates, and the point where a timeout stops being treated as consent.
+   *
+   * Four things have to be true before the next call may start: this device is out of the ACS
+   * call, the WHIP listener's port is released, the glasses have acknowledged their hotspot off,
+   * and the phone has a validated default route again. The first and last already ran; this adds
+   * the two that were never waited for at all, and the ones that produced the stop-then-start
+   * failure — the listener was still inside its 3s tombstone and the glasses AP was still up.
+   *
+   * A bound that expires is not success. It means the resource is still held by a call nobody is
+   * in any more, so it is taken by force and re-verified. An ingest port that is still held
+   * refuses the next join. A glasses hotspot that missed its off-ack does not — the next join
+   * wants the AP up and will raise it again.
+   *
+   * @returns failures to record; a non-empty list refuses the next join.
+   */
+  private async settleSoftapTeardown(
+    attempt: SoftapAttempt,
+    earlier: {acsLeave: {ok: boolean; durationMs: number}; defaultNetwork: {ok: boolean; durationMs: number}},
+  ): Promise<string[]> {
+    const ingestStartedAt = Date.now()
+    let ingestClosed = false
+    try {
+      ingestClosed = await acsMeetingService.awaitIngestClosed(SOFTAP_INGEST_CLOSE_WAIT_MS)
+    } catch (error) {
+      softapTraceFailure("softap_teardown_step", {
+        attempt: attempt.id,
+        step: "awaitIngestClosed",
+        outcome: "failed",
+        reason: error instanceof Error ? error.message : String(error),
+      })
+    }
+    const ingestMs = Date.now() - ingestStartedAt
+
+    const hotspotStartedAt = Date.now()
+    let hotspotOff = false
+    let hotspotReason = ""
+    try {
+      // Idempotent by design — the command asks for "disabled" rather than toggling — so sending
+      // it again after the transport's own stop costs nothing and is the only way to get an ack
+      // that is bound to a deadline we chose.
+      const status = await withTimeout(
+        this.setGlassesHotspotState(false),
+        SOFTAP_HOTSPOT_OFF_ACK_MS,
+        "hotspot_off_ack_timeout",
+      )
+      hotspotOff = status.state === "disabled"
+      hotspotReason = status.state
+    } catch (error) {
+      hotspotReason = error instanceof Error ? error.message : String(error)
+    }
+    const hotspotMs = Date.now() - hotspotStartedAt
+
+    softapTrace("softap_teardown_settled", {
+      attempt: attempt.id,
+      acsLeaveMs: earlier.acsLeave.durationMs,
+      acsLeaveOk: earlier.acsLeave.ok,
+      ingestClosedMs: ingestMs,
+      ingestClosed,
+      hotspotOffMs: hotspotMs,
+      hotspotOff,
+      hotspotDetail: hotspotReason,
+      defaultNetworkMs: earlier.defaultNetwork.durationMs,
+      defaultNetworkOk: earlier.defaultNetwork.ok,
+    })
+
+    if (ingestClosed && hotspotOff) return []
+    return this.forceSoftapCleanup(attempt, {ingestClosed, hotspotOff, hotspotReason})
+  }
+
+  /**
+   * Take back what the bounded waits could not confirm was released.
+   *
+   * Runs only after a gate timed out, and re-verifies rather than assuming: the whole reason the
+   * barrier exists is that "it has probably finished by now" is what broke restarts.
+   */
+  private async forceSoftapCleanup(
+    attempt: SoftapAttempt,
+    gates: {ingestClosed: boolean; hotspotOff: boolean; hotspotReason: string},
+  ): Promise<string[]> {
+    const failures: string[] = []
+    softapTraceFailure("softap_teardown_forced", {
+      attempt: attempt.id,
+      ingestClosed: gates.ingestClosed,
+      hotspotOff: gates.hotspotOff,
+      hotspotDetail: gates.hotspotReason,
+    })
+    if (!gates.ingestClosed) {
+      try {
+        await acsMeetingService.forceCloseIngest()
+        // Re-asked, not assumed: `forceCloseIngest` skips the tombstone, so the latch should be
+        // open immediately. A short bound here is enough and a failure is real.
+        const closed = await acsMeetingService.awaitIngestClosed(SOFTAP_FORCED_VERIFY_MS)
+        if (!closed) failures.push("the video receiver did not release its port")
+      } catch (error) {
+        failures.push(`forced ingest close: ${error instanceof Error ? error.message : String(error)}`)
+      }
+    }
+    if (!gates.hotspotOff) {
+      try {
+        const status = await withTimeout(
+          this.setGlassesHotspotState(false),
+          SOFTAP_HOTSPOT_OFF_ACK_MS,
+          "hotspot_off_ack_timeout",
+        )
+        if (status.state !== "disabled") {
+          console.warn("[LocalMiniappRuntime] glasses hotspot still reported after disable; next join will raise it", {
+            attempt: attempt.id,
+            state: status.state,
+          })
+        }
+      } catch (error) {
+        console.warn("[LocalMiniappRuntime] glasses hotspot off ack missed; next join will raise it", {
+          attempt: attempt.id,
+          reason: error instanceof Error ? error.message : String(error),
+        })
+      }
+    }
+    softapTrace("softap_teardown_forced_done", {
+      attempt: attempt.id,
+      recovered: failures.length === 0,
+      failures: failures.join("; "),
+    })
+    return failures
+  }
+
+  private async handleMeetingLeave(packageName: string, requestId?: string): Promise<void> {
+    const startedAt = Date.now()
+    softapTrace("meeting_leave_request", {
+      packageName,
+      requestId: requestId ?? "none",
+      attempt: this.softapAttempt?.id ?? "none",
+    })
+    try {
+      // A SoftAP call owns the hotspot, the scoped network, and the cellular pin as well as the
+      // ACS call, and retiring the attempt releases all of them. Returning before that finishes is
+      // what let the next Start race this teardown.
+      if (this.softapAttempt) {
+        await this.retireSoftapAttempt()
+        softapTrace("meeting_leave_result", {
+          packageName,
+          requestId: requestId ?? "none",
+          path: "softap",
+          durationMs: Date.now() - startedAt,
+        })
+        this.sendResult(packageName, requestId, true)
+        return
+      }
+      await acsMeetingService.leave(packageName)
+      softapTrace("meeting_leave_result", {
+        packageName,
+        requestId: requestId ?? "none",
+        path: "acs",
+        durationMs: Date.now() - startedAt,
+      })
+      this.sendResult(packageName, requestId, true)
+    } catch (err) {
+      softapTraceFailure("meeting_leave_result", {
+        packageName,
+        requestId: requestId ?? "none",
+        reason: err instanceof Error ? err.message : String(err),
+        durationMs: Date.now() - startedAt,
+      })
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "ACS meeting leave failed",
+      })
+    }
+  }
+
+  /**
+   * End the meeting for everyone, then tear this device down.
+   *
+   * A rejection here always means "the others may still be in the meeting", never "you are still in
+   * it": both paths below complete local teardown before the error surfaces.
+   */
+  private async handleMeetingEnd(packageName: string, requestId?: string): Promise<void> {
+    const startedAt = Date.now()
+    const softap = Boolean(this.softapAttempt)
+    softapTrace("meeting_end_request", {
+      packageName,
+      requestId: requestId ?? "none",
+      attempt: this.softapAttempt?.id ?? "none",
+    })
+    try {
+      if (this.softapAttempt) {
+        await this.retireSoftapAttempt({mode: "end"})
+      } else {
+        await acsMeetingService.endForEveryone(packageName)
+      }
+      softapTrace("meeting_end_result", {
+        packageName,
+        requestId: requestId ?? "none",
+        path: softap ? "softap" : "acs",
+        durationMs: Date.now() - startedAt,
+      })
+      this.sendResult(packageName, requestId, true)
+    } catch (err) {
+      // A rejection here always means the others may still be in the meeting, never that this
+      // device is — the log has to be readable that way round or it accuses the wrong side.
+      softapTraceFailure("meeting_end_result", {
+        packageName,
+        requestId: requestId ?? "none",
+        reason: err instanceof Error ? err.message : String(err),
+        durationMs: Date.now() - startedAt,
+      })
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "Could not end the meeting for everyone",
+      })
+    }
+  }
+
+  private async handleMeetingAdmit(packageName: string, payload: Record<string, unknown>, requestId?: string): Promise<void> {
+    try {
+      if (typeof payload.participantId !== "string") throw new Error("A participant ID is required")
+      await acsMeetingService.admitParticipant(packageName, payload.participantId)
+      this.sendResult(packageName, requestId, true)
+    } catch (error) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: error instanceof Error ? error.message : "Could not admit this guest",
+      })
+    }
+  }
+
+  private async handleMeetingSetMuted(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    const startedAt = Date.now()
+    try {
+      const state = await acsMeetingService.setMuted(packageName, Boolean(payload.muted))
+      softapTrace("meeting_set_muted", {
+        packageName,
+        requestId: requestId ?? "none",
+        requested: Boolean(payload.muted),
+        muted: state.muted,
+        durationMs: Date.now() - startedAt,
+      })
+      this.sendResult(packageName, requestId, true, state)
+    } catch (err) {
+      softapTraceFailure("meeting_set_muted", {
+        packageName,
+        requestId: requestId ?? "none",
+        requested: Boolean(payload.muted),
+        reason: err instanceof Error ? err.message : String(err),
+        durationMs: Date.now() - startedAt,
+      })
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "ACS mute failed",
+      })
+    }
+  }
+
+  private async handleMeetingUpdateVideoSource(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    const videoSource = payload.videoSource as {type?: string; url?: string} | undefined
+    const whepUrl = videoSource?.type === "whep" ? (videoSource.url ?? "") : ""
+    if (!whepUrl) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INVALID_ARGUMENT,
+        message: "videoSource must be a WHEP URL",
+      })
+      return
+    }
+    try {
+      await acsMeetingService.updateVideoSource(packageName, whepUrl)
+      this.sendResult(packageName, requestId, true)
+    } catch (err) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "ACS video source update failed",
+      })
+    }
+  }
+
+  private async handleMeetingGetState(packageName: string, requestId?: string): Promise<void> {
+    try {
+      const state = await acsMeetingService.readState(packageName)
+      this.sendResult(packageName, requestId, true, state)
+    } catch (err) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "ACS getState failed",
+      })
+    }
+  }
+
+  /**
+   * Phone Wi-Fi requests use host seams and never change miniapp foreground.
+   */
+  private async handlePhoneWifiRequest(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    try {
+      const result = await invokePhoneWifiSeam(getUiSeams(), payload)
+      this.sendResult(packageName, requestId, true, result)
+    } catch (err) {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: (err as {code?: string} | null)?.code || MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "Phone Wi-Fi request failed",
+      })
+    }
   }
 
   /**
@@ -3848,11 +5483,11 @@ class LocalMiniappRuntime {
    * Forward a streamed event to all miniapps subscribed to the given stream.
    *
    * Event name translation:
-   * - Cloud sends "head_up" → miniapp protocol uses "head_position" (HEAD_POSITION)
-   * - Cloud sends "VAD" (uppercase) → miniapp protocol uses "vad" (lowercase)
+   * - Incoming "head_up" → miniapp protocol uses "head_position" (HEAD_POSITION)
+   * - Incoming "VAD" (uppercase) → miniapp protocol uses "vad" (lowercase)
    */
   public forwardEvent(streamType: string, data: unknown, transcriptionSource?: TranscriptionEventSource): void {
-    // Translate cloud event names to miniapp protocol stream types
+    // Normalize incoming event names to miniapp protocol stream types
     const normalizedStream = this.normalizeStreamType(streamType)
 
     // Collect all subscribers: exact match, plus wildcard matches for streams
@@ -3904,6 +5539,9 @@ class LocalMiniappRuntime {
     // The bare `touch_event` stream above still catches `onTouch(handler)`.
     let perGestureStream: string | null = null
     let outboundData = data
+    if (normalizedStream === MiniappStreamType.GLASSES_CONNECTION) {
+      outboundData = toMiniappConnectionData(data) ?? data
+    }
     if (normalizedStream === MiniappStreamType.TOUCH_EVENT) {
       // The Bluetooth SDK delivers the gesture under `gestureName` (single_tap /
       // double_tap / triple_tap / long_press / swipe_up / swipe_down). Surface it
@@ -4008,10 +5646,10 @@ class LocalMiniappRuntime {
   }
 
   /**
-   * Translate cloud event names to miniapp stream type values.
+   * Normalize incoming event names to miniapp stream type values.
    */
   private normalizeStreamType(cloudEventName: string): string {
-    // Cloud / Bluetooth SDK → miniapp protocol translations.
+    // Incoming event names → miniapp protocol translations.
     // Bluetooth SDK event names don't always match the miniapp wire values.
     switch (cloudEventName) {
       case "head_up":
@@ -4121,8 +5759,15 @@ class LocalMiniappRuntime {
   }
 
   private isSystemPackage(packageName: string): boolean {
-    if (SYSTEM_MINIAPP_PACKAGES.has(packageName)) return true
-    return this.interopApps().find((app) => app.packageName === packageName)?.isMiniappDev === true
+    const app = this.interopApps().find((candidate) => candidate.packageName === packageName)
+    if (SYSTEM_MINIAPP_PACKAGE_SET.has(packageName)) {
+      if (app?.offline) return true
+      if (app?.local && app.version) {
+        return appRegistry.getReleaseIdentity(packageName, app.version)?.source === "bundled_asset"
+      }
+      return false
+    }
+    return app?.isMiniappDev === true
   }
 
   private async startInteropApp(packageName: string): Promise<boolean> {
@@ -4569,13 +6214,20 @@ class LocalMiniappRuntime {
     const toRemove: string[] = []
 
     for (const [packageName, app] of this.connectedApps) {
-      const liveness = advanceMiniappPingLiveness(app.unansweredPingRounds, PING_TIMEOUT_THRESHOLD)
-      if (liveness.shouldUnregister) {
-        console.warn(`${LOG_TAG}: ${packageName} missed ${PING_TIMEOUT_THRESHOLD} pings, unregistering`)
-        toRemove.push(packageName)
-        continue
+      const holdPingLiveness = shouldHoldMiniappPingLiveness({
+        packageName,
+        softapPackageName: this.softapAttempt?.packageName,
+        softapCancelled: this.softapAttempt?.cancelled,
+      })
+      if (!holdPingLiveness) {
+        const liveness = advanceMiniappPingLiveness(app.unansweredPingRounds, PING_TIMEOUT_THRESHOLD)
+        if (liveness.shouldUnregister) {
+          console.warn(`${LOG_TAG}: ${packageName} missed ${PING_TIMEOUT_THRESHOLD} pings, unregistering`)
+          toRemove.push(packageName)
+          continue
+        }
+        app.unansweredPingRounds = liveness.unansweredPingRounds
       }
-      app.unansweredPingRounds = liveness.unansweredPingRounds
 
       // Send PING — SDK auto-replies with PONG
       this.sendToMiniapp(packageName, {
@@ -4626,7 +6278,6 @@ class LocalMiniappRuntime {
     }
 
     // Belt-and-suspenders: clear any remaining state
-    this.pendingCloudRequests.clear()
     const hadButtonPressSubscribers = this.getButtonPressSubscribers().length > 0
     this.streamSubscribers.clear()
     if (hadButtonPressSubscribers) {

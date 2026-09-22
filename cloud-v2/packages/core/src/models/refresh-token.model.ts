@@ -28,8 +28,19 @@
  * Spec: docs/issues/001-oem-auth/design.md ("Data model" / "refreshTokens")
  */
 
-import { Schema, type InferSchemaType } from "mongoose";
-import { registerModel } from "./register-model";
+import {Schema, type InferSchemaType} from "mongoose"
+import {registerModel} from "./register-model"
+
+const FederatedIdentitySchema = new Schema(
+  {
+    providerId: {type: String},
+    providerKind: {type: String},
+    issuer: {type: String},
+    subject: {type: String},
+    directoryTenantId: {type: String},
+  },
+  {_id: false},
+)
 
 const RefreshTokenSchema = new Schema(
   {
@@ -38,13 +49,13 @@ const RefreshTokenSchema = new Schema(
      * admin tooling can target a session without knowing the token value.
      * Format: `sess_<ULID>`.
      */
-    sessionId: { type: String, required: true, unique: true },
+    sessionId: {type: String, required: true, unique: true},
 
     /**
      * HMAC-SHA256(REFRESH_TOKEN_PEPPER, refreshToken) as base64url. Lookup
      * field on refresh: hash the presented token, find by this field.
      */
-    refreshTokenHash: { type: String, required: true, unique: true },
+    refreshTokenHash: {type: String, required: true, unique: true},
 
     /**
      * Hash of the immediately-superseded refresh token, set on every
@@ -52,44 +63,47 @@ const RefreshTokenSchema = new Schema(
      * rotation response re-presents its old token, which matches here as
      * long as the successor was never used. Absent on brand-new sessions.
      */
-    prevTokenHash: { type: String },
+    prevTokenHash: {type: String},
 
     /**
      * Hash of a live successor displaced by a predecessor-path recovery
      * rotation. Both responses from a duplicate refresh remain usable until
      * the client proves which branch it persisted by presenting one of them.
      */
-    altTokenHash: { type: String },
+    altTokenHash: {type: String},
 
     /** Whose session this is. Matches `users.mentraUserId`. */
-    mentraUserId: { type: String, required: true },
+    mentraUserId: {type: String, required: true},
 
     /** Attesting OEM at the time this session was issued. */
-    tenantId: { type: String, required: true },
+    tenantId: {type: String, required: true},
 
-    issuedAt: { type: Date, required: true, default: () => new Date() },
+    /** Upstream workforce identity, retained across Core refresh rotation. */
+    federatedIdentity: {type: FederatedIdentitySchema},
+
+    issuedAt: {type: Date, required: true, default: () => new Date()},
 
     /** Mongo TTL index field: documents past this date are auto-deleted. */
-    expiresAt: { type: Date, required: true },
+    expiresAt: {type: Date, required: true},
   },
-  { collection: "refreshTokens" },
-);
+  {collection: "refreshTokens"},
+)
 
 // TTL index. `expireAfterSeconds: 0` means "delete the doc as soon as the
 // indexed field's date is in the past." Mongo scans every ~60s.
-RefreshTokenSchema.index({ expiresAt: 1 }, { expireAfterSeconds: 0 });
+RefreshTokenSchema.index({expiresAt: 1}, {expireAfterSeconds: 0})
 
 // Recovery lookup: refresh presented with the immediately-superseded token
 // (OS-1703). Sparse — brand-new sessions have no predecessor.
-RefreshTokenSchema.index({ prevTokenHash: 1 }, { sparse: true });
+RefreshTokenSchema.index({prevTokenHash: 1}, {sparse: true})
 
 // Displaced-sibling lookup for duplicate refresh responses. Sparse because a
 // normal session has no alternate branch.
-RefreshTokenSchema.index({ altTokenHash: 1 }, { sparse: true });
+RefreshTokenSchema.index({altTokenHash: 1}, {sparse: true})
 
 // Revocation queries: "kill every session belonging to this user / OEM."
-RefreshTokenSchema.index({ mentraUserId: 1, tenantId: 1 });
-RefreshTokenSchema.index({ tenantId: 1 });
+RefreshTokenSchema.index({mentraUserId: 1, tenantId: 1})
+RefreshTokenSchema.index({tenantId: 1})
 
-export type RefreshToken = InferSchemaType<typeof RefreshTokenSchema>;
-export const RefreshTokenModel = registerModel("RefreshToken", RefreshTokenSchema);
+export type RefreshToken = InferSchemaType<typeof RefreshTokenSchema>
+export const RefreshTokenModel = registerModel("RefreshToken", RefreshTokenSchema)

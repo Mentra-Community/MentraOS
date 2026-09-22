@@ -55,7 +55,8 @@ bun run dev
 This validates `miniapp.json`, builds the example's `dist/`, serves it over your
 LAN, and prints a QR code. On your phone: **Mentra app → Settings → Developer
 settings → Mini App Development → Scan Mini App QR Code** (phone and laptop must
-be on the same Wi-Fi). See [`miniapp-cli/README.md`](./miniapp-cli/README.md) for
+be on the same Wi-Fi, or run `bun run dev --usb` to go over the USB cable
+instead). See [`miniapp-cli/README.md`](./miniapp-cli/README.md) for
 `dev` / `release` / `pack` details.
 
 ## Developing the SDK itself

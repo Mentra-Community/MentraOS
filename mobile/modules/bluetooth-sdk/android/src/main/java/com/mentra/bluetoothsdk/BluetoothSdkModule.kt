@@ -133,6 +133,7 @@ private inline fun <
 class BluetoothSdkModule : Module() {
     private var sdk: MentraBluetoothSdk? = null
     private var deviceManager: DeviceManager? = null
+    private val logForwarding = LogForwardingBudget()
     private val sdkListener =
             object : MentraBluetoothSdkListener {
                 override fun onGlassesChanged(glasses: GlassesRuntimeState) {
@@ -295,6 +296,16 @@ class BluetoothSdkModule : Module() {
                 }
 
                 override fun onLog(message: String) {
+                    // Each event pins a JNI global reference until JavaScript drains it. The
+                    // log stream is the one source whose rate is unbounded, so it is budgeted.
+                    val withheld = logForwarding.admit() ?: return
+                    if (withheld > 0) {
+                        val notice =
+                                "[W/BluetoothSdkModule] withheld $withheld native log line(s) from " +
+                                        "JavaScript to stay under ${logForwarding.maxPerWindow}/s; " +
+                                        "logcat has them all"
+                        sendEvent("log", mapOf("message" to notice))
+                    }
                     sendEvent("log", mapOf("message" to message))
                 }
 
@@ -339,6 +350,8 @@ class BluetoothSdkModule : Module() {
             "local_transcription",
             "wifi_status_change",
             "wifi_scan_result",
+            "wifi_forget_result",
+            "saved_wifi_networks",
             "hotspot_status_change",
             "hotspot_error",
             "photo_response",
@@ -355,6 +368,10 @@ class BluetoothSdkModule : Module() {
             "receive_command_from_ble",
             "swipe_volume_status",
             "switch_status",
+            "mic_tuning_state",
+            "mic_rms",
+            "wear_state",
+            "wear_tuning",
             "rgb_led_control_response",
             "settings_ack",
             "version_info",
@@ -367,6 +384,8 @@ class BluetoothSdkModule : Module() {
             "audio_disconnected",
             "save_setting",
             "phone_notification",
+            "native_notification_status",
+            "native_notification_delivery",
             "phone_notification_dismissed",
             "ws_text",
             "ws_bin",
@@ -499,6 +518,10 @@ class BluetoothSdkModule : Module() {
 
         SdkAsyncFunction("clearDisplay") { -> sdk?.clearDisplay() }
 
+        SdkAsyncFunction("setDashboardContent") { content: String ->
+            sdk?.setDashboardContent(content)
+        }
+
         // MARK: - Connection Commands
 
         SdkAsyncFunction("connectDefault") { -> sdk?.connectDefault() }
@@ -537,6 +560,12 @@ class BluetoothSdkModule : Module() {
             sdk?.startScan(DeviceModel.fromDeviceType(model))
         }
 
+        SdkAsyncFunction("getScanDiagnostic") { model: String ->
+            sdk?.connectedDeviceScanDiagnostic(DeviceModel.fromDeviceType(model))?.let {
+                mapOf("code" to it.code, "message" to it.message)
+            }
+        }
+
         SdkAsyncFunction("stopScan") { -> sdk?.stopScan() }
 
         SdkAsyncFunction("cancelConnectionAttempt") { -> sdk?.cancelConnectionAttempt() }
@@ -557,22 +586,64 @@ class BluetoothSdkModule : Module() {
         // Stub on Android — iOS uses this for the jetsam stress test.
         Function("getMemoryMB") { -> 0.0 }
 
+        // MARK: - Mic tuning (internal SDK surface only)
+
+        AsyncFunction("setMicRmsTelemetry") { enabled: Boolean ->
+            deviceManager?.sgc?.setMicRmsTelemetry(enabled)
+        }
+
+        // Fire-and-forget: the answer arrives as a mic_tuning_state event, which
+        // the screen is subscribed to anyway.
+        AsyncFunction("requestMicTuningState") { deviceManager?.sgc?.requestMicTuningState() }
+
+        // MARK: - Wear detection (internal SDK surface only)
+
+        // All fire-and-forget; answers arrive as wear_state / wear_tuning events.
+        AsyncFunction("queryWearState") { deviceManager?.queryWearState() }
+
+        AsyncFunction("setWearReporting") { enabled: Boolean ->
+            deviceManager?.setWearReporting(enabled)
+        }
+
+        AsyncFunction("setWearTuning") { intervalMs: Int, count: Int, majority: Int ->
+            deviceManager?.setWearTuning(intervalMs, count, majority)
+        }
+
+        AsyncFunction("requestWearTuning") { deviceManager?.requestWearTuning() }
+
+        AsyncFunction("resetWearTuning") { deviceManager?.resetWearTuning() }
+
         // MARK: - Incident Reporting
 
         SdkAsyncFunction("sendIncidentId") { incidentId: String, apiBaseUrl: String? ->
             sdk?.sendIncidentId(incidentId, apiBaseUrl)
         }
 
+        // MARK: - Native Notification Centre
+
+        // Public controls use the SDK facade; phone payload delivery uses DeviceManager.
+        SdkAsyncFunction("configureNativeNotifications") { config: Map<String, Any> ->
+            requireSdk().configureNativeNotifications(NativeNotificationConfig.fromMap(config))
+        }
+        SdkAsyncFunction("getNativeNotificationStatus") { ->
+            requireSdk().getNativeNotificationStatus().toMap()
+        }
+        AsyncFunction("sendPhoneNotification") { notification: Map<String, Any> ->
+            deviceManager?.sendPhoneNotification(notification)
+        }
+
         // MARK: - WiFi Commands
 
         SdkCoroutineFunction("requestWifiScan") { -> requireSdk().requestWifiScan().map { it.toMap() } }
+
+        SdkCoroutineFunction("getSavedWifiNetworks") { -> requireSdk().getSavedWifiNetworks().toMap() }
 
         SdkCoroutineFunction("sendWifiCredentials") { ssid: String, password: String ->
             requireSdk().sendWifiCredentials(ssid, password).values
         }
 
         SdkCoroutineFunction("forgetWifiNetwork") { ssid: String ->
-            requireSdk().forgetWifiNetwork(ssid).values
+            requireSdk().forgetWifiNetwork(ssid).toMap()
         }
 
         SdkCoroutineFunction("setHotspotState") { enabled: Boolean ->
@@ -589,6 +660,10 @@ class BluetoothSdkModule : Module() {
 
         // MARK: - Gallery Commands
 
+        SdkCoroutineFunction("setGalleryServerEnabled") { enabled: Boolean ->
+            requireSdk().setGalleryServerEnabled(enabled).values
+        }
+
         SdkCoroutineFunction("setGalleryModeEnabled") { enabled: Boolean ->
             requireSdk().setGalleryModeEnabled(enabled).values
         }
@@ -603,7 +678,7 @@ class BluetoothSdkModule : Module() {
 
         @Suppress("DEPRECATION")
         SdkCoroutineFunction("setPhotoCaptureDefaults") { params: Map<String, Any?> ->
-            requireSdk().setPhotoCaptureDefaults(params.toPhotoCaptureDefaults()).values
+            requireSdk().setPhotoCaptureDefaults(PhotoCaptureDefaults.fromMap(params)).values
         }
 
         SdkCoroutineFunction("setVideoRecordingDefaults") { width: Int, height: Int, fps: Int ->
@@ -658,12 +733,7 @@ class BluetoothSdkModule : Module() {
         SdkCoroutineFunction("queryGalleryStatus") { -> requireSdk().queryGalleryStatus().values }
 
         SdkCoroutineFunction("requestPhoto") { params: Map<String, Any?> ->
-            // JS may pass null for optional fields; Map<String, Any> rejects null values at the bridge.
-            val sanitized =
-                    params.mapNotNull { (key, value) ->
-                        if (value == null) null else key to value
-                    }.toMap()
-            val req = PhotoRequest.fromMap(sanitized)
+            val req = PhotoRequest.fromMap(params)
             Bridge.log(
                     "NATIVE: PHOTO PIPELINE [3/6] BluetoothSdk.requestPhoto requestId=${req.requestId} size=${req.size} mode=${req.mode.value} compress=${req.compress} sound=${req.sound} exposureTimeNs=${req.exposureTimeNs} iso=${req.iso}"
             )
@@ -778,15 +848,7 @@ class BluetoothSdkModule : Module() {
             requireSdk().startStream(StreamRequest.fromMap(params)).values
         }
 
-        SdkCoroutineFunction("startExternallyManagedStream") { params: Map<String, Any> ->
-            requireSdk().startExternallyManagedStream(StreamRequest.fromMap(params)).values
-        }
-
         SdkCoroutineFunction("stopStream") { -> requireSdk().stopStream().values }
-
-        SdkAsyncFunction("sendExternallyManagedStreamKeepAlive") { params: Map<String, Any> ->
-            sdk?.sendExternallyManagedStreamKeepAlive(StreamKeepAliveRequest.fromMap(params))
-        }
 
         // MARK: - Microphone Commands
 
@@ -801,6 +863,10 @@ class BluetoothSdkModule : Module() {
                     sendTranscript = sendTranscript ?: false,
                     sendLc3Data = sendLc3Data ?: false,
             )
+        }
+
+        SdkAsyncFunction("setMicSourcePin") { source: String? ->
+            sdk?.setMicSourcePin(source)
         }
 
         // Runs on Dispatchers.IO, not the shared Expo AsyncFunctionQueue: restart()
@@ -825,8 +891,14 @@ class BluetoothSdkModule : Module() {
         // close blocks until the backlog drains — either would otherwise stall
         // every other native call queued behind them.
 
-        AsyncFunction("pcmStreamOpen") { streamId: String, sampleRate: Int, channels: Int, volume: Double ->
-            PcmStreamManager.open(streamId, sampleRate, channels, volume.toFloat())
+        AsyncFunction("pcmStreamOpen") {
+            streamId: String,
+            sampleRate: Int,
+            channels: Int,
+            volume: Double,
+            jitterMs: Int?,
+            ->
+            PcmStreamManager.open(streamId, sampleRate, channels, volume.toFloat(), jitterMs)
         }
 
         AsyncFunction("pcmStreamWrite") Coroutine { streamId: String, base64: String ->
@@ -1001,22 +1073,6 @@ private fun Map<String, Any>?.toMentraDevice(): Device? {
             id = id?.takeIf { it.isNotBlank() } ?: address?.takeIf { it.isNotBlank() } ?: "$model:$name",
     )
 }
-
-private fun Map<String, Any?>.toPhotoCaptureDefaults(): PhotoCaptureDefaults =
-        PhotoCaptureDefaults(
-                size = (this["size"] as? String)?.let { PhotoSize.fromValue(it) },
-                mfnr = this["mfnr"] as? Boolean,
-                zsl = this["zsl"] as? Boolean,
-                noiseReduction = this["noiseReduction"] as? Boolean,
-                edgeEnhancement = this["edgeEnhancement"] as? Boolean,
-                ispDigitalGain = (this["ispDigitalGain"] as? Number)?.toInt(),
-                ispAnalogGain = this["ispAnalogGain"] as? String,
-                aeExposureDivisor = (this["aeExposureDivisor"] as? Number)?.toInt(),
-                isoCap = (this["isoCap"] as? Number)?.toInt(),
-                compress = this["compress"] as? String,
-                sound = this["sound"] as? Boolean,
-                resetCaptureTuning = this["resetCaptureTuning"] as? Boolean == true,
-        )
 
 private fun Map<String, Any>?.toMentraConnectOptions(): ConnectOptions {
     val values = this ?: return ConnectOptions()

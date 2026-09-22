@@ -12,6 +12,7 @@ interface OverrideEntry {
   fov: number
   roiPosition: "center" | "bottom" | "top"
   order: number
+  releasing?: boolean
 }
 
 let leaseCounter = 0
@@ -40,6 +41,11 @@ export class PhoneCameraFovCoordinator {
   private legacyMode = false
 
   constructor(private readonly legacyRestartSettleMs = LEGACY_CAMERA_RESTART_SETTLE_MS) {}
+
+  /** Capture a barrier for FOV work already submitted, excluding future requests. */
+  whenSettled(): Promise<void> {
+    return this.queue.then(() => undefined)
+  }
 
   /** Report-safe FOV ownership snapshot for incident diagnostics. */
   getDiagnosticSnapshot(): Record<string, unknown> {
@@ -90,56 +96,108 @@ export class PhoneCameraFovCoordinator {
     })
   }
 
-  releaseForApp(packageName: string): Promise<void> {
+  /**
+   * Re-assert the current override on the glasses.
+   *
+   * The on-connect device-settings push replays the persistent `camera_fov`,
+   * so glasses that connect mid-call come up at the user's saved value and
+   * silently drop a miniapp's override — a Mentra Call wearer loses the 102°
+   * bottom crop by connecting their glasses after joining.
+   *
+   * The effective lease is recomputed inside [enqueue], not captured at call
+   * time: a `setOverride` or `releaseForApp` already queued ahead of this must
+   * win, and it is this coordinator that has to be the authoritative last
+   * writer. Sends the complete override — `fov` *and* `roiPosition` — because
+   * the scalar alone leaves the ROI wherever the persistent setting put it.
+   *
+   * No-op in legacy mode: those commands restart the camera HAL, which is far
+   * too expensive to fire on every reconnect.
+   */
+  reapplyEffectiveOverride(): Promise<void> {
     return this.enqueue(async () => {
-      const removed = this.overrides.get(packageName)
-      if (!removed) return
-      if (removed.leaseId !== this.effectiveLeaseId) {
-        this.overrides.delete(packageName)
+      if (this.legacyMode) return
+      const leaseId = this.effectiveLeaseId
+      if (!leaseId) return
+      const entry = [...this.overrides.values()].find((candidate) => candidate.leaseId === leaseId)
+      if (!entry) return
+      if (entry.releasing) {
+        const owner = [...this.overrides.entries()].find(([, candidate]) => candidate === entry)![0]
+        await this.releaseOverride(owner)
         return
       }
+      await BluetoothSdk.setCameraFovOverride({
+        leaseId,
+        fov: entry.fov,
+        roiPosition: entry.roiPosition,
+        ttlMs: CAMERA_FOV_OVERRIDE_TTL_MS,
+      })
+      this.scheduleRefresh()
+    })
+  }
 
-      const next = [...this.overrides.entries()]
-        .filter(([candidatePackage]) => candidatePackage !== packageName)
-        .map(([, entry]) => entry)
-        .sort((a, b) => b.order - a.order)[0]
-      if (this.legacyMode) {
-        if (next) {
-          await this.applyLegacyFov({fov: next.fov, roiPosition: next.roiPosition})
-          this.overrides.delete(packageName)
-          this.effectiveLeaseId = next.leaseId
-        } else {
-          // Legacy commands are one-way and have no lease-release protocol.
-          // Ask native to replay its unchanged persistent base setting, then
-          // probe the modern override path again for the next ownership cycle.
-          await BluetoothSdk.restoreLegacyCameraFov()
-          await this.waitForLegacyCameraRestart()
-          this.overrides.delete(packageName)
-          this.clearRefresh()
-          this.effectiveLeaseId = undefined
-          this.legacyMode = false
-        }
-        return
-      }
+  releaseForApp(packageName: string, cameraCleanup: Promise<void> = Promise.resolve()): Promise<void> {
+    // Reserve the queue slot now, before waiting for capture teardown. A respawn
+    // must not install a new crop that this old incarnation's cleanup releases.
+    return this.enqueue(async () => {
+      await cameraCleanup
+      await this.releaseOverride(packageName)
+    })
+  }
+
+  private async releaseOverride(packageName: string): Promise<void> {
+    const removed = this.overrides.get(packageName)
+    if (!removed) return
+    if (removed.leaseId !== this.effectiveLeaseId) {
+      this.overrides.delete(packageName)
+      return
+    }
+
+    // A failed release must not renew the closing owner's lease forever. Keep
+    // enough identity to retry on reconnect, but let ASG's existing TTL restore
+    // the saved crop if the phone cannot complete cleanup (including camera_busy).
+    removed.releasing = true
+    this.clearRefresh()
+
+    const next = [...this.overrides.entries()]
+      .filter(([candidatePackage, entry]) => candidatePackage !== packageName && !entry.releasing)
+      .map(([, entry]) => entry)
+      .sort((a, b) => b.order - a.order)[0]
+    if (this.legacyMode) {
       if (next) {
-        await BluetoothSdk.setCameraFovOverride({
-          leaseId: next.leaseId,
-          fov: next.fov,
-          roiPosition: next.roiPosition,
-          ttlMs: CAMERA_FOV_OVERRIDE_TTL_MS,
-        })
-        // Commit phone-side ownership only after ASG accepted the replacement. On failure the
-        // closing app remains effective here, allowing unregister/reconnect cleanup to retry.
+        await this.applyLegacyFov({fov: next.fov, roiPosition: next.roiPosition})
         this.overrides.delete(packageName)
         this.effectiveLeaseId = next.leaseId
-        this.scheduleRefresh()
       } else {
-        await BluetoothSdk.releaseCameraFovOverride(removed.leaseId)
+        // Legacy commands are one-way and have no lease-release protocol.
+        // Ask native to replay its unchanged persistent base setting, then
+        // probe the modern override path again for the next ownership cycle.
+        await BluetoothSdk.restoreLegacyCameraFov()
+        await this.waitForLegacyCameraRestart()
         this.overrides.delete(packageName)
         this.clearRefresh()
         this.effectiveLeaseId = undefined
+        this.legacyMode = false
       }
-    })
+      return
+    }
+    if (next) {
+      await BluetoothSdk.setCameraFovOverride({
+        leaseId: next.leaseId,
+        fov: next.fov,
+        roiPosition: next.roiPosition,
+        ttlMs: CAMERA_FOV_OVERRIDE_TTL_MS,
+      })
+      // Commit phone-side ownership only after ASG accepted the replacement. On failure the
+      // closing app remains effective here, allowing unregister/reconnect cleanup to retry.
+      this.overrides.delete(packageName)
+      this.effectiveLeaseId = next.leaseId
+      this.scheduleRefresh()
+    } else {
+      await BluetoothSdk.releaseCameraFovOverride(removed.leaseId)
+      this.overrides.delete(packageName)
+      this.clearRefresh()
+      this.effectiveLeaseId = undefined
+    }
   }
 
   private scheduleRefresh(): void {
@@ -151,7 +209,7 @@ export class PhoneCameraFovCoordinator {
       void this.enqueue(async () => {
         if (this.effectiveLeaseId !== leaseId) return
         const entry = [...this.overrides.values()].find((candidate) => candidate.leaseId === leaseId)
-        if (!entry) return
+        if (!entry || entry.releasing) return
         await BluetoothSdk.setCameraFovOverride({
           leaseId,
           fov: entry.fov,

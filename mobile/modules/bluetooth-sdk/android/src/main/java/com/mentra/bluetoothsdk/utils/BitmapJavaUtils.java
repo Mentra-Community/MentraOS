@@ -3,7 +3,7 @@ package com.mentra.bluetoothsdk.utils;
 import java.io.File;
 import android.graphics.Bitmap;
 import android.graphics.BitmapFactory;
-import android.util.Log;
+import com.mentra.bluetoothsdk.utils.NativeLog;
 import android.graphics.Bitmap;
 import java.io.ByteArrayOutputStream;
 import java.io.IOException;
@@ -18,7 +18,7 @@ public class BitmapJavaUtils {
             Bitmap myBitmap = BitmapFactory.decodeFile(imgFile.getAbsolutePath());
             return myBitmap;
         } else {
-            Log.d(TAG, "Image doesn't exist");
+            NativeLog.d(TAG, "Image doesn't exist");
             return null;
         }
     }

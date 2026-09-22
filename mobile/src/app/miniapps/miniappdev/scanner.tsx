@@ -8,7 +8,7 @@ import {useAppTheme} from "@/contexts/ThemeContext"
 import {useNavigationStore} from "@/stores/navigation"
 import {translate} from "@/i18n"
 import showAlert from "@/utils/AlertUtils"
-import {decideDevLaunchRoute, engine} from "@mentra/engine"
+import {decideDevOpenRoute, engine} from "@mentra/engine"
 import {appRegistry, registerDevApp, type DevAppRecord} from "@mentra/engine-host-internal"
 import {askPermissionsUI, checkPermissionsUI, PERMISSION_CONFIG} from "@/utils/PermissionsUtils"
 import {storage} from "@/utils/storage/storage"
@@ -94,12 +94,12 @@ export default function MiniappDeveloperScannerScreen() {
       }
 
       // Pass mDNS up front — storage hasn't been written yet on first scan, so
-      // decideDevLaunchRoute can't read `_dev_mdns` until we persist below.
-      const launchResult = await decideDevLaunchRoute(packageName ?? "", devUrl, {
+      // decideDevOpenRoute can't read `_dev_mdns` until we persist below.
+      const launchResult = await decideDevOpenRoute(packageName ?? "", devUrl, {
         alternateHosts: mdnsHost ? [mdnsHost] : undefined,
       })
 
-      const manifest = launchResult.manifest
+      const manifest = launchResult.decision === "live" ? launchResult.manifest : null
       // Keep an explicit identity separate from the offline-screen display
       // fallback — never persist routing keys under the shared `com.dev.unknown`.
       const knownPackageName = (manifest?.packageName || packageName)?.trim() || undefined
@@ -110,7 +110,9 @@ export default function MiniappDeveloperScannerScreen() {
         ? (manifest!.permissions as AppletPermission[])
         : []
 
-      const resolvedBase = (launchResult.resolvedUrl || devUrl).replace(/\/$/, "")
+      const resolvedBase = (
+        (launchResult.decision === "live" ? launchResult.resolvedUrl : undefined) || devUrl
+      ).replace(/\/$/, "")
       let iconUrl: string | undefined
       if (iconPath) {
         iconUrl = /^https?:\/\//.test(iconPath)
@@ -131,7 +133,7 @@ export default function MiniappDeveloperScannerScreen() {
           name: name ?? knownPackageName,
           iconUrl: iconUrl ?? `${resolvedBase}/icon.png`,
           // Prefer the host that actually answered (may be mDNS / Metro failover).
-          devUrl: launchResult.resolvedUrl || devUrl,
+          devUrl: resolvedBase,
           // Explicit empty clears a prior QR's sidecar port / mDNS for this package.
           devPort: Number.isFinite(portNum) ? portNum : undefined,
           mdnsHost: mdnsHost ?? "",
@@ -168,6 +170,13 @@ export default function MiniappDeveloperScannerScreen() {
       if (launchResult.decision === "offline") {
         clearHistoryAndGoHome()
         push("/applet/dev-offline", {packageName, name, iconUrl})
+        return
+      }
+
+      if (launchResult.decision === "cached") {
+        clearHistoryAndGoHome()
+        await engine.miniapps.refresh()
+        await engine.miniapps.setForeground(packageName)
         return
       }
 

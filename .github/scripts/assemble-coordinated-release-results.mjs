@@ -5,6 +5,8 @@ import path from "node:path"
 import {fileURLToPath} from "node:url"
 
 import {validateCloudV2DeploymentRecord} from "./coordinated-cloud-v2-records.mjs"
+import {validatePrivateDeploymentRecord} from "./coordinated-private-deployment-records.mjs"
+import {validateRuntimeImageRecord} from "./coordinated-runtime-image-records.mjs"
 import {serializeReleaseRecord} from "./release-family.mjs"
 import {createEnginePackageArtifact, mergeReleaseResultRecords} from "./release-result-records.mjs"
 
@@ -52,6 +54,8 @@ export function assembleCoordinatedReleaseResults({
   native,
   mobile,
   cloud,
+  runtimeImage,
+  privateDeployment,
   asgSelectionFile,
   enginePackage,
   releaseAssetBaseUrl,
@@ -62,6 +66,20 @@ export function assembleCoordinatedReleaseResults({
   const merged = mergeReleaseResultRecords({plan, records: [...npmRecords, native, mobile]})
   const selection = verifyAsgSelection(plan, ota, asgSelectionFile)
   const verifiedCloud = validateCloudV2DeploymentRecord({plan, record: cloud, allowValidated: true})
+  const verifiedRuntimeImage = validateRuntimeImageRecord({
+    plan,
+    record: runtimeImage,
+    allowValidated: true,
+  })
+  const verifiedPrivateDeployment =
+    plan.channel === "dev"
+      ? validatePrivateDeploymentRecord({
+          plan,
+          record: privateDeployment,
+          allowValidated: true,
+          runtimeImage: verifiedRuntimeImage,
+        })
+      : undefined
   const otaProvenanceUrl = provenanceUrl(ota)
   const artifacts = [
     ...merged.artifacts,
@@ -116,6 +134,8 @@ export function assembleCoordinatedReleaseResults({
     },
     artifacts,
     cloud: verifiedCloud,
+    runtimeImage: verifiedRuntimeImage,
+    ...(verifiedPrivateDeployment ? {privateDeployment: verifiedPrivateDeployment} : {}),
   }
 }
 
@@ -139,6 +159,8 @@ function main() {
     native: readJson(path.resolve(args.native)),
     mobile: readJson(path.resolve(args.mobile)),
     cloud: readJson(path.resolve(args.cloud)),
+    runtimeImage: readJson(path.resolve(args["runtime-image"])),
+    privateDeployment: args["private-deployment"] ? readJson(path.resolve(args["private-deployment"])) : undefined,
     asgSelectionFile: path.resolve(args["asg-selection"]),
     enginePackage: args["engine-package"] ? path.resolve(args["engine-package"]) : undefined,
     releaseAssetBaseUrl: args["release-asset-base-url"],

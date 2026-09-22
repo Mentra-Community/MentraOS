@@ -69,11 +69,13 @@ async function cmdBugbotPoll() {
     repo,
     headSha,
     config.limits.maxBugbotWaitMin,
+    config.limits.bugbotStartGraceMin,
   );
   const out = process.env.GITHUB_OUTPUT;
   if (out) {
     appendFileSync(out, `bugbot_completed=${result.completed}\n`);
     appendFileSync(out, `bugbot_success=${result.success}\n`);
+    appendFileSync(out, `bugbot_started=${result.started}\n`);
   }
   console.log(JSON.stringify(result));
 }
@@ -107,6 +109,14 @@ async function cmdAggregate() {
     console.warn('external review ingestion failed; continuing without:', err);
   }
 
+  // Absent/blank means "unknown" (e.g. the Bugbot job did not run), which must
+  // keep the conservative treatment. Only an explicit `false` drops the slot.
+  const bugbotStartedRaw = process.env.BUGBOT_STARTED;
+  const bugbotStarted =
+    bugbotStartedRaw === undefined || bugbotStartedRaw === ''
+      ? undefined
+      : bugbotStartedRaw === 'true';
+
   const reviews = {
     standards: loadReviewOutput(repoRoot, 'standards'),
     depth: loadReviewOutput(repoRoot, 'depth'),
@@ -114,6 +124,7 @@ async function cmdAggregate() {
     bugbot: await loadBugbotVerdict(octokit, owner, repo, prNumber),
     bugbotCheckCompleted: process.env.BUGBOT_COMPLETED === 'true',
     bugbotCheckSuccess: process.env.BUGBOT_SUCCESS === 'true',
+    bugbotStarted,
     external,
   };
 
@@ -131,7 +142,7 @@ async function cmdAggregate() {
       bugbot: reviews.bugbot,
     },
     activePair,
-    { nativeReviewers: reviews.external?.reviewers },
+    { nativeReviewers: reviews.external?.reviewers, bugbotStarted },
   );
   await upsertMarkerComment(octokit, owner, repo, prNumber, MARKER_REVIEW, reviewComment);
 
@@ -151,6 +162,7 @@ async function cmdAggregate() {
     appendFileSync(out, `handoff_reason=${result.handoffReason ?? ''}\n`);
     appendFileSync(out, `ci_failed=${result.ciFailed}\n`);
     appendFileSync(out, `fix_round=${result.state.fixRound}\n`);
+    appendFileSync(out, `needs_continuation=${result.needsContinuation === true}\n`);
   }
 
   console.log(JSON.stringify(result, null, 2));
@@ -199,8 +211,42 @@ async function cmdRecheckHandoff() {
   if (out) {
     appendFileSync(out, `should_handoff=${result.shouldHandoff}\n`);
     appendFileSync(out, `handoff_reason=${result.handoffReason ?? ''}\n`);
+    appendFileSync(out, `needs_continuation=${result.needsContinuation === true}\n`);
   }
   console.log(JSON.stringify(result, null, 2));
+}
+
+/**
+ * Re-trigger the orchestrator for a PR whose diff matches no CI gate. Such a
+ * PR receives no `workflow_run` completion, so without this nudge the loop
+ * stops after one cycle and never banks enough clean cycles to hand off.
+ * Bounded by `limits.maxSelfDispatches`; the state write happens before the
+ * dispatch so a crash cannot double-spend the budget.
+ */
+async function cmdContinue() {
+  const config = loadConfig(repoRoot);
+  const octokit = createOctokit();
+  const { state, commentId } = await loadOrCreateState(octokit, owner, repo, prNumber);
+
+  const max = config.limits.maxSelfDispatches;
+  if (state.selfDispatches >= max) {
+    console.log(`Self-dispatch budget spent (${state.selfDispatches}/${max}); not continuing`);
+    return;
+  }
+
+  const next = { ...state, selfDispatches: state.selfDispatches + 1 };
+  await saveState(octokit, owner, repo, prNumber, next, commentId);
+
+  await octokit.actions.createWorkflowDispatch({
+    owner,
+    repo,
+    workflow_id: 'pr-agent-orchestrator.yml',
+    ref: process.env.TOOL_REF || baseRef,
+    inputs: { pr_number: String(prNumber) },
+  });
+  console.log(
+    `Self-dispatched next cycle (dispatch ${next.selfDispatches}/${max}) for PR #${prNumber}`,
+  );
 }
 
 async function cmdFinalize() {
@@ -261,14 +307,17 @@ async function main() {
     case 'recheck-handoff':
       await cmdRecheckHandoff();
       break;
+    case 'continue':
+      await cmdContinue();
+      break;
     case 'finalize':
       await cmdFinalize();
       break;
     case 'help':
     default:
       console.log(`Usage: cli.ts <command>
-  plan | review <standards|depth> | bugbot-trigger | bugbot-poll
-  aggregate | fix | wait-ci | recheck-handoff | finalize`);
+  plan | review <standards|depth|codex> | bugbot-trigger | bugbot-poll
+  aggregate | fix | wait-ci | recheck-handoff | continue | finalize`);
   }
 }
 

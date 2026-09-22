@@ -210,6 +210,13 @@ struct GlassesStatus: CustomStringConvertible {
         stringValue(values, "appVersion") ?? ""
     }
 
+    /// Package the glasses client actually runs as, from version_info_1. Empty on glasses whose
+    /// client predates the field. "com.mentra.asg_client" is the stock client; anything else is a
+    /// sideloaded build that OTA must not drive.
+    var packageName: String {
+        stringValue(values, "packageName") ?? ""
+    }
+
     var hotspotOtaVersion: Int {
         intValue(values["hotspotOtaVersion"]) ?? 0
     }
@@ -367,7 +374,12 @@ public struct VersionInfoResult: CustomStringConvertible {
     public let systemTimeMs: Int?
     public let otaVersionUrl: String
     public let appVersion: String
+    public let packageName: String
     public let hotspotOtaVersion: Int
+    public let wifiForgetResultVersion: Int?
+    public let savedWifiNetworksVersion: Int?
+    public let versionInfoType: String?
+    public let sid: String?
 
     init(status: GlassesStatus) {
         androidVersion = status.androidVersion
@@ -378,7 +390,12 @@ public struct VersionInfoResult: CustomStringConvertible {
         systemTimeMs = intValue(status.values["systemTimeMs"])
         otaVersionUrl = status.otaVersionUrl
         appVersion = status.appVersion
+        packageName = status.packageName
         hotspotOtaVersion = status.hotspotOtaVersion
+        wifiForgetResultVersion = nil
+        savedWifiNetworksVersion = nil
+        versionInfoType = nil
+        sid = nil
     }
 
     init(values: [String: Any]) {
@@ -390,10 +407,19 @@ public struct VersionInfoResult: CustomStringConvertible {
         systemTimeMs = intValue(values["systemTimeMs"]) ?? intValue(values["system_time_ms"])
         otaVersionUrl = stringValue(values, "otaVersionUrl", "ota_version_url") ?? ""
         appVersion = stringValue(values, "appVersion", "app_version") ?? ""
+        packageName = stringValue(values, "packageName", "package_name") ?? ""
         hotspotOtaVersion =
             intValue(values["hotspotOtaVersion"])
                 ?? intValue(values["hotspot_ota_version"])
                 ?? 0
+        wifiForgetResultVersion =
+            intValue(values["wifiForgetResultVersion"])
+                ?? intValue(values["wifi_forget_result_version"])
+        savedWifiNetworksVersion =
+            intValue(values["savedWifiNetworksVersion"])
+                ?? intValue(values["saved_wifi_networks_version"])
+        versionInfoType = stringValue(values, "versionInfoType", "version_info_type")
+        sid = stringValue(values, "sid")
     }
 
     public var dictionary: [String: Any] {
@@ -409,6 +435,23 @@ public struct VersionInfoResult: CustomStringConvertible {
         ]
         if let systemTimeMs {
             values["systemTimeMs"] = systemTimeMs
+        }
+        // Only when known: per-chunk events may omit package identity. Emitting an empty value
+        // would overwrite a known identity, which the OTA guard uses to identify stock.
+        if !packageName.isEmpty {
+            values["packageName"] = packageName
+        }
+        if let wifiForgetResultVersion {
+            values["wifiForgetResultVersion"] = wifiForgetResultVersion
+        }
+        if let savedWifiNetworksVersion {
+            values["savedWifiNetworksVersion"] = savedWifiNetworksVersion
+        }
+        if let versionInfoType {
+            values["versionInfoType"] = versionInfoType
+        }
+        if let sid {
+            values["sid"] = sid
         }
         return values
     }
@@ -702,6 +745,10 @@ struct GlassesStatusUpdate: CustomStringConvertible {
 
     var appVersion: String? {
         optionalStringValue(values, "appVersion")
+    }
+
+    var packageName: String? {
+        optionalStringValue(values, "packageName")
     }
 
     var hotspotOtaVersion: Int? {

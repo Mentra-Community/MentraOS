@@ -1,0 +1,10 @@
+# OSX
+.DS_Store
+build/
+node_modules/
+android/.gradle
+android/build
+android/.cxx
+ios/build
+.expo/
+ios/PolicyKit/.build

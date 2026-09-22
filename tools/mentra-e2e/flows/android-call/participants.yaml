@@ -1,0 +1,5 @@
+appId: com.mentra.mentra
+---
+- assertVisible: Leave the call
+- tapOn: View participants
+- assertVisible: Close participants

@@ -1,5 +1,10 @@
 {
+  "call": {
+    "repo": "../Mentra-Call",
+    "packScript": "pack:prod"
+  },
   "livestreamer": {
-    "repo": "../Livestreamer-Miniapp"
+    "repo": "../Livestreamer-Miniapp",
+    "packScript": "pack:prod"
   }
 }

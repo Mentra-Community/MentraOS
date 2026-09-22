@@ -1,5 +1,13 @@
 import Foundation
 
+enum DashboardContentFormatter {
+    static let statusHeader = "$TIME12$ $DATE$ $GBATT$ $CONNECTION_STATUS$"
+
+    static func template(for content: String) -> String {
+        content.isEmpty ? statusHeader : statusHeader + "\n\n" + content
+    }
+}
+
 public struct DisplayTextRequest {
     public let text: String
     public let x: Int

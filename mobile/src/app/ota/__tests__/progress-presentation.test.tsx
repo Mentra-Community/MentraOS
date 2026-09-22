@@ -7,6 +7,7 @@ import * as otaHook from "../../../../modules/engine/src/react/useMentraLiveOta"
 const baseState: otaHook.MentraLiveOtaState = {
   screen: "preparing_hotspot",
   connected: true,
+  glassesPackageName: null,
   batteryLevel: 80,
   transport: "hotspot",
   updateRequired: true,
@@ -58,7 +59,7 @@ const flow = () => <MentraLiveOtaFlow onFinished={jest.fn()} onOpenWifiSetup={je
 test("identifies each phone download when its percentage starts over", () => {
   state.hotspotArtifact = {kind: "apk", index: 0, totalCount: 3}
   const screen = render(flow())
-  expect(screen.getByText("Downloading update to phone...")).toBeDefined()
+  expect(screen.getByText("Downloading update to phone…")).toBeDefined()
   expect(screen.getByText("File 1 of 3 · Glasses software")).toBeDefined()
   expect(screen.getByText("100%")).toBeDefined()
 
@@ -75,9 +76,9 @@ test("identifies each phone download when its percentage starts over", () => {
 })
 
 test.each([
-  ["starting_hotspot", "Starting glasses hotspot..."],
-  ["joining_hotspot", "Connecting phone to glasses..."],
-  ["serving", "Starting update..."],
+  ["starting_hotspot", "Starting glasses hotspot…"],
+  ["joining_hotspot", "Connecting phone to glasses…"],
+  ["serving", "Starting update…"],
 ] as const)("labels %s and hides the previous download's progress", (phase, title) => {
   state.hotspotPhase = phase
   state.hotspotArtifact = {kind: "apk", index: 0, totalCount: 1}
@@ -94,16 +95,16 @@ test.each([
 ] as const)("distinguishes %s transfer from installation", (step, component) => {
   state = {...state, screen: "updating", phase: "download", step, currentStep: 2, totalSteps: 3, progress: 100}
   const screen = render(flow())
-  expect(screen.getByText("Transferring update to glasses...")).toBeDefined()
+  expect(screen.getByText("Transferring update to glasses…")).toBeDefined()
   expect(screen.getByText(`Update 2 of 3 · ${component}`)).toBeDefined()
   expect(screen.getByText("100%")).toBeDefined()
 
   state = {...state, phase: "install", progress: 20}
   screen.rerender(flow())
-  expect(screen.getByText("Installing update on glasses...")).toBeDefined()
+  expect(screen.getByText("Installing update on glasses…")).toBeDefined()
   expect(screen.getByText(`Update 2 of 3 · ${component}`)).toBeDefined()
   expect(screen.getByText("20%")).toBeDefined()
-  expect(screen.queryByText("Transferring update to glasses...")).toBeNull()
+  expect(screen.queryByText("Transferring update to glasses…")).toBeNull()
 })
 
 test("does not invent a step count for a legacy update", () => {
@@ -116,11 +117,11 @@ test("does not invent a step count for a legacy update", () => {
 test("keeps APK-only installation indeterminate", () => {
   state = {...state, screen: "updating", phase: "install", step: "apk", installingApkOnly: true, progress: 0}
   const screen = render(flow())
-  expect(screen.getByText("Installing update on glasses...")).toBeDefined()
+  expect(screen.getByText("Installing update on glasses…")).toBeDefined()
   expect(screen.queryByText("0%")).toBeNull()
 })
 
 test("keeps the direct Wi-Fi download label", () => {
   state = {...state, screen: "updating", transport: "wifi", phase: "download", step: "apk", progress: 50}
-  expect(render(flow()).getByText("Downloading...")).toBeDefined()
+  expect(render(flow()).getByText("Downloading…")).toBeDefined()
 })

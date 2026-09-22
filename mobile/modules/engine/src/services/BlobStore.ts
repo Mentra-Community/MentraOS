@@ -49,6 +49,7 @@ const SHARE_DIR_NAME = "mentra_blob_share"
  * files sooner under storage pressure.
  */
 const SHARE_CACHE_MAX_AGE_MS = 24 * 60 * 60 * 1000
+const SHARE_LAST_USED_FILE = ".last-shared"
 const META_KEY_ROOT = "mentraos_blobmeta_"
 /** Cap md5 computation so we don't block the JS thread hashing a huge file. */
 const MD5_MAX_BYTES = 50 * 1024 * 1024
@@ -103,6 +104,7 @@ interface ActiveReader {
 
 export class BlobStore {
   private readonly uploads = new Map<string, ActiveUpload>() // key: `${pkg} ${key}`
+  private readonly activeShareDirs = new Map<string, number>()
   private readonly readers = new Map<string, ActiveReader>() // key: host handle id
   /** user + package → committed usage bytes, cached; invalidated on commit/delete/clear. */
   private readonly usageCache = new Map<string, number>()
@@ -612,15 +614,18 @@ export class BlobStore {
       if (!root.exists) return
       const cutoff = now - SHARE_CACHE_MAX_AGE_MS
       for (const entry of root.list()) {
-        if (!(entry instanceof Directory)) continue
+        if (!(entry instanceof Directory) || this.activeShareDirs.has(entry.uri)) continue
         try {
+          const lastUsed = new File(entry, SHARE_LAST_USED_FILE)
           const info = entry.info()
           // modificationTime is available on both platforms; creationTime can
           // be absent on Android versions before API 26. The directory id
           // begins with Date.now().toString(36), which is a final fallback.
           const encoded = entry.name.split("-", 1)[0]
           const encodedTime = /^[0-9a-z]+$/.test(encoded) ? Number.parseInt(encoded, 36) : Number.NaN
-          const timestamp = info.modificationTime ?? info.creationTime ?? encodedTime
+          const timestamp = lastUsed.exists
+            ? Number(lastUsed.textSync())
+            : info.modificationTime ?? info.creationTime ?? encodedTime
           if (Number.isFinite(timestamp) && timestamp < cutoff) entry.delete()
         } catch {
           // Keep scanning if one cache entry disappears or is unreadable.
@@ -658,6 +663,7 @@ export class BlobStore {
     // right name + extension.
     let tempDir: Directory | null = null
     let cacheReady = false
+    let handoffStarted = false
     try {
       this.cleanupShareCache()
       tempDir = new Directory(Paths.cache, SHARE_DIR_NAME, sanitizeSegment(meta.fileName))
@@ -668,6 +674,11 @@ export class BlobStore {
         file.copy(temp)
       }
       cacheReady = true
+      // Persist each handoff's age, even when reusing old bytes. Directory
+      // modification time does not change when an existing file is shared.
+      new File(tempDir, SHARE_LAST_USED_FILE).write(String(Date.now()))
+      this.activeShareDirs.set(tempDir.uri, (this.activeShareDirs.get(tempDir.uri) ?? 0) + 1)
+      handoffStarted = true
       await Share.open({
         url: temp.uri,
         type: meta.mimeType || OCTET,
@@ -684,6 +695,18 @@ export class BlobStore {
         this.hooks.sendResult(packageName, requestId, true, {success: false})
       }
     } finally {
+      if (tempDir && handoffStarted) {
+        // Give async readers a full window after the chooser returns, even
+        // if it stayed open longer than the retention period.
+        try {
+          new File(tempDir, SHARE_LAST_USED_FILE).write(String(Date.now()))
+        } catch (error) {
+          console.warn(`${LOG_TAG}: could not refresh share retention`, error)
+        }
+        const remaining = (this.activeShareDirs.get(tempDir.uri) ?? 1) - 1
+        if (remaining > 0) this.activeShareDirs.set(tempDir.uri, remaining)
+        else this.activeShareDirs.delete(tempDir.uri)
+      }
       // Once a reusable cache entry is ready, retain it even if this particular
       // sheet is cancelled or fails: another concurrent/recent share may still
       // be reading the same file. Only remove an entry whose preparation did

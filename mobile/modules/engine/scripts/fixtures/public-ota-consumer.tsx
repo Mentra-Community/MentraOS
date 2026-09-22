@@ -28,6 +28,7 @@ function screenLabel(screen: MentraLiveOtaScreen): string {
     case "up_to_date":
       return "Up to date"
     case "dev_build":
+    case "unofficial_client":
       return "OTA disabled"
     case "check_failed":
     case "update_info_unavailable":

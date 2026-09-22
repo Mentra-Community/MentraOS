@@ -13,9 +13,10 @@ import {
   setOwnAppAudioPlaying,
 } from "./audioTestMocks"
 
+import {reactNative, reactNativeAppState} from "./reactNativeTestMock"
+
 const setAudioModeAsync = mock(async () => {})
 const tailTimerCallbacks: Array<() => void> = []
-const appState = {currentState: "active"}
 const silentAudioSource = 9001
 
 const audioPlayer = {
@@ -36,10 +37,8 @@ mock.module("../audioPlaybackAssets", () => ({
   SILENT_AUDIO_SOURCE: silentAudioSource,
 }))
 
-mock.module("react-native", () => ({
-  AppState: appState,
-  Platform: {OS: "android"},
-}))
+reactNative.Platform = {OS: "android"}
+reactNativeAppState.currentState = "active"
 
 mock.module("../../utils/timers", () => ({
   BgTimer: {
@@ -63,8 +62,7 @@ describe("AudioPlaybackService live PCM streams", () => {
     await audioPlaybackService.stopAll()
     stopAudioCloudUplink()
     resetAudioTestMocks()
-    appState.currentState = "active"
-    Object.assign(audioPlaybackService, {audioRouteWarmUntil: 0})
+    reactNativeAppState.currentState = "active"
     tailTimerCallbacks.length = 0
     startAudioCloudUplink()
     setAudioModeAsync.mockClear()
@@ -80,18 +78,18 @@ describe("AudioPlaybackService live PCM streams", () => {
     stopAudioCloudUplink()
   })
 
-  test("prewarms a cold Android route by aborting silence before URL playback", async () => {
+  test("plays a cold Android URL without a silent PCM warmup", async () => {
     await audioPlaybackService.play({audioUrl: "https://example.test/click.wav", requestId: "click"}, () => {})
 
-    expect(pcmStreamOpen).toHaveBeenCalledTimes(1)
-    expect(pcmStreamWrite).toHaveBeenCalledTimes(1)
-    expect(pcmStreamAbort).toHaveBeenCalledTimes(1)
+    expect(pcmStreamOpen).not.toHaveBeenCalled()
+    expect(pcmStreamWrite).not.toHaveBeenCalled()
+    expect(pcmStreamAbort).not.toHaveBeenCalled()
     expect(pcmStreamClose).not.toHaveBeenCalled()
     expect(audioPlayer.play).toHaveBeenCalledTimes(1)
   })
 
-  test("skips optional route prewarm so background URL playback cannot stall", async () => {
-    appState.currentState = "background"
+  test("plays a background URL without a silent PCM warmup", async () => {
+    reactNativeAppState.currentState = "background"
     await audioPlaybackService.play(
       {audioUrl: "https://example.test/background.wav", requestId: "background"},
       () => {},
@@ -104,7 +102,7 @@ describe("AudioPlaybackService live PCM streams", () => {
     expect(audioPlayer.play).toHaveBeenCalledTimes(1)
   })
 
-  test("prewarms a cold Android route before opening a live PCM stream", async () => {
+  test("opens a cold live PCM stream without a silent warmup", async () => {
     const coldNow = Date.now() + 10_000
     const dateNow = spyOn(Date, "now").mockReturnValue(coldNow)
     try {
@@ -120,11 +118,23 @@ describe("AudioPlaybackService live PCM streams", () => {
       dateNow.mockRestore()
     }
 
-    expect(pcmStreamOpen).toHaveBeenCalledTimes(2)
-    expect(pcmStreamOpen).toHaveBeenNthCalledWith(1, expect.stringContaining("audio-route-prewarm-"), 16_000, 1, 1)
-    expect(pcmStreamWrite).toHaveBeenCalledTimes(1)
-    expect(pcmStreamAbort).toHaveBeenCalledTimes(1)
-    expect(pcmStreamOpen).toHaveBeenNthCalledWith(2, "stream-cold", 24_000, 1, 0.75)
+    expect(pcmStreamOpen).toHaveBeenCalledTimes(1)
+    expect(pcmStreamWrite).not.toHaveBeenCalled()
+    expect(pcmStreamAbort).not.toHaveBeenCalled()
+    expect(pcmStreamOpen).toHaveBeenNthCalledWith(1, "stream-cold", 24_000, 1, 0.75, undefined)
+  })
+
+  test("forwards a requested jitter budget to native", async () => {
+    await audioPlaybackService.openStream({
+      appId: "com.example.call",
+      channels: 1,
+      jitterMs: 120,
+      onEnded: () => {},
+      sampleRate: 16_000,
+      streamId: "stream-realtime",
+    })
+
+    expect(pcmStreamOpen).toHaveBeenCalledWith("stream-realtime", 16_000, 1, 1, 120)
   })
 
   test("opens, writes, drains, and reports active stream state", async () => {
@@ -139,7 +149,7 @@ describe("AudioPlaybackService live PCM streams", () => {
       volume: 0.75,
     })
 
-    expect(pcmStreamOpen).toHaveBeenCalledWith("stream-1", 24_000, 1, 0.75)
+    expect(pcmStreamOpen).toHaveBeenCalledWith("stream-1", 24_000, 1, 0.75, undefined)
     emitLc3Frame([1])
     expect(sendAudioFrame).toHaveBeenCalledTimes(1)
     expect(audioPlaybackService.isPlaying()).toBe(true)

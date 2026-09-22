@@ -664,6 +664,40 @@ describe("OtaInstallCoordinator version-change detour retry gate", () => {
     },
   )
 
+  it("a re-observed failed install status arms the latch at most once and releases it once", async () => {
+    setGlassesConnected()
+    useGlassesStore.getState().setOtaUpdateAvailable({
+      updateAvailable: true,
+      isDowngrade: true,
+      versionCode: 49000000,
+    } as never)
+    otaInstallCoordinator.attach()
+    GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
+    await flushNativeStartPromise()
+
+    const logSpy = jest.spyOn(console, "log")
+    const countLogs = (needle: string) =>
+      logSpy.mock.calls.filter((call) => typeof call[0] === "string" && call[0].includes(needle)).length
+
+    // Real handoff failure: ASG emits apk/install in_progress, then the terminal failed status.
+    useGlassesStore.getState().setOtaStatus(inProgressStatus({phase: "install", stepPercent: 100}))
+    expect(countLogs("entering detour wait")).toBe(1)
+    const failed = inProgressStatus({phase: "install", status: "failed", error: "downgrade_handoff_failed"})
+    useGlassesStore.getState().setOtaStatus(failed)
+    expect(countLogs("releasing latch")).toBe(1)
+
+    // The failed status stays in the store: the same object is re-observed on unrelated
+    // store changes, and the glasses may re-send it. Neither may re-arm the latch.
+    useGlassesStore.getState().setBatteryInfo(42, false, -1, false)
+    useGlassesStore.getState().setOtaStatus({...failed})
+    useGlassesStore.getState().setBatteryInfo(41, false, -1, false)
+
+    expect(countLogs("entering detour wait")).toBe(1)
+    expect(countLogs("releasing latch")).toBe(1)
+    expect(otaInstallCoordinator.snapshot().displayState).toBe("failed")
+    logSpy.mockRestore()
+  })
+
   it("a generic failure during a latched detour does NOT release the latch (accepted-but-slow)", async () => {
     setGlassesConnected()
     useGlassesStore.getState().setOtaUpdateAvailable({
@@ -721,6 +755,24 @@ describe("OtaInstallCoordinator version-change detour retry gate", () => {
 })
 
 describe("OtaInstallCoordinator stuck-at-zero watchdog", () => {
+  it("uses advancing bytes at 0%, but repeated or missing byte counts cannot mask a stall", async () => {
+    setGlassesConnected()
+    otaInstallCoordinator.attach()
+    GlobalEventEmitter.emit("ota_start_ack", {timestamp: Date.now()})
+    const status = inProgressStatus({stepType: "mtk", stepPercent: 0, overallPercent: 0})
+    for (let bytes = 1; bytes <= 5; bytes++) {
+      useGlassesStore.getState().setOtaStatus({...status, bytesDownloaded: bytes * 8192})
+      await jest.advanceTimersByTimeAsync(60_000)
+      expect(otaInstallCoordinator.snapshot().errorMsg).toBe("")
+    }
+    // Ordinary queries need not carry bytes. Neither they nor a duplicate sample is progress.
+    useGlassesStore.getState().setOtaStatus(status)
+    await jest.advanceTimersByTimeAsync(30_000)
+    useGlassesStore.getState().setOtaStatus({...status, bytesDownloaded: 5 * 8192})
+    await jest.advanceTimersByTimeAsync(30_000)
+    expect(otaInstallCoordinator.snapshot().errorMsg).toBe(OtaProgressMessages.stalledOrStuck)
+  })
+
   it("fails after DOWNLOAD_STUCK_TIMEOUT_MS at 0%", async () => {
     setGlassesConnected()
     otaInstallCoordinator.attach()

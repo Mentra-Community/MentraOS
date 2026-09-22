@@ -14,11 +14,14 @@ import {useMarkdown, type MarkedStyles, type useMarkdownHookOptions} from "react
 import {SafeAreaView} from "react-native-safe-area-context"
 import Svg, {Path, Rect} from "react-native-svg"
 
+import {OTA_ERROR_ENGLISH_COPY} from "../services/OtaErrorMapping"
 import {
   MINIMUM_OTA_BATTERY_LEVEL,
   useMentraLiveOta,
   type MentraLiveOtaController,
+  type MentraLiveOtaError,
   type MentraLiveOtaFlowPage,
+  type MentraLiveOtaState,
 } from "./useMentraLiveOta"
 
 export type {MentraLiveOtaFlowPage} from "./useMentraLiveOta"
@@ -70,25 +73,24 @@ const DEFAULT_THEME: MentraLiveOtaFlowTheme = {
 }
 
 const ENGLISH_COPY: Record<string, string> = {
-  "ota:downloadingToPhone": "Downloading update to phone...",
-  "ota:startingGlassesHotspot": "Starting glasses hotspot...",
-  "ota:connectingPhoneToGlasses": "Connecting phone to glasses...",
-  "ota:startingHotspotUpdate": "Starting update...",
-  "ota:transferringToGlasses": "Transferring update to glasses...",
-  "ota:installingOnGlasses": "Installing update on glasses...",
+  "ota:downloadingToPhone": "Downloading update to phone…",
+  "ota:startingGlassesHotspot": "Starting glasses hotspot…",
+  "ota:connectingPhoneToGlasses": "Connecting phone to glasses…",
+  "ota:startingHotspotUpdate": "Starting update…",
+  "ota:transferringToGlasses": "Transferring update to glasses…",
+  "ota:installingOnGlasses": "Installing update on glasses…",
   "ota:componentApk": "Glasses software",
   "ota:componentMtk": "System firmware",
   "ota:componentBes": "Bluetooth firmware",
   "ota:updateFile": "File {{current}} of {{total}} · {{component}}",
   "ota:updatePart": "Update {{current}} of {{total}} · {{component}}",
   "ota:phoneFileProgress": "Each file downloads separately. Progress is for the current file.",
-  "ota:transferFileProgress": "Progress is for this file’s transfer from your phone.",
 
   "common:continue": "Continue",
   "common:done": "Done",
   "ota:checkingForUpdates": "Checking for updates",
   "ota:checkingForUpdatesMessage":
-    "Connected devices will perform automatic updates. Automatic updates can be disabled in Device Settings",
+    "Connected devices will perform automatic updates. Automatic updates can be disabled in Device Settings.",
   "ota:finishingUpdate": "Finishing your update",
   "ota:checkingAdditionalUpdates": "Checking whether your glasses need any additional updates.",
   "ota:updateAvailable": "{{deviceName}} Update Available",
@@ -96,8 +98,8 @@ const ENGLISH_COPY: Record<string, string> = {
   "ota:batteryRequiredMessage":
     "{{deviceName}} is currently at {{batteryLevel}}%. Charge it to at least {{minimumBatteryLevel}}% before updating.",
   "ota:batteryRequiredLiveUpdate": "This screen will update automatically as the battery charges.",
-  "ota:updateConnectWifi": "Connect your {{deviceName}} to WiFi to install the update.",
-  "ota:wifiRequiredTitle": "WiFi Needed for Update",
+  "ota:updateConnectWifi": "Connect your {{deviceName}} to Wi-Fi to install the update.",
+  "ota:wifiRequiredTitle": "Wi-Fi Needed for Update",
   "ota:updateDescription":
     "A new update is available for your glasses. We recommend updating now for the best experience.",
   "ota:updateSequenceMessage":
@@ -109,14 +111,19 @@ const ENGLISH_COPY: Record<string, string> = {
   "ota:downgradeDescription":
     "This app requires an earlier glasses software version. Your photos and videos will be preserved, but glasses settings will be reset and restored automatically after the change.",
   "ota:updateNow": "Update Now",
-  "ota:setupWifi": "Setup WiFi",
+  "ota:setupWifi": "Set up Wi-Fi",
   "ota:updateLater": "Later",
   "ota:updateComplete": "Update complete",
   "ota:whatsNew": "What's new",
-  "ota:upToDate": "Up To Date",
+  "ota:upToDate": "Up to Date",
   "ota:devBuild": "Development Build",
   "ota:devBuildNoOta":
     "This mobile app is a development build, so automatic glasses updates are disabled. Use the developer settings manifest override to update them manually.",
+  "ota:unofficialClient": "Updates Blocked",
+  "ota:unofficialClientNoOta":
+    "Your glasses are running a sideloaded client, so updates are blocked. Restore the stock client to update them.",
+  "ota:unofficialClientNoOtaNamed":
+    "Your glasses are running a sideloaded client ({{packageName}}), so updates are blocked. Restore the stock client to update them.",
   "ota:noUpdatesAvailable": "Your glasses are running the latest version.",
   "ota:checkFailed": "Check Failed",
   "ota:checkFailedMessage": "Couldn't check for updates. Please check your connection and try again.",
@@ -137,6 +144,8 @@ const ENGLISH_COPY: Record<string, string> = {
   "ota:versionChangeFirmwarePassComplete": "Firmware updated",
   "ota:versionChangeFirmwarePassCompleteMessage":
     "Your glasses restarted with new firmware. One more step: they'll now continue to the required version.",
+  "ota:updateFailed": "Update Failed",
+  ...OTA_ERROR_ENGLISH_COPY,
 }
 
 const componentCopyKey = {
@@ -145,8 +154,17 @@ const componentCopyKey = {
   bes: "ota:componentBes",
 } as const
 
+/**
+ * Copy for the failed screen: the translated copy key when the failure maps to one,
+ * otherwise the engine's English message (phone-side watchdog and preflight text).
+ */
+function failureMessage(error: MentraLiveOtaError | null, translate: MentraLiveOtaFlowTranslate): string {
+  if (!error) return translate("ota:errorGeneric")
+  return error.copyKey ? translate(error.copyKey) : error.message
+}
+
 function defaultTranslate(key: string, options?: Record<string, string>): string {
-  let value = ENGLISH_COPY[key] ?? key
+  let value = Object.prototype.hasOwnProperty.call(ENGLISH_COPY, key) ? ENGLISH_COPY[key] : key
   for (const [name, replacement] of Object.entries(options ?? {})) {
     value = value.replaceAll(`{{${name}}}`, replacement)
   }
@@ -175,6 +193,50 @@ export function MentraLiveOtaFlow({
     onOpenWifiSetup,
   })
 
+  return <OtaFlowFrame {...{allowDevSkip, colors, controller, deviceName, style, superMode, translate}} />
+}
+
+type OtaFlowFrameProps = {
+  allowDevSkip: boolean
+  colors: MentraLiveOtaFlowTheme
+  controller: MentraLiveOtaController
+  deviceName: string
+  style?: StyleProp<ViewStyle>
+  superMode: boolean
+  translate: MentraLiveOtaFlowTranslate
+}
+
+const previewAction = () => {}
+
+/** Renders the real OTA pages without mounting the runtime hook or performing any actions. */
+export function MentraLiveOtaPreview({
+  state,
+  deviceName = "Mentra Live",
+  theme,
+  translate = defaultTranslate,
+}: Pick<MentraLiveOtaFlowProps, "deviceName" | "theme" | "translate"> & {state: MentraLiveOtaState}) {
+  return (
+    <OtaFlowFrame
+      allowDevSkip={false}
+      colors={{...DEFAULT_THEME, ...theme}}
+      controller={{
+        state,
+        check: previewAction,
+        retryCheck: previewAction,
+        install: previewAction,
+        retryInstall: previewAction,
+        finish: previewAction,
+        discard: previewAction,
+        openWifiSetup: previewAction,
+      }}
+      deviceName={deviceName}
+      superMode={false}
+      translate={translate}
+    />
+  )
+}
+
+function OtaFlowFrame({allowDevSkip, colors, controller, deviceName, style, superMode, translate}: OtaFlowFrameProps) {
   return (
     <SafeAreaView style={[styles.safeArea, {backgroundColor: colors.background}, style]}>
       <View style={styles.header}>
@@ -322,6 +384,22 @@ function OtaFlowContent({
     )
   }
 
+  if (state.screen === "unofficial_client") {
+    return (
+      <FlowPage
+        actions={<FlowButton colors={colors} label={translate("common:continue")} onPress={controller.finish} />}
+        colors={colors}
+        icon="settings"
+        title={translate("ota:unofficialClient")}>
+        <BodyText colors={colors}>
+          {state.glassesPackageName
+            ? translate("ota:unofficialClientNoOtaNamed", {packageName: state.glassesPackageName})
+            : translate("ota:unofficialClientNoOta")}
+        </BodyText>
+      </FlowPage>
+    )
+  }
+
   if (state.screen === "up_to_date") {
     return (
       <FlowPage
@@ -422,7 +500,7 @@ function OtaFlowContent({
         {state.hotspotPhase === "downloading" ? (
           <BodyText colors={colors}>{translate("ota:phoneFileProgress")}</BodyText>
         ) : null}
-        <BodyText colors={colors}>Do not disconnect your glasses</BodyText>
+        <BodyText colors={colors}>Do not disconnect your glasses.</BodyText>
       </FlowPage>
     )
   }
@@ -432,8 +510,8 @@ function OtaFlowContent({
     const title = hotspot
       ? translate(state.phase === "download" ? "ota:transferringToGlasses" : "ota:installingOnGlasses")
       : state.phase === "download"
-        ? "Downloading..."
-        : "Installing..."
+        ? "Downloading…"
+        : "Installing…"
     const component = state.step ? translate(componentCopyKey[state.step]) : null
     const hasStepCount =
       state.currentStep !== null &&
@@ -465,10 +543,7 @@ function OtaFlowContent({
             </View>
           </>
         )}
-        <BodyText colors={colors}>Do not disconnect your glasses</BodyText>
-        {hotspot && state.phase === "download" ? (
-          <BodyText colors={colors}>{translate("ota:transferFileProgress")}</BodyText>
-        ) : null}
+        <BodyText colors={colors}>Do not disconnect your glasses.</BodyText>
         {state.versionChange && state.phase === "install" ? (
           <BodyText colors={colors}>{translate("ota:downgradeDuration")}</BodyText>
         ) : null}
@@ -532,14 +607,19 @@ function OtaFlowContent({
               onPress={state.canRetry ? controller.retryInstall : controller.finish}
             />
             {state.canOpenWifiSetup ? (
-              <FlowButton colors={colors} label="Change WiFi" onPress={controller.openWifiSetup} secondary />
+              <FlowButton colors={colors} label="Change Wi-Fi" onPress={controller.openWifiSetup} secondary />
             ) : null}
           </>
         }
         colors={colors}
         icon="alert"
-        title="Update Failed">
-        <BodyText colors={colors}>{state.error?.message}</BodyText>
+        title={translate("ota:updateFailed")}>
+        <BodyText colors={colors}>{failureMessage(state.error, translate)}</BodyText>
+        {state.error?.glassesCode ? (
+          <Text style={[styles.errorCode, {color: colors.textDim}]} testID="ota-error-code">
+            {translate("ota:errorCode", {code: state.error.glassesCode})}
+          </Text>
+        ) : null}
       </FlowPage>
     )
   }
@@ -554,7 +634,7 @@ function OtaFlowContent({
       colors={colors}
       icon="bluetooth"
       title="Glasses disconnected">
-      <BodyText colors={colors}>Reconnecting...</BodyText>
+      <BodyText colors={colors}>Reconnecting…</BodyText>
       <ActivityIndicator size="large" color={colors.foreground} />
     </FlowPage>
   )
@@ -766,8 +846,33 @@ function MentraMark({color}: {color: string}) {
 
 function FlowIcon({colors, name}: {colors: MentraLiveOtaFlowTheme; name: FlowPageProps["icon"]}) {
   const color = name === "alert" || name === "bluetooth" ? colors.error : colors.primary
-  const glyph =
-    name === "check" ? "✓" : name === "alert" ? "!" : name === "settings" ? "⚙" : name === "bluetooth" ? "⌁" : "↓"
+  if (name === "download" || name === "check") {
+    // Lucide arrow-down-to-line and check; see ./lucide-LICENSE.txt.
+    return (
+      <View style={styles.svgIcon}>
+        <Svg
+          width={64}
+          height={64}
+          viewBox="0 0 24 24"
+          fill="none"
+          stroke={color}
+          strokeWidth={2}
+          strokeLinecap="round"
+          strokeLinejoin="round">
+          {name === "download" ? (
+            <>
+              <Path d="M12 17V3" />
+              <Path d="m6 11 6 6 6-6" />
+              <Path d="M19 21H5" />
+            </>
+          ) : (
+            <Path d="M20 6 9 17l-5-5" />
+          )}
+        </Svg>
+      </View>
+    )
+  }
+  const glyph = name === "alert" ? "!" : name === "settings" ? "⚙" : "⌁"
   return <Text style={[styles.icon, {color}]}>{glyph}</Text>
 }
 
@@ -787,8 +892,10 @@ const styles = StyleSheet.create({
   actionSpacer: {height: 48},
   actions: {gap: 12},
   icon: {fontSize: 64, fontWeight: "500", lineHeight: 72, textAlign: "center"},
+  svgIcon: {alignItems: "center", height: 72, justifyContent: "center", width: 72},
   title: {fontSize: 20, fontWeight: "600", textAlign: "center"},
   body: {fontSize: 14, lineHeight: 20, maxWidth: 420, textAlign: "center"},
+  errorCode: {fontSize: 12, fontVariant: ["tabular-nums"], lineHeight: 16, opacity: 0.7, textAlign: "center"},
   percent: {fontSize: 30, fontVariant: ["tabular-nums"], fontWeight: "700"},
   progressTrack: {borderRadius: 4, height: 8, maxWidth: 420, overflow: "hidden", width: "100%"},
   progressFill: {borderRadius: 4, height: 8},

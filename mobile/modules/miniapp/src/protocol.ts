@@ -2,12 +2,10 @@
  * @fileoverview Wire protocol for @mentra/miniapp.
  *
  * Fresh miniapp-naming enum values. No legacy tpa_/app_/applet_ prefixes.
- * These values are the contract between @mentra/miniapp (running in a WebView)
- * and LocalMiniappRuntime (running on the phone).
+ * These values are the contract between @mentra/miniapp and LocalMiniappRuntime,
+ * both running locally in the Mentra App on the phone.
  *
- * IMPORTANT: This file has no runtime dependency on the retired cloud SDK.
- * Its published wire-protocol enums are used only for compatibility with
- * existing cloud-hosted miniapps, not for phone↔miniapp communication.
+ * This file has no runtime dependency on the retired cloud SDK.
  */
 
 // ============================================================================
@@ -121,6 +119,14 @@ export enum MiniappRequestType {
   MIC_SET_VAD_ENABLED = "miniapp_mic_set_vad_enabled",
   /** Explicitly enable/disable the center-mic loudness gate ("Barrier"). */
   MIC_SET_LOUDNESS_GATE_ENABLED = "miniapp_mic_set_loudness_gate_enabled",
+  /**
+   * Take a semantic microphone session. The host decides what the use case
+   * requires of the hardware; the caller never names a gain or a threshold.
+   * Host-gated per use case — see `MicModule.acquire`.
+   */
+  MIC_ACQUIRE = "miniapp_mic_acquire",
+  /** Release a session taken with MIC_ACQUIRE. */
+  MIC_RELEASE = "miniapp_mic_release",
 
   /**
    * Enable or disable Wi-Fi ADB (wireless debugging) on Mentra Live.
@@ -193,6 +199,10 @@ export enum MiniappRequestType {
 
   /** Ask the host to open the glasses Wi-Fi setup flow (mirrors the cloud SDK's requestWifiSetup). */
   REQUEST_WIFI_SETUP = "miniapp_request_wifi_setup",
+  /** Read the phone's Wi-Fi radio state (null when the platform cannot determine it). */
+  PHONE_IS_WIFI_ENABLED = "miniapp_phone_is_wifi_enabled",
+  /** Ask the host to help the user enable phone Wi-Fi, then recheck on return. */
+  PHONE_REQUEST_WIFI_ENABLE = "miniapp_phone_request_wifi_enable",
 
   // ----- Inter-miniapp interop (SYSTEM apps only) -----
   /** List installed miniapps (compatibility-filtered, with declared actions). */
@@ -205,6 +215,20 @@ export enum MiniappRequestType {
   ACTION_INVOKE = "miniapp_action_invoke",
   /** Target → host: the result of a delivered ACTION_CALL, correlated by callId. */
   ACTION_RESULT = "miniapp_action_result",
+
+  /**
+   * Phone-native meeting (ACS Teams). Join/leave/mute live in the MentraOS
+   * host so the miniapp never holds the ACS Calling SDK.
+   */
+  MEETING_JOIN = "miniapp_meeting_join",
+  MEETING_LEAVE = "miniapp_meeting_leave",
+  /** Terminate the meeting for everyone, not just this device. See `meeting.end()`. */
+  MEETING_END = "miniapp_meeting_end",
+  /** Admit one waiting participant, when the host has Teams lobby permission. */
+  MEETING_ADMIT = "miniapp_meeting_admit",
+  MEETING_SET_MUTED = "miniapp_meeting_set_muted",
+  MEETING_UPDATE_VIDEO_SOURCE = "miniapp_meeting_update_video_source",
+  MEETING_GET_STATE = "miniapp_meeting_get_state",
 }
 
 // ============================================================================
@@ -260,6 +284,12 @@ export enum MiniappResponseType {
    * handler and replies with an ACTION_RESULT request keyed by callId.
    */
   ACTION_CALL = "miniapp_action_call",
+
+  /**
+   * Push: native meeting state changed. Carries {state, muted?, error?}.
+   * See MeetingModule.onState().
+   */
+  MEETING_STATE = "miniapp_meeting_state",
 
   /**
    * Push: phone is about to tear down the miniapp's session. Gives the SDK
@@ -357,6 +387,12 @@ export enum MiniappErrorCode {
 
   /** Not connected / pre-ACK and transport closed. */
   NOT_CONNECTED = "NOT_CONNECTED",
+
+  /** A meeting join needs a microphone session the caller does not hold. */
+  MIC_SESSION_REQUIRED = "MIC_SESSION_REQUIRED",
+
+  /** A different microphone source is already live; only one can be pinned. */
+  MIC_SOURCE_CONFLICT = "MIC_SOURCE_CONFLICT",
 
   // ----- Inter-miniapp interop -----
   /**

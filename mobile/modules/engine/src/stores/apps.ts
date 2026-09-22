@@ -35,6 +35,8 @@ import BluetoothSdk from "@mentra/bluetooth-sdk"
 
 export interface StartOptions {
   skipNavigation?: boolean
+  /** Present the app after launch checks, before bundle loading and runtime startup. */
+  onAccepted?: () => void | Promise<void>
 }
 
 export interface AppStoreHooks {
@@ -346,6 +348,8 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
     // including re-opening an already-running app — so the animation always
     // plays (BuiltInMiniappCatalog.navigateForApp: overlay apps setForeground
     // for the slide).
+    const presentation = opts?.onAccepted?.()
+    if (presentation) await presentation
     hostHooks.onOpenRequested?.(app, opts)
 
     // First-activation mark (moved from the host's old beforeStart — engine
@@ -381,8 +385,8 @@ export const useAppStatusStore = create<AppStatusState>((set, get) => ({
     // side effect of LocalMiniappView mounting on foreground; pulling it here
     // lets start() actually run the app even when nothing foregrounds it (e.g.
     // a system app launching another miniapp via session.miniapps). Idempotent
-    // with the view's own ensureRunning; a no-op for native offline built-ins
-    // and cloud apps (no JS bundle).
+    // with the view's own ensureRunning; skipped for native offline built-ins
+    // (no JS bundle).
     if (app.local) {
       try {
         await miniappLauncher.ensureRunning(packageName)

@@ -106,6 +106,7 @@ export function parseArgs(argv) {
     bump: "patch",
     noBump: false,
     dryRun: false,
+    packScript: null,
   }
   for (let i = 0; i < argv.length; i++) {
     const a = argv[i]
@@ -113,6 +114,11 @@ export function parseArgs(argv) {
       args.repo = argv[++i]
     } else if (a === "--bump") {
       args.bump = argv[++i]
+    } else if (a === "--pack-script") {
+      args.packScript = argv[++i]
+      if (!args.packScript || !/^[a-zA-Z0-9:_-]+$/.test(args.packScript)) {
+        die("--pack-script requires a package.json script name")
+      }
     } else if (a === "--no-bump") {
       args.noBump = true
     } else if (a === "--dry-run") {
@@ -146,7 +152,7 @@ function resolveMiniappDir(repoPath) {
  * Find nearest package.json between miniappDir and repoPath (inclusive) that defines scripts.pack.
  * @returns {{ cwd: string, packageJsonPath: string } | null}
  */
-function findPackScript(miniappDir, repoPath) {
+function findPackScript(miniappDir, repoPath, scriptName = "pack") {
   let cur = miniappDir
   const stop = resolve(repoPath)
   while (true) {
@@ -154,7 +160,7 @@ function findPackScript(miniappDir, repoPath) {
     if (existsSync(pkgPath)) {
       try {
         const pkg = JSON.parse(readFileSync(pkgPath, "utf8"))
-        if (pkg.scripts && typeof pkg.scripts.pack === "string") {
+        if (pkg.scripts && typeof pkg.scripts[scriptName] === "string") {
           return {cwd: cur, packageJsonPath: pkgPath}
         }
       } catch {
@@ -171,7 +177,7 @@ function findPackScript(miniappDir, repoPath) {
   if (existsSync(rootPkg)) {
     try {
       const pkg = JSON.parse(readFileSync(rootPkg, "utf8"))
-      if (pkg.scripts && typeof pkg.scripts.pack === "string") {
+      if (pkg.scripts && typeof pkg.scripts[scriptName] === "string") {
         return {cwd: repoPath, packageJsonPath: rootPkg}
       }
     } catch {
@@ -318,6 +324,7 @@ Options:
   --no-bump                  Keep the current miniapp.json version
   --dry-run                  Print plan only; write nothing
   --repo <path>              External miniapp repo root (skips name map)
+  --pack-script <name>       Select a package script (e.g. pack:prod; default: pack)
 
 Named repos live in scripts/miniapp-repos.json (paths relative to MentraOS root).
 
@@ -385,19 +392,20 @@ Never commits or pushes. Prepares local changes only.`)
     }
   }
 
-  const packInfo = findPackScript(miniappDir, repoPath)
+  const scriptName = args.packScript ?? configEntry?.packScript ?? "pack"
+  const packInfo = findPackScript(miniappDir, repoPath, scriptName)
   const mentraBin = findMentraMiniappBin(repoPath)
   let packCommand
   let packCwd
   if (packInfo) {
-    packCommand = "bun run pack"
+    packCommand = `bun run ${scriptName}`
     packCwd = packInfo.cwd
-  } else if (mentraBin) {
+  } else if (mentraBin && scriptName === "pack") {
     packCommand = `"${mentraBin}" pack`
     packCwd = miniappDir
   } else {
     die(
-      `no pack script found under ${repoPath} and no node_modules/.bin/mentra-miniapp. ` +
+      `no ${scriptName} script found under ${repoPath} and no applicable node_modules/.bin/mentra-miniapp. ` +
         `Run bun install in the target repo or add a "pack" script.`,
     )
   }
@@ -438,7 +446,7 @@ Never commits or pushes. Prepares local changes only.`)
   // 6. Build+pack
   let packResult
   if (packInfo) {
-    packResult = spawnSync("bun", ["run", "pack"], {
+    packResult = spawnSync("bun", ["run", scriptName], {
       cwd: packCwd,
       stdio: "inherit",
       env: process.env,

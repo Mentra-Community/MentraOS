@@ -83,24 +83,30 @@ export function createAndroidRecord({
   internalSharing,
 }) {
   validatePlan(plan)
-  if (!playTrack) throw new Error("Google Play track is required")
-  const {url, playArtifact} = internalSharingPublication({playTrack, storeStatus, internalSharing})
+  const uploadGooglePlay = plan.native.googlePlayUpload !== false
+  if (!uploadGooglePlay && plan.channel !== "dev") throw new Error("Only dev may skip Google Play publication")
+  if (uploadGooglePlay && !playTrack) throw new Error("Google Play track is required")
+  const {url, playArtifact} = uploadGooglePlay
+    ? internalSharingPublication({playTrack, storeStatus, internalSharing})
+    : {}
   return {
     schemaVersion: 1,
     releaseSetId: plan.releaseSetId,
     publications: {
-      mentraos: {
-        "google-play": {
-          ...publication({
-            status: storeStatus,
-            coordinate: `com.mentra.mentra:${plan.native.buildNumber}:${playTrack}`,
-            url,
-            provenanceUrl,
-            file: aab,
-          }),
-          ...(playArtifact ? {playArtifact} : {}),
-        },
-      },
+      mentraos: uploadGooglePlay
+        ? {
+            "google-play": {
+              ...publication({
+                status: storeStatus,
+                coordinate: `com.mentra.mentra:${plan.native.buildNumber}:${playTrack}`,
+                url,
+                provenanceUrl,
+                file: aab,
+              }),
+              ...(playArtifact ? {playArtifact} : {}),
+            },
+          }
+        : {},
     },
     artifacts: [
       publication({

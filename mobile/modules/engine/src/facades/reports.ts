@@ -7,12 +7,7 @@
  * screenshots, and notifying connected glasses.
  */
 import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
-import type {
-  ReportAttachmentInput,
-  ReportContext,
-  ReportStatus,
-  SubmitReportInput,
-} from "@mentra/cloud-client"
+import type {ReportAttachmentInput, ReportContext, ReportStatus, SubmitReportInput} from "@mentra/cloud-client"
 import {useGlassesStore} from "../stores/glasses"
 import {isGlassesConnected} from "../services/GlassesReadiness"
 import {cloudClientService} from "../services/CloudClientService"
@@ -88,6 +83,9 @@ function notifyGlasses(reportId: string, apiBaseUrl?: string | null): void {
 }
 
 async function submitReportInternal(input: InternalSubmitReportInput): Promise<ReportSubmitResult> {
+  if (!cloudClientService.hasCore()) {
+    return {status: "failed", error: "Reports are unavailable in this deployment"}
+  }
   const throttle =
     input.kind === "automatic" && input.throttleKey
       ? {

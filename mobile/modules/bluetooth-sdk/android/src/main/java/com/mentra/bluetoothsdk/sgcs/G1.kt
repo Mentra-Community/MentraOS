@@ -22,7 +22,7 @@ import android.graphics.Bitmap
 import android.graphics.BitmapFactory
 import android.os.Handler
 import android.os.Looper
-import android.util.Log
+import com.mentra.bluetoothsdk.utils.NativeLog as Log
 import android.util.SparseArray
 
 import java.io.IOException

@@ -5,7 +5,7 @@ import java.io.IOException
 import java.util.UUID
 
 import android.content.Context
-import android.util.Log
+import com.mentra.bluetoothsdk.utils.NativeLog as Log
 
 import com.mentra.bluetoothsdk.Bridge
 import com.mentra.bluetoothsdk.DeviceStore

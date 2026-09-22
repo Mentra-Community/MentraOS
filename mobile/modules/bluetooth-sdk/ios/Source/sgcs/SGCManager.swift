@@ -66,6 +66,8 @@ protocol SGCManager {
     func requestPhoto(_ request: PhotoRequest)
     func startStream(_ message: [String: Any])
     func stopStream()
+    /// Re-advertise glasses-owned stream control after the phone SDK remounts.
+    func replayStreamControlReady()
     func sendStreamKeepAlive(_ message: [String: Any])
     func startVideoRecording(requestId: String, save: Bool, sound: Bool)
     func queryVideoRecordingStatus(requestId: String)
@@ -145,6 +147,14 @@ protocol SGCManager {
 
     func showNotificationsPanel() async
 
+    /// Push a phone notification into the glasses' own notification centre.
+    ///
+    /// Android/G2 only in practice — iOS glasses read notifications over ANCS. Declared for
+    /// parity so the shared TypeScript module type is callable on both platforms.
+    func sendPhoneNotification(_ notification: [String: Any]) throws
+    func configureNativeNotifications(_ config: NativeNotificationConfig) throws
+    func getNativeNotificationStatus() -> NativeNotificationStatus
+
     // MARK: - Calendar Events
 
     func sendCalendarEvents(_ events: [[String: Any]])
@@ -187,8 +197,10 @@ protocol SGCManager {
     // MARK: - Network Management
 
     func requestWifiScan(scanId: String?)
+    @discardableResult func requestSavedWifiNetworks(requestId: String, sid: String) -> Bool
     func sendWifiCredentials(_ ssid: String, _ password: String)
     func forgetWifiNetwork(_ ssid: String)
+    @discardableResult func forgetWifiNetwork(_ ssid: String, requestId: String?, sid: String?) -> Bool
     func sendHotspotState(_ enabled: Bool)
     func sendWifiAdbState(_ enabled: Bool)
     func sendOtaStart(otaVersionUrl: String?)
@@ -216,6 +228,24 @@ protocol SGCManager {
 
     func sendLoudnessGateSetting()
 
+    // MARK: - Mic tuning (super-mode only)
+
+    func sendMicTuningSetting()
+    func requestMicTuningState()
+    func setMicRmsTelemetry(_ enabled: Bool)
+
+    // MARK: - Wear detection (super-mode only)
+
+    // These are protocol requirements, not extension-only members, on purpose:
+    // DeviceManager holds an `SGCManager?`, and a method that exists only in
+    // the extension is statically dispatched through that reference, so the
+    // no-op below would win over MentraLive's implementation.
+    func queryWearState()
+    func setWearReporting(_ enabled: Bool)
+    func setWearTuning(intervalMs: Int, count: Int, majority: Int)
+    func requestWearTuning()
+    func resetWearTuning()
+
     // MARK: - Version Info
 
     func requestVersionInfo()
@@ -224,7 +254,19 @@ protocol SGCManager {
 /// doesn't seem to work for concurrency reasons :(
 /// we can make read-only getters for convienence though:
 extension SGCManager {
-    var isMicSuspendedForAudio: Bool { false }
+    var isMicSuspendedForAudio: Bool {
+        false
+    }
+
+    func replayStreamControlReady() {}
+
+    @discardableResult func requestSavedWifiNetworks(requestId _: String, sid _: String) -> Bool {
+        false
+    }
+
+    @discardableResult func forgetWifiNetwork(_: String, requestId _: String?, sid _: String?) -> Bool {
+        false
+    }
 
     /// Default: no-op. Only G2 renders positioned text containers; other glasses ignore it.
     func sendPositionedText(
@@ -357,6 +399,20 @@ extension SGCManager {
 
     func showNotificationsPanel() async {}
 
+    // MARK: - Native notification centre (default no-op — Android/G2 only; iOS uses ANCS)
+
+    func sendPhoneNotification(_: [String: Any]) throws {
+        throw NativeNotificationError.unsupported
+    }
+
+    func configureNativeNotifications(_: NativeNotificationConfig) throws {
+        throw NativeNotificationError.unsupported
+    }
+
+    func getNativeNotificationStatus() -> NativeNotificationStatus {
+        .unavailable
+    }
+
     // MARK: - IMU (default no-op — only G2 streams accelerometer data)
 
     func setImuEnabled(_: Bool) async {
@@ -378,6 +434,20 @@ extension SGCManager {
     // MARK: - Loudness / Barrier Gate (default no-op — Mentra Live supports this)
 
     func sendLoudnessGateSetting() {}
+
+    // MARK: - Mic tuning (default no-op — Mentra Live supports this)
+
+    func sendMicTuningSetting() {}
+    func requestMicTuningState() {}
+    func setMicRmsTelemetry(_: Bool) {}
+
+    // MARK: - Wear detection (default no-op — Mentra Live supports this)
+
+    func queryWearState() {}
+    func setWearReporting(_: Bool) {}
+    func setWearTuning(intervalMs _: Int, count _: Int, majority _: Int) {}
+    func requestWearTuning() {}
+    func resetWearTuning() {}
 
     /// Default no-op; Mentra Live and G2 override to handle phone-detected clock skew.
     func sendSetSystemTime(_: Int64) {

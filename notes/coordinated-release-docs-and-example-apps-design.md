@@ -146,9 +146,12 @@ the immutable release-plan artifact before any dependent publication starts,
 and the Starter Kit workflow rejects a different head. A later attempt of the
 same GitHub run restores that plan and recreates it byte for byte instead of
 reading the channel branch again. If no plan artifact exists, no dependent job
-could have started, so selecting the current channel head is still safe. This
-provides the useful provenance of a submodule without moving source ownership
-or requiring a second MentraOS commit after every example release.
+could have started, so selecting the current channel head is still safe. For a
+release-family cut, the MentraOS staging merge also records the selected SHA in
+a `Starter-Kit-Source` Git trailer, so the explicit cross-repository selection
+is part of the exact MentraOS source commit. This provides the useful provenance
+of a submodule without moving source ownership or requiring a second MentraOS
+commit after every example release.
 
 ## Branch and Channel Model
 
@@ -164,6 +167,36 @@ Human Starter Kit features land on `dev`. Stabilization fixes may land on
 `staging` first and must be merged back into `dev`. Production changes move
 through `staging`; automation must not treat `main` as an independent feature
 branch.
+
+### Release-family cut
+
+The release-family cut is ordered across both repositories:
+
+1. promote an exact Starter Kit `dev` head into Starter Kit `staging`;
+2. promote an exact MentraOS `dev` head into MentraOS `staging`, which starts
+   the coordinated beta release;
+3. let the beta release synchronize its exact beta dependency versions into
+   Starter Kit `staging` and finish all release gates;
+4. after that coordinated beta run succeeds, merge Starter Kit `staging` back
+   into Starter Kit `dev`; and
+5. prepare the next MentraOS family on `dev`, whose first coordinated dev run
+   then synchronizes the Starter Kit `dev` dependencies to that family.
+
+The reverse merge in step 4 is required release bookkeeping, not an optional
+source cleanup. The coordinated beta creates channel-owned version and lockfile
+commits on `staging`; reconciling that commit before the next dev-family sync
+keeps the next `dev` to `staging` promotion from manufacturing predictable
+conflicts in generated files.
+
+`bun run release:promote-family -- start --next X.Y.Z` performs steps 1 and 2
+with exact-head promotion branches and prints the coordinated beta run. After
+that run is successful, `finish --next X.Y.Z --run RUN_ID` verifies that the run
+and its downloaded release plan match the current staging commit, family, and
+Starter Kit trailer before it performs step 4 and runs the existing next-family
+preparation for the follow-up MentraOS pull request. If preparation fails after
+writing its expected local diff, the same `finish` command recognizes and
+resumes that dirty partial preparation. Both phases are rerunnable and fail
+rather than resolving a human source conflict or replacing a moving branch.
 
 A bot dependency-sync commit is release output, not a new release request. It
 must carry explicit machine-readable metadata so it cannot trigger a dispatch
@@ -358,8 +391,8 @@ schema versions fail closed.
 
 ## GitHub Release Containers
 
-Coordinated prereleases do not create one visible GitHub release per commit.
-MentraOS keeps its existing base-version container:
+MentraOS stores coordinated prerelease artifacts in its existing base-version
+container (with new binaries hosted on the artifact CDN):
 
 ```text
 mentra-builds-v3.1.0
@@ -377,6 +410,13 @@ as `sdk-3.1.0-dev.42` and `sdk-3.1.0-beta.57` identify the exact Starter Kit
 commit even though their downloadable assets share one visible release page.
 The grouped container tag is fixed when the container is created and is never
 used as source provenance or force-moved to the newest example commit.
+
+Each completed Mentra dev/beta build also has a GitHub prerelease page at its
+`mentra-v<release identity>` source tag. Its description links directly to the
+main Mentra App APK/AAB/IPA, glasses artifacts, SDK packages, and manifest in
+the shared container. It does not duplicate binaries. Page creation consumes
+the archived final manifest in a separate job, so a GitHub API failure can be
+retried without republishing immutable artifacts or blocking example dispatch.
 
 Stable publication uses the stable containers `mentra-v3.1.0` and
 `sdk-3.1.0`. It does not rename a prerelease artifact and pretend its embedded
@@ -513,7 +553,8 @@ The existing channel mapping remains:
 - `dev` posts to `dev-builds` through `SLACK_WEBHOOK_DEV_BUILDS`;
 - `staging` posts to `staging-builds` through the existing staging webhook.
 
-One final coordinated message reports the full release, including:
+Core release completion and the independently dispatched examples/docs workflow
+post separate messages. Together they report:
 
 - release identity and source commit;
 - success or failure of OTA, npm, native SDK, MentraOS, Engine consumer,
@@ -527,6 +568,11 @@ One final coordinated message reports the full release, including:
 
 Slack never guesses an artifact URL. It uses the validated release plan,
 MentraOS outputs, and Starter Kit result.
+
+The examples message repeats the main Mentra App APK and IPA links from the
+completed core manifest, so an example store failure does not hide the phone
+app downloads. A failed release-page job is reported separately from core
+completion; the core message falls back to the shared artifact container link.
 
 ## Concurrency and Retries
 

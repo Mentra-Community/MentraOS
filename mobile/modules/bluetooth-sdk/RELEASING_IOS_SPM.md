@@ -34,7 +34,7 @@ add an explicit exclusion with a short explanation in the export script.
   ../mentra-bluetooth-sdk-ios
   ```
 
-- Xcode with the iOS platform installed.
+- macOS with Xcode, Swift 5.9 or newer, and the iOS platform installed.
 - Push permission to `Mentra-Community/mentra-bluetooth-sdk-ios`.
 - For CI, a `MENTRA_BLUETOOTH_SDK_IOS_PUSH_TOKEN` repository secret with write
   access to the SwiftPM mirror repository.
@@ -51,8 +51,8 @@ scripts/export-bluetooth-sdk-ios-spm.sh --target ../mentra-bluetooth-sdk-ios --v
 ```
 
 The script rewrites the target checkout except for `.git`. The `--verify` flag
-runs SwiftPM package description and a generic iOS Xcode build in the exported
-package. It reads `mobile/modules/bluetooth-sdk/package.json` and inserts that
+runs SwiftPM package description, a native macOS build, and a generic iOS Xcode
+build in the exported package. It reads `mobile/modules/bluetooth-sdk/package.json` and inserts that
 version into the generated README examples.
 
 ## Inspect the Target Diff

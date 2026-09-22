@@ -33,7 +33,7 @@ public class GalleryCommandHandler implements ICommandHandler {
 
     @Override
     public Set<String> getSupportedCommandTypes() {
-        return Set.of("query_gallery_status");
+        return Set.of("query_gallery_status", "set_gallery_server_enabled");
     }
 
     @Override
@@ -42,6 +42,8 @@ public class GalleryCommandHandler implements ICommandHandler {
             switch (commandType) {
                 case "query_gallery_status":
                     return handleQueryGalleryStatus();
+                case "set_gallery_server_enabled":
+                    return handleSetGalleryServerEnabled(data);
                 default:
                     Log.e(TAG, "Unsupported gallery command: " + commandType);
                     return false;
@@ -50,6 +52,34 @@ public class GalleryCommandHandler implements ICommandHandler {
             Log.e(TAG, "Error handling gallery command: " + commandType, e);
             return false;
         }
+    }
+
+    private boolean handleSetGalleryServerEnabled(JSONObject data) throws Exception {
+        String requestId = data.optString("request_id", "");
+        JSONObject ack = new JSONObject();
+        ack.put("type", "settings_ack");
+        ack.put("request_id", requestId);
+        ack.put("setting", "gallery_server");
+        ack.put("timestamp", System.currentTimeMillis());
+        if (requestId.isEmpty() || !(data.opt("enabled") instanceof Boolean)) {
+            ack.put("status", "error");
+            ack.put("error_code", "invalid_request");
+            ack.put("error_message", "A request_id and boolean enabled are required.");
+        } else if (serviceManager == null
+                || !serviceManager.setGalleryServerEnabled(data.getBoolean("enabled"))) {
+            ack.put("status", "error");
+            ack.put("error_code", "settings_unavailable");
+            ack.put("error_message", "Could not persist the gallery server setting.");
+        } else {
+            ack.put("status", "applied");
+            ack.put("enabled", serviceManager.isGalleryServerEnabled());
+            String url = serviceManager.getGalleryServerUrl();
+            ack.put("listening", url != null);
+            if (url != null) {
+                ack.put("url", url);
+            }
+        }
+        return communicationManager.sendBluetoothResponse(ack);
     }
 
     /**

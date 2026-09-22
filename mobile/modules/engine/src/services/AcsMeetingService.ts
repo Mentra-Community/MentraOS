@@ -1,0 +1,1914 @@
+/**
+ * Host-side ACS meeting controller. One active meeting. Native module owns
+ * WHEP + ACS; this service maps that into miniapp envelopes and pipes
+ * incoming PCM into AudioPlaybackService (A2DP / PcmStreamPlayer).
+ */
+
+import {Platform} from "react-native"
+
+import BluetoothSdk from "@mentra/bluetooth-sdk/internal"
+
+import audioPlaybackService from "./AudioPlaybackService"
+import {getCallGainSweep} from "./CallGainSweep"
+import micStateCoordinator from "./MicStateCoordinator"
+import micSessionManager, {type MicSession} from "./MicSessionManager"
+import {ENGINE_OWNER_PREFIX} from "./micPolicy"
+import {SETTINGS, useSettingsStore} from "../stores/settings"
+import {Pcm16LevelMeter, pcm16WindowStats} from "../utils/pcm16"
+import {pcmToBase64} from "../utils/pcmToBase64"
+import {softapTrace, softapTraceFailure, softapTraceId} from "../utils/softapTrace"
+import {ACS_CALL_MIC, type AcsAudioSource, type ResolvedAudioSource, type SourceReason} from "./acsAudioSource"
+import type {SoftapProgress} from "./SoftapCallTransport"
+
+export {ACS_CALL_MIC}
+export {pcmToBase64}
+export type {ResolvedAudioSource, SourceReason}
+
+type MeetingPhase = "idle" | "connecting" | "lobby" | "connected" | "disconnected" | "error"
+
+export type AudioSafety = "safe" | "degraded" | "unsafe"
+export type ActiveStream = "none" | "virtual" | "local"
+/**
+ * Health of the glasses WHEP subscription that feeds the call. `failed` means ICE
+ * dropped or the WHEP endpoint went away (glasses stopped publishing, phone changed
+ * networks); the ACS call itself may still be `connected` with a frozen last frame.
+ */
+export type MediaSourceState = "idle" | "connecting" | "live" | "failed"
+
+/**
+ * How the wearer's voice is reaching ACS.
+ *
+ * `ble-lc3` is the glasses microphone over Bluetooth, decoded on the phone and pushed into the ACS
+ * raw outgoing stream. `whip` is the glasses microphone on the WebRTC track they publish (SoftAP or
+ * Cloudflare). `phone` is the phone's own microphone. `none` means the source we committed to went
+ * away mid-call, which is a reportable failure rather than a reason to open a different microphone.
+ */
+export type MicTransport = "ble-lc3" | "whip" | "phone" | "none"
+
+/** Error surfaced when the pinned glasses microphone stops producing audio during a call. */
+export const GLASSES_MIC_UNAVAILABLE = "GLASSES_MIC_UNAVAILABLE"
+
+export type MeetingParticipantState = "idle" | "connecting" | "connected" | "lobby" | "hold" | "disconnected"
+
+export interface MeetingParticipant {
+  id: string
+  displayName: string | null
+  state: MeetingParticipantState
+  isMuted: boolean
+  isSpeaking: boolean
+}
+
+/**
+ * One runtime participant capability.
+ *
+ * `allowed` is nullable because "denied" and "not known yet" are different facts. ACS delivers
+ * capabilities asynchronously, so every call is briefly unknown, and collapsing that into `false`
+ * would hide controls on calls that do in fact permit them.
+ */
+export interface MeetingCapability {
+  allowed: boolean | null
+  reason: string | null
+}
+
+export interface MeetingCapabilities {
+  /** Whether this participant may end the Teams group call for everyone. Presenters only. */
+  hangUpForEveryone: MeetingCapability
+  manageLobby?: MeetingCapability
+}
+
+export function parseMeetingCapabilities(raw: unknown): MeetingCapabilities | undefined {
+  if (!raw || typeof raw !== "object") return undefined
+  const value = (raw as Record<string, unknown>).hangUpForEveryone
+  if (!value || typeof value !== "object") return undefined
+  const capability = value as Record<string, unknown>
+  const rawLobby = (raw as Record<string, unknown>).manageLobby
+  const lobby = rawLobby && typeof rawLobby === "object" ? rawLobby as Record<string, unknown> : undefined
+  return {
+    ...(lobby ? {manageLobby: {
+      allowed: typeof lobby.allowed === "boolean" ? lobby.allowed : null,
+      reason: typeof lobby.reason === "string" && lobby.reason ? lobby.reason : null,
+    }} : {}),
+    hangUpForEveryone: {
+      allowed: typeof capability.allowed === "boolean" ? capability.allowed : null,
+      reason: typeof capability.reason === "string" && capability.reason ? capability.reason : null,
+    },
+  }
+}
+
+/**
+ * Read the ACS `CallEndReason` off a native state event.
+ *
+ * Native flattens it into `endReason_code` / `endReason_subcode` / `endReason_message` rather than
+ * a nested object, because the Expo bridge drops nested nulls. Anything non-numeric is discarded:
+ * a code that arrived as a string would compare unequal to every entry in the lookup tables and
+ * classify a known failure as unknown, which is worse than having no code at all.
+ */
+export function parseMeetingEndReason(event: Record<string, unknown>): MeetingEndReason | undefined {
+  const num = (value: unknown): number | undefined => (typeof value === "number" && Number.isFinite(value) ? value : undefined)
+  const code = num(event.endReason_code)
+  const subcode = num(event.endReason_subcode)
+  const message = typeof event.endReason_message === "string" ? event.endReason_message : undefined
+  if (code === undefined && subcode === undefined && !message) return undefined
+  return {...(code !== undefined ? {code} : {}), ...(subcode !== undefined ? {subcode} : {}), ...(message ? {message} : {})}
+}
+
+export interface MeetingState {
+  state: MeetingPhase
+  muted: boolean
+  error?: string
+  meetingUrl?: string
+  provider?: "acs-teams"
+  audioSource?: "glasses" | "phone"
+  audioSourceReason?: SourceReason
+  activeStream?: ActiveStream
+  audioSafety?: AudioSafety
+  mediaSource?: MediaSourceState
+  mediaSourceReason?: string
+  callEndReason?: {code: number; subcode: number}
+  participants?: MeetingParticipant[]
+  /** Runtime capabilities. Omitted by natives that predate them; read that as unknown. */
+  capabilities?: MeetingCapabilities
+  /** Which microphone path is carrying the wearer's voice, decided at join time. */
+  micTransport?: MicTransport
+  /**
+   * SoftAP join checklist, attached only to the state events the SoftAP orchestrator emits while
+   * it walks hotspot → scoped join → ACS join → publish → live. Native ACS events never carry it,
+   * so a consumer keeps the last one it saw rather than treating its absence as a reset.
+   */
+  softap?: SoftapProgress
+  /**
+   * ACS `CallEndReason`, forwarded numerically.
+   *
+   * It is the only machine-readable statement of *why* a join failed, and a miniapp cannot tell a
+   * dead meeting link from a dropped network any other way — the human message is localised and
+   * reworded between SDK releases, so matching on it would turn an outage into "your link is
+   * broken" the first time Microsoft rephrases a sentence.
+   */
+  endReason?: MeetingEndReason
+}
+
+/** Numeric ACS `CallEndReason`. `message` is for logs and bug reports only, never for branching. */
+export interface MeetingEndReason {
+  code?: number
+  subcode?: number
+  message?: string
+}
+
+/**
+ * The call microphone is [ACS_CALL_MIC], and `preferred_mic` governs MentraOS STT capture rather
+ * than this call.
+ *
+ * `"glasses"` selects the wearer's own microphone. Which *transport* carries it is a separate
+ * decision made per call by [glassesLc3UplinkSupported]: BLE LC3 into the ACS raw outgoing stream
+ * where the host and native both support it, otherwise the glasses' published WebRTC audio track.
+ * `"phone"` selects the phone's microphone via `PhoneMicCapturer`; do not route it through ACS
+ * `LocalOutgoingAudioStream`, because that hands ACS the audio route
+ * (MODE_IN_COMMUNICATION + forced speaker) and opens an echo loop.
+ */
+export function resolveAcsAudioSource(): ResolvedAudioSource {
+  return {source: ACS_CALL_MIC, reason: "explicit"}
+}
+
+/**
+ * Whether this call can take the wearer's voice off the glasses over BLE LC3.
+ *
+ * Every term is a hard requirement, and the answer has to be known *before* the glasses are told
+ * what to publish — deciding afterwards is how a call ends up with either two copies of the wearer
+ * or none. A host whose native module has no `pushOutgoingPcm` keeps the WHIP audio track it has
+ * always used rather than silently joining a meeting nobody can be heard in.
+ *
+ * SoftAP takes BLE LC3 and publishes WHIP video only (`captureAudio=false`), so the glasses SoC
+ * microphone is never opened for a call.
+ *
+ * This was switched off once on a misread: a soak logged `P4 pcm meanAbs` 8–39 and called it
+ * digital silence. It was the room. The same LC3 path measured on the bench sits at `meanAbs`
+ * ≈30–60 / `peak` ≈80–100 in a quiet room with nobody talking, and that soak had already
+ * published with `captureAudio=false`, so the SoC mic was not the thief either. The uplink now
+ * logs its own `meanAbs`/`peak` every window ([logMicUplink]) so the next soak reads the level,
+ * not the frame rate. Disable only with a level log showing the floor *while the wearer talks*.
+ */
+const SOFTAP_BLE_LC3_UPLINK = true
+/**
+ * How long native may take to finish a leave before it reports the cleanup as stuck.
+ *
+ * Generous on purpose: this is a diagnostic ceiling on a hang-up plus an agent disposal, not a
+ * readiness deadline. The caller treats a timeout as "cleanup failed", never as "safe to restart".
+ */
+const ACS_LEAVE_WAIT_MS = 20_000
+/**
+ * SoftAP video (camera → H.264 → WHIP → WHEP → ACS) is slower than BLE LC3.
+ * Hold glasses PCM this long so the talk track does not lead the picture.
+ * Set from SoftAP+LC3 clap correlator (2026-09-10): leads 70/201/173/300/142 ms,
+ * median 173, rounded to 170. `AVSYNC clap audioLeadMs` is still the re-cal.
+ */
+export const SOFTAP_LC3_AUDIO_DELAY_MS = 170
+let softapBleLc3UplinkForTests: boolean | null = null
+
+export function glassesLc3UplinkSupported(args: {
+  videoSource: AcsVideoSource
+  audioSource: AcsAudioSource
+  hasPushOutgoingPcm: boolean
+  platform: string
+  /** Somebody holds a glasses microphone session through MicSessionManager. */
+  glassesSession: boolean
+}): boolean {
+  if (!(softapBleLc3UplinkForTests ?? SOFTAP_BLE_LC3_UPLINK)) return false
+  // The microphone belongs to whoever leased it. Without a lease nothing has pinned the glasses
+  // or claimed raw PCM, so this call has no wearer audio to read off them.
+  if (!args.glassesSession) return false
+  // iOS has no `setMicSourcePin` yet, so it cannot promise the phone microphone stays shut.
+  if (args.platform !== "android") return false
+  // WHEP audio comes back from Cloudflare already mixed into the subscribed track; there is no
+  // captureAudio flag on that path to turn off.
+  if (args.videoSource.type !== "softap") return false
+  if (args.audioSource !== "glasses") return false
+  return args.hasPushOutgoingPcm
+}
+
+const PARTICIPANT_STATES = new Set<MeetingParticipantState>([
+  "idle",
+  "connecting",
+  "connected",
+  "lobby",
+  "hold",
+  "disconnected",
+])
+
+export function parseMeetingParticipants(raw: unknown): MeetingParticipant[] | undefined {
+  if (!Array.isArray(raw)) return undefined
+  const result: MeetingParticipant[] = []
+  for (const entry of raw) {
+    if (!entry || typeof entry !== "object") continue
+    const value = entry as Record<string, unknown>
+    if (typeof value.id !== "string" || !value.id) continue
+    const state = PARTICIPANT_STATES.has(value.state as MeetingParticipantState)
+      ? (value.state as MeetingParticipantState)
+      : "idle"
+    result.push({
+      id: value.id,
+      displayName: typeof value.displayName === "string" && value.displayName ? value.displayName : null,
+      state,
+      isMuted: Boolean(value.isMuted),
+      isSpeaking: Boolean(value.isSpeaking),
+    })
+  }
+  return result
+}
+
+export type AcsOutgoingVideo = {
+  width: number
+  height: number
+  fps: number
+  maxBitrateBps: number
+}
+
+/** ACS VirtualOutgoingVideoStream documented 16:9 sizes. P540 is 960×540, not 540×960. */
+const ACS_VIRTUAL_CAMERA_SIZES = new Set(["1280x720", "960x540", "858x480"])
+
+export function parseAcsOutgoingVideo(raw: unknown): AcsOutgoingVideo | undefined {
+  if (raw == null) return undefined
+  if (typeof raw !== "object") throw new Error("video must be an object")
+  const value = raw as Record<string, unknown>
+  const width = Number(value.width)
+  const height = Number(value.height)
+  const fps = Number(value.fps)
+  const maxBitrateBps = Number(value.maxBitrateBps)
+  if (![width, height, fps, maxBitrateBps].every(Number.isFinite)) {
+    throw new Error("video requires width, height, fps, and maxBitrateBps")
+  }
+  if (!ACS_VIRTUAL_CAMERA_SIZES.has(`${width}x${height}`) || fps < 1 || fps > 30 || maxBitrateBps <= 0) {
+    throw new Error(`unsupported ACS video ${width}x${height}@${fps}`)
+  }
+  return {width, height, fps, maxBitrateBps}
+}
+
+/**
+ * Where the glasses video comes from.
+ *
+ * A union rather than a nullable URL because the two transports need different inputs: WHEP is
+ * given a URL, while SoftAP produces one only after the host binds a local listener. Collapsing
+ * them into `whepUrl?: string` is what lets an empty string reach the subscriber and fail seconds
+ * later as an opaque HTTP error.
+ */
+export type AcsVideoSource =
+  | {type: "whep"; url: string}
+  | {type: "softap"; ssid?: string; passphrase?: string; bindAddress?: string}
+
+/**
+ * Validates a `videoSource` from a miniapp.
+ *
+ * Throws rather than defaulting to WHEP. A miniapp that asks for SoftAP and silently gets a
+ * Cloudflare call — or vice versa — is a bug that shows up as unexplained latency or a black tile,
+ * not as an error anyone can act on.
+ */
+export function parseAcsVideoSource(raw: unknown): AcsVideoSource {
+  if (raw == null || typeof raw !== "object") {
+    throw new Error(`videoSource must be {type: "whep", url} or {type: "softap"}`)
+  }
+  const value = raw as Record<string, unknown>
+
+  if (value.type === "whep") {
+    const url = typeof value.url === "string" ? value.url.trim() : ""
+    if (!url) throw new Error("videoSource.url is required for a WHEP source")
+    return {type: "whep", url}
+  }
+
+  if (value.type === "softap") {
+    const ssid = typeof value.ssid === "string" ? value.ssid.trim() : ""
+    const passphrase = typeof value.passphrase === "string" ? value.passphrase : ""
+    // Half a credential pair would otherwise present as a failed hotspot join much later.
+    if (Boolean(ssid) !== Boolean(passphrase)) {
+      throw new Error("videoSource.ssid and videoSource.passphrase must be provided together")
+    }
+    return ssid ? {type: "softap", ssid, passphrase} : {type: "softap"}
+  }
+
+  throw new Error(`unsupported videoSource.type: ${String(value.type)}`)
+}
+
+/**
+ * The app's default network after a hotspot join.
+ *
+ * `usable` is the only field to branch on; the rest is for the note the wearer sees and the trace.
+ * A held cellular request brings the radio up but does not promise the default route has switched
+ * or validated, so this is asked separately rather than inferred from the hold.
+ */
+export interface DefaultNetworkStatus {
+  transport: string
+  validated: boolean
+  present: boolean
+  usable: boolean
+  detail: string
+}
+
+/**
+ * Which path the wearer took into the call.
+ *
+ * Diagnostic only — nothing behaves differently — but it is carried all the way to the native
+ * traces because the open question about video quality is exactly "do these two differ", and a
+ * log that cannot separate them cannot answer it.
+ */
+export type AcsCallOrigin = "created" | "joined" | "unknown"
+
+export function parseAcsCallOrigin(value: unknown): AcsCallOrigin {
+  return value === "created" || value === "joined" ? value : "unknown"
+}
+
+type NativeModule = {
+  prepareAgent?(options: {token: string; displayName?: string}): Promise<MeetingState>
+  join(options: {
+    meetingUrl: string
+    token: string
+    /** Legacy field, still sent for whep so an older native keeps working. */
+    whepUrl: string
+    videoSource: AcsVideoSource
+    displayName?: string
+    dumpPcmWav?: boolean
+    audioSource?: "glasses" | "phone"
+    audioDelayMs?: number
+    video?: AcsOutgoingVideo
+    origin?: AcsCallOrigin
+  }): Promise<MeetingState & {ingestUrl?: string}>
+  leave(): Promise<void>
+  /**
+   * Leave, and resolve only once the hang-up, the agent disposal, and the network releases have
+   * actually finished.
+   *
+   * [leave] queues its work on the session executor and returns immediately, so awaiting it proves
+   * nothing about cleanup — which is what let a fast Stop/Start start a second call on top of the
+   * first one's teardown. Absent on natives that predate the signal.
+   */
+  leaveAndAwait?(options: {timeoutMs: number}): Promise<{completed: boolean}>
+  /**
+   * Wait for the SoftAP WHIP listener's port. `closed: false` means it is still held.
+   *
+   * Separate from [leaveAndAwait] because the listener outlives the ACS teardown on purpose: it
+   * answers `410` for a few seconds so an in-flight request from the glasses gets a status rather
+   * than a reset. Absent on natives that predate the barrier.
+   */
+  awaitIngestClosed?(options: {timeoutMs: number}): Promise<{closed: boolean}>
+  /** Drop the retiring WHIP listener now, skipping its grace period. */
+  forceCloseIngest?(): Promise<void>
+  /**
+   * End the group call for everyone, then tear this device down. Rejects when the capability is
+   * denied or ACS refuses — and has still left the call. Absent on natives that predate End.
+   */
+  endForEveryone?(): Promise<MeetingState>
+  admitParticipant?(participantId: string): Promise<void>
+  setMuted(muted: boolean): Promise<MeetingState>
+  setAudioSource(source: "glasses" | "phone"): Promise<MeetingState>
+  updateVideoSource(whepUrl: string): Promise<void>
+  /** Force a WHEP rebuild on the current URL. Absent on natives that predate it. */
+  restartVideoSource?(): Promise<void>
+  /**
+   * SoftAP: destroy the current ingest listener and bind a new one. Resolves with
+   * the new URL. Absent on natives that predate rebind; disabled natives reject.
+   */
+  rebindSoftApIngest?(): Promise<string>
+  /**
+   * Join the glasses hotspot as a scoped, internet-less network; resolves with this phone's
+   * address on it. Absent on natives that predate SoftAP.
+   */
+  joinScopedNetwork?(ssid: string, passphrase: string): Promise<string>
+  joinScopedNetworkWithGateway?(ssid: string, passphrase: string, gateway: string): Promise<string>
+  /** Is this phone's Wi-Fi radio on? Absent on natives that predate the preflight. */
+  isWifiEnabled?(): Promise<boolean>
+  beginTrace?(traceId: string): Promise<void>
+  leaveScopedNetwork?(): Promise<void>
+  cancelScopedNetworkJoin?(): Promise<void>
+  awaitDefaultNetworkAfterHotspot?(): Promise<DefaultNetworkStatus>
+  /**
+   * TCP-probe the hotspot gateway over the scoped network. Absent on natives that predate it.
+   * `detail` is a one-line human summary (address, port, latency or the failure).
+   */
+  probeScopedGateway?(): Promise<{reachable: boolean; detail: string}>
+  /** The joined hotspot: `prefix` is what the media path must stay inside. */
+  scopedNetworkInfo?(): Promise<{available: boolean; localIpv4: string | null; prefix: string | null}>
+  /**
+   * Wait for the app's default network to be validated, after the hotspot join changed it.
+   * Absent on natives that predate the cellular transition handling.
+   */
+  awaitValidatedDefaultNetwork?(): Promise<DefaultNetworkStatus>
+  getState(): Promise<MeetingState>
+  /**
+   * Hand one chunk of already-decoded microphone PCM to the ACS uplink. Synchronous on purpose:
+   * this runs ~100×/s and a promise per chunk would cost more than the copy does.
+   *
+   * Absent on natives that predate the BLE LC3 uplink, which is exactly what
+   * [glassesLc3UplinkSupported] tests for.
+   */
+  pushOutgoingPcm?(base64: string, sampleRate: number, channels: number): void
+  addListener(event: string, listener: (event: Record<string, unknown>) => void): {remove: () => void}
+}
+
+let nativeModule: NativeModule | null | undefined
+
+function getNative(): NativeModule | null {
+  if (nativeModule !== undefined) return nativeModule
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    nativeModule = require("@mentra/acs-meeting").default as NativeModule
+  } catch {
+    nativeModule = null
+  }
+  return nativeModule
+}
+
+/** Test seam: skip the native require and inject a fake ACS module. */
+export function setAcsMeetingNativeForTests(mod: NativeModule | null | undefined): void {
+  nativeModule = mod
+}
+
+/** Test seam: exercise the BLE LC3 path without flipping the production kill switch. */
+export function setSoftapBleLc3UplinkForTests(enabled: boolean | null): void {
+  softapBleLc3UplinkForTests = enabled
+}
+
+/**
+ * Phone connectivity feed. Only the subset of `@react-native-community/netinfo`
+ * this service needs, so tests can inject a fake and hosts without the package
+ * (or a bare test runtime) degrade to "no phone-network awareness" instead of
+ * failing to load the meeting service.
+ */
+export type PhoneNetworkInfo = {type: string; isConnected: boolean | null}
+type PhoneNetworkSource = {
+  addEventListener(listener: (state: PhoneNetworkInfo) => void): () => void
+}
+
+let phoneNetwork: PhoneNetworkSource | null | undefined
+
+function getPhoneNetwork(): PhoneNetworkSource | null {
+  if (phoneNetwork !== undefined) return phoneNetwork
+  try {
+    // eslint-disable-next-line @typescript-eslint/no-require-imports
+    const netInfo = require("@react-native-community/netinfo") as {default?: PhoneNetworkSource} & PhoneNetworkSource
+    phoneNetwork = netInfo.default ?? netInfo
+  } catch {
+    phoneNetwork = null
+  }
+  return phoneNetwork
+}
+
+/** Test seam: inject a fake phone-network feed (or `null` to disable it). */
+export function setAcsMeetingPhoneNetworkForTests(source: PhoneNetworkSource | null | undefined): void {
+  phoneNetwork = source
+}
+
+function parseActiveStream(value: unknown): ActiveStream | undefined {
+  if (value === "none" || value === "virtual" || value === "local") return value
+  return undefined
+}
+
+function parseAudioSafety(value: unknown): AudioSafety | undefined {
+  if (value === "safe" || value === "degraded" || value === "unsafe") return value
+  return undefined
+}
+
+function parseMediaSource(value: unknown): MediaSourceState | undefined {
+  if (value === "idle" || value === "connecting" || value === "live" || value === "failed") return value
+  return undefined
+}
+
+/** Meeting phases during which the WHEP feed should be alive and is worth restarting. */
+const MEDIA_ACTIVE_PHASES = new Set<MeetingPhase>(["connecting", "lobby", "connected"])
+/** Floor between WHEP restarts we trigger from the host, so a flapping network cannot thrash native. */
+const MEDIA_RESTART_MIN_INTERVAL_MS = 3000
+
+/** Formats the native PcmStreamPlayer accepts (mono only). */
+const PCM_SAMPLE_RATES = new Set([16000, 24000, 48000])
+
+/**
+ * Playout headroom for the far end's voice.
+ *
+ * The native player defaults to half a second, which is right for a miniapp clip and wrong here:
+ * a streaming track sits at its buffer size, so that default is 500ms of delay before the wearer
+ * hears anyone, enough that both sides talk over each other. This trades cushion for immediacy —
+ * still several BLE playout beats, but a conversation instead of a broadcast.
+ */
+const PCM_JITTER_MS = 120
+/**
+ * Above this the backlog is real congestion rather than the configured cushion.
+ *
+ * Has to stay clear of [PCM_JITTER_MS], because the reported backlog *includes* the track's own
+ * buffer and so never falls below it. A threshold at or under the cushion logs once per interval
+ * for the whole call and says nothing.
+ */
+const PCM_BACKLOG_WARN_MS = PCM_JITTER_MS + 400
+
+/** The Bluetooth SDK mic identifier the call pins itself to. */
+const GLASSES_MIC_SOURCE = "glasses"
+/**
+ * How long the glasses may produce no PCM before the call reports its microphone gone.
+ *
+ * The pin makes a phone-mic fallback impossible, so the only honest response to a source that
+ * stopped is to say so. One second is several BLE mic-beats: long enough that a reconnect blip
+ * does not raise an error, short enough that the wearer is not talking into nothing for long.
+ */
+const GLASSES_MIC_GRACE_MS = 1000
+/** Cadence of the uplink health line, matching the native P8 ladder. */
+const MIC_UPLINK_LOG_INTERVAL_MS = 5000
+/** During a gain sweep, one-second windows so each 25 s phase has enough speech samples. */
+const MIC_UPLINK_SWEEP_LOG_INTERVAL_MS = 1000
+/** A 50 ms LC3 frame arriving more than this late is a missed beat, not jitter. */
+const MIC_GAP_WARN_MS = 90
+
+class AcsMeetingService {
+  private owner: string | null = null
+  private pcmStreamId: string | null = null
+  private pcmFormat: {sampleRate: number; channels: number} | null = null
+  private pcmReopen: Promise<void> | null = null
+  private pcmWriteChain: Promise<void> = Promise.resolve()
+  private lastBacklogWarnAt = 0
+  private subscriptions: Array<{remove: () => void}> = []
+  private lastState: MeetingState = {state: "idle", muted: false}
+  private onState: ((packageName: string, state: MeetingState) => void) | null = null
+  /** WHEP URL native is (or should be) subscribed to; what a host-triggered restart re-feeds. */
+  private whepUrl: string | null = null
+  /** Transport for the active call, so recovery picks the right repair. */
+  private videoSource: AcsVideoSource | null = null
+  /**
+   * SoftAP only: the URL the glasses must publish to. An output of the join rather than an input,
+   * because it is not known until native has bound a listener and been given a port.
+   */
+  private ingestUrl: string | null = null
+  private phoneNetworkUnsub: (() => void) | null = null
+  private lastPhoneNetworkKey: string | null = null
+  private lastMediaRestartAt = 0
+  /** Callers parked in [waitForFirstFrame], woken by the next `mediaSource` verdict. */
+  private readonly firstFrameWaiters = new Set<(error?: Error) => void>()
+  /**
+   * Bumped by [invalidateDecodedMedia]. A `live` verdict only counts for the wait that
+   * started after that bump if [liveEpoch] matches.
+   */
+  private decodedMediaEpoch = 0
+  /** [decodedMediaEpoch] at the moment the phone last reported `mediaSource: live`. */
+  private liveEpoch = -1
+  /** Mid-call republish waiters: live resolves true, leave/timeout resolves false. Failed is ignored. */
+  private readonly mediaLiveWaiters = new Set<(live: boolean) => void>()
+  private scopedLostSub: {remove: () => void} | null = null
+  private readonly scopedLostListeners = new Set<(error: {code: string; message: string}) => void>()
+  /**
+   * Set before the scoped network is released, so the loss we are about to cause is not reported as
+   * one that happened to us. Android emits `onLost` for a deliberate release, and a naive wiring
+   * turns every successful Leave and End into a mid-call network error.
+   */
+  private scopedTerminating = false
+  /**
+   * Bumped by every join and every release, and captured by everything that can outlive a call:
+   * the `mic_pcm` listener and the in-flight `native.join`.
+   *
+   * A leave during a slow join is the case this exists for. Without it the join resolves into a
+   * torn-down host, subscribes a microphone listener nobody will ever unsubscribe, and pushes the
+   * wearer's voice at a native session that has already left the meeting.
+   */
+  private callGeneration = 0
+  /** Stamped on the host-side state traces so they can be grouped the same way the native ones are. */
+  private callOrigin: AcsCallOrigin = "unknown"
+  private micTransport: MicTransport = "whip"
+  private micSub: {remove: () => void} | null = null
+  /** Backstop lease, held only while this call is actually reading the glasses mic. */
+  private micSession: MicSession | null = null
+  private micTuningSub: {remove: () => void} | null = null
+  private micRmsSub: {remove: () => void} | null = null
+  /** Only turn telemetry off again if this call is what turned it on. */
+  private micRmsEnabled = false
+  private gateSamples = 0
+  private gateClosed = 0
+  private gateElevated = 0
+  private gateClosedElevated = 0
+  private gateRmsMax = 0
+  /** True between the pin/requirement being taken and released, so release is exactly once. */
+  private micUplinkActive = false
+  private micFramesForwarded = 0
+  /** Frames since the last health line, so the rate and the call total stay separate facts. */
+  private micFramesWindow = 0
+  private micDropsStale = 0
+  private micDropsNonGlasses = 0
+  private micGaps = 0
+  private micGapMsMax = 0
+  private lastGlassesFrameAt = 0
+  private lastMicUplinkLogAt = 0
+  private lastMicDropLogAt = 0
+  /** PCM level over the current health window; read and reset by [logMicUplink]. */
+  private micLevel = new Pcm16LevelMeter()
+  private lastMicLevel: {meanAbs: number; peak: number} | null = null
+  /** Guards [releaseHostState] so a remote hang-up followed by an explicit leave releases once. */
+  private hostStateReleased = true
+
+  setStateHandler(handler: (packageName: string, state: MeetingState) => void): void {
+    this.onState = handler
+  }
+
+  getState(): MeetingState {
+    return {...this.lastState}
+  }
+
+  ownerPackage(): string | null {
+    return this.owner
+  }
+
+  /**
+   * The WHIP URL the glasses must POST their offer to, for a SoftAP call. Null for every other
+   * transport and until the join has bound a listener; the orchestrator reads it between the ACS
+   * join and telling the glasses to publish.
+   */
+  softApIngestUrl(): string | null {
+    return this.ingestUrl
+  }
+
+  /**
+   * Whether this call is taking the wearer's voice over BLE LC3, which means the glasses must
+   * publish video only. Read by the SoftAP orchestrator between the meeting join and the publish.
+   */
+  glassesLc3UplinkActive(): boolean {
+    return this.micTransport === "ble-lc3"
+  }
+
+  /**
+   * Has the SoftAP video receiver released its port?
+   *
+   * A native that cannot answer reports `true`: it also predates the tombstone this waits out, so
+   * there is nothing for the barrier to be waiting on.
+   */
+  async awaitIngestClosed(timeoutMs: number): Promise<boolean> {
+    const native = getNative()
+    if (!native?.awaitIngestClosed) return true
+    const outcome = await native.awaitIngestClosed({timeoutMs})
+    return outcome.closed
+  }
+
+  /** Close the retiring WHIP listener now. No-op on natives without it. */
+  async forceCloseIngest(): Promise<void> {
+    await getNative()?.forceCloseIngest?.()
+  }
+
+  /**
+   * Destroy the current SoftAP ingest listener and bind a new one. The caller
+   * rejoins the hotspot first; native reads the current scoped address.
+   */
+  async rebindSoftApIngest(): Promise<string> {
+    const native = getNative()
+    if (!native?.rebindSoftApIngest) {
+      throw new Error("SoftAP ingest rebind is not available on this native")
+    }
+    this.invalidateDecodedMedia()
+    const url = await native.rebindSoftApIngest()
+    this.ingestUrl = url
+    return url
+  }
+
+  /**
+   * Forget a previously decoded first frame. Recovery must wait for a frame
+   * from the new ingest generation, not short-circuit on the last live verdict.
+   */
+  invalidateDecodedMedia(): void {
+    this.decodedMediaEpoch++
+    if (this.lastState.mediaSource === "live") {
+      this.lastState = {...this.lastState, mediaSource: "connecting", mediaSourceReason: "ingest_rebind"}
+    }
+  }
+
+  /**
+   * Is this phone's Wi-Fi radio on?
+   *
+   * `null` means the question cannot be answered on this host — iOS, or a native that predates the
+   * preflight — and callers must treat that as "carry on", not as "off". Refusing a call because
+   * we could not ask would break every platform that never had the problem.
+   */
+  async isWifiEnabled(): Promise<boolean | null> {
+    const native = getNative()
+    if (!native?.isWifiEnabled) return null
+    return await native.isWifiEnabled()
+  }
+
+  /**
+   * Join the glasses hotspot as a scoped, internet-less network, returning this phone's address on
+   * it. Called before the ACS join, because the local WHIP listener has to bind to that address.
+   *
+   * A host without the native function is not a host that silently skips the join — the SoftAP call
+   * has no network to run on, so this reports the reason instead.
+   */
+  async joinScopedNetwork(
+    ssid: string,
+    passphrase: string,
+    gateway?: string,
+    report?: (detail: string) => void,
+  ): Promise<string | undefined> {
+    const native = getNative()
+    if (!native?.joinScopedNetwork) {
+      throw new Error("This host cannot join the glasses hotspot; SoftAP calling is unavailable")
+    }
+    this.scopedTerminating = false
+    this.bindScopedNetworkLost(native)
+    await native.beginTrace?.(softapTraceId())
+    if (this.scopedTerminating) throw new Error("Hotspot join cancelled")
+    const progress =
+      Platform.OS === "ios" && report
+        ? native.addListener("onScopedNetworkProgress", (event) => {
+            if (!this.scopedTerminating && event.permissionRequired === true) {
+              report(
+                "Allow Local Network access to connect to your glasses. If you previously denied access, enable it in Settings, or cancel to return home.",
+              )
+            }
+          })
+        : undefined
+    try {
+      if (native.joinScopedNetworkWithGateway) {
+        if (!gateway) throw new Error("The glasses did not report a hotspot gateway")
+        return await native.joinScopedNetworkWithGateway(ssid, passphrase, gateway)
+      }
+      return await native.joinScopedNetwork(ssid, passphrase)
+    } finally {
+      progress?.remove()
+    }
+  }
+
+  /**
+   * Subscribe to "the glasses hotspot went away while we still wanted it".
+   *
+   * Only unexpected losses arrive here. Native drops the framework callback for a network it
+   * released itself, and [leaveScopedNetwork] raises the terminal intent before releasing, so a
+   * normal Leave or End cannot manufacture a mid-call failure.
+   */
+  onScopedNetworkLost(listener: (error: {code: string; message: string}) => void): () => void {
+    this.scopedLostListeners.add(listener)
+    return () => this.scopedLostListeners.delete(listener)
+  }
+
+  private bindScopedNetworkLost(native: NativeModule): void {
+    if (this.scopedLostSub) return
+    try {
+      this.scopedLostSub = native.addListener("onScopedNetworkLost", (event) => {
+        if (this.scopedTerminating) {
+          console.log("[AcsMeeting] phase=scoped-lost-expected", {code: event.code})
+          return
+        }
+        const error = {
+          code: typeof event.code === "string" ? event.code : "SOFTAP_NETWORK_LOST",
+          message: typeof event.message === "string" ? event.message : "The glasses hotspot went away",
+        }
+        console.warn("[AcsMeeting] phase=scoped-lost", error)
+        for (const listener of [...this.scopedLostListeners]) {
+          try {
+            listener(error)
+          } catch (listenerError) {
+            console.warn("[AcsMeeting] scoped-lost listener threw", listenerError)
+          }
+        }
+      })
+    } catch (error) {
+      // A native that predates the event simply never reports mid-call loss; that is a smaller
+      // problem than failing the join over a missing listener.
+      console.warn("[AcsMeeting] scoped network loss events unavailable", error)
+      this.scopedLostSub = null
+    }
+  }
+
+  /** Raise the terminal intent so the release we are about to do is not read as a failure. */
+  beginScopedTeardown(): void {
+    this.scopedTerminating = true
+  }
+
+  /**
+   * Wait until the phone's default network is validated again after the hotspot join.
+   *
+   * Joining the glasses hotspot takes the phone off Wi-Fi, and ACS needs the internet for the very
+   * next step. Waiting is what turns a 40-second join timeout with device-wide DNS failures into a
+   * short, named wait — or an honest failure. Null when the host cannot tell.
+   */
+  async awaitValidatedDefaultNetwork(): Promise<DefaultNetworkStatus | null> {
+    const native = getNative()
+    if (!native?.awaitValidatedDefaultNetwork) return null
+    return await native.awaitValidatedDefaultNetwork()
+  }
+
+  /** Cleanup may restore home Wi-Fi; only the live SoftAP leg requires cellular on iOS. */
+  async awaitDefaultNetworkAfterHotspot(): Promise<DefaultNetworkStatus | null> {
+    const native = getNative()
+    return native?.awaitDefaultNetworkAfterHotspot
+      ? await native.awaitDefaultNetworkAfterHotspot()
+      : await this.awaitValidatedDefaultNetwork()
+  }
+
+  async cancelScopedNetworkJoin(): Promise<void> {
+    this.scopedTerminating = true
+    await getNative()?.cancelScopedNetworkJoin?.()
+  }
+
+  /**
+   * Can this phone reach the glasses over the hotspot it just joined? Null when the host cannot
+   * tell (no native support), so the orchestrator narrates nothing rather than a guess.
+   */
+  async probeScopedGateway(): Promise<{reachable: boolean; detail: string} | null> {
+    const native = getNative()
+    if (!native?.probeScopedGateway) return null
+    return await native.probeScopedGateway()
+  }
+
+  /** Safe to call when nothing was joined: teardown runs after failed starts too. */
+  async leaveScopedNetwork(): Promise<void> {
+    // Intent first, release second. The other order is the false-positive bug: Android reports the
+    // loss we asked for, and the call reports a network failure as it is successfully ending.
+    this.scopedTerminating = true
+    try {
+      await getNative()?.leaveScopedNetwork?.()
+    } finally {
+      this.scopedLostSub?.remove()
+      this.scopedLostSub = null
+    }
+  }
+
+  /**
+   * Resolves when the phone decodes its first glasses frame. This confirms the local media leg;
+   * Teams admission is a separate call state and may still be connecting or in the lobby.
+   * Rejects if the feed fails first, and on timeout.
+   *
+   * @param timeoutMs how long to wait before treating the silence as a failure
+   */
+  waitForFirstFrame(timeoutMs: number, options: {fresh?: boolean} = {}): Promise<void> {
+    const liveThisGeneration =
+      this.lastState.mediaSource === "live" && this.liveEpoch === this.decodedMediaEpoch
+    // Join short-circuits on any live. Recovery (`fresh`) short-circuits only on a live
+    // from this ingest generation: the new WHIP first frame often lands during publish,
+    // before this wait starts. Waiting for a later `onState` then times out while video
+    // is already flowing, and the miniapp hangs up the ACS meeting.
+    if (liveThisGeneration) {
+      softapTrace(
+        options.fresh ? "glasses_first_frame_this_generation" : "glasses_first_frame_already_received",
+        {mediaSource: this.lastState.mediaSource, epoch: this.decodedMediaEpoch},
+      )
+      return Promise.resolve()
+    }
+    const startedAt = Date.now()
+    softapTrace("acs_first_frame_wait", {
+      timeoutMs,
+      mediaSource: this.lastState.mediaSource ?? "unknown",
+      state: this.lastState.state,
+    })
+    return new Promise<void>((resolve, reject) => {
+      const settle = (error?: Error) => {
+        if (done) return
+        done = true
+        clearTimeout(timer)
+        this.firstFrameWaiters.delete(settle)
+        // The step this closes is the one that decides whether the call is usable, so its outcome
+        // is named rather than inferred from whichever line happens to follow.
+        if (error) {
+          softapTraceFailure("acs_first_frame_wait_done", {
+            waitedMs: Date.now() - startedAt,
+            reason: error.message,
+          })
+          reject(error)
+        } else {
+          softapTrace("acs_first_frame_wait_done", {waitedMs: Date.now() - startedAt})
+          resolve()
+        }
+      }
+      let done = false
+      const timer = setTimeout(
+        () => settle(new Error(`No glasses video reached the phone within ${Math.round(timeoutMs / 1000)}s`)),
+        timeoutMs,
+      )
+      this.firstFrameWaiters.add(settle)
+    })
+  }
+
+  /** Wake every `waitForFirstFrame` caller with the outcome the host just reported. */
+  private settleFirstFrameWaiters(mediaSource: MediaSourceState | undefined): void {
+    if (mediaSource !== "live" && mediaSource !== "failed") return
+    const error = mediaSource === "failed" ? new Error("The glasses video feed failed") : undefined
+    for (const settle of [...this.firstFrameWaiters]) settle(error)
+    if (mediaSource === "live") this.settleMediaLiveWaiters(true)
+  }
+
+  private settleMediaLiveWaiters(live: boolean): void {
+    for (const settle of [...this.mediaLiveWaiters]) settle(live)
+  }
+
+  /**
+   * Mid-call SoftAP camera recovery. Resolves `true` only when ingest is live again.
+   * A standing `failed` is why we republished, so it must not abort the wait the way
+   * [waitForFirstFrame] does on join.
+   */
+  waitUntilMediaLive(timeoutMs: number): Promise<boolean> {
+    if (this.lastState.mediaSource === "live") return Promise.resolve(true)
+    const startedAt = Date.now()
+    softapTrace("acs_media_live_wait", {
+      timeoutMs,
+      mediaSource: this.lastState.mediaSource ?? "unknown",
+      state: this.lastState.state,
+    })
+    return new Promise<boolean>((resolve) => {
+      const settle = (live: boolean) => {
+        if (done) return
+        done = true
+        clearTimeout(timer)
+        this.mediaLiveWaiters.delete(settle)
+        softapTrace("acs_media_live_wait_done", {
+          waitedMs: Date.now() - startedAt,
+          live,
+        })
+        resolve(live)
+      }
+      let done = false
+      const timer = setTimeout(() => settle(false), timeoutMs)
+      this.mediaLiveWaiters.add(settle)
+    })
+  }
+
+  /**
+   * On Android, pin cellular and sign in before the glasses hotspot exists.
+   *
+   * SoftAP DNS cannot resolve Teams hosts. Doing this on the phone's existing internet is what
+   * stops `createCallAgent` from hanging until the hotspot is torn down.
+   */
+  async prepareAgent(args: {token: string; displayName?: string}): Promise<void> {
+    // iOS creates its agent after the host's hotspot/default-route wait so signaling starts
+    // on the post-handoff route instead of reusing an agent signed in over the previous Wi-Fi.
+    if (Platform.OS === "ios") {
+      softapTrace("acs_prepare_agent_deferred", {reason: "ios_hotspot_handoff"})
+      return
+    }
+    const native = getNative()
+    if (!native?.prepareAgent) {
+      // A host that cannot pre-sign-in still joins; it just does the sign-in inside the SoftAP
+      // join, which is the 20-second ACS_AGENT_TIMEOUT this step exists to avoid. Worth a line,
+      // because from the trace alone that build looks like one whose sign-in was instant.
+      softapTrace("acs_prepare_agent_skipped", {reason: native ? "unsupported build" : "no native module"})
+      return
+    }
+    console.log("[AcsMeeting] phase=prepare-agent")
+    const startedAt = Date.now()
+    softapTrace("acs_native_prepare_agent", {hasDisplayName: Boolean(args.displayName)})
+    try {
+      await native.prepareAgent({token: args.token, displayName: args.displayName})
+    } catch (error) {
+      softapTraceFailure("acs_native_prepare_agent_failed", {
+        durationMs: Date.now() - startedAt,
+        reason: error instanceof Error ? error.message : String(error),
+      })
+      throw error
+    }
+    console.log("[AcsMeeting] phase=prepare-agent-ok")
+    softapTrace("acs_native_prepare_agent_ok", {durationMs: Date.now() - startedAt})
+  }
+
+  async join(
+    packageName: string,
+    args: {
+      meetingUrl: string
+      token: string
+      videoSource: AcsVideoSource
+      displayName?: string
+      video?: AcsOutgoingVideo
+      origin?: AcsCallOrigin
+      /**
+       * Whether the caller holds a glasses microphone session. The uplink is the wearer's voice,
+       * so it is only taken off the glasses when somebody has actually claimed that microphone
+       * through MicSessionManager; this class never claims it itself.
+       */
+      glassesSession?: boolean
+    },
+  ): Promise<MeetingState> {
+    const native = getNative()
+    if (!native) {
+      console.warn("[AcsMeeting] phase=join-native nativeLoaded=false")
+      throw new Error("ACS meeting module is not available on this host")
+    }
+    if (this.owner && this.owner !== packageName) {
+      throw new Error("Another miniapp already has an active meeting")
+    }
+    // Validate before claiming ownership so a bad request cannot leave the slot taken.
+    const video = args.video ? parseAcsOutgoingVideo(args.video) : undefined
+    const resolved = resolveAcsAudioSource()
+    const generation = ++this.callGeneration
+    this.hostStateReleased = false
+    this.owner = packageName
+    // Only a whep source has a URL to re-feed on recovery; softap rebuilds instead.
+    this.whepUrl = args.videoSource.type === "whep" ? args.videoSource.url : null
+    this.videoSource = args.videoSource
+    // Decided here, before the join, so the SoftAP orchestrator can read it between the join and
+    // telling the glasses what to capture.
+    const lc3Uplink = glassesLc3UplinkSupported({
+      videoSource: args.videoSource,
+      audioSource: resolved.source,
+      hasPushOutgoingPcm: typeof native.pushOutgoingPcm === "function",
+      platform: Platform.OS,
+      glassesSession: args.glassesSession ?? false,
+    })
+    this.micTransport = lc3Uplink ? "ble-lc3" : resolved.source === "phone" ? "phone" : "whip"
+    this.bindNative(native, packageName)
+    console.log("[AcsMeeting] phase=join-native", {
+      packageName,
+      nativeLoaded: true,
+      hasToken: Boolean(args.token),
+      transport: args.videoSource.type,
+      audioSource: resolved.source,
+      audioSourceReason: resolved.reason,
+      micTransport: this.micTransport,
+      preferredMic: useSettingsStore.getState().getSetting(SETTINGS.preferred_mic.key),
+    })
+    const joinStartedAt = Date.now()
+    const origin = parseAcsCallOrigin(args.origin)
+    this.callOrigin = origin
+    softapTrace("acs_native_join", {
+      packageName,
+      generation,
+      transport: args.videoSource.type,
+      audioSource: resolved.source,
+      micTransport: this.micTransport,
+      audioDelayMs: lc3Uplink ? SOFTAP_LC3_AUDIO_DELAY_MS : 0,
+      video: video ? `${video.width}x${video.height}@${video.fps}` : "default",
+      origin,
+    })
+    // Duplicated from the native `native_join_options` line on purpose: if the native trace is
+    // missing from a capture — a bug report with only the JS log, a crash before export — this is
+    // the only record of what the two paths actually asked for.
+    softapTrace("acs_join_options", {
+      origin,
+      transport: args.videoSource.type,
+      width: video?.width ?? 0,
+      height: video?.height ?? 0,
+      fps: video?.fps ?? 0,
+      maxBitrateBps: video?.maxBitrateBps ?? 0,
+    })
+    try {
+      const state = await native.join({
+        meetingUrl: args.meetingUrl,
+        token: args.token,
+        whepUrl: this.whepUrl ?? "",
+        videoSource: args.videoSource,
+        displayName: args.displayName,
+        audioSource: resolved.source,
+        origin,
+        ...(lc3Uplink ? {audioDelayMs: SOFTAP_LC3_AUDIO_DELAY_MS} : {}),
+        ...(video ? {video} : {}),
+      })
+      softapTrace("acs_native_join_returned", {
+        packageName,
+        generation,
+        state: state.state,
+        hasIngestUrl: typeof state.ingestUrl === "string" && state.ingestUrl.length > 0,
+        durationMs: Date.now() - joinStartedAt,
+      })
+      if (generation !== this.callGeneration) {
+        // The wearer left while ACS was still joining. Nothing above knows about this call, so
+        // hanging it up here is the only thing that takes the device out of the Teams roster.
+        console.warn("[AcsMeeting] phase=join-cancelled", {packageName, generation})
+        softapTraceFailure("acs_native_join_cancelled", {
+          packageName,
+          generation,
+          current: this.callGeneration,
+          durationMs: Date.now() - joinStartedAt,
+        })
+        await native.leave().catch((leaveError) => {
+          console.warn("[AcsMeeting] native leave after a cancelled join failed", leaveError)
+          softapTraceFailure("acs_native_leave_after_cancelled_join_failed", {
+            packageName,
+            reason: leaveError instanceof Error ? leaveError.message : String(leaveError),
+          })
+        })
+        throw new Error("The meeting was cancelled before it finished joining")
+      }
+      this.ingestUrl = typeof state.ingestUrl === "string" ? state.ingestUrl : null
+      const {ingestUrl: _ingestUrl, ...meetingState} = state
+      this.lastState = {
+        ...meetingState,
+        audioSource: resolved.source,
+        audioSourceReason: resolved.reason,
+        micTransport: this.micTransport,
+      }
+      console.log("[AcsMeeting] phase=join-native-ok", {state: state.state, muted: state.muted})
+      this.startGlassesMicUplink(generation)
+    } catch (error) {
+      // Native never joined (or is unwinding). Release the slot so the same or another
+      // miniapp can retry, and make sure nothing half-joined lingers in Teams.
+      console.warn("[AcsMeeting] phase=join-native-failed", {
+        packageName,
+        error: error instanceof Error ? error.message : String(error),
+      })
+      softapTraceFailure("acs_native_join_failed", {
+        packageName,
+        generation,
+        durationMs: Date.now() - joinStartedAt,
+        reason: error instanceof Error ? error.message : String(error),
+      })
+      await native.leave().catch((leaveError) => {
+        console.warn("[AcsMeeting] native leave after failed join also failed", leaveError)
+        softapTraceFailure("acs_native_leave_after_failed_join_failed", {
+          packageName,
+          reason: leaveError instanceof Error ? leaveError.message : String(leaveError),
+        })
+      })
+      await this.releaseHostState()
+      throw error
+    }
+    this.watchPhoneNetwork(native)
+    // Return audio is additive: the wearer is already in the meeting with camera and
+    // mic. A playback failure must not reject the join — that would leave the miniapp
+    // believing it never joined while native keeps the wearer in Teams.
+    try {
+      await this.ensurePcmPlayback(packageName)
+      console.log("[AcsMeeting] phase=pcm-playback", {streamId: this.pcmStreamId})
+    } catch (error) {
+      console.warn("[AcsMeeting] phase=pcm-playback-failed; continuing without return audio", {
+        error: error instanceof Error ? error.message : String(error),
+      })
+    }
+    return this.lastState
+  }
+
+  async leave(packageName: string): Promise<void> {
+    if (this.owner && this.owner !== packageName) {
+      // Not the owner, so this is a no-op rather than a leave. Said out loud because a miniapp
+      // that thinks it left and a host that never hung up look identical from the miniapp's side.
+      softapTrace("acs_native_leave_ignored", {packageName, owner: this.owner})
+      return
+    }
+    const native = getNative()
+    const startedAt = Date.now()
+    softapTrace("acs_native_leave", {packageName, nativeLoaded: Boolean(native)})
+    try {
+      await native?.leave()
+      softapTrace("acs_native_leave_ok", {packageName, durationMs: Date.now() - startedAt})
+    } catch (error) {
+      softapTraceFailure("acs_native_leave_failed", {
+        packageName,
+        durationMs: Date.now() - startedAt,
+        reason: error instanceof Error ? error.message : String(error),
+      })
+      throw error
+    } finally {
+      await this.releaseHostState()
+    }
+  }
+
+  /**
+   * Leave, and do not resolve until native reports its cleanup is finished.
+   *
+   * Android native's `leave()` queues the hang-up, the
+   * agent disposal, and the network releases on its session executor and returns straight away, so
+   * a caller that awaits it and then starts the next call is racing the previous one's teardown.
+   *
+   * Falls back to [leave] on builds that predate the signal and says so, rather than pretending to
+   * a guarantee it cannot give.
+   *
+   * @param timeoutMs how long native may take before it reports the cleanup as stuck
+   */
+  async leaveAndAwait(packageName: string, timeoutMs = ACS_LEAVE_WAIT_MS): Promise<{completed: boolean; reason?: string}> {
+    if (this.owner && this.owner !== packageName) {
+      softapTrace("acs_native_leave_and_await_ignored", {packageName, owner: this.owner})
+      return {completed: true}
+    }
+    const native = getNative()
+    if (!native?.leaveAndAwait) {
+      // The fallback is the case the cleanup barrier was built for: this build's leave returns
+      // before its own teardown has finished, so nothing downstream can treat "left" as "idle".
+      softapTraceFailure("acs_native_leave_and_await_unsupported", {
+        packageName,
+        nativeLoaded: Boolean(native),
+      })
+      await this.leave(packageName)
+      return {completed: false, reason: "unsupported"}
+    }
+    const startedAt = Date.now()
+    softapTrace("acs_native_leave_and_await", {packageName, timeoutMs})
+    try {
+      const outcome = await native.leaveAndAwait({timeoutMs})
+      softapTrace("acs_native_leave_and_await_ok", {
+        packageName,
+        completed: outcome?.completed !== false,
+        durationMs: Date.now() - startedAt,
+      })
+      return {completed: outcome?.completed !== false}
+    } catch (error) {
+      softapTraceFailure("acs_native_leave_and_await_failed", {
+        packageName,
+        durationMs: Date.now() - startedAt,
+        reason: error instanceof Error ? error.message : String(error),
+      })
+      throw error
+    } finally {
+      await this.releaseHostState()
+    }
+  }
+
+  /** Admit one guest without changing call ownership or audio state. */
+  async admitParticipant(packageName: string, participantId: string): Promise<void> {
+    if (this.owner !== packageName) throw new Error("This miniapp does not own the active meeting")
+    if (!participantId.trim()) throw new Error("A participant ID is required")
+    const native = getNative()
+    if (!native?.admitParticipant) throw new Error("This Mentra App build does not support admitting guests")
+    const generation = this.callGeneration
+    await native.admitParticipant(participantId)
+    if (generation !== this.callGeneration) throw new Error("The meeting changed during admission")
+  }
+
+  /**
+   * End the Teams group call for everyone.
+   *
+   * Host state is released either way: native tears this device down whatever the hang-up did, so
+   * holding the meeting slot open after a rejection would leave the miniapp unable to start another
+   * call. The rejection still propagates — the caller has to be able to say "you left, but the
+   * meeting may still be active" instead of claiming a clean end.
+   */
+  async endForEveryone(packageName: string): Promise<MeetingState> {
+    if (this.owner && this.owner !== packageName) {
+      throw new Error("This miniapp does not own the active meeting")
+    }
+    const native = getNative()
+    if (!native?.endForEveryone) {
+      softapTraceFailure("acs_native_end_unsupported", {packageName, nativeLoaded: Boolean(native)})
+      throw new Error("Update the Mentra App to end a meeting for everyone")
+    }
+    const startedAt = Date.now()
+    softapTrace("acs_native_end", {packageName})
+    try {
+      const state = await native.endForEveryone()
+      console.log("[AcsMeeting] phase=end-for-everyone-ok", {state: state.state})
+      softapTrace("acs_native_end_ok", {packageName, state: state.state, durationMs: Date.now() - startedAt})
+      return state
+    } catch (error) {
+      // The meeting may still be live for the others; this device is out regardless. Logged as a
+      // failure of the claim, not of the teardown.
+      softapTraceFailure("acs_native_end_failed", {
+        packageName,
+        durationMs: Date.now() - startedAt,
+        reason: error instanceof Error ? error.message : String(error),
+      })
+      throw error
+    } finally {
+      await this.releaseHostState()
+    }
+  }
+
+  /** Whether the wearer may end this meeting for everyone, as ACS last reported it. */
+  hangUpForEveryoneCapability(): MeetingCapability {
+    return this.lastState.capabilities?.hangUpForEveryone ?? {allowed: null, reason: null}
+  }
+
+  /**
+   * Drop everything the host set up around a session: the microphone uplink, the network watcher,
+   * return audio, native listeners, ownership.
+   *
+   * Idempotent, because there are now several terminal paths into it and they overlap. A remote
+   * hang-up arrives as a native `disconnected`, and the miniapp usually calls `leave` right after
+   * seeing it; releasing the microphone pin twice would clear a pin the *next* call had already
+   * taken. Every release also bumps the call generation, which is what stops a `mic_pcm` event
+   * already queued on the JS thread from reaching a native session that is gone.
+   */
+  private async releaseHostState(): Promise<void> {
+    if (this.hostStateReleased) return
+    this.hostStateReleased = true
+    this.callGeneration++
+    // Before anything else: a caller parked on a frame that will now never arrive has to be
+    // rejected, or a leave mid-join leaves the orchestrator waiting out its whole timeout.
+    for (const settle of [...this.firstFrameWaiters]) settle(new Error("The meeting ended"))
+    this.firstFrameWaiters.clear()
+    this.settleMediaLiveWaiters(false)
+    this.mediaLiveWaiters.clear()
+    this.stopGlassesMicUplink()
+    this.unwatchPhoneNetwork()
+    await this.stopPcm()
+    this.unbindNative()
+    this.scopedLostSub?.remove()
+    this.scopedLostSub = null
+    this.owner = null
+    this.whepUrl = null
+    this.videoSource = null
+    this.ingestUrl = null
+    this.lastMediaRestartAt = 0
+    this.lastState = {state: "idle", muted: false}
+  }
+
+  /**
+   * Start forwarding the glasses microphone into ACS for this call.
+   *
+   * This class is a sink: it never names a gain, a pin or a setting. It does take a semantic
+   * voice_call lease first, because reading the glasses mic without one is what put this call on
+   * the OS default of VAD-on — a speech gate that drops the wearer's uplink whenever the GX8002
+   * disagrees, which during a call is most of the time the far end is talking. The lease is a
+   * backstop: when the miniapp already holds one this simply merges with it, and micPolicy still
+   * decides what voice_call means for the hardware.
+   *
+   * `generation` is captured by the listener so a frame that lands after this call ended is
+   * dropped rather than pushed at a native session that has left the meeting.
+   */
+  private startGlassesMicUplink(generation: number): void {
+    if (this.micTransport !== "ble-lc3") return
+    const native = getNative()
+    const push = native?.pushOutgoingPcm
+    if (!native || !push) return
+    this.micFramesForwarded = 0
+    this.micFramesWindow = 0
+    this.micDropsStale = 0
+    this.micDropsNonGlasses = 0
+    this.micGaps = 0
+    this.micGapMsMax = 0
+    this.lastGlassesFrameAt = Date.now()
+    this.lastMicDropLogAt = 0
+    this.lastMicUplinkLogAt = Date.now()
+    this.micLevel.take()
+    this.lastMicLevel = null
+    try {
+      this.acquireMicSession()
+      this.startMicGateTelemetry()
+      this.micUplinkActive = true
+      this.micSub = BluetoothSdk.addListener("mic_pcm", (event: {pcm?: ArrayBuffer; sampleRate?: number; source?: string}) => {
+        if (generation !== this.callGeneration) {
+          this.micDropsStale += 1
+          this.logMicDrop("stale", {generation, active: this.callGeneration})
+          return
+        }
+        // The pin makes this unreachable in normal operation, which is exactly why it is checked:
+        // a mic the SDK moved under us would otherwise put the phone's room into a Teams call
+        // that reports the glasses.
+        if (event.source !== GLASSES_MIC_SOURCE) {
+          this.micDropsNonGlasses += 1
+          this.logMicDrop("non-glasses", {source: event.source})
+          this.reportGlassesMicUnavailable(event.source)
+          return
+        }
+        const pcm = event.pcm
+        if (!pcm) return
+        const now = Date.now()
+        if (this.micFramesForwarded > 0) {
+          const gapMs = now - this.lastGlassesFrameAt
+          if (gapMs > MIC_GAP_WARN_MS) {
+            this.micGaps += 1
+            this.micGapMsMax = Math.max(this.micGapMsMax, gapMs)
+            this.logMicDrop("gap", {gapMs})
+          }
+        }
+        this.lastGlassesFrameAt = now
+        this.micFramesForwarded += 1
+        this.micFramesWindow += 1
+        this.micLevel.add(pcm)
+        try {
+          push.call(native, pcmToBase64(pcm), event.sampleRate ?? 16000, 1)
+        } catch (error) {
+          console.warn("[AcsMeeting] pushing glasses PCM to ACS failed", error)
+        }
+        this.logMicUplink()
+      })
+      console.log("[AcsMeeting] phase=glasses-mic-uplink-start", {generation, micTransport: this.micTransport})
+    } catch (error) {
+      // A host that cannot subscribe has no wearer audio at all, and that is worth saying loudly,
+      // but it is not worth failing a call the wearer can still see and hear.
+      console.error("[AcsMeeting] phase=glasses-mic-uplink-unavailable", error)
+      this.stopGlassesMicUplink()
+      this.markMicTransportNone()
+    }
+  }
+
+  /**
+   * Stop reading the glasses microphone. Safe to call when this call never started.
+   *
+   * Only this call's own backstop lease is dropped. A lease the miniapp took is its to release,
+   * and letting go of ours before that owner releases is what keeps a normal hang-up from looking
+   * like the wearer's microphone disappearing.
+   */
+  private stopGlassesMicUplink(): void {
+    this.micSub?.remove()
+    this.micSub = null
+    this.releaseMicSession()
+    if (this.micUplinkActive) {
+      this.micUplinkActive = false
+      console.log("[AcsMeeting] phase=glasses-mic-uplink-stop", {
+        frames: this.micFramesForwarded,
+        dropsStale: this.micDropsStale,
+        dropsNonGlasses: this.micDropsNonGlasses,
+        gaps: this.micGaps,
+        gapMsMax: this.micGapMsMax,
+        ...this.gateSummary(),
+      })
+    }
+    this.stopMicGateTelemetry()
+    this.micTransport = "whip"
+  }
+
+  /**
+   * Watch what the glasses are actually running for the length of the call.
+   *
+   * Two different questions, both unanswerable from this side otherwise. `mic_tuning_state` is
+   * the post-clamp reply, so it catches a profile the firmware rewrote rather than accepted.
+   * `mic_rms` carries the Barrier's own verdict per frame, which is the only way to tell a gate
+   * that is suppressing speaker leak from one that is suppressing the wearer.
+   */
+  private startMicGateTelemetry(): void {
+    this.gateSamples = 0
+    this.gateClosed = 0
+    this.gateElevated = 0
+    this.gateClosedElevated = 0
+    this.gateRmsMax = 0
+
+    try {
+      this.micTuningSub = BluetoothSdk.addListener("mic_tuning_state", (event: Record<string, unknown>) => {
+        console.log("[AcsMeeting] phase=glasses-mic-tuning-applied", event)
+      })
+      this.micRmsSub = BluetoothSdk.addListener(
+        "mic_rms",
+        (event: {rms?: number; gateOpen?: boolean; speakerElevated?: boolean}) => {
+          this.gateSamples += 1
+          if (event.gateOpen === false) this.gateClosed += 1
+          if (event.speakerElevated) {
+            this.gateElevated += 1
+            if (event.gateOpen === false) this.gateClosedElevated += 1
+          }
+          if (typeof event.rms === "number" && event.rms > this.gateRmsMax) this.gateRmsMax = event.rms
+        },
+      )
+      void Promise.resolve(BluetoothSdk.setMicRmsTelemetry?.(true))
+        .then(() => {
+          this.micRmsEnabled = true
+        })
+        .catch((error) => console.warn("[AcsMeeting] mic RMS telemetry unavailable", error))
+      void Promise.resolve(BluetoothSdk.requestMicTuningState?.()).catch(() => {})
+    } catch (error) {
+      console.warn("[AcsMeeting] mic gate telemetry unavailable", error)
+    }
+  }
+
+  private stopMicGateTelemetry(): void {
+    this.micTuningSub?.remove()
+    this.micTuningSub = null
+    this.micRmsSub?.remove()
+    this.micRmsSub = null
+    if (!this.micRmsEnabled) return
+    this.micRmsEnabled = false
+    // Super Mode may have the readout open behind this call; it re-requests on focus.
+    void Promise.resolve(BluetoothSdk.setMicRmsTelemetry?.(false)).catch(() => {})
+  }
+
+  /** Barrier's behaviour over the window, as percentages a listening test can be checked against. */
+  private gateSummary(): Record<string, number> {
+    if (this.gateSamples === 0) return {}
+    const pct = (n: number, of: number) => (of === 0 ? 0 : Math.round((n / of) * 1000) / 10)
+    return {
+      gateSamples: this.gateSamples,
+      gateClosedPct: pct(this.gateClosed, this.gateSamples),
+      speakerElevatedPct: pct(this.gateElevated, this.gateSamples),
+      // The number that matters: closed while the far end was quiet means the wearer was cut.
+      gateClosedQuietPct: pct(this.gateClosed - this.gateClosedElevated, this.gateSamples - this.gateElevated),
+      gateRmsMax: this.gateRmsMax,
+    }
+  }
+
+  /**
+   * Guarantee a voice_call session for as long as this call reads the glasses mic.
+   *
+   * The miniapp asking for one is the intended path; this covers the builds where it cannot,
+   * because a bundled Call that predates MIC_ACQUIRE joins anyway rather than failing. Without
+   * this the uplink runs under whatever the OS settings say, and the shipped default is VAD-on.
+   */
+  private acquireMicSession(): void {
+    if (this.micSession) return
+    try {
+      this.micSession = micSessionManager.acquire({
+        owner: `${ENGINE_OWNER_PREFIX}acs-uplink`,
+        source: "glasses",
+        useCase: "voice_call",
+      })
+    } catch (error) {
+      // A source conflict means something else already owns the microphone. Forwarding whatever
+      // it captures is still better than dropping the wearer from the call.
+      console.warn("[AcsMeeting] glasses mic session unavailable", error)
+    }
+  }
+
+  private releaseMicSession(): void {
+    const session = this.micSession
+    if (!session) return
+    this.micSession = null
+    try {
+      session.release()
+    } catch (error) {
+      console.warn("[AcsMeeting] releasing the glasses mic session failed", error)
+    }
+  }
+
+  /**
+   * Report a call whose pinned microphone stopped delivering. There is deliberately no fallback:
+   * the wearer agreed to be heard from the glasses, and quietly switching to the phone in the
+   * middle of a meeting puts the room they are standing in on the call.
+   */
+  private reportGlassesMicUnavailable(source: string | undefined): void {
+    if (Date.now() - this.lastGlassesFrameAt < GLASSES_MIC_GRACE_MS) return
+    if (this.micTransport === "none") return
+    console.error("[AcsMeeting] phase=glasses-mic-unavailable", {source, dropsNonGlasses: this.micDropsNonGlasses})
+    this.markMicTransportNone()
+  }
+
+  /**
+   * Record that this call has no wearer audio path.
+   *
+   * The state has to carry it, not just the field: a call that reported `ble-lc3` and then failed
+   * to start the uplink looks identical from the miniapp's side to one that is working, and the
+   * wearer finds out by being asked to repeat themselves.
+   */
+  private markMicTransportNone(): void {
+    this.micTransport = "none"
+    this.lastState = {...this.lastState, micTransport: "none", error: GLASSES_MIC_UNAVAILABLE}
+    if (this.owner) this.onState?.(this.owner, this.lastState)
+  }
+
+  private logMicUplink(): void {
+    const now = Date.now()
+    const elapsed = now - this.lastMicUplinkLogAt
+    const sweep = getCallGainSweep()
+    const interval = sweep.isActive() ? MIC_UPLINK_SWEEP_LOG_INTERVAL_MS : MIC_UPLINK_LOG_INTERVAL_MS
+    if (elapsed < interval) return
+    this.lastMicUplinkLogAt = now
+    // Level, not just cadence: a 20 Hz stream of the noise floor and a 20 Hz stream of speech
+    // have the same framesPerSecond. Quiet room on Mentra Live LC3 is meanAbs ≈30–60.
+    const level = this.micLevel.take()
+    const stats = pcm16WindowStats(level)
+    this.lastMicLevel = {meanAbs: level.meanAbs, peak: level.peak}
+    const gain = sweep.currentGain() ?? micStateCoordinator.getSessionMicTuning()?.gain ?? null
+    if (sweep.isActive()) sweep.ingest(level)
+    console.log("[AcsMeeting] phase=glasses-mic-uplink", {
+      framesPerSecond: Math.round((this.micFramesWindow * 1000) / elapsed),
+      frames: this.micFramesForwarded,
+      meanAbs: stats.meanAbs,
+      peak: stats.peak,
+      peakPct: stats.peakPct,
+      clipped: stats.clipped,
+      clipPct: stats.clipPct,
+      nearClip: stats.nearClip,
+      nearClipPct: stats.nearClipPct,
+      gain,
+      barrier: micStateCoordinator.getSessionLoudnessGate(),
+      sweep: sweep.currentLabel(),
+      dropsStale: this.micDropsStale,
+      dropsNonGlasses: this.micDropsNonGlasses,
+      gaps: this.micGaps,
+      gapMsMax: this.micGapMsMax,
+      ...this.gateSummary(),
+    })
+    this.micFramesWindow = 0
+  }
+
+  /** Level of the last uplink window, for tests and dev screens. `null` until a window closed. */
+  lastGlassesMicLevel(): {meanAbs: number; peak: number} | null {
+    return this.lastMicLevel
+  }
+
+  private logMicDrop(reason: string, extra: Record<string, unknown>): void {
+    const now = Date.now()
+    if (now - this.lastMicDropLogAt < 1000) return
+    this.lastMicDropLogAt = now
+    console.warn("[AcsMeeting] phase=glasses-mic-drop", {
+      reason,
+      dropsStale: this.micDropsStale,
+      dropsNonGlasses: this.micDropsNonGlasses,
+      gaps: this.micGaps,
+      ...extra,
+    })
+  }
+
+  async setMuted(packageName: string, muted: boolean): Promise<MeetingState> {
+    this.assertOwner(packageName)
+    const native = getNative()
+    if (!native) throw new Error("ACS meeting module is not available on this host")
+    const state = await native.setMuted(muted)
+    this.lastState = {
+      ...this.lastState,
+      ...state,
+      audioSourceReason: this.lastState.audioSourceReason,
+      // Mute is an ACS-side gate. It does not change which microphone the call is using, and it
+      // deliberately does not turn the glasses microphone off — see the mute chain in native.
+      micTransport: this.micTransport,
+    }
+    return this.lastState
+  }
+
+  async updateVideoSource(packageName: string, whepUrl: string): Promise<void> {
+    this.assertOwner(packageName)
+    const native = getNative()
+    if (!native) throw new Error("ACS meeting module is not available on this host")
+    if (this.videoSource?.type === "softap") {
+      // The host owns the softap endpoint, so there is no URL for a caller to change. Failing is
+      // better than accepting it and doing nothing.
+      throw new Error("updateVideoSource is not applicable to a SoftAP call")
+    }
+    this.whepUrl = whepUrl
+    await native.updateVideoSource(whepUrl)
+  }
+
+  async readState(packageName: string): Promise<MeetingState> {
+    if (this.owner && this.owner !== packageName) {
+      return {state: "idle", muted: false}
+    }
+    const native = getNative()
+    if (!native) return {state: "idle", muted: false}
+    const state = await native.getState()
+    this.lastState = {...state, micTransport: this.micTransport}
+    return this.lastState
+  }
+
+  async leaveIfOwner(packageName: string): Promise<void> {
+    if (this.owner === packageName) await this.leave(packageName)
+  }
+
+  private assertOwner(packageName: string): void {
+    if (this.owner !== packageName) {
+      throw new Error(
+        this.owner ? "This miniapp does not own the active meeting" : "No active meeting; call meeting.join first",
+      )
+    }
+  }
+
+  private unbindNative(): void {
+    this.subscriptions.forEach((sub) => sub.remove())
+    this.subscriptions = []
+  }
+
+  private bindNative(native: NativeModule, packageName: string): void {
+    this.unbindNative()
+    // Captured at bind, checked on every event. `unbindNative` removes the listener, but an event
+    // already dispatched onto the JS queue still runs — and this is the one path where that lands
+    // as the *previous* call's `disconnected` ending the call the wearer just started. Every other
+    // callback that can outlive a session (mic PCM, the in-flight join) is fenced the same way.
+    const generation = this.callGeneration
+    this.subscriptions = [
+      native.addListener("onState", (event) => {
+        if (generation !== this.callGeneration) {
+          softapTraceFailure("softap_stale_callback", {
+            source: "acs_state",
+            generation,
+            current: this.callGeneration,
+            state: String(event.state ?? "unknown"),
+          })
+          return
+        }
+        const audioSafety = parseAudioSafety(event.audioSafety)
+        if (audioSafety === "unsafe") {
+          console.error("[AcsMeeting] phase=audio-unsafe", {
+            activeStream: event.activeStream,
+            audioSource: event.audioSource,
+          })
+        }
+        const participants = parseMeetingParticipants(event.participants)
+        const mediaSource = parseMediaSource(event.mediaSource)
+        const mediaSourceReason = typeof event.mediaSourceReason === "string" ? event.mediaSourceReason : undefined
+        const callEndReason =
+          Number.isInteger(event.endReason_code) && Number.isInteger(event.endReason_subcode)
+            ? {code: event.endReason_code as number, subcode: event.endReason_subcode as number}
+            : undefined
+        const capabilities = parseMeetingCapabilities(event.capabilities)
+        const endReason = parseMeetingEndReason(event as Record<string, unknown>)
+        const state: MeetingState = {
+          state: (event.state as MeetingPhase) ?? "idle",
+          muted: Boolean(event.muted),
+          error: event.error as string | undefined,
+          meetingUrl: event.meetingUrl as string | undefined,
+          provider: "acs-teams",
+          audioSource: event.audioSource === "phone" ? "phone" : "glasses",
+          audioSourceReason: this.lastState.audioSourceReason,
+          activeStream: parseActiveStream(event.activeStream),
+          audioSafety,
+          micTransport: this.micTransport,
+          ...(mediaSource ? {mediaSource} : {}),
+          ...(mediaSourceReason ? {mediaSourceReason} : {}),
+          ...(callEndReason ? {callEndReason} : {}),
+          ...(participants ? {participants} : {}),
+          ...(endReason ? {endReason} : {}),
+          // Absent means unknown, so keep the last known verdict rather than clearing it.
+          ...((capabilities ?? this.lastState.capabilities) ? {capabilities: capabilities ?? this.lastState.capabilities} : {}),
+        }
+        const previous = this.lastState.state
+        this.lastState = state
+        if (state.state !== previous) {
+          // The host's own copy of the transition. Native already traces `acs_call_state` with
+          // timings; this one survives a capture where the native trace is absent, and is the
+          // line the miniapp's timeline is reconciled against.
+          softapTrace("acs_state", {
+            state: state.state,
+            previous,
+            origin: this.callOrigin,
+            mediaSource: state.mediaSource ?? "unknown",
+            micTransport: state.micTransport ?? "unknown",
+          })
+        }
+        console.log("[AcsMeeting] phase=native-state", {
+          state: state.state,
+          muted: state.muted,
+          error: state.error,
+          audioSource: state.audioSource,
+          activeStream: state.activeStream,
+          audioSafety: state.audioSafety,
+          mediaSource: state.mediaSource,
+          mediaSourceReason: state.mediaSourceReason,
+          callEndReason: state.callEndReason,
+          micTransport: state.micTransport,
+          participants: participants?.length,
+          endReason: endReason ? `${endReason.code ?? "?"}/${endReason.subcode ?? "?"}` : undefined,
+        })
+        if (mediaSource === "live") this.liveEpoch = this.decodedMediaEpoch
+        this.settleFirstFrameWaiters(mediaSource)
+        this.onState?.(packageName, state)
+        // A remote hang-up, an ACS error or a dropped call never goes through `leave`, so without
+        // this the microphone pin, the PCM requirement and the `mic_pcm` listener would outlive the
+        // meeting — and the next miniapp to start a call would inherit them.
+        if (state.state === "disconnected" || state.state === "error") {
+          void this.releaseHostState().catch((error) => {
+            console.warn("[AcsMeeting] releasing host state after a terminal native state failed", error)
+          })
+        }
+      }),
+      native.addListener("onIncomingPcm", (event) => {
+        const base64 = event.base64 as string | undefined
+        if (!base64 || !this.owner) return
+        // Serialize: native async calls may complete out of order, and PCM
+        // chunks written out of order are audible as garbling.
+        this.pcmWriteChain = this.pcmWriteChain
+          .then(() => this.writeIncomingPcm(packageName, base64, event.sampleRate, event.channels))
+          .catch(() => undefined)
+      }),
+    ]
+  }
+
+  /**
+   * The WHEP PeerConnection does not survive the phone changing networks
+   * (Wi-Fi↔cellular, or a different Wi-Fi): ICE fails and native parks the source
+   * as `failed` while the ACS call itself reconnects on its own. Nudge native to
+   * rebuild the subscription whenever the phone's network identity changes during
+   * a live meeting. Native ignores the request when the source is healthy on the
+   * same URL, so a spurious event costs nothing.
+   */
+  private watchPhoneNetwork(native: NativeModule): void {
+    this.unwatchPhoneNetwork()
+    const source = getPhoneNetwork()
+    if (!source) return
+    this.lastPhoneNetworkKey = null
+    try {
+      this.phoneNetworkUnsub = source.addEventListener((info) => {
+        const key = `${info.type}:${info.isConnected === false ? "offline" : "online"}`
+        const previous = this.lastPhoneNetworkKey
+        this.lastPhoneNetworkKey = key
+        // First callback is NetInfo replaying the current state, not a change.
+        if (previous === null || previous === key) return
+        if (info.isConnected === false) return
+        void this.restartMediaSource(native, `phone network ${previous} → ${key}`)
+      })
+    } catch (error) {
+      console.warn("[AcsMeeting] phone network watch unavailable", error)
+      this.phoneNetworkUnsub = null
+    }
+  }
+
+  private unwatchPhoneNetwork(): void {
+    this.phoneNetworkUnsub?.()
+    this.phoneNetworkUnsub = null
+    this.lastPhoneNetworkKey = null
+  }
+
+  private async restartMediaSource(native: NativeModule, reason: string): Promise<void> {
+    const whepUrl = this.whepUrl
+    const softap = this.videoSource?.type === "softap"
+    // SoftAP media is bound to the scoped hotspot, not the phone's default route. Joining that
+    // hotspot is what *causes* NetInfo to flap `none:offline → cellular:online` — the default
+    // route looks gone for a beat, then cellular comes back. Rebuilding the WHIP listener on
+    // that flap changes the ingest port after the glasses already have the old URL, and their
+    // POST hits a tombstone (HTTP 410). A real hotspot loss is `onScopedNetworkLost`, not this
+    // default-network watch. WHEP still needs the rebuild: that path rides the default route.
+    if (softap) return
+    if (!this.owner || !MEDIA_ACTIVE_PHASES.has(this.lastState.state)) return
+    if (!whepUrl) return
+    const now = Date.now()
+    if (now - this.lastMediaRestartAt < MEDIA_RESTART_MIN_INTERVAL_MS) return
+    this.lastMediaRestartAt = now
+    console.log("[AcsMeeting] phase=media-restart", {reason, mediaSource: this.lastState.mediaSource})
+    try {
+      // A same-URL updateVideoSource is a no-op while native still believes the
+      // peer is healthy; after a network switch that belief is exactly what is wrong.
+      if (native.restartVideoSource) await native.restartVideoSource()
+      else if (whepUrl) await native.updateVideoSource(whepUrl)
+      else console.warn("[AcsMeeting] softap restart needs a native restartVideoSource", {reason})
+    } catch (error) {
+      console.warn("[AcsMeeting] media restart failed", {reason, error})
+    }
+  }
+
+  /**
+   * Native normalizes to 16 kHz mono, so this is normally a straight write.
+   * If the format ever differs, reopen the player to match rather than play
+   * the bytes at the wrong rate (that is what slows and deepens the audio).
+   */
+  private async writeIncomingPcm(
+    packageName: string,
+    base64: string,
+    rawRate: unknown,
+    rawChannels: unknown,
+  ): Promise<void> {
+    const sampleRate = Number(rawRate) || 16000
+    const channels = Number(rawChannels) || 1
+    if (!PCM_SAMPLE_RATES.has(sampleRate) || channels !== 1) {
+      console.warn("[AcsMeeting] incoming PCM format unsupported; dropping chunk", {sampleRate, channels})
+      return
+    }
+    if (this.pcmFormat && (this.pcmFormat.sampleRate !== sampleRate || this.pcmFormat.channels !== channels)) {
+      if (!this.pcmReopen) {
+        console.warn("[AcsMeeting] incoming PCM format changed; reopening player", {
+          from: this.pcmFormat,
+          to: {sampleRate, channels},
+        })
+        this.pcmReopen = this.stopPcm()
+          .then(() => this.ensurePcmPlayback(packageName, sampleRate, channels))
+          .finally(() => {
+            this.pcmReopen = null
+          })
+      }
+      await this.pcmReopen
+    } else if (!this.pcmStreamId) {
+      await this.ensurePcmPlayback(packageName, sampleRate, channels)
+    }
+    const streamId = this.pcmStreamId
+    if (!streamId) return
+    try {
+      const result = await audioPlaybackService.writeStreamChunk(streamId, base64)
+      const bufferedMs = result?.bufferedMs
+      if (typeof bufferedMs === "number" && bufferedMs > PCM_BACKLOG_WARN_MS) {
+        const now = Date.now()
+        if (now - this.lastBacklogWarnAt > 5000) {
+          this.lastBacklogWarnAt = now
+          console.warn("[AcsMeeting] incoming PCM backlog high (downlink playback, not glasses mic)", {bufferedMs})
+        }
+      }
+    } catch (error) {
+      console.warn("[AcsMeeting] incoming PCM write failed", error)
+    }
+  }
+
+  private async ensurePcmPlayback(packageName: string, sampleRate = 16000, channels = 1): Promise<void> {
+    if (this.pcmStreamId) return
+    const streamId = `acs-in-${packageName}-${Date.now()}`
+    await audioPlaybackService.openStream({
+      streamId,
+      appId: packageName,
+      sampleRate,
+      channels,
+      stopOtherAudio: true,
+      jitterMs: PCM_JITTER_MS,
+      onEnded: () => {
+        if (this.pcmStreamId === streamId) {
+          this.pcmStreamId = null
+          this.pcmFormat = null
+        }
+      },
+    })
+    this.pcmStreamId = streamId
+    this.pcmFormat = {sampleRate, channels}
+  }
+
+  private async stopPcm(): Promise<void> {
+    const streamId = this.pcmStreamId
+    this.pcmStreamId = null
+    this.pcmFormat = null
+    if (!streamId) return
+    await audioPlaybackService.abortStream(streamId).catch(() => undefined)
+  }
+}
+
+const acsMeetingService = new AcsMeetingService()
+export default acsMeetingService

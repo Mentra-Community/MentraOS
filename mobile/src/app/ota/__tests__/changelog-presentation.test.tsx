@@ -78,6 +78,7 @@ Use \`safe mode\`.`,
       openWifiSetup: jest.fn(),
       state: {
         screen,
+        glassesPackageName: null,
         connected: true,
         batteryLevel: 100,
         transport: null,

@@ -2,7 +2,7 @@ import {createElement} from "react"
 import {Platform} from "react-native"
 
 import {
-  decideDevLaunchRoute,
+  decideDevOpenRoute,
   HardwareRequirementLevel,
   HardwareType,
   SETTINGS,
@@ -20,14 +20,13 @@ import {getDefaultMenuApps, type GlassesMenuItem} from "@/utils/glassesMenu"
 
 import {
   cameraPackageName,
-  CHINA_HIDDEN_APPS,
   feedbackPackageName,
-  isChinaBuild,
   miniappDeveloperPackageName,
   mirrorPackageName,
   notifyPackageName,
   settingsPackageName,
 } from "@/constants/miniapps"
+import {shouldHideMiniapp} from "./miniappVisibility"
 
 /**
  * Registers the Mentra app's built-in/offline miniapps.
@@ -40,6 +39,7 @@ import {
 class BuiltInMiniappCatalog {
   private static instance: BuiltInMiniappCatalog | null = null
   private initialized = false
+  private notifyInstalled = false
   private syncInFlight = false
   private syncPending = false
 
@@ -56,6 +56,7 @@ class BuiltInMiniappCatalog {
 
     for (const app of this.buildOfflineApps()) {
       appRegistry.installOfflineApp(app)
+      if (app.packageName === notifyPackageName) this.notifyInstalled = true
     }
 
     installAppStoreHooks({
@@ -79,8 +80,22 @@ class BuiltInMiniappCatalog {
     }
     syncMiniappDeveloperVisibility(Boolean(engine.settings.get(SETTINGS.miniapp_dev_mode.key)))
     engine.settings.onChanged<boolean>(SETTINGS.miniapp_dev_mode.key, syncMiniappDeveloperVisibility)
+    for (const key of [SETTINGS.show_mentra_call_ios.key, SETTINGS.show_notify_ios.key]) {
+      engine.settings.onChanged(key, () => {
+        void this.syncGlassesMenuApps()
+      })
+    }
 
     void this.syncGlassesMenuApps()
+  }
+
+  /** Register Notify after a debug opt-in, once per process, without starting it. */
+  installNotify(): void {
+    if (this.notifyInstalled) return
+    const app = this.buildOfflineApps().find((candidate) => candidate.packageName === notifyPackageName)
+    if (!app) return
+    appRegistry.installOfflineApp(app)
+    this.notifyInstalled = true
   }
 
   /** Branded incompatible-launch alert (island already blocked the start). */
@@ -124,11 +139,11 @@ class BuiltInMiniappCatalog {
 
     if (app.isMiniappDev && app.devUrl) {
       const {packageName, devUrl, name: appName, logoUrl} = app
-      decideDevLaunchRoute(packageName, devUrl).then((result) => {
-        if (result.decision === "live") {
-          engine.miniapps.setForeground(packageName)
-        } else {
+      decideDevOpenRoute(packageName, devUrl).then((result) => {
+        if (result.decision === "offline") {
           nav.push("/applet/dev-offline", {packageName, name: appName, iconUrl: logoUrl})
+        } else {
+          engine.miniapps.setForeground(packageName)
         }
       })
       return
@@ -152,10 +167,12 @@ class BuiltInMiniappCatalog {
         menuItems = await getDefaultMenuApps(apps)
       }
 
-      const itemsForNative = menuItems.map((item) => {
-        const app = apps.find((candidate) => candidate.packageName === item.packageName)
-        return {name: item.name, packageName: item.packageName, running: app?.running ?? false}
-      })
+      const itemsForNative = menuItems
+        .filter((item) => !shouldHideMiniapp(item.packageName))
+        .map((item) => {
+          const app = apps.find((candidate) => candidate.packageName === item.packageName)
+          return {name: item.name, packageName: item.packageName, running: app?.running ?? false}
+        })
 
       const changed =
         menuItems.length !== itemsForNative.length ||
@@ -165,7 +182,7 @@ class BuiltInMiniappCatalog {
         })
 
       if (changed) {
-        engine.settings.set(SETTINGS.menu_apps.key, itemsForNative)
+        await engine.settings.set(SETTINGS.menu_apps.key, itemsForNative)
       }
     } finally {
       this.syncInFlight = false
@@ -250,7 +267,7 @@ class BuiltInMiniappCatalog {
       },
     ]
 
-    if (Platform.OS !== "ios") {
+    {
       apps.push({
         packageName: notifyPackageName,
         name: translate("miniApps:notify"),
@@ -265,7 +282,7 @@ class BuiltInMiniappCatalog {
         hidden: false,
         // The home-screen launcher uses manifest permissions to request the
         // Android NotificationListenerService grant before opening this UI.
-        permissions: [{type: "READ_NOTIFICATIONS", required: true}],
+        permissions: Platform.OS === "android" ? [{type: "READ_NOTIFICATIONS", required: true}] : [],
         offlineRoute: "/miniapps/settings/notifications",
         running: false,
         loading: false,
@@ -299,7 +316,7 @@ class BuiltInMiniappCatalog {
       iconComponent: createElement(DevIcon),
     })
 
-    return isChinaBuild() ? apps.filter((app) => !CHINA_HIDDEN_APPS.includes(app.packageName)) : apps
+    return apps.filter((app) => !shouldHideMiniapp(app.packageName))
   }
 }
 

@@ -3,13 +3,19 @@ package com.mentra.asg_client.service.core.handlers;
 import android.content.Context;
 import android.os.Handler;
 import android.os.Looper;
+import android.os.SystemClock;
+import android.hardware.camera2.CameraManager;
+import com.mentra.asg_client.io.media.core.PhotoCompression;
+import com.mentra.asg_client.camera.lifecycle.CameraOpener;
 import android.util.Log;
-import com.dev.api.DevApi;
 import com.mentra.asg_client.AsgConstants;
 import com.mentra.asg_client.camera.policy.PhotoSizeTier;
 import com.mentra.asg_client.service.communication.interfaces.ICommunicationManager;
 import com.mentra.asg_client.service.communication.interfaces.IResponseBuilder;
 import com.mentra.asg_client.service.core.CameraRestartCooldown;
+import com.mentra.asg_client.service.core.CameraFovController;
+import com.mentra.asg_client.camera.policy.CameraFovPolicy;
+import java.util.function.BooleanSupplier;
 import com.mentra.asg_client.service.legacy.interfaces.ICommandHandler;
 import com.mentra.asg_client.service.legacy.managers.AsgClientServiceManager;
 import com.mentra.asg_client.service.system.core.SystemControllerFactory;
@@ -33,11 +39,25 @@ public class SettingsCommandHandler implements ICommandHandler {
     private final ICommunicationManager communicationManager;
     private final IResponseBuilder responseBuilder;
     private final Handler mainHandler = new Handler(Looper.getMainLooper());
+    private BooleanSupplier streamBusy = () -> false;
 
     private String cameraFovOverrideLeaseId;
     private int cameraFovOverrideValue;
     private int cameraFovOverrideRoi;
     private Runnable cameraFovOverrideExpiry;
+    private PendingFovCommand mPendingFovCommand;
+    private boolean waitingForFovReady;
+    private boolean cameraTuningPending;
+
+    private static final class PendingFovCommand {
+        final String type;
+        final JSONObject data;
+
+        PendingFovCommand(String type, JSONObject data) {
+            this.type = type;
+            this.data = data;
+        }
+    }
 
     public SettingsCommandHandler(
             AsgClientServiceManager serviceManager,
@@ -46,6 +66,15 @@ public class SettingsCommandHandler implements ICommandHandler {
         this.serviceManager = serviceManager;
         this.communicationManager = communicationManager;
         this.responseBuilder = responseBuilder;
+    }
+
+    /** Includes pending and reconnecting publisher sessions in camera ownership. */
+    public SettingsCommandHandler(
+            AsgClientServiceManager serviceManager,
+            ICommunicationManager communicationManager,
+            IResponseBuilder responseBuilder, BooleanSupplier streamBusy) {
+        this(serviceManager, communicationManager, responseBuilder);
+        this.streamBusy = streamBusy;
     }
 
     @Override
@@ -64,6 +93,22 @@ public class SettingsCommandHandler implements ICommandHandler {
 
     @Override
     public boolean handleCommand(String commandType, JSONObject data) {
+        if (commandType.startsWith("camera_fov_")) {
+            if (Looper.myLooper() != Looper.getMainLooper()) {
+                mainHandler.post(() -> handleCommand(commandType, data));
+                return true;
+            }
+            // One pending slot bounds latency to the active restart plus our own restart.
+            // Set/override/release share it: a superseded command must never mutate hardware.
+            if (mPendingFovCommand != null) {
+              sendSettingsError(getRequestId(mPendingFovCommand.data),
+                  fovSetting(mPendingFovCommand.type), "fov_superseded",
+                  "Replaced by a newer pending FOV command.");
+            }
+            mPendingFovCommand = new PendingFovCommand(commandType, data);
+            drainFovCommands();
+            return true;
+        }
         try {
             switch (commandType) {
                 case "set_photo_mode":
@@ -91,6 +136,31 @@ public class SettingsCommandHandler implements ICommandHandler {
         } catch (Exception e) {
             Log.e(TAG, "Error handling settings command: " + commandType, e);
             return false;
+        }
+    }
+
+    private static String fovSetting(String commandType) {
+      return "camera_fov_setting".equals(commandType) ? "camera_fov" : "camera_fov_override";
+    }
+
+    private void drainFovCommands() {
+        while (!waitingForFovReady && mPendingFovCommand != null) {
+            PendingFovCommand command = mPendingFovCommand;
+            mPendingFovCommand = null;
+            switch (command.type) {
+                case "camera_fov_setting":
+                    handleCameraFovSetting(command.data);
+                    break;
+                case "camera_fov_override":
+                    handleCameraFovOverride(command.data);
+                    break;
+                case "camera_fov_override_release":
+                    handleCameraFovOverrideRelease(command.data);
+                    break;
+                default:
+                    sendSettingsError(getRequestId(command.data), command.type,
+                            "unsupported", "Unsupported FOV command.");
+            }
         }
     }
 
@@ -222,7 +292,7 @@ public class SettingsCommandHandler implements ICommandHandler {
             boolean hasAeExposureDivisor =
                     data.has("aeExposureDivisor") && !data.isNull("aeExposureDivisor");
             boolean hasIsoCap = data.has("isoCap") && !data.isNull("isoCap");
-            boolean hasCompress = data.has("compress") && !data.isNull("compress");
+            boolean hasCompress = data.has("compress");
             boolean hasSound = data.has("sound") && !data.isNull("sound");
             Boolean mfnr = hasMfnr ? data.optBoolean("mfnr", true) : null;
             Boolean zsl = hasZsl ? data.optBoolean("zsl", true) : null;
@@ -237,7 +307,15 @@ public class SettingsCommandHandler implements ICommandHandler {
             Integer aeExposureDivisor =
                     hasAeExposureDivisor ? data.optInt("aeExposureDivisor", 0) : null;
             Integer isoCap = hasIsoCap ? data.optInt("isoCap", 0) : null;
-            String compress = hasCompress ? data.optString("compress", "none") : null;
+            if (hasCompress) {
+                try {
+                    PhotoCompression.fromValue(data.opt("compress"));
+                } catch (IllegalArgumentException e) {
+                    sendSettingsError(getRequestId(data), "button_photo", "invalid_photo_compression", e.getMessage());
+                    return false;
+                }
+            }
+            String compress = hasCompress ? (String) data.opt("compress") : null;
             Boolean sound = hasSound ? data.optBoolean("sound", true) : null;
 
             Log.d(
@@ -407,8 +485,8 @@ public class SettingsCommandHandler implements ICommandHandler {
      * camera HAL.
      */
     private synchronized boolean handleCameraFovSetting(JSONObject data) {
+        String requestId = getRequestId(data);
         try {
-            String requestId = getRequestId(data);
             JSONObject params = data.optJSONObject("params");
             if (params == null) {
                 Log.e(TAG, "Missing params in camera_fov_setting");
@@ -430,16 +508,15 @@ public class SettingsCommandHandler implements ICommandHandler {
                         "Settings are not available.");
                 return false;
             }
-            asgSettings.setCameraFov(fov, roiPosition);
-
-            // Re-read sanitized values — setCameraFov clamps invalid FOV/ROI before persisting
-            fov = asgSettings.getCameraFov();
-            roiPosition = asgSettings.getCameraRoiPosition();
-            Log.d(TAG, "Camera FOV saved: fov=" + fov + ", roi_position=" + roiPosition);
+            // Normalize before touching preferences: a busy-camera rejection must not silently
+            // change the crop that will be applied on the next service start.
+            if (fov < 62 || fov > 118) fov = AsgConstants.CAMERA_FOV_DEFAULT;
+            roiPosition = Math.max(0, Math.min(2, roiPosition));
 
             // A miniapp override is the current effective crop. Update the persistent base without
             // interrupting that owner; release/expiry will restore this newly saved value.
             if (cameraFovOverrideLeaseId != null) {
+                asgSettings.setCameraFov(fov, roiPosition);
                 JSONObject values = new JSONObject();
                 values.put("fov", fov);
                 values.put("roi_position", roiPosition);
@@ -451,6 +528,7 @@ public class SettingsCommandHandler implements ICommandHandler {
 
             Context context = serviceManager.getContext();
             if (context == null) {
+                asgSettings.setCameraFov(fov, roiPosition);
                 Log.w(TAG, "Context not available, FOV persisted but not applied to hardware");
                 JSONObject values = new JSONObject();
                 values.put("fov", fov);
@@ -460,39 +538,24 @@ public class SettingsCommandHandler implements ICommandHandler {
                 return true;
             }
             try {
-                DevApi.setCameraFov(fov, roiPosition);
-                SystemControllerFactory.get(context).restartCameraHal();
-                CameraRestartCooldown.setCooldown();
+                CameraFovPolicy.Result result =
+                        CameraFovController.apply(context, fov, roiPosition, streamBusy);
+                if (result == CameraFovPolicy.Result.BUSY) {
+                    sendSettingsError(requestId, "camera_fov", "camera_busy",
+                            "Camera is in use; retry the FOV change after capture stops.");
+                    return false;
+                }
+                if (result == CameraFovPolicy.Result.UNCHANGED) {
+                    asgSettings.setCameraFov(fov, roiPosition);
+                    sendCameraFovReadyAck(requestId, fov, roiPosition);
+                    return true;
+                }
                 Log.d(TAG, "Camera FOV applied to hardware and HAL restarted");
+                asgSettings.setCameraFov(fov, roiPosition);
                 sendCameraFovReadyAck(requestId, fov, roiPosition);
-                // Re-apply saved camera tuning after the HAL comes back up so ANR/gain config
-                // survives a runtime FOV change (mirrors the boot-time defer in AsgClientService).
-                AsgSettings savedSettings = asgSettings;
-                new Handler(Looper.getMainLooper())
-                        .postDelayed(
-                                () -> {
-                                    try {
-                                        boolean anrOn = savedSettings.isCameraAnrEnabled();
-                                        boolean gainOn = savedSettings.isCameraGainEnabled();
-                                        SystemControllerFactory.get(context)
-                                                .setCameraTuningConfig(anrOn, gainOn);
-                                        Log.d(
-                                                TAG,
-                                                "Camera tuning re-applied after FOV HAL restart:"
-                                                        + " anr="
-                                                        + anrOn
-                                                        + ", gain="
-                                                        + gainOn);
-                                    } catch (Exception ex) {
-                                        Log.w(
-                                                TAG,
-                                                "Failed to re-apply camera tuning after FOV"
-                                                        + " restart",
-                                                ex);
-                                    }
-                                },
-                                CameraRestartCooldown.DEFAULT_COOLDOWN_DURATION_MS + 500L);
+                reapplyCameraTuningAfterRestart(context);
             } catch (UnsatisfiedLinkError e) {
+                asgSettings.setCameraFov(fov, roiPosition);
                 Log.w(TAG, "libxydev not available (non-K900?), FOV persisted but not applied", e);
                 JSONObject values = new JSONObject();
                 values.put("fov", fov);
@@ -503,6 +566,8 @@ public class SettingsCommandHandler implements ICommandHandler {
             return true;
         } catch (Exception e) {
             Log.e(TAG, "Error handling camera_fov_setting", e);
+            sendSettingsError(requestId, "camera_fov", "internal_error",
+                    "Could not apply camera FOV settings.");
             return false;
         }
     }
@@ -558,10 +623,7 @@ public class SettingsCommandHandler implements ICommandHandler {
 
             if (refresh) {
                 scheduleCameraFovOverrideExpiry(leaseId, ttlMs);
-                JSONObject values = cameraFovValues(fov, roi, true);
-                values.put("lease_id", leaseId);
-                values.put("refreshed", true);
-                sendSettingsAck(requestId, "camera_fov_override", STATUS_READY, values);
+                sendCameraFovReadyAck(requestId, "camera_fov_override", fov, roi, leaseId);
                 return true;
             }
 
@@ -655,6 +717,12 @@ public class SettingsCommandHandler implements ICommandHandler {
                         if (!leaseId.equals(cameraFovOverrideLeaseId)) {
                             return;
                         }
+                        // Expiry restoration shares the same restart boundary as phone requests.
+                        if (waitingForFovReady || mPendingFovCommand != null) {
+                            scheduleCameraFovOverrideExpiry(
+                                    leaseId, CAMERA_FOV_RESTORE_RETRY_DELAY_MS);
+                            return;
+                        }
                         Log.i(TAG, "Camera FOV override lease expired: " + leaseId);
                         AsgSettings settings = serviceManager.getAsgSettings();
                         int fov =
@@ -701,15 +769,24 @@ public class SettingsCommandHandler implements ICommandHandler {
             return false;
         }
         try {
-            DevApi.setCameraFov(fov, roiPosition);
-            SystemControllerFactory.get(context).restartCameraHal();
-            CameraRestartCooldown.setCooldown();
+            CameraFovPolicy.Result result =
+                    CameraFovController.apply(context, fov, roiPosition, streamBusy);
+            if (result == CameraFovPolicy.Result.BUSY) {
+                sendSettingsError(requestId, setting, "camera_busy",
+                        "Camera is in use; retry the FOV change after capture stops.");
+                return false;
+            }
+            if (result == CameraFovPolicy.Result.UNCHANGED) {
+                sendCameraFovReadyAck(requestId, setting, fov, roiPosition, leaseId);
+                return true;
+            }
             sendCameraFovReadyAck(requestId, setting, fov, roiPosition, leaseId);
             reapplyCameraTuningAfterRestart(context);
         } catch (UnsatisfiedLinkError e) {
             Log.w(TAG, "libxydev not available (non-K900?), FOV not applied", e);
-            JSONObject values = cameraFovValues(fov, roiPosition, false);
-            sendSettingsAck(requestId, setting, STATUS_APPLIED, values);
+            sendSettingsError(requestId, setting, "unsupported",
+                    "Camera FOV overrides are unavailable on this device.");
+            return false;
         }
         return true;
     }
@@ -731,6 +808,9 @@ public class SettingsCommandHandler implements ICommandHandler {
         if (settings == null) {
             return;
         }
+        // camconfig can restart the provider again. Never announce FOV ready between
+        // the initial restart and this delayed tuning write.
+        cameraTuningPending = true;
         mainHandler.postDelayed(
                 () -> {
                     try {
@@ -738,8 +818,11 @@ public class SettingsCommandHandler implements ICommandHandler {
                                 .setCameraTuningConfig(
                                         settings.isCameraAnrEnabled(),
                                         settings.isCameraGainEnabled());
+                        CameraRestartCooldown.setCooldown();
                     } catch (Exception e) {
                         Log.w(TAG, "Failed to re-apply camera tuning after FOV restart", e);
+                    } finally {
+                        cameraTuningPending = false;
                     }
                 },
                 CameraRestartCooldown.DEFAULT_COOLDOWN_DURATION_MS + 500L);
@@ -763,25 +846,71 @@ public class SettingsCommandHandler implements ICommandHandler {
             int fov,
             int roiPosition,
             String leaseId) {
-        if (requestId == null || requestId.isEmpty()) {
-            return;
+        waitingForFovReady = true;
+        long startedMs = SystemClock.elapsedRealtime();
+        mainHandler.post(new Runnable() {
+            @Override
+            public void run() {
+                long elapsedMs = SystemClock.elapsedRealtime() - startedMs;
+                // The restart is asynchronous. Cooldown alone does not mean Camera2 has
+                // re-registered the device, and its ID list can briefly contain stale IDs.
+                if (!cameraTuningPending && !CameraRestartCooldown.isActive() && isCameraRegistered()) {
+                    if (mPendingFovCommand != null) {
+                        PendingFovCommand next = mPendingFovCommand;
+                        sendSettingsError(requestId, setting, "fov_superseded",
+                                "FOV update finished, but a queued FOV request is starting: "
+                                        + getRequestId(next.data));
+                        waitingForFovReady = false;
+                        drainFovCommands();
+                        return;
+                    }
+                    try {
+                        JSONObject values = new JSONObject();
+                        values.put("fov", fov);
+                        values.put("roi_position", roiPosition);
+                        values.put("hardware_applied", true);
+                        if (leaseId != null) {
+                            values.put("lease_id", leaseId);
+                        }
+                        sendSettingsAck(requestId, setting, STATUS_READY, values);
+                    } catch (Exception e) {
+                        Log.e(TAG, "Failed to send camera FOV ready ack", e);
+                    }
+                    waitingForFovReady = false;
+                    drainFovCommands();
+                    return;
+                }
+                if (elapsedMs >= AsgConstants.CAMERA_FOV_READY_TIMEOUT_MS) {
+                    sendSettingsError(requestId, setting, "camera_unavailable",
+                            "Camera did not re-register after the FOV change.");
+                    // Do not start another restart against an unrecovered camera provider.
+                    if (mPendingFovCommand != null) {
+                        PendingFovCommand pending = mPendingFovCommand;
+                        mPendingFovCommand = null;
+                        sendSettingsError(getRequestId(pending.data),
+                                fovSetting(pending.type),
+                                "camera_unavailable",
+                                "Queued FOV update canceled because the camera did not recover.");
+                    }
+                    waitingForFovReady = false;
+                    return;
+                }
+                mainHandler.postDelayed(this, AsgConstants.CAMERA_FOV_READY_POLL_MS);
+            }
+        });
+    }
+
+    private boolean isCameraRegistered() {
+        try {
+            Context context = serviceManager.getContext();
+            CameraManager manager = context == null ? null
+                    : (CameraManager) context.getSystemService(Context.CAMERA_SERVICE);
+            // Use the same selection/characteristics lookup as warm-up. Enumeration
+            // alone accepted stale camera ID 0 while the HAL was still restarting.
+            return manager != null && CameraOpener.selectPrimaryCameraId(manager) != null;
+        } catch (Exception e) {
+            return false;
         }
-        mainHandler.postDelayed(
-                        () -> {
-                            try {
-                                JSONObject values = new JSONObject();
-                                values.put("fov", fov);
-                                values.put("roi_position", roiPosition);
-                                values.put("hardware_applied", true);
-                                if (leaseId != null) {
-                                    values.put("lease_id", leaseId);
-                                }
-                                sendSettingsAck(requestId, setting, STATUS_READY, values);
-                            } catch (Exception e) {
-                                Log.e(TAG, "Failed to send delayed camera FOV ready ack", e);
-                            }
-                        },
-                        CameraRestartCooldown.DEFAULT_COOLDOWN_DURATION_MS);
     }
 
     private void sendSettingsAck(String requestId, String setting, String status, JSONObject values) {

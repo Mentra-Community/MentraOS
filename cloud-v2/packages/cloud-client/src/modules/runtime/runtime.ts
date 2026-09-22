@@ -29,7 +29,7 @@ import type { Connection } from "./connection";
 import { HandshakeRejectedError } from "./connection";
 import type { RuntimeEmitter, RuntimeEvents } from "./emitter";
 import type { Subscriptions } from "./subscriptions";
-import type { Camera, PhotoOptions, StreamOptions, ManagedStream, StreamStatusResult } from "./camera";
+import type { Camera, StreamOptions, ManagedStream, StreamStatusResult } from "./camera";
 import type { Maps, DirectionsRequest, DirectionsResult, LatLng, ReverseGeocodeResult } from "./maps";
 import type { Tts, RuntimeTtsSpeakOptions, RuntimeTtsSpeechSource } from "./tts";
 import type { UdpAudio } from "./audio-udp";
@@ -41,7 +41,7 @@ const UDP_LIVENESS_TIMEOUT_MS = 3_000;
 
 // Re-export the camera option/result types so a host importing the runtime gets
 // them from one place alongside the module that produces them.
-export type { PhotoOptions, StreamOptions, ManagedStream, StreamStatusResult } from "./camera";
+export type { StreamOptions, ManagedStream, StreamStatusResult } from "./camera";
 export type {
   DirectionsRequest,
   DirectionsResult,
@@ -86,8 +86,8 @@ export interface RuntimeModule {
   onTranscript(handler: (data: TranscriptionData) => void): () => void;
   onTranslation(handler: (data: TranslationData) => void): () => void;
 
-  requestManagedPhoto(opts: PhotoOptions): Promise<{ requestId: string; readUrl: string }>;
-  startManagedPhoto(opts: PhotoOptions): Promise<{ requestId: string; uploadUrl: string; readUrl: string }>;
+  requestManagedPhoto(): Promise<{ requestId: string; readUrl: string }>;
+  startManagedPhoto(): Promise<{ requestId: string; uploadUrl: string; readUrl: string }>;
   awaitManagedPhotoReady(requestId: string): Promise<{ requestId: string; readUrl: string }>;
   startManagedStream(opts: StreamOptions): Promise<ManagedStream>;
   getManagedStreamStatus(streamId: string): Promise<StreamStatusResult>;
@@ -444,13 +444,13 @@ export class Runtime implements RuntimeModule {
 
   // --- Camera: managed photo/stream (delegated) -----------------------------
 
-  requestManagedPhoto(opts: PhotoOptions): Promise<{ requestId: string; readUrl: string }> {
-    return this.camera.requestPhoto(opts);
+  requestManagedPhoto(): Promise<{ requestId: string; readUrl: string }> {
+    return this.camera.requestPhoto();
   }
 
   /** Device-side managed photo: presign now, deliver bytes yourself, then await ready. */
-  startManagedPhoto(opts: PhotoOptions): Promise<{ requestId: string; uploadUrl: string; readUrl: string }> {
-    return this.camera.startPhoto(opts);
+  startManagedPhoto(): Promise<{ requestId: string; uploadUrl: string; readUrl: string }> {
+    return this.camera.startPhoto();
   }
 
   awaitManagedPhotoReady(requestId: string): Promise<{ requestId: string; readUrl: string }> {

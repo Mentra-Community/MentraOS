@@ -1,6 +1,6 @@
 package com.mentra.bluetoothsdk.otaserver
 
-import android.util.Log
+import com.mentra.bluetoothsdk.utils.NativeLog as Log
 import com.mentra.bluetoothsdk.net.LocalIpv4
 import expo.modules.kotlin.modules.Module
 import expo.modules.kotlin.modules.ModuleDefinition

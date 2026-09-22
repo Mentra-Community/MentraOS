@@ -157,3 +157,49 @@ describe('workflow tooling pin', () => {
     expect(block).toContain('head_ref');
   });
 });
+
+describe('continue-loop self-dispatch guards (#3851)', () => {
+  const workflow = readFileSync(workflowPath, 'utf8');
+
+  test('workflow can dispatch itself', () => {
+    // createWorkflowDispatch needs actions: write; read-only strands the loop.
+    expect(workflow).toMatch(/permissions:[\s\S]*?actions: write/);
+  });
+
+  test('continue-loop is gated on a real plan and an explicit continuation ask', () => {
+    const block = jobBlock(workflow, 'continue-loop');
+    expect(block).toContain("needs.plan.result == 'success'");
+    expect(block).toContain("needs.aggregate.outputs.needs_continuation == 'true'");
+    expect(block).toContain(
+      "needs.recheck-handoff.outputs.needs_continuation == 'true'",
+    );
+    expect(block).toContain('bun run cli continue');
+  });
+
+  test('continue-loop can never race a handoff', () => {
+    const block = jobBlock(workflow, 'continue-loop');
+    expect(block).toContain("needs.plan.outputs.should_handoff != 'true'");
+    expect(block).toContain("needs.aggregate.outputs.should_handoff != 'true'");
+    expect(block).toContain("needs.recheck-handoff.outputs.should_handoff != 'true'");
+    expect(block).toContain("needs.finalize.result == 'skipped'");
+  });
+
+  test('continuation signals are exported by both deciding jobs', () => {
+    expect(jobBlock(workflow, 'aggregate')).toContain(
+      'needs_continuation: ${{ steps.agg.outputs.needs_continuation }}',
+    );
+    expect(jobBlock(workflow, 'recheck-handoff')).toContain(
+      'needs_continuation: ${{ steps.recheck.outputs.needs_continuation }}',
+    );
+  });
+
+  test('BUGBOT_STARTED is passed through without a false default', () => {
+    // A blank value must stay blank: it means "unknown", not "did not start".
+    expect(jobBlock(workflow, 'review-bugbot')).toContain(
+      'bugbot_started: ${{ steps.poll.outputs.bugbot_started }}',
+    );
+    expect(jobBlock(workflow, 'aggregate')).toContain(
+      'BUGBOT_STARTED: ${{ needs.review-bugbot.outputs.bugbot_started }}',
+    );
+  });
+});

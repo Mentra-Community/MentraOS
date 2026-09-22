@@ -28,6 +28,8 @@ permissions:
   contents: write
 
 env:
+  ARTIFACTS_R2_ACCOUNT_ID: ${{ vars.ARTIFACTS_R2_ACCOUNT_ID }}
+  ARTIFACTS_R2_BUCKET: artifactscdn
   CI: true
   EXAMPLE_PACKAGE_ID: com.mentra.bluetoothsdkexample
   STARTER_KIT_REPOSITORY: Mentra-Community/Mentra-Bluetooth-SDK-Starter-Kit
@@ -59,7 +61,9 @@ jobs:
         with:
           ref: ${{ github.sha }}
           path: release-tooling
-          sparse-checkout: .github/scripts
+          sparse-checkout: |
+            .github/scripts
+            .github/artifact-storage
           sparse-checkout-cone-mode: false
       - uses: actions/download-artifact@v4
         with:
@@ -91,6 +95,8 @@ jobs:
       - name: Resolve previously persisted immutable App Bundle
         id: existing
         env:
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
           GH_TOKEN: ${{ github.token }}
           RELEASE_ID: ${{ inputs.release_id }}
         run: |
@@ -108,13 +114,13 @@ jobs:
           else
             [[ "$(jq -r .draft <<< "$release")" == false ]]
           fi
-          assets=$(gh api --paginate --slurp "repos/$GITHUB_REPOSITORY/releases/$RELEASE_ID/assets?per_page=100" | jq 'add')
+          assets=$(node "$GITHUB_WORKSPACE/release-tooling/.github/scripts/release-assets.mjs" list --repository "$GITHUB_REPOSITORY" --release-id "$RELEASE_ID")
           matches=$(jq --arg name "${{ steps.coordinates.outputs.aab_name }}" '[.[] | select(.name == $name)]' <<< "$assets")
           [[ "$(jq length <<< "$matches")" -le 1 ]]
           mkdir -p release-output
           if [[ "$(jq length <<< "$matches")" == 1 ]]; then
             asset_id=$(jq -er '.[0].id' <<< "$matches")
-            gh api -H 'Accept: application/octet-stream' "repos/$GITHUB_REPOSITORY/releases/assets/$asset_id" \
+            node "$GITHUB_WORKSPACE/release-tooling/.github/scripts/release-assets.mjs" fetch --repository "$GITHUB_REPOSITORY" --asset-id "$asset_id" \
               > "release-output/${{ steps.coordinates.outputs.aab_name }}"
             echo "exists=true" >> "$GITHUB_OUTPUT"
           else
@@ -248,6 +254,8 @@ jobs:
 
       - name: Verify and persist exact signed bytes before Play upload
         env:
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
           GH_TOKEN: ${{ github.token }}
         run: |
           set -euo pipefail
@@ -263,7 +271,7 @@ jobs:
           abis=$(unzip -Z1 "$aab" | sed -n 's#^[^/]*/lib/\([^/]*\)/.*\.so$#\1#p' | LC_ALL=C sort -u | paste -sd, -)
           # Preserve the example's withAndroid16KbPageSize plugin ABI contract.
           [[ "$abis" == "arm64-v8a,x86_64" ]]
-          node .github/scripts/publish-immutable-release-asset.mjs \
+          node "$GITHUB_WORKSPACE/release-tooling/.github/scripts/publish-immutable-release-asset.mjs" \
             --file "$aab" --name "${{ steps.coordinates.outputs.aab_name }}" \
             --release-id "${{ inputs.release_id }}" --repository "$GITHUB_REPOSITORY"
 

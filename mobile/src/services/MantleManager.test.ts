@@ -1,11 +1,20 @@
+import {Platform} from "react-native"
+import {Asset} from "expo-asset"
+import {result as Res} from "typesafe-ts"
+import {BUNDLED_MINIAPPS} from "@/generated/bundledMiniapps"
 import {waitFor} from "@testing-library/react-native"
 import {router} from "expo-router"
 
+import {initI18n} from "@/i18n"
 import mantle from "@/services/MantleManager"
+import builtInMiniappCatalog from "@/services/miniapps/BuiltInMiniappCatalog"
+import {mentraCallPackageName, notifyPackageName} from "@/constants/miniapps"
 import {
+  appRegistry,
   audioPlaybackService,
   localDisplayManager,
   localMiniappRuntime,
+  saveLocalAppRunningState,
   useAppStatusStore,
   useCoreStore,
   useDisplayStore,
@@ -107,7 +116,25 @@ let syncCoreDisplayOwner: () => void
 let syncGlassesPresentationState: (status: {state: string}) => void
 
 describe("MantleManager", () => {
+  const originalOverride = process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS
+  beforeAll(() => {
+    delete process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS
+  })
+  afterAll(() => {
+    if (originalOverride === undefined) delete process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS
+    else process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS = originalOverride
+  })
+  const originalPlatform = Platform.OS
+  beforeAll(() => {
+    Object.defineProperty(Platform, "OS", {configurable: true, value: "android"})
+  })
+  afterAll(() => {
+    Object.defineProperty(Platform, "OS", {configurable: true, value: originalPlatform})
+  })
   beforeAll(async () => {
+    // Alerts surface translated copy (e.g. the Wi-Fi-needs-glasses blocker), so
+    // initialize i18n before init(); otherwise translate() returns raw keys.
+    await initI18n()
     routerPushSpy = jest.spyOn(router, "push").mockImplementation(() => {})
     jest.useFakeTimers()
     resetBluetoothSdkMock()
@@ -467,6 +494,70 @@ describe("MantleManager", () => {
     await Promise.resolve()
   })
 
+  it("uses native presentation without duplicating the Mentra card or miniapp event", async () => {
+    useAppStatusStore.setState({
+      apps: [{packageName: "cloud.augmentos.notify", type: "background", running: true}] as any,
+    })
+    syncCoreDisplayOwner()
+    expect(engine.phoneNotifications.setPresentationActive).toHaveBeenLastCalledWith(true)
+    ;(engine.phoneNotifications.usesNativePresentation as jest.Mock).mockReturnValueOnce(true)
+    ;(engine.phoneNotifications.presentNative as jest.Mock).mockResolvedValueOnce(true)
+    const forward = jest.spyOn(localMiniappRuntime, "forwardEvent")
+    emitCrustEvent("phone_notification", {
+      notificationId: "native-1",
+      app: "Calendar",
+      title: "Meeting",
+      content: "Soon",
+      packageName: "com.calendar",
+    })
+    await Promise.resolve()
+    expect(engine.phoneNotifications.presentNative).toHaveBeenCalledTimes(1)
+    expect(forward).toHaveBeenCalledWith("phone_notification", expect.objectContaining({notificationId: "native-1"}))
+    expect(localDisplayManager.request).not.toHaveBeenCalled()
+    expect(audioPlaybackService.play).not.toHaveBeenCalled()
+  })
+
+  it("does not fabricate an iOS card from G2's app-only relay", () => {
+    Object.defineProperty(Platform, "OS", {configurable: true, value: "ios"})
+    try {
+      useAppStatusStore.setState({
+        apps: [{packageName: "cloud.augmentos.notify", type: "background", running: true}] as any,
+      })
+      emitBluetoothSdkEvent("phone_notification", {
+        notificationId: "ancs-metadata",
+        app: "Messages",
+        title: "",
+        content: "",
+        packageName: "com.apple.MobileSMS",
+      })
+      expect(localDisplayManager.request).not.toHaveBeenCalled()
+    } finally {
+      Object.defineProperty(Platform, "OS", {configurable: true, value: "android"})
+    }
+  })
+
+  it("preserves full-content iOS notification presentation", () => {
+    Object.defineProperty(Platform, "OS", {configurable: true, value: "ios"})
+    try {
+      useAppStatusStore.setState({
+        apps: [{packageName: "cloud.augmentos.notify", type: "background", running: true}] as any,
+      })
+      emitBluetoothSdkEvent("phone_notification", {
+        notificationId: "full-ios",
+        app: "Messages",
+        title: "Alice",
+        content: "Hello",
+        packageName: "com.apple.MobileSMS",
+      })
+      expect(localDisplayManager.request).toHaveBeenCalledWith(
+        "cloud.augmentos.notify",
+        expect.objectContaining({layout: expect.objectContaining({text: "Hello"})}),
+      )
+    } finally {
+      Object.defineProperty(Platform, "OS", {configurable: true, value: "android"})
+    }
+  })
+
   it("tracks OTA status without allowing backward progress or stale terminal update hints", async () => {
     useGlassesStore.getState().setGlassesInfo({connection: {state: "connected", fullyBooted: true}})
     useGlassesStore.getState().setOtaUpdateAvailable({
@@ -513,7 +604,28 @@ describe("MantleManager", () => {
     expect(useGlassesStore.getState().otaInProgress).toBe(false)
   })
 
+  it("refuses Wi-Fi setup while the glasses are off Bluetooth and says why", async () => {
+    ;(engine.glasses.status as jest.Mock).mockReturnValue({state: "disconnected"})
+
+    const request = requestWifiSetup("Streaming needs Wi-Fi", "com.mentra.call")
+    const [title, message, buttons] = mockShowAlert.mock.calls.at(-1)!
+
+    expect(title).toBe("Reconnect your glasses")
+    expect(message).toBe(
+      "Wi-Fi setup needs your glasses connected over Bluetooth. Turn them on and wait for them to reconnect, then try again.",
+    )
+    expect(buttons).toHaveLength(1)
+    expect(buttons[0].text).toBe("OK")
+    buttons[0].onPress()
+    await request
+
+    // The miniapp stays in the foreground and no Wi-Fi route is pushed.
+    expect(engine.miniapps.clearForeground).not.toHaveBeenCalled()
+    expect(routerPushSpy).not.toHaveBeenCalled()
+  })
+
   it("prompts before opening Wi-Fi setup and backgrounds the requesting miniapp", async () => {
+    ;(engine.glasses.status as jest.Mock).mockReturnValue({state: "connected"})
     const cancelRequest = requestWifiSetup("Streaming needs Wi-Fi")
     const [, message, cancelButtons] = mockShowAlert.mock.calls.at(-1)!
 
@@ -533,5 +645,135 @@ describe("MantleManager", () => {
       pathname: "/wifi/scan",
       params: {returnToMiniapp: "com.mentra.livestreamer"},
     })
+  })
+
+  it("continues startup bundle installation after one asset fails", async () => {
+    const instance = new (mantle.constructor as new () => {
+      installBundledMiniapps: () => Promise<void>
+      installBundledMiniapp: (asset: Asset) => Promise<void>
+    })()
+    const asset = {name: "com.mentra.fixture-1.0.0.zip"} as Asset
+    const fromModule = jest.spyOn(Asset, "fromModule").mockReturnValue(asset)
+    const install = jest.fn(async () => {}).mockRejectedValueOnce(new Error("Invalid bundle"))
+    instance.installBundledMiniapp = install
+    const log = jest.spyOn(console, "error").mockImplementation(() => {})
+    try {
+      await expect(instance.installBundledMiniapps()).resolves.toBeUndefined()
+      expect(install).toHaveBeenCalledTimes(BUNDLED_MINIAPPS.length)
+      expect(log).toHaveBeenCalledWith("MANTLE: error installing bundled miniapp:", expect.any(Error))
+    } finally {
+      fromModule.mockRestore()
+      log.mockRestore()
+    }
+  })
+
+  it("rechecks Call policy after downloading and propagates an install failure", async () => {
+    const originalPlatform = Platform.OS
+    const originalVersions = appRegistry.getInstalledVersions
+    const originalInstall = appRegistry.installFromLocalZip
+    Object.defineProperty(Platform, "OS", {configurable: true, value: "ios"})
+    appRegistry.getInstalledVersions = jest.fn(() => [])
+    const failure = new Error("Archive installation failed")
+    const install = jest.fn(() =>
+      Res.try_async(async () => {
+        throw failure
+      }),
+    )
+    appRegistry.installFromLocalZip = install
+    const instance = mantle as unknown as {installBundledMiniapp: (asset: Asset) => Promise<void>}
+    const asset = {
+      name: "com.mentra.call-2.1.18.zip",
+      localUri: "file:///fixture/call.zip",
+      downloadAsync: async () => {
+        await engine.settings.set(SETTINGS.show_mentra_call_ios.key, false)
+      },
+    } as unknown as Asset
+    try {
+      await engine.settings.set(SETTINGS.show_mentra_call_ios.key, true)
+      await instance.installBundledMiniapp(asset)
+      expect(install).not.toHaveBeenCalled()
+      await engine.settings.set(SETTINGS.show_mentra_call_ios.key, true)
+      asset.downloadAsync = jest.fn(async () => asset)
+      await expect(instance.installBundledMiniapp(asset)).rejects.toThrow(failure)
+      expect(install).toHaveBeenCalledWith(asset.localUri)
+    } finally {
+      appRegistry.getInstalledVersions = originalVersions
+      appRegistry.installFromLocalZip = originalInstall
+      Object.defineProperty(Platform, "OS", {configurable: true, value: originalPlatform})
+    }
+  })
+
+  it.each([
+    [mentraCallPackageName, SETTINGS.show_mentra_call_ios.key, SETTINGS.show_notify_ios.key],
+    [notifyPackageName, SETTINGS.show_notify_ios.key, SETTINGS.show_mentra_call_ios.key],
+  ])("reconciles %s independently and replaces its setting listener cleanly", async (packageName, key, otherKey) => {
+    const originalPlatform = Platform.OS
+    Object.defineProperty(Platform, "OS", {configurable: true, value: "ios"})
+    const instance = new (mantle.constructor as new () => {
+      setupIosMiniappVisibility: () => void
+      setupSubscriptions: () => Promise<void>
+      installBundledCall: () => Promise<void>
+      subs: Array<{remove: () => void}>
+      iosMiniappVisibility: Map<string, {dispose: () => void}>
+    })()
+    const installCall = jest.fn(async () => {})
+    instance.installBundledCall = installCall
+    const installNotify = jest.spyOn(builtInMiniappCatalog, "installNotify").mockImplementation(() => {})
+    const install = packageName === mentraCallPackageName ? installCall : installNotify
+    const otherInstall = packageName === mentraCallPackageName ? installNotify : installCall
+    try {
+      await engine.settings.set(key, false)
+      await engine.settings.set(otherKey, false)
+      useAppStatusStore.setState({
+        apps: [
+          {
+            packageName: notifyPackageName,
+            name: "Notify",
+            type: "background",
+            running: true,
+            offline: true,
+            local: false,
+            hidden: false,
+            loading: false,
+            healthy: true,
+            permissions: [],
+            hardwareRequirements: [],
+            offlineRoute: "/miniapps/settings/notifications",
+            webviewUrl: "",
+            logoUrl: "",
+          },
+        ],
+      })
+      instance.setupIosMiniappVisibility()
+      expect(saveLocalAppRunningState).toHaveBeenCalledWith(mentraCallPackageName, false)
+      expect(saveLocalAppRunningState).toHaveBeenCalledWith(notifyPackageName, false)
+      expect(engine.miniapps.setHiddenStatus).toHaveBeenCalledWith(mentraCallPackageName, true)
+      expect(engine.miniapps.setHiddenStatus).toHaveBeenCalledWith(notifyPackageName, true)
+      await instance.setupSubscriptions()
+      await engine.settings.set(key, true)
+      await waitFor(() => expect(install).toHaveBeenCalledTimes(1))
+      await waitFor(() => expect(engine.miniapps.setHiddenStatus).toHaveBeenLastCalledWith(packageName, false))
+      expect(otherInstall).not.toHaveBeenCalled()
+      expect(engine.settings.get(otherKey)).toBe(false)
+      await instance.setupSubscriptions()
+      await engine.settings.set(key, false)
+      expect(engine.miniapps.setHiddenStatus).toHaveBeenLastCalledWith(packageName, true)
+      if (packageName === notifyPackageName) {
+        await waitFor(() => expect(engine.phoneNotifications.setPresentationActive).toHaveBeenLastCalledWith(false))
+        expect(localDisplayManager.dismiss).toHaveBeenCalledWith(notifyPackageName)
+        expect(audioPlaybackService.stopForApp).toHaveBeenCalledWith(notifyPackageName)
+        expect(engine.miniapps.stop).toHaveBeenCalledWith(notifyPackageName)
+      }
+      install.mockClear()
+      await engine.settings.set(key, true)
+      await waitFor(() => expect(install).toHaveBeenCalledTimes(1))
+      await waitFor(() => expect(engine.miniapps.setHiddenStatus).toHaveBeenLastCalledWith(packageName, false))
+      expect(otherInstall).not.toHaveBeenCalled()
+    } finally {
+      for (const visibility of instance.iosMiniappVisibility.values()) visibility.dispose()
+      instance.subs.forEach((sub) => sub.remove())
+      installNotify.mockRestore()
+      Object.defineProperty(Platform, "OS", {configurable: true, value: originalPlatform})
+    }
   })
 })

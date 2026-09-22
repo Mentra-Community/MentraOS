@@ -13,6 +13,7 @@
  *   - uninstall(packageName, version?)      remove one or all versions
  *   - getInstalledMiniapps()                ClientApp[] derived from disk
  *   - getActiveVersion(packageName)         active version string for a package
+ *   - getLatestDevSnapshotVersion(pkg)      newest on-disk `dev-*` snapshot
  *   - getBundleDir / getMiniappManifest     filesystem helpers used by hosts
  *   - subscribe(fn)                         register a refresh listener
  */
@@ -22,54 +23,30 @@ import {unzip} from "react-native-zip-archive"
 import semver from "semver"
 import {AsyncResult, Result, result as Res} from "typesafe-ts"
 
-import type {AppletPermission, AppPermissionType, AppletType, ClientApp} from "../types/applet"
+import type {AppletType, ClientApp} from "../types/applet"
 import {HardwareRequirement, HardwareRequirementLevel, HardwareType} from "../types"
 import {configuredDevHost} from "../utils/configuredDevHost"
 import {storage} from "../utils/storage/storage"
 import {printDirectory} from "../utils/storage/zip"
+import {isInstalledMiniappAllowed, isOfflineSystemMiniappAllowed} from "../runtime/bootstrap"
 import {checkManifestVersions} from "./manifestVersionGate"
 import {normalizeManifestActions} from "./manifestActions"
+import {normalizeManifestPermissions} from "./manifestPermissions"
+import {miniappInstallIdentityError, type MiniappInstallExpectations} from "./miniappInstallIdentity"
 import {miniappRunningRegistry} from "./MiniappRunningRegistry"
 
 export {normalizeManifestActions} from "./manifestActions"
+export {normalizeManifestPermissions} from "./manifestPermissions"
 
-const ALLOWED_PERMISSION_TYPES: ReadonlySet<AppPermissionType> = new Set<AppPermissionType>([
-  "MICROPHONE",
-  "CAMERA",
-  "CALENDAR",
-  "LOCATION",
-  "BACKGROUND_LOCATION",
-  "READ_NOTIFICATIONS",
-  "POST_NOTIFICATIONS",
-])
+let installQueue: Promise<void> = Promise.resolve()
 
-/**
- * Normalize the `permissions` field from a miniapp.json manifest.
- *
- * New miniapps ship `[{type, required?, description?}]` objects. A few older
- * installed bundles may have `["MICROPHONE", ...]` plain strings. Accept both.
- */
-export function normalizeManifestPermissions(
-  raw: Array<string | {type: string; required?: boolean; description?: string}> | undefined,
-): AppletPermission[] {
-  if (!Array.isArray(raw)) return []
-  const out: AppletPermission[] = []
-  for (const p of raw) {
-    if (typeof p === "string") {
-      if (ALLOWED_PERMISSION_TYPES.has(p as AppPermissionType)) {
-        out.push({type: p as AppPermissionType, required: true})
-      }
-    } else if (p && typeof p === "object" && typeof p.type === "string") {
-      if (ALLOWED_PERMISSION_TYPES.has(p.type as AppPermissionType)) {
-        out.push({
-          type: p.type as AppPermissionType,
-          ...(typeof p.required === "boolean" ? {required: p.required} : {}),
-          ...(typeof p.description === "string" ? {description: p.description} : {}),
-        })
-      }
-    }
-  }
-  return out
+function serializeInstall<T>(operation: () => Promise<T>): Promise<T> {
+  const result = installQueue.then(operation, operation)
+  installQueue = result.then(
+    () => undefined,
+    () => undefined,
+  )
+  return result
 }
 
 function normalizeManifestType(raw: unknown): AppletType {
@@ -140,10 +117,12 @@ interface InstalledLma {
 }
 
 export interface MiniappReleaseIdentity {
-  source: "direct_download" | "bundled_asset" | "preinstalled_registry" | "dev_snapshot"
+  source: "direct_download" | "bundled_asset" | "preinstalled_registry" | "deployment_manifest" | "dev_snapshot"
   releaseId?: string
   bundleSha256?: string
   channel?: string
+  deploymentId?: string
+  deploymentOrigin?: string
 }
 
 function releaseIdentityKey(packageName: string, version: string): string {
@@ -208,6 +187,7 @@ async function downloadMiniAppZip(url: string): Promise<string> {
 async function unpackMiniApp(
   zipPath: string,
   versionOverride?: string,
+  expected?: MiniappInstallExpectations,
 ): Promise<{packageName: string; version: string}> {
   const unzipDir = new Directory(Paths.cache, "lma_unzip")
   try {
@@ -245,6 +225,8 @@ async function unpackMiniApp(
     throw "READ_MANIFEST_FAILED"
   }
   const version = versionOverride ?? manifestVersion
+  const identityError = miniappInstallIdentityError({packageName, version: manifestVersion}, expected)
+  if (identityError) throw new Error(identityError)
   console.log(`ZIP: installing ${packageName} as version ${version}`)
 
   const basePackageDir = new Directory(Paths.document, "lmas", packageName)
@@ -259,6 +241,9 @@ async function unpackMiniApp(
 
   const versionDir = new Directory(basePackageDir, version)
   try {
+    if (expected?.rejectExistingVersion && versionDir.exists) {
+      throw new Error(`Miniapp ${packageName}@${version} is already installed`)
+    }
     if (!versionDir.exists) {
       versionDir.create()
     } else {
@@ -298,10 +283,11 @@ async function unpackMiniApp(
 async function downloadAndInstallMiniApp(
   url: string,
   versionOverride?: string,
+  expected?: MiniappInstallExpectations,
 ): Promise<{packageName: string; version: string}> {
   const downloadedZipPath = await downloadMiniAppZip(url)
   console.log("ZIP: done downloading, starting unzip")
-  return unpackMiniApp(downloadedZipPath, versionOverride)
+  return unpackMiniApp(downloadedZipPath, versionOverride, expected)
 }
 
 type Listener = () => void
@@ -444,17 +430,29 @@ class AppRegistry {
    */
   public installFromUrl(
     url: string,
-    opts?: {versionOverride?: string; releaseIdentity?: MiniappReleaseIdentity},
+    opts?: {
+      versionOverride?: string
+      releaseIdentity?: MiniappReleaseIdentity
+      expectedPackageName?: string
+      expectedVersion?: string
+      rejectExistingVersion?: boolean
+    },
   ): AsyncResult<void, Error> {
-    return Res.try_async(async () => {
-      const {packageName, version} = await downloadAndInstallMiniApp(url, opts?.versionOverride)
-      console.log("APP_REGISTRY: Downloaded and installed mini app")
-      this.finalizeInstall(
-        packageName,
-        version,
-        opts?.releaseIdentity ?? {source: version.startsWith("dev-") ? "dev_snapshot" : "direct_download"},
-      )
-    })
+    return Res.try_async(() =>
+      serializeInstall(async () => {
+        const {packageName, version} = await downloadAndInstallMiniApp(url, opts?.versionOverride, {
+          packageName: opts?.expectedPackageName,
+          version: opts?.expectedVersion,
+          rejectExistingVersion: opts?.rejectExistingVersion,
+        })
+        console.log("APP_REGISTRY: Downloaded and installed mini app")
+        this.finalizeInstall(
+          packageName,
+          version,
+          opts?.releaseIdentity ?? {source: version.startsWith("dev-") ? "dev_snapshot" : "direct_download"},
+        )
+      }),
+    )
   }
 
   /**
@@ -466,14 +464,26 @@ class AppRegistry {
    */
   public installFromLocalZip(
     zipPath: string,
-    opts?: {versionOverride?: string; releaseIdentity?: MiniappReleaseIdentity},
+    opts?: {
+      versionOverride?: string
+      releaseIdentity?: MiniappReleaseIdentity
+      expectedPackageName?: string
+      expectedVersion?: string
+      rejectExistingVersion?: boolean
+    },
   ): AsyncResult<{packageName: string; version: string}, Error> {
-    return Res.try_async(async () => {
-      const {packageName, version} = await unpackMiniApp(zipPath, opts?.versionOverride)
-      console.log("APP_REGISTRY: Installed mini app from local zip")
-      this.finalizeInstall(packageName, version, opts?.releaseIdentity ?? {source: "bundled_asset"})
-      return {packageName, version}
-    })
+    return Res.try_async(() =>
+      serializeInstall(async () => {
+        const {packageName, version} = await unpackMiniApp(zipPath, opts?.versionOverride, {
+          packageName: opts?.expectedPackageName,
+          version: opts?.expectedVersion,
+          rejectExistingVersion: opts?.rejectExistingVersion,
+        })
+        console.log("APP_REGISTRY: Installed mini app from local zip")
+        this.finalizeInstall(packageName, version, opts?.releaseIdentity ?? {source: "bundled_asset"})
+        return {packageName, version}
+      }),
+    )
   }
 
   /**
@@ -501,6 +511,22 @@ class AppRegistry {
   public getReleaseIdentity(packageName: string, version: string): MiniappReleaseIdentity | null {
     const result = storage.load<MiniappReleaseIdentity>(releaseIdentityKey(packageName, version))
     return result.is_ok() ? result.value : null
+  }
+
+  /** Enumerate installed releases carrying deployment ownership metadata. */
+  public getDeploymentOwnedReleases(): Array<{
+    packageName: string
+    version: string
+    identity: MiniappReleaseIdentity
+  }> {
+    const releases: Array<{packageName: string; version: string; identity: MiniappReleaseIdentity}> = []
+    for (const packageName of this.getPackageNames()) {
+      for (const version of this.getInstalledVersions(packageName)) {
+        const identity = this.getReleaseIdentity(packageName, version)
+        if (identity?.source === "deployment_manifest") releases.push({packageName, version, identity})
+      }
+    }
+    return releases
   }
 
   public installFromJsonUrl(baseUrl: string): AsyncResult<{packageName: string; version: string; name: string}, Error> {
@@ -675,12 +701,38 @@ class AppRegistry {
     return storage.save(`${packageName}_active_version`, version)
   }
 
+  /**
+   * Newest `dev-*` snapshot that still has a resolvable UI or background
+   * entry. Semver store installs are ignored — a live-dev tile must not
+   * silently fall back to a released store bundle when the laptop drops.
+   */
+  public getLatestDevSnapshotVersion(packageName: string): string | null {
+    const versions = this.getInstalledVersions(packageName)
+      .filter((v) => v.startsWith("dev-"))
+      .sort()
+      .reverse()
+    for (const version of versions) {
+      const paths = this.getMiniappEntryPaths(packageName, version)
+      if (paths?.background || paths?.ui) return version
+    }
+    return null
+  }
+
+  /** True iff {@link getLatestDevSnapshotVersion} finds a usable snapshot. */
+  public hasDevSnapshot(packageName: string): boolean {
+    return this.getLatestDevSnapshotVersion(packageName) != null
+  }
+
   public getMetadata(packageName: string, version: string): InstalledInfo {
     try {
       const lmaDir = new Directory(Paths.document, "lmas", packageName, version)
       const miniappJsonFile = new File(lmaDir, "miniapp.json")
       const manifest = JSON.parse(miniappJsonFile.textSync())
-      const logoUrl = new File(lmaDir, "icon.png").uri
+      const iconPath = typeof manifest.icon === "string" && manifest.icon.trim() ? manifest.icon : "icon.png"
+      const safeRelativeIcon =
+        !/^[a-z]+:/i.test(iconPath) && !iconPath.startsWith("/") && !iconPath.split("/").includes("..")
+      const declaredIcon = safeRelativeIcon ? new File(lmaDir, iconPath) : null
+      const logoUrl = declaredIcon?.exists ? declaredIcon.uri : new File(lmaDir, "icon.png").uri
       return {name: manifest.name, logoUrl: logoUrl}
     } catch (error) {
       console.error("APP_REGISTRY: Error getting local miniapp metadata", error)
@@ -709,12 +761,21 @@ class AppRegistry {
    * registration in finalizeInstall. Native offline apps keep top priority.
    */
   private mergeProjectedApps(diskApps: ClientApp[]): ClientApp[] {
-    const offline = this.projectOfflineApps()
+    const offline = this.projectOfflineApps().filter((app) => isOfflineSystemMiniappAllowed(app.packageName))
     const offlinePackages = new Set(offline.map((app) => app.packageName))
-    const dev = this.projectDevApps().filter((app) => !offlinePackages.has(app.packageName))
+    const dev = this.projectDevApps().filter(
+      (app) => isInstalledMiniappAllowed(app.packageName, undefined, null) && !offlinePackages.has(app.packageName),
+    )
     const devPackages = new Set(dev.map((app) => app.packageName))
     const installed = diskApps.filter(
-      (app) => !offlinePackages.has(app.packageName) && !devPackages.has(app.packageName),
+      (app) =>
+        isInstalledMiniappAllowed(
+          app.packageName,
+          app.version,
+          app.version ? this.getReleaseIdentity(app.packageName, app.version) : null,
+        ) &&
+        !offlinePackages.has(app.packageName) &&
+        !devPackages.has(app.packageName),
     )
     return [...installed, ...dev, ...offline]
   }
@@ -816,6 +877,11 @@ class AppRegistry {
    */
   private projectDevApps(): ClientApp[] {
     return getDevAppRecords().map((rec) => {
+      // Every dev rebuild has a unique snapshot directory. Prefer its manifest
+      // icon so home tiles update with the bundle instead of retaining the
+      // separately cached, stable-path QR preview (and its decoded image cache).
+      const snapshotVersion = this.getLatestDevSnapshotVersion(rec.packageName)
+      const snapshotIcon = snapshotVersion ? this.getMetadata(rec.packageName, snapshotVersion).logoUrl : undefined
       const permissions = normalizeManifestPermissions(rec.permissions)
       const hardwareRequirements = buildHardwareRequirements(rec.hardwareRequirements, rec.packageName)
       return {
@@ -830,7 +896,7 @@ class AppRegistry {
         offlineRoute: "",
         name: rec.name,
         webviewUrl: "",
-        logoUrl: rec.iconUrl,
+        logoUrl: snapshotIcon || rec.iconUrl,
         type: normalizeManifestType(rec.type),
         permissions,
         hardwareRequirements,
@@ -979,7 +1045,6 @@ export interface DevAppRecord {
 
 const DEV_APPS_INDEX_KEY = "dev_apps_index"
 const DEV_APP_ICONS_DIR = "dev-miniapp-icons"
-
 
 function isPrivateLanHost(hostname: string): boolean {
   return (
@@ -1144,8 +1209,7 @@ export async function registerDevApp(record: DevAppRecord): Promise<void> {
   // Relaunch paths (developer-URL screen, loadDevMiniapp) omit mdnsHost, so an
   // omitted field keeps whatever the QR scan stored instead of wiping the
   // `.local` failover host.
-  const mdnsHost =
-    record.mdnsHost !== undefined ? record.mdnsHost.trim() || undefined : readStoredMdnsHost(packageName)
+  const mdnsHost = record.mdnsHost !== undefined ? record.mdnsHost.trim() || undefined : readStoredMdnsHost(packageName)
   const devRecord: DevAppRecord = {
     ...record,
     packageName,

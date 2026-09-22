@@ -178,3 +178,18 @@ describe("CameraModule", () => {
     expect(requestCalls[0]).toMatchObject({zsl: true, mfnr: false})
   })
 })
+
+test("takePhoto preserves compression and rejects invalid values before dispatch", async () => {
+  const {session, requestCalls} = mockSession({})
+  const camera = new CameraModule(session)
+  for (const compress of ["none", "low", "medium", "high"] as const) {
+    await camera.takePhoto({compress})
+    expect(requestCalls.at(-1)).toMatchObject({compress})
+  }
+  await camera.takePhoto()
+  expect(requestCalls.at(-1)).toMatchObject({compress: "none"})
+  for (const compress of ["heavy", "", "HIGH", null, 1]) {
+    await expect(camera.takePhoto({compress} as never)).rejects.toThrow("Invalid photo compression")
+  }
+  expect(requestCalls).toHaveLength(5)
+})

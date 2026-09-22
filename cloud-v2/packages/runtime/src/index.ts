@@ -15,7 +15,10 @@
  * Spec + design: cloud-v2/docs/issues/002-cloud-runtime/.
  */
 
-import { assertRuntimeAuthConfigured, createLogger } from "@mentra/cloud-shared";
+import {
+  assertRuntimeAuthConfigured,
+  createLogger,
+} from "@mentra/cloud-shared";
 import {
   connectRedis,
   disconnectRedis,
@@ -32,10 +35,7 @@ import {
   tryWsUpgrade,
   wsHandlers,
 } from "./net/ws";
-import {
-  startUdpIngress,
-  stopUdpIngress,
-} from "./net/udp";
+import { startUdpIngress, stopUdpIngress } from "./net/udp";
 import { createApiApp } from "./api";
 import {
   startOwnershipRefreshLoop,
@@ -52,6 +52,18 @@ import {
 } from "./services/audio/workers/pool";
 import { transcriptToStreamMessage } from "./services/audio/result";
 import { PROTOCOL_MAJOR } from "@mentra/cloud-protocol/envelope";
+import {
+  resolveRuntimeServices,
+  serviceList,
+  type RuntimeServiceName,
+} from "./services/runtime-services";
+import { assertAcsTeamsConfigured } from "./services/meetings/acs-teams.service";
+import { resolveMeetingProviders } from "./services/meetings/meeting-providers";
+import {
+  assertManifestMatchesRuntimeServices,
+  parseDeploymentManifest,
+} from "./services/deployment-manifest";
+import { loadDeploymentMiniappBundles } from "./services/deployment-miniapps";
 
 const logger = createLogger("runtime");
 
@@ -75,15 +87,22 @@ function isIPv4Family(family: string | number): boolean {
 
 function isPrivateIPv4(address: string): boolean {
   const parts = address.split(".").map((part) => Number.parseInt(part, 10));
-  if (parts.length !== 4 || parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)) {
+  if (
+    parts.length !== 4 ||
+    parts.some((part) => !Number.isInteger(part) || part < 0 || part > 255)
+  ) {
     return false;
   }
   const [a, b] = parts;
-  return a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168);
+  return (
+    a === 10 || (a === 172 && b >= 16 && b <= 31) || (a === 192 && b === 168)
+  );
 }
 
 function isIgnoredInterface(name: string): boolean {
-  return /^(lo|awdl|llw|utun|tun|tap|bridge|docker|veth|vmnet|tailscale|zt)/i.test(name);
+  return /^(lo|awdl|llw|utun|tun|tap|bridge|docker|veth|vmnet|tailscale|zt)/i.test(
+    name,
+  );
 }
 
 function preferredInterfaceRank(name: string): number {
@@ -91,10 +110,12 @@ function preferredInterfaceRank(name: string): number {
   return 1;
 }
 
-export function detectLanIPv4(opts: {
-  interfaces?: NodeJS.Dict<os.NetworkInterfaceInfo[]>;
-  preferredInterface?: string;
-} = {}): string | undefined {
+export function detectLanIPv4(
+  opts: {
+    interfaces?: NodeJS.Dict<os.NetworkInterfaceInfo[]>;
+    preferredInterface?: string;
+  } = {},
+): string | undefined {
   const interfaces = opts.interfaces ?? os.networkInterfaces();
   const preferredInterface = opts.preferredInterface?.trim();
   const candidates: Array<{ name: string; address: string }> = [];
@@ -104,16 +125,26 @@ export function detectLanIPv4(opts: {
     if (preferredInterface && name !== preferredInterface) continue;
     if (!preferredInterface && isIgnoredInterface(name)) continue;
     for (const entry of entries) {
-      if (!entry || entry.internal || !isIPv4Family(entry.family) || !isPrivateIPv4(entry.address)) continue;
+      if (
+        !entry ||
+        entry.internal ||
+        !isIPv4Family(entry.family) ||
+        !isPrivateIPv4(entry.address)
+      )
+        continue;
       candidates.push({ name, address: entry.address });
     }
   }
 
-  candidates.sort((a, b) => preferredInterfaceRank(a.name) - preferredInterfaceRank(b.name));
+  candidates.sort(
+    (a, b) => preferredInterfaceRank(a.name) - preferredInterfaceRank(b.name),
+  );
   return candidates[0]?.address;
 }
 
-export function shouldAutoDetectUdpAdvertisedHost(env: RuntimeEnv = process.env): boolean {
+export function shouldAutoDetectUdpAdvertisedHost(
+  env: RuntimeEnv = process.env,
+): boolean {
   if (env.AUDIO_UDP_ADVERTISED_HOST?.trim()) return false;
   if (env.AUDIO_UDP_AUTO_DETECT_LAN === "false") return false;
   if (env.AUDIO_UDP_AUTO_DETECT_LAN === "true") return true;
@@ -121,11 +152,13 @@ export function shouldAutoDetectUdpAdvertisedHost(env: RuntimeEnv = process.env)
   return !DEPLOYED_RUNTIME_ENV_KEYS.some((key) => !!env[key]);
 }
 
-export function resolveUdpAdvertisedHost(opts: {
-  explicitHost?: string;
-  env?: RuntimeEnv;
-  interfaces?: NodeJS.Dict<os.NetworkInterfaceInfo[]>;
-} = {}): { host: string; source: "option" | "env" | "auto-lan" | "fallback" } {
+export function resolveUdpAdvertisedHost(
+  opts: {
+    explicitHost?: string;
+    env?: RuntimeEnv;
+    interfaces?: NodeJS.Dict<os.NetworkInterfaceInfo[]>;
+  } = {},
+): { host: string; source: "option" | "env" | "auto-lan" | "fallback" } {
   const env = opts.env ?? process.env;
   const explicitHost = opts.explicitHost?.trim();
   if (explicitHost) return { host: explicitHost, source: "option" };
@@ -136,7 +169,8 @@ export function resolveUdpAdvertisedHost(opts: {
   if (shouldAutoDetectUdpAdvertisedHost(env)) {
     const host = detectLanIPv4({
       interfaces: opts.interfaces,
-      preferredInterface: env.AUDIO_UDP_ADVERTISED_INTERFACE ?? env.AUDIO_UDP_INTERFACE,
+      preferredInterface:
+        env.AUDIO_UDP_ADVERTISED_INTERFACE ?? env.AUDIO_UDP_INTERFACE,
     });
     if (host) return { host, source: "auto-lan" };
   }
@@ -174,19 +208,69 @@ export interface StartRuntimeOptions {
    * `stream.transcript` / `stream.translation`.
    */
   forwardTranscriptStubs?: boolean;
+  /** Enabled HTTP/runtime modules. Defaults to RUNTIME_SERVICES or the legacy full profile. */
+  services?: ReadonlySet<RuntimeServiceName>;
+  /** Exact JSON served at /.well-known/mentra-deployment.json. */
+  deploymentManifest?: string;
+  /** Optional customer-owned HTML served by this Runtime for manifest legal links. */
+  legalDocuments?: {
+    privacy?: string;
+    terms?: string;
+  };
+  /** Optional customer logo exposed from the workspace origin. */
+  deploymentBranding?: {
+    logos?: {
+      light: { body: ArrayBuffer; contentType: "image/png" };
+      dark: { body: ArrayBuffer; contentType: "image/png" };
+    };
+  };
+  /** Optional same-origin userland miniapp ZIPs declared by the deployment manifest. */
+  deploymentMiniappBundles?: Array<{ path: string; body: Blob | ArrayBuffer }>;
 }
 
 export interface RuntimeHandle {
   httpPort: number;
-  udpPort: number;
-  wsUrl: string;
+  /** Bound audio UDP ingress port. Only present when `realtime-audio` is enabled. */
+  udpPort?: number;
+  /** WebSocket session endpoint. Only present when `realtime-audio` is enabled. */
+  wsUrl?: string;
   stop(): Promise<void>;
 }
 
-export async function startRuntime(opts: StartRuntimeOptions = {}): Promise<RuntimeHandle> {
+export async function startRuntime(
+  opts: StartRuntimeOptions = {},
+): Promise<RuntimeHandle> {
   assertRuntimeAuthConfigured();
 
-  const httpPort = opts.httpPort ?? Number.parseInt(process.env.PORT ?? "3001", 10);
+  const services = new Set(opts.services ?? resolveRuntimeServices());
+  const realtimeAudio = services.has("realtime-audio");
+  if (services.has("camera") && !realtimeAudio) {
+    throw new Error("camera currently requires realtime-audio");
+  }
+  if (services.has("meetings")) {
+    const meetingProviders = resolveMeetingProviders();
+    if (meetingProviders.has("acs-teams")) assertAcsTeamsConfigured();
+  }
+  const deploymentManifest =
+    opts.deploymentManifest ?? (await loadDeploymentManifest());
+  if (deploymentManifest) {
+    assertManifestMatchesRuntimeServices(
+      parseDeploymentManifest(deploymentManifest).manifest,
+      services,
+    );
+  }
+  const legalDocuments = opts.legalDocuments ?? (await loadLegalDocuments());
+  const deploymentBranding =
+    opts.deploymentBranding ?? (await loadDeploymentBranding());
+  const deploymentMiniappBundles =
+    opts.deploymentMiniappBundles ??
+    (await loadDeploymentMiniappBundles(deploymentManifest));
+  if (services.has("meetings") && !deploymentManifest) {
+    throw new Error("meetings service requires a deployment manifest");
+  }
+
+  const httpPort =
+    opts.httpPort ?? Number.parseInt(process.env.PORT ?? "3001", 10);
   const udpPort =
     opts.udpPort ?? Number.parseInt(process.env.AUDIO_UDP_PORT ?? "8000", 10);
   const redisUrl =
@@ -197,87 +281,101 @@ export async function startRuntime(opts: StartRuntimeOptions = {}): Promise<Runt
   const udpAdvertisedHost = resolvedUdpAdvertisedHost.host;
   const udpAdvertisedPort =
     opts.udpAdvertisedPort ??
-    Number.parseInt(process.env.AUDIO_UDP_ADVERTISED_PORT ?? String(udpPort), 10);
+    Number.parseInt(
+      process.env.AUDIO_UDP_ADVERTISED_PORT ?? String(udpPort),
+      10,
+    );
 
-  configureAudioSession({ udpAdvertisedHost, udpAdvertisedPort });
+  if (realtimeAudio) {
+    configureAudioSession({ udpAdvertisedHost, udpAdvertisedPort });
 
-  await connectRedis(redisUrl);
-  await startUdpIngress(udpPort);
+    await connectRedis(redisUrl);
+    await startUdpIngress(udpPort);
 
-  // Single-sourced from ws.ts so the refresh loop, worker pool, and
-  // upgrade-time ownership claims can never disagree on pod identity.
-  const podId = getPodId();
+    // Single-sourced from ws.ts so the refresh loop, worker pool, and
+    // upgrade-time ownership claims can never disagree on pod identity.
+    const podId = getPodId();
 
-  const workerCount =
-    opts.workerCount ??
-    Number.parseInt(process.env.AUDIO_WORKERS ?? "2", 10);
-  const forwardTranscriptStubs =
-    opts.forwardTranscriptStubs ??
-    (process.env.AUDIO_FORWARD_TRANSCRIPT_STUBS === "true" ||
-      process.env.AUDIO_DEBUG_ECHO === "true");
-  startWorkerPool({ podId, count: workerCount });
-  // Route worker-emitted transcripts to the user's WS sessions on this pod.
-  // Real transcripts become v2 `stream.transcript` / `stream.translation`
-  // envelopes (see services/audio/result). Routing stubs (TRANSCRIPT_STUB) are
-  // internal/debug signals; only forward them when explicitly requested by
-  // low-level integration tests.
-  onTranscript((msg) => {
-    if (msg.type === "TRANSCRIPT_STUB") {
-      if (forwardTranscriptStubs) {
-        forwardToUserSessions(msg.mentraUserId, msg);
+    const workerCount =
+      opts.workerCount ?? Number.parseInt(process.env.AUDIO_WORKERS ?? "2", 10);
+    const forwardTranscriptStubs =
+      opts.forwardTranscriptStubs ??
+      (process.env.AUDIO_FORWARD_TRANSCRIPT_STUBS === "true" ||
+        process.env.AUDIO_DEBUG_ECHO === "true");
+    startWorkerPool({ podId, count: workerCount });
+    // Route worker-emitted transcripts to the user's WS sessions on this pod.
+    // Real transcripts become v2 `stream.transcript` / `stream.translation`
+    // envelopes (see services/audio/result). Routing stubs (TRANSCRIPT_STUB) are
+    // internal/debug signals; only forward them when explicitly requested by
+    // low-level integration tests.
+    onTranscript((msg) => {
+      if (msg.type === "TRANSCRIPT_STUB") {
+        if (forwardTranscriptStubs) {
+          forwardToUserSessions(msg.mentraUserId, msg);
+        }
+        return;
       }
-      return;
-    }
-    if (msg.type === "UDP_LIVENESS_ACK") {
-      logger.debug(
-        {
-          mentraUserId: msg.mentraUserId,
-          sessionTag: msg.sessionTag,
-          probeId: msg.probeId,
-        },
-        "udp liveness ack forwarding to owner websocket sessions",
-      );
-      forwardToUserSessions(msg.mentraUserId, {
-        v: PROTOCOL_MAJOR,
-        type: "audio.udp_liveness_ack",
-        timestamp: Date.now(),
-        payload: {
-          sessionId: msg.audioSessionId,
-          sessionTag: msg.sessionTag,
-          probeId: msg.probeId,
-          receivedAt: msg.receivedAt,
-        },
-      });
-      return;
-    }
-    forwardToUserSessions(msg.mentraUserId, transcriptToStreamMessage(msg));
-  });
+      if (msg.type === "UDP_LIVENESS_ACK") {
+        logger.debug(
+          {
+            mentraUserId: msg.mentraUserId,
+            sessionTag: msg.sessionTag,
+            probeId: msg.probeId,
+          },
+          "udp liveness ack forwarding to owner websocket sessions",
+        );
+        forwardToUserSessions(msg.mentraUserId, {
+          v: PROTOCOL_MAJOR,
+          type: "audio.udp_liveness_ack",
+          timestamp: Date.now(),
+          payload: {
+            sessionId: msg.audioSessionId,
+            sessionTag: msg.sessionTag,
+            probeId: msg.probeId,
+            receivedAt: msg.receivedAt,
+          },
+        });
+        return;
+      }
+      forwardToUserSessions(msg.mentraUserId, transcriptToStreamMessage(msg));
+    });
 
-  // Refresh-owned-claims loop: keeps each owned user's Redis claim alive
-  // while this pod holds their WS. Idempotent in case startRuntime is called
-  // twice in a test.
-  startOwnershipRefreshLoop({
-    podId,
-    getOwnedUserIds,
-    onLostOwnership: dropUserSessionsForLostOwnership,
-  });
+    // Refresh-owned-claims loop: keeps each owned user's Redis claim alive
+    // while this pod holds their WS. Idempotent in case startRuntime is called
+    // twice in a test.
+    startOwnershipRefreshLoop({
+      podId,
+      getOwnedUserIds,
+      onLostOwnership: dropUserSessionsForLostOwnership,
+    });
+  }
 
   // Reclaim Cloudflare Stream inputs and recordings whose stream ended without
   // a stop() -- a disconnect, a closed app, a pod restart. Left alone these
   // accumulate until the account hits its storage quota, at which point
   // Cloudflare accepts new live inputs but rejects the broadcast at publish.
-  startStreamSweepLoop();
+  // cameraApi's durable registry is mounted with camera.
+  if (realtimeAudio && services.has("camera")) startStreamSweepLoop();
 
   // The REST surface (Hono): subscriptions today, health, camera later. The WS
   // upgrade is tried first; everything else falls through to this app.
-  const apiApp = createApiApp({ readinessChecks: [redisReadinessCheck] });
+  const api = createApiApp({
+    readinessChecks: realtimeAudio ? [redisReadinessCheck] : [],
+    services,
+    deploymentManifest,
+    legalDocuments,
+    deploymentBranding,
+    deploymentMiniappBundles,
+  });
 
   const server = Bun.serve({
     port: httpPort,
     async fetch(req, srv) {
-      const wsResult = await tryWsUpgrade(req, srv);
-      if (wsResult !== HTTP_FALLTHROUGH) return wsResult;
-      return apiApp.fetch(req);
+      if (realtimeAudio) {
+        const wsResult = await tryWsUpgrade(req, srv);
+        if (wsResult !== HTTP_FALLTHROUGH) return wsResult;
+      }
+      return api.fetch(req);
     },
     websocket: wsHandlers,
   });
@@ -286,27 +384,114 @@ export async function startRuntime(opts: StartRuntimeOptions = {}): Promise<Runt
   logger.info(
     {
       httpPort: boundHttpPort,
-      udpPort,
-      udpAdvertisedHost,
-      udpAdvertisedPort,
-      udpAdvertisedHostSource: resolvedUdpAdvertisedHost.source,
+      ...(realtimeAudio
+        ? {
+            udpPort,
+            udpAdvertisedHost,
+            udpAdvertisedPort,
+            udpAdvertisedHostSource: resolvedUdpAdvertisedHost.source,
+          }
+        : {}),
+      services: serviceList(services),
     },
-    "cloud-v2 runtime listening (audio UDP + WS ready; workers + streams pending)",
+    "cloud-v2 runtime listening",
   );
 
   return {
     httpPort: boundHttpPort,
-    udpPort,
-    wsUrl: `ws://localhost:${boundHttpPort}/ws/session`,
+    // Reduced profiles skip the WS upgrade and never bind UDP, so they must not
+    // advertise those endpoints.
+    ...(realtimeAudio
+      ? { udpPort, wsUrl: `ws://localhost:${boundHttpPort}/ws/session` }
+      : {}),
     async stop() {
-      stopOwnershipRefreshLoop();
-      stopStreamSweepLoop();
-      await stopWorkerPool();
+      if (realtimeAudio) {
+        stopOwnershipRefreshLoop();
+        stopStreamSweepLoop();
+        await stopWorkerPool();
+      }
       server.stop();
-      await stopUdpIngress();
-      await disconnectRedis();
+      if (realtimeAudio) {
+        await stopUdpIngress();
+        await disconnectRedis();
+      }
     },
   };
+}
+
+async function loadDeploymentManifest(): Promise<string | undefined> {
+  const inline = process.env.DEPLOYMENT_MANIFEST_JSON?.trim();
+  const path = process.env.DEPLOYMENT_MANIFEST_PATH?.trim();
+  if (inline && path)
+    throw new Error(
+      "set only one of DEPLOYMENT_MANIFEST_JSON or DEPLOYMENT_MANIFEST_PATH",
+    );
+  if (inline) return parseDeploymentManifest(inline).body;
+  if (!path) return undefined;
+  const file = Bun.file(path);
+  if (!(await file.exists()))
+    throw new Error(`DEPLOYMENT_MANIFEST_PATH does not exist: ${path}`);
+  return parseDeploymentManifest(await file.text()).body;
+}
+
+async function loadLegalDocuments(): Promise<{
+  privacy?: string;
+  terms?: string;
+}> {
+  const [privacy, terms] = await Promise.all([
+    loadOptionalDocument("DEPLOYMENT_PRIVACY_PATH"),
+    loadOptionalDocument("DEPLOYMENT_TERMS_PATH"),
+  ]);
+  return { privacy, terms };
+}
+
+async function loadDeploymentBranding(): Promise<{
+  logos?: {
+    light: { body: ArrayBuffer; contentType: "image/png" };
+    dark: { body: ArrayBuffer; contentType: "image/png" };
+  };
+}> {
+  const paths = [
+    process.env.DEPLOYMENT_LOGO_LIGHT_PATH?.trim(),
+    process.env.DEPLOYMENT_LOGO_DARK_PATH?.trim(),
+  ];
+  if (paths.every((path) => !path)) return {};
+  if (paths.some((path) => !path))
+    throw new Error(
+      "DEPLOYMENT_LOGO_LIGHT_PATH and DEPLOYMENT_LOGO_DARK_PATH must be configured together",
+    );
+
+  const [light, dark] = await Promise.all(
+    paths.map(async (path, index) => {
+      const envName =
+        index === 0
+          ? "DEPLOYMENT_LOGO_LIGHT_PATH"
+          : "DEPLOYMENT_LOGO_DARK_PATH";
+      const file = Bun.file(path!);
+      if (!(await file.exists()))
+        throw new Error(`${envName} does not exist: ${path}`);
+      if (file.size > 512 * 1024) throw new Error(`${envName} exceeds 512 KiB`);
+      if (file.type !== "image/png")
+        throw new Error(`${envName} must be a PNG image`);
+      return {
+        body: await file.arrayBuffer(),
+        contentType: "image/png" as const,
+      };
+    }),
+  );
+  return { logos: { light, dark } };
+}
+
+async function loadOptionalDocument(
+  envName: string,
+): Promise<string | undefined> {
+  const path = process.env[envName]?.trim();
+  if (!path) return undefined;
+  const file = Bun.file(path);
+  if (!(await file.exists()))
+    throw new Error(`${envName} does not exist: ${path}`);
+  if (file.size > 256 * 1024) throw new Error(`${envName} exceeds 256 KiB`);
+  return file.text();
 }
 
 /** @deprecated Use StartRuntimeOptions. */

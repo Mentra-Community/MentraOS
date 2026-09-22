@@ -164,7 +164,7 @@ Add typed public models before exposing the facade:
 - `MentraBluetoothStatus`: current snapshot of searching, mic, current mic, search results, Wi-Fi scan results, permission availability, and audio availability.
 - `MentraDisplayTextRequest`, `MentraDisplayEventRequest`, `MentraDashboardPositionRequest`, `MentraDashboardMenuItem`, `MentraPhotoRequest`, `MentraStreamRequest`, `MentraVideoRecordingRequest`, `MentraMicConfig`, `MentraBluetoothError`.
 - Settings models/enums for values currently routed through `DeviceStore.apply()`: `MentraPhotoCaptureDefaults`, `MentraPhotoSize`, `MentraButtonVideoRecordingSettings`, `MentraCameraFov`, and `MentraMicPreference`.
-- Typed value enums should reflect device-specific capability boundaries rather than raw string payloads: `MentraPhotoSize` uses the current `LOW` / `MEDIUM` / `HIGH` / `MAX` tiers, `MentraPhotoCompression` is `NONE` / `MEDIUM` / `HEAVY`; `MentraRgbLedAction` and `MentraRgbLedColor` represent the Mentra Live/K900 RGB ring surface; stream request fields are typed while the actual streaming protocol is selected from the URL prefix.
+- Typed value enums should reflect device-specific capability boundaries rather than raw string payloads: `MentraPhotoSize` uses the current `LOW` / `MEDIUM` / `HIGH` / `MAX` tiers, `MentraPhotoCompression` is `NONE` / `LOW` / `MEDIUM` / `HIGH`; `MentraRgbLedAction` and `MentraRgbLedColor` represent the Mentra Live/K900 RGB ring surface; stream request fields are typed while the actual streaming protocol is selected from the URL prefix.
 
 For Java ergonomics, models with many optional fields should have builders instead of huge constructors.
 
