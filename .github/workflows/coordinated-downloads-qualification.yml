@@ -36,7 +36,8 @@ jobs:
           source=$(git rev-parse HEAD)
           node .github/scripts/collect-ota-release-inputs.mjs
           node .github/scripts/create-release-plan.mjs --branch "$QUALIFICATION_BRANCH" --sequence "$GITHUB_RUN_NUMBER" \
-            --native-build-sequence "$GITHUB_RUN_NUMBER" --source-commit "$source" --ota-inputs ota-release-inputs.json
+            --native-build-sequence "$GITHUB_RUN_NUMBER" --source-commit "$source" --ota-inputs ota-release-inputs.json \
+            --public-beta-testflight true
           {
             echo "branch=$QUALIFICATION_BRANCH"
             echo "source=$source"
