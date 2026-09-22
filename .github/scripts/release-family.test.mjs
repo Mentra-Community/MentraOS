@@ -12,6 +12,7 @@ import {
   deriveReleaseIdentity,
   finalizeReleaseManifest,
   familyBuildNumber,
+  expectedPlayTracks,
   loadReleaseFamily,
   releaseRecordSha256,
   requirePublicHttpsUrl,
@@ -529,5 +530,100 @@ test("a manifest carries the Android build's version code when a testing track f
   assert.throws(
     () => finalizeReleaseManifest({plan, results, completedAt: "2026-09-21T10:00:00.000Z"}),
     /coordinate must be com\.mentra\.mentra:310000213:beta/,
+  )
+})
+
+test("plans freeze their Play destination and archived Internal App Sharing betas still validate", () => {
+  const family = loadReleaseFamily({rootDir: repositoryRoot})
+  const plan = createReleasePlan({
+    family,
+    channel: "beta",
+    sequence: 58,
+    sourceCommit: "a".repeat(40),
+    nativeBuildNumber: familyBuildNumber(family.familyBaseVersion, 58),
+  })
+  assert.equal(plan.native.playTrack, "beta")
+  assert.deepEqual(expectedPlayTracks(plan), ["beta"])
+  const dev = createReleasePlan({
+    family,
+    channel: "dev",
+    sequence: 1,
+    sourceCommit: "a".repeat(40),
+    nativeBuildNumber: familyBuildNumber(family.familyBaseVersion, 1),
+    uploadGooglePlay: false,
+  })
+  assert.equal(dev.native.playTrack, "internal")
+  assert.throws(
+    () =>
+      createReleasePlan({
+        family,
+        channel: "beta",
+        sequence: 1,
+        sourceCommit: "a".repeat(40),
+        nativeBuildNumber: familyBuildNumber(family.familyBaseVersion, 1),
+        playTrack: "Open Testing",
+      }),
+    /Invalid Google Play track/,
+  )
+  const legacy = {
+    ...plan,
+    native: {marketingVersion: plan.native.marketingVersion, buildNumber: plan.native.buildNumber},
+  }
+  assert.deepEqual(expectedPlayTracks(legacy), ["beta", "internal-app-sharing"])
+  const publication = (coordinate) => ({
+    status: "published",
+    coordinate,
+    url: `https://artifacts.example.com/${encodeURIComponent(coordinate)}`,
+    sha256: "b".repeat(64),
+    provenanceUrl: "https://github.com/Mentra-Community/MentraOS/attestations/123",
+  })
+  const resultsFor = (basePlan, playCoordinate) => {
+    const results = {
+      releaseSetId: basePlan.releaseSetId,
+      publications: {},
+      otaManifest: publication(basePlan.artifactNames.otaManifest),
+      artifacts: ["asgSelection", "otaBundle", "androidApp", "androidStoreApp", "iosApp", "enginePackage"].map((key) =>
+        publication(basePlan.artifactNames[key]),
+      ),
+      cloud: cloudRecordForPlan(basePlan),
+      runtimeImage: runtimeImageRecordForPlan(basePlan),
+    }
+    for (const [name, member] of Object.entries(basePlan.members)) {
+      results.publications[name] = {}
+      for (const target of member.publishTargets) {
+        results.publications[name][target] = publication(
+          target === "google-play"
+            ? playCoordinate
+            : target === "app-store-connect"
+              ? `com.mentra.mentra:${basePlan.native.marketingVersion}:${basePlan.native.buildNumber}:Mentra Staging`
+              : target === "npm"
+                ? `${name}@${basePlan.releaseIdentity}`
+                : target === "maven-central"
+                  ? `com.mentraglass:bluetooth-sdk:${basePlan.releaseIdentity}`
+                  : `Mentra-Community/mentra-bluetooth-sdk-ios@${basePlan.releaseIdentity}`,
+        )
+      }
+    }
+    return results
+  }
+  const archived = resultsFor(legacy, `com.mentra.mentra:${legacy.native.buildNumber}:internal-app-sharing`)
+  const manifest = finalizeReleaseManifest({plan: legacy, results: archived, completedAt: "2026-09-14T10:00:00.000Z"})
+  assert.equal(
+    manifest.publications.mentraos["google-play"].coordinate,
+    `com.mentra.mentra:${legacy.native.buildNumber}:internal-app-sharing`,
+  )
+  assert.deepEqual(
+    finalizeReleaseManifest({plan: legacy, results: manifest, completedAt: manifest.completedAt}),
+    manifest,
+  )
+  // A frozen plan accepts only its own destination.
+  assert.throws(
+    () =>
+      finalizeReleaseManifest({
+        plan,
+        results: resultsFor(plan, `com.mentra.mentra:${plan.native.buildNumber}:internal-app-sharing`),
+        completedAt: "2026-09-21T10:00:00.000Z",
+      }),
+    /coordinate must be com\.mentra\.mentra:\d+:beta/,
   )
 })

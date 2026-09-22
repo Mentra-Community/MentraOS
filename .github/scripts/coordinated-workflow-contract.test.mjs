@@ -407,20 +407,28 @@ test("mobile destinations use real TestFlight groups without changing the releas
   assert.match(coordinator, /play_track=beta/)
   // The Android build resolves its own version code before building and the
   // record carries it; verification and the track check use the same value.
-  assert.match(mobile, /- name: Resolve the Android version code\n        id: android-code/)
+  assert.match(mobile, /- name: Resolve and reserve the Android version code\n        id: android-code/)
   assert.match(mobile, /resolve-android-version-code\.mjs/)
+  assert.match(
+    mobile,
+    /--assets release-container-assets\.json --owner "\$OWNER" --marker-dir android-version-code-marker/,
+  )
+  assert.match(coordinator, /--play-track "\$\{\{ steps\.channel\.outputs\.play_track \}\}"/)
   assert.match(mobile, /EXPECTED_BUILD: \$\{\{ steps\.android-code\.outputs\.code \}\}/)
   assert.match(mobile, /--android-build-number "\$\{\{ steps\.android-code\.outputs\.code \}\}"/)
   assert.ok(
-    mobile.indexOf("- name: Resolve the Android version code") <
+    mobile.indexOf("- name: Resolve and reserve the Android version code") <
       mobile.indexOf("- name: Build signed coordinated APK and AAB"),
   )
   assert.ok(
     mobile.indexOf("- name: Install Google Play upload tooling") <
-      mobile.indexOf("- name: Resolve the Android version code"),
+      mobile.indexOf("- name: Resolve and reserve the Android version code"),
   )
   assert.match(mobile, /url="https:\/\/play\.google\.com\/apps\/testing\/com\.mentra\.mentra"/)
-  assert.match(readFileSync(new URL("./release-family.mjs", import.meta.url), "utf8"), /beta: \{play: "beta"/)
+  assert.match(
+    readFileSync(new URL("./release-family.mjs", import.meta.url), "utf8"),
+    /DEFAULT_PLAY_TRACKS = Object\.freeze\(\{dev: "internal", beta: "beta", production: "production"\}\)/,
+  )
   assert.match(mobile, /COMPATIBILITY-LAB-NOT-FOR-PRODUCTION/)
   assert.doesNotMatch(mobile, /MENTRA_COORDINATED_RELEASE_CHANNEL=\$\{\{ inputs\.testflight_group \}\}/)
   assert.match(example, /EXAMPLE_APP_ID: "6792839366"/)

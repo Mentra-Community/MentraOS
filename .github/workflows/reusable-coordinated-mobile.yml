@@ -453,16 +453,22 @@ jobs:
             > "mobile-release/android/${{ needs.prepare.outputs.aab_name }}"
 
       # The Android build carries the family build number unless its testing
-      # track already serves a higher code; then it takes that floor plus one
-      # (resolve-android-version-code.mjs). Production keeps the family number.
-      # A pair that already exists for this release keeps the code it was
-      # built with.
-      - name: Resolve the Android version code
+      # track already serves a higher code; then it takes the next code above
+      # that floor and every code reserved in the release container
+      # (resolve-android-version-code.mjs), and reserves it there before
+      # building so a run that stops after building keeps its code and a
+      # retry finds it. Production keeps the family number. A pair that already
+      # exists for this release keeps the code it was built with.
+      - name: Resolve and reserve the Android version code
         id: android-code
         env:
+          GH_TOKEN: ${{ github.token }}
           GOOGLE_PLAY_TRACK: ${{ inputs.play_track }}
           GOOGLE_PLAY_VERSION_CODES_OUTPUT: ${{ runner.temp }}/mentra-play-track-codes.json
           LOOK_UP_TRACK: ${{ inputs.dry_run != true && inputs.compatibility_lab != true && needs.prepare.outputs.upload_google_play == 'true' && inputs.play_track != 'internal-app-sharing' && inputs.play_track != 'production' }}
+          RESERVE: ${{ inputs.dry_run != true && needs.prepare.outputs.android_assets_exist != 'true' }}
+          RELEASE_ID: ${{ needs.prepare.outputs.release_id }}
+          OWNER: coordinated-run-${{ github.run_id }}
         run: |
           set -euo pipefail
           if [[ "${{ inputs.dry_run != true && needs.prepare.outputs.android_assets_exist == 'true' }}" == true ]]; then
@@ -476,8 +482,18 @@ jobs:
               (cd mobile-play && bundle exec fastlane track_version_codes)
               args+=(--codes "$GOOGLE_PLAY_VERSION_CODES_OUTPUT")
             fi
+            if [[ "$RESERVE" == true ]]; then
+              node "$GITHUB_WORKSPACE/release-tooling/.github/scripts/release-assets.mjs" list --repository "${GITHUB_REPOSITORY}" --release-id "$RELEASE_ID" > release-container-assets.json
+              args+=(--assets release-container-assets.json --owner "$OWNER" --marker-dir android-version-code-marker)
+            fi
             node .github/scripts/resolve-android-version-code.mjs "${args[@]}"
             code=$(jq -er .versionCode android-version-code.json)
+            if [[ "$RESERVE" == true && "$(jq -r .reused android-version-code.json)" != true ]]; then
+              marker=$(ls android-version-code-marker)
+              node .github/scripts/publish-immutable-release-asset.mjs \
+                --release-id "$RELEASE_ID" --repository "${GITHUB_REPOSITORY}" \
+                --file "android-version-code-marker/$marker" --name "$marker"
+            fi
           fi
           echo "code=$code" >> "$GITHUB_OUTPUT"
           echo "MENTRAOS_PINNED_BUILD_NUMBER=$code" >> "$GITHUB_ENV"

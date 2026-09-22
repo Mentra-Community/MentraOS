@@ -106,11 +106,17 @@ The pipeline therefore uses Play like this:
 
 - **Betas** publish to the open-testing track (`beta`), the track behind the
   public beta link. While that track serves a code above the family window,
-  the Android build takes **the track's highest code plus one** instead of the
-  family number (`resolve-android-version-code.mjs`, run in the Android job
-  before the build); iOS and the ASG client keep the family number. The record
-  and the manifest carry the Android code (`native.androidBuildNumber`), and
-  the coordinate check accepts it. Once a family passes the floor (3.10.0 and
+  the Android build takes **the next code above the track's floor and every
+  code already reserved** instead of the family number
+  (`resolve-android-version-code.mjs`, run in the Android job before the
+  build); it reserves that code in the release container as
+  `mentra-android-version-code-<code>-<owner>.json` before building, so a run
+  that stops after building keeps its code and its retry finds it. iOS and the
+  ASG client keep the family number. The plan freezes the Play destination
+  (`native.playTrack`), the record and the manifest carry the Android code
+  (`native.androidBuildNumber`), and the coordinate check accepts both; plans
+  from before the freeze still validate their archived Internal App Sharing
+  records. Once a family passes the floor (3.10.0 and
   later, after its sequences climb past the last floor code), the family number
   takes over on its own. Testers on the open-testing track do not receive a
   production release whose code is lower; they leave the programme to move.
