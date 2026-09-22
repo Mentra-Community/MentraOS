@@ -22,6 +22,9 @@ def validate_app(app, plan, ota_url):
             or 'iPhoneOS' not in info.get('CFBundleSupportedPlatforms', [])
             or Path(info.get('CFBundleExecutable', '')).name != info.get('CFBundleExecutable')):
         raise ValueError('Download does not match the coordinated iOS app identity')
+    config = json.loads((app / 'EXConstants.bundle/app.config').read_text())
+    if 'mentraPrBuild' in (config.get('extra') or {}):
+        raise ValueError('Coordinated app must not contain a PR runtime configuration override')
     bundle = (app / 'main.jsbundle').read_bytes()
     for value in (plan['releaseIdentity'], plan['sourceCommit'], ota_url):
         if not value or value.encode() not in bundle:

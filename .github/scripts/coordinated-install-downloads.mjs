@@ -98,21 +98,27 @@ export function prepareDownloads(directory, plan, repository, otaUrl) {
   return receipt
 }
 
-export async function restoreDownloads(directory, plan, repository, otaUrl) {
-  const release = resolveRelease(repository, {tag: plan.artifactContainerTag})
-  const assets = await listReleaseAssets(repository, release)
+export async function restoreDownloads(
+  directory,
+  plan,
+  repository,
+  otaUrl,
+  {resolve = resolveRelease, list = listReleaseAssets, download = downloadAsset} = {},
+) {
+  const release = resolve(repository, {tag: plan.artifactContainerTag})
+  const assets = await list(repository, release)
   const names = downloadNames(plan)
   const matches = assets.filter((asset) => asset.name === names.receipt)
   if (matches.length > 1) throw new Error("Duplicate Apple download receipts")
   if (!matches.length) return false
   mkdirSync(directory, {recursive: true})
   const receiptFile = path.join(directory, names.receipt)
-  await downloadAsset(repository, matches[0], receiptFile)
+  await download(repository, matches[0], receiptFile)
   const receipt = validateDownloads(readJson(receiptFile), plan, otaUrl)
   for (const asset of Object.values(receipt.artifacts)) {
     const found = assets.filter((entry) => entry.name === asset.name)
     if (found.length !== 1) throw new Error(`Published receipt has missing or duplicate ${asset.name}`)
-    await downloadAsset(repository, found[0], path.join(directory, asset.name))
+    await download(repository, found[0], path.join(directory, asset.name))
   }
   verifyFiles(directory, receipt)
   return true

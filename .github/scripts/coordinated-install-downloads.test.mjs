@@ -141,3 +141,29 @@ test("Slack firmware targets must belong to the current release", () => {
   assert.match(otaTargetText(manifest, manifest.releaseVersion), /302010057/)
   assert.throws(() => otaTargetText(manifest, "3.2.1-dev.58"), /do not match/)
 })
+
+test("restore accepts only a complete matching published receipt and its original bytes", async (t) => {
+  const {plan, directory, names} = fixture(t)
+  prepareDownloads(directory, plan, repository, ota)
+  const bytes = new Map(Object.values(names).map((name) => [name, readFileSync(path.join(directory, name))]))
+  const assets = [...bytes.keys()].map((name) => ({name, id: name}))
+  const restored = mkdtempSync(path.join(tmpdir(), "coordinated-restored-"))
+  t.after(() => rmSync(restored, {recursive: true, force: true}))
+  const deps = {
+    resolve: () => ({id: 123}),
+    list: async () => assets,
+    download: async (repo, asset, file) => writeFileSync(file, bytes.get(asset.name)),
+  }
+  assert.equal(await restoreDownloads(restored, plan, repository, ota, deps), true)
+  assert.deepEqual(readFileSync(path.join(restored, names.mac)), bytes.get(names.mac))
+  assert.equal(await restoreDownloads(restored, plan, repository, ota, {...deps, list: async () => []}), false)
+  await assert.rejects(
+    restoreDownloads(restored, plan, repository, ota, {
+      ...deps,
+      list: async () => assets.filter((asset) => asset.name !== names.mac),
+    }),
+    /missing or duplicate/,
+  )
+  bytes.set(names.iphone, Buffer.from("different signed bytes"))
+  await assert.rejects(restoreDownloads(restored, plan, repository, ota, deps), /bytes disagree/)
+})
