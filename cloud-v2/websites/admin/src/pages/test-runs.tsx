@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { api } from "../lib/api";
-import { testRunAssetPath, type TestRunLink } from "../lib/test-run-links";
+import { readTestRunLink, testRunAssetPath, type TestRunLink } from "../lib/test-run-links";
 import {
   chapterSeekTime,
   EMPTY_FILTERS,
@@ -342,6 +342,10 @@ export function TestRunView({
     `${chapter.id} ${chapter.instruction}`.toLowerCase().includes(search.toLowerCase()),
   );
   const producer = safeProducerUrl(run.provenance.producerUrl);
+  const originalRunId =
+    typeof run.provenance.originalRunId === "string" && run.provenance.originalRunId !== run.runId
+      ? readTestRunLink(new URLSearchParams({ testRun: run.provenance.originalRunId }).toString())?.runID
+      : null;
   return (
     <>
       <section className={`${PANEL} p-5`}>
@@ -366,6 +370,16 @@ export function TestRunView({
             </a>
           ) : null}
         </div>
+        {originalRunId ? (
+          <aside aria-label="Recovery result" className="mt-4 rounded-xl bg-[#f5f7f4] p-3 text-sm text-[#4f5d54]">
+            <span className="font-semibold">Recovery result.</span> The original test outcome is preserved.{" "}
+            <a
+              href={`/?testRun=${encodeURIComponent(originalRunId)}`}
+              className="font-semibold text-[#087d50] underline">
+              View original run
+            </a>
+          </aside>
+        ) : null}
         <div className="mt-5 grid grid-cols-2 gap-3 md:grid-cols-4">
           {Object.entries(run.outcomes).map(([label, value]) => (
             <div key={label} className="rounded-xl bg-[#f5f7f4] p-3">

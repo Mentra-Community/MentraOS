@@ -36,7 +36,8 @@ hardware readiness is rechecked under the lease during `consume`.
 through `inspectRoutineRequest`, then calls `consumeRoutineRequest` with this
 local registration. The existing durable claim prevents resending a request after
 a crash. A duplicate or interrupted request is not a retry command. Successful
-terminal intake exports the actual finalized lifecycle and recording into
+terminal intake pins the original immutable lifecycle completion in its worker
+receipt and exports that completion and recording into
 `<stateDirectory>/runs/<requestId>/admin-export`; publication remains a separate
 explicit use of `publish-test-run.ts`.
 
@@ -51,6 +52,32 @@ releases the reservation only after settled state and the terminal journal,
 result and fixture record are persisted. Failed recording cleanup also retains
 the reservation. A settled test failure can release the app while its separate
 fixture record still requires return verification.
+
+## Terminal results and recovery exports
+
+Every completed lifecycle writes an immutable
+`<runDirectory>/terminals/<journal-sequence>.json` snapshot containing its result,
+phase state, exact journal prefix hash and previous snapshot reference. The
+returned result includes `terminal: {path, sha256}`, with a path relative to that
+run directory. Recovery appends a new terminal generation; it does not rewrite
+the original snapshot or worker receipt. Working `state.json` and `result.json`
+can advance with recovery without changing the original exported outcome.
+
+`exportCiRun({claim, trust, outputDirectory})` selects the original worker
+receipt's snapshot even after recovery. To publish the recovery completion as a
+separate record, pass `terminal: {path: absoluteSnapshotPath, sha256}` using the
+exact reference returned by `recoverLifecycle`, plus a fresh output directory.
+The exporter validates the linked snapshot and original claim. It requires an
+original `routine-finished` worker receipt with a terminal pin; interrupted
+intake without that receipt remains unsupported.
+
+Each recovery generation receives a distinct deterministic canonical `runId`
+under the same `requestId`. Its provenance records `originalRunId`,
+`resultGeneration` and `previousResultRunId`, and the admin viewer links back to
+the original run. A failed customer test stays failed when recovery succeeds;
+the later teardown and fixture results are recorded separately. Exporting or
+publishing a snapshot does not change hardware readiness or retry an operation.
+See [CI-EXPORT.md](./CI-EXPORT.md) for the exact export call and publication rules.
 
 ## Private configuration
 

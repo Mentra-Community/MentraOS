@@ -185,6 +185,44 @@ describe("recording and chapter integrity", () => {
     expect(returned).toContain("26.9.21.3");
     expect(returned).toContain(">passed<");
   });
+  test("links a recovery result to the original run while retaining the failed test outcome", () => {
+    const markup = renderToStaticMarkup(
+      <TestRunView
+        run={{
+          ...run,
+          provenance: {
+            ...run.provenance,
+            originalRunId: "original_run-01",
+            resultGeneration: "2",
+            previousResultRunId: "original_run-01",
+          },
+        }}
+        onStep={() => {}}
+      />,
+    );
+    expect(markup).toContain('aria-label="Recovery result"');
+    expect(markup).toContain('href="/?testRun=original_run-01"');
+    expect(markup).toContain("The original test outcome is preserved.");
+    expect(markup).toMatch(/>test<\/p>[\s\S]*?>failed<\/span>/);
+    expect(markup).toMatch(/>fixture<\/p>[\s\S]*?>ready<\/span>/);
+  });
+  test("only valid distinct original run IDs produce a recovery link", () => {
+    for (const originalRunId of [
+      undefined,
+      run.runId,
+      "../other",
+      "https://elsewhere.invalid",
+      "one&testRun=two",
+      "\ud800",
+      "a".repeat(121),
+    ]) {
+      const markup = renderToStaticMarkup(
+        <TestRunView run={{ ...run, provenance: { ...run.provenance, originalRunId } }} onStep={() => {}} />,
+      );
+      expect(markup).not.toContain('aria-label="Recovery result"');
+      expect(markup).not.toContain("View original run");
+    }
+  });
   test("incomplete media gets explicit text and is never requested as a playable recording", () => {
     const markup = renderToStaticMarkup(
       <TestRunView

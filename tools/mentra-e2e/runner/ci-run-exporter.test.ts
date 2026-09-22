@@ -2,7 +2,7 @@ import {afterEach, describe, expect, test} from "bun:test"
 import {createHash} from "node:crypto"
 import {mkdtemp, mkdir, readFile, readdir, realpath, rm, symlink, writeFile} from "node:fs/promises"
 import {tmpdir} from "node:os"
-import {dirname, join, relative, resolve} from "node:path"
+import {basename, dirname, join, relative, resolve} from "node:path"
 import {testRunSchema} from "../../../cloud-v2/packages/core/src/types/test-run.types"
 import {
   consumeRoutineRequest,
@@ -16,7 +16,14 @@ import {
 } from "./ci-request"
 import {ciRecordingBinding, exportCiRun, finalizeCiRecording} from "./ci-run-exporter"
 import {assertFirmwareState, type FirmwareObservation, type FirmwareProfile} from "./firmware-profile"
-import type {AssertionStep, Json, LifecycleContext, LifecycleStep} from "./lifecycle"
+import {
+  recoverLifecycle,
+  type AssertionStep,
+  type Json,
+  type LifecycleContext,
+  type LifecycleOptions,
+  type LifecycleStep,
+} from "./lifecycle"
 import {day1ReturnSources} from "./day1-local-runtime"
 import {collectReturnObservation} from "./return-collector"
 import {simulatedReturnCollection} from "./return-collector.test-support"
@@ -161,7 +168,7 @@ async function actualRun(
     testPassed?: boolean
     teardownPassed?: boolean
     manual?: boolean
-    mutation?: "satisfied" | "unknown"
+    mutation?: "satisfied" | "active" | "unknown"
     firmware?: {final?: Json[]; returned?: Json[]; teardown?: Json[]; mutation?: Json[]}
     collectFirmware?: (
       phase: "final" | "teardown" | "return",
@@ -225,6 +232,9 @@ async function actualRun(
   const trust = {path: trustPath, sha256: sha256(json(f.trust))}
   let reportDirectory = "",
     claim = {path: "", sha256: ""}
+  let lifecycleOptions: LifecycleOptions | undefined,
+    mutationStatus = options.mutation,
+    dispatches = 0
   const observation = (passed: boolean, actual: Json = passed) => ({
     passed,
     expected: true,
@@ -336,6 +346,7 @@ async function actualRun(
             repeat: "never",
             execute: async () => {
               dispatched = true
+              dispatches++
               return {offline: true}
             },
             reconcile: async () => ({
@@ -347,7 +358,7 @@ async function actualRun(
               observedAt: new Date().toISOString(),
               source: "offline mutation fixture",
               evidence: ["offline receipt"],
-              status: dispatched ? options.mutation! : "settled",
+              status: dispatched ? mutationStatus! : "settled",
             }),
           }
         : assertion("product", options.testPassed !== false)
@@ -379,7 +390,7 @@ async function actualRun(
             const actual = JSON.parse(JSON.stringify(result)) as Json
             return observation(result.returnObservationPassed, phase === "return" ? actual : {target: actual})
           }
-      return {
+      const prepared = {
         inputs: {offlineTest: true},
         acquireLease: async () => async () => {},
         routine: {
@@ -394,6 +405,18 @@ async function actualRun(
           evidence: [evidence],
         },
       }
+      lifecycleOptions = {
+        ...prepared,
+        runDirectory: context.runDirectory,
+        fixtureDirectory,
+        selection: {
+          runID: context.runID,
+          fixtureID: context.registration.fixtureID,
+          returnProfileDigest: context.registration.returnProfileDigest,
+          inputs: {request: context.request as unknown as Json, adapter: prepared.inputs},
+        },
+      }
+      return prepared
     },
   }
   const result = await consumeRoutineRequest(f.request, f.evidence, f.trust, stateDirectory, local)
@@ -407,6 +430,12 @@ async function actualRun(
     reportDirectory,
     options: {claim, trust, outputDirectory: join(root, "export")},
     request: f.request,
+    dispatches: () => dispatches,
+    recover: async (status: "satisfied" | "active" | "unknown") => {
+      mutationStatus = status
+      if (!lifecycleOptions) throw new Error("Consumed fixture has no prepared lifecycle")
+      return recoverLifecycle(lifecycleOptions)
+    },
   }
 }
 async function edit(path: string, change: (value: any) => void) {
@@ -421,7 +450,21 @@ async function journalEdit(directory: string, change: (events: any[]) => void) {
       .split("\n")
       .map((line) => JSON.parse(line))
   change(events)
-  await writeFile(path, events.map((e) => JSON.stringify(e)).join("\n") + "\n")
+  const bytes = Buffer.from(events.map((e) => JSON.stringify(e)).join("\n") + "\n")
+  await writeFile(path, bytes)
+  // Deliberately repin the forged fixture so semantic validation still runs;
+  // separate tests exercise rejection at the immutable hash boundary.
+  const receiptPath = join(dirname(dirname(directory)), "claims", `${basename(directory)}.result.json`)
+  const receipt = JSON.parse(await readFile(receiptPath, "utf8"))
+  const snapshotPath = join(directory, receipt.terminal.path)
+  const snapshot = JSON.parse(await readFile(snapshotPath, "utf8"))
+  snapshot.journal = {sequence: events.length, bytes: bytes.length, sha256: sha256(bytes)}
+  snapshot.state = events.at(-1).state
+  snapshot.result = events.at(-1).details
+  const snapshotBytes = json(snapshot)
+  await writeFile(snapshotPath, snapshotBytes)
+  receipt.terminal.sha256 = sha256(snapshotBytes)
+  await writeFile(receiptPath, json(receipt))
 }
 
 function firmwareChecks(passed: boolean, raw?: {mtk: string; bes: string}): Json[] {
@@ -497,6 +540,84 @@ async function adminView(record: unknown) {
     {
       cwd: resolve(sourceHarnessDirectory, "../../cloud-v2/websites/admin"),
       stdin: json(record),
+      stdout: "pipe",
+      stderr: "pipe",
+      timeout: 15000,
+    },
+  )
+  expect(child.exitCode, child.stderr.toString()).toBe(0)
+  return JSON.parse(child.stdout.toString().trim())
+}
+
+/** Actual publisher, ingest routes and service; only repository/storage are in-memory. */
+async function publishGenerations(exports: Awaited<ReturnType<typeof exportCiRun>>[]) {
+  const child = Bun.spawnSync(
+    [
+      process.execPath,
+      "-e",
+      `
+      import {join} from "node:path";
+      import {TestRunService} from "../../packages/core/src/services/test-run.service.ts";
+      import {createTestRunIngestApi} from "../../packages/core/src/api/internal/test-runs.api.ts";
+      import {createTestRunAdminApi} from "../../packages/core/src/api/admin/test-runs.api.ts";
+      import {publishTestRun} from ${JSON.stringify(join(import.meta.dir, "test-run-publisher.ts"))};
+      const outputs = JSON.parse(await Bun.stdin.text()), rows = new Map(), assets = new Map(), objects = new Map();
+      const repository = {
+        get: async id => rows.get(id) ?? null,
+        assets: async id => [...assets.values()].filter(asset => asset.runId === id),
+        insert: async (run, payloadSha256) => {
+          if (rows.has(run.runId)) return {stored: rows.get(run.runId), created: false};
+          const stored = structuredClone({run, payloadSha256}); rows.set(run.runId, stored);
+          return {stored, created: true};
+        },
+        insertAsset: async asset => {
+          const key = asset.runId + "/" + asset.assetId;
+          if (!assets.has(key)) assets.set(key, structuredClone(asset));
+          return assets.get(key);
+        },
+        markUploadsComplete: async () => {},
+      };
+      const storage = {
+        putFile: async ({key, path}) => {objects.set(key, await Bun.file(path).arrayBuffer());},
+        statObject: async key => ({sizeBytes: objects.get(key).byteLength}),
+        deleteObject: async key => {objects.delete(key);},
+      };
+      const service = new TestRunService(repository, () => storage);
+      process.env.TEST_RUN_INGEST_TOKEN = "offline-test-only-" + "x".repeat(32);
+      const app = createTestRunIngestApi(service);
+      const server = Bun.serve({hostname: "127.0.0.1", port: 0, fetch(request) {
+        const url = new URL(request.url);
+        if (!url.pathname.startsWith("/api/internal/test-runs")) return new Response(null, {status: 404});
+        url.pathname = url.pathname.slice("/api/internal/test-runs".length) || "/";
+        return app.fetch(new Request(url, request));
+      }});
+      const options = output => ({
+        metadataPath: join(output.outputDirectory, "run.json"), assetsPath: join(output.outputDirectory, "assets.json"),
+        evidenceRoot: output.outputDirectory, journalPath: join(output.outputDirectory, "publication.jsonl"),
+        coreUrl: server.url.origin, adminUrl: "https://admin.example.invalid", token: process.env.TEST_RUN_INGEST_TOKEN,
+      });
+      try {
+        const publications = [];
+        for (const output of outputs) publications.push(await publishTestRun(options(output)));
+        const replay = await publishTestRun(options(outputs[0]));
+        const forged = structuredClone(outputs[1].result); forged.runId = outputs[0].runId;
+        const conflict = await app.request("/", {
+          method: "POST", headers: {authorization: "Bearer " + process.env.TEST_RUN_INGEST_TOKEN, "content-type": "application/json"},
+          body: JSON.stringify(forged),
+        });
+        const details = [];
+        for (const output of outputs) {
+          const response = await createTestRunAdminApi(service).request("/" + output.runId);
+          if (response.status !== 200) throw new Error(await response.text());
+          details.push(await response.json());
+        }
+        console.log(JSON.stringify({publications, replay, conflict: conflict.status, details, rows: rows.size, assets: assets.size}));
+      } finally {server.stop(true);}
+    `,
+    ],
+    {
+      cwd: resolve(sourceHarnessDirectory, "../../cloud-v2/websites/admin"),
+      stdin: json(exports),
       stdout: "pipe",
       stderr: "pipe",
       timeout: 15000,
@@ -653,6 +774,100 @@ describe("consumed CI lifecycle export", () => {
         .reconciliation,
     ).toBe("unknown")
   })
+  for (const status of ["active", "unknown"] as const)
+    test(`exports and uploads original ${status} failure only after same-run recovery without relabeling it`, async () => {
+      const f = await actualRun({record: false, mutation: status})
+      const receiptPath = join(dirname(f.claim.path), `${f.request.requestId}.result.json`)
+      const receiptBytes = await readFile(receiptPath)
+      const receipt = JSON.parse(receiptBytes.toString())
+      const originalPath = join(f.runDirectory, receipt.terminal.path)
+      const originalBytes = await readFile(originalPath)
+      const originalJournal = await readFile(join(f.runDirectory, "events.jsonl"))
+      expect(receipt.lifecycle).toMatchObject({test: "failed", fixture: "recovery-required", outcome: "failed"})
+      expect(f.dispatches()).toBe(1)
+      expect(await readdir(f.root)).not.toContain("export")
+
+      const recovered = await f.recover("satisfied")
+      expect(recovered).toMatchObject({
+        test: "failed",
+        teardown: "passed",
+        returnVerification: "passed",
+        fixture: "ready",
+        outcome: "failed",
+      })
+      expect(f.dispatches()).toBe(1)
+      expect(await readFile(receiptPath)).toEqual(receiptBytes)
+      expect(await readFile(originalPath)).toEqual(originalBytes)
+      expect((await readFile(join(f.runDirectory, "events.jsonl"))).subarray(0, originalJournal.length)).toEqual(
+        originalJournal,
+      )
+      const recoveredPath = join(f.runDirectory, recovered.terminal.path)
+      const recoveredSnapshot = JSON.parse(await readFile(recoveredPath, "utf8"))
+      expect(recoveredSnapshot.generation).toBe(2)
+      expect(recoveredSnapshot.previous).toEqual(receipt.terminal)
+      expect(sha256(await readFile(recoveredPath))).toBe(recovered.terminal.sha256)
+
+      // Neither publication exists until after recovery has replaced the mutable
+      // state/result checkpoints. The worker receipt must still select generation 1.
+      const original = await exportCiRun(f.options)
+      const recovery = await exportCiRun({
+        ...f.options,
+        outputDirectory: join(f.root, "recovery-export"),
+        terminal: {...recovered.terminal, path: recoveredPath},
+      })
+      expect(original.result.outcomes).toEqual({
+        test: "failed",
+        teardown: "blocked",
+        fixture: "unavailable",
+        evidence: "incomplete",
+      })
+      expect(recovery.result.outcomes).toEqual({
+        test: "failed",
+        teardown: "passed",
+        fixture: "ready",
+        evidence: "incomplete",
+      })
+      expect(original.result.outcome).toBe("failed")
+      expect(recovery.result.outcome).toBe("failed")
+      expect(original.runId).toBe(receipt.runID)
+      expect(recovery.runId).not.toBe(original.runId)
+      expect(recovery.result.requestId).toBe(original.result.requestId)
+      expect(original.result.provenance.resultGeneration).toBe("1")
+      expect(recovery.result.provenance).toMatchObject({
+        resultGeneration: "2",
+        originalRunId: original.runId,
+        previousResultRunId: original.runId,
+        originalTerminalSnapshotSha256: receipt.terminal.sha256,
+        terminalSnapshotSha256: recovered.terminal.sha256,
+      })
+      expect(original.result.finishedAt).toBe(receipt.at)
+      const recoveryEvents = (await readFile(join(f.runDirectory, "events.jsonl"), "utf8"))
+        .trimEnd()
+        .split("\n")
+        .map((line) => JSON.parse(line))
+      expect(recovery.result.finishedAt).toBe(recoveryEvents.at(-1).timestamp)
+      const summaries = await Promise.all(
+        [original, recovery].map(async (output) =>
+          JSON.parse(await readFile(join(output.outputDirectory, "lifecycle-summary.json"), "utf8")),
+        ),
+      )
+      expect(summaries[0].mutations[0].reconciliation).toBe(status)
+      expect(summaries[1].mutations[0].reconciliation).toBe("satisfied")
+
+      const published = await publishGenerations([original, recovery])
+      expect(published.rows).toBe(2)
+      expect(published.assets).toBe(2)
+      expect(published.publications.map((p: any) => p.sourceOutcome)).toEqual(["failed", "failed"])
+      expect(published.publications.every((p: any) => p.publication === "complete")).toBe(true)
+      expect(published.replay.uploadedAssets).toBe(0)
+      expect(published.conflict).toBe(409)
+      expect(published.details.map((d: any) => d.outcomes)).toEqual([
+        original.result.outcomes,
+        recovery.result.outcomes,
+      ])
+      expect(published.details.every((d: any) => d.assets.every((asset: any) => asset.uploaded))).toBe(true)
+      expect(f.dispatches()).toBe(1)
+    }, 20000)
   test("metadata-only completion remains unqualified and preserves independent phase outcomes", async () => {
     const f = await actualRun({record: false}),
       exported = await exportCiRun(f.options)
@@ -693,13 +908,55 @@ describe("consumed CI lifecycle export", () => {
     await writeFile(join(f.runDirectory, "state.json"), checkpoint)
     const journal = await readFile(join(f.runDirectory, "events.jsonl"))
     await writeFile(join(f.runDirectory, "events.jsonl"), journal.subarray(0, journal.length - 1))
-    await expect(exportCiRun(f.options)).rejects.toThrow("Partial lifecycle")
+    await expect(exportCiRun(f.options)).rejects.toThrow(/Partial lifecycle|journal bounds/)
     await writeFile(join(f.runDirectory, "events.jsonl"), journal)
     await edit(
       join(dirname(f.claim.path), `${f.request.requestId}.result.json`),
       (v) => (v.status = "routine-interrupted"),
     )
     await expect(exportCiRun(f.options)).rejects.toThrow("original completed")
+  })
+  test("rejects changed original terminal bytes or journal prefix before semantic validation", async () => {
+    for (const mode of ["snapshot", "journal"] as const) {
+      const f = await actualRun({record: false})
+      const receipt = JSON.parse(
+        await readFile(join(dirname(f.claim.path), `${f.request.requestId}.result.json`), "utf8"),
+      )
+      if (mode === "snapshot") await edit(join(f.runDirectory, receipt.terminal.path), (v) => v.generation++)
+      else {
+        const path = join(f.runDirectory, "events.jsonl")
+        await writeFile(path, (await readFile(path, "utf8")).replace('"run-started"', '"bad-started"'))
+      }
+      await expect(exportCiRun(f.options)).rejects.toThrow(
+        mode === "snapshot" ? "snapshot hash mismatch" : "prefix hash mismatch",
+      )
+    }
+  })
+  test("explicit recovery cannot discard its link to the worker's original snapshot", async () => {
+    const f = await actualRun({record: false, mutation: "unknown"})
+    const recovered = await f.recover("satisfied")
+    const path = join(f.runDirectory, recovered.terminal.path)
+    await edit(path, (v) => (v.previous = null))
+    await expect(exportCiRun({...f.options, terminal: {path, sha256: sha256(await readFile(path))}})).rejects.toThrow(
+      "not linked to the worker's original",
+    )
+    expect(f.dispatches()).toBe(1)
+  })
+  test("historical export ignores a partial later recovery suffix and mutable checkpoint", async () => {
+    const f = await actualRun({record: false, mutation: "unknown"})
+    await f.recover("satisfied")
+    const path = join(f.runDirectory, "events.jsonl")
+    await writeFile(path, Buffer.concat([await readFile(path), Buffer.from('{"sequence":')]))
+    await writeFile(join(f.runDirectory, "state.json"), '{"mode":"recovering"')
+    const exported = await exportCiRun(f.options)
+    expect(exported.result.provenance.resultGeneration).toBe("1")
+    expect(exported.result.outcomes).toEqual({
+      test: "failed",
+      teardown: "blocked",
+      fixture: "unavailable",
+      evidence: "incomplete",
+    })
+    expect(f.dispatches()).toBe(1)
   })
   test("rejects recording bytes changed after successful verification", async () => {
     const f = await actualRun()

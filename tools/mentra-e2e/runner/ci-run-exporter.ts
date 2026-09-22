@@ -365,6 +365,8 @@ function validateTerminal(events: LifecycleEvent[], state: LifecycleState, resul
   const intents = new Map<string, LifecycleEvent>(),
     dispatched = new Set<string>(),
     intentSteps = new Set<string>()
+  let frozenTest: LifecycleState | undefined
+  let generationStart = 0
   for (const [i, event] of events.entries()) {
     requireThat(
       event.sequence === i + 1 &&
@@ -376,7 +378,21 @@ function validateTerminal(events: LifecycleEvent[], state: LifecycleState, resul
       "Invalid lifecycle journal order or identity",
     )
     at = time(event.timestamp)
-    requireThat(i === events.length - 1 || event.type !== "run-finished", "Journal continued after terminal result")
+    if (frozenTest)
+      requireThat(
+        event.state.testFrozen &&
+          event.state.test === frozenTest.test &&
+          event.state.testStarted === frozenTest.testStarted,
+        "Recovery changed the original frozen test verdict",
+      )
+    if (event.type === "recovery-started") {
+      requireThat(i > 0 && frozenTest, "Recovery lacks a prior terminal generation")
+      generationStart = i
+    }
+    if (i < events.length - 1 && event.type === "run-finished") {
+      requireThat(events[i + 1].type === "recovery-started", "Journal continued without explicit recovery")
+      frozenTest ??= event.state
+    }
     if (event.type === "mutation-intent") {
       const intent = event.details as Row
       requireThat(
@@ -424,7 +440,6 @@ function validateTerminal(events: LifecycleEvent[], state: LifecycleState, resul
     "Final state lost a durable mutation intent",
   )
   for (const operation of state.operations) {
-    requireThat(dispatched.has(operation.operationID), "Terminal lifecycle contains a partially written dispatch")
     const original = intents.get(operation.operationID)!.details as Row
     requireThat(
       operation.stepID === original.stepID &&
@@ -433,6 +448,18 @@ function validateTerminal(events: LifecycleEvent[], state: LifecycleState, resul
       "Final operation differs from its durable intent",
     )
     const lastReconciliation = events.findLast((e) => e.type === "reconciliation" && e.stepID === operation.stepID)
+    const intentSequence = intents.get(operation.operationID)!.sequence
+    requireThat(
+      dispatched.has(operation.operationID) ||
+        (["settled", "satisfied"].includes((lastReconciliation?.details as Row)?.status) &&
+          events.some(
+            (event) =>
+              event.type === "recovery-started" &&
+              event.sequence > intentSequence &&
+              event.sequence < lastReconciliation!.sequence,
+          )),
+      "Terminal lifecycle contains a partially written dispatch without settled recovery proof",
+    )
     equal(
       operation.reconciliation,
       lastReconciliation?.details,
@@ -496,8 +523,13 @@ function validateTerminal(events: LifecycleEvent[], state: LifecycleState, resul
   }
   for (const phase of PHASES)
     if (state.phases[phase] === "passed") {
+      // Recovery reruns cleanup/return/evidence. Earlier failures remain history,
+      // while the current generation must independently earn these verdicts.
+      const phaseEvents = ["teardown", "return-verification", "evidence"].includes(phase)
+        ? events.slice(generationStart)
+        : events
       requireThat(
-        events.some(
+        phaseEvents.some(
           (e) =>
             e.phase === phase &&
             ((e.type === "phase-finished" && (e.details as Row).verdict === "passed") ||
@@ -506,21 +538,113 @@ function validateTerminal(events: LifecycleEvent[], state: LifecycleState, resul
         "Passed phase has no journal completion",
       )
       requireThat(
-        !events.some((e) => e.phase === phase && e.type === "assertion" && (e.details as Row).passed !== true),
+        !phaseEvents.some((e) => e.phase === phase && e.type === "assertion" && (e.details as Row).passed !== true),
         "Failed assertion was promoted to a passed phase",
       )
     }
   if (ready)
     requireThat(
-      events.some(
-        (e) => e.phase === "return-verification" && e.type === "assertion" && (e.details as Row).passed === true,
-      ),
+      events
+        .slice(generationStart)
+        .some((e) => e.phase === "return-verification" && e.type === "assertion" && (e.details as Row).passed === true),
       "Ready fixture lacks independent return proof",
     )
 }
 
+function resultRunId(runID: string, generation: number) {
+  return generation === 1 ? runID : `recovery-${hash(Buffer.from(runID)).slice(0, 32)}-${generation}`
+}
+
+/** Select a complete immutable prefix. Mutable state/result files may already
+ * describe a later recovery, including one that is currently interrupted. */
+async function terminalGeneration(
+  directory: string,
+  worker: Row,
+  selected: FrozenFile | undefined,
+  journal: Buffer,
+  read: (path: string, limit?: number) => Promise<Buffer>,
+) {
+  function relativeRef(value: unknown): FrozenFile {
+    const ref = object(value, "Terminal snapshot reference")
+    requireThat(
+      typeof ref.path === "string" &&
+        /^terminals\/[1-9][0-9]*\.json$/.test(ref.path) &&
+        typeof ref.sha256 === "string" &&
+        HASH.test(ref.sha256),
+      "Invalid terminal snapshot reference",
+    )
+    return {path: child(directory, ref.path), sha256: ref.sha256}
+  }
+  const original = relativeRef(worker.terminal)
+  let ref = selected ?? original
+  const chain: {ref: FrozenFile; snapshot: Row; events: LifecycleEvent[]; journal: Buffer}[] = []
+  const seen = new Set<string>()
+  for (;;) {
+    requireThat(
+      resolve(ref.path) === ref.path &&
+        dirname(ref.path) === join(directory, "terminals") &&
+        /^[1-9][0-9]*\.json$/.test(basename(ref.path)) &&
+        HASH.test(ref.sha256) &&
+        !seen.has(ref.path) &&
+        chain.length < 1000,
+      "Invalid or cyclic terminal snapshot chain",
+    )
+    seen.add(ref.path)
+    const bytes = await read(ref.path)
+    requireThat(hash(bytes) === ref.sha256, "Terminal snapshot hash mismatch")
+    const snapshot = object(JSON.parse(bytes.toString()), "Terminal snapshot") as Row
+    requireThat(
+      snapshot.schemaVersion === 1 &&
+        Number.isSafeInteger(snapshot.generation) &&
+        snapshot.generation > 0 &&
+        Number.isSafeInteger(snapshot.journal?.bytes) &&
+        snapshot.journal.bytes > 0 &&
+        snapshot.journal.bytes <= journal.length &&
+        Number.isSafeInteger(snapshot.journal.sequence) &&
+        snapshot.journal.sequence > 0 &&
+        HASH.test(snapshot.journal.sha256) &&
+        basename(ref.path) === `${snapshot.journal.sequence}.json`,
+      "Invalid terminal snapshot generation or journal bounds",
+    )
+    const prefix = journal.subarray(0, snapshot.journal.bytes)
+    requireThat(prefix.at(-1) === 10, "Partial lifecycle terminal prefix")
+    requireThat(hash(prefix) === snapshot.journal.sha256, "Terminal journal prefix hash mismatch")
+    const events = prefix
+      .toString()
+      .trimEnd()
+      .split("\n")
+      .map((line) => JSON.parse(line) as LifecycleEvent)
+    requireThat(events.length === snapshot.journal.sequence, "Terminal journal sequence mismatch")
+    validateTerminal(events, snapshot.state, snapshot.result, worker.runID)
+    chain.unshift({ref, snapshot, events, journal: prefix})
+    if (snapshot.previous === null) break
+    ref = relativeRef(snapshot.previous)
+  }
+  equal(chain[0].ref, original, "Recovery is not linked to the worker's original terminal snapshot")
+  equal(chain[0].snapshot.result, worker.lifecycle, "Worker terminal result differs from original snapshot")
+  for (const [i, row] of chain.entries()) {
+    requireThat(row.snapshot.generation === i + 1, "Terminal generation chain is incomplete")
+    const finished = row.events.filter((event) => event.type === "run-finished")
+    requireThat(finished.length === i + 1, "Terminal snapshot chain omits a result generation")
+    if (i > 0) {
+      const previous = chain[i - 1]
+      requireThat(
+        row.snapshot.journal.bytes > previous.snapshot.journal.bytes &&
+          row.events[previous.snapshot.journal.sequence]?.type === "recovery-started" &&
+          row.events[previous.snapshot.journal.sequence - 1]?.type === "run-finished",
+        "Recovery does not extend its preceding terminal generation",
+      )
+    }
+  }
+  requireThat(
+    time(worker.at) >= time(chain[0].events.at(-1)!.timestamp),
+    "Worker completion precedes original terminal",
+  )
+  return {original: chain[0], selected: chain.at(-1)!, chain}
+}
+
 /** Pure local publication preparation. Reads durable worker files; never consumes, retries, or changes a fixture. */
-export async function exportCiRun(options: CiExportInputs & {outputDirectory: string}) {
+export async function exportCiRun(options: CiExportInputs & {outputDirectory: string; terminal?: FrozenFile}) {
   const c = await loadClaim(options),
     directory = c.row.runDirectory as string
   const originals: {path: string; sha256: string; limit: number}[] = [
@@ -561,21 +685,26 @@ export async function exportCiRun(options: CiExportInputs & {outputDirectory: st
     },
     "Lifecycle inputs differ from consumed request",
   )
-  const state = JSON.parse((await read(join(directory, "state.json"))).toString()) as LifecycleState
-  const lifecycle = JSON.parse((await read(join(directory, "result.json"))).toString()) as LifecycleResult
-  const journal = await read(join(directory, "events.jsonl"), 32 * MAX_METADATA_BYTES)
-  requireThat(journal.at(-1) === 10, "Partial lifecycle journal")
-  const events = journal
-    .toString()
-    .trimEnd()
-    .split("\n")
-    .map((line) => JSON.parse(line) as LifecycleEvent)
-  validateTerminal(events, state, lifecycle, c.row.runID)
-  equal(terminal.lifecycle, lifecycle, "Worker terminal result differs from lifecycle result")
-  requireThat(
-    time(events[0].timestamp) >= time(c.row.at) && time(terminal.at) >= time(events.at(-1)!.timestamp),
-    "Worker/lifecycle time interval differs",
-  )
+  const liveJournal = await read(join(directory, "events.jsonl"), 32 * MAX_METADATA_BYTES)
+  const generation = await terminalGeneration(directory, terminal, options.terminal, liveJournal, read)
+  const {snapshot, events, journal} = generation.selected
+  const state = snapshot.state as LifecycleState,
+    lifecycle = snapshot.result as LifecycleResult
+  // These convenience files are relevant only when they still describe the
+  // selected terminal. Never substitute a recovery checkpoint for an older result.
+  if (journal.length === liveJournal.length) {
+    equal(
+      JSON.parse((await read(join(directory, "state.json"))).toString()),
+      state,
+      "Checkpoint differs from terminal snapshot",
+    )
+    equal(
+      JSON.parse((await read(join(directory, "result.json"))).toString()),
+      lifecycle,
+      "Result differs from terminal snapshot",
+    )
+  }
+  requireThat(time(events[0].timestamp) >= time(c.row.at), "Worker/lifecycle time interval differs")
   const evidenceEvents = events.filter(
     (e) =>
       e.phase === "evidence" && e.type === "assertion" && (e.details as Row).actual?.kind === "ci-finalized-recording",
@@ -719,7 +848,7 @@ export async function exportCiRun(options: CiExportInputs & {outputDirectory: st
     evidence: complete ? "complete" : "incomplete",
   }
   const outcome =
-    lifecycle.outcome === "failed"
+    lifecycle.outcome === "failed" || generation.original.snapshot.result.outcome === "failed"
       ? "failed"
       : lifecycle.outcome === "cancelled"
         ? "aborted"
@@ -732,6 +861,9 @@ export async function exportCiRun(options: CiExportInputs & {outputDirectory: st
     executionMode: "ci-registered",
     requestId: c.request.requestId,
     runID: c.row.runID,
+    resultGeneration: snapshot.generation,
+    terminalSnapshotSha256: generation.selected.ref.sha256,
+    originalTerminalSnapshotSha256: generation.original.ref.sha256,
     lifecycle,
     phases: state.phases,
     outcomes,
@@ -754,7 +886,7 @@ export async function exportCiRun(options: CiExportInputs & {outputDirectory: st
       reconciliation: i.reconciliation?.status ?? "unknown",
     })),
     scope:
-      "Original consumed CI lifecycle. Raw claims, device logs, observation payloads and adapter errors are not published. Fixture is the terminal historical result, not a current readiness query.",
+      "Immutable consumed CI lifecycle generation. The original test verdict is preserved across linked recovery results. Raw claims, device logs, observation payloads and adapter errors are not published. Fixture is the selected terminal historical result, not a current readiness query.",
   }
   const bytes = json(summary),
     filename = "lifecycle-summary.json"
@@ -770,7 +902,7 @@ export async function exportCiRun(options: CiExportInputs & {outputDirectory: st
   localAssets.push({assetId: "lifecycle-summary", path: filename})
   const selection = c.request.selection!
   const result = testRunSchema.parse({
-    runId: c.row.runID,
+    runId: resultRunId(c.row.runID, snapshot.generation),
     requestId: c.request.requestId,
     routineId: c.request.routine.id,
     routineVersion: `sha256:${c.registration.definitionDigest}`,
@@ -778,7 +910,7 @@ export async function exportCiRun(options: CiExportInputs & {outputDirectory: st
     channel: "pr",
     prNumber: c.request.pullRequest.number,
     startedAt: c.row.at,
-    finishedAt: terminal.at,
+    finishedAt: snapshot.generation === 1 ? terminal.at : events.at(-1)!.timestamp,
     outcome,
     outcomes,
     provenance: {
@@ -786,6 +918,15 @@ export async function exportCiRun(options: CiExportInputs & {outputDirectory: st
       repository: c.request.trigger.repository,
       executionMode: "ci-registered",
       requestRelationship: "consumed",
+      resultGeneration: String(snapshot.generation),
+      terminalSnapshotSha256: generation.selected.ref.sha256,
+      originalTerminalSnapshotSha256: generation.original.ref.sha256,
+      ...(snapshot.generation > 1
+        ? {
+            originalRunId: c.row.runID,
+            previousResultRunId: resultRunId(c.row.runID, snapshot.generation - 1),
+          }
+        : {}),
       headSha: c.request.pullRequest.headSha,
       baseSha: c.request.pullRequest.baseSha,
       buildSha: selection.build.buildSha,

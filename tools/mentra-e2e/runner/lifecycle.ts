@@ -1,17 +1,11 @@
-import {randomUUID} from "node:crypto"
-import {mkdir, open, readFile, rename, rm} from "node:fs/promises"
+import {createHash, randomUUID} from "node:crypto"
+import {link, lstat, mkdir, open, readFile, readdir, rename, rm} from "node:fs/promises"
 import {dirname, join, resolve} from "node:path"
 import {isDeepStrictEqual} from "node:util"
 
 export type Json = null | boolean | number | string | Json[] | {[key: string]: Json}
 export type LifecyclePhase =
-  | "preflight"
-  | "setup"
-  | "test"
-  | "final-assertions"
-  | "teardown"
-  | "return-verification"
-  | "evidence"
+  "preflight" | "setup" | "test" | "final-assertions" | "teardown" | "return-verification" | "evidence"
 export type PhaseVerdict = "not-run" | "passed" | "failed" | "cancelled" | "deferred"
 export type TestVerdict = "not-run" | "passed" | "failed" | "cancelled"
 
@@ -139,6 +133,26 @@ export interface LifecycleResult {
   outcome: "passed" | "failed" | "setup-failed" | "cancelled" | "incomplete"
 }
 
+export interface LifecycleTerminalRef {
+  /** Relative to the owning run directory; always terminals/{journal sequence}.json. */
+  path: string
+  sha256: string
+}
+
+export interface LifecycleTerminalSnapshot {
+  schemaVersion: 1
+  generation: number
+  previous: LifecycleTerminalRef | null
+  journal: {sequence: number; bytes: number; sha256: string}
+  state: LifecycleState
+  result: LifecycleResult
+}
+
+export interface LifecycleCompletion extends LifecycleResult {
+  /** Pin this immutable snapshot in the worker receipt, separately from the result. */
+  terminal: LifecycleTerminalRef
+}
+
 export interface LifecycleLeaseOwner {
   recovering: boolean
   runDirectory: string
@@ -214,6 +228,98 @@ async function atomicJson(path: string, value: unknown) {
   } finally {
     await rm(temporary, {force: true})
   }
+}
+
+const sha256 = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex")
+
+async function immutableJson(path: string, value: unknown) {
+  const bytes = Buffer.from(JSON.stringify(value, null, 2) + "\n")
+  const verify = async () => {
+    const entry = await lstat(path)
+    if (!entry.isFile() || entry.isSymbolicLink() || !(await readFile(path)).equals(bytes))
+      throw new Error("Terminal snapshot differs from its immutable journal prefix")
+  }
+  try {
+    await verify()
+  } catch (error) {
+    if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
+    const temporary = `${path}.${randomUUID()}.tmp`
+    const handle = await open(temporary, "wx", 0o600)
+    try {
+      await handle.writeFile(bytes)
+      await handle.sync()
+    } finally {
+      await handle.close()
+    }
+    try {
+      // Hard-link publication is atomic and refuses overwrite. A crash can leave an
+      // unused temporary file, never a partially written canonical snapshot.
+      try {
+        await link(temporary, path)
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error
+        await verify()
+      }
+      await syncDirectory(dirname(path))
+    } finally {
+      await rm(temporary, {force: true})
+    }
+  }
+  return sha256(bytes)
+}
+
+/** Freeze every committed terminal prefix before allowing any recovery append.
+ * An interrupted snapshot write is reconstructed from the already durable journal;
+ * an existing different snapshot or an orphan terminal is never replaced/adopted. */
+async function terminalSnapshots(directory: string, journal: Buffer): Promise<LifecycleTerminalRef | undefined> {
+  const folder = join(directory, "terminals")
+  const created = await mkdir(folder, {recursive: true, mode: 0o700})
+  const entry = await lstat(folder)
+  if (!entry.isDirectory() || entry.isSymbolicLink()) throw new Error("Invalid terminal snapshot directory")
+  if (created) await syncDirectory(directory)
+  let offset = 0,
+    generation = 0,
+    previous: LifecycleTerminalRef | null = null
+  const names = new Set<string>()
+  while (offset < journal.length) {
+    const newline = journal.indexOf(10, offset)
+    if (newline < 0) throw new Error("Incomplete journal; cannot freeze terminal snapshots")
+    const event = JSON.parse(journal.subarray(offset, newline).toString("utf8")) as LifecycleEvent
+    offset = newline + 1
+    if (event.type !== "run-finished") continue
+    const name = `${event.sequence}.json`
+    if (!Number.isSafeInteger(event.sequence) || event.sequence <= 0 || names.has(name))
+      throw new Error("Invalid terminal journal sequence")
+    names.add(name)
+    const snapshot: LifecycleTerminalSnapshot = {
+      schemaVersion: 1,
+      generation: ++generation,
+      previous,
+      journal: {sequence: event.sequence, bytes: offset, sha256: sha256(journal.subarray(0, offset))},
+      state: event.state,
+      result: event.details as unknown as LifecycleResult,
+    }
+    previous = {path: `terminals/${name}`, sha256: await immutableJson(join(folder, name), snapshot)}
+  }
+  let removedAlias = false
+  for (const name of await readdir(folder)) {
+    if (names.has(name)) continue
+    const temporary = /^(\d+\.json)\.[a-f0-9-]+\.tmp$/.exec(name)
+    if (!temporary) throw new Error("Terminal snapshot has no matching journal event")
+    if (!names.has(temporary[1])) continue
+    const canonical = await lstat(join(folder, temporary[1]))
+    const alias = await lstat(join(folder, name))
+    // Publication may have committed before a crash interrupted temporary unlink.
+    // Remove only this verified snapshot's own hard link, never a partial temp file.
+    if (alias.isFile() && alias.dev === canonical.dev && alias.ino === canonical.ino) {
+      await rm(join(folder, name))
+      removedAlias = true
+    }
+  }
+  if (removedAlias) await syncDirectory(folder)
+  for (const name of names)
+    if ((await lstat(join(folder, name))).nlink !== 1) throw new Error("Terminal snapshot has an unowned hard link")
+  return previous ?? undefined
 }
 
 function definition(routine: LifecycleRoutine): Record<LifecyclePhase, LifecycleStep[]> {
@@ -313,7 +419,8 @@ class Journal {
   }
 
   static async resume(directory: string, runID: string) {
-    const lines = (await readFile(join(directory, "events.jsonl"), "utf8")).split("\n")
+    const bytes = await readFile(join(directory, "events.jsonl"))
+    const lines = bytes.toString("utf8").split("\n")
     if (lines.pop() !== "" || !lines.length) throw new Error("Incomplete journal; do not replay or resend mutations")
     let last: LifecycleEvent | undefined
     for (const line of lines) {
@@ -327,6 +434,7 @@ class Journal {
         throw new Error("Invalid journal ordering or ownership; do not replay mutations")
       last = event
     }
+    await terminalSnapshots(directory, bytes)
     const journal = new Journal(directory, last!.state)
     journal.sequence = last!.sequence
     return journal
@@ -446,7 +554,7 @@ class Execution {
     await this.reconcile(step, intent)
   }
 
-  async finish(): Promise<LifecycleResult> {
+  async finish(): Promise<LifecycleCompletion> {
     const state = this.journal.state
     const unsettled = () => !!(state.activeOperationID || state.pendingReconciliation)
     if (unsettled()) {
@@ -489,6 +597,11 @@ class Execution {
     }
     state.mode = "complete"
     await this.journal.append("run-finished", result as unknown as Json)
+    const terminal = await terminalSnapshots(
+      this.options.runDirectory,
+      await readFile(join(this.options.runDirectory, "events.jsonl")),
+    )
+    if (!terminal) throw new Error("Missing immutable terminal snapshot")
     await atomicJson(join(this.options.runDirectory, "result.json"), result)
     const fixture: FixtureRecord = {
       schemaVersion: 1,
@@ -502,11 +615,11 @@ class Execution {
         : {}),
     }
     await atomicJson(join(this.options.fixtureDirectory, "fixture.json"), fixture)
-    return result
+    return {...result, terminal}
   }
 }
 
-async function withOwnership(options: LifecycleOptions, recovering: boolean): Promise<LifecycleResult> {
+async function withOwnership(options: LifecycleOptions, recovering: boolean): Promise<LifecycleCompletion> {
   options = {...options, selection: structuredClone(options.selection)}
   definition(options.routine)
   if (!options.selection.runID || !options.selection.fixtureID || !options.selection.returnProfileDigest)

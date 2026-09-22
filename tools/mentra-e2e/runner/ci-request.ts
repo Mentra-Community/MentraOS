@@ -2,7 +2,13 @@ import {createHash, randomUUID} from "node:crypto"
 import {constants} from "node:fs"
 import {lstat, mkdir, open, unlink} from "node:fs/promises"
 import {isAbsolute, join, resolve} from "node:path"
-import {runLifecycle, type Json, type LifecycleOptions, type LifecycleResult} from "./lifecycle"
+import {
+  runLifecycle,
+  type Json,
+  type LifecycleOptions,
+  type LifecycleResult,
+  type LifecycleTerminalRef,
+} from "./lifecycle"
 
 export const REQUEST_REPOSITORY = "Mentra-Community/MentraOS"
 export const REQUEST_WORKFLOW = ".github/workflows/request-e2e-routine.yml"
@@ -435,6 +441,8 @@ export interface DispatchedIntakeResult {
   /** Dispatch alone does not attest which hardware actions occurred. Use the lifecycle journal. */
   dispatchStarted: true
   lifecycle: LifecycleResult | null
+  /** Immutable original completion; recovery never rewrites this receipt. */
+  terminal?: LifecycleTerminalRef
   /** Private claim-side failure details; never upload this file as report evidence. */
   diagnosticFile?: string
   at: string
@@ -618,7 +626,7 @@ export async function consumeRoutineRequest(
         "Prepared lifecycle differs from the verified registration",
       )
       const {inputs, ...options} = prepared
-      const lifecycle = await runLifecycle({
+      const {terminal, ...lifecycle} = await runLifecycle({
         ...options,
         acquireLease: async (owner) => {
           const release = await options.acquireLease(owner)
@@ -657,6 +665,7 @@ export async function consumeRoutineRequest(
         runDirectory,
         dispatchStarted: true,
         lifecycle,
+        terminal,
         at: new Date().toISOString(),
       }
     } catch (error) {

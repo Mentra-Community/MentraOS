@@ -1,5 +1,6 @@
 import {expect, test} from "bun:test"
-import {mkdir, mkdtemp, readFile, rm, writeFile} from "node:fs/promises"
+import {createHash} from "node:crypto"
+import {link, lstat, mkdir, mkdtemp, readFile, readdir, rm, symlink, writeFile} from "node:fs/promises"
 import {tmpdir} from "node:os"
 import {join} from "node:path"
 import {
@@ -11,6 +12,7 @@ import {
   type LifecycleLeaseOwner,
   type LifecycleOptions,
   type LifecycleRoutine,
+  type LifecycleTerminalSnapshot,
   type MutationStep,
   type Observation,
   type RetainedLifecycleLease,
@@ -601,5 +603,181 @@ test("same-owner recovery of a committed ready fixture requires fresh return pro
       recoverLifecycle({...h.options, selection: {...h.options.selection, runID: "different-owner"}}),
     ).rejects.toThrow("Recovery requires the owning fixture")
     expect(await readFile(join(h.options.runDirectory, "run.json"), "utf8")).toBe(descriptor)
+  })
+})
+
+const digest = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex")
+
+test("terminal snapshots pin the exact UTF-8 journal prefix, state and separate base result", async () => {
+  await fixture(async (folder) => {
+    const h = harness(folder)
+    h.routine.preflight[0].instruction = "Verify glasses → prêt."
+    const {terminal, ...result} = await runLifecycle(h.options)
+    const raw = await readFile(join(h.options.runDirectory, terminal.path))
+    const snapshot = JSON.parse(raw.toString()) as LifecycleTerminalSnapshot
+    const journal = await readFile(join(h.options.runDirectory, "events.jsonl"))
+    const last = (await events(folder)).at(-1)!
+    expect(terminal).toEqual({path: `terminals/${last.sequence}.json`, sha256: digest(raw)})
+    expect(snapshot).toEqual({
+      schemaVersion: 1,
+      generation: 1,
+      previous: null,
+      journal: {sequence: last.sequence, bytes: journal.length, sha256: digest(journal)},
+      state: last.state,
+      result,
+    })
+    expect(journal.length).toBeGreaterThan(journal.toString().length)
+    expect(JSON.parse(await readFile(join(h.options.runDirectory, "result.json"), "utf8"))).toEqual(result)
+    expect(await readdir(join(h.options.runDirectory, "terminals"))).toEqual([`${last.sequence}.json`])
+  })
+})
+
+test("later terminal generations preserve the original failure while recording a freshly recovered return", async () => {
+  await fixture(async (folder) => {
+    const h = harness(folder)
+    const upgrade = h.routine.test[0] as MutationStep
+    const execute = upgrade.execute
+    upgrade.execute = async (context, intent) => {
+      const result = await execute(context, intent)
+      h.device.active = true
+      return result
+    }
+    const first = await runLifecycle(h.options)
+    const firstBytes = await readFile(join(h.options.runDirectory, first.terminal.path))
+    const firstJournal = await readFile(join(h.options.runDirectory, "events.jsonl"))
+    expect(first).toMatchObject({test: "failed", teardown: "deferred", fixture: "recovery-required"})
+    const second = await recoverLifecycle(h.options)
+    const secondBytes = await readFile(join(h.options.runDirectory, second.terminal.path))
+    expect(second).toMatchObject({test: "failed", fixture: "recovery-required"})
+    h.device.active = false
+    const third = await recoverLifecycle(h.options)
+    const thirdBytes = await readFile(join(h.options.runDirectory, third.terminal.path))
+    expect(third).toMatchObject({test: "failed", teardown: "passed", returnVerification: "passed", fixture: "ready"})
+    expect(await readFile(join(h.options.runDirectory, first.terminal.path))).toEqual(firstBytes)
+    expect(await readFile(join(h.options.runDirectory, second.terminal.path))).toEqual(secondBytes)
+    expect(JSON.parse(secondBytes.toString())).toMatchObject({generation: 2, previous: first.terminal})
+    expect(JSON.parse(thirdBytes.toString())).toMatchObject({generation: 3, previous: second.terminal})
+    const journal = await readFile(join(h.options.runDirectory, "events.jsonl"))
+    expect(journal.subarray(0, firstJournal.length)).toEqual(firstJournal)
+    for (const [bytes, ref] of [
+      [firstBytes, first.terminal],
+      [secondBytes, second.terminal],
+      [thirdBytes, third.terminal],
+    ] as const) {
+      const snapshot = JSON.parse(bytes.toString()) as LifecycleTerminalSnapshot
+      expect(digest(bytes)).toBe(ref.sha256)
+      expect(digest(journal.subarray(0, snapshot.journal.bytes))).toBe(snapshot.journal.sha256)
+    }
+    expect((await events(folder)).filter((event) => event.type === "test-frozen")).toHaveLength(1)
+    expect(h.dispatched).toEqual(["baseline", "upgrade"])
+    expect(h.releases).toBe(1)
+  })
+})
+
+for (const damage of ["snapshot", "previous", "prefix", "orphan", "symlink", "hardlink"] as const) {
+  test(`recovery rejects ${damage} terminal damage before appending or observing, retaining exclusion`, async () => {
+    await fixture(async (folder) => {
+      const h = harness(folder)
+      const first = await runLifecycle(h.options)
+      const second = await recoverLifecycle(h.options)
+      const path = join(h.options.runDirectory, first.terminal.path)
+      const journalPath = join(h.options.runDirectory, "events.jsonl")
+      if (damage === "snapshot") await writeFile(path, "{incomplete")
+      if (damage === "previous") {
+        const later = join(h.options.runDirectory, second.terminal.path)
+        const snapshot = JSON.parse(await readFile(later, "utf8")) as LifecycleTerminalSnapshot
+        snapshot.previous = {...first.terminal, sha256: "f".repeat(64)}
+        await writeFile(later, JSON.stringify(snapshot, null, 2) + "\n")
+      }
+      if (damage === "prefix") {
+        const journal = await readFile(journalPath, "utf8")
+        await writeFile(journalPath, journal.replace("Verify identity-power-recovery.", "Changed prior instruction."))
+      }
+      if (damage === "orphan") await writeFile(join(h.options.runDirectory, "terminals/99999.json"), "{}\n")
+      if (damage === "hardlink") await link(path, join(folder, "unowned-snapshot-alias.json"))
+      if (damage === "symlink") {
+        const copy = join(folder, "outside.json")
+        await writeFile(copy, await readFile(path))
+        await rm(path)
+        await symlink(copy, path)
+      }
+      const before = await readFile(journalPath)
+      const reads = h.reconciled.length
+      await expect(recoverLifecycle(h.options)).rejects.toThrow("Terminal snapshot")
+      expect(await readFile(journalPath)).toEqual(before)
+      expect(h.reconciled).toHaveLength(reads)
+      expect(h.dispatched).toEqual(["baseline", "upgrade"])
+      expect(h.releases).toBe(2)
+      expect(h.retained.at(-1)).toMatchObject({recovering: true, reason: "incomplete-run"})
+    })
+  })
+}
+
+test("snapshot publication failure retains the terminal journal and reconstructs it before recovery", async () => {
+  await fixture(async (folder) => {
+    const h = harness(folder)
+    const evidence = h.routine.evidence[0]
+    const observe = evidence.observe
+    evidence.observe = async (context) => {
+      // Simulate a filesystem failure after the committed terminal journal, before
+      // any canonical terminal file can be published.
+      await writeFile(join(h.options.runDirectory, "terminals"), "unavailable")
+      return observe(context)
+    }
+    await expect(runLifecycle(h.options)).rejects.toThrow()
+    const journal = await readFile(join(h.options.runDirectory, "events.jsonl"))
+    const last = (await events(folder)).at(-1)!
+    expect(last.type).toBe("run-finished")
+    expect(h.releases).toBe(0)
+    expect(h.retained.at(-1)?.reason).toBe("incomplete-run")
+    expect((await fixtureRecord(folder)).status).toBe("busy")
+    await rm(join(h.options.runDirectory, "terminals"))
+    await mkdir(join(h.options.runDirectory, "terminals"))
+    const temporary = `${last.sequence}.json.00000000-0000-0000-0000-000000000000.tmp`
+    await writeFile(join(h.options.runDirectory, "terminals", temporary), "partial temporary write")
+    evidence.observe = observe
+    const recovered = await recoverLifecycle(h.options)
+    const originalPath = `terminals/${last.sequence}.json`
+    const originalBytes = await readFile(join(h.options.runDirectory, originalPath))
+    expect(JSON.parse(originalBytes.toString())).toEqual({
+      schemaVersion: 1,
+      generation: 1,
+      previous: null,
+      journal: {sequence: last.sequence, bytes: journal.length, sha256: digest(journal)},
+      state: last.state,
+      result: last.details,
+    })
+    expect(JSON.parse(await readFile(join(h.options.runDirectory, recovered.terminal.path), "utf8"))).toMatchObject({
+      generation: 2,
+      previous: {path: originalPath, sha256: digest(originalBytes)},
+    })
+    expect(recovered).toMatchObject({test: "passed", fixture: "ready"})
+    expect(h.dispatched).toEqual(["baseline", "upgrade"])
+    expect(h.releases).toBe(1)
+  })
+})
+
+test("recovery removes only the committed snapshot's abandoned publication hard link", async () => {
+  await fixture(async (folder) => {
+    const h = harness(folder)
+    const first = await runLifecycle(h.options)
+    const path = join(h.options.runDirectory, first.terminal.path)
+    const committed = await readFile(path)
+    const alias = `${path}.00000000-0000-0000-0000-000000000000.tmp`
+    const partial = `${path}.11111111-1111-1111-1111-111111111111.tmp`
+    await link(path, alias)
+    await writeFile(partial, "uncommitted partial snapshot")
+    expect((await lstat(path)).nlink).toBe(2)
+    const recovered = await recoverLifecycle(h.options)
+    expect(recovered.fixture).toBe("ready")
+    expect(await readFile(path)).toEqual(committed)
+    expect((await lstat(path)).nlink).toBe(1)
+    await expect(lstat(alias)).rejects.toThrow("ENOENT")
+    expect(await readFile(partial, "utf8")).toBe("uncommitted partial snapshot")
+    expect(JSON.parse(await readFile(join(h.options.runDirectory, recovered.terminal.path), "utf8"))).toMatchObject({
+      generation: 2,
+      previous: first.terminal,
+    })
+    expect(h.dispatched).toEqual(["baseline", "upgrade"])
   })
 })

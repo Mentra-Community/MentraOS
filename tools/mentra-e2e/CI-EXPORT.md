@@ -7,10 +7,12 @@ The adapter must already have passed the worker's local registration checks.
 
 The inputs are SHA-256 references to the original durable claim and its private
 trust policy. The claim must retain the worker's `claims/<requestId>.json`
-layout. The exporter reads the corresponding original worker result and
-`runs/<requestId>/{run.json,events.jsonl,state.json,result.json}` itself. A replay
-response, interrupted intake, partial journal, missing registration, conflicting
-checkpoint, or result for another claim is rejected.
+layout. The exporter reads the corresponding original worker receipt, frozen
+`runs/<requestId>/run.json`, lifecycle journal and immutable terminal snapshot.
+The receipt must have `status: "routine-finished"` and pin its original snapshot;
+an interrupted intake without that pin is not exportable. A replay response,
+partial selected journal prefix, missing registration, changed snapshot or result
+for another claim is rejected.
 
 ## Recorded evidence from a trusted adapter
 
@@ -52,11 +54,55 @@ registration actually supplies a routine; this exporter adds no registration.
 
 ## Terminal export and publication
 
-After the worker has durably written `status: "routine-finished"`:
+Each lifecycle completion freezes `terminals/<journal-sequence>.json`. Its
+SHA-256 reference binds the terminal phase state, result, generation, previous
+snapshot reference and exact journal prefix byte count/hash. `runLifecycle` and
+`recoverLifecycle` return the lifecycle result fields plus `terminal`, whose
+`path` is relative to the owning run directory. The worker stores the original
+result and terminal reference separately in its durable receipt.
+
+After the worker has durably written `status: "routine-finished"`, export that
+original completion:
 
 ```ts
 const exported = await exportCiRun({claim, trust, outputDirectory})
 ```
+
+Omitting `terminal` always selects the original worker receipt's pinned snapshot.
+Later recovery can append to the journal and update working `state.json` and
+`result.json`; those files do not replace the original completion. The exporter
+validates the selected snapshot against its exact terminal journal prefix.
+Re-exporting the original completion after recovery therefore retains the
+original canonical identity and outcomes.
+
+To export a later completion from the same frozen run, pass its exact snapshot
+explicitly, resolving the returned relative path against the original run
+directory:
+
+```ts
+const recovered = await recoverLifecycle(frozenOptions)
+const recoveredExport = await exportCiRun({
+  claim,
+  trust,
+  outputDirectory: recoveryOutputDirectory,
+  terminal: {
+    path: join(runDirectory, recovered.terminal.path),
+    sha256: recovered.terminal.sha256,
+  },
+})
+```
+
+This export still requires the original finished worker receipt. The supplied
+snapshot must belong to its run and follow the validated snapshot chain; it is
+not an arbitrary replacement result. Recovery exports have a distinct,
+deterministic `runId`, retain the same `requestId`, and include
+`provenance.originalRunId`, `provenance.resultGeneration` and
+`provenance.previousResultRunId`. The previous result ID identifies the preceding
+terminal generation. Re-exporting the same generation uses the same identity;
+publishing it creates or resumes that immutable result instead of overwriting
+the original run. The admin viewer links a recovery result to its original run.
+Successful cleanup or return verification does not turn the original failed
+test into a pass.
 
 Use a new output directory. The result contains canonical `run.json`, a relative
 `assets.json` mapping, validated video/screenshots/chapters when present, and a
