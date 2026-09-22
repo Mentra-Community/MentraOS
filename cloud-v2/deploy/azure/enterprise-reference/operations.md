@@ -3,6 +3,8 @@
 ## Reports and durable attachments
 
 Core stores report records in the deployment's Cosmos DB (MongoDB API).
+Core's report-asset schema creates the `createdAt` index required by Cosmos
+for the ordered attachment lookup.
 The Azure setup also creates an Azure Files share and mounts it at
 `/mnt/core-attachments` in Core. `CLOUD_STORAGE_PROVIDER=local` refers to this
 durable mount, not the container's temporary filesystem. Logs and screenshots
