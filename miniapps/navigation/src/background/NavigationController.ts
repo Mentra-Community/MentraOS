@@ -310,6 +310,7 @@ export class NavigationController {
   private applyCapabilities(raw: MiniappSession["capabilities"]): void {
     const previous = this.capabilities
     this.capabilities = readGlassesCapabilities(raw)
+    if (this.largeMapShown && !this.display.supportsBitmaps) this.exitLargeMap()
     this.audioGuidance.setAvailable(this.capabilities.hasSpeaker)
     if (!this.voiceGuidancePreferenceExplicit) {
       this.voiceGuidanceMode = this.defaultVoiceGuidanceMode()
@@ -1380,6 +1381,7 @@ export class NavigationController {
    * over it until the user swipes back down.
    */
   private showLargeMap(): void {
+    if (!this.display.supportsBitmaps) return
     this.largeMapShown = true
     this.largeMapTransitioning = true // lock out swipes until the render lands
     // Switch HUD → large map by REPLACING the specific containers in place, not
@@ -1444,6 +1446,13 @@ export class NavigationController {
 
   /** Render + push the large centered map for the current position. */
   private renderLargeMap(me: LatLng): void {
+    if (!this.display.supportsBitmaps) {
+      if (this.largeMapShown) {
+        this.exitLargeMap()
+        this.refreshHUD()
+      }
+      return
+    }
     const {w, h} = this.display.getBitmapSize(this.OSM_LARGE_MAP_W, this.OSM_LARGE_MAP_H)
     const route = this.trip.routePoints
 

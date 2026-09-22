@@ -223,6 +223,30 @@ describe("NIMO positioned scene routing", () => {
 })
 
 describe("render text feedback and source replay", () => {
+  test("feedback and replay preserve text-only columns and stacked spacing", () => {
+    for (const model of ["Even Realities G1", "Vuzix Z100"]) {
+      selectedModel = model
+      for (const y of [0, 100]) {
+        const elements: SceneElementInput[] = [
+          {type: "text", id: "left", box: {x: 0, y: 0, w: 200, h: 100}, text: "Left column"},
+          {type: "text", id: "right", box: {x: 200, y, w: 200, h: 100}, text: "Right column"},
+        ]
+        localDisplayManager.request("com.app.text", {scene: elements})
+        const before = sent.at(-1)?.layout
+        let result: DisplayRequestResult | undefined
+        localDisplayManager.request(
+          "com.app.text",
+          {scene: elements, includeTextLayout: true},
+          (value) => (result = value),
+        )
+        expect(sent.at(-1)?.layout).toEqual(before)
+        expect(result?.textLayout?.left.lines.map((line) => line.text)).toEqual(["Left column"])
+        expect(result?.textLayout?.right.lines.map((line) => line.text)).toEqual(["Right column"])
+        localDisplayManager.replayCurrent()
+        expect(sent.at(-1)?.layout).toEqual(before)
+      }
+    }
+  })
   test("returns host line boundaries and only sends the selected tail", () => {
     let result: DisplayRequestResult | undefined
     localDisplayManager.request(

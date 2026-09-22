@@ -7,6 +7,56 @@ import {processText} from "../../../../../mobile/modules/engine/src/utils/displa
 import {NIMO_PROFILE} from "../../../../../mobile/modules/engine/src/utils/display/profiles/nimo"
 
 describe("Teleprompter host layout", () => {
+  test("load_script reports unavailable lines when no display can provide layout", async () => {
+    const controller = new TeleprompterController({storage: {set: async () => {}}} as never)
+    Object.assign(controller, {
+      engine: new ScriptEngine({numberOfLines: 2}),
+      hasDisplay: false,
+      ui: {send: () => {}},
+    })
+    expect(await controller.loadScript("one two three four", false)).toEqual({words: 4, lines: null, started: false})
+  })
+  test("load_script waits for host layout before returning its line count", async () => {
+    let finishRender!: (result: RenderResult) => void
+    const session = {
+      capabilities: {display: {width: 80, height: 100}},
+      display: {
+        render: () =>
+          new Promise<RenderResult>((resolve) => {
+            finishRender = resolve
+          }),
+      },
+      storage: {set: async () => {}},
+    }
+    const controller = new TeleprompterController(session as never)
+    Object.assign(controller, {
+      engine: new ScriptEngine({numberOfLines: 2}),
+      hasDisplay: true,
+      ui: {send: () => {}},
+    })
+    let returned = false
+    const loading = controller.loadScript("one two three four five six", false).then((result) => {
+      returned = true
+      return result
+    })
+    await Promise.resolve()
+    expect(returned).toBe(false)
+    finishRender({
+      status: "displayed",
+      textLayout: {
+        script: {
+          lines: [
+            {text: "one two", start: 0, end: 7},
+            {text: "three four", start: 8, end: 18},
+          ],
+          lineStarts: [0, 8, 19],
+          capacity: 2,
+          truncated: true,
+        },
+      },
+    })
+    expect(await loading).toEqual({words: 6, lines: 3, started: false})
+  })
   test("tracks source words and accepts line boundaries only from render results", () => {
     const engine = new ScriptEngine({numberOfLines: 2})
     engine.setScript("one two three four five six")

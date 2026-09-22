@@ -222,16 +222,18 @@ class SceneRenderer {
 
     this.sources.set(`${appId}:${view}`, elements)
     if (!caps.canPosition) {
-      const controls =
-        includeTextLayout ||
-        elements.some(
-          (el) =>
-            el?.type === "text" &&
-            (el.style?.maxLines !== undefined || el.style?.textWindow || el.style?.verticalAlign),
-        )
+      const controls = elements.some(
+        (el) =>
+          el?.type === "text" && (el.style?.maxLines !== undefined || el.style?.textWindow || el.style?.verticalAlign),
+      )
       const result = controls
         ? degradeTextScene(elements, caps, displayProcessor.getProfile(), includeTextLayout)
-        : degradeScene(elements)
+        : degradeScene(
+            elements,
+            includeTextLayout
+              ? {profile: displayProcessor.getProfile(), breakMode: displayProcessor.getBreakMode()}
+              : undefined,
+          )
       return {kind: "legacy", ...result}
     }
 

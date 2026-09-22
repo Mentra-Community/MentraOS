@@ -50,6 +50,24 @@ class NimoBitmapAcceptanceTest {
         assertFalse(nimo.displayBitmap(image, -1, 0, 10, 10))
     }
 
+    @Test fun jpegPixelsAreDecodedForRawAndDataUriInputs() {
+        val bitmap = Bitmap.createBitmap(2, 2, Bitmap.Config.ARGB_8888)
+        val bytes = ByteArrayOutputStream()
+        try {
+            bitmap.eraseColor(android.graphics.Color.WHITE)
+            assertTrue(bitmap.compress(Bitmap.CompressFormat.JPEG, 100, bytes))
+        } finally { bitmap.recycle() }
+        val raw = Base64.getEncoder().encodeToString(bytes.toByteArray())
+        val decode = Nimo::class.java.getDeclaredMethod(
+            "decodeCanvasImage", String::class.java, Int::class.javaPrimitiveType, Int::class.javaPrimitiveType
+        ).apply { isAccessible = true }
+        for (input in listOf(raw, "data:image/jpeg;base64,$raw")) {
+            assertTrue(nimo.displayBitmap(input))
+            assertArrayEquals(ByteArray(4) { 255.toByte() }, decode.invoke(nimo, input, 2, 2) as ByteArray)
+        }
+        assertFalse(nimo.displayBitmap("data:image/png;base64,$raw"))
+    }
+
     @Test fun sourceRasterBudgetsRejectOversizeAndAcceptBoundaries() {
         for ((width, height) in listOf(4097 to 1, 1 to 4097, 2049 to 2000)) {
             assertFalse("Oversize source $width x $height", nimo.displayBitmap(png(width, height)))

@@ -1,4 +1,5 @@
 import CoreGraphics
+import ImageIO
 @testable import MentraBluetoothSDK
 import XCTest
 import zlib
@@ -151,6 +152,23 @@ final class NimoCanvasCodecTests: XCTestCase {
         XCTAssertThrowsError(try NimoCanvasCodec.imageBytes("Qk0"))
         XCTAssertThrowsError(try NimoCanvasImage.source(png.base64EncodedString()))
         XCTAssertThrowsError(try NimoCanvasCodec.imageBytes(String(repeating: "a", count: 2_800_001)))
+    }
+
+    func testJpegPixelsAreDecodedForRawAndDataUriInputs() throws {
+        let rgba = Data(repeating: 255, count: 16)
+        let provider = CGDataProvider(data: rgba as CFData)!
+        let image = try XCTUnwrap(CGImage(width: 2, height: 2, bitsPerComponent: 8, bitsPerPixel: 32, bytesPerRow: 8,
+                                          space: CGColorSpaceCreateDeviceRGB(), bitmapInfo: CGBitmapInfo(rawValue: CGImageAlphaInfo.noneSkipLast.rawValue),
+                                          provider: provider, decode: nil, shouldInterpolate: false, intent: .defaultIntent))
+        let bytes = NSMutableData()
+        let destination = try XCTUnwrap(CGImageDestinationCreateWithData(bytes, "public.jpeg" as CFString, 1, nil))
+        CGImageDestinationAddImage(destination, image, nil)
+        XCTAssertTrue(CGImageDestinationFinalize(destination))
+        let raw = (bytes as Data).base64EncodedString()
+        for input in [raw, "data:image/jpeg;base64," + raw] {
+            XCTAssertEqual(try NimoCanvasImage.decode(input, width: 2, height: 2), Data(repeating: 255, count: 4))
+        }
+        XCTAssertThrowsError(try NimoCanvasImage.source("data:image/png;base64," + raw))
     }
 
     func testRasterKeepsTopRowAndLuminanceWithoutInversion() throws {

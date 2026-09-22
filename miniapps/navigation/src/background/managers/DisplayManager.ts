@@ -27,6 +27,12 @@ export class DisplayManager {
     }
   }
 
+  /** Whether the selected display can show a positioned bitmap. */
+  get supportsBitmaps(): boolean {
+    const {maxWidth, maxHeight} = this.bitmapLimits
+    return this.session.capabilities?.display?.canPosition !== false && maxWidth > 0 && maxHeight > 0
+  }
+
   /** Choose raster dimensions before encoding, using the same limits as placement. */
   getBitmapSize(width = 288, height = 140): {w: number; h: number} {
     const {maxWidth, maxHeight} = this.bitmapLimits

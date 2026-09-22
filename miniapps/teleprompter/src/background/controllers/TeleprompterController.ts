@@ -264,7 +264,10 @@ export class TeleprompterController {
    * the editor), this always resets to the top and re-renders — an explicit
    * "open with this text" should land deterministically. Optionally autostarts.
    */
-  async loadScript(script: string, autostart: boolean): Promise<{words: number; lines: number; started: boolean}> {
+  async loadScript(
+    script: string,
+    autostart: boolean,
+  ): Promise<{words: number; lines: number | null; started: boolean}> {
     const next = script ?? ""
     this.settings.script = next
     this.engine.setScript(next)
@@ -275,7 +278,7 @@ export class TeleprompterController {
     // so an explicit "open with this text" must land on-screen rather than be
     // deduped away by render()'s lastRenderedText cache.
     this.lastRenderedText = ""
-    this.render()
+    const lines = await this.render()
     this.broadcastSettings()
     this.broadcastStatus()
     await this.persist(STORAGE_KEYS.script, next)
@@ -283,7 +286,7 @@ export class TeleprompterController {
     const started = autostart && this.engine.totalWords > 0
     if (started) this.play()
 
-    return {words: this.engine.totalWords, lines: this.engine.totalLines, started}
+    return {words: this.engine.totalWords, lines, started}
   }
 
   private sendSnapshot(): void {
@@ -662,12 +665,12 @@ export class TeleprompterController {
   // Rendering
   // ───────────────────────────────────────────────────────────────────────
 
-  private render(): void {
+  private async render(): Promise<number | null> {
     this.currentTopLine = Math.min(
       this.manualTopLine ?? this.engine.topLineForWord(this.cursor),
       this.engine.maxTopLine,
     )
-    if (!this.hasDisplay) return
+    if (!this.hasDisplay) return null
     const sourceStart = this.engine.sourceStartForLine(this.currentTopLine)
     const text = this.engine.textFrom(sourceStart)
     const d = this.session.capabilities?.display
@@ -693,30 +696,30 @@ export class TeleprompterController {
         style: {maxLines: 1},
       })
     const key = JSON.stringify(elements)
-    if (key === this.lastRenderedText) return
+    if (key === this.lastRenderedText) return null
     this.lastRenderedText = key
     const revision = ++this.renderRevision
-    void this.session.display.render(elements, {includeTextLayout: true}).then((result) => {
-      if (revision !== this.renderRevision) return
-      const layout = result.textLayout?.script
-      if (result.status !== "displayed" || !layout) {
-        this.lastRenderedText = ""
-        return
-      }
-      this.engine.acceptLayout(sourceStart, layout)
-      this.currentVisible = [
-        ...layout.lines.map((line) => line.text),
-        ...(result.textLayout?.timecode?.lines.map((line) => line.text) ?? []),
-      ]
-      // The host may fit fewer rows than requested (including footer space).
-      // Re-pin the final page using its reported capacity.
-      if (
-        Math.min(this.manualTopLine ?? this.engine.topLineForWord(this.cursor), this.engine.maxTopLine) !==
-        this.currentTopLine
-      )
-        this.render()
-      this.broadcastStatus()
-    })
+    const result = await this.session.display.render(elements, {includeTextLayout: true})
+    if (revision !== this.renderRevision) return null
+    const layout = result.textLayout?.script
+    if (result.status !== "displayed" || !layout) {
+      this.lastRenderedText = ""
+      return null
+    }
+    this.engine.acceptLayout(sourceStart, layout)
+    this.currentVisible = [
+      ...layout.lines.map((line) => line.text),
+      ...(result.textLayout?.timecode?.lines.map((line) => line.text) ?? []),
+    ]
+    // The host may fit fewer rows than requested (including footer space).
+    // Re-pin the final page using its reported capacity.
+    if (
+      Math.min(this.manualTopLine ?? this.engine.topLineForWord(this.cursor), this.engine.maxTopLine) !==
+      this.currentTopLine
+    )
+      await this.render()
+    this.broadcastStatus()
+    return this.engine.totalLines
   }
 
   private applyViewport(): void {

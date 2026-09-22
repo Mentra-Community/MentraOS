@@ -21,6 +21,7 @@ internal object NimoCanvasCodec {
     val mime = when {
       input.startsWith("data:image/png;base64,") -> "png"
       input.startsWith("data:image/bmp;base64,") -> "bmp"
+      input.startsWith("data:image/jpeg;base64,") -> "jpeg"
       input.startsWith("data:") -> error("Unsupported canvas image data URI")
       else -> null
     }
@@ -30,7 +31,9 @@ internal object NimoCanvasCodec {
     require(data.size in 24..2_000_000) { "Canvas image file size exceeds limit" }
     val png = data.take(8) == listOf(0x89.toByte(), 0x50.toByte(), 0x4E.toByte(), 0x47.toByte(), 13.toByte(), 10.toByte(), 26.toByte(), 10.toByte())
     val bmp = data.size >= 54 && data[0] == 0x42.toByte() && data[1] == 0x4D.toByte()
-    require((png && mime != "bmp") || (bmp && mime != "png")) { "Canvas image must be PNG or BMP matching its MIME type" }
+    val jpeg = data.take(3) == listOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte())
+    val kind = when { png -> "png"; bmp -> "bmp"; jpeg -> "jpeg"; else -> null }
+    require(kind != null && (mime == null || mime == kind)) { "Canvas image must be PNG, BMP or JPEG matching its MIME type" }
     return data
   }
 

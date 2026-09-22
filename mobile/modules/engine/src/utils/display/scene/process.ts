@@ -13,7 +13,7 @@ import {TextWrapper} from "../wrapper/TextWrapper"
 import type {DisplayProfile} from "../profiles/types"
 import type {DiffableElement} from "./differ"
 import type {SceneBox, SceneDisplayCapabilities, SceneElementInput, SceneTextStyle} from "./types"
-import {processText} from "./text"
+import {processText, sourceLines} from "./text"
 import type {SceneTextLayout} from "./types"
 import {elementContentHash} from "./types"
 
@@ -187,7 +187,7 @@ export function processScene(
       degraded = true
       continue
     }
-    if (includeTextLayout || style.maxLines !== undefined || style.textWindow || style.verticalAlign) {
+    if (style.maxLines !== undefined || style.textWindow || style.verticalAlign) {
       const processed = processText(el.text ?? "", clamped, style, profile)
       degraded ||= processed.degraded
       textLayout[reportId(el, index)] = processed.layout
@@ -221,6 +221,15 @@ export function processScene(
         // never emit a line wider than the clamped box.
         const ellipsized = last.length > 0 || measurer.fitsInWidth("…", clamped.w) ? `${last}…` : ""
         lines = [...lines.slice(0, -1), ellipsized]
+      }
+    }
+    if (includeTextLayout) {
+      const all = sourceLines(el.text ?? "", clamped.w, style, profile)
+      textLayout[reportId(el, index)] = {
+        lines: all.slice(0, lines.length).map((line, i) => ({...line, text: lines[i]})),
+        lineStarts: all.map((line) => line.start),
+        capacity: maxLines,
+        truncated: result.truncated,
       }
     }
     const wrappedText = lines.join("\n")

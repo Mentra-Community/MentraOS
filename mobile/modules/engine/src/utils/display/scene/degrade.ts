@@ -14,7 +14,10 @@
 
 import {TextMeasurer} from "../measurer/TextMeasurer"
 import type {DisplayProfile} from "../profiles/types"
-import {processText} from "./text"
+import {processText, sourceLines} from "./text"
+import {TextWrapper} from "../wrapper/TextWrapper"
+import {ColumnComposer} from "../composer/ColumnComposer"
+import type {SceneBreakMode} from "./types"
 import type {SceneTextLayout, SceneDisplayCapabilities} from "./types"
 import type {SceneElementInput} from "./types"
 
@@ -37,9 +40,13 @@ function xDisjoint(a: TextEl, b: TextEl): boolean {
   return a.box.x + a.box.w <= b.box.x || b.box.x + b.box.w <= a.box.x
 }
 
-export function degradeScene(input: readonly SceneElementInput[]): DegradedScene {
+export function degradeScene(
+  input: readonly SceneElementInput[],
+  feedback?: {profile: DisplayProfile; breakMode: SceneBreakMode},
+): DegradedScene {
   const dropped: string[] = []
   let degraded = false
+  const textLayout: Record<string, SceneTextLayout> = Object.create(null)
 
   const texts: TextEl[] = []
   input.forEach((el, index) => {
@@ -68,7 +75,25 @@ export function degradeScene(input: readonly SceneElementInput[]): DegradedScene
   // layout engine).
   if (texts.length === 2 && yOverlap(texts[0], texts[1]) && xDisjoint(texts[0], texts[1])) {
     const [left, right] = texts[0].box.x <= texts[1].box.x ? [texts[0], texts[1]] : [texts[1], texts[0]]
+    if (feedback) {
+      const {profile, breakMode} = feedback
+      const config = new ColumnComposer(profile, breakMode).getDefaultColumnConfig()
+      for (const [el, width] of [
+        [left, config.leftColumnWidthPx],
+        [right, config.rightColumnWidthPx],
+      ] as const) {
+        const all = sourceLines(el.text ?? "", width, {breakMode}, profile)
+        const visible = new TextWrapper(new TextMeasurer(profile), {breakMode}).wrap(el.text ?? "", {maxWidthPx: width})
+        textLayout[el.id ?? `text[${input.indexOf(el)}]`] = {
+          lines: all.slice(0, visible.lines.length),
+          lineStarts: all.map((line) => line.start),
+          capacity: config.maxLines,
+          truncated: visible.truncated,
+        }
+      }
+    }
     return {
+      ...(feedback ? {textLayout} : {}),
       layout: {layoutType: "double_text_wall", topText: left.text ?? "", bottomText: right.text ?? ""},
       degraded,
       dropped,
@@ -82,7 +107,28 @@ export function degradeScene(input: readonly SceneElementInput[]): DegradedScene
     .map((t) => t.text ?? "")
     .filter((t) => t.length > 0)
     .join("\n\n")
-  return {layout: {layoutType: "text_wall", text}, degraded, dropped}
+  if (feedback) {
+    const {profile, breakMode} = feedback
+    const all = sourceLines(text, profile.displayWidthPx, {breakMode}, profile)
+    const visible = new TextWrapper(new TextMeasurer(profile), {breakMode}).wrap(text).lines
+    let offset = 0
+    for (const el of ordered.filter((el) => el.text?.length > 0)) {
+      const end = offset + el.text.length
+      const belongs = (line: (typeof all)[number]) =>
+        line.start >= offset && (line.start < end || (line.start === end && el.text.endsWith("\n")))
+      const ownLines = all.filter(belongs)
+      const ownVisible = all.slice(0, visible.length).filter(belongs)
+      const firstRow = all.findIndex(belongs)
+      textLayout[el.id ?? `text[${input.indexOf(el)}]`] = {
+        lines: ownVisible.map((line) => ({...line, start: line.start - offset, end: line.end - offset})),
+        lineStarts: ownLines.map((line) => line.start - offset),
+        capacity: Math.max(0, profile.maxLines - Math.max(0, firstRow)),
+        truncated: ownVisible.length < ownLines.length,
+      }
+      offset = end + 2 // The existing fallback separates elements with a blank line.
+    }
+  }
+  return {layout: {layoutType: "text_wall", text}, degraded, dropped, ...(feedback ? {textLayout} : {})}
 }
 
 /** Compile opt-in text controls for text-only glasses, once, using their usable

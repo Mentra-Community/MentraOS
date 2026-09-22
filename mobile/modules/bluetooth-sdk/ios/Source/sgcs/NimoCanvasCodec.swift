@@ -27,7 +27,7 @@ enum NimoCanvasCodec {
         try require(input.utf8.count <= 2_800_000, "Encoded image exceeds limit")
         var encoded = input
         var mime: String?
-        for kind in ["png", "bmp"] where input.hasPrefix("data:image/\(kind);base64,") {
+        for kind in ["png", "bmp", "jpeg"] where input.hasPrefix("data:image/\(kind);base64,") {
             mime = kind
             encoded = String(input.dropFirst("data:image/\(kind);base64,".count))
         }
@@ -37,7 +37,9 @@ enum NimoCanvasCodec {
         try require((24 ... 2_000_000).contains(data.count), "Image file exceeds limit")
         let png = data.prefix(8) == Data([0x89, 0x50, 0x4E, 0x47, 13, 10, 26, 10])
         let bmp = data.count >= 54 && data.prefix(2) == Data([0x42, 0x4D])
-        try require((png && mime != "bmp") || (bmp && mime != "png"), "Image must be PNG or BMP matching its MIME type")
+        let jpeg = data.prefix(3) == Data([0xFF, 0xD8, 0xFF])
+        let kind: String? = png ? "png" : bmp ? "bmp" : jpeg ? "jpeg" : nil
+        try require(kind != nil && (mime == nil || mime == kind), "Image must be PNG, BMP or JPEG matching its MIME type")
         return data
     }
 

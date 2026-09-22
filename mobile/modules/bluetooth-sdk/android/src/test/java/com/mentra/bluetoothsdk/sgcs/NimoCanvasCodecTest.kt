@@ -4,11 +4,12 @@ import org.junit.Assert.*
 import org.junit.Test
 
 class NimoCanvasCodecTest {
-  @Test fun pngAndBmpImageSourcesAcceptRawAndMatchingDataUris() {
+  @Test fun imageSourcesAcceptRawAndMatchingDataUris() {
     // ImageIO/BitmapFactory validate the complete raster; this boundary validates file kind and size.
     val png = byteArrayOf(0x89.toByte(), 0x50, 0x4E, 0x47, 13, 10, 26, 10) + ByteArray(24)
     val bmp = byteArrayOf(0x42, 0x4D) + ByteArray(56)
-    for ((mime, bytes) in listOf("png" to png, "bmp" to bmp)) {
+    val jpeg = byteArrayOf(0xFF.toByte(), 0xD8.toByte(), 0xFF.toByte()) + ByteArray(24)
+    for ((mime, bytes) in listOf("png" to png, "bmp" to bmp, "jpeg" to jpeg)) {
       val raw = java.util.Base64.getEncoder().encodeToString(bytes)
       assertArrayEquals(bytes, NimoCanvasCodec.imageBytes(raw))
       assertArrayEquals(bytes, NimoCanvasCodec.imageBytes("data:image/$mime;base64,$raw"))
@@ -21,7 +22,7 @@ class NimoCanvasCodecTest {
 
   @Test fun unsupportedAndOversizedImageSourcesFailBeforeRasterDecoding() {
     val encoder = java.util.Base64.getEncoder()
-    assertThrows(IllegalStateException::class.java) { NimoCanvasCodec.imageBytes("data:image/jpeg;base64,AAAA") }
+    assertThrows(IllegalStateException::class.java) { NimoCanvasCodec.imageBytes("data:image/gif;base64,AAAA") }
     assertThrows(IllegalArgumentException::class.java) { NimoCanvasCodec.imageBytes(encoder.encodeToString(ByteArray(54))) }
     assertThrows(IllegalArgumentException::class.java) { NimoCanvasCodec.imageBytes("a".repeat(2_800_001)) }
     assertThrows(IllegalArgumentException::class.java) { NimoCanvasCodec.imageBytes(encoder.encodeToString(ByteArray(2_000_001))) }

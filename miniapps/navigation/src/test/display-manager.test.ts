@@ -30,6 +30,22 @@ describe("navigation capability-bounded bitmaps", () => {
     globalThis.setTimeout = setTimeoutOriginal
   })
 
+  test("ignores large-map requests on text-only displays without taking over the HUD", () => {
+    const {frames, session} = makeNimoDisplay()
+    session.capabilities = {display: {width: 576, height: 288, canPosition: false, maxImageElements: 0}}
+    const controller = new NavigationController(session) as unknown as {
+      showLargeMap(): void
+      renderLargeMap(position: {lat: number; lng: number}): void
+      largeMapShown: boolean
+      largeMapTransitioning: boolean
+    }
+    expect(() => controller.showLargeMap()).not.toThrow()
+    expect(() => controller.renderLargeMap({lat: 37.77, lng: -122.42})).not.toThrow()
+    expect(controller.largeMapShown).toBe(false)
+    expect(controller.largeMapTransitioning).toBe(false)
+    expect(frames).toEqual([])
+  })
+
   test("renders the real large-map raster and matching placement inside NIMO limits", () => {
     const {frames, session} = makeNimoDisplay()
     const controller = new NavigationController(session) as unknown as {

@@ -21,6 +21,13 @@ const caps: SceneDisplayCapabilities = {
 const box = {x: 0, y: 0, w: 500, h: 220}
 
 describe("render text selection", () => {
+  test("feedback does not change legacy positioned text or box-height behavior", () => {
+    const elements = [{type: "text" as const, id: "text", box: {...box, h: 10}, text: "one\ntwo"}]
+    const without = processScene(elements, caps, G2_PROFILE)
+    const withFeedback = processScene(elements, caps, G2_PROFILE, true)
+    expect(withFeedback.elements).toEqual(without.elements)
+    expect(withFeedback.textLayout?.text.lines.map((line) => line.text)).toEqual(["one"])
+  })
   test("keeps either end after wrapping, without truncating the newest transcript at the byte limit", () => {
     const text = "old\n".repeat(3000) + "latest\nwords"
     expect(processText(text, box, {maxLines: 2, textWindow: "end"}, NIMO_PROFILE).text).toBe("latest\nwords")
