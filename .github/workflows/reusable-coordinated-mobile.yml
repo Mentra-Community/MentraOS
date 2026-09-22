@@ -472,6 +472,7 @@ jobs:
           ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
           GOOGLE_PLAY_TRACK: ${{ inputs.play_track }}
           GOOGLE_PLAY_VERSION_CODES_OUTPUT: ${{ runner.temp }}/mentra-play-track-codes.json
+          GOOGLE_PLAY_USED_VERSION_CODES_OUTPUT: ${{ runner.temp }}/mentra-play-used-codes.json
           LOOK_UP_TRACK: ${{ inputs.dry_run != true && inputs.compatibility_lab != true && needs.prepare.outputs.upload_google_play == 'true' && inputs.play_track != 'internal-app-sharing' && inputs.play_track != 'production' }}
           RESERVE: ${{ inputs.dry_run != true && inputs.compatibility_lab != true && needs.prepare.outputs.android_assets_exist != 'true' && inputs.play_track != 'internal-app-sharing' && inputs.play_track != 'production' }}
           RESERVATION_RELEASE_TAG: mentra-coordinated-asg
@@ -487,8 +488,8 @@ jobs:
             tooling="$GITHUB_WORKSPACE/release-tooling/.github/scripts"
             args=(--plan release-intent/release-plan.json --track "$GOOGLE_PLAY_TRACK" --output android-version-code.json)
             if [[ "$LOOK_UP_TRACK" == true ]]; then
-              (cd mobile-play && bundle exec fastlane track_version_codes)
-              args+=(--codes "$GOOGLE_PLAY_VERSION_CODES_OUTPUT")
+              (cd mobile-play && bundle exec fastlane track_version_codes && bundle exec fastlane used_version_codes)
+              args+=(--codes "$GOOGLE_PLAY_VERSION_CODES_OUTPUT" --used "$GOOGLE_PLAY_USED_VERSION_CODES_OUTPUT")
             fi
             if [[ "$RESERVE" == true ]]; then
               registry_id=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/$RESERVATION_RELEASE_TAG" --jq .id)

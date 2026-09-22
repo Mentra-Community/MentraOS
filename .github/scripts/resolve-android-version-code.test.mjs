@@ -37,6 +37,21 @@ test("a testing track above the family window lends the next code above its floo
     }),
     {versionCode: 310000213, source: "reservation", reused: true},
   )
+  // Codes Play accepted earlier but no longer serves are skipped too.
+  assert.equal(
+    resolveAndroidVersionCode({
+      planBuildNumber: 302010036,
+      track: "beta",
+      trackCodes: [310000212],
+      usedCodes: [50572796, 310000212, 310000213, 310000214, 310000227, 900000002],
+    }).versionCode,
+    310000215,
+  )
+  assert.throws(
+    () =>
+      resolveAndroidVersionCode({planBuildNumber: 302010036, track: "beta", trackCodes: [310000212], usedCodes: [-1]}),
+    /invalid used version code/,
+  )
   assert.equal(
     resolveAndroidVersionCode({planBuildNumber: 310000300, track: "beta", trackCodes: [310000212]}).source,
     "family",
