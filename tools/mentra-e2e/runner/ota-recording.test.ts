@@ -2,13 +2,13 @@ import {afterEach, expect, mock, test} from "bun:test"
 import {mkdtemp, readFile, rm, stat} from "node:fs/promises"
 import {tmpdir} from "node:os"
 import {join} from "node:path"
-import type {Snapshot} from "./driver"
+import type {Command, Element, Snapshot} from "./driver"
 import {OTA_AUDIO_NOTICE_BODY, OTA_AUDIO_NOTICE_TITLE} from "./ota-audio-notice"
 import {legacyAppPairChecks} from "./ota-legacy-route"
 import {createOtaRecording, otaRecordingSelection, type OtaRecordingInputs} from "./ota-recording"
 import {OtaHardwareUnavailable, OtaValidationError} from "./ota-state"
 import type {Report} from "./report"
-import type {Step} from "./suite"
+import {executeSteps, type Context, type Step} from "./suite"
 
 const folders: string[] = []
 afterEach(async () => {
@@ -34,6 +34,12 @@ const home = {
   pid: 100,
   frontmostBundleId: "com.mentra.mentra",
   elements: [{identifier: "home.miniapp.com.mentra.settings", visible: true}],
+} as Snapshot
+const settingsScreen = {
+  ...home,
+  elements: [
+    {role: "AXGenericElement", title: "", description: "Device info", value: "", placeholder: "", visible: true},
+  ],
 } as Snapshot
 const proof = "1000.500 10 10 I K: BES_OTA_DIAG version_proof actual=26.9.21.3 current_boot=new-boot"
 
@@ -173,8 +179,9 @@ test("legacy reads retain the strict allowlist during active passes and recheck 
   expect(io.readHardware.mock.calls[0][3]).toBe(false)
   await session.actions.verifyPublishedManifests!()
   expect(io.verifyPublishedManifests).toHaveBeenCalledWith(inputs.legacy!.route.manifests)
+  io.snapshot.mockResolvedValueOnce(home).mockResolvedValue(settingsScreen)
   await session.actions.verifyAppPair()
-  const pairSteps = io.executeSteps.mock.calls[0][0]
+  const pairSteps = io.executeSteps.mock.calls[1][0]
   expect(pairSteps[1].checks).toEqual(legacyAppPairChecks(fixture.bluetooth, 200))
   await session.close()
 })
@@ -220,29 +227,31 @@ test("observation and actions use the same Report and unique chapters; a failed 
 test("captured audio notice gets one named step before Settings, and a failed dismissal stops there", async () => {
   for (const dismisses of [true, false]) {
     const {session, io} = await harness()
-    io.snapshot.mockResolvedValue({
-      ...home,
-      elements: [
-        ...home.elements,
-        ...[OTA_AUDIO_NOTICE_TITLE, OTA_AUDIO_NOTICE_BODY].map((description) => ({
-          role: "AXStaticText",
-          description,
-          visible: true,
-        })),
-        ...["Ignore", "Connect"].map((description) => ({
-          role: "AXButton",
-          description,
-          enabled: true,
-          visible: true,
-          actions: ["AXPress"],
-        })),
-      ],
-    } as Snapshot)
+    io.snapshot
+      .mockResolvedValueOnce({
+        ...home,
+        elements: [
+          ...home.elements,
+          ...[OTA_AUDIO_NOTICE_TITLE, OTA_AUDIO_NOTICE_BODY].map((description) => ({
+            role: "AXStaticText",
+            description,
+            visible: true,
+          })),
+          ...["Ignore", "Connect"].map((description) => ({
+            role: "AXButton",
+            description,
+            enabled: true,
+            visible: true,
+            actions: ["AXPress"],
+          })),
+        ],
+      } as Snapshot)
+      .mockResolvedValue(settingsScreen)
     io.executeSteps.mockResolvedValue(dismisses)
     if (dismisses) {
       await session.actions.verifyAppPair()
-      expect(io.executeSteps.mock.calls[1][0].map((step) => step.id)).toEqual(["OTA-02", "OTA-03", "OTA-04"])
-      expect(io.executeSteps.mock.calls[1][0][1].checks).toEqual([
+      expect(io.executeSteps.mock.calls[2][0].map((step) => step.id)).toEqual(["OTA-03", "OTA-04", "OTA-05"])
+      expect(io.executeSteps.mock.calls[2][0][1].checks).toEqual([
         {selector: {role: "AXGenericElement", contains: fixture.serial}},
         {selector: {role: "AXGenericElement", contains: fixture.bluetooth}},
       ])
@@ -252,6 +261,119 @@ test("captured audio notice gets one named step before Settings, and a failed di
     }
     expect(io.executeSteps.mock.calls[0][0][0].instruction).toContain("Bluetooth audio")
   }
+})
+
+test("late audio interruption is recorded and only Settings navigation can continue once", async () => {
+  for (const arrival of ["before-dispatch", "after-dispatch", "during-observation"] as const) {
+    const {session, io, recorded} = await harness()
+    const element = (values: Partial<Element>) => ({
+      path: "0.1",
+      role: "AXGenericElement",
+      subrole: "",
+      title: "",
+      description: "",
+      placeholder: "",
+      identifier: "",
+      value: "",
+      enabled: true,
+      focused: false,
+      visible: true,
+      actions: ["AXPress"],
+      ...values,
+    })
+    const screen = (...elements: Element[]) => ({...home, window: {x: 0, y: 0, width: 400, height: 600}, elements})
+    const pairedHome = screen(element({identifier: "home.miniapp.com.mentra.settings"}))
+    const notice = screen(
+      ...pairedHome.elements,
+      ...[OTA_AUDIO_NOTICE_TITLE, OTA_AUDIO_NOTICE_BODY].map((description) =>
+        element({role: "AXStaticText", description}),
+      ),
+      ...["Ignore", "Connect"].map((description) => element({role: "AXButton", description})),
+    )
+    const settings = screen(element({description: "Device info"}))
+    const info = screen(
+      element({description: fixture.serial}),
+      element({description: fixture.bluetooth}),
+      element({identifier: "miniapp.close"}),
+    )
+    let current = pairedHome
+    let reads = 0
+    let settingsPresses = 0
+    const commands: string[] = []
+    const read = async () => {
+      if (++reads === 2 && arrival === "before-dispatch") current = notice
+      if (reads === 6 && arrival === "during-observation") current = notice
+      return current
+    }
+    io.snapshot.mockImplementation(read)
+    io.executeSteps.mockImplementation((steps, context, report) =>
+      executeSteps(steps, context as Context, report, {
+        snapshot: read,
+        command: (async (command: Command) => {
+          const selected = command.selector?.identifier ?? command.selector?.description ?? command.selector?.contains
+          commands.push(selected ?? command.op)
+          if (selected === "Ignore") current = pairedHome
+          else if (selected === "home.miniapp.com.mentra.settings") {
+            settingsPresses++
+            current =
+              settingsPresses === 1 && arrival === "after-dispatch"
+                ? notice
+                : settingsPresses === 1 && arrival === "during-observation"
+                  ? pairedHome
+                  : settings
+          } else if (selected === "Device info") current = info
+          else if (selected === "miniapp.close") current = pairedHome
+          else if (command.op !== "snapshot") throw new Error("Unexpected action")
+          return {}
+        }) as NonNullable<Parameters<typeof executeSteps>[3]>["command"],
+      }),
+    )
+    await session.actions.verifyAppPair()
+    expect(commands.filter((value) => value === "Ignore")).toHaveLength(1)
+    expect(commands.filter((value) => value === "home.miniapp.com.mentra.settings")).toHaveLength(
+      arrival === "before-dispatch" ? 1 : 2,
+    )
+    expect(commands).not.toContain("Connect")
+    expect(commands.some((value) => value.includes("Update"))).toBe(false)
+    expect(recorded.map((step) => step.id)).toEqual(["OTA-01", "OTA-02", "OTA-03", "OTA-04", "OTA-05"])
+    expect(recorded.every((step) => step.status === "passed")).toBe(true)
+    expect(io.executeSteps.mock.calls[1][0][0].instruction).toContain("Bluetooth audio notice")
+    await session.close()
+  }
+})
+
+test("Settings navigation failure is not retried and a repeated notice cannot be ignored again", async () => {
+  const {session, io} = await harness()
+  io.executeSteps.mockResolvedValue(false)
+  await expect(session.actions.verifyAppPair()).rejects.toThrow("do not repeat an unconfirmed action")
+  expect(io.executeSteps).toHaveBeenCalledTimes(1)
+
+  const second = await harness()
+  const notice = {
+    ...home,
+    elements: [
+      ...home.elements,
+      ...[OTA_AUDIO_NOTICE_TITLE, OTA_AUDIO_NOTICE_BODY].map((description) => ({
+        role: "AXStaticText",
+        description,
+        visible: true,
+      })),
+      ...["Ignore", "Connect"].map((description) => ({
+        role: "AXButton",
+        description,
+        visible: true,
+        enabled: true,
+        actions: ["AXPress"],
+      })),
+    ],
+  } as Snapshot
+  second.io.snapshot.mockResolvedValue(notice)
+  await expect(second.session.actions.verifyAppPair()).rejects.toThrow("do not repeat its dismissal")
+  expect(
+    second.io.executeSteps.mock.calls
+      .flatMap(([steps]) => steps)
+      .filter((step) => step.instruction.includes("Dismiss the Bluetooth")),
+  ).toHaveLength(1)
 })
 
 test("final qualification still requires the fresh boot BES response and exact installed APK bytes", async () => {

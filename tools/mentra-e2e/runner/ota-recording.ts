@@ -1,7 +1,7 @@
 import {createHash} from "node:crypto"
 import {appendFile, chmod, mkdir, writeFile} from "node:fs/promises"
 import {join} from "node:path"
-import {snapshot, type Snapshot} from "./driver"
+import {snapshot, visible, type Snapshot} from "./driver"
 import {otaAudioNotice, otaAudioNoticeStep} from "./ota-audio-notice"
 import type {OtaCustomerActions} from "./ota-customer-sequence"
 import {observeOtaHardware, otaCommand, readOtaHardware, type OtaFixture} from "./ota-hardware"
@@ -186,17 +186,74 @@ export async function createOtaRecording(
   }
   async function verifyAppPair() {
     const identity = legacy ? await hardware() : undefined
-    const notice = otaAudioNotice(await io.snapshot())
-    if (notice === "blocked") throw new Error("The glasses audio notice is incomplete or ambiguous")
-    if (notice === "dismissible") {
+    const context = {fixture: fixture.serial, email: "", password: ""}
+    let dismissedNotice = false
+    async function dismissNotice(state: Snapshot) {
+      const notice = otaAudioNotice(state)
+      if (notice === "blocked") throw new Error("The glasses audio notice is incomplete or ambiguous")
+      if (notice === "absent") return
+      if (dismissedNotice) throw new Error("The glasses audio notice returned; do not repeat its dismissal")
+      dismissedNotice = true
       const step = otaAudioNoticeStep(`OTA-${String(++index).padStart(2, "0")}`)
-      if (!(await io.executeSteps([step], {fixture: fixture.serial, email: "", password: ""}, report)))
+      if (!(await io.executeSteps([step], context, report)))
         throw new Error("The glasses audio notice did not close; do not retry its dismissal automatically")
     }
+    function settingsAction(state: Snapshot, observeNotice: boolean) {
+      const notice = otaAudioNotice(state)
+      if (notice === "blocked") throw new Error("The glasses audio notice is incomplete or ambiguous")
+      // executeSteps supplies a fresh snapshot immediately before dispatch. A
+      // late notice is recorded without pressing the Settings tile behind it.
+      if (notice === "dismissible") {
+        if (observeNotice && !dismissedNotice) return {op: "snapshot"}
+        throw new Error("The glasses audio notice returned; do not repeat its dismissal")
+      }
+      const selector = {identifier: "home.miniapp.com.mentra.settings"}
+      if (visible(state, selector).length !== 1) throw new Error("Expected paired Home before opening Settings")
+      return {op: "press", selector}
+    }
+    await dismissNotice(await io.snapshot())
+    if (
+      !(await io.executeSteps(
+        [
+          {
+            id: `OTA-${String(++index).padStart(2, "0")}`,
+            instruction: "Request Settings navigation, observing any late Bluetooth audio notice first.",
+            expected:
+              "Settings is requested from paired Home, or the exact audio notice is observed; the destination is checked separately.",
+            action: (_context, state) => settingsAction(state, true),
+            checks: [],
+          },
+        ],
+        context,
+        report,
+      ))
+    )
+      throw new Error("Settings navigation failed; do not repeat an unconfirmed action")
+    // Settings can take time to open. Observe either destination instead of
+    // deciding from one snapshot while a late notice is still on its way.
+    const navigationDeadline = performance.now() + 10000
+    let afterNavigation: Snapshot | undefined
+    while (performance.now() < navigationDeadline) {
+      const current = await io.snapshot()
+      if (performance.now() >= navigationDeadline) break
+      if (
+        otaAudioNotice(current) !== "absent" ||
+        visible(current, {role: "AXGenericElement", contains: "Device info"}).length === 1
+      ) {
+        afterNavigation = current
+        break
+      }
+      await Bun.sleep(150)
+    }
+    if (!afterNavigation) throw new Error("Settings or the exact audio notice did not appear within 10000 ms")
+    const interrupted = otaAudioNotice(afterNavigation) !== "absent"
+    if (interrupted) await dismissNotice(afterNavigation)
     const steps = [
       {
-        instruction: "Open Settings to identify the app's paired glasses.",
-        action: {op: "press", selector: {identifier: "home.miniapp.com.mentra.settings"}},
+        instruction: interrupted
+          ? "Open Settings after dismissing the audio notice to identify the app's paired glasses."
+          : "Verify Settings opened to identify the app's paired glasses.",
+        action: interrupted ? (_context: unknown, state: Snapshot) => settingsAction(state, false) : {op: "snapshot"},
         checks: [{selector: {role: "AXGenericElement", contains: "Device info"}}],
       },
       {
@@ -217,7 +274,7 @@ export async function createOtaRecording(
         checks: [{selector: {identifier: "miniapp.close"}, absent: true}],
       },
     ].map((step) => ({...step, id: `OTA-${String(++index).padStart(2, "0")}`, expected: step.instruction}))
-    if (!(await io.executeSteps(steps, {fixture: fixture.serial, email: "", password: ""}, report)))
+    if (!(await io.executeSteps(steps, context, report)))
       throw new Error("The app's paired device does not match the selected fixture")
   }
   async function verifyTarget() {
