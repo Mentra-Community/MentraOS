@@ -110,6 +110,17 @@ The full January baseline and recorded day-one test have not passed. Limited BES
 preparation and earlier ordinary OTA runs cannot substitute for this qualification.
 Do not start Mentra Call as part of this routine.
 
+The 2026-09-22 UTC setup diagnostic confirmed a parser failure before firmware
+payload transfer was observed: raw-mode entry retained 225 bytes, then three
+nine-byte reads with `0x9A` response headers remained incomplete behind the stale
+`23 23 30 00 2e` header (declared length 771,764,259). The owned operation ended
+`authorization_unreconciled`. Its immutable local admin export preserves the
+received-header evidence separately from the absence of a parsed response;
+test remains not run, restoration unverified and the fixture unavailable. Next,
+isolate parser state at the owned framed-to-raw transition and cover the stale
+buffer with a regression test before another owned hardware attempt. This finding
+does not qualify the full January baseline or the customer OTA routine.
+
 ## CI and results integration
 
 - [x] Add exact PR build/receipt/archive/OTA selection and immutable request

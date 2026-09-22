@@ -612,7 +612,7 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
         isWaitingForAuthorization = false;
         authorizationRecoveryProbePending = true;
         authorizationRecoveryProbeAttempts = 0;
-        beginHandshakeDiagnostics("authorization_timeout");
+        beginRawHandshakeLocked("authorization_timeout");
         sendNextAuthorizationRecoveryProbeLocked();
     }
 
@@ -897,7 +897,7 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
             // response cancels the remaining attempts.
             authorizationRecoveryProbePending = true;
             authorizationRecoveryProbeAttempts = 0;
-            beginHandshakeDiagnostics("authorization_granted");
+            beginRawHandshakeLocked("authorization_granted");
             sendNextAuthorizationRecoveryProbeLocked();
         }
     }
@@ -1118,6 +1118,15 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
     private byte[] recvBuffer = new byte[512];
     private int curRecvLen = 0;
 
+    private void beginRawHandshakeLocked(String reason) {
+        // Recovery can route normal framed UART bytes here before OTA admission. Those bytes
+        // belong to the previous parser session, not the newly admitted raw handshake. Reset
+        // once after promotion, under the same gate as parsing and dispatch; never per probe.
+        Log.i(TAG, "Discarding " + curRecvLen + " buffered bytes at admitted OTA raw entry");
+        curRecvLen = 0;
+        beginHandshakeDiagnostics(reason);
+    }
+
     // Observe parser state without resetting it: a retained partial frame is diagnostic evidence.
     private void beginHandshakeDiagnostics(String reason) {
         String context =
@@ -1192,6 +1201,12 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
     }
 
     public BesOtaMessage parseRecv(byte[] data, int offset, int len) {
+        synchronized (mTransferGate) {
+            return parseRecvLocked(data, offset, len);
+        }
+    }
+
+    private BesOtaMessage parseRecvLocked(byte[] data, int offset, int len) {
         if (data == null) return null;
 
         BesOtaMessage m = new BesOtaMessage();
@@ -1320,6 +1335,14 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
 
     @Override
     public void onOtaRecv(byte[] data, int size) {
+        // Keep parsing and dispatch in one session: cleanup/new admission cannot reset the
+        // accumulator or replace the owner between decoding a response and handling it.
+        synchronized (mTransferGate) {
+            onOtaRecvLocked(data, size);
+        }
+    }
+
+    private void onOtaRecvLocked(byte[] data, int size) {
         String diagnosticContext = handshakeDiagnosticContext;
         int diagnosticRemaining =
                 diagnosticContext == null
