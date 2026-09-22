@@ -9,6 +9,9 @@ import type {LifecycleContext} from "./lifecycle"
 
 const hash = (bytes: Uint8Array) => createHash("sha256").update(bytes).digest("hex")
 const owner = "bd80e7eb-0456-4098-afc6-0567b1c4a27a"
+// These integration cases start real Python parents and many fake ADB children.
+// Linux CI can exceed Bun's 5s default; device observation limits remain unchanged.
+const subprocessTestTimeout = 30_000
 
 async function privateJson(path: string, value: unknown) {
   const bytes = Buffer.from(JSON.stringify(value) + "\n")
@@ -144,7 +147,7 @@ test("real direct Python observer and canonical reconciliation preserve private 
     expect(result.actual).toMatchObject({setupOnly: true, fixtureReadyForOtherRoutines: false, continuityInput: null})
     expect(await readdir(join(folder, "inputs/claims"))).toEqual([])
   })
-})
+}, subprocessTestTimeout)
 
 test("changed definition or another lease owner fails before the first Python/ADB observation", async () => {
   for (const change of ["definition", "lease"]) {
@@ -230,4 +233,4 @@ try {
     expect(pids).not.toContain(process.pid)
     expect(await readdir(join(folder, "inputs/claims"))).toEqual([])
   })
-})
+}, subprocessTestTimeout)
