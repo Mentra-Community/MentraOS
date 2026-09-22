@@ -83,7 +83,11 @@ Subscribes to touch events. Three overloads:
 
 ```ts
 interface TouchData {
-  kind: "click" | "double_click" | "scroll_top" | "scroll_bottom" | string
+  kind: "single_tap" | "double_tap" | "triple_tap" | "long_press" | "swipe_up" | "swipe_down" | string
+  /** Zero-based row of a rendered `list` element the gesture landed on (absent for plain touchpad gestures). */
+  selectedItemIndex?: number
+  /** That row's text, present together with `selectedItemIndex`. */
+  selectedItemName?: string
 }
 ```
 

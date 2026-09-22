@@ -90,6 +90,9 @@ class DeviceStore {
         store.set("bluetooth", "dashboard_depth", 2)
         store.set("bluetooth", "head_up_angle", 30)
         store.set("bluetooth", "imu_enabled", false)
+        // Runtime flag from the phone: a local miniapp listens for double-tap, so the glasses
+        // must not open their native dashboard on it. Never persisted.
+        store.set("bluetooth", "double_tap_claimed", false)
         store.set("bluetooth", "contextual_dashboard", true)
         store.set("bluetooth", "gallery_mode", true)
         store.set("bluetooth", "voice_activity_detection_enabled", BluetoothSdkDefaults.voiceActivityDetectionEnabled)
