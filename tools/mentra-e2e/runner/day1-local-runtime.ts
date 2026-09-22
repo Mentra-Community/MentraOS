@@ -17,7 +17,8 @@ import {normalizeBesVersion, parseFirmwareProfile, type FirmwareProfile} from ".
 import {collectReturnObservation, PROBE_BYTES, PROBE_SHA, validateProbePath} from "./return-collector"
 import {appObserver} from "./return-app-observer"
 import {command, snapshot, bin, root, type Doctor} from "./driver"
-import {acquireLock, Report} from "./report"
+import {Report} from "./report"
+import {lifecycleAppOwnership} from "./lifecycle-app-ownership"
 import {parseRoutineRequest, sha256, type LocalRoutineRegistration, type RegisteredRoutineContext} from "./ci-request"
 import type {AssertionStep, Json, LifecycleContext} from "./lifecycle"
 import type {ChapterPhase} from "./recorded-evidence"
@@ -221,6 +222,7 @@ export async function createLocalRegistration(ref: Ref) {
         join(import.meta.dir, "day1-status-probe.ts"),
         join(import.meta.dir, "../day1-local.ts"),
         join(root, "mobile/scripts/app-ownership.mjs"),
+        join(import.meta.dir, "lifecycle-app-ownership.ts"),
         ...[
           "driver.ts",
           "report.ts",
@@ -782,16 +784,7 @@ export async function createLocalRegistration(ref: Ref) {
       return {
         routine: current.composition.routine,
         inputs: current.composition.inputs,
-        acquireLease: async () => {
-          const release = await acquireLock(dirname(host.leasePath))
-          return async () => {
-            try {
-              await current.cleanup()
-            } finally {
-              await release()
-            }
-          }
-        },
+        ...lifecycleAppOwnership(dirname(host.leasePath), current.cleanup),
       }
     },
   }

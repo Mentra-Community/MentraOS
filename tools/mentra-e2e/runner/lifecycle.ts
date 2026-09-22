@@ -139,13 +139,25 @@ export interface LifecycleResult {
   outcome: "passed" | "failed" | "setup-failed" | "cancelled" | "incomplete"
 }
 
+export interface LifecycleLeaseOwner {
+  recovering: boolean
+  runDirectory: string
+  selection: Readonly<LifecycleSelection>
+}
+
+export interface RetainedLifecycleLease extends LifecycleLeaseOwner {
+  reason: "unsettled-operation" | "incomplete-run"
+}
+
 export interface LifecycleOptions {
   runDirectory: string
   fixtureDirectory: string
   selection: LifecycleSelection
   routine: LifecycleRoutine
-  /** Mandatory exclusive ownership of all resources; acquire before any fixture read. */
-  acquireLease(): Promise<() => Promise<void>>
+  /** Durable exclusion, acquired before fixture reads; only this owner may reclaim it for recovery. */
+  acquireLease(owner: LifecycleLeaseOwner): Promise<() => Promise<void>>
+  /** Close observation resources or record recovery metadata without releasing the retained exclusion. */
+  onLeaseRetained?(owner: RetainedLifecycleLease): Promise<void>
   /** Stops new test/setup steps. Cleanup is still attempted without forwarding an aborted signal. */
   signal?: AbortSignal
   /** An explicit operator stop can also prohibit new cleanup mutations. Reads remain allowed. */
@@ -499,9 +511,17 @@ async function withOwnership(options: LifecycleOptions, recovering: boolean): Pr
   definition(options.routine)
   if (!options.selection.runID || !options.selection.fixtureID || !options.selection.returnProfileDigest)
     throw new Error("Resolved run, physical fixture and return-profile identities are required")
-  const release = await options.acquireLease()
+  const owner: LifecycleLeaseOwner = {
+    recovering,
+    runDirectory: resolve(options.runDirectory),
+    selection: structuredClone(options.selection),
+  }
+  const release = await options.acquireLease(structuredClone(owner))
+  // An initial validation rejection has not claimed a new run. Recovery already owns
+  // potentially dispatched work, so even malformed inputs/journals must retain exclusion.
+  let releaseAllowed = !recovering
+  let retainedReason: RetainedLifecycleLease["reason"] = "incomplete-run"
   try {
-    await mkdir(options.fixtureDirectory, {recursive: true, mode: 0o700})
     const fixturePath = join(options.fixtureDirectory, "fixture.json")
     const fixture = await jsonFile<FixtureRecord>(fixturePath)
     if (fixture !== undefined) validFixture(fixture, options.selection.fixtureID)
@@ -514,12 +534,13 @@ async function withOwnership(options: LifecycleOptions, recovering: boolean): Pr
     if (recovering) {
       if (
         !fixture ||
-        fixture.status === "ready" ||
         fixture.runID !== options.selection.runID ||
         fixture.runDirectory !== resolve(options.runDirectory) ||
         fixture.returnProfileDigest !== options.selection.returnProfileDigest
       )
-        throw new Error("Recovery requires the owning unavailable fixture and its frozen run inputs")
+        throw new Error("Recovery requires the owning fixture and its frozen run inputs")
+      // Cleanup may fail after a ready fixture was committed, retaining the app lease.
+      // The same owner's explicit recovery must still freshly reconcile and verify it.
       const stored = await jsonFile(join(options.runDirectory, "run.json"))
       if (!isDeepStrictEqual(stored, descriptor)) throw new Error("Recovery inputs or routine definition changed")
       journal = await Journal.resume(options.runDirectory, options.selection.runID)
@@ -530,6 +551,10 @@ async function withOwnership(options: LifecycleOptions, recovering: boolean): Pr
         throw new Error(
           `Fixture is ${fixture.status}, owned by ${fixture.runID}; recover it before starting another run`,
         )
+      // Retain on any persistence failure from the first owned write onward. In-memory
+      // settled state cannot substitute for a complete durable journal/result/fixture.
+      releaseAllowed = false
+      await mkdir(options.fixtureDirectory, {recursive: true, mode: 0o700})
       await mkdir(options.runDirectory, {recursive: false, mode: 0o700})
       await atomicJson(join(options.runDirectory, "run.json"), descriptor)
       journal = new Journal(options.runDirectory, {
@@ -574,10 +599,15 @@ async function withOwnership(options: LifecycleOptions, recovering: boolean): Pr
         )
       }
     }
-    return await execution.finish()
+    const result = await execution.finish()
+    releaseAllowed = !journal.state.activeOperationID && !journal.state.pendingReconciliation
+    if (!releaseAllowed) retainedReason = "unsettled-operation"
+    return result
   } finally {
-    // Releasing the OS/process lease never clears a busy or recovery-required fixture record.
-    await release()
+    // An unavailable fixture record alone cannot protect the app from installers or
+    // other workers. Only durable completion with no pending writer permits release.
+    if (releaseAllowed) await release()
+    else await options.onLeaseRetained?.({...structuredClone(owner), reason: retainedReason})
   }
 }
 

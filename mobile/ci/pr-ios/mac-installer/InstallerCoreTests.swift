@@ -198,6 +198,54 @@ private struct InstallerCoreTests {
             try rejects("acquiring the lock") { _ = try AppOwnershipLease(homeDirectory: fixture.temporary) }
             try expect(InstallerFiles.exists(guardPath), "Abandoned guard was removed")
         }
+        do {
+            let fixture = try Fixture()
+            defer { fixture.clean() }
+            // Leave no installer transaction lock to mask a lost app lease.
+            try InstallerFiles.manager.removeItem(at: fixture.lock)
+            try InstallerFiles.manager.removeItem(at: fixture.staging)
+            let beforeEntries = try InstallerFiles.manager.contentsOfDirectory(atPath: fixture.root.path).sorted()
+            let folder = fixture.temporary.appendingPathComponent(".cache/mentra-e2e")
+            try InstallerFiles.manager.createDirectory(at: folder, withIntermediateDirectories: true)
+            let path = folder.appendingPathComponent("com.mentra.mentra.lock")
+            let deadPID: pid_t = 99_999_999
+            try expect(kill(deadPID, 0) == -1 && errno == ESRCH, "Fixture owner is not dead")
+            let contents = try encode([
+                "pid": Int(deadPID), "token": "retained-lifecycle-owner", "retainOnExit": true,
+                "reservation": ["runID": "retained-lifecycle-run",
+                                "runDirectory": fixture.temporary.appendingPathComponent("runs/retained-lifecycle-run").path,
+                                "fixtureID": "unit-fixture"],
+            ])
+            try contents.write(to: path)
+            var opened = false
+            do {
+                // Open Mentra uses this same wrapper around its launch closure.
+                try await withAppOwnership(homeDirectory: fixture.temporary) { opened = true }
+                throw TestFailure(description: "Open took a retained lifecycle reservation")
+            } catch let error as InstallerError {
+                try expect(error.localizedDescription.contains("Mentra is owned"), "Open bypassed retained app ownership")
+            }
+            try test("retained lifecycle reservation with a dead owner prevents native Open") {
+                try expect(!opened, "Open entered its launch closure")
+                try expect(InstallerFiles.read(path) == contents, "Open changed the retained reservation")
+            }
+            let candidate = VerifiedBuild(directory: fixture.temporary, manifest: manifest, codeRequirement: "test")
+            var quit = false, launch = false
+            do {
+                _ = try await install(candidate, homeDirectory: fixture.temporary, quit: { quit = true }, launch: { _ in launch = true })
+                throw TestFailure(description: "Installer took a retained lifecycle reservation")
+            } catch let error as InstallerError {
+                try expect(error.localizedDescription.contains("Mentra is owned"), "Install bypassed retained app ownership")
+            }
+            try test("retained lifecycle reservation prevents native install mutation and remains unchanged") {
+                try expect(!quit && !launch, "Installer entered quit or launch")
+                try expect(fixture.text("Mentra.app/binary") == "old", "Reserved app was replaced")
+                try expect(fixture.text("installed-build.json") == "old manifest", "Reserved manifest changed")
+                try expect(InstallerFiles.manager.contentsOfDirectory(atPath: fixture.root.path).sorted() == beforeEntries, "Installer created transaction files")
+                try expect(InstallerFiles.read(path) == contents, "Install changed the retained reservation")
+                try expect(!InstallerFiles.exists(folder.appendingPathComponent("com.mentra.mentra.lock.reclaim")), "Installer left an acquisition guard")
+            }
+        }
 
         try test("bind the chosen package to the signed installer's exact manifest") {
             let actual = try BuildManifest(data: data, expected: data)

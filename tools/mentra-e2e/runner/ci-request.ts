@@ -620,8 +620,8 @@ export async function consumeRoutineRequest(
       const {inputs, ...options} = prepared
       const lifecycle = await runLifecycle({
         ...options,
-        acquireLease: async () => {
-          const release = await options.acquireLease()
+        acquireLease: async (owner) => {
+          const release = await options.acquireLease(owner)
           try {
             // Generic lifecycle enrollment is useful locally, but CI may only use an existing fixture.
             const fixtureDirectory = await lstat(registration.fixtureDirectory)

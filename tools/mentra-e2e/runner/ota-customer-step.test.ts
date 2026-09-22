@@ -184,6 +184,7 @@ async function harness() {
       return {restored: true}
     },
   }
+  let retainedLease: Parameters<LifecycleOptions["acquireLease"]>[0] | undefined
   const options: LifecycleOptions = {
     runDirectory: join(folder, "run"),
     fixtureDirectory: join(folder, "fixture"),
@@ -193,12 +194,17 @@ async function harness() {
       returnProfileDigest: "frozen-target",
       inputs: {},
     },
-    acquireLease: async () => {
-      expect(state.held).toBe(false)
+    acquireLease: async (owner) => {
+      if (retainedLease) expect(owner).toEqual(retainedLease)
+      else expect(state.held).toBe(false)
+      retainedLease = undefined
       state.held = true
       return async () => {
         state.held = false
       }
+    },
+    onLeaseRetained: async (owner) => {
+      retainedLease = {recovering: true, runDirectory: owner.runDirectory, selection: owner.selection}
     },
     routine: {
       id: "day1-test",

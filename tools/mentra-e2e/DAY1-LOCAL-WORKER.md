@@ -40,6 +40,18 @@ terminal intake exports the actual finalized lifecycle and recording into
 `<stateDirectory>/runs/<requestId>/admin-export`; publication remains a separate
 explicit use of `publish-test-run.ts`.
 
+The shared app lease reserves the exact run, directory and fixture before any
+operation. A timeout, unknown writer state, interrupted process or persistence
+failure retains that reservation, so both installers and other routines remain
+excluded after the worker exits. Do not delete the lease to install a build or
+start another run. Recovery uses `recoverLifecycle` with the original frozen
+routine/selection and the same `lifecycleAppOwnership` adapter, after the previous
+process has exited. It reconciles pending operations without resending them and
+releases the reservation only after settled state and the terminal journal,
+result and fixture record are persisted. Failed recording cleanup also retains
+the reservation. A settled test failure can release the app while its separate
+fixture record still requires return verification.
+
 ## Private configuration
 
 Store configs, identity, approvals and evidence outside Git, with mode `0600`.

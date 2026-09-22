@@ -200,9 +200,10 @@ but the visible top-level document still reports `visibilityState=hidden` and
 does not advance decoded frames. Window/tab selection and moving between displays
 did not resolve that rendering failure. Temporary diagnostics were removed;
 native fullscreen playback subsequently worked, while inline playback still
-reported the hidden-document failure. Normal inline playback remains unverified.
-The original recording and publication
-remain unchanged.
+reported the hidden-document failure. After the local service restart and page
+refresh, a later authenticated Safari check played the actual recording inline
+and sought to an English chapter with advancing visible frames. The original
+failed recording verdict and publication remain unchanged.
 CI request `routine-35699614125-2-4136-day1-ota` selected the same successful build
 but remains context only; this supervised run did not consume it.
 
@@ -275,6 +276,13 @@ request was consumed and no complete registered OTA pass is claimed.
   `bc582636` iOS artifact passed verification, but intake rejected it after `dev`
   advanced during the build; a new integration build is required before consuming
   the request. The older candidate was not installed.
+- [x] Retain the shared app reservation when a registered operation is active,
+  unknown or interrupted, or persistence/cleanup fails. Both installers and
+  unrelated workers remain excluded after process exit. Same-run recovery uses
+  the frozen journal and fresh reconciliation without resending mutations;
+  settled completion releases the reservation. Real subprocess regressions
+  cover timeout, abrupt exit and recorder cleanup failure alongside native
+  installer exclusion. This is offline ownership validation, not an OTA pass.
 - [x] Add authenticated admin Test runs browsing, expected/actual firmware,
   separate phase outcomes and private streaming media with byte-range seeking.
   Local tests and a clearly labeled synthetic browser fixture verify playback,

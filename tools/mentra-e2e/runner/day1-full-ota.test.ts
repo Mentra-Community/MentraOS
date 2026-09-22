@@ -142,6 +142,7 @@ function harness(
     returnVerification: [assertion("return-not-qualified", false)],
     evidence: [assertion("evidence", true)],
   }
+  let retainedLease: Parameters<LifecycleOptions["acquireLease"]>[0] | undefined
   const lifecycle: LifecycleOptions = {
     runDirectory: join(folder, "run"),
     fixtureDirectory: join(folder, "fixture"),
@@ -152,13 +153,18 @@ function harness(
       returnProfileDigest: "test-return-profile",
       inputs: {setupConfigSha256: inputs.config.sha256},
     },
-    acquireLease: async () => {
-      expect(held).toBe(false)
+    acquireLease: async (owner) => {
+      if (retainedLease) expect(owner).toEqual(retainedLease)
+      else expect(held).toBe(false)
+      retainedLease = undefined
       held = true
       leases++
       return async () => {
         held = false
       }
+    },
+    onLeaseRetained: async (owner) => {
+      retainedLease = {recovering: true, runDirectory: owner.runDirectory, selection: owner.selection}
     },
   }
   return {

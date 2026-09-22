@@ -8,10 +8,12 @@ import {
   type AssertionStep,
   type FixtureRecord,
   type LifecycleEvent,
+  type LifecycleLeaseOwner,
   type LifecycleOptions,
   type LifecycleRoutine,
   type MutationStep,
   type Observation,
+  type RetainedLifecycleLease,
 } from "./lifecycle"
 
 function proof(actual: string, expected: string): Observation {
@@ -40,6 +42,8 @@ function harness(folder: string) {
   const reconciled: string[] = []
   let held = false
   let releases = 0
+  let retainedOwner: LifecycleLeaseOwner | undefined
+  const retained: RetainedLifecycleLease[] = []
   const assertion = (id: string, expected = "target"): AssertionStep => ({
     kind: "assertion",
     id,
@@ -89,13 +93,26 @@ function harness(folder: string) {
       inputs: {build: "candidate"},
     },
     routine,
-    acquireLease: async () => {
+    acquireLease: async (owner) => {
       if (held) throw new Error("Resource lease is held")
+      if (
+        retainedOwner &&
+        (!owner.recovering ||
+          owner.runDirectory !== retainedOwner.runDirectory ||
+          JSON.stringify(owner.selection) !== JSON.stringify(retainedOwner.selection))
+      )
+        throw new Error("Resource lease is retained for its owning recovery")
       held = true
       return async () => {
         held = false
+        retainedOwner = undefined
         releases++
       }
+    },
+    onLeaseRetained: async (owner) => {
+      retained.push(owner)
+      retainedOwner = owner
+      held = false
     },
   }
   return {
@@ -104,6 +121,7 @@ function harness(folder: string) {
     device,
     dispatched,
     reconciled,
+    retained,
     mutation,
     assertion,
     get releases() {
@@ -177,6 +195,8 @@ test("failed customer assertion remains failed after successful restoration", as
     const result = await runLifecycle(h.options)
     expect(result).toMatchObject({test: "failed", teardown: "passed", fixture: "ready", outcome: "failed"})
     expect(h.dispatched).toEqual(["baseline", "restore"])
+    expect(h.releases).toBe(1)
+    expect(h.retained).toEqual([])
   })
 })
 
@@ -289,11 +309,81 @@ test("an active write blocks teardown until recovery independently observes it s
       fixture: "recovery-required",
     })
     expect(h.dispatched).toEqual(["baseline"])
+    expect(h.releases).toBe(0)
+    expect(h.retained.at(-1)).toMatchObject({reason: "unsettled-operation", recovering: false})
     expect((await recoverLifecycle(h.options)).fixture).toBe("recovery-required")
+    expect(h.releases).toBe(0)
+    expect(h.retained.at(-1)).toMatchObject({reason: "unsettled-operation", recovering: true})
     expect(h.dispatched).toEqual(["baseline"])
     h.device.active = false
     expect(await recoverLifecycle(h.options)).toMatchObject({test: "not-run", fixture: "ready"})
     expect(h.dispatched).toEqual(["baseline", "restore"])
+    expect(h.releases).toBe(1)
+  })
+})
+
+for (const status of ["active", "unknown"] as const) {
+  test(`a dispatched ${status} customer operation retains exclusion until its owner proves it idle`, async () => {
+    await fixture(async (folder) => {
+      const h = harness(folder)
+      const customer = h.routine.test[0] as MutationStep
+      const execute = customer.execute
+      const reconcile = customer.reconcile
+      customer.execute = async (context, intent) => {
+        await execute(context, intent)
+        h.device.active = true
+      }
+      customer.reconcile = async (context, intent) => ({
+        ...(await reconcile(context, intent)),
+        ...(intent && h.device.active ? {status} : {}),
+      })
+      expect(await runLifecycle(h.options)).toMatchObject({
+        test: "failed",
+        teardown: "deferred",
+        fixture: "recovery-required",
+      })
+      expect(h.releases).toBe(0)
+      expect(h.retained.at(-1)).toMatchObject({
+        reason: "unsettled-operation",
+        runDirectory: h.options.runDirectory,
+        selection: h.options.selection,
+      })
+      await expect(
+        runLifecycle({
+          ...h.options,
+          runDirectory: join(folder, "next"),
+          selection: {...h.options.selection, runID: "next-run"},
+        }),
+      ).rejects.toThrow("retained for its owning recovery")
+      await expect(
+        recoverLifecycle({...h.options, selection: {...h.options.selection, runID: "different-owner"}}),
+      ).rejects.toThrow("retained for its owning recovery")
+      expect((await recoverLifecycle(h.options)).fixture).toBe("recovery-required")
+      expect(h.releases).toBe(0)
+      h.device.active = false
+      expect(await recoverLifecycle(h.options)).toMatchObject({test: "failed", fixture: "ready"})
+      expect(h.releases).toBe(1)
+      expect(h.dispatched).toEqual(["baseline", "upgrade"])
+      expect(
+        (await events(folder)).filter((event) => event.type === "mutation-intent" && event.stepID === "upgrade"),
+      ).toHaveLength(1)
+    })
+  })
+}
+
+test("retention cleanup failure never falls back to releasing the shared lease", async () => {
+  await fixture(async (folder) => {
+    const h = harness(folder)
+    h.device.active = true
+    h.options.onLeaseRetained = async () => {
+      throw new Error("Recording cleanup failed")
+    }
+    // Let preflight establish identity so the subsequent mutation probe observes the busy writer.
+    h.routine.preflight[0].observe = async () => ({...proof("identified", "identified"), passed: true})
+    await expect(runLifecycle(h.options)).rejects.toThrow("Recording cleanup failed")
+    expect(h.releases).toBe(0)
+    expect((await fixtureRecord(folder)).status).toBe("recovery-required")
+    await expect(runLifecycle(h.options)).rejects.toThrow("Resource lease is held")
   })
 })
 
@@ -338,11 +428,14 @@ test("failed identity preflight never restores an unqualified device even when i
 test("recovery rejects changed inputs instead of reinterpreting an old mutation intent", async () => {
   await fixture(async (folder) => {
     const h = harness(folder)
+    h.routine.preflight[0].observe = async () => ({...proof("identified", "identified"), passed: true})
     h.device.active = true
     await runLifecycle(h.options)
     await expect(
       recoverLifecycle({...h.options, routine: {...h.routine, definitionDigest: "different-code"}}),
     ).rejects.toThrow("definition changed")
+    expect(h.releases).toBe(0)
+    expect(h.retained.at(-1)).toMatchObject({reason: "incomplete-run", recovering: true})
     expect((await fixtureRecord(folder)).status).toBe("recovery-required")
     expect(h.dispatched).toEqual([])
   })
@@ -351,7 +444,11 @@ test("recovery rejects changed inputs instead of reinterpreting an old mutation 
 test("a second invocation cannot steal a live resource lease", async () => {
   await fixture(async (folder) => {
     const h = harness(folder)
-    const release = await h.options.acquireLease()
+    const release = await h.options.acquireLease({
+      recovering: false,
+      runDirectory: h.options.runDirectory,
+      selection: h.options.selection,
+    })
     await expect(runLifecycle(h.options)).rejects.toThrow("Resource lease is held")
     await release()
     expect(h.dispatched).toEqual([])
@@ -415,12 +512,15 @@ test("a real process crash after dispatch recovers from the journal without rese
 test("a damaged append-only journal fails closed and is never truncated to enable another dispatch", async () => {
   await fixture(async (folder) => {
     const h = harness(folder)
+    h.routine.preflight[0].observe = async () => ({...proof("identified", "identified"), passed: true})
     h.device.active = true
     await runLifecycle(h.options)
     const path = join(folder, "run", "events.jsonl")
     const damaged = (await readFile(path, "utf8")) + '{"sequence":'
     await writeFile(path, damaged)
     await expect(recoverLifecycle(h.options)).rejects.toThrow("Incomplete journal")
+    expect(h.releases).toBe(0)
+    expect(h.retained.at(-1)).toMatchObject({reason: "incomplete-run", recovering: true})
     expect(await readFile(path, "utf8")).toBe(damaged)
     expect((await fixtureRecord(folder)).status).toBe("recovery-required")
     expect(h.dispatched).toEqual([])
@@ -441,11 +541,65 @@ test("checkpoint persistence failure stops all new actions; recovery uses the du
     }
     await expect(runLifecycle(h.options)).rejects.toThrow("Journal persistence failed")
     expect(h.dispatched).toEqual(["baseline"])
-    expect(h.releases).toBe(1)
+    expect(h.releases).toBe(0)
+    expect(h.retained.at(-1)).toMatchObject({reason: "incomplete-run", recovering: false})
     expect((await fixtureRecord(folder)).status).toBe("busy")
     expect((await events(folder)).at(-1)?.type).toBe("mutation-dispatched")
     await rm(join(folder, "run", "state.json"), {recursive: true})
     expect(await recoverLifecycle(h.options)).toMatchObject({test: "not-run", fixture: "ready"})
     expect(h.dispatched).toEqual(["baseline", "restore"])
+    expect(h.releases).toBe(1)
+  })
+})
+
+test("result persistence failure retains exclusion even after all operations were observed settled", async () => {
+  await fixture(async (folder) => {
+    const h = harness(folder)
+    const evidence = h.routine.evidence[0]
+    const observe = evidence.observe
+    evidence.observe = async (context) => {
+      await mkdir(join(h.options.runDirectory, "result.json"))
+      return observe(context)
+    }
+    await expect(runLifecycle(h.options)).rejects.toThrow()
+    expect((await events(folder)).at(-1)?.type).toBe("run-finished")
+    expect(h.releases).toBe(0)
+    expect(h.retained.at(-1)).toMatchObject({reason: "incomplete-run"})
+    expect((await fixtureRecord(folder)).status).toBe("busy")
+    await rm(join(h.options.runDirectory, "result.json"), {recursive: true})
+    evidence.observe = observe
+    expect(await recoverLifecycle(h.options)).toMatchObject({test: "passed", fixture: "ready"})
+    expect(h.releases).toBe(1)
+    expect(h.dispatched).toEqual(["baseline", "upgrade"])
+  })
+})
+
+test("same-owner recovery of a committed ready fixture requires fresh return proof without replay", async () => {
+  await fixture(async (folder) => {
+    const h = harness(folder)
+    const step = h.routine.returnVerification[0]
+    const observe = step.observe
+    let returnReads = 0
+    step.observe = async (context) => {
+      returnReads++
+      return observe(context)
+    }
+    expect((await runLifecycle(h.options)).fixture).toBe("ready")
+    const descriptor = await readFile(join(h.options.runDirectory, "run.json"), "utf8")
+    const sequence = (await events(folder)).at(-1)!.sequence
+    expect(returnReads).toBe(1)
+    expect(await recoverLifecycle(h.options)).toMatchObject({test: "passed", fixture: "ready"})
+    expect(returnReads).toBe(2)
+    expect(h.dispatched).toEqual(["baseline", "upgrade"])
+    expect(await readFile(join(h.options.runDirectory, "run.json"), "utf8")).toBe(descriptor)
+    const journal = await events(folder)
+    expect(journal.filter((event) => event.type === "mutation-intent")).toHaveLength(2)
+    expect(
+      journal.find((event) => event.sequence > sequence && event.stepID === step.id && event.type === "assertion"),
+    ).toMatchObject({details: {passed: true, source: "simulated-device"}})
+    await expect(
+      recoverLifecycle({...h.options, selection: {...h.options.selection, runID: "different-owner"}}),
+    ).rejects.toThrow("Recovery requires the owning fixture")
+    expect(await readFile(join(h.options.runDirectory, "run.json"), "utf8")).toBe(descriptor)
   })
 })
