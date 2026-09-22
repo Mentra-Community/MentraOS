@@ -75,11 +75,12 @@ jobs:
               # promotion needs a follow-up design because signed mobile bytes
               # cannot have their embedded backend rewritten after this build.
               echo "backend_environment=staging" >> "$GITHUB_OUTPUT"
-              # The Play beta track still serves a pre-formula build number
-              # above every family window, so betas go through Internal App
-              # Sharing until a fresh closed track exists (see the family
-              # build numbers spec). Keep release-family.mjs in step.
-              echo "play_track=internal-app-sharing" >> "$GITHUB_OUTPUT"
+              # The open-testing track behind the public beta link. It serves
+              # a pre-formula code above the family window, so the Android
+              # build takes the track's floor plus one until the family passes
+              # it (resolve-android-version-code.mjs). Keep release-family.mjs
+              # in step.
+              echo "play_track=beta" >> "$GITHUB_OUTPUT"
               echo "testflight_group=Mentra Staging Public" >> "$GITHUB_OUTPUT"
               echo "testflight_audience=external" >> "$GITHUB_OUTPUT"
               ;;
@@ -173,6 +174,7 @@ jobs:
             --sequence "${{ github.run_number }}" \
             --source-commit "${{ github.sha }}" \
             --native-build-number "${{ steps.family-number.outputs.build_number }}" \
+            --play-track "${{ steps.channel.outputs.play_track }}" \
             --ota-inputs ota-release-inputs.json \
             --require-version-mirrors true \
             --public-beta-testflight true \
@@ -187,6 +189,7 @@ jobs:
             --sequence "${{ github.run_number }}" \
             --source-commit "${{ github.sha }}" \
             --native-build-number "${{ steps.family-number.outputs.build_number }}" \
+            --play-track "${{ steps.channel.outputs.play_track }}" \
             --ota-inputs ota-release-inputs.json \
             --require-version-mirrors true \
             --public-beta-testflight true \

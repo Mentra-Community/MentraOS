@@ -91,7 +91,7 @@ test("assembles every product target and finalizes one complete release manifest
     releaseSetId: plan.releaseSetId,
     publications: {
       mentraos: {
-        "google-play": publication(`com.mentra.mentra:${plan.native.buildNumber}:internal-app-sharing`),
+        "google-play": publication(`com.mentra.mentra:${plan.native.buildNumber}:beta`),
         "app-store-connect": publication(
           `com.mentra.mentra:${plan.native.marketingVersion}:${plan.native.buildNumber}:Mentra Staging`,
         ),

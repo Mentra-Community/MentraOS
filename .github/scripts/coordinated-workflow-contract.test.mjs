@@ -404,10 +404,44 @@ test("mobile destinations use real TestFlight groups without changing the releas
   assert.match(mobile, /play_install_url:\n        value: \$\{\{ jobs\.android\.outputs\.play_install_url \}\}/)
   assert.match(coordinator, /PLAY_INSTALL_URL: \$\{\{ needs\.mobile\.outputs\.play_install_url \}\}/)
   // The beta channel and the plan's expected coordinate name the same Play destination.
-  assert.match(coordinator, /play_track=internal-app-sharing/)
+  assert.match(coordinator, /play_track=beta/)
+  // The Android build resolves its own version code before building and the
+  // record carries it; verification and the track check use the same value.
+  assert.match(mobile, /- name: Resolve and reserve the Android version code\n        id: android-code/)
+  assert.match(mobile, /resolve-android-version-code\.mjs/)
+  assert.match(
+    mobile,
+    /--assets android-code-registry-assets\.json --owner "\$OWNER" --marker-dir android-version-code-marker/,
+  )
+  assert.match(mobile, /RESERVATION_RELEASE_TAG: mentra-coordinated-asg/)
+  assert.match(
+    mobile,
+    /RESERVE: \$\{\{ inputs\.dry_run != true && inputs\.compatibility_lab != true && needs\.prepare\.outputs\.android_assets_exist != 'true'/,
+  )
+  const reservation = mobile.slice(
+    mobile.indexOf("- name: Resolve and reserve the Android version code"),
+    mobile.indexOf("- name: Build signed coordinated APK and AAB"),
+  )
+  assert.match(reservation, /ARTIFACTS_R2_ACCESS_KEY_ID: \$\{\{ secrets\.ARTIFACTS_R2_ACCESS_KEY_ID \}\}/)
+  assert.match(reservation, /"\$tooling\/resolve-android-version-code\.mjs"/)
+  assert.match(reservation, /"\$tooling\/publish-immutable-release-asset\.mjs"/)
+  assert.doesNotMatch(reservation, /node \.github\/scripts\//)
+  assert.match(mobile, /but this release has no immutable Android pair; refusing to treat it as reused/)
+  assert.match(coordinator, /--play-track "\$\{\{ steps\.channel\.outputs\.play_track \}\}"/)
+  assert.match(mobile, /EXPECTED_BUILD: \$\{\{ steps\.android-code\.outputs\.code \}\}/)
+  assert.match(mobile, /--android-build-number "\$\{\{ steps\.android-code\.outputs\.code \}\}"/)
+  assert.ok(
+    mobile.indexOf("- name: Resolve and reserve the Android version code") <
+      mobile.indexOf("- name: Build signed coordinated APK and AAB"),
+  )
+  assert.ok(
+    mobile.indexOf("- name: Install Google Play upload tooling") <
+      mobile.indexOf("- name: Resolve and reserve the Android version code"),
+  )
+  assert.match(mobile, /url="https:\/\/play\.google\.com\/apps\/testing\/com\.mentra\.mentra"/)
   assert.match(
     readFileSync(new URL("./release-family.mjs", import.meta.url), "utf8"),
-    /beta: \{play: "internal-app-sharing"/,
+    /DEFAULT_PLAY_TRACKS = Object\.freeze\(\{dev: "internal", beta: "beta", production: "production"\}\)/,
   )
   assert.match(mobile, /COMPATIBILITY-LAB-NOT-FOR-PRODUCTION/)
   assert.doesNotMatch(mobile, /MENTRA_COORDINATED_RELEASE_CHANNEL=\$\{\{ inputs\.testflight_group \}\}/)
