@@ -122,7 +122,7 @@ The reconciler never overwrites an original failed result.
 const inputs = {config: {path: configPath, sha256: configSha256}, python, adapterDirectory}
 const besSetup = createDay1BesStep(inputs, createDay1BesRuntime(inputs))
 // Include besSetup in the existing routine.setup array. The existing lifecycle
-// process owns the lease whose PID is pinned in the private config.
+// process owns the live lease at the path pinned in the private config.
 ```
 
 Construction performs no file or device work. Before the mutation intent, one
@@ -164,6 +164,15 @@ trusted observation or separately qualified recovery settles it. No automatic
 claim deletion, source-state reset, reboot, reader restart or second firmware
 attempt is available here. The extracted tracked flow still needs a complete
 hardware pass before unattended use; offline tests do not supply that evidence.
+
+The September 22 read-only check exercised this tracked runtime on the physical
+fixture and returned `settled / exact_source_before_first_attempt`. It freshly
+verified source BES `26.9.21.3`, MTK `MentraLive_20260921.0` and ASG `303006291`
+using the real observer and canonical reconciler. Normal Wi-Fi ADB was temporarily
+enabled and restored to its original off state under one lease. No firmware
+dispatch, lifecycle claim, fixture enrollment or CI request consumption occurred.
+This qualifies the source observation path only, not installation or unattended
+completion. Raw identity and command evidence remain in the local run folder.
 
 Run the focused tests without touching hardware:
 
