@@ -56,6 +56,8 @@ jobs:
       - run: python3 -m unittest discover -s tools/mentra-e2e -p test_mac_ci.py -v
       - name: Verify January setup with fake hardware
         run: python3 -m unittest discover -s tools/mentra-e2e/adapters/day1-setup -p 'test_*.py' -v
+      - name: Verify compact January BES setup with fake hardware
+        run: python3 -m unittest discover -s tools/mentra-e2e/adapters/day1-bes -p 'test_*.py' -v
       - run: node --test mobile/scripts/install-ios-mac.test.mjs
       - run: python3 mobile/ci/pr-ios/test_mac_installer.py
       - name: Verify routine lifecycle, firmware assertions and request guards
@@ -63,6 +65,7 @@ jobs:
           bun test tools/mentra-e2e/runner/lifecycle.test.ts tools/mentra-e2e/runner/firmware-profile.test.ts tools/mentra-e2e/runner/firmware-state-cli.test.ts tools/mentra-e2e/runner/ci-request.test.ts tools/mentra-e2e/runner/test-run-publisher.test.ts
           bun test tools/mentra-e2e/runner/ota-state.test.ts tools/mentra-e2e/runner/ota-legacy-route.test.ts tools/mentra-e2e/runner/return-observer.test.ts tools/mentra-e2e/runner/day1-run-exporter.test.ts
           bun test tools/mentra-e2e/runner/day1-full-ota.test.ts tools/mentra-e2e/runner/ota-customer-sequence.test.ts tools/mentra-e2e/runner/ota-recording.test.ts tools/mentra-e2e/runner/return-collector.test.ts tools/mentra-e2e/runner/return-app-observer.test.ts tools/mentra-e2e/runner/ci-run-exporter.test.ts tools/mentra-e2e/runner/ota-january-identity.test.ts tools/mentra-e2e/runner/ota-january-pairing.test.ts
+          bun test tools/mentra-e2e/runner/ota-customer-step.test.ts
           node --test .github/scripts/request-e2e-routine.test.mjs
 
   native-recorder:
