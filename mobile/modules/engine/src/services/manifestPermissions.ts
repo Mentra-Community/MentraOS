@@ -14,6 +14,10 @@ const ALLOWED_PERMISSION_TYPES: ReadonlySet<AppPermissionType> = new Set<AppPerm
   "POST_NOTIFICATIONS",
 ])
 
+export function isAuthorDeclarablePermissionType(value: string): value is AppPermissionType {
+  return ALLOWED_PERMISSION_TYPES.has(value as AppPermissionType)
+}
+
 /**
  * Normalize the `permissions` field from a miniapp.json manifest.
  *
@@ -27,11 +31,11 @@ export function normalizeManifestPermissions(
   const out: AppletPermission[] = []
   for (const p of raw) {
     if (typeof p === "string") {
-      if (ALLOWED_PERMISSION_TYPES.has(p as AppPermissionType)) {
+      if (isAuthorDeclarablePermissionType(p)) {
         out.push({type: p as AppPermissionType, required: true})
       }
     } else if (p && typeof p === "object" && typeof p.type === "string") {
-      if (ALLOWED_PERMISSION_TYPES.has(p.type as AppPermissionType)) {
+      if (isAuthorDeclarablePermissionType(p.type)) {
         out.push({
           type: p.type as AppPermissionType,
           ...(typeof p.required === "boolean" ? {required: p.required} : {}),

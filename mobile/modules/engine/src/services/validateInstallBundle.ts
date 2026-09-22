@@ -5,6 +5,7 @@ import {Buffer} from "buffer"
 
 import {HardwareRequirementLevel, HardwareType, type HardwareRequirement} from "../types"
 import {createIncrementalSha256, sha256Hex} from "../utils/sha256"
+import {isAuthorDeclarablePermissionType} from "./manifestPermissions"
 
 const MAX_EXPANDED_BYTES = 200 * 1024 * 1024
 const MAX_ENTRIES = 2_000
@@ -12,16 +13,6 @@ const MAX_MANIFEST_BYTES = 256 * 1024
 const MAX_SIGNATURE_BYTES = 16 * 1024
 const MENTRA_BUNDLE_SIGNATURE_PATH = "META-INF/MENTRA.SIG"
 const PACKAGE_NAME_PATTERN = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/
-const AUTHOR_DECLARABLE_PERMISSION_TYPES = new Set([
-  "MICROPHONE",
-  "CAMERA",
-  "PHONE_CAMERA",
-  "CALENDAR",
-  "LOCATION",
-  "BACKGROUND_LOCATION",
-  "READ_NOTIFICATIONS",
-  "POST_NOTIFICATIONS",
-])
 
 export async function validateInstallBundleArchive(
   bytes: Uint8Array,
@@ -232,7 +223,7 @@ export function validateManifestPermissions(value: unknown): void {
       throw new Error(`bundle manifest permissions[${index}] must be an object`)
     }
     const record = candidate as Record<string, unknown>
-    if (typeof record.type !== "string" || !AUTHOR_DECLARABLE_PERMISSION_TYPES.has(record.type)) {
+    if (typeof record.type !== "string" || !isAuthorDeclarablePermissionType(record.type)) {
       throw new Error(`bundle manifest permissions[${index}].type is invalid`)
     }
     if (record.required !== undefined && typeof record.required !== "boolean") {
