@@ -123,11 +123,14 @@ permissions:
   contents: write
 
 concurrency:
-  group: coordinated-mobile-publication
+  group: ${{ inputs.dry_run && format('coordinated-mobile-qualification-{0}', github.run_id) || 'coordinated-mobile-publication' }}
   cancel-in-progress: false
   queue: max
 
 env:
+  # Keep cold/warm qualification evidence separately; publication retries retain
+  # their existing handoff identity.
+  COORDINATED_MOBILE_ARTIFACT_RUN_ID: ${{ inputs.dry_run && format('{0}-{1}', github.run_id, github.run_attempt) || github.run_id }}
   ARTIFACTS_R2_ACCOUNT_ID: ${{ vars.ARTIFACTS_R2_ACCOUNT_ID }}
   ARTIFACTS_R2_BUCKET: artifactscdn
 
@@ -340,6 +343,14 @@ jobs:
           java-version: "17"
           distribution: temurin
 
+      - name: Restore Gradle dependencies and native task outputs
+        if: inputs.backend_environment != 'prod' && (inputs.dry_run == true || needs.prepare.outputs.android_assets_exist != 'true')
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: false
+          # Do not persist a signing task's serialized configuration/credentials.
+          cache-encryption-key: ''
+
       - uses: android-actions/setup-android@v3
         with:
           # The action's default list includes the retired `tools` package,
@@ -411,7 +422,7 @@ jobs:
           )
           node mobile/modules/bluetooth-sdk/scripts/write-release-metadata.mjs "${metadata[@]}"
           node mobile/modules/engine/scripts/write-release-metadata.mjs "${metadata[@]}"
-          grep -E '^(EXPO_PUBLIC_|MENTRAOS_NATIVE_MARKETING_VERSION|MENTRAOS_PINNED_BUILD_NUMBER)=' mobile/.env >> "$GITHUB_ENV"
+          grep -E '^(EXPO_PUBLIC_[A-Za-z0-9_]+|MENTRAOS_NATIVE_MARKETING_VERSION|MENTRAOS_PINNED_BUILD_NUMBER)=' mobile/.env >> "$GITHUB_ENV"
           echo "MENTRA_COORDINATED_RELEASE_CHANNEL=$(jq -er .channel release-intent/release-plan.json)" >> "$GITHUB_ENV"
 
       - name: Inject Android signing and Play credentials
@@ -616,7 +627,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: coordinated-mobile-android-${{ github.run_id }}
+          name: coordinated-mobile-android-${{ env.COORDINATED_MOBILE_ARTIFACT_RUN_ID }}
           path: mobile-release
           if-no-files-found: error
           retention-days: 90
@@ -632,7 +643,7 @@ jobs:
       EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY }}
       EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID }}
     outputs:
-      upload_artifact: coordinated-mobile-ios-upload-${{ github.run_id }}
+      upload_artifact: coordinated-mobile-ios-upload-${{ env.COORDINATED_MOBILE_ARTIFACT_RUN_ID }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -647,6 +658,7 @@ jobs:
           sparse-checkout: |
             .github/scripts
             .github/artifact-storage
+            mobile/ci/verify-signing.py
 
       - uses: actions/download-artifact@v4
         with:
@@ -726,8 +738,39 @@ jobs:
           )
           node mobile/modules/bluetooth-sdk/scripts/write-release-metadata.mjs "${metadata[@]}"
           node mobile/modules/engine/scripts/write-release-metadata.mjs "${metadata[@]}"
-          grep -E '^(EXPO_PUBLIC_|MENTRAOS_NATIVE_MARKETING_VERSION|MENTRAOS_PINNED_BUILD_NUMBER)=' mobile/.env >> "$GITHUB_ENV"
+          grep -E '^(EXPO_PUBLIC_[A-Za-z0-9_]+|MENTRAOS_NATIVE_MARKETING_VERSION|MENTRAOS_PINNED_BUILD_NUMBER)=' mobile/.env >> "$GITHUB_ENV"
           echo "MENTRA_COORDINATED_RELEASE_CHANNEL=$(jq -er .channel release-intent/release-plan.json)" >> "$GITHUB_ENV"
+
+      - name: Check frozen source cache support
+        id: cache-support
+        if: inputs.backend_environment != 'prod'
+        run: |
+          supported=false
+          if [[ -f mobile/scripts/native-build-cache.mjs ]] && grep -q MENTRA_NATIVE_BUILD_CACHE mobile/scripts/release-ios.mjs; then
+            supported=true
+          fi
+          echo "supported=$supported" >> "$GITHUB_OUTPUT"
+
+      - name: Compute iOS compilation cache scope
+        id: native-cache
+        if: steps.cache-support.outputs.supported == 'true' && (inputs.dry_run == true || needs.prepare.outputs.ios_asset_exists != 'true')
+        run: node mobile/scripts/native-build-cache.mjs key
+
+      - name: Restore iOS compiler outputs
+        if: steps.native-cache.outputs.scope != ''
+        uses: actions/cache@v4
+        with:
+          # Keep native projects and build graphs fresh. Xcode validates compiler
+          # cache inputs itself; SwiftPM restores only its sources/downloads.
+          path: |
+            mobile/build/CompilationCache
+            mobile/build/DerivedData/SourcePackages
+          # Repeated releases of the same source reuse one entry rather than
+          # uploading several gigabytes again for each new release number.
+          key: coordinated-ios-${{ steps.native-cache.outputs.scope }}-${{ steps.native-cache.outputs.source }}
+          restore-keys: |
+            coordinated-ios-${{ steps.native-cache.outputs.scope }}-${{ steps.native-cache.outputs.source }}
+            coordinated-ios-${{ steps.native-cache.outputs.scope }}-
 
       - name: Configure Mapbox SwiftPM credentials
         if: inputs.dry_run == true || needs.prepare.outputs.ios_asset_exists != 'true'
@@ -787,6 +830,10 @@ jobs:
           echo "MENTRA_CI_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
           echo "MENTRA_CI_KEYCHAIN_PASSWORD=$password" >> "$GITHUB_ENV"
 
+      - name: Verify private signing access before compilation
+        if: inputs.dry_run == true || needs.prepare.outputs.ios_asset_exists != 'true'
+        run: python3 "$GITHUB_WORKSPACE/release-tooling/mobile/ci/verify-signing.py" "$MENTRA_CI_KEYCHAIN"
+
       - name: Inject App Store Connect API credential
         uses: ./.github/actions/inject-signing
         with:
@@ -809,6 +856,7 @@ jobs:
           SENTRY_ALLOW_FAILURE: "true"
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
           MENTRA_TESTFLIGHT_INTERNAL_ONLY: ${{ inputs.compatibility_lab }}
+          MENTRA_NATIVE_BUILD_CACHE: ${{ steps.native-cache.outputs.scope != '' }}
         run: |
           security unlock-keychain -p "$MENTRA_CI_KEYCHAIN_PASSWORD" "$MENTRA_CI_KEYCHAIN"
           security set-keychain-settings "$MENTRA_CI_KEYCHAIN"
@@ -844,7 +892,7 @@ jobs:
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
-          name: coordinated-mobile-ios-upload-${{ github.run_id }}
+          name: coordinated-mobile-ios-upload-${{ env.COORDINATED_MOBILE_ARTIFACT_RUN_ID }}
           path: mobile-release
           if-no-files-found: error
           retention-days: 90
@@ -859,7 +907,7 @@ jobs:
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
-          name: coordinated-mobile-ios-upload-${{ github.run_id }}
+          name: coordinated-mobile-ios-upload-${{ env.COORDINATED_MOBILE_ARTIFACT_RUN_ID }}
           path: mobile-release
           if-no-files-found: error
           retention-days: 90
@@ -875,7 +923,7 @@ jobs:
         if: steps.ipa-upload-2.outcome == 'failure'
         uses: actions/upload-artifact@v4
         with:
-          name: coordinated-mobile-ios-upload-${{ github.run_id }}
+          name: coordinated-mobile-ios-upload-${{ env.COORDINATED_MOBILE_ARTIFACT_RUN_ID }}
           path: mobile-release
           if-no-files-found: error
           retention-days: 90
@@ -1149,7 +1197,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: coordinated-mobile-ios-${{ github.run_id }}
+          name: coordinated-mobile-ios-${{ env.COORDINATED_MOBILE_ARTIFACT_RUN_ID }}
           path: mobile-release
           if-no-files-found: error
           retention-days: 90
@@ -1172,12 +1220,12 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: coordinated-mobile-android-${{ github.run_id }}
+          name: coordinated-mobile-android-${{ env.COORDINATED_MOBILE_ARTIFACT_RUN_ID }}
           path: result/android
 
       - uses: actions/download-artifact@v4
         with:
-          name: coordinated-mobile-ios-${{ github.run_id }}
+          name: coordinated-mobile-ios-${{ env.COORDINATED_MOBILE_ARTIFACT_RUN_ID }}
           path: result/ios
 
       - name: Merge mobile publication records

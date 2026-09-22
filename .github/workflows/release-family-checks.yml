@@ -59,6 +59,7 @@ jobs:
             mobile/modules/engine/scripts \
             -maxdepth 1 -name '*.test.mjs' -print | sort)
           tests+=(mobile/scripts/app-store-connect-build.test.mjs scripts/production-release.test.mjs)
+          tests+=(mobile/scripts/native-build-cache.test.mjs mobile/ci/pr-ios/xcode-attempt.test.mjs)
           test "${#tests[@]}" -gt 0
           node --test "${tests[@]}"
       - name: Validate repository definition

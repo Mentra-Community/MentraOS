@@ -16,7 +16,7 @@ export function signingOnlyFailure({status, signal, output}) {
   )
 }
 
-export function runXcode(args, options) {
+export function runXcode(args, {onOutput, ...options} = {}) {
   return new Promise((resolve, reject) => {
     const child = spawn("xcodebuild", args, {...options, stdio: ["inherit", "pipe", "pipe"]})
     let output = ""
@@ -27,6 +27,7 @@ export function runXcode(args, options) {
       stream.on("data", (chunk) => {
         destination.write(chunk)
         output = (output + chunk).slice(-128 * 1024)
+        onOutput?.(output)
       })
     }
     child.on("error", reject)
