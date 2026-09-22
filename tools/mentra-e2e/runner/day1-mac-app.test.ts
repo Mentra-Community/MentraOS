@@ -69,9 +69,17 @@ async function setup(folder: string) {
   await writeFile(driver, "synthetic pinned driver")
   await chmod(driver, 0o755)
   const leasePath = join(folder, "lease.json")
-  const acquire = async () => {
-    await writeFile(leasePath, JSON.stringify({pid: process.pid, token: randomUUID()}), {flag: "wx", mode: 0o600})
+  let retainedLease: Parameters<LifecycleOptions["acquireLease"]>[0] | undefined
+  const acquire = async (owner?: Parameters<LifecycleOptions["acquireLease"]>[0]) => {
+    if (retainedLease) {
+      expect(owner).toEqual(retainedLease)
+      retainedLease = undefined
+    } else
+      await writeFile(leasePath, JSON.stringify({pid: process.pid, token: randomUUID()}), {flag: "wx", mode: 0o600})
     return () => rm(leasePath)
+  }
+  const retain: NonNullable<LifecycleOptions["onLeaseRetained"]> = async (owner) => {
+    retainedLease = {recovering: true, runDirectory: owner.runDirectory, selection: owner.selection}
   }
   const base = {
     manifest: {path: manifest, sha256: hash(JSON.stringify(ci))},
@@ -183,6 +191,7 @@ async function setup(folder: string) {
     context,
     intent,
     acquire,
+    retain,
     commands,
     doctor,
     get app() {
@@ -241,6 +250,7 @@ test("real lifecycle journals stop then launch, with private command evidence an
       fixtureDirectory: join(f.folder, "fixture"),
       selection: f.context.selection,
       acquireLease: f.acquire,
+      onLeaseRetained: f.retain,
       routine: {
         id: "synthetic-mac",
         definitionDigest: "synthetic-definition",
@@ -399,6 +409,7 @@ test("lifecycle recovery observes the completed goal without repeating an ambigu
       fixtureDirectory: join(f.folder, "fixture"),
       selection: f.context.selection,
       acquireLease: f.acquire,
+      onLeaseRetained: f.retain,
       routine: {
         id: "synthetic-mac-recovery",
         definitionDigest: "synthetic-definition",
@@ -415,6 +426,7 @@ test("lifecycle recovery observes the completed goal without repeating an ambigu
     f.childAlive = true
     await runLifecycle(options)
     expect(launchCommands(f)).toHaveLength(1)
+    expect(JSON.parse(await readFile(f.base.leasePath, "utf8")).pid).toBe(process.pid)
     f.childAlive = false
     f.app = null
     await recoverLifecycle(options)
@@ -422,6 +434,7 @@ test("lifecycle recovery observes the completed goal without repeating an ambigu
     const state = JSON.parse(await readFile(join(f.context.runDirectory, "state.json"), "utf8"))
     expect(state.operations[0].reconciliation.status).toBe("satisfied")
     expect(state.operations[0].dispatchError).toContain("synthetic interruption")
+    expect(existsSync(f.base.leasePath)).toBe(false)
   }))
 
 test("launcher and manifest pins are checked again even after a successful precondition", () =>
