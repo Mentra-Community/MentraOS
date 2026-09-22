@@ -239,7 +239,12 @@ export class TestRunService {
     }
     headers.set("Content-Length", String(range ? range.end - range.start + 1 : meta.sizeBytes));
     if (range) headers.set("Content-Range", `bytes ${range.start}-${range.end}/${meta.sizeBytes}`);
-    return new Response(request.method === "HEAD" ? null : await storage.streamObject(stored.storageKey, range),
-      { status: range ? 206 : 200, headers });
+    let body = request.method === "HEAD" ? null : await storage.streamObject(stored.storageKey, range);
+    if (!range && request.headers.has("range") && body instanceof Blob) {
+      // Bun otherwise applies the original Range again to a full-file Blob,
+      // overriding the 200 required when If-Range did not match. Keep it lazy.
+      body = body.stream().pipeThrough(new TransformStream());
+    }
+    return new Response(body, { status: range ? 206 : 200, headers });
   }
 }

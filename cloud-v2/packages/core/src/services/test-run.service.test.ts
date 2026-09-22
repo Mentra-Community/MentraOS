@@ -164,6 +164,43 @@ describe("verified media uploads and seeking", () => {
     const ifRange = await admin.request(path, { headers: { range: "bytes=4-7", "if-range": '"old"' } });
     expect(ifRange.status).toBe(200); expect((await ifRange.arrayBuffer()).byteLength).toBe(video.length);
   });
+  test("preserves exact Content-Length and range bytes over a real HTTP socket", async () => {
+    const bytes = Buffer.concat([video, Buffer.alloc(1024 * 1024, 0x6d)]);
+    const run = fixture();
+    run.assets[0].sizeBytes = bytes.length;
+    run.assets[0].sha256 = sha256(bytes);
+    expect((await post(run)).status).toBe(201);
+    expect((await put(bytes)).status).toBe(201);
+    const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: request => admin.fetch(request) });
+    try {
+      const url = new URL("/run-example-1/assets/video-1", server.url);
+      // Safari starts with bytes=0-1 and then seeks to the MP4 metadata at its tail.
+      for (const [range, start, end] of [
+        ["bytes=0-1", 0, 1],
+        ["bytes=-8192", bytes.length - 8192, bytes.length - 1],
+        ["bytes=123-65536", 123, 65536],
+      ] as const) {
+        const response = await fetch(url, { headers: { range } });
+        expect(response.status).toBe(206);
+        expect(response.headers.get("content-length")).toBe(String(end - start + 1));
+        expect(response.headers.get("content-range")).toBe(`bytes ${start}-${end}/${bytes.length}`);
+        expect(response.headers.get("transfer-encoding")).toBeNull();
+        expect(Buffer.from(await response.arrayBuffer())).toEqual(bytes.subarray(start, end + 1));
+      }
+      const full = await fetch(url);
+      expect(full.status).toBe(200);
+      expect(full.headers.get("content-length")).toBe(String(bytes.length));
+      expect(Buffer.from(await full.arrayBuffer())).toEqual(bytes);
+      const head = await fetch(url, { method: "HEAD", headers: { range: "bytes=0-1" } });
+      expect(head.status).toBe(206);
+      expect(head.headers.get("content-length")).toBe("2");
+      expect((await head.arrayBuffer()).byteLength).toBe(0);
+      const changed = await fetch(url, { headers: { range: "bytes=0-1", "if-range": '"old"' } });
+      expect(changed.status).toBe(200);
+      expect(changed.headers.get("content-range")).toBeNull();
+      expect(Buffer.from(await changed.arrayBuffer())).toEqual(bytes);
+    } finally { await server.stop(true); }
+  });
   test("concurrent uploads cannot overwrite the winning immutable object", async () => {
     await post();
     const results = await Promise.all([put(), put()]);

@@ -110,9 +110,9 @@ Source of truth:
 ## Day-one device qualification
 
 - [ ] Prove January BES, MTK and active factory ASG on the same physical glasses.
-- [ ] Execute the English customer flow through normal Mentra App UI with continuous
+- [x] Execute the English customer flow through normal Mentra App UI with continuous
   recording, step screenshots, chapters and independent hardware observations.
-- [ ] Verify final BES/MTK/ASG version and active ASG hash against the selected
+- [x] Verify final BES/MTK/ASG version and active ASG hash against the selected
   effective manifest; retain failures without relabeling them after recovery.
 - [ ] Verify teardown, idle app connection and the next routine's entry checks.
 - [ ] Check actual HTML playback/seek and finalize the full evidence/result bundle.
@@ -165,6 +165,26 @@ Measured flash timings: dispatch to writes/readbacks completed was 123.974 secon
 first independent network boot observation was at 299.785 seconds; complete
 read-only verification was at 579.256 seconds. The latter includes the original
 USB wait and manual observation delay. Full OTA comparison remains pending.
+
+The replacement CI app at head `1d716af0` (build `303006206`) completed the normal
+customer update from the prepared January baseline on the same 03BE fixture.
+Independent checks during recording matched MTK `MentraLive_20260921.0`, BES
+`26.9.21.3`, ASG `303006206` and active APK SHA-256
+`0b257034d4bbf1ea4f5f25e636053b98c8b6727c1032a706ffebc73efeb419dc`.
+The 20-step recording retains a failed transient Downloading expectation after
+the UI had advanced to Installing. It remains a failed test with blocked teardown
+and an unavailable fixture. The full January OTA setup and authoritative runtime
+idle check still require their own device qualification.
+
+The real recording and component assertions were published to the authenticated
+local admin as `manual-day1-119ff3af24b9cd693e87f651`. Browser inspection found a
+black video despite working chapter selection. The original video decodes in
+AVFoundation; the local HTTP server dropped Content-Length on ranged Node streams.
+Lazy file bodies fix the response, with a real socket regression covering initial
+and tail byte ranges, HEAD and stale If-Range. Final Safari recheck is pending
+because the Mac locked. The original recording and publication remain unchanged.
+CI request `routine-35699614125-2-4136-day1-ota` selected the same successful build
+but remains context only; this supervised run did not consume it.
 
 ## CI and results integration
 

@@ -21,7 +21,7 @@ export interface StorageProvider {
   deleteObject(key: string): Promise<void>;
   putFile(input: { key: string; path: string; contentType: string }): Promise<void>;
   statObject(key: string): Promise<{ sizeBytes: number }>;
-  streamObject(key: string, range?: { start: number; end: number }): Promise<ReadableStream<Uint8Array>>;
+  streamObject(key: string, range?: { start: number; end: number }): Promise<ReadableStream<Uint8Array> | Blob>;
 }
 
 export class StorageService {
@@ -47,7 +47,7 @@ export class StorageService {
     return this.provider.statObject(key);
   }
 
-  streamObject(key: string, range?: { start: number; end: number }): Promise<ReadableStream<Uint8Array>> {
+  streamObject(key: string, range?: { start: number; end: number }): Promise<ReadableStream<Uint8Array> | Blob> {
     return this.provider.streamObject(key, range);
   }
 }
