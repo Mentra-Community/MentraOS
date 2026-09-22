@@ -20,6 +20,7 @@ async function proxyCoreRequest(req: Request) {
 }
 
 const server = serve({
+  hostname: process.env.HOSTNAME ?? "0.0.0.0",
   port: process.env.PORT ? Number(process.env.PORT) : 5174,
   routes: {
     "/api/*": proxyCoreRequest,

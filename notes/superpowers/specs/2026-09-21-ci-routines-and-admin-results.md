@@ -11,8 +11,9 @@ current Mac first; moving orchestration and routines to a private repository is
 deferred. Raw media, account data, fixture identities and firmware backups remain
 private regardless of where runner source lives.
 
-This is a design, not an enabled schedule, deployed service or passing device
-qualification. See [lifecycle](2026-09-21-routine-lifecycle.md),
+The initial PR request, local intake and admin viewer are implemented. They are
+not an enabled nightly schedule, deployed service or passing device qualification.
+See [lifecycle](2026-09-21-routine-lifecycle.md),
 [orchestrator](2026-09-21-routine-orchestrator.md),
 [Mac installation](2026-09-21-mac-test-host-installation.md) and the
 [active implementation plan](../plans/2026-09-21-day1-ota-and-ci-routines.md).
@@ -132,10 +133,32 @@ allowlisted summaries; no raw logs, meeting URLs, accounts or media in GitHub.
 
 ## Minimal execution service
 
-First make the local CLI reliable, then add one queue and one polling Mac worker
-using the existing backend stack. Suggested records: `test_requests` for selection
-and leases, `test_runs` for phase/check results, and `test_assets` for private object
-metadata. Keep large media/logs out of Mongo documents.
+The first implementation uses immutable GitHub Actions request artifacts as its
+queue, an explicitly invoked local worker, and Mongo `test_runs` records for
+results. It does not add a second backend request queue. Large media/logs live in
+private object storage, with declarations and verified upload receipts in the run.
+
+`request-e2e-routine.yml` accepts an explicit `day1-ota` request for a current PR.
+After this workflow reaches `dev`, operators can use `workflow_dispatch` there.
+Before merge, a same-repository PR with the `routine:day1-ota` label can publish
+a request. This bootstrap does not grant the PR permission to control the Mac:
+the host separately allowlists the exact reviewed head, base, merge checkout and
+workflow revision. The request job has read-only repository permissions and no
+hardware credentials. The host executes its reviewed local registry, never
+commands or scripts supplied by request JSON.
+
+The request resolver selects the current head's successful Mac producer, verifies
+its receipt, and pins the archive and OTA manifest. Missing or incomplete
+publication emits `no-artifact`, with no installation. A ready selection remains
+`blocked-unqualified` at intake until the local day-one hardware adapter is
+qualified and connected. Neither state passes a device test. A later workflow
+attempt creates a new immutable request generation rather than editing history.
+
+The worker verifies the authenticated Actions run, artifact digest, current PR
+identity/label and source commit parents against its private trust policy. It
+durably claims the request before dispatch and takes an exclusive worker lease.
+An interrupted claim cannot be dispatched again automatically. Publishing a
+terminal result or retrying its missing asset uploads is separate from execution.
 
 Lease one compatible request at a time with heartbeat/checkpoints. An expired
 lease during firmware mutation requires reconciliation, not dispatch to a second
@@ -173,10 +196,13 @@ origin. Private run-scoped media endpoints must support streaming, HEAD and HTTP
 Range/206 for video seeking; do not buffer an entire MP4 through the current
 whole-object incident endpoint. Authorize asset IDs rather than arbitrary paths.
 
-Suggested APIs are admin list/detail/media routes under `/api/admin/test-runs`
-and separately authenticated worker claim, heartbeat, result and upload routes.
-Start with browsing only; rerun/cancel/recovery controls require later audited
-server-side requests.
+Implemented APIs are admin list/detail/media routes under `/api/admin/test-runs`
+and narrowly authenticated result/asset ingestion under `/api/internal/test-runs`.
+The worker credential is `TEST_RUN_INGEST_TOKEN`; it grants ingestion, not admin
+browsing. Terminal metadata is immutable and idempotent; individual asset uploads
+verify declared size and SHA-256. Each asset is capped at 128 MiB, so longer video
+must be segmented. HTML and SVG are not accepted as media. Rerun/cancel/recovery
+controls require later audited server-side requests.
 
 A central result index visible from the production admin console is recommended
 so failed dev/staging backends do not hide evidence. Channel and backend remain

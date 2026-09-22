@@ -68,26 +68,33 @@ Source of truth:
   permission reuse. The locally signed preview was stopped by Gatekeeper before
   the retained helper entered its main function; no security setting or quarantine
   flag was changed to get past that gate.
-- [ ] Have the Apple Account Holder create the missing Developer ID Application
-  certificate and provision its private-key export in CI. The portal currently
-  disables certificate creation for this user's team role. Do not merge the CI
-  signing change before provisioning and a successful notarized-artifact run.
+- [x] Provision the Developer ID Application certificate/private-key export and
+  password in Doppler `mentra-mobile-client/prd`. Verify matching keys, team and
+  saved values. CI fetches only this pair at signing time; notarization credentials
+  remain in the existing GitHub secrets. A real signed/notarized CI artifact is
+  still required before merging the packaging change.
 - [ ] Download the resulting CI ZIP through a browser on a registered Mac and
   qualify Gatekeeper launch, translocation/folder selection, app replacement and
   permission reuse. Recheck first-use setup on a new test host separately.
-- [ ] Resolve one app/manifest selection for the day-one test and verify effective
-  legacy rescue policy plus all normal return artifacts. The currently restored
-  PR #4132 installation alone is not this qualification.
-- [ ] Prepare adequate free storage for firmware staging, backups, video and
-  recovery without deleting retained evidence or unrelated files.
-- [ ] Add typed lifecycle hooks, durable mutation/phase journal and persistent
-  fixture readiness around existing runner components.
-- [ ] Implement recovery that reconciles an unfinished write and never blindly
-  resends it; cover partial setup, failure and cancellation with simulated devices.
+- [x] Freeze PR #4132's app/manifest for setup qualification, verify the running
+  executable/JS and legacy policy, and cache all eight referenced normal/rescue
+  artifacts by size and SHA. This preparation selection is distinct from the
+  requested PR #4136 run, which must select its own successful artifacts.
+- [x] Preserve original January assets outside Downloads and verify the complete
+  copy. Recheck storage at each staging/recording boundary; free space is not a
+  permanent readiness claim.
+- [x] Add typed lifecycle hooks, durable mutation/phase journal and persistent
+  fixture readiness. Hardware adapters still need integration/qualification.
+- [x] Implement recovery that reconciles an unfinished write and never blindly
+  resends it; 17 tests cover partial setup, cancellation, process interruption,
+  damaged journals and failed restoration.
 - [ ] Qualify MTK factory-flash ordering around January BES's missing `cs_mtkfp`;
   verify original ASG is active after setup and operational recovery works.
-- [ ] Implement manifest-derived return verification and the unavailable-fixture
-  gate. Restore only owned app/firmware/configuration changes.
+- [x] Implement frozen manifest parsing, fourteen independent firmware/identity
+  assertions and an offline verification CLI (16 focused parser/CLI tests).
+  Live adapters must collect those observations; supplied JSON alone cannot
+  establish hardware qualification. The lifecycle retains the unavailable-fixture
+  gate when restoration is unverified.
 
 ## Day-one device qualification
 
@@ -105,13 +112,25 @@ Do not start Mentra Call as part of this routine.
 
 ## CI and results integration
 
-- [ ] Add normalized PR/coordinated-release selection and immutable input validation.
+- [x] Add exact PR build/receipt/archive/OTA selection and immutable request
+  validation, including separate build and publication attempts.
+- [ ] Add coordinated-release selection through the same input interface.
 - [ ] Extend coordinated Apple exports with a Mac ZIP and receipt; preserve stable
   identity and effective OTA configuration across installs.
-- [ ] Add one sequential request queue/worker with durable leases and upload-only
-  retries; keep local CLI use independent of the service.
-- [ ] Add authenticated admin Test runs browsing, expected/actual results and
-  private streaming media with working byte-range seeking.
+- [x] Add immutable Actions requests and local intake with exclusive durable
+  claims and a private exact-revision trust policy. Until hardware adapter
+  qualification, consumption records `no-artifact` or `blocked-unqualified`.
+- [ ] Connect qualified day-one execution and upload-only retries to that intake;
+  run the current PR's actual artifacts and publish its real result.
+- [x] Add authenticated admin Test runs browsing, expected/actual firmware,
+  separate phase outcomes and private streaming media with byte-range seeking.
+  Local tests and a clearly labeled synthetic browser fixture verify playback,
+  chapter seeking, authenticated deep links and filter behavior.
+- [ ] Verify actual CI-request ingestion and real recorded evidence in the
+  dashboard. Synthetic viewer checks are not a device-run result.
+- [x] Implement an independently retryable publisher with explicit asset paths,
+  size/hash checks, immutable metadata reconciliation and a durable upload journal.
+  It does not repeat device actions. Eleven focused tests pass.
 - [ ] Enable independent dev/staging nightlies after routine qualification, recording
   chosen-release age and missing/newer-failed artifact state.
 - [ ] Add reviewed path-based PR selection plus author additions and advisory,

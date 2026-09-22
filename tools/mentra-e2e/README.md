@@ -3,6 +3,9 @@
 Start with the [English coverage checklist](ROUTINE.md), [exact compiled routine](COMPILED-ROUTINE.md), [design and technology choices](../../notes/superpowers/specs/2026-09-15-mentra-app-e2e-harness.md), [accessibility contract](ACCESSIBILITY.md), and [Mac Mini setup](SETUP.md).
 
 For PR artifacts, use the [verified Mac CI installer](MAC-CI-SETUP.md). The
+[CI request and private publication guide](CI-ROUTINES.md) documents the initial
+request, durable intake and admin results pipeline. Hardware dispatch remains
+disabled until the day-one setup/recovery adapter is qualified. The
 [day-one OTA routine](DAY1-OTA-ROUTINE.md) adds a January baseline and explicit
 manifest-derived return state; its full hardware pass is pending. The
 [active plan](../../notes/superpowers/plans/2026-09-21-day1-ota-and-ci-routines.md)

@@ -1,13 +1,20 @@
 import base64
+import io
 import json
 from pathlib import Path
 import plistlib
 import subprocess
 import tempfile
+import traceback
 import unittest
 from unittest.mock import patch
+from urllib.error import HTTPError, URLError
 
 import mac_installer as installer
+
+
+class SecretResponse(io.BytesIO):
+    status = 200
 
 
 class MacInstallerPackagingTests(unittest.TestCase):
@@ -33,6 +40,105 @@ class MacInstallerPackagingTests(unittest.TestCase):
 
     def test_base64_whitespace_is_supported(self):
         self.assertEqual(installer.decode_secret("\n" + base64.b64encode(b"fixture").decode() + "\n"), b"fixture")
+
+    def signing_environment(self):
+        return {"ASC_API_KEY_P8_B64": base64.b64encode(b"test-notary-key").decode(),
+                "ASC_API_KEY_ID": "KEY", "ASC_API_ISSUER_ID": "ISSUER",
+                "PR_IOS_KEYCHAIN_PASSWORD": "test-keychain-password"}
+
+    def test_doppler_fetches_only_the_certificate_pair_without_persisting_or_exporting_it(self):
+        env = {**self.signing_environment(), "DOPPLER_TOKEN_MOBILE_PRD": "test-service-token"}
+        expected = {"MAC_INSTALLER_P12_BASE64": base64.b64encode(b"test-p12").decode(),
+                    "MAC_INSTALLER_P12_PASSWORD": " password with spaces "}
+        requests = []
+        def respond(request, timeout):
+            requests.append(request)
+            self.assertEqual(timeout, 20)
+            name = request.full_url.split("?name=")[-1]
+            self.assertIn(name, installer.CERTIFICATE_SECRETS)
+            self.assertEqual(request.full_url, "https://api.doppler.com/v3/configs/config/secret?name=" + name)
+            self.assertEqual(request.get_header("Authorization"),
+                             "Basic " + base64.b64encode(b"test-service-token:").decode())
+            return SecretResponse(json.dumps({"name": name, "value": {"computed": expected[name]}}).encode())
+        before = dict(env)
+        with patch.object(installer, "build_opener") as opener, patch("builtins.print") as printed:
+            opener.return_value.open.side_effect = respond
+            self.assertEqual(installer.required_environment(env), {**self.signing_environment(), **expected})
+            self.assertEqual(len(requests), 2)
+            self.assertTrue(all(isinstance(call.args[0], installer.NoSecretRedirects) for call in opener.call_args_list))
+            printed.assert_not_called()
+        self.assertEqual(env, before)
+        self.assertEqual(list(self.root.iterdir()), [])
+
+    def test_direct_credentials_override_doppler_only_as_a_complete_pair(self):
+        pair = {"MAC_INSTALLER_P12_BASE64": base64.b64encode(b"test-p12").decode(),
+                "MAC_INSTALLER_P12_PASSWORD": "test-p12-password"}
+        env = {**self.signing_environment(), **pair, "DOPPLER_TOKEN_MOBILE_PRD": "unused-token"}
+        with patch.object(installer, "build_opener") as opener:
+            self.assertEqual(installer.required_environment(env), {**self.signing_environment(), **pair})
+            for name in pair:
+                for incomplete in ({key: value for key, value in env.items() if key != name},
+                                   {**env, name: ""}):
+                    with self.subTest(name=name, empty=name in incomplete):
+                        with self.assertRaisesRegex(ValueError, name):
+                            installer.required_environment(incomplete)
+            opener.assert_not_called()
+
+    def test_malformed_credentials_never_reach_the_keychain_or_fall_back_to_doppler(self):
+        pair = {"MAC_INSTALLER_P12_BASE64": base64.b64encode(b"test-p12").decode(),
+                "MAC_INSTALLER_P12_PASSWORD": "test-p12-password"}
+        for changes in ({"MAC_INSTALLER_P12_BASE64": "not-base64-secret"},
+                        {"MAC_INSTALLER_P12_BASE64": " \n"},
+                        {"MAC_INSTALLER_P12_BASE64": "A" * (installer.DOPPLER_RESPONSE_LIMIT + 1)},
+                        {"MAC_INSTALLER_P12_PASSWORD": "private\0password"}):
+            with patch.object(installer, "build_opener") as opener, patch.object(installer, "run") as command:
+                with self.assertRaisesRegex(ValueError, "credentials are malformed"):
+                    installer.configure(self.root / "job.keychain", self.root / "out",
+                                        {**self.signing_environment(), **pair, **changes})
+                opener.assert_not_called()
+                command.assert_not_called()
+                self.assertFalse((self.root / "out").exists())
+
+    def test_doppler_rejects_missing_wrong_or_oversized_secret_responses(self):
+        name = installer.CERTIFICATE_SECRETS[0]
+        responses = [b"not-json-private-value", b"\xff", b"{}", b"[]",
+                     json.dumps({"name": "OTHER_SECRET", "value": {"computed": "private-value"}}).encode(),
+                     json.dumps({"name": name, "value": {"raw": "private-value"}}).encode(),
+                     json.dumps({"name": name, "value": {"computed": ""}}).encode(),
+                     json.dumps({"name": name, "value": {"computed": 123}}).encode(),
+                     json.dumps({"name": name, "value": {"computed": "private-value"}, "success": False}).encode(),
+                     b"x" * (installer.DOPPLER_RESPONSE_LIMIT + 1)]
+        for payload in responses:
+            with self.subTest(size=len(payload)), patch.object(installer, "build_opener") as opener:
+                opener.return_value.open.return_value = SecretResponse(payload)
+                with self.assertRaisesRegex(ValueError, "Could not fetch valid") as error:
+                    installer.doppler_secret("test-service-token", name)
+                rendered = "".join(traceback.format_exception(error.exception))
+                self.assertNotIn("private-value", rendered)
+                self.assertNotIn("test-service-token", rendered)
+                self.assertTrue(error.exception.__suppress_context__)
+
+    def test_doppler_http_and_timeout_failures_do_not_echo_private_details(self):
+        failures = [HTTPError("https://api.doppler.com/", 403, "private-value", {}, io.BytesIO(b"private-value")),
+                    URLError("private-value"), TimeoutError("private-value")]
+        for failure in failures:
+            with patch.object(installer, "build_opener") as opener:
+                opener.return_value.open.side_effect = failure
+                with self.assertRaisesRegex(ValueError, "Could not fetch valid") as error:
+                    installer.doppler_secret("test-service-token", installer.CERTIFICATE_SECRETS[0])
+                rendered = "".join(traceback.format_exception(error.exception))
+                self.assertNotIn("private-value", rendered)
+                self.assertNotIn("test-service-token", rendered)
+        self.assertIsNone(installer.NoSecretRedirects().redirect_request(None, None, 302, "", {}, "https://other.invalid"))
+
+    def test_doppler_rejects_unrelated_secret_names_and_invalid_service_tokens_without_requests(self):
+        with patch.object(installer, "build_opener") as opener:
+            with self.assertRaisesRegex(ValueError, "Only the two"):
+                installer.doppler_secret("test-service-token", "ASC_API_KEY_P8_B64")
+            for token in ("", "token\n", "token:password", "non-ascii-\u2603"):
+                with self.assertRaisesRegex(ValueError, "service token"):
+                    installer.doppler_secret(token, installer.CERTIFICATE_SECRETS[0])
+            opener.assert_not_called()
 
     def test_secret_failure_does_not_echo_password_or_command(self):
         failed = subprocess.CompletedProcess(["security", "-P", "secret-password"], 1, b"", b"secret-password")

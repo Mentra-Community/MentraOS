@@ -167,27 +167,40 @@ then return the issued public certificate to that Mac for the `.p12` export.
 
 Obtain a password-protected `.p12` export of the certificate **and its private
 key** from the Mac/keychain or secret store that owns that key. A downloaded
-public `.cer` file alone cannot sign the installer. Add these MentraOS Actions
-secrets through the company secret-management process:
+public `.cer` file alone cannot sign the installer. Store the certificate pair in
+Doppler project **`mentra-mobile-client`**, config **`prd`**, through the company
+secret-management process. The existing MentraOS Actions service token
+`DOPPLER_TOKEN_MOBILE_PRD` selects that project/config; the signing step fetches
+only these two named secrets:
 
 | Secret | Purpose |
 | --- | --- |
 | `MAC_INSTALLER_P12_BASE64` | Base64-encoded Developer ID Application certificate and private-key export. |
 | `MAC_INSTALLER_P12_PASSWORD` | Password protecting that `.p12` export. |
+
+Keep the existing notarization credentials in MentraOS Actions secrets:
+
+| Secret | Purpose |
+| --- | --- |
 | `ASC_API_KEY_P8_B64` | Existing App Store Connect API private key, reused for Apple notarization. |
 | `ASC_API_KEY_ID` | Existing API key ID. |
 | `ASC_API_ISSUER_ID` | Existing API key issuer. |
 
 App Store Connect API credentials authenticate notarization; they do not replace
 the Developer ID signing certificate/private key. Keep exports, passwords and API
-keys out of chat, source files, logs and tracked test fixtures. For example,
-upload the certificate export directly and enter its password in the CLI prompt:
+keys out of chat, source files, logs and tracked test fixtures. The signing
+configuration uses Python's HTTPS client with Basic service-token authentication
+against Doppler's single-secret endpoint. It rejects redirects, malformed or
+missing values, limits each response to 1 MiB and uses a 20-second socket timeout.
+It never downloads the full config, writes the certificate credentials into
+`mobile/.env`, or exports them to subsequent workflow steps.
 
-```sh
-base64 < /secure/path/developer-id-application.p12 | tr -d '\r\n' |
-  gh secret set MAC_INSTALLER_P12_BASE64 --repo Mentra-Community/MentraOS
-gh secret set MAC_INSTALLER_P12_PASSWORD --repo Mentra-Community/MentraOS
-```
+Local runs may supply both `MAC_INSTALLER_P12_BASE64` and
+`MAC_INSTALLER_P12_PASSWORD` directly in the process environment instead. If
+either variable is present, both must be nonempty and valid; an incomplete pair
+fails without fetching or mixing in Doppler values. With neither variable set,
+the same `DOPPLER_TOKEN_MOBILE_PRD` service-token path is used. The temporary P12
+file is private and removed immediately after its keychain import.
 
 CI checks private-key access and notarization authentication before building the
 app. It signs only `Install Mentra.app` with Developer ID and hardened runtime,

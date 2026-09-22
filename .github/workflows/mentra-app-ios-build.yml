@@ -309,8 +309,7 @@ jobs:
       - name: Configure Developer ID signing and notarization for the Mac download
         if: env.PR_IOS_SIGNED == 'true'
         env:
-          MAC_INSTALLER_P12_BASE64: ${{ secrets.MAC_INSTALLER_P12_BASE64 }}
-          MAC_INSTALLER_P12_PASSWORD: ${{ secrets.MAC_INSTALLER_P12_PASSWORD }}
+          DOPPLER_TOKEN_MOBILE_PRD: ${{ secrets.DOPPLER_TOKEN_MOBILE_PRD }}
           ASC_API_KEY_P8_B64: ${{ secrets.ASC_API_KEY_P8_B64 }}
           ASC_API_KEY_ID: ${{ secrets.ASC_API_KEY_ID }}
           ASC_API_ISSUER_ID: ${{ secrets.ASC_API_ISSUER_ID }}

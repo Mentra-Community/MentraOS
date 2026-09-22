@@ -7,6 +7,8 @@ import plistlib
 import re
 import shutil
 import subprocess
+from urllib.error import HTTPError
+from urllib.request import build_opener, HTTPRedirectHandler, Request
 
 HERE = Path(__file__).resolve().parent
 TEAM = "T5XXXL6N36"
@@ -16,6 +18,45 @@ DEVELOPER_ID_REQUIREMENT = (
     'and certificate leaf[field.1.2.840.113635.100.6.1.13] exists '
     f'and certificate leaf[subject.OU] = "{TEAM}"'
 )
+CERTIFICATE_SECRETS = ("MAC_INSTALLER_P12_BASE64", "MAC_INSTALLER_P12_PASSWORD")
+DOPPLER_RESPONSE_LIMIT = 1024 * 1024
+
+
+class NoSecretRedirects(HTTPRedirectHandler):
+    def redirect_request(self, request, file, code, message, headers, new_url):
+        # Never forward service-token authorization to a redirected endpoint.
+        return None
+
+
+def doppler_secret(token, name):
+    if name not in CERTIFICATE_SECRETS:
+        raise ValueError("Only the two Mac installer certificate secrets may be fetched")
+    if not isinstance(token, str) or not re.fullmatch(r"[!-~]{1,4096}", token) or ":" in token:
+        raise ValueError("DOPPLER_TOKEN_MOBILE_PRD must be a nonempty service token")
+    authorization = base64.b64encode((token + ":").encode("ascii")).decode("ascii")
+    request = Request("https://api.doppler.com/v3/configs/config/secret?name=" + name,
+                      headers={"Authorization": "Basic " + authorization, "Accept": "application/json"})
+    try:
+        with build_opener(NoSecretRedirects()).open(request, timeout=20) as response:
+            if response.status != 200:
+                raise ValueError("Unexpected response status")
+            data = response.read(DOPPLER_RESPONSE_LIMIT + 1)
+        if len(data) > DOPPLER_RESPONSE_LIMIT:
+            raise ValueError("Response exceeds limit")
+        payload = json.loads(data.decode("utf-8"))
+        if not isinstance(payload, dict) or payload.get("name") != name or payload.get("success") is False:
+            raise ValueError("Unexpected secret response")
+        value = payload.get("value")
+        computed = value.get("computed") if isinstance(value, dict) else None
+        if not isinstance(computed, str) or not computed:
+            raise ValueError("Missing computed secret")
+        return computed
+    except Exception as error:
+        if isinstance(error, HTTPError):
+            error.close()
+        # HTTP/JSON exceptions can contain response bodies and credential values.
+        # Suppress their context as well as their text in the CI traceback.
+        raise ValueError(f"Could not fetch valid {name} from Doppler; check the mobile prd service token and secret") from None
 
 
 def run(*arguments, input=None, private=False):
@@ -34,18 +75,36 @@ def run(*arguments, input=None, private=False):
 
 def required_environment(env):
     names = (
-        "MAC_INSTALLER_P12_BASE64",
-        "MAC_INSTALLER_P12_PASSWORD",
         "ASC_API_KEY_P8_B64",
         "ASC_API_KEY_ID",
         "ASC_API_ISSUER_ID",
         "PR_IOS_KEYCHAIN_PASSWORD",
     )
     missing = [name for name in names if not env.get(name)]
+    direct = any(name in env for name in CERTIFICATE_SECRETS)
+    if direct:
+        missing.extend(name for name in CERTIFICATE_SECRETS if not env.get(name))
+    elif not env.get("DOPPLER_TOKEN_MOBILE_PRD"):
+        missing.append("DOPPLER_TOKEN_MOBILE_PRD (or both MAC_INSTALLER_P12_BASE64 and MAC_INSTALLER_P12_PASSWORD)")
     if missing:
         raise ValueError("Native Mac installer signing requires: " + ", ".join(missing)
                          + ". Provision Developer ID Application signing before enabling this CI change.")
-    return {name: env[name] for name in names}
+    secrets = {name: env[name] for name in names}
+    # Direct local inputs are a pair. Never silently combine an export from one
+    # source with a password from the other, including an explicitly empty input.
+    secrets.update({name: env[name] if direct else doppler_secret(env["DOPPLER_TOKEN_MOBILE_PRD"], name)
+                    for name in CERTIFICATE_SECRETS})
+    try:
+        if not isinstance(secrets["MAC_INSTALLER_P12_BASE64"], str):
+            raise ValueError("Invalid export")
+        if len(secrets["MAC_INSTALLER_P12_BASE64"]) > DOPPLER_RESPONSE_LIMIT or not decode_secret(secrets["MAC_INSTALLER_P12_BASE64"]):
+            raise ValueError("Invalid export")
+        password = secrets["MAC_INSTALLER_P12_PASSWORD"]
+        if not isinstance(password, str) or not 1 <= len(password) <= 4096 or "\0" in password:
+            raise ValueError("Invalid password")
+    except Exception:
+        raise ValueError("Mac installer certificate credentials are malformed") from None
+    return secrets
 
 
 def select_identity(output):

@@ -1,0 +1,173 @@
+import { describe, expect, test } from "bun:test";
+import { renderToStaticMarkup } from "react-dom/server";
+import { readTestRunLink, testRunAssetPath, testRunLocation } from "../lib/test-run-links";
+import {
+  chapterSeekTime,
+  EMPTY_FILTERS,
+  initialChapter,
+  safeProducerUrl,
+  testRunListPath,
+  type TestRunDetail,
+} from "./test-runs-data";
+import { TestRunView } from "./test-runs";
+
+// Synthetic render fixture only; never uploaded or presented as a device result.
+const run: TestRunDetail = {
+  runId: "synthetic-run",
+  requestId: "synthetic-request",
+  routineId: "synthetic-ota",
+  routineVersion: "test-only",
+  platform: "ios-mac",
+  channel: "local",
+  startedAt: "2026-09-22T01:00:00Z",
+  finishedAt: "2026-09-22T01:10:00Z",
+  outcome: "failed",
+  outcomes: { test: "failed", teardown: "passed", fixture: "ready", evidence: "complete" },
+  provenance: { repository: "example/synthetic", buildSha: "a".repeat(40), manifestSha256: "b".repeat(64) },
+  fixture: { alias: "Synthetic fixture" },
+  firmwareAssertions: [{ component: "BES", expected: "26.9.21.1", actual: "26.1.13.1", status: "failed" }],
+  chapters: [
+    {
+      id: "start",
+      instruction: "Open Updates",
+      phase: "setup",
+      status: "passed",
+      videoAssetId: "video-one",
+      videoStart: 0,
+      videoEnd: 3,
+    },
+    {
+      id: "failed-step",
+      instruction: "Verify the installed firmware",
+      expected: "Version matches the selected manifest",
+      phase: "verify",
+      status: "failed",
+      videoAssetId: "video-one",
+      videoStart: 4,
+      videoEnd: 8,
+      screenshotAssetId: "screen-one",
+    },
+  ],
+  assets: [
+    {
+      assetId: "video-one",
+      kind: "video",
+      contentType: "video/mp4",
+      filename: "routine.mp4",
+      sizeBytes: 100,
+      sha256: "c".repeat(64),
+      uploaded: true,
+    },
+    {
+      assetId: "screen-one",
+      kind: "screenshot",
+      contentType: "image/png",
+      filename: "verification.png",
+      sizeBytes: 10,
+      sha256: "d".repeat(64),
+      uploaded: true,
+    },
+  ],
+};
+
+describe("authenticated result navigation", () => {
+  test("a run and English step link survive the login return URL round trip", () => {
+    const location = "https://admin.mentraglass.com/?testRun=run-01&step=BES%20version%3F#evidence";
+    const login = new URL("/api/console/auth/login", location);
+    login.searchParams.set("return_to", location);
+    const returned = new URL(login.searchParams.get("return_to")!);
+    expect(readTestRunLink(returned.search)).toEqual({ runID: "run-01", stepID: "BES version?" });
+    expect(testRunLocation(returned.href, { runID: "run-02", stepID: "MTK-03" })).toBe(
+      "/?testRun=run-02&step=MTK-03#evidence",
+    );
+    expect(testRunLocation(returned.href, null)).toBe("/#evidence");
+  });
+  test("ambiguous IDs and path traversal cannot become authenticated media paths", () => {
+    expect(readTestRunLink("?testRun=one&testRun=two")).toBeNull();
+    expect(readTestRunLink("?testRun=..%2Fother")).toBeNull();
+    expect(testRunAssetPath("run-one", "asset_one")).toBe("/api/admin/test-runs/run-one/assets/asset_one");
+    for (const id of ["..", "../other", "https://elsewhere.invalid/video", "a/b", "%2F"]) {
+      expect(() => testRunAssetPath("run-one", id)).toThrow();
+    }
+  });
+  test("query filters stay on the current admin backend and encode cursor values", () => {
+    const path = testRunListPath(
+      { ...EMPTY_FILTERS, pr: "4136", channel: "staging", outcome: "failed" },
+      "cursor/one+two",
+    );
+    const url = new URL(path, "https://admin.mentraglass.com");
+    expect(url.origin).toBe("https://admin.mentraglass.com");
+    expect(url.searchParams.get("pr")).toBe("4136");
+    expect(url.searchParams.get("channel")).toBe("staging");
+    expect(url.searchParams.get("cursor")).toBe("cursor/one+two");
+    expect(() => testRunListPath({ ...EMPTY_FILTERS, pr: "1&channel=prod" })).toThrow();
+    const range = new URL(
+      testRunListPath({ ...EMPTY_FILTERS, startedAfter: "2026-09-21", startedBefore: "2026-09-22" }),
+      url,
+    );
+    expect(Date.parse(range.searchParams.get("startedAfter")!)).toBeLessThan(
+      Date.parse(range.searchParams.get("startedBefore")!),
+    );
+    expect(() => testRunListPath({ ...EMPTY_FILTERS, startedAfter: "2026-02-30" })).toThrow();
+    expect(() =>
+      testRunListPath({ ...EMPTY_FILTERS, startedAfter: "2026-09-22", startedBefore: "2026-09-21" }),
+    ).toThrow();
+  });
+});
+
+describe("recording and chapter integrity", () => {
+  test("opens a failed step by default and honors an explicit recorded step", () => {
+    expect(initialChapter(run.chapters)?.id).toBe("failed-step");
+    expect(initialChapter(run.chapters, "start")?.id).toBe("start");
+    expect(initialChapter(run.chapters, "missing")?.id).toBe("failed-step");
+  });
+  test("only seeks within the selected uploaded recording", () => {
+    const chapter = run.chapters[1];
+    const asset = run.assets[0];
+    expect(chapterSeekTime(chapter, asset, 10)).toBe(4);
+    expect(chapterSeekTime(chapter, { ...asset, uploaded: false }, 10)).toBeNull();
+    expect(chapterSeekTime(chapter, { ...asset, assetId: "another-video" }, 10)).toBeNull();
+    for (const patch of [
+      { videoStart: -1 },
+      { videoStart: NaN },
+      { videoStart: 11 },
+      { videoEnd: 2 },
+      { videoEnd: 20 },
+    ]) {
+      expect(chapterSeekTime({ ...chapter, ...patch }, asset, 10)).toBeNull();
+    }
+    expect(chapterSeekTime(chapter, asset, Infinity)).toBeNull();
+  });
+  test("uses authenticated asset routes, preserves separate outcomes and escapes report content", () => {
+    const markup = renderToStaticMarkup(
+      <TestRunView run={{ ...run, notes: "<script>alert('uploaded report')</script>" }} onStep={() => {}} />,
+    );
+    expect(markup).toContain('src="/api/admin/test-runs/synthetic-run/assets/video-one"');
+    expect(markup).toContain('src="/api/admin/test-runs/synthetic-run/assets/screen-one"');
+    expect(markup).toContain('aria-current="step"');
+    expect(markup).toContain(">teardown</p>");
+    expect(markup).toContain("26.1.13.1");
+    expect(markup).toContain("&lt;script&gt;");
+    expect(markup).not.toContain("<script>");
+    expect(markup).not.toContain("<iframe");
+  });
+  test("incomplete media gets explicit text and is never requested as a playable recording", () => {
+    const markup = renderToStaticMarkup(
+      <TestRunView
+        run={{ ...run, assets: run.assets.map((asset) => ({ ...asset, uploaded: false })) }}
+        onStep={() => {}}
+      />,
+    );
+    expect(markup).toContain("Recording upload is incomplete.");
+    expect(markup).toContain("Screenshot upload is incomplete.");
+    expect(markup).not.toContain("<video");
+    expect(markup).not.toContain("<img");
+  });
+  test("unsafe producer schemes cannot become clickable links", () => {
+    expect(safeProducerUrl("javascript:alert(1)")).toBeNull();
+    expect(safeProducerUrl("https://user:secret@example.com/build")).toBeNull();
+    expect(safeProducerUrl("https://github.com/example/repo/actions/runs/1")).toBe(
+      "https://github.com/example/repo/actions/runs/1",
+    );
+  });
+});

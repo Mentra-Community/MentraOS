@@ -49,9 +49,10 @@ BES. A temporary compatible BES followed by MTK flashing, compact January BES an
 factory ASG restoration is a candidate sequence, not a proven procedure.
 
 PR #4132's build was installed, verified and restored during the Mac host experiment.
-That proves candidate installation/permission reuse, not selection or qualification
-for this OTA test. Resolve its effective manifest and legacy deployment policy,
-or choose another explicit CI selection, before baseline mutation.
+Its effective manifest and legacy deployment policy have since been frozen for
+setup qualification, with all eight normal/rescue artifacts cached and verified.
+This is distinct from the requested PR #4136 device run: that run must select
+its own exact successful producer artifacts and manifest.
 The reusable [Mac CI importer](MAC-CI-SETUP.md) is now implemented with opt-in
 installation and a pinned host launcher. Live PR #4132 installation, launch,
 runtime artifact identity and existing Bluetooth grant reuse passed. This does
@@ -116,6 +117,18 @@ independent `runner/ota-hardware.ts` checks. Extend them through the lifecycle
 contract rather than copy an artifact-specific exploratory script into a general
 installer. The January setup/recovery adapters must expose immutable artifact
 inputs and no-resend operation ownership before unattended use.
+
+The shared `runner/lifecycle.ts` now supplies setup/test/assertion/teardown hooks,
+an append-only mutation journal, no-resend recovery and persistent fixture
+readiness. `firmware-state.ts freeze` pins a manifest-derived return profile;
+`firmware-state.ts verify` evaluates supplied observations without hardware
+access. Its results explicitly say `offline-assertion`. The fourteen checks
+cover identity, freshness, boot, target versions, active ASG hash, idle update
+state and app connection. The real adapter must collect those observations.
+
+The initial `ci-worker.ts` only authenticates and claims requests. It cannot
+install firmware or report a hardware pass. Its current unqualified result is
+intentional until the complete January setup and recovery adapters pass on-device.
 
 The successful limited BES preparation required a legacy BLE version query after
 the UART-origin recovery timed out. Preserve both observations; this is not proof
