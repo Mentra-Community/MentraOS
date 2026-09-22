@@ -536,13 +536,12 @@ program
 
 program
   .command("publish")
-  .description("Build, sign, and upload the current miniapp release bundle to the Store")
+  .description("Build and upload the current miniapp release bundle to the Store without signing")
   .option("--cwd <path>", "miniapp project directory", process.cwd())
   .option("--no-build", "skip running bun run build before packing")
   .option("--no-pack", "skip running bun run pack and upload the existing build zip")
   .option("--no-submit", "upload as draft without submitting for review")
   .option("--track <track>", "release track: stable or beta", "stable")
-  .option("--signing-key <path>", "publisher signing key file (CI/non-persistent use)")
   .option("--json", "print machine-readable JSON")
   .action(async (options: {
     cwd: string;
@@ -550,7 +549,6 @@ program
     pack: boolean;
     submit: boolean;
     track: string;
-    signingKey?: string;
     json?: boolean;
   }) => {
     const creds = await requireCredentials();
@@ -574,9 +572,7 @@ program
           cwd,
           build: options.build,
           silent: options.json,
-          // Store publication requires a signed archive; local pack/release stay opt-in.
-          sign: true,
-          signingKeyPath: options.signingKey,
+          sign: false,
         });
       } else if (options.build) {
         await buildMiniappProduction(cwd, { silent: options.json });
@@ -587,7 +583,7 @@ program
         throw new Error(`Release bundle not found: ${zipPath}`);
       }
       const bundle = readFileSync(zipPath);
-      const signedBundle = await verifyPackedBundle(bundle, manifest);
+      const verifiedBundle = await verifyPackedBundle(bundle, manifest);
       const { release } = await createRelease(creds, {
         packageName,
         version,
@@ -606,7 +602,7 @@ program
             {
               release: submitted.release,
               bundle: basename(zipPath),
-              publisherKeyFingerprint: signedBundle.publisherKeyFingerprint,
+              publisherKeyFingerprint: verifiedBundle.publisherKeyFingerprint ?? null,
             },
             null,
             2,
@@ -618,7 +614,7 @@ program
       console.log(`Status: ${submitted.release.status}`);
       console.log(`Track: ${submitted.release.releaseTrack}`);
       console.log(`Bundle: ${basename(zipPath)} (${sizeKb} KB)`);
-      console.log(`Publisher key: ${signedBundle.publisherKeyFingerprint}`);
+      console.log(`Publisher key: ${verifiedBundle.publisherKeyFingerprint ?? "unsigned"}`);
       if (release.bundleSha256) console.log(`SHA-256: ${release.bundleSha256}`);
     } catch (error) {
       fail(error);

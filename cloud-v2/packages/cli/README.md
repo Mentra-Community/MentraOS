@@ -30,7 +30,7 @@ mentra login              # sign in to the Mentra Developer Console
 mentra dev                # local dev server with a signed Cloud V2 identity
 mentra build              # build the current miniapp
 mentra pack               # build and pack locally (use --sign to sign)
-mentra publish --no-submit # build, sign, and upload a draft
+mentra publish --no-submit # build and upload an unsigned draft
 mentra miniapps list      # miniapps owned by your org
 mentra releases submit    # submit an uploaded release for review
 ```
@@ -50,15 +50,21 @@ use:
 mentra org init --new --name "Your Org" --prefix com.example
 ```
 
-## Publisher keys and signed bundles
+## Optional publisher signatures
 
-Every production ZIP is signed by a durable Ed25519 key scoped to its package.
-Create and back up the key before the first signed pack or Store upload:
+`mentra publish` builds and uploads an unsigned bundle. It does not create or
+read publisher keys, including keys configured through environment variables.
+The Store accepts unsigned bundles and verifies any signature included in an
+existing archive supplied with `--no-pack`.
+
+To opt into publisher signatures explicitly, create and back up a durable
+Ed25519 key, sign with `pack`, and upload those exact bytes:
 
 ```bash
 mentra miniapps keys create --package com.example.myminiapp
 mentra miniapps keys export --package com.example.myminiapp ./publisher-key.json
-mentra publish
+mentra pack --sign
+mentra publish --no-build --no-pack
 ```
 
 The CLI stores publisher keys in the OS keychain when available and otherwise
@@ -67,11 +73,16 @@ key on another machine with
 `mentra miniapps keys import --package com.example.myminiapp <path>`. Losing it
 prevents a later release from updating the established package identity.
 
-CI may pass `--signing-key <path>`, set
+For an explicitly signed `pack`, CI may pass `--signing-key <path>`, set
 `MENTRA_MINIAPP_SIGNING_KEY_FILE`, or provide the exported JSON through
 `MENTRA_MINIAPP_SIGNING_KEY_JSON`; these inputs are used without persisting the
-key. `--no-pack` accepts only an already signed ZIP and never silently signs it
-during upload.
+key. `publish --no-pack` accepts either signed or unsigned ZIPs and uploads
+without changing them. `publish` has no signing-key option.
+
+Phones that already installed a signed release retain its publisher pin and
+require that same key for future release updates. Accepting unsigned uploads
+in the Store does not clear existing device pins. Store-side publisher records
+also remain intact; an optional signed upload must match its recorded key.
 
 ## Stable and beta releases
 
@@ -85,7 +96,7 @@ mentra releases list com.example.myminiapp
 
 Each upload is permanently assigned to one track. Admin review publishes it to
 that track's independent active slot. Store users remain on stable unless they
-opt into beta for that miniapp. If no beta is currently published, Core serves
+opt into beta for that miniapp. If no beta is currently published, the Store serves
 stable without discarding their beta preference.
 
 The CLI targets one production Store, currently at
@@ -111,7 +122,7 @@ older `mentra:dev`, `mentra:staging`, and `mentra:prod` shortcuts are aliases fo
 that command; `mentra:local` explicitly selects localhost:3003. No Doppler session
 is needed to run the developer CLI.
 
-Upload builds and signs a bundle, then `--no-submit` keeps it as a draft. Edit
+Upload builds an unsigned bundle, then `--no-submit` keeps it as a draft. Edit
 its listing in the Developer Console. Public releases require staff approval
 and a separate publication action; private distribution publishes upon submission
 after automated validation. Use `--no-submit` when preparing either kind.
@@ -119,6 +130,6 @@ after automated validation. Use `--no-submit` when preparing either kind.
 The source in PR #3743 requires new npm releases: `@mentra/miniapp-cli` base
 `0.1.0-dev.2` and `@mentra/cli` base `2.0.0-dev.1`. The existing Developer Tools
 release workflow publishes them in dependency order after the PR lands; older
-npm versions do not implement this Store routing and signing flow.
+npm versions do not implement this Store routing and unsigned publishing flow.
 
 Run `mentra <command> --help` for the full option set.

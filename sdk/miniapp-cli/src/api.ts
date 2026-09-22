@@ -5,8 +5,10 @@ export {
   MENTRA_BUNDLE_SIGNATURE_PATH,
   canonicalJson,
   signBundleArchive,
+  verifyBundleArchive,
   verifySignedBundleArchive,
   type MentraBundleSignatureV1,
+  type VerifiedBundle,
   type VerifiedSignedBundle,
 } from './bundle-signing.js';
 export {

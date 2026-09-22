@@ -25,8 +25,8 @@ miniapp, Developer Console and staff moderation. Public builds do not clone it.
   and `x-mentra-service-signature` (base64url), allowing 60 seconds of clock
   skew. Configure the same `MENTRA_SERVICE_AUTH_SECRET` on both services.
   Existing installations retain the `WORKOS_API_KEY` fallback during cutover.
-- Public SDK/CLI contracts remain in this repo. Publish signed Store releases;
-  local and bundled unsigned archives remain supported. Once a publisher is
+- Public SDK/CLI contracts remain in this repo. Store uploads accept unsigned releases. The CLI publishes without signing;
+  signatures supplied explicitly in an archive are still verified. Once a publisher is
   pinned, the host enforces continuity. Automatic updates defer while a miniapp
   runs; the host displays progress and blocks opens during an accepted update.
 

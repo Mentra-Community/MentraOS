@@ -1,7 +1,7 @@
 import { describe, expect, test } from 'bun:test';
 import JSZip from 'jszip';
 
-import { signBundleArchive, verifySignedBundleArchive } from './bundle-signing';
+import { signBundleArchive, verifyBundleArchive, verifySignedBundleArchive } from './bundle-signing';
 import { generatePackageSigningKey } from './package-signing-key';
 
 async function unsignedBundle(version = '1.0.0') {
@@ -12,6 +12,19 @@ async function unsignedBundle(version = '1.0.0') {
 }
 
 describe('signed miniapp bundles', () => {
+  test('validates unsigned contents without reporting a publisher', async () => {
+    const verified = await verifyBundleArchive(await unsignedBundle());
+    expect(verified.packageName).toBe('com.example.signed');
+    expect(verified.contentSha256).toMatch(/^[a-f0-9]{64}$/);
+    expect(verified.publisherKeyFingerprint).toBeUndefined();
+  });
+
+  test('rejects a malformed optional signature', async () => {
+    const zip = await JSZip.loadAsync(await unsignedBundle());
+    zip.file('META-INF/MENTRA.SIG', '{}');
+    await expect(verifyBundleArchive(await zip.generateAsync({type: 'uint8array'}))).rejects.toThrow('signature');
+  });
+
   test('embeds and verifies publisher identity', async () => {
     const key = generatePackageSigningKey('com.example.signed');
     const signed = await signBundleArchive(await unsignedBundle(), key);
@@ -26,6 +39,7 @@ describe('signed miniapp bundles', () => {
     const zip = await JSZip.loadAsync(await signBundleArchive(await unsignedBundle(), key));
     zip.file('background/index.js', 'export const signed = false');
     const changed = await zip.generateAsync({ type: 'uint8array' });
+    await expect(verifyBundleArchive(changed)).rejects.toThrow('does not match');
     await expect(verifySignedBundleArchive(changed)).rejects.toThrow('does not match');
   });
 

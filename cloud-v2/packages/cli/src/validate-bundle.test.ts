@@ -14,15 +14,20 @@ async function bundle(value = manifest) {
   const zip = new JSZip();
   zip.file("miniapp.json", JSON.stringify(value));
   zip.file("background/index.js", "export {};");
-  return signBundleArchive(
-    await zip.generateAsync({ type: "uint8array" }),
-    generatePackageSigningKey(String(value.packageName)),
-  );
+  return zip.generateAsync({ type: "uint8array" });
 }
 
 describe("validatePackedBundle", () => {
-  test("accepts the exact canonical manifest", async () => {
+  test("accepts an unsigned bundle with the exact canonical manifest", async () => {
     await expect(validatePackedBundle(await bundle(), manifest)).resolves.toEqual(manifest);
+  });
+
+  test("verifies an optional signature and rejects tampered signed contents", async () => {
+    const signed = await signBundleArchive(await bundle(), generatePackageSigningKey(manifest.packageName));
+    await expect(validatePackedBundle(signed, manifest)).resolves.toEqual(manifest);
+    const zip = await JSZip.loadAsync(signed);
+    zip.file("background/index.js", "changed");
+    await expect(validatePackedBundle(await zip.generateAsync({type: "uint8array"}), manifest)).rejects.toThrow("does not match");
   });
 
   test("rejects a manifest mismatch", async () => {
@@ -36,10 +41,7 @@ describe("validatePackedBundle", () => {
     zip.file("miniapp.json", JSON.stringify(manifest));
     await expect(
       validatePackedBundle(
-        await signBundleArchive(
-          await zip.generateAsync({ type: "uint8array" }),
-          generatePackageSigningKey("com.example.app"),
-        ),
+        await zip.generateAsync({ type: "uint8array" }),
         manifest,
       ),
     ).rejects.toThrow("missing");
@@ -55,9 +57,9 @@ describe("validatePackedBundle", () => {
     zip.file("miniapp.json", JSON.stringify(manifest));
     zip.file("background/index.js", "target", { unixPermissions: 0o120777 });
     await expect(
-      signBundleArchive(
+      validatePackedBundle(
         await zip.generateAsync({ type: "uint8array", platform: "UNIX" }),
-        generatePackageSigningKey("com.example.app"),
+        manifest,
       ),
     ).rejects.toThrow("symbolic link");
   });

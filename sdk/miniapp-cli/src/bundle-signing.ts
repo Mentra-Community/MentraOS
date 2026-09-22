@@ -24,12 +24,17 @@ export interface MentraBundleSignatureV1 {
   signature: string;
 }
 
-export interface VerifiedSignedBundle {
+export interface VerifiedBundle {
   packageName: string;
   version: string;
   manifest: Record<string, unknown>;
   manifestSha256: string;
   contentSha256: string;
+  publisherKeyFingerprint?: string;
+  publicKeyJwk?: Ed25519PublicJwk;
+}
+
+export interface VerifiedSignedBundle extends VerifiedBundle {
   publisherKeyFingerprint: string;
   publicKeyJwk: Ed25519PublicJwk;
 }
@@ -87,12 +92,30 @@ export async function verifyUnsignedBundleArchive(archive: Uint8Array) {
 }
 
 export async function verifySignedBundleArchive(archive: Uint8Array): Promise<VerifiedSignedBundle> {
+  const verified = await verifyBundleArchive(archive);
+  if (!verified.publisherKeyFingerprint || !verified.publicKeyJwk) {
+    throw new Error(`Bundle must contain exactly one ${MENTRA_BUNDLE_SIGNATURE_PATH}`);
+  }
+  return {
+    ...verified,
+    publisherKeyFingerprint: verified.publisherKeyFingerprint,
+    publicKeyJwk: verified.publicKeyJwk,
+  };
+}
+
+/** Validate archive contents, verifying a publisher signature when one is supplied. */
+export async function verifyBundleArchive(archive: Uint8Array): Promise<VerifiedBundle> {
   inspectRawZipNames(archive);
   const zip = await loadZip(archive);
   const signatureEntries = Object.values(zip.files).filter(
-    entry => !entry.dir && entry.name.toLowerCase() === MENTRA_BUNDLE_SIGNATURE_PATH.toLowerCase(),
+    entry => entry.name.toLowerCase() === MENTRA_BUNDLE_SIGNATURE_PATH.toLowerCase(),
   );
-  if (signatureEntries.length !== 1 || signatureEntries[0]?.name !== MENTRA_BUNDLE_SIGNATURE_PATH) {
+  if (signatureEntries.length === 0) return bundleStatement(zip);
+  if (
+    signatureEntries.length !== 1 ||
+    signatureEntries[0]?.dir ||
+    signatureEntries[0]?.name !== MENTRA_BUNDLE_SIGNATURE_PATH
+  ) {
     throw new Error(`Bundle must contain exactly one ${MENTRA_BUNDLE_SIGNATURE_PATH}`);
   }
   const signatureBytes = await signatureEntries[0].async('uint8array');
