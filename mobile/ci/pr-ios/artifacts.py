@@ -136,6 +136,39 @@ def configure(output, keychain):
     print(f"Validated ad hoc profile {profile['Name']}, expires {profile['ExpirationDate']}, {len(profile['ProvisionedDevices'])} devices")
 
 
+def package_mac_app(app, output, manifest, folder_name="Mentra PR", readme=None):
+    """Share the verified portable Mac package between PR and channel builds."""
+    output = Path(output)
+    with tempfile.TemporaryDirectory(prefix="mentra-mac-package-") as tmp:
+        root = Path(tmp)
+        mac = root / folder_name
+        mac.mkdir()
+        run("ditto", app, mac / "Mentra.app")
+        shutil.copy2(HERE.parent.parent / "scripts/install-ios-mac.mjs", mac / "install.mjs")
+        launcher = mac / "launch-ios-on-mac"
+        run("xcrun", "swiftc", "-parse-as-library", "-O", "-target", "arm64-apple-macosx14.0",
+            HERE.parent.parent / "scripts/launch-ios-on-mac.swift", "-o", launcher)
+        run("codesign", "--force", "--sign", "-", launcher)
+        manifest.update({"launcherPath": "launch-ios-on-mac", "launcherSha256": digest(launcher)})
+        (mac / "build.json").write_text(json.dumps(manifest, indent=2) + "\n")
+        (mac / "Install.command").write_text('#!/bin/bash\nset -euo pipefail\ncd -- "$(dirname -- "$0")"\nexport PATH="$HOME/.bun/bin:/opt/homebrew/bin:$PATH"\ncommand -v bun >/dev/null || { echo "Install Bun first: https://bun.sh"; exit 1; }\nbun install.mjs --manifest build.json\n')
+        (mac / "Install.command").chmod(0o755)
+        if readme is None:
+            shutil.copy2(HERE / "README.md", mac / "README.md")
+        else:
+            (mac / "README.md").write_text(readme)
+        run("ditto", "-c", "-k", "--keepParent", mac, output)
+        run("ditto", "-x", "-k", output, root / "verify")
+        delivered = root / "verify" / folder_name / "Mentra.app"
+        run("codesign", "--verify", "--deep", "--strict", delivered)
+        info = plistlib.loads((delivered / "Info.plist").read_bytes())
+        if (digest(delivered / info["CFBundleExecutable"]) != manifest["executableSha256"]
+                or digest(delivered / "main.jsbundle") != manifest["javascriptSha256"]):
+            raise ValueError("Mac ZIP no longer contains the exported signed app")
+        if (delivered / "EXConstants.bundle/app.config").read_bytes() != (app / "EXConstants.bundle/app.config").read_bytes():
+            raise ValueError("Mac ZIP configuration changed")
+
+
 def package(ipa, output):
     output.mkdir(parents=True, exist_ok=True)
     context = {"pr": int(os.environ["PR_NUMBER"]), "headSha": os.environ["PR_HEAD_SHA"],
@@ -173,30 +206,9 @@ def package(ipa, output):
                     "version": info["CFBundleShortVersionString"], "build": info["CFBundleVersion"],
                     "executableSha256": digest(executable), "javascriptSha256": digest(app / "main.jsbundle"),
                     "profileUUID": profile["UUID"], "profileExpires": profile["ExpirationDate"].isoformat(), "teamId": team}
-        mac = root / "Mentra PR"
-        mac.mkdir()
-        run("ditto", app, mac / "Mentra.app")
-        shutil.copy2(HERE.parent.parent / "scripts/install-ios-mac.mjs", mac / "install.mjs")
-        launcher = mac / "launch-ios-on-mac"
-        run("xcrun", "swiftc", "-parse-as-library", "-O", "-target", "arm64-apple-macosx14.0",
-            HERE.parent.parent / "scripts/launch-ios-on-mac.swift", "-o", launcher)
-        # Small macOS helper has a local signature; the inner iOS app keeps its Apple signature.
-        run("codesign", "--force", "--sign", "-", launcher)
-        manifest.update({"launcherPath": "launch-ios-on-mac", "launcherSha256": digest(launcher)})
-        (mac / "build.json").write_text(json.dumps(manifest, indent=2) + "\n")
-        (mac / "Install.command").write_text('#!/bin/bash\nset -euo pipefail\ncd -- "$(dirname -- "$0")"\nexport PATH="$HOME/.bun/bin:/opt/homebrew/bin:$PATH"\ncommand -v bun >/dev/null || { echo "Install Bun first: https://bun.sh"; exit 1; }\nbun install.mjs --manifest build.json\n')
-        (mac / "Install.command").chmod(0o755)
-        shutil.copy2(HERE / "README.md", mac / "README.md")
         files = {"iphone": f"mentra-ios-iphone-{suffix}.ipa", "mac": f"mentra-ios-mac-{suffix}.zip"}
         shutil.copy2(ipa, output / files["iphone"])
-        run("ditto", "-c", "-k", "--keepParent", mac, output / files["mac"])
-        # Verify the delivered Mac ZIP, not only the source staging directory.
-        run("ditto", "-x", "-k", output / files["mac"], root / "verify")
-        delivered = root / "verify/Mentra PR/Mentra.app"
-        run("codesign", "--verify", "--deep", "--strict", delivered)
-        verify_pr_ota(delivered, os.environ["GITHUB_REPOSITORY"], context["pr"], context["headSha"])
-        if digest(delivered / info["CFBundleExecutable"]) != manifest["executableSha256"] or digest(delivered / "main.jsbundle") != manifest["javascriptSha256"]:
-            raise ValueError("Mac ZIP no longer contains the exported signed app")
+        package_mac_app(app, output / files["mac"], manifest)
         receipt = {"schemaVersion": 1, **context, "app": manifest,
                    "artifacts": {kind: {"name": name, "size": (output / name).stat().st_size,
                                         "sha256": digest(output / name)} for kind, name in files.items()}}

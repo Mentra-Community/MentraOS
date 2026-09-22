@@ -49,12 +49,19 @@ on:
         required: false
         default: false
         type: boolean
+      installable_downloads:
+        description: Export registered-device iPhone and Mac downloads alongside TestFlight
+        required: false
+        default: false
+        type: boolean
       compatibility_lab:
         description: Build Mobile N for non-promotable staging compatibility distribution
         required: false
         default: false
         type: boolean
     secrets:
+      IOS_PR_PROFILE_BASE64:
+        required: false
       ARTIFACTS_R2_ACCESS_KEY_ID:
         required: false
       ARTIFACTS_R2_SECRET_ACCESS_KEY:
@@ -94,6 +101,12 @@ on:
       EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY:
         required: false
     outputs:
+      iphone_manifest_url:
+        value: ${{ jobs.ios-publish.outputs.manifest_url }}
+      iphone_share_url:
+        value: ${{ jobs.ios-publish.outputs.install_url }}
+      mac_url:
+        value: ${{ jobs.ios-publish.outputs.mac_url }}
       result_artifact:
         value: ${{ jobs.result.outputs.result_artifact }}
       release_tag:
@@ -666,7 +679,7 @@ jobs:
           path: release-intent
 
       - name: Set up Ruby signing tools
-        if: inputs.dry_run == true || needs.prepare.outputs.ios_asset_exists != 'true'
+        if: inputs.installable_downloads == true || inputs.dry_run == true || needs.prepare.outputs.ios_asset_exists != 'true'
         uses: ruby/setup-ruby@v1
         with:
           ruby-version: "3.3"
@@ -785,7 +798,7 @@ jobs:
           echo "MENTRA_CONFIGURED_MAPBOX_NETRC=true" >> "$GITHUB_ENV"
 
       - name: Install iOS signing assets
-        if: inputs.dry_run == true || needs.prepare.outputs.ios_asset_exists != 'true'
+        if: inputs.installable_downloads == true || inputs.dry_run == true || needs.prepare.outputs.ios_asset_exists != 'true'
         working-directory: mobile
         env:
           MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
@@ -886,6 +899,24 @@ jobs:
           [[ "$(plutil -extract CFBundleShortVersionString raw /tmp/mentra-mobile-info.plist)" == "$EXPECTED_VERSION" ]]
           [[ "$(plutil -extract CFBundleVersion raw /tmp/mentra-mobile-info.plist)" == "$EXPECTED_BUILD" ]]
 
+      - name: Restore verified registered-device downloads on a release retry
+        id: downloads-restore
+        if: inputs.installable_downloads == true && inputs.dry_run != true
+        env:
+          GH_TOKEN: ${{ github.token }}
+          COORDINATED_OTA_URL: ${{ inputs.ota_manifest_url }}
+        run: node .github/scripts/coordinated-install-downloads.mjs restore release-intent/release-plan.json mobile-release/downloads
+
+      - name: Export iPhone and Mac from the compiled store app
+        if: inputs.installable_downloads == true && steps.downloads-restore.outputs.restored != 'true'
+        env:
+          IOS_PR_PROFILE_BASE64: ${{ secrets.IOS_PR_PROFILE_BASE64 }}
+          COORDINATED_OTA_URL: ${{ inputs.ota_manifest_url }}
+        run: |
+          python3 mobile/ci/coordinated-downloads.py release-intent/release-plan.json \
+            "mobile-release/ios/${{ needs.prepare.outputs.ipa_name }}" mobile-release/downloads
+          node .github/scripts/coordinated-install-downloads.mjs prepare release-intent/release-plan.json mobile-release/downloads
+
       # Keep retries in the workflow: the frozen source checkout may predate this policy.
       - name: Upload IPA handoff (attempt 1 of 3)
         id: ipa-upload-1
@@ -954,10 +985,14 @@ jobs:
           fi
 
   ios-publish:
+    outputs:
+      manifest_url: ${{ steps.downloads.outputs.manifest_url }}
+      install_url: ${{ steps.downloads.outputs.install_url }}
+      mac_url: ${{ steps.downloads.outputs.mac_url }}
     name: Publish immutable iOS app from Ubuntu
     needs: [prepare, ios]
     runs-on: ubuntu-latest
-    timeout-minutes: 15
+    timeout-minutes: 30
     steps:
       - uses: actions/checkout@v4
         with:
@@ -995,6 +1030,24 @@ jobs:
           --repository "${{ github.repository }}"
           --file "mobile-release/ios/${{ needs.prepare.outputs.ipa_name }}"
           --name "${{ needs.prepare.outputs.ipa_name }}"
+
+      - uses: actions/download-artifact@v4
+        if: inputs.installable_downloads == true
+        with:
+          name: ${{ inputs.release_plan_artifact }}
+          path: release-intent
+
+      - name: Publish and verify registered-device downloads
+        id: downloads
+        if: inputs.installable_downloads == true && inputs.dry_run != true
+        timeout-minutes: 15
+        env:
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
+          GH_TOKEN: ${{ github.token }}
+          COORDINATED_OTA_URL: ${{ inputs.ota_manifest_url }}
+          RELEASE_ID: ${{ needs.prepare.outputs.release_id }}
+        run: node .github/scripts/coordinated-install-downloads.mjs publish release-intent/release-plan.json mobile-release/downloads
 
   ios-upload:
     name: Upload the published iOS app to App Store Connect
@@ -1178,6 +1231,7 @@ jobs:
 
       - name: Write iOS release result
         env:
+          COORDINATED_OTA_URL: ${{ inputs.ota_manifest_url }}
           STATUS: ${{ needs.ios-upload.outputs.upload_status }}
         run: >-
           node .github/scripts/coordinated-mobile-records.mjs create-ios
@@ -1193,6 +1247,7 @@ jobs:
           --build-id "${{ steps.assignment.outputs.build_id || steps.processed.outputs.build_id }}"
           --status "$STATUS"
           --provenance-url "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
+          --downloads "${{ inputs.installable_downloads && 'mobile-release/downloads' || '' }}"
           --output mobile-release/ios-publication.json
 
       - uses: actions/upload-artifact@v4

@@ -62,6 +62,8 @@ jobs:
           tests+=(mobile/scripts/native-build-cache.test.mjs mobile/ci/pr-ios/xcode-attempt.test.mjs)
           test "${#tests[@]}" -gt 0
           node --test "${tests[@]}"
+      - name: Test coordinated Apple package identity
+        run: python3 mobile/ci/coordinated-downloads-test.py
       - name: Validate repository definition
         run: node .github/scripts/release-family-cli.mjs validate --require-version-mirrors
       - name: Verify generated changelog catalogs
