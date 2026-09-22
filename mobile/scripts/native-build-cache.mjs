@@ -27,7 +27,7 @@ export function nativeSources(root, files) {
       else if (entry.isFile() && /\.(?:h|hpp|c|cc|cpp|m|mm|swift|modulemap)$/.test(entry.name)) result.add(path.relative(root, file))
     }
   }
-  for (const directory of ["node_modules", "mobile/node_modules", "mobile/ios/build/generated"]) walk(path.join(root, directory))
+  for (const directory of ["node_modules", "mobile/node_modules", "mobile/ios/Pods", "mobile/ios/build/generated"]) walk(path.join(root, directory))
   return [...result]
 }
 

@@ -753,13 +753,13 @@ jobs:
         if: steps.cache-support.outputs.supported == 'true' && (inputs.dry_run == true || needs.prepare.outputs.ios_asset_exists != 'true')
         run: node mobile/scripts/native-build-cache.mjs key
 
-      - name: Restore iOS dependencies and compiler outputs
+      - name: Restore iOS compiler outputs
         if: steps.native-cache.outputs.scope != ''
         uses: actions/cache@v4
         with:
-          path: |
-            mobile/ios/Pods
-            mobile/build/DerivedData
+          # Keep ios/ absent until Expo generates the current native project.
+          # Restoring Pods alone would create an incomplete native project.
+          path: mobile/build/DerivedData
           key: coordinated-ios-${{ steps.native-cache.outputs.scope }}-${{ steps.native-cache.outputs.source }}-${{ github.run_id }}-${{ github.run_attempt }}
           restore-keys: |
             coordinated-ios-${{ steps.native-cache.outputs.scope }}-${{ steps.native-cache.outputs.source }}-
