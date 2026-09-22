@@ -24,7 +24,9 @@ export function nativeSources(root, files) {
     for (const entry of readdirSync(directory, {withFileTypes: true})) {
       const file = path.join(directory, entry.name)
       if (entry.isDirectory()) walk(file)
-      else if (entry.isFile() && /\.(?:h|hpp|c|cc|cpp|m|mm|swift|modulemap)$/.test(entry.name)) result.add(path.relative(root, file))
+      // CocoaPods -include's its generated prefix.pch in every translation
+      // unit. Leaving those mtimes fresh invalidates otherwise unchanged Pods.
+      else if (entry.isFile() && /\.(?:h|hpp|hxx|pch|inc|inl|ipp|c|cc|cpp|m|mm|swift|modulemap)$/.test(entry.name)) result.add(path.relative(root, file))
     }
   }
   for (const directory of ["node_modules", "mobile/node_modules", "mobile/ios/Pods", "mobile/ios/build/generated"]) walk(path.join(root, directory))

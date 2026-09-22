@@ -760,9 +760,11 @@ jobs:
           # Keep ios/ absent until Expo generates the current native project.
           # Restoring Pods alone would create an incomplete native project.
           path: mobile/build/DerivedData
-          key: coordinated-ios-${{ steps.native-cache.outputs.scope }}-${{ steps.native-cache.outputs.source }}-${{ github.run_id }}-${{ github.run_attempt }}
+          # Repeated releases of the same source reuse one entry rather than
+          # uploading several gigabytes again for each new release number.
+          key: coordinated-ios-${{ steps.native-cache.outputs.scope }}-${{ steps.native-cache.outputs.source }}
           restore-keys: |
-            coordinated-ios-${{ steps.native-cache.outputs.scope }}-${{ steps.native-cache.outputs.source }}-
+            coordinated-ios-${{ steps.native-cache.outputs.scope }}-${{ steps.native-cache.outputs.source }}
             coordinated-ios-${{ steps.native-cache.outputs.scope }}-
 
       - name: Configure Mapbox SwiftPM credentials

@@ -1,10 +1,10 @@
 import {test} from "node:test"
 import assert from "node:assert/strict"
-import {mkdtempSync, rmSync, statSync, utimesSync, writeFileSync} from "node:fs"
+import {mkdirSync, mkdtempSync, rmSync, statSync, utimesSync, writeFileSync} from "node:fs"
 import {tmpdir} from "node:os"
 import path from "node:path"
 import {execFileSync} from "node:child_process"
-import {cacheScope, snapshotSources, restoreSourceTimes} from "./native-build-cache.mjs"
+import {cacheScope, nativeSources, snapshotSources, restoreSourceTimes} from "./native-build-cache.mjs"
 
 test("native cache scope isolates workspace, tools, dependencies and runtime environment", () => {
   const base = {workspace: "/build/repo", xcode: "26.2", node: "20", bun: "1.4", environment: {backend: "dev"}, dependencies: "lock1"}
@@ -44,5 +44,27 @@ test("source restoration preserves Xcode's full nanosecond timestamps", () => {
     utimesSync(file, new Date(), new Date())
     assert.equal(restoreSourceTimes(root, ["unchanged.swift"], snapshot), 1)
     assert.equal(statSync(file, {bigint: true}).mtimeNs, original)
+  } finally { rmSync(root, {recursive: true, force: true}) }
+})
+
+test("fresh CocoaPods prefix headers preserve compiler inputs only when unchanged", () => {
+  const root = mkdtempSync(path.join(tmpdir(), "mentra-pod-inputs-"))
+  try {
+    const directory = path.join(root, "mobile/ios/Pods/Target Support Files/MSAL")
+    mkdirSync(directory, {recursive: true})
+    const prefix = path.join(directory, "MSAL-prefix.pch")
+    const inline = path.join(directory, "implementation.inc")
+    for (const file of [prefix, inline]) {
+      writeFileSync(file, "// native compiler input")
+      utimesSync(file, new Date(100000), new Date(100000))
+    }
+    const before = snapshotSources(root, nativeSources(root, []))
+    rmSync(directory, {recursive: true})
+    mkdirSync(directory, {recursive: true})
+    writeFileSync(prefix, "// native compiler input")
+    writeFileSync(inline, "// changed native compiler input")
+    assert.equal(restoreSourceTimes(root, nativeSources(root, []), before), 1)
+    assert.equal(statSync(prefix).mtimeMs, 100000)
+    assert.notEqual(statSync(inline).mtimeMs, 100000)
   } finally { rmSync(root, {recursive: true, force: true}) }
 })
