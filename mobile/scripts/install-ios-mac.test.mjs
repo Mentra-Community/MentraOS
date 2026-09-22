@@ -1,9 +1,16 @@
 import assert from "node:assert/strict"
+import {createHash} from "node:crypto"
 import {afterEach, test} from "node:test"
-import {mkdtemp, mkdir, readFile, rename, rm, symlink, writeFile} from "node:fs/promises"
+import {mkdtemp, mkdir, readFile, realpath, rename, rm, symlink, writeFile} from "node:fs/promises"
 import {tmpdir} from "node:os"
 import path from "node:path"
-import {claimInstallation, commitStagedInstallation, InstallationRollbackError} from "./install-ios-mac.mjs"
+import {
+  claimInstallation,
+  commitStagedInstallation,
+  InstallationRollbackError,
+  parseInstallerArgs,
+  verifyLauncherOverride,
+} from "./install-ios-mac.mjs"
 
 const roots = []
 const fixture = async () => {
@@ -13,6 +20,83 @@ const fixture = async () => {
 }
 afterEach(async () => {
   for (const root of roots.splice(0)) await rm(root, {recursive: true, force: true})
+})
+
+async function launcherFixture() {
+  const root = await fixture()
+  await mkdir(root, {recursive: true})
+  const file = path.join(root, "launcher")
+  const contents = "verified launcher fixture; never executed"
+  await writeFile(file, contents)
+  return {file: await realpath(file), sha256: createHash("sha256").update(contents).digest("hex")}
+}
+
+test("preinstalled launcher must match its independently supplied pin", async () => {
+  const {file, sha256} = await launcherFixture()
+  assert.deepEqual(await verifyLauncherOverride(file, sha256), {source: "preinstalled", path: file, sha256})
+  assert.equal(await verifyLauncherOverride(), undefined)
+  await assert.rejects(verifyLauncherOverride(file, "0".repeat(64)), /SHA256 mismatch/)
+  await writeFile(file, "replaced launcher")
+  await assert.rejects(verifyLauncherOverride(file, sha256), /SHA256 mismatch/)
+})
+
+test("missing or non-file preinstalled launchers are rejected", async () => {
+  const {file, sha256} = await launcherFixture()
+  await assert.rejects(verifyLauncherOverride(`${file}-missing`, sha256), {code: "ENOENT"})
+  await assert.rejects(verifyLauncherOverride(path.dirname(file), sha256), /regular file/)
+})
+
+test("preinstalled launcher rejects a symlink or a symlinked parent", async () => {
+  const {file, sha256} = await launcherFixture()
+  const alias = `${file}-alias`
+  await symlink(file, alias)
+  await assert.rejects(verifyLauncherOverride(alias, sha256), /without symlinks/)
+  const parentAlias = path.join(path.dirname(path.dirname(file)), "alias")
+  await symlink(path.dirname(file), parentAlias)
+  await assert.rejects(verifyLauncherOverride(path.join(parentAlias, "launcher"), sha256), /without symlinks/)
+})
+
+test("preinstalled launcher requires a canonical absolute path and a complete SHA256 pin", async () => {
+  const {file, sha256} = await launcherFixture()
+  await assert.rejects(verifyLauncherOverride("relative/launcher", sha256), /absolute canonical path/)
+  await assert.rejects(verifyLauncherOverride(`${path.dirname(file)}/./launcher`, sha256), /absolute canonical path/)
+  await assert.rejects(verifyLauncherOverride(file, "short-pin"), /Invalid.*SHA256/)
+  await assert.rejects(verifyLauncherOverride(file), /together/)
+  await assert.rejects(verifyLauncherOverride(undefined, sha256), /together/)
+})
+
+test("installer CLI preserves existing defaults and accepts the pinned launcher pair", () => {
+  assert.deepEqual(parseInstallerArgs(["--manifest", "build.json"]), {
+    manifestPath: path.resolve("build.json"),
+    launch: true,
+    launcherPath: undefined,
+    launcherSha256: undefined,
+  })
+  assert.deepEqual(
+    parseInstallerArgs([
+      "--manifest",
+      "build.json",
+      "--launcher",
+      "/host/launcher",
+      "--launcher-sha256",
+      "a".repeat(64),
+      "--no-launch",
+    ]),
+    {
+      manifestPath: path.resolve("build.json"),
+      launch: false,
+      launcherPath: "/host/launcher",
+      launcherSha256: "a".repeat(64),
+    },
+  )
+})
+
+test("installer CLI rejects incomplete launcher selection and malformed arguments", () => {
+  assert.throws(() => parseInstallerArgs(["--manifest", "build.json", "--launcher", "/host/launcher"]), /together/)
+  assert.throws(() => parseInstallerArgs(["--manifest", "build.json", "--launcher-sha256", "a".repeat(64)]), /together/)
+  assert.throws(() => parseInstallerArgs(["--manifest", "build.json", "--launcher"]))
+  assert.throws(() => parseInstallerArgs(["--manifest", "build.json", "--unknown"]))
+  assert.throws(() => parseInstallerArgs([]), /Usage:/)
 })
 
 test("reuse the same managed installation across builds", async () => {

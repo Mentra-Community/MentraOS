@@ -1,10 +1,23 @@
 #!/usr/bin/env bun
 import {createHash} from "node:crypto"
 import {execFileSync} from "node:child_process"
-import {access, lstat, mkdir, mkdtemp, readFile, readlink, rename, rm, symlink, writeFile} from "node:fs/promises"
+import {
+  access,
+  lstat,
+  mkdir,
+  mkdtemp,
+  readFile,
+  readlink,
+  realpath,
+  rename,
+  rm,
+  symlink,
+  writeFile,
+} from "node:fs/promises"
 import {homedir} from "node:os"
 import path from "node:path"
 import {fileURLToPath} from "node:url"
+import {parseArgs} from "node:util"
 
 const scripts = path.dirname(fileURLToPath(import.meta.url))
 const owner = "mentra-ios-mac-v1"
@@ -20,6 +33,49 @@ const hash = async (file) =>
     .update(await readFile(file))
     .digest("hex")
 export const installationRoot = () => path.join(homedir(), "Applications", "Mentra E2E")
+
+function validateLauncherOptions(launcherPath, launcherSha256) {
+  if (launcherPath === undefined && launcherSha256 === undefined) return
+  if (typeof launcherPath !== "string" || typeof launcherSha256 !== "string")
+    throw new Error("Provide --launcher and --launcher-sha256 together")
+  if (!path.isAbsolute(launcherPath) || path.normalize(launcherPath) !== launcherPath)
+    throw new Error("Preinstalled launcher requires an absolute canonical path")
+  if (!/^[a-fA-F0-9]{64}$/.test(launcherSha256)) throw new Error("Invalid preinstalled launcher SHA256")
+}
+
+export async function verifyLauncherOverride(launcherPath, launcherSha256) {
+  validateLauncherOptions(launcherPath, launcherSha256)
+  if (launcherPath === undefined) return undefined
+  const info = await lstat(launcherPath)
+  if (!info.isFile() || info.isSymbolicLink() || (await realpath(launcherPath)) !== launcherPath)
+    throw new Error("Preinstalled launcher must be a regular file at its canonical path, without symlinks")
+  const sha256 = await hash(launcherPath)
+  if (sha256 !== launcherSha256.toLowerCase()) throw new Error("Preinstalled launcher SHA256 mismatch")
+  return {source: "preinstalled", path: launcherPath, sha256}
+}
+
+export function parseInstallerArgs(args) {
+  const {values} = parseArgs({
+    args,
+    options: {
+      "manifest": {type: "string"},
+      "launcher": {type: "string"},
+      "launcher-sha256": {type: "string"},
+      "no-launch": {type: "boolean"},
+    },
+  })
+  if (!values.manifest)
+    throw new Error(
+      "Usage: bun scripts/install-ios-mac.mjs --manifest PATH [--launcher PATH --launcher-sha256 HEX] [--no-launch]",
+    )
+  validateLauncherOptions(values.launcher, values["launcher-sha256"])
+  return {
+    manifestPath: path.resolve(values.manifest),
+    launch: !values["no-launch"],
+    launcherPath: values.launcher,
+    launcherSha256: values["launcher-sha256"],
+  }
+}
 
 async function regularDirectory(directory) {
   const info = await lstat(directory)
@@ -142,8 +198,9 @@ export async function commitStagedInstallation({root, staging, lock}, move = ren
   }
 }
 
-export async function installBuild(manifestPath, {launch = true} = {}) {
+export async function installBuild(manifestPath, {launch = true, launcherPath, launcherSha256} = {}) {
   if (process.platform !== "darwin") throw new Error("Requires macOS")
+  const preinstalledLauncher = await verifyLauncherOverride(launcherPath, launcherSha256)
   const manifest = JSON.parse(await readFile(manifestPath, "utf8"))
   if (!manifest.bundleId || !manifest.executableSha256) throw new Error("Invalid build manifest")
   const root = installationRoot()
@@ -175,16 +232,18 @@ export async function installBuild(manifestPath, {launch = true} = {}) {
     command("/bin/cp", ["-cR", source, inner])
     await symlink("Wrapper/Mentra.app", path.join(wrapper, "WrappedBundle"))
     const identity = await verifyApp(inner, manifest)
-    const launcher = manifest.launcherPath
-      ? path.resolve(path.dirname(manifestPath), manifest.launcherPath)
-      : path.join(staging, "launch-ios-on-mac")
-    if (manifest.launcherPath) {
+    const launcher = preinstalledLauncher
+      ? preinstalledLauncher.path
+      : manifest.launcherPath
+        ? path.resolve(path.dirname(manifestPath), manifest.launcherPath)
+        : path.join(staging, "launch-ios-on-mac")
+    if (!preinstalledLauncher && manifest.launcherPath) {
       if (
         path.basename(manifest.launcherPath) !== manifest.launcherPath ||
         (await hash(launcher)) !== manifest.launcherSha256
       )
         throw new Error("Bundled launcher path or hash mismatch")
-    } else
+    } else if (!preinstalledLauncher)
       command("/usr/bin/xcrun", [
         "swiftc",
         "-parse-as-library",
@@ -206,12 +265,27 @@ export async function installBuild(manifestPath, {launch = true} = {}) {
       command("/usr/bin/unzip", ["-tq", backup])
       await rename(backup, path.join(root, "previous-installation.zip"))
     }
-    const installed = {...manifest, ...identity, launchPath: destination, installedAt: new Date().toISOString()}
+    const installationLauncher = preinstalledLauncher ?? {
+      source: manifest.launcherPath ? "bundled" : "compiled",
+      path: launcher,
+      sha256: await hash(launcher),
+    }
+    const installed = {
+      ...manifest,
+      ...identity,
+      installationLauncher,
+      launchPath: destination,
+      installedAt: new Date().toISOString(),
+    }
     await writeFile(path.join(staging, "installed-build.json"), JSON.stringify(installed, null, 2) + "\n")
+    await verifyLauncherOverride(launcherPath, launcherSha256)
     command(launcher, ["--quit", wrapper])
     await commitStagedInstallation({root, staging, lock})
     installedNew = true
-    if (launch) console.log(command(launcher, [destination]))
+    if (launch) {
+      await verifyLauncherOverride(launcherPath, launcherSha256)
+      console.log(command(launcher, [destination]))
+    }
     console.log(`Installed app: ${destination}\nInstalled evidence: ${path.join(root, "installed-build.json")}`)
     return installed
   } catch (error) {
@@ -228,9 +302,6 @@ export async function installBuild(manifestPath, {launch = true} = {}) {
 }
 
 if (import.meta.main) {
-  const args = process.argv.slice(2)
-  if (args[0] !== "--manifest" || !args[1] || args.slice(2).some((arg) => arg !== "--no-launch")) {
-    throw new Error("Usage: bun scripts/install-ios-mac.mjs --manifest PATH [--no-launch]")
-  }
-  await installBuild(path.resolve(args[1]), {launch: !args.includes("--no-launch")})
+  const {manifestPath, ...options} = parseInstallerArgs(process.argv.slice(2))
+  await installBuild(manifestPath, options)
 }

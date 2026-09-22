@@ -34,9 +34,16 @@ For a longer discovery/build work session between recordings, run `caffeinate -d
 
 ## 2. Install the real app
 
+### CI artifact (preferred for PR qualification)
+
+Use [MAC-CI-SETUP.md](MAC-CI-SETUP.md) to select a signed PR Mac artifact,
+verify its provenance and install with the trusted repository installer and a
+pinned host launcher. Provision developer trust and required privacy grants once;
+subsequent builds preserve app identity and data. Run outputs remain local.
+
 ### Local source build (for developing the routine)
 
-Use this route to test the PR's accessibility changes immediately. It needs full Xcode, its iOS platform support, CocoaPods, Bun, and the mobile dependencies. `bun ios` currently targets a physical iPhone/iPad; it does not select the Mac. The PR's existing iOS CI only performs an unsigned compile and does not publish an installable IPA.
+Use this route to develop accessibility changes before a CI artifact is ready. It needs full Xcode, its iOS platform support, CocoaPods, Bun, and the mobile dependencies. `bun ios` targets a physical iPhone/iPad; it does not select the Mac. PR CI also publishes signed iPhone and Mac artifacts for registered devices; a local build is a different qualification input.
 
 After checking out the branch in section 3:
 

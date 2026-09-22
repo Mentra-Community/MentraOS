@@ -1,0 +1,37 @@
+name: E2E Setup Checks
+
+on:
+  pull_request:
+    paths:
+      - "tools/mentra-e2e/mac_ci.py"
+      - "tools/mentra-e2e/test_mac_ci.py"
+      - "mobile/scripts/install-ios-mac.mjs"
+      - "mobile/scripts/install-ios-mac.test.mjs"
+      - ".github/workflows/e2e-setup-checks.yml"
+  push:
+    branches: [dev]
+    paths:
+      - "tools/mentra-e2e/mac_ci.py"
+      - "tools/mentra-e2e/test_mac_ci.py"
+      - "mobile/scripts/install-ios-mac.mjs"
+      - "mobile/scripts/install-ios-mac.test.mjs"
+      - ".github/workflows/e2e-setup-checks.yml"
+
+permissions:
+  contents: read
+
+jobs:
+  test:
+    name: Verify Mac artifact and installer guards
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - uses: actions/setup-python@v5
+        with:
+          python-version: "3.12"
+      - run: python3 -m unittest discover -s tools/mentra-e2e -p test_mac_ci.py -v
+      - run: node --test mobile/scripts/install-ios-mac.test.mjs

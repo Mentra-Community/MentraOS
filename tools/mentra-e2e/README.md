@@ -2,6 +2,13 @@
 
 Start with the [English coverage checklist](ROUTINE.md), [exact compiled routine](COMPILED-ROUTINE.md), [design and technology choices](../../notes/superpowers/specs/2026-09-15-mentra-app-e2e-harness.md), [accessibility contract](ACCESSIBILITY.md), and [Mac Mini setup](SETUP.md).
 
+For PR artifacts, use the [verified Mac CI installer](MAC-CI-SETUP.md). The
+[day-one OTA routine](DAY1-OTA-ROUTINE.md) adds a January baseline and explicit
+manifest-derived return state; its full hardware pass is pending. The
+[active plan](../../notes/superpowers/plans/2026-09-21-day1-ota-and-ci-routines.md)
+tracks lifecycle, CI and admin integration. This work stays in MentraOS while
+private-repository migration is deferred; credentials and run evidence stay local.
+
 To review a recording in an embedded browser, serve its report over localhost:
 
 ```sh

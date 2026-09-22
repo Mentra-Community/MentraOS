@@ -64,6 +64,15 @@ macOS may require its normal first-use approvals. The installer does not change
 privacy settings or disable Gatekeeper. If a launch approval delays opening,
 the verified app remains installed; approve through macOS and open it again.
 
+For repeated automated installations, use the repository's
+[Mac test-host setup](https://github.com/Mentra-Community/MentraOS/blob/dev/tools/mentra-e2e/MAC-CI-SETUP.md). It verifies the
+selected Actions artifact and invokes a trusted repository installer with a
+pinned preinstalled launcher, without executing the downloaded installer/helper.
+This avoids those per-download executable prompts. Initial prerelease developer
+trust and app privacy grants remain host provisioning; signing a Mac helper does
+not grant Bluetooth. The current portable ZIP helper is ad hoc signed, not
+Developer ID signed/notarized.
+
 ## Compilation reuse
 
 Android and iOS use the same fingerprint/selection and PR configuration contract.
