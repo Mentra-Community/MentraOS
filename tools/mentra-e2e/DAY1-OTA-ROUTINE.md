@@ -97,6 +97,19 @@ the incorrect APK-path assertion; the final read-only reconciliation itself took
 16.782 seconds. These measurements establish remote Wi-Fi operation, not an OTA
 speed advantage.
 
+The September 22 supervised customer sequence on PR #4136 build
+`e5ecea74e157c67ae61f2384e8c6eb8c7751a5f7` reached the selected return state:
+MTK `MentraLive_20260921.0`, BES `26.9.21.3`, and ASG `303006291` with the
+manifest's exact APK hash. All fourteen independent return checks passed,
+including idle update state, stopped media and the selected app at paired home.
+Update Now was dispatched once. The original customer recording remains failed:
+its observer stopped during an intermediate reboot; later read-only observation
+and return verification did not repeat the update or replace that verdict.
+The separate return recording passed video, screenshot and chapter integrity
+checks. This is evidence that the customer firmware path completed, not a
+passing complete CI routine or an enrolled fixture. The extracted setup/runtime
+composition and selected-target restoration still need their own device pass.
+
 PR #4132's build was installed, verified and restored during the Mac host experiment.
 Its effective manifest and legacy deployment policy have since been frozen for
 setup qualification, with all eight normal/rescue artifacts cached and verified.
