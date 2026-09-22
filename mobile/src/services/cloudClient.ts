@@ -41,6 +41,7 @@ export function lc3FrameSizeBytes(): Lc3FrameSizeBytes {
  * resolved endpoints + the live LC3 frame size.
  */
 export function cloudConfigValues(): {
+  privateMeetings?: boolean
   coreUrl: string | null
   runtimeUrl: string | null
   hostVersion: string
@@ -84,6 +85,7 @@ export function deploymentCloudConfigValues(deployment: ActiveDeployment): Retur
       ? `mentra.cloud-client.${manifest.deploymentId}.${encodeURIComponent(deployment.workspaceOrigin)}.refreshToken`
       : undefined
   return {
+    privateMeetings: deployment.kind === "workspace",
     coreUrl: manifest.services.coreUrl,
     runtimeUrl: manifest.services.runtimeUrl,
     runtimeRealtimeSession: manifest.features.runtimeRealtimeSession,

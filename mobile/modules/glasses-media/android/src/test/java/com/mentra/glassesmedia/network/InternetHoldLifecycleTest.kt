@@ -108,4 +108,51 @@ class InternetHoldLifecycleTest {
         assertTrue(result.held)
         assertFalse(result.validated)
     }
+
+    @Test
+    fun `listener binds without cellular and restores the pin afterwards`() {
+        val f = Fixture()
+        assertTrue(f.awaitCellular(0).validated)
+        clearInvocations(f.manager)
+
+        val result = f.hold.withProcessUnpinned {
+            verify(f.manager).bindProcessToNetwork(null)
+            verify(f.manager, never()).bindProcessToNetwork(f.network)
+            "listener"
+        }
+
+        assertEquals("listener", result)
+        inOrder(f.manager).apply {
+            verify(f.manager).bindProcessToNetwork(null)
+            verify(f.manager).bindProcessToNetwork(f.network)
+        }
+        f.hold.close()
+    }
+
+    @Test
+    fun `failed listener bind still restores cellular`() {
+        val f = Fixture()
+        assertTrue(f.awaitCellular(0).validated)
+        clearInvocations(f.manager)
+        val failure = IllegalStateException("bind failed")
+
+        val thrown = assertThrows(IllegalStateException::class.java) {
+            f.hold.withProcessUnpinned {
+                verify(f.manager).bindProcessToNetwork(null)
+                throw failure
+            }
+        }
+
+        assertSame(failure, thrown)
+        verify(f.manager).bindProcessToNetwork(f.network)
+        f.hold.close()
+    }
+
+    @Test
+    fun `listener without a cellular pin leaves routing unchanged`() {
+        val f = Fixture()
+        assertEquals("listener", f.hold.withProcessUnpinned { "listener" })
+        verify(f.manager, never()).bindProcessToNetwork(nullable(Network::class.java))
+        f.hold.close()
+    }
 }

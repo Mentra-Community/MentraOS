@@ -1,6 +1,7 @@
 import {Button, Icon, Text} from "@/components/ignite"
 import {useAppTheme} from "@/contexts/ThemeContext"
 import {useCapsuleStore} from "@/stores/capsule"
+import {translate} from "@/i18n"
 
 import {Dimensions, InteractionManager, PixelRatio, Platform, Share, View} from "react-native"
 import {Pressable} from "react-native-gesture-handler"
@@ -63,6 +64,14 @@ function CapsuleButton({onRightPress, onLeftPress}: CapsuleButtonProps) {
       className="flex-row justify-between rounded-full h-8 w-20 items-center bg-background/60"
       style={androidStyle}>
       <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={translate("navigation:minimizeMiniapp")}
+        testID="miniapp.minimize"
+        onAccessibilityTap={onLeftPress}
+        accessibilityActions={[{name: "activate"}]}
+        onAccessibilityAction={({nativeEvent}) => {
+          if (nativeEvent.actionName === "activate") onLeftPress?.()
+        }}
         hitSlop={10}
         onPress={onLeftPress}
         // className="w-8 h-full items-center justify-center rounded-l-full bg-red-500"
@@ -89,6 +98,14 @@ function CapsuleButton({onRightPress, onLeftPress}: CapsuleButtonProps) {
       </Pressable>
       <View className="h-4 w-px bg-primary-foreground absolute left-1/2 -translate-x-1/2" />
       <Pressable
+        accessibilityRole="button"
+        accessibilityLabel={translate("navigation:closeMiniapp")}
+        testID="miniapp.close"
+        onAccessibilityTap={onRightPress}
+        accessibilityActions={[{name: "activate"}]}
+        onAccessibilityAction={({nativeEvent}) => {
+          if (nativeEvent.actionName === "activate") onRightPress?.()
+        }}
         hitSlop={10}
         onPress={onRightPress}
         style={({pressed}) => [
@@ -201,74 +218,85 @@ export async function captureScreenshot(
   topInsetOffset: number = 0,
   options: {settle?: boolean} = {},
 ) {
-  if (!viewShotRef.current) {
-    console.warn(`captureScreenshot: viewShotRef is null ${viewShotRef.current}`)
-    return
-  }
+  if (options.settle) await settleBeforeCapture()
+  const persist = await captureScreenshotForLater(viewShotRef, packageName, topInsetOffset)
+  await persist?.()
+}
 
+/** Capture the current pixels now; defer processing and publication until after dismissal. */
+export async function captureScreenshotForLater(
+  viewShotRef: React.RefObject<View | null>,
+  packageName: string,
+  topInsetOffset: number = 0,
+): Promise<(() => Promise<void>) | undefined> {
+  if (!viewShotRef.current) return
+
+  let screenshotUri: string
   try {
-    // Capsule presses can leave pressed/layout transients in the image. Gesture
-    // exits must capture immediately because their callers start teardown or a
-    // compositor transform as soon as this function returns.
-    if (options.settle) await settleBeforeCapture()
-
-    let screenshotUri = await captureRef(viewShotRef, {
+    screenshotUri = await captureRef(viewShotRef, {
       format: "jpg",
       quality: Platform.OS === "ios" ? 0.1 : 0.5,
       result: "tmpfile",
     })
+  } catch (error) {
+    console.warn("screenshot capture failed:", error)
+    return
+  }
 
-    if (Platform.OS === "ios") {
-      const {width, height} = await new Promise<{width: number; height: number}>((resolve, reject) => {
-        RNImage.getSize(screenshotUri, (w, h) => resolve({width: w, height: h}), reject)
-      })
-      let amountToChop = topInsetOffset * PixelRatio.get()
-      amountToChop = 0
-      const context = ImageManipulator.ImageManipulator.manipulate(screenshotUri)
-      context.crop({originX: 0, originY: amountToChop, width, height: height - amountToChop})
-      const imageRef = await context.renderAsync()
-      const cropped = await imageRef.saveAsync({
-        format: ImageManipulator.SaveFormat.JPEG,
-        compress: 0.1,
-      })
-      screenshotUri = cropped.uri
-    }
+  return async () => {
+    try {
+      if (Platform.OS === "ios") {
+        const {width, height} = await new Promise<{width: number; height: number}>((resolve, reject) => {
+          RNImage.getSize(screenshotUri, (w, h) => resolve({width: w, height: h}), reject)
+        })
+        let amountToChop = topInsetOffset * PixelRatio.get()
+        amountToChop = 0
+        const context = ImageManipulator.ImageManipulator.manipulate(screenshotUri)
+        context.crop({originX: 0, originY: amountToChop, width, height: height - amountToChop})
+        const imageRef = await context.renderAsync()
+        const cropped = await imageRef.saveAsync({
+          format: ImageManipulator.SaveFormat.JPEG,
+          compress: 0.1,
+        })
+        screenshotUri = cropped.uri
+      }
 
-    await enqueueScreenshotPersistence(async () => {
-      const screenshotDirectory = new Directory(Paths.document, "miniapp-screenshots")
-      if (!screenshotDirectory.exists) screenshotDirectory.create()
+      await enqueueScreenshotPersistence(async () => {
+        const screenshotDirectory = new Directory(Paths.document, "miniapp-screenshots")
+        if (!screenshotDirectory.exists) screenshotDirectory.create()
 
-      const safePackageName = packageName.replace(/[^a-zA-Z0-9._-]/g, "_")
-      // Unique filename per capture. The app switcher renders this uri through
-      // expo-image, which caches by uri, so reusing one path meant every fresh
-      // capture landed on disk but the card kept showing the first image ever
-      // loaded (OS-1810). Changing the uri is what actually invalidates it.
-      const prefix = `${safePackageName}-`
-      const legacyName = `${safePackageName}.jpg`
-      const captureId = `${Date.now()}-${screenshotFileSequence++}`
-      const persistentFile = new File(screenshotDirectory, `${prefix}${captureId}.jpg`)
-      new File(screenshotUri).copy(persistentFile)
+        const safePackageName = packageName.replace(/[^a-zA-Z0-9._-]/g, "_")
+        // Unique filename per capture. The app switcher renders this uri through
+        // expo-image, which caches by uri, so reusing one path meant every fresh
+        // capture landed on disk but the card kept showing the first image ever
+        // loaded (OS-1810). Changing the uri is what actually invalidates it.
+        const prefix = `${safePackageName}-`
+        const legacyName = `${safePackageName}.jpg`
+        const captureId = `${Date.now()}-${screenshotFileSequence++}`
+        const persistentFile = new File(screenshotDirectory, `${prefix}${captureId}.jpg`)
+        new File(screenshotUri).copy(persistentFile)
 
-      // Publish the new URI before removing older files. Persistence is
-      // serialized so another capture cannot publish a file this sweep deletes.
-      await engine.miniapps.saveScreenshot(packageName, persistentFile.uri)
+        // Publish the new URI before removing older files. Persistence is
+        // serialized so another capture cannot publish a file this sweep deletes.
+        await engine.miniapps.saveScreenshot(packageName, persistentFile.uri)
 
-      for (const entry of screenshotDirectory.list()) {
-        if (
-          entry instanceof File &&
-          (entry.name === legacyName || entry.name.startsWith(prefix)) &&
-          entry.name !== persistentFile.name
-        ) {
-          try {
-            entry.delete()
-          } catch {
-            // A stale file we can't remove is harmless; don't fail the capture.
+        for (const entry of screenshotDirectory.list()) {
+          if (
+            entry instanceof File &&
+            (entry.name === legacyName || entry.name.startsWith(prefix)) &&
+            entry.name !== persistentFile.name
+          ) {
+            try {
+              entry.delete()
+            } catch {
+              // A stale file we can't remove is harmless; don't fail the capture.
+            }
           }
         }
-      }
-    })
-  } catch (error) {
-    console.warn("screenshot failed:", error)
+      })
+    } catch (error) {
+      console.warn("screenshot failed:", error)
+    }
   }
 }
 

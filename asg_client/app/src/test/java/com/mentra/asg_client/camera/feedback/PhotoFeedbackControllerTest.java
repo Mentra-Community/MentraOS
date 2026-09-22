@@ -115,36 +115,28 @@ public class PhotoFeedbackControllerTest {
     }
 
     @Test
-    public void warmCapture_playsImmediatelyAndDoesNotRepeatAtExposure() {
+    public void warmCapture_waitsForExposureAndDoesNotRepeatAtFrame() {
         PhotoFeedbackController.Token token = controller.start("warm", true);
-        verify(hardwareManager).playAudioAssetOverlayTracked(
+        verify(hardwareManager).prepareCameraAudioPlayback();
+        verify(hardwareManager, never()).playAudioAssetOverlayTracked(
                 AudioAssets.CAMERA_SNAP, AsgConstants.CAMERA_SNAP_PLAYBACK_VOLUME);
-        controller.onExposureStarted(token, 0L, 250_000_000L);
+        controller.onExposureStarted(token, 0L, 50_000_000L);
         controller.playSnap(token, "JPEG ready");
         verify(hardwareManager).playAudioAssetOverlayTracked(
                 AudioAssets.CAMERA_SNAP, AsgConstants.CAMERA_SNAP_PLAYBACK_VOLUME);
-        verify(hardwareManager, never()).playAudioAssetOverlayTracked(
-                AudioAssets.CAMERA_PREP_CLICK, AsgConstants.CAMERA_PREP_CLICK_PLAYBACK_VOLUME);
     }
 
     @Test
-    public void warmCapture_doesNotPlayOnTheCallersThread() {
-        // start() runs inline on the UART reader thread; opening the I2S path blocks there.
-        Deque<Runnable> queued = new ArrayDeque<>();
-        PhotoFeedbackController deferred =
-                new PhotoFeedbackController(hardwareManager, handler, clock, queued::add);
-
-        deferred.start("warm-async", true);
-
-        verify(hardwareManager, never())
-                .playAudioAssetOverlayTracked(
-                        AudioAssets.CAMERA_SNAP, AsgConstants.CAMERA_SNAP_PLAYBACK_VOLUME);
-        assertThat(queued).hasSize(1);
-
-        queued.remove().run();
-        verify(hardwareManager)
-                .playAudioAssetOverlayTracked(
-                        AudioAssets.CAMERA_SNAP, AsgConstants.CAMERA_SNAP_PLAYBACK_VOLUME);
+    public void warmCapture_longExposureDoesNotSnapAtRequestOrExposureStart() {
+        PhotoFeedbackController.Token token = controller.start("warm-long", true);
+        controller.onExposureStarted(token, 0L, 500_000_000L);
+        verify(hardwareManager, never()).playAudioAssetOverlayTracked(
+                AudioAssets.CAMERA_SNAP, AsgConstants.CAMERA_SNAP_PLAYBACK_VOLUME);
+        ArgumentCaptor<Runnable> snap = ArgumentCaptor.forClass(Runnable.class);
+        verify(handler).postDelayed(snap.capture(), eq(400L));
+        snap.getValue().run();
+        verify(hardwareManager).playAudioAssetOverlayTracked(
+                AudioAssets.CAMERA_SNAP, AsgConstants.CAMERA_SNAP_PLAYBACK_VOLUME);
     }
 
     @Test
@@ -152,6 +144,7 @@ public class PhotoFeedbackControllerTest {
         // Warm but not ready: enqueuePhotoRequest() queues this behind the running capture, so an
         // immediate shutter would sound well before the frame it belongs to.
         PhotoFeedbackController.Token token = controller.start("warm-queued", true, false);
+        verify(hardwareManager, never()).prepareCameraAudioPlayback();
 
         verify(hardwareManager, never())
                 .playAudioAssetOverlayTracked(
@@ -194,7 +187,7 @@ public class PhotoFeedbackControllerTest {
 
         PhotoFeedbackController.Token token = deferred.start("warm-failed", true);
         deferred.stopForFailure(token);
-        queued.remove().run();
+        deferred.onExposureStarted(token, 0L, 50_000_000L);
 
         verify(hardwareManager, never())
                 .playAudioAssetOverlayTracked(

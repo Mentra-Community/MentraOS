@@ -199,6 +199,10 @@ export enum MiniappRequestType {
 
   /** Ask the host to open the glasses Wi-Fi setup flow (mirrors the cloud SDK's requestWifiSetup). */
   REQUEST_WIFI_SETUP = "miniapp_request_wifi_setup",
+  /** Read the phone's Wi-Fi radio state (null when the platform cannot determine it). */
+  PHONE_IS_WIFI_ENABLED = "miniapp_phone_is_wifi_enabled",
+  /** Ask the host to help the user enable phone Wi-Fi, then recheck on return. */
+  PHONE_REQUEST_WIFI_ENABLE = "miniapp_phone_request_wifi_enable",
 
   // ----- Inter-miniapp interop (SYSTEM apps only) -----
   /** List installed miniapps (compatibility-filtered, with declared actions). */
@@ -222,6 +226,7 @@ export enum MiniappRequestType {
    * Phone-native meeting (ACS Teams). Join/leave/mute live in the MentraOS
    * host so the miniapp never holds the ACS Calling SDK.
    */
+  MEETING_GET_CONFIGURATION = "miniapp_meeting_get_configuration",
   MEETING_JOIN = "miniapp_meeting_join",
   MEETING_LEAVE = "miniapp_meeting_leave",
   /** Terminate the meeting for everyone, not just this device. See `meeting.end()`. */

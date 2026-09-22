@@ -7,7 +7,7 @@ import OtaVersionUrl from "@/components/dev/OtaVersionUrl"
 import {Header, Icon, Screen, Text} from "@/components/ignite"
 import SelectSetting from "@/components/settings/SelectSetting"
 import ToggleSetting from "@/components/settings/ToggleSetting"
-import IosCallSetting from "@/components/settings/IosCallSetting"
+import IosMiniappSettings from "@/components/settings/IosMiniappSettings"
 import {Group} from "@/components/ui/Group"
 import {RouteButton} from "@/components/ui/RouteButton"
 import {Spacer} from "@/components/ui/Spacer"
@@ -95,7 +95,7 @@ export default function DebugSettingsScreen() {
                 onValueChange={(value) => setAndroidNotificationListenerEnabled(value)}
               />
             )}
-            <IosCallSetting />
+            <IosMiniappSettings />
             <ToggleSetting
               label={translate("settings:reconnectOnAppForeground")}
               subtitle={translate("settings:reconnectOnAppForegroundSubtitle")}

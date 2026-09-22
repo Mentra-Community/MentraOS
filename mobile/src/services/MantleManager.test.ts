@@ -8,11 +8,14 @@ import {router} from "expo-router"
 import {initI18n} from "@/i18n"
 import mantle from "@/services/MantleManager"
 import {storeUpdateScheduler} from "@/services/miniapps/storeUpdateScheduler"
+import builtInMiniappCatalog from "@/services/miniapps/BuiltInMiniappCatalog"
+import {mentraCallPackageName, notifyPackageName} from "@/constants/miniapps"
 import {
   appRegistry,
   audioPlaybackService,
   localDisplayManager,
   localMiniappRuntime,
+  saveLocalAppRunningState,
   useAppStatusStore,
   useCoreStore,
   useDisplayStore,
@@ -114,6 +117,14 @@ let syncCoreDisplayOwner: () => void
 let syncGlassesPresentationState: (status: {state: string}) => void
 
 describe("MantleManager", () => {
+  const originalOverride = process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS
+  beforeAll(() => {
+    delete process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS
+  })
+  afterAll(() => {
+    if (originalOverride === undefined) delete process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS
+    else process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS = originalOverride
+  })
   const originalPlatform = Platform.OS
   beforeAll(() => {
     Object.defineProperty(Platform, "OS", {configurable: true, value: "android"})
@@ -732,13 +743,11 @@ describe("MantleManager", () => {
 
   it("rechecks Call policy after downloading and propagates an install failure", async () => {
     const originalPlatform = Platform.OS
-    const originalOverride = process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS
     const originalVersions = appRegistry.getInstalledVersions
     const originalInstall = appRegistry.installFromLocalZip
     const originalUninstalled = appRegistry.wasUserUninstalled
     appRegistry.wasUserUninstalled = jest.fn(() => false)
     Object.defineProperty(Platform, "OS", {configurable: true, value: "ios"})
-    delete process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS
     appRegistry.getInstalledVersions = jest.fn(() => [])
     const failure = new Error("Archive installation failed")
     const install = jest.fn(() =>
@@ -768,45 +777,80 @@ describe("MantleManager", () => {
       appRegistry.installFromLocalZip = originalInstall
       appRegistry.wasUserUninstalled = originalUninstalled
       Object.defineProperty(Platform, "OS", {configurable: true, value: originalPlatform})
-      if (originalOverride === undefined) delete process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS
-      else process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS = originalOverride
     }
   })
 
-  it("keeps the iOS Call listener after normal subscription setup and replaces it cleanly", async () => {
+  it.each([
+    [mentraCallPackageName, SETTINGS.show_mentra_call_ios.key, SETTINGS.show_notify_ios.key],
+    [notifyPackageName, SETTINGS.show_notify_ios.key, SETTINGS.show_mentra_call_ios.key],
+  ])("reconciles %s independently and replaces its setting listener cleanly", async (packageName, key, otherKey) => {
     const originalPlatform = Platform.OS
-    const originalOverride = process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS
     Object.defineProperty(Platform, "OS", {configurable: true, value: "ios"})
-    delete process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS
     const instance = new (mantle.constructor as new () => {
-      setupIosCallVisibility: () => void
+      setupIosMiniappVisibility: () => void
       setupSubscriptions: () => Promise<void>
       installBundledCall: () => Promise<void>
       subs: Array<{remove: () => void}>
-      iosCallVisibility: {dispose: () => void}
+      iosMiniappVisibility: Map<string, {dispose: () => void}>
     })()
-    const install = jest.fn(async () => {})
-    instance.installBundledCall = install
+    const installCall = jest.fn(async () => {})
+    instance.installBundledCall = installCall
+    const installNotify = jest.spyOn(builtInMiniappCatalog, "installNotify").mockImplementation(() => {})
+    const install = packageName === mentraCallPackageName ? installCall : installNotify
+    const otherInstall = packageName === mentraCallPackageName ? installNotify : installCall
     try {
-      await engine.settings.set(SETTINGS.show_mentra_call_ios.key, false)
-      instance.setupIosCallVisibility()
+      await engine.settings.set(key, false)
+      await engine.settings.set(otherKey, false)
+      useAppStatusStore.setState({
+        apps: [
+          {
+            packageName: notifyPackageName,
+            name: "Notify",
+            type: "background",
+            running: true,
+            offline: true,
+            local: false,
+            hidden: false,
+            loading: false,
+            healthy: true,
+            permissions: [],
+            hardwareRequirements: [],
+            offlineRoute: "/miniapps/settings/notifications",
+            webviewUrl: "",
+            logoUrl: "",
+          },
+        ],
+      })
+      instance.setupIosMiniappVisibility()
+      expect(saveLocalAppRunningState).toHaveBeenCalledWith(mentraCallPackageName, false)
+      expect(saveLocalAppRunningState).toHaveBeenCalledWith(notifyPackageName, false)
+      expect(engine.miniapps.setHiddenStatus).toHaveBeenCalledWith(mentraCallPackageName, true)
+      expect(engine.miniapps.setHiddenStatus).toHaveBeenCalledWith(notifyPackageName, true)
       await instance.setupSubscriptions()
-      await engine.settings.set(SETTINGS.show_mentra_call_ios.key, true)
+      await engine.settings.set(key, true)
       await waitFor(() => expect(install).toHaveBeenCalledTimes(1))
-      await waitFor(() => expect(engine.miniapps.setHiddenStatus).toHaveBeenLastCalledWith("com.mentra.call", false))
+      await waitFor(() => expect(engine.miniapps.setHiddenStatus).toHaveBeenLastCalledWith(packageName, false))
+      expect(otherInstall).not.toHaveBeenCalled()
+      expect(engine.settings.get(otherKey)).toBe(false)
       await instance.setupSubscriptions()
-      await engine.settings.set(SETTINGS.show_mentra_call_ios.key, false)
-      expect(engine.miniapps.setHiddenStatus).toHaveBeenLastCalledWith("com.mentra.call", true)
+      await engine.settings.set(key, false)
+      expect(engine.miniapps.setHiddenStatus).toHaveBeenLastCalledWith(packageName, true)
+      if (packageName === notifyPackageName) {
+        await waitFor(() => expect(engine.phoneNotifications.setPresentationActive).toHaveBeenLastCalledWith(false))
+        expect(localDisplayManager.dismiss).toHaveBeenCalledWith(notifyPackageName)
+        expect(audioPlaybackService.stopForApp).toHaveBeenCalledWith(notifyPackageName)
+        expect(engine.miniapps.stop).toHaveBeenCalledWith(notifyPackageName)
+      }
       install.mockClear()
-      await engine.settings.set(SETTINGS.show_mentra_call_ios.key, true)
+      await engine.settings.set(key, true)
       await waitFor(() => expect(install).toHaveBeenCalledTimes(1))
-      await waitFor(() => expect(engine.miniapps.setHiddenStatus).toHaveBeenLastCalledWith("com.mentra.call", false))
+      await waitFor(() => expect(engine.miniapps.setHiddenStatus).toHaveBeenLastCalledWith(packageName, false))
+      expect(otherInstall).not.toHaveBeenCalled()
     } finally {
-      instance.iosCallVisibility.dispose()
+      for (const visibility of instance.iosMiniappVisibility.values()) visibility.dispose()
       instance.subs.forEach((sub) => sub.remove())
+      installNotify.mockRestore()
       Object.defineProperty(Platform, "OS", {configurable: true, value: originalPlatform})
-      if (originalOverride === undefined) delete process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS
-      else process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS = originalOverride
     }
   })
 })

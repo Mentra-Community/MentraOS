@@ -1382,7 +1382,11 @@ class AppRegistry {
       const lmaDir = new Directory(Paths.document, "lmas", packageName, version)
       const miniappJsonFile = new File(lmaDir, "miniapp.json")
       const manifest = JSON.parse(miniappJsonFile.textSync())
-      const logoUrl = new File(lmaDir, "icon.png").uri
+      const iconPath = typeof manifest.icon === "string" && manifest.icon.trim() ? manifest.icon : "icon.png"
+      const safeRelativeIcon =
+        !/^[a-z]+:/i.test(iconPath) && !iconPath.startsWith("/") && !iconPath.split("/").includes("..")
+      const declaredIcon = safeRelativeIcon ? new File(lmaDir, iconPath) : null
+      const logoUrl = declaredIcon?.exists ? declaredIcon.uri : new File(lmaDir, "icon.png").uri
       return {name: manifest.name, logoUrl: logoUrl}
     } catch (error) {
       console.error("APP_REGISTRY: Error getting local miniapp metadata", error)
@@ -1534,6 +1538,11 @@ class AppRegistry {
    */
   private projectDevApps(): ClientApp[] {
     return getDevAppRecords().map((rec) => {
+      // Every dev rebuild has a unique snapshot directory. Prefer its manifest
+      // icon so home tiles update with the bundle instead of retaining the
+      // separately cached, stable-path QR preview (and its decoded image cache).
+      const snapshotVersion = this.getLatestDevSnapshotVersion(rec.packageName)
+      const snapshotIcon = snapshotVersion ? this.getMetadata(rec.packageName, snapshotVersion).logoUrl : undefined
       const permissions = normalizeManifestPermissions(rec.permissions)
       const hardwareRequirements = buildHardwareRequirements(rec.hardwareRequirements, rec.packageName)
       return {
@@ -1548,7 +1557,7 @@ class AppRegistry {
         offlineRoute: "",
         name: rec.name,
         webviewUrl: "",
-        logoUrl: rec.iconUrl,
+        logoUrl: snapshotIcon || rec.iconUrl,
         type: normalizeManifestType(rec.type),
         permissions,
         hardwareRequirements,

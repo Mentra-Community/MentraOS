@@ -9,6 +9,8 @@
 export type SubjectTokenType = "supabase" | "authing" | (string & {})
 
 export interface IslandAuth {
+  /** Host-owned Teams subject token from the selected deployment account. */
+  getTeamsToken?: () => Promise<string>
   /** Returns the host's current (auto-refreshed) subject token for the backend. */
   getSubjectToken?: () => Promise<{token: string; type: SubjectTokenType}>
   /** Supplies a token issued directly for Runtime in a Core-free deployment. */
@@ -24,6 +26,8 @@ export interface IslandAuth {
 }
 
 export interface IslandConfigValues {
+  /** Workspace calls use Runtime credentials and cannot access the public Call backend. */
+  privateMeetings?: boolean
   /** cloud-v2 core service base URL (defaults resolved by the cloud client). */
   coreUrl?: string | null
   /** cloud-v2 runtime service base URL. */
@@ -102,6 +106,10 @@ export interface IslandUiSeams {
    * flow. Absent ⇒ miniapps get NOT_IMPLEMENTED for the request.
    */
   requestWifiSetup?: (reason?: string, packageName?: string) => Promise<void> | void
+  /** Phone Wi-Fi availability; null when the platform cannot read the radio state. */
+  isPhoneWifiEnabled?: () => Promise<boolean | null>
+  /** Host prompt + system settings round trip. Keep the requesting miniapp mounted. */
+  requestPhoneWifiEnable?: (reason?: string) => Promise<{enabled: boolean | null; cancelled: boolean}>
   /**
    * `session.system.scanQr` — open a phone-camera QR scanner overlay. Must NOT
    * clear miniapp foreground: UI_CLOSE on a live call hangs it up. Absent ⇒

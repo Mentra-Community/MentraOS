@@ -65,6 +65,31 @@ public class AsgSettings {
         Log.d(TAG, "AsgSettings initialized");
     }
 
+    /** Whether site-network HTTP gallery access is enabled across restarts. Defaults off. */
+    public boolean isGalleryServerEnabled() {
+        synchronized (prefs) {
+            return prefs.getBoolean(AsgConstants.GALLERY_SERVER_ENABLED_PREFERENCE, false);
+        }
+    }
+
+    /** Persist the explicit site-network gallery opt-in; return whether storage succeeded. */
+    public boolean setGalleryServerEnabled(boolean enabled) {
+        synchronized (prefs) {
+            boolean previous = isGalleryServerEnabled();
+            if (prefs.edit().putBoolean(AsgConstants.GALLERY_SERVER_ENABLED_PREFERENCE, enabled)
+                    .commit()) {
+                return true;
+            }
+            // commit() changes the in-memory value even when the disk write fails. Restore it
+            // before readers (including other AsgSettings instances) can observe the failed edit.
+            if (!prefs.edit().putBoolean(AsgConstants.GALLERY_SERVER_ENABLED_PREFERENCE, previous)
+                    .commit()) {
+                Log.e(TAG, "Gallery setting rollback was restored in memory but could not be saved");
+            }
+            return false;
+        }
+    }
+
     /**
      * One-time migration from coupled global and button-photo keys into independent ZSL/MFNR
      * preferences.

@@ -611,9 +611,9 @@ export function AppsGrid({
     async (app: ClientApp) => {
       if (blockUpdatingMiniapp(app.packageName)) return
       if (await showCompatibilityAlert(app)) return
-      if (await openMiniappFromHome(app)) onOpenApp?.(app)
+      if (await openMiniappFromHome(app, showAllApps ? "expand" : "slide")) onOpenApp?.(app)
     },
-    [onOpenApp],
+    [onOpenApp, showAllApps],
   )
 
   const placeAppOnHome = useCallback(
@@ -824,6 +824,9 @@ export function AppsGrid({
           ref={(ref) => {
             itemRefs.current[item.packageName] = ref
           }}
+          accessibilityRole="button"
+          accessibilityLabel={item.name}
+          testID={`${showAllApps ? "allApps" : "home"}.miniapp.${item.packageName}`}
           className="flex-1 items-center justify-center pt-3"
           accessibilityRole="button"
           accessibilityLabel={item.updating ? translate("home:miniappUpdatingLabel", {app: item.name}) : item.name}

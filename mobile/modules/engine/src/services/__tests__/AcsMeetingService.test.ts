@@ -138,6 +138,38 @@ function fakeNative() {
 }
 
 describe("AcsMeetingService", () => {
+  for (const identity of [
+    {identityMode: "teams-user" as const},
+    {identityMode: "guest" as const, guestReason: "teams-license-unavailable" as const},
+  ]) test(`preserves ${identity.identityMode} identity across joins, state reads and native events`, async () => {
+    const native = {...fakeNative(), supportsTeamsIdentity: () => true}
+    setAcsMeetingNativeForTests(native)
+    const seen: unknown[] = []
+    acsMeetingService.setStateHandler((_pkg, state) => seen.push(state))
+    const state = await acsMeetingService.join("com.mentra.call", {
+      meetingUrl: "https://teams.microsoft.com/l/meetup-join/x", token: "host-token", identity,
+      videoSource: {type: "whep", url: "https://example.com/whep"},
+    })
+    expect(native.join).toHaveBeenCalledWith(expect.objectContaining({identityMode: identity.identityMode}))
+    expect(state).toMatchObject(identity)
+    expect(await acsMeetingService.readState("com.mentra.call")).toMatchObject(identity)
+    native.emit("onState", {state: "connected", muted: true})
+    expect(seen.at(-1)).toMatchObject({...identity, muted: true})
+    acsMeetingService.setStateHandler(() => {})
+  })
+
+  test("does not hand employee credentials to a guest-only native binary", async () => {
+    const native = fakeNative()
+    setAcsMeetingNativeForTests(native)
+    await expect(acsMeetingService.join("com.mentra.call", {
+      meetingUrl: "https://teams.microsoft.com/l/meetup-join/x", token: "employee-token",
+      identity: {identityMode: "teams-user"},
+      videoSource: {type: "whep", url: "https://example.com/whep"},
+    })).rejects.toThrow("Update the Mentra App")
+    expect(native.join).not.toHaveBeenCalled()
+    expect(acsMeetingService.ownerPackage()).toBeNull()
+  })
+
   test("admission is owner-scoped and a rejected admission leaves the call intact", async () => {
     const admitParticipant = mock(async () => {throw new Error("not allowed")})
     const native = {...fakeNative(), admitParticipant}
@@ -1410,6 +1442,52 @@ describe("scoped network passthrough", () => {
     setAcsMeetingNativeForTests(native)
 
     await expect(acsMeetingService.prepareAgent({token: "tok"})).resolves.toBeUndefined()
+  })
+
+  test("iOS defers agent creation until join after the hotspot handoff", async () => {
+    const prepareAgent = mock(async () => ({state: "connecting" as const, muted: false}))
+    const native = {...fakeNative(), prepareAgent}
+    setAcsMeetingNativeForTests(native)
+    const os = reactNative.Platform.OS
+    reactNative.Platform.OS = "ios"
+    try {
+      await acsMeetingService.prepareAgent({token: "tok", displayName: "Mentra Call"})
+      expect(prepareAgent).not.toHaveBeenCalled()
+      expect(native.join).not.toHaveBeenCalled()
+    } finally {
+      reactNative.Platform.OS = os
+    }
+  })
+
+  test("iOS narrates permission while native join is pending and removes the progress listener afterward", async () => {
+    let finish!: (address: string) => void
+    const pending = new Promise<string>((resolve) => {
+      finish = resolve
+    })
+    const native = {...fakeNative(), joinScopedNetwork: mock(() => pending)}
+    setAcsMeetingNativeForTests(native)
+    const os = reactNative.Platform.OS
+    reactNative.Platform.OS = "ios"
+    const report = mock((_detail: string) => {})
+    try {
+      let completed = false
+      const joined = acsMeetingService.joinScopedNetwork("MentraLive-1234", "pw", undefined, report).then((address) => {
+        completed = true
+        return address
+      })
+      await Promise.resolve()
+      native.emit("onScopedNetworkProgress", {permissionRequired: true})
+      expect(report).toHaveBeenCalledWith(expect.stringContaining("Allow Local Network access"))
+      expect(completed).toBe(false)
+      expect(native.join).not.toHaveBeenCalled()
+      finish("192.168.43.20")
+      expect(await joined).toBe("192.168.43.20")
+      expect(native.handlerFor("onScopedNetworkProgress")).toBeUndefined()
+    } finally {
+      await acsMeetingService.leaveScopedNetwork()
+      reactNative.Platform.OS = os
+      finish("192.168.43.20")
+    }
   })
 })
 

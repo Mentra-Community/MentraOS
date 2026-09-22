@@ -410,6 +410,7 @@ const mockIslandEntries = () => {
   const main = {
     __esModule: true,
     ...realEngineTypes,
+    getAppBuildInfo: jest.requireActual("./modules/engine/src/utils/appBuildInfo").getAppBuildInfo,
     // OTA install policy (timings + failure copy) + deriveDisplayState — real (pure)
     // implementations, consumed by the host otaProgressTimeouts shim + OTA tests.
     ...realOtaInstallPolicy,

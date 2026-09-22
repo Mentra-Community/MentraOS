@@ -15,13 +15,14 @@ import {
   BUNDLED_SYSTEM_MINIAPP_PUBLISHER_KEYS,
 } from "@/generated/bundledMiniapps"
 import {CHINA_HIDDEN_APPS, mentraCallPackageName, notifyPackageName} from "@/constants/miniapps"
-import {IosCallVisibility} from "@/services/miniapps/IosCallVisibility"
+import {IosMiniappVisibility} from "@/services/miniapps/IosMiniappVisibility"
 import {shouldHideMiniapp} from "@/services/miniapps/miniappVisibility"
 import {storage} from "@/utils/storage"
 import {migrate} from "@/services/Migrations"
 import {buildSpokenNotification} from "@/services/notifications/spokenNotification"
 import {deploymentCloudConfigValues} from "@/services/cloudClient"
 import {requestPhoneQrScan} from "@/services/qrScanRequest"
+import {isPhoneWifiEnabled, requestPhoneWifiEnable} from "@/services/phoneWifi"
 import {engine, BgTimer, isSystemMiniappPackage, SETTINGS} from "@mentra/engine"
 import {
   appRegistry,
@@ -111,7 +112,7 @@ const SPOKEN_NOTIFICATION_MAX_MS = 30_000
 const SPOKEN_NOTIFICATION_GAP_MS = 10_000
 
 class MantleManager {
-  private iosCallVisibility: IosCallVisibility | null = null
+  private iosMiniappVisibility = new Map<string, IosMiniappVisibility>()
   private static instance: MantleManager | null = null
   private calendarSyncTimer: ReturnType<typeof BgTimer.setInterval> | null = null
   private micDataTimeout: ReturnType<typeof BgTimer.setTimeout> | null = null
@@ -374,6 +375,12 @@ class MantleManager {
     engine.configure({
       auth: workspaceAuth
         ? {
+            getTeamsToken: async () => {
+              if (deployment.manifest.auth.mode !== "microsoft-entra") {
+                throw new Error("This workspace does not have a Microsoft Entra identity")
+              }
+              return workspaceAuth.getAccessToken({scopes: deployment.manifest.auth.teamsScopes})
+            },
             getSubjectToken: async () => ({
               token: await workspaceAuth.getAccessToken({
                 scopes:
@@ -456,6 +463,8 @@ class MantleManager {
       // Named host-UI seams: island dispatches the miniapp request, the host
       // owns the screen (branding/navigation).
       ui: {
+        isPhoneWifiEnabled,
+        requestPhoneWifiEnable,
         requestWifiSetup: (reason?: string, packageName?: string) =>
           new Promise<void>((resolve) => {
             // Wi-Fi setup drives the glasses over Bluetooth (scan, credentials,
@@ -493,7 +502,7 @@ class MantleManager {
       },
     })
     await engine.start()
-    this.setupIosCallVisibility()
+    this.setupIosMiniappVisibility()
 
     // iOS: require a second swipe across the bottom edge to invoke the Home
     // indicator / app switcher, so users don't accidentally background the
@@ -554,8 +563,8 @@ class MantleManager {
   }
 
   public async cleanup() {
-    this.iosCallVisibility?.dispose()
-    this.iosCallVisibility = null
+    for (const visibility of this.iosMiniappVisibility.values()) visibility.dispose()
+    this.iosMiniappVisibility.clear()
     // Stop timers
     if (this.calendarSyncTimer) {
       clearInterval(this.calendarSyncTimer)
@@ -626,7 +635,9 @@ class MantleManager {
     // Initialize local miniapp runtime
     localMiniappRuntime.initialize()
 
-    await this.iosCallVisibility?.reconcile().catch((error) => this.reportMiniappVisibilityError(error))
+    for (const visibility of this.iosMiniappVisibility.values()) {
+      await visibility.reconcile().catch((error) => this.reportMiniappVisibilityError(error))
+    }
 
     // Install any bundled miniapps that ship with the app and aren't on disk
     // yet (or are an older version). Runs after the registry is warm so the
@@ -652,7 +663,7 @@ class MantleManager {
 
     // Region-restricted miniapps must not surface or autostart from an old install.
     this.hidePlatformBlockedMiniapps()
-    this.iosCallVisibility?.applyRestriction()
+    for (const visibility of this.iosMiniappVisibility.values()) visibility.applyRestriction()
 
     // Re-spawn local miniapps that were running when the app was last killed.
     // Cloud apps get resurrected by the cloud on reconnect; local (phone-hosted)
@@ -787,36 +798,52 @@ class MantleManager {
     console.log(`MANTLE: installed bundled miniapp ${result.value.packageName}@${result.value.version}`)
   }
 
-  private setupIosCallVisibility(): void {
+  private setupIosMiniappVisibility(): void {
     if (Platform.OS !== "ios") return
-    const policyKey = "mentra_call_ios_last_enabled"
-    const visibility = new IosCallVisibility({
-      isEnabled: () => !shouldHideMiniapp(mentraCallPackageName),
-      wasEnabled: () => {
-        const result = storage.load<boolean>(policyKey)
-        return result.is_ok() && result.value === true
-      },
-      saveEnabled: (enabled) => {
-        const result = storage.save(policyKey, enabled)
-        if (result.is_error()) throw result.error
-      },
-      setHidden: (hidden) => engine.miniapps.setHiddenStatus(mentraCallPackageName, hidden),
-      clearRunningState: () => saveLocalAppRunningState(mentraCallPackageName, false),
-      install: () => this.installBundledCall(),
-      stop: async () => {
-        if (engine.miniapps.list().some((app) => app.packageName === mentraCallPackageName && app.foregrounded)) {
-          engine.miniapps.clearForeground()
-        }
-        await miniappLauncher.stop(mentraCallPackageName)
-      },
-    })
-    this.iosCallVisibility = visibility
-    visibility.applyRestriction()
+    for (const [packageName, settingKey, policyKey] of [
+      [mentraCallPackageName, SETTINGS.show_mentra_call_ios.key, "mentra_call_ios_last_enabled"],
+      [notifyPackageName, SETTINGS.show_notify_ios.key, "notify_ios_last_enabled"],
+    ]) {
+      const visibility = new IosMiniappVisibility({
+        isEnabled: () => !shouldHideMiniapp(packageName),
+        wasEnabled: () => {
+          const result = storage.load<boolean>(policyKey)
+          return result.is_ok() && result.value === true
+        },
+        saveEnabled: (enabled) => {
+          const result = storage.save(policyKey, enabled)
+          if (result.is_error()) throw result.error
+        },
+        setHidden: (hidden) => engine.miniapps.setHiddenStatus(packageName, hidden),
+        clearRunningState: () => saveLocalAppRunningState(packageName, false),
+        install: async () => {
+          if (packageName === mentraCallPackageName) await this.installBundledCall()
+          else builtInMiniappCatalog.installNotify()
+        },
+        stop: async () => {
+          if (engine.miniapps.list().some((app) => app.packageName === packageName && app.foregrounded)) {
+            engine.miniapps.clearForeground()
+          }
+          if (packageName === notifyPackageName) {
+            // Native built-ins have no JS context; stop their presentation owner.
+            engine.phoneNotifications.setPresentationActive(false)
+            this.stopPhoneNotificationPresentation()
+            if (engine.miniapps.list().some((app) => app.packageName === packageName)) {
+              await engine.miniapps.stop(packageName)
+            }
+          } else {
+            await miniappLauncher.stop(packageName)
+          }
+        },
+      })
+      this.iosMiniappVisibility.set(settingKey, visibility)
+      visibility.applyRestriction()
+    }
   }
 
   private reportMiniappVisibilityError(error: unknown): void {
     console.warn("MANTLE: miniapp visibility reconciliation failed", error)
-    showAlert(translate("common:error"), translate("debugSettings:mentraCallVisibilityError"))
+    showAlert(translate("common:error"), translate("debugSettings:miniappVisibilityError"))
   }
 
   /**
@@ -883,11 +910,10 @@ class MantleManager {
     this.subs.forEach((sub) => sub.remove())
     this.subs = []
 
-    const callVisibility = this.iosCallVisibility
-    if (callVisibility) {
+    for (const [settingKey, visibility] of this.iosMiniappVisibility) {
       this.subs.push({
-        remove: engine.settings.onChanged(SETTINGS.show_mentra_call_ios.key, () => {
-          void callVisibility.reconcile().catch((error) => this.reportMiniappVisibilityError(error))
+        remove: engine.settings.onChanged(settingKey, () => {
+          void visibility.reconcile().catch((error) => this.reportMiniappVisibilityError(error))
         }),
       })
     }

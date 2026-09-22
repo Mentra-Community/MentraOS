@@ -239,6 +239,21 @@ class InternetHold(private val context: Context) {
         return@synchronized ok
     }
 
+    /**
+     * Create a SoftAP listener without inheriting the cellular socket mark, then restore the pin.
+     * Holding the lock prevents a network callback from re-pinning during the bind. The previous
+     * routing state is restored even when creating the listener fails.
+     */
+    fun <T> withProcessUnpinned(bind: () -> T): T = synchronized(lock) {
+        val wasPinned = processPinned
+        unbindProcess()
+        try {
+            bind()
+        } finally {
+            if (wasPinned) bindProcessToCellular()
+        }
+    }
+
     /** Undo [bindProcessToCellular]. Safe to call when nothing is pinned, and safe to call twice. */
     fun unbindProcess() = synchronized(lock) {
         if (closed) return@synchronized

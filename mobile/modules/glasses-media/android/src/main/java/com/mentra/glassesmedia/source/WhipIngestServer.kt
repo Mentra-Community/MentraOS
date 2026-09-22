@@ -213,6 +213,7 @@ class WhipIngestServer(
       }
       if (!registered) { runCatching { connection.close() }; return }
       accepted.incrementAndGet()
+      SoftApTrace.stage("whip_socket_accepted")
       // Each connection on its own thread: a negotiation blocks for the length of an ICE gather,
       // and a DELETE arriving during one must not queue behind it.
       try {
@@ -371,6 +372,7 @@ class WhipIngestServer(
       val (method, target) = WhipIngestProtocol.parseRequestLine(
         reader.readLine() ?: return null,
       ) ?: return null
+      SoftApTrace.stage("whip_request_line_read", "method" to method)
 
       val headers = mutableMapOf<String, String>()
       while (true) {
@@ -383,6 +385,7 @@ class WhipIngestServer(
 
       val contentType = WhipIngestProtocol.headerValue(headers, "Content-Type")
       val contentLength = WhipIngestProtocol.headerValue(headers, "Content-Length")?.toLongOrNull()
+      SoftApTrace.stage("whip_request_headers_read", "contentLength" to contentLength)
 
       // Do not read a body we have already decided to refuse. decide() checks the length first for
       // exactly this reason.
@@ -398,6 +401,7 @@ class WhipIngestServer(
         val count = reader.read(body, read, body.size - read)
         if (count < 0) break
         read += count
+        SoftApTrace.stage("whip_request_body_read", "read" to read, "expected" to body.size)
       }
       return WhipIngestProtocol.Request(method, target, contentType, contentLength, String(body, 0, read))
     }

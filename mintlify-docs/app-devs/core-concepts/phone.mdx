@@ -1,6 +1,6 @@
 ---
 title: "Phone"
-description: "Phone notifications, calendar events, and phone battery."
+description: "Phone Wi-Fi, notifications, calendar events, and battery."
 icon: "phone"
 ---
 
@@ -139,3 +139,44 @@ whether `CALENDAR` is declared. Neither tells you whether the user granted the O
 prompt. A calendar request rejects with `PERMISSION_DENIED` if access was later
 revoked. See
 [Permissions](/app-devs/core-concepts/permissions).
+
+## Phone Wi-Fi
+
+Use these APIs before a user starts a feature that connects the phone to the
+glasses hotspot. They concern the **phone**, independently of
+`session.glasses.requestWifiSetup()`, which connects the glasses to a network.
+Neither method requires a miniapp manifest permission.
+
+```typescript
+const enabled = await session.phone.isWifiEnabled()
+if (enabled === false) {
+  const result = await session.phone.requestWifiEnable(
+    "Live video needs your phone’s Wi-Fi to connect to your glasses.",
+  )
+  if (result.cancelled || result.enabled === false) return
+}
+// Continue the requested call/stream. The host handles joining the glasses hotspot.
+```
+
+`isWifiEnabled(): Promise<boolean | null>` reads the Android radio switch,
+including when Wi-Fi is on but not connected to a network. On iOS it returns
+`true` for an observed Wi-Fi connection and `null` otherwise: iOS has no public
+API to read the switch. Unknown does not mean off or that a hotspot join will fail.
+
+`requestWifiEnable(reason?): Promise<{enabled: boolean | null; cancelled: boolean}>`
+shows a Mentra App prompt with your reason. On Android the action opens the system
+Wi-Fi panel, falling back to Wi-Fi settings. On iOS it opens the app's Settings
+page and explains how to reach Settings → Wi-Fi. No private Settings URLs are used.
+The miniapp stays mounted; the promise resolves after the user returns and the
+host rechecks Wi-Fi. Already-enabled Wi-Fi skips the prompt. Cancellation, or a
+Settings visit exceeding five minutes, returns `cancelled: true`. The normal
+short SDK request timeout does not apply while waiting for the user.
+
+A `null` result after returning on iOS lets you attempt the normal system hotspot
+join; it does not verify the radio is enabled. Call from a user-initiated flow
+while the Mentra App is active. Concurrent prompts reject with `REQUEST_ABORTED`.
+Older hosts or hosts without this capability reject with `NOT_IMPLEMENTED`.
+Only prompt automatically when the state is `false`. When it is `null`, try the normal hotspot join; call `requestWifiEnable()` from an explicit recovery action if the connection fails.
+
+Neither function switches Wi-Fi on itself, joins an SSID, or requires internet
+access through Wi-Fi.

@@ -38,7 +38,7 @@ export type {
   TouchData,
   UnsubscribeFn,
 } from "../modules/events"
-export type {CalendarEvent, CalendarListOptions, CalendarListResult} from "../modules/phone"
+export type {CalendarEvent, CalendarListOptions, CalendarListResult, PhoneWifiEnableResult} from "../modules/phone"
 
 // Public envelope + protocol types so authors can write strongly-typed
 // glue when they need to fall back to session.sendOneShot / sendRequest.
@@ -100,6 +100,9 @@ export type {SpeakerModule} from "../modules/speaker"
 export type {
   MeetingModule,
   MeetingJoinOptions,
+  MeetingConfiguration,
+  MeetingIdentityMode,
+  MeetingGuestReason,
   MeetingState,
   MeetingPhase,
   MeetingProvider,

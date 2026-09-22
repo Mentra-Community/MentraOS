@@ -588,6 +588,8 @@ const en = {
     activateAnAppMessage: "Switch the toggle to run an app on your glasses.",
     search: "Search",
     noAppsFoundForQuery: 'No apps found for "{{query}}"',
+    openAllApps: "Open all miniapps",
+    closeAllApps: "Close all miniapps list",
     clearSearch: "Clear Search",
     movedToActive: "Moved to Active",
     movedToInactive: "Moved to Inactive",
@@ -845,7 +847,9 @@ const en = {
     showMentraCallIos: "Show Mentra Call (experimental)",
     showMentraCallIosSubtitle: "Show Mentra Call on this device for testing.",
     mentraCallBuildOverride: "Enabled by this build's EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS override.",
-    mentraCallVisibilityError: "Could not update Mentra Call availability. Try turning the setting off and on again.",
+    showNotifyIos: "Show Notify (experimental)",
+    showNotifyIosSubtitle: "Show Notify on this device for testing.",
+    miniappVisibilityError: "Could not update miniapp availability. Try turning the setting off and on again.",
     otaPreview: "OTA Preview",
     otaPreviewSubtitle: "Browse update screens with sample data",
     otaPreviewPage: "Preview page",
@@ -1172,7 +1176,17 @@ const en = {
     pairingCouldNotStart:
       "Couldn't start connecting to your {{glassesModel}}. Please make sure Bluetooth is turned on and try again.",
   },
+  phoneWifi: {
+    title: "Wi-Fi required",
+    reason: "Mentra uses your phone’s Wi-Fi to connect to your glasses.",
+    instructionsAndroid: "Turn on Wi-Fi, then return to Mentra. Your glasses will connect automatically.",
+    instructionsIos:
+      "Open Settings, go back to the main Settings screen, then tap Wi-Fi and turn it on. Return to Mentra to continue.",
+    turnOn: "Turn on Wi-Fi",
+    openSettings: "Open Settings",
+  },
   common: {
+    miniappUiUnavailable: "This miniapp has no page to display. You can minimize or close it.",
     ok: "OK",
     no: "No",
     cancel: "Cancel",
@@ -1240,6 +1254,8 @@ const en = {
     },
   },
   navigation: {
+    minimizeMiniapp: "Minimize miniapp",
+    closeMiniapp: "Close miniapp",
     home: "Home",
     glasses: "Glasses",
     mirror: "Mirror",
@@ -1247,6 +1263,8 @@ const en = {
     account: "Account",
   },
   appSwitcher: {
+    open: "Open running miniapps",
+    close: "Close running miniapps list",
     swipeUpToClose: "Swipe up to close miniapps",
     noAppsOpen: "No miniapps open",
     yourRecentlyUsedAppsWillAppearHere: "Your recently used miniapps will appear here",

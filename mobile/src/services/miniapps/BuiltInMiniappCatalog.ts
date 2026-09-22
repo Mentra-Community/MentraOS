@@ -40,6 +40,7 @@ import {shouldHideMiniapp} from "./miniappVisibility"
 class BuiltInMiniappCatalog {
   private static instance: BuiltInMiniappCatalog | null = null
   private initialized = false
+  private notifyInstalled = false
   private syncInFlight = false
   private syncPending = false
 
@@ -56,6 +57,7 @@ class BuiltInMiniappCatalog {
 
     for (const app of this.buildOfflineApps()) {
       appRegistry.installOfflineApp(app)
+      if (app.packageName === notifyPackageName) this.notifyInstalled = true
     }
 
     installAppStoreHooks({
@@ -80,11 +82,22 @@ class BuiltInMiniappCatalog {
     }
     syncMiniappDeveloperVisibility(Boolean(engine.settings.get(SETTINGS.miniapp_dev_mode.key)))
     engine.settings.onChanged<boolean>(SETTINGS.miniapp_dev_mode.key, syncMiniappDeveloperVisibility)
-    engine.settings.onChanged(SETTINGS.show_mentra_call_ios.key, () => {
-      void this.syncGlassesMenuApps()
-    })
+    for (const key of [SETTINGS.show_mentra_call_ios.key, SETTINGS.show_notify_ios.key]) {
+      engine.settings.onChanged(key, () => {
+        void this.syncGlassesMenuApps()
+      })
+    }
 
     void this.syncGlassesMenuApps()
+  }
+
+  /** Register Notify after a debug opt-in, once per process, without starting it. */
+  installNotify(): void {
+    if (this.notifyInstalled) return
+    const app = this.buildOfflineApps().find((candidate) => candidate.packageName === notifyPackageName)
+    if (!app) return
+    appRegistry.installOfflineApp(app)
+    this.notifyInstalled = true
   }
 
   /** Branded incompatible-launch alert (island already blocked the start). */

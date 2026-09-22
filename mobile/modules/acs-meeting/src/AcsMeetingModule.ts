@@ -3,9 +3,14 @@ import {NativeModule, requireNativeModule} from "expo"
 import type {AcsMeetingJoinOptions, AcsMeetingModuleEvents, AcsMeetingState} from "./AcsMeeting.types"
 
 declare class AcsMeetingNativeModule extends NativeModule<AcsMeetingModuleEvents> {
+  supportsTeamsIdentity(): boolean
   join(options: AcsMeetingJoinOptions): Promise<AcsMeetingState>
   /** Sign in to ACS before SoftAP so Teams is not resolved through glasses DNS. */
-  prepareAgent(options: {token: string; displayName?: string}): Promise<AcsMeetingState>
+  prepareAgent(options: {
+    token: string
+    displayName?: string
+    identityMode?: "guest" | "teams-user"
+  }): Promise<AcsMeetingState>
   leave(): Promise<void>
   admitParticipant?(participantId: string): Promise<void>
   /**

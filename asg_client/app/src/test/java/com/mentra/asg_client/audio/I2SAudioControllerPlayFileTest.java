@@ -324,6 +324,47 @@ public class I2SAudioControllerPlayFileTest {
         }
     }
 
+    @Test
+    public void unusedCameraReadinessClosesAfterGrace() {
+        I2sReadyGate.setSupported(true);
+        controller.prepareCameraAudioPlayback();
+        assertThat(playingFlags(drainStartedServices())).containsExactly(true);
+        assertThat(I2SAudioController.isControllingI2S()).isTrue();
+        finishIdleGrace();
+        assertThat(playingFlags(drainStartedServices())).containsExactly(false);
+        assertThat(I2SAudioController.isControllingI2S()).isFalse();
+    }
+
+    @Test
+    public void cameraReadinessDoesNotRestartExternalAudio() {
+        I2SAudioController.setExternalAudioPlaying(true);
+        controller.prepareCameraAudioPlayback();
+        finishIdleGrace();
+        assertThat(drainStartedServices()).isEmpty();
+    }
+
+    @Test
+    public void snapReusesEarlyReadinessAndCancelsReservationExpiry() throws Exception {
+        controller = controllerWithStubAssets();
+        I2sReadyGate.setSupported(true);
+        controller.prepareCameraAudioPlayback();
+        int requestId = drainStartedServices().get(0)
+                .getIntExtra(AsgConstants.EXTRA_I2S_REQUEST_ID, 0);
+        try (MockedConstruction<MediaPlayer> players = mockConstruction(MediaPlayer.class)) {
+            long snap = controller.playOverlayAssetTracked(AudioAssets.CAMERA_SNAP, 0.1f);
+            assertThat(drainStartedServices()).isEmpty();
+            verify(players.constructed().get(0), never()).start();
+            I2sReadyGate.onResponse(requestId, true);
+            shadowOf(Looper.getMainLooper()).idle();
+            verify(players.constructed().get(0)).start();
+            finishIdleGrace();
+            assertThat(drainStartedServices()).isEmpty();
+            controller.stopOverlayPlayback(snap);
+            finishIdleGrace();
+            assertThat(playingFlags(drainStartedServices())).containsExactly(false);
+        }
+    }
+
     private void finishIdleGrace() {
         shadowOf(Looper.getMainLooper()).idleFor(Duration.ofMillis(AsgConstants.I2S_IDLE_CLOSE_MS));
     }
