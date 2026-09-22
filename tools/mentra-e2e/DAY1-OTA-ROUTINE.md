@@ -57,8 +57,12 @@ unqualified; target files themselves are not installable.
 "Full OTA" describes replacement system content; it does not imply erasing user
 data. Normal customer upgrades preserve data. The prepared January lab downgrade
 explicitly carries a verified downgrade/wipe policy (`POWERWASH=1`): this removes
-newer app updates and app data from `/data`, exposing the factory ASG27 already in
-January MTK without installing another APK. Reverify that policy in the frozen
+newer app updates and app data from `/data`, restoring the factory ASG27 already in
+January MTK without a separate harness APK installation. January's own SystemUI
+installs `/system/media/MentraOSLauncherBackup.apk` on the first boot after reset,
+so the active ASG27 can legitimately be under `/data/app`. Verify version 27 and
+identical active, system and backup APK hashes; do not uninstall that factory
+copy merely because of its path. Reverify the reset policy in the frozen
 artifact before dispatch; do not apply it to ordinary customer upgrades or assume
 every full OTA wipes data. Saved Wi-Fi settings are also lost. Preserve required
 fixture data and prove the normal January BLE Wi-Fi provisioning and independently

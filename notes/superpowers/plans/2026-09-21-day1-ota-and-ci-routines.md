@@ -188,12 +188,28 @@ local admin as `manual-day1-119ff3af24b9cd693e87f651`. Browser inspection found 
 black video despite working chapter selection. The original video decodes in
 AVFoundation; the local HTTP server dropped Content-Length on ranged Node streams.
 Lazy file bodies fix the response, with a real socket regression covering initial
-and tail byte ranges, HEAD and stale If-Range. Final Safari recheck is pending
-because the Mac locked. The original recording and publication remain unchanged.
+and tail byte ranges, HEAD and stale If-Range. The unlocked September 22 Safari
+recheck confirms correct ranges and fully buffered media without a media error,
+but the visible top-level document still reports `visibilityState=hidden` and
+does not advance decoded frames. Window/tab selection and moving between displays
+did not resolve that rendering failure. Temporary diagnostics were removed;
+normal Safari playback remains unverified. The original recording and publication
+remain unchanged.
 CI request `routine-35699614125-2-4136-day1-ota` selected the same successful build
 but remains context only; this supervised run did not consume it.
 
 ## CI and results integration
+
+The September 22 full downgrade applied successfully over Wi-Fi: transfer took
+34.334 seconds and the successful apply observation followed dispatch by 186.218
+seconds. After the owned restart, independent reads found January MTK, a new boot
+on the expected slot, ASG27, and absence of the owned pre-reset userdata witness.
+The active, system and backup ASG APKs all match the original January digest.
+The initial recovery check nevertheless failed because it required a system APK
+path. Exact January SystemUI disassembly confirms first-boot installation from
+its bundled backup, explaining the valid `/data/app` copy. Preserve that failure
+and qualify the corrected identity check through separate read-only reconciliation;
+these observations alone do not pass the full routine or its teardown.
 
 - [x] Add exact PR build/receipt/archive/OTA selection and immutable request
   validation, including separate build and publication attempts.

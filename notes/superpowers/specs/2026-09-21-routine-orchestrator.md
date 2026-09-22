@@ -71,6 +71,13 @@ in January MTK; it does not require a separate initial ASG installation. Validat
 that reset policy from the frozen artifact and qualify the resulting Wi-Fi and
 identity recovery. Ordinary customer upgrades preserve userdata.
 
+January's SystemUI installs its bundled ASG backup on the first boot after a
+reset. Therefore the active factory ASG27 may legitimately live under `/data/app`.
+Verify its version and exact bytes against the pinned system and backup APKs;
+installation path alone must neither reject the factory baseline nor admit a
+newer overlay. The harness must not separately install or uninstall ASG merely
+to force the expected path.
+
 For method comparisons, retain separate timestamps for artifact download, device
 staging, dispatch, write completion, reboot and final verification. Report total
 dispatch-to-verification alongside write time and disclose observation delays;
