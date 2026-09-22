@@ -1,7 +1,8 @@
 # Private test-run results
 
-This is an immutable result index and media service, not an execution queue. The
-Mac worker owns request deduplication, sequential fixture access and recovery.
+This is an immutable result index and media service, not an execution queue.
+The separate [shared claim API](TEST-RUN-CLAIMS.md) reserves requests across workers;
+the Mac worker retains its local claim, sequential fixture access and recovery.
 No schedules, credentials, remote storage or deployments are enabled by this code.
 
 The exact version-one payload is `src/types/test-run.types.ts`. It retains separate
