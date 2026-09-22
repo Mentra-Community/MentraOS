@@ -22,7 +22,9 @@ Source of truth:
 - [x] Locate and compare original January BES/MTK factory assets; keep source
   provenance and hashes locally. The newly supplied January target-files archive
   passes all 6,390 entry CRCs and matches the factory partition images. Its signed
-  full downgrade OTA is being prepared separately; the archive is not installable.
+  full downgrade OTA passes native signature verification and an apply check
+  against all fourteen target partitions; device qualification remains pending.
+  The target-files archive itself is not installable.
 - [x] Confirm the original January BES exceeds the OTA boundary by 260 bytes;
   preserve the existing size gate.
 - [x] Prepare and independently verify the accepted compact BES artifact on the
@@ -141,6 +143,23 @@ matching the verified original digest). A later ASG27 query did not produce a
 fresh BES version response; that limitation is retained alongside the same-boot
 version proof immediately before the ASG-only revert. The complete customer
 recording and return-profile restoration remain outstanding.
+
+The first customer attempt used PR #4136 head `25d5c418`'s verified CI Mac app
+(`303006135`) and exact PR OTA manifest. It failed before firmware dispatch:
+January ASG27 sends only `version_info_1` and `version_info_2`, but the native
+accumulator required `version_info_3`. The normal startup check skipped the fresh
+query, so it showed an update offer; pressing Install performed the query and
+timed out with a misleading network error. Both native accumulators now recognize
+the verified ASG27 format while retaining modern correlation and completion rules.
+The shared UI preserves the distinct version-query failure. Focused native and
+hook tests pass; a new CI build and device rerun are required.
+
+The finalized failed recording has three screenshot/chapter entries and plays in
+the authenticated local admin dashboard. Selecting the English failure-observation
+step seeks to 1:59 and shows the recorded Check Failed screen. Its test is failed,
+teardown remains blocked and the fixture remains unavailable. A separate immutable
+CI request (run `35694052494`, attempt 2) authenticated successfully and selected
+the same exact artifacts; it did not dispatch this manual qualification.
 
 Measured flash timings: dispatch to writes/readbacks completed was 123.974 seconds;
 first independent network boot observation was at 299.785 seconds; complete

@@ -495,6 +495,7 @@ const en = {
     noUpdatesAvailable: "Your glasses are running the latest version.",
     checkFailed: "Check Failed",
     checkFailedMessage: "Couldn't check for updates. Please check your connection and try again.",
+    versionInfoFailedMessage: "Couldn't read the glasses software versions. Keep the glasses connected and try again.",
     updateInfoUnavailable: "Update Info Unavailable",
     updateInfoUnavailableMessage:
       "Update information for this version of the app is unavailable. Please check the app store for a newer version of the Mentra App.",

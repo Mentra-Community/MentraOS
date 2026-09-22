@@ -46,8 +46,10 @@ over OTA. Do not generalize the accepted transformation to another image.
 Full MTK OTA is the default for setup and restoration. Freeze a signed full OTA
 for the requested target; a missing or unqualified artifact stops preparation
 instead of silently choosing factory flashing. The January 13 target-files archive
-has now been obtained and matched to the factory image set. Building and qualifying
-its signed full OTA remains in progress; target files themselves are not installable.
+has now been obtained and matched to the factory image set. Its generated signed
+full downgrade OTA passes native signature verification and an apply check against
+all fourteen target partitions. Device installation and Wi-Fi recovery remain
+unqualified; target files themselves are not installable.
 
 "Full OTA" describes replacement system content; it does not imply erasing user
 data. Normal customer upgrades preserve data. The January lab downgrade must
@@ -160,6 +162,15 @@ so the subsequent normal query produced no fresh version. Preserve this continui
 evidence and the unavailable fresh post-restore response separately. Do not turn a
 cached version into an independent assertion or weaken final modern firmware
 checks. This is not proof that January setup is currently unattended.
+
+The first recorded customer attempt on PR #4136 head `25d5c418` stopped before
+firmware installation: ASG27 sent two version-info chunks, while the native SDK
+waited for a third and the UI mislabeled that timeout as a network error. The fix
+recognizes ASG27's terminal second chunk on both native platforms, retains modern
+response correlation, and shows a distinct software-version read error. Its unit
+tests pass; the replacement CI app still requires the same recorded device test.
+The failed recording, screenshots and English chapter seeking have been verified
+in the local admin dashboard without claiming a complete upgrade or teardown.
 
 No passing day-one video exists yet. Required completion evidence is one real
 January-to-selected-target run with full phase results and verified return state,
