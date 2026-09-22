@@ -114,7 +114,7 @@ host-owned text fitting. Captions and Translation supply transcript history in
 one text element with `maxLines` and `textWindow: "end"`. Teleprompter uses
 optional render feedback (visible lines and source line starts) while retaining
 its own script, word cursor, voice matching, and replacement-frame behavior.
-All three copied display-utils trees are removed. They require host 3.2.0.
+All three copied display-utils trees are removed. They require host 3.2.1.
 
 The existing text element supports optional `maxLines`, `textWindow`, and
 `verticalAlign`. Defaults preserve existing callers. G1/Z100 compile the new
