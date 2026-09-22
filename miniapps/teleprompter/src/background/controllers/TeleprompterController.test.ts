@@ -57,6 +57,69 @@ describe("Teleprompter host layout", () => {
     })
     expect(await loading).toEqual({words: 6, lines: 3, started: false})
   })
+  test.each([false, true])(
+    "load_script follows a replacement render (newest resolves first: %s)",
+    async (newestFirst) => {
+      const pending: Array<(result: RenderResult) => void> = []
+      const controller = new TeleprompterController({
+        capabilities: {display: {width: 80, height: 100}},
+        display: {render: () => new Promise<RenderResult>((resolve) => pending.push(resolve))},
+        storage: {set: async () => {}},
+      } as never)
+      Object.assign(controller, {engine: new ScriptEngine({numberOfLines: 2}), hasDisplay: true, ui: {send: () => {}}})
+      let returned = false
+      const loading = controller.loadScript("one two three four", false).then((value) => {
+        returned = true
+        return value
+      })
+      const internal = controller as unknown as {render: () => Promise<number | null>; lastRenderedText: string}
+      // Foreground/device events force a replacement even for unchanged content.
+      internal.lastRenderedText = ""
+      const replacement = internal.render()
+      const layout: RenderResult = {
+        status: "displayed",
+        textLayout: {
+          script: {
+            lines: [
+              {text: "one two", start: 0, end: 7},
+              {text: "three four", start: 8, end: 18},
+            ],
+            lineStarts: [0, 8],
+            capacity: 2,
+            truncated: false,
+          },
+        },
+      }
+      if (newestFirst) pending[1](layout)
+      pending[0]({status: "displayed"}) // obsolete feedback must not win
+      await Promise.resolve()
+      expect(returned).toBe(false)
+      if (!newestFirst) pending[1](layout)
+      expect(await loading).toEqual({words: 4, lines: 2, started: false})
+      expect(await replacement).toBe(2)
+      expect(await internal.render()).toBe(2) // deduped render shares the known result
+    },
+  )
+
+  test("stopping cancels a pending layout without a promise cycle", async () => {
+    let finish!: (result: RenderResult) => void
+    const controller = new TeleprompterController({
+      capabilities: {display: {width: 80, height: 100}},
+      display: {
+        render: () =>
+          new Promise<RenderResult>((resolve) => {
+            finish = resolve
+          }),
+      },
+      storage: {set: async () => {}},
+    } as never)
+    Object.assign(controller, {engine: new ScriptEngine({numberOfLines: 2}), hasDisplay: true, ui: {send: () => {}}})
+    const loading = controller.loadScript("one two", false)
+    controller.stop()
+    finish({status: "displayed"})
+    expect((await loading).lines).toBeNull()
+  })
+
   test("tracks source words and accepts line boundaries only from render results", () => {
     const engine = new ScriptEngine({numberOfLines: 2})
     engine.setScript("one two three four five six")

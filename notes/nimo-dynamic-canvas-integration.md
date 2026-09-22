@@ -59,6 +59,13 @@ Bluetooth SDK podspec. Both platforms require a native app rebuild.
 - Images are bounded before decoding, resized to their destination, composited
   over black, and packed with the same luminance/polarity as Android. Text,
   object, pixel, and serialized-frame budgets are validated before transmission.
+- Host scene admission enforces the aggregate limits before resolving `render()`.
+  It counts nonempty wrapped rows and borders, UTF-8 text bytes, destination
+  image pixels, and a conservative encoded-byte bound from the device profile.
+  Image reservations use worst-case literal RLE size, so highly compressible
+  scenes can be dropped sooner than native compression strictly requires.
+  Overflowing elements appear in `dropped`; accepted later elements can still
+  use the remaining budget. Native retains its final validation.
 
 ## Validation and remaining device acceptance
 

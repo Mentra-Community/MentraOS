@@ -46,6 +46,23 @@ describe("navigation capability-bounded bitmaps", () => {
     expect(frames).toEqual([])
   })
 
+  test("repaints the HUD when only bitmap capability disappears", () => {
+    const {frames, session} = makeNimoDisplay()
+    const controller = new NavigationController(session) as unknown as {
+      applyCapabilities(raw: MiniappSession["capabilities"]): void
+      largeMapShown: boolean
+      broadcastVoiceGuidanceState(): void
+    }
+    controller.broadcastVoiceGuidanceState = () => {}
+    session.capabilities = {...session.capabilities, hasDisplay: true}
+    controller.applyCapabilities(session.capabilities)
+    controller.largeMapShown = true
+    session.capabilities = {...session.capabilities, display: {...session.capabilities?.display, maxImageElements: 0}}
+    controller.applyCapabilities(session.capabilities)
+    expect(controller.largeMapShown).toBe(false)
+    expect(frames.at(-1)?.some((el) => el.type === "text" && el.text.includes("Welcome to Mentra Maps"))).toBe(true)
+  })
+
   test("renders the real large-map raster and matching placement inside NIMO limits", () => {
     const {frames, session} = makeNimoDisplay()
     const controller = new NavigationController(session) as unknown as {

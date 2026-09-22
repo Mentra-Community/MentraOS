@@ -25,8 +25,9 @@ export const nimo: Capabilities = {
     height: 220,
     canPosition: true,
     // Host policy ceilings, not independent firmware pool guarantees. Rects
-    // share the host text budget; native validates the encoded frame against
-    // the aggregate 64-object / 8192-byte text / 110000-pixel / 12 KiB limits.
+    // share the host text budget. The host profile also enforces aggregate
+    // object/text/pixel limits and reserves worst-case encoded frame bytes;
+    // native validates the final encoding again before transmission.
     maxTextElements: 32,
     maxImageElements: 4,
     maxImagePx: {width: 200, height: 200},

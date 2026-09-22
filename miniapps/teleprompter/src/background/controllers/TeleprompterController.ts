@@ -81,6 +81,7 @@ export class TeleprompterController {
   private settings: TeleprompterSettings = {...DEFAULT_SETTINGS}
   private engine!: ScriptEngine
   private renderRevision = 0
+  private renderResult: Promise<number | null> = Promise.resolve(null)
   private hasDisplay = false
   private hasMic = true
 
@@ -188,6 +189,7 @@ export class TeleprompterController {
 
   stop(): void {
     this.renderRevision++
+    this.renderResult = Promise.resolve(null)
     this.clearTimer()
     this.unsubscribeTranscription()
     for (const u of this.unsubs) {
@@ -665,12 +667,16 @@ export class TeleprompterController {
   // Rendering
   // ───────────────────────────────────────────────────────────────────────
 
-  private async render(): Promise<number | null> {
+  private render(): Promise<number | null> {
     this.currentTopLine = Math.min(
       this.manualTopLine ?? this.engine.topLineForWord(this.cursor),
       this.engine.maxTopLine,
     )
-    if (!this.hasDisplay) return null
+    if (!this.hasDisplay) {
+      this.renderRevision++
+      this.lastRenderedText = ""
+      return (this.renderResult = Promise.resolve(null))
+    }
     const sourceStart = this.engine.sourceStartForLine(this.currentTopLine)
     const text = this.engine.textFrom(sourceStart)
     const d = this.session.capabilities?.display
@@ -696,11 +702,18 @@ export class TeleprompterController {
         style: {maxLines: 1},
       })
     const key = JSON.stringify(elements)
-    if (key === this.lastRenderedText) return null
+    if (key === this.lastRenderedText) return this.renderResult
     this.lastRenderedText = key
     const revision = ++this.renderRevision
+    return (this.renderResult = this.sendRender(elements, sourceStart, revision))
+  }
+
+  private async sendRender(elements: RenderElement[], sourceStart: number, revision: number): Promise<number | null> {
     const result = await this.session.display.render(elements, {includeTextLayout: true})
-    if (revision !== this.renderRevision) return null
+    // A ready/visibility/device event can replace an in-flight frame. Its
+    // callers await the replacement's feedback; stale feedback never mutates
+    // the engine. stop() and display loss replace this promise with null.
+    if (revision !== this.renderRevision) return this.renderResult
     const layout = result.textLayout?.script
     if (result.status !== "displayed" || !layout) {
       this.lastRenderedText = ""

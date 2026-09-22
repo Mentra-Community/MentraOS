@@ -310,7 +310,10 @@ export class NavigationController {
   private applyCapabilities(raw: MiniappSession["capabilities"]): void {
     const previous = this.capabilities
     this.capabilities = readGlassesCapabilities(raw)
-    if (this.largeMapShown && !this.display.supportsBitmaps) this.exitLargeMap()
+    if (this.largeMapShown && !this.display.supportsBitmaps) {
+      this.exitLargeMap()
+      this.refreshHUD()
+    }
     this.audioGuidance.setAvailable(this.capabilities.hasSpeaker)
     if (!this.voiceGuidancePreferenceExplicit) {
       this.voiceGuidanceMode = this.defaultVoiceGuidanceMode()

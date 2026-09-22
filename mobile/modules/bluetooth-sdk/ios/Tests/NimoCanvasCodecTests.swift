@@ -134,6 +134,27 @@ final class NimoCanvasCodecTests: XCTestCase {
         XCTAssertThrowsError(try NimoCanvasCodec.replace([.init(type: 4, payload: Data(count: 12278))]))
     }
 
+    func testHostFrameReservationBoundsNativeEncoding() throws {
+        var seed: UInt32 = 42
+        func noise(_ count: Int) -> Data {
+            Data((0 ..< count).map { _ in
+                seed = seed &* 1_664_525 &+ 1_013_904_223
+                return UInt8(truncatingIfNeeded: seed >> 24)
+            })
+        }
+        for size in [1, 5, 80, 160, 200] {
+            let image = try NimoCanvasCodec.bitmap(0, 0, size, size, gray: noise(size * size))
+            let packed = (size * size + 3) / 4
+            let reserved = 32 + packed + (packed + 126) / 127
+            XCTAssertLessThanOrEqual(3 + image.payload.count, reserved)
+        }
+        // Retained prefixes of the host's over-budget regression scenes.
+        let rows = try NimoCanvasCodec.textRows(Array(repeating: "row", count: 11).joined(separator: "\n"), 0, 0, 500, 220)
+        XCTAssertLessThanOrEqual(try NimoCanvasCodec.replace(Array(repeating: rows, count: 5).flatMap { $0 }).count, 12280)
+        let images = try [200, 80].map { try NimoCanvasCodec.bitmap(0, 0, $0, $0, gray: noise($0 * $0)) }
+        XCTAssertLessThanOrEqual(try NimoCanvasCodec.replace(images).count, 12280)
+    }
+
     func testWholeScenePreservesOrderAndIgnoresDiffAnnotations() throws {
         let text = SceneElement(id: "caption", type: "text", x: 10, y: 20, w: 100, h: 40, text: "hello",
                                 data: nil, border: 2, radius: 3, change: "unchanged", contentHash: "")

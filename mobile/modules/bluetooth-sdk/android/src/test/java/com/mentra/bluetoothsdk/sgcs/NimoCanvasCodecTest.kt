@@ -87,6 +87,24 @@ class NimoCanvasCodecTest {
     }
   }
 
+  @Test fun hostFrameReservationBoundsNativeEncoding() {
+    val random = java.util.Random(42)
+    for (size in listOf(1, 5, 80, 160, 200)) {
+      val gray = ByteArray(size * size).also { random.nextBytes(it) }
+      val image = NimoCanvasCodec.bitmap(0, 0, size, size, gray)
+      val packed = (gray.size + 3) / 4
+      val reserved = 32 + packed + (packed + 126) / 127
+      assertTrue(3 + image.payload.size <= reserved)
+    }
+    // These are the retained prefixes of the host's over-budget regression scenes.
+    val rows = NimoCanvasCodec.textRows(List(11) { "row" }.joinToString("\n"), 0, 0, 500, 220)
+    assertTrue(NimoCanvasCodec.replace(List(5) { rows }.flatten()).size <= 12280)
+    val images = listOf(200, 80).map { size ->
+      NimoCanvasCodec.bitmap(0, 0, size, size, ByteArray(size * size).also { random.nextBytes(it) })
+    }
+    assertTrue(NimoCanvasCodec.replace(images).size <= 12280)
+  }
+
   @Test fun explicitNewlinesRetainRowsWithoutRewrapping() {
     val rows = NimoCanvasCodec.textRows("first\n\nthird", 12, 15, 400, 100)
     assertEquals(2, rows.size)

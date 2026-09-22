@@ -164,6 +164,22 @@ describe("NIMO positioned scene routing", () => {
     })
   })
 
+  test("reports aggregate rejection and transmits only the admitted native frame", () => {
+    let result: DisplayRequestResult | undefined
+    const elements: SceneElementInput[] = Array.from({length: 6}, (_, i) => ({
+      id: `text${i}`,
+      type: "text",
+      box: {x: 0, y: 0, w: 500, h: 220},
+      text: Array(11).fill("row").join("\n"),
+    }))
+    localDisplayManager.request("com.test.frame", {view: "main", scene: elements}, (value) => {
+      result = value
+    })
+    expect(result).toEqual({status: "displayed", degraded: true, dropped: ["text5"]})
+    expect(lastScene().elements).toHaveLength(5)
+    expect(lastScene().elements.reduce((sum, el) => sum + el.text!.split("\n").length, 0)).toBe(55)
+  })
+
   test("converts legacy captions into a full logical-canvas text scene", () => {
     localDisplayManager.request("com.test.captions", {
       view: "main",

@@ -16,8 +16,20 @@ export const NIMO_PROFILE: DisplayProfile = {
   maxLines: 11,
   lineHeightPx: 20,
 
-  // This is a per-wrap ceiling. Native additionally validates aggregate text
-  // and encoded frame budgets before transmission (multiple labels share it).
+  // Mirrors Dynamic V1 object and reassembly limits. Image admission reserves
+  // worst-case RLE size; native may compress further but cannot exceed this bound.
+  sceneBudget: {
+    maxObjects: 64,
+    maxTextBytes: 8192,
+    maxImagePixels: 110000,
+    maxEncodedBytes: 12288 - 8,
+    frameOverheadBytes: 3,
+    textLineOverheadBytes: 17,
+    rectBytes: 15,
+    image: {bitsPerPixel: 2, overheadBytes: 32, maxLiteralRunBytes: 127},
+  },
+
+  // Per-wrap ceiling; scene processing also enforces the cumulative budget.
   maxPayloadBytes: 8192,
   // Helper default only; the native transport uses the negotiated write size.
   bleChunkSize: 244,

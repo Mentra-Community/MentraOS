@@ -16,6 +16,7 @@ import type {SceneBox, SceneDisplayCapabilities, SceneElementInput, SceneTextSty
 import {processText, sourceLines} from "./text"
 import type {SceneTextLayout} from "./types"
 import {elementContentHash} from "./types"
+import {sceneBudget} from "./budget"
 
 export interface ProcessedScene {
   elements: DiffableElement[]
@@ -117,6 +118,17 @@ export function processScene(
   let textBudget = caps.maxTextElements
   let imageBudget = caps.maxImageElements
   const out: DiffableElement[] = []
+  const reserve = sceneBudget(profile)
+  const append = (element: DiffableElement, index: number) => {
+    if (reserve(element)) {
+      out.push(element)
+    } else {
+      const id = element.id ?? `${element.type}[${index}]`
+      dropped.push(id)
+      delete textLayout[id]
+      degraded = true
+    }
+  }
 
   for (const {el, index} of valid) {
     const clamped = clampBox(el.box, caps.width, caps.height)
@@ -148,13 +160,16 @@ export function processScene(
         continue
       }
       imageBudget--
-      out.push({
-        id: el.id,
-        type: "image",
-        box: clamped,
-        data: el.data,
-        contentHash: elementContentHash({type: "image", data: el.data}),
-      })
+      append(
+        {
+          id: el.id,
+          type: "image",
+          box: clamped,
+          data: el.data,
+          contentHash: elementContentHash({type: "image", data: el.data}),
+        },
+        index,
+      )
       continue
     }
 
@@ -167,13 +182,16 @@ export function processScene(
     textBudget--
 
     if (el.type === "rect") {
-      out.push({
-        id: el.id,
-        type: "rect",
-        box: clamped,
-        style: el.style,
-        contentHash: elementContentHash({type: "rect", style: el.style}),
-      })
+      append(
+        {
+          id: el.id,
+          type: "rect",
+          box: clamped,
+          style: el.style,
+          contentHash: elementContentHash({type: "rect", style: el.style}),
+        },
+        index,
+      )
       continue
     }
 
@@ -191,14 +209,17 @@ export function processScene(
       const processed = processText(el.text ?? "", clamped, style, profile)
       degraded ||= processed.degraded
       textLayout[reportId(el, index)] = processed.layout
-      out.push({
-        id: el.id,
-        type: "text",
-        box: processed.box,
-        text: processed.text,
-        style: el.style,
-        contentHash: elementContentHash({type: "text", text: processed.text, style: el.style}),
-      })
+      append(
+        {
+          id: el.id,
+          type: "text",
+          box: processed.box,
+          text: processed.text,
+          style: el.style,
+          contentHash: elementContentHash({type: "text", text: processed.text, style: el.style}),
+        },
+        index,
+      )
       continue
     }
     const maxLines = lineHeight ? Math.max(1, Math.floor(clamped.h / lineHeight)) : profile.maxLines
@@ -233,14 +254,17 @@ export function processScene(
       }
     }
     const wrappedText = lines.join("\n")
-    out.push({
-      id: el.id,
-      type: "text",
-      box: clamped,
-      text: wrappedText,
-      style: el.style,
-      contentHash: elementContentHash({type: "text", text: wrappedText, style: el.style}),
-    })
+    append(
+      {
+        id: el.id,
+        type: "text",
+        box: clamped,
+        text: wrappedText,
+        style: el.style,
+        contentHash: elementContentHash({type: "text", text: wrappedText, style: el.style}),
+      },
+      index,
+    )
   }
 
   return {elements: out, degraded, dropped, ...(includeTextLayout ? {textLayout} : {})}
