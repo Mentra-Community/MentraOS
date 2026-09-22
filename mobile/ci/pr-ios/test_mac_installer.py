@@ -176,7 +176,7 @@ class MacInstallerPackagingTests(unittest.TestCase):
         with patch.object(installer, "build_opener") as opener:
             with self.assertRaisesRegex(ValueError, "Only the two"):
                 installer.doppler_secret("test-service-token", "ASC_API_KEY_P8_B64")
-            for token in ("", "token\n", "token:password", "non-ascii-\u2603"):
+            for token in ("", "token\n", ":", "non-ascii-\u2603"):
                 with self.assertRaisesRegex(ValueError, "service token"):
                     installer.doppler_secret(token, installer.CERTIFICATE_SECRETS[0])
             opener.assert_not_called()
