@@ -19,7 +19,7 @@
 #   --limit N        (--list) max reports to return (1-200, default 50)
 #
 # Environment variables:
-#   MENTRA_ADMIN_TOKEN  (required) Bearer token for the admin API: an org API
+#   MENTRA_ADMIN_TOKEN  (required unless --agent) Bearer token for the admin API: an org API
 #                       key (msk_...) whose synthetic email is allowlisted in
 #                       CLOUD_CORE_ADMIN_EMAILS, or a WorkOS access token of
 #                       an admin user.
@@ -31,7 +31,7 @@
 set -euo pipefail
 
 usage() {
-  sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'
   exit 1
 }
 

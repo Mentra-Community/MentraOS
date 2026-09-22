@@ -1,12 +1,15 @@
 import {Platform} from "react-native"
 import {SETTINGS, engine} from "@mentra/engine"
 import {mentraCallPackageName, notifyPackageName} from "@/constants/miniapps"
-import {shouldHideMiniapp} from "./miniappVisibility"
+import {appRegistry} from "@mentra/engine-host-internal"
+import {shouldHideMiniapp, shouldSkipMiniappInstall} from "./miniappVisibility"
 import {deploymentStore} from "@/services/deployment/store"
 import {createConsumerDeployment} from "@/services/deployment/officialManifest"
 import type {WorkspaceDeployment} from "@/services/deployment/types"
 
 describe("live iOS miniapp visibility policy", () => {
+  const originalIdentity = appRegistry.getReleaseIdentity
+  const originalVersions = appRegistry.getInstalledVersions
   const originalOverride = process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS
   afterEach(() => {
     if (originalOverride === undefined) delete process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS
@@ -18,7 +21,11 @@ describe("live iOS miniapp visibility policy", () => {
     await engine.settings.set(SETTINGS.show_mentra_call_ios.key, false)
     await engine.settings.set(SETTINGS.show_notify_ios.key, false)
   })
-  afterEach(() => jest.restoreAllMocks())
+  afterEach(() => {
+    appRegistry.getReleaseIdentity = originalIdentity
+    appRegistry.getInstalledVersions = originalVersions
+    jest.restoreAllMocks()
+  })
 
   it("uses the managed Call manifest on iOS, then restores consumer defaults on workspace exit", async () => {
     const consumer = createConsumerDeployment()
@@ -45,7 +52,32 @@ describe("live iOS miniapp visibility policy", () => {
       },
     }
     const active = jest.spyOn(deploymentStore, "getActive").mockReturnValue(workspace)
-    expect(shouldHideMiniapp(mentraCallPackageName)).toBe(false)
+    const identity = {
+      source: "deployment_manifest" as const,
+      deploymentId: workspace.manifest.deploymentId,
+      deploymentOrigin: workspace.workspaceOrigin,
+      bundleSha256: "a".repeat(64),
+    }
+    const release = jest.fn((): typeof identity | null => null)
+    appRegistry.getReleaseIdentity = release
+    appRegistry.getInstalledVersions = jest.fn(() => ["2.1.29"])
+    expect(shouldSkipMiniappInstall(mentraCallPackageName)).toBe(false)
+    expect(shouldHideMiniapp(mentraCallPackageName)).toBe(true)
+    release.mockReturnValue(identity)
+    expect(shouldHideMiniapp(mentraCallPackageName, "2.1.29")).toBe(false)
+    expect(shouldHideMiniapp(mentraCallPackageName, "2.1.18")).toBe(true)
+    for (const mismatch of [
+      {deploymentId: "another-workspace"},
+      {deploymentOrigin: "https://another.example"},
+      {bundleSha256: "b".repeat(64)},
+    ]) {
+      release.mockReturnValue({...identity, ...mismatch})
+      expect(shouldHideMiniapp(mentraCallPackageName)).toBe(true)
+    }
+    release.mockReturnValue(identity)
+    appRegistry.getInstalledVersions = jest.fn(() => [])
+    expect(shouldHideMiniapp(mentraCallPackageName)).toBe(true)
+    appRegistry.getInstalledVersions = jest.fn(() => ["2.1.29"])
     expect(shouldHideMiniapp(notifyPackageName)).toBe(true)
     expect(engine.settings.get(SETTINGS.show_mentra_call_ios.key)).toBe(false)
     workspace.manifest.features.nativeMeetings = false

@@ -1,7 +1,7 @@
 import {appRegistry} from "@mentra/engine-host-internal"
 import {Directory, File, Paths} from "expo-file-system"
 
-import {shouldHideMiniapp} from "./miniappVisibility"
+import {shouldSkipMiniappInstall} from "./miniappVisibility"
 import type {ActiveDeployment, DeploymentManagedMiniapp} from "@/services/deployment"
 
 import {sha256Hex} from "./preinstalledMiniappSync"
@@ -185,7 +185,7 @@ async function installEntry(
   const desiredWasInstalled = installedVersions.includes(entry.version)
   try {
     const zipPath = await downloadVerifiedBundle(entry)
-    if (shouldHideMiniapp(entry.packageName)) return false
+    if (shouldSkipMiniappInstall(entry.packageName)) return false
     const result = await appRegistry.installFromLocalZip(zipPath, {
       expectedPackageName: entry.packageName,
       expectedVersion: entry.version,
@@ -226,12 +226,12 @@ async function syncWorkspace(deployment: Extract<ActiveDeployment, {kind: "works
   const nextEntries = new Map(currentEntries)
   const desiredNames = new Set(
     deployment.manifest.miniapps.managed
-      .filter((entry) => !shouldHideMiniapp(entry.packageName))
+      .filter((entry) => !shouldSkipMiniappInstall(entry.packageName))
       .map((entry) => entry.packageName),
   )
 
   for (const entry of deployment.manifest.miniapps.managed) {
-    if (shouldHideMiniapp(entry.packageName)) {
+    if (shouldSkipMiniappInstall(entry.packageName)) {
       console.log(`${LOG_TAG}: skipping platform-hidden ${entry.packageName}@${entry.version}`)
       continue
     }

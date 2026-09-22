@@ -13,7 +13,7 @@ afterEach(async () => {
 
 async function run(args: string[], env: Record<string, string>) {
   const child = spawn("bash", [fileURLToPath(new URL("./fetch-incident-logs.sh", import.meta.url)), ...args], {
-    env: {...process.env, MENTRA_CORE_URL: "", MENTRA_ADMIN_TOKEN: "", MENTRA_REPORT_AGENT_TOKEN: "", ...env},
+    env: {PATH: process.env.PATH, ...env},
     stdio: ["ignore", "pipe", "pipe"],
   })
   return await new Promise<{code: number | null; stdout: string; stderr: string}>((resolve, reject) => {

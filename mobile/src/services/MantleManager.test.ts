@@ -12,6 +12,8 @@ import {mentraCallPackageName, notifyPackageName} from "@/constants/miniapps"
 import {deploymentStore} from "@/services/deployment/store"
 import {createConsumerDeployment} from "@/services/deployment/officialManifest"
 import type {WorkspaceDeployment} from "@/services/deployment/types"
+import {storage} from "@/utils/storage"
+import {shouldHideMiniapp} from "@/services/miniapps/miniappVisibility"
 import {deploymentManagedMiniappSync} from "@/services/miniapps/deploymentManagedMiniappSync"
 import {
   appRegistry,
@@ -672,8 +674,8 @@ describe("MantleManager", () => {
   })
 
   it.each([true, false])(
-    "unhides Enterprise Call only after verifying its managed release (verified=%s)",
-    async (verified) => {
+    "publishes Enterprise Call after startup recovery (previously enabled=%s)",
+    async (previouslyEnabled) => {
       const consumer = createConsumerDeployment()
       const entry = {
         packageName: mentraCallPackageName,
@@ -697,8 +699,16 @@ describe("MantleManager", () => {
       }
       const originalPlatform = Platform.OS
       const originalIdentity = appRegistry.getReleaseIdentity
+      const originalVersions = appRegistry.getInstalledVersions
+      let verified = false
       const active = jest.spyOn(deploymentStore, "getActive").mockReturnValue(workspace)
-      const sync = jest.spyOn(deploymentManagedMiniappSync, "sync").mockResolvedValue(undefined)
+      const sync = jest
+        .spyOn(deploymentManagedMiniappSync, "sync")
+        .mockResolvedValueOnce(undefined)
+        .mockImplementation(async () => {
+          verified = true
+        })
+      appRegistry.getInstalledVersions = jest.fn(() => [entry.version])
       appRegistry.getReleaseIdentity = jest.fn(() =>
         verified
           ? {
@@ -713,25 +723,37 @@ describe("MantleManager", () => {
       Object.defineProperty(Platform, "OS", {configurable: true, value: "ios"})
       const instance = new (mantle.constructor as new () => {
         setupIosMiniappVisibility: () => void
+        initMiniapps: () => Promise<void>
+        installBundledMiniapps: () => Promise<void>
         iosMiniappVisibility: Map<string, {reconcile: () => Promise<void>; dispose: () => void}>
       })()
+      instance.installBundledMiniapps = jest.fn(async () => {})
       try {
         await engine.settings.set(SETTINGS.show_mentra_call_ios.key, false)
+        storage.save("mentra_call_ios_last_enabled", previouslyEnabled)
         instance.setupIosMiniappVisibility()
-        const visibility = instance.iosMiniappVisibility.get(SETTINGS.show_mentra_call_ios.key)!
-        if (verified) {
-          await visibility.reconcile()
-          expect(engine.miniapps.setHiddenStatus).toHaveBeenCalledWith(mentraCallPackageName, false)
-        } else {
-          await expect(visibility.reconcile()).rejects.toThrow("could not be installed and verified")
-          expect(engine.miniapps.setHiddenStatus).not.toHaveBeenCalledWith(mentraCallPackageName, false)
-        }
-        expect(sync).toHaveBeenCalledWith(workspace)
+        // A stale visible consumer entry is restricted before any async work.
+        expect(engine.miniapps.setHiddenStatus).toHaveBeenCalledWith(mentraCallPackageName, true)
+        await instance.initMiniapps()
+        expect(sync).toHaveBeenCalledTimes(1)
+        expect(shouldHideMiniapp(mentraCallPackageName, entry.version)).toBe(true)
+        expect(engine.miniapps.setHiddenStatus).not.toHaveBeenCalledWith(mentraCallPackageName, false)
+        expect(storage.load("mentra_call_ios_last_enabled")).toMatchObject({value: false})
+
+        // The next startup succeeds: the same lifecycle must clear the forced
+        // hidden flag before it finishes, without an independent second sync.
+        await instance.initMiniapps()
+        expect(sync).toHaveBeenCalledTimes(2)
+        expect(sync).toHaveBeenLastCalledWith(workspace)
+        expect(shouldHideMiniapp(mentraCallPackageName, entry.version)).toBe(false)
+        expect(engine.miniapps.setHiddenStatus).toHaveBeenCalledWith(mentraCallPackageName, false)
+        expect(storage.load("mentra_call_ios_last_enabled")).toMatchObject({value: true})
         expect(assets).not.toHaveBeenCalled()
         expect(engine.settings.get(SETTINGS.show_mentra_call_ios.key)).toBe(false)
       } finally {
         for (const visibility of instance.iosMiniappVisibility.values()) visibility.dispose()
         appRegistry.getReleaseIdentity = originalIdentity
+        appRegistry.getInstalledVersions = originalVersions
         active.mockRestore()
         sync.mockRestore()
         assets.mockRestore()

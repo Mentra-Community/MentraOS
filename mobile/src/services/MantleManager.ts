@@ -613,10 +613,6 @@ class MantleManager {
     // Initialize local miniapp runtime
     localMiniappRuntime.initialize()
 
-    for (const visibility of this.iosMiniappVisibility.values()) {
-      await visibility.reconcile().catch((error) => this.reportMiniappVisibilityError(error))
-    }
-
     // Install any bundled miniapps that ship with the app and aren't on disk
     // yet (or are an older version). Runs after the registry is warm so the
     // already-installed check below sees the real on-disk state.
@@ -625,6 +621,13 @@ class MantleManager {
     // Reconcile customer-owned userland bundles independently from SYSTEM
     // miniapps embedded in the Mentra App binary.
     await deploymentManagedMiniappSync.sync(deploymentStore.getActive())
+
+    // Publish iOS enablement only after managed installation has finished.
+    // Every startup/retry follows this order, including recovery from a failed
+    // download with a previously forced-hidden Call entry.
+    for (const visibility of this.iosMiniappVisibility.values()) {
+      await visibility.reconcile().catch((error) => this.reportMiniappVisibilityError(error))
+    }
 
     // Then reconcile the admin-managed preinstall registry from Cloud V2. This
     // lets Core move users to newer bundled miniapp releases without shipping a
@@ -664,7 +667,7 @@ class MantleManager {
       try {
         const asset = Asset.fromModule(module)
         const parsed = parseBundledMiniappName(asset.name)
-        // iOS Call is installed by its serialized visibility controller.
+        // iOS Call uses its visibility controller (consumer) or managed sync (workspace).
         if (Platform.OS === "ios" && parsed?.packageName === mentraCallPackageName) continue
         await this.installBundledMiniapp(asset)
       } catch (error) {
@@ -673,22 +676,14 @@ class MantleManager {
     }
   }
 
-  private async installBundledCall() {
+  private async prepareIosCall() {
     const deployment = deploymentStore.getActive()
     if (deployment.kind === "workspace") {
       // Managed releases must retain manifest ownership and digest verification;
       // the consumer binary's ZIP is outside the workspace system-app allowlist.
-      await deploymentManagedMiniappSync.sync(deployment)
-      const entry = deployment.manifest.miniapps.managed.find((item) => item.packageName === mentraCallPackageName)
-      const identity = entry && appRegistry.getReleaseIdentity(entry.packageName, entry.version)
-      if (
-        deploymentStore.getActive() !== deployment ||
-        !entry ||
-        identity?.source !== "deployment_manifest" ||
-        identity.deploymentId !== deployment.manifest.deploymentId ||
-        identity.deploymentOrigin !== deployment.workspaceOrigin ||
-        identity.bundleSha256 !== entry.sha256.toLowerCase()
-      ) {
+      // initMiniapps owns managed synchronization; never start an independent
+      // retry that could install a bundle without publishing its visibility.
+      if (shouldHideMiniapp(mentraCallPackageName)) {
         throw new Error("The workspace Call bundle could not be installed and verified")
       }
       return
@@ -740,7 +735,7 @@ class MantleManager {
         setHidden: (hidden) => engine.miniapps.setHiddenStatus(packageName, hidden),
         clearRunningState: () => saveLocalAppRunningState(packageName, false),
         install: async () => {
-          if (packageName === mentraCallPackageName) await this.installBundledCall()
+          if (packageName === mentraCallPackageName) await this.prepareIosCall()
           else builtInMiniappCatalog.installNotify()
         },
         stop: async () => {

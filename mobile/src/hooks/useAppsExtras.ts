@@ -14,7 +14,7 @@ export const useAvailableApps = () => {
   const [showIosNotify] = useSetting<boolean>(SETTINGS.show_notify_ios.key)
   const deployment = useSyncExternalStore(subscribeDeployment, getDeployment)
   return useMemo(
-    () => apps.filter((app) => !shouldHideMiniapp(app.packageName)),
+    () => apps.filter((app) => !shouldHideMiniapp(app.packageName, app.version)),
     [apps, showIosCall, showIosNotify, deployment],
   )
 }
