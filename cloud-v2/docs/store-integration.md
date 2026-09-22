@@ -63,3 +63,11 @@ public deployment remove the old service before the private replacement is ready
 Console deploys from the private repository to the existing Console Pages projects.
 Core admin keeps its existing domain, login, report deep links and incident APIs;
 Store staff use `/admin` on the Developer Console.
+
+Core owns browser login, callback, organization selection and logout at
+`/api/console/auth/*` for both public websites. Configure Core
+`ADMIN_URL` and `PORTAL_URL` (included in the environment Porter files) and
+its existing `WORKOS_API_KEY`, `WORKOS_CLIENT_ID`, `WORKOS_COOKIE_PASSWORD`.
+Allowlist both website origins plus `/api/console/auth/callback` in WorkOS,
+and their origins as sign-out return URLs. Local callbacks use ports 5174 and
+5175. These routes do not call Store and preserve incident report deep links.

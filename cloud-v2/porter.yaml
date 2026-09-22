@@ -26,6 +26,8 @@ services:
     domains:
       - name: core.us-west-2.dev.mentraglass.com
     env:
+      ADMIN_URL: "https://admin.dev.mentraglass.com"
+      PORTAL_URL: "https://portal.dev.mentraglass.com"
       MENTRA_STORE_INTERNAL_URL: "https://store.dev.us-west-2.mentraglass.com"
       PORT: "3000"
       LOG_STDOUT_JSON: "true"

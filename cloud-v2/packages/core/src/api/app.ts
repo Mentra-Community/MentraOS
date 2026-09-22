@@ -27,6 +27,7 @@ import { OauthError } from "../types/oauth.types";
 import { AccountError } from "../services/account/account-error";
 import { requestContext } from "./middleware/context.middleware";
 import adminApi from "./admin/admin.api";
+import browserAuth from "./admin/browser-auth.api";
 import reportAgent from "./agent/reports.api";
 import clientAuth from "./client/auth.api";
 import clientReports from "./client/reports.api";
@@ -87,6 +88,7 @@ export function createApp(opts: CreateAppOptions): Hono<AppEnv> {
   app.route("/api/internal/identity", internalIdentity);
   app.route("/api/portal", portalEnterprise);
   app.route("/api/admin", adminApi);
+  app.route("/api/console/auth", browserAuth);
 
   // Global error translator.
   app.onError((err, c) => {

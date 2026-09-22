@@ -103,15 +103,17 @@ let pendingDeepLinkReportId = new URLSearchParams(window.location.search).get("r
 function AdminPage() {
   const [deepLinkReportId, setDeepLinkReportId] = useState<string | null>(pendingDeepLinkReportId);
   const [signingOut, setSigningOut] = useState(false);
+  const [signOutError, setSignOutError] = useState<unknown>(null);
 
   async function signOut() {
     setSigningOut(true);
+    setSignOutError(null);
     try {
-      await fetch("/api/console/auth/logout", { method: "POST", headers: { accept: "application/json" } });
-    } catch {
-      // best-effort; reload still drops us at the login gate
+      await signOutOfCore();
+    } catch (error) {
+      setSignOutError(error);
+      setSigningOut(false);
     }
-    window.location.reload();
   }
 
   const me = useQuery({
@@ -151,6 +153,7 @@ function AdminPage() {
       onSignOut={signOut}
       signingOut={signingOut}
     >
+      {signOutError ? <ErrorText error={signOutError} /> : null}
       <ReportsPage key={deepLinkReportId ?? "reports"} initialReportId={deepLinkReportId} />
     </AppShell>
   );
@@ -544,13 +547,17 @@ function LoginGate({ denied = false }: { denied?: boolean }) {
   // login round-trip; safeReturnTo on Core validates the origin either way.
   const loginUrl = `/api/console/auth/login?return_to=${encodeURIComponent(window.location.href)}`;
 
-  async function signOutAndReload() {
+  const [signingOut, setSigningOut] = useState(false);
+  const [signOutError, setSignOutError] = useState<unknown>(null);
+  async function switchAccount() {
+    setSigningOut(true);
+    setSignOutError(null);
     try {
-      await fetch("/api/console/auth/logout", { method: "POST", headers: { accept: "application/json" } });
-    } catch {
-      // best-effort; the reload lands back on this gate either way
+      await signOutOfCore();
+    } catch (error) {
+      setSignOutError(error);
+      setSigningOut(false);
     }
-    window.location.reload();
   }
 
   return (
@@ -582,14 +589,16 @@ function LoginGate({ denied = false }: { denied?: boolean }) {
                 : "Investigate reports and manage Core operations."}
             </p>
 
+            {signOutError ? <ErrorText error={signOutError} /> : null}
             <div className="h-8" />
             {denied ? (
               <button
                 type="button"
                 className="flex h-[48px] w-full items-center justify-center rounded-full bg-[#14141a] px-[18px] font-display text-sm font-semibold text-white shadow-[0_18px_44px_-10px_rgba(20,20,26,0.25),inset_0_1px_0_rgba(255,255,255,0.14)] transition hover:bg-[#24242b] focus:outline-none focus:ring-4 focus:ring-[#14141a]/10"
-                onClick={signOutAndReload}
+                disabled={signingOut}
+                onClick={switchAccount}
               >
-                Sign out and switch account
+                {signingOut ? "Signing out…" : "Sign out and switch account"}
               </button>
             ) : (
               <a
@@ -668,3 +677,10 @@ async function api<T>(path: string, opts?: { method?: string; body?: unknown }):
 }
 
 export default App;
+
+async function signOutOfCore(): Promise<void> {
+  const response = await fetch("/api/console/auth/logout", {method: "POST", headers: {accept: "application/json"}});
+  if (!response.ok) throw new Error("Sign-out failed. Please try again.");
+  const {logoutUrl} = await response.json() as {logoutUrl: string | null};
+  window.location.assign(logoutUrl ?? "/");
+}

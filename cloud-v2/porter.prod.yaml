@@ -19,6 +19,8 @@ services:
     type: web
     run: bun packages/core/src/index.ts
     env:
+      ADMIN_URL: "https://admin.mentraglass.com"
+      PORTAL_URL: "https://portal.mentraglass.com"
       MENTRA_STORE_INTERNAL_URL: "https://store.mentraglass.com"
     port: 3000
     instances: 1
