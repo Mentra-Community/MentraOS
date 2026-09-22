@@ -1,6 +1,6 @@
 # Install complete coordinated dev/staging software
 
-Status: implemented; signed export qualification pending.
+Status: implemented; signed dev and staging export qualification passed. Public release rollout remains to be verified after merge.
 
 The release should be easy to install from its Slack post on Android, a registered iPhone, or a registered Apple Silicon Mac. Each app must keep the channel backend and exact release OTA target. TestFlight and Google Play retain their existing channel policies.
 
@@ -22,6 +22,8 @@ The `installable_downloads` input defaults off and is enabled only by the dev/st
 
 ## Validation
 
-Unit tests cover both channel links, stale metadata, OTA mismatches, partial sets, changed bytes, publication order, repeat publication, final release records and Slack links. Existing PR packaging and notification tests remain regression coverage. The opt-in `qualify-coordinated-downloads` label runs the actual signed coordinated build and export in dry-run mode, without deploying Cloud, publishing a release or uploading to stores. Its placeholder OTA target makes its intermediate app unsuitable for device OTA testing.
+Unit tests cover both channel links, stale metadata, OTA mismatches, partial sets, changed bytes, publication order, repeat publication, final release records and Slack links. Existing PR packaging and notification tests remain regression coverage. The opt-in `qualify-coordinated-downloads` (dev) and `qualify-coordinated-downloads-staging` labels run the actual signed coordinated build and export in dry-run mode, without deploying Cloud, publishing a release or uploading to stores. Their placeholder OTA target makes these intermediate apps unsuitable for device OTA testing.
 
-Before merging: require a successful signed export and artifact handoff in this qualification job. Before declaring rollout complete: verify a real coordinated release's published receipt, install links, app OTA pin and TestFlight result.
+Signed qualification passed in [dev run 35683670210](https://github.com/Mentra-Community/MentraOS/actions/runs/35683670210) and [staging run 35688158326](https://github.com/Mentra-Community/MentraOS/actions/runs/35688158326). Downloaded receipts and all four assets passed independent size/hash checks. Extracted Mac apps passed Apple signature, profile, executable, JavaScript, release metadata and OTA-pin validation. Staging carried `3.3.0-beta.5`, build `303000005`, the staging SDK environment, and the external `Mentra Staging Public` audience. The ad hoc profile covered 19 registered devices and expires May 28, 2027. This qualifies packaging; it does not demonstrate device installation or actual TestFlight publication.
+
+Before declaring rollout complete: verify a real coordinated release's published receipt, install links, app OTA pin and TestFlight result.
