@@ -177,7 +177,7 @@ async function installEntry(
     // example, the app stopped between those two operations). Recover it.
     appRegistry.setActiveVersion(entry.packageName, entry.version)
     return true
-  } else if (installedVersions.includes(entry.version)) {
+  } else if (installedVersions.includes(entry.version) && desiredIdentity?.source !== "bundled_asset") {
     console.warn(`${LOG_TAG}: refusing to replace existing unowned ${entry.packageName}@${entry.version}`)
     return false
   }
@@ -190,6 +190,7 @@ async function installEntry(
       expectedPackageName: entry.packageName,
       expectedVersion: entry.version,
       rejectExistingVersion: true,
+      adoptIdenticalBundledVersion: desiredIdentity?.source === "bundled_asset",
       releaseIdentity: {
         source: "deployment_manifest",
         deploymentId,

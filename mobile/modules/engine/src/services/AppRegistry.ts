@@ -34,6 +34,7 @@ import {normalizeManifestActions} from "./manifestActions"
 import {normalizeManifestPermissions} from "./manifestPermissions"
 import {miniappInstallIdentityError, type MiniappInstallExpectations} from "./miniappInstallIdentity"
 import {miniappRunningRegistry} from "./MiniappRunningRegistry"
+import {sameMiniappBundle} from "./sameMiniappBundle"
 
 export {normalizeManifestActions} from "./manifestActions"
 export {normalizeManifestPermissions} from "./manifestPermissions"
@@ -188,6 +189,12 @@ async function unpackMiniApp(
   zipPath: string,
   versionOverride?: string,
   expected?: MiniappInstallExpectations,
+  adoptExisting?: (
+    packageName: string,
+    version: string,
+    extracted: Directory,
+    installed: Directory,
+  ) => Promise<boolean>,
 ): Promise<{packageName: string; version: string}> {
   const unzipDir = new Directory(Paths.cache, "lma_unzip")
   try {
@@ -242,6 +249,11 @@ async function unpackMiniApp(
   const versionDir = new Directory(basePackageDir, version)
   try {
     if (expected?.rejectExistingVersion && versionDir.exists) {
+      // The host may adopt a byte-identical bundled release after verifying a
+      // deployment ZIP. Never replace its files or trust a version label alone.
+      if (adoptExisting && (await adoptExisting(packageName, version, appDir, versionDir))) {
+        return {packageName, version}
+      }
       throw new Error(`Miniapp ${packageName}@${version} is already installed`)
     }
     if (!versionDir.exists) {
@@ -470,15 +482,35 @@ class AppRegistry {
       expectedPackageName?: string
       expectedVersion?: string
       rejectExistingVersion?: boolean
+      /** Host-only migration after the deployment ZIP's digest is verified. */
+      adoptIdenticalBundledVersion?: boolean
     },
   ): AsyncResult<{packageName: string; version: string}, Error> {
     return Res.try_async(() =>
       serializeInstall(async () => {
-        const {packageName, version} = await unpackMiniApp(zipPath, opts?.versionOverride, {
-          packageName: opts?.expectedPackageName,
-          version: opts?.expectedVersion,
-          rejectExistingVersion: opts?.rejectExistingVersion,
-        })
+        if (
+          opts?.adoptIdenticalBundledVersion &&
+          (opts.releaseIdentity?.source !== "deployment_manifest" ||
+            !opts.expectedPackageName ||
+            !opts.expectedVersion ||
+            opts.versionOverride ||
+            !opts.rejectExistingVersion)
+        )
+          throw new Error("Bundled adoption requires a verified deployment release with an exact identity")
+        const {packageName, version} = await unpackMiniApp(
+          zipPath,
+          opts?.versionOverride,
+          {
+            packageName: opts?.expectedPackageName,
+            version: opts?.expectedVersion,
+            rejectExistingVersion: opts?.rejectExistingVersion,
+          },
+          opts?.adoptIdenticalBundledVersion
+            ? async (pkg, ver, extracted, installed) =>
+                this.getReleaseIdentity(pkg, ver)?.source === "bundled_asset" &&
+                (await sameMiniappBundle(extracted, installed))
+            : undefined,
+        )
         console.log("APP_REGISTRY: Installed mini app from local zip")
         this.finalizeInstall(packageName, version, opts?.releaseIdentity ?? {source: "bundled_asset"})
         return {packageName, version}

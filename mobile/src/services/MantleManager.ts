@@ -613,14 +613,14 @@ class MantleManager {
     // Initialize local miniapp runtime
     localMiniappRuntime.initialize()
 
+    // Remove previous workspace releases before restoring consumer bundles,
+    // including an identical bundled release adopted by a workspace.
+    await deploymentManagedMiniappSync.sync(deploymentStore.getActive())
+
     // Install any bundled miniapps that ship with the app and aren't on disk
     // yet (or are an older version). Runs after the registry is warm so the
     // already-installed check below sees the real on-disk state.
     await this.installBundledMiniapps()
-
-    // Reconcile customer-owned userland bundles independently from SYSTEM
-    // miniapps embedded in the Mentra App binary.
-    await deploymentManagedMiniappSync.sync(deploymentStore.getActive())
 
     // Publish iOS enablement only after managed installation has finished.
     // Every startup/retry follows this order, including recovery from a failed

@@ -14,6 +14,7 @@ import {createConsumerDeployment} from "@/services/deployment/officialManifest"
 import type {WorkspaceDeployment} from "@/services/deployment/types"
 import {storage} from "@/utils/storage"
 import {shouldHideMiniapp} from "@/services/miniapps/miniappVisibility"
+import {preinstalledMiniappSync} from "@/services/miniapps/preinstalledMiniappSync"
 import {deploymentManagedMiniappSync} from "@/services/miniapps/deploymentManagedMiniappSync"
 import {
   appRegistry,
@@ -670,6 +671,33 @@ describe("MantleManager", () => {
     } finally {
       fromModule.mockRestore()
       log.mockRestore()
+    }
+  })
+
+  it.each(["ios", "android"])("restores consumer bundles after workspace cleanup on %s", async (platform) => {
+    const originalPlatform = Platform.OS
+    Object.defineProperty(Platform, "OS", {configurable: true, value: platform})
+    const active = jest.spyOn(deploymentStore, "getActive").mockReturnValue(createConsumerDeployment())
+    let workspaceCopyPresent = true
+    const sync = jest.spyOn(deploymentManagedMiniappSync, "sync").mockImplementation(async () => {
+      workspaceCopyPresent = false
+    })
+    const preinstall = jest.spyOn(preinstalledMiniappSync, "sync").mockResolvedValue(undefined)
+    const instance = new (mantle.constructor as new () => {
+      initMiniapps: () => Promise<void>
+      installBundledMiniapps: () => Promise<void>
+    })()
+    instance.installBundledMiniapps = jest.fn(async () => {
+      expect(workspaceCopyPresent).toBe(false)
+    })
+    try {
+      await instance.initMiniapps()
+      expect(instance.installBundledMiniapps).toHaveBeenCalledTimes(1)
+    } finally {
+      active.mockRestore()
+      sync.mockRestore()
+      preinstall.mockRestore()
+      Object.defineProperty(Platform, "OS", {configurable: true, value: originalPlatform})
     }
   })
 
