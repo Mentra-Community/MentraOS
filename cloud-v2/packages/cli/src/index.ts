@@ -633,7 +633,7 @@ program
     console.log("Logged out");
   });
 
-program.parse();
+await program.parseAsync();
 
 async function requireCredentials(): Promise<CliCredentials | null> {
   const config = getConfig();
