@@ -15,7 +15,7 @@ maps, Store, or reporting dependencies.
 
 Core's report API is available independently of Runtime and consumer telemetry.
 See [report setup and retrieval](operations.md#reports-and-durable-attachments)
-for the generated read-only credential and attachment-storage lifecycle.
+for existing admin org API-key authorization and the attachment-storage lifecycle.
 
 ## Reference identities
 
