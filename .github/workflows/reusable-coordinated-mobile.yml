@@ -454,20 +454,27 @@ jobs:
 
       # The Android build carries the family build number unless its testing
       # track already serves a higher code; then it takes the next code above
-      # that floor and every code reserved in the release container
-      # (resolve-android-version-code.mjs), and reserves it there before
-      # building so a run that stops after building keeps its code and a
-      # retry finds it. Production keeps the family number. A pair that already
-      # exists for this release keeps the code it was built with.
+      # that floor and every code reserved so far (resolve-android-version-code.mjs).
+      # Borrowed codes span families, so reservations live in the shared ASG
+      # release (mentra-coordinated-asg, the cross-family home of Android
+      # numbering) as owner-bound markers published before the build: a run
+      # that stops after building keeps its code, no later run in any family
+      # takes it, and a retry finds its own marker. Production keeps the family
+      # number. A pair that already exists for this release keeps the code it
+      # was built with. The compatibility lab builds an older source through
+      # Internal App Sharing and reserves nothing; the scripts run from the
+      # workflow revision for the same reason.
       - name: Resolve and reserve the Android version code
         id: android-code
         env:
           GH_TOKEN: ${{ github.token }}
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
           GOOGLE_PLAY_TRACK: ${{ inputs.play_track }}
           GOOGLE_PLAY_VERSION_CODES_OUTPUT: ${{ runner.temp }}/mentra-play-track-codes.json
           LOOK_UP_TRACK: ${{ inputs.dry_run != true && inputs.compatibility_lab != true && needs.prepare.outputs.upload_google_play == 'true' && inputs.play_track != 'internal-app-sharing' && inputs.play_track != 'production' }}
-          RESERVE: ${{ inputs.dry_run != true && needs.prepare.outputs.android_assets_exist != 'true' }}
-          RELEASE_ID: ${{ needs.prepare.outputs.release_id }}
+          RESERVE: ${{ inputs.dry_run != true && inputs.compatibility_lab != true && needs.prepare.outputs.android_assets_exist != 'true' && inputs.play_track != 'internal-app-sharing' && inputs.play_track != 'production' }}
+          RESERVATION_RELEASE_TAG: mentra-coordinated-asg
           OWNER: coordinated-run-${{ github.run_id }}
         run: |
           set -euo pipefail
@@ -477,21 +484,23 @@ jobs:
             [[ "$code" =~ ^[1-9][0-9]*$ ]]
             echo "Android version code $code (the existing immutable pair)"
           else
+            tooling="$GITHUB_WORKSPACE/release-tooling/.github/scripts"
             args=(--plan release-intent/release-plan.json --track "$GOOGLE_PLAY_TRACK" --output android-version-code.json)
             if [[ "$LOOK_UP_TRACK" == true ]]; then
               (cd mobile-play && bundle exec fastlane track_version_codes)
               args+=(--codes "$GOOGLE_PLAY_VERSION_CODES_OUTPUT")
             fi
             if [[ "$RESERVE" == true ]]; then
-              node "$GITHUB_WORKSPACE/release-tooling/.github/scripts/release-assets.mjs" list --repository "${GITHUB_REPOSITORY}" --release-id "$RELEASE_ID" > release-container-assets.json
-              args+=(--assets release-container-assets.json --owner "$OWNER" --marker-dir android-version-code-marker)
+              registry_id=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/$RESERVATION_RELEASE_TAG" --jq .id)
+              node "$tooling/release-assets.mjs" list --repository "${GITHUB_REPOSITORY}" --release-id "$registry_id" > android-code-registry-assets.json
+              args+=(--assets android-code-registry-assets.json --owner "$OWNER" --marker-dir android-version-code-marker)
             fi
-            node .github/scripts/resolve-android-version-code.mjs "${args[@]}"
+            node "$tooling/resolve-android-version-code.mjs" "${args[@]}"
             code=$(jq -er .versionCode android-version-code.json)
             if [[ "$RESERVE" == true && "$(jq -r .reused android-version-code.json)" != true ]]; then
               marker=$(ls android-version-code-marker)
-              node .github/scripts/publish-immutable-release-asset.mjs \
-                --release-id "$RELEASE_ID" --repository "${GITHUB_REPOSITORY}" \
+              node "$tooling/publish-immutable-release-asset.mjs" \
+                --release-id "$registry_id" --repository "${GITHUB_REPOSITORY}" \
                 --file "android-version-code-marker/$marker" --name "$marker"
             fi
           fi
@@ -601,6 +610,14 @@ jobs:
           set -euo pipefail
           bundle exec fastlane track_version_codes
           if jq -e --argjson expected "${{ steps.android-code.outputs.code }}" 'map(tonumber) | index($expected) != null' "$GOOGLE_PLAY_VERSION_CODES_OUTPUT" >/dev/null; then
+            # Only this release's own earlier upload may already carry the code:
+            # its immutable pair exists and the code was reserved before it was
+            # built. A code that is on the track without that pair is someone
+            # else's, and the run stops rather than call it reused.
+            if [[ "${{ needs.prepare.outputs.android_assets_exist }}" != true ]]; then
+              echo "Version code ${{ steps.android-code.outputs.code }} is already on track ${{ inputs.play_track }} but this release has no immutable Android pair; refusing to treat it as reused." >&2
+              exit 1
+            fi
             echo "exists=true" >> "$GITHUB_OUTPUT"
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
