@@ -18,6 +18,7 @@ REPOSITORY = "Mentra-Community/MentraOS"
 WORKFLOW = ".github/workflows/mentra-app-ios-build.yml"
 BUNDLE = "com.mentra.mentra"
 TEAM = "T5XXXL6N36"
+MAC_INSTALLER = "Install Mentra.app"
 MAX_UNPACKED = 2 * 1024**3
 ROOT = Path(__file__).resolve().parents[2]
 
@@ -56,13 +57,13 @@ def validate_receipt(receipt, selection):
     require(all(receipt.get(key) == value and app.get(key) == value for key, value in expected.items()),
             "Receipt/app selection mismatch")
     require(app.get("bundleId") == BUNDLE and app.get("teamId") == TEAM, "Unexpected app signing identity")
-    require(app.get("app") == "Mentra.app" and app.get("launcherPath") == "launch-ios-on-mac",
-            "Unexpected package layout")
+    version = validate_package_layout(app)
     require(not any(key in app for key in ("archivePath", "archiveSha256", "archivedAppName")),
             "CI package cannot redirect the installer to another archive")
     ota = f"https://artifactscdn.mentraglass.com/{REPOSITORY}/releases/pr-builds/ota-pr-{selection.pr}-{selection.head}.json"
     require(app.get("otaManifestUrl") == ota, "Missing or mismatched PR OTA pin")
-    for key in ("executableSha256", "javascriptSha256", "launcherSha256"):
+    hashes = ("executableSha256", "javascriptSha256")
+    for key in hashes + (("launcherSha256",) if version == 1 else ()):
         require(bool(re.fullmatch(r"[a-f0-9]{64}", app.get(key, ""))), f"Invalid {key}")
     asset = receipt["artifacts"]["mac"]
     expected_name = f"mentra-ios-mac-pr-{selection.pr}-{selection.head}-{selection.run}-{selection.attempt}.zip"
@@ -70,6 +71,20 @@ def validate_receipt(receipt, selection):
     require(bool(re.fullmatch(r"[a-f0-9]{64}", asset.get("sha256", ""))), "Invalid archive hash")
     require(isinstance(asset.get("size"), int) and 0 < asset["size"] <= MAX_UNPACKED, "Invalid archive size")
     return app, asset
+
+
+def validate_package_layout(app):
+    version = app.get("macPackageVersion", 1)
+    require(type(version) is int and version in (1, 2), "Unsupported Mac package version")
+    require(app.get("app") == "Mentra.app", "Unexpected package layout")
+    if version == 1:
+        require(app.get("launcherPath") == "launch-ios-on-mac" and "macInstaller" not in app,
+                "Unexpected legacy package layout")
+    else:
+        require(app.get("macInstaller") == MAC_INSTALLER
+                and not any(key in app for key in ("launcherPath", "launcherSha256")),
+                "Unexpected native installer package layout")
+    return version
 
 
 def extract_package(archive, destination):
@@ -111,7 +126,9 @@ def extract_package(archive, destination):
 
 
 def verify_package(package, app, command):
-    require(json.loads((package / "build.json").read_text()) == app, "Packaged manifest differs from CI receipt")
+    version = validate_package_layout(app)
+    manifest_bytes = (package / "build.json").read_bytes()
+    require(json.loads(manifest_bytes) == app, "Packaged manifest differs from CI receipt")
     bundle = package / "Mentra.app"
     info = plistlib.loads((bundle / "Info.plist").read_bytes())
     executable = info["CFBundleExecutable"]
@@ -120,9 +137,11 @@ def verify_package(package, app, command):
     require(info.get("CFBundleIdentifier") == BUNDLE, "App bundle ID mismatch")
     require(info.get("CFBundleVersion") == app.get("build")
             and info.get("CFBundleShortVersionString") == app.get("version"), "App version mismatch")
-    for file, key in ((bundle / executable, "executableSha256"),
-                      (bundle / "main.jsbundle", "javascriptSha256"),
-                      (package / app["launcherPath"], "launcherSha256")):
+    files = [(bundle / executable, "executableSha256"),
+             (bundle / "main.jsbundle", "javascriptSha256")]
+    if version == 1:
+        files.append((package / app["launcherPath"], "launcherSha256"))
+    for file, key in files:
         require(digest(file) == app[key], f"Hash mismatch: {file.name}")
     config = json.loads((bundle / "EXConstants.bundle/app.config").read_text())
     extra = config.get("extra") or {}
@@ -135,6 +154,17 @@ def verify_package(package, app, command):
     command(["/usr/bin/codesign", "--verify", "--deep", "--strict", str(bundle)])
     command(["/usr/bin/codesign", "--verify", "-R",
              f'=anchor apple generic and certificate leaf[subject.OU] = "{TEAM}"', str(bundle)])
+    if version == 2:
+        installer = package / MAC_INSTALLER
+        require((installer / "Contents/Resources/build.json").read_bytes() == manifest_bytes,
+                "Native installer is pinned to a different manifest")
+        command(["/usr/bin/codesign", "--verify", "--deep", "--strict", str(installer)])
+        command(["/usr/bin/codesign", "--verify", "-R",
+                 '=anchor apple generic '
+                 'and identifier "com.mentra.mac-installer" '
+                 'and certificate 1[field.1.2.840.113635.100.6.2.6] exists '
+                 'and certificate leaf[field.1.2.840.113635.100.6.1.13] exists '
+                 f'and certificate leaf[subject.OU] = "{TEAM}"', str(installer)])
 
 
 def main(argv=None):

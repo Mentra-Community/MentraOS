@@ -40,6 +40,25 @@ class MacArtifactTests(unittest.TestCase):
             with self.assertRaises(ValueError):
                 mac_ci.validate_receipt(receipt, self.selection)
 
+    def use_native_package(self):
+        self.app.pop("launcherPath")
+        self.app.pop("launcherSha256")
+        self.app.update(macPackageVersion=2, macInstaller=mac_ci.MAC_INSTALLER)
+
+    def test_native_receipt_requires_the_known_layout_without_a_legacy_launcher(self):
+        self.use_native_package()
+        mac_ci.validate_receipt(self.receipt, self.selection)
+        for mutation in (lambda a: a.update(macPackageVersion=3),
+                         lambda a: a.update(macPackageVersion=True),
+                         lambda a: a.pop("macPackageVersion"),
+                         lambda a: a.update(macInstaller="../Install Mentra.app"),
+                         lambda a: a.update(launcherPath="launch-ios-on-mac"),
+                         lambda a: a.update(launcherSha256="d" * 64)):
+            receipt = copy.deepcopy(self.receipt)
+            mutation(receipt["app"])
+            with self.assertRaises(ValueError):
+                mac_ci.validate_receipt(receipt, self.selection)
+
     def test_producer_allows_selected_prior_artifact_attempt_but_not_wrong_run(self):
         run = {"id": 456, "repository": {"full_name": mac_ci.REPOSITORY},
                "path": mac_ci.WORKFLOW, "event": "pull_request", "status": "completed",
@@ -83,21 +102,29 @@ class MacArtifactTests(unittest.TestCase):
             with self.assertRaisesRegex(ValueError, "link or special"):
                 mac_ci.extract_package(self.archive([entry]), self.root / "rejected")
 
-    def package(self):
+    def package(self, native=False):
+        if native:
+            self.use_native_package()
         package = self.root / "package"
         bundle = package / "Mentra.app"
         (bundle / "EXConstants.bundle").mkdir(parents=True)
         info = {"CFBundleIdentifier": mac_ci.BUNDLE, "CFBundleExecutable": "Mentra",
                 "CFBundleVersion": "1234", "CFBundleShortVersionString": "3.2.1"}
         (bundle / "Info.plist").write_bytes(plistlib.dumps(info))
-        for file, key in ((bundle / "Mentra", "executableSha256"),
-                          (bundle / "main.jsbundle", "javascriptSha256"),
-                          (package / "launch-ios-on-mac", "launcherSha256")):
+        files = [(bundle / "Mentra", "executableSha256"),
+                 (bundle / "main.jsbundle", "javascriptSha256")]
+        if not native:
+            files.append((package / "launch-ios-on-mac", "launcherSha256"))
+        for file, key in files:
             file.write_text(file.name)
             self.app[key] = mac_ci.digest(file)
         (bundle / "EXConstants.bundle/app.config").write_text(json.dumps({"extra": {
             "mentraPrBuild": {"schemaVersion": 1, "otaManifestUrl": self.app["otaManifestUrl"]}}}))
         (package / "build.json").write_text(json.dumps(self.app))
+        if native:
+            resources = package / mac_ci.MAC_INSTALLER / "Contents/Resources"
+            resources.mkdir(parents=True)
+            (resources / "build.json").write_bytes((package / "build.json").read_bytes())
         return package
 
     def test_verifies_bytes_pin_and_expected_apple_signer(self):
@@ -111,6 +138,32 @@ class MacArtifactTests(unittest.TestCase):
         with self.assertRaisesRegex(ValueError, "Hash mismatch"):
             mac_ci.verify_package(package, self.app, commands.append)
         self.assertEqual(len(commands), 2)
+
+    def test_native_package_requires_matching_manifest_and_developer_id_signature(self):
+        package = self.package(native=True)
+        commands = []
+        mac_ci.verify_package(package, self.app, commands.append)
+        self.assertEqual(len(commands), 4)
+        self.assertIn("--strict", commands[2])
+        self.assertEqual(commands[3][-1], str(package / mac_ci.MAC_INSTALLER))
+        self.assertIn(mac_ci.TEAM, commands[3][3])
+        self.assertIn('identifier "com.mentra.mac-installer"', commands[3][3])
+        self.assertIn("certificate 1[field.1.2.840.113635.100.6.2.6] exists", commands[3][3])
+        self.assertIn("certificate leaf[field.1.2.840.113635.100.6.1.13] exists", commands[3][3])
+        pinned = package / mac_ci.MAC_INSTALLER / "Contents/Resources/build.json"
+        pinned.write_text(json.dumps({**self.app, "pr": 124}))
+        with self.assertRaisesRegex(ValueError, "different manifest"):
+            mac_ci.verify_package(package, self.app, commands.append)
+
+    def test_native_installer_signature_failure_rejects_the_package(self):
+        package = self.package(native=True)
+
+        def reject_wrong_signer(argv):
+            if "--strict" not in argv and argv[-1].endswith(mac_ci.MAC_INSTALLER):
+                raise ValueError("Signature does not satisfy Developer ID requirement")
+
+        with self.assertRaisesRegex(ValueError, "Developer ID"):
+            mac_ci.verify_package(package, self.app, reject_wrong_signer)
 
     def test_empty_packaged_pin_does_not_fall_back_to_compiled_javascript(self):
         package = self.package()

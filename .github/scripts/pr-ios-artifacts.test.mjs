@@ -43,6 +43,30 @@ test("publication rerun identifies original build bytes and current publication 
   assert.throws(() => iosReceiptName(123, "../bad", 100, 1), /Invalid/)
 })
 
+test("native Mac packages require the notarized installer receipt before publication", () => {
+  const native = {
+    ...receipt,
+    app: {...receipt.app, macPackageVersion: 2, macInstaller: "Install Mentra.app"},
+    macInstaller: {
+      bundleId: "com.mentra.mac-installer",
+      teamId: "T5XXXL6N36",
+      notarizationStatus: "Accepted",
+      notarizationId: "12345678-abcd-1234-abcd-123456789012",
+      stapled: true,
+    },
+  }
+  assert.equal(validateIosReceipt(native, coordinates), native.artifacts)
+  for (const installer of [
+    undefined,
+    {...native.macInstaller, teamId: "OTHERTEAM"},
+    {...native.macInstaller, bundleId: "com.example.installer"},
+    {...native.macInstaller, notarizationStatus: "In Progress"},
+    {...native.macInstaller, notarizationId: ""},
+    {...native.macInstaller, stapled: false},
+  ])
+    assert.throws(() => validateIosReceipt({...native, macInstaller: installer}, coordinates), /notarization/)
+})
+
 test("Safari install page points through a valid Apple plist to the exact signed IPA", () => {
   const repository = "Mentra-Community/MentraOS"
   const files = iosInstallationFiles(receipt, repository)

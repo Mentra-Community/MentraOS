@@ -8,6 +8,8 @@ import {
   claimInstallation,
   commitStagedInstallation,
   InstallationRollbackError,
+  installBuild,
+  isPortableMacPackage,
   parseInstallerArgs,
   verifyLauncherOverride,
 } from "./install-ios-mac.mjs"
@@ -98,6 +100,37 @@ test("installer CLI rejects incomplete launcher selection and malformed argument
   assert.throws(() => parseInstallerArgs(["--manifest", "build.json", "--unknown"]))
   assert.throws(() => parseInstallerArgs([]), /Usage:/)
 })
+
+test("both CI package formats use portable provisioning checks without requiring Xcode", () => {
+  assert.equal(isPortableMacPackage({app: "Mentra.app"}), false)
+  assert.equal(isPortableMacPackage({app: "Mentra.app", launcherPath: "launch-ios-on-mac"}), true)
+  const native = {app: "Mentra.app", macPackageVersion: 2, macInstaller: "Install Mentra.app"}
+  assert.equal(isPortableMacPackage(native), true)
+  assert.throws(() => isPortableMacPackage({...native, launcherPath: "old-helper"}), /layout/)
+  assert.throws(() => isPortableMacPackage({...native, macInstaller: "../other.app"}), /layout/)
+  assert.throws(() => isPortableMacPackage({...native, macPackageVersion: 3}), /Unsupported/)
+})
+
+test(
+  "a native Mac ZIP requires a pinned host helper before changing the installation",
+  {skip: process.platform !== "darwin"},
+  async () => {
+    const root = await fixture()
+    await mkdir(root, {recursive: true})
+    const manifest = path.join(root, "build.json")
+    await writeFile(
+      manifest,
+      JSON.stringify({
+        app: "Mentra.app",
+        bundleId: "com.mentra.mentra",
+        executableSha256: "a".repeat(64),
+        macPackageVersion: 2,
+        macInstaller: "Install Mentra.app",
+      }),
+    )
+    await assert.rejects(installBuild(manifest), /open Install Mentra.app.*--launcher/)
+  },
+)
 
 test("reuse the same managed installation across builds", async () => {
   const root = await fixture()

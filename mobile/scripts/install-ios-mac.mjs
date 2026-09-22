@@ -77,6 +77,22 @@ export function parseInstallerArgs(args) {
   }
 }
 
+export function isPortableMacPackage(manifest) {
+  const version = manifest.macPackageVersion
+  if (version !== undefined && version !== 1 && version !== 2) throw new Error("Unsupported Mac package version")
+  if (version === 2) {
+    if (
+      manifest.app !== "Mentra.app" ||
+      manifest.macInstaller !== "Install Mentra.app" ||
+      "launcherPath" in manifest ||
+      "launcherSha256" in manifest
+    )
+      throw new Error("Invalid native installer package layout")
+    return true
+  }
+  return Boolean(manifest.launcherPath)
+}
+
 async function regularDirectory(directory) {
   const info = await lstat(directory)
   if (!info.isDirectory() || info.isSymbolicLink()) throw new Error(`Expected a real directory: ${directory}`)
@@ -100,7 +116,7 @@ export async function verifyApp(app, manifest) {
   command("/usr/bin/codesign", ["--verify", "-R", "=anchor apple generic", app])
   const codeRequirement = command("/usr/bin/codesign", ["-dr", "-", app])
   // Portable PR downloads must not require Xcode on the receiving Mac.
-  const executableUUID = manifest.launcherPath
+  const executableUUID = isPortableMacPackage(manifest)
     ? undefined
     : command("/usr/bin/xcrun", ["dwarfdump", "--uuid", path.join(app, executable)])
   if (executableUUID !== undefined && !/^UUID: [A-F0-9-]+ /im.test(executableUUID))
@@ -203,6 +219,11 @@ export async function installBuild(manifestPath, {launch = true, launcherPath, l
   const preinstalledLauncher = await verifyLauncherOverride(launcherPath, launcherSha256)
   const manifest = JSON.parse(await readFile(manifestPath, "utf8"))
   if (!manifest.bundleId || !manifest.executableSha256) throw new Error("Invalid build manifest")
+  const portablePackage = isPortableMacPackage(manifest)
+  if (manifest.macPackageVersion === 2 && !preinstalledLauncher)
+    throw new Error(
+      "For this Mac ZIP, open Install Mentra.app, or provide --launcher and --launcher-sha256 from host provisioning",
+    )
   const root = installationRoot()
   const destination = path.join(root, "Mentra.app")
   await claimInstallation(root, manifest.bundleId)
@@ -225,7 +246,7 @@ export async function installBuild(manifestPath, {launch = true, launcherPath, l
       source = path.join(unpacked, manifest.archivedAppName)
     }
     await verifyApp(source, manifest)
-    if (manifest.launcherPath) verifyMacProvisioning(source)
+    if (portablePackage) verifyMacProvisioning(source)
     const wrapper = path.join(staging, "Mentra.app")
     const inner = path.join(wrapper, "Wrapper", "Mentra.app")
     await mkdir(path.dirname(inner), {recursive: true})

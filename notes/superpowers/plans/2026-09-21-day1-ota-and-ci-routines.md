@@ -43,6 +43,22 @@ Source of truth:
   action or new permission enrollment is covered by this pass.
 - [x] Add `e2e-setup-checks.yml` to run the 20 guard unit tests on Ubuntu only;
   this does not enable hardware execution or a nightly schedule.
+- [x] Replace the scripts in the existing company Mac PR ZIP with a native
+  `Install Mentra.app`; wire Developer ID signing, Apple notarization, stapling
+  and delivered-ZIP checks into the existing PR build/publication workflow.
+  Keep the iOS payload's original signature and the existing Mac download link.
+- [x] Qualify the locally compiled native installer against PR #4132's original
+  signed app: normal replacement and launch, running executable/JavaScript
+  hashes matching the manifest, original app signature valid, existing account
+  and glasses pairing visible. Save screenshots and verification commands
+  privately. This is not notarized-download qualification.
+- [ ] Have the Apple Account Holder create the missing Developer ID Application
+  certificate and provision its private-key export in CI. The portal currently
+  disables certificate creation for this user's team role. Do not merge the CI
+  signing change before provisioning and a successful notarized-artifact run.
+- [ ] Download the resulting CI ZIP through a browser on a registered Mac and
+  qualify Gatekeeper launch, translocation/folder selection, app replacement and
+  permission reuse. Recheck first-use setup on a new test host separately.
 - [ ] Resolve one app/manifest selection for the day-one test and verify effective
   legacy rescue policy plus all normal return artifacts. The currently restored
   PR #4132 installation alone is not this qualification.

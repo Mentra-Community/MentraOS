@@ -7,6 +7,8 @@ on:
       - "tools/mentra-e2e/test_mac_ci.py"
       - "mobile/scripts/install-ios-mac.mjs"
       - "mobile/scripts/install-ios-mac.test.mjs"
+      - "mobile/ci/pr-ios/mac_installer.py"
+      - "mobile/ci/pr-ios/test_mac_installer.py"
       - ".github/workflows/e2e-setup-checks.yml"
   push:
     branches: [dev]
@@ -15,6 +17,8 @@ on:
       - "tools/mentra-e2e/test_mac_ci.py"
       - "mobile/scripts/install-ios-mac.mjs"
       - "mobile/scripts/install-ios-mac.test.mjs"
+      - "mobile/ci/pr-ios/mac_installer.py"
+      - "mobile/ci/pr-ios/test_mac_installer.py"
       - ".github/workflows/e2e-setup-checks.yml"
 
 permissions:
@@ -35,3 +39,4 @@ jobs:
           python-version: "3.12"
       - run: python3 -m unittest discover -s tools/mentra-e2e -p test_mac_ci.py -v
       - run: node --test mobile/scripts/install-ios-mac.test.mjs
+      - run: python3 mobile/ci/pr-ios/test_mac_installer.py

@@ -14,6 +14,7 @@ import sys
 import subprocess
 import tempfile
 import zipfile
+from mac_installer import DEVELOPER_ID_REQUIREMENT, package_installer
 
 BUNDLE_ID = "com.mentra.mentra"
 PROFILE_NAME = f"match AdHoc {BUNDLE_ID}"
@@ -136,7 +137,7 @@ def configure(output, keychain):
     print(f"Validated ad hoc profile {profile['Name']}, expires {profile['ExpirationDate']}, {len(profile['ProvisionedDevices'])} devices")
 
 
-def package(ipa, output):
+def package(ipa, output, mac_signing):
     output.mkdir(parents=True, exist_ok=True)
     context = {"pr": int(os.environ["PR_NUMBER"]), "headSha": os.environ["PR_HEAD_SHA"],
                "buildSha": run("git", "rev-parse", "HEAD").decode().strip(),
@@ -167,6 +168,7 @@ def package(ipa, output):
         if executable.parent != app:
             raise ValueError("Invalid executable name")
         manifest = {**context, "bundleId": BUNDLE_ID, "app": "Mentra.app", "backend": "dev", "otaManifestUrl": ota_url,
+                    "macPackageVersion": 2, "macInstaller": "Install Mentra.app",
                     "mobileFingerprint": compilation["mobileFingerprint"],
                     "mobileSourceCommit": compilation["mobileSourceCommit"],
                     "reusedCompilation": os.environ.get("PR_IOS_REUSED") == "true",
@@ -176,16 +178,8 @@ def package(ipa, output):
         mac = root / "Mentra PR"
         mac.mkdir()
         run("ditto", app, mac / "Mentra.app")
-        shutil.copy2(HERE.parent.parent / "scripts/install-ios-mac.mjs", mac / "install.mjs")
-        launcher = mac / "launch-ios-on-mac"
-        run("xcrun", "swiftc", "-parse-as-library", "-O", "-target", "arm64-apple-macosx14.0",
-            HERE.parent.parent / "scripts/launch-ios-on-mac.swift", "-o", launcher)
-        # Small macOS helper has a local signature; the inner iOS app keeps its Apple signature.
-        run("codesign", "--force", "--sign", "-", launcher)
-        manifest.update({"launcherPath": "launch-ios-on-mac", "launcherSha256": digest(launcher)})
         (mac / "build.json").write_text(json.dumps(manifest, indent=2) + "\n")
-        (mac / "Install.command").write_text('#!/bin/bash\nset -euo pipefail\ncd -- "$(dirname -- "$0")"\nexport PATH="$HOME/.bun/bin:/opt/homebrew/bin:$PATH"\ncommand -v bun >/dev/null || { echo "Install Bun first: https://bun.sh"; exit 1; }\nbun install.mjs --manifest build.json\n')
-        (mac / "Install.command").chmod(0o755)
+        installer = package_installer(mac, manifest, mac_signing, output.parent / "mac-installer-diagnostics")
         shutil.copy2(HERE / "README.md", mac / "README.md")
         files = {"iphone": f"mentra-ios-iphone-{suffix}.ipa", "mac": f"mentra-ios-mac-{suffix}.zip"}
         shutil.copy2(ipa, output / files["iphone"])
@@ -193,11 +187,16 @@ def package(ipa, output):
         # Verify the delivered Mac ZIP, not only the source staging directory.
         run("ditto", "-x", "-k", output / files["mac"], root / "verify")
         delivered = root / "verify/Mentra PR/Mentra.app"
+        delivered_installer = root / "verify/Mentra PR/Install Mentra.app"
+        run("codesign", "--verify", "--deep", "--strict", "-R", DEVELOPER_ID_REQUIREMENT, delivered_installer)
+        run("xcrun", "stapler", "validate", delivered_installer)
+        if (delivered_installer / "Contents/Resources/build.json").read_bytes() != (mac / "build.json").read_bytes():
+            raise ValueError("Delivered installer is not bound to this exact PR manifest")
         run("codesign", "--verify", "--deep", "--strict", delivered)
         verify_pr_ota(delivered, os.environ["GITHUB_REPOSITORY"], context["pr"], context["headSha"])
         if digest(delivered / info["CFBundleExecutable"]) != manifest["executableSha256"] or digest(delivered / "main.jsbundle") != manifest["javascriptSha256"]:
             raise ValueError("Mac ZIP no longer contains the exported signed app")
-        receipt = {"schemaVersion": 1, **context, "app": manifest,
+        receipt = {"schemaVersion": 1, **context, "app": manifest, "macInstaller": installer,
                    "artifacts": {kind: {"name": name, "size": (output / name).stat().st_size,
                                         "sha256": digest(output / name)} for kind, name in files.items()}}
         (output / f"mentra-ios-{suffix}.json").write_text(json.dumps(receipt, indent=2) + "\n")
@@ -209,12 +208,13 @@ if __name__ == "__main__":
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--keychain")
     parser.add_argument("--ipa", type=Path)
+    parser.add_argument("--mac-signing", type=Path)
     args = parser.parse_args()
     if args.mode == "configure":
         if not args.keychain:
             parser.error("configure requires --keychain")
         configure(args.output, args.keychain)
     else:
-        if not args.ipa:
-            parser.error("package requires --ipa")
-        package(args.ipa, args.output)
+        if not args.ipa or not args.mac_signing:
+            parser.error("package requires --ipa and --mac-signing")
+        package(args.ipa, args.output, args.mac_signing)
