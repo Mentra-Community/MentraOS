@@ -71,6 +71,9 @@ export const testRunSchema = z.object({
 
 export const testRunQuerySchema = z.object({
   pr: z.coerce.number().int().positive().optional(),
+  repository: z.string().max(200).regex(/^[A-Za-z0-9-]+\/[A-Za-z0-9_.-]+$/).optional(),
+  headSha: z.string().regex(/^[a-f0-9]{40}$/).optional(),
+  archiveSha256: sha256.optional(),
   channel: z.enum(["pr", "dev", "staging", "local"]).optional(),
   outcome: z.enum(["passed", "failed", "blocked", "aborted"]).optional(),
   routineId: testRunIdSchema.optional(),

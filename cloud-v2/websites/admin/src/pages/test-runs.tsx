@@ -4,7 +4,7 @@ import { useEffect, useRef, useState, type ReactNode } from "react";
 import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { api } from "../lib/api";
-import { readTestRunLink, testRunAssetPath, type TestRunLink } from "../lib/test-run-links";
+import { readTestRunLink, testRunAssetPath, type TestRunLink, type TestRunListScope } from "../lib/test-run-links";
 import {
   chapterSeekTime,
   EMPTY_FILTERS,
@@ -26,18 +26,22 @@ const INPUT = "h-9 rounded-lg border border-[#dfe3dc] bg-white px-3 text-sm";
 export function TestRunsPage({
   selection,
   onSelect,
+  scope = null,
+  onClearScope,
 }: {
   selection: TestRunLink | null;
   onSelect: (selection: TestRunLink | null, replace?: boolean) => void;
+  scope?: TestRunListScope | null;
+  onClearScope?: () => void;
 }) {
   const [draft, setDraft] = useState<TestRunFilters>(EMPTY_FILTERS);
   const [filters, setFilters] = useState<TestRunFilters>(EMPTY_FILTERS);
   const [filterError, setFilterError] = useState<string | null>(null);
   const runs = useInfiniteQuery({
-    queryKey: ["admin-test-runs", filters],
+    queryKey: ["admin-test-runs", filters, scope],
     initialPageParam: undefined as string | undefined,
     queryFn: ({ pageParam }) =>
-      api<{ runs: TestRunSummary[]; nextCursor: string | null }>(testRunListPath(filters, pageParam)),
+      api<{ runs: TestRunSummary[]; nextCursor: string | null }>(testRunListPath(filters, pageParam, scope)),
     getNextPageParam: (response) => response.nextCursor ?? undefined,
     enabled: !selection,
   });
@@ -52,6 +56,7 @@ export function TestRunsPage({
       />
     );
   const rows = runs.data?.pages.flatMap((page) => page.runs) ?? [];
+  const additionalFilters = !!(filters.outcome || filters.fixtureAlias || filters.startedAfter || filters.startedBefore);
   return (
     <section className={PANEL}>
       <div className="border-b border-[#eceeeb] p-5">
@@ -71,12 +76,23 @@ export function TestRunsPage({
             <RefreshCcw className={`size-4 ${runs.isFetching ? "animate-spin" : ""}`} />
           </Button>
         </div>
+        {scope ? (
+          <div className="mt-4 rounded-lg bg-[#f2f7f3] p-3 text-sm">
+            <p className="font-semibold">
+              Results for {scope.repository} PR #{scope.pr} · commit {scope.headSha.slice(0, 7)}
+            </p>
+            <p className="mt-1 break-all text-xs text-[#68746d]">App archive SHA256: {scope.archiveSha256}</p>
+            <Button className="mt-2" variant="outline" onClick={onClearScope}>
+              Show all builds
+            </Button>
+          </div>
+        ) : null}
         <form
           className="mt-5 flex flex-wrap items-end gap-3"
           onSubmit={(event) => {
             event.preventDefault();
             try {
-              testRunListPath(draft);
+              testRunListPath(draft, undefined, scope);
               setFilters({ ...draft });
               setFilterError(null);
             } catch (error) {
@@ -87,7 +103,8 @@ export function TestRunsPage({
             <Input
               className="w-28"
               inputMode="numeric"
-              value={draft.pr}
+              value={scope?.pr ?? draft.pr}
+              disabled={!!scope}
               onChange={(event) => update("pr", event.target.value)}
               placeholder="All PRs"
               aria-label="PR number"
@@ -97,7 +114,8 @@ export function TestRunsPage({
             <select
               aria-label="Channel"
               className={INPUT}
-              value={draft.channel}
+              value={scope ? "pr" : draft.channel}
+              disabled={!!scope}
               onChange={(event) => update("channel", event.target.value)}>
               {[
                 ["", "All channels"],
@@ -135,7 +153,8 @@ export function TestRunsPage({
             <select
               aria-label="Platform"
               className={INPUT}
-              value={draft.platform}
+              value={scope?.platform ?? draft.platform}
+              disabled={!!scope}
               onChange={(event) => update("platform", event.target.value)}>
               {[
                 ["", "All platforms"],
@@ -152,7 +171,8 @@ export function TestRunsPage({
           <Filter label="Routine">
             <Input
               className="w-44"
-              value={draft.routineId}
+              value={scope?.routineId ?? draft.routineId}
+              disabled={!!scope}
               onChange={(event) => update("routineId", event.target.value)}
               placeholder="All routines"
               aria-label="Routine ID"
@@ -203,8 +223,12 @@ export function TestRunsPage({
         <Failure error={runs.error} />
       ) : rows.length === 0 ? (
         <Empty
-          title="No test runs found"
-          body="Completed routine results will appear here after they are uploaded. Try a different filter."
+          title={scope && !additionalFilters ? "No results for this build yet" : "No test runs match these filters"}
+          body={
+            scope && !additionalFilters
+              ? "Results appear after the device run is uploaded. A requested test is not a completed test."
+              : "Completed routine results will appear here after they are uploaded. Try a different filter."
+          }
         />
       ) : (
         <>

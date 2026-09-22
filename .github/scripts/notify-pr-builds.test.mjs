@@ -13,6 +13,7 @@ import {
   notifyPrBuilds,
   readOtaTargets,
   verifyIosTextArtifact,
+  routineResultsUrl,
 } from "./notify-pr-builds.mjs"
 
 const sha = "a".repeat(40)
@@ -125,6 +126,8 @@ function harness(options = {}) {
     corruptInstall: false,
     textArtifacts: {},
     jobs: {},
+    routineRuns: [],
+    routineLookupError: false,
     ...options,
   }
   const posts = [],
@@ -135,19 +138,27 @@ function harness(options = {}) {
     rest: {
       pulls: {get: async () => ({data: state.currentPr}), listFiles: "files"},
       actions: {
-        listWorkflowRuns: async ({workflow_id}) => ({
-          data: {
-            workflow_runs: [
-              state[
-                workflow_id === "mentra-app-ios-build.yml"
-                  ? "ios"
-                  : workflow_id === "mentra-app-android-build.yml"
-                    ? "android"
-                    : "asg"
-              ],
-            ].filter(Boolean),
-          },
-        }),
+        listWorkflowRuns: async ({workflow_id, head_sha, event}) => {
+          if (workflow_id === "request-e2e-routine.yml") {
+            assert.equal(head_sha, sha)
+            assert.equal(event, "pull_request")
+            if (state.routineLookupError) throw new Error("Temporary Actions failure")
+            return {data: {workflow_runs: state.routineRuns}}
+          }
+          return {
+            data: {
+              workflow_runs: [
+                state[
+                  workflow_id === "mentra-app-ios-build.yml"
+                    ? "ios"
+                    : workflow_id === "mentra-app-android-build.yml"
+                      ? "android"
+                      : "asg"
+                ],
+              ].filter(Boolean),
+            },
+          }
+        },
         listJobsForWorkflowRun: "jobs",
       },
       issues: {
@@ -547,4 +558,72 @@ test("Android failure still allows verified iOS links; cancelled iOS suppresses 
   const cancelled = harness({files: [{filename: "mobile/app.config.ts"}], ios: {...iosRun, conclusion: "cancelled"}})
   await notifyPrBuilds(cancelled.args)
   assert.equal(cancelled.posts.length, 0)
+})
+
+test("requested tests link the exact Mac archive and current-head request without waiting for device results", async () => {
+  const h = harness({
+    files: [{filename: "mobile/app.config.ts"}],
+    currentPr: {...pr, labels: [{name: "routine:day1-ota"}]},
+    routineRuns: [
+      {...run, id: 90, head_sha: "d".repeat(40)},
+      {...run, id: 91, head_repository: {full_name: "someone/fork"}},
+      {...run, id: 9, run_attempt: 2, status: "in_progress", conclusion: null},
+    ],
+  })
+  await notifyPrBuilds(h.args)
+  const text = h.posts[0].blocks.flatMap((block) => block.text?.text ?? []).join("\n")
+  assert.match(text, /Requested tests:\* Day-one OTA · iOS on Mac/)
+  assert.match(text, /https:\/\/github.com\/o\/r\/actions\/runs\/9\/attempts\/2\|Request pipeline/)
+  assert.doesNotMatch(text, /Tests passed|Test running|Ready to run|localhost|127\.0\.0\.1/)
+  const results = new URL(text.match(/<(https:[^|]+)\|View results>/)[1])
+  assert.equal(results.origin, "https://admin.dev.mentraglass.com")
+  assert.deepEqual(Object.fromEntries(results.searchParams), {
+    testRuns: "1",
+    repository: "o/r",
+    pr: "123",
+    headSha: sha,
+    archiveSha256: iosReceipt.artifacts.mac.sha256,
+    routineId: "day1-ota",
+    platform: "ios-mac",
+  })
+  assert.match(h.written[0].body, /\[View results\]\(https:\/\/admin\.dev\.mentraglass\.com/)
+  assert.match(text, /Results appear after the device run is uploaded/)
+  h.state.routineRuns[2].status = "completed"
+  h.state.routineRuns[2].conclusion = "success"
+  await notifyPrBuilds(h.args)
+  assert.equal(h.posts.length, 1, "request completion does not change build-post deduplication")
+})
+
+test("optional request lookup never gates the build post or substitutes another revision", async () => {
+  for (const options of [{routineRuns: [{...run, id: 90, head_sha: "d".repeat(40)}]}, {routineLookupError: true}]) {
+    const h = harness({
+      files: [{filename: "mobile/app.config.ts"}],
+      currentPr: {...pr, labels: [{name: "routine:day1-ota"}]},
+      ...options,
+    })
+    await notifyPrBuilds(h.args)
+    const body = JSON.stringify(h.posts[0])
+    assert.match(body, /request-e2e-routine.yml\|Request pipeline \(workflow\)/)
+    assert.doesNotMatch(body, /actions\/runs\/90/)
+  }
+  for (const options of [{missingMac: true}, {files: []}]) {
+    const h = harness({
+      files: [{filename: "mobile/app.config.ts"}],
+      currentPr: {...pr, labels: [{name: "routine:day1-ota"}]},
+      ...options,
+    })
+    await notifyPrBuilds(h.args)
+    const body = JSON.stringify(h.posts[0])
+    assert.match(body, /Requested tests/)
+    assert.doesNotMatch(body, /\|View results>/)
+  }
+  const unrequested = harness({files: [{filename: "mobile/app.config.ts"}]})
+  await notifyPrBuilds(unrequested.args)
+  assert.doesNotMatch(JSON.stringify(unrequested.posts[0]), /Requested tests|View results|Request pipeline/)
+})
+
+test("result links require a complete build identity", () => {
+  const identity = {repository: "o/r", pr: 123, sha, archiveSha256: "b".repeat(64)}
+  for (const patch of [{repository: "../bad"}, {pr: -1}, {sha: "short"}, {archiveSha256: undefined}])
+    assert.equal(routineResultsUrl({...identity, ...patch}), null)
 })

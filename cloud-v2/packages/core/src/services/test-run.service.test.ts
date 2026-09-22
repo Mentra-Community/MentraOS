@@ -1,4 +1,4 @@
-import { afterEach, beforeEach, describe, expect, test } from "bun:test";
+import { afterEach, beforeEach, describe, expect, spyOn, test } from "bun:test";
 import { createHash } from "node:crypto";
 import { mkdtemp, rm } from "node:fs/promises";
 import { join } from "node:path";
@@ -7,11 +7,12 @@ import { Hono } from "hono";
 import { createTestRunAdminApi } from "../api/admin/test-runs.api";
 import { createTestRunIngestApi } from "../api/internal/test-runs.api";
 import { adminAuth } from "../api/middleware/admin-auth.middleware";
+import { TestRunModel } from "../models/test-run.model";
 import { testRunQuerySchema, testRunSchema, type TestRun, type TestRunQuery } from "../types/test-run.types";
 import { StorageService } from "./storage/storage.service";
 import { LocalStorageProvider } from "./storage/providers/local-storage.provider";
 import { S3StorageProvider } from "./storage/providers/s3-storage.provider";
-import { parseTestAssetRange, TestRunService, type StoredTestAsset, type StoredTestRun, type TestRunRepository } from "./test-run.service";
+import { MongoTestRunRepository, parseTestAssetRange, TestRunService, type StoredTestAsset, type StoredTestRun, type TestRunRepository } from "./test-run.service";
 
 class MemoryRepository implements TestRunRepository {
   runs = new Map<string, StoredTestRun>();
@@ -77,6 +78,26 @@ const post = (run: unknown = fixture(), token = TOKEN) => ingest.request("/", {
 });
 const put = (bytes: Uint8Array = video, id = "video-1") => ingest.request(`/run-example-1/assets/${id}`, {
   method: "PUT", headers: { authorization: `Bearer ${TOKEN}`, "content-type": "video/mp4" }, body: bytes,
+});
+
+test("build-scoped list links reach Mongo as exact provenance filters and reject malformed hashes", async () => {
+  const query = {repository: "Mentra-Community/MentraOS", pr: "4136", headSha: "a".repeat(40),
+    archiveSha256: "b".repeat(64), routineId: "day1-ota", platform: "ios-mac", channel: "pr"};
+  const find = spyOn(TestRunModel, "find").mockReturnValue({sort: () => ({limit: () => ({lean: async () => []})})} as unknown as ReturnType<typeof TestRunModel.find>);
+  try {
+    const api = createTestRunAdminApi(new TestRunService(new MongoTestRunRepository()));
+    const response = await api.request(`/?${new URLSearchParams(query)}`);
+    expect(response.status).toBe(200);
+    expect(await response.json()).toEqual({runs: [], nextCursor: null});
+    expect(find).toHaveBeenCalledWith({
+      "payload.prNumber": 4136, "payload.channel": "pr", "payload.routineId": "day1-ota", "payload.platform": "ios-mac",
+      "payload.provenance.repository": query.repository, "payload.provenance.headSha": query.headSha,
+      "payload.provenance.archiveSha256": query.archiveSha256,
+    });
+    for (const patch of [{repository: "../repo"}, {headSha: "short"}, {archiveSha256: "short"}])
+      expect((await api.request(`/?${new URLSearchParams({...query, ...patch})}`)).status).toBe(400);
+    expect(find).toHaveBeenCalledTimes(1);
+  } finally { find.mockRestore(); }
 });
 
 describe("test run authentication and immutable ingestion", () => {

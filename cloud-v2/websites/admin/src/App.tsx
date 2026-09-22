@@ -5,7 +5,9 @@ import { AppShell, type NavItem } from "@/components/app-shell";
 import { Button } from "@/components/ui/button";
 import mentraLogo from "./assets/mentra-logo.svg";
 import { api, ApiError } from "./lib/api";
-import { readTestRunLink, testRunLocation, type TestRunLink } from "./lib/test-run-links";
+import {
+  readTestRunLink, readTestRunListScope, testRunListLocation, testRunLocation, type TestRunLink,
+} from "./lib/test-run-links";
 import { TestRunsPage } from "./pages/test-runs";
 
 type Environment = "debug" | "dev" | "staging" | "prod";
@@ -159,12 +161,16 @@ export function App() {
 // it back through the auth round-trip. Navigating between pages spends it.
 let pendingDeepLinkReportId = new URLSearchParams(window.location.search).get("report");
 const initialTestRunLink = readTestRunLink(window.location.search);
+const initialTestRunListScope = readTestRunListScope(window.location.search);
 
 function AdminPage() {
   const qc = useQueryClient();
   const env = ENVIRONMENT;
-  const [page, setPage] = useState<AdminPageKey>(initialTestRunLink ? "test-runs" : pendingDeepLinkReportId ? "incidents" : "home");
+  const [page, setPage] = useState<AdminPageKey>(
+    initialTestRunLink || initialTestRunListScope ? "test-runs" : pendingDeepLinkReportId ? "incidents" : "home",
+  );
   const [testRunLink, setTestRunLink] = useState<TestRunLink | null>(initialTestRunLink);
+  const [testRunListScope, setTestRunListScope] = useState(initialTestRunListScope);
   const [deepLinkReportId, setDeepLinkReportId] = useState<string | null>(pendingDeepLinkReportId);
   const [selectedReleaseIds, setSelectedReleaseIds] = useState<Set<string>>(new Set());
   const [detailReleaseId, setDetailReleaseId] = useState<string | null>(null);
@@ -201,8 +207,10 @@ function AdminPage() {
   useEffect(() => {
     const restore = () => {
       const selection = readTestRunLink(window.location.search);
+      const scope = readTestRunListScope(window.location.search);
       setTestRunLink(selection);
-      if (selection) setPage("test-runs");
+      setTestRunListScope(scope);
+      if (selection || scope) setPage("test-runs");
     };
     window.addEventListener("popstate", restore);
     return () => window.removeEventListener("popstate", restore);
@@ -211,6 +219,11 @@ function AdminPage() {
   function selectTestRun(selection: TestRunLink | null, replace = false) {
     setTestRunLink(selection);
     window.history[replace ? "replaceState" : "pushState"](null, "", testRunLocation(window.location.href, selection));
+  }
+
+  function clearTestRunListScope() {
+    setTestRunListScope(null);
+    window.history.replaceState(null, "", testRunListLocation(window.location.href, null));
   }
 
   const submissions = useQuery({
@@ -348,7 +361,10 @@ function AdminPage() {
         // Any navigation spends the deep link: coming back to the Incident
         // system page starts unselected.
         setDeepLinkReportId(null);
-        if (key !== "test-runs") selectTestRun(null, true);
+        if (key !== "test-runs") {
+          selectTestRun(null, true);
+          clearTestRunListScope();
+        }
       }}
       title={pageMeta[page].title}
       description={pageMeta[page].body}
@@ -406,7 +422,10 @@ function AdminPage() {
       {page === "audit" ? <AuditPage events={auditEvents} loading={audit.isLoading} /> : null}
 
       {page === "incidents" ? <ReportsPage initialReportId={deepLinkReportId} /> : null}
-      {page === "test-runs" ? <TestRunsPage selection={testRunLink} onSelect={selectTestRun} /> : null}
+      {page === "test-runs" ? (
+        <TestRunsPage selection={testRunLink} onSelect={selectTestRun}
+          scope={testRunListScope} onClearScope={clearTestRunListScope} />
+      ) : null}
 
       {detailRelease ? (
         <SubmissionDetail

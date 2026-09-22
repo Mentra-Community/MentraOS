@@ -55,6 +55,7 @@ export class MongoTestRunRepository implements TestRunRepository {
     const filter: Record<string, unknown> = {};
     if (query.outcome) filter.outcome = query.outcome;
     for (const [input, path] of [["pr", "prNumber"], ["channel", "channel"],
+      ["repository", "provenance.repository"], ["headSha", "provenance.headSha"], ["archiveSha256", "provenance.archiveSha256"],
       ["routineId", "routineId"], ["platform", "platform"], ["fixtureAlias", "fixture.alias"]] as const) {
       if (query[input] !== undefined) filter[`payload.${path}`] = query[input];
     }

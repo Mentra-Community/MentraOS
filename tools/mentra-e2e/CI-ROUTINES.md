@@ -22,6 +22,34 @@ in-progress or missing publication produces `no-artifact`. Rerun the request
 workflow after the build becomes available; the new attempt is a new immutable
 request, not an edit to the old one.
 
+## Build posts in Slack
+
+The existing **#pr-builds** post is published when its app/ASG producers finish,
+at the same time as before. It does not wait for a request workflow or a hardware
+test. When `routine:day1-ota` is present at publication, the post adds **Requested
+tests: Day-one OTA · iOS on Mac**, a **Request pipeline** link, and **View results**
+when the Mac archive has been verified. The label expresses requested coverage,
+not a running or passed test.
+The label creates a request artifact; it does not start the Mac worker or put a
+job into an automatic hardware queue. An operator still invokes the local
+worker explicitly.
+
+**View results** opens the existing dev admin at
+`https://admin.dev.mentraglass.com/`, scoped to the repository, PR, full head SHA,
+exact Mac archive SHA256, routine and platform. The same scope survives sign-in
+and opening/backing out of a result. Until a matching result is uploaded, it says
+**No results for this build yet**. Older PR builds are not substituted. Publish
+results to dev Core for this shared link; localhost-only records are not copied
+by merging this PR. The dev admin/Core must include the build-filter support.
+
+The pipeline link selects the latest matching PR-event request for this head.
+If none can be located, **Request pipeline (workflow)** opens the workflow page;
+it does not imply a request exists. This lookup never blocks a ready build post.
+There is no Slack bot or post-editing service: later label changes, completed
+tests or uploads do not publish/update a build post. Check **View results** for
+uploaded outcomes; normal build/publication retries retain their existing
+notification reconciliation behavior.
+
 ## Inspect and claim on the Mac
 
 Use the reviewed local checkout. Keep the trust policy and worker state outside

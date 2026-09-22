@@ -61,7 +61,11 @@ Existing `adminAuth` protects all three routes using the admin console session:
   `channel`, `outcome`, `routineId`, `platform`, `fixtureAlias`, `startedAfter`,
   `startedBefore`; ISO dates; `limit` defaults to 25 and is capped at 100.
   `cursor` is an opaque newest-first continuation. Summaries omit chapters,
-  assets, firmware assertions and notes.
+  assets, firmware assertions and notes. `repository`, `headSha` (full 40-character
+  SHA), and `archiveSha256` (64-character hash) are optional exact provenance
+  filters. Build links combine all three with `pr`, `channel=pr`, `routineId`
+  and `platform` so results from an older revision or another archive cannot
+  appear as coverage for the linked build. Existing PR indexes bound this query.
 - `GET /api/admin/test-runs/:runId` returns the complete record, computed
   evidence outcome and `assets[].uploaded`. It never exposes storage keys.
 - `GET` or `HEAD /api/admin/test-runs/:runId/assets/:assetId` serves only an

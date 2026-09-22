@@ -1,6 +1,13 @@
 import { describe, expect, test } from "bun:test";
 import { renderToStaticMarkup } from "react-dom/server";
-import { readTestRunLink, testRunAssetPath, testRunLocation } from "../lib/test-run-links";
+import { QueryClient, QueryClientProvider } from "@tanstack/react-query";
+import {
+  readTestRunLink,
+  readTestRunListScope,
+  testRunListLocation,
+  testRunAssetPath,
+  testRunLocation,
+} from "../lib/test-run-links";
 import {
   chapterSeekTime,
   EMPTY_FILTERS,
@@ -9,7 +16,7 @@ import {
   testRunListPath,
   type TestRunDetail,
 } from "./test-runs-data";
-import { TestRunView } from "./test-runs";
+import { TestRunsPage, TestRunView } from "./test-runs";
 
 // Synthetic render fixture only; never uploaded or presented as a device result.
 const run: TestRunDetail = {
@@ -71,6 +78,94 @@ const run: TestRunDetail = {
 };
 
 describe("authenticated result navigation", () => {
+  const buildQuery = new URLSearchParams({
+    testRuns: "1",
+    repository: "Mentra-Community/MentraOS",
+    pr: "4136",
+    headSha: "a".repeat(40),
+    archiveSha256: "b".repeat(64),
+    routineId: "day1-ota",
+    platform: "ios-mac",
+  });
+  test("exact build scope survives login, detail navigation and back to results", () => {
+    const location = `https://admin.dev.mentraglass.com/?${buildQuery}`;
+    const login = new URL("/api/console/auth/login", location);
+    login.searchParams.set("return_to", location);
+    const returned = new URL(login.searchParams.get("return_to")!);
+    const scope = readTestRunListScope(returned.search)!;
+    expect(scope).toEqual({
+      repository: "Mentra-Community/MentraOS",
+      pr: "4136",
+      headSha: "a".repeat(40),
+      archiveSha256: "b".repeat(64),
+      routineId: "day1-ota",
+      platform: "ios-mac",
+    });
+    const detail = new URL(testRunLocation(returned.href, { runID: "example-01", stepID: "OTA-01" }), returned);
+    expect(readTestRunListScope(detail.search)).toEqual(scope);
+    const back = new URL(testRunLocation(detail.href, null), returned);
+    expect(readTestRunLink(back.search)).toBeNull();
+    expect(readTestRunListScope(back.search)).toEqual(scope);
+    expect(testRunListLocation(back.href, null)).toBe("/");
+    const path = new URL(
+      testRunListPath(
+        { ...EMPTY_FILTERS, pr: "1", channel: "local", routineId: "other", platform: "android", outcome: "failed" },
+        "cursor-2",
+        scope,
+      ),
+      returned,
+    );
+    expect(Object.fromEntries(path.searchParams)).toEqual({
+      ...scope,
+      channel: "pr",
+      outcome: "failed",
+      cursor: "cursor-2",
+      limit: "25",
+    });
+  });
+  test("incomplete or ambiguous build links cannot select an unscoped results list", () => {
+    for (const key of ["testRuns", "repository", "pr", "headSha", "archiveSha256", "routineId", "platform"]) {
+      const missing = new URLSearchParams(buildQuery);
+      missing.delete(key);
+      expect(readTestRunListScope(missing.toString())).toBeNull();
+      const duplicate = new URLSearchParams(buildQuery);
+      duplicate.append(key, buildQuery.get(key)!);
+      expect(readTestRunListScope(duplicate.toString())).toBeNull();
+    }
+    for (const [key, value] of [
+      ["repository", "../repo"],
+      ["pr", "9007199254740993"],
+      ["headSha", "abcdef"],
+      ["archiveSha256", "missing"],
+      ["routineId", "../id"],
+      ["platform", "unknown"],
+    ]) {
+      const invalid = new URLSearchParams(buildQuery);
+      invalid.set(key!, value!);
+      expect(readTestRunListScope(invalid.toString())).toBeNull();
+    }
+  });
+  test("a new build shows an honest empty state and keeps its identity filters fixed", () => {
+    const scope = readTestRunListScope(buildQuery.toString())!;
+    const client = new QueryClient();
+    client.setQueryData(["admin-test-runs", EMPTY_FILTERS, scope], {
+      pages: [{ runs: [], nextCursor: null }],
+      pageParams: [undefined],
+    });
+    const markup = renderToStaticMarkup(
+      <QueryClientProvider client={client}>
+        <TestRunsPage selection={null} onSelect={() => {}} scope={scope} onClearScope={() => {}} />
+      </QueryClientProvider>,
+    );
+    expect(markup).toContain("No results for this build yet");
+    expect(markup).toContain("Results appear after the device run is uploaded");
+    expect(markup).toContain("PR #4136");
+    expect(markup).toContain(scope.archiveSha256);
+    expect(markup).toMatch(/disabled=""[^>]*aria-label="PR number"/);
+    expect(markup).toMatch(/aria-label="Platform"[^>]*disabled=""/);
+    expect(markup).not.toContain("No test runs found");
+    client.clear();
+  });
   test("a run and English step link survive the login return URL round trip", () => {
     const location = "https://admin.mentraglass.com/?testRun=run-01&step=BES%20version%3F#evidence";
     const login = new URL("/api/console/auth/login", location);

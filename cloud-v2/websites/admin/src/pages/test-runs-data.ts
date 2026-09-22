@@ -1,3 +1,5 @@
+import type { TestRunListScope } from "../lib/test-run-links";
+
 export type RunOutcome = "passed" | "failed" | "blocked" | "aborted";
 export type CheckOutcome = "passed" | "failed" | "blocked" | "not-run";
 export type RunChannel = "pr" | "dev" | "staging" | "local";
@@ -108,8 +110,8 @@ export const EMPTY_FILTERS: TestRunFilters = {
   startedBefore: "",
 };
 
-export function testRunListPath(filters: TestRunFilters, cursor?: string) {
-  if (filters.pr && !/^[1-9]\d*$/.test(filters.pr)) throw new Error("Enter a positive PR number.");
+export function testRunListPath(filters: TestRunFilters, cursor?: string, scope?: TestRunListScope | null) {
+  if (!scope && filters.pr && !/^[1-9]\d*$/.test(filters.pr)) throw new Error("Enter a positive PR number.");
   const query = new URLSearchParams({ limit: "25" });
   for (const [key, value] of Object.entries(filters))
     if (value.trim()) {
@@ -127,6 +129,10 @@ export function testRunListPath(filters: TestRunFilters, cursor?: string) {
     }
   if (filters.startedAfter && filters.startedBefore && filters.startedAfter > filters.startedBefore)
     throw new Error("The start date must not follow the end date.");
+  if (scope) {
+    for (const [key, value] of Object.entries(scope)) query.set(key, value);
+    query.set("channel", "pr");
+  }
   if (cursor) query.set("cursor", cursor);
   return `/api/admin/test-runs?${query}`;
 }
