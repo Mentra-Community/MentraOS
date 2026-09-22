@@ -655,6 +655,7 @@ jobs:
           sparse-checkout: |
             .github/scripts
             .github/artifact-storage
+            mobile/ci/verify-signing.py
 
       - uses: actions/download-artifact@v4
         with:
@@ -737,9 +738,19 @@ jobs:
           grep -E '^(EXPO_PUBLIC_|MENTRAOS_NATIVE_MARKETING_VERSION|MENTRAOS_PINNED_BUILD_NUMBER)=' mobile/.env >> "$GITHUB_ENV"
           echo "MENTRA_COORDINATED_RELEASE_CHANNEL=$(jq -er .channel release-intent/release-plan.json)" >> "$GITHUB_ENV"
 
+      - name: Check frozen source cache support
+        id: cache-support
+        if: inputs.backend_environment != 'prod'
+        run: |
+          supported=false
+          if [[ -f mobile/scripts/native-build-cache.mjs ]] && grep -q MENTRA_NATIVE_BUILD_CACHE mobile/scripts/release-ios.mjs; then
+            supported=true
+          fi
+          echo "supported=$supported" >> "$GITHUB_OUTPUT"
+
       - name: Compute iOS compilation cache scope
         id: native-cache
-        if: inputs.backend_environment != 'prod' && (inputs.dry_run == true || needs.prepare.outputs.ios_asset_exists != 'true')
+        if: steps.cache-support.outputs.supported == 'true' && (inputs.dry_run == true || needs.prepare.outputs.ios_asset_exists != 'true')
         run: node mobile/scripts/native-build-cache.mjs key
 
       - name: Restore iOS dependencies and compiler outputs
@@ -814,7 +825,7 @@ jobs:
 
       - name: Verify private signing access before compilation
         if: inputs.dry_run == true || needs.prepare.outputs.ios_asset_exists != 'true'
-        run: python3 mobile/ci/verify-signing.py "$MENTRA_CI_KEYCHAIN"
+        run: python3 "$GITHUB_WORKSPACE/release-tooling/mobile/ci/verify-signing.py" "$MENTRA_CI_KEYCHAIN"
 
       - name: Inject App Store Connect API credential
         uses: ./.github/actions/inject-signing

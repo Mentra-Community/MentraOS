@@ -280,7 +280,7 @@ test("stable packages publish from the frozen beta source independently of the m
   )
 })
 
-test("Cloud V2 deploys once per environment while mobile builds and gates release completion", () => {
+test("Cloud V2 readiness gates mobile compilation and publication", () => {
   const coordinator = workflow("coordinated-release.yml")
   const cloud = workflow("reusable-coordinated-cloud-v2.yml")
   const cloudJob = jobBlock(coordinator, "cloud-v2")
@@ -295,7 +295,7 @@ test("Cloud V2 deploys once per environment while mobile builds and gates releas
   assert.match(cloudJob, /^    needs: plan$/m)
   assert.match(cloudJob, /reusable-coordinated-cloud-v2\.yml/)
   assert.match(cloudJob, /deployment_environment: \$\{\{ needs\.plan\.outputs\.cloud_environment \}\}/)
-  assert.match(mobile, /^    needs: \[plan, ota\]$/m)
+  assert.match(mobile, /^    needs: \[plan, ota, cloud-v2\]$/m)
   assert.match(finalize, /needs\.cloud-v2\.result == 'success'/)
   assert.match(finalize, /--cloud release-input\/cloud-v2\/cloud-v2-deployment\.json/)
   assert.match(notify, /CLOUD_V2_RESULT: \$\{\{ needs\.cloud-v2\.result \}\}/)
@@ -965,4 +965,13 @@ test("the immutable publish contract inspects each invocation on its own", () =>
     immutablePublishMismatches(snippet).map(({name}) => name),
     ["current-production-release-plan.json", "\${{ steps.b.outputs.asset_name }}"],
   )
+})
+
+test("new cache and signing tooling tolerate a frozen source predating the helpers", () => {
+  const ios = jobBlock(workflow("reusable-coordinated-mobile.yml"), "ios")
+  assert.match(ios, /ref: \$\{\{ github.sha \}\}[\s\S]*mobile\/ci\/verify-signing.py/)
+  assert.match(ios, /python3 "\$GITHUB_WORKSPACE\/release-tooling\/mobile\/ci\/verify-signing.py"/)
+  assert.match(ios, /if \[\[ -f mobile\/scripts\/native-build-cache.mjs \]\] && grep -q MENTRA_NATIVE_BUILD_CACHE/)
+  const cache = ios.split("      - name: Compute iOS compilation cache scope\n")[1].split("\n      - name:")[0]
+  assert.match(cache, /if: steps.cache-support.outputs.supported == 'true'/)
 })
