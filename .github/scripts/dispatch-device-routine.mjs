@@ -5,9 +5,50 @@ const REPOSITORY = "Mentra-Community/MentraOS"
 const PRIVATE_REPOSITORY = "Mentra-Automated-Testing"
 const REQUEST_WORKFLOW = ".github/workflows/request-e2e-routine.yml"
 const BUILD_WORKFLOW = ".github/workflows/mentra-app-ios-build.yml"
+const CALLBACK_WORKFLOW = ".github/workflows/dispatch-device-routine.yml"
 const SHA = /^[a-f0-9]{40}$/
 const positive = (value) => Number.isSafeInteger(value) && value > 0
 const requireThat = (value, message) => { if (!value) throw new Error(message) }
+export const callbackRunName = (runId, attempt) => `Device request callback ${runId} / attempt ${attempt}`
+const callbackUrl = (id) => `https://github.com/${REPOSITORY}/actions/runs/${id}`
+
+/**
+ * The retained, authenticated Actions callback run is the pre-send fence.
+ * Never delete its history to authorize replay. An unknown send or missing
+ * history requires manual reconciliation, even if no child request is visible.
+ */
+async function automaticGenerationFence(github, context, run, callbackAttempt) {
+  requireThat(positive(context.runId) && positive(callbackAttempt) && SHA.test(context.sha ?? ""), "Missing callback identity")
+  if (callbackAttempt !== 1) return {mode: "reconcile", callbackUrl: callbackUrl(context.runId),
+    reason: "This callback was already attempted; inspect its retained outcome before manually requesting another generation"}
+  requireThat(typeof run.created_at === "string" && Number.isFinite(Date.parse(run.created_at)), "Missing source creation time")
+  const history = []
+  let expectedTotal
+  for (let page = 1; ; page++) {
+    const {data} = await github.rest.actions.listWorkflowRuns({...context.repo, workflow_id: CALLBACK_WORKFLOW,
+      event: "workflow_run", branch: "dev", created: `>=${run.created_at}`, per_page: 100, page})
+    requireThat(Number.isSafeInteger(data.total_count) && data.total_count >= 0 && data.total_count < 1000 &&
+      Array.isArray(data.workflow_runs), "Callback history is incomplete; reconcile manually")
+    expectedTotal ??= data.total_count
+    requireThat(data.total_count === expectedTotal, "Callback history changed while reading; reconcile manually")
+    history.push(...data.workflow_runs)
+    if (history.length >= expectedTotal) break
+    requireThat(data.workflow_runs.length === 100, "Callback history page is incomplete; reconcile manually")
+  }
+  requireThat(history.length === expectedTotal && new Set(history.map((item) => item.id)).size === expectedTotal,
+    "Callback history is incomplete; reconcile manually")
+  const matching = history.filter((item) => item.display_title === callbackRunName(run.id, run.run_attempt))
+  requireThat(matching.length && matching.every((item) => positive(item.id) && positive(item.run_number) &&
+    positive(item.run_attempt) && item.path === CALLBACK_WORKFLOW && item.event === "workflow_run" && item.head_branch === "dev" &&
+    item.repository?.full_name === REPOSITORY && item.head_repository?.full_name === REPOSITORY), "Callback history is not authenticated")
+  const current = matching.find((item) => item.id === context.runId)
+  requireThat(current?.run_attempt === callbackAttempt && current.head_sha === context.sha,
+    "Current callback is absent from authenticated history; reconcile manually")
+  const first = matching.reduce((a, b) => a.run_number < b.run_number ? a : b)
+  if (first.id !== current.id) return {mode: "reconcile", callbackUrl: callbackUrl(first.id),
+    reason: "An earlier automatic callback owns this publication generation; reuse or reconcile its request, never resend automatically"}
+  return null
+}
 
 async function completedRun(github, context) {
   requireThat(context.eventName === "workflow_run" &&
@@ -32,7 +73,7 @@ async function currentOptIn(github, context, number, headSha) {
 }
 
 /** Runs only from the trusted default-branch workflow; reads PR metadata, never PR code. */
-export async function planDeviceDispatch({github, context}) {
+export async function planDeviceDispatch({github, context, callbackAttempt}) {
   const run = await completedRun(github, context)
   if (!run) return {mode: "skip", reason: "Workflow has not completed"}
   if (run.path === BUILD_WORKFLOW && run.event === "pull_request") {
@@ -40,12 +81,18 @@ export async function planDeviceDispatch({github, context}) {
     const jobs = await github.paginate(github.rest.actions.listJobsForWorkflowRun, {
       ...context.repo, run_id: run.id, filter: "all", per_page: 100,
     })
-    if (!successfulMacPublication(run, jobs)) return {mode: "skip", reason: "Build/publication has not succeeded"}
+    const publication = successfulMacPublication(run, jobs)
+    if (!publication) return {mode: "skip", reason: "Build/publication has not succeeded"}
+    if (publication.publicationAttempt !== run.run_attempt)
+      return {mode: "skip", reason: "Notification-only retry retained an earlier publication; no new request generation"}
     const numbers = [...new Set((run.pull_requests ?? []).map((pr) => pr.number))]
     if (numbers.length !== 1) return {mode: "skip", reason: "Build has no unambiguous PR association"}
     const pr = await currentOptIn(github, context, numbers[0], run.head_sha)
     if (!pr) return {mode: "skip", reason: "PR opt-in was removed or the build was superseded"}
-    return {mode: "request", pr: pr.number}
+    const prior = await automaticGenerationFence(github, context, run, callbackAttempt)
+    if (prior) return prior
+    return {mode: "request", pr: pr.number, sourceRunId: run.id, publicationAttempt: publication.publicationAttempt,
+      callbackRunId: context.runId, callbackAttempt}
   }
   // Automatic dispatch accepts only the trusted dev request producer. Bootstrap
   // PR workflow artifacts remain available for explicitly enrolled local tests.
@@ -66,10 +113,19 @@ export async function planDeviceDispatch({github, context}) {
 }
 
 export async function requestAfterPublication({github, context, plan}) {
-  requireThat(plan.mode === "request" && positive(plan.pr), "Invalid request dispatch")
-  await github.rest.actions.createWorkflowDispatch({...context.repo,
-    workflow_id: REQUEST_WORKFLOW, ref: "dev", inputs: {pr: String(plan.pr), routine: "day1-ota"}})
-  return {status: "request-dispatched", pr: plan.pr}
+  requireThat(plan.mode === "request" && positive(plan.pr) && positive(plan.sourceRunId) && positive(plan.publicationAttempt)
+    && plan.callbackRunId === context.runId && plan.callbackAttempt === 1, "Invalid request dispatch")
+  try {
+    // The workflow disables SDK retry. The callback record already fences this send.
+    const {status, data} = await github.rest.actions.createWorkflowDispatch({...context.repo,
+      workflow_id: REQUEST_WORKFLOW, ref: "dev", return_run_details: true, inputs: {pr: String(plan.pr), routine: "day1-ota"}})
+    requireThat(status === 200 && positive(data?.workflow_run_id) && data.html_url === callbackUrl(data.workflow_run_id)
+      && data.run_url === `https://api.github.com/repos/${REPOSITORY}/actions/runs/${data.workflow_run_id}`, "Dispatch acknowledgement differs")
+    return {status: "request-dispatched", pr: plan.pr, requestRunId: data.workflow_run_id, requestUrl: data.html_url}
+  } catch {
+    return {status: "request-dispatch-unknown", callbackUrl: callbackUrl(context.runId),
+      reason: "The send may have succeeded. Preserve this callback history and reconcile manually; no automatic resend is authorized"}
+  }
 }
 
 /** Read the downloaded JSON as data. The private worker independently authenticates it again. */

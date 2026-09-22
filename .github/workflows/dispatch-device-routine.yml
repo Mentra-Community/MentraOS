@@ -1,4 +1,5 @@
 name: Dispatch requested device routine
+run-name: Device request callback ${{ github.event.workflow_run.id }} / attempt ${{ github.event.workflow_run.run_attempt }}
 
 on:
   workflow_run:
@@ -15,9 +16,13 @@ jobs:
     if: github.repository == 'Mentra-Community/MentraOS'
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    # Do not group different requests into GitHub's single pending concurrency
-    # slot. The private runner provides the execution queue and shared claims
-    # reject duplicate deliveries. No hardware runs in this public job.
+    # Serialize only callbacks for the same source run. Independent requests and
+    # the private hardware queue have no shared concurrency group.
+    concurrency:
+      group: device-request-callback-${{ github.event.workflow_run.id }}
+      cancel-in-progress: false
+    # Retained callback run history fences automatic generation before POST.
+    # Deleting it is not permission to replay; unknown sends need reconciliation.
     steps:
       - uses: actions/checkout@v4
         with:
@@ -30,16 +35,19 @@ jobs:
         id: plan
         uses: actions/github-script@v7
         with:
+          retries: 0
           script: |
             const {planDeviceDispatch, requestAfterPublication} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/dispatch-device-routine.mjs`);
-            const plan = await planDeviceDispatch({github, context});
+            const plan = await planDeviceDispatch({github, context, callbackAttempt: Number(process.env.GITHUB_RUN_ATTEMPT)});
             core.setOutput('plan', JSON.stringify(plan));
             core.setOutput('mode', plan.mode);
             if (plan.mode === 'request') {
               const result = await requestAfterPublication({github, context, plan});
               await core.summary.addRaw(JSON.stringify(result)).write();
-            } else if (plan.mode === 'skip') {
-              await core.summary.addRaw(plan.reason).write();
+              if (result.status === 'request-dispatch-unknown') core.setFailed(result.reason);
+            } else if (plan.mode === 'skip' || plan.mode === 'reconcile') {
+              await core.summary.addRaw(JSON.stringify(plan)).write();
+              if (plan.mode === 'reconcile') core.setFailed(plan.reason);
             } else {
               core.setOutput('artifact-id', String(plan.artifactId));
               core.setOutput('run-id', String(plan.runId));
@@ -60,9 +68,10 @@ jobs:
           DISPATCH_PLAN: ${{ steps.plan.outputs.plan }}
           E2E_PRIVATE_DISPATCH_TOKEN: ${{ secrets.E2E_PRIVATE_DISPATCH_TOKEN }}
         with:
+          retries: 0
           script: |
             const {dispatchReadyRequest, readRequest} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/dispatch-device-routine.mjs`);
-            const privateGithub = process.env.E2E_PRIVATE_DISPATCH_TOKEN ? new github.constructor({auth: process.env.E2E_PRIVATE_DISPATCH_TOKEN}) : null;
+            const privateGithub = process.env.E2E_PRIVATE_DISPATCH_TOKEN ? new github.constructor({auth: process.env.E2E_PRIVATE_DISPATCH_TOKEN, retry: {enabled: false}}) : null;
             const result = await dispatchReadyRequest({github, privateGithub, context,
               plan: JSON.parse(process.env.DISPATCH_PLAN), bytes: await readRequest('routine-request/request.json')});
             await core.summary.addRaw(JSON.stringify(result)).write();

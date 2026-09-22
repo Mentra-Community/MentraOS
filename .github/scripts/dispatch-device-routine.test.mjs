@@ -1,14 +1,15 @@
 import {test} from "node:test"
 import assert from "node:assert/strict"
-import {dispatchReadyRequest, planDeviceDispatch, requestAfterPublication} from "./dispatch-device-routine.mjs"
+import {callbackRunName, dispatchReadyRequest, planDeviceDispatch, requestAfterPublication} from "./dispatch-device-routine.mjs"
 
 const repo = "Mentra-Community/MentraOS"
 const source = "a".repeat(40), head = "b".repeat(40), base = "c".repeat(40)
-const context = {eventName: "workflow_run", repo: {owner: "Mentra-Community", repo: "MentraOS"},
+const context = {eventName: "workflow_run", runId: 777, sha: source, repo: {owner: "Mentra-Community", repo: "MentraOS"},
   payload: {workflow_run: {id: 123, run_attempt: 2}}}
 const pr = {number: 42, state: "open", base: {ref: "dev"},
   head: {sha: head, repo: {full_name: repo}}, labels: [{name: "routine:day1-ota"}]}
 const build = {id: 123, run_attempt: 2, path: ".github/workflows/mentra-app-ios-build.yml", event: "pull_request",
+  created_at: "2026-09-22T00:00:00Z",
   head_sha: head, head_branch: "feature", repository: {full_name: repo}, head_repository: {full_name: repo},
   status: "completed", conclusion: "success", pull_requests: [{number: 42}]}
 const producer = {...build, path: ".github/workflows/request-e2e-routine.yml", event: "workflow_dispatch",
@@ -23,25 +24,35 @@ const request = {schemaVersion: 1, kind: "mentra-routine-request", requestId: "r
 
 const publishedJobs = ["build", "publish"].map((name, id) => ({name, id, run_attempt: 2,
   status: "completed", conclusion: "success", started_at: "2026-09-22T00:00:00Z", completed_at: "2026-09-22T00:01:00Z"}))
-function fake({run = build, pull = pr, artifacts = [artifact], baseSha = base, jobs = publishedJobs} = {}) {
+const callback = {id: context.runId, run_number: 100, run_attempt: 1, display_title: callbackRunName(123, 2),
+  event: "workflow_run", path: ".github/workflows/dispatch-device-routine.yml", head_branch: "dev", head_sha: source,
+  repository: {full_name: repo}, head_repository: {full_name: repo}}
+const requestPlan = {mode: "request", pr: 42, sourceRunId: 123, publicationAttempt: 2, callbackRunId: 777, callbackAttempt: 1}
+const dispatchResponse = {status: 200, data: {workflow_run_id: 9000,
+  run_url: `https://api.github.com/repos/${repo}/actions/runs/9000`, html_url: `https://github.com/${repo}/actions/runs/9000`}}
+function fake({run = build, pull = pr, artifacts = [artifact], baseSha = base, jobs = publishedJobs,
+  history = [callback], historyResponse, dispatch = async () => dispatchResponse} = {}) {
   const calls = []
   const listJobsForWorkflowRun = () => {}
   const github = {rest: {
     actions: {getWorkflowRunAttempt: async (input) => {calls.push(["read-attempt", input]); return {data: run}},
-      listJobsForWorkflowRun, listWorkflowRunArtifacts: () => {}, createWorkflowDispatch: async (input) => {calls.push(["dispatch", input])}},
+      listWorkflowRuns: async (input) => {calls.push(["read-callbacks", input]); return {data:
+        typeof historyResponse === "function" ? historyResponse(input) : historyResponse ?? {total_count: history.length, workflow_runs: history}}},
+      listJobsForWorkflowRun, listWorkflowRunArtifacts: () => {}, createWorkflowDispatch: async (input) => {calls.push(["dispatch", input]); return dispatch()}},
     pulls: {get: async () => ({data: pull})}, git: {getRef: async () => ({data: {object: {sha: baseSha}}})},
   }, paginate: async (method) => method === listJobsForWorkflowRun ? jobs : artifacts}
-  return {github, calls}
+  return {github, calls, callbackAttempt: 1}
 }
 const bytes = (value) => Buffer.from(JSON.stringify(value))
 
 test("successful current opted-in iOS publication requests the trusted dev producer", async () => {
   const f = fake()
   const plan = await planDeviceDispatch({...f, context})
-  assert.deepEqual(plan, {mode: "request", pr: 42})
-  await requestAfterPublication({...f, context, plan})
+  assert.deepEqual(plan, requestPlan)
+  const result = await requestAfterPublication({...f, context, plan})
+  assert.deepEqual(result, {status: "request-dispatched", pr: 42, requestRunId: 9000, requestUrl: dispatchResponse.data.html_url})
   assert.deepEqual(f.calls.at(-1), ["dispatch", {...context.repo, workflow_id: producer.path, ref: "dev",
-    inputs: {pr: "42", routine: "day1-ota"}}])
+    return_run_details: true, inputs: {pr: "42", routine: "day1-ota"}}])
 })
 
 test("failed, stale, ambiguous or no-longer-requested builds never create a request", async () => {
@@ -57,7 +68,62 @@ test("failed, stale, ambiguous or no-longer-requested builds never create a requ
 test("notification failure does not suppress a successfully published iOS build", async () => {
   const f = fake({run: {...build, conclusion: "failure"}, jobs: [...publishedJobs,
     {name: "notify-pr-builds", id: 3, run_attempt: 2, status: "completed", conclusion: "failure"}]})
-  assert.deepEqual(await planDeviceDispatch({...f, context}), {mode: "request", pr: 42})
+  assert.deepEqual(await planDeviceDispatch({...f, context}), requestPlan)
+})
+
+test("notification-only retries retaining an earlier publication create no new generation", async () => {
+  const original = publishedJobs.map(job => ({...job, id: job.id + 10, run_attempt: 1}))
+  const f = fake({jobs: [...original, ...publishedJobs]})
+  assert.equal((await planDeviceDispatch({...f, context})).mode, "skip")
+  assert.equal(f.calls.some(([kind]) => kind === "dispatch" || kind === "read-callbacks"), false)
+})
+
+test("one retained callback owns the generation even across queued duplicate callbacks and reruns", async () => {
+  const later = {...callback, id: 778, run_number: 101}
+  const f = fake({history: [later, callback]})
+  const plan = await planDeviceDispatch({...f, context})
+  await requestAfterPublication({...f, context, plan})
+  const duplicate = await planDeviceDispatch({...f, context: {...context, runId: later.id}})
+  assert.equal(duplicate.mode, "reconcile")
+  assert.equal(duplicate.callbackUrl, `https://github.com/${repo}/actions/runs/777`)
+  assert.equal((await planDeviceDispatch({...f, context, callbackAttempt: 2})).mode, "reconcile")
+  assert.equal(f.calls.filter(([kind]) => kind === "dispatch").length, 1)
+})
+
+test("absent, truncated, duplicated or untrusted callback history cannot authorize a send", async () => {
+  for (const setup of [{history: []}, {history: [callback, callback]},
+    {history: [{...callback, head_sha: head}]}, {history: [{...callback, head_repository: {full_name: "fork/repo"}}]},
+    {historyResponse: {total_count: 1000, workflow_runs: [callback]}},
+    {historyResponse: {total_count: 2, workflow_runs: [callback]}}]) {
+    const f = fake(setup)
+    await assert.rejects(() => planDeviceDispatch({...f, context}))
+    assert.equal(f.calls.some(([kind]) => kind === "dispatch"), false)
+  }
+})
+
+test("the complete callback history is paginated and changing history fails closed", async () => {
+  const others = Array.from({length: 100}, (_, index) => ({...callback, id: 1000 + index,
+    display_title: callbackRunName(1000 + index, 1)}))
+  const response = (input) => ({total_count: 101, workflow_runs: input.page === 1 ? others : [callback]})
+  const f = fake({historyResponse: response})
+  assert.deepEqual(await planDeviceDispatch({...f, context}), requestPlan)
+  assert.deepEqual(f.calls.filter(([kind]) => kind === "read-callbacks").map(([, input]) => input.page), [1, 2])
+  const changed = fake({historyResponse: (input) => ({...response(input), total_count: input.page === 1 ? 101 : 102})})
+  await assert.rejects(() => planDeviceDispatch({...changed, context}), /history changed/)
+  assert.equal(changed.calls.some(([kind]) => kind === "dispatch"), false)
+})
+
+test("lost, malformed and old 204 acknowledgements remain unknown and callback reruns never resend", async () => {
+  for (const dispatch of [async () => {throw new Error("lost acknowledgement")}, async () => ({status: 204}),
+    async () => ({status: 503}), async () => ({status: 200, data: {workflow_run_id: 9000}}),
+    async () => ({...dispatchResponse, data: {...dispatchResponse.data, html_url: "https://other.example/run/9000"}})]) {
+    const f = fake({dispatch})
+    const plan = await planDeviceDispatch({...f, context})
+    const result = await requestAfterPublication({...f, context, plan})
+    assert.equal(result.status, "request-dispatch-unknown")
+    assert.equal((await planDeviceDispatch({...f, context, callbackAttempt: 2})).mode, "reconcile")
+    assert.equal(f.calls.filter(([kind]) => kind === "dispatch").length, 1)
+  }
 })
 
 test("fork or mismatching attempt metadata is rejected before dispatch", async () => {
