@@ -310,6 +310,10 @@ export class NavigationController {
   private applyCapabilities(raw: MiniappSession["capabilities"]): void {
     const previous = this.capabilities
     this.capabilities = readGlassesCapabilities(raw)
+    if (this.largeMapShown && !this.display.supportsBitmaps) {
+      this.exitLargeMap()
+      this.refreshHUD()
+    }
     this.audioGuidance.setAvailable(this.capabilities.hasSpeaker)
     if (!this.voiceGuidancePreferenceExplicit) {
       this.voiceGuidanceMode = this.defaultVoiceGuidanceMode()
@@ -1380,6 +1384,7 @@ export class NavigationController {
    * over it until the user swipes back down.
    */
   private showLargeMap(): void {
+    if (!this.display.supportsBitmaps) return
     this.largeMapShown = true
     this.largeMapTransitioning = true // lock out swipes until the render lands
     // Switch HUD → large map by REPLACING the specific containers in place, not
@@ -1444,8 +1449,14 @@ export class NavigationController {
 
   /** Render + push the large centered map for the current position. */
   private renderLargeMap(me: LatLng): void {
-    const w = this.OSM_LARGE_MAP_W
-    const h = this.OSM_LARGE_MAP_H
+    if (!this.display.supportsBitmaps) {
+      if (this.largeMapShown) {
+        this.exitLargeMap()
+        this.refreshHUD()
+      }
+      return
+    }
+    const {w, h} = this.display.getBitmapSize(this.OSM_LARGE_MAP_W, this.OSM_LARGE_MAP_H)
     const route = this.trip.routePoints
 
     // Zoom to fit the WHOLE route: center on the route's bounding-box midpoint
@@ -1513,11 +1524,7 @@ export class NavigationController {
       // Turn thresholds stay paired with the native event that supplied the
       // type/instruction. ARRIVE is different: md carries the live remaining
       // route distance, so its spoken destination countdown stays current.
-      distanceMeters: selectAudioGuidanceDistance(
-        maneuver?.maneuverType,
-        maneuver?.distanceMeters,
-        md?.distanceMeters,
-      ),
+      distanceMeters: selectAudioGuidanceDistance(maneuver?.maneuverType, maneuver?.distanceMeters, md?.distanceMeters),
       offRoute: this.offRouteAdvisory,
       destinationName: activeDestinationName,
       arrivalSide,
@@ -1778,7 +1785,6 @@ export class NavigationController {
     return `${hh}:${mm}`
   }
 
-
   private buildTripStats(): string | null {
     const me = this.coords ? {lat: this.coords.lat, lng: this.coords.lng} : null
     const distM =
@@ -1810,9 +1816,8 @@ export class NavigationController {
   // If you change SIZE, scale RADIUS proportionally or the map zooms and the
   // traveled distance looks wrong.
   private readonly OSM_MINIMAP_RADIUS_M = 133
-  // Large map shown on swipe-up. Capped at 200px: a single G2 image container
-  // maxes out ~200px wide before it needs (unimplemented) quad-mode tiling.
-  // Large map render dimensions (swipe-up view): 288×140.
+  // Preferred large-map dimensions. Device image/canvas limits are applied
+  // before rasterization and shared with placement (e.g. NIMO uses 200×140).
   private readonly OSM_LARGE_MAP_W = 288
   private readonly OSM_LARGE_MAP_H = 140
   private readonly OSM_REFETCH_THRESHOLD_M = 120
@@ -2154,7 +2159,8 @@ export class NavigationController {
   // the destination pin). We fire earlier on either of two signals:
   //
   //   1. ALONG-ROUTE: the user has walked nearly the whole route polyline (the
-  //      grey trail reached the pin) — ≤ ARRIVAL_REMAINING_M of route left.
+  //      grey trail reached the pin) — ≤ ARRIVAL_REMAINING_M of route left
+  //      AND physically near the route endpoint, not just projected onto it.
   //
   //   2. NEAR THE PIN: the straight-line distance to the destination pin is
   //      small AND we are near the end of the route. This catches the common
@@ -2173,6 +2179,9 @@ export class NavigationController {
   private maybeFireEarlyArrival(): void {
     // ≤ this much route polyline remaining → arrived (trail reached the pin).
     const ARRIVAL_REMAINING_M = 7
+    // Projection clamps to the endpoint even for fixes far beyond/beside it.
+    // Require real proximity before treating zero remaining as arrival.
+    const ARRIVAL_NEAR_ROUTE_END_M = 15
     // Straight-line distance to the pin that counts as "we're there".
     const ARRIVAL_NEAR_PIN_M = 15
     // Only consider the near-pin trigger once we're this close to the route's
@@ -2182,13 +2191,16 @@ export class NavigationController {
     if (this.trip.status === "arrived" || !this.trip.running) return
     const route = this.trip.routePoints
     const me = {lat: this.coords.lat, lng: this.coords.lng}
+    if (!Number.isFinite(me.lat) || !Number.isFinite(me.lng)) return
+    if (!route || route.length < 2 || route.some((p) => !Number.isFinite(p.lat) || !Number.isFinite(p.lng))) return
     const remaining = remainingRouteMeters(me, route)
-    if (remaining == null) return
+    if (remaining == null || !Number.isFinite(remaining)) return
 
     const dest = this.trip.activeDestination
     const straightLineToPin = dest ? haversineMeters(me, dest) : null
+    const straightLineToRouteEnd = haversineMeters(me, route[route.length - 1])
 
-    const alongRouteArrived = remaining <= ARRIVAL_REMAINING_M
+    const alongRouteArrived = remaining <= ARRIVAL_REMAINING_M && straightLineToRouteEnd <= ARRIVAL_NEAR_ROUTE_END_M
     const nearPinArrived =
       straightLineToPin != null && straightLineToPin <= ARRIVAL_NEAR_PIN_M && remaining <= ARRIVAL_NEAR_END_M
     if (!alongRouteArrived && !nearPinArrived) return

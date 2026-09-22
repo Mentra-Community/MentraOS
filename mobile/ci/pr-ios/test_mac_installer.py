@@ -4,6 +4,7 @@ import json
 from pathlib import Path
 import plistlib
 import subprocess
+import sys
 import tempfile
 import traceback
 import unittest
@@ -196,6 +197,40 @@ class MacInstallerPackagingTests(unittest.TestCase):
         self.assertNotIn("secret-password", str(error.exception))
         self.assertTrue(error.exception.__suppress_context__)
 
+    def test_signing_lock_wait_does_not_use_the_general_command_timeout(self):
+        result = subprocess.CompletedProcess([], 0, b"signed", b"")
+        keychain = self.root / "job.keychain"
+        arguments = ("--force", "--sign", "A" * 40, "--keychain", keychain, "probe")
+        with patch.object(installer.subprocess, "run", return_value=result) as command:
+            self.assertEqual(installer.sign(keychain, *arguments), b"signed")
+            self.assertEqual(command.call_args.args[0], [sys.executable, str(installer.HERE / "keychain-search.py"),
+                             "run", str(keychain), "codesign", *map(str, arguments)])
+            self.assertIsNone(command.call_args.kwargs["timeout"])
+            installer.run("xcrun", "stapler", "validate", "probe")
+            self.assertEqual(command.call_args.kwargs["timeout"], 180)
+
+    def test_developer_id_probe_uses_job_lock_but_notary_history_does_not(self):
+        keychain = self.root / "job.keychain"
+        identity = "A" * 40
+        secrets = {"MAC_INSTALLER_P12_BASE64": base64.b64encode(b"fixture").decode(),
+                   "MAC_INSTALLER_P12_PASSWORD": "test-only", "PR_IOS_KEYCHAIN_PASSWORD": "test-only",
+                   "ASC_API_KEY_P8_B64": base64.b64encode(b"fixture").decode(),
+                   "ASC_API_KEY_ID": "KEY", "ASC_API_ISSUER_ID": "ISSUER"}
+        def respond(*args, **kwargs):
+            if args[:2] == ("security", "find-identity"):
+                return f'1) {identity} "Developer ID Application: Mentra Labs, Inc. ({installer.TEAM})"'.encode()
+            return b"{}"
+        with patch.object(installer, "required_environment", return_value=secrets), \
+             patch.object(installer, "run", side_effect=respond) as command:
+            installer.configure(keychain, self.root / "out", {})
+        signing = next(call for call in command.call_args_list if "--sign" in call.args)
+        self.assertEqual(signing.args[:5], (sys.executable, installer.HERE / "keychain-search.py", "run", keychain, "codesign"))
+        self.assertEqual(signing.args[signing.args.index("--sign") + 1], identity)
+        self.assertEqual(signing.args[signing.args.index("--keychain") + 1], keychain)
+        self.assertIsNone(signing.kwargs["timeout"])
+        history = next(call for call in command.call_args_list if "history" in call.args)
+        self.assertEqual(history.args[:3], ("xcrun", "notarytool", "history"))
+
     def test_app_embeds_only_expected_manifest_not_ios_payload(self):
         package = self.root / "Mentra PR"
         package.mkdir()
@@ -234,6 +269,9 @@ class MacInstallerPackagingTests(unittest.TestCase):
             result = installer.notarize(app, settings, self.root / "diagnostics")
         self.assertEqual(result["notarizationStatus"], "Accepted")
         self.assertTrue(result["stapled"])
+        self.assertEqual(commands[0][:5], (sys.executable, installer.HERE / "keychain-search.py", "run", settings["keychain"], "codesign"))
+        self.assertEqual(commands[0][commands[0].index("--sign") + 1], settings["identity"])
+        self.assertEqual(sum(installer.HERE / "keychain-search.py" in command for command in commands), 1)
         self.assertIn("runtime", commands[0])
         self.assertIn("--timestamp", commands[0])
         archive = next(command for command in commands if command[0] == "ditto")

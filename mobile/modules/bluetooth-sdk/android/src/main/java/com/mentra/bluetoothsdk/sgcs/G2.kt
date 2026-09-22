@@ -1,5 +1,6 @@
 package com.mentra.bluetoothsdk.sgcs
 
+import com.mentra.bluetoothsdk.utils.G2Text
 import com.mentra.bluetoothsdk.PhotoRequest
 import android.bluetooth.BluetoothAdapter
 import android.bluetooth.BluetoothGatt
@@ -2190,7 +2191,7 @@ class G2 : SGCManager() {
         val rBorderColor = borderColor ?: defaultTextBorderColor
         val rBorderRadius = borderRadius ?: defaultTextBorderRadius
         val rPaddingLength = paddingLength ?: defaultTextPaddingLength
-        val content = if (text.isEmpty()) " " else text
+        val content = G2Text.containerContent(text)
 
         // Pure state mutation: update the container's content and schedule its sends; the reconcile
         // loop does the actual updateText writes. Reuse an existing container if the rect matches
@@ -2538,7 +2539,7 @@ class G2 : SGCManager() {
         @Suppress("NAME_SHADOWING")
         val height = minOf(maxOf(height, minTextContainerHeight), 288 - y)
         run {
-            val content = if (text.isEmpty()) " " else text
+            val content = G2Text.containerContent(text)
             val existingId = sceneTextByElement[elementId]
             if (existingId != null) {
                 val idx = textContainers.indexOfFirst { it.id == existingId }

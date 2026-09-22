@@ -224,8 +224,11 @@ path after a single Update Now action. All fourteen independent return checks
 passed for MTK `MentraLive_20260921.0`, BES `26.9.21.3`, ASG `303006291` and its
 exact APK. The original recorder failed during an intermediate reboot; its
 verdict remains failed. The separate return recording passed its video/chapter
-checks. Fixture enrollment then stopped at the Mac lock screen before device
-commands; the fixture is still unenrolled and no CI request was consumed.
+checks. The first enrollment stopped at the Mac lock screen before device
+commands. A fresh September 22 enrollment subsequently passed all fourteen
+firmware, idle-state and paired-app assertions, plus independent video/chapter
+verification, and marked the fixture ready on that same source profile. No CI
+request was consumed and no complete registered OTA pass is claimed.
 
 - [x] Add exact PR build/receipt/archive/OTA selection and immutable request
   validation, including separate build and publication attempts.
@@ -268,7 +271,10 @@ commands; the fixture is still unenrolled and no CI request was consumed.
   export. Its file-only admission distinguishes the enrolled source profile from
   the selected CI return profile. A separate helper rechecks native full-OTA
   evidence and binds it to exact selected manifest bytes without claiming device
-  qualification. The registered hardware pass remains pending the unlocked Mac.
+  qualification. The Mac is now unlocked and the fixture is enrolled. The
+  `bc582636` iOS artifact passed verification, but intake rejected it after `dev`
+  advanced during the build; a new integration build is required before consuming
+  the request. The older candidate was not installed.
 - [x] Add authenticated admin Test runs browsing, expected/actual firmware,
   separate phase outcomes and private streaming media with byte-range seeking.
   Local tests and a clearly labeled synthetic browser fixture verify playback,

@@ -123,6 +123,7 @@ jobs:
           python3 mobile/ci/pr-ios/test_mac_installer.py
           bash mobile/ci/pr-ios/mac-installer/test.sh
           python3 mobile/ci/pr-ios/test_repackage.py
+          python3 mobile/ci/pr-ios/test_keychain_search.py
           node --test mobile/ci/pr-ios/xcode-attempt.test.mjs
           node --test .github/scripts/pr-mobile-build.test.mjs
 
@@ -286,7 +287,7 @@ jobs:
           echo "::add-mask::$password"
           echo "PR_IOS_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
           echo "PR_IOS_KEYCHAIN_PASSWORD=$password" >> "$GITHUB_ENV"
-          security create-keychain -p "$password" "$keychain"
+          python3 ci/pr-ios/keychain-search.py locked security create-keychain -p "$password" "$keychain"
           # Match release signing: keep only this disposable job keychain
           # unlocked through archive/export; always delete it at job cleanup.
           security set-keychain-settings "$keychain"
@@ -665,7 +666,8 @@ jobs:
         run: |
           set -euo pipefail
           security unlock-keychain -p "$PR_IOS_KEYCHAIN_PASSWORD" "$PR_IOS_KEYCHAIN"
-          xcodebuild -exportArchive -archivePath mobile/build/pr-ios/Mentra.xcarchive \
+          python3 mobile/ci/pr-ios/keychain-search.py run "$PR_IOS_KEYCHAIN" \
+            xcodebuild -exportArchive -archivePath mobile/build/pr-ios/Mentra.xcarchive \
             -exportOptionsPlist mobile/build/pr-ios/ExportOptions.plist \
             -exportPath mobile/build/pr-ios/export
 
@@ -720,7 +722,7 @@ jobs:
           rm -rf mobile/build/pr-ios/mac-installer-private
           rm -f mobile/build/pr-ios/mac-signing.json
           python3 mobile/ci/pr-ios/keychain-search.py remove "$PR_IOS_KEYCHAIN"
-          security delete-keychain "$PR_IOS_KEYCHAIN"
+          python3 mobile/ci/pr-ios/keychain-search.py locked security delete-keychain "$PR_IOS_KEYCHAIN"
 
       - name: Save Xcode DerivedData (best effort)
         if: >-

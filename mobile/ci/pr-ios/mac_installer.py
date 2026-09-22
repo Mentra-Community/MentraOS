@@ -7,6 +7,7 @@ import plistlib
 import re
 import shutil
 import subprocess
+import sys
 from urllib.error import HTTPError
 from urllib.request import build_opener, HTTPRedirectHandler, Request
 
@@ -59,9 +60,9 @@ def doppler_secret(token, name):
         raise ValueError(f"Could not fetch valid {name} from Doppler; check the mobile prd service token and secret") from None
 
 
-def run(*arguments, input=None, private=False):
+def run(*arguments, input=None, private=False, timeout=180):
     try:
-        result = subprocess.run([str(arg) for arg in arguments], input=input, capture_output=True, timeout=180)
+        result = subprocess.run([str(arg) for arg in arguments], input=input, capture_output=True, timeout=timeout)
     except subprocess.TimeoutExpired:
         # TimeoutExpired includes argv, which may contain private-key passwords.
         raise RuntimeError(f"{Path(arguments[0]).name} timed out") from None
@@ -71,6 +72,13 @@ def run(*arguments, input=None, private=False):
         detail = "" if private else ": " + result.stderr.decode(errors="replace").strip()
         raise RuntimeError(f"{Path(arguments[0]).name} failed (exit {result.returncode}){detail}")
     return result.stdout
+
+
+def sign(keychain, *arguments):
+    # Another job may hold this lock for its complete archive. The wrapper has
+    # no separate command timeout, so let the CI job bound this signing wait.
+    return run(sys.executable, HERE / "keychain-search.py", "run", keychain,
+               "codesign", *arguments, timeout=None)
 
 
 def required_environment(env):
@@ -173,7 +181,7 @@ def configure(keychain, output, env=os.environ, intermediate=None):
     # app compilation. Only a trivial owned probe is signed here.
     probe = private / "signing-probe"
     run("xcrun", "clang", "-x", "c", "-", "-o", probe, input=b"int main(void) { return 0; }\n")
-    run("codesign", "--force", "--options", "runtime", "--timestamp", "--sign", identity,
+    sign(keychain, "--force", "--options", "runtime", "--timestamp", "--sign", identity,
         "--keychain", keychain, probe)
     run("codesign", "--verify", "--strict", "-R", DEVELOPER_ID_REQUIREMENT, probe)
     run("xcrun", "notarytool", "history", "--key", key, "--key-id", settings["keyId"],
@@ -220,7 +228,7 @@ def create_app(package, manifest):
 def notarize(app, settings, diagnostics):
     if settings.get("team") != TEAM or not re.fullmatch(r"[0-9A-F]{40}", settings.get("identity", "")):
         raise ValueError("Invalid Mac signing configuration")
-    run("codesign", "--force", "--options", "runtime", "--timestamp", "--sign", settings["identity"],
+    sign(settings["keychain"], "--force", "--options", "runtime", "--timestamp", "--sign", settings["identity"],
         "--keychain", settings["keychain"], app)
     run("codesign", "--verify", "--deep", "--strict", "-R", DEVELOPER_ID_REQUIREMENT, app)
     diagnostics.mkdir(parents=True, exist_ok=True)

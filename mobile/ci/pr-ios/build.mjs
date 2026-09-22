@@ -42,11 +42,12 @@ if (signed) {
   )
 } else args.push("CODE_SIGN_IDENTITY=", "CODE_SIGNING_REQUIRED=NO", "CODE_SIGNING_ALLOWED=NO")
 args.push(...xcodeBuildSettings(env, process.execPath))
-let result = await runXcode(args, {cwd: path.join(mobile, "ios"), env})
+const options = {cwd: path.join(mobile, "ios"), env, keychain: signed ? env.PR_IOS_KEYCHAIN : undefined}
+let result = await runXcode(args, options)
 if (signed && signingOnlyFailure(result)) {
   console.log("Signing failed after compilation. Unlocking the job keychain and retrying with existing build outputs.")
   execFileSync("security", ["unlock-keychain", "-p", env.PR_IOS_KEYCHAIN_PASSWORD, env.PR_IOS_KEYCHAIN])
-  result = await runXcode(args, {cwd: path.join(mobile, "ios"), env})
+  result = await runXcode(args, options)
 }
 if (signed && signingOnlyFailure(result) && env.GITHUB_OUTPUT) {
   appendFileSync(env.GITHUB_OUTPUT, "failure_kind=signing\n")

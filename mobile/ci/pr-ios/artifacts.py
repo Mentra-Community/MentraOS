@@ -92,7 +92,8 @@ def verify_private_signing(keychain, certificate):
         subprocess.run(["xcrun", "clang", "-x", "c", "-", "-o", str(probe)],
                        input=b"int main(void) { return 0; }\n", check=True)
         try:
-            run("codesign", "--force", "--verbose=4", "--sign", certificate, "--keychain", keychain,
+            run(sys.executable, HERE / "keychain-search.py", "run", keychain,
+                "codesign", "--force", "--verbose=4", "--sign", certificate, "--keychain", keychain,
                 "--timestamp=none", probe)
         except subprocess.CalledProcessError:
             # Public metadata and codesign-specific security diagnostics only;
@@ -124,7 +125,8 @@ def probe_framework_copy(framework, keychain, certificate):
     with tempfile.TemporaryDirectory(prefix="mentra-framework-signing-probe-") as temporary:
         probe = Path(temporary) / framework.name
         shutil.copytree(framework, probe, symlinks=True)
-        run("codesign", "--force", "--sign", certificate, "--keychain", keychain,
+        run(sys.executable, HERE / "keychain-search.py", "run", keychain,
+            "codesign", "--force", "--sign", certificate, "--keychain", keychain,
             "--timestamp=none", "--preserve-metadata=identifier,entitlements,flags",
             "--generate-entitlement-der", probe)
         run("codesign", "--verify", "--strict", "-R", "=anchor apple generic", probe)

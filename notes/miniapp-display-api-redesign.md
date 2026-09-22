@@ -1,5 +1,6 @@
 # Miniapp SDK Display API Redesign — Design Doc
 
+> Text fitting update (2026-09-16): the public measurement-helper proposal below is superseded by optional controls and feedback on `render()` itself. See `nimo-dynamic-canvas-integration.md`, Text rendering migration.
 **Status:** Draft — analysis complete, decisions made, not yet implemented
 **Scope:** `@mentra/miniapp` SDK display surface, host pipeline (island module), native SGC layer
 **Out of scope:** Nex firmware (developed separately — we assume text/bitmap verbs in its SGC), cloud SDK (`@mentra/sdk`) display path

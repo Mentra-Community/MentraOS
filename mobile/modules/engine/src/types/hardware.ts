@@ -202,8 +202,14 @@ export const HARDWARE_CAPABILITIES: Record<string, Capabilities> = {
   [none.modelName]: none,
 };
 
+export const isNimoModelName = (modelName: string | null | undefined): boolean =>
+  typeof modelName === "string" && /^nimo(?:$|[-\s])/i.test(modelName.trim())
+
 export const getModelCapabilities = (deviceType: DeviceTypes): Capabilities => {
   const modelName = deviceType as string;
+  // Native/device names include "Nimo-7188" while the saved model is "NIMO".
+  // Normalize only NIMO aliases; preserve every other device's lookup behavior.
+  if (isNimoModelName(modelName)) return nimo
   if (!HARDWARE_CAPABILITIES[modelName]) {
     return HARDWARE_CAPABILITIES[DeviceTypes.NONE];
   }

@@ -62,6 +62,22 @@ The outer `LocalConfig` has:
 | `runtimeInputs` | The frozen local adapter inputs below |
 | `admission` | Reviewed safe-admission packet for these exact inputs |
 
+The Python executable used by the firmware adapters must be a regular file;
+the default symlink in a virtual environment is rejected by the file-pin checks.
+The tested macOS environment uses Python 3.14 and these pinned dependencies:
+
+```sh
+python3.14 -m venv --copies "$HOME/.cache/mentra-e2e/runtimes/day1-python314-bleak302"
+"$HOME/.cache/mentra-e2e/runtimes/day1-python314-bleak302/bin/python" -m pip install \
+  bleak==3.0.2 pyobjc-core==12.2.2 pyobjc-framework-Cocoa==12.2.2 \
+  pyobjc-framework-CoreBluetooth==12.2.2 pyobjc-framework-libdispatch==12.2.2
+"$HOME/.cache/mentra-e2e/runtimes/day1-python314-bleak302/bin/python" -m pip check
+```
+
+Record the resulting interpreter hash and installed package versions in the
+private host setup evidence, then use that interpreter in the January and restore
+inputs. Provisioning this runtime does not connect to glasses or qualify a run.
+
 `RuntimeInputs` contains the common `leasePath` (ending in
 `com.mentra.mentra.lock`), full fixture serial/CID/Bluetooth MAC and explicit USB
 return selector, BES config, deferred January config template, selected Mac app

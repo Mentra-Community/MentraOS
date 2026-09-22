@@ -66,6 +66,8 @@ import {
  * not zero. Populated on the "ready" event (null in `start()`).
  */
 export interface DisplayCapabilities {
+  /** Legacy panel dimensions. Prefer drawable width/height when present. */
+  resolution?: {width: number; height: number}
   /** Public drawable canvas in px — raw coordinate space for `display.render()` boxes. */
   width?: number
   height?: number

@@ -7,6 +7,7 @@ import tempfile
 import unittest
 from unittest.mock import patch
 import subprocess
+import sys
 from artifacts import BUNDLE_ID, digest, package_mac_app, probe_framework_copy, probe_signing, validate_profile, verify_pr_ota, verify_private_signing
 
 
@@ -132,6 +133,10 @@ class SigningProbeTests(unittest.TestCase):
 
             def command(*args):
                 if "--force" in args:
+                    self.assertEqual(args[:5], (sys.executable, Path(__file__).resolve().with_name("keychain-search.py"),
+                                               "run", "owned.keychain-db", "codesign"))
+                    self.assertEqual(args[args.index("--sign") + 1], self.certificate)
+                    self.assertEqual(args[args.index("--keychain") + 1], "owned.keychain-db")
                     target = Path(args[-1])
                     targets.append(target)
                     self.assertNotEqual(target.resolve(), framework.resolve())
