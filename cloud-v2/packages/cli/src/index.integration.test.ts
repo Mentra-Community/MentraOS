@@ -5,6 +5,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { generatePackageSigningKey, verifySignedBundleArchive } from "@mentra/miniapp-cli";
 import JSZip from "jszip";
+import { DEFAULT_STORE_URL } from "./config";
 
 const dirs: string[] = [];
 afterEach(() => {
@@ -53,14 +54,35 @@ function fixture() {
   return { cwd, preload };
 }
 
-async function cli(f: ReturnType<typeof fixture>, args: string[], env: Record<string, string> = {}) {
+async function cli(
+  f: ReturnType<typeof fixture>,
+  args: string[],
+  env: Record<string, string> = {},
+  scriptName?: string,
+) {
+  const cloudDir = new URL("../../../", import.meta.url).pathname;
+  const bin = join(f.cwd, "bin");
+  let script: string | undefined;
+  if (scriptName) {
+    script = JSON.parse(readFileSync(join(cloudDir, "package.json"), "utf8")).scripts[scriptName];
+    expect(typeof script).toBe("string");
+    mkdirSync(bin);
+    const quote = (value: string) => `'${value.replaceAll("'", "'\\''")}'`;
+    // Run the actual package shortcut with the same isolated CLI fixture. A
+    // regression must not load real Doppler credentials or access the network.
+    writeFileSync(join(bin, "bun"), `#!/bin/sh\nexec ${quote(process.execPath)} --preload ${quote(f.preload)} "$@"\n`, { mode: 0o755 });
+    writeFileSync(join(bin, "doppler"), "#!/bin/sh\necho 'Unexpected Doppler access' >&2\nexit 86\n", { mode: 0o755 });
+  }
   const child = spawnSync(
-    process.execPath,
-    ["--preload", f.preload, new URL("./index.ts", import.meta.url).pathname, ...args],
+    script ? "/bin/sh" : process.execPath,
+    script
+      ? ["-c", `${script} "$@"`, "mentra-script", ...args]
+      : ["--preload", f.preload, new URL("./index.ts", import.meta.url).pathname, ...args],
     {
-      cwd: f.cwd,
+      cwd: script ? cloudDir : f.cwd,
       env: {
         ...process.env,
+        PATH: `${bin}:${process.env.PATH}`,
         MENTRA_CORE_URL: "https://identity.example.test",
         MENTRA_STORE_URL: "https://catalog.example.test",
         MENTRA_CLI_HOME: join(f.cwd, "keys"),
@@ -81,6 +103,23 @@ async function cli(f: ReturnType<typeof fixture>, args: string[], env: Record<st
 }
 
 describe("CLI publication and credential refresh", () => {
+  test.each(["mentra", "mentra:dev", "mentra:staging", "mentra:prod", "mentra:local"])(
+    "%s selects the Store independently of Core credentials",
+    async (scriptName) => {
+      const f = fixture();
+      const storeUrl = scriptName === "mentra:local" ? "http://localhost:3003" : DEFAULT_STORE_URL;
+      await cli(f, ["whoami"], {
+        MENTRA_STORE_URL: "",
+        MENTRA_TEST_SAVED_STORE: storeUrl,
+        WORKOS_CLIENT_ID: "unrelated-core-client",
+      }, scriptName);
+      expect(readFileSync(join(f.cwd, "requests.txt"), "utf8").split("\n")[0]).toBe(
+        `${storeUrl}/api/console/auth/cli-config`,
+      );
+      expect(JSON.parse(readFileSync(join(f.cwd, "saved.json"), "utf8"))).toMatchObject({ storeUrl });
+    },
+  );
+
   test.each(["https://catalog.example.test", "https://override.example.test"])(
     "refresh stays scoped to the selected Store %s",
     async (override) => {

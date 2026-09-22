@@ -312,7 +312,7 @@ export function validateCloudV2DeploymentRecord({plan, record, allowValidated = 
     throw new Error("Cloud V2 deployment record is missing its observed deployment identity")
   }
   if (!Array.isArray(record.observedServices) || record.observedServices.length !== CLOUD_V2_SERVICES.length) {
-    throw new Error("Cloud V2 deployment record must observe Core, Store, and Runtime")
+    throw new Error("Cloud V2 deployment record must observe Core and Runtime")
   }
   const services = new Set()
   for (const observed of record.observedServices) {

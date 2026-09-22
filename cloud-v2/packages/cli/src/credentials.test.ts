@@ -20,7 +20,7 @@ beforeEach(() => {
 afterEach(() => {
   get.mockRestore()
   set.mockRestore()
-  for (const key of ["MENTRA_CLI_TOKEN", "MENTRA_CORE_URL", "MENTRA_STORE_URL"]) {
+  for (const key of ["MENTRA_CLI_TOKEN", "MENTRA_CORE_URL", "MENTRA_STORE_URL", "WORKOS_CLIENT_ID", "MENTRA_WORKOS_CLIENT_ID"]) {
     if (saved[key] === undefined) delete process.env[key]
     else process.env[key] = saved[key]
   }
@@ -43,6 +43,13 @@ describe("independent Store configuration", () => {
       expect(await loadCredentials()).toMatchObject({storeUrl: DEFAULT_STORE_URL, token: "explicit-ci-token"})
     },
   )
+  test("discovers Store login configuration instead of inheriting Core WorkOS settings", () => {
+    delete process.env.MENTRA_WORKOS_CLIENT_ID
+    process.env.WORKOS_CLIENT_ID = "unrelated-core-client"
+    expect(getConfig().workosClientId).toBe("")
+    process.env.MENTRA_WORKOS_CLIENT_ID = "explicit-store-client"
+    expect(getConfig().workosClientId).toBe("explicit-store-client")
+  })
   test("uses an explicit local Store independently of Core", async () => {
     process.env.MENTRA_STORE_URL = "http://localhost:3003/"
     process.env.MENTRA_CLI_TOKEN = "explicit-ci-token"

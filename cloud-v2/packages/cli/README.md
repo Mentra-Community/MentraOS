@@ -105,6 +105,11 @@ the selected Store; changing it requires that Store's own login. This release
 requires signing in again after the older Core-scoped CLI. Publisher signing
 keys remain in their existing package-scoped keychain/file storage.
 The CLI discovers the selected Store's public WorkOS client id automatically.
+Only `MENTRA_WORKOS_CLIENT_ID` explicitly overrides it; generic Core WorkOS
+settings are ignored. Repository `bun run mentra` uses this same default. The
+older `mentra:dev`, `mentra:staging`, and `mentra:prod` shortcuts are aliases for
+that command; `mentra:local` explicitly selects localhost:3003. No Doppler session
+is needed to run the developer CLI.
 
 Upload builds and signs a bundle, then `--no-submit` keeps it as a draft. Edit
 its listing in the Developer Console. Public releases require staff approval

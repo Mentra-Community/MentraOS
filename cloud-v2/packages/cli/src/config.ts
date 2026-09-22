@@ -13,7 +13,7 @@ export function getConfig(): CliConfig {
   return {
     storeUrl: normalizeUrl(process.env.MENTRA_STORE_URL || DEFAULT_STORE_URL),
     consoleUrl: normalizeUrl(process.env.MENTRA_CONSOLE_URL || "https://console2.dev.mentraglass.com"),
-    workosClientId: process.env.MENTRA_WORKOS_CLIENT_ID || process.env.WORKOS_CLIENT_ID || "",
+    workosClientId: process.env.MENTRA_WORKOS_CLIENT_ID || "",
     workosApiBaseUrl: normalizeUrl(process.env.WORKOS_API_BASE_URL || "https://api.workos.com"),
   }
 }
