@@ -1,7 +1,7 @@
 /**
  * @fileoverview Sequences a SoftAP call. Sequencing only — no sockets, no peers, no BLE.
  *
- * The glasses open a hotspot, the phone joins it without giving up its cellular route, and the
+ * The glasses open a hotspot, the host joins it while retaining cellular or Ethernet internet, and the
  * glasses publish WebRTC straight to a listener on the phone. Cloudflare is not involved at all.
  *
  * The order below is the whole point of this file, and one step in it is load-bearing:
@@ -770,7 +770,7 @@ export class SoftapCallTransport {
       const hotspot = this.requireHotspot()
       let bindAddress: string | undefined
       await this.step(generation, "scopedJoin", "SCOPED_JOIN_FAILED", async (report) => {
-        report(`Phone joining ${hotspot.ssid}. Turn Wi-Fi on if a panel opens — Teams stays on cellular.`)
+        report(`Joining ${hotspot.ssid}. Keep Wi-Fi on for the glasses and a separate internet connection for Teams.`)
         bindAddress = await this.deps.joinScopedNetwork(hotspot.ssid, hotspot.passphrase, report)
         softapTrace("scoped_network_joined", {bindAddress: bindAddress ?? "unknown"})
         if (bindAddress) report(`Phone is ${bindAddress} on ${hotspot.ssid}`)
@@ -1149,7 +1149,7 @@ export function createSoftapCallDeps(args: {
     setHotspotState: (enabled: boolean) => Promise<{state: string; ssid?: string; password?: string; localIp?: string}>
     /** Whether this phone's Wi-Fi radio is on. Optional: only Android hosts can answer it. */
     isWifiEnabled?: () => Promise<boolean>
-    joinScopedNetwork: (ssid: string, passphrase: string, gateway?: string) => Promise<string | undefined>
+    joinScopedNetwork: (ssid: string, passphrase: string, gateway?: string, report?: SoftapStepReporter) => Promise<string | undefined>
     leaveScopedNetwork: () => Promise<void>
     cancelScopedNetworkJoin?: () => Promise<void>
     joinMeeting: (
@@ -1275,8 +1275,8 @@ export function createSoftapCallDeps(args: {
     joinScopedNetwork: async (ssid, passphrase, report) => {
       const joinOnce = (nextSsid: string, nextPassphrase: string) =>
         gatewayAddress
-          ? subsystems.joinScopedNetwork(nextSsid, nextPassphrase, gatewayAddress)
-          : subsystems.joinScopedNetwork(nextSsid, nextPassphrase)
+          ? subsystems.joinScopedNetwork(nextSsid, nextPassphrase, gatewayAddress, report)
+          : subsystems.joinScopedNetwork(nextSsid, nextPassphrase, undefined, report)
       let address: string | undefined
       try {
         address = await joinOnce(ssid, passphrase)
@@ -1321,7 +1321,7 @@ export function createSoftapCallDeps(args: {
       // Android promoted in its place. Waiting for it to validate is what stopped the ACS join
       // from burning its whole timeout on DNS that could not resolve yet.
       if (subsystems.awaitValidatedDefaultNetwork) {
-        report?.("Waiting for this phone's mobile data to take over so Teams can connect")
+        report?.("Waiting for an internet route outside the glasses hotspot so Teams can connect")
         try {
           const network = await subsystems.awaitValidatedDefaultNetwork()
           if (network) {
@@ -1340,7 +1340,7 @@ export function createSoftapCallDeps(args: {
           })
         }
       }
-      report?.("Binding the video receiver and joining Teams over cellular")
+      report?.("Binding the video receiver and joining Teams")
       await subsystems.joinMeeting(packageName, {
         meetingUrl: args.meetingUrl,
         token: args.token,

@@ -25,8 +25,8 @@ import {
   mirrorPackageName,
   notifyPackageName,
   settingsPackageName,
-  shouldHideMiniapp,
 } from "@/constants/miniapps"
+import {shouldHideMiniapp} from "./miniappVisibility"
 
 /**
  * Registers the Mentra app's built-in/offline miniapps.
@@ -39,6 +39,7 @@ import {
 class BuiltInMiniappCatalog {
   private static instance: BuiltInMiniappCatalog | null = null
   private initialized = false
+  private notifyInstalled = false
   private syncInFlight = false
   private syncPending = false
 
@@ -55,6 +56,7 @@ class BuiltInMiniappCatalog {
 
     for (const app of this.buildOfflineApps()) {
       appRegistry.installOfflineApp(app)
+      if (app.packageName === notifyPackageName) this.notifyInstalled = true
     }
 
     installAppStoreHooks({
@@ -78,8 +80,22 @@ class BuiltInMiniappCatalog {
     }
     syncMiniappDeveloperVisibility(Boolean(engine.settings.get(SETTINGS.miniapp_dev_mode.key)))
     engine.settings.onChanged<boolean>(SETTINGS.miniapp_dev_mode.key, syncMiniappDeveloperVisibility)
+    for (const key of [SETTINGS.show_mentra_call_ios.key, SETTINGS.show_notify_ios.key]) {
+      engine.settings.onChanged(key, () => {
+        void this.syncGlassesMenuApps()
+      })
+    }
 
     void this.syncGlassesMenuApps()
+  }
+
+  /** Register Notify after a debug opt-in, once per process, without starting it. */
+  installNotify(): void {
+    if (this.notifyInstalled) return
+    const app = this.buildOfflineApps().find((candidate) => candidate.packageName === notifyPackageName)
+    if (!app) return
+    appRegistry.installOfflineApp(app)
+    this.notifyInstalled = true
   }
 
   /** Branded incompatible-launch alert (island already blocked the start). */
@@ -151,10 +167,12 @@ class BuiltInMiniappCatalog {
         menuItems = await getDefaultMenuApps(apps)
       }
 
-      const itemsForNative = menuItems.map((item) => {
-        const app = apps.find((candidate) => candidate.packageName === item.packageName)
-        return {name: item.name, packageName: item.packageName, running: app?.running ?? false}
-      })
+      const itemsForNative = menuItems
+        .filter((item) => !shouldHideMiniapp(item.packageName))
+        .map((item) => {
+          const app = apps.find((candidate) => candidate.packageName === item.packageName)
+          return {name: item.name, packageName: item.packageName, running: app?.running ?? false}
+        })
 
       const changed =
         menuItems.length !== itemsForNative.length ||
@@ -164,7 +182,7 @@ class BuiltInMiniappCatalog {
         })
 
       if (changed) {
-        engine.settings.set(SETTINGS.menu_apps.key, itemsForNative)
+        await engine.settings.set(SETTINGS.menu_apps.key, itemsForNative)
       }
     } finally {
       this.syncInFlight = false

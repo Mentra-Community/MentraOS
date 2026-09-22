@@ -1,0 +1,15 @@
+{
+  "name": "mentra-e2e",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "typecheck": "tsc --noEmit",
+    "test": "bun test runner",
+    "doctor": "bun run run.ts doctor"
+  },
+  "devDependencies": {
+    "bun-types": "1.3.14",
+    "playwright-core": "1.63.0",
+    "typescript": "5.9.3"
+  }
+}

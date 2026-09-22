@@ -391,6 +391,40 @@ public class Bridge private constructor() {
             sendTypedMessage("switch_status", body)
         }
 
+        /**
+         * Mic tuning values the glasses report as actually in force (post-clamp),
+         * from sr_mictun / sr_micst.
+         */
+        @JvmStatic
+        fun sendMicTuningState(state: Map<String, Any>) {
+            sendTypedMessage("mic_tuning_state", HashMap(state))
+        }
+
+        /** Wear state from sr_wrst, or from a wear transition on the glasses. */
+        @JvmStatic
+        fun sendWearState(worn: Boolean) {
+            val body = HashMap<String, Any>()
+            body["worn"] = worn
+            sendTypedMessage("wear_state", body)
+        }
+
+        /** Wear vote config the glasses report as in force, from sr_weartun. */
+        @JvmStatic
+        fun sendWearTuningState(state: Map<String, Any>) {
+            sendTypedMessage("wear_tuning", HashMap(state))
+        }
+
+        /** Disposable mic RMS sample from sr_micrms. */
+        @JvmStatic
+        fun sendMicRms(rms: Int, gateOpen: Boolean, speakerElevated: Boolean, generation: Int) {
+            val body = HashMap<String, Any>()
+            body["rms"] = rms
+            body["gateOpen"] = gateOpen
+            body["speakerElevated"] = speakerElevated
+            body["generation"] = generation
+            sendTypedMessage("mic_rms", body)
+        }
+
         @JvmStatic
         fun sendPhotoError(requestId: String, errorCode: String, errorMessage: String) {
             val timestamp = System.currentTimeMillis()

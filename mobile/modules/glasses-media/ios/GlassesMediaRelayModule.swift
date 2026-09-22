@@ -74,6 +74,12 @@ private final class ManagedRelaySession {
     {
         ready = completion
         hotspot.onLost = { reason in onState("failed", reason) }
+        hotspot.onPermissionRequired = { [weak self] in
+            self?.queue.async {
+                guard let self, !self.stopped else { return }
+                onState("permission_required", "Allow Local Network access to connect to your glasses. If you previously denied access, enable it in Settings, or cancel to return home.")
+            }
+        }
         hotspot.join(ssid: ssid, passphrase: password, gateway: gateway) { result in
             self.queue.async {
                 guard !self.stopped else { return }
@@ -83,7 +89,7 @@ private final class ManagedRelaySession {
                     self.hotspot.awaitInternet { usable, _ in
                         self.queue.async {
                             guard !self.stopped else { return }
-                            guard usable else { self.finish(.failure(LocalMediaError("Turn on phone mobile data to stream through the glasses hotspot"))); return }
+                            guard usable else { self.finish(.failure(LocalMediaError("Connect cellular or Ethernet internet to stream through the glasses hotspot"))); return }
                             let publisher = PhoneWhipPublisher(endpoint: endpoint, captureAudio: captureAudio, bitrate: bitrate, onState: onState)
                             self.publisher = publisher
                             let receiver = LocalWhipIngestSource()
@@ -117,6 +123,7 @@ private final class ManagedRelaySession {
         stopped = true
         finish(.failure(LocalMediaError("Relay cancelled")))
         hotspot.onLost = nil
+        hotspot.onPermissionRequired = nil
         let group = DispatchGroup()
         if let receiver {
             group.enter(); receiver.stop { group.leave() }

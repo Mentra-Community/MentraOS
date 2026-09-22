@@ -104,9 +104,19 @@ class WhipIngestServer(
       val bound = WhipIngestProtocol.Endpoint(address.hostAddress ?: "127.0.0.1", socket.localPort)
       server = socket
       endpoint = bound
-      closed = CountDownLatch(1)
+      val listenerClosed = CountDownLatch(1)
+      closed = listenerClosed
       state = WhipIngestProtocol.State()
-      acceptThread = Thread({ acceptLoop(socket) }, "whip-ingest-accept").apply {
+      acceptThread = Thread({
+        try {
+          acceptLoop(socket)
+        } finally {
+          // close() can return while a blocked accept still owns the native descriptor.
+          // Only the accept thread can signal that the listener has really released its port.
+          socket.close()
+          listenerClosed.countDown()
+        }
+      }, "whip-ingest-accept").apply {
         isDaemon = true
         start()
       }
@@ -156,9 +166,11 @@ class WhipIngestServer(
 
   /** Hard teardown barrier: no request may still create a peer after this returns. */
   fun closeAndAwait(timeoutMs: Long = 15_000): Boolean {
+    val deadline = System.nanoTime() + TimeUnit.MILLISECONDS.toNanos(timeoutMs)
     closeNow()
     connections.shutdownNow()
-    return connections.awaitTermination(timeoutMs, TimeUnit.MILLISECONDS)
+    if (!awaitClosed(timeoutMs)) return false
+    return connections.awaitTermination((deadline - System.nanoTime()).coerceAtLeast(0), TimeUnit.NANOSECONDS)
   }
 
   /**
@@ -178,9 +190,7 @@ class WhipIngestServer(
       endpoint = null
       current
     }
-    // Counted down even on the early return: a second close must not leave a waiter parked on a
-    // latch that nothing will ever open again.
-    closed.countDown()
+    // The accept thread owns the close barrier; concurrent closes must not open it early.
     if (socket == null) return
     runCatching { socket.close() }
     activeSockets.forEach { runCatching { it.close() } }
@@ -203,6 +213,7 @@ class WhipIngestServer(
       }
       if (!registered) { runCatching { connection.close() }; return }
       accepted.incrementAndGet()
+      SoftApTrace.stage("whip_socket_accepted")
       // Each connection on its own thread: a negotiation blocks for the length of an ICE gather,
       // and a DELETE arriving during one must not queue behind it.
       try {
@@ -361,6 +372,7 @@ class WhipIngestServer(
       val (method, target) = WhipIngestProtocol.parseRequestLine(
         reader.readLine() ?: return null,
       ) ?: return null
+      SoftApTrace.stage("whip_request_line_read", "method" to method)
 
       val headers = mutableMapOf<String, String>()
       while (true) {
@@ -373,6 +385,7 @@ class WhipIngestServer(
 
       val contentType = WhipIngestProtocol.headerValue(headers, "Content-Type")
       val contentLength = WhipIngestProtocol.headerValue(headers, "Content-Length")?.toLongOrNull()
+      SoftApTrace.stage("whip_request_headers_read", "contentLength" to contentLength)
 
       // Do not read a body we have already decided to refuse. decide() checks the length first for
       // exactly this reason.
@@ -388,6 +401,7 @@ class WhipIngestServer(
         val count = reader.read(body, read, body.size - read)
         if (count < 0) break
         read += count
+        SoftApTrace.stage("whip_request_body_read", "read" to read, "expected" to body.size)
       }
       return WhipIngestProtocol.Request(method, target, contentType, contentLength, String(body, 0, read))
     }

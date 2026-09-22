@@ -55,9 +55,9 @@ the selected deployment's authentication.
 
 ## OTA compatibility
 
-The official manifest reads `EXPO_PUBLIC_ASG_OTA_VERSION_URL`. PR APKs instead
+The official manifest reads `EXPO_PUBLIC_ASG_OTA_VERSION_URL`. Android and iOS PR apps instead
 read `extra.mentraPrBuild.otaManifestUrl` from Expo's packaged `app.config` asset,
-which CI can replace before re-signing a matching existing APK. Malformed PR
+which CI can replace before re-signing a matching existing APK or IPA. Malformed PR
 configuration is rejected; it never falls back to a previous bundled pin.
 The selected pin still goes through the existing host/engine adapter.
 Its engine adapter

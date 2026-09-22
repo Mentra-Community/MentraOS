@@ -4,7 +4,27 @@ on:
   pull_request:
     paths:
       - "mobile/**"
+      - "cloud-v2/**"
+      - "android_core/**"
+      - "asg_client/**"
+      - "package.json"
+      - "bun.lock"
+      - ".github/workflows/mentra-app-android-build.yml"
+      - ".github/workflows/mentra-asg-client-build.yml"
+      - ".github/actions/inject-signing/**"
+      - ".github/scripts/pr-mobile-build*"
+      - ".github/scripts/pr_mobile_config.py"
+      - ".github/scripts/prepare-pr-mobile.mjs"
+      - ".github/scripts/repackage-pr-apk*"
+      - ".github/scripts/test_repackage_pr_apk.py"
+      - ".github/scripts/notify-pr-builds*"
       - ".github/workflows/mentra-app-ios-build.yml"
+      - ".github/workflows/reusable-pr-build-notification.yml"
+      - ".github/scripts/pr-ios-artifacts*"
+      - ".github/scripts/select-pr-asg.mjs"
+      - ".github/scripts/compute-asg-build-identity.mjs"
+      - ".github/scripts/allocate-asg-version.mjs"
+      - ".github/scripts/build-bluetooth-sdk-ota-manifest.mjs"
   push:
     branches:
       - main
@@ -18,10 +38,23 @@ concurrency:
   group: ios-build-${{ github.workflow }}-${{ github.ref }}
   cancel-in-progress: true
 
+permissions:
+  contents: read
+
+env:
+  PR_IOS_SIGNED: ${{ github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
+  PR_NUMBER: ${{ github.event.pull_request.number }}
+  PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+  # Keep per-PR configuration out of reusable JavaScript, matching Android.
+  EXPO_PUBLIC_ASG_OTA_VERSION_URL: ""
+  PR_OTA_MANIFEST_URL: ${{ github.event_name == 'pull_request' && format('https://artifactscdn.mentraglass.com/{0}/releases/pr-builds/ota-pr-{1}-{2}.json', github.repository, github.event.pull_request.number, github.event.pull_request.head.sha) || '' }}
+
 jobs:
   build:
     runs-on: [self-hosted, macOS, ARM64]
     timeout-minutes: 90
+    outputs:
+      upload_attempt: ${{ github.run_attempt }}
     env:
       EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID }}
       EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY }}
@@ -72,67 +105,24 @@ jobs:
         uses: ./.github/actions/disk-guard
 
       - name: Setup Bun
-        uses: oven-sh/setup-bun@v1
+        uses: oven-sh/setup-bun@v2
         with:
-          bun-version: latest
+          # Match coordinated mobile builds. v2 reuses this installed version
+          # or downloads from GitHub Releases, avoiding the flaky bun.sh alias.
+          bun-version: 1.4.0
 
       - name: Setup Node.js
         uses: actions/setup-node@v4
         with:
           node-version: "20"
 
-      - name: Get cache week number
-        id: cache-week
-        run: echo "week=$(date +%Y-%U)" >> "$GITHUB_OUTPUT"
-
-      - name: Cache CocoaPods downloads
-        uses: actions/cache@v4
-        with:
-          path: |
-            ~/Library/Caches/CocoaPods
-            ~/.cocoapods
-          # Downloaded pod archives and specs are portable between runners.
-          key: cocoapods-downloads-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-${{ hashFiles('mobile/package.json', 'mobile/bun.lock') }}
-          restore-keys: |
-            cocoapods-downloads-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-
-            cocoapods-downloads-${{ runner.os }}-
-
-      - name: Cache installed CocoaPods
-        uses: actions/cache@v4
-        with:
-          path: mobile/ios/Pods
-          # Generated pod support files can embed absolute node_modules and
-          # workspace paths. Keep them runner-local and exact so a runner never
-          # inherits another runner's Hermes or React Native build-script paths.
-          key: pods-installed-${{ runner.name }}-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-${{ hashFiles('mobile/ios/Podfile.lock', 'mobile/package.json', 'mobile/bun.lock') }}
-
-      - name: Cache Xcode DerivedData (device build)
-        id: xcode-derived-cache
-        uses: actions/cache@v4
-        with:
-          path: mobile/ios/build-device
-          # DerivedData and SwiftPM artifacts embed absolute workspace paths.
-          # Keep this cache runner-local and exact: restoring another runner's
-          # cache produced references to missing Mapbox XCFrameworks.
-          key: xcode-derived-device-${{ runner.name }}-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-${{ hashFiles('mobile/ios/Podfile.lock', 'mobile/package.json', 'mobile/bun.lock') }}
-
-      - name: Install dependencies
-        id: bun-install
-        working-directory: ./mobile
-        run: bun install --no-frozen-lockfile
-        continue-on-error: true
-
-      - name: Retry bun install with clean node_modules (if first attempt failed)
-        if: steps.bun-install.outcome == 'failure'
-        working-directory: ./mobile
+      - name: Test PR artifact and notification contracts
         run: |
-          echo "First bun install failed, wiping node_modules and retrying..."
-          rm -rf node_modules
-          bun install --no-frozen-lockfile
-
-      - name: Validate CocoaPods post-install project integrity
-        working-directory: ./mobile
-        run: bun ./scripts/check-mapbox-pods-project.ts
+          node --test .github/scripts/pr-ios-artifacts.test.mjs .github/scripts/notify-pr-builds.test.mjs mobile/scripts/release-bundle-config.test.mjs
+          python3 mobile/ci/pr-ios/test_artifacts.py
+          python3 mobile/ci/pr-ios/test_repackage.py
+          node --test mobile/ci/pr-ios/xcode-attempt.test.mjs
+          node --test .github/scripts/pr-mobile-build.test.mjs
 
       - name: Setup environment
         working-directory: ./mobile
@@ -147,8 +137,8 @@ jobs:
           # Pin which cloud this binary talks to (OS-1875).
           #
           # main is production-configured; dev, PRs and feature branches use dev
-          # cloud. Nothing uploads from this workflow, so these are compile checks,
-          # but they should still match the environment they claim to check.
+          # cloud. Trusted PRs publish ad hoc iPhone/Mac downloads; other events
+          # remain compile checks. No TestFlight export or upload occurs here.
           #
           # .env.example ships dev URLs so a local checkout builds with no setup.
           # A lane that produces a distributable must not inherit that silently.
@@ -258,7 +248,144 @@ jobs:
             sentry_dsn_unavailable "DOPPLER_TOKEN_MOBILE_PRD secret not set."
           fi
 
+      - name: Prepare PR mobile configuration
+        if: env.PR_IOS_SIGNED == 'true'
+        run: node .github/scripts/prepare-pr-mobile.mjs
+
+      - name: Use the self-hosted Mac's Ruby for signing
+        if: env.PR_IOS_SIGNED == 'true'
+        working-directory: mobile
+        run: |
+          set -euo pipefail
+          ruby_bin="$(brew --prefix ruby)/bin"
+          export PATH="$ruby_bin:$PATH"
+          echo "$ruby_bin" >> "$GITHUB_PATH"
+          ruby --version
+          # Do not install hosted-runner Ruby under /Users/runner on this Mac.
+          # Keep gems and Bundler configuration scoped to this job.
+          export BUNDLE_PATH="$RUNNER_TEMP/mentra-pr-signing-gems"
+          export BUNDLE_FROZEN=true
+          echo "BUNDLE_PATH=$BUNDLE_PATH" >> "$GITHUB_ENV"
+          echo "BUNDLE_FROZEN=true" >> "$GITHUB_ENV"
+          bundle install --jobs 4 --retry 3
+
+      - name: Install PR ad hoc signing assets
+        if: env.PR_IOS_SIGNED == 'true'
+        working-directory: mobile
+        env:
+          FASTLANE_SKIP_UPDATE_CHECK: "true"
+          MATCH_PASSWORD: ${{ secrets.MATCH_PASSWORD }}
+          RAW_MATCH_GIT_BASIC_AUTHORIZATION: ${{ secrets.MATCH_GIT_BASIC_AUTHORIZATION }}
+          IOS_PR_PROFILE_BASE64: ${{ secrets.IOS_PR_PROFILE_BASE64 }}
+        run: |
+          set -euo pipefail
+          keychain="$RUNNER_TEMP/mentra-pr-${GITHUB_RUN_ID}-${GITHUB_RUN_ATTEMPT}.keychain-db"
+          password="$(openssl rand -hex 32)"
+          echo "::add-mask::$password"
+          echo "PR_IOS_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
+          echo "PR_IOS_KEYCHAIN_PASSWORD=$password" >> "$GITHUB_ENV"
+          security create-keychain -p "$password" "$keychain"
+          # Match release signing: keep only this disposable job keychain
+          # unlocked through archive/export; always delete it at job cleanup.
+          security set-keychain-settings "$keychain"
+          security unlock-keychain -p "$password" "$keychain"
+          python3 ci/pr-ios/keychain-search.py add "$keychain"
+          # A fresh job keychain needs the Apple certificate chain as well as
+          # the distribution identity, matching the coordinated signing setup.
+          for wwdr in G2 G3 G4 G5 G6; do
+            certificate="$RUNNER_TEMP/AppleWWDRCA${wwdr}.cer"
+            curl --fail --silent --show-error --location --retry 2 \
+              "https://www.apple.com/certificateauthority/AppleWWDRCA${wwdr}.cer" -o "$certificate"
+            security import "$certificate" -k "$keychain" -T /usr/bin/codesign
+          done
+          MATCH_GIT_BASIC_AUTHORIZATION="$(printf '%s' "$RAW_MATCH_GIT_BASIC_AUTHORIZATION" | tr -d '\r\n')"
+          export MATCH_GIT_BASIC_AUTHORIZATION
+          bundle exec fastlane match adhoc --readonly --skip_provisioning_profiles true --keychain_name "$keychain" --keychain_password "$password"
+          security set-key-partition-list -S apple-tool:,apple:,codesign: -s -k "$password" "$keychain" >/dev/null
+          python3 ci/pr-ios/artifacts.py configure --keychain "$keychain" --output build/pr-ios
+
+      - name: Fingerprint compiled mobile inputs
+        if: env.PR_IOS_SIGNED == 'true'
+        run: node .github/scripts/pr-mobile-build.mjs ios
+
+      - name: Select a matching signed PR IPA
+        id: select-ipa
+        if: env.PR_IOS_SIGNED == 'true'
+        env:
+          ARTIFACTS_R2_ACCOUNT_ID: ${{ vars.ARTIFACTS_R2_ACCOUNT_ID }}
+          ARTIFACTS_R2_BUCKET: artifactscdn
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const {selectMobile} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/pr-mobile-build.mjs`);
+            await selectMobile({github, context, core, platform: 'ios'});
+
+      - name: Get cache week number
+        id: cache-week
+        run: echo "week=$(date +%Y-%U)" >> "$GITHUB_OUTPUT"
+
+      - name: Cache CocoaPods downloads
+        if: steps.select-ipa.outputs.reused != 'true'
+        uses: actions/cache@v4
+        with:
+          path: |
+            ~/Library/Caches/CocoaPods
+            ~/.cocoapods
+          # Downloaded pod archives and specs are portable between runners.
+          key: cocoapods-downloads-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-${{ hashFiles('mobile/package.json', 'mobile/bun.lock') }}
+          restore-keys: |
+            cocoapods-downloads-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-
+            cocoapods-downloads-${{ runner.os }}-
+
+      - name: Cache installed CocoaPods
+        if: steps.select-ipa.outputs.reused != 'true'
+        uses: actions/cache@v4
+        with:
+          path: mobile/ios/Pods
+          # Generated pod support files can embed absolute node_modules and
+          # workspace paths. Keep them runner-local and exact so a runner never
+          # inherits another runner's Hermes or React Native build-script paths.
+          key: pods-installed-${{ runner.name }}-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-${{ hashFiles('mobile/ios/Podfile.lock', 'mobile/package.json', 'mobile/bun.lock') }}
+
+      - name: Cache Xcode DerivedData (device build)
+        if: steps.select-ipa.outputs.reused != 'true'
+        id: xcode-derived-cache
+        uses: actions/cache@v4
+        with:
+          path: mobile/ios/build-device
+          # DerivedData and SwiftPM artifacts embed absolute workspace paths.
+          # Keep this cache runner-local and exact: restoring another runner's
+          # cache produced references to missing Mapbox XCFrameworks.
+          key: xcode-derived-device-${{ runner.name }}-${{ runner.os }}-${{ steps.cache-week.outputs.week }}-${{ hashFiles('mobile/ios/Podfile.lock', 'mobile/package.json', 'mobile/bun.lock') }}
+
+      - name: Install dependencies
+        if: steps.select-ipa.outputs.reused != 'true'
+        id: bun-install
+        working-directory: ./mobile
+        run: bun install --no-frozen-lockfile
+        continue-on-error: true
+
+      - name: Retry bun install with clean node_modules (if first attempt failed)
+        if: steps.bun-install.outcome == 'failure'
+        working-directory: ./mobile
+        run: |
+          echo "First bun install failed, wiping node_modules and retrying..."
+          rm -rf node_modules
+          bun install --no-frozen-lockfile
+
+      - name: Test native gallery download progress
+        if: steps.select-ipa.outputs.reused != 'true'
+        run: mobile/scripts/test-gallery-download-progress.sh
+
+      - name: Validate CocoaPods post-install project integrity
+        if: steps.select-ipa.outputs.reused != 'true'
+        working-directory: ./mobile
+        run: bun ./scripts/check-mapbox-pods-project.ts
+
       - name: Configure Mapbox SPM credentials (~/.netrc)
+        if: steps.select-ipa.outputs.reused != 'true'
         # The Mapbox Navigation SDK (v3) is a Swift Package fetched from
         # api.mapbox.com at prebuild / pod install / SPM resolve time. SPM
         # authenticates via ~/.netrc with the Downloads:Read secret token (sk.…).
@@ -280,6 +407,7 @@ jobs:
           chmod 600 "$HOME/.netrc"
 
       - name: Ensure a clean iOS prebuild (drop stale generated project, keep dep caches)
+        if: steps.select-ipa.outputs.reused != 'true'
         run: |
           # mobile/ios is gitignored (generated by prebuild). The CocoaPods +
           # DerivedData cache restores above recreate mobile/ios/ containing only
@@ -309,10 +437,12 @@ jobs:
           fi
 
       - name: Run Expo prebuild
+        if: steps.select-ipa.outputs.reused != 'true'
         working-directory: ./mobile
         run: bun expo prebuild --platform ios
 
       - name: Restore iOS dep caches (Pods + build-device)
+        if: steps.select-ipa.outputs.reused != 'true'
         run: |
           # Prebuild just regenerated a clean mobile/ios with a valid AppDelegate.
           # Restore Pods/ and build-device/ so pod install + xcodebuild reuse them.
@@ -330,12 +460,14 @@ jobs:
           fi
 
       - name: Setup Sherpa Onnx
+        if: steps.select-ipa.outputs.reused != 'true'
         working-directory: ./mobile
         run: |
           chmod +x scripts/setup-sherpa-onnx-optional.sh
           ./scripts/setup-sherpa-onnx-optional.sh
 
       - name: Install CocoaPods dependencies
+        if: steps.select-ipa.outputs.reused != 'true'
         working-directory: ./mobile/ios
         run: |
           # Self-heal a corrupted prebuilt-framework cache: the cached Pods can be
@@ -352,7 +484,13 @@ jobs:
             pod install --repo-update
           }
 
+      - name: Configure only the app target for PR signing
+        if: env.PR_IOS_SIGNED == 'true' && steps.select-ipa.outputs.reused != 'true'
+        working-directory: mobile
+        run: bundle exec ruby ci/pr-ios/configure-signing.rb ios/Mentra.xcodeproj build/pr-ios/signing.json
+
       - name: Ensure iOS platform is installed
+        if: steps.select-ipa.outputs.reused != 'true'
         working-directory: ./mobile/ios
         run: |
           # Idempotent: no-op if already present, downloads if missing.
@@ -378,6 +516,7 @@ jobs:
       #                -derivedDataPath build
 
       - name: Build iOS app for Device (cached attempt)
+        if: steps.select-ipa.outputs.reused != 'true'
         id: xcode-build
         working-directory: ./mobile/ios
         env:
@@ -393,19 +532,12 @@ jobs:
           }
           trap record_duration EXIT
 
-          xcodebuild -quiet \
-                     -workspace Mentra.xcworkspace \
-                     -scheme Mentra \
-                     -configuration Release \
-                     -destination 'generic/platform=iOS' \
-                     -derivedDataPath build-device \
-                     CODE_SIGN_IDENTITY="" \
-                     CODE_SIGNING_REQUIRED=NO \
-                     CODE_SIGNING_ALLOWED=NO
+          cd "$GITHUB_WORKSPACE"
+          node mobile/ci/pr-ios/build.mjs
 
       - name: Retry build with clean caches (if first attempt failed)
         id: xcode-build-clean
-        if: steps.xcode-build.outcome == 'failure'
+        if: steps.xcode-build.outcome == 'failure' && steps.xcode-build.outputs.failure_kind != 'signing'
         working-directory: ./mobile/ios
         env:
           SENTRY_DISABLE_AUTO_UPLOAD: "true"
@@ -454,20 +586,13 @@ jobs:
           # Retry serially. The fallback only runs after a failed cached build,
           # and limiting concurrency avoids the observed CocoaPods VFS overlay
           # disappearing while parallel compile and XCFramework copy jobs run.
-          xcodebuild -quiet \
-                     -workspace Mentra.xcworkspace \
-                     -scheme Mentra \
-                     -jobs 1 \
-                     -configuration Release \
-                     -destination 'generic/platform=iOS' \
-                     -derivedDataPath build-device \
-                     CODE_SIGN_IDENTITY="" \
-                     CODE_SIGNING_REQUIRED=NO \
-                     CODE_SIGNING_ALLOWED=NO
+          cd "$GITHUB_WORKSPACE"
+          node mobile/ci/pr-ios/build.mjs --serial
 
       - name: Summarize iOS build attempts
         if: always()
         env:
+          REUSED: ${{ steps.select-ipa.outputs.reused }}
           DERIVED_CACHE_HIT: ${{ steps.xcode-derived-cache.outputs.cache-hit }}
           CACHED_OUTCOME: ${{ steps.xcode-build.outcome }}
           CACHED_DURATION_SECONDS: ${{ steps.xcode-build.outputs.duration_seconds }}
@@ -492,6 +617,7 @@ jobs:
           {
             echo "## iOS device build attempts"
             echo ""
+            echo "- Reused verified compiled app: ${REUSED:-false}"
             echo "- DerivedData exact-key hit: $cache_hit"
             echo ""
             echo "| Attempt | Outcome | Duration |"
@@ -504,10 +630,98 @@ jobs:
             echo "::warning::Cache-enabled iOS build failed after $cached_duration; clean-cache retry outcome: $retry_outcome ($retry_duration)."
           fi
 
-      - name: Fail if both builds failed
-        if: steps.xcode-build.outcome == 'failure'
+      - name: Require a successful build attempt
+        if: always()
+        env:
+          CACHED_RESULT: ${{ steps.xcode-build.outcome }}
+          RETRY_RESULT: ${{ steps.xcode-build-clean.outcome }}
+          REUSED: ${{ steps.select-ipa.outputs.reused }}
+        run: test "$REUSED" = true || test "$CACHED_RESULT" = success || test "$RETRY_RESULT" = success
+
+      - name: Export fresh iOS compilation
+        if: success() && env.PR_IOS_SIGNED == 'true' && steps.select-ipa.outputs.reused != 'true'
         run: |
-          if [ ! -d "mobile/ios/build-device/Build/Products/Release-iphoneos/Mentra.app" ]; then
-            echo "Both build attempts failed"
-            exit 1
-          fi
+          set -euo pipefail
+          security unlock-keychain -p "$PR_IOS_KEYCHAIN_PASSWORD" "$PR_IOS_KEYCHAIN"
+          xcodebuild -exportArchive -archivePath mobile/build/pr-ios/Mentra.xcarchive \
+            -exportOptionsPlist mobile/build/pr-ios/ExportOptions.plist \
+            -exportPath mobile/build/pr-ios/export
+
+      - name: Package this PR's configuration and sign
+        if: success() && env.PR_IOS_SIGNED == 'true'
+        env:
+          PR_IOS_REUSED: ${{ steps.select-ipa.outputs.reused }}
+        run: |
+          set -euo pipefail
+          security unlock-keychain -p "$PR_IOS_KEYCHAIN_PASSWORD" "$PR_IOS_KEYCHAIN"
+          source=mobile/build/pr-ios/export/Mentra.ipa
+          if [[ "$PR_IOS_REUSED" == true ]]; then source=pr-mobile-candidate.ipa; fi
+          python3 mobile/ci/pr-ios/repackage.py package "$source" "$MENTRA_PR_MOBILE_FINGERPRINT" mobile/build/pr-ios/Mentra-pr.ipa
+          python3 mobile/ci/pr-ios/artifacts.py package --ipa mobile/build/pr-ios/Mentra-pr.ipa --output pr-ios-output
+
+      - name: Hand off signed PR downloads
+        id: handoff
+        if: success() && env.PR_IOS_SIGNED == 'true'
+        continue-on-error: true
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-ios-${{ github.run_id }}-${{ github.run_attempt }}
+          path: pr-ios-output
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+
+      - name: Retry signed download handoff
+        if: steps.handoff.outcome == 'failure'
+        uses: actions/upload-artifact@v4
+        with:
+          name: pr-ios-${{ github.run_id }}-${{ github.run_attempt }}
+          path: pr-ios-output
+          compression-level: 0
+          if-no-files-found: error
+          retention-days: 7
+          overwrite: true
+
+      - name: Remove this job's signing keychain
+        if: always() && env.PR_IOS_KEYCHAIN != ''
+        run: |
+          python3 mobile/ci/pr-ios/keychain-search.py remove "$PR_IOS_KEYCHAIN"
+          security delete-keychain "$PR_IOS_KEYCHAIN"
+
+  publish:
+    needs: build
+    if: github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository
+    runs-on: ubuntu-latest
+    timeout-minutes: 30
+    env:
+      ARTIFACTS_R2_ACCOUNT_ID: ${{ vars.ARTIFACTS_R2_ACCOUNT_ID }}
+      ARTIFACTS_R2_BUCKET: artifactscdn
+      SOURCE_RUN_ID: ${{ github.run_id }}
+      SOURCE_RUN_ATTEMPT: ${{ needs.build.outputs.upload_attempt }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: "20"
+      - run: npm ci --prefix .github/artifact-storage
+      - uses: actions/download-artifact@v4
+        with:
+          name: pr-ios-${{ github.run_id }}-${{ needs.build.outputs.upload_attempt }}
+          path: pr-ios-output
+      - name: Publish verified iPhone installer, IPA, Mac ZIP and receipt
+        env:
+          GH_TOKEN: ${{ github.token }}
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
+        run: node .github/scripts/pr-ios-artifacts.mjs pr-ios-output
+
+  notify-pr-builds:
+    needs: [build, publish]
+    if: ${{ always() && !cancelled() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
+    uses: ./.github/workflows/reusable-pr-build-notification.yml
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
+    secrets:
+      SLACK_WEBHOOK_PR_BUILDS: ${{ secrets.SLACK_WEBHOOK_PR_BUILDS }}

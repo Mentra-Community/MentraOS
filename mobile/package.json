@@ -1,6 +1,6 @@
 {
   "name": "mentraos",
-  "version": "3.2.0",
+  "version": "3.2.1",
   "private": true,
   "main": "expo-router/entry",
   "workspaces": [
@@ -14,6 +14,7 @@
     "start": "zx ./scripts/start.mjs",
     "android": "zx ./scripts/android.mjs",
     "ios": "zx ./scripts/ios.mjs",
+    "ios:mac": "bun ./scripts/ios-mac.mjs",
     "ios:release": "zx ./scripts/ios-release.mjs",
     "android:wireless": "zx ./scripts/android-wireless.mjs",
     "android:release": "zx ./scripts/android-release.mjs",
@@ -215,7 +216,9 @@
     "react-native-inner-shadow@2.4.0": "patches/react-native-inner-shadow@2.4.0.patch",
     "react-native-webview@13.16.0": "patches/react-native-webview@13.16.0.patch",
     "expo-audio@55.0.14": "patches/expo-audio@55.0.14.patch",
-    "@livekit/react-native-webrtc@137.0.3": "patches/@livekit%2Freact-native-webrtc@137.0.3.patch"
+    "@livekit/react-native-webrtc@137.0.3": "patches/@livekit%2Freact-native-webrtc@137.0.3.patch",
+    "@dr.pogodin/react-native-fs@2.38.2": "patches/@dr.pogodin%2Freact-native-fs@2.38.2.patch",
+    "expo-router@55.0.16": "patches/expo-router@55.0.16.patch"
   },
   "trustedDependencies": [
     "@sentry/cli",

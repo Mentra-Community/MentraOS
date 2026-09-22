@@ -14,9 +14,14 @@ on:
       - ".github/workflows/mentra-asg-client-build.yml"
       - ".github/actions/inject-signing/**"
       - ".github/scripts/pr-mobile-build*"
+      - ".github/scripts/pr_mobile_config.py"
+      - ".github/scripts/prepare-pr-mobile.mjs"
       - ".github/scripts/repackage-pr-apk*"
       - ".github/scripts/test_repackage_pr_apk.py"
       - ".github/scripts/notify-pr-builds*"
+      - ".github/workflows/mentra-app-ios-build.yml"
+      - ".github/workflows/reusable-pr-build-notification.yml"
+      - ".github/scripts/pr-ios-artifacts*"
       - ".github/scripts/select-pr-asg.mjs"
       - ".github/scripts/compute-asg-build-identity.mjs"
       - ".github/scripts/allocate-asg-version.mjs"
@@ -48,6 +53,10 @@ permissions:
   actions: read
   pull-requests: write
 
+env:
+  ARTIFACTS_R2_ACCOUNT_ID: ${{ vars.ARTIFACTS_R2_ACCOUNT_ID }}
+  ARTIFACTS_R2_BUCKET: artifactscdn
+
 jobs:
   build:
     # Blacksmith 8 vCPU / 32 GB: this is the long-pole check on every mobile PR
@@ -63,7 +72,7 @@ jobs:
       # PR configuration is packaged after compilation so matching signed APKs
       # can be reused across revisions. Other builds retain their embedded pin.
       EXPO_PUBLIC_ASG_OTA_VERSION_URL: ${{ github.event_name != 'pull_request' && inputs.ota_manifest_url || '' }}
-      PR_OTA_MANIFEST_URL: ${{ github.event_name == 'pull_request' && format('https://github.com/{0}/releases/download/pr-builds/ota-pr-{1}-{2}.json', github.repository, github.event.pull_request.number, github.event.pull_request.head.sha) || '' }}
+      PR_OTA_MANIFEST_URL: ${{ github.event_name == 'pull_request' && format('https://artifactscdn.mentraglass.com/{0}/releases/pr-builds/ota-pr-{1}-{2}.json', github.repository, github.event.pull_request.number, github.event.pull_request.head.sha) || '' }}
       PR_HEAD_SHA: ${{ github.event.pull_request.head.sha }}
       # Compile-check APKs are phone sideloads. Full ABI belongs on the
       # coordinated release workflow, not on this compile-check workflow.
@@ -107,7 +116,7 @@ jobs:
             const sha = context.payload.pull_request.head.sha.substring(0, 7);
 
             // Check for existing working build link to preserve
-            const existingDownloadMatch = comment.body.match(/\[📥 \*\*Download APK\*\*\]\((https:\/\/github\.com[^)]+\.apk)\)/);
+            const existingDownloadMatch = comment.body.match(/\[📥 \*\*Download APK\*\*\]\((https:\/\/(?:github\.com|artifactscdn\.mentraglass\.com)\/[^)]+\.apk)\)/);
             const existingShaMatch = comment.body.match(/✅ \*\*(?:Ready to test!|APK published)\*\* \(commit `([a-f0-9]+)`\)/);
 
             let buildStatus = `### 📱 Mobile App Build\n⏳ **Building...** (commit \`${sha}\`)`;
@@ -136,12 +145,6 @@ jobs:
       - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Pin Android build number for this run
-        if: github.event_name == 'pull_request'
-        run: |
-          # shellcheck disable=SC2016
-          node --input-type=module -e 'import {getBuildNumber} from "./mobile/scripts/build-number.mjs"; console.log(`MENTRAOS_PINNED_BUILD_NUMBER=${getBuildNumber()}`)' >> "$GITHUB_ENV"
-
       - name: Setup Java
         uses: actions/setup-java@v4
         with:
@@ -167,7 +170,7 @@ jobs:
 
       - name: Verify PR packaging and notification contracts
         run: |
-          node --test .github/scripts/pr-mobile-build.test.mjs .github/scripts/notify-pr-builds.test.mjs
+          node --test .github/scripts/pr-mobile-build.test.mjs .github/scripts/notify-pr-builds.test.mjs .github/scripts/pr-ios-artifacts.test.mjs
           python3 .github/scripts/test_repackage_pr_apk.py
 
       - name: Setup environment
@@ -302,6 +305,10 @@ jobs:
             sentry_dsn_unavailable "DOPPLER_TOKEN_MOBILE_PRD secret not set."
           fi
 
+      - name: Prepare PR mobile configuration
+        if: github.event_name == 'pull_request'
+        run: node .github/scripts/prepare-pr-mobile.mjs
+
       - name: Inject release signing key
         uses: ./.github/actions/inject-signing
         with:
@@ -319,6 +326,9 @@ jobs:
         id: select-apk
         if: github.event_name == 'pull_request'
         uses: actions/github-script@v7
+        env:
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
         with:
           script: |
             const {selectMobile} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/pr-mobile-build.mjs`);
@@ -425,7 +435,7 @@ jobs:
           else
             cp mobile/android/app/build/outputs/apk/release/app-release.apk pr-mobile-base.apk
           fi
-          python3 .github/scripts/repackage-pr-apk.py package pr-mobile-base.apk "$MENTRA_PR_APK_FINGERPRINT" \
+          python3 .github/scripts/repackage-pr-apk.py package pr-mobile-base.apk "$MENTRA_PR_MOBILE_FINGERPRINT" \
             mobile/android/app/build/outputs/apk/release/app-release.apk
 
       - name: Verify embedded OTA manifest pin
@@ -462,85 +472,31 @@ jobs:
           name: app-release
           path: mobile/android/app/build/outputs/apk/release/app-release.apk
 
-      - name: Upload APK to pr-builds release
+      - name: Upload APK to the public artifact CDN
         if: github.event_name == 'pull_request'
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const fs = require('fs');
-            const path = require('path');
-
-            const prNumber = context.payload.pull_request.number;
-            const sha = context.payload.pull_request.head.sha.substring(0, 7);
-            const apkName = `mobile-pr-${prNumber}-${sha}.apk`;
-            const apkPath = 'mobile/android/app/build/outputs/apk/release/app-release.apk';
-
-            // Get the pr-builds release
-            const release = await github.rest.repos.getReleaseByTag({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              tag: 'pr-builds'
-            });
-
-            // Delete existing asset with same name if it exists
-            for (const asset of release.data.assets) {
-              if (asset.name === apkName) {
-                console.log(`Deleting existing asset: ${asset.name}`);
-                await github.rest.repos.deleteReleaseAsset({
-                  owner: context.repo.owner,
-                  repo: context.repo.repo,
-                  asset_id: asset.id
-                });
-                break;
-              }
-            }
-
-            // Read the APK file
-            const apkData = fs.readFileSync(apkPath);
-            const sha256 = require('crypto').createHash('sha256').update(apkData).digest('hex');
-
-            // Upload the APK
-            console.log(`Uploading ${apkName} (${apkData.length} bytes)...`);
-            await github.rest.repos.uploadReleaseAsset({
-              owner: context.repo.owner,
-              repo: context.repo.repo,
-              release_id: release.data.id,
-              name: apkName,
-              label: `mobile-v1:${process.env.MENTRA_PR_APK_FINGERPRINT}:${sha256}`,
-              data: apkData
-            });
-
-            console.log(`Successfully uploaded ${apkName}`);
+        env:
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
+          GH_TOKEN: ${{ github.token }}
+          PR_NUMBER: ${{ github.event.pull_request.number }}
+          HEAD_SHA: ${{ github.event.pull_request.head.sha }}
+        run: |
+          set -euo pipefail
+          release_id=$(gh api "repos/${GITHUB_REPOSITORY}/releases/tags/pr-builds" --jq .id)
+          name="mobile-pr-${PR_NUMBER}-${HEAD_SHA:0:7}.apk"
+          node .github/scripts/publish-immutable-release-asset.mjs \
+            --file mobile/android/app/build/outputs/apk/release/app-release.apk --name "$name" --release-id "$release_id" \
+            --repository "$GITHUB_REPOSITORY" --replace true \
+            --fingerprint "$MENTRA_PR_MOBILE_FINGERPRINT"
 
       - name: Cleanup old release assets
         if: github.event_name == 'pull_request'
         continue-on-error: true
-        uses: actions/github-script@v7
-        with:
-          script: |
-            const sevenDaysAgo = new Date(Date.now() - 7 * 24 * 60 * 60 * 1000);
-
-            try {
-              const release = await github.rest.repos.getReleaseByTag({
-                owner: context.repo.owner,
-                repo: context.repo.repo,
-                tag: 'pr-builds'
-              });
-
-              for (const asset of release.data.assets) {
-                const createdAt = new Date(asset.created_at);
-                if (createdAt < sevenDaysAgo) {
-                  console.log(`Deleting old asset: ${asset.name} (created ${asset.created_at})`);
-                  await github.rest.repos.deleteReleaseAsset({
-                    owner: context.repo.owner,
-                    repo: context.repo.repo,
-                    asset_id: asset.id
-                  });
-                }
-              }
-            } catch (error) {
-              console.log('Cleanup skipped:', error.message);
-            }
+        env:
+          ARTIFACTS_R2_ACCESS_KEY_ID: ${{ secrets.ARTIFACTS_R2_ACCESS_KEY_ID }}
+          ARTIFACTS_R2_SECRET_ACCESS_KEY: ${{ secrets.ARTIFACTS_R2_SECRET_ACCESS_KEY }}
+          GH_TOKEN: ${{ github.token }}
+        run: node .github/scripts/release-assets.mjs sweep --tag pr-builds --days 7
 
       - name: Update PR comment - Build succeeded
         if: success() && github.event_name == 'pull_request'
@@ -561,7 +517,7 @@ jobs:
             const headSha = context.payload.pull_request.head.sha;
             const sha = headSha.substring(0, 7);
             const apkName = `mobile-pr-${prNumber}-${sha}.apk`;
-            const releaseBase = `https://github.com/${context.repo.owner}/${context.repo.repo}/releases/download/pr-builds`;
+            const releaseBase = `https://artifactscdn.mentraglass.com/${context.repo.owner}/${context.repo.repo}/releases/pr-builds`;
             const downloadUrl = `${releaseBase}/${apkName}`;
             const manifestName = `ota-pr-${prNumber}-${headSha}.json`;
 
@@ -598,7 +554,7 @@ jobs:
             const runUrl = `https://github.com/${context.repo.owner}/${context.repo.repo}/actions/runs/${context.runId}`;
 
             // Check if there was a previous working build
-            const previousDownloadMatch = comment.body.match(/\[📥 \*\*Download APK\*\*\]\((https:\/\/github\.com[^)]+\.apk)\)/);
+            const previousDownloadMatch = comment.body.match(/\[📥 \*\*Download APK\*\*\]\((https:\/\/(?:github\.com|artifactscdn\.mentraglass\.com)\/[^)]+\.apk)\)/);
             const previousShaMatch = comment.body.match(/✅ \*\*(?:Ready to test!|APK published)\*\* \(commit `([a-f0-9]+)`\)/)
                                   || comment.body.match(/📦 \*\*Previous build:\*\* \(commit `([a-f0-9]+)`\)/);
 
@@ -623,19 +579,10 @@ jobs:
   notify-pr-builds:
     needs: build
     if: ${{ always() && !cancelled() && github.event_name == 'pull_request' && github.event.pull_request.head.repo.full_name == github.repository }}
-    runs-on: ubuntu-latest
-    timeout-minutes: 50
-    concurrency:
-      group: pr-builds-slack-${{ github.event.pull_request.number }}
-      cancel-in-progress: false
-    steps:
-      - uses: actions/checkout@v4
-      - name: Wait for matching ASG publication and notify Slack
-        uses: actions/github-script@v7
-        env:
-          SLACK_WEBHOOK_PR_BUILDS: ${{ secrets.SLACK_WEBHOOK_PR_BUILDS }}
-          ANDROID_RESULT: ${{ needs.build.result }}
-        with:
-          script: |
-            const {notifyPrBuilds} = await import(`${process.env.GITHUB_WORKSPACE}/.github/scripts/notify-pr-builds.mjs`);
-            await notifyPrBuilds({github, context, core});
+    uses: ./.github/workflows/reusable-pr-build-notification.yml
+    permissions:
+      contents: read
+      actions: read
+      pull-requests: write
+    secrets:
+      SLACK_WEBHOOK_PR_BUILDS: ${{ secrets.SLACK_WEBHOOK_PR_BUILDS }}

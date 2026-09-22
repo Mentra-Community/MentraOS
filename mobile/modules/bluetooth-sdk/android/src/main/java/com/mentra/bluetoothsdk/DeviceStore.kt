@@ -31,6 +31,16 @@ object DeviceStore {
                 JSONObject(mapOf("v" to newValue)).toString()
     }
 
+    /**
+     * Empty/`reset` mic tuning must still be written to the glasses. Native
+     * `update` drops null, and equal empty maps would otherwise skip BLE.
+     */
+    private fun isMicTuningReset(value: Any): Boolean {
+        val map = value as? Map<*, *> ?: return true
+        if (map.isEmpty()) return true
+        return map.entries.none { (key, field) -> key != "reset" && field is Number }
+    }
+
     private fun scheduleDashboardHeightToGlasses() {
         pendingDashboardHeightRunnable?.let { dashboardBleHandler.removeCallbacks(it) }
         val r = Runnable {
@@ -164,7 +174,10 @@ object DeviceStore {
     fun apply(category: String, key: String, value: Any) {
         val oldValue = store.get(category, key)
         store.set(category, key, value)
-        if (observableStoreWouldHaveSkipped(oldValue, value)) {
+        val skipped = observableStoreWouldHaveSkipped(oldValue, value)
+        val forceMicReset =
+                category == ObservableStore.BLUETOOTH_CATEGORY && key == "mic_tuning" && isMicTuningReset(value)
+        if (skipped && !forceMicReset) {
             return
         }
 
@@ -294,6 +307,12 @@ object DeviceStore {
             }
             "bluetooth" to "loudness_gate_enabled" -> {
                 DeviceManager.getInstance().sgc?.sendLoudnessGateSetting()
+            }
+            // Deliberately has no seeded default above: the key starts absent so
+            // that a session where the engine has not authorized tuning can only
+            // ever send a reset.
+            "bluetooth" to "mic_tuning" -> {
+                DeviceManager.getInstance().sgc?.sendMicTuningSetting()
             }
             "bluetooth" to "nex_lc3_audio_playback" -> {
                 (value as? Boolean)?.let { enabled ->

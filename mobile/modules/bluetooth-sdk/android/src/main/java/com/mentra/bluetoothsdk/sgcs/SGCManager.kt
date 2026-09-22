@@ -358,6 +358,19 @@ abstract class SGCManager {
     // Mentra Live center-mic loudness / Barrier gate
     open fun sendLoudnessGateSetting() {}
 
+    // Mentra Live mic tuning (super-mode only). No value authorized means the
+    // implementation sends an explicit reset rather than skipping the send.
+    open fun sendMicTuningSetting() {}
+    open fun requestMicTuningState() {}
+    open fun setMicRmsTelemetry(enabled: Boolean) {}
+
+    // Wear detection (Mentra Live only; super-mode tooling).
+    open fun queryWearState() {}
+    open fun setWearReporting(enabled: Boolean) {}
+    open fun setWearTuning(intervalMs: Int, count: Int, majority: Int) {}
+    open fun requestWearTuning() {}
+    open fun resetWearTuning() {}
+
     // Start/stop LC3 audio playback from glasses based on the nex_lc3_audio_playback flag.
     open fun applyNexAudioPlaybackSetting() {}
 

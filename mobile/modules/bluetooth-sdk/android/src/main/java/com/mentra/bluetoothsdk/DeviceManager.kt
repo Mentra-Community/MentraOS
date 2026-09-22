@@ -1905,6 +1905,31 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
         sgc?.dbg2()
     }
 
+    fun queryWearState() {
+        Bridge.log("MAN: queryWearState()")
+        sgc?.queryWearState()
+    }
+
+    fun setWearReporting(enabled: Boolean) {
+        Bridge.log("MAN: setWearReporting($enabled)")
+        sgc?.setWearReporting(enabled)
+    }
+
+    fun setWearTuning(intervalMs: Int, count: Int, majority: Int) {
+        Bridge.log("MAN: setWearTuning($intervalMs, $count, $majority)")
+        sgc?.setWearTuning(intervalMs, count, majority)
+    }
+
+    fun requestWearTuning() {
+        Bridge.log("MAN: requestWearTuning()")
+        sgc?.requestWearTuning()
+    }
+
+    fun resetWearTuning() {
+        Bridge.log("MAN: resetWearTuning()")
+        sgc?.resetWearTuning()
+    }
+
     fun startStream(message: MutableMap<String, Any>) {
         Bridge.log("MAN: startStream")
         sgc?.startStream(message)
@@ -1996,6 +2021,11 @@ class DeviceManager internal constructor(initializeHardware: Boolean) {
     fun sendAr99FactoryReset() {
         val ar99 = sgc as? Ar99 ?: throw IllegalStateException("unsupported_device")
         ar99.sendFactoryReset()
+    }
+
+    fun sendGalleryServerEnabled(requestId: String, enabled: Boolean) {
+        val live = sgc as? MentraLive ?: throw IllegalStateException("unsupported_device")
+        live.sendGalleryServerEnabled(requestId, enabled)
     }
 
     fun sendGalleryMode(requestId: String, enabled: Boolean) {

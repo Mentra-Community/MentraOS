@@ -1,0 +1,14 @@
+{
+  "phone": "REPLACE_WITH_PHONE_ADB_SERIAL",
+  "display": "REPLACE_WITH_PHYSICAL_DISPLAY_ID",
+  "phoneApkSha256": "REPLACE_WITH_REVIEWED_PHONE_APK_SHA256",
+  "glasses": {
+    "serial": "REPLACE_WITH_GLASSES_ADB_SERIAL",
+    "usb": "REPLACE_WITH_CURRENT_USB_PATH",
+    "cid": "REPLACE_WITH_EMMC_CID",
+    "bluetooth": "REPLACE_WITH_GLASSES_BLUETOOTH_ADDRESS",
+    "name": "REPLACE_WITH_GLASSES_BLUETOOTH_NAME"
+  },
+  "manifestPath": "/absolute/path/to/reviewed-ota-manifest.json",
+  "manifestSha256": "REPLACE_WITH_REVIEWED_MANIFEST_SHA256"
+}

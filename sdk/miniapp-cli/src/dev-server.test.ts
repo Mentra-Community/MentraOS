@@ -6,7 +6,7 @@ import {tmpdir} from "os"
 import {join} from "path"
 import JSZip from "jszip"
 
-import {buildProjectZip, listProjectFiles} from "./dev-server"
+import {buildProjectZip, classifyWatchEvent, listProjectFiles} from "./dev-server"
 
 describe("listProjectFiles — dist/ inclusion", () => {
   let root: string
@@ -134,5 +134,41 @@ describe("buildProjectZip — two-output bundle contract", () => {
     const bg = await zip.files["background/index.js"]!.async("string")
     expect(manifest).toBe('{"a":1}')
     expect(bg).toBe("/* bg-stub */")
+  })
+})
+
+describe("classifyWatchEvent: which layer a watcher event touched", () => {
+  test("POSIX paths: background respawns, UI and other files reload", () => {
+    expect(classifyWatchEvent("src/background/index.ts", "/")).toBe("respawn-bg")
+    expect(classifyWatchEvent("packages/app/src/background/index.ts", "/")).toBe("respawn-bg")
+    expect(classifyWatchEvent("src/ui/App.tsx", "/")).toBe("reload")
+    expect(classifyWatchEvent("miniapp.json", "/")).toBe("reload")
+  })
+
+  test("POSIX paths: build output, dependencies and bare directory events are ignored", () => {
+    expect(classifyWatchEvent(".", "/")).toBe("ignore")
+    expect(classifyWatchEvent("dist", "/")).toBe("ignore")
+    expect(classifyWatchEvent("dist/background/index.js", "/")).toBe("ignore")
+    expect(classifyWatchEvent("node_modules/jszip/index.js", "/")).toBe("ignore")
+    expect(classifyWatchEvent(".git/index", "/")).toBe("ignore")
+    expect(classifyWatchEvent("build/app.zip", "/")).toBe("ignore")
+    expect(classifyWatchEvent(".next/cache", "/")).toBe("ignore")
+  })
+
+  // Windows fs.watch reports paths with backslashes (Mentra-Community/MentraOS#3888).
+  test("Windows paths: background respawns, UI and other files reload", () => {
+    expect(classifyWatchEvent("src\\background\\index.ts", "\\")).toBe("respawn-bg")
+    expect(classifyWatchEvent("packages\\app\\src\\background\\index.ts", "\\")).toBe("respawn-bg")
+    expect(classifyWatchEvent("src\\ui\\App.tsx", "\\")).toBe("reload")
+  })
+
+  test("Windows paths: build output and dependencies are ignored", () => {
+    expect(classifyWatchEvent("dist\\background\\index.js", "\\")).toBe("ignore")
+    expect(classifyWatchEvent("node_modules\\jszip\\index.js", "\\")).toBe("ignore")
+    expect(classifyWatchEvent(".git\\index", "\\")).toBe("ignore")
+  })
+
+  test("a backslash is left alone on platforms where it is not the separator", () => {
+    expect(classifyWatchEvent("src\\background\\index.ts", "/")).toBe("reload")
   })
 })

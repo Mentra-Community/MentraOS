@@ -96,3 +96,86 @@ test("PR comment updates retain previous APK links with either success label", (
     }
   }
 })
+
+test("mobile and ASG progress/failure comments retain both GitHub and CDN download links", () => {
+  for (const [file, label] of [
+    ["mentra-app-android-build.yml", "Download APK"],
+    ["mentra-asg-client-build.yml", "Download ASG APK"],
+  ]) {
+    const workflow = readFileSync(new URL(`../workflows/${file}`, import.meta.url), "utf8")
+    for (const variable of ["existingDownloadMatch", "previousDownloadMatch"]) {
+      const expression = workflow.match(new RegExp(`const ${variable} = comment.body.match\\((/.+/)\\)`))[1]
+      const pattern = runInNewContext(expression)
+      for (const origin of ["github.com", "artifactscdn.mentraglass.com"]) {
+        const url = `https://${origin}/Mentra-Community/MentraOS/releases/pr-builds/app.apk`
+        assert.equal(pattern.exec(`[📥 **${label}**](${url})`)[1], url)
+      }
+      assert.equal(pattern.exec(`[📥 **${label}**](https://github.com.example.org/app.apk)`), null)
+    }
+  }
+})
+
+test("iOS and Android never select each other's binaries, and all producer triggers agree", () => {
+  const fp = "a".repeat(64),
+    digest = "b".repeat(64)
+  const assets = [
+    {name: `mentra-ios-iphone-pr-1-${"c".repeat(40)}-2-1.ipa`, label: `mobile-v1:${fp}:${digest}`},
+    {name: "mobile-pr-1-ccccccc.apk", label: `mobile-v1:${fp}:${digest}`},
+  ]
+  assert.deepEqual(candidateAssets(assets, fp, "ios"), [assets[0]])
+  assert.deepEqual(candidateAssets(assets, fp, "android"), [assets[1]])
+  assert.deepEqual(candidateAssets(assets, "d".repeat(64), "ios"), [])
+  const paths = (name) =>
+    readFileSync(new URL(`../workflows/${name}`, import.meta.url), "utf8")
+      .split("    paths:\n")[1]
+      .split("\n  push:")[0]
+      .trim()
+  assert.equal(paths("mentra-app-ios-build.yml"), paths("mentra-app-android-build.yml"))
+  assert.equal(paths("mentra-asg-client-build.yml"), paths("mentra-app-android-build.yml"))
+})
+
+test("iOS selection skips corrupt candidates, verifies signature/provenance and falls back to compilation", async () => {
+  const {selectMobile} = await import("./pr-mobile-build.mjs")
+  const {createHash} = await import("node:crypto")
+  const fp = "a".repeat(64),
+    body = Buffer.from("signed app")
+  const digest = createHash("sha256").update(body).digest("hex")
+  const asset = {id: 1, name: `mentra-ios-iphone-pr-1-${"c".repeat(40)}-2-1.ipa`, label: `mobile-v1:${fp}:${digest}`}
+  const directory = mkdtempSync(path.join(tmpdir(), "pr-ios-select-"))
+  const previous = process.cwd()
+  process.chdir(directory)
+  try {
+    for (const valid of [true, false]) {
+      const outputs = {},
+        verified = []
+      const github = {
+        rest: {
+          repos: {
+            getReleaseByTag: async () => ({data: {id: 1}}),
+            listReleaseAssets: () => {},
+            getReleaseAsset: async ({asset_id}) => ({data: asset_id === 2 ? Buffer.from("corrupt") : body}),
+          },
+        },
+        paginate: async () => [{...asset, id: 2}, asset],
+      }
+      await selectMobile({
+        github,
+        context: {repo: {owner: "o", repo: "r"}},
+        platform: "ios",
+        env: {MENTRA_PR_MOBILE_FINGERPRINT: fp},
+        readIndex: async () => ({assets: []}),
+        core: {setOutput: (key, value) => (outputs[key] = value), info: () => {}, warning: () => {}},
+        exec: (command, args) => {
+          verified.push(args)
+          if (!valid) throw new Error("wrong signing identity")
+        },
+      })
+      assert.equal(outputs.reused, String(valid))
+      assert.equal(verified.length, 1)
+      assert.equal(verified[0][0], "mobile/ci/pr-ios/repackage.py")
+      assert.equal(verified[0][1], "verify-base")
+    }
+  } finally {
+    process.chdir(previous)
+  }
+})

@@ -481,6 +481,84 @@ export type SwitchStatusEvent = {
   timestamp: number
 }
 
+/**
+ * Mentra Live center-mic gate + ADC gain overrides. Internal SDK surface: this
+ * is a super-mode tuning aid, not a public capability.
+ *
+ * Every field is optional; an omitted field keeps the firmware default. The
+ * glasses hold these in RAM only and drop them on disconnect, so the phone
+ * re-sends on every connect.
+ */
+export type MicTuning = {
+  /** codec_adc_vol index, 0-15. 15 is +32 dB, the top of the table. */
+  gain?: number
+  /** Gate open / close thresholds, linear RMS on int16 samples. */
+  open?: number
+  close?: number
+  /** Frames of 10 ms. */
+  attack?: number
+  hang?: number
+  /** Thresholds used while the speaker is active or within its hold-off. */
+  sp_open?: number
+  sp_close?: number
+  sp_hold?: number
+}
+
+/**
+ * What the glasses report as actually in force, after their own clamping. Use
+ * this rather than the requested value when showing applied settings.
+ */
+export type MicTuningStateEvent = MicTuning & {
+  type: "mic_tuning_state"
+  /** Tuning revision; increments on every accepted set or reset. */
+  generation: number
+  /** True when any override is in force. */
+  overridden: boolean
+}
+
+/** Live center-mic level. Disposable: samples are dropped under any pressure. */
+export type MicRmsEvent = {
+  type: "mic_rms"
+  rms: number
+  gateOpen: boolean
+  speakerElevated: boolean
+  /** Tuning revision the sample was measured under. */
+  generation: number
+}
+
+/**
+ * Mentra Live wear-detection vote. Internal SDK surface: Super Mode only.
+ * Values live in RAM on the glasses and reset on disconnect.
+ */
+export type WearTuning = {
+  /** Poll period in milliseconds. Firmware clamp: 50–2000. */
+  interval?: number
+  /** Sliding-window length. Firmware clamp: 3–15. */
+  count?: number
+  /** Votes needed to flip, either direction. Must be > count/2 and ≤ count. */
+  majority?: number
+}
+
+/** Current wear vote from sr_wrst, or an unsolicited wear transition. */
+export type WearStateEvent = {
+  type: "wear_state"
+  worn: boolean
+}
+
+/**
+ * What the wear poll loop is actually running. A rejected patch echoes the
+ * unchanged values with `accepted: false`.
+ */
+export type WearTuningEvent = WearTuning & {
+  type: "wear_tuning"
+  enabled: boolean
+  interval: number
+  count: number
+  majority: number
+  generation: number
+  accepted: boolean
+}
+
 export type RgbLedControlResponseEvent =
   | {
       type: "rgb_led_control_response"
@@ -499,6 +577,7 @@ export type RgbLedControlSuccessResponseEvent = Extract<RgbLedControlResponseEve
 export type SettingsAckStatus = "applied" | "ready" | "error" | "failed" | "failure" | "rejected"
 
 export type SettingsAckSetting =
+  | "gallery_server"
   | "gallery_mode"
   | "button_photo"
   | "button_video_recording"
@@ -524,6 +603,10 @@ export type SettingsAckEvent = {
   fps?: number
   enabled?: boolean
   minutes?: number
+  /** Current site-network listener state; present for gallery_server acknowledgements. */
+  listening?: boolean
+  /** Current HTTP base URL; present for gallery_server only while listening. */
+  url?: string
   /** ANR enabled flag; present when setting === "camera_tuning" */
   anr?: boolean
   /** Stock-gain flag; present when setting === "camera_tuning" */
@@ -1066,6 +1149,10 @@ export type BluetoothSdkModuleEvents = {
   heartbeat_received: (event: HeartbeatReceivedEvent) => void
   swipe_volume_status: (event: SwipeVolumeStatusEvent) => void
   switch_status: (event: SwitchStatusEvent) => void
+  mic_tuning_state: (event: MicTuningStateEvent) => void
+  mic_rms: (event: MicRmsEvent) => void
+  wear_state: (event: WearStateEvent) => void
+  wear_tuning: (event: WearTuningEvent) => void
   rgb_led_control_response: (event: RgbLedControlResponseEvent) => void
   settings_ack: (event: SettingsAckEvent) => void
   pair_failure: (event: PairFailureEvent) => void
@@ -1226,6 +1313,10 @@ export type BluetoothSdkEventMap = {
   compatible_glasses_search_stop: CompatibleGlassesSearchStopEvent
   swipe_volume_status: SwipeVolumeStatusEvent
   switch_status: SwitchStatusEvent
+  mic_tuning_state: MicTuningStateEvent
+  mic_rms: MicRmsEvent
+  wear_state: WearStateEvent
+  wear_tuning: WearTuningEvent
   rgb_led_control_response: RgbLedControlResponseEvent
   settings_ack: SettingsAckEvent
   pair_failure: PairFailureEvent
@@ -1317,6 +1408,12 @@ export interface BluetoothSdkPublicModule {
   /** Enable or disable Wi-Fi ADB on Mentra Live (no-op on other devices). */
   setWifiAdbState(enabled: boolean): Promise<void>
 
+  /**
+   * Persistently enable/disable unauthenticated HTTP gallery access on the glasses' Wi-Fi.
+   * Default off; survives reconnects/restarts until disabled. Only use on trusted networks.
+   * Returns saved enabled state plus current listening/url. No Wi-Fi means listening=false.
+   */
+  setGalleryServerEnabled(enabled: boolean): Promise<SettingsAckSuccessEvent>
   setGalleryModeEnabled(enabled: boolean): Promise<SettingsAckSuccessEvent>
   setVoiceActivityDetectionEnabled(enabled: boolean): Promise<void>
   setLoudnessGateEnabled(enabled: boolean): Promise<void>
@@ -1701,6 +1798,8 @@ export type BluetoothSettingsUpdate = Partial<{
   gallery_mode: boolean
   voice_activity_detection_enabled: boolean
   loudness_gate_enabled: boolean
+  /** Effective mic tuning only. `{}` means "reset to firmware defaults". */
+  mic_tuning: MicTuning
   button_photo_size: ButtonPhotoSize
   button_video_settings: {width: number; height: number; fps: number}
   button_video_width: number

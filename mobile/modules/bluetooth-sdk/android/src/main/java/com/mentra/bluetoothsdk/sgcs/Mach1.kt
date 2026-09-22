@@ -703,9 +703,8 @@ class Mach1 : SGCManager() {
     }
 
     fun blankScreen() {
-//        if (connectedGlasses != null){
-//            connectedGlasses.clear();
-//        }
+        ultraliteSdk?.screenOff()
+        screenIsClear = true
     }
 
     fun destroy() {
@@ -781,12 +780,12 @@ class Mach1 : SGCManager() {
     }
 
     fun changeUltraliteLayout(chosenLayout: Layout) {
+        ultraliteSdk!!.screenOn()
+
         //don't update layout if it's already setup
         if (currentUltraliteLayout != null && currentUltraliteLayout == chosenLayout) {
             return
         }
-
-        ultraliteSdk!!.screenOn()
 
         currentUltraliteLayout = chosenLayout
         ultraliteSdk!!.setLayout(chosenLayout, 0, true, false, 2)

@@ -1,13 +1,22 @@
+import {waitFor} from "@testing-library/react-native"
 import {Platform} from "react-native"
 
 import {appRegistry} from "@mentra/engine-host-internal"
 
-import {miniappDeveloperPackageName, notifyPackageName} from "@/constants/miniapps"
+import {mentraCallPackageName, miniappDeveloperPackageName, notifyPackageName} from "@/constants/miniapps"
 import {SETTINGS, engine} from "@mentra/engine"
 
 import builtInMiniappCatalog from "./BuiltInMiniappCatalog"
 
 describe("BuiltInMiniappCatalog", () => {
+  const originalOverride = process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS
+  beforeAll(() => {
+    delete process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS
+  })
+  afterAll(() => {
+    if (originalOverride === undefined) delete process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS
+    else process.env.EXPO_PUBLIC_ENABLE_MENTRA_CALL_IOS = originalOverride
+  })
   const originalPlatform = Platform.OS
 
   beforeAll(() => {
@@ -34,17 +43,28 @@ describe("BuiltInMiniappCatalog", () => {
     )
   })
 
-  it("provides the same Notify owner on iOS without requesting Android capture access", () => {
+  it("registers Notify on iOS only after opt-in, without Android capture access or duplicate registrations", async () => {
     Object.defineProperty(Platform, "OS", {configurable: true, value: "ios"})
     try {
-      const apps = (
-        builtInMiniappCatalog as unknown as {
-          buildOfflineApps: () => Array<{packageName: string; type: string; permissions: unknown[]}>
-        }
-      ).buildOfflineApps()
-      expect(apps.find((app) => app.packageName === notifyPackageName)).toEqual(
-        expect.objectContaining({type: "background", permissions: []}),
+      const catalog = new (builtInMiniappCatalog.constructor as new () => {
+        buildOfflineApps: () => Array<{packageName: string; type: string; permissions: unknown[]}>
+        installNotify: () => void
+      })()
+      await engine.settings.set(SETTINGS.show_notify_ios.key, false)
+      expect(catalog.buildOfflineApps().find((app) => app.packageName === notifyPackageName)).toBeUndefined()
+      const installed = (appRegistry.installOfflineApp as jest.Mock).mock.calls.length
+      catalog.installNotify()
+      expect(appRegistry.installOfflineApp).toHaveBeenCalledTimes(installed)
+      await engine.settings.set(SETTINGS.show_notify_ios.key, true)
+      catalog.installNotify()
+      expect(appRegistry.installOfflineApp).toHaveBeenLastCalledWith(
+        expect.objectContaining({packageName: notifyPackageName, type: "background", permissions: []}),
       )
+      await engine.settings.set(SETTINGS.show_notify_ios.key, false)
+      await engine.settings.set(SETTINGS.show_notify_ios.key, true)
+      catalog.installNotify()
+      expect(appRegistry.installOfflineApp).toHaveBeenCalledTimes(installed + 1)
+      await engine.settings.set(SETTINGS.show_notify_ios.key, false)
     } finally {
       Object.defineProperty(Platform, "OS", {configurable: true, value: "android"})
     }
@@ -75,5 +95,38 @@ describe("BuiltInMiniappCatalog", () => {
     settingListener(false)
     expect(appRegistry.setOfflineAppHidden).toHaveBeenLastCalledWith(miniappDeveloperPackageName, true)
     expect(engine.miniapps.setHiddenStatus).toHaveBeenLastCalledWith(miniappDeveloperPackageName, true)
+  })
+
+  it.each([
+    [mentraCallPackageName, SETTINGS.show_mentra_call_ios.key],
+    [notifyPackageName, SETTINGS.show_notify_ios.key],
+  ])("removes saved %s menu entries when its iOS opt-in is turned off", async (packageName, key) => {
+    Object.defineProperty(Platform, "OS", {configurable: true, value: "ios"})
+    const notes = {name: "Notes", packageName: "com.mentra.notes", running: false}
+    try {
+      await engine.settings.set(key, true)
+      await engine.settings.set(SETTINGS.menu_apps.key, [{name: "Experimental", packageName, running: true}, notes])
+      await engine.settings.set(key, false)
+      await waitFor(() => expect(engine.settings.get(SETTINGS.menu_apps.key)).toEqual([notes]))
+    } finally {
+      Object.defineProperty(Platform, "OS", {configurable: true, value: "android"})
+    }
+  })
+
+  it.each(["android", "ios"])("keeps permitted saved menu entries on %s", async (os) => {
+    Object.defineProperty(Platform, "OS", {configurable: true, value: os})
+    const menu = [
+      {name: "Call", packageName: mentraCallPackageName, running: false},
+      {name: "Notify", packageName: notifyPackageName, running: false},
+    ]
+    try {
+      await engine.settings.set(SETTINGS.show_mentra_call_ios.key, os === "ios")
+      await engine.settings.set(SETTINGS.show_notify_ios.key, os === "ios")
+      await engine.settings.set(SETTINGS.menu_apps.key, menu)
+      await (builtInMiniappCatalog as unknown as {syncGlassesMenuApps: () => Promise<void>}).syncGlassesMenuApps()
+      expect(engine.settings.get(SETTINGS.menu_apps.key)).toEqual(menu)
+    } finally {
+      Object.defineProperty(Platform, "OS", {configurable: true, value: "android"})
+    }
   })
 })

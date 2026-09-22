@@ -232,6 +232,24 @@ protocol SGCManager {
 
     func sendLoudnessGateSetting()
 
+    // MARK: - Mic tuning (super-mode only)
+
+    func sendMicTuningSetting()
+    func requestMicTuningState()
+    func setMicRmsTelemetry(_ enabled: Bool)
+
+    // MARK: - Wear detection (super-mode only)
+
+    // These are protocol requirements, not extension-only members, on purpose:
+    // DeviceManager holds an `SGCManager?`, and a method that exists only in
+    // the extension is statically dispatched through that reference, so the
+    // no-op below would win over MentraLive's implementation.
+    func queryWearState()
+    func setWearReporting(_ enabled: Bool)
+    func setWearTuning(intervalMs: Int, count: Int, majority: Int)
+    func requestWearTuning()
+    func resetWearTuning()
+
     // MARK: - Version Info
 
     func requestVersionInfo()
@@ -432,6 +450,20 @@ extension SGCManager {
     // MARK: - Loudness / Barrier Gate (default no-op — Mentra Live supports this)
 
     func sendLoudnessGateSetting() {}
+
+    // MARK: - Mic tuning (default no-op — Mentra Live supports this)
+
+    func sendMicTuningSetting() {}
+    func requestMicTuningState() {}
+    func setMicRmsTelemetry(_: Bool) {}
+
+    // MARK: - Wear detection (default no-op — Mentra Live supports this)
+
+    func queryWearState() {}
+    func setWearReporting(_: Bool) {}
+    func setWearTuning(intervalMs _: Int, count _: Int, majority _: Int) {}
+    func requestWearTuning() {}
+    func resetWearTuning() {}
 
     /// Default no-op; Mentra Live and G2 override to handle phone-detected clock skew.
     func sendSetSystemTime(_: Int64) {

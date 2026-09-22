@@ -9,12 +9,13 @@ import {useAuth} from "@/contexts/AuthContext"
 import {useEngineSnapshot} from "@/hooks/useEngineSnapshot"
 import {translate} from "@/i18n"
 import {resolvedEndpoints} from "@/services/cloudClient"
-import {engine, SETTINGS, useSetting} from "@mentra/engine"
+import {engine, SETTINGS, useSetting, getAppBuildInfo} from "@mentra/engine"
 import {ThemedStyle} from "@/theme"
 import showAlert from "@/utils/AlertUtils"
 
 export const VersionInfo = () => {
   const {themed} = useAppTheme()
+  const buildInfo = getAppBuildInfo()
   const {user} = useAuth()
   const [debugMode, setDebugMode] = useSetting(SETTINGS.debug_mode.key)
   const [_superMode, setSuperMode] = useSetting(SETTINGS.super_mode.key)
@@ -68,10 +69,10 @@ export const VersionInfo = () => {
 
   const copyVersionInfo = async () => {
     const info = [
-      `version: ${process.env.EXPO_PUBLIC_MENTRAOS_VERSION}`,
-      `branch: ${process.env.EXPO_PUBLIC_BUILD_BRANCH}`,
-      `time: ${process.env.EXPO_PUBLIC_BUILD_TIME}`,
-      `commit: ${process.env.EXPO_PUBLIC_BUILD_COMMIT}`,
+      `version: ${buildInfo.appVersion}`,
+      `branch: ${buildInfo.buildBranch}`,
+      `time: ${buildInfo.buildTime}`,
+      `commit: ${buildInfo.buildCommit}`,
       `cloud_core_url: ${resolvedEndpoints().core}`,
       `cloud_runtime_url: ${resolvedEndpoints().runtime}`,
       `audio: ${audioTransport}`,
@@ -122,15 +123,12 @@ export const VersionInfo = () => {
       <TouchableOpacity onPressIn={handlePressIn} onPressOut={handlePressOut}>
         <View className="items-center bottom-2 w-full py-2 rounded-xl mt-16">
           <View className="flex-row gap-2">
-            <Text
-              style={themed($buildInfo)}
-              text={translate("common:version", {number: process.env.EXPO_PUBLIC_MENTRAOS_VERSION})}
-            />
-            <Text style={themed($buildInfo)} text={`${process.env.EXPO_PUBLIC_BUILD_BRANCH}`} />
+            <Text style={themed($buildInfo)} text={translate("common:version", {number: buildInfo.appVersion})} />
+            <Text style={themed($buildInfo)} text={`${buildInfo.buildBranch}`} />
           </View>
           <View className="flex-row gap-2">
-            <Text style={themed($buildInfo)} text={`${process.env.EXPO_PUBLIC_BUILD_TIME}`} />
-            <Text style={themed($buildInfo)} text={`${process.env.EXPO_PUBLIC_BUILD_COMMIT}`} />
+            <Text style={themed($buildInfo)} text={`${buildInfo.buildTime}`} />
+            <Text style={themed($buildInfo)} text={`${buildInfo.buildCommit}`} />
           </View>
           <View className="flex-row gap-2">
             <Text style={themed($buildInfo)} text={`${coreUrl || "(default cloud)"}`} />
@@ -149,10 +147,7 @@ export const VersionInfo = () => {
     <TouchableOpacity onPress={handleQuickPress}>
       <View className="items-center bottom-2 w-full py-2 rounded-xl mt-16">
         <View className="flex-row gap-2">
-          <Text
-            style={themed($buildInfo)}
-            text={translate("common:version", {number: process.env.EXPO_PUBLIC_MENTRAOS_VERSION})}
-          />
+          <Text style={themed($buildInfo)} text={translate("common:version", {number: buildInfo.appVersion})} />
         </View>
         {isChina && (
           <TouchableOpacity onPress={() => Linking.openURL("https://beian.miit.gov.cn/")}>
