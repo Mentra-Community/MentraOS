@@ -4,8 +4,10 @@ Start with the [English coverage checklist](ROUTINE.md), [exact compiled routine
 
 For PR artifacts, use the [verified Mac CI installer](MAC-CI-SETUP.md). The
 [CI request and private publication guide](CI-ROUTINES.md) documents the initial
-request, durable intake and admin results pipeline. Hardware dispatch remains
-disabled until the day-one setup/recovery adapter is qualified. The
+request, durable intake and admin results pipeline. The generic intake leaves
+hardware dispatch disabled. The [registered local worker](DAY1-LOCAL-WORKER.md)
+provides an explicit lab entry for the first complete qualification, with a
+reviewed definition and independently enrolled fixture. The
 [day-one OTA routine](DAY1-OTA-ROUTINE.md) adds a January baseline and explicit
 manifest-derived return state; its full hardware pass is pending. The
 [active plan](../../notes/superpowers/plans/2026-09-21-day1-ota-and-ci-routines.md)

@@ -2,9 +2,12 @@
 
 The initial pipeline selects current PR artifacts, authenticates an immutable
 Actions request on a reviewed local Mac checkout, and publishes terminal results
-to the admin dashboard. It does not yet dispatch the unqualified day-one setup
-adapter. A missing artifact or unqualified adapter produces an explicit blocked
-record; it never passes a device test.
+to the admin dashboard. The generic intake does not dispatch an unregistered
+day-one setup adapter. The [registered local worker](DAY1-LOCAL-WORKER.md) is the
+explicit entry for an authorized lab qualification attempt; it requires a
+reviewed definition and an independently enrolled fixture. A missing artifact or
+unregistered adapter produces an explicit blocked record; it never passes a
+device test.
 
 ## Request a PR build
 
@@ -92,8 +95,10 @@ Range requests for seeking. Local `index.html` review remains available through
 
 The shared lifecycle and firmware assertions have failure/recovery tests, and the
 viewer has synthetic playback/seek checks. Complete January BES/MTK/ASG setup,
-customer OTA, target verification and safe teardown still need a real device pass.
-Then connect that qualified adapter to the worker, exercise the current PR's
-actual build, and verify its real recording in admin. Nightlies, automatic path
+customer OTA, target verification and safe teardown still need a complete
+registered device pass. Use the local entry above to exercise the current PR's
+actual build, then verify its real recording in admin. Its admission packet is
+authorization for that qualification attempt, not evidence that it passed.
+Nightlies, automatic path
 selection and PR verification comments remain separate follow-up work in the
 [implementation plan](../../notes/superpowers/plans/2026-09-21-day1-ota-and-ci-routines.md).

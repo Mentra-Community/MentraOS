@@ -296,3 +296,8 @@ ran, not that January setup or restoration was qualified. The actual video,
 chapters and screenshots are finalized and checked with `verify-run.ts`, including
 for failed observations. Do not label this extension an unattended end-to-end
 pass until setup, independent idle/return verification and recovery are qualified.
+
+The [registered local worker](DAY1-LOCAL-WORKER.md) composes those setup,
+restoration and independent return adapters with actual CI intake. It is the
+entry for the first complete lab qualification; it does not change the limited
+verdict of the standalone customer-only extension above.

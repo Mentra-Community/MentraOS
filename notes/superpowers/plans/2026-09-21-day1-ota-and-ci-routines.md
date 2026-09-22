@@ -264,6 +264,11 @@ commands; the fixture is still unenrolled and no CI request was consumed.
   qualification is still pending; admission never supplies a passing test verdict.
 - [ ] Connect qualified day-one execution and upload-only retries to that intake;
   run the current PR's actual artifacts and publish its real result.
+  The parameterized local entry now connects the actual adapters and terminal
+  export. Its file-only admission distinguishes the enrolled source profile from
+  the selected CI return profile. A separate helper rechecks native full-OTA
+  evidence and binds it to exact selected manifest bytes without claiming device
+  qualification. The registered hardware pass remains pending the unlocked Mac.
 - [x] Add authenticated admin Test runs browsing, expected/actual firmware,
   separate phase outcomes and private streaming media with byte-range seeking.
   Local tests and a clearly labeled synthetic browser fixture verify playback,
