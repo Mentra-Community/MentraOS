@@ -316,7 +316,7 @@ The first real join failed because Cloudflare accepted the configured token as a
 
 Server logs and generated meeting URLs are private run evidence. Keep sanitized error excerpts and operation results in the report, never commit raw tokens or meeting links. After an unsuccessful create-and-join, verify whether the created meeting object was retired; returning home alone did not do so in the first test.
 
-The recorder uses a fixed video canvas and explicitly scales frames up/down while preserving their aspect ratio. This was verified with Mentra on an external 1x display; earlier recordings that captured a quarter-size image remain unchanged as historical evidence. Keep the app window dimensions constant during a run.
+The recorder uses a fixed video canvas and explicitly scales frames up/down while preserving their aspect ratio. This was verified with Mentra on an external 1x display; earlier recordings that captured a quarter-size image remain unchanged as historical evidence. Keep the app window dimensions constant during a run and fully inside one display. Capture uses the display compositor with only the verified Mentra window allowlisted and a matching crop; other apps remain excluded. Geometry refreshes at marks, screenshots and relaunch reattachment. Leave the window in place during long actions, since a move can leave a video gap until the next boundary refresh. Capture does not move or activate the window.
 
 ### Mac hotspot API isolation
 

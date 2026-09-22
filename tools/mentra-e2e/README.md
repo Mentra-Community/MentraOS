@@ -91,6 +91,10 @@ Open a run's `index.html` locally to browse its English steps, or open `routine.
 
 Evidence version 2 records the latest window-server observation time for every screenshot. A complete frame or an explicit idle observation confirms the stream is live; blank, suspended, stopped or stale capture cannot produce a passing screenshot. Idle observations retain the last complete image, so an unchanged screen remains valid without inventing a new image timestamp.
 
+On macOS, recording uses the display compositor with an allowlist containing only the verified Mentra window, cropped to that window's bounds. Other apps are excluded. The standalone window surface stopped after 16 frames on the September 22 host, including across an actual UI transition; refreshing it or changing buffer ownership did not recover it. The display path passed a 20.778-second H.264 capture with 300 frames, three fresh screenshots and matching video-track/container durations. These are capture checks, not an OTA pass.
+
+Keep the entire window on one display and keep its dimensions constant. Marks, screenshots and relaunch reattachment refresh the window/display geometry; a changed source invalidates earlier images until a new capture callback arrives. Moving the window during a step can leave a gap before the next boundary refresh, so leave it in place during long actions. A window spanning displays or changing size fails explicitly. The recorder neither activates Mentra nor changes its position.
+
 New reports also record `bundledMiniappArtifacts`: SHA-256 hashes of ZIPs in the running binary's `assets/assets/miniapps` directory. This distinguishes archives even when their filename/version is unchanged. An unavailable directory is reported explicitly. These are packaged assets, not proof of which runtime-extracted or subsequently updated miniapp is active. Incremental Xcode products may retain an older unreferenced archive alongside the current one; do not select the runtime version by directory order.
 
 | Run folder | Result |

@@ -16,6 +16,9 @@ final class RecordingObserver: NSObject, SCRecordingOutputDelegate, SCStreamOutp
   private var observedAt: Double = 0
   private var frameStatus: SCFrameStatus?
   private var frameCounts: [Int: Int] = [:]
+  private var rejectedSamples = 0
+  private var lastCallbackAt: Double = 0
+  private var minimumSourcePTS: Double = 0
 
   func state() -> (Bool, Bool, String?, Double?) {
     lock.lock(); defer { lock.unlock() }
@@ -24,7 +27,16 @@ final class RecordingObserver: NSObject, SCRecordingOutputDelegate, SCStreamOutp
 
   func diagnostic() -> String {
     lock.lock(); defer { lock.unlock() }
-    return "recording started=\(started), frame status counts=\(frameCounts), complete image=\(latestBuffer != nil)"
+    let now = CMClockGetTime(CMClockGetHostTimeClock()).seconds
+    return "recording started=\(started), last status=\(frameStatus?.rawValue ?? -1), frame status counts=\(frameCounts), rejected samples=\(rejectedSamples), complete image=\(latestBuffer != nil), callback age=\(now - lastCallbackAt), observation age=\(now - observedAt)"
+  }
+
+  func invalidateSource() {
+    lock.lock(); defer { lock.unlock() }
+    minimumSourcePTS = CMClockGetTime(CMClockGetHostTimeClock()).seconds
+    latestBuffer = nil
+    observedAt = 0
+    frameStatus = nil
   }
 
   func recordingOutputDidStartRecording(_: SCRecordingOutput) {
@@ -44,14 +56,16 @@ final class RecordingObserver: NSObject, SCRecordingOutputDelegate, SCStreamOutp
   }
 
   func stream(_: SCStream, didOutputSampleBuffer sampleBuffer: CMSampleBuffer, of type: SCStreamOutputType) {
+    lock.lock()
+    defer { lock.unlock() }
+    lastCallbackAt = CMClockGetTime(CMClockGetHostTimeClock()).seconds
     guard type == .screen, sampleBuffer.isValid,
           let attachments = CMSampleBufferGetSampleAttachmentsArray(sampleBuffer, createIfNecessary: false) as? [[SCStreamFrameInfo: Any]],
           let rawStatus = attachments.first?[.status] as? Int,
-          let status = SCFrameStatus(rawValue: rawStatus) else { return }
-    lock.lock()
-    defer { lock.unlock() }
-    frameStatus = status
+          let status = SCFrameStatus(rawValue: rawStatus) else { rejectedSamples += 1; return }
     frameCounts[rawStatus, default: 0] += 1
+    guard CMSampleBufferGetPresentationTimeStamp(sampleBuffer).seconds >= minimumSourcePTS else { return }
+    frameStatus = status
     // Idle means the window server observed an unchanged screen. It confirms
     // liveness without replacing the last complete image with an empty buffer.
     if status == .complete || status == .idle {
@@ -96,7 +110,7 @@ final class RecordingObserver: NSObject, SCRecordingOutputDelegate, SCStreamOutp
     lock.unlock()
     if let error { throw DriverFailure(error) }
     guard age <= 1, status == .complete || status == .idle else {
-      throw DriverFailure("No live video frame: last status \(String(describing: status)), observation age \(age) seconds")
+      throw DriverFailure("No live video frame: last status \(status?.rawValue ?? -1), observation age \(age) seconds; \(diagnostic())")
     }
     guard let buffer else { throw DriverFailure("No video frame is available for a screenshot") }
     let image = CIImage(cvPixelBuffer: buffer)
@@ -123,13 +137,15 @@ extension Driver {
     guard CGPreflightScreenCaptureAccess() else { throw DriverFailure("Screen Recording permission is missing") }
     let content = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
     let target = try capturableWindow(in: content)
-    // Window capture follows position/display changes and excludes other apps.
-    // Before relaunch, park on an empty display allowlist so this stream survives
-    // the old window disappearing, then attach the new window to the same MP4.
-    let filter = SCContentFilter(desktopIndependentWindow: target)
+    // The display compositor keeps producing observations when the standalone
+    // window surface stalls. The allowlist still excludes every other app.
+    let placement = try windowCapturePlacement(window: target.frame, displays: content.displays.map(\.frame))
+    let display = content.displays[placement.displayIndex]
+    let filter = SCContentFilter(display: display, including: [target])
     let configuration = SCStreamConfiguration()
     configuration.width = Int(target.frame.width * 2) / 2 * 2
     configuration.height = Int(target.frame.height * 2) / 2 * 2
+    configuration.sourceRect = placement.sourceRect
     // External displays can provide 1x frames for this fixed 2x canvas. Scale
     // both up and down so moving displays cannot leave a quarter-sized image.
     configuration.scalesToFit = true
@@ -140,6 +156,11 @@ extension Driver {
     configuration.showsCursor = false
     configuration.ignoreShadowsSingleWindow = true
     configuration.includeChildWindows = true
+    var currentPID = app.processIdentifier
+    var currentWindowID = target.windowID
+    var currentFrame = target.frame
+    var currentDisplayID = display.displayID
+    var parked = false
     let observer = RecordingObserver()
     let stream = SCStream(filter: filter, configuration: configuration, delegate: observer)
     try stream.addStreamOutput(observer, type: .screen, sampleHandlerQueue: DispatchQueue(label: "mentra.e2e.frames"))
@@ -149,6 +170,34 @@ extension Driver {
     recordingConfig.outputFileType = .mp4
     let recording = SCRecordingOutput(configuration: recordingConfig, delegate: observer)
     try stream.addRecordingOutput(recording)
+    func refreshSource(allowRelaunch: Bool = false) async throws {
+      guard !parked || allowRelaunch else { throw DriverFailure("Recording is parked during app relaunch") }
+      let fresh = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
+      let running = try Driver(bundleID: bundleID)
+      guard allowRelaunch || running.app.processIdentifier == currentPID else {
+        throw DriverFailure("The app process changed without recording reattachment")
+      }
+      let window = try running.capturableWindow(in: fresh)
+      guard abs(window.frame.width - target.frame.width) < 2,
+            abs(window.frame.height - target.frame.height) < 2 else {
+        throw DriverFailure("Window size changed during recording; restore the initial size")
+      }
+      let next = try windowCapturePlacement(window: window.frame, displays: fresh.displays.map(\.frame))
+      let nextDisplay = fresh.displays[next.displayIndex]
+      if parked || window.windowID != currentWindowID || window.frame != currentFrame || nextDisplay.displayID != currentDisplayID {
+        configuration.sourceRect = next.sourceRect
+        try await stream.updateContentFilter(SCContentFilter(display: nextDisplay, including: [window]))
+        try await stream.updateConfiguration(configuration)
+        // Discard queued images captured before the new crop/filter committed.
+        // Keep the original video clock; require an actual subsequent callback.
+        observer.invalidateSource()
+        currentPID = running.app.processIdentifier
+        currentWindowID = window.windowID
+        currentFrame = window.frame
+        currentDisplayID = nextDisplay.displayID
+        parked = false
+      }
+    }
     try await stream.startCapture()
     let deadline = Date().addingTimeInterval(10)
     while !observer.state().0 || observer.state().3 == nil, Date() < deadline {
@@ -162,7 +211,10 @@ extension Driver {
     func timestamp() -> Double {
       max(0, CMClockGetTime(CMClockGetHostTimeClock()).seconds - origin)
     }
-    try emitJSON(["event": "ready", "time": timestamp(), "path": path, "width": configuration.width, "height": configuration.height])
+    try emitJSON(["event": "ready", "time": timestamp(), "path": path, "width": configuration.width, "height": configuration.height,
+                  "queueDepth": configuration.queueDepth, "windowID": target.windowID, "windowFrame": frameJSON(target.frame), "isOnScreen": target.isOnScreen,
+                  "displays": content.displays.map { ["id": $0.displayID, "frame": frameJSON($0.frame)] as [String: Any] },
+                  "screens": NSScreen.screens.map { frameJSON($0.frame) }])
     while let line = await readRecorderLine() {
       if let error = observer.state().2 { throw DriverFailure(error) }
       if line == "stop" { break }
@@ -170,13 +222,17 @@ extension Driver {
         let fresh = try await SCShareableContent.excludingDesktopWindows(true, onScreenWindowsOnly: true)
         guard let display = fresh.displays.first else { throw DriverFailure("No display available during relaunch") }
         try await stream.updateContentFilter(SCContentFilter(display: display, including: []))
+        parked = true
+        observer.invalidateSource()
         try emitJSON(["event": "parked", "time": timestamp()])
         continue
       }
-      if line == "mark" { try emitJSON(["event": "mark", "time": timestamp()]); continue }
+      if line == "mark" { try await refreshSource(); try emitJSON(["event": "mark", "time": timestamp()]); continue }
+      if line == "diagnostic" { try emitJSON(["event": "diagnostic", "time": timestamp(), "detail": observer.diagnostic()]); continue }
       if line.hasPrefix("{") {
         guard let request = try JSONSerialization.jsonObject(with: Data(line.utf8)) as? [String: String],
               request["op"] == "screenshot", let path = request["path"] else { throw DriverFailure("Invalid recorder request") }
+        try await refreshSource()
         let settleDeadline = Date().addingTimeInterval(2)
         while !observer.isSettled(), Date() < settleDeadline {
           if let error = observer.state().2 { throw DriverFailure(error) }
@@ -200,7 +256,8 @@ extension Driver {
           if restoredWindow == nil { try await Task.sleep(for: .milliseconds(100)) }
         }
         guard let newWindow = restoredWindow else { throw DriverFailure("Window size changed during recording; restore the initial size") }
-        try await stream.updateContentFilter(SCContentFilter(desktopIndependentWindow: newWindow))
+        _ = newWindow
+        try await refreshSource(allowRelaunch: true)
         try emitJSON(["event": "reattached", "time": timestamp()])
       }
     }
