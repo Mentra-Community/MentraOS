@@ -398,6 +398,7 @@ jobs:
       release_id: ${{ needs.plan.outputs.release_id }}
       ota_manifest_url: ${{ needs.ota.outputs.manifest_url }}
       ota_manifest_sha256: ${{ needs.ota.outputs.manifest_sha256 }}
+      installable_downloads: true
       backend_environment: ${{ needs.plan.outputs.backend_environment }}
       play_track: ${{ needs.plan.outputs.play_track }}
       testflight_group: ${{ needs.plan.outputs.testflight_group }}
@@ -719,6 +720,10 @@ jobs:
           APK_NAME: ${{ needs.mobile.outputs.apk_name }}
           IPA_NAME: ${{ needs.mobile.outputs.ipa_name }}
           MOBILE_APK_URL: ${{ needs.mobile.outputs.apk_url }}
+          IPHONE_MANIFEST_URL: ${{ needs.mobile.outputs.iphone_manifest_url }}
+          IPHONE_SHARE_URL: ${{ needs.mobile.outputs.iphone_share_url }}
+          MAC_URL: ${{ needs.mobile.outputs.mac_url }}
+          OTA_MANIFEST_URL: ${{ needs.ota.outputs.manifest_url }}
           MOBILE_IPA_URL: ${{ needs.mobile.outputs.ipa_url }}
           ASG_APK_NAME: ${{ needs.ota.outputs.asg_apk_name }}
           ASG_APK_URL: ${{ needs.ota.outputs.asg_apk_url }}

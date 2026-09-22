@@ -36,6 +36,7 @@ export type AcsMeetingCredential =
       expiresOn: string
       identityMode: "guest"
       acsUserId: string
+      guestReason?: "teams-license-unavailable"
     }
   | {
       token: string
@@ -154,6 +155,26 @@ export async function exchangeAcsTeamsUserToken(
     token: result.token,
     expiresOn: result.expiresOn.toISOString(),
     identityMode: "teams-user",
+  }
+}
+
+/** Only Microsoft's explicit license rejection permits automatic guest joining. */
+export function isTeamsLicenseUnavailable(error: unknown): boolean {
+  return (
+    typeof error === "object" && error !== null && "code" in error && error.code === "UserLicenseNotPresentForbidden"
+  )
+}
+
+/** The subject must already have been verified against the authenticated Runtime user. */
+export async function issueAcsTeamsCredential(
+  subject: VerifiedTeamsSubject,
+  authenticatedUserId: string,
+): Promise<AcsMeetingCredential> {
+  try {
+    return await exchangeAcsTeamsUserToken(subject)
+  } catch (error) {
+    if (!isTeamsLicenseUnavailable(error)) throw error
+    return {...(await mintAcsGuestToken(authenticatedUserId)), guestReason: "teams-license-unavailable"}
   }
 }
 

@@ -280,7 +280,7 @@ test("stable packages publish from the frozen beta source independently of the m
   )
 })
 
-test("Cloud V2 deploys once per coordinated environment before mobile publication", () => {
+test("Cloud V2 readiness gates mobile compilation and publication", () => {
   const coordinator = workflow("coordinated-release.yml")
   const cloud = workflow("reusable-coordinated-cloud-v2.yml")
   const cloudJob = jobBlock(coordinator, "cloud-v2")
@@ -965,4 +965,25 @@ test("the immutable publish contract inspects each invocation on its own", () =>
     immutablePublishMismatches(snippet).map(({name}) => name),
     ["current-production-release-plan.json", "\${{ steps.b.outputs.asset_name }}"],
   )
+})
+
+test("new cache and signing tooling tolerate a frozen source predating the helpers", () => {
+  const ios = jobBlock(workflow("reusable-coordinated-mobile.yml"), "ios")
+  assert.match(ios, /ref: \$\{\{ github.sha \}\}[\s\S]*mobile\/ci\/verify-signing.py/)
+  assert.match(ios, /python3 "\$GITHUB_WORKSPACE\/release-tooling\/mobile\/ci\/verify-signing.py"/)
+  assert.match(ios, /if \[\[ -f mobile\/scripts\/native-build-cache.mjs \]\] && grep -q MENTRA_NATIVE_BUILD_CACHE/)
+  const cache = ios.split("      - name: Compute iOS compilation cache scope\n")[1].split("\n      - name:")[0]
+  assert.match(cache, /if: steps.cache-support.outputs.supported == 'true'/)
+})
+
+
+test("cache scope receives the generated public runtime environment, including its backend", () => {
+  const source = workflow("reusable-coordinated-mobile.yml")
+  const pattern = source.match(/grep -E '([^']+)' mobile\/\.env/)[1]
+  const input = "EXPO_PUBLIC_BUILD_ENV=staging\nEXPO_PUBLIC_CLOUD_CORE_URL=https://staging.example\nMENTRAOS_PINNED_BUILD_NUMBER=42\nPRIVATE_TOKEN=secret\n"
+  const result = spawnSync("grep", ["-E", pattern], {input, encoding: "utf8"})
+  assert.equal(result.status, 0)
+  assert.match(result.stdout, /EXPO_PUBLIC_BUILD_ENV=staging/)
+  assert.match(result.stdout, /EXPO_PUBLIC_CLOUD_CORE_URL=https:\/\/staging.example/)
+  assert.doesNotMatch(result.stdout, /PRIVATE_TOKEN/)
 })

@@ -46,7 +46,7 @@ const macInstallScript = `(() => {
 const macScriptPolicy = `; script-src 'sha256-${createHash("sha256").update(macInstallScript).digest("base64")}'`
 
 // Called only after the publisher validates the handoff receipt and IPA bytes.
-export function iosInstallationFiles(receipt, repository) {
+export function iosInstallationFiles(receipt, repository, release = undefined) {
   const {app} = receipt
   if (
     app?.bundleId !== "com.mentra.mentra" ||
@@ -56,13 +56,19 @@ export function iosInstallationFiles(receipt, repository) {
     throw new Error("Invalid iPhone installation app identity")
 
   const ipaName = receipt.artifacts.iphone.name
-  const manifestName = ipaName.replace("mentra-ios-iphone-", "mentra-ios-manifest-").replace(/\.ipa$/, ".plist")
-  const pageName = ipaName.replace("mentra-ios-iphone-", "mentra-ios-install-").replace(/\.ipa$/, ".html")
-  const ipaUrl = artifactUrl(repository, "pr-builds", ipaName)
-  const manifestUrl = artifactUrl(repository, "pr-builds", manifestName)
+  const manifestName =
+    release?.manifestName ?? ipaName.replace("mentra-ios-iphone-", "mentra-ios-manifest-").replace(/\.ipa$/, ".plist")
+  const pageName =
+    release?.pageName ?? ipaName.replace("mentra-ios-iphone-", "mentra-ios-install-").replace(/\.ipa$/, ".html")
+  const ipaUrl = artifactUrl(repository, release?.tag ?? "pr-builds", ipaName)
+  const manifestUrl = artifactUrl(repository, release?.tag ?? "pr-builds", manifestName)
   const installUrl = iosInstallUrl(manifestUrl)
-  const prUrl = `https://github.com/${repository}/pull/${receipt.pr}`
-  const macEnabled = app.macPackageVersion === 2
+  const prUrl = release?.url ?? `https://github.com/${repository}/pull/${receipt.pr}`
+  const title = release?.identity ?? `PR #${receipt.pr}`
+  const badge = release ? "MENTRA · TEST RELEASE" : "MENTRA · PR TEST BUILD"
+  const backend = release?.backend ?? "dev"
+  const retention = release ? "" : " PR downloads may be removed after 7 days."
+  const macEnabled = !release && app.macPackageVersion === 2
   if (
     macEnabled &&
     (app.macInstaller !== "Install Mentra.app" ||
@@ -104,7 +110,7 @@ export function iosInstallationFiles(receipt, repository) {
   <meta http-equiv="Content-Security-Policy" content="default-src 'none'; style-src 'unsafe-inline'; base-uri 'none'; form-action 'none'${
     macEnabled ? macScriptPolicy : ""
   }">
-  <title>Install Mentra App · PR #${escape(receipt.pr)}</title>
+  <title>Install Mentra App · ${escape(title)}</title>
   <style>
     :root { color-scheme: light dark; font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; }
     body { margin: 0; background: light-dark(#f4f7f5, #111a15); color: light-dark(#17251d, #e7f2eb); }
@@ -119,12 +125,12 @@ export function iosInstallationFiles(receipt, repository) {
   </style>
 </head>
 <body><main>
-  <p class="badge">MENTRA · PR TEST BUILD</p>
+  <p class="badge">${badge}</p>
   <h1${macEnabled ? ' id="install-heading"' : ""}>Install the Mentra App</h1>
   <p class="details">Version ${escape(app.version)} · Build ${escape(app.build)}<br>
-    <a href="${escape(prUrl)}">PR #${escape(receipt.pr)}</a> · Commit ${escape(
+    <a href="${escape(prUrl)}">${escape(title)}</a> · Commit ${escape(
       receipt.headSha.slice(0, 7),
-    )} · Dev backend</p>
+    )} · ${escape(backend)} backend</p>
 ${macEnabled ? '  <section id="iphone-install">\n' : ""}  <a class="install" href="${escape(
         installUrl,
       )}">Install on iPhone</a>
@@ -134,7 +140,7 @@ ${macEnabled ? '  <section id="iphone-install">\n' : ""}  <a class="install" hre
     <li>Return to your Home Screen. Wait for installation to finish, then open Mentra.</li>
   </ol>
   <p>Your iPhone must be registered with Mentra and included in this build’s provisioning profile. This build replaces the existing Mentra App; keep it installed to preserve its data.</p>
-  <p class="secondary">No prompt? Open this page in Safari and tap Install again. If iOS cannot install it, check that your device is included and ask for a fresh build. PR downloads may be removed after 7 days.</p>
+  <p class="secondary">No prompt? Open this page in Safari and tap Install again. If iOS cannot install it, check that your device is included and ask for a fresh build.${retention}</p>
   <p class="secondary"><a href="${escape(ipaUrl)}">Download IPA for installation with a Mac</a></p>
 ${
   macEnabled

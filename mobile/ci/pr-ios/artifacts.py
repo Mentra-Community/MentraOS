@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""PR-only ad hoc export validation and portable iPhone/Mac packaging."""
+"""Ad hoc export validation and PR/coordinated iPhone and Mac packaging."""
 import argparse
 import base64
 import datetime as dt
@@ -171,6 +171,39 @@ def configure(output, keychain):
                       "thinning": "<none>", "manageAppVersionAndBuildNumber": False,
                       "uploadSymbols": False}, stream)
     print(f"Validated ad hoc profile {profile['Name']}, expires {profile['ExpirationDate']}, {len(profile['ProvisionedDevices'])} devices")
+
+
+def package_mac_app(app, output, manifest, folder_name="Mentra PR", readme=None):
+    """Share the verified portable Mac package between PR and channel builds."""
+    output = Path(output)
+    with tempfile.TemporaryDirectory(prefix="mentra-mac-package-") as tmp:
+        root = Path(tmp)
+        mac = root / folder_name
+        mac.mkdir()
+        run("ditto", app, mac / "Mentra.app")
+        shutil.copy2(HERE.parent.parent / "scripts/install-ios-mac.mjs", mac / "install.mjs")
+        launcher = mac / "launch-ios-on-mac"
+        run("xcrun", "swiftc", "-parse-as-library", "-O", "-target", "arm64-apple-macosx14.0",
+            HERE.parent.parent / "scripts/launch-ios-on-mac.swift", "-o", launcher)
+        run("codesign", "--force", "--sign", "-", launcher)
+        manifest.update({"launcherPath": "launch-ios-on-mac", "launcherSha256": digest(launcher)})
+        (mac / "build.json").write_text(json.dumps(manifest, indent=2) + "\n")
+        (mac / "Install.command").write_text('#!/bin/bash\nset -euo pipefail\ncd -- "$(dirname -- "$0")"\nexport PATH="$HOME/.bun/bin:/opt/homebrew/bin:$PATH"\ncommand -v bun >/dev/null || { echo "Install Bun first: https://bun.sh"; exit 1; }\nbun install.mjs --manifest build.json\n')
+        (mac / "Install.command").chmod(0o755)
+        if readme is None:
+            shutil.copy2(HERE / "README.md", mac / "README.md")
+        else:
+            (mac / "README.md").write_text(readme)
+        run("ditto", "-c", "-k", "--keepParent", mac, output)
+        run("ditto", "-x", "-k", output, root / "verify")
+        delivered = root / "verify" / folder_name / "Mentra.app"
+        run("codesign", "--verify", "--deep", "--strict", delivered)
+        info = plistlib.loads((delivered / "Info.plist").read_bytes())
+        if (digest(delivered / info["CFBundleExecutable"]) != manifest["executableSha256"]
+                or digest(delivered / "main.jsbundle") != manifest["javascriptSha256"]):
+            raise ValueError("Mac ZIP no longer contains the exported signed app")
+        if (delivered / "EXConstants.bundle/app.config").read_bytes() != (app / "EXConstants.bundle/app.config").read_bytes():
+            raise ValueError("Mac ZIP configuration changed")
 
 
 def package(ipa, output, mac_signing):

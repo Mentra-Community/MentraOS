@@ -2,7 +2,7 @@ import {Hono} from "hono"
 import {z} from "zod"
 import {
   AcsCredentialError,
-  exchangeAcsTeamsUserToken,
+  issueAcsTeamsCredential,
   mintAcsGuestToken,
   TeamsIdentityRejectedError,
   verifyTeamsSubjectToken,
@@ -109,7 +109,10 @@ meetingsApi.post("/acs/token", async (c) => {
   }
 
   try {
-    return c.json(await exchangeAcsTeamsUserToken(subject), 200)
+    return c.json(
+      await issueAcsTeamsCredential(subject, `${auth.identity.tenantId}:${auth.identity.mentraUserId}`),
+      200,
+    )
   } catch (error) {
     if (error instanceof AcsCredentialError) {
       return c.json({error: error.message}, error.status)

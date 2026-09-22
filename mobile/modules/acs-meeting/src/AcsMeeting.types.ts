@@ -51,6 +51,7 @@ export type AcsOutgoingVideo = {
 export type AcsMeetingJoinOptions = {
   meetingUrl: string
   token: string
+  identityMode?: "guest" | "teams-user"
   whepUrl?: string
   videoSource?: {type: "whep"; url: string} | {type: "softap"; bindAddress: string}
   displayName?: string
