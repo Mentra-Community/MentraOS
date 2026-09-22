@@ -75,6 +75,7 @@ jq -e '
   (.communicationName | nonempty) and
   (.runtimeName | container_app_name) and
   (.coreName | container_app_name) and
+  ((.coreAdminEmails // "") | type == "string") and
   ((.miniappConfiguration // {}) | miniapp_configuration_map) and
   ($minVersion | semver) and
   ($recommendedVersion | semver) and
@@ -82,9 +83,8 @@ jq -e '
 ' "$CONFIG" >/dev/null || { printf 'Deployment configuration is incomplete or invalid\n' >&2; exit 1; }
 
 jq -e '
-  ([.refreshTokenPepper,.mentraJwtPrivateKey,.mentraJwtPublicKey,.miniappJwtPrivateKey,.miniappJwtPublicKey]
-  | all(type == "string" and length > 0)) and
-  (.reportAgentApiToken | type == "string" and length >= 32 and test("^[A-Za-z0-9_-]+$"))
+  [.refreshTokenPepper,.mentraJwtPrivateKey,.mentraJwtPublicKey,.miniappJwtPrivateKey,.miniappJwtPublicKey]
+  | all(type == "string" and length > 0)
 ' "$SECRETS" >/dev/null || { printf 'Secret file is incomplete or invalid\n' >&2; exit 1; }
 
 if [[ "$VALIDATE_ONLY" == true ]]; then
@@ -142,7 +142,7 @@ jq -n \
       mentraJwtPublicKey:{value:$s.mentraJwtPublicKey},
       miniappJwtPrivateKey:{value:$s.miniappJwtPrivateKey},
       miniappJwtPublicKey:{value:$s.miniappJwtPublicKey},
-      reportAgentApiToken:{value:$s.reportAgentApiToken},
+      coreAdminEmails:{value:($c.coreAdminEmails // "")},
       workspaceHostname:{value:($c.workspaceHostname // "")},
       clientMinVersion:{value:($c.clientMinVersion // "0.0.0")},
       clientRecommendedVersion:{value:($c.clientRecommendedVersion // $c.clientMinVersion // "0.0.0")},
@@ -200,9 +200,11 @@ WORKSPACE="$(az deployment group show \
 
 CORE_ORIGIN="$(az deployment group show --name "$DEPLOYMENT_NAME" --resource-group "$RESOURCE_GROUP" \
   --query properties.outputs.coreOrigin.value --output tsv)"
-curl --fail --silent --show-error --retry 12 --retry-delay 10 --retry-all-errors \
-  -H "Authorization: Bearer $(jq -r .reportAgentApiToken "$SECRETS")" \
-  "$CORE_ORIGIN/api/agent/reports/health" | jq -e '.ok == true' >/dev/null
+if [[ -n "${MENTRA_ADMIN_TOKEN:-}" ]]; then
+  curl --fail --silent --show-error --retry 12 --retry-delay 10 --retry-all-errors \
+    -H "Authorization: Bearer $MENTRA_ADMIN_TOKEN" \
+    "$CORE_ORIGIN/api/admin/reports?limit=1" | jq -e '.reports | type == "array"' >/dev/null
+fi
 
 az deployment group show \
   --name "$DEPLOYMENT_NAME" \

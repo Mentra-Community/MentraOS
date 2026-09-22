@@ -22,10 +22,8 @@ param miniappJwtPrivateKey string
 @secure()
 param miniappJwtPublicKey string
 
-@secure()
-@minLength(32)
-@description('Read-only credential for /api/agent/reports. Keep in the deployment secret manager; never put it in the mobile manifest.')
-param reportAgentApiToken string
+@description('Comma-separated administrator emails for existing Core admin authorization. For an org API key, allowlist api-key@<keyId>.local. This is not a bearer credential.')
+param coreAdminEmails string = ''
 
 @description('Durable Core attachment storage account. The default is stable for this resource group.')
 param reportStorageAccountName string = 'mentra${uniqueString(subscription().id, resourceGroup().id)}'
@@ -280,7 +278,6 @@ resource core 'Microsoft.App/containerApps@2024-03-01' = {
         { name: 'mentra-jwt-public-key', value: mentraJwtPublicKey }
         { name: 'miniapp-jwt-private-key', value: miniappJwtPrivateKey }
         { name: 'miniapp-jwt-public-key', value: miniappJwtPublicKey }
-        { name: 'report-agent-api-token', value: reportAgentApiToken }
       ]
     }
     template: {
@@ -298,7 +295,7 @@ resource core 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'MENTRA_MINIAPP_JWT_PRIVATE_KEY', secretRef: 'miniapp-jwt-private-key' }
             { name: 'MENTRA_MINIAPP_JWT_PUBLIC_KEY', secretRef: 'miniapp-jwt-public-key' }
             { name: 'CLOUD_CORE_ISSUER', value: coreOrigin }
-            { name: 'CLOUD_REPORT_AGENT_API_TOKEN', secretRef: 'report-agent-api-token' }
+            { name: 'CLOUD_CORE_ADMIN_EMAILS', value: coreAdminEmails }
             { name: 'CLOUD_STORAGE_PROVIDER', value: 'local' }
             { name: 'CLOUD_STORAGE_LOCAL_DIR', value: '/mnt/core-attachments' }
             {

@@ -27,7 +27,7 @@ on:
         required: true
       ENTERPRISE_DEV_MINIAPP_JWT_PUBLIC_KEY:
         required: true
-      ENTERPRISE_DEV_REPORT_AGENT_API_TOKEN:
+      ENTERPRISE_DEV_ADMIN_TOKEN:
         required: true
     outputs:
       result_artifact:
@@ -163,7 +163,7 @@ jobs:
           MENTRA_JWT_PUBLIC_KEY: ${{ secrets.ENTERPRISE_DEV_MENTRA_JWT_PUBLIC_KEY }}
           MINIAPP_JWT_PRIVATE_KEY: ${{ secrets.ENTERPRISE_DEV_MINIAPP_JWT_PRIVATE_KEY }}
           MINIAPP_JWT_PUBLIC_KEY: ${{ secrets.ENTERPRISE_DEV_MINIAPP_JWT_PUBLIC_KEY }}
-          REPORT_AGENT_API_TOKEN: ${{ secrets.ENTERPRISE_DEV_REPORT_AGENT_API_TOKEN }}
+          CORE_ADMIN_EMAILS: ${{ vars.ENTERPRISE_DEV_CORE_ADMIN_EMAILS }}
         run: |
           set -euo pipefail
           parameters="$RUNNER_TEMP/private-deployment-dev.parameters.json"
@@ -193,7 +193,7 @@ jobs:
                 mentraJwtPublicKey:{value:env.MENTRA_JWT_PUBLIC_KEY},
                 miniappJwtPrivateKey:{value:env.MINIAPP_JWT_PRIVATE_KEY},
                 miniappJwtPublicKey:{value:env.MINIAPP_JWT_PUBLIC_KEY},
-                reportAgentApiToken:{value:env.REPORT_AGENT_API_TOKEN},
+                coreAdminEmails:{value:env.CORE_ADMIN_EMAILS},
                 workspaceHostname:{value:$workspaceHostname},
                 managedMiniapps:{value:$reference[0].miniapps.managed},
                 manageAcrPullRoleAssignment:{value:false}
@@ -212,7 +212,7 @@ jobs:
         id: verify
         if: inputs.dry_run != true
         env:
-          REPORT_AGENT_API_TOKEN: ${{ secrets.ENTERPRISE_DEV_REPORT_AGENT_API_TOKEN }}
+          MENTRA_ADMIN_TOKEN: ${{ secrets.ENTERPRISE_DEV_ADMIN_TOKEN }}
         run: |
           set -euo pipefail
           workspace_origin=$(az deployment group show \
@@ -375,8 +375,8 @@ jobs:
           test -n "$core_revision"
 
           curl --fail --silent --show-error --retry 12 --retry-delay 10 --retry-all-errors \
-            -H "Authorization: Bearer $REPORT_AGENT_API_TOKEN" \
-            "$core_origin/api/agent/reports/health" | jq -e '.ok == true' >/dev/null
+            -H "Authorization: Bearer $MENTRA_ADMIN_TOKEN" \
+            "$core_origin/api/admin/reports?limit=1" | jq -e '.reports | type == "array"' >/dev/null
           az containerapp revision show --name "$AZURE_CORE_CONTAINER_APP" --revision "$core_revision" \
             --resource-group "$AZURE_RESOURCE_GROUP" \
             --query properties.template --output json | jq -e '

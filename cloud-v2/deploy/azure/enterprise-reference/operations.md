@@ -13,28 +13,52 @@ key held by the Container Apps environment, uses encrypted SMB, and has
 seven-day share-delete retention. It uses the storage service's authenticated
 public endpoint, matching this reference deployment's non-VNet topology.
 
-`generate-private-secrets.sh` creates a separate `reportAgentApiToken` for
-read-only report access. When upgrading an existing deployment, add a random
-token (at least 32 URL-safe characters, for example `openssl rand -hex 32`) to
-that existing secret file as `reportAgentApiToken`; preserve every signing key
-and the refresh-token pepper. Store the token in the customer's secret manager.
-Enterprise Dev CI uses the `ENTERPRISE_DEV_REPORT_AGENT_API_TOKEN` GitHub secret.
-The deployment helper and CI verify the authenticated report-reader health route.
+Report access uses Core's existing admin authorization. Create an org API key
+in this deployment and add its synthetic email, `api-key@<keyId>.local`, to
+`coreAdminEmails` in the deployment config (a comma-separated string). The
+template supplies it as `CLOUD_CORE_ADMIN_EMAILS`. Only the key's hash lives in
+the database; keep the full `msk_...` token in the customer's secret manager.
+An API key alone does not grant admin access: its email must be allowlisted.
+Admin keys permit the existing admin routes, including report listing and triage.
+
+The existing Developer Console org API-key creation flow can issue this key.
+For a fresh private deployment without a console, an operator with database
+access can bootstrap the org with `DeveloperOrgService.createPrimaryOrg` and
+issue its key with `DeveloperApiKeyService.create`. Use the operator's identity
+as the creator for auditability. The key's environment must match Core's
+`CLOUD_CORE_ENVIRONMENT` (or its console-derived environment; this reference
+defaults to `local`). Use these existing services rather than inserting a raw
+bearer secret into Core configuration. Keep the allowlist in deployment config
+so subsequent deployments preserve access. Revoke keys through
+`DeveloperApiKeyService.revoke` and remove their emails from the allowlist.
+
+Enterprise Dev CI uses the `ENTERPRISE_DEV_CORE_ADMIN_EMAILS` repository variable
+and `ENTERPRISE_DEV_ADMIN_TOKEN` secret. The secret is used only to verify the
+existing authenticated admin report route; the application validates the key
+against its database. The deployment helper performs the same check when
+`MENTRA_ADMIN_TOKEN` is set. Preserve signing keys and the refresh-token pepper
+when updating an existing deployment.
 
 The Mentra App feedback confirmation displays the report ID and offers
 **Copy report ID**. Retrieve a known report and its attachments with:
 
 ```bash
 export MENTRA_CORE_URL=https://<enterprise-core-host>
-export MENTRA_REPORT_AGENT_TOKEN=<read-only-token-from-secret-manager>
-./scripts/fetch-incident-logs.sh --agent rep_01...
+export MENTRA_ADMIN_TOKEN=<admin-org-api-key-from-secret-manager>
+./scripts/fetch-incident-logs.sh rep_01...
 ```
 
-Agent mode requires an explicit Core URL, never probes consumer environments,
-and grants no write, list, or general admin access. Report artifacts are not
-public. Slack notification delivery remains optional and unconfigured by this
-reference setup; report filing and retrieval work without Slack or consumer
-analytics (`telemetry: false`).
+`--list` also works with this admin credential. For Enterprise Dev, operators
+who keep the key as `MENTRA_ADMIN_TOKEN_ENTERPRISEDEV` can pass
+`MENTRA_ADMIN_TOKEN="$MENTRA_ADMIN_TOKEN_ENTERPRISEDEV"` to the script along
+with the Enterprise Core URL.
+
+This setup needs no separate report-only credential. Admin credentials never
+belong in the mobile manifest.
+
+Report artifacts are not public. Slack notification delivery remains optional
+and unconfigured by this reference setup; report filing and retrieval work
+without Slack or consumer analytics (`telemetry: false`).
 
 Before upgrading a deployment that used temporary local attachment storage,
 copy its existing `.cloud-v2-storage/core/` contents to the new share. Database

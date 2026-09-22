@@ -12,26 +12,23 @@
 # Options:
 #   -o, --out DIR    Output directory (default: ./incident-logs/<reportId>)
 #   --json           Print the raw report JSON to stdout, skip artifact downloads
-#   --agent          Use the private read-only report API (requires explicit Core URL)
 #   --env ENV        prod | staging | dev (default: auto-discover)
 #   --kind KIND      (--list) bug | feedback | automatic
 #   --status STATUS  (--list) collecting | ready | closed
 #   --limit N        (--list) max reports to return (1-200, default 50)
 #
 # Environment variables:
-#   MENTRA_ADMIN_TOKEN  (required unless --agent) Bearer token for the admin API: an org API
+#   MENTRA_ADMIN_TOKEN  (required) Bearer token for the admin API: an org API
 #                       key (msk_...) whose synthetic email is allowlisted in
 #                       CLOUD_CORE_ADMIN_EMAILS, or a WorkOS access token of
 #                       an admin user.
 #   MENTRA_CORE_URL     (optional) Core API base URL; disables auto-discovery
 #                       and overrides --env.
-#   MENTRA_REPORT_AGENT_TOKEN  Private deployment's read-only report token;
-#                              used only with --agent and MENTRA_CORE_URL.
 
 set -euo pipefail
 
 usage() {
-  sed -n '2,/^$/p' "$0" | sed 's/^# \{0,1\}//'
+  sed -n '2,26p' "$0" | sed 's/^# \{0,1\}//'
   exit 1
 }
 
@@ -44,7 +41,6 @@ command -v jq >/dev/null || { err "jq is required (brew install jq)"; exit 1; }
 REPORT_ID=""
 OUT_DIR=""
 MODE="fetch"
-AGENT_MODE=0
 ENV_NAME=""
 ENV_EXPLICIT=0
 LIST_KIND=""
@@ -55,7 +51,6 @@ while [ $# -gt 0 ]; do
   case "$1" in
     --list) MODE="list" ;;
     --json) MODE="json" ;;
-    --agent) AGENT_MODE=1 ;;
     -o|--out) OUT_DIR="${2:?--out requires a directory}"; shift ;;
     --env) ENV_NAME="${2:?--env requires prod|staging|dev}"; ENV_EXPLICIT=1; shift ;;
     --kind) LIST_KIND="${2:?--kind requires a value}"; shift ;;
@@ -113,17 +108,7 @@ if [ -n "$REPORT_ID" ] && ! printf '%s' "$REPORT_ID" | grep -Eq '^[A-Za-z0-9_-]+
   exit 1
 fi
 
-REPORT_API_PATH="/api/admin/reports"
-REPORT_BEARER_TOKEN="${MENTRA_ADMIN_TOKEN:-}"
-if [ "$AGENT_MODE" -eq 1 ]; then
-  [ -n "${MENTRA_CORE_URL:-}" ] || { err "--agent requires MENTRA_CORE_URL; private credentials are never auto-discovered"; exit 1; }
-  [ "$MODE" != "list" ] || { err "--agent reads a known report ID; listing is not supported"; exit 1; }
-  [ -n "${MENTRA_REPORT_AGENT_TOKEN:-}" ] || { err "--agent requires MENTRA_REPORT_AGENT_TOKEN"; exit 1; }
-  REPORT_API_PATH="/api/agent/reports"
-  REPORT_BEARER_TOKEN="$MENTRA_REPORT_AGENT_TOKEN"
-fi
-
-if [ -z "$REPORT_BEARER_TOKEN" ]; then
+if [ -z "${MENTRA_ADMIN_TOKEN:-}" ]; then
   err "MENTRA_ADMIN_TOKEN environment variable not set"
   note ""
   note "The admin reports API needs a bearer token with admin access:"
@@ -137,7 +122,7 @@ fi
 # api_get PATH OUTFILE -> echoes HTTP status; body lands in OUTFILE.
 api_get() {
   curl -sS -m 60 \
-    -H "Authorization: Bearer $REPORT_BEARER_TOKEN" \
+    -H "Authorization: Bearer $MENTRA_ADMIN_TOKEN" \
     -H "Accept: application/json" \
     -o "$2" -w '%{http_code}' \
     "$CORE_URL$1"
@@ -147,7 +132,7 @@ fail_for_status() {
   local status="$1" body="$2" what="$3"
   case "$status" in
     2??) return 0 ;;
-    401) err "unauthorized (401) fetching $what — report credential was rejected" ;;
+    401) err "unauthorized (401) fetching $what — MENTRA_ADMIN_TOKEN was rejected" ;;
     403) err "forbidden (403) fetching $what — token is valid but not admin-allowlisted (CLOUD_CORE_ADMIN_EMAILS)" ;;
     404) err "not found (404) fetching $what — wrong report id, or this environment does not serve the admin reports API yet" ;;
     *) err "HTTP $status fetching $what" ;;
@@ -199,14 +184,14 @@ if [ "$MODE" = "list" ]; then
   QUERY="${QUERY#&}"
   note "Listing reports${QUERY:+ ($QUERY)}"
   BODY="$TMP_DIR/list.json"
-  discover_get "$REPORT_API_PATH${QUERY:+?$QUERY}" "$BODY" "report list"
+  discover_get "/api/admin/reports${QUERY:+?$QUERY}" "$BODY" "report list"
   jq . "$BODY"
   exit 0
 fi
 
 note "Fetching report $REPORT_ID"
 DETAIL="$TMP_DIR/detail.json"
-discover_get "$REPORT_API_PATH/$REPORT_ID" "$DETAIL" "report $REPORT_ID"
+discover_get "/api/admin/reports/$REPORT_ID" "$DETAIL" "report $REPORT_ID"
 
 if [ "$MODE" = "json" ]; then
   jq . "$DETAIL"
@@ -256,7 +241,7 @@ while IFS=$'\t' read -r ARTIFACT_ID TYPE SOURCE CONTENT_TYPE FILENAME; do
   SAFE_NAME="${SAFE_NAME%.*}"
   FILE=$(printf '%02d-%s-%s%s.%s' "$INDEX" "${SAFE_TYPE:-artifact}" "${SAFE_SOURCE:-unknown}" "${SAFE_NAME:+-$SAFE_NAME}" "$EXT")
   BODY="$TMP_DIR/artifact"
-  STATUS=$(api_get "$REPORT_API_PATH/$REPORT_ID/artifacts/$ARTIFACT_ID" "$BODY") || STATUS="000"
+  STATUS=$(api_get "/api/admin/reports/$REPORT_ID/artifacts/$ARTIFACT_ID" "$BODY") || STATUS="000"
   if ! printf '%s' "$STATUS" | grep -q '^2'; then
     err "artifact $ARTIFACT_ID ($TYPE/$SOURCE) failed with HTTP $STATUS — skipping"
     FAILED=$((FAILED + 1))
