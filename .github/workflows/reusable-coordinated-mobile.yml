@@ -128,6 +128,9 @@ concurrency:
   queue: max
 
 env:
+  # Keep cold/warm qualification evidence separately; publication retries retain
+  # their existing handoff identity.
+  COORDINATED_MOBILE_ARTIFACT_RUN_ID: ${{ inputs.dry_run && format('{0}-{1}', github.run_id, github.run_attempt) || github.run_id }}
   ARTIFACTS_R2_ACCOUNT_ID: ${{ vars.ARTIFACTS_R2_ACCOUNT_ID }}
   ARTIFACTS_R2_BUCKET: artifactscdn
 
@@ -624,7 +627,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: coordinated-mobile-android-${{ github.run_id }}
+          name: coordinated-mobile-android-${{ env.COORDINATED_MOBILE_ARTIFACT_RUN_ID }}
           path: mobile-release
           if-no-files-found: error
           retention-days: 90
@@ -640,7 +643,7 @@ jobs:
       EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_CLIENT_KEY }}
       EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID: ${{ secrets.EXPO_PUBLIC_AR99_RELEASE_DEVELOPER_ID }}
     outputs:
-      upload_artifact: coordinated-mobile-ios-upload-${{ github.run_id }}
+      upload_artifact: coordinated-mobile-ios-upload-${{ env.COORDINATED_MOBILE_ARTIFACT_RUN_ID }}
     steps:
       - uses: actions/checkout@v4
         with:
@@ -889,7 +892,7 @@ jobs:
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
-          name: coordinated-mobile-ios-upload-${{ github.run_id }}
+          name: coordinated-mobile-ios-upload-${{ env.COORDINATED_MOBILE_ARTIFACT_RUN_ID }}
           path: mobile-release
           if-no-files-found: error
           retention-days: 90
@@ -904,7 +907,7 @@ jobs:
         continue-on-error: true
         uses: actions/upload-artifact@v4
         with:
-          name: coordinated-mobile-ios-upload-${{ github.run_id }}
+          name: coordinated-mobile-ios-upload-${{ env.COORDINATED_MOBILE_ARTIFACT_RUN_ID }}
           path: mobile-release
           if-no-files-found: error
           retention-days: 90
@@ -920,7 +923,7 @@ jobs:
         if: steps.ipa-upload-2.outcome == 'failure'
         uses: actions/upload-artifact@v4
         with:
-          name: coordinated-mobile-ios-upload-${{ github.run_id }}
+          name: coordinated-mobile-ios-upload-${{ env.COORDINATED_MOBILE_ARTIFACT_RUN_ID }}
           path: mobile-release
           if-no-files-found: error
           retention-days: 90
@@ -1194,7 +1197,7 @@ jobs:
 
       - uses: actions/upload-artifact@v4
         with:
-          name: coordinated-mobile-ios-${{ github.run_id }}
+          name: coordinated-mobile-ios-${{ env.COORDINATED_MOBILE_ARTIFACT_RUN_ID }}
           path: mobile-release
           if-no-files-found: error
           retention-days: 90
@@ -1217,12 +1220,12 @@ jobs:
 
       - uses: actions/download-artifact@v4
         with:
-          name: coordinated-mobile-android-${{ github.run_id }}
+          name: coordinated-mobile-android-${{ env.COORDINATED_MOBILE_ARTIFACT_RUN_ID }}
           path: result/android
 
       - uses: actions/download-artifact@v4
         with:
-          name: coordinated-mobile-ios-${{ github.run_id }}
+          name: coordinated-mobile-ios-${{ env.COORDINATED_MOBILE_ARTIFACT_RUN_ID }}
           path: result/ios
 
       - name: Merge mobile publication records

@@ -38,10 +38,10 @@ jobs:
           node .github/scripts/create-release-plan.mjs --branch dev --sequence "$sequence" \
             --native-build-sequence "$sequence" --source-commit "$source" --ota-inputs ota-release-inputs.json
           echo "source=$source" >> "$GITHUB_OUTPUT"
-          echo "artifact=mobile-qualification-plan-$GITHUB_RUN_ID" >> "$GITHUB_OUTPUT"
+          echo "artifact=mobile-qualification-plan-$GITHUB_RUN_ID-$GITHUB_RUN_ATTEMPT" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4
         with:
-          name: mobile-qualification-plan-${{ github.run_id }}
+          name: mobile-qualification-plan-${{ github.run_id }}-${{ github.run_attempt }}
           path: release-plan.json
           overwrite: true
   build:
