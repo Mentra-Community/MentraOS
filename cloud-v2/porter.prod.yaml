@@ -9,6 +9,10 @@ envGroups:
   # correct value the whole time; nothing was reading it.
   - cloud-v2-prod-doppler-sync
 
+# Porter applies environment variables at application level.
+env:
+  MENTRA_STORE_INTERNAL_URL: "https://store.dev.us-west-2.mentraglass.com"
+
 build:
   method: docker
   context: ../
@@ -21,7 +25,6 @@ services:
     env:
       ADMIN_URL: "https://admin.mentraglass.com"
       PORTAL_URL: "https://portal.mentraglass.com"
-      MENTRA_STORE_INTERNAL_URL: "https://store.dev.us-west-2.mentraglass.com"
     port: 3000
     instances: 1
     cpuCores: 0.25
