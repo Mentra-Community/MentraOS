@@ -219,7 +219,11 @@ remains active. To roll back an already activated bundle, publish the known-good
 content under a new semantic version and update the manifest; versions are
 immutable.
 
-If the same Call version is already installed from the Mentra App bundle, the
+Installation provenance is stored separately from session data so logout retains
+ownership alongside the bundle files. Older missing metadata is recovered only
+through verified comparison, never by trusting a version number.
+
+If the same Call version is already installed from the consumer deployment, the
 host downloads and verifies the workspace ZIP, compares the complete extracted
 file tree, and adopts the existing release only when every file matches. It does
 not overwrite a differing or foreign-owned same-version release. A failed check

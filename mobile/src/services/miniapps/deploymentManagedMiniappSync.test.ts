@@ -1,4 +1,7 @@
 import {File, Paths} from "expo-file-system"
+import {createMMKV} from "react-native-mmkv"
+import {LogoutUtils} from "@/utils/LogoutUtils"
+import {storage} from "@/utils/storage"
 import registry from "../../../modules/engine/src/services/AppRegistry"
 import {createConsumerDeployment} from "@/services/deployment/officialManifest"
 import {deploymentStore} from "@/services/deployment/store"
@@ -9,6 +12,30 @@ import {shouldHideMiniapp} from "./miniappVisibility"
 let mockDigest = "a".repeat(64)
 let mockScript = "verified call"
 const mockDownload = jest.fn()
+
+jest.mock("@/services/MantleManager", () => ({__esModule: true, default: {cleanup: jest.fn(async () => {})}}))
+jest.mock("@/services/cloudClient", () => ({cloudClient: {clearAuthSession: jest.fn(async () => {})}}))
+jest.mock("@/utils/auth/authClient", () => ({
+  __esModule: true,
+  default: {signOut: jest.fn(async () => ({is_error: () => false}))},
+}))
+jest.mock("@/utils/settleFrame", () => ({settleFrame: jest.fn(async () => {})}))
+jest.mock("react-native-mmkv", () => {
+  const stores = new Map<string, Map<string, string>>()
+  return {
+    createMMKV: ({id = "default"} = {}) => {
+      if (!stores.has(id)) stores.set(id, new Map())
+      const values = stores.get(id)!
+      return {
+        getString: (key: string) => values.get(key),
+        set: (key: string, value: string) => values.set(key, value),
+        remove: (key: string) => values.delete(key),
+        clearAll: () => values.clear(),
+        getAllKeys: () => [...values.keys()],
+      }
+    },
+  }
+})
 
 jest.mock("expo-file-system", () => {
   const fs = require("node:fs")
@@ -142,6 +169,10 @@ afterEach(() => jest.restoreAllMocks())
 afterAll(() => require("node:fs").rmSync(require("node:path").dirname(Paths.document), {recursive: true, force: true}))
 
 it("adopts an identical verified consumer release and restores consumer installation on workspace exit", async () => {
+  storage.save("mentra.account.accessToken", "test-session")
+  await LogoutUtils.performCompleteLogout()
+  expect(storage.load("mentra.account.accessToken").is_error()).toBe(true)
+  expect(registry.getReleaseIdentity(pkg, version)?.source).toBe("bundled_asset")
   expect(shouldHideMiniapp(pkg, version)).toBe(true)
   await deploymentManagedMiniappSync.sync(workspace)
   expect(mockDownload).toHaveBeenCalledTimes(1)
@@ -153,6 +184,8 @@ it("adopts an identical verified consumer release and restores consumer installa
   expect(installedScript()).toBe("verified call")
   await deploymentManagedMiniappSync.sync(workspace)
   expect(mockDownload).toHaveBeenCalledTimes(1)
+  await LogoutUtils.performCompleteLogout()
+  expect(registry.getReleaseIdentity(pkg, version)?.source).toBe("deployment_manifest")
   jest.spyOn(deploymentStore, "getActive").mockReturnValue(consumer)
   await deploymentManagedMiniappSync.sync(consumer)
   expect(registry.getInstalledVersions(pkg)).toEqual([])
@@ -192,4 +225,43 @@ it("does not adopt a same-version release owned by another workspace", async () 
   expect(mockDownload).not.toHaveBeenCalled()
   expect(shouldHideMiniapp(pkg, version)).toBe(true)
   expect(registry.getReleaseIdentity(pkg, version)?.deploymentId).toBe("other")
+})
+
+it.each(["consumer", "workspace"])(
+  "recovers legacy %s files whose ownership was erased by an older logout",
+  async (source) => {
+    if (source === "workspace") await deploymentManagedMiniappSync.sync(workspace)
+    createMMKV({id: "mentra-miniapp-installations"}).remove(`miniapp_release_identity:${pkg}:${version}`)
+    await LogoutUtils.performCompleteLogout()
+    expect(registry.getReleaseIdentity(pkg, version)).toBeNull()
+    mockDigest = "b".repeat(64)
+    await deploymentManagedMiniappSync.sync(workspace)
+    expect(registry.getReleaseIdentity(pkg, version)).toBeNull()
+    expect(installedScript()).toBe("verified call")
+    mockDigest = "a".repeat(64)
+    await deploymentManagedMiniappSync.sync(workspace)
+    expect(shouldHideMiniapp(pkg, version)).toBe(false)
+    await LogoutUtils.performCompleteLogout()
+    await deploymentManagedMiniappSync.sync(consumer)
+    expect(registry.getInstalledVersions(pkg)).toEqual([])
+  },
+)
+
+it("migrates legacy ownership before the session store is cleared", async () => {
+  const key = `miniapp_release_identity:${pkg}:${version}`
+  createMMKV({id: "mentra-miniapp-installations"}).remove(key)
+  storage.save(key, {source: "bundled_asset"})
+  expect(registry.getReleaseIdentity(pkg, version)?.source).toBe("bundled_asset")
+  await LogoutUtils.performCompleteLogout()
+  expect(registry.getReleaseIdentity(pkg, version)?.source).toBe("bundled_asset")
+})
+
+it("adopts a byte-identical consumer registry release after logout", async () => {
+  await registry.installFromLocalZip("consumer-registry.zip", {
+    releaseIdentity: {source: "preinstalled_registry", releaseId: "consumer-release"},
+  })
+  await LogoutUtils.performCompleteLogout()
+  await deploymentManagedMiniappSync.sync(workspace)
+  expect(shouldHideMiniapp(pkg, version)).toBe(false)
+  expect(registry.getReleaseIdentity(pkg, version)?.source).toBe("deployment_manifest")
 })

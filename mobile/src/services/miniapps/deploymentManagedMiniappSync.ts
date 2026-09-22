@@ -170,14 +170,18 @@ async function installEntry(
       appRegistry.setActiveVersion(entry.packageName, entry.version)
       return true
     }
-    console.warn(`${LOG_TAG}: refusing unverified existing ${entry.packageName}@${entry.version}`)
-    return false
+    if (desiredIdentity?.source === "deployment_manifest") {
+      console.warn(`${LOG_TAG}: refusing unverified existing ${entry.packageName}@${entry.version}`)
+      return false
+    }
+    // An older logout may have erased provenance while leaving this state and
+    // the files intact. Re-download and verify before recovering ownership.
   } else if (desiredOwnedByDeployment) {
     // The install completed but ownership state was not persisted (for
     // example, the app stopped between those two operations). Recover it.
     appRegistry.setActiveVersion(entry.packageName, entry.version)
     return true
-  } else if (installedVersions.includes(entry.version) && desiredIdentity?.source !== "bundled_asset") {
+  } else if (installedVersions.includes(entry.version) && desiredIdentity?.source === "deployment_manifest") {
     console.warn(`${LOG_TAG}: refusing to replace existing unowned ${entry.packageName}@${entry.version}`)
     return false
   }
@@ -190,7 +194,7 @@ async function installEntry(
       expectedPackageName: entry.packageName,
       expectedVersion: entry.version,
       rejectExistingVersion: true,
-      adoptIdenticalBundledVersion: desiredIdentity?.source === "bundled_asset",
+      adoptIdenticalInstalledVersion: desiredIdentity?.source !== "deployment_manifest",
       releaseIdentity: {
         source: "deployment_manifest",
         deploymentId,
