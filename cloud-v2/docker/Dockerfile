@@ -1,7 +1,7 @@
 # Cloud-v2 image: builds the whole monorepo, no entrypoint.
 #
 # Each Porter service in porter.yaml overrides `run:` to launch a different
-# process from this same image (core / store / runtime / proxy). Workspace symlinks
+# process from this same image (core / runtime / proxy). Workspace symlinks
 # mean we copy the whole tree and `bun install` resolves everything in one
 # pass.
 
@@ -24,7 +24,6 @@ COPY cloud-v2/packages/auth/package.json ./packages/auth/
 COPY cloud-v2/packages/developer-auth/package.json ./packages/developer-auth/
 COPY cloud-v2/packages/cli/package.json ./packages/cli/
 COPY cloud-v2/packages/core/package.json ./packages/core/
-COPY cloud-v2/packages/store/package.json ./packages/store/
 COPY cloud-v2/packages/protocol/package.json ./packages/protocol/
 COPY cloud-v2/packages/runtime/package.json ./packages/runtime/
 COPY cloud-v2/packages/proxy/package.json ./packages/proxy/
@@ -33,7 +32,6 @@ COPY cloud-v2/packages/console-mcp/package.json ./packages/console-mcp/
 COPY cloud-v2/test/test-oem/package.json ./test/test-oem/
 COPY cloud-v2/test/test-client/package.json ./test/test-client/
 COPY cloud-v2/websites/admin/package.json ./websites/admin/
-COPY cloud-v2/websites/console/package.json ./websites/console/
 COPY cloud-v2/websites/portal/package.json ./websites/portal/
 COPY sdk/miniapp-cli/ ../sdk/miniapp-cli/
 
@@ -49,6 +47,6 @@ RUN bun run typecheck
 
 # All service ports (HTTP/WS) + audio UDP. Porter's port mapping picks
 # the right one per-service from porter.yaml.
-EXPOSE 3000 3001 3002 3003 8000
+EXPOSE 3000 3001 3002 8000
 
 # No CMD — porter.yaml services set their own `run:`.

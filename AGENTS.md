@@ -4,15 +4,16 @@ Repository implementation guidelines for coding agents working with MentraOS.
 
 ## Project Overview
 
-MentraOS is an open source operating system, app store, and development framework for smart glasses.
+MentraOS is an open source operating system and development framework for smart glasses.
 
 - Architecture: Smart glasses connect to the user's phone via BLE; the Mentra App runs miniapps locally and connects to Cloud V2 services
 - Mobile app: `mobile` (React Native with native modules)
 - Android logic: `android_core`
 - iOS native module: `mobile/ios`
-- Backend & web portals: `cloud-v2` (Core, Runtime, Cloud Client, CLI, admin, console, and portal)
+- Backend & web portals: `cloud-v2` (Core, Runtime, Cloud Client, CLI, Core admin, and portal)
 - Android-based smart glasses client: `asg_client` (uses `android_core` as a library)
-- Mentra Miniapp Store and Developer Console: `cloud-v2/websites/`
+- Mentra Miniapp Store, backend, Developer Console and Store moderation: [private miniapp-store repo](https://github.com/Mentra-Community/miniapp-store)
+- Core incident administration stays in `cloud-v2/websites/admin/`.
 
 ### Established iOS behavior
 
@@ -81,7 +82,7 @@ validates the public Maven artifact dependency shape.
 - Dev: `bun run dev`
 - Type check: `bun run typecheck`
 - Test: `bun run test`
-- Web portals: `bun run dev:console`, `bun run dev:admin`, or `bun run dev:portal`
+- Web portals: `bun run dev:admin` or `bun run dev:portal`
 
 ## Prerequisites
 
@@ -185,6 +186,8 @@ Automated ransomware scanners actively target exposed MongoDB instances. Use Mon
 - [Discord Community](https://discord.gg/5ukNvkEAqT)
 
 ### Related Miniapp Repositories
+
+- [Mentra Miniapp Store](https://github.com/Mentra-Community/miniapp-store) — miniapp, backend, Developer Console and Store moderation; Core infrastructure stays here.
 
 - [Mentra Notes Miniapp](https://github.com/Mentra-Community/Mentra-Notes-Miniapp)
 - [Mentra Call Miniapp](https://github.com/Mentra-Community/Mentra-Call)

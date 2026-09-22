@@ -1,71 +1,14 @@
-import { QueryClient, QueryClientProvider, useMutation, useQuery, useQueryClient } from "@tanstack/react-query";
+import { QueryClient, QueryClientProvider, useQuery } from "@tanstack/react-query";
 import { AlertCircle, Bug, Check, ClipboardList, FileText, History, Home, Loader2, MessageSquareWarning, RefreshCcw, ShieldCheck, X } from "lucide-react";
 import { useEffect, useState } from "react";
-import { AppShell, type NavItem } from "@/components/app-shell";
+import { AppShell } from "@/components/app-shell";
 import { Button } from "@/components/ui/button";
 import mentraLogo from "./assets/mentra-logo.svg";
 
 type Environment = "debug" | "dev" | "staging" | "prod";
-type AdminPageKey = "home" | "review" | "audit" | "incidents";
-type ReleaseStatus = "draft" | "submitted" | "in_review" | "accepted" | "rejected" | "published" | "suspended";
-
 interface AdminUser {
   developerId: string;
   email: string;
-}
-
-interface ReleaseSummary {
-  id: string;
-  packageName: string;
-  displayName: string;
-  description?: string | null;
-  version: string;
-  releaseTrack: "stable" | "beta";
-  status: ReleaseStatus;
-  bundleSha256: string | null;
-  bundleSizeBytes?: number | null;
-  manifestSha256?: string | null;
-  manifest?: Record<string, unknown> | null;
-  publisherKeyFingerprint?: string | null;
-  signedAt?: string | null;
-  storeListing?: {
-    subtitle: string | null;
-    longDescription: string | null;
-    categories: string[];
-    privacyPolicyUrl: string | null;
-    supportUrl: string | null;
-    websiteUrl: string | null;
-    reviewTier: "community" | "verified";
-    featured: boolean;
-    iconAssetId: string | null;
-    coverAssetId: string | null;
-    screenshotAssetIds: string[];
-  };
-  storeAssets?: Array<{
-    id: string;
-    role: "store_icon" | "store_cover" | "gallery_screenshot";
-    fileName: string;
-    contentType: string;
-    sizeBytes: number;
-  }>;
-  listingReadiness?: { ready: boolean; missing: string[] };
-  reviewNotes?: string | null;
-  submittedAt?: string | null;
-  reviewedAt?: string | null;
-  publishedAt?: string | null;
-  publicStoreApprovedAt?: string | null;
-  isActiveRelease?: boolean;
-  requiresPublicStoreApproval?: boolean;
-}
-
-interface AuditEvent {
-  id: string;
-  adminId: string;
-  action: string;
-  targetType: string;
-  targetId: string;
-  reason: string | null;
-  createdAt: string | null;
 }
 
 type ReportKind = "bug" | "feedback" | "automatic";
@@ -128,13 +71,6 @@ const queryClient = new QueryClient({
   },
 });
 
-const ADMIN_NAV: readonly NavItem[] = [
-  { key: "home", label: "Home", icon: Home },
-  { key: "review", label: "Miniapp review", icon: ClipboardList },
-  { key: "audit", label: "Audit log", icon: History },
-  { key: "incidents", label: "Incident system", icon: Bug },
-];
-
 /**
  * The admin environment is bound to the hostname, not chosen in-app (PRD: no
  * env switcher; opening the matching hostname switches environment). Localhost
@@ -165,11 +101,7 @@ export function App() {
 let pendingDeepLinkReportId = new URLSearchParams(window.location.search).get("report");
 
 function AdminPage() {
-  const qc = useQueryClient();
-  const env = ENVIRONMENT;
-  const [page, setPage] = useState<AdminPageKey>(pendingDeepLinkReportId ? "incidents" : "home");
   const [deepLinkReportId, setDeepLinkReportId] = useState<string | null>(pendingDeepLinkReportId);
-  const [detailReleaseId, setDetailReleaseId] = useState<string | null>(null);
   const [signingOut, setSigningOut] = useState(false);
 
   async function signOut() {
@@ -197,61 +129,6 @@ function AdminPage() {
       window.history.replaceState(null, "", window.location.pathname);
     }
   }, [me.isSuccess]);
-  const submissions = useQuery({
-    queryKey: ["admin-submissions"],
-    queryFn: () => api<{ submissions: ReleaseSummary[] }>("/api/admin/submissions"),
-    enabled: me.isSuccess,
-  });
-  const audit = useQuery({
-    queryKey: ["admin-audit"],
-    queryFn: () => api<{ events: AuditEvent[] }>("/api/admin/audit-log"),
-    enabled: me.isSuccess,
-  });
-
-  // Review decisions carry the reviewer's typed notes. "Request changes" is a
-  // reject with feedback the developer sees; the backend has no separate verb.
-  const reviewMutation = useMutation({
-    mutationFn: (input: { releaseId: string; action: "approve" | "reject" | "publish"; notes: string }) =>
-      api<{ release: ReleaseSummary }>(`/api/admin/submissions/${input.releaseId}/${input.action}`, {
-        method: "POST",
-        body: { notes: input.notes },
-      }),
-    onSuccess: async () => {
-      setDetailReleaseId(null);
-      await Promise.all([
-        qc.invalidateQueries({ queryKey: ["admin-submissions"] }),
-        qc.invalidateQueries({ queryKey: ["admin-audit"] }),
-      ]);
-    },
-  });
-  const moderationMutation = useMutation({
-    mutationFn: (input: { packageName: string; reviewTier: "community" | "verified"; featured: boolean }) =>
-      api(`/api/admin/apps/${encodeURIComponent(input.packageName)}/store-moderation`, {
-        method: "PATCH",
-        body: { reviewTier: input.reviewTier, featured: input.featured },
-      }),
-    onSuccess: async () => {
-      await Promise.all([
-        qc.invalidateQueries({ queryKey: ["admin-submissions"] }),
-        qc.invalidateQueries({ queryKey: ["admin-audit"] }),
-      ]);
-    },
-  });
-
-  const submissionList = submissions.data?.submissions ?? [];
-  const auditEvents = audit.data?.events ?? [];
-  const pendingReviews = submissionList.filter(release =>
-    ["submitted", "in_review"].includes(release.status) || needsPublicApproval(release),
-  );
-  const detailRelease = submissionList.find(release => release.id === detailReleaseId) ?? null;
-
-  const pageMeta: Record<AdminPageKey, { title: string; body: string }> = {
-    home: { title: "Operations home", body: "Pending review and recent admin actions." },
-    review: { title: "Miniapp review", body: "Review developer-submitted releases before they are published to the store." },
-    audit: { title: "Audit log", body: "Every admin mutation: who approved, rejected, published, or moderated something." },
-    incidents: { title: "Incident system", body: "Bug reports and feedback filed from the Mentra App, with their screenshots and log bundles." },
-  };
-
   if (me.isLoading) return <Splash label="Checking admin session" />;
   if (me.isError) {
     // A 403 means the Mentra login itself worked but the account isn't on the
@@ -261,59 +138,20 @@ function AdminPage() {
 
   return (
     <AppShell
-      brandTitle="Admin"
+      brandTitle="Core admin"
       brandSubtitle="MentraOS"
-      badge={<EnvBadge env={env} />}
-      nav={ADMIN_NAV}
-      activeKey={page}
-      onSelect={key => {
-        setPage(key as AdminPageKey);
-        // Any navigation spends the deep link: coming back to the Incident
-        // system page starts unselected.
-        setDeepLinkReportId(null);
-      }}
-      title={pageMeta[page].title}
-      description={pageMeta[page].body}
+      badge={<EnvBadge env={ENVIRONMENT} />}
+      nav={[{key: "incidents", label: "Incident system", icon: Bug}]}
+      activeKey="incidents"
+      onSelect={() => setDeepLinkReportId(null)}
+      title="Incident system"
+      description="Bug reports and feedback filed from the Mentra App, with their screenshots and log bundles."
       userEmail={me.data?.user?.email ?? "Admin"}
       accountLabel="Admin"
       onSignOut={signOut}
       signingOut={signingOut}
     >
-      {page === "home" ? (
-        <HomePage
-          loading={submissions.isLoading}
-          pendingReviews={pendingReviews}
-          auditEvents={auditEvents}
-          onOpenRelease={setDetailReleaseId}
-          onGo={setPage}
-        />
-      ) : null}
-
-      {page === "review" ? (
-        <ReviewQueue
-          submissions={submissionList}
-          loading={submissions.isLoading}
-          onOpen={setDetailReleaseId}
-        />
-      ) : null}
-
-      {page === "audit" ? <AuditPage events={auditEvents} loading={audit.isLoading} /> : null}
-
-      {page === "incidents" ? <ReportsPage initialReportId={deepLinkReportId} /> : null}
-
-      {detailRelease ? (
-        <SubmissionDetail
-          release={detailRelease}
-          history={submissionList.filter(r => r.packageName === detailRelease.packageName)}
-          pending={reviewMutation.isPending || moderationMutation.isPending}
-          error={reviewMutation.error ?? moderationMutation.error}
-          onClose={() => setDetailReleaseId(null)}
-          onAction={(action, notes) => reviewMutation.mutate({ releaseId: detailRelease.id, action, notes })}
-          onModerate={(reviewTier, featured) =>
-            moderationMutation.mutate({ packageName: detailRelease.packageName, reviewTier, featured })
-          }
-        />
-      ) : null}
+      <ReportsPage key={deepLinkReportId ?? "reports"} initialReportId={deepLinkReportId} />
     </AppShell>
   );
 }
@@ -337,435 +175,6 @@ function EnvBadge({ env }: { env: Environment }) {
         <span>Env · {envLabel(env)}</span>
         <span className="text-[10px] font-medium normal-case opacity-70">read-only</span>
       </div>
-    </div>
-  );
-}
-
-function HomePage(props: {
-  loading: boolean;
-  pendingReviews: ReleaseSummary[];
-  auditEvents: AuditEvent[];
-  onOpenRelease: (id: string) => void;
-  onGo: (page: AdminPageKey) => void;
-}) {
-  return (
-    <div className="space-y-6">
-      <div className="grid gap-4 sm:grid-cols-2">
-        <StatCard
-          label="Pending reviews"
-          value={String(props.pendingReviews.length)}
-          hint="Releases awaiting a decision"
-          tone={props.pendingReviews.length > 0 ? "alert" : "calm"}
-          onClick={() => props.onGo("review")}
-        />
-        <StatCard
-          label="Recent admin actions"
-          value={String(props.auditEvents.length)}
-          hint="In the audit log"
-          tone="calm"
-          onClick={() => props.onGo("audit")}
-        />
-      </div>
-
-      <div className="grid gap-6 xl:grid-cols-[1fr_360px]">
-        <section className="rounded-[24px] border border-[#e0e4de] bg-white shadow-[0_1px_2px_rgba(20,21,27,0.06)]">
-          <div className="flex items-center justify-between gap-4 border-b border-[#eceeeb] p-5">
-            <h2 className="text-xl font-bold">Review queue</h2>
-            <Button variant="ghost" className="rounded-full text-[#087d50] hover:bg-[#eef8f2]" onClick={() => props.onGo("review")}>
-              Open queue
-            </Button>
-          </div>
-          {props.loading ? (
-            <div className="p-5"><InlineLoading label="Loading queue" /></div>
-          ) : props.pendingReviews.length === 0 ? (
-            <EmptyState title="Queue is clear" body="No releases are waiting for review right now." />
-          ) : (
-            <div className="divide-y divide-[#eceeeb]">
-              {props.pendingReviews.slice(0, 5).map(release => (
-                <button
-                  key={release.id}
-                  className="flex w-full items-center gap-4 p-5 text-left hover:bg-[#fafbfa]"
-                  onClick={() => props.onOpenRelease(release.id)}
-                >
-                  <ReleaseIdentity release={release} compact />
-                  <span className="shrink-0 text-sm font-semibold text-[#087d50]">Review →</span>
-                </button>
-              ))}
-            </div>
-          )}
-        </section>
-
-        <section className="rounded-[24px] border border-[#e0e4de] bg-white p-5 shadow-[0_1px_2px_rgba(20,21,27,0.06)]">
-          <h2 className="text-xl font-bold">Recent actions</h2>
-          <div className="mt-4 space-y-3">
-            {props.auditEvents.length > 0 ? props.auditEvents.slice(0, 6).map(event => (
-              <AuditRow key={event.id} event={event} compact />
-            )) : <p className="text-sm text-[#68746d]">No admin actions yet.</p>}
-          </div>
-        </section>
-      </div>
-    </div>
-  );
-}
-
-function StatCard(props: { label: string; value: string; hint: string; tone: "alert" | "calm"; onClick: () => void }) {
-  return (
-    <button
-      onClick={props.onClick}
-      className="rounded-[20px] border border-[#e0e4de] bg-white p-5 text-left shadow-[0_1px_2px_rgba(20,21,27,0.06)] transition hover:border-[#cfe6da] hover:shadow-[0_8px_24px_-18px_rgba(20,21,27,0.4)]"
-    >
-      <div className="text-xs font-medium uppercase tracking-[0.1em] text-[#a0a3aa]">{props.label}</div>
-      <div className={`mt-2 text-3xl font-bold tracking-[-0.02em] ${props.tone === "alert" ? "text-[#a64235]" : "text-[#14151b]"}`}>{props.value}</div>
-      <div className="mt-1 text-sm text-[#747780]">{props.hint}</div>
-    </button>
-  );
-}
-
-function ReviewQueue(props: { submissions: ReleaseSummary[]; loading: boolean; onOpen: (id: string) => void }) {
-  const queue = props.submissions.filter(release => release.status !== "draft");
-  return (
-    <section className="rounded-[24px] border border-[#e0e4de] bg-white shadow-[0_1px_2px_rgba(20,21,27,0.06)]">
-      <div className="flex items-center justify-between gap-4 border-b border-[#eceeeb] p-5">
-        <div>
-          <h2 className="text-xl font-bold">Submitted releases</h2>
-          <p className="mt-1 text-sm text-[#68746d]">Open a release to inspect its metadata and approve, request changes, or publish.</p>
-        </div>
-        <ClipboardList className="size-5 text-[#087d50]" />
-      </div>
-      {props.loading ? (
-        <div className="p-5"><InlineLoading label="Loading submissions" /></div>
-      ) : queue.length === 0 ? (
-        <EmptyState title="No submissions" body="Developer releases appear here after they are submitted for review." />
-      ) : (
-        <div className="divide-y divide-[#eceeeb]">
-          {queue.map(release => (
-            <button key={release.id} className="flex w-full items-center gap-4 p-5 text-left hover:bg-[#fafbfa]" onClick={() => props.onOpen(release.id)}>
-              <ReleaseIdentity release={release} />
-              <span className="shrink-0 text-sm font-semibold text-[#087d50]">Open →</span>
-            </button>
-          ))}
-        </div>
-      )}
-    </section>
-  );
-}
-
-function SubmissionDetail(props: {
-  release: ReleaseSummary;
-  history: ReleaseSummary[];
-  pending: boolean;
-  error: unknown;
-  onClose: () => void;
-  onAction: (action: "approve" | "reject" | "publish", notes: string) => void;
-  onModerate: (reviewTier: "community" | "verified", featured: boolean) => void;
-}) {
-  const { release } = props;
-  const [notes, setNotes] = useState("");
-  const priorHistory = props.history.filter(r => r.id !== release.id);
-
-  return (
-    <div className="fixed inset-0 z-50 flex justify-end bg-[#111217]/30" onClick={props.onClose}>
-      <div
-        className="h-full w-full max-w-[560px] overflow-y-auto bg-[#f7f8f6] shadow-2xl"
-        onClick={event => event.stopPropagation()}
-      >
-        <div className="sticky top-0 z-10 flex items-center justify-between border-b border-[#e4e6e2] bg-white/90 px-6 py-4 backdrop-blur">
-          <h2 className="font-display text-lg font-bold">Release review</h2>
-          <Button variant="ghost" size="icon" className="rounded-full" onClick={props.onClose} aria-label="Close">
-            <X className="size-5" />
-          </Button>
-        </div>
-
-        <div className="space-y-5 p-6">
-          <div className="rounded-[18px] border border-[#e0e4de] bg-white p-5">
-            <div className="text-lg font-bold">{release.displayName}</div>
-            <div className="mt-1 font-mono text-sm text-[#68746d]">{release.packageName}</div>
-            <div className="mt-3 flex flex-wrap gap-2">
-              <Tag>{release.version}</Tag>
-              <StatusTag status={release.status} />
-              {needsPublicApproval(release) ? <Tag>public review pending</Tag> : null}
-            </div>
-          </div>
-
-          <DetailGrid
-            rows={[
-              ["Bundle SHA-256", release.bundleSha256 ? `${release.bundleSha256.slice(0, 16)}…` : "—"],
-              ["Release track", release.releaseTrack],
-              ["Bundle size", formatBytes(release.bundleSizeBytes)],
-              ["Manifest SHA-256", release.manifestSha256 ? `${release.manifestSha256.slice(0, 16)}…` : "—"],
-              ["Publisher key", release.publisherKeyFingerprint ?? "—"],
-              ["Signed", formatDate(release.signedAt)],
-              ["Submitted", formatDate(release.submittedAt)],
-              ["Reviewed", formatDate(release.reviewedAt)],
-              ["Published", formatDate(release.publishedAt)],
-              ["Public Store approval", formatDate(release.publicStoreApprovedAt)],
-            ]}
-          />
-
-          <ManifestReview manifest={release.manifest} />
-          <StoreListingReview
-            release={release}
-            pending={props.pending}
-            onModerate={props.onModerate}
-          />
-
-          {release.reviewNotes ? (
-            <div className="rounded-[18px] border border-[#e0e4de] bg-white p-5">
-              <div className="text-xs font-medium uppercase tracking-[0.1em] text-[#a0a3aa]">Last review notes</div>
-              <p className="mt-2 text-sm leading-6 text-[#4f5d54]">{release.reviewNotes}</p>
-            </div>
-          ) : null}
-
-          {priorHistory.length > 0 ? (
-            <div className="rounded-[18px] border border-[#e0e4de] bg-white p-5">
-              <div className="text-xs font-medium uppercase tracking-[0.1em] text-[#a0a3aa]">Prior releases for this package</div>
-              <div className="mt-3 space-y-2">
-                {priorHistory.map(prior => (
-                  <div key={prior.id} className="flex items-center justify-between text-sm">
-                    <span className="font-mono text-[#4f5d54]">{prior.version}</span>
-                    <StatusTag status={prior.status} small />
-                  </div>
-                ))}
-              </div>
-            </div>
-          ) : null}
-
-          <div className="rounded-[18px] border border-[#e0e4de] bg-white p-5">
-            <label className="text-xs font-medium uppercase tracking-[0.1em] text-[#a0a3aa]">Review notes (shared with developer on reject / request changes)</label>
-            <textarea
-              value={notes}
-              onChange={event => setNotes(event.target.value)}
-              rows={3}
-              placeholder="Optional for approve / publish. Required when requesting changes."
-              className="mt-2 w-full rounded-[12px] border border-[#e0e4de] bg-white p-3 text-sm outline-none focus:border-[#1bbd7e] focus:ring-2 focus:ring-[#1bbd7e]/20"
-            />
-            {props.error ? <ErrorText error={props.error} /> : null}
-            <div className="mt-4 flex flex-wrap gap-2">
-              {["submitted", "in_review"].includes(release.status) || needsPublicApproval(release) ? (
-                <Button
-                  className="rounded-full bg-[#e9f8f1] text-[#087d50] hover:bg-[#dff5eb]"
-                  disabled={props.pending}
-                  onClick={() => props.onAction("approve", notes.trim() || "Approved for the public Store")}
-                >
-                  <Check className="size-4" /> {needsPublicApproval(release) ? "Approve for public Store" : "Approve"}
-                </Button>
-              ) : null}
-              {["submitted", "in_review", "accepted"].includes(release.status) ? (
-                <Button
-                  className="rounded-full bg-[#fff7df] text-[#a66a00] hover:bg-[#fff0c4]"
-                  disabled={props.pending || notes.trim().length === 0}
-                  onClick={() => props.onAction("reject", notes.trim())}
-                  title={notes.trim().length === 0 ? "Add notes explaining what to change" : undefined}
-                >
-                  <MessageSquareWarning className="size-4" /> Request changes
-                </Button>
-              ) : null}
-              {["submitted", "in_review", "accepted"].includes(release.status) ? (
-                <Button
-                  className="rounded-full bg-[#fff3f1] text-[#a64235] hover:bg-[#ffe7e2]"
-                  disabled={props.pending}
-                  onClick={() => props.onAction("reject", notes.trim() || "Rejected")}
-                >
-                  <X className="size-4" /> Reject
-                </Button>
-              ) : null}
-              {release.status === "accepted" ? (
-                <Button
-                  className="rounded-full bg-[#111217] text-white hover:bg-[#25262c]"
-                  disabled={props.pending || release.listingReadiness?.ready === false}
-                  onClick={() => props.onAction("publish", notes.trim() || "Published")}
-                >
-                  Publish to store
-                </Button>
-              ) : null}
-              {release.listingReadiness?.ready === false ? (
-                <p className="w-full text-xs text-[#a64235]">
-                  Publishing blocked until the developer adds: {release.listingReadiness.missing.join(", ")}.
-                </p>
-              ) : null}
-              {props.pending ? <Loader2 className="size-5 animate-spin self-center text-[#68746d]" /> : null}
-            </div>
-          </div>
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function ManifestReview({ manifest }: { manifest?: Record<string, unknown> | null }) {
-  if (!manifest) {
-    return (
-      <div className="rounded-[18px] border border-[#f0d2cc] bg-[#fff7f5] p-5 text-sm text-[#a64235]">
-        Canonical manifest is unavailable for this release.
-      </div>
-    );
-  }
-  const permissions = Array.isArray(manifest.permissions) ? manifest.permissions : [];
-  const hardware = Array.isArray(manifest.hardwareRequirements) ? manifest.hardwareRequirements : [];
-  return (
-    <div className="rounded-[18px] border border-[#e0e4de] bg-white p-5">
-      <div className="text-xs font-medium uppercase tracking-[0.1em] text-[#a0a3aa]">Canonical manifest</div>
-      <div className="mt-4 grid gap-4 sm:grid-cols-2">
-        <ManifestList title="Permissions" values={permissions} empty="No permissions declared" />
-        <ManifestList title="Hardware requirements" values={hardware} empty="No hardware requirements" />
-      </div>
-      <details className="mt-4">
-        <summary className="cursor-pointer text-sm font-semibold text-[#087d50]">View complete signed manifest</summary>
-        <pre className="mt-3 max-h-[320px] overflow-auto rounded-[12px] bg-[#151816] p-4 text-xs leading-5 text-[#dce5de]">
-          {JSON.stringify(manifest, null, 2)}
-        </pre>
-      </details>
-    </div>
-  );
-}
-
-function ManifestList({ title, values, empty }: { title: string; values: unknown[]; empty: string }) {
-  return (
-    <div>
-      <div className="text-sm font-semibold text-[#1c1d22]">{title}</div>
-      {values.length > 0 ? (
-        <div className="mt-2 space-y-2">
-          {values.map((value, index) => (
-            <div key={index} className="rounded-[10px] bg-[#f5f7f4] px-3 py-2 font-mono text-xs text-[#4f5d54]">
-              {typeof value === "string" ? value : JSON.stringify(value)}
-            </div>
-          ))}
-        </div>
-      ) : (
-        <p className="mt-2 text-sm text-[#879088]">{empty}</p>
-      )}
-    </div>
-  );
-}
-
-function StoreListingReview(props: {
-  release: ReleaseSummary;
-  pending: boolean;
-  onModerate: (reviewTier: "community" | "verified", featured: boolean) => void;
-}) {
-  const listing = props.release.storeListing;
-  if (!listing) return null;
-  const assets = props.release.storeAssets ?? [];
-  return (
-    <div className="rounded-[18px] border border-[#e0e4de] bg-white p-5">
-      <div className="flex flex-wrap items-start justify-between gap-3">
-        <div>
-          <div className="text-xs font-medium uppercase tracking-[0.1em] text-[#a0a3aa]">Store listing</div>
-          <div className="mt-1 text-sm font-semibold text-[#1c1d22]">{listing.subtitle || "No subtitle"}</div>
-        </div>
-        <span className={`rounded-full px-2.5 py-1 text-xs font-semibold ${
-          props.release.listingReadiness?.ready ? "bg-[#e9f8f1] text-[#087d50]" : "bg-[#fff3f1] text-[#a64235]"
-        }`}>
-          {props.release.listingReadiness?.ready ? "Ready" : "Incomplete"}
-        </span>
-      </div>
-      <p className="mt-3 whitespace-pre-wrap text-sm leading-6 text-[#4f5d54]">
-        {listing.longDescription || props.release.description || "No description provided."}
-      </p>
-      <div className="mt-3 flex flex-wrap gap-2">
-        {listing.categories.map(category => <Tag key={category}>{category}</Tag>)}
-      </div>
-      <div className="mt-4 grid grid-cols-3 gap-2">
-        {assets.map(asset => (
-          <figure key={asset.id} className="overflow-hidden rounded-[12px] border border-[#e0e4de] bg-[#f5f7f4]">
-            <img
-              src={`/api/admin/apps/${encodeURIComponent(props.release.packageName)}/store-assets/${encodeURIComponent(asset.id)}`}
-              alt={asset.role.replaceAll("_", " ")}
-              className="aspect-square w-full object-cover"
-            />
-            <figcaption className="truncate px-2 py-1.5 text-[10px] text-[#68746d]">{asset.fileName}</figcaption>
-          </figure>
-        ))}
-      </div>
-      {assets.length === 0 ? <p className="mt-3 text-sm text-[#879088]">No Store artwork uploaded.</p> : null}
-      <div className="mt-4 space-y-1 text-xs text-[#68746d]">
-        <div>Privacy: {listing.privacyPolicyUrl || "missing"}</div>
-        <div>Support: {listing.supportUrl || "missing"}</div>
-        <div>Website: {listing.websiteUrl || "not provided"}</div>
-      </div>
-      {props.release.status !== "published" || props.release.isActiveRelease ? (
-        <div className="mt-4 flex flex-wrap gap-2 border-t border-[#eceeeb] pt-4">
-          <Button
-            variant="outline"
-            className="rounded-full"
-            disabled={props.pending}
-            onClick={() =>
-              props.onModerate(listing.reviewTier === "verified" ? "community" : "verified", listing.featured)
-            }
-          >
-            {listing.reviewTier === "verified" ? "Set community" : "Mark verified"}
-          </Button>
-          <Button
-            variant="outline"
-            className="rounded-full"
-            disabled={props.pending}
-            onClick={() => props.onModerate(listing.reviewTier, !listing.featured)}
-          >
-            {listing.featured ? "Remove featured" : "Feature miniapp"}
-          </Button>
-        </div>
-      ) : (
-        <p className="mt-4 border-t border-[#eceeeb] pt-4 text-xs text-[#879088]">
-          This historical publication is immutable. Moderate the active release instead.
-        </p>
-      )}
-    </div>
-  );
-}
-
-function AuditPage(props: { events: AuditEvent[]; loading: boolean }) {
-  const [filter, setFilter] = useState("");
-  const filtered = props.events.filter(event => {
-    if (!filter.trim()) return true;
-    const q = filter.toLowerCase();
-    return [event.action, event.targetType, event.targetId, event.adminId, event.reason ?? ""].some(value => value.toLowerCase().includes(q));
-  });
-  return (
-    <section className="rounded-[24px] border border-[#e0e4de] bg-white shadow-[0_1px_2px_rgba(20,21,27,0.06)]">
-      <div className="flex flex-wrap items-center justify-between gap-4 border-b border-[#eceeeb] p-5">
-        <div>
-          <h2 className="text-xl font-bold">Audit log</h2>
-          <p className="mt-1 text-sm text-[#68746d]">{props.events.length} recorded admin actions.</p>
-        </div>
-        <input
-          value={filter}
-          onChange={event => setFilter(event.target.value)}
-          placeholder="Filter by action, target, admin…"
-          className="h-10 w-full max-w-xs rounded-full border border-[#e0e4de] bg-[#f7f8f6] px-4 text-sm outline-none focus:border-[#1bbd7e] focus:bg-white sm:w-72"
-        />
-      </div>
-      {props.loading ? (
-        <div className="p-5"><InlineLoading label="Loading audit log" /></div>
-      ) : filtered.length === 0 ? (
-        <EmptyState title="No matching events" body={props.events.length === 0 ? "Admin actions will be recorded here." : "Try a different filter."} />
-      ) : (
-        <div className="divide-y divide-[#eceeeb]">
-          {filtered.map(event => <AuditRow key={event.id} event={event} />)}
-        </div>
-      )}
-    </section>
-  );
-}
-
-function AuditRow({ event, compact = false }: { event: AuditEvent; compact?: boolean }) {
-  if (compact) {
-    return (
-      <div className="rounded-[16px] bg-[#f5f7f4] p-4">
-        <div className="font-mono text-xs text-[#087d50]">{event.action}</div>
-        <div className="mt-1 truncate text-sm font-semibold">{event.targetType}:{event.targetId}</div>
-        <div className="mt-1 text-xs text-[#747780]">{formatDate(event.createdAt)}</div>
-      </div>
-    );
-  }
-  return (
-    <div className="grid gap-2 p-5 md:grid-cols-[180px_1fr_180px] md:items-center">
-      <span className="inline-flex w-fit rounded-full bg-[#eef8f2] px-3 py-1 font-mono text-xs font-semibold text-[#087d50]">{event.action}</span>
-      <div className="min-w-0">
-        <div className="truncate text-sm font-semibold">{event.targetType}:{event.targetId}</div>
-        {event.reason ? <div className="mt-0.5 truncate text-sm text-[#68746d]">{event.reason}</div> : null}
-        <div className="mt-0.5 truncate text-xs text-[#a0a3aa]">by {event.adminId}</div>
-      </div>
-      <div className="text-sm text-[#747780] md:text-right">{formatDate(event.createdAt)}</div>
     </div>
   );
 }
@@ -1096,45 +505,6 @@ function formatBytes(bytes: number | null | undefined): string {
   return `${(bytes / (1024 * 1024)).toFixed(1)} MB`;
 }
 
-function ReleaseIdentity({ release, compact = false }: { release: ReleaseSummary; compact?: boolean }) {
-  return (
-    <div className="min-w-0 flex-1">
-      <div className={`${compact ? "text-sm" : "text-base"} truncate font-bold`}>{release.displayName}</div>
-      <div className="mt-1 truncate font-mono text-xs text-[#68746d]">{release.packageName}</div>
-      <div className="mt-2 flex flex-wrap gap-2">
-        <Tag>{release.version}</Tag>
-        <Tag>{release.releaseTrack}</Tag>
-        <StatusTag status={release.status} small />
-      </div>
-    </div>
-  );
-}
-
-function Tag({ children }: { children: React.ReactNode }) {
-  return <span className="rounded-full bg-[#f0f2ef] px-2.5 py-1 font-mono text-xs">{children}</span>;
-}
-
-function needsPublicApproval(release: ReleaseSummary): boolean {
-  return release.requiresPublicStoreApproval === true;
-}
-
-function StatusTag({ status, small = false }: { status: ReleaseStatus; small?: boolean }) {
-  const tone: Record<ReleaseStatus, string> = {
-    draft: "bg-[#f0f2ef] text-[#68746d]",
-    submitted: "bg-[#eef2ff] text-[#3a55c8]",
-    in_review: "bg-[#fff7df] text-[#a66a00]",
-    accepted: "bg-[#e9f8f1] text-[#087d50]",
-    published: "bg-[#111217] text-white",
-    rejected: "bg-[#fff3f1] text-[#a64235]",
-    suspended: "bg-[#fff3f1] text-[#a64235]",
-  };
-  return (
-    <span className={`rounded-full px-2.5 ${small ? "py-0.5" : "py-1"} text-xs font-semibold uppercase tracking-[0.08em] ${tone[status]}`}>
-      {status.replace("_", " ")}
-    </span>
-  );
-}
-
 function DetailGrid({ rows }: { rows: Array<[string, string]> }) {
   return (
     <div className="grid gap-px overflow-hidden rounded-[18px] border border-[#e0e4de] bg-[#e0e4de] sm:grid-cols-2">
@@ -1209,7 +579,7 @@ function LoginGate({ denied = false }: { denied?: boolean }) {
             <p className="mx-auto max-w-[300px] font-body text-[13.5px] leading-[20px] text-[#7a7a82]">
               {denied
                 ? "You're signed in, but this account isn't on the admin allowlist. Switch accounts, or ask for your email to be added to the Core admin allowlist."
-                : "Review miniapp releases and manage internal operations."}
+                : "Investigate reports and manage Core operations."}
             </p>
 
             <div className="h-8" />

@@ -2,7 +2,6 @@ import { spawnSync } from "node:child_process";
 
 const environments = ["dev", "staging", "prod"] as const;
 const sites = {
-  console: "mentra-console2",
   admin: "mentra-admin",
   portal: "mentra-enterprise-portal",
 } as const;
@@ -27,26 +26,15 @@ const coreUrls: Record<Environment, string> = {
   staging: "https://core.staging.us-west-2.mentraglass.com",
   prod: "https://core.mentraglass.com",
 };
-const storeUrls: Record<Environment, string> = {
-  dev: "https://store.dev.us-west-2.mentraglass.com",
-  staging: "https://store.staging.us-west-2.mentraglass.com",
-  prod: "https://store.mentraglass.com",
-};
 
 for (const site of selectedSites) {
   const project = `${sites[site]}-${env}`;
   run(["bun", "--cwd", `websites/${site}`, "build"]);
-  // admin needs both: Store serves miniapp review, Core serves incident
-  // reports and support profiles directly so triage survives a Store outage.
+  // Public websites use Core; the Developer Console deploys from miniapp-store.
   if (site === "portal" || site === "admin") {
     run([
       "bunx", "wrangler", "pages", "secret", "put", "CORE_URL", "--project-name", project,
     ], { cwd: `websites/${site}`, input: coreUrls[env] });
-  }
-  if (site !== "portal") {
-    run([
-      "bunx", "wrangler", "pages", "secret", "put", "STORE_URL", "--project-name", project,
-    ], { cwd: `websites/${site}`, input: storeUrls[env] });
   }
   run([
     "bunx",

@@ -6,10 +6,8 @@
  * payload bytes, and the auth gate itself (401 without credentials, 403 for a
  * non-allowlisted principal).
  *
- * Admin auth uses the org API-key bearer path: an `msk_…` token is not a JWT,
- * so authenticateBearerToken falls through to the local DB validation without
- * touching WorkOS, and the resulting synthetic `api-key@{keyId}.local` email
- * is allowlisted via CLOUD_CORE_ADMIN_EMAILS. Fully local — no WorkOS needed.
+ * WorkOS authentication is stubbed at the identity-provider boundary. Core's
+ * real admin allowlist, report APIs, storage and database are exercised.
  *
  * Prereq: a running Mongo. Defaults to
  * `mongodb://127.0.0.1:27017/mentra-cloud-v2-test`; override via `MONGO_URL`.
@@ -22,7 +20,7 @@ import crypto from "node:crypto";
 import { rm } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
-import { afterAll, beforeAll, beforeEach, describe, expect, test } from "bun:test";
+import { afterAll, beforeAll, beforeEach, describe, expect, test, spyOn } from "bun:test";
 
 const STORAGE_DIR = join(tmpdir(), `mentra-admin-reports-test-${process.pid}`);
 const savedAdminEmails = process.env.CLOUD_CORE_ADMIN_EMAILS;
@@ -43,7 +41,8 @@ const savedAdminEmails = process.env.CLOUD_CORE_ADMIN_EMAILS;
   // Pin the API-key environment label so minted keys validate deterministically.
   process.env.CLOUD_CORE_ENVIRONMENT = "local";
   process.env.WORKOS_API_KEY = "test-workos-service-secret";
-  process.env.MENTRA_CORE_INTERNAL_URL = "http://core.internal";
+  process.env.WORKOS_CLIENT_ID = "client_test";
+  process.env.WORKOS_COOKIE_PASSWORD = "test-cookie-password-with-at-least-32-characters";
 }
 
 // eslint-disable-next-line import/first
@@ -53,25 +52,22 @@ import {
   mongoReadinessCheck,
 } from "../packages/core/src/connections/mongo.connection";
 import { createApp } from "../packages/core/src/api/app";
-import { createApp as createStoreApp } from "../packages/store/src/api/app";
+import * as developerAuth from "../packages/developer-auth/src/index";
 import { ReportModel } from "../packages/core/src/models/report.model";
 import { ReportAssetModel } from "../packages/core/src/models/report-asset.model";
 import { UserModel } from "../packages/core/src/models/user.model";
 import { RefreshTokenModel } from "../packages/core/src/models/refresh-token.model";
 import { SeenJtiModel } from "../packages/core/src/models/seen-jti.model";
 import { RevokedJtiModel } from "../packages/core/src/models/revoked-jti.model";
-import { DeveloperOrgApiKeyModel } from "../packages/store/src/models/developer-org-api-key.model";
-import { DeveloperApiKeyService } from "../packages/store/src/services/developer-orgs/developer-api-key.service";
 
 const REPORTS_PATH = "http://localhost/api/client/reports";
 const ADMIN_REPORTS_PATH = "http://localhost/api/admin/reports";
 
 let coreApp: ReturnType<typeof createApp>;
-let storeApp: ReturnType<typeof createStoreApp>;
-const nativeFetch = globalThis.fetch;
 let userAccessToken: string;
-let adminBearer: string;
-let nonAdminBearer: string;
+const adminBearer = "test-workos-admin-token";
+const nonAdminBearer = "test-workos-developer-token";
+let authSpy: ReturnType<typeof spyOn>;
 
 beforeAll(async () => {
   await connectMongo(process.env.MONGO_URL!);
@@ -82,35 +78,27 @@ beforeAll(async () => {
     RefreshTokenModel.syncIndexes(),
     SeenJtiModel.syncIndexes(),
     RevokedJtiModel.syncIndexes(),
-    DeveloperOrgApiKeyModel.syncIndexes(),
   ]);
   coreApp = createApp({ readinessChecks: [mongoReadinessCheck] });
-  storeApp = createStoreApp({ readinessChecks: [mongoReadinessCheck] });
-  globalThis.fetch = (async (input: string | URL | Request, init?: RequestInit) => {
-    const url = input instanceof Request ? input.url : String(input);
-    if (url.startsWith("http://core.internal/")) {
-      return coreApp.fetch(input instanceof Request ? input : new Request(url, init));
+  authSpy = spyOn(developerAuth, "authenticateWorkosRequest").mockImplementation(async c => {
+    const token = c.req.header("authorization");
+    if (token !== `Bearer ${adminBearer}` && token !== `Bearer ${nonAdminBearer}`) {
+      return {authenticated: false, reason: "invalid_token"};
     }
-    return nativeFetch(input, init);
-  }) as typeof fetch;
+    return {authenticated: true, user: {id: "test-admin", email: token === `Bearer ${adminBearer}` ? "admin@example.com" : "developer@example.com"}, organizationId: null};
+  });
 
   const exchanged = await exchange(mintSupabaseJwt("admin-reports-user-1"));
   expect(exchanged.status).toBe(200);
   userAccessToken = ((await exchanged.json()) as { access_token: string }).access_token;
 
-  const apiKeys = new DeveloperApiKeyService();
-  const adminKey = await apiKeys.create("org_admin_reports_test", "admin", "user_admin", "local");
-  const nonAdminKey = await apiKeys.create("org_admin_reports_test", "plain", "user_plain", "local");
-  adminBearer = adminKey.value!;
-  nonAdminBearer = nonAdminKey.value!;
-  process.env.CLOUD_CORE_ADMIN_EMAILS = `api-key@${adminKey.id}.local`;
+  process.env.CLOUD_CORE_ADMIN_EMAILS = "admin@example.com";
 });
 
 afterAll(async () => {
   if (savedAdminEmails === undefined) delete process.env.CLOUD_CORE_ADMIN_EMAILS;
   else process.env.CLOUD_CORE_ADMIN_EMAILS = savedAdminEmails;
-  await DeveloperOrgApiKeyModel.deleteMany({ orgId: "org_admin_reports_test" });
-  globalThis.fetch = nativeFetch;
+  authSpy?.mockRestore();
   await disconnectMongo();
   await rm(STORAGE_DIR, { recursive: true, force: true });
 });
@@ -124,10 +112,10 @@ beforeEach(async () => {
 
 describe("admin reports auth gate", () => {
   test("rejects requests without credentials and non-admin principals", async () => {
-    const anonymous = await storeApp.fetch(new Request(ADMIN_REPORTS_PATH));
+    const anonymous = await coreApp.fetch(new Request(ADMIN_REPORTS_PATH));
     expect(anonymous.status).toBe(401);
 
-    const forbidden = await storeApp.fetch(
+    const forbidden = await coreApp.fetch(
       new Request(ADMIN_REPORTS_PATH, { headers: { authorization: `Bearer ${nonAdminBearer}` } }),
     );
     expect(forbidden.status).toBe(403);
@@ -259,7 +247,7 @@ describe("admin reports read surface", () => {
 // === Helpers ===
 
 function adminGet(url: string): Promise<Response> {
-  return storeApp.fetch(new Request(url, { headers: { authorization: `Bearer ${adminBearer}` } }));
+  return coreApp.fetch(new Request(url, { headers: { authorization: `Bearer ${adminBearer}` } }));
 }
 
 /** Submit a bug report with one log bundle and one screenshot; returns the reportId. */

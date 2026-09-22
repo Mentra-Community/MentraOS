@@ -6,5 +6,9 @@
   "livestreamer": {
     "repo": "../Livestreamer-Miniapp",
     "packScript": "pack:prod"
+  },
+  "store": {
+    "repo": "../miniapp-store",
+    "packScript": "pack"
   }
 }

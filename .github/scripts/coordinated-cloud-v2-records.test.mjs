@@ -24,7 +24,7 @@ function pods() {
   return {
     apiVersion: "v1",
     kind: "PodList",
-    items: ["core", "store", "runtime"].map((service) => ({
+    items: ["core", "runtime"].map((service) => ({
       metadata: {
         name: `cloud-${service}-abc`,
         uid: `${service}-pod-uid`,
@@ -121,10 +121,10 @@ test("records observed image digests, Porter revision, and every public readines
   assert.equal(record.deploymentId, "porter:revision-42")
   assert.deepEqual(
     record.observedServices.map((service) => service.service),
-    ["core", "store", "runtime"],
+    ["core", "runtime"],
   )
   assert.equal(record.observedServices[0].digest, `sha256:${"b".repeat(64)}`)
-  assert.equal(record.checks.length, 6)
+  assert.equal(record.checks.length, 4)
   assert.equal(validateCloudV2DeploymentRecord({plan: releasePlan, record}), record)
 })
 
@@ -222,9 +222,8 @@ test("identifies the requested tag from the deployed pod spec, not the kubelet's
   })
   assert.deepEqual(
     record.observedServices.map((service) => service.images),
-    // core, store, runtime — Cloud V2 deploys three services.
+    // Store deploys independently; Core and Runtime share this image.
     [
-      [`registry.example.com/cloud-v2:${sourceCommit}`],
       [`registry.example.com/cloud-v2:${sourceCommit}`],
       [`registry.example.com/cloud-v2:${sourceCommit}`],
     ],

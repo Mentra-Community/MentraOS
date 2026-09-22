@@ -26,6 +26,7 @@ services:
     domains:
       - name: core.us-west-2.dev.mentraglass.com
     env:
+      MENTRA_STORE_INTERNAL_URL: "https://store.dev.us-west-2.mentraglass.com"
       PORT: "3000"
       LOG_STDOUT_JSON: "true"
       SERVICE_NAME: "core"
@@ -46,33 +47,6 @@ services:
       nginx.ingress.kubernetes.io/proxy-read-timeout: "3600"
       nginx.ingress.kubernetes.io/proxy-send-timeout: "3600"
       nginx.ingress.kubernetes.io/proxy-connect-timeout: "60"
-    terminationGracePeriodSeconds: 10
-
-  # ── store ──────────────────────────────────────────────────────────
-  # Owns developer publishing, catalogs, tracks, reviews, and bundles.
-  - name: store
-    type: web
-    run: bun packages/store/src/index.ts
-    port: 3003
-    instances: 1
-    cpuCores: 0.25
-    ramMegabytes: 1024
-    domains:
-      - name: store.us-west-2.dev.mentraglass.com
-    env:
-      PORT: "3003"
-      MENTRA_CORE_INTERNAL_URL: "http://core:3000"
-      MENTRA_STORE_CORE_JWKS_URL: "http://core:3000/.well-known/jwks.json"
-    livenessCheck:
-      enabled: true
-      httpPath: /healthz
-      timeoutSeconds: 3
-      initialDelaySeconds: 15
-    readinessCheck:
-      enabled: true
-      httpPath: /ready
-      timeoutSeconds: 5
-      initialDelaySeconds: 15
     terminationGracePeriodSeconds: 10
 
   - name: runtime

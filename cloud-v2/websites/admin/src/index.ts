@@ -1,15 +1,16 @@
 import { serve } from "bun";
 import { relative, resolve } from "node:path";
 
-const storeUrl = process.env.STORE_URL ?? process.env.BUN_PUBLIC_STORE_URL ?? "http://localhost:3003";
+const coreUrl = process.env.CORE_URL ?? process.env.BUN_PUBLIC_CORE_URL ?? "http://localhost:3000";
 const distRoot = resolve(import.meta.dir, "../dist");
 const indexFile = Bun.file(resolve(distRoot, "index.html"));
 
 async function proxyCoreRequest(req: Request) {
   const sourceUrl = new URL(req.url);
-  const upstreamUrl = new URL(sourceUrl.pathname + sourceUrl.search, storeUrl);
+  const upstreamUrl = new URL(sourceUrl.pathname + sourceUrl.search, coreUrl);
   const headers = new Headers(req.headers);
   headers.delete("host");
+  headers.set("x-mentra-public-origin", sourceUrl.origin);
 
   return fetch(upstreamUrl, {
     method: req.method,
@@ -28,7 +29,7 @@ const server = serve({
 });
 
 console.log(`Admin running at ${server.url}`);
-console.log(`Proxying Store admin APIs to ${storeUrl}`);
+console.log(`Proxying Core admin APIs to ${coreUrl}`);
 
 async function serveBuiltApp(req: Request): Promise<Response> {
   const url = new URL(req.url);

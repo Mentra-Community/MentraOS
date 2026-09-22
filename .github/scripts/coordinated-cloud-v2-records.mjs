@@ -6,7 +6,7 @@ import {fileURLToPath} from "node:url"
 
 const COMMIT_PATTERN = /^[0-9a-f]{40}$/
 const DIGEST_PATTERN = /^sha256:[0-9a-f]{64}$/
-const CLOUD_V2_SERVICES = Object.freeze(["core", "store", "runtime"])
+const CLOUD_V2_SERVICES = Object.freeze(["core", "runtime"])
 
 export const CLOUD_V2_TARGETS = Object.freeze({
   dev: Object.freeze({
@@ -19,7 +19,6 @@ export const CLOUD_V2_TARGETS = Object.freeze({
     porterTarget: "aws-us-west-2-default",
     services: Object.freeze({
       core: Object.freeze(["core.dev.us-west-2.mentraglass.com"]),
-      store: Object.freeze(["store.dev.us-west-2.mentraglass.com"]),
       runtime: Object.freeze(["runtime.dev.us-west-2.mentraglass.com"]),
     }),
   }),
@@ -33,7 +32,6 @@ export const CLOUD_V2_TARGETS = Object.freeze({
     porterTarget: "aws-us-west-2-default",
     services: Object.freeze({
       core: Object.freeze(["core.staging.us-west-2.mentraglass.com"]),
-      store: Object.freeze(["store.staging.us-west-2.mentraglass.com"]),
       runtime: Object.freeze(["runtime.staging.us-west-2.mentraglass.com"]),
     }),
   }),
@@ -47,7 +45,6 @@ export const CLOUD_V2_TARGETS = Object.freeze({
     porterTarget: "aws-us-west-2-default",
     services: Object.freeze({
       core: Object.freeze(["core.us-west-2.mentraglass.com", "core.mentraglass.com"]),
-      store: Object.freeze(["store.us-west-2.mentraglass.com", "store.mentraglass.com"]),
       runtime: Object.freeze(["runtime.us-west-2.mentraglass.com", "runtime.mentraglass.com"]),
     }),
   }),
@@ -249,7 +246,7 @@ export function createCloudV2DeploymentRecord({
   }
   const record = {
     schemaVersion: 1,
-    component: "cloud-v2-core-store-runtime",
+    component: "cloud-v2-core-runtime",
     releaseSetId: plan.releaseSetId,
     releaseIdentity: plan.releaseIdentity,
     sourceCommit,
@@ -286,7 +283,7 @@ export function validateCloudV2DeploymentRecord({plan, record, allowValidated = 
   const target = resolveCloudV2Target({plan, environment: record?.environment, sourceCommit: record?.sourceCommit})
   if (
     record.schemaVersion !== 1 ||
-    record.component !== "cloud-v2-core-store-runtime" ||
+    record.component !== "cloud-v2-core-runtime" ||
     record.releaseSetId !== plan.releaseSetId ||
     record.releaseIdentity !== plan.releaseIdentity ||
     record.channel !== plan.channel ||

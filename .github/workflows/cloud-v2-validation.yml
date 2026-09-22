@@ -78,7 +78,7 @@ jobs:
       - name: Build published workspace dependencies
         working-directory: cloud-v2/packages/auth
         # @mentra/auth intentionally exports its compiled package entry point so
-        # the same artifact is exercised by Store and by external consumers.
+        # the same artifact is exercised by external consumers.
         run: bun run build
 
       - name: Run package tests
@@ -96,13 +96,11 @@ jobs:
       - name: Typecheck websites
         working-directory: cloud-v2
         run: |
-          bun run typecheck:console
           bun run typecheck:admin
           bun run typecheck:portal
 
       - name: Build websites
         working-directory: cloud-v2
         run: |
-          bun run build:console
           bun run build:admin
           bun run build:portal

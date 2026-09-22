@@ -30,10 +30,6 @@ export async function proxyTo(context: ProxyContext, upstreamUrl: string | undef
   })
 }
 
-export function storeUpstream(env: ProxyContext["env"]): string | undefined {
-  return env.STORE_URL ?? env.BUN_PUBLIC_STORE_URL
-}
-
 export function coreUpstream(env: ProxyContext["env"]): string | undefined {
   return env.CORE_URL ?? env.BUN_PUBLIC_CORE_URL
 }
