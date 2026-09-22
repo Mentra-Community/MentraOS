@@ -92,6 +92,9 @@ export type {SpeakerModule} from "../modules/speaker"
 export type {
   MeetingModule,
   MeetingJoinOptions,
+  MeetingConfiguration,
+  MeetingIdentityMode,
+  MeetingGuestReason,
   MeetingState,
   MeetingPhase,
   MeetingProvider,

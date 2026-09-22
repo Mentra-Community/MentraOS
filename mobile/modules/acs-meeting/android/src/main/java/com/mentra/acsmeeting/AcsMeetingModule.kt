@@ -86,6 +86,7 @@ class AcsMeetingModule : Module() {
 
   override fun definition() = ModuleDefinition {
     Name("MentraAcsMeeting")
+    Function("supportsTeamsIdentity") { true }
     // `onScopedNetworkLost` fires only for a hotspot that went away while we still wanted it: the
     // scoped state machine drops the framework's `onLost` for a network we released ourselves, so a
     // normal Leave or End cannot manufacture a mid-call network error.
@@ -268,7 +269,7 @@ class AcsMeetingModule : Module() {
         // follows, because ACS re-binds its signalling when the network moves and keeps whatever
         // route it got. Teardown's `leaveAndAwait` is what drops it, and only once a validated
         // default internet exists — not `leaveScopedNetwork`, which used to unpin onto SoftAP.
-        meeting.prepareAgent(token, displayName)
+        meeting.prepareAgent(token, displayName, options["identityMode"] as? String ?: "guest")
         meeting.snapshot()
       }
     }
@@ -326,6 +327,7 @@ class AcsMeetingModule : Module() {
           video,
           audioDelayMs,
           origin,
+          identityMode = options["identityMode"] as? String ?: "guest",
           bindIngestUnpinned = { bind -> withIngestUnpinned(bind) },
         )
         // Prefer the join snapshot: getState() can race a leave from a respawned miniapp

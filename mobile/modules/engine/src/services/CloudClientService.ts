@@ -521,6 +521,14 @@ function construct(): void {
  * and the runtime-hook wiring.
  */
 export const cloudClientService = {
+  async getMeetingCredential(teamsUserAadToken?: string) {
+    if (!client) construct()
+    const current = client
+    if (!current) throw new Error("Cloud client is unavailable")
+    const credential = await current.runtime.meetings.getAcsCredential(teamsUserAadToken)
+    if (current !== client) throw new Error("Deployment changed while obtaining meeting credentials")
+    return credential
+  },
   async clearAuthSession(): Promise<void> {
     if (client) {
       await client.auth.clearSession()

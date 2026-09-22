@@ -43,7 +43,14 @@
     "approvedPackageNamesOverride": ["com.mentra.settings"]
   },
   "miniapps": {
-    "managed": [],
+    "managed": [
+      {
+        "packageName": "com.mentra.call",
+        "version": "2.1.29",
+        "bundleUrl": "https://enterprisedev.mentraglass.com/miniapps/com.mentra.call-2.1.29.zip",
+        "sha256": "e6619829f18de57442f2a66abd5c516e9f31d43f68b48bbe4a71915bea6df498"
+      }
+    ],
     "configuration": {}
   },
   "glasses": {"allowedModelsOverride": ["mentra-live"]},
