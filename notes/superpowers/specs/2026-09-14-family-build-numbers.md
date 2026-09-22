@@ -107,7 +107,9 @@ The pipeline therefore uses Play like this:
 - **Betas** publish to the open-testing track (`beta`), the track behind the
   public beta link. While that track serves a code above the family window,
   the Android build takes **the next code above the track's floor and every
-  code already reserved** instead of the family number
+  code already reserved, skipping every code Play ever accepted** (the 3.1.0
+  betas left 310000213 to 310000227 behind the served 310000212) instead of
+  the family number
   (`resolve-android-version-code.mjs`, run in the Android job before the
   build); it reserves that code before building as an owner-bound marker
   `mentra-android-version-code-<code>-<owner>.json` in the shared ASG release

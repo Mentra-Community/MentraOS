@@ -40,7 +40,14 @@ export function reservedAndroidCodes(assets) {
   })
 }
 
-export function resolveAndroidVersionCode({planBuildNumber, track, trackCodes = [], reservations = [], owner = null}) {
+export function resolveAndroidVersionCode({
+  planBuildNumber,
+  track,
+  trackCodes = [],
+  usedCodes = [],
+  reservations = [],
+  owner = null,
+}) {
   if (!Number.isSafeInteger(planBuildNumber) || planBuildNumber < 1) {
     throw new Error(`Invalid plan build number ${JSON.stringify(planBuildNumber)}`)
   }
@@ -49,6 +56,10 @@ export function resolveAndroidVersionCode({planBuildNumber, track, trackCodes = 
   if (codes.some((code) => !Number.isSafeInteger(code) || code < 1)) {
     throw new Error(`Track ${track} reports an invalid version code`)
   }
+  const used = new Set(usedCodes.map((code) => Number(code)))
+  if ([...used].some((code) => !Number.isSafeInteger(code) || code < 1)) {
+    throw new Error("Google Play reports an invalid used version code")
+  }
   if (owner !== null) requireOwner(owner)
   const owned = reservations.filter((reservation) => reservation.owner === owner)
   if (owned.length > 1) throw new Error(`${owner} reserved more than one Android version code`)
@@ -56,7 +67,11 @@ export function resolveAndroidVersionCode({planBuildNumber, track, trackCodes = 
   if (FAMILY_NUMBER_TRACKS.has(track)) return {versionCode: planBuildNumber, source: "family", reused: false}
   const floor = Math.max(0, ...codes, ...reservations.map((reservation) => reservation.code))
   if (floor < planBuildNumber) return {versionCode: planBuildNumber, source: "family", reused: false}
-  return {versionCode: floor + 1, source: "track-floor", floor, reused: false}
+  // Play also refuses every code it has ever accepted, served or not (the
+  // 3.1.0 betas left 310000213..227 behind the served 310000212).
+  let versionCode = floor + 1
+  while (used.has(versionCode)) versionCode += 1
+  return {versionCode, source: "track-floor", floor, reused: false}
 }
 
 export function androidCodeMarker({code, owner, planBuildNumber, track}) {
@@ -83,6 +98,7 @@ function main() {
   const args = parseArgs(process.argv.slice(2))
   const plan = JSON.parse(readFileSync(path.resolve(args.plan), "utf8"))
   const trackCodes = args.codes ? JSON.parse(readFileSync(path.resolve(args.codes), "utf8")) : []
+  const usedCodes = args.used ? JSON.parse(readFileSync(path.resolve(args.used), "utf8")) : []
   const reservations = args.assets
     ? reservedAndroidCodes(JSON.parse(readFileSync(path.resolve(args.assets), "utf8")))
     : []
@@ -90,6 +106,7 @@ function main() {
     planBuildNumber: plan.native.buildNumber,
     track: args.track,
     trackCodes,
+    usedCodes,
     reservations,
     owner: args.owner ?? null,
   })
