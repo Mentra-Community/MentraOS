@@ -700,7 +700,15 @@ class MantleManager {
     const parsed = parseBundledMiniappName(asset.name)
     if (!parsed) throw new Error(`Bundled miniapp asset name "${asset.name}" is not <packageName>-<version>`)
     const {packageName, version} = parsed
-    const approved = deploymentStore.getActive().manifest.systemMiniapps.approvedPackageNamesOverride
+    const deployment = deploymentStore.getActive()
+    // A workspace pin owns this package even when the system-app allowlist is
+    // unrestricted. A newer consumer ZIP must not replace its active version.
+    if (
+      deployment.kind === "workspace" &&
+      deployment.manifest.miniapps.managed.some((app) => app.packageName === packageName)
+    )
+      return
+    const approved = deployment.manifest.systemMiniapps.approvedPackageNamesOverride
     if (approved !== null && !approved.includes(packageName)) {
       throw new Error(`${packageName} is outside the workspace allowlist`)
     }
@@ -709,7 +717,7 @@ class MantleManager {
 
     await asset.downloadAsync()
     // The user can disable Call while the bundle is being materialized.
-    if (shouldHideMiniapp(packageName)) return
+    if (deploymentStore.getActive() !== deployment || shouldHideMiniapp(packageName)) return
     if (!asset.localUri) throw new Error(`Bundled ${packageName} has no local URI`)
     const result = await appRegistry.installFromLocalZip(asset.localUri)
     if (result.is_error()) throw result.error

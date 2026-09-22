@@ -753,6 +753,7 @@ describe("MantleManager", () => {
         setupIosMiniappVisibility: () => void
         initMiniapps: () => Promise<void>
         installBundledMiniapps: () => Promise<void>
+        installBundledMiniapp: (asset: Asset) => Promise<void>
         iosMiniappVisibility: Map<string, {reconcile: () => Promise<void>; dispose: () => void}>
       })()
       instance.installBundledMiniapps = jest.fn(async () => {})
@@ -776,6 +777,16 @@ describe("MantleManager", () => {
         expect(shouldHideMiniapp(mentraCallPackageName, entry.version)).toBe(false)
         expect(engine.miniapps.setHiddenStatus).toHaveBeenCalledWith(mentraCallPackageName, false)
         expect(storage.load("mentra_call_ios_last_enabled")).toMatchObject({value: true})
+        // Android's general bundle loop must also honor the pin, including a
+        // valid workspace with an unrestricted system-miniapp allowlist.
+        workspace.manifest.systemMiniapps.approvedPackageNamesOverride = null
+        Object.defineProperty(Platform, "OS", {configurable: true, value: "android"})
+        const newerConsumerBundle = {
+          name: "com.mentra.call-2.1.30.zip",
+          downloadAsync: jest.fn(async () => {}),
+        } as unknown as Asset
+        await instance.installBundledMiniapp(newerConsumerBundle)
+        expect(newerConsumerBundle.downloadAsync).not.toHaveBeenCalled()
         expect(assets).not.toHaveBeenCalled()
         expect(engine.settings.get(SETTINGS.show_mentra_call_ios.key)).toBe(false)
       } finally {
