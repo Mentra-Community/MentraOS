@@ -759,7 +759,16 @@ class AppRegistry {
   }
 
   public setActiveVersion(packageName: string, version: string): Result<void, Error> {
-    return storage.save(`${packageName}_active_version`, version)
+    const key = `${packageName}_active_version`
+    const previous = storage.load<string>(key)
+    const result = storage.save(key, version)
+    if (result.is_ok() && (previous.is_error() || previous.value !== version)) {
+      // Selecting an already-installed workspace pin must update cached app
+      // metadata and subscribers just like a new installation does.
+      this.refreshNeeded = true
+      this.notify()
+    }
+    return result
   }
 
   /**

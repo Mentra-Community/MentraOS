@@ -11,6 +11,7 @@ import {shouldHideMiniapp} from "./miniappVisibility"
 
 let mockDigest = "a".repeat(64)
 let mockScript = "verified call"
+let mockVersion = "2.1.29"
 const mockDownload = jest.fn()
 
 jest.mock("@/services/MantleManager", () => ({__esModule: true, default: {cleanup: jest.fn(async () => {})}}))
@@ -120,7 +121,7 @@ jest.mock("expo-file-system", () => {
 jest.mock("react-native-zip-archive", () => ({
   unzip: async (_zip: string, target: string) => {
     const {File} = require("expo-file-system")
-    new File(target, "miniapp.json").write(JSON.stringify({packageName: "com.mentra.call", version: "2.1.29"}))
+    new File(target, "miniapp.json").write(JSON.stringify({packageName: "com.mentra.call", version: mockVersion}))
     new File(target, "call.js").write(mockScript)
     new File(target, "ui", "index.js").write("verified nested UI")
   },
@@ -161,6 +162,7 @@ beforeEach(async () => {
   mockDownload.mockClear()
   mockDigest = "a".repeat(64)
   mockScript = "verified call"
+  mockVersion = "2.1.29"
   jest.spyOn(deploymentStore, "getActive").mockReturnValue(workspace)
   expect((await registry.installFromLocalZip("consumer.zip")).is_ok()).toBe(true)
   expect(registry.getReleaseIdentity(pkg, version)?.source).toBe("bundled_asset")
@@ -264,4 +266,15 @@ it("adopts a byte-identical consumer registry release after logout", async () =>
   await deploymentManagedMiniappSync.sync(workspace)
   expect(shouldHideMiniapp(pkg, version)).toBe(false)
   expect(registry.getReleaseIdentity(pkg, version)?.source).toBe("deployment_manifest")
+})
+
+it("refreshes cached app metadata when recovering the workspace pin over a newer installed consumer version", async () => {
+  await deploymentManagedMiniappSync.sync(workspace)
+  mockVersion = "2.1.30"
+  expect((await registry.installFromLocalZip("newer-consumer.zip")).is_ok()).toBe(true)
+  expect((await registry.getInstalledMiniapps()).find((app) => app.packageName === pkg)?.version).toBe("2.1.30")
+  mockVersion = version
+  await deploymentManagedMiniappSync.sync(workspace)
+  expect(await registry.getActiveVersion(pkg)).toBe(version)
+  expect((await registry.getInstalledMiniapps()).find((app) => app.packageName === pkg)?.version).toBe(version)
 })
