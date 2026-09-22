@@ -52,7 +52,7 @@ test("successful current opted-in iOS publication requests the trusted dev produ
   const result = await requestAfterPublication({...f, context, plan})
   assert.deepEqual(result, {status: "request-dispatched", pr: 42, requestRunId: 9000, requestUrl: dispatchResponse.data.html_url})
   assert.deepEqual(f.calls.at(-1), ["dispatch", {...context.repo, workflow_id: producer.path, ref: "dev",
-    return_run_details: true, inputs: {pr: "42", routine: "day1-ota"}}])
+    return_run_details: true, inputs: {pr: "42", routine: "day1-ota", source_build_run_id: "123", source_publication_attempt: "2"}}])
 })
 
 test("failed, stale, ambiguous or no-longer-requested builds never create a request", async () => {

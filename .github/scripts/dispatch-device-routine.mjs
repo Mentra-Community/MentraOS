@@ -118,7 +118,8 @@ export async function requestAfterPublication({github, context, plan}) {
   try {
     // The workflow disables SDK retry. The callback record already fences this send.
     const {status, data} = await github.rest.actions.createWorkflowDispatch({...context.repo,
-      workflow_id: REQUEST_WORKFLOW, ref: "dev", return_run_details: true, inputs: {pr: String(plan.pr), routine: "day1-ota"}})
+      workflow_id: REQUEST_WORKFLOW, ref: "dev", return_run_details: true, inputs: {pr: String(plan.pr), routine: "day1-ota",
+        source_build_run_id: String(plan.sourceRunId), source_publication_attempt: String(plan.publicationAttempt)}})
     requireThat(status === 200 && positive(data?.workflow_run_id) && data.html_url === callbackUrl(data.workflow_run_id)
       && data.run_url === `https://api.github.com/repos/${REPOSITORY}/actions/runs/${data.workflow_run_id}`, "Dispatch acknowledgement differs")
     return {status: "request-dispatched", pr: plan.pr, requestRunId: data.workflow_run_id, requestUrl: data.html_url}

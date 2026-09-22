@@ -16,10 +16,10 @@ jobs:
     if: github.repository == 'Mentra-Community/MentraOS'
     runs-on: ubuntu-latest
     timeout-minutes: 10
-    # Serialize only callbacks for the same source run. Independent requests and
+    # Serialize only callbacks for the same source run and attempt. Other publications and
     # the private hardware queue have no shared concurrency group.
     concurrency:
-      group: device-request-callback-${{ github.event.workflow_run.id }}
+      group: device-request-callback-${{ github.event.workflow_run.id }}-${{ github.event.workflow_run.run_attempt }}
       cancel-in-progress: false
     # Retained callback run history fences automatic generation before POST.
     # Deleting it is not permission to replay; unknown sends need reconciliation.

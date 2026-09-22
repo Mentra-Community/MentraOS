@@ -13,6 +13,17 @@ const HASH = /^[a-f0-9]{64}$/
 const positive = (value) => Number.isSafeInteger(value) && value > 0
 const hash = (bytes) => createHash("sha256").update(bytes).digest("hex")
 
+function sourcePublication(runId, publicationAttempt) {
+  const absent = (value) => value === undefined || value === ""
+  if (absent(runId) && absent(publicationAttempt)) return null
+  const valid = (value) =>
+    (typeof value === "number" && positive(value)) ||
+    (typeof value === "string" && /^[1-9]\d*$/.test(value) && positive(Number(value)))
+  if (!valid(runId) || !valid(publicationAttempt))
+    throw new Error("Source build run ID and publication attempt must both be positive safe integers")
+  return {runId: Number(runId), publicationAttempt: Number(publicationAttempt)}
+}
+
 function firstExecution(all, job) {
   return Math.min(
     job.run_attempt,
@@ -143,10 +154,13 @@ export async function createRoutineRequest({
   number,
   routine = "day1-ota",
   source,
+  sourceBuildRunId,
+  sourcePublicationAttempt,
   fetchImpl = fetch,
   now = () => new Date(),
 }) {
   const repository = `${context.repo.owner}/${context.repo.repo}`
+  const selectedSource = sourcePublication(sourceBuildRunId, sourcePublicationAttempt)
   if (!positive(number) || routine !== "day1-ota") throw new Error("Expected a positive PR number and day1-ota routine")
   if (
     repository !== "Mentra-Community/MentraOS" ||
@@ -160,6 +174,8 @@ export async function createRoutineRequest({
     throw new Error("Unsupported routine request source")
   if (context.eventName === "workflow_dispatch" && source.ref !== "refs/heads/dev")
     throw new Error("Stable manual requests must use the trusted dev workflow")
+  if (selectedSource && context.eventName !== "workflow_dispatch")
+    throw new Error("Source publication selectors require the trusted dev workflow dispatch")
   if (
     context.eventName === "pull_request" &&
     (source.ref !== `refs/pull/${number}/merge` || context.payload.pull_request?.number !== number)
@@ -208,14 +224,38 @@ export async function createRoutineRequest({
     request.reason = "Bootstrap opt-in was removed or its triggering PR revision was superseded"
     return request
   }
-  const {data} = await github.rest.actions.listWorkflowRuns({
-    ...context.repo,
-    workflow_id: PRODUCER,
-    head_sha: pr.head.sha,
-    event: "pull_request",
-    per_page: 100,
-  })
-  let candidates = data.workflow_runs
+  if (selectedSource && !pr.labels?.some((label) => (typeof label === "string" ? label : label.name) === REQUEST_LABEL)) {
+    request.reason = "Automatic request opt-in was removed"
+    return request
+  }
+  let candidates
+  if (selectedSource) {
+    // A delayed callback must resolve its original publication, never whichever
+    // newer run/attempt happens to exist when this request starts.
+    request.reason = "Selected Mac publication is unavailable or does not match the current PR revision"
+    let run
+    try {
+      run = (await github.rest.actions.getWorkflowRunAttempt({
+        ...context.repo, run_id: selectedSource.runId, attempt_number: selectedSource.publicationAttempt,
+      })).data
+    } catch (error) {
+      if (error?.status === 404) return request
+      throw error
+    }
+    if (run.id !== selectedSource.runId || run.run_attempt !== selectedSource.publicationAttempt ||
+      run.status !== "completed" || run.repository?.full_name !== repository ||
+      !matchingBuildRun([run], pr, pr.head.sha)) return request
+    candidates = [run]
+  } else {
+    const {data} = await github.rest.actions.listWorkflowRuns({
+      ...context.repo,
+      workflow_id: PRODUCER,
+      head_sha: pr.head.sha,
+      event: "pull_request",
+      per_page: 100,
+    })
+    candidates = data.workflow_runs
+  }
   while (candidates.length) {
     const run = matchingBuildRun(candidates, pr, pr.head.sha)
     if (!run) break
@@ -233,6 +273,10 @@ export async function createRoutineRequest({
       })
       const attempts = successfulMacPublication(run, jobs)
       if (!attempts) continue
+      if (selectedSource && attempts.publicationAttempt !== selectedSource.publicationAttempt) {
+        candidate.reason = "Selected attempt retained another publication; no substitute was selected"
+        continue
+      }
       const receiptUrl = artifactUrl(
         repository,
         "pr-builds",
@@ -288,7 +332,7 @@ export async function createRoutineRequest({
     current.head.repo?.full_name !== repository ||
     current.base.ref !== "dev" ||
     currentBaseSha !== baseSha ||
-    (context.eventName === "pull_request" &&
+    ((context.eventName === "pull_request" || selectedSource) &&
       !current.labels?.some((label) => (typeof label === "string" ? label : label.name) === REQUEST_LABEL))
   ) {
     request.selection = null

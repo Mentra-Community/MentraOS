@@ -43,6 +43,7 @@ function fixture() {
     head_sha: head,
     head_branch: pr.head.ref,
     head_repository: pr.head.repo,
+    repository: {full_name: repository},
     path: ".github/workflows/mentra-app-ios-build.yml",
     html_url: `https://github.com/${repository}/actions/runs/100`,
   }
@@ -98,11 +99,15 @@ function fixture() {
     receipt,
     manifest,
     runs: [run],
+    runAttempts: [run],
+    apiCalls: [],
+    receipts: {},
     jobs: [job("build"), job("publish", 2)],
     parents: [{sha: base}, {sha: head}],
     missingArchive: false,
     prReads: 0,
     changeOnReread: false,
+    removeLabelOnReread: false,
     baseRef: {ref: "refs/heads/dev", object: {type: "commit", sha: base}},
     baseReads: 0,
     changeBaseOnReread: false,
@@ -110,9 +115,14 @@ function fixture() {
   const github = {
     rest: {
       pulls: {
-        get: async () => ({
-          data: state.changeOnReread && state.prReads++ > 0 ? {...pr, head: {...pr.head, sha: "f".repeat(40)}} : pr,
-        }),
+        get: async () => {
+          const data = structuredClone(pr)
+          if (state.prReads++ > 0) {
+            if (state.changeOnReread) data.head.sha = "f".repeat(40)
+            if (state.removeLabelOnReread) data.labels = []
+          }
+          return {data}
+        },
       },
       git: {
         getRef: async ({ref}) => {
@@ -123,7 +133,19 @@ function fixture() {
           return {data}
         },
       },
-      actions: {listWorkflowRuns: async () => ({data: {workflow_runs: state.runs}}), listJobsForWorkflowRun: () => {}},
+      actions: {
+        listWorkflowRuns: async () => {
+          state.apiCalls.push(["list"])
+          return {data: {workflow_runs: state.runs}}
+        },
+        getWorkflowRunAttempt: async (input) => {
+          state.apiCalls.push(["attempt", input])
+          const data = state.runAttempts.find((run) => run.id === input.run_id && run.run_attempt === input.attempt_number)
+          if (!data) throw Object.assign(new Error("Not found"), {status: 404})
+          return {data}
+        },
+        listJobsForWorkflowRun: () => {},
+      },
       repos: {getCommit: async () => ({data: {sha: merge, parents: state.parents}})},
     },
     paginate: async () => state.jobs,
@@ -145,10 +167,12 @@ function fixture() {
   const fetchImpl = async (address, options) => {
     if (options.method === "HEAD")
       return new Response(null, {status: state.missingArchive ? 404 : 200, headers: {"content-length": "1234"}})
-    assert.ok(address === otaUrl || address === url(`mentra-ios-pr-4136-${head}-100-2.json`))
-    return new Response(JSON.stringify(address === otaUrl ? state.manifest : state.receipt))
+    const value = address === otaUrl ? state.manifest :
+      state.receipts[address] ?? (address === url(`mentra-ios-pr-4136-${head}-100-2.json`) ? state.receipt : undefined)
+    assert.ok(value, `Unexpected metadata URL: ${address}`)
+    return new Response(JSON.stringify(value))
   }
-  const resolve = () =>
+  const resolve = (options = {}) =>
     createRoutineRequest({
       github,
       context,
@@ -156,9 +180,115 @@ function fixture() {
       source,
       fetchImpl,
       now: () => new Date("2026-09-21T10:10:00Z"),
+      ...options,
     })
-  return {state, context, source, resolve}
+  const manual = () => {
+    context.eventName = "workflow_dispatch"
+    source.ref = "refs/heads/dev"
+    source.workflowRef = `${repository}/${REQUEST_WORKFLOW}@refs/heads/dev`
+  }
+  return {state, context, source, github, resolve, manual}
 }
+
+const originalPublication = {sourceBuildRunId: "100", sourcePublicationAttempt: "2"}
+
+test("delayed automatic requests keep the original run while manual requests select the newer build", async () => {
+  const f = fixture()
+  f.manual()
+  const newer = {...f.state.runs[0], id: 101, html_url: `https://github.com/${repository}/actions/runs/101`}
+  f.state.runs.unshift(newer)
+  const receipt = structuredClone(f.state.receipt)
+  receipt.runId = receipt.app.runId = newer.id
+  for (const artifact of Object.values(receipt.artifacts)) artifact.name = artifact.name.replace("-100-", "-101-")
+  f.state.receipts[url(`mentra-ios-pr-4136-${head}-101-2.json`)] = receipt
+  const selected = await f.resolve(originalPublication)
+  assert.equal(selected.status, "ready")
+  assert.equal(selected.selection.producer.runId, 100)
+  assert.deepEqual(f.state.apiCalls, [["attempt", {
+    owner: "Mentra-Community", repo: "MentraOS", run_id: 100, attempt_number: 2,
+  }]])
+  const manual = await f.resolve({sourceBuildRunId: "", sourcePublicationAttempt: ""})
+  assert.equal(manual.status, "ready")
+  assert.equal(manual.selection.producer.runId, 101)
+})
+
+test("separate callbacks for old and new publication attempts resolve separate exact receipts", async () => {
+  const f = fixture()
+  f.manual()
+  const newer = {...f.state.runs[0], run_attempt: 3}
+  f.state.runs[0] = newer
+  f.state.runAttempts.push(newer)
+  f.state.jobs.push(job("publish", 3))
+  f.state.receipts[url(`mentra-ios-pr-4136-${head}-100-3.json`)] = {...f.state.receipt, runAttempt: 3}
+  const oldRequest = await f.resolve(originalPublication)
+  f.context.runId++
+  const newRequest = await f.resolve({...originalPublication, sourcePublicationAttempt: "3"})
+  assert.equal(oldRequest.status, "ready")
+  assert.equal(newRequest.status, "ready")
+  assert.equal(oldRequest.selection.producer.publicationAttempt, 2)
+  assert.equal(newRequest.selection.producer.publicationAttempt, 3)
+  assert.notEqual(oldRequest.selection.receipt.url, newRequest.selection.receipt.url)
+  assert.notEqual(oldRequest.requestId, newRequest.requestId)
+})
+
+test("missing, mismatching or no-longer-eligible exact sources never fall back to a newer run", async () => {
+  for (const change of [
+    (f) => { f.state.runAttempts = [] },
+    (f) => { f.state.runs[0].path = ".github/workflows/other.yml" },
+    (f) => { f.state.runs[0].head_sha = "f".repeat(40) },
+    (f) => { f.state.runs[0].head_branch = "other" },
+    (f) => { f.state.runs[0].head_repository = {full_name: "fork/repo"} },
+    (f) => { f.state.runs[0].repository = {full_name: "fork/repo"} },
+    (f) => { f.state.runs[0].status = "in_progress" },
+    (f) => { f.state.jobs[1].conclusion = "failure" },
+    (f) => { f.state.parents[0].sha = "f".repeat(40) },
+    (f) => { f.state.changeOnReread = true },
+    (f) => { f.state.changeBaseOnReread = true },
+    (f) => { f.state.pr.labels = [] },
+    (f) => { f.state.removeLabelOnReread = true },
+  ]) {
+    const f = fixture()
+    f.manual()
+    change(f)
+    const request = await f.resolve(originalPublication)
+    assert.equal(request.status, "no-artifact")
+    assert.equal(request.selection, null)
+    assert.equal(f.state.apiCalls.some(([kind]) => kind === "list"), false)
+  }
+  for (const mismatch of [{id: 101}, {run_attempt: 3}]) {
+    const f = fixture()
+    f.manual()
+    f.github.rest.actions.getWorkflowRunAttempt = async () => ({data: {...f.state.runs[0], ...mismatch}})
+    assert.equal((await f.resolve(originalPublication)).status, "no-artifact")
+  }
+})
+
+test("a selected notification-only attempt cannot substitute its retained earlier publication", async () => {
+  const f = fixture()
+  f.manual()
+  const original = job("publish", 1)
+  f.state.jobs = [job("build"), original, {...original, id: 21, run_attempt: 2}]
+  const request = await f.resolve(originalPublication)
+  assert.equal(request.status, "no-artifact")
+  assert.equal(request.selection, null)
+  assert.match(request.reason, /retained another publication/)
+})
+
+test("partial or malformed optional selectors fail before reading PR or build metadata", async () => {
+  for (const [sourceBuildRunId, sourcePublicationAttempt] of [
+    [undefined, "2"], ["100", undefined], ["", "2"], ["100", ""], [null, null],
+    ["1e2", "2"], [" 100", "2"], ["0100", "2"], ["100", "2.0"], ["100", "0"],
+    [0, 2], [100, 1.5], [true, 2], ["9007199254740992", "2"],
+  ]) {
+    const f = fixture()
+    f.manual()
+    await assert.rejects(() => f.resolve({sourceBuildRunId, sourcePublicationAttempt}), /both be positive safe integers/)
+    assert.equal(f.state.prReads, 0)
+    assert.deepEqual(f.state.apiCalls, [])
+  }
+  const bootstrap = fixture()
+  await assert.rejects(() => bootstrap.resolve(originalPublication), /selectors require/)
+})
 
 test("freezes original build attempt, retained publication and exact raw manifest hash", async () => {
   const f = fixture()
