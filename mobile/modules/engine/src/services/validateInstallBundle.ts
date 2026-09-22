@@ -15,6 +15,7 @@ const PACKAGE_NAME_PATTERN = /^[a-z][a-z0-9_]*(\.[a-z][a-z0-9_]*)+$/
 const AUTHOR_DECLARABLE_PERMISSION_TYPES = new Set([
   "MICROPHONE",
   "CAMERA",
+  "PHONE_CAMERA",
   "CALENDAR",
   "LOCATION",
   "BACKGROUND_LOCATION",

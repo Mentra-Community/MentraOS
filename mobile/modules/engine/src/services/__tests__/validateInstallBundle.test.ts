@@ -77,6 +77,18 @@ describe("validateInstallBundleArchive", () => {
     ).rejects.toThrow("hardwareRequirements[0].level")
   })
 
+  test("accepts signed phone-camera bundles supported by the public SDK and runtime", async () => {
+    const bytes = await bundle({
+      packageName: "com.example.call",
+      version: "1.0.0",
+      permissions: [{type: "PHONE_CAMERA", required: true, description: "Publish phone video"}],
+    })
+    await expect(validateInstallBundleArchive(bytes)).resolves.toMatchObject({
+      packageName: "com.example.call",
+      publisherKeyFingerprint: expect.stringMatching(/^sha256:[a-f0-9]{64}$/),
+    })
+  })
+
   test("rejects permissions outside the public manifest schema", async () => {
     for (const permissions of [
       {type: "MICROPHONE"},
