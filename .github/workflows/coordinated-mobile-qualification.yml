@@ -31,9 +31,12 @@ jobs:
         run: |
           set -euo pipefail
           source=$(git rev-parse HEAD)
+          # Re-run all jobs for a warm comparison: GitHub retains the same
+          # source commit, while the attempt changes the release metadata.
+          sequence=$((GITHUB_RUN_NUMBER + GITHUB_RUN_ATTEMPT - 1))
           node .github/scripts/collect-ota-release-inputs.mjs
-          node .github/scripts/create-release-plan.mjs --branch dev --sequence "$GITHUB_RUN_NUMBER" \
-            --native-build-sequence "$GITHUB_RUN_NUMBER" --source-commit "$source" --ota-inputs ota-release-inputs.json
+          node .github/scripts/create-release-plan.mjs --branch dev --sequence "$sequence" \
+            --native-build-sequence "$sequence" --source-commit "$source" --ota-inputs ota-release-inputs.json
           echo "source=$source" >> "$GITHUB_OUTPUT"
           echo "artifact=mobile-qualification-plan-$GITHUB_RUN_ID" >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4
