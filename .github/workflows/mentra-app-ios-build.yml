@@ -321,6 +321,10 @@ jobs:
           python3 mobile/ci/pr-ios/mac_installer.py configure \
             --keychain "$PR_IOS_KEYCHAIN" --output mobile/build/pr-ios \
             --intermediate "$certificate"
+          # The Mac import touches the same job keychain; verify that the iOS
+          # identity remains usable before spending time compiling the app.
+          python3 mobile/ci/pr-ios/artifacts.py probe \
+            --keychain "$PR_IOS_KEYCHAIN" --output mobile/build/pr-ios
 
       - name: Fingerprint compiled mobile inputs
         if: env.PR_IOS_SIGNED == 'true'

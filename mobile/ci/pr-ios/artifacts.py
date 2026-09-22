@@ -82,22 +82,9 @@ def verify_pr_ota(app, repository, pr, head_sha):
     return expected
 
 
-def configure(output, keychain):
-    encoded = os.environ.get("IOS_PR_PROFILE_BASE64")
-    if not encoded:
-        raise ValueError("Missing IOS_PR_PROFILE_BASE64 Actions secret; upload the registered-device ad hoc profile first")
-    output.mkdir(parents=True, exist_ok=True)
-    file = output / "PR.mobileprovision"
-    file.write_bytes(base64.b64decode(encoded, validate=True))
-    profile = read_profile(file)
-    if profile.get("Name") != PROFILE_NAME:
-        raise ValueError(f"Expected {PROFILE_NAME}")
-    team = validate_profile(profile)
-    identities = run("security", "find-identity", "-v", "-p", "codesigning", keychain).decode()
-    certificates = [hashlib.sha1(cert).hexdigest().upper() for cert in profile["DeveloperCertificates"]]
-    certificate = next((cert for cert in certificates if cert in identities), None)
-    if certificate is None:
-        raise ValueError("No usable private signing identity matches the ad hoc profile in the job keychain")
+def verify_private_signing(keychain, certificate):
+    if not isinstance(certificate, str) or not re.fullmatch(r"[A-F0-9]{40}", certificate):
+        raise ValueError("Expected the selected iOS signing certificate SHA-1")
     # Listing an identity does not prove codesign can use its private key in a
     # headless runner session. Fail here instead of after compiling the app.
     with tempfile.TemporaryDirectory(prefix="mentra-signing-probe-") as temporary:
@@ -121,6 +108,55 @@ def configure(output, keychain):
         run("codesign", "--verify", "--strict", "-R", "=anchor apple generic", probe)
         if signer_certificate(probe) != certificate:
             raise ValueError("Signing probe used a different certificate")
+    print("Verified iOS private-key signing access", flush=True)
+
+
+def probe_framework_copy(framework, keychain, certificate):
+    # Inspect only code-signature metadata. Re-sign an owned copy with Xcode's
+    # flags so this diagnostic cannot change the failed build output.
+    if framework.is_symlink() or not framework.is_dir():
+        raise ValueError("Expected a framework directory, not a symlink")
+    root = framework.resolve()
+    for item in framework.rglob("*"):
+        if item.is_symlink() and (Path(os.readlink(item)).is_absolute() or not item.resolve().is_relative_to(root)):
+            raise ValueError("Framework contains an external symlink")
+    subprocess.run(["codesign", "-d", "--verbose=4", str(framework)], check=False, timeout=20)
+    with tempfile.TemporaryDirectory(prefix="mentra-framework-signing-probe-") as temporary:
+        probe = Path(temporary) / framework.name
+        shutil.copytree(framework, probe, symlinks=True)
+        run("codesign", "--force", "--sign", certificate, "--keychain", keychain,
+            "--timestamp=none", "--preserve-metadata=identifier,entitlements,flags",
+            "--generate-entitlement-der", probe)
+        run("codesign", "--verify", "--strict", "-R", "=anchor apple generic", probe)
+        if signer_certificate(probe) != certificate:
+            raise ValueError("Framework probe used a different certificate")
+    print("Verified signing on a temporary copy of the failed framework", flush=True)
+
+
+def probe_signing(output, keychain, framework=None):
+    certificate = json.loads((output / "signing.json").read_text())["certificate"]
+    verify_private_signing(keychain, certificate)
+    if framework is not None:
+        probe_framework_copy(framework, keychain, certificate)
+
+
+def configure(output, keychain):
+    encoded = os.environ.get("IOS_PR_PROFILE_BASE64")
+    if not encoded:
+        raise ValueError("Missing IOS_PR_PROFILE_BASE64 Actions secret; upload the registered-device ad hoc profile first")
+    output.mkdir(parents=True, exist_ok=True)
+    file = output / "PR.mobileprovision"
+    file.write_bytes(base64.b64decode(encoded, validate=True))
+    profile = read_profile(file)
+    if profile.get("Name") != PROFILE_NAME:
+        raise ValueError(f"Expected {PROFILE_NAME}")
+    team = validate_profile(profile)
+    identities = run("security", "find-identity", "-v", "-p", "codesigning", keychain).decode()
+    certificates = [hashlib.sha1(cert).hexdigest().upper() for cert in profile["DeveloperCertificates"]]
+    certificate = next((cert for cert in certificates if cert in identities), None)
+    if certificate is None:
+        raise ValueError("No usable private signing identity matches the ad hoc profile in the job keychain")
+    verify_private_signing(keychain, certificate)
     # Xcode 16+ reads profiles here. Keep the named profile separate from the
     # App Store profile; concurrent jobs can use the same Apple-issued UUID.
     installed = Path.home() / "Library/Developer/Xcode/UserData/Provisioning Profiles"
@@ -204,16 +240,21 @@ def package(ipa, output, mac_signing):
 
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument("mode", choices=["configure", "package"])
+    parser.add_argument("mode", choices=["configure", "package", "probe"])
     parser.add_argument("--output", type=Path, required=True)
     parser.add_argument("--keychain")
     parser.add_argument("--ipa", type=Path)
     parser.add_argument("--mac-signing", type=Path)
+    parser.add_argument("--framework", type=Path)
     args = parser.parse_args()
     if args.mode == "configure":
         if not args.keychain:
             parser.error("configure requires --keychain")
         configure(args.output, args.keychain)
+    elif args.mode == "probe":
+        if not args.keychain:
+            parser.error("probe requires --keychain")
+        probe_signing(args.output, args.keychain, args.framework)
     else:
         if not args.ipa or not args.mac_signing:
             parser.error("package requires --ipa and --mac-signing")
