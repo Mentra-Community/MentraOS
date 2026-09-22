@@ -143,6 +143,21 @@ test("construction preserves frozen evidence without starting hardware, UI or an
   expect(loggers[0].kill).toHaveBeenCalledTimes(1)
 })
 
+test("a separately owned teardown session preserves original chapters and evidence", async () => {
+  const {session, report, inputs, io, recorded} = await harness()
+  const originalMetadata = structuredClone(report.metadata.ota)
+  await session.actions.observe("Original customer observation", home)
+  const teardown = await createOtaRecording(report, {...inputs, session: "restore"}, io)
+  await teardown.actions.observe("Independent teardown observation", home)
+  expect(recorded.map((row) => row.id)).toEqual(["OTA-01", "RESTORE-OTA-01"])
+  expect(teardown.hardwareFolder).toEndWith("hardware-restore")
+  expect(report.metadata.ota).toEqual(originalMetadata)
+  expect((report.metadata.otaSessions as Record<string, any>).restore.scope).toBe("normal-update")
+  expect(await readFile(join(session.hardwareFolder, "manifest.json"))).toEqual(Buffer.from(inputs.manifestBytes))
+  await expect(createOtaRecording(report, {...inputs, session: "restore"}, io)).rejects.toThrow()
+  await expect(createOtaRecording(report, {...inputs, session: "../escape"}, io)).rejects.toThrow("Invalid")
+})
+
 test("transport rotation waits for its owned logger and repeated observations do not duplicate segments", async () => {
   const {session, io, identity, loggers} = await harness()
   await session.actions.hardware()

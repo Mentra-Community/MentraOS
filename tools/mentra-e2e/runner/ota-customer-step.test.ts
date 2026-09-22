@@ -336,6 +336,84 @@ test("reused or foreign durable intents cannot execute or adopt another operatio
   expect(h.calls).toEqual(before)
 })
 
+test("a distinct teardown customer pass preserves the original failed test and its intent", async () => {
+  const h = await harness()
+  h.state.failPress = true
+  const restoreRuntime = h.runtime()
+  h.options.routine.teardown.push(
+    createOtaCustomerStep(
+      {
+        ...restoreRuntime,
+        prepare: async (context) => {
+          h.state.failPress = false
+          h.state.page = "home"
+          return restoreRuntime.prepare(context)
+        },
+      },
+      {id: "restore-selected-components", phase: "teardown"},
+    ),
+  )
+  const result = await runLifecycle(h.options)
+  expect(result).toMatchObject({test: "failed", teardown: "passed", fixture: "ready", outcome: "failed"})
+  const events = await journal(h.folder),
+    operations = events.at(-1)!.state.operations
+  const original = operations.find((op) => op.stepID === "customer-sequence")!,
+    restored = operations.find((op) => op.stepID === "restore-selected-components")!
+  expect(original.phase).toBe("test")
+  expect(original.dispatch).toMatchObject({failed: true, progress: {started: true, finished: false}})
+  expect(restored.phase).toBe("teardown")
+  expect(restored.operationID).not.toBe(original.operationID)
+  expect(restored.dispatch).toMatchObject({failed: false, progress: {started: true, finished: true}})
+  expect(restored.reconciliation?.status).toBe("satisfied")
+  expect(h.calls.filter((call) => call === "button-Update Now")).toHaveLength(2)
+  expect(events.findIndex((event) => event.type === "test-frozen")).toBeLessThan(
+    events.findIndex((event) => event.stepID === restored.stepID),
+  )
+  const step = createOtaCustomerStep(h.runtime(), {id: restored.stepID, phase: "teardown"})
+  const context = {runDirectory: h.options.runDirectory, selection: h.options.selection, operations}
+  await expect(step.execute(context, restored)).rejects.toThrow("already dispatched")
+  await expect(step.reconcile(context, original)).rejects.toThrow("original teardown-phase")
+  const testPhase = {...restored, phase: "test" as const}
+  await expect(step.reconcile({...context, operations: [testPhase]}, testPhase)).rejects.toThrow(
+    "original teardown-phase",
+  )
+  expect(h.calls.filter((call) => call === "button-Update Now")).toHaveLength(2)
+})
+
+test("unknown teardown writer blocks return, and recovery never replays its failed sequence", async () => {
+  const h = await harness()
+  h.state.failPress = true
+  const cleanupRuntime = h.runtime()
+  const cleanup = () =>
+    createOtaCustomerStep(
+      {
+        ...cleanupRuntime,
+        prepare: async (context) => {
+          h.state.page = "home"
+          return cleanupRuntime.prepare(context)
+        },
+        recordFailure: async () => {
+          h.state.idle = "unknown"
+        },
+      },
+      {id: "restore-selected-components", phase: "teardown"},
+    )
+  h.options.routine.teardown.push(cleanup())
+  expect(await runLifecycle(h.options)).toMatchObject({test: "failed", fixture: "recovery-required"})
+  const count = h.calls.filter((call) => call === "button-Update Now").length
+  expect(count).toBe(2)
+  h.options.routine.teardown[1] = cleanup()
+  expect(await recoverLifecycle(h.options)).toMatchObject({test: "failed", fixture: "recovery-required"})
+  h.state.idle = "settled"
+  expect(await recoverLifecycle(h.options)).toMatchObject({test: "failed", fixture: "recovery-required"})
+  expect(h.calls.filter((call) => call === "button-Update Now")).toHaveLength(count)
+  const operations = (await journal(h.folder)).at(-1)!.state.operations
+  expect(operations.find((op) => op.stepID === "restore-selected-components")?.dispatch).toMatchObject({
+    failed: true,
+    progress: {finished: false},
+  })
+})
+
 test("a true process exit after the update press never replays and cannot manufacture completed progress", async () => {
   const h = await harness()
   const source = `

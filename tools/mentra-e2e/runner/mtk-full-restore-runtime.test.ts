@@ -26,6 +26,7 @@ async function harness() {
     boot: oldBoot,
     slot: "_a",
     asg: 303006291,
+    bes: "26.9.21.3",
     uptime: 100,
     engine: "UPDATE_STATUS_IDLE",
     busy: false,
@@ -59,7 +60,7 @@ c=' '.join(a[3:]);remote='/data/local/tmp/mentra-update-engine-status-${probe}.j
 values={'cat /sys/block/mmcblk0/device/cid':'0123456789abcdef0123456789abcdef','getprop ro.serialno':'TEST012345','getprop ro.boot.serialno':'TEST012345','getprop persist.mentra.live.mac':s['mac'],'getprop ro.custom.ota.version':s['firmware'],'getprop sys.boot_completed':'1','cat /proc/sys/kernel/random/boot_id':s['boot'],'getprop ro.boot.slot_suffix':s['slot'],'dumpsys package com.mentra.asg_client':'versionCode='+str(s['asg']),'pidof com.mentra.asg_client':'1335','cat /proc/1335/stat':'1335 (asg) S '+' '.join(['0']*18)+' 2485 0','getconf CLK_TCK':'100','cat /proc/uptime':str(s['uptime'])+' 0','test ! -L '+remote:'','sha256sum '+remote:'${probe} '+remote,'stat -c %s '+remote:'2143','pm path com.mentra.asg_client':'package:/data/app/owned/base.apk','sha256sum /data/app/owned/base.apk':s.get('apkSha','${"d".repeat(64)}')+' /data/app/owned/base.apk','df -k /data':'Filesystem 1K-blocks Used Available Use% Mounted on\\n/dev/data 9000000 1 8000000 1% /data'}
 if c in values:done(values[c])
 if c.startswith('CLASSPATH='):done('CURRENT_OP='+s['engine']+'\\nSTATUS_CODE='+('0' if s['engine']=='UPDATE_STATUS_IDLE' else '6'),7 if s.get('failStatus') else 0)
-if c=='logcat -b main -d -v threadtime -v monotonic -v usec':done(f"{s['uptime']-0.1:.6f} 1335 1500 I K900BluetoothManager: BES_OTA_DIAG version_proof actual=26.9.21.3 current_boot={s['boot']} owner=fixture\\n"+'\\n'.join(s['logs']))
+if c=='logcat -b main -d -v threadtime -v monotonic -v usec':done(f"{s['uptime']-0.1:.6f} 1335 1500 I K900BluetoothManager: BES_OTA_DIAG version_proof actual={s['bes']} current_boot={s.get('besProofBoot',s['boot'])} owner=fixture\\n"+'\\n'.join(s['logs']))
 if c.startswith("test ! -e '/storage/"):done('',1 if s['remote'] else 0)
 if c.startswith("stat -c %s '/storage/"):done(str(s['artifactSize'])+'\\n'+s['artifactSha']+' remote')
 m=re.search(r"--es json '(.*)'$",c)
@@ -180,6 +181,90 @@ test("legacy, wrong MAC, changed active APK and nonzero reads cannot prove moder
     else await expect(h.runtime.read(h.c)).rejects.toThrow()
     expect((await h.get()).applies).toBe(0)
   }
+}, 30000)
+
+test("explicit January BES with selected or January MTK can be idle without satisfying target assertions", async () => {
+  for (const firmware of ["MentraLive_20260921.0", "MentraLive_20260113"]) {
+    const h = await harness()
+    await h.set({...(await h.get()), firmware, bes: "17.26.1.13"})
+    const setupBaseline = {mtkVersion: "MentraLive_20260113", besVersion: "17.26.1.13"}
+    const runtime = createMtkFullRestoreRuntime(h.input, {...h.config, setupBaseline})
+    const value = await runtime.read(h.c)
+    expect(value).toMatchObject({writersIdle: true, engineStatus: "UPDATE_STATUS_IDLE", identity: {firmware}})
+    const actual = value.actual as any
+    expect(actual.sourceProfile).toEqual(h.input.profile)
+    expect(actual.selectedTargetProfile).toEqual(h.input.profile)
+    expect(actual.setupBaseline).toEqual(setupBaseline)
+    expect(actual.observation.bes.version).toBe("17.26.1.13")
+    expect(actual.allowedSource.mtkVersions).toContain("MentraLive_20260113")
+    const collector = JSON.parse(await readFile(value.evidence[0]!, "utf8"))
+    const assertion = (id: string) => collector.firmwareAssertions.find((item: any) => item.id === id)
+    expect(assertion("firmware.mtk").status).toBe(firmware === h.input.profile.mtk.version ? "passed" : "failed")
+    expect(assertion("firmware.bes.version").status).toBe("failed")
+    expect(assertion("firmware.bes.fresh").status).toBe("passed")
+    expect(collector.adbQualified).toBe(false)
+    expect(collector.returnObservationPassed).toBe(false)
+    expect((await h.get()).applies).toBe(0)
+    expect((await h.get()).reboots).toBe(0)
+  }
+}, 30000)
+
+test("mixed-source permission never admits unknown firmware, BES, legacy ASG or conflicting modern APK", async () => {
+  for (const change of [{firmware: "MentraLive_20250101"}, {bes: "17.26.1.12"}, {asg: 27}, {apkSha: "e".repeat(64)}]) {
+    const h = await harness()
+    await h.set({...(await h.get()), ...change})
+    const runtime = createMtkFullRestoreRuntime(h.input, {
+      ...h.config,
+      setupBaseline: {mtkVersion: "MentraLive_20260113", besVersion: "17.26.1.13"},
+    })
+    await expect(runtime.read(h.c)).rejects.toThrow()
+    expect((await h.get()).applies).toBe(0)
+    expect((await h.get()).reboots).toBe(0)
+  }
+}, 30000)
+
+test("ASG profile matching ignores MTK/BES combinations but rejects ambiguous ASG bytes", async () => {
+  const h = await harness()
+  const sameApk = {
+    ...h.input.profile,
+    manifest: {...h.input.profile.manifest, url: "https://example.test/another-manifest"},
+    mtk: {...h.input.profile.mtk, version: "MentraLive_20260920.0"},
+    bes: {...h.input.profile.bes, version: "17.26.1.13"},
+    asg: {
+      ...h.input.profile.asg,
+      artifact: {...h.input.profile.asg.artifact, url: "https://example.test/identical-apk"},
+    },
+  }
+  await h.set({...(await h.get()), bes: "17.26.1.13"})
+  expect(
+    (await createMtkFullRestoreRuntime(h.input, {...h.config, sourceProfiles: [sameApk]}).read(h.c)).writersIdle,
+  ).toBe(true)
+  const changedApk = {...sameApk, asg: {...sameApk.asg, artifact: {...sameApk.asg.artifact, sha256: "e".repeat(64)}}}
+  await expect(
+    createMtkFullRestoreRuntime(h.input, {...h.config, sourceProfiles: [changedApk]}).read(h.c),
+  ).rejects.toThrow("Ambiguous")
+}, 20000)
+
+test("an already-target stage without a transfer claim does not freeze later component admission", async () => {
+  const h = await harness()
+  const owner: MutationIntent = {
+    operationID: "abcdefab-1111-2222-3333-444444444444",
+    stepID: "restore-mtk-stage",
+    phase: "teardown",
+    startedAt: new Date().toISOString(),
+  }
+  h.c.operations = [owner]
+  await h.set({...(await h.get()), generation: 7})
+  expect((await h.runtime.read(h.c)).writersIdle).toBe(true)
+  // Only a real transfer creates this file and protects the same-boot interval.
+  const first = await h.runtime.read(h.c)
+  await writeFile(
+    join(h.c.runDirectory, `mtk-full-${owner.operationID}.transfer.json`),
+    JSON.stringify({source: first.identity, writerIdentity: (first.actual as any).writerIdentity}),
+    {mode: 0o600},
+  )
+  await h.set({...(await h.get()), generation: 8})
+  expect((await h.runtime.read(h.c)).writersIdle).toBe(false)
 }, 30000)
 
 test("concrete transfer/helper gate persist original receipts and recovery reads without subprocess or resend", async () => {

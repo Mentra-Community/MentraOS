@@ -40,6 +40,12 @@ export interface OtaCustomerStepRuntime {
   clock?: Parameters<typeof runOtaCustomerSequence>[4]
 }
 
+export interface OtaCustomerStepOptions {
+  /** A teardown pass must use a distinct ID and the caller's own recorded actions. */
+  id?: string
+  phase?: "test" | "teardown"
+}
+
 type Dispatch = {
   kind: "ota-customer-sequence/v1"
   operationID: string
@@ -48,7 +54,6 @@ type Dispatch = {
   error: string | null
   reportingError: string | null
 }
-const id = "customer-sequence"
 const errorText = (error: unknown) => (error instanceof Error ? error.message : String(error))
 
 async function fresh<T extends Observation>(read: () => Promise<T>): Promise<T> {
@@ -70,19 +75,24 @@ async function fresh<T extends Observation>(read: () => Promise<T>): Promise<T> 
   return value
 }
 
-function owned(context: LifecycleContext, intent?: Readonly<MutationIntent>) {
+function owned(
+  context: LifecycleContext,
+  intent: Readonly<MutationIntent> | undefined,
+  id: string,
+  phase: "test" | "teardown",
+) {
   const matches = context.operations.filter((operation) => operation.stepID === id)
   if (
     matches.length > 1 ||
     (intent ? matches.length !== 1 : matches.length !== 0) ||
     (intent &&
       (intent.stepID !== id ||
-        intent.phase !== "test" ||
+        intent.phase !== phase ||
         !/^[a-f\d]{8}(?:-[a-f\d]{4}){3}-[a-f\d]{12}$/.test(intent.operationID) ||
         matches[0].operationID !== intent.operationID ||
-        matches[0].phase !== "test"))
+        matches[0].phase !== phase))
   )
-    throw new Error("Customer step requires its original test-phase lifecycle intent")
+    throw new Error(`Customer step requires its original ${phase}-phase lifecycle intent`)
 }
 
 function dispatch(intent: Readonly<MutationIntent>): Dispatch | undefined {
@@ -108,15 +118,29 @@ function dispatch(intent: Readonly<MutationIntent>): Dispatch | undefined {
 /** One customer mutation under runLifecycle's existing lease/journal. Recovery
  * never opens recording actions or replays the customer loop. A settled failure
  * permits teardown but does not satisfy this test; runLifecycle freezes failure
- * before restoring, including after process restart. No fixture state is written here. */
-export function createOtaCustomerStep(runtime: OtaCustomerStepRuntime): MutationStep {
+ * before restoring, including after process restart. A separate teardown ID can
+ * reuse the normal updater with its own prepared modern/idle state, recording
+ * scope and original intent; it never adopts the failed test's progress. The
+ * caller must reject unsupported component directions or legacy writer state.
+ * No fixture state is written here. */
+export function createOtaCustomerStep(
+  runtime: OtaCustomerStepRuntime,
+  options: OtaCustomerStepOptions = {},
+): MutationStep {
+  const id = options.id ?? "customer-sequence",
+    phase = options.phase ?? "test"
+  if (!/^[a-z][a-z0-9-]{0,79}$/.test(id) || !["test", "teardown"].includes(phase))
+    throw new Error("Invalid customer operation identity or phase")
   return {
     id,
     kind: "mutation",
     repeat: "never",
-    instruction: "Run the recorded customer OTA sequence once and preserve its outcome before restoration.",
+    instruction:
+      phase === "test"
+        ? "Run the recorded customer OTA sequence once and preserve its outcome before restoration."
+        : "Finish restoring the selected components through one separately recorded normal OTA sequence.",
     async execute(context, intent) {
-      owned(context, intent)
+      owned(context, intent, id, phase)
       if (intent.dispatch !== undefined || intent.dispatchError !== undefined)
         throw new Error("Customer operation was already dispatched; it cannot be replayed")
       const progress: OtaCustomerProgress = {started: false, installPasses: 0, finished: false}
@@ -152,7 +176,7 @@ export function createOtaCustomerStep(runtime: OtaCustomerStepRuntime): Mutation
       return result as unknown as Json
     },
     async reconcile(context, intent) {
-      owned(context, intent)
+      owned(context, intent, id, phase)
       if (!intent) {
         const prepared = await fresh(() => runtime.prepare(context))
         if (typeof prepared.passed !== "boolean") throw new Error("Prepared baseline omitted its verdict")

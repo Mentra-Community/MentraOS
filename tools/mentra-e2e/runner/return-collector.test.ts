@@ -168,7 +168,16 @@ async function simulatedCollection() {
   const apk = "/data/app/owned/base.apk"
   const logs: string[] = []
   const queries: Record<string, unknown>[] = []
-  const flags = {busy: false, staged: false, wrongSid: false, wrongApk: false, duplicateReply: false}
+  const flags = {
+    busy: false,
+    staged: false,
+    wrongSid: false,
+    wrongApk: false,
+    duplicateReply: false,
+    firmware: "MentraLive_20260921.0",
+    asgVersion: 303006291,
+    besVersion: "26.9.21.3",
+  }
   const record = (value: unknown, tag: string, prefix = "") => {
     logs.push(line(prefix + JSON.stringify(value), uptime.toFixed(6), processRead.pid, tag))
   }
@@ -188,11 +197,11 @@ async function simulatedCollection() {
       "cat /sys/block/mmcblk0/device/cid": fixture.cid,
       "getprop ro.serialno": fixture.serial,
       "getprop persist.mentra.live.mac": fixture.bluetooth,
-      "getprop ro.custom.ota.version": "MentraLive_20260921.0",
+      "getprop ro.custom.ota.version": flags.firmware,
       "getprop sys.boot_completed": "1",
       "cat /proc/sys/kernel/random/boot_id": processRead.bootId,
       "getprop ro.boot.slot_suffix": "_a",
-      "dumpsys package com.mentra.asg_client": "versionCode=303006291",
+      "dumpsys package com.mentra.asg_client": `versionCode=${flags.asgVersion}`,
       "pidof com.mentra.asg_client": String(processRead.pid),
       [`cat /proc/${processRead.pid}/stat`]: `${processRead.pid} (asg) S ${Array(18).fill("0").join(" ")} ${processRead.startTicks} 0`,
       "getconf CLK_TCK": "100",
@@ -208,7 +217,7 @@ async function simulatedCollection() {
     }
     if (cmd in values) return values[cmd]
     if (cmd === "logcat -b main -d -v threadtime -v monotonic -v usec")
-      return [line(proof(), "99.500000"), ...logs].join("\n")
+      return [line(proof(flags.besVersion), "99.500000"), ...logs].join("\n")
     const query = /--es json '(.*)'$/.exec(cmd)
     if (query && cmd.startsWith("am broadcast -n com.mentra.asg_client/.receiver.IntentCommandReceiver ")) {
       const value = JSON.parse(query[1])
@@ -217,7 +226,7 @@ async function simulatedCollection() {
         ble({
           type: "version_info_1",
           package_name: "com.mentra.asg_client",
-          build_number: "303006291",
+          build_number: String(flags.asgVersion),
           sid,
           request_id: value.request_id,
         })
@@ -309,6 +318,43 @@ test("ADB-only and each independent failed target or idle check cannot pass full
     expect(result.adbQualified).toBe(false)
     expect(result.fixtureStateChanged).toBe(false)
   }
+})
+
+test("an explicit source observation can prove idle without declaring off-target firmware restored", async () => {
+  const s = await simulatedCollection()
+  s.flags.firmware = "MentraLive_20260113"
+  s.flags.asgVersion = 303006000
+  s.flags.besVersion = "17.26.1.13"
+  s.config.allowedSource = {
+    mtkVersions: [s.flags.firmware],
+    asgVersions: [s.flags.asgVersion],
+    besVersions: [s.flags.besVersion],
+  }
+  const result = await collectReturnObservation(s.config, s.app)
+  expect(result.returnObservationPassed).toBe(false)
+  expect(result.adbQualified).toBe(false)
+  expect(result.idleChecks.every((check) => check.passed)).toBe(true)
+  expect(result.streamStopped).toBe(true)
+  const failed = result.firmwareAssertions.filter((check) => check.status === "failed").map((check) => check.id)
+  expect(failed).toEqual(["firmware.mtk", "firmware.asg.version", "firmware.bes.version"])
+  const saved = JSON.parse(await readFile(join(s.config.recorder.output, "inputs.json"), "utf8"))
+  expect(saved.profile).toEqual(s.config.profile)
+  expect(saved.allowedSource).toEqual(s.config.allowedSource)
+})
+
+test("unknown source versions still fail and cannot cherry-pick an older BES match", async () => {
+  const s = await simulatedCollection()
+  s.flags.besVersion = "17.26.1.13"
+  await expect(collectReturnObservation(s.config)).rejects.toThrow("Fresh BES target mismatch")
+  const rows = logRows([line(proof()), line(proof("99.1.1.1"), "100.800000")].join("\n"))
+  expect(() => freshBes(rows, processRead, ["26.9.21.3", "17.26.1.13"], 15)).toThrow("Fresh BES target mismatch")
+})
+
+test("repair observation validates its allowlist before any device command", async () => {
+  const s = await simulatedCollection()
+  s.config.allowedSource = {mtkVersions: [], asgVersions: [303006291], besVersions: ["17.26.1.13"]}
+  await expect(collectReturnObservation(s.config)).rejects.toThrow("bounded source versions")
+  expect((s.config.recorder as TestReturnRecorder).commands).toHaveLength(0)
 })
 
 test("ambiguous responses retain failure evidence and never resend queries", async () => {

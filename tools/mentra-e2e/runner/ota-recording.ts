@@ -23,6 +23,8 @@ export interface OtaRecordingInputs {
   /** Already loaded and hash-verified with loadLegacyRoute against these selected inputs. */
   legacy?: LoadedOtaLegacyRoute
   resume: boolean
+  /** Optional separate session within the same Report (for an owned teardown). */
+  session?: string
 }
 
 /** Shared early CLI validation and the exact targets consumed by the recorded actions. */
@@ -73,6 +75,9 @@ export async function createOtaRecording(
 ) {
   const frozen = structuredClone(inputs)
   const {fixture, legacy} = frozen
+  if (frozen.session !== undefined && !/^[a-z][a-z0-9-]{0,31}$/.test(frozen.session))
+    throw new Error("Invalid OTA recording session")
+  const prefix = frozen.session ? `${frozen.session.toUpperCase()}-OTA` : "OTA"
   const selection = otaRecordingSelection(fixture, frozen.manifestBytes)
   const {target, manifestSha256} = selection
   const allowedFirmware = legacy?.allowedFirmware ?? selection.allowedFirmware
@@ -96,10 +101,10 @@ export async function createOtaRecording(
       }),
     ...overrides,
   }
-  const hardwareFolder = join(report.directory, "hardware")
+  const hardwareFolder = join(report.directory, frozen.session ? `hardware-${frozen.session}` : "hardware")
   await mkdir(hardwareFolder, {mode: 0o700})
   await writeFile(join(hardwareFolder, "manifest.json"), frozen.manifestBytes)
-  report.metadata.ota = {
+  const metadata: Record<string, unknown> = {
     url: url.href,
     manifestSha256,
     target,
@@ -112,6 +117,15 @@ export async function createOtaRecording(
     resume: frozen.resume,
     nativeAssociationQualified: false,
   }
+  if (frozen.session) {
+    const sessions = report.metadata.otaSessions ?? {}
+    if (typeof sessions !== "object" || sessions === null || Array.isArray(sessions))
+      throw new Error("Invalid OTA session metadata")
+    const rows = sessions as Record<string, unknown>
+    if (rows[frozen.session]) throw new Error("OTA recording session already exists")
+    rows[frozen.session] = metadata
+    report.metadata.otaSessions = rows
+  } else report.metadata.ota = metadata
   let logger: Logger | undefined
   let loggingTransport = ""
   let logSegment = 0
@@ -153,7 +167,7 @@ export async function createOtaRecording(
     const mark = await report.video!.mark()
     const result = await report.record(
       {
-        id: `OTA-${String(++index).padStart(2, "0")}`,
+        id: `${prefix}-${String(++index).padStart(2, "0")}`,
         instruction,
         expected,
         status: "passed",
@@ -171,7 +185,7 @@ export async function createOtaRecording(
     const ok = await io.executeSteps(
       [
         {
-          id: `OTA-${String(++index).padStart(2, "0")}`,
+          id: `${prefix}-${String(++index).padStart(2, "0")}`,
           instruction,
           expected: "The named control accepts the action; the following observation verifies the resulting state.",
           action: {op: "press", selector: {identifier, enabled: true}},
@@ -194,7 +208,7 @@ export async function createOtaRecording(
       if (notice === "absent") return
       if (dismissedNotice) throw new Error("The glasses audio notice returned; do not repeat its dismissal")
       dismissedNotice = true
-      const step = otaAudioNoticeStep(`OTA-${String(++index).padStart(2, "0")}`)
+      const step = otaAudioNoticeStep(`${prefix}-${String(++index).padStart(2, "0")}`)
       if (!(await io.executeSteps([step], context, report)))
         throw new Error("The glasses audio notice did not close; do not retry its dismissal automatically")
     }
@@ -216,7 +230,7 @@ export async function createOtaRecording(
       !(await io.executeSteps(
         [
           {
-            id: `OTA-${String(++index).padStart(2, "0")}`,
+            id: `${prefix}-${String(++index).padStart(2, "0")}`,
             instruction: "Request Settings navigation, observing any late Bluetooth audio notice first.",
             expected:
               "Settings is requested from paired Home, or the exact audio notice is observed; the destination is checked separately.",
@@ -273,7 +287,7 @@ export async function createOtaRecording(
         action: {op: "press", selector: {identifier: "miniapp.close"}},
         checks: [{selector: {identifier: "miniapp.close"}, absent: true}],
       },
-    ].map((step) => ({...step, id: `OTA-${String(++index).padStart(2, "0")}`, expected: step.instruction}))
+    ].map((step) => ({...step, id: `${prefix}-${String(++index).padStart(2, "0")}`, expected: step.instruction}))
     if (!(await io.executeSteps(steps, context, report)))
       throw new Error("The app's paired device does not match the selected fixture")
   }
@@ -322,7 +336,7 @@ export async function createOtaRecording(
     },
     executeStep: (step) =>
       io.executeSteps(
-        [{...step, id: `OTA-${String(++index).padStart(2, "0")}`}],
+        [{...step, id: `${prefix}-${String(++index).padStart(2, "0")}`}],
         {fixture: fixture.serial, email: "", password: ""},
         report,
       ),
@@ -348,6 +362,7 @@ export async function createOtaRecording(
   }
   return {
     actions,
+    sessionMetadata: metadata,
     hardwareFolder,
     target,
     manifestSha256,

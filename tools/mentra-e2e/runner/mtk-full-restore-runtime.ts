@@ -8,7 +8,7 @@ import {isDeepStrictEqual as same} from "node:util"
 import {collectReturnObservation, type ReturnEvidenceRecorder} from "./return-collector"
 import {OtaCommandError, readOtaHardware, type OtaFixture} from "./ota-hardware"
 import {normalizeFirmware, OtaHardwareUnavailable} from "./ota-state"
-import type {FirmwareProfile} from "./firmware-profile"
+import {normalizeBesVersion, type FirmwareProfile} from "./firmware-profile"
 import type {LifecycleContext, MutationIntent} from "./lifecycle"
 import type {
   MtkFullRestoreInputs,
@@ -27,6 +27,9 @@ export type MtkRestoreRuntimeConfig = {
   january: {directory: string; definition: Record<string, string>}
   /** Authenticated frozen profiles for permitted modern sources. Target is also allowed. */
   sourceProfiles: FirmwareProfile[]
+  /** Version-only setup baseline derived from the pinned January profile and BES
+   * artifact. It never supplies an ASG identity or replaces the expected profile. */
+  setupBaseline?: {mtkVersion: string; besVersion: string}
   /** Required for writes, never for an already-target idle observation. */
   artifactVerification?: Ref
 }
@@ -111,6 +114,28 @@ export function createMtkFullRestoreRuntime(
     profiles.every((p) => sha.test(p.manifest.sha256) && p.asg.versionCode > 37),
     "Only frozen modern source profiles are supported",
   )
+  const allowedSource = {
+    mtkVersions: [
+      ...new Set(
+        [...profiles.map((p) => p.mtk.version), ...(cfg.setupBaseline ? [cfg.setupBaseline.mtkVersion] : [])].map(
+          normalizeFirmware,
+        ),
+      ),
+    ],
+    asgVersions: [...new Set(profiles.map((p) => p.asg.versionCode))],
+    besVersions: [
+      ...new Set(
+        [...profiles.map((p) => p.bes.version), ...(cfg.setupBaseline ? [cfg.setupBaseline.besVersion] : [])].map(
+          normalizeBesVersion,
+        ),
+      ),
+    ],
+  }
+  const asgIdentity = (p: FirmwareProfile) => ({
+    versionCode: p.asg.versionCode,
+    sha256: p.asg.artifact.sha256,
+    size: p.asg.artifact.size ?? null,
+  })
   async function lease() {
     const value = await json(cfg.leasePath)
     requireProof(
@@ -308,20 +333,10 @@ export function createMtkFullRestoreRuntime(
     async read(c) {
       const rec = await recorder(c),
         run = (argv: string[]) => rec.run(argv)
-      const first = await readOtaHardware(
-        fixture,
-        profiles.map((p) => p.mtk.version),
-        profiles.map((p) => p.asg.versionCode),
-        false,
-        run,
-      )
-      const matches = profiles.filter(
-        (p) =>
-          normalizeFirmware(p.mtk.version) === normalizeFirmware(first.firmware) &&
-          p.asg.versionCode === first.asgVersion,
-      )
+      const first = await readOtaHardware(fixture, allowedSource.mtkVersions, allowedSource.asgVersions, false, run)
+      const matches = profiles.filter((p) => p.asg.versionCode === first.asgVersion)
       requireProof(
-        matches.length > 0 && matches.every((p) => same(p.asg, matches[0].asg) && same(p.bes, matches[0].bes)),
+        matches.length > 0 && matches.every((p) => same(asgIdentity(p), asgIdentity(matches[0]))),
         "Ambiguous or unsupported modern source",
       )
       const profile = matches[0]
@@ -353,23 +368,32 @@ export function createMtkFullRestoreRuntime(
       const result = await collectReturnObservation({
         fixture,
         profile,
+        allowedSource,
         recorder: rec,
         probe: {path: input.probe.remote, sha256: input.probe.sha256, size: 2143},
       })
       const observed = await json(join(rec.output, "observation.json")),
         idle = await json(join(rec.output, "runtime-idle-input.json"))
-      const last = await readOtaHardware(fixture, [profile.mtk.version], [profile.asg.versionCode], false, run)
+      const last = await readOtaHardware(fixture, [first.firmware], [first.asgVersion], false, run)
       const bootSerial = await run(["adb", "-t", last.transport, "shell", "getprop", "ro.boot.serialno"])
       requireProof(
         first.transport === last.transport &&
           first.bootId === last.bootId &&
           first.slot === last.slot &&
+          observed.bootId === last.bootId &&
+          observed.asgVersion === last.asgVersion &&
+          normalizeFirmware(observed.firmware) === last.firmware &&
           input.fixture.serials.includes(bootSerial),
         "Identity changed during read",
       )
       requireProof(
+        allowedSource.mtkVersions.includes(normalizeFirmware(observed.firmware)) &&
+          allowedSource.besVersions.includes(normalizeBesVersion(observed.bes?.version)),
+        "Observed MTK or fresh BES is outside the pinned source versions",
+      )
+      requireProof(
         result.firmwareAssertions
-          .filter((a) => !["app.connected", "update.idle"].includes(a.id))
+          .filter((a) => !["app.connected", "update.idle", "firmware.mtk", "firmware.bes.version"].includes(a.id))
           .every((a) => a.status === "passed"),
         "Modern source components or active APK not verified",
       )
@@ -422,9 +446,18 @@ export function createMtkFullRestoreRuntime(
         writersIdle,
         powerReady,
         observedAt: new Date().toISOString(),
-        source: "Modern ASG activity, independent Update Engine, exact active APK and source profile",
+        source:
+          "Modern ASG activity, independent Update Engine, exact active APK and explicitly allowed source versions",
         expected: "Exact source, stopped media and no competing updater",
-        actual: {writerIdentity, sourceProfile: profile.manifest, power, observation: observed},
+        actual: {
+          writerIdentity,
+          sourceProfile: profile,
+          selectedTargetProfile: input.profile,
+          allowedSource,
+          setupBaseline: cfg.setupBaseline ?? null,
+          power,
+          observation: observed,
+        },
         evidence: [join(rec.output, "result.json"), join(rec.output, "observation.json")],
       }
       latest.set(c.runDirectory, observation)

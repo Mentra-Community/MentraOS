@@ -4,10 +4,12 @@ import {join} from "node:path"
 import {
   assertFirmwareState,
   firmwareTransport,
+  normalizeBesVersion,
   type FirmwareObservation,
   type FirmwareProfile,
 } from "./firmware-profile"
 import {readOtaHardware, type OtaFixture} from "./ota-hardware"
+import {normalizeFirmware} from "./ota-state"
 import {
   checkRuntimeOtaIdle,
   checkStoppedStream,
@@ -55,6 +57,9 @@ export type ReturnCollectorConfig = {
   fixture: OtaFixture
   probe: {path: string; sha256: string; size: number}
   recorder: ReturnEvidenceRecorder
+  /** Explicit known source versions for a repair observation. Target assertions
+   * still compare the unchanged profile and cannot pass an off-target device. */
+  allowedSource?: {mtkVersions: string[]; asgVersions: number[]; besVersions: string[]}
 }
 
 export function validateFixture(value: unknown): OtaFixture {
@@ -142,7 +147,7 @@ export function exactBleOutputResponse(
   )
 }
 
-export function freshBes(rows: LogRow[], process: ReturnProcess, expected: string, maxAgeSeconds: number) {
+export function freshBes(rows: LogRow[], process: ReturnProcess, expected: string | string[], maxAgeSeconds: number) {
   const candidates = rows
     .filter(
       (row) =>
@@ -160,7 +165,9 @@ export function freshBes(rows: LogRow[], process: ReturnProcess, expected: strin
     .sort((a, b) => a.row.seconds - b.row.seconds)
   const latest = candidates.at(-1)
   if (!latest || process.uptimeSeconds - latest.row.seconds > maxAgeSeconds) return undefined
-  if (latest.version !== expected) throw new Error(`Fresh BES target mismatch: ${latest.version}`)
+  const allowed = (Array.isArray(expected) ? expected : [expected]).map(normalizeBesVersion)
+  if (!allowed.includes(normalizeBesVersion(latest.version)))
+    throw new Error(`Fresh BES target mismatch: ${latest.version}`)
   return latest
 }
 
@@ -192,6 +199,23 @@ export function appProofWithinBracket(proof: AppProof, before: string, after: st
 export async function collectReturnObservation(config: ReturnCollectorConfig, app?: AppObserver) {
   const fixture = validateFixture(config.fixture)
   const profile = structuredClone(config.profile)
+  const allowed = structuredClone(
+    config.allowedSource ?? {
+      mtkVersions: [profile.mtk.version],
+      asgVersions: [profile.asg.versionCode],
+      besVersions: [profile.bes.version],
+    },
+  )
+  if (
+    !allowed ||
+    ![allowed.mtkVersions, allowed.asgVersions, allowed.besVersions].every(
+      (values) => Array.isArray(values) && values.length > 0 && values.length <= 32,
+    ) ||
+    !allowed.asgVersions.every((value) => Number.isSafeInteger(value) && value > 0)
+  )
+    throw new Error("Explicit bounded source versions are required")
+  allowed.mtkVersions = allowed.mtkVersions.map(normalizeFirmware)
+  allowed.besVersions = allowed.besVersions.map(normalizeBesVersion)
   const {recorder} = config
   const output = recorder.output
   const remote = validateProbePath(config.probe.path)
@@ -201,6 +225,7 @@ export async function collectReturnObservation(config: ReturnCollectorConfig, ap
     mode: "collect",
     fixture,
     profile,
+    allowedSource: allowed,
     probe: config.probe,
     collectorSha256: sha(await readFile(import.meta.path)),
     returnObserverSha256: sha(await readFile(new URL("./return-observer.ts", import.meta.url))),
@@ -209,13 +234,19 @@ export async function collectReturnObservation(config: ReturnCollectorConfig, ap
     const appContext = {recorder, profile, fixture}
     await app?.prepare(appContext)
     const hardware = () =>
-      readOtaHardware(fixture, [profile.mtk.version], [profile.asg.versionCode], false, (argv) => recorder.run(argv))
+      readOtaHardware(fixture, allowed.mtkVersions, allowed.asgVersions, false, (argv) => recorder.run(argv))
     const initial = await hardware()
     if (initial.bootCompleted !== "1" || !/^_[ab]$/.test(initial.slot)) throw new Error("Target has not completed boot")
     const shell = (...argv: string[]) => ["adb", "-t", initial.transport, "shell", ...argv]
     const sameHardware = async () => {
       const next = await hardware()
-      if (next.transport !== initial.transport || next.bootId !== initial.bootId || next.slot !== initial.slot)
+      if (
+        next.transport !== initial.transport ||
+        next.bootId !== initial.bootId ||
+        next.slot !== initial.slot ||
+        next.firmware !== initial.firmware ||
+        next.asgVersion !== initial.asgVersion
+      )
         throw new Error("Fixture transport, boot or slot changed during observation")
       return next
     }
@@ -265,7 +296,7 @@ export async function collectReturnObservation(config: ReturnCollectorConfig, ap
     const deadline = Date.now() + 35000
     while (!bes) {
       const logs = await logRead()
-      const found = freshBes(logs.rows, {...waitIdentity.process, uptimeSeconds: logs.uptime}, profile.bes.version, 15)
+      const found = freshBes(logs.rows, {...waitIdentity.process, uptimeSeconds: logs.uptime}, allowed.besVersions, 15)
       if (found)
         bes = {
           version: found.version,
@@ -363,7 +394,7 @@ export async function collectReturnObservation(config: ReturnCollectorConfig, ap
     if (
       version.value.type !== "version_info_1" ||
       version.value.package_name !== APP ||
-      Number(version.value.build_number) !== profile.asg.versionCode ||
+      Number(version.value.build_number) !== initial.asgVersion ||
       typeof version.value.sid !== "string"
     )
       throw new Error("Version response does not match selected ASG")
