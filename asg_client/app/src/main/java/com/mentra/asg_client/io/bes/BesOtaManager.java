@@ -19,6 +19,7 @@ import java.io.FileInputStream;
 import java.io.FileNotFoundException;
 import java.io.IOException;
 import java.nio.charset.StandardCharsets;
+import java.util.concurrent.atomic.AtomicInteger;
 import org.greenrobot.eventbus.EventBus;
 import org.json.JSONObject;
 
@@ -92,6 +93,8 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
     private Runnable applyWaitRunnable;
     private String activeOwnerSessionId = "";
     private ValidatedBesArtifact activeArtifact;
+    private volatile String handshakeDiagnosticContext;
+    private final AtomicInteger handshakeDiagnosticFrames = new AtomicInteger();
 
     private final Runnable otaAppliedCallback;
     private final BesOtaStateStore stateStore;
@@ -609,6 +612,7 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
         isWaitingForAuthorization = false;
         authorizationRecoveryProbePending = true;
         authorizationRecoveryProbeAttempts = 0;
+        beginHandshakeDiagnostics("authorization_timeout");
         sendNextAuthorizationRecoveryProbeLocked();
     }
 
@@ -777,6 +781,7 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
     }
 
     private void cleanupLocked() {
+        handshakeDiagnosticContext = null;
         if (authorizationReserved && !activeOwnerSessionId.isEmpty()) {
             BesOtaStateStore.Snapshot current = stateStore.read();
             if (current.isValid() && current.getState() == BesOtaStateStore.State.AUTH_ATTEMPTED) {
@@ -892,6 +897,7 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
             // response cancels the remaining attempts.
             authorizationRecoveryProbePending = true;
             authorizationRecoveryProbeAttempts = 0;
+            beginHandshakeDiagnostics("authorization_granted");
             sendNextAuthorizationRecoveryProbeLocked();
         }
     }
@@ -1112,6 +1118,79 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
     private byte[] recvBuffer = new byte[512];
     private int curRecvLen = 0;
 
+    // Observe parser state without resetting it: a retained partial frame is diagnostic evidence.
+    private void beginHandshakeDiagnostics(String reason) {
+        String context =
+                " pid="
+                        + android.os.Process.myPid()
+                        + " owner="
+                        + activeOwnerSessionId
+                        + " lease="
+                        + transportLease;
+        handshakeDiagnosticContext = context;
+        handshakeDiagnosticFrames.set(AsgConstants.BES_OTA_HANDSHAKE_DIAGNOSTIC_MAX_FRAMES);
+        Log.i(
+                TAG,
+                "BES_OTA_DIAG op=raw_entry"
+                        + context
+                        + " reason="
+                        + reason
+                        + " buffered="
+                        + curRecvLen);
+    }
+
+    private void logHandshakeReceive(
+            String context,
+            int remaining,
+            byte[] data,
+            int size,
+            int bufferedBefore,
+            BesOtaMessage message,
+            boolean parserReturned) {
+        // Bound both byte views to the header width, and stop after the protocol-version reply.
+        byte[] header = bufferedBefore > 0 || curRecvLen > 0 ? recvBuffer : data;
+        int available =
+                header == null ? 0 : Math.min(header.length, bufferedBefore + Math.max(0, size));
+        int headerLength = Math.min(BesBaseCommand.MIN_LENGTH, available);
+        String declaredLength =
+                headerLength == BesBaseCommand.MIN_LENGTH
+                        ? Integer.toUnsignedString(BesOtaUtil.bytes2Int(header, 1, 4))
+                        : "unknown";
+        String disposition =
+                !parserReturned
+                        ? "exception"
+                        : message == null ? "incomplete" : message.error ? "error" : "parsed";
+        Log.i(
+                TAG,
+                "BES_OTA_DIAG op=raw_receive"
+                        + context
+                        + " frame="
+                        + (AsgConstants.BES_OTA_HANDSHAKE_DIAGNOSTIC_MAX_FRAMES - remaining + 1)
+                        + " bytes="
+                        + size
+                        + " buffered_before="
+                        + bufferedBefore
+                        + " buffered_after="
+                        + curRecvLen
+                        + " chunk_prefix="
+                        + (data == null
+                                ? "none"
+                                : ByteUtil.outputHexString(
+                                        data,
+                                        0,
+                                        Math.min(
+                                                BesBaseCommand.MIN_LENGTH,
+                                                Math.min(data.length, size))))
+                        + " header="
+                        + (headerLength == 0
+                                ? "none"
+                                : ByteUtil.outputHexString(header, 0, headerLength))
+                        + " declared_length="
+                        + declaredLength
+                        + " disposition="
+                        + disposition);
+    }
+
     public BesOtaMessage parseRecv(byte[] data, int offset, int len) {
         if (data == null) return null;
 
@@ -1241,8 +1320,34 @@ public class BesOtaManager implements IBesOtaController, BesOtaUartListener, Bes
 
     @Override
     public void onOtaRecv(byte[] data, int size) {
-        // Reduced logging - only log errors and non-data-ack commands
-        BesOtaMessage otaMsg = parseRecv(data, 0, size);
+        String diagnosticContext = handshakeDiagnosticContext;
+        int diagnosticRemaining =
+                diagnosticContext == null
+                        ? 0
+                        : handshakeDiagnosticFrames.getAndUpdate(value -> Math.max(0, value - 1));
+        int bufferedBefore = curRecvLen;
+        BesOtaMessage otaMsg = null;
+        boolean parserReturned = false;
+        try {
+            otaMsg = parseRecv(data, 0, size);
+            parserReturned = true;
+        } finally {
+            if (diagnosticRemaining > 0) {
+                logHandshakeReceive(
+                        diagnosticContext,
+                        diagnosticRemaining,
+                        data,
+                        size,
+                        bufferedBefore,
+                        otaMsg,
+                        parserReturned);
+            }
+        }
+        if (otaMsg != null
+                && !otaMsg.error
+                && otaMsg.cmd == BesProtocolConstants.RCMD_GET_PROTOCOL_VERSION) {
+            handshakeDiagnosticContext = null;
+        }
         if (otaMsg != null) {
             if (!otaMsg.error) {
                 if (transportCoordinator != null

@@ -291,6 +291,9 @@ public class AsgConstants {
      */
     public static final long BES_OTA_RESPONSE_TIMEOUT_MS = 30000;
 
+    /** Maximum receive callbacks logged while waiting for the raw OTA protocol-version reply. */
+    public static final int BES_OTA_HANDSHAKE_DIAGNOSTIC_MAX_FRAMES = 12;
+
     /**
      * Resend schedule for the post-APK-restart OTA completion push
      * (OtaHelper#sendCompletionToPhone). The freshly installed process races its own UART transport
