@@ -11,6 +11,7 @@ import {executeSteps} from "./runner/suite"
 import {legacyAppPairChecks, loadLegacyRoute, verifyPublishedLegacyManifests} from "./runner/ota-legacy-route"
 import {runLifecycle, type AssertionObservation, type Json, type Reconciliation} from "./runner/lifecycle"
 import {runOtaCustomerSequence, type OtaCustomerProgress} from "./runner/ota-customer-sequence"
+import {otaAudioNotice, otaAudioNoticeStep} from "./runner/ota-audio-notice"
 
 const {values} = parseArgs({
   args: process.argv.slice(2),
@@ -171,6 +172,13 @@ async function press(identifier: string, instruction: string) {
 }
 async function verifyAppPair() {
   const identity = legacy ? await hardware() : undefined
+  const notice = otaAudioNotice(await snapshot())
+  if (notice === "blocked") throw new Error("The glasses audio notice is incomplete or ambiguous")
+  if (notice === "dismissible") {
+    const step = otaAudioNoticeStep(`OTA-${String(++index).padStart(2, "0")}`)
+    if (!(await executeSteps([step], {fixture: fixture.serial, email: "", password: ""}, report)))
+      throw new Error("The glasses audio notice did not close; do not retry its dismissal automatically")
+  }
   const steps = [
     {
       instruction: "Open Settings to identify the app's paired glasses.",

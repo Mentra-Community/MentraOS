@@ -1,4 +1,5 @@
 import type {Snapshot} from "./driver"
+import {otaAudioNotice} from "./ota-audio-notice"
 import {otaPage} from "./ota-state"
 
 /** Caller-captured reads under the existing fixture lease. This module runs no commands. */
@@ -172,6 +173,7 @@ export function checkPairedHome(home: Snapshot, deviceInfo: Snapshot, bluetooth:
   const named = deviceInfo.elements.filter((row) => row.visible).map((row) => row.description)
   return (
     otaPage(home).kind === "home" &&
+    otaAudioNotice(home) === "absent" &&
     shown.filter(
       (row) =>
         row.role === "AXGenericElement" &&
