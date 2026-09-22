@@ -2,7 +2,7 @@ name: Qualify coordinated mobile builds
 
 on:
   pull_request:
-    types: [labeled, synchronize]
+    types: [labeled]
 
 concurrency:
   group: qualify-coordinated-mobile-${{ github.event.pull_request.number }}
@@ -16,7 +16,7 @@ permissions:
 # Nothing in this workflow deploys Cloud, publishes releases or uploads to stores.
 jobs:
   plan:
-    if: github.event.pull_request.head.repo.full_name == github.repository && contains(github.event.pull_request.labels.*.name, 'qualify-coordinated-mobile')
+    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.label.name == 'qualify-coordinated-mobile'
     runs-on: ubuntu-latest
     outputs:
       source: ${{ steps.plan.outputs.source }}

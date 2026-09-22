@@ -237,14 +237,20 @@ await withRetry(
     if (process.env.MENTRA_CI_KEYCHAIN) {
       args.push(`OTHER_CODE_SIGN_FLAGS=--keychain ${process.env.MENTRA_CI_KEYCHAIN} --timestamp=none`);
     }
-    let result = await runXcode(args, {env: process.env});
+    // Keep the first transient diagnostic even if later parallel compile logs
+    // push it out of runXcode's bounded tail.
+    let transientEvidence = '';
+    const options = {env: process.env, onOutput: (output) => {
+      if (!transientEvidence && isSPMOrSentryTransientError({stdout: output})) transientEvidence = output;
+    }};
+    let result = await runXcode(args, options);
     if (signingOnlyFailure(result) && process.env.MENTRA_CI_KEYCHAIN) {
       console.log('Retrying signing with existing compiler outputs.');
       await $({ stdio: 'inherit' })`security unlock-keychain -p ${process.env.MENTRA_CI_KEYCHAIN_PASSWORD} ${process.env.MENTRA_CI_KEYCHAIN}`;
-      result = await runXcode(args, {env: process.env});
+      result = await runXcode(args, options);
     }
     if (result.status !== 0 || result.signal) {
-      throw Object.assign(new Error(`iOS archive failed: ${result.status ?? result.signal}`), {stdout: result.output});
+      throw Object.assign(new Error(`iOS archive failed: ${result.status ?? result.signal}`), {stdout: transientEvidence + result.output});
     }
   },
   { shouldRetry: isSPMOrSentryTransientError }
