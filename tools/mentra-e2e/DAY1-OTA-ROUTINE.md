@@ -1,11 +1,11 @@
 # January baseline to selected release: iOS on Mac
 
-Status: the supervised January-to-target customer update reached the exact CI
-manifest's BES, MTK and active ASG APK on the authorized lab fixture. Its continuous
-recording preserves one failed transient-screen assertion; it is not a passing
-routine. The January starting state was prepared using compact BES OTA and MTK
-factory flashing, with independently verified original system ASG27. Full January
-OTA setup and automatic teardown are **not yet qualified**.
+Status: the earlier supervised January-to-target customer update reached the exact
+CI manifest's BES, MTK and active ASG APK, but retained a failed transient-screen
+assertion. A later full January OTA downgrade now has independent baseline proof,
+including Wi-Fi recovery and the bundled ASG27, after preserving and reconciling
+an incorrect APK-path assertion. Neither result passes the complete unattended
+setup, customer update and teardown routine.
 The customer-only replay extension below starts from an already prepared baseline;
 it does not claim to handle or qualify the complete January setup and recovery.
 
@@ -51,8 +51,9 @@ for the requested target; a missing or unqualified artifact stops preparation
 instead of silently choosing factory flashing. The January 13 target-files archive
 has now been obtained and matched to the factory image set. Its generated signed
 full downgrade OTA passes native signature verification and an apply check against
-all fourteen target partitions. Device installation and Wi-Fi recovery remain
-unqualified; target files themselves are not installable.
+all fourteen target partitions. One installation and Wi-Fi recovery were verified
+on the fixture; the newly extracted lifecycle composition still needs its own
+complete device run. Target files themselves are not installable.
 
 "Full OTA" describes replacement system content; it does not imply erasing user
 data. Normal customer upgrades preserve data. The prepared January lab downgrade
@@ -85,6 +86,17 @@ until both measured results exist for comparable starting and target states.
 Keep package generation/upload time, a same-version reinstall and the later
 multi-component customer upgrade separate from this downgrade comparison.
 
+The measured Wi-Fi full downgrade took 34.334 seconds to transfer and 186.218
+seconds to apply. The first independent new-boot observation was 534.994 seconds
+after transfer began, including checks and scheduling between stages. The earlier
+factory flash completed writes/readbacks in 123.974 seconds and its first network
+boot observation was at 299.785 seconds. These runs are not directly comparable:
+the OTA reset userdata, while flashing preserved it. Full setup proof took
+1,725.822 seconds for this OTA experiment, including 1,173.054 seconds investigating
+the incorrect APK-path assertion; the final read-only reconciliation itself took
+16.782 seconds. These measurements establish remote Wi-Fi operation, not an OTA
+speed advantage.
+
 PR #4132's build was installed, verified and restored during the Mac host experiment.
 Its effective manifest and legacy deployment policy have since been frozen for
 setup qualification, with all eight normal/rescue artifacts cached and verified.
@@ -112,8 +124,8 @@ readiness for this routine.
    policy. Preserve identity/calibration and recover Wi-Fi through the owned
    January BLE setup path. Verify the bundled factory ASG27; do not add a separate
    initial APK installation. Record every mutation and its postconditions. The
-   prepared full MTK adapter still needs device qualification; this setup has its
-   own result and must not be presented as the customer upgrade.
+   complete setup composition still needs device qualification; this setup has
+   its own result and must not be presented as the customer upgrade.
 4. **Verify the starting state.** Independently prove all three January components
    and the same physical glasses. Do not start the customer test with modern MTK
    or an overlaid modern ASG APK. Keep failed preparation attempts as failures.
