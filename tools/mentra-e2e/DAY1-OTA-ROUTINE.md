@@ -36,7 +36,7 @@ command/device evidence remain in ignored local storage.
 | --- | --- |
 | BES | Fresh `17.26.1.13` response after installation of the accepted compact lab artifact; exact artifact digest and OTA gates. |
 | MTK | `MentraLive_20260113` from the selected full OTA or explicitly selected factory images, boot completion and matching physical identity. |
-| ASG | Original active factory APK, expected version code 27; verify exact APK/hash before freezing the baseline. A newer installed update must not mask it. |
+| ASG | Original active factory APK bundled in January MTK, expected version code 27; verify exact APK/hash before freezing the baseline. No separate initial ASG installation is needed, and a newer installed update must not mask it. |
 
 The compact BES raw image is 1,966,076 bytes, below the unchanged strict
 1,966,080-byte OTA boundary. Its acceptance includes CRC, byte-identical
@@ -55,18 +55,22 @@ all fourteen target partitions. Device installation and Wi-Fi recovery remain
 unqualified; target files themselves are not installable.
 
 "Full OTA" describes replacement system content; it does not imply erasing user
-data. Normal customer upgrades preserve data. The January lab downgrade must
-explicitly carry the verified downgrade/wipe policy (`POWERWASH=1`): this removes
+data. Normal customer upgrades preserve data. The prepared January lab downgrade
+explicitly carries a verified downgrade/wipe policy (`POWERWASH=1`): this removes
 newer app updates and app data from `/data`, exposing the factory ASG27 already in
-January MTK. Saved Wi-Fi settings are also lost. Before dispatch, preserve required
+January MTK without installing another APK. Reverify that policy in the frozen
+artifact before dispatch; do not apply it to ordinary customer upgrades or assume
+every full OTA wipes data. Saved Wi-Fi settings are also lost. Preserve required
 fixture data and prove the normal January BLE Wi-Fi provisioning and independently
 identified ADB return path. A successful USB return from newer firmware is not
 evidence that January USB will return without a cable replug.
 
-Factory flashing remains an explicitly selected alternative. Its unattended helper
-uses the modern BES `cs_mtkfp` command, absent from January BES. That option requires
-temporary compatible BES before flashing, then compact January BES and factory ASG
-restoration. Preserve the actual installation method in every result. Never retry
+Factory flashing remains an explicitly selected setup or recovery alternative.
+Its unattended helper uses the modern BES `cs_mtkfp` command, absent from January
+BES. That option requires temporary compatible BES before flashing, then compact
+January BES. The factory images also contain ASG27; any preserved `/data` APK
+overlay must be identified and handled explicitly before the baseline can pass.
+Preserve the actual installation method in every result. Never retry
 an interrupted OTA using flashing until its original write is settled and recovery
 is explicitly selected.
 
@@ -74,6 +78,8 @@ Record artifact download, device staging, dispatch, completion/reboot and indepe
 target verification timestamps separately for both methods. Compare dispatch to
 verified boot/identity, disclose observer delays, and do not claim that OTA is faster
 until both measured results exist for comparable starting and target states.
+Keep package generation/upload time, a same-version reinstall and the later
+multi-component customer upgrade separate from this downgrade comparison.
 
 PR #4132's build was installed, verified and restored during the Mac host experiment.
 Its effective manifest and legacy deployment policy have since been frozen for
@@ -96,10 +102,14 @@ readiness for this routine.
    glasses identity, power, available storage, host permissions and tool readiness.
    Record current firmware, active ASG hash, slot and boot identity. Require no
    active call, media transfer or firmware operation.
-3. **Establish the January lab baseline.** Use the qualified BES and full MTK OTA
-   setup adapters in their verified order, preserving identity/calibration. Record
-   every mutation and any owned clean-data reset. This preparation has its own
-   result and must not be presented as the customer upgrade.
+3. **Establish the January lab baseline.** For the default route, install compact
+   January BES through its qualified OTA path while modern ASG remains active,
+   then apply the signed full January MTK OTA with its verified `POWERWASH=1`
+   policy. Preserve identity/calibration and recover Wi-Fi through the owned
+   January BLE setup path. Verify the bundled factory ASG27; do not add a separate
+   initial APK installation. Record every mutation and its postconditions. The
+   prepared full MTK adapter still needs device qualification; this setup has its
+   own result and must not be presented as the customer upgrade.
 4. **Verify the starting state.** Independently prove all three January components
    and the same physical glasses. Do not start the customer test with modern MTK
    or an overlaid modern ASG APK. Keep failed preparation attempts as failures.

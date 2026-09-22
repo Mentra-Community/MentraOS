@@ -65,10 +65,18 @@ artifacts, retain no-resend ownership, and require independent post-boot firmwar
 and identity verification. Wi-Fi ADB is an explicitly selected transport with the
 same identity checks, not a weaker fallback.
 
+Full payload selection and userdata reset are separate policies. The prepared
+January lab downgrade explicitly uses `POWERWASH=1` to expose ASG27 already bundled
+in January MTK; it does not require a separate initial ASG installation. Validate
+that reset policy from the frozen artifact and qualify the resulting Wi-Fi and
+identity recovery. Ordinary customer upgrades preserve userdata.
+
 For method comparisons, retain separate timestamps for artifact download, device
 staging, dispatch, write completion, reboot and final verification. Report total
 dispatch-to-verification alongside write time and disclose observation delays;
-only comparable measured runs can establish which method is faster.
+only comparable measured downgrades can establish which method is faster. Keep
+package generation/upload and the subsequent customer upgrade out of that timing;
+a same-version reinstall does not qualify the downgrade comparison.
 
 ## Durable execution and ownership
 

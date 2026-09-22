@@ -24,7 +24,9 @@ Source of truth:
   passes all 6,390 entry CRCs and matches the factory partition images. Its signed
   full downgrade OTA passes native signature verification and an apply check
   against all fourteen target partitions; device qualification remains pending.
-  The target-files archive itself is not installable.
+  The prepared package explicitly uses `POWERWASH=1`, exposing the ASG27 already
+  bundled in January MTK without a separate initial APK installation. Full OTA
+  alone does not imply a wipe. The target-files archive itself is not installable.
 - [x] Confirm the original January BES exceeds the OTA boundary by 260 bytes;
   preserve the existing size gate.
 - [x] Prepare and independently verify the accepted compact BES artifact on the
@@ -98,9 +100,13 @@ Source of truth:
 - [x] Add explicitly selected Wi-Fi ADB observation, preserving CID/serial/full
   Bluetooth identity and fail-closed reconnect classification. Fifteen focused
   tests and a real read-only January observation pass.
-- [ ] Make qualified full MTK OTA the default for setup/restoration, retaining
-  flashing only by explicit selection. Preserve downgrade-with-wipe behavior,
-  qualify BLE Wi-Fi reprovisioning, and measure both methods to verified boot.
+- [ ] Qualify the prepared full MTK OTA adapter as the default for setup/restoration,
+  retaining flashing only as an explicitly selected setup or recovery option.
+  Install compact January BES while modern ASG is active, then apply the full
+  January MTK downgrade with its verified wipe policy and verify bundled ASG27.
+  Qualify BLE Wi-Fi reprovisioning and independent identity/boot return. Measure
+  full OTA and flashing on comparable downgrades; keep staging, generation and
+  the later customer update timings separate. No full OTA device pass is claimed.
 - [x] Implement frozen manifest parsing, fourteen independent firmware/identity
   assertions and an offline verification CLI (16 focused parser/CLI tests).
   Live adapters must collect those observations; supplied JSON alone cannot
@@ -141,8 +147,9 @@ by a normal ASG-reader restart and fresh legacy version query, without resend.
 The newer ASG overlay was removed, exposing the January system APK (version 27,
 matching the verified original digest). A later ASG27 query did not produce a
 fresh BES version response; that limitation is retained alongside the same-boot
-version proof immediately before the ASG-only revert. The complete customer
-recording and return-profile restoration remain outstanding.
+version proof immediately before the ASG-only revert. This historical setup used
+flashing; the later customer recording below does not qualify the prepared full
+January OTA setup or return-profile restoration.
 
 The first customer attempt used PR #4136 head `25d5c418`'s verified CI Mac app
 (`303006135`) and exact PR OTA manifest. It failed before firmware dispatch:
@@ -152,7 +159,7 @@ query, so it showed an update offer; pressing Install performed the query and
 timed out with a misleading network error. Both native accumulators now recognize
 the verified ASG27 format while retaining modern correlation and completion rules.
 The shared UI preserves the distinct version-query failure. Focused native and
-hook tests pass; a new CI build and device rerun are required.
+hook tests passed; the replacement build was exercised in the later run below.
 
 The finalized failed recording has three screenshot/chapter entries and plays in
 the authenticated local admin dashboard. Selecting the English failure-observation
