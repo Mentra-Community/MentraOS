@@ -1,6 +1,6 @@
 import {MOBILE_PR_PATHS} from "./pr-mobile-build.mjs"
 import {createHash} from "node:crypto"
-import {iosInstallUrl} from "./pr-ios-artifacts-install.mjs"
+import {iosInstallUrl, macInstallPageUrl} from "./pr-ios-artifacts-install.mjs"
 import {iosReceiptName, validateIosReceipt} from "./pr-ios-artifacts.mjs"
 import {artifactUrl} from "./release-artifact-storage.mjs"
 
@@ -26,6 +26,7 @@ export async function verifyIosTextArtifact(response, kind, asset) {
   if (bytes.length !== asset.size) throw new Error(`Published ${kind} download size disagrees with its receipt`)
   if (createHash("sha256").update(bytes).digest("hex") !== asset.sha256)
     throw new Error(`Published ${kind} download hash disagrees with its receipt`)
+  return kind === "install" && bytes.toString("utf8").includes('data-mentra-mac-install="1"')
 }
 
 export function readOtaTargets(manifest, number, sha) {
@@ -69,15 +70,23 @@ export function buildPost({pr, sha, androidUrl, manifestUrl, targets, androidRun
       )
     else iphoneLinks.push(richLink(ios.assets.iphone, "Download IPA"))
   }
+  const macLinks = ios?.assets
+    ? [
+        ...(ios.macInstallUrl ? [richLink(ios.macInstallUrl, "Install on Mac")] : []),
+        richLink(ios.assets.mac, ios.macInstallUrl ? "First-time setup ZIP" : "Download ZIP"),
+      ]
+    : []
   // Slack's webhook mrkdwn parser escapes itms-services links as literal text.
   // Rich-text links open the installer on iPhone; Slack renders them as plain
   // text on Mac, so also include the HTTPS installation page for sharing.
+  // Mac installation uses HTTPS too; the browser performs the custom-protocol
+  // handoff instead of depending on Slack's handling of a new URL scheme.
   const platforms = {
     type: "rich_text",
     elements: [
       ["iphone", "Android", error ? [] : [richLink(androidUrl, "Download APK")], "Unavailable"],
       ["iphone", "iOS", iphoneLinks, appleStatus],
-      ["computer", "macOS", ios?.assets ? [richLink(ios.assets.mac, "Download ZIP")] : [], appleStatus],
+      ["computer", "macOS", macLinks, appleStatus],
     ].map(([icon, name, links, status]) => ({
       type: "rich_text_section",
       elements: [
@@ -245,8 +254,8 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
     androidBuild.conclusion !== "success"
       ? `Android build ${androidBuild.conclusion}; no ready-to-test build is available.`
       : asgBuild.conclusion !== "success"
-      ? `ASG + OTA ${asgBuild.conclusion}; Android is not ready to test.`
-      : null
+        ? `ASG + OTA ${asgBuild.conclusion}; Android is not ready to test.`
+        : null
   if (ios.required) {
     ios.runUrl = iosRun.html_url
     if (iosBuild.conclusion !== "success") ios.error = `iOS ${iosBuild.conclusion}; downloads are not ready.`
@@ -283,14 +292,17 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
       const receipt = await (await request(receiptUrl)).json()
       const assets = validateIosReceipt(receipt, coordinates)
       const urls = {}
+      let macHandoff = false
       for (const [kind, asset] of Object.entries(assets)) {
         urls[kind] = artifactUrl(`${repo.owner}/${repo.repo}`, "pr-builds", asset.name)
         const response = await request(urls[kind], iosTextTypes[kind] ? "GET" : "HEAD")
-        if (iosTextTypes[kind]) await verifyIosTextArtifact(response, kind, asset)
-        else if (Number(response.headers.get("content-length")) !== asset.size)
+        if (iosTextTypes[kind]) {
+          if (await verifyIosTextArtifact(response, kind, asset)) macHandoff = true
+        } else if (Number(response.headers.get("content-length")) !== asset.size)
           throw new Error(`Published ${kind} download size disagrees with its receipt`)
       }
       ios.assets = urls
+      if (macHandoff) ios.macInstallUrl = macInstallPageUrl(urls.install, receipt.runAttempt)
       ios.instructionsUrl = `https://github.com/${repo.owner}/${repo.repo}/blob/${receipt.buildSha}/mobile/ci/pr-ios/README.md`
     } catch (failure) {
       ios.error = failure.message
@@ -339,7 +351,9 @@ export async function notifyPrBuilds({github, context, core, fetchImpl = fetch})
     downloads.push(
       `${ios.assets.install ? `[Install on iPhone](${ios.assets.install}) · ` : ""}[Download iPhone IPA](${
         ios.assets.iphone
-      }) · [Download Mac app](${ios.assets.mac}) · [Installation instructions](${ios.instructionsUrl})`,
+      }) · ${ios.macInstallUrl ? `[Install on Mac](${ios.macInstallUrl}) · ` : ""}[Download Mac app](${
+        ios.assets.mac
+      }) · [Installation instructions](${ios.instructionsUrl})`,
     )
   else downloads.push(ios.error || "iPhone / Mac: not built for these changed paths.")
   const body = `${marker}\n<!-- ${identity} -->\n${

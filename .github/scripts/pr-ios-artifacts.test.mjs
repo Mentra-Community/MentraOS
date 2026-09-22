@@ -5,8 +5,9 @@ import {mkdtemp, readFile, rm, writeFile} from "node:fs/promises"
 import {tmpdir} from "node:os"
 import path from "node:path"
 import test from "node:test"
+import {runInNewContext} from "node:vm"
 import {iosReceiptName, validateIosReceipt, publishIosArtifacts} from "./pr-ios-artifacts.mjs"
-import {iosInstallationFiles} from "./pr-ios-artifacts-install.mjs"
+import {iosInstallationFiles, macInstallPageUrl} from "./pr-ios-artifacts-install.mjs"
 import {artifactUrl} from "./release-artifact-storage.mjs"
 import {validateMacProvisioning} from "../../mobile/scripts/install-ios-mac.mjs"
 
@@ -98,6 +99,67 @@ test("Safari install page points through a valid Apple plist to the exact signed
   assert.deepEqual(iosInstallationFiles({...receipt, runAttempt: 3}, repository), files)
   for (const app of [{...receipt.app, bundleId: "wrong"}, {...receipt.app, build: "<bad>"}, undefined])
     assert.throws(() => iosInstallationFiles({...receipt, app}, repository), /app identity/)
+})
+
+test("native Mac handoff preserves immutable HTML and selects the public receipt attempt", () => {
+  const native = {...receipt, app: {...receipt.app, macPackageVersion: 2, macInstaller: "Install Mentra.app"}}
+  const repository = "Mentra-Community/MentraOS"
+  const files = iosInstallationFiles(native, repository)
+  const html = files.install.content
+  const script = html.match(/<script>([\s\S]*?)<\/script>/)[1]
+  const policyHash = html.match(/script-src 'sha256-([^']+)'/)[1]
+  assert.equal(policyHash, createHash("sha256").update(script).digest("base64"))
+  assert.match(html, /data-mentra-mac-install="1"/)
+  assert.match(html, /First-time setup/)
+  assert.match(html, /without another ZIP in Downloads/)
+  assert.doesNotMatch(script, /itms-services|https?:/)
+  assert.deepEqual(iosInstallationFiles({...native, runAttempt: 3}, repository), files)
+
+  const pageUrl = artifactUrl(repository, "pr-builds", files.install.name)
+  const handoff = new URL(macInstallPageUrl(pageUrl, 3))
+  assert.equal(handoff.pathname, new URL(pageUrl).pathname)
+  assert.equal(handoff.search, "?platform=mac&attempt=3")
+  for (const attempt of [0, -1, 1.5, Number.MAX_SAFE_INTEGER + 1, "3"])
+    assert.throws(() => macInstallPageUrl(pageUrl, attempt), /Invalid/)
+  assert.throws(() => macInstallPageUrl("http://example.com/install.html", 1), /Invalid/)
+
+  function runPage(search) {
+    const elements = {
+      "mac-install": {hidden: true, dataset: {number: "123", head: coordinates.sha, run: "100"}},
+      "iphone-install": {hidden: false},
+      "install-heading": {textContent: "Install the Mentra App"},
+      "mac-status": {},
+      "mac-install-button": {},
+    }
+    const opened = []
+    runInNewContext(script, {
+      URL,
+      URLSearchParams,
+      window: {location: {search, assign: (url) => opened.push(url)}},
+      document: {getElementById: (id) => elements[id]},
+    })
+    return {elements, opened}
+  }
+  for (const query of ["", "?platform=iphone", "?attempt=3", "?platform=mac&platform=iphone&attempt=3"])
+    assert.deepEqual(runPage(query).opened, [])
+  for (const attempt of ["", "0", "-1", "1.5", "01", "9007199254740992", "3&attempt=4", "%22%3E%3Cscript%3E"])
+    assert.deepEqual(runPage(`?platform=mac&attempt=${attempt}`).opened, [])
+  const result = runPage("?platform=mac&attempt=3&number=999&run=999&head=evil&url=https://example.com")
+  assert.equal(result.opened.length, 1)
+  const target = new URL(result.opened[0])
+  assert.equal(target.protocol, "mentra-install:")
+  assert.equal(target.hostname, "pr")
+  assert.deepEqual(Object.fromEntries(target.searchParams), {
+    number: "123",
+    head: coordinates.sha,
+    run: "100",
+    attempt: "3",
+  })
+  assert.equal(result.elements["mac-install-button"].href, target.href)
+  assert.equal(result.elements["mac-install"].hidden, false)
+  assert.equal(result.elements["iphone-install"].hidden, true)
+  for (const values of [{pr: '123"><script>evil</script>'}, {headSha: "<script>"}, {runId: "100"}])
+    assert.throws(() => iosInstallationFiles({...native, ...values}, repository), /coordinates/)
 })
 
 test("publishes installation files before receipt and preserves their bytes on publication-only retry", async (t) => {

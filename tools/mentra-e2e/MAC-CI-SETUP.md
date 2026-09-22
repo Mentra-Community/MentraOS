@@ -5,11 +5,13 @@ host setup live in MentraOS for now. Migrating them to a private repository is
 deferred. The [Mac installation spec](../../notes/superpowers/specs/2026-09-21-mac-test-host-installation.md)
 records the design and tested permission behavior.
 
-For manual installation, the existing **Mac app** download in **#pr-builds** now
-packages native **Install Mentra.app**, the signed iOS payload and its build
-manifest. See the [download guide](../../mobile/ci/pr-ios/README.md) for its GUI
-and maintainer signing setup. The automated path below continues to use trusted
-repository code and a pinned host launcher, including for those new ZIPs.
+For manual installation, **Install on Mac** in **#pr-builds** hands a specific
+candidate to a persistent **Install Mentra.app**. Its one-time setup comes from
+the existing Mac ZIP, which also retains the signed iOS payload and manifest.
+Subsequent link installations use a managed cache rather than accumulating
+folders in Downloads. See the [download guide](../../mobile/ci/pr-ios/README.md)
+for setup and signing. The automated path below continues to use trusted
+repository code and a pinned host launcher, including for the new ZIPs.
 
 ## What needs approval
 

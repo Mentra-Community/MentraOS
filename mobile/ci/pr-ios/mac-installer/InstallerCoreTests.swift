@@ -121,10 +121,29 @@ private struct InstallerCoreTests {
                 try rejects { _ = try BuildManifest(data: encode(invalid)) }
             }
         }
-        try test("reject old package format") {
+        try test("reject incomplete legacy package format") {
             var invalid = manifestJSON()
             invalid["macPackageVersion"] = 1
             try rejects { _ = try BuildManifest(data: encode(invalid)) }
+        }
+        try test("accept genuine legacy packages without executing their launcher") {
+            var legacy = manifestJSON()
+            legacy.removeValue(forKey: "macPackageVersion")
+            legacy.removeValue(forKey: "macInstaller")
+            legacy["launcherPath"] = "launch-ios-on-mac"
+            legacy["launcherSha256"] = String(repeating: "d", count: 64)
+            let candidate = try BuildManifest(data: encode(legacy))
+            try expect(candidate.packageVersion == 1, "Legacy package was not identified")
+            legacy["launcherPath"] = "../run-something"
+            try rejects { _ = try BuildManifest(data: encode(legacy)) }
+        }
+        try test("installer ownership cannot claim the app installer's directory") {
+            let fixture = try Fixture()
+            defer { fixture.clean() }
+            try rejects("not owned") {
+                try InstallerFiles.claim(fixture.root, owner: InstallerHost.owner, bundleID: InstallerHost.bundleID)
+            }
+            try expect(fixture.text("Mentra.app/binary") == "old", "Another owner's app changed")
         }
         try test("accept only the registered Mac and exact unexpired profile") {
             try validateProfile(profile(manifest), manifest: manifest, deviceID: "registered-mac", now: now)

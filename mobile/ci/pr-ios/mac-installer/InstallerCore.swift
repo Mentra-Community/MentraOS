@@ -25,18 +25,18 @@ struct BuildManifest {
     let javascriptSHA256: String
     let profileUUID: String
     let profileExpires: Date
+    let packageVersion: Int
 
     init(data: Data, expected: Data? = nil) throws {
         if let expected, data != expected {
             throw InstallerError.invalid("This folder belongs to a different build. Choose the folder containing this Install Mentra app and its original build.json.")
         }
         guard let json = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-              json["macPackageVersion"] as? Int == 2,
-              json["macInstaller"] as? String == "Install Mentra.app",
+              Self.supportedPackage(json),
               json["app"] as? String == "Mentra.app",
               json["bundleId"] as? String == Self.bundleID,
               json["teamId"] as? String == Self.teamID,
-              json["archivePath"] == nil, json["launcherPath"] == nil,
+              json["archivePath"] == nil,
               let pr = json["pr"] as? Int, pr > 0,
               let head = json["headSha"] as? String, Self.hex(head, length: 40),
               let version = json["version"] as? String, !version.isEmpty,
@@ -56,6 +56,7 @@ struct BuildManifest {
         javascriptSHA256 = javascript
         self.profileUUID = profileUUID
         self.profileExpires = profileExpires
+        packageVersion = json["macPackageVersion"] as? Int ?? 1
     }
 
     var summary: String {
@@ -64,6 +65,21 @@ struct BuildManifest {
 
     private static func hex(_ value: String, length: Int) -> Bool {
         value.count == length && value.allSatisfy { "0123456789abcdef".contains($0) }
+    }
+
+    private static func supportedPackage(_ json: [String: Any]) -> Bool {
+        switch json["macPackageVersion"] as? Int ?? 1 {
+        case 1:
+            // Existing CDN packages remain usable. Only their signed iOS app
+            // is installed; the legacy script and ad hoc launcher never run.
+            return json["macInstaller"] == nil
+                && json["launcherPath"] as? String == "launch-ios-on-mac"
+                && (json["launcherSha256"] as? String).map { hex($0, length: 64) } == true
+        case 2:
+            return json["macInstaller"] as? String == "Install Mentra.app"
+                && json["launcherPath"] == nil && json["launcherSha256"] == nil
+        default: return false
+        }
     }
 
     private static func date(_ value: String) -> Date? {
@@ -154,14 +170,14 @@ enum InstallerFiles {
         try JSONSerialization.data(withJSONObject: value, options: [.prettyPrinted, .sortedKeys]).write(to: url, options: .withoutOverwriting)
     }
 
-    static func claim(_ root: URL) throws {
+    static func claim(_ root: URL, owner: String = InstallerFiles.owner, bundleID: String = BuildManifest.bundleID) throws {
         let applications = root.deletingLastPathComponent()
         try requirePath(applications.deletingLastPathComponent(), directory: true)
         if !exists(applications) { try manager.createDirectory(at: applications, withIntermediateDirectories: false) }
         try requirePath(applications, directory: true)
         if !exists(root) {
             try manager.createDirectory(at: root, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700])
-            try writeJSON(["owner": owner, "bundleId": BuildManifest.bundleID], to: root.appendingPathComponent("owner.json"))
+            try writeJSON(["owner": owner, "bundleId": bundleID], to: root.appendingPathComponent("owner.json"))
         }
         try requirePath(root, directory: true)
         let attributes = try manager.attributesOfItem(atPath: root.path)
@@ -171,7 +187,7 @@ enum InstallerFiles {
             throw InstallerError.invalid("The managed installation must belong to you and must not be writable by other users.")
         }
         let marker = try dictionary(read(root.appendingPathComponent("owner.json")))
-        guard marker["owner"] as? String == owner, marker["bundleId"] as? String == BuildManifest.bundleID else {
+        guard marker["owner"] as? String == owner, marker["bundleId"] as? String == bundleID else {
             throw InstallerError.invalid("This installation directory is not owned by the Mentra installer: \(root.path)")
         }
     }
@@ -369,5 +385,93 @@ func install(_ verified: VerifiedBuild, quit: () async throws -> Void) async thr
     } catch {
         if case InstallerError.recovery = error { preserveRecovery = true }
         throw error
+    }
+}
+
+enum InstallerHost {
+    static let bundleID = "com.mentra.mac-installer"
+    static let owner = "mentra-native-installer-v1"
+    static var application: URL {
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Applications/Install Mentra.app")
+    }
+
+    static var state: URL {
+        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent("Library/Application Support/Mentra Installer")
+    }
+
+    static func verify(_ app: URL) throws -> String {
+        try InstallerFiles.requirePlainTree(app)
+        let info = try PropertyListSerialization.propertyList(from: InstallerFiles.read(app.appendingPathComponent("Contents/Info.plist")), format: nil) as? [String: Any]
+        let types = info?["CFBundleURLTypes"] as? [[String: Any]] ?? []
+        guard info?["CFBundleIdentifier"] as? String == bundleID,
+              info?["CFBundleExecutable"] as? String == "Installer",
+              types.contains(where: { ($0["CFBundleURLSchemes"] as? [String])?.contains("mentra-install") == true })
+        else { throw InstallerError.invalid("This is not a Mentra installer with support for PR links.") }
+        try tool("/usr/bin/codesign", ["--verify", "--deep", "--strict", "-R", "=identifier \"\(bundleID)\"", app.path])
+        return try InstallerFiles.hash(app.appendingPathComponent("Contents/MacOS/Installer"))
+    }
+
+    /// A one-time bootstrap retains the already-running, OS-approved installer.
+    /// CI requires Developer ID/notarization; this copy preserves its signature.
+    /// It also allows an explicitly launched local signed development preview.
+    /// Never replace a running helper or execute a helper fetched by a PR link.
+    static func retain(_ runningBundle: URL) throws -> URL {
+        guard let resolved = realpath(runningBundle.path, nil) else {
+            throw InstallerError.invalid("Cannot locate the running installer bundle.")
+        }
+        let source = URL(fileURLWithPath: String(cString: resolved), isDirectory: true)
+        free(resolved)
+        let sourceHash = try verify(source)
+        let destination = application
+        let state = state
+        try InstallerFiles.claim(state, owner: owner, bundleID: bundleID)
+        let metadata = state.appendingPathComponent("installed-helper.json")
+        if InstallerFiles.exists(destination) {
+            let retained = try InstallerFiles.dictionary(InstallerFiles.read(metadata))
+            let installedHash = try verify(destination)
+            guard retained["bundleId"] as? String == bundleID,
+                  retained["executableSha256"] as? String == installedHash
+            else { throw InstallerError.invalid("The permanent Mentra installer does not match its ownership record. Quit it and ask a maintainer to repair the installation.") }
+            return destination
+        }
+        if InstallerFiles.exists(metadata) {
+            throw InstallerError.invalid("The permanent installer is missing but its ownership record remains. Ask a maintainer to repair the installation.")
+        }
+        let applications = destination.deletingLastPathComponent()
+        try InstallerFiles.requirePath(applications.deletingLastPathComponent(), directory: true)
+        if !InstallerFiles.exists(applications) {
+            try FileManager.default.createDirectory(at: applications, withIntermediateDirectories: false)
+        }
+        try InstallerFiles.requirePath(applications, directory: true)
+        let lock = state.appendingPathComponent(".bootstrap-lock")
+        do { try FileManager.default.createDirectory(at: lock, withIntermediateDirectories: false, attributes: [.posixPermissions: 0o700]) }
+        catch { throw InstallerError.invalid("Another installer bootstrap is running or needs recovery: \(lock.path)") }
+        var preserveRecovery = false
+        defer { if !preserveRecovery { try? FileManager.default.removeItem(at: lock) } }
+        let staged = lock.appendingPathComponent("Install Mentra.app")
+        let stagedMetadata = lock.appendingPathComponent("installed-helper.json")
+        var moved = false
+        do {
+            try tool("/usr/bin/ditto", [source.path, staged.path])
+            guard try verify(staged) == sourceHash else { throw InstallerError.invalid("The retained installer copy differs from the running app.") }
+            try InstallerFiles.writeJSON(["bundleId": bundleID, "executableSha256": sourceHash,
+                                          "installedAt": ISO8601DateFormatter().string(from: Date())], to: stagedMetadata)
+            guard !InstallerFiles.exists(destination), !InstallerFiles.exists(metadata) else {
+                throw InstallerError.invalid("Another installer appeared during setup. Nothing was replaced.")
+            }
+            try InstallerFiles.move(staged, destination)
+            moved = true
+            try InstallerFiles.move(stagedMetadata, metadata)
+            return destination
+        } catch {
+            let original = error
+            do { if moved { try InstallerFiles.move(destination, staged) } }
+            catch {
+                preserveRecovery = true
+                throw InstallerError.recovery("Installer setup could not roll back. Retain \(lock.path) for recovery: \(error.localizedDescription)")
+            }
+            if case InstallerError.recovery = original { preserveRecovery = true }
+            throw original
+        }
     }
 }

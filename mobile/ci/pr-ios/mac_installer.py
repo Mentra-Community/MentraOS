@@ -108,10 +108,14 @@ def create_app(package, manifest):
             "CFBundlePackageType": "APPL", "CFBundleShortVersionString": "1.0",
             "CFBundleVersion": manifest["build"], "LSMinimumSystemVersion": "14.0",
             "NSHighResolutionCapable": True, "NSPrincipalClass": "NSApplication",
-            "CFBundleIconFile": "AppIcon.icns"}
+            "CFBundleIconFile": "AppIcon.icns", "LSFileQuarantineEnabled": True,
+            "CFBundleURLTypes": [{"CFBundleURLName": INSTALLER_ID,
+                                  "CFBundleURLSchemes": ["mentra-install"],
+                                  "CFBundleTypeRole": "Viewer"}]}
     (contents / "Info.plist").write_bytes(plistlib.dumps(info))
     run("xcrun", "swiftc", "-parse-as-library", "-O", "-target", "arm64-apple-macosx14.0",
-        HERE / "mac-installer/InstallerCore.swift", HERE / "mac-installer/Installer.swift",
+        HERE / "mac-installer/InstallerCore.swift", HERE / "mac-installer/Distribution.swift",
+        HERE / "mac-installer/Installer.swift",
         "-o", contents / "MacOS/Installer")
     iconset = package / "installer.iconset"
     iconset.mkdir()

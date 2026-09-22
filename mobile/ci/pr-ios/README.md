@@ -45,15 +45,24 @@ phone. Older PR messages that only offer **Download IPA** use this USB method.
 
 Requires Apple Silicon, macOS 14 or later (also subject to the app's iOS/macOS
 compatibility requirement), and registration in the build's ad hoc profile.
-New packages use the same **Mac app** ZIP link in **#pr-builds**, with a native
-installer instead of `Install.command` and the separate launcher. Bun, Xcode and
-Terminal are not required for this installation.
+New **Install on Mac** links in **#pr-builds** hand the selected build to a
+persistent native installer. Bun, Xcode and Terminal are not required.
 
-1. Unzip **Mac app** and open **Install Mentra.app** inside the `Mentra PR` folder.
-2. If the installer asks for a folder, select the extracted `Mentra PR` folder
-   containing `Install Mentra.app`, `Mentra.app` and `build.json`. macOS sometimes
-   opens a downloaded installer separately from its neighboring files.
-3. Check the PR/build shown in the installer and click **Install & Open**.
+**First setup:** use the Mac ZIP download on the installation page, unzip it and
+open **Install Mentra.app** inside the `Mentra PR` folder. If it asks for a folder,
+select that extracted folder. Check the PR/build and click **Install & Open**.
+The installer retains itself in `~/Applications/Install Mentra.app` for later
+links. Complete any normal macOS first-use approvals.
+
+**Later builds:** click **Install on Mac** in **#pr-builds** and allow the browser
+to open the installed Mentra installer if asked. It downloads the selected build
+into its managed cache, verifies it, replaces the Mentra App and opens it. There
+is no new folder to find in Downloads. The page also has an explicit Open button
+if the browser prevents automatic handoff. Old posts remain download-only.
+
+The installer accepts only Mentra PR/build coordinates through `mentra-install:`;
+the link cannot supply an arbitrary download URL or executable. Expired or
+missing builds fail visibly instead of selecting a different build.
 
 The installer checks the profile/device, Apple signature and build hashes,
 normally quits the running app, and installs into

@@ -116,6 +116,24 @@ the inner app signature and verify installed/running identity separately.
 
 ## Shared CI ZIP implementation
 
+The default repeat-install experience is an **Install on Mac** link, not a fresh
+Downloads folder. One-time bootstrap retains the signed native installer in
+`~/Applications/Install Mentra.app` and registers `mentra-install:`. A link
+contains only the PR number, full head SHA, producer run and publication attempt.
+The installer derives the receipt and archive URLs from the fixed Mentra CDN
+origin, validates the receipt and bytes, installs at the existing managed app
+path and opens the app. It must not accept arbitrary hosts, paths or commands.
+Concurrent incoming requests must not race replacement.
+
+The HTTPS handoff page uses the existing published installation HTML artifact.
+It preserves iPhone's explicit installation behavior and attempts the Mac URL
+handler only for an explicit Mac request. It provides an Open button if browser
+policy blocks automatic handoff, and the Mac ZIP for one-time bootstrap. Browser
+confirmation to open an external application remains outside our control.
+Already published immutable pages without handoff support remain download-only.
+Publication retries must preserve HTML bytes while selecting the current public
+receipt attempt, whose archive may belong to an earlier successful build attempt.
+
 Improve the existing Mac ZIP and **#pr-builds** link for every tester. The package
 now contains `Install Mentra.app`, `Mentra.app`, `build.json` and `README.md`.
 `Install.command`, `install.mjs` and the separate ad hoc launcher are removed from

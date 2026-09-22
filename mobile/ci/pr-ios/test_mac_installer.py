@@ -1,6 +1,7 @@
 import base64
 import json
 from pathlib import Path
+import plistlib
 import subprocess
 import tempfile
 import unittest
@@ -62,6 +63,9 @@ class MacInstallerPackagingTests(unittest.TestCase):
         self.assertEqual((package / "Mentra.app/original").read_text(), "Apple-signed iOS payload")
         self.assertFalse((package / "Install.command").exists())
         self.assertFalse((package / "launch-ios-on-mac").exists())
+        info = plistlib.loads((app / "Contents/Info.plist").read_bytes())
+        self.assertEqual(info["CFBundleURLTypes"][0]["CFBundleURLSchemes"], ["mentra-install"])
+        self.assertTrue(info["LSFileQuarantineEnabled"])
         self.assertTrue(any("swiftc" in call.args for call in command.call_args_list))
 
     def notarization(self, status):

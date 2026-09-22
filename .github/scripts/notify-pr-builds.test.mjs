@@ -5,6 +5,7 @@ import {createServer} from "node:http"
 import test from "node:test"
 import {readFileSync} from "node:fs"
 import {brotliCompressSync} from "node:zlib"
+import {iosInstallationFiles} from "./pr-ios-artifacts-install.mjs"
 import {
   iosBuildRequired,
   buildPost,
@@ -122,6 +123,7 @@ function harness(options = {}) {
     missingInstall: false,
     wrongInstallType: false,
     corruptInstall: false,
+    textArtifacts: {},
     jobs: {},
     ...options,
   }
@@ -140,8 +142,8 @@ function harness(options = {}) {
                 workflow_id === "mentra-app-ios-build.yml"
                   ? "ios"
                   : workflow_id === "mentra-app-android-build.yml"
-                  ? "android"
-                  : "asg"
+                    ? "android"
+                    : "asg"
               ],
             ].filter(Boolean),
           },
@@ -184,10 +186,10 @@ function harness(options = {}) {
       options.method === "HEAD"
         ? null
         : isInstallFile
-        ? state.corruptInstall
-          ? "bad bytes!"
-          : "test bytes"
-        : JSON.stringify(url.includes("mentra-ios-pr-") ? state.receipt : manifest),
+          ? state.corruptInstall
+            ? "bad bytes!"
+            : (state.textArtifacts[url.endsWith(".html") ? "install" : "manifest"] ?? "test bytes")
+          : JSON.stringify(url.includes("mentra-ios-pr-") ? state.receipt : manifest),
       {
         status:
           (state.missingMac && url.endsWith(".zip")) || (state.missingInstall && url.endsWith(".html"))
@@ -198,8 +200,8 @@ function harness(options = {}) {
           "content-type": state.wrongInstallType
             ? "application/octet-stream"
             : url.endsWith(".html")
-            ? "text/html; charset=utf-8"
-            : "text/xml; charset=utf-8",
+              ? "text/html; charset=utf-8"
+              : "text/xml; charset=utf-8",
         },
       },
     )
@@ -244,16 +246,25 @@ test("publishes direct iPhone installation and a shareable Safari link without t
   assert.ok(platformRows.every((row) => row.type === "rich_text_section" && row.elements[1].style.bold))
   assert.equal(platformRows[0].elements[3].text, "Download APK")
   assert.equal(platformRows[2].elements[3].text, "Download ZIP")
-  assert.deepEqual(platformRows.map((row) => row.elements.filter((element) => element.type === "link").length), [1, 2, 1])
+  assert.deepEqual(
+    platformRows.map((row) => row.elements.filter((element) => element.type === "link").length),
+    [1, 2, 1],
+  )
   const iphoneLinks = platformRows[1].elements.filter((element) => element.type === "link")
-  assert.deepEqual(iphoneLinks.map((element) => element.text), ["Install on iPhone", "Share install link"])
+  assert.deepEqual(
+    iphoneLinks.map((element) => element.text),
+    ["Install on iPhone", "Share install link"],
+  )
   // A structured link is required: webhook mrkdwn escapes this URL scheme.
   const direct = new URL(iphoneLinks[0].url)
   assert.equal(direct.protocol, "itms-services:")
   assert.equal(direct.searchParams.get("action"), "download-manifest")
   const verifiedManifest = ready.requests.find((url) => url.endsWith(".plist"))
   assert.equal(direct.searchParams.get("url"), verifiedManifest)
-  assert.equal(iphoneLinks[1].url, ready.requests.find((url) => url.endsWith(".html")))
+  assert.equal(
+    iphoneLinks[1].url,
+    ready.requests.find((url) => url.endsWith(".html")),
+  )
   assert.doesNotMatch(JSON.stringify(ready.posts[0]), /Download IPA/)
   assert.match(JSON.stringify(ready.posts[0]), /Install the app, connect your Mentra Live glasses/)
   assert.match(ready.written[0].body, /\[Install on iPhone\]\(https:\/\/artifactscdn.*\.html\)/)
@@ -272,6 +283,63 @@ test("publishes direct iPhone installation and a shareable Safari link without t
   assert.match(legacy.written[0].body, /Download iPhone IPA/)
   assert.doesNotMatch(legacy.written[0].body, /Install on iPhone/)
   assert.doesNotMatch(JSON.stringify(legacy.posts[0]), /itms-services:/)
+})
+
+test("advertises HTTPS Mac handoff only from a verified capable page and uses the publication attempt", async () => {
+  const receipt = structuredClone(iosReceipt)
+  Object.assign(receipt, {
+    schemaVersion: 2,
+    runAttempt: 2,
+    buildAttempt: 1,
+    app: {
+      bundleId: "com.mentra.mentra",
+      version: "3.2.1",
+      build: "302018377",
+      macPackageVersion: 2,
+      macInstaller: "Install Mentra.app",
+    },
+    macInstaller: {
+      bundleId: "com.mentra.mac-installer",
+      teamId: "T5XXXL6N36",
+      notarizationStatus: "Accepted",
+      notarizationId: "12345678-abcd-1234-abcd-123456789012",
+      stapled: true,
+    },
+  })
+  const files = iosInstallationFiles(receipt, "o/r")
+  const textArtifacts = {}
+  for (const [kind, file] of Object.entries(files)) {
+    textArtifacts[kind] = file.content
+    receipt.artifacts[kind] = {
+      name: file.name,
+      size: Buffer.byteLength(file.content),
+      sha256: createHash("sha256").update(file.content).digest("hex"),
+    }
+  }
+  const ready = harness({
+    files: [{filename: "mobile/app.config.ts"}],
+    receipt,
+    textArtifacts,
+    ios: {...iosRun, run_attempt: 2},
+  })
+  await notifyPrBuilds(ready.args)
+  const macLinks = ready.posts[0].blocks[3].elements[2].elements.filter((item) => item.type === "link")
+  assert.deepEqual(
+    macLinks.map((item) => item.text),
+    ["Install on Mac", "First-time setup ZIP"],
+  )
+  const handoff = new URL(macLinks[0].url)
+  assert.equal(handoff.protocol, "https:")
+  assert.equal(handoff.search, "?platform=mac&attempt=2")
+  assert.match(handoff.pathname, /-3-1\.html$/)
+  assert.match(macLinks[1].url, /-3-1\.zip$/)
+  assert.doesNotMatch(JSON.stringify(ready.posts[0]), /mentra-install:/)
+  assert.match(ready.written[0].body, /\[Install on Mac\]\(https:[^)]*platform=mac&attempt=2\)/)
+  assert.equal(ready.requests.filter((url) => url.endsWith(".html")).length, 1)
+
+  const corrupted = harness({...ready.state, comments: [], corruptInstall: true})
+  await notifyPrBuilds(corrupted.args)
+  assert.doesNotMatch(JSON.stringify(corrupted.posts[0]), /Install on Mac/)
 })
 
 test("verifies decoded install files through real HTTP compression with missing or compressed Content-Length", async (t) => {

@@ -52,6 +52,22 @@ Source of truth:
   hashes matching the manifest, original app signature valid, existing account
   and glasses pairing visible. Save screenshots and verification commands
   privately. This is not notarized-download qualification.
+- [x] Retain the native installer after first-time setup and add an HTTPS
+  **Install on Mac** link to the existing verified PR artifact page and Slack
+  notification. The link selects immutable PR/head/run/publication-attempt
+  coordinates; its native handler downloads from the fixed Mentra CDN into an
+  owned cache, verifies the receipt/archive/app/OTA pin and replaces the managed
+  app. Existing immutable pages keep their original download-only behavior.
+- [x] Verify the actual PR #4132 publication-attempt-2 receipt and its original
+  build-attempt-1 ZIP through the native downloader, including Mac provisioning,
+  signature and cache cleanup. Verify the new ZIP format including AppleDouble
+  metadata, and Safari's handoff to the registered URL handler. Keep all commands
+  and results in the local run directory.
+- [ ] Qualify the full browser link with a notarized persistent helper, both
+  already running and after quitting it, including repeated link clicks and
+  permission reuse. The locally signed preview was stopped by Gatekeeper before
+  the retained helper entered its main function; no security setting or quarantine
+  flag was changed to get past that gate.
 - [ ] Have the Apple Account Holder create the missing Developer ID Application
   certificate and provision its private-key export in CI. The portal currently
   disables certificate creation for this user's team role. Do not merge the CI

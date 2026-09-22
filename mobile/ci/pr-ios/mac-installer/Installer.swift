@@ -4,6 +4,8 @@ struct InstallerOptions {
     var package: URL?
     var verifyOnly = false
     var launch = true
+    var retained = false
+    var requests: [URL] = []
 
     static func parse(_ arguments: [String]) throws -> Self {
         var options = Self()
@@ -17,12 +19,22 @@ struct InstallerOptions {
                 options.package = URL(fileURLWithPath: path, isDirectory: true)
             case "--verify-only": options.verifyOnly = true
             case "--no-launch": options.launch = false
+            case "--retained": options.retained = true
+            case "--request":
+                guard let value = arguments.next(), let url = URL(string: value) else {
+                    throw InstallerError.invalid("--request requires a Mentra PR installation link.")
+                }
+                _ = try InstallRequest(url: url)
+                options.requests.append(url)
             default:
                 guard argument.hasPrefix("-psn_") else { throw InstallerError.invalid("Unknown option: \(argument)") }
             }
         }
         guard options.package != nil || (!options.verifyOnly && options.launch) else {
             throw InstallerError.invalid("Use --package DIRECTORY with --verify-only or --no-launch.")
+        }
+        guard options.package == nil || (!options.retained && options.requests.isEmpty) else {
+            throw InstallerError.invalid("Do not combine local package verification with PR-link requests.")
         }
         return options
     }
@@ -59,6 +71,12 @@ final class InstallerDelegate: NSObject, NSApplicationDelegate {
     private var verified: VerifiedBuild?
     private var installed: URL?
     private var replacing = false
+    private var busy = false
+    private var initialized = false
+    private var handingOff = false
+    private var pending: [URL] = []
+    private var activeRequest: URL?
+    private var persistentSession: Bool
     private var window: NSWindow?
     private let titleLabel = NSTextField(labelWithString: "Install Mentra")
     private let buildLabel = NSTextField(wrappingLabelWithString: "")
@@ -68,6 +86,7 @@ final class InstallerDelegate: NSObject, NSApplicationDelegate {
 
     init(options: InstallerOptions) {
         self.options = options
+        persistentSession = options.retained || Bundle.main.bundleURL.path == InstallerHost.application.path
     }
 
     func applicationDidFinishLaunching(_: Notification) {
@@ -80,6 +99,9 @@ final class InstallerDelegate: NSObject, NSApplicationDelegate {
                 // signed resource normally; never try to disable translocation.
                 expected = try Data(contentsOf: resource)
                 let manifest = try BuildManifest(data: expected)
+                guard manifest.packageVersion == 2 else {
+                    throw InstallerError.invalid("The bootstrap installer is not bound to a version 2 Mac package.")
+                }
                 if let directory = options.package {
                     let expected = expected
                     let candidate = try await Task.detached { try verifyPackage(directory, expected: expected) }.value
@@ -95,7 +117,17 @@ final class InstallerDelegate: NSObject, NSApplicationDelegate {
                     NSApp.terminate(nil)
                     return
                 }
-                makeWindow(manifest: manifest)
+                makeWindow(manifest: persistentSession ? nil : manifest, show: !options.retained)
+                initialized = true
+                pending.append(contentsOf: options.requests)
+                if !pending.isEmpty {
+                    processNextRequest()
+                    return
+                }
+                if persistentSession {
+                    statusLabel.stringValue = "Ready. Click Install on Mac in #pr-builds to install and open that build. Downloads stay in a temporary installer cache."
+                    return
+                }
                 let sibling = Bundle.main.bundleURL.deletingLastPathComponent()
                 if InstallerFiles.exists(sibling.appendingPathComponent("build.json")) {
                     await validate(sibling)
@@ -118,19 +150,20 @@ final class InstallerDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func makeWindow(manifest: BuildManifest) {
+    private func makeWindow(manifest: BuildManifest?, show: Bool) {
         let window = NSWindow(contentRect: NSRect(x: 0, y: 0, width: 550, height: 360),
                               styleMask: [.titled, .closable, .miniaturizable], backing: .buffered, defer: false)
         window.title = "Install Mentra"
         window.isReleasedWhenClosed = false
         titleLabel.font = .systemFont(ofSize: 24, weight: .semibold)
-        buildLabel.stringValue = manifest.summary
+        buildLabel.stringValue = manifest?.summary ?? "Ready for #pr-builds links"
         buildLabel.font = .systemFont(ofSize: 14, weight: .medium)
         statusLabel.isSelectable = true
-        let explanation = NSTextField(wrappingLabelWithString: "Installs in ~/Applications/Mentra E2E and preserves your app data. Mentra will close normally before replacement. macOS may ask you to trust Mentra or allow Bluetooth the first time.")
+        let explanation = NSTextField(wrappingLabelWithString: "Keeps one Mentra App in ~/Applications/Mentra E2E and preserves its data. First-time setup also retains this installer in ~/Applications for future PR links. macOS may ask for developer trust or Bluetooth the first time.")
         explanation.textColor = .secondaryLabelColor
         chooseButton.target = self
         chooseButton.action = #selector(chooseFolder)
+        chooseButton.isHidden = persistentSession
         installButton.target = self
         installButton.action = #selector(installOrOpen)
         installButton.keyEquivalent = "\r"
@@ -156,9 +189,8 @@ final class InstallerDelegate: NSObject, NSApplicationDelegate {
             buttons.widthAnchor.constraint(equalTo: stack.widthAnchor),
         ])
         window.center()
-        window.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
         self.window = window
+        if show { showWindow() }
     }
 
     @objc private func chooseFolder() {
@@ -177,6 +209,7 @@ final class InstallerDelegate: NSObject, NSApplicationDelegate {
     }
 
     private func setBusy(_ busy: Bool) {
+        self.busy = busy
         chooseButton.isEnabled = !busy
         installButton.isEnabled = !busy && (verified != nil || installed != nil)
     }
@@ -193,35 +226,188 @@ final class InstallerDelegate: NSObject, NSApplicationDelegate {
             statusLabel.stringValue = "Ready to install. The app matches this download and this Mac is registered for the build."
         } catch { statusLabel.stringValue = error.localizedDescription }
         setBusy(false)
+        processNextRequest()
     }
 
     @objc private func installOrOpen() {
+        guard !busy else { return }
         Task {
             setBusy(true)
             defer {
                 replacing = false
                 window?.standardWindowButton(.closeButton)?.isEnabled = true
                 setBusy(false)
+                processNextRequest()
             }
             do {
+                var permanentHelper: URL?
+                if !persistentSession {
+                    setReplacing(true)
+                    let source = Bundle.main.bundleURL
+                    statusLabel.stringValue = "Setting up the permanent installer for future #pr-builds links…"
+                    permanentHelper = try await Task.detached { try InstallerHost.retain(source) }.value
+                }
                 if installed == nil, let candidate = verified {
-                    replacing = true
-                    window?.standardWindowButton(.closeButton)?.isEnabled = false
-                    statusLabel.stringValue = "Installing Mentra and preserving your app data…"
-                    installed = try await Task.detached {
-                        try await install(candidate) { try await quitMentraNormally() }
-                    }.value
-                    replacing = false
-                    window?.standardWindowButton(.closeButton)?.isEnabled = true
+                    try await installCandidate(candidate)
                 }
-                if let installed {
-                    installButton.title = "Open Mentra"
-                    statusLabel.stringValue = "Mentra is installed. Approve any macOS developer trust or Bluetooth request to finish first-time setup."
-                    do { try await openMentra(installed) }
-                    catch { statusLabel.stringValue = "Mentra is installed, but macOS did not open it. \(error.localizedDescription) You can finish first-time setup and click Open Mentra again." }
+                await openInstalled()
+                if let permanentHelper {
+                    try await handoff(to: permanentHelper, requests: pending)
                 }
-            } catch { statusLabel.stringValue = error.localizedDescription }
+            } catch {
+                handingOff = false
+                pending.removeAll()
+                statusLabel.stringValue = error.localizedDescription
+            }
         }
+    }
+
+    private func setReplacing(_ value: Bool) {
+        replacing = value
+        window?.standardWindowButton(.closeButton)?.isEnabled = !value
+    }
+
+    private func installCandidate(_ candidate: VerifiedBuild) async throws {
+        setReplacing(true)
+        defer { setReplacing(false) }
+        statusLabel.stringValue = "Installing Mentra and preserving your app data…"
+        installed = try await Task.detached {
+            try await install(candidate) { try await quitMentraNormally() }
+        }.value
+    }
+
+    private func openInstalled() async {
+        guard let installed else { return }
+        installButton.title = "Open Mentra"
+        statusLabel.stringValue = "Mentra is installed. Approve any macOS developer trust or Bluetooth request to finish first-time setup."
+        do { try await openMentra(installed) }
+        catch { statusLabel.stringValue = "Mentra is installed, but macOS did not open it. \(error.localizedDescription) You can finish first-time setup and click Open Mentra again." }
+    }
+
+    private func showWindow() {
+        window?.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    func applicationShouldHandleReopen(_: NSApplication, hasVisibleWindows _: Bool) -> Bool {
+        showWindow()
+        return true
+    }
+
+    func application(_: NSApplication, open urls: [URL]) {
+        do {
+            guard !handingOff else {
+                throw InstallerError.invalid("The installer is finishing first-time setup. Click the PR link again in a moment.")
+            }
+            for url in urls {
+                _ = try InstallRequest(url: url)
+                if activeRequest == url || pending.contains(url) { continue }
+                guard pending.count < 8 else { throw InstallerError.invalid("The installer already has several builds queued. Wait for them to finish before clicking another link.") }
+                pending.append(url)
+            }
+            if initialized { processNextRequest() }
+        } catch {
+            let alert = NSAlert()
+            alert.messageText = "Cannot open this Mentra PR link"
+            alert.informativeText = error.localizedDescription
+            alert.runModal()
+        }
+    }
+
+    private func processNextRequest() {
+        guard initialized, !busy, !pending.isEmpty else { return }
+        showWindow()
+        if !persistentSession {
+            // URL dispatch can target the downloaded copy during bootstrap.
+            // Hand the exact request to the retained copy, then exit this one.
+            setBusy(true)
+            setReplacing(true)
+            handingOff = true
+            Task {
+                do {
+                    let source = Bundle.main.bundleURL
+                    let helper = try await Task.detached { try InstallerHost.retain(source) }.value
+                    try await handoff(to: helper, requests: pending)
+                } catch {
+                    handingOff = false
+                    pending.removeAll()
+                    statusLabel.stringValue = error.localizedDescription
+                    setReplacing(false)
+                    setBusy(false)
+                }
+            }
+            return
+        }
+        let url = pending.removeFirst()
+        activeRequest = url
+        setBusy(true)
+        verified = nil
+        installed = nil
+        installButton.title = "Install & Open"
+        Task {
+            var prepared: VerifiedBuild?
+            var retainRecovery = false
+            do {
+                let request = try InstallRequest(url: url)
+                buildLabel.stringValue = request.summary
+                statusLabel.stringValue = "Downloading and verifying the selected PR build…"
+                let candidate = try await preparePackage(request)
+                prepared = candidate
+                buildLabel.stringValue = candidate.manifest.summary
+                try await installCandidate(candidate)
+                await openInstalled()
+            } catch {
+                if case InstallerError.recovery = error { retainRecovery = true }
+                statusLabel.stringValue = error.localizedDescription
+            }
+            if let prepared, !retainRecovery {
+                do { try cleanupPackage(prepared) }
+                catch { statusLabel.stringValue += " The owned download cache could not be removed: \(error.localizedDescription)" }
+            }
+            activeRequest = nil
+            setBusy(false)
+            processNextRequest()
+        }
+    }
+
+    private func handoff(to helper: URL, requests: [URL]) async throws {
+        handingOff = true
+        let ownedHash = try InstallerHost.verify(helper)
+        var matches: [NSRunningApplication] = []
+        for application in NSRunningApplication.runningApplications(withBundleIdentifier: InstallerHost.bundleID)
+            where application.processIdentifier != ProcessInfo.processInfo.processIdentifier && !application.isTerminated
+        {
+            // App Translocation changes bundleURL even for the retained copy.
+            // Match the complete signed executable to the owned installation,
+            // then target the running app's public URL instead of guessing its
+            // physical location or starting another copy behind a macOS prompt.
+            guard application.isFinishedLaunching, let bundle = application.bundleURL else {
+                throw InstallerError.invalid("Another Mentra installer is still starting. Finish its macOS setup prompt, or quit it, before trying the link again.")
+            }
+            guard let resolved = realpath(bundle.path, nil) else {
+                throw InstallerError.invalid("Cannot verify the running Mentra installer. Quit it before trying this link again.")
+            }
+            let canonical = URL(fileURLWithPath: String(cString: resolved), isDirectory: true)
+            free(resolved)
+            guard try InstallerHost.verify(canonical) == ownedHash else {
+                throw InstallerError.invalid("A different Mentra installer is already running. Quit it before continuing.")
+            }
+            matches.append(application)
+        }
+        guard matches.count <= 1 else { throw InstallerError.invalid("More than one Mentra installer is running. Quit the extra copies before trying this link again.") }
+        let existing = matches.first
+        let configuration = NSWorkspace.OpenConfiguration()
+        configuration.activates = !requests.isEmpty
+        if let existing {
+            if !requests.isEmpty { _ = try await NSWorkspace.shared.open(requests, withApplicationAt: existing.bundleURL!, configuration: configuration) }
+        } else {
+            configuration.createsNewApplicationInstance = true
+            configuration.arguments = ["--retained"] + requests.flatMap { ["--request", $0.absoluteString] }
+            _ = try await NSWorkspace.shared.openApplication(at: helper, configuration: configuration)
+        }
+        pending.removeAll()
+        setReplacing(false)
+        NSApp.terminate(nil)
     }
 
     func applicationShouldTerminate(_: NSApplication) -> NSApplication.TerminateReply {
@@ -231,7 +417,7 @@ final class InstallerDelegate: NSObject, NSApplicationDelegate {
     }
 
     func applicationShouldTerminateAfterLastWindowClosed(_: NSApplication) -> Bool {
-        true
+        !persistentSession
     }
 }
 
