@@ -73,6 +73,7 @@ jobs:
           bun test tools/mentra-e2e/runner/day1-bes.test.ts tools/mentra-e2e/runner/day1-bes-runtime.test.ts
           bun test tools/mentra-e2e/runner/mtk-full-restore.test.ts tools/mentra-e2e/runner/mtk-full-restore-runtime.test.ts
           bun test tools/mentra-e2e/runner/day1-mac-app.test.ts
+          bun test tools/mentra-e2e/runner/day1-routine.test.ts
           bun test tools/mentra-e2e/runner/ci-selection.test.ts
           node --test .github/scripts/request-e2e-routine.test.mjs
 

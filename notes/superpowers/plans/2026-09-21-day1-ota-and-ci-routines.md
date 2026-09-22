@@ -234,8 +234,22 @@ commands; the fixture is still unenrolled and no CI request was consumed.
   The real historical e5 cache passed; this does not authenticate an obsolete
   request as current or install anything.
 - [x] Add selected-target full-OTA restoration steps with original-source/apply
-  records and read-only recovery after a missing worker dispatch record. Their
-  real transport runtime and physical restoration pass remain to be qualified.
+  records and read-only recovery after a missing worker dispatch record. The
+  concrete local runtime now has subprocess coverage; physical restoration
+  remains to be qualified.
+- [x] Verify the selected normal MTK full OTA with the native build tools:
+  explicit-key signatures pass and all fourteen reconstructed partitions match
+  the exact target-files archive. The full image has no POWERWASH/downgrade flag.
+  The verification-only job took 135.692 seconds including host tools and did
+  not install firmware. The private proof has SHA-256
+  `a321f26c01f20ee875f07301a0565f8fe210944c615ce0e87ff4623a5da6b3ff`.
+- [x] Compose the existing lifecycle adapters around explicit app stop/start,
+  original BES continuity, January setup, recorded customer actions, restoration
+  and combined return verification. Preserve an active/unknown writer barrier
+  before teardown even when a final read fails after earlier customer success.
+  The selected USB fallback observes modern return after Wi-Fi ADB is disabled;
+  it requires the real MAC and a different valid boot identity and never carries
+  January's empty-property exception onto that return.
 - [x] Exercise the tracked BES source observer on actual glasses with temporary
   Wi-Fi ADB enabled then restored. No firmware dispatch or fixture enrollment
   occurred; the complete BES installation runtime remains unqualified.
@@ -243,8 +257,11 @@ commands; the fixture is still unenrolled and no CI request was consumed.
 - [ ] Extend coordinated Apple exports with a Mac ZIP and receipt; preserve stable
   identity and effective OTA configuration across installs.
 - [x] Add immutable Actions requests and local intake with exclusive durable
-  claims and a private exact-revision trust policy. Until hardware adapter
-  qualification, consumption records `no-artifact` or `blocked-unqualified`.
+  claims and a private exact-revision trust policy. The default CLI registry
+  remains closed. An explicitly reviewed lab registration may admit the first
+  qualification run using pinned artifact verification, code/component evidence
+  and an enrolled fixture. Its admission record must retain that complete-routine
+  qualification is still pending; admission never supplies a passing test verdict.
 - [ ] Connect qualified day-one execution and upload-only retries to that intake;
   run the current PR's actual artifacts and publish its real result.
 - [x] Add authenticated admin Test runs browsing, expected/actual firmware,
