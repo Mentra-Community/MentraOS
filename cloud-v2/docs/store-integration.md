@@ -50,19 +50,26 @@ snapshots with a source SHA and checksums, until suitable npm releases exist.
 
 ## Deployment ownership
 
-Core and Runtime remain in the coordinated Cloud V2 release. Store deploys
-separately, retaining the existing Store domains, API routes, Mongo collections
-and storage keys. Core's Porter definitions explicitly configure Store's URL;
-they do not rely on the old same-app `http://store:3003` DNS alias.
+Core and Runtime remain in the coordinated Cloud V2 release. The private Store's
+`main` branch deploys one production Store independently. Its current temporary
+backend is `https://store.dev.us-west-2.mentraglass.com` and its website is
+`https://apps-dev.mentraglass.com`. These names do not select a dev catalog.
+The CLI and bundled Store select their Store explicitly, independently of Core's
+environment. Official Core Porter definitions point to the same Store for developer
+attestation verification. Local/self-hosted services can configure explicit URLs.
 
-Before deploying this extraction, complete the private repository's
-`docs/cutover.md`: create its environment groups/secrets, validate the private
-Store on temporary domains, transfer the existing Store domains, then remove
-the old Store service through the public deployment. Do not let the first
-public deployment remove the old service before the private replacement is ready.
-Console deploys from the private repository to the existing Console Pages projects.
-Core admin keeps its existing domain, login, report deep links and incident APIs;
-Store staff use `/admin` on the Developer Console.
+Store preserves its existing data, developer accounts, storage and signing keys.
+Moving the website to `apps.mentraglass.com` later is a domain change, not a catalog
+promotion. The private `docs/cutover.md` describes the deployment and rollback.
+Store moderation stays in the private Developer Console. Core admin keeps its
+existing domain, login, report deep links and incident APIs.
+
+The Store may verify miniapp tokens from several explicitly trusted Core JWKS
+endpoints. Core environments with separate account databases retain distinct opaque
+user identities; private Store invitations resolve through the canonical production
+Core. Configure Store's `MENTRA_CORE_IDENTITY_SECRET` for that lookup and its
+`MENTRA_STORE_CORE_SERVICE_SECRETS` JSON list for accepted Core attestation callers.
+Core continues to use its own service secret; its Store requests are unchanged.
 
 Core owns browser login, callback, organization selection and logout at
 `/api/console/auth/*` for both public websites. Configure Core

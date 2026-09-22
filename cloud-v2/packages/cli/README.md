@@ -1,7 +1,7 @@
 # @mentra/cli
 
 The Mentra developer CLI — the `mentra` command. Build, publish, and manage
-Mentra miniapps against the Cloud V2 developer console.
+Mentra miniapps against the independently deployed Mentra Miniapp Store.
 
 It wraps [`@mentra/miniapp-cli`](https://www.npmjs.com/package/@mentra/miniapp-cli)
 (the `dev` / `build` / `pack` author flow) and adds account and store operations:
@@ -29,8 +29,8 @@ bunx @mentra/cli@dev --help
 mentra login              # sign in to the Mentra Developer Console
 mentra dev                # local dev server with a signed Cloud V2 identity
 mentra build              # build the current miniapp
-mentra pack               # sign dist/ into a submittable release ZIP
-mentra publish            # upload + publish a release
+mentra pack               # build and pack locally (use --sign to sign)
+mentra publish --no-submit # build, sign, and upload a draft
 mentra miniapps list      # miniapps owned by your org
 mentra releases submit    # submit an uploaded release for review
 ```
@@ -53,7 +53,7 @@ mentra org init --new --name "Your Org" --prefix com.example
 ## Publisher keys and signed bundles
 
 Every production ZIP is signed by a durable Ed25519 key scoped to its package.
-Create and back up the key before the first `pack` or `publish`:
+Create and back up the key before the first signed pack or Store upload:
 
 ```bash
 mentra miniapps keys create --package com.example.myminiapp
@@ -88,11 +88,32 @@ that track's independent active slot. Store users remain on stable unless they
 opt into beta for that miniapp. If no beta is currently published, Core serves
 stable without discarding their beta preference.
 
-The published CLI targets production by default. Set `MENTRA_CORE_URL`,
-`MENTRA_STORE_URL`, and `MENTRA_CONSOLE_URL` to use a local, development,
-staging, OEM, or self-hosted deployment. When `MENTRA_STORE_URL` is omitted,
-the CLI derives `store.*` from a matching `core.*` host (and port 3003 from
-local Core port 3000). Independently named Store hosts must be explicit. The
-CLI discovers the selected Store's public WorkOS client id automatically.
+The CLI targets one production Store, currently at
+`https://store.dev.us-west-2.mentraglass.com`. The hostname is temporary;
+`@dev` and `@beta` npm tags describe tool release channels, not Store catalogs.
+Changing `MENTRA_CORE_URL` does not change the Store or its login.
+
+For an explicitly local or self-hosted Store:
+
+```sh
+mentra --store-url http://localhost:3003 login
+mentra --store-url http://localhost:3003 publish --no-submit
+```
+
+`MENTRA_STORE_URL` is the equivalent environment setting. Logins are scoped to
+the selected Store; changing it requires that Store's own login. This release
+requires signing in again after the older Core-scoped CLI. Publisher signing
+keys remain in their existing package-scoped keychain/file storage.
+The CLI discovers the selected Store's public WorkOS client id automatically.
+
+Upload builds and signs a bundle, then `--no-submit` keeps it as a draft. Edit
+its listing in the Developer Console. Public releases require staff approval
+and a separate publication action; private distribution publishes upon submission
+after automated validation. Use `--no-submit` when preparing either kind.
+
+The source in PR #3743 requires new npm releases: `@mentra/miniapp-cli` base
+`0.1.0-dev.2` and `@mentra/cli` base `2.0.0-dev.1`. The existing Developer Tools
+release workflow publishes them in dependency order after the PR lands; older
+npm versions do not implement this Store routing and signing flow.
 
 Run `mentra <command> --help` for the full option set.

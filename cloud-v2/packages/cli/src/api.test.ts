@@ -6,7 +6,6 @@ const credentials = {
   token: "token",
   workosUserId: "user",
   email: "developer@example.com",
-  coreUrl: "https://core.example.test",
   storeUrl: "https://store.example.test",
   storedAt: new Date(0).toISOString(),
 };
@@ -64,8 +63,7 @@ describe("createRelease", () => {
 describe("startLogin", () => {
   test("discovers the public WorkOS client id from the selected Store", async () => {
     const config: CliConfig = {
-      coreUrl: "https://core.example.test",
-      storeUrl: "https://store.example.test",
+          storeUrl: "https://store.example.test",
       consoleUrl: "https://console.example.test",
       workosClientId: "",
       workosApiBaseUrl: "https://api.workos.test",

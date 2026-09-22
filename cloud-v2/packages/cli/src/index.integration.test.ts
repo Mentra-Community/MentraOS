@@ -35,7 +35,7 @@ function fixture() {
     import {appendFileSync, writeFileSync} from "node:fs";
     Object.defineProperty(Bun, "secrets", {value: {get: async ({service}) => service === "mentra-miniapp-publisher-signing" ? process.env.MENTRA_TEST_PACKAGE_KEY || null : JSON.stringify({
       token: "old", refreshToken: "refresh", workosUserId: "user", email: "fixture@example.test",
-      coreUrl: "https://identity.example.test", storeUrl: "https://catalog.example.test",
+      storeUrl: process.env.MENTRA_TEST_SAVED_STORE || "https://catalog.example.test",
       storedAt: "2020-01-01T00:00:00Z", expiresAt: "2020-01-01T00:00:01Z",
     }),
     set: async ({value}) => { writeFileSync(${JSON.stringify(join(cwd, "saved.json"))}, value); }}});
@@ -62,7 +62,7 @@ async function cli(f: ReturnType<typeof fixture>, args: string[], env: Record<st
       env: {
         ...process.env,
         MENTRA_CORE_URL: "https://identity.example.test",
-        MENTRA_STORE_URL: "",
+        MENTRA_STORE_URL: "https://catalog.example.test",
         MENTRA_CLI_HOME: join(f.cwd, "keys"),
         MENTRA_CLI_TOKEN: "",
         MENTRA_WORKOS_CLIENT_ID: "",
@@ -81,17 +81,17 @@ async function cli(f: ReturnType<typeof fixture>, args: string[], env: Record<st
 }
 
 describe("CLI publication and credential refresh", () => {
-  test.each(["", "https://override.example.test"])(
-    "refresh preserves the saved Store with override %s",
+  test.each(["https://catalog.example.test", "https://override.example.test"])(
+    "refresh stays scoped to the selected Store %s",
     async (override) => {
       const f = fixture();
-      await cli(f, ["whoami"], { MENTRA_STORE_URL: override });
+      await cli(f, ["--store-url", override, "whoami"], { MENTRA_TEST_SAVED_STORE: override });
       expect(JSON.parse(readFileSync(join(f.cwd, "saved.json"), "utf8"))).toMatchObject({
         token: "new",
-        storeUrl: "https://catalog.example.test",
+        storeUrl: override,
       });
       expect(readFileSync(join(f.cwd, "requests.txt"), "utf8")).toContain(
-        `${override || "https://catalog.example.test"}/api/console/auth/cli-config`,
+        `${override}/api/console/auth/cli-config`,
       );
     },
   );

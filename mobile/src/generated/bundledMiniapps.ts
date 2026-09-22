@@ -14,7 +14,7 @@ export const BUNDLED_MINIAPPS: number[] = [
   require("@assets/miniapps/com.mentra.navigation-1.1.34.zip"),
   require("@assets/miniapps/com.mentra.notes-1.0.16.zip"),
   require("@assets/miniapps/com.mentra.recorder-1.0.8.zip"),
-  require("@assets/miniapps/com.mentra.store-1.0.25.zip"),
+  require("@assets/miniapps/com.mentra.store-1.0.26.zip"),
   require("@assets/miniapps/com.mentra.teleprompter-1.0.10.zip"),
   require("@assets/miniapps/com.mentra.translation-1.0.22.zip"),
 ]

@@ -28,7 +28,7 @@ import {
   submitRelease,
   upsertOrg,
 } from "./api";
-import { getConfig, resolveStoreUrlForCore } from "./config";
+import { getConfig } from "./config";
 import { clearCredentials, loadCredentials, saveCredentials, type CliCredentials } from "./credentials";
 import { openBrowser } from "./open-browser";
 import { encodeDevAttestation, ensureSigningKey, signDevAttestation } from "./signing";
@@ -39,7 +39,12 @@ const CLI_VERSION = (
   JSON.parse(readFileSync(new URL("../package.json", import.meta.url), "utf8")) as { version: string }
 ).version;
 
-program.name("mentra").description("Mentra developer CLI").version(CLI_VERSION);
+program.name("mentra").description("Mentra developer CLI").version(CLI_VERSION)
+  .option("--store-url <url>", "use an explicit local or self-hosted Store")
+  .hook("preAction", command => {
+    const storeUrl = command.opts().storeUrl;
+    if (storeUrl) process.env.MENTRA_STORE_URL = storeUrl;
+  });
 
 program
   .command("login")
@@ -92,7 +97,6 @@ program
           email: token.user.email,
           organizationId: token.organization_id,
           authenticationMethod: token.authentication_method,
-          coreUrl: config.coreUrl,
           storeUrl: config.storeUrl,
           storedAt: storedAt.toISOString(),
           expiresAt: expiresAt?.toISOString(),
@@ -104,7 +108,7 @@ program
           credentials.developerOrgId = session.organizationId ?? session.organizations[0]?.id ?? null;
           if (session.organizations.length > 1 && !session.organizationId) credentials.developerOrgId = null;
         } catch {
-          // Authentication still succeeded. The first Core command will report
+          // Authentication still succeeded. The first Store command will report
           // any connectivity or organization-selection problem explicitly.
         }
         const storage = await saveCredentials(credentials);
@@ -143,7 +147,6 @@ program
     console.log(`WorkOS user: ${creds.workosUserId}`);
     if (creds.organizationId) console.log(`Organization: ${creds.organizationId}`);
     if (creds.developerOrgId) console.log(`Developer org: ${creds.developerOrgId}`);
-    console.log(`Core: ${config.coreUrl}`);
     console.log(`Store: ${creds.storeUrl}`);
     if (creds.expiresAt) console.log(`Expires: ${new Date(creds.expiresAt).toLocaleString()}`);
   });
@@ -452,7 +455,7 @@ admin
     try {
       const me = await getAdminMe(creds);
       console.log(`Admin: ${me.user?.email ?? "unknown"}`);
-      console.log(`Core: ${creds.coreUrl}`);
+      console.log(`Store: ${creds.storeUrl}`);
     } catch (error) {
       fail(error);
     }
@@ -626,7 +629,7 @@ program
   .command("logout")
   .description("Clear the current CLI login")
   .action(async () => {
-    await clearCredentials(getConfig().coreUrl);
+    await clearCredentials(getConfig().storeUrl);
     console.log("Logged out");
   });
 
@@ -644,10 +647,8 @@ async function requireCredentials(): Promise<CliCredentials | null> {
 }
 
 async function loadFreshCredentials(config = getConfig()): Promise<CliCredentials | null> {
-  // Keep the persisted origin separate from a one-command Store override.
-  const stored = await loadCredentials(config.coreUrl, {applyStoreOverride: false});
-  if (!stored) return null;
-  const creds = {...stored, storeUrl: resolveStoreUrlForCore(stored.coreUrl, stored.storeUrl)};
+  const creds = await loadCredentials(config.storeUrl);
+  if (!creds) return null;
   if (!shouldRefresh(creds)) return creds;
 
   if (!creds.refreshToken) {
@@ -658,7 +659,7 @@ async function loadFreshCredentials(config = getConfig()): Promise<CliCredential
 
   try {
     const refreshed = await refreshLoginToken(
-      {...config, coreUrl: creds.coreUrl, storeUrl: creds.storeUrl},
+      {...config, storeUrl: creds.storeUrl},
       creds.refreshToken,
       creds.organizationId,
     );
@@ -677,8 +678,7 @@ async function loadFreshCredentials(config = getConfig()): Promise<CliCredential
       organizationId: refreshed.organization_id,
       developerOrgId: creds.developerOrgId,
       authenticationMethod: refreshed.authentication_method ?? creds.authenticationMethod,
-      coreUrl: stored.coreUrl,
-      storeUrl: stored.storeUrl,
+      storeUrl: creds.storeUrl,
       storedAt: storedAt.toISOString(),
       expiresAt: expiresAt?.toISOString(),
     };

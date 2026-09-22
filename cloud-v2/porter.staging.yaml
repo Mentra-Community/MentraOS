@@ -16,7 +16,7 @@ services:
     env:
       ADMIN_URL: "https://admin.staging.mentraglass.com"
       PORTAL_URL: "https://portal.staging.mentraglass.com"
-      MENTRA_STORE_INTERNAL_URL: "https://store.staging.us-west-2.mentraglass.com"
+      MENTRA_STORE_INTERNAL_URL: "https://store.dev.us-west-2.mentraglass.com"
     port: 3000
     instances: 1
     cpuCores: 0.25
