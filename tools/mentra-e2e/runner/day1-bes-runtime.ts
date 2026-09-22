@@ -106,13 +106,10 @@ export function createDay1BesRuntime(inputs: Day1BesInputs): Day1BesRuntime {
       )
         throw new Error("BES adapter definition changed")
     }
-    const lease = JSON.parse((await privateBytes(cfg.lease?.path, 65536)).toString("utf8"))
-    if (
-      cfg.lease.ownerPid !== process.pid ||
-      lease.pid !== process.pid ||
-      typeof lease.token !== "string" ||
-      !lease.token
-    )
+    if (!cfg.lease || Object.keys(cfg.lease).join("|") !== "path")
+      throw new Error("BES lease config must pin only its path")
+    const lease = JSON.parse((await privateBytes(cfg.lease.path, 65536)).toString("utf8"))
+    if (lease.pid !== process.pid || typeof lease.token !== "string" || !lease.token)
       throw new Error("BES Python must be spawned directly by the existing fixture lease owner")
   }
 

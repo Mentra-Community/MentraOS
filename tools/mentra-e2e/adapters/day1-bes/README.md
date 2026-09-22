@@ -27,7 +27,7 @@ The trusted local worker writes a mode-0600 JSON file with these exact fields:
 | `tools` | `{adb: {path, sha256}, python: {path, sha256}, verifier: {path, sha256}}`; Python 3.11+ and the qualified existing verifier |
 | `sourceProof` | `{log: {path, sha256}, pid, deviceEpoch}`; frozen mode-0600 native epoch log with fresh UART version and readiness proof |
 | `proof_max_age_seconds` | Integer 1–60, checked again against actual device time immediately before dispatch |
-| `lease` | `{path, ownerPid}`; the existing fixture lease, owned by the immediate parent process |
+| `lease` | `{path}`; the existing private fixture lease, whose live PID must be the immediate parent process |
 | `claimsRoot` | Existing owned mode-0700 directory shared across lifecycle runs |
 | `definition` | SHA-256 for every filename in `config.FILES`, including the reconciler |
 
@@ -141,9 +141,13 @@ retries an invocation, reconnects ADB or performs reader recovery. The command
 exit status remains evidence; only the canonical native reconciliation can
 satisfy the step.
 
-The current frozen config also pins the parent lease PID. Recovery in a different
-OS process therefore remains blocked without a separately audited lease handoff;
-this integration does not rewrite the old config or relax its claim binding.
+Only the lease path belongs to the frozen config. Its private current PID/token
+must identify the live immediate parent on every guard; the runtime also checks
+that PID against its own process before spawning Python. A new worker can use
+the unchanged config after the existing harness exclusively grants it that
+lease. This does not adopt another live owner's lease, delete an old install
+claim or authorize resending. Original operation/config/claim hashes stay
+unchanged. Historical configs containing `ownerPid` are not accepted.
 
 ## Recovery and qualification boundary
 

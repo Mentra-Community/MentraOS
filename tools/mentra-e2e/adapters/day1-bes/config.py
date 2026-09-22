@@ -99,13 +99,14 @@ class Config:
         self.verify_definition()
         value = self.data
         lease = json.loads(private_bytes(absolute(value['lease']['path']), 65536))
-        pid = value['lease']['ownerPid']
-        require(pid == os.getppid() and lease.get('pid') == pid and isinstance(lease.get('token'), str)
+        pid = lease.get('pid')
+        require(type(pid) is int and pid > 1 and pid == os.getppid() and isinstance(lease.get('token'), str)
                 and bool(lease['token']), 'immediate_parent_must_own_fixture_lease')
         os.kill(pid, 0)
         for name in ('adb', 'python'):
             path = reference(value['tools'][name])
             require(os.access(path, os.X_OK), 'runtime_not_executable')
+        return pid
 
     def prepare_claims(self):
         root = absolute(self.data['claimsRoot'])
@@ -177,8 +178,7 @@ def load(path, sha256):
     require(isinstance(proof['pid'], str) and re.fullmatch(r'[1-9]\d*', proof['pid'])
             and type(proof['deviceEpoch']) in (int, float) and 0 < proof['deviceEpoch'] < 1e12, 'source_proof_clock_invalid')
     require(type(row['proof_max_age_seconds']) is int and 1 <= row['proof_max_age_seconds'] <= 60, 'invalid_proof_age')
-    exact(row['lease'], 'path ownerPid', 'lease_schema')
-    require(type(row['lease']['ownerPid']) is int and row['lease']['ownerPid'] > 1, 'lease_pid_invalid')
+    exact(row['lease'], 'path', 'lease_schema')
     absolute(row['lease']['path']); absolute(row['claimsRoot'])
     require(isinstance(row['definition'], dict) and set(row['definition']) == FILES
             and all(isinstance(x, str) and re.fullmatch(SHA, x) for x in row['definition'].values()), 'definition_schema')

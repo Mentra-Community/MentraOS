@@ -28,7 +28,7 @@ these fields. Paths must be absolute; all hashes are lowercase SHA-256.
 | `stagingHelper` | `{path, sha256}` for the existing audited `stage_mtk_ota.py` |
 | `statusProbe` | `{path, sha256, size}` for the audited 2143-byte UpdateEngineStatus JAR |
 | `python`, `adb` | Absolute runtime executable paths. Python 3.10+ with Bleak; ADB on PATH must resolve to the same selected executable because the pinned helper also launches logcat. |
-| `lease` | `{path, ownerPid}`: existing global harness lock file and live outer worker PID. The Python controller must be its immediate child. Nested BLE children verify the same outer parent. |
+| `lease` | `{path}`: existing private global harness lock file. Its live PID must be the Python controller's immediate parent; nested BLE children verify that same outer grandparent. |
 | `definition` | Map every filename in `config.DEFINITION_FILES` to its actual source SHA-256, frozen by the trusted routine definition |
 | `managedAppExecutableName` | `Mentra`; its actual process must be absent before dispatch/BLE recovery |
 | `sourceEndpoint` | The already identified private IPv4 network-ADB endpoint, port 5555 |
@@ -198,6 +198,14 @@ runtime has no timeout that kills a firmware writer, no automatic retry and no
 second lease. Python still validates the complete config/definition, identity,
 artifact and admission gates. The config's `definition` now includes
 `observe.py`; freeze its actual hash with the other adapter modules.
+
+The frozen config pins the lease path, not a session PID. Before each command the
+runtime requires the private live lease PID to equal its own process; Python
+checks that live owner and ancestry again before writes. After the existing
+harness exclusively admits a replacement worker, the original config and
+operation/claim hashes remain valid for no-resend reconciliation. Another live
+owner, a stale/malformed lease or a historical `ownerPid` config is rejected.
+No lease acquisition, stale-lock deletion or handoff ledger is added here.
 
 The observer entry point is:
 

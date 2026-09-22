@@ -77,8 +77,8 @@ def main():
     audit = f.Audit(cfg, args.out.absolute())
     try:
         # This child may only run beneath the lease-owning TS wrapper's Python controller.
-        cfg.require_lease(child=True)
-        f.require(args.lease_pid == cfg.lease_pid, 'root_fixture_lease_required')
+        owner_pid = cfg.require_lease(child=True)
+        f.require(args.lease_pid == owner_pid, 'root_fixture_lease_required')
         operation = f.private(args.operation)
         asyncio.run(query(cfg, audit, operation, args.pid, args.start_ticks, args.asg_sha))
     except BaseException as exc:

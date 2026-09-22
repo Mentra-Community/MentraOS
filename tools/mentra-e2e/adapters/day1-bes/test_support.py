@@ -64,7 +64,7 @@ def make_config(test, root):
         'target':{'version':config.VERSION,'raw':raw,'ota':ota},
         'tools':{'adb':runtime,'python':runtime,'verifier':verifier},
         'sourceProof':{'log':native,'pid':'1936','deviceEpoch':1001.},'proof_max_age_seconds':60,
-        'lease':{'path':str(lease),'ownerPid':os.getppid()},'claimsRoot':str(claims),
+        'lease':{'path':str(lease)},'claimsRoot':str(claims),
         'definition':{name:config.digest(Path(config.__file__).parent/name) for name in config.FILES}}
     ref=write(root/'config.json',value)
     return config.load(ref['path'],ref['sha256'])

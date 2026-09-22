@@ -1,6 +1,6 @@
 import {expect, test} from "bun:test"
 import {createHash} from "node:crypto"
-import {access, chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, writeFile} from "node:fs/promises"
+import {access, chmod, mkdir, mkdtemp, readFile, readdir, rm, stat, unlink, writeFile} from "node:fs/promises"
 import {tmpdir} from "node:os"
 import {join} from "node:path"
 import {createDay1FullOtaRuntime} from "./day1-full-ota-runtime"
@@ -17,7 +17,10 @@ async function temporary(body: (root: string) => Promise<void>) {
 }
 async function setup(root: string, extra = "") {
   const config = join(root, "config.json")
-  await writeFile(config, "{}", {mode: 0o600})
+  const leasePath = join(root, "lease.json")
+  await writeFile(leasePath, JSON.stringify({pid: process.pid, token: "synthetic-fixture-lease"}), {mode: 0o600})
+  const configBytes = JSON.stringify({lease: {path: leasePath}})
+  await writeFile(config, configBytes, {mode: 0o600})
   const adapter = join(root, "adapter")
   const run = join(root, "run")
   await mkdir(adapter)
@@ -36,7 +39,7 @@ ${extra}
 print(json.dumps({'current':{'path':str(path),'sha256':hashlib.sha256(path.read_bytes()).hexdigest()},'firmwareWrites':0}))
 `
   await writeFile(join(adapter, "full_january.py"), program)
-  const inputs: Day1FullOtaInputs = {config: {path: config, sha256: hash("{}")}, python, adapterDirectory: adapter}
+  const inputs: Day1FullOtaInputs = {config: {path: config, sha256: hash(configBytes)}, python, adapterDirectory: adapter}
   const bound: Day1FullOtaRuntimeContext = {
     phase: "stage",
     stageOwner: null,
@@ -47,7 +50,7 @@ print(json.dumps({'current':{'path':str(path),'sha256':hashlib.sha256(path.read_
       selection: {runID: "synthetic", fixtureID: "synthetic", returnProfileDigest: "synthetic", inputs: {}},
     },
   }
-  return {inputs, bound}
+  return {inputs, bound, leasePath, configBytes}
 }
 
 test("real subprocess observer keeps stage absent and records private commands without implicit probe writes", async () => {
@@ -108,14 +111,65 @@ test("nonzero command and exact stdin/stdout remain evidence, with no automatic 
 
 test("changed or nonprivate config refuses before spawning or creating command evidence", async () => {
   await temporary(async (root) => {
-    const {inputs, bound} = await setup(root)
+    const {inputs, bound, configBytes} = await setup(root)
     const runtime = createDay1FullOtaRuntime(inputs)
     await writeFile(inputs.config.path, "changed")
     await expect(runtime.readCurrentState(bound)).rejects.toThrow("configuration changed")
-    await writeFile(inputs.config.path, "{}")
+    await writeFile(inputs.config.path, configBytes)
     await chmod(inputs.config.path, 0o644)
     await expect(runtime.readCurrentState(bound)).rejects.toThrow("private")
     expect(await readdir(bound.lifecycle.runDirectory)).toEqual([])
+  })
+})
+
+test("live lease ownership and exact path-only config are checked before any child starts", async () => {
+  await temporary(async (root) => {
+    const {inputs, bound, leasePath} = await setup(root)
+    for (const lease of [{pid: process.pid + 1, token: "another-owner"}, {pid: process.pid, token: ""}]) {
+      await writeFile(leasePath, JSON.stringify(lease))
+      await expect(createDay1FullOtaRuntime(inputs).readCurrentState(bound)).rejects.toThrow("current fixture lease owner")
+    }
+    const oldConfig = JSON.stringify({lease: {path: leasePath, ownerPid: process.pid}})
+    await writeFile(inputs.config.path, oldConfig)
+    await expect(
+      createDay1FullOtaRuntime({...inputs, config: {...inputs.config, sha256: hash(oldConfig)}}).readCurrentState(bound),
+    ).rejects.toThrow("only its path")
+    expect(await readdir(bound.lifecycle.runDirectory)).toEqual([])
+  })
+})
+
+test("two actual parent processes reuse the frozen config after legitimately replacing the live lease", async () => {
+  await temporary(async (root) => {
+    const {inputs, bound, leasePath, configBytes} = await setup(root)
+    await unlink(leasePath) // Release the original test parent's lease before recovery.
+    const worker = join(root, "parent.ts")
+    await writeFile(worker, `import {readFile,unlink,writeFile} from "node:fs/promises";
+import {createDay1FullOtaRuntime} from ${JSON.stringify(join(import.meta.dir, "day1-full-ota-runtime.ts"))};
+const leasePath=${JSON.stringify(leasePath)};
+await writeFile(leasePath, JSON.stringify({pid:process.pid,token:"synthetic-reacquired-lease"}),{mode:0o600,flag:"wx"});
+try {
+const result=await createDay1FullOtaRuntime(${JSON.stringify(inputs)}).readCurrentState(${JSON.stringify(bound)});
+console.log(JSON.stringify({pid:process.pid,engine:result.current.engineStatus}));
+} finally {
+if(JSON.parse(await readFile(leasePath,"utf8")).pid!==process.pid)throw new Error("Lease owner changed");
+await unlink(leasePath);
+}
+`)
+    const pids: number[] = []
+    for (let i = 0; i < 2; i++) {
+      const child = Bun.spawn([process.execPath, worker], {stdout: "pipe", stderr: "pipe"})
+      const [exitCode, stdout, stderr] = await Promise.all([
+        child.exited, new Response(child.stdout).text(), new Response(child.stderr).text(),
+      ])
+      expect(stderr).toBe("")
+      expect(exitCode).toBe(0)
+      const result = JSON.parse(stdout)
+      expect(result.engine).toBe("UPDATE_STATUS_IDLE")
+      pids.push(result.pid)
+      expect(await readFile(inputs.config.path, "utf8")).toBe(configBytes)
+    }
+    expect(new Set(pids).size).toBe(2)
+    expect(pids).not.toContain(process.pid)
   })
 })
 

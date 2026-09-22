@@ -1,5 +1,6 @@
 import copy
 import json
+import os
 from pathlib import Path
 import tempfile
 import unittest
@@ -76,6 +77,34 @@ class AdapterTests(unittest.TestCase):
         with patch.object(observer,'run') as called,self.assertRaises(config.Guard):
             run.execute(self.cfg,'install',self.root/'attempt',OWNER)
         called.assert_not_called();self.assertFalse(self.cfg.claim_path.exists())
+
+    def test_live_parent_reacquires_same_config_without_rebinding_durable_claim(self):
+        original = self.cfg.path.read_bytes()
+        with patch.object(observer,'run',return_value=0) as called:
+            for index, pid in enumerate((12345, 22222)):
+                write(Path(self.cfg.data['lease']['path']), {'pid':pid, 'token':'newly-owned-private-lease'})
+                with patch.object(os,'getppid',return_value=pid), patch.object(os,'kill'):
+                    self.assertEqual(self.cfg.require_lease(), pid)
+                    if index == 0:
+                        run.execute(self.cfg,'install',self.root/'one',OWNER)
+                        claim = self.cfg.claim_path.read_bytes()
+                    else:
+                        with self.assertRaises(FileExistsError): run.execute(self.cfg,'install',self.root/'two',OWNER)
+                        self.assertEqual(self.cfg.claim_path.read_bytes(), claim)
+                self.assertEqual(self.cfg.path.read_bytes(), original)
+            called.assert_called_once()
+
+    def test_stale_or_malformed_live_lease_and_historical_config_are_rejected(self):
+        lease=Path(self.cfg.data['lease']['path'])
+        write(lease, {'pid':os.getppid(), 'token':'private-lease'})
+        with patch.object(os,'kill',side_effect=ProcessLookupError), self.assertRaises(ProcessLookupError):
+            self.cfg.require_lease()
+        for value in ({'pid':True,'token':'x'}, {'pid':1,'token':'x'}, {'pid':str(os.getppid()),'token':'x'},
+                      {'pid':os.getppid(),'token':''}):
+            write(lease,value)
+            with self.assertRaises(config.Guard):self.cfg.require_lease()
+        with self.assertRaisesRegex(config.Guard,'lease_schema'):
+            self.changed_config(lambda value:value['lease'].update(ownerPid=os.getppid()))()
 
     def test_shared_claim_blocks_other_run_and_owner_without_resend(self):
         with patch.object(observer,'run',return_value=0) as called:

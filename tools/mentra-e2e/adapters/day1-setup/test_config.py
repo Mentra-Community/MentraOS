@@ -103,10 +103,10 @@ class ConfigTests(unittest.TestCase):
         read.assert_not_called();self.assertEqual(audit.commands,[])
 
     def test_exact_outer_lease_parent_is_required_for_controller_and_children(self):
-        put(self.cfg.lease_path,{'pid':self.cfg.lease_pid,'token':'synthetic-lock-token'})
-        with patch.object(os,'kill') as alive,patch.object(os,'getppid',return_value=self.cfg.lease_pid):
+        put(self.cfg.lease_path,{'pid':12345,'token':'synthetic-lock-token'})
+        with patch.object(os,'kill') as alive,patch.object(os,'getppid',return_value=12345):
             controller.lease(self.cfg)
-            alive.assert_called_once_with(self.cfg.lease_pid,0)
+            alive.assert_called_once_with(12345,0)
         with patch.object(os,'kill'),patch.object(os,'getppid',return_value=22222):
             with self.assertRaisesRegex(config.Guard,'controller_lease_parent_mismatch'):controller.lease(self.cfg)
             with patch('subprocess.run',return_value=types.SimpleNamespace(returncode=0,stdout='12345\n')) as ps:
@@ -115,7 +115,31 @@ class ConfigTests(unittest.TestCase):
             with patch('subprocess.run',return_value=types.SimpleNamespace(returncode=0,stdout='777\n')):
                 with self.assertRaisesRegex(config.Guard,'child_lease_parent_mismatch'):self.cfg.require_lease(child=True)
         put(self.cfg.lease_path,{'pid':22222,'token':'different-owner'})
-        with self.assertRaisesRegex(config.Guard,'root_fixture_lease_required'):self.cfg.require_lease()
+        with patch.object(os,'kill'), patch.object(os,'getppid',return_value=12345), \
+                self.assertRaisesRegex(config.Guard,'controller_lease_parent_mismatch'):self.cfg.require_lease()
+
+    def test_new_live_parent_uses_identical_config_and_stale_or_malformed_lease_fails(self):
+        original = self.cfg.path.read_bytes()
+        for pid in (12345, 22222):
+            put(self.cfg.lease_path, {'pid':pid, 'token':'newly-owned-private-lease'})
+            with patch.object(os,'kill'), patch.object(os,'getppid',return_value=pid):
+                self.assertEqual(self.cfg.require_lease(), pid)
+            self.assertEqual(self.cfg.path.read_bytes(), original)
+            self.assertEqual(config.digest(self.cfg.path), self.cfg.sha256)
+        with patch.object(os,'kill',side_effect=ProcessLookupError), self.assertRaises(ProcessLookupError):
+            self.cfg.require_lease()
+        for owner in ({'pid':True,'token':'x'}, {'pid':1,'token':'x'}, {'pid':'22222','token':'x'}, {'pid':22222,'token':''}):
+            put(self.cfg.lease_path, owner)
+            with self.assertRaisesRegex(config.Guard,'root_fixture_lease_required'):self.cfg.require_lease()
+        with self.assertRaisesRegex(config.Guard,'lease_schema'):
+            self.changed(lambda value:value['lease'].update(ownerPid=12345))
+
+    def test_child_cannot_adopt_a_reparented_controller(self):
+        put(self.cfg.lease_path, {'pid':12345, 'token':'private-lease'})
+        with patch.object(os,'kill'), patch.object(os,'getppid',side_effect=[22222,33333]), \
+                patch('subprocess.run',return_value=types.SimpleNamespace(returncode=0,stdout='12345\n')), \
+                self.assertRaisesRegex(config.Guard,'child_lease_parent_mismatch'):
+            self.cfg.require_lease(child=True)
 
     def test_external_helper_mismatch_fails_before_import_or_commands(self):
         self.cfg.helper.path.write_text('raise RuntimeError("must never import")')

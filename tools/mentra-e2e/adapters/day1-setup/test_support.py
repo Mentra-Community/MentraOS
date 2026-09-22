@@ -29,7 +29,7 @@ def make_config(base, credential_path=None):
         'stagingHelper':reference('stage_mtk_ota.py',config.HELPER_SHA),
         'statusProbe':{**reference('probe.jar',config.PROBE_SHA),'size':config.PROBE_BYTES},
         'python':str(Path(sys.executable).resolve()), 'adb':str(base/'adb'),
-        'lease':{'path':str(base/'lease.json'),'ownerPid':12345},
+        'lease':{'path':str(base/'lease.json')},
         'definition':{name:config.digest(Path(config.__file__).parent/name) for name in config.DEFINITION_FILES},
         'managedAppExecutableName':'Mentra','sourceEndpoint':'192.168.50.10:5555',
         'besInstallProof':reference('bes-install.json','a'*64)}

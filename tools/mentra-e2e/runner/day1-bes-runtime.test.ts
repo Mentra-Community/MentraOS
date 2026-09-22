@@ -85,7 +85,6 @@ else: raise Exception('Offline ADB rejected unexpected command '+repr(cmd))
     await writeFile(adbPath, adb, {mode: 0o700})
     row.tools.adb = {path: adbPath, sha256: hash(Buffer.from(adb))}
     // The test process itself owns this lease; Python must be its direct child.
-    row.lease.ownerPid = process.pid
     await privateJson(row.lease.path, {pid: process.pid, token: "offline-fixture-lease"})
     const config = await privateJson(join(folder, "inputs/config.json"), row)
     const inputs = {config, python, adapterDirectory: directory}
@@ -179,5 +178,56 @@ test("nonzero direct child exit is retained with hashed output and never retried
     expect(terminal.automaticRetry).toBe(false)
     expect(terminal.stdoutSha256).toBe(hash(await readFile(result.evidence[2])))
     expect(await readdir(join(bound.lifecycle.runDirectory, "day1-bes-runtime"))).toHaveLength(1)
+  })
+})
+
+test("new real lease-owning parents reuse the unchanged config; a different live parent is refused", async () => {
+  await fixture(async ({folder, inputs, bound}) => {
+    const cfg = JSON.parse(await readFile(inputs.config.path, "utf8"))
+    const original = await readFile(inputs.config.path)
+    const worker = join(folder, "restart-parent.ts")
+    await writeFile(
+      worker,
+      `import {writeFile,unlink} from "node:fs/promises";
+import {createDay1BesRuntime} from ${JSON.stringify(join(import.meta.dir, "day1-bes-runtime.ts"))};
+const own=process.argv[2]==="acquire";
+if(own) await writeFile(${JSON.stringify(cfg.lease.path)},JSON.stringify({pid:process.pid,token:"offline-exclusive-lease"}),{mode:0o600,flag:"wx"});
+try {
+ const result=await createDay1BesRuntime(${JSON.stringify(inputs)}).readCurrentState(${JSON.stringify(bound)});
+ console.log(JSON.stringify({pid:process.pid,owner:result.current.observationOwner,firmwareWrites:result.current.firmwareWrites}));
+} catch(error) {
+ console.log(JSON.stringify({pid:process.pid,rejected:error instanceof Error?error.message:"unknown"}));
+ process.exitCode=2;
+} finally {if(own) await unlink(${JSON.stringify(cfg.lease.path)});}
+`,
+    )
+    async function run(mode: string) {
+      const child = Bun.spawn([process.execPath, "--no-env-file", worker, mode], {stdout: "pipe", stderr: "pipe"})
+      const [stdout, stderr, code] = await Promise.all([
+        new Response(child.stdout).text(),
+        new Response(child.stderr).text(),
+        child.exited,
+      ])
+      expect(stderr).toBe("")
+      return {code, value: JSON.parse(stdout)}
+    }
+    // The test parent's lease is genuinely live; the child may not adopt it.
+    const refused = await run("foreign")
+    expect(refused.code).toBe(2)
+    expect(refused.value.rejected).toContain("lease owner")
+    expect(await readdir(bound.lifecycle.runDirectory)).toEqual([])
+    await rm(cfg.lease.path)
+    const pids: number[] = []
+    for (let index = 0; index < 2; index++) {
+      const result = await run("acquire")
+      expect(result.code).toBe(0)
+      expect(result.value).toMatchObject({owner, firmwareWrites: 0})
+      pids.push(result.value.pid)
+      expect(await readFile(inputs.config.path)).toEqual(original)
+      expect(hash(original)).toBe(inputs.config.sha256)
+    }
+    expect(new Set(pids).size).toBe(2)
+    expect(pids).not.toContain(process.pid)
+    expect(await readdir(join(folder, "inputs/claims"))).toEqual([])
   })
 })

@@ -122,7 +122,6 @@ class Config:
     python: Path
     adb: Path
     lease_path: Path
-    lease_pid: int
     definition: object
     app_name: str
     source_endpoint: str
@@ -150,16 +149,20 @@ class Config:
     def require_lease(self, *, child=False):
         self.verify_definition()
         owner = json.loads(private_bytes(self.lease_path))
-        require(owner.get('pid') == self.lease_pid and isinstance(owner.get('token'), str)
+        pid = owner.get('pid')
+        require(type(pid) is int and pid > 1 and isinstance(owner.get('token'), str)
                 and bool(owner['token']), 'root_fixture_lease_required')
-        os.kill(self.lease_pid, 0)
+        os.kill(pid, 0)
         if child:
             import subprocess
-            parent = subprocess.run(['ps', '-p', str(os.getppid()), '-o', 'ppid='],
+            immediate_parent = os.getppid()
+            parent = subprocess.run(['ps', '-p', str(immediate_parent), '-o', 'ppid='],
                                     capture_output=True, text=True, timeout=10)
-            require(parent.returncode == 0 and parent.stdout.strip() == str(self.lease_pid), 'child_lease_parent_mismatch')
+            require(parent.returncode == 0 and parent.stdout.strip() == str(pid)
+                    and os.getppid() == immediate_parent, 'child_lease_parent_mismatch')
         else:
-            require(os.getppid() == self.lease_pid, 'controller_lease_parent_mismatch')
+            require(os.getppid() == pid, 'controller_lease_parent_mismatch')
+        return pid
 
     def prepare_claims(self):
         for index, path in enumerate((self.claims_root, self.claims_root / self.fixture['cid'], self.stage_claims, self.recovery_claims)):
@@ -208,15 +211,13 @@ def load(path, sha):
     require(ota.sha256 == PROFILE['otaSha256'] and ota.size == PROFILE['otaBytes']
             and proof.sha256 == PROFILE['verificationSha256'] and helper.sha256 == HELPER_SHA
             and probe.sha256 == PROBE_SHA and probe.size == PROBE_BYTES, 'unqualified_artifact_or_tool')
-    exact(value['lease'], 'path ownerPid', 'lease_schema')
-    pid = value['lease']['ownerPid']
-    require(type(pid) is int and pid > 1, 'lease_pid_invalid')
+    exact(value['lease'], 'path', 'lease_schema')
     require(isinstance(value['definition'], dict) and set(value['definition']) == DEFINITION_FILES
             and all(isinstance(sha, str) and re.fullmatch(SHA, sha) for sha in value['definition'].values()), 'definition_schema')
     require(value['managedAppExecutableName'] == 'Mentra', 'unqualified_managed_app')
     cfg = Config(path, sha, fixture, tuple(aliases), f['bootSerial'], 'mentra_live_'+f['mac'].replace(':', '')[-4:].lower(),
         absolute(value['claimsRoot']), reference(value['credential']), ota, proof, helper, probe,
-        absolute(value['python']), absolute(value['adb']), absolute(value['lease']['path']), pid,
+        absolute(value['python']), absolute(value['adb']), absolute(value['lease']['path']),
         MappingProxyType(value['definition']), value['managedAppExecutableName'],
         endpoint(value['sourceEndpoint']), reference(value['besInstallProof']))
     cfg.verify_definition()
