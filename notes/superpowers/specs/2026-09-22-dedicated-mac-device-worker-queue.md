@@ -1,5 +1,5 @@
 ---
-status: draft
+status: active
 owner: Philippe
 ---
 
@@ -10,10 +10,12 @@ Keep the existing [registered day-one worker](../../../tools/mentra-e2e/DAY1-LOC
 lifecycle, recording and admin results. This note proposes the missing dispatch
 connection; it does not establish an implemented or qualified unattended worker.
 
-The intended first test station is a third office Mac mini. The Tailscale entry
-**“Mentra’s Mac mini”** is a candidate awaiting confirmation of hostname and login
-user. Its identity, graphical session and attached fixture are not established by
-the runner discovery below. The control-repository decision also remains open.
+The intended first test station is a third office Mac mini. The existing SSH alias
+`mentras-mac-mini` resolves over Tailscale and logs in as `mentraconference`.
+Read-only inspection found macOS 26.4.1 on ARM64, that user's graphical session,
+86 GiB available, Command Line Tools, and no active Actions runner. Physical
+fixture enrollment is still required. The user approved the private repository
+and migration on September 22: **Mentra-Community/Mentra-Automated-Testing**.
 
 ## Existing configuration and evidence
 
@@ -66,30 +68,41 @@ Selected-workflow runner-group restrictions are unavailable on the reported `fre
 plan; GitHub [documents them for Enterprise Cloud/Server](https://github.com/github/docs/blob/c574b799f29918d8c61f1e93ee16a6adb6742b40/data/reusables/actions/runner-group-assign-policy-workflow.md).
 Group list/get returned 403, so the observed `Default` policy was not inspectable.
 
-Two control options require a decision:
+The selected private repository owns the harness, English routines, device
+adapters, recording, lifecycle and dispatch workflow. MentraOS retains company
+app installers/build publication, request production, Core result/claim APIs and
+the admin UI. A tracked-source-only import preserves original license and per-file
+provenance; it excludes firmware, local evidence, credentials and active claims.
+This supersedes the earlier migration deferral. Existing attempts and recovery
+remain bound to their original checkout until settled.
 
-- **Private control repository (recommended):** contain only the trusted dispatch
-  workflow, keeping the harness in MentraOS at reviewed revisions. This reuses
-  GitHub Actions routing, runner availability and the job queue.
-- **Keep everything in MentraOS:** expose a typed request endpoint over Tailscale
-  that accepts authenticated data only and invokes the pinned local launcher.
-  This needs custom dispatch, worker availability and pending-request handling.
-
-Neither option authorizes repository creation or harness migration. The existing
-[implementation plan](../plans/2026-09-21-day1-ota-and-ci-routines.md) explicitly
-defers private-repository migration until the simpler CI hookup works.
+The private job uses only `[mentra-device-worker, day1-ota]`, with no default
+runner labels and no workflow-wide concurrency group that could drop pending
+requests. One registered runner supplies one execution slot. Workflow dispatch
+accepts only a source repository and immutable request run/attempt identifiers;
+it never accepts a shell command, source checkout, executable path or fixture
+override from the public request.
 
 ## Request ordering and shared claims
 
-The [current request workflow](../../../.github/workflows/request-e2e-routine.yml)
-can run before app publication and produce `no-artifact`. Automatic dispatch must
-resolve the request after successful publication, pinning the exact current PR
-head/base, producer/publication attempts, Mac archive and OTA manifest. A successful
-request workflow alone is insufficient; only its authenticated `ready` selection
-is eligible. Keep build-post timing independent of this device path.
+The [request workflow](../../../.github/workflows/request-e2e-routine.yml) may run
+before publication and produce `no-artifact`. The new trusted default-branch
+[dispatch workflow](../../../.github/workflows/dispatch-device-routine.yml) reacts
+to successful iOS producer completion. It verifies the current same-repository PR
+and `routine:day1-ota` label, then invokes the request workflow on `dev`. After
+that workflow completes, a second callback reads its exact request artifact and
+dispatches only a still-current `ready` selection to the private workflow on
+`main`. The private worker independently authenticates the request before claiming
+it. Bootstrap PR request workflows are excluded from automatic dispatch.
 
-Both options require a shared atomic claim before app installation or any device
-action. Proposed dev Core/Mongo state has a unique immutable request ID, request
+The public callback needs `E2E_PRIVATE_DISPATCH_TOKEN`, restricted to Actions write
+on the private repository. It is read only by the trusted callback; no PR source
+is checked out with it. App build posts remain independent and may link to an
+empty results page while the device job is pending. These callbacks do not run
+until merged to the default branch and configured; workflow dispatch acceptance
+is not evidence that a device ran or passed.
+
+The Core/Mongo claim API uses a unique immutable request ID, request
 hash, worker/fixture owner, execution token and
 terminal state. A duplicate or another Mac observing existing ownership performs
 no device work. Crashes and ambiguous responses retain the claim: no automatic
@@ -100,6 +113,7 @@ The existing `consumeRoutineRequest` claim lives under a local `stateDirectory`;
 another Mac cannot see it. Retain it and the lifecycle/app lease beneath the shared
 claim. Existing result records are not a shared claim: `runId` is unique, while
 `requestId` is only indexed and intentionally admits recovery result generations.
+See [the claim API contract](../../../cloud-v2/packages/core/TEST-RUN-CLAIMS.md).
 The shared claim is deduplication, not another scheduler. Do not copy build
 `cancel-in-progress: true` into an active firmware routine.
 
@@ -112,7 +126,7 @@ current local entry requires prepared pinned configuration and does not install
 the CI app. It exports results but does not publish them; automated publication to
 dev Core also remains necessary, preserving immutable metadata and upload retries.
 
-Confirm the third Mac, choose the control boundary, implement shared claims and
-the thin dispatch/preparation/publication connection, then qualify the actual
+Confirm the third Mac's attached fixture, deploy/configure shared claims and
+the dispatch/preparation/publication connection, then qualify the actual
 fixture and recovery behavior. Neither online runners, a queued request, admission
 nor source tests constitute a completed day-one OTA run.
