@@ -2,9 +2,10 @@
 
 Status: preparation and design are in progress. A compact January BES image was
 installed and freshly verified on the authorized lab fixture. January MTK factory
-flashing also completed with independent Wi-Fi ADB verification. Full January OTA,
-factory ASG restoration, the complete customer OTA recording and automatic
-teardown are **not yet qualified**. This document does not add a runnable day-one
+flashing also completed with independent Wi-Fi ADB verification, and the original
+system ASG27 is active with its exact January APK hash. Full January OTA, the
+complete customer OTA recording and automatic teardown are **not yet qualified**.
+This document does not add a runnable day-one
 command or claim that the existing `ota.ts` handles all January behavior.
 
 The test intentionally restores January firmware in setup. That authorized lab
@@ -47,6 +48,15 @@ for the requested target; a missing or unqualified artifact stops preparation
 instead of silently choosing factory flashing. The January 13 target-files archive
 has now been obtained and matched to the factory image set. Building and qualifying
 its signed full OTA remains in progress; target files themselves are not installable.
+
+"Full OTA" describes replacement system content; it does not imply erasing user
+data. Normal customer upgrades preserve data. The January lab downgrade must
+explicitly carry the verified downgrade/wipe policy (`POWERWASH=1`): this removes
+newer app updates and app data from `/data`, exposing the factory ASG27 already in
+January MTK. Saved Wi-Fi settings are also lost. Before dispatch, preserve required
+fixture data and prove the normal January BLE Wi-Fi provisioning and independently
+identified ADB return path. A successful USB return from newer firmware is not
+evidence that January USB will return without a cable replug.
 
 Factory flashing remains an explicitly selected alternative. Its unattended helper
 uses the modern BES `cs_mtkfp` command, absent from January BES. That option requires
@@ -143,9 +153,13 @@ install firmware or report a hardware pass. Its current unqualified result is
 intentional until the complete January setup and recovery adapters pass on-device.
 
 The successful limited BES preparation required a legacy BLE version query after
-the UART-origin recovery timed out. Preserve both observations; this is not proof
-that January setup is currently unattended. Qualify legacy identity/version
-queries without weakening final modern firmware checks.
+the UART-origin recovery timed out. Fresh BES proof was obtained before restoring
+ASG27; the app-only restore preserved the same boot and physical identity. ASG27
+consumes `hs_syvr/B.version` and does not handle the newer `sr_syvr/B.dpj` reply,
+so the subsequent normal query produced no fresh version. Preserve this continuity
+evidence and the unavailable fresh post-restore response separately. Do not turn a
+cached version into an independent assertion or weaken final modern firmware
+checks. This is not proof that January setup is currently unattended.
 
 No passing day-one video exists yet. Required completion evidence is one real
 January-to-selected-target run with full phase results and verified return state,
