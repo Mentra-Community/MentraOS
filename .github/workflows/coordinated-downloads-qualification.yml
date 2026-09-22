@@ -16,11 +16,12 @@ permissions:
 # Nothing in this workflow deploys Cloud, publishes releases or uploads to stores.
 jobs:
   plan:
-    if: github.event.pull_request.head.repo.full_name == github.repository && github.event.label.name == 'qualify-coordinated-downloads'
+    if: github.event.pull_request.head.repo.full_name == github.repository && contains(fromJSON('["qualify-coordinated-downloads","qualify-coordinated-downloads-staging"]'), github.event.label.name)
     runs-on: ubuntu-latest
     outputs:
       source: ${{ steps.plan.outputs.source }}
       artifact: ${{ steps.plan.outputs.artifact }}
+      branch: ${{ steps.plan.outputs.branch }}
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -28,14 +29,19 @@ jobs:
           node-version: "20"
       - name: Prepare a non-publishing release plan
         id: plan
+        env:
+          QUALIFICATION_BRANCH: ${{ endsWith(github.event.label.name, '-staging') && 'staging' || 'dev' }}
         run: |
           set -euo pipefail
           source=$(git rev-parse HEAD)
           node .github/scripts/collect-ota-release-inputs.mjs
-          node .github/scripts/create-release-plan.mjs --branch dev --sequence "$GITHUB_RUN_ATTEMPT" \
-            --native-build-sequence "$GITHUB_RUN_ATTEMPT" --source-commit "$source" --ota-inputs ota-release-inputs.json
-          echo "source=$source" >> "$GITHUB_OUTPUT"
-          echo "artifact=downloads-qualification-plan-$GITHUB_RUN_ID" >> "$GITHUB_OUTPUT"
+          node .github/scripts/create-release-plan.mjs --branch "$QUALIFICATION_BRANCH" --sequence "$GITHUB_RUN_NUMBER" \
+            --native-build-sequence "$GITHUB_RUN_NUMBER" --source-commit "$source" --ota-inputs ota-release-inputs.json
+          {
+            echo "branch=$QUALIFICATION_BRANCH"
+            echo "source=$source"
+            echo "artifact=downloads-qualification-plan-$GITHUB_RUN_ID"
+          } >> "$GITHUB_OUTPUT"
       - uses: actions/upload-artifact@v4
         with:
           name: downloads-qualification-plan-${{ github.run_id }}
@@ -48,9 +54,10 @@ jobs:
       source_commit: ${{ needs.plan.outputs.source }}
       release_plan_artifact: ${{ needs.plan.outputs.artifact }}
       installable_downloads: true
-      backend_environment: dev
-      play_track: internal
-      testflight_group: Mentra Dev
+      backend_environment: ${{ needs.plan.outputs.branch }}
+      play_track: ${{ needs.plan.outputs.branch == 'staging' && 'internal-app-sharing' || 'internal' }}
+      testflight_group: ${{ needs.plan.outputs.branch == 'staging' && 'Mentra Staging Public' || 'Mentra Dev' }}
+      testflight_audience: ${{ needs.plan.outputs.branch == 'staging' && 'external' || 'internal' }}
       # No store publication or runnable OTA target for qualification intermediates.
       dry_run: true
       ota_manifest_url: https://invalid.example/qualification-only.json
