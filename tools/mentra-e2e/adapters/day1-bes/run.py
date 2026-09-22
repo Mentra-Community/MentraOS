@@ -16,11 +16,18 @@ def execute(cfg, mode, output, owner):
     import bes_setup
     import run_once
     output = config.absolute(str(output))
-    config.require(mode in ('observe', 'install') and isinstance(owner, str)
+    config.require(mode in ('observe', 'observe-current', 'install') and isinstance(owner, str)
                    and re.fullmatch(config.UUID, owner), 'mode_and_lifecycle_owner_required')
     config.require(not output.exists() and not output.is_symlink(), 'new_run_directory_required')
-    if mode == 'observe':
+    if mode in ('observe', 'observe-current'):
         adapter = bes_setup.Adapter(cfg, output, owner)
+        if mode == 'observe-current':
+            adapter.observe_current()
+            result = {'status':'observed-current', 'run':str(output), 'firmwareWrites':0,
+                      'observationOwner':owner, 'configSha256':cfg.sha256,
+                      'current':{'path':str(output/'current.json'), 'sha256':config.digest(output/'current.json')}}
+            bes_setup.durable_new(output/'result.json', result)
+            return result
         result = adapter.observe(need_version=True)
         bes_setup.durable_new(output/'result.json', {'status':'observed', 'observed':result,
                              'lifecycleOwner':owner, 'configSha256':cfg.sha256, 'firmwareWrites':0})
@@ -40,7 +47,7 @@ def execute(cfg, mode, output, owner):
 def main():
     os.umask(0o077)
     parser = argparse.ArgumentParser(description=__doc__)
-    parser.add_argument('mode', choices=('observe', 'install'))
+    parser.add_argument('mode', choices=('observe', 'observe-current', 'install'))
     parser.add_argument('--config', type=Path, required=True)
     parser.add_argument('--config-sha256', required=True)
     parser.add_argument('--owner', required=True)

@@ -51,6 +51,14 @@ intermediate shell or lease-owning child:
 ```
 
 `observe` performs read-only device commands and writes local evidence only.
+For lifecycle reconciliation, use `observe-current` with the same arguments and
+a new observation directory. It reads the current boot, complete selected
+MTK/ASG/APK/CID/MAC identity, and ASG PID plus process start ticks on both sides
+of a bounded native log capture. A changed boot after the BES attempt is allowed
+only for this read; install still requires the original source boot. A raced
+boot/process, changed identity or batch longer than 30 seconds fails closed.
+`current.json` and its native log are private and hash-bound in `result.json`.
+
 `install` reserves a fsynced shared claim keyed by CID, source boot and target
 artifact before entering the observer. It creates durable transfer and install
 intents before the corresponding single push and single receiver broadcast.
@@ -103,6 +111,39 @@ and use its hash as the full-January setup input. Its referenced logs and intent
 must remain unchanged. This is an accepted-install input for subsequent MTK-only
 continuity checks, not a fresh post-wipe BES measurement or customer OTA pass.
 The reconciler never overwrites an original failed result.
+
+## Lifecycle integration
+
+`runner/day1-bes.ts` exports `createDay1BesStep(inputs, runtime)`, one
+`repeat: "never"` setup step. `runner/day1-bes-runtime.ts` exports
+`createDay1BesRuntime(inputs)` for its actual direct Python invocations:
+
+```ts
+const inputs = {config: {path: configPath, sha256: configSha256}, python, adapterDirectory}
+const besSetup = createDay1BesStep(inputs, createDay1BesRuntime(inputs))
+// Include besSetup in the existing routine.setup array. The existing lifecycle
+// process owns the lease whose PID is pinned in the private config.
+```
+
+Construction performs no file or device work. Before the mutation intent, one
+stable observation UUID identifies read evidence only and creates no install
+claim. After the intent, observation, dispatch and reconciliation use that
+original lifecycle UUID, including a reconstructed step during recovery. A satisfied
+reconciliation exposes `actual.continuityInput` for the subsequent setup step;
+it never marks the whole fixture ready. The caller must separately verify the
+customer test and complete return state.
+
+The real runtime rechecks the config, Python/source hashes and immediate parent
+lease, spawns without a shell, and saves private command-start, stdout/stderr,
+exit status and hashes. It reads freshly compiled pinned sources rather than
+an old adjacent Python bytecode cache. It never kills a dispatched writer,
+retries an invocation, reconnects ADB or performs reader recovery. The command
+exit status remains evidence; only the canonical native reconciliation can
+satisfy the step.
+
+The current frozen config also pins the parent lease PID. Recovery in a different
+OS process therefore remains blocked without a separately audited lease handoff;
+this integration does not rewrite the old config or relax its claim binding.
 
 ## Recovery and qualification boundary
 

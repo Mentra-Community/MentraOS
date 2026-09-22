@@ -215,6 +215,61 @@ class Adapter:
         self.event(observation=actual)
         return actual
 
+    def observe_current(self):
+        """Read-only bracket for reconciliation, including an already-rebooted BES.
+
+        A new boot is observed, never authorized for install. Both complete
+        identity reads still require the selected MTK/ASG/APK/CID/full MAC.
+        """
+        self.inputs.require_lease()
+        started = time.time()
+        transport = self.transport()
+        boot = self.shell(transport, 'cat', '/proc/sys/kernel/random/boot_id')
+        require(re.fullmatch(inputs.UUID, boot), 'Current boot UUID required')
+
+        def process():
+            pid = self.shell(transport, 'pidof', PACKAGE)
+            require(re.fullmatch(r'[1-9]\d*', pid), 'Exactly one current ASG process is required')
+            stat = self.shell(transport, 'cat', '/proc/'+pid+'/stat')
+            # Field 2 (comm) can contain spaces and parentheses. Fields after
+            # its final ')' start at field 3; starttime is field 22.
+            _, separator, tail = stat.rpartition(') ')
+            fields = tail.split()
+            require(stat.startswith(pid+' (') and separator and len(fields) > 19
+                    and fields[19].isdigit(), 'ASG process start ticks unavailable')
+            return pid, fields[19]
+
+        pid, ticks = process()
+        before = self.identity(boot)
+        require(before['transport'] == transport, 'Transport changed before current log capture')
+        log = self.adb(transport, 'logcat', '-d', '-v', 'epoch', '-t', '5000',
+                       'BesOtaManager:V', 'BesOtaStateStore:V', 'DebugBesOtaReceiver:V',
+                       'BES-UART:V', 'K900BluetoothManager:V', 'ASGClientOTA:V', 'OtaHelper:V', '*:S')
+        captured = time.time()
+        device_epoch = int(self.shell(transport, 'date', '+%s'))
+        after = self.identity(boot)
+        closing_pid, closing_ticks = process()
+        closing_boot = self.shell(transport, 'cat', '/proc/sys/kernel/random/boot_id')
+        require(before == after and closing_boot == boot and self.transport() == transport,
+                'Identity changed during current observation')
+        require((closing_pid, closing_ticks) == (pid, ticks), 'ASG process changed during current observation')
+        self.inputs.require_lease()
+        finished = time.time()
+        require(0 <= finished-started <= 30, 'Current observation exceeded fresh bracket')
+        log_path = self.run_dir/'current.log'
+        with log_path.open('x', encoding='utf-8') as stream:
+            os.fchmod(stream.fileno(), 0o600)
+            stream.write(log)
+            stream.flush()
+            os.fsync(stream.fileno())
+        result = {'schemaVersion':1, 'observationOwner':self.run_id, 'firmwareWrites':0,
+            'startedAt':started, 'finishedAt':finished, 'bootBefore':boot, 'bootAfter':closing_boot,
+            'pidBefore':pid, 'pidAfter':closing_pid, 'startTicksBefore':ticks, 'startTicksAfter':closing_ticks,
+            'endpoint':self.fixture['transport']['address'], 'observed':{**after, 'pid':pid, 'device_epoch':device_epoch},
+            'logCapturedAt':captured, 'log':{'path':str(log_path), 'sha256':digest(log_path)}}
+        durable_new(self.run_dir/'current.json', result)
+        return result
+
     def validate_artifact(self):
         for name in ('raw', 'ota', 'verifier'):
             item = self.target[name] if name != 'verifier' else self.tools['verifier']
