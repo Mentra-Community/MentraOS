@@ -404,11 +404,23 @@ test("mobile destinations use real TestFlight groups without changing the releas
   assert.match(mobile, /play_install_url:\n        value: \$\{\{ jobs\.android\.outputs\.play_install_url \}\}/)
   assert.match(coordinator, /PLAY_INSTALL_URL: \$\{\{ needs\.mobile\.outputs\.play_install_url \}\}/)
   // The beta channel and the plan's expected coordinate name the same Play destination.
-  assert.match(coordinator, /play_track=internal-app-sharing/)
-  assert.match(
-    readFileSync(new URL("./release-family.mjs", import.meta.url), "utf8"),
-    /beta: \{play: "internal-app-sharing"/,
+  assert.match(coordinator, /play_track=beta/)
+  // The Android build resolves its own version code before building and the
+  // record carries it; verification and the track check use the same value.
+  assert.match(mobile, /- name: Resolve the Android version code\n        id: android-code/)
+  assert.match(mobile, /resolve-android-version-code\.mjs/)
+  assert.match(mobile, /EXPECTED_BUILD: \$\{\{ steps\.android-code\.outputs\.code \}\}/)
+  assert.match(mobile, /--android-build-number "\$\{\{ steps\.android-code\.outputs\.code \}\}"/)
+  assert.ok(
+    mobile.indexOf("- name: Resolve the Android version code") <
+      mobile.indexOf("- name: Build signed coordinated APK and AAB"),
   )
+  assert.ok(
+    mobile.indexOf("- name: Install Google Play upload tooling") <
+      mobile.indexOf("- name: Resolve the Android version code"),
+  )
+  assert.match(mobile, /url="https:\/\/play\.google\.com\/apps\/testing\/com\.mentra\.mentra"/)
+  assert.match(readFileSync(new URL("./release-family.mjs", import.meta.url), "utf8"), /beta: \{play: "beta"/)
   assert.match(mobile, /COMPATIBILITY-LAB-NOT-FOR-PRODUCTION/)
   assert.doesNotMatch(mobile, /MENTRA_COORDINATED_RELEASE_CHANNEL=\$\{\{ inputs\.testflight_group \}\}/)
   assert.match(example, /EXAMPLE_APP_ID: "6792839366"/)

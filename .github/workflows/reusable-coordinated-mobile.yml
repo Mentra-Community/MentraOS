@@ -425,6 +425,63 @@ jobs:
           upload-key-alias: ${{ secrets.MENTRAOS_UPLOAD_KEY_ALIAS }}
           google-play-key-json: ${{ secrets.GOOGLE_PLAY_KEY_JSON }}
 
+      - name: Prepare Google Play upload tooling
+        if: inputs.dry_run != true && needs.prepare.outputs.upload_google_play == 'true'
+        run: |
+          set -euo pipefail
+          mkdir -p mobile-play/fastlane
+          cp mobile/ci/fastlane-android/Fastfile mobile-play/fastlane/Fastfile
+          cp mobile/ci/fastlane-android/Appfile mobile-play/fastlane/Appfile
+          cp mobile/Gemfile mobile-play/Gemfile
+          cp mobile/Gemfile.lock mobile-play/Gemfile.lock
+
+      - name: Install Google Play upload tooling
+        if: inputs.dry_run != true && needs.prepare.outputs.upload_google_play == 'true'
+        working-directory: mobile-play
+        run: bundle install
+
+      - name: Download the existing immutable Android pair
+        if: inputs.dry_run != true && needs.prepare.outputs.android_assets_exist == 'true'
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          set -euo pipefail
+          mkdir -p mobile-release/android
+          node "$GITHUB_WORKSPACE/release-tooling/.github/scripts/release-assets.mjs" fetch --repository "${GITHUB_REPOSITORY}" --asset-id "${{ needs.prepare.outputs.apk_asset_id }}" \
+            > "mobile-release/android/${{ needs.prepare.outputs.apk_name }}"
+          node "$GITHUB_WORKSPACE/release-tooling/.github/scripts/release-assets.mjs" fetch --repository "${GITHUB_REPOSITORY}" --asset-id "${{ needs.prepare.outputs.aab_asset_id }}" \
+            > "mobile-release/android/${{ needs.prepare.outputs.aab_name }}"
+
+      # The Android build carries the family build number unless its testing
+      # track already serves a higher code; then it takes that floor plus one
+      # (resolve-android-version-code.mjs). Production keeps the family number.
+      # A pair that already exists for this release keeps the code it was
+      # built with.
+      - name: Resolve the Android version code
+        id: android-code
+        env:
+          GOOGLE_PLAY_TRACK: ${{ inputs.play_track }}
+          GOOGLE_PLAY_VERSION_CODES_OUTPUT: ${{ runner.temp }}/mentra-play-track-codes.json
+          LOOK_UP_TRACK: ${{ inputs.dry_run != true && inputs.compatibility_lab != true && needs.prepare.outputs.upload_google_play == 'true' && inputs.play_track != 'internal-app-sharing' && inputs.play_track != 'production' }}
+        run: |
+          set -euo pipefail
+          if [[ "${{ inputs.dry_run != true && needs.prepare.outputs.android_assets_exist == 'true' }}" == true ]]; then
+            aapt=$(find "$ANDROID_HOME/build-tools" -type f -name aapt -perm -111 | sort | tail -1)
+            code=$("$aapt" dump badging "mobile-release/android/${{ needs.prepare.outputs.apk_name }}" | sed -n "1s/.*versionCode='\([^']*\)'.*/\1/p")
+            [[ "$code" =~ ^[1-9][0-9]*$ ]]
+            echo "Android version code $code (the existing immutable pair)"
+          else
+            args=(--plan release-intent/release-plan.json --track "$GOOGLE_PLAY_TRACK" --output android-version-code.json)
+            if [[ "$LOOK_UP_TRACK" == true ]]; then
+              (cd mobile-play && bundle exec fastlane track_version_codes)
+              args+=(--codes "$GOOGLE_PLAY_VERSION_CODES_OUTPUT")
+            fi
+            node .github/scripts/resolve-android-version-code.mjs "${args[@]}"
+            code=$(jq -er .versionCode android-version-code.json)
+          fi
+          echo "code=$code" >> "$GITHUB_OUTPUT"
+          echo "MENTRAOS_PINNED_BUILD_NUMBER=$code" >> "$GITHUB_ENV"
+
       - name: Build signed coordinated APK and AAB
         if: inputs.dry_run == true || needs.prepare.outputs.android_assets_exist != 'true'
         working-directory: mobile
@@ -442,21 +499,9 @@ jobs:
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
         run: bun run release:android
 
-      - name: Download the existing immutable Android pair
-        if: inputs.dry_run != true && needs.prepare.outputs.android_assets_exist == 'true'
-        env:
-          GH_TOKEN: ${{ github.token }}
-        run: |
-          set -euo pipefail
-          mkdir -p mobile-release/android
-          node "$GITHUB_WORKSPACE/release-tooling/.github/scripts/release-assets.mjs" fetch --repository "${GITHUB_REPOSITORY}" --asset-id "${{ needs.prepare.outputs.apk_asset_id }}" \
-            > "mobile-release/android/${{ needs.prepare.outputs.apk_name }}"
-          node "$GITHUB_WORKSPACE/release-tooling/.github/scripts/release-assets.mjs" fetch --repository "${GITHUB_REPOSITORY}" --asset-id "${{ needs.prepare.outputs.aab_asset_id }}" \
-            > "mobile-release/android/${{ needs.prepare.outputs.aab_name }}"
-
       - name: Verify Android native version and production signature
         env:
-          EXPECTED_BUILD: ${{ needs.prepare.outputs.build_number }}
+          EXPECTED_BUILD: ${{ steps.android-code.outputs.code }}
           EXPECTED_VERSION: ${{ needs.prepare.outputs.marketing_version }}
         run: |
           set -euo pipefail
@@ -529,21 +574,6 @@ jobs:
             --file "mobile-release/android/${{ needs.prepare.outputs.aab_name }}" \
             --name "${{ needs.prepare.outputs.aab_name }}"
 
-      - name: Prepare Google Play upload tooling
-        if: inputs.dry_run != true && needs.prepare.outputs.upload_google_play == 'true'
-        run: |
-          set -euo pipefail
-          mkdir -p mobile-play/fastlane
-          cp mobile/ci/fastlane-android/Fastfile mobile-play/fastlane/Fastfile
-          cp mobile/ci/fastlane-android/Appfile mobile-play/fastlane/Appfile
-          cp mobile/Gemfile mobile-play/Gemfile
-          cp mobile/Gemfile.lock mobile-play/Gemfile.lock
-
-      - name: Install Google Play upload tooling
-        if: inputs.dry_run != true && needs.prepare.outputs.upload_google_play == 'true'
-        working-directory: mobile-play
-        run: bundle install
-
       - name: Check selected Google Play track
         id: play
         if: inputs.dry_run != true && inputs.compatibility_lab != true && needs.prepare.outputs.upload_google_play == 'true' && inputs.play_track != 'internal-app-sharing'
@@ -554,7 +584,7 @@ jobs:
         run: |
           set -euo pipefail
           bundle exec fastlane track_version_codes
-          if jq -e --argjson expected "${{ needs.prepare.outputs.build_number }}" 'map(tonumber) | index($expected) != null' "$GOOGLE_PLAY_VERSION_CODES_OUTPUT" >/dev/null; then
+          if jq -e --argjson expected "${{ steps.android-code.outputs.code }}" 'map(tonumber) | index($expected) != null' "$GOOGLE_PLAY_VERSION_CODES_OUTPUT" >/dev/null; then
             echo "exists=true" >> "$GITHUB_OUTPUT"
           else
             echo "exists=false" >> "$GITHUB_OUTPUT"
@@ -599,6 +629,7 @@ jobs:
           --aab "mobile-release/android/${{ needs.prepare.outputs.aab_name }}"
           --aab-url "${{ needs.prepare.outputs.aab_url }}"
           --play-track "${{ inputs.play_track }}"
+          --android-build-number "${{ steps.android-code.outputs.code }}"
           ${{ inputs.dry_run != true && inputs.play_track == 'internal-app-sharing' && needs.prepare.outputs.upload_google_play == 'true' && '--internal-sharing mobile-release/android-internal-sharing.json' || '' }}
           --status "$STATUS"
           --provenance-url "https://github.com/${{ github.repository }}/actions/runs/${{ github.run_id }}"
@@ -611,6 +642,8 @@ jobs:
           url=""
           if [[ "${{ inputs.play_track }}" == internal-app-sharing && "${{ inputs.dry_run }}" != true && "${{ needs.prepare.outputs.upload_google_play }}" == true ]]; then
             url=$(jq -er '.publications.mentraos["google-play"].url' mobile-release/android-publication.json)
+          elif [[ "${{ inputs.play_track }}" == beta && "${{ inputs.dry_run }}" != true && "${{ needs.prepare.outputs.upload_google_play }}" == true ]]; then
+            url="https://play.google.com/apps/testing/com.mentra.mentra"
           fi
           echo "install_url=$url" >> "$GITHUB_OUTPUT"
 

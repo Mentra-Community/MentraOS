@@ -453,21 +453,30 @@ function validatePublication(publication, label) {
   return publication
 }
 
-function expectedPublicationCoordinate(plan, memberName, target) {
+// The Android build may carry a testing track's floor plus one instead of the
+// family number (see resolve-android-version-code.mjs); the results say so.
+export function androidBuildNumberOf(plan, results) {
+  const declared = results?.native?.androidBuildNumber
+  if (declared === undefined) return plan.native.buildNumber
+  if (!Number.isSafeInteger(declared) || declared < plan.native.buildNumber) {
+    throw new Error(`native.androidBuildNumber ${JSON.stringify(declared)} is below the family build number`)
+  }
+  return declared
+}
+
+function expectedPublicationCoordinate(plan, memberName, target, results) {
   const version = plan.members[memberName].version
   if (target === "npm") return `${memberName}@${version}`
   if (target === "maven-central") return `com.mentraglass:bluetooth-sdk:${version}`
   if (target === "swift-package-manager") return `Mentra-Community/mentra-bluetooth-sdk-ios@${version}`
   const channels = {
     dev: {play: "internal", appStore: "Mentra Dev"},
-    // Betas use Internal App Sharing while the Play beta track serves a
-    // pre-formula build number above every family window.
-    beta: {play: "internal-app-sharing", appStore: "Mentra Staging"},
+    beta: {play: "beta", appStore: "Mentra Staging"},
     production: {play: "production", appStore: "App Store"},
   }
   const selected = channels[plan.channel]
   if (!selected) throw new Error(`Unknown release channel ${JSON.stringify(plan.channel)}`)
-  if (target === "google-play") return `com.mentra.mentra:${plan.native.buildNumber}:${selected.play}`
+  if (target === "google-play") return `com.mentra.mentra:${androidBuildNumberOf(plan, results)}:${selected.play}`
   if (target === "app-store-connect") {
     const group = plan.native.testflight?.group || selected.appStore
     if (
@@ -510,6 +519,7 @@ export function finalizeReleaseManifest({plan, results, completedAt}) {
     throw new Error("Release plan has invalid native build identity")
   }
   const changelog = validateChangelog(plan.changelog, plan.familyBaseVersion)
+  const androidBuildNumber = androidBuildNumberOf(plan, results)
 
   const publications = {}
   for (const [memberName, member] of Object.entries(plan.members)) {
@@ -521,7 +531,7 @@ export function finalizeReleaseManifest({plan, results, completedAt}) {
     for (const target of member.publishTargets) {
       const label = `publications.${memberName}.${target}`
       const publication = validatePublication(memberResults[target], label)
-      const expected = expectedPublicationCoordinate(plan, memberName, target)
+      const expected = expectedPublicationCoordinate(plan, memberName, target, results)
       if (publication.coordinate !== expected) {
         throw new Error(`${label}.coordinate must be ${expected}`)
       }
@@ -589,7 +599,7 @@ export function finalizeReleaseManifest({plan, results, completedAt}) {
     releaseIdentity: plan.releaseIdentity,
     channel: plan.channel,
     sourceCommit: plan.sourceCommit,
-    native: plan.native,
+    native: androidBuildNumber === plan.native.buildNumber ? plan.native : {...plan.native, androidBuildNumber},
     completedAt,
     releasePlanSha256: releaseRecordSha256(plan),
     publications,
