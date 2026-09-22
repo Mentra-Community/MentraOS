@@ -68,6 +68,7 @@ jobs:
           bun test tools/mentra-e2e/runner/ota-customer-step.test.ts
           bun test tools/mentra-e2e/runner/day1-full-ota-runtime.test.ts
           bun test tools/mentra-e2e/runner/day1-bes.test.ts tools/mentra-e2e/runner/day1-bes-runtime.test.ts
+          bun test tools/mentra-e2e/runner/mtk-full-restore.test.ts
           node --test .github/scripts/request-e2e-routine.test.mjs
 
   native-recorder:
