@@ -291,6 +291,16 @@ floor overrides used by tests do not change this release policy.
 
 Update flows must preserve device recoverability, report progress where possible, and avoid interrupting active media operations without cleanup.
 
+An `ota_query_status` with `include_activity: true` and a bounded `request_id`
+also records a read-only activity snapshot in local diagnostics. It identifies
+the process and request and exposes the existing OTA admission, APK/MTK/BES busy
+state and pending APK restart guard without expiring sessions or starting work.
+Its process-local admission generation increases on each accepted OTA admission;
+`consistent` is false if an admission occurs during the snapshot itself.
+Unknown owners remain unknown. Ordinary query responses and compact terminal BLE
+frames retain their existing behavior; a terminal BES result alone is not proof
+that every updater is idle.
+
 MTK updates prefer an incremental patch whose start version matches the glasses.
 If no patch matches, a pinned `mtk_full_ota` can update a known older firmware
 directly. Full fallback requires a valid target version, URL, SHA-256, and size;
