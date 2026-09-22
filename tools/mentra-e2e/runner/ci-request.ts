@@ -1,7 +1,8 @@
 import {createHash, randomUUID} from "node:crypto"
 import {constants} from "node:fs"
 import {lstat, mkdir, open, unlink} from "node:fs/promises"
-import {join, resolve} from "node:path"
+import {isAbsolute, join, resolve} from "node:path"
+import {runLifecycle, type Json, type LifecycleOptions, type LifecycleResult} from "./lifecycle"
 
 export const REQUEST_REPOSITORY = "Mentra-Community/MentraOS"
 export const REQUEST_WORKFLOW = ".github/workflows/request-e2e-routine.yml"
@@ -383,7 +384,7 @@ export function assertRequestTrust(request: RoutineRequest, trust: RequestTrust,
     )
 }
 
-export interface IntakeResult {
+export interface UndispatchedIntakeResult {
   schemaVersion: 1
   requestId: string
   status: "no-artifact" | "blocked-unqualified" | "already-claimed"
@@ -391,6 +392,55 @@ export interface IntakeResult {
   hardwareStarted: false
   at: string
 }
+
+/** Produced by trusted local verification, never by the incoming request or a CLI flag. */
+export interface VerifiedRoutineRegistration {
+  routineId: "day1-ota"
+  requestSha256: string
+  harnessRevision: string
+  definitionDigest: string
+  qualificationDigest: string
+  fixtureID: string
+  fixtureDirectory: string
+  returnProfileDigest: string
+}
+
+export interface RegisteredRoutineContext {
+  request: RoutineRequest
+  registration: VerifiedRoutineRegistration
+  claimPath: string
+  runID: string
+  runDirectory: string
+}
+
+/**
+ * Verification must establish the exact local code/qualification, enrolled fixture and
+ * frozen return profile. Preparation only assembles existing lifecycle steps; actions
+ * belong inside those steps, under the lifecycle's normal global harness lease.
+ */
+export interface LocalRoutineRegistration {
+  verify(request: RoutineRequest): Promise<VerifiedRoutineRegistration | null>
+  prepare(
+    context: RegisteredRoutineContext,
+  ): Promise<Omit<LifecycleOptions, "runDirectory" | "fixtureDirectory" | "selection"> & {inputs: Json}>
+}
+
+export interface DispatchedIntakeResult {
+  schemaVersion: 1
+  requestId: string
+  status: "routine-finished" | "routine-interrupted"
+  reason: string
+  runID: string
+  runDirectory: string
+  /** Dispatch alone does not attest which hardware actions occurred. Use the lifecycle journal. */
+  dispatchStarted: true
+  lifecycle: LifecycleResult | null
+  /** Private claim-side failure details; never upload this file as report evidence. */
+  diagnosticFile?: string
+  at: string
+}
+
+export type IntakeResult = UndispatchedIntakeResult | DispatchedIntakeResult
 
 async function directory(path: string) {
   await mkdir(path, {recursive: true, mode: 0o700})
@@ -426,7 +476,7 @@ function exists(error: unknown) {
 }
 
 /** The local registry is deliberately closed until the day-one hardware adapter is qualified. */
-function dispatchRegisteredRoutine(request: RoutineRequest): IntakeResult {
+function undispatchedResult(request: RoutineRequest): UndispatchedIntakeResult {
   requireThat(request.routine.id === "day1-ota", "No registered routine for this request")
   return {
     schemaVersion: 1,
@@ -441,12 +491,62 @@ function dispatchRegisteredRoutine(request: RoutineRequest): IntakeResult {
   }
 }
 
+async function verifyRegistration(request: RoutineRequest, local?: LocalRoutineRegistration) {
+  if (request.status !== "ready" || !local) return null
+  requireThat(
+    typeof local.verify === "function" && typeof local.prepare === "function",
+    "Invalid local routine registration",
+  )
+  const verified = await local.verify(structuredClone(request))
+  if (verified === null) return null
+  const registration = object(verified, "Verified registration", [
+    "routineId",
+    "requestSha256",
+    "harnessRevision",
+    "definitionDigest",
+    "qualificationDigest",
+    "fixtureID",
+    "fixtureDirectory",
+    "returnProfileDigest",
+  ])
+  requireThat(registration.routineId === request.routine.id, "Registered routine does not match the request")
+  requireThat(
+    registration.requestSha256 === sha256(Buffer.from(JSON.stringify(request))),
+    "Registration verified a different request",
+  )
+  text(registration.harnessRevision, "Registered harness revision", SHA)
+  for (const key of ["definitionDigest", "qualificationDigest", "returnProfileDigest"])
+    text(registration[key], `Registered ${key}`, HASH)
+  text(registration.fixtureID, "Registered fixture ID", /^[A-Za-z0-9][A-Za-z0-9_-]{0,119}$/)
+  text(registration.fixtureDirectory, "Registered fixture directory")
+  requireThat(
+    isAbsolute(registration.fixtureDirectory) &&
+      resolve(registration.fixtureDirectory) === registration.fixtureDirectory,
+    "Registered fixture directory must be an absolute normalized path",
+  )
+  return structuredClone(verified)
+}
+
 /** A partial claim or retained worker lease requires operator reconciliation, never automatic retry. */
+export function consumeRoutineRequest(
+  request: RoutineRequest,
+  evidence: RequestEvidence,
+  trust: RequestTrust,
+  stateDirectory: string,
+): Promise<UndispatchedIntakeResult>
+export function consumeRoutineRequest(
+  request: RoutineRequest,
+  evidence: RequestEvidence,
+  trust: RequestTrust,
+  stateDirectory: string,
+  local: LocalRoutineRegistration,
+): Promise<IntakeResult>
 export async function consumeRoutineRequest(
   request: RoutineRequest,
   evidence: RequestEvidence,
   trust: RequestTrust,
   stateDirectory: string,
+  local?: LocalRoutineRegistration,
 ): Promise<IntakeResult> {
   // Revalidate at the filesystem boundary even when called outside the CLI.
   request = parseRoutineRequest(Buffer.from(JSON.stringify(request)))
@@ -470,6 +570,9 @@ export async function consumeRoutineRequest(
   } catch (error) {
     if ((error as NodeJS.ErrnoException).code !== "ENOENT") throw error
   }
+  const registration = await verifyRegistration(request, local)
+  const runID = request.requestId
+  const runDirectory = join(root, "runs", runID)
   const lease = join(root, "worker-lease.json")
   try {
     await durableExclusive(lease, {
@@ -486,11 +589,110 @@ export async function consumeRoutineRequest(
     throw error
   }
   // Do not release the lease on an exception: the durable claim/result may be partial.
-  await durableExclusive(claim, {schemaVersion: 1, request, evidence, at: new Date().toISOString()})
+  await durableExclusive(claim, {
+    schemaVersion: 1,
+    request,
+    requestSha256: sha256(Buffer.from(JSON.stringify(request))),
+    evidence,
+    runID,
+    runDirectory,
+    registration,
+    at: new Date().toISOString(),
+  })
   await syncDirectory(claims)
-  const result = dispatchRegisteredRoutine(request)
+  let result: IntakeResult
+  if (!registration) result = undispatchedResult(request)
+  else {
+    try {
+      await directory(join(root, "runs"))
+      const prepared = await local!.prepare({
+        request: structuredClone(request),
+        registration: structuredClone(registration),
+        claimPath: claim,
+        runID,
+        runDirectory,
+      })
+      requireThat(
+        prepared.routine.id === registration.routineId &&
+          prepared.routine.definitionDigest === registration.definitionDigest,
+        "Prepared lifecycle differs from the verified registration",
+      )
+      const {inputs, ...options} = prepared
+      const lifecycle = await runLifecycle({
+        ...options,
+        acquireLease: async () => {
+          const release = await options.acquireLease()
+          try {
+            // Generic lifecycle enrollment is useful locally, but CI may only use an existing fixture.
+            const fixtureDirectory = await lstat(registration.fixtureDirectory)
+            const fixture = await lstat(join(registration.fixtureDirectory, "fixture.json"))
+            requireThat(
+              fixtureDirectory.isDirectory() &&
+                !fixtureDirectory.isSymbolicLink() &&
+                fixture.isFile() &&
+                !fixture.isSymbolicLink(),
+              "CI requires an enrolled fixture under the harness lease",
+            )
+            return release
+          } catch (error) {
+            await release()
+            throw error
+          }
+        },
+        runDirectory,
+        fixtureDirectory: registration.fixtureDirectory,
+        selection: {
+          runID,
+          fixtureID: registration.fixtureID,
+          returnProfileDigest: registration.returnProfileDigest,
+          inputs: {request: request as unknown as Json, adapter: inputs},
+        },
+      })
+      result = {
+        schemaVersion: 1,
+        requestId: request.requestId,
+        status: "routine-finished",
+        reason: "Lifecycle finished; test, teardown, return and evidence verdicts are recorded separately",
+        runID,
+        runDirectory,
+        dispatchStarted: true,
+        lifecycle,
+        at: new Date().toISOString(),
+      }
+    } catch (error) {
+      // Preserve diagnostics privately, including failures before a lifecycle journal exists.
+      const diagnosticFile = `${request.requestId}.failure.json`
+      await durableExclusive(join(claims, diagnosticFile), {
+        schemaVersion: 1,
+        requestId: request.requestId,
+        runID,
+        runDirectory,
+        at: new Date().toISOString(),
+        error:
+          error instanceof Error
+            ? {name: error.name, message: error.message, stack: error.stack}
+            : {thrown: String(error)},
+      })
+      await syncDirectory(claims)
+      // Arbitrary adapter exceptions may contain credentials; keep public result metadata generic.
+      result = {
+        schemaVersion: 1,
+        requestId: request.requestId,
+        status: "routine-interrupted",
+        reason:
+          "Registered routine did not finish; reconcile its claimed run and retained worker lease before another dispatch",
+        runID,
+        runDirectory,
+        dispatchStarted: true,
+        lifecycle: null,
+        diagnosticFile,
+        at: new Date().toISOString(),
+      }
+    }
+  }
   await durableExclusive(join(claims, `${request.requestId}.result.json`), result)
   await syncDirectory(claims)
+  if (result.status === "routine-interrupted") return result
   await unlink(lease)
   await syncDirectory(root)
   return result
