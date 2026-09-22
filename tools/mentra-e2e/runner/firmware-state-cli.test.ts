@@ -127,6 +127,24 @@ test("profile digest mismatch fails without producing a profile", async () => {
   })
 })
 
+test("offline CLI accepts an explicit Wi-Fi fixture without inventing a USB observation", async () => {
+  await fixture(async (folder, freeze, verify) => {
+    expect((await command(freeze)).code).toBe(0)
+    const wifiEndpoint = "192.168.1.186:5555"
+    await writeFile(join(folder, "fixture.json"), JSON.stringify({...identity, usb: undefined, wifiEndpoint}))
+    await writeFile(join(folder, "observation.json"), JSON.stringify({...observed(), usb: undefined, wifiEndpoint}))
+    const result = await command(verify)
+    expect({code: result.code, stderr: result.stderr}).toEqual({code: 0, stderr: ""})
+    const report = JSON.parse(await readFile(join(folder, "result.json"), "utf8"))
+    expect(report.mode).toBe("offline-assertion")
+    expect(report.assertions).toHaveLength(14)
+    expect(report.assertions.find((row: {id: string}) => row.id === "identity.wifi-endpoint")).toMatchObject({
+      expected: wifiEndpoint, actual: wifiEndpoint, status: "passed",
+    })
+    expect(report.assertions.some((row: {id: string}) => row.id === "identity.usb")).toBe(false)
+  })
+})
+
 test("a failed state comparison writes evidence and exits nonzero without claiming live verification", async () => {
   await fixture(async (folder, freeze, verify) => {
     expect((await command(freeze)).code).toBe(0)

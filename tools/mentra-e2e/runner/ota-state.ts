@@ -115,7 +115,9 @@ export function otaPage(state: Snapshot): {kind: OtaPage; title: string; finishC
     "Transferring update to glasses...",
     "Installing update on glasses...",
     "Downloading...",
+    "Downloading…",
     "Installing...",
+    "Installing…",
     "Installing a different version…",
     "Verifying your glasses…",
     "Finishing your update",
@@ -147,8 +149,7 @@ export function selectUsbTransport(inventory: string, serial: string, usb: strin
   return transport
 }
 
-/** An explicitly selected network endpoint is only a transport; callers must verify device identity. */
-export function selectWifiTransport(inventory: string, endpoint: string): string {
+export function assertWifiEndpoint(endpoint: string): void {
   const match = /^(\d{1,3}(?:\.\d{1,3}){3}):(\d{1,5})$/.exec(endpoint)
   if (
     !match ||
@@ -157,6 +158,11 @@ export function selectWifiTransport(inventory: string, endpoint: string): string
     Number(match[2]) > 65535
   )
     throw new OtaValidationError("Expected an explicit IPv4 ADB endpoint with port")
+}
+
+/** An explicitly selected network endpoint is only a transport; callers must verify device identity. */
+export function selectWifiTransport(inventory: string, endpoint: string): string {
+  assertWifiEndpoint(endpoint)
   const rows = inventory
     .split("\n")
     .map((line) => line.trim().split(/\s+/))

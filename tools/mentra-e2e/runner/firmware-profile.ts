@@ -1,5 +1,5 @@
 import {createHash} from "node:crypto"
-import {normalizeFirmware} from "./ota-state"
+import {assertWifiEndpoint, normalizeFirmware} from "./ota-state"
 
 export type FirmwareArtifact = {url: string; sha256: string; size?: number}
 export type FirmwareProfile = {
@@ -72,18 +72,29 @@ export function parseFirmwareProfile(bytes: Uint8Array, manifest: FirmwareArtifa
   }
 }
 
-export type FirmwareFixture = {
-  usb: string
+export type FirmwareTransport = {usb: string; wifiEndpoint?: never} | {usb?: never; wifiEndpoint: string}
+
+/** A transport locates a candidate; immutable CID, Bluetooth and serial checks still establish its identity. */
+export function firmwareTransport(value: {usb?: unknown; wifiEndpoint?: unknown}): FirmwareTransport {
+  if (typeof value.usb === "string" && value.usb.trim() && value.wifiEndpoint === undefined)
+    return {usb: value.usb}
+  if (typeof value.wifiEndpoint === "string" && value.usb === undefined) {
+    assertWifiEndpoint(value.wifiEndpoint)
+    return {wifiEndpoint: value.wifiEndpoint}
+  }
+  throw new Error("Select exactly one physical USB path or verified Wi-Fi endpoint")
+}
+
+export type FirmwareFixture = FirmwareTransport & {
   cid: string
   bluetooth: string
-  /** Explicit aliases may include the nonunique January serial; USB + CID still must match. */
+  /** Explicit aliases may include the nonunique January serial; transport + CID still must match. */
   serials: string[]
 }
 
-export type FirmwareObservation = {
+export type FirmwareObservation = FirmwareTransport & {
   at: string
   evidence: string
-  usb: string
   cid: string
   bluetooth: string
   serial: string
@@ -126,14 +137,14 @@ export function assertFirmwareState(
 ): FirmwareAssertion[] {
   if (!Number.isFinite(now) || !Number.isFinite(maxAgeMs) || maxAgeMs <= 0)
     throw new Error("Freshness check needs a valid time and positive age bound")
+  const transport = firmwareTransport(fixture)
   if (
-    !fixture.usb ||
     !/^[a-f0-9]{32}$/i.test(fixture.cid) ||
     !/^(?:[a-f0-9]{2}:){5}[a-f0-9]{2}$/i.test(fixture.bluetooth) ||
     !fixture.serials.length ||
     fixture.serials.some((serial) => !serial || typeof serial !== "string")
   )
-    throw new Error("Fixture needs physical USB, immutable CID, Bluetooth identity and allowed serial aliases")
+    throw new Error("Fixture needs immutable CID, Bluetooth identity and allowed serial aliases")
   const results: FirmwareAssertion[] = []
   const evidence = typeof observed.evidence === "string" && observed.evidence.trim() ? observed.evidence : null
   const check = (id: string, expected: unknown, actual: unknown, passed: boolean, reference = evidence) => {
@@ -150,7 +161,15 @@ export function assertFirmwareState(
     return Number.isFinite(age) && age >= 0 && age <= maxAgeMs
   }
   check("observation.fresh", `observed within ${maxAgeMs} ms`, observed.at, fresh(observed.at))
-  check("identity.usb", fixture.usb, observed.usb, observed.usb === fixture.usb)
+  if (transport.usb !== undefined)
+    check("identity.usb", transport.usb, observed.usb, observed.usb === transport.usb && observed.wifiEndpoint === undefined)
+  else
+    check(
+      "identity.wifi-endpoint",
+      transport.wifiEndpoint,
+      observed.wifiEndpoint,
+      observed.wifiEndpoint === transport.wifiEndpoint && observed.usb === undefined,
+    )
   check(
     "identity.cid",
     fixture.cid.toLowerCase(),

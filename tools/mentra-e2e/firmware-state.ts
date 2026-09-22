@@ -6,6 +6,7 @@ import {resolve} from "node:path"
 import {parseArgs} from "node:util"
 import {
   assertFirmwareState,
+  firmwareTransport,
   normalizeBesVersion,
   parseFirmwareProfile,
   type FirmwareArtifact,
@@ -124,10 +125,10 @@ function profile(value: unknown): FirmwareProfile {
 }
 
 function fixture(value: unknown): FirmwareFixture {
-  const row = object(value, "Fixture", ["usb", "cid", "bluetooth", "serials"])
+  const row = object(value, "Fixture", ["usb", "wifiEndpoint", "cid", "bluetooth", "serials"])
   if (!Array.isArray(row.serials) || !row.serials.length) throw new Error("Fixture serials must be a nonempty array")
   return {
-    usb: text(row.usb, "Fixture USB path"),
+    ...firmwareTransport(row),
     cid: text(row.cid, "Fixture CID", CID),
     bluetooth: text(row.bluetooth, "Fixture Bluetooth address", BLUETOOTH),
     serials: row.serials.map((serial) => text(serial, "Fixture serial alias")),
@@ -139,6 +140,7 @@ function observation(value: unknown): FirmwareObservation {
     "at",
     "evidence",
     "usb",
+    "wifiEndpoint",
     "cid",
     "bluetooth",
     "serial",
@@ -159,7 +161,7 @@ function observation(value: unknown): FirmwareObservation {
   return {
     at: timestamp(row.at, "Observation time"),
     evidence: text(row.evidence, "Observation evidence reference"),
-    usb: text(row.usb, "Observed USB path"),
+    ...firmwareTransport(row),
     cid: text(row.cid, "Observed CID", CID),
     bluetooth: text(row.bluetooth, "Observed Bluetooth address", BLUETOOTH),
     serial: text(row.serial, "Observed serial"),

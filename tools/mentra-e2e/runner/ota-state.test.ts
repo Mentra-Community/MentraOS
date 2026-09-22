@@ -50,6 +50,8 @@ test("Done and transient component completion cannot pass the complete OTA routi
 test("checking, hotspot transfer and reconnect remain observable without becoming final success", () => {
   expect(otaPage(screen("Checking for updates")).kind).toBe("checking")
   for (const label of [
+    "Downloading…",
+    "Installing…",
     "Downloading update to phone...",
     "Starting glasses hotspot...",
     "Connecting phone to glasses...",

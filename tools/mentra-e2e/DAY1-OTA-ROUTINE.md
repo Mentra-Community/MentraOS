@@ -1,12 +1,13 @@
 # January baseline to selected release: iOS on Mac
 
-Status: preparation and design are in progress. A compact January BES image was
-installed and freshly verified on the authorized lab fixture. January MTK factory
-flashing also completed with independent Wi-Fi ADB verification, and the original
-system ASG27 is active with its exact January APK hash. Full January OTA, the
-complete customer OTA recording and automatic teardown are **not yet qualified**.
-This document does not add a runnable day-one
-command or claim that the existing `ota.ts` handles all January behavior.
+Status: the supervised January-to-target customer update reached the exact CI
+manifest's BES, MTK and active ASG APK on the authorized lab fixture. Its continuous
+recording preserves one failed transient-screen assertion; it is not a passing
+routine. The January starting state was prepared using compact BES OTA and MTK
+factory flashing, with independently verified original system ASG27. Full January
+OTA setup and automatic teardown are **not yet qualified**.
+The customer-only replay extension below starts from an already prepared baseline;
+it does not claim to handle or qualify the complete January setup and recovery.
 
 The test intentionally restores January firmware in setup. That authorized lab
 preparation is distinct from the normal [OTA routine](OTA-ROUTINE.md), which does
@@ -24,15 +25,17 @@ identity, allowed legacy rescue manifests and every referenced artifact before
 setup. Do not copy an old target independently of the app or select "latest"
 again during the run.
 
-Private fixture input supplies Bluetooth identity, physical USB path, immutable
-eMMC CID and observed transport aliases. A January placeholder ADB serial is not
+Private fixture input supplies Bluetooth identity, an explicitly selected physical
+USB path or verified Wi-Fi ADB endpoint, immutable eMMC CID and observed transport
+aliases. An endpoint locates a candidate; the full MAC, CID and serial still prove
+its identity. A January placeholder ADB serial is not
 unique. Device credentials, factory assets, calibration/identity backups and raw
 command/device evidence remain in ignored local storage.
 
 | January start component | Required proof |
 | --- | --- |
 | BES | Fresh `17.26.1.13` response after installation of the accepted compact lab artifact; exact artifact digest and OTA gates. |
-| MTK | `MentraLive_20260113` from verified factory images, boot completion and matching physical identity. |
+| MTK | `MentraLive_20260113` from the selected full OTA or explicitly selected factory images, boot completion and matching physical identity. |
 | ASG | Original active factory APK, expected version code 27; verify exact APK/hash before freezing the baseline. A newer installed update must not mask it. |
 
 The compact BES raw image is 1,966,076 bytes, below the unchanged strict
@@ -111,8 +114,8 @@ readiness for this routine.
    Read the offered information and start once. Record missing version information
    as a UI limitation rather than claiming it was displayed.
 8. **Observe update and reconnect.** Record actual downloads, stages and restarts.
-   Follow only the permitted route from the frozen manifests. Re-resolve USB and
-   immutable identity after return. Do not Retry, relaunch or resend while a write
+   Follow only the permitted route from the frozen manifests. Re-resolve the
+   selected transport and immutable identity after return. Do not Retry, relaunch or resend while a write
    may still be active, even after a recorder deadline or USB disappearance.
 9. **Follow remaining normal update offers.** Stay in the same owned sequence
    through any legacy rescue/intermediate release. Intermediate completion does
@@ -168,11 +171,89 @@ firmware installation: ASG27 sent two version-info chunks, while the native SDK
 waited for a third and the UI mislabeled that timeout as a network error. The fix
 recognizes ASG27's terminal second chunk on both native platforms, retains modern
 response correlation, and shows a distinct software-version read error. Its unit
-tests pass; the replacement CI app still requires the same recorded device test.
+tests pass. The replacement CI app was exercised in the next recorded device test.
 The failed recording, screenshots and English chapter seeking have been verified
 in the local admin dashboard without claiming a complete upgrade or teardown.
+
+The September 22 run on head `1d716af0`, CI app build `303006206`, completed the
+normal customer update after a single **Update Now** press. The independently
+observed route was January MTK with ASG27 → ASG31 → ASG37, July MTK with factory
+ASG39, then the selected PR ASG and September MTK. Live checks matched MTK
+`MentraLive_20260921.0`, BES `26.9.21.3`, ASG `303006206` and the manifest's active
+APK SHA-256. The original 20-step, 28-minute recording retains OTA-12's failed
+expectation: it required the brief Downloading screen after the app had already
+advanced to Installing. The compiled routine must accept legitimate forward
+progress rather than require every transient label. About 15 minutes 13 seconds
+elapsed from the press to the observed Update Complete screen; this multi-component
+customer upgrade is not the full January downgrade benchmark.
+
+The result keeps `test: failed`, `teardown: blocked` and `fixture: unavailable`.
+Matching component versions do not prove updater inactivity. The new opt-in ASG
+activity observation requires a separate build and physical qualification before
+it can establish return readiness. The report is a supervised run related to its
+CI request, not an unattended execution of that request. Its sanitized recording,
+chapters and component assertions use the [reviewed exporter](DAY1-EXPORT.md).
 
 No passing day-one video exists yet. Required completion evidence is one real
 January-to-selected-target run with full phase results and verified return state,
 plus simulated failure/recovery coverage. The next routine must reject an
 unavailable fixture; it must not infer readiness from a recorder exit code.
+
+### Customer replay with a reviewed legacy route
+
+`ota.ts` now has a source-tested, **not yet device-qualified** extension for a
+prepared January baseline. It reuses the normal observer/semantic controls and
+strict final BES, MTK, ASG version and active APK hash checks. It performs no
+baseline installation and no automatic restoration.
+
+Supply `--legacy-route /absolute/path/legacy-route.json` and
+`--fixture-state-directory /absolute/path/existing-fixture-state` in addition to
+the ordinary OTA arguments and `--install`. The fixture directory must already
+contain the existing owner's `fixture.json`, explicitly handed over as ready;
+its `fixtureID` is the lowercase eMMC CID. Do not create a second directory or
+change an unresolved writer's status to bypass ownership. The shared lifecycle
+claims that fixture and durably records one bounded customer sequence before
+entering any of its UI actions. The legacy path rejects `--resume`; recovery must
+reconcile the existing intent without invoking the UI loop or replaying presses.
+
+The private route follows `LegacyRoute` in `runner/ota-legacy-route.ts`:
+
+- `schemaVersion: 1`, exact selected `buildSha`, `executableSha256` and
+  `manifestSha256` bind it to this app and target.
+- `effectivePolicy` is an absolute file reference with `size` and `sha256`. Its
+  reviewed JSON repeats `buildSha` and `executableSha256`, supplies the selected
+  `manifestUrl`, and proves `allowLegacyOtaFallback: true` and
+  `modernOverride: null`. Obtain this from actual installed configuration; the
+  parser verifies integrity and the declared policy, not the truth of an audit.
+- `sourceEvidence` contains nonempty hash/size-locked source or binary inspection
+  evidence establishing which legacy URLs the installed ASG versions consume.
+- `manifests` contains those exact ordered rescue URLs, local paths, sizes and
+  SHA-256 values. January's flat ASG descriptor and later multi-component feeds
+  are supported. The permitted MTK route follows first matching rescue patches,
+  then the selected modern manifest; unrelated branches stay invalid.
+- `artifacts` contains local path/URL/size/SHA-256 records for every ASG and BES
+  artifact in those feeds and every selected legacy MTK patch. Existing bytes are
+  hashed; the controller never downloads firmware or substitutes another asset.
+- `embeddedAsg` records an ASG exposed by an intermediate system image: normalized
+  firmware version, ASG `versionCode`, its hash/size-locked `artifact` file and
+  separate reviewed `evidence` file. This permits the observed July ASG handoff
+  without treating an arbitrary stock version as valid.
+
+The runner compares the mutable rescue endpoint bytes with their frozen digests
+before preflight, every **Update Now** press, and final target verification. A
+changed endpoint or cached file stops the run. The app still owns its normal OTA
+network requests; this does not make a rolling server endpoint immutable between
+checks. The legacy path accepts only its explicit ASG set, including during an
+active pass. At Device Info it matches the full Bluetooth MAC and exact observed
+ASG build because January exposes only a serial suffix. Independent ADB checks
+still require the full serial, immutable CID and full MAC on the selected transport.
+
+The lifecycle result separates the customer test from fixture readiness. A fully
+verified customer sequence can have `test: passed`, while the overall result and
+exit code remain unsuccessful because the authoritative updater-idle/return
+adapter is not implemented. `returnVerification` deliberately fails and the
+fixture stays `recovery-required`; an empty setup/teardown phase means no adapter
+ran, not that January setup or restoration was qualified. The actual video,
+chapters and screenshots are finalized and checked with `verify-run.ts`, including
+for failed observations. Do not label this extension an unattended end-to-end
+pass until setup, independent idle/return verification and recovery are qualified.

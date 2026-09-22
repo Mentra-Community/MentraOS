@@ -1,6 +1,6 @@
 import {describe, expect, test} from "bun:test"
 import {createHash} from "node:crypto"
-import {assertFirmwareState, parseFirmwareProfile, type FirmwareObservation} from "./firmware-profile"
+import {assertFirmwareState, firmwareTransport, parseFirmwareProfile, type FirmwareObservation} from "./firmware-profile"
 
 const sha = "a".repeat(64)
 const fixture = {
@@ -26,7 +26,7 @@ function parse(value: unknown = manifest) {
   })
 }
 const now = Date.parse("2026-09-22T01:00:00Z")
-const state = (): FirmwareObservation => ({
+const state = (): FirmwareObservation & {usb: string} => ({
   at: new Date(now - 1000).toISOString(),
   evidence: "verification/hardware.json",
   usb: fixture.usb,
@@ -88,6 +88,36 @@ describe("manifest-derived firmware target", () => {
 })
 
 describe("independent return-state assertions", () => {
+  test("network transport still requires exact endpoint, physical identity and fresh firmware proof", () => {
+    const selected = {...fixture, usb: undefined, wifiEndpoint: "192.168.1.186:5555"}
+    const observed = {...state(), usb: undefined, wifiEndpoint: selected.wifiEndpoint}
+    const failures = (patch: Partial<FirmwareObservation> = {}) =>
+      // JSON input can contain both transports even though the typed producer cannot.
+      assertFirmwareState(parse(), selected, {...observed, ...patch} as Partial<FirmwareObservation>, now)
+        .filter((row) => row.status === "failed")
+        .map((row) => row.id)
+    expect(failures()).toEqual([])
+    expect(failures({wifiEndpoint: "192.168.1.187:5555"})).toEqual(["identity.wifi-endpoint"])
+    expect(failures({cid: "2".repeat(32), bluetooth: "AA:BB:CC:DD:EE:FF"})).toEqual([
+      "identity.cid",
+      "identity.bluetooth",
+    ])
+    expect(failures({bes: {...observed.bes, bootId: "previous-boot"}})).toEqual(["firmware.bes.fresh"])
+    expect(failures({usb: fixture.usb})).toContain("identity.wifi-endpoint")
+  })
+  test("transport selection never silently falls back or accepts malformed network coordinates", () => {
+    expect(firmwareTransport({usb: fixture.usb})).toEqual({usb: fixture.usb})
+    expect(firmwareTransport({wifiEndpoint: "192.168.1.186:5555"})).toEqual({wifiEndpoint: "192.168.1.186:5555"})
+    for (const invalid of [
+      {},
+      {usb: fixture.usb, wifiEndpoint: "192.168.1.186:5555"},
+      {usb: null, wifiEndpoint: "192.168.1.186:5555"},
+      {wifiEndpoint: "192.168.1.186"},
+      {wifiEndpoint: "999.168.1.186:5555"},
+      {wifiEndpoint: "192.168.1.186:65536"},
+      {wifiEndpoint: "glasses.local:5555"},
+    ]) expect(() => firmwareTransport(invalid)).toThrow()
+  })
   test("allows an explicitly recorded legacy serial only with matching USB and CID", () => {
     const observed = {...state(), serial: "0123456789ABCDEF"}
     expect(failed(observed)).toEqual([])
