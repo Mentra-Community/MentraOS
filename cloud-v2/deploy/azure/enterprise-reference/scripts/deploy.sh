@@ -68,6 +68,9 @@ jq -e '
   (.tenantId | guid) and
   (.coreApiClientId | guid) and
   (.mobileClientId | guid) and
+  ((.teamsGraphTenantId // "") | . == "" or guid) and
+  ((.teamsGraphClientId // "") | . == "" or guid) and
+  ((.teamsGraphOrganizerId // "") | . == "" or guid) and
   (.deploymentId | nonempty) and
   (.displayName | nonempty) and
   (.environmentName | nonempty) and
@@ -85,6 +88,15 @@ jq -e '
   [.refreshTokenPepper,.mentraJwtPrivateKey,.mentraJwtPublicKey,.miniappJwtPrivateKey,.miniappJwtPublicKey]
   | all(type == "string" and length > 0)
 ' "$SECRETS" >/dev/null || { printf 'Secret file is incomplete or invalid\n' >&2; exit 1; }
+
+# Graph creation is optional, but partially configured credentials cannot work.
+jq -en --slurpfile config "$CONFIG" --slurpfile secrets "$SECRETS" '
+  ($config[0].teamsGraphClientId // "") as $client |
+  ($secrets[0].teamsGraphClientSecret // "") as $secret |
+  ($config[0].teamsGraphOrganizerId // "") as $organizer |
+  ($secret | type == "string") and
+  (if $client == "" then $secret == "" and $organizer == "" else ($secret | length > 0) end)
+' >/dev/null || { printf 'Graph creation requires both teamsGraphClientId and secret teamsGraphClientSecret; the fallback organizer also requires these credentials\n' >&2; exit 1; }
 
 if [[ "$VALIDATE_ONLY" == true ]]; then
   printf 'Mentra Private Deployment configuration and secret file passed local validation.\n'
@@ -152,6 +164,10 @@ jq -n \
       pullIdentityName:{value:$c.pullIdentityName},
       communicationName:{value:$c.communicationName},
       communicationDataLocation:{value:($c.communicationDataLocation // "United States")},
+      teamsGraphTenantId:{value:(if ($c.teamsGraphTenantId // "") == "" then $c.tenantId else $c.teamsGraphTenantId end)},
+      teamsGraphClientId:{value:($c.teamsGraphClientId // "")},
+      teamsGraphClientSecret:{value:($s.teamsGraphClientSecret // "")},
+      teamsGraphOrganizerId:{value:($c.teamsGraphOrganizerId // "")},
       approvedSystemMiniapps:{value:($c.approvedSystemMiniapps // ["com.mentra.settings"])},
       managedMiniapps:{value:($c.managedMiniapps // [])},
       miniappConfiguration:{value:($c.miniappConfiguration // {})},

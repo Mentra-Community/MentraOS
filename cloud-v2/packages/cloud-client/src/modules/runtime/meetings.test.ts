@@ -51,3 +51,65 @@ describe("Runtime meeting credentials", () => {
     }
   })
 })
+
+describe("Runtime meeting creation", () => {
+  const created = {
+    provider: "acs-teams",
+    joinUrl: "https://teams.microsoft.com/meet/123?p=test",
+    meetingRef: "opaque-owner-reference",
+    identityMode: "guest",
+    guestReason: "no-entra-identity",
+  } as const
+  test("uses the selected Runtime, preserves identity metadata, and strips unexpected fields", async () => {
+    const {meetings, calls} = fixture({...created, token: "must-stay-host-only"})
+    expect(await meetings.createTeamsMeeting({subject: "Standup", durationMinutes: 20})).toEqual(created)
+    expect(calls[0].url).toBe("https://private.example/runtime/api/meetings/teams/create")
+    expect(new Headers(calls[0].init?.headers).get("Authorization")).toBe("Bearer core-brokered-runtime-token")
+    expect(JSON.parse(calls[0].init?.body as string)).toEqual({subject: "Standup", durationMinutes: 20})
+  })
+  test("forwards the host subject and accepts only the specific license fallback", async () => {
+    const result = {...created, guestReason: "teams-license-unavailable" as const}
+    const {meetings, calls} = fixture(result)
+    expect(await meetings.createTeamsMeeting({}, "entra")).toEqual(result)
+    expect(JSON.parse(calls[0].init?.body as string)).toEqual({teamsUserAadToken: "entra"})
+    await expect(fixture(created).meetings.createTeamsMeeting({}, "entra")).rejects.toThrow("invalid")
+    expect(await fixture({...created, identityMode: "teams-user"}).meetings.createTeamsMeeting({}, "entra")).toEqual({
+      provider: created.provider,
+      joinUrl: created.joinUrl,
+      meetingRef: created.meetingRef,
+      identityMode: "teams-user",
+    })
+  })
+  test("rejects unexpected URLs, missing ownership, and identity mismatches", async () => {
+    for (const response of [
+      {...created, joinUrl: "https://teams.microsoft.com.evil.example/meeting"},
+      {...created, joinUrl: "https://teams.microsoft.com@evil.example/meeting"},
+      {...created, meetingRef: ""},
+      {...created, identityMode: "teams-user"},
+      {...created, guestReason: "unknown"},
+    ])
+      await expect(fixture(response).meetings.createTeamsMeeting({})).rejects.toThrow("invalid")
+  })
+  test("retires using only the opaque ownership reference", async () => {
+    const {meetings, calls} = fixture({})
+    await meetings.retireTeamsMeeting(created.meetingRef)
+    expect(calls[0].url).toBe("https://private.example/runtime/api/meetings/teams/retire")
+    expect(JSON.parse(calls[0].init?.body as string)).toEqual({meetingRef: created.meetingRef})
+  })
+  test("does not retry a creation POST after an ambiguous failure", async () => {
+    let calls = 0
+    const meetings = new Meetings(
+      createHttpClient({
+        baseUrl: "https://private.example/runtime",
+        getToken: async () => "token",
+        logger: noopLogger,
+        fetch: async () => {
+          calls++
+          throw new Error("connection closed after request")
+        },
+      }),
+    )
+    await expect(meetings.createTeamsMeeting({})).rejects.toThrow()
+    expect(calls).toBe(1)
+  })
+})

@@ -221,6 +221,8 @@ export enum MiniappRequestType {
    * host so the miniapp never holds the ACS Calling SDK.
    */
   MEETING_GET_CONFIGURATION = "miniapp_meeting_get_configuration",
+  MEETING_CREATE = "miniapp_meeting_create",
+  MEETING_RETIRE = "miniapp_meeting_retire",
   MEETING_JOIN = "miniapp_meeting_join",
   MEETING_LEAVE = "miniapp_meeting_leave",
   /** Terminate the meeting for everyone, not just this device. See `meeting.end()`. */
