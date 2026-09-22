@@ -174,6 +174,7 @@ async function setup(change?: (name: string, value: any) => void) {
     allowedAsg: [27, 31, 37, 39],
   } as LoadedOtaLegacyRoute
   const calls: string[][] = []
+  const transport = {inventory: fixture.wifiEndpoint + " device transport_id:7", id: "7"}
   const values: Record<string, string> = {
     "getprop persist.mentra.live.mac": "",
     "cat /proc/sys/kernel/random/boot_id": boot,
@@ -189,14 +190,14 @@ async function setup(change?: (name: string, value: any) => void) {
   }
   const run = async (argv: string[]) => {
     calls.push(argv)
-    if (argv.join(" ") === "adb devices -l") return fixture.wifiEndpoint + " device transport_id:7"
-    if (argv[0] !== "adb" || argv[1] !== "-t" || argv[2] !== "7" || argv[3] !== "shell")
+    if (argv.join(" ") === "adb devices -l") return transport.inventory
+    if (argv[0] !== "adb" || argv[1] !== "-t" || argv[2] !== transport.id || argv[3] !== "shell")
       throw Error("unexpected command")
     const key = argv.slice(4).join(" ")
     if (!(key in values)) throw Error("unexpected shell " + key)
     return values[key]
   }
-  return {root, baseline, legacy, values, run, calls, hashes, after, objects}
+  return {root, baseline, legacy, values, run, calls, hashes, after, objects, transport}
 }
 async function read(env: Awaited<ReturnType<typeof setup>>) {
   const reader = await createJanuaryHardwareReader({baseline: env.baseline, fixture, legacy: env.legacy}, env.run)
@@ -263,6 +264,55 @@ test("new boot with empty MAC stays unavailable until real identity returns; phy
   env.values["getprop ro.custom.ota.version"] = "20260709"
   env.values["dumpsys package com.mentra.asg_client"] = "versionCode=39"
   expect((await read(env)).bootId).toBe("new-normal-boot")
+})
+
+test("explicit USB fallback observes the modern return after firmware disables Wi-Fi ADB", async () => {
+  const env = await setup()
+  env.transport.inventory = fixture.serial + " device usb:1234X transport_id:8"
+  env.transport.id = "8"
+  env.values["getprop persist.mentra.live.mac"] = fixture.bluetooth
+  env.values["cat /proc/sys/kernel/random/boot_id"] = sourceBoot
+  env.values["getprop ro.custom.ota.version"] = "20260709"
+  env.values["dumpsys package com.mentra.asg_client"] = "versionCode=39"
+  await expect(read(env)).rejects.toBeInstanceOf(OtaHardwareUnavailable)
+  const reader = await createJanuaryHardwareReader(
+    {baseline: env.baseline, fixture, legacy: env.legacy, returnUsb: "1234X"},
+    env.run,
+  )
+  const actual: any = await reader.readHardware(fixture, env.legacy.allowedFirmware, env.legacy.allowedAsg, true)
+  expect(actual.transport).toBe("8")
+  expect(actual.bluetooth).toBe(fixture.bluetooth)
+  expect(actual.firmware).toBe("MentraLive_20260709")
+  expect(actual.bluetoothProvenance).toBeUndefined()
+  expect(env.calls.every((argv) => argv[1] === "devices" || argv[3] === "shell")).toBe(true)
+  expect(env.calls.some((argv) => ["connect", "tcpip", "setprop", "push", "reboot"].some((x) => argv.includes(x)))).toBe(false)
+})
+
+test("USB fallback cannot carry old blank-MAC identity or conceal a wrong device or Wi-Fi authorization error", async () => {
+  for (const failure of ["blank", "wrong-mac", "wrong-cid", "old-boot", "empty-boot", "invalid-boot", "january", "wrong-usb", "wifi-unauthorized"]) {
+    const env = await setup()
+    env.transport.inventory = fixture.serial + " device usb:1234X transport_id:8"
+    env.transport.id = "8"
+    env.values["getprop persist.mentra.live.mac"] = fixture.bluetooth
+    env.values["cat /proc/sys/kernel/random/boot_id"] = sourceBoot
+    env.values["getprop ro.custom.ota.version"] = "20260709"
+    env.values["dumpsys package com.mentra.asg_client"] = "versionCode=39"
+    if (failure === "blank") env.values["getprop persist.mentra.live.mac"] = ""
+    if (failure === "wrong-mac") env.values["getprop persist.mentra.live.mac"] = "AA:BB:CC:DD:EE:02"
+    if (failure === "wrong-cid") env.values["cat /sys/block/mmcblk0/device/cid"] = "f".repeat(32)
+    if (failure === "old-boot") env.values["cat /proc/sys/kernel/random/boot_id"] = boot
+    if (failure === "empty-boot") env.values["cat /proc/sys/kernel/random/boot_id"] = ""
+    if (failure === "invalid-boot") env.values["cat /proc/sys/kernel/random/boot_id"] = "invalid"
+    if (failure === "january") env.values["getprop ro.custom.ota.version"] = "20260113"
+    if (failure === "wrong-usb") env.transport.inventory = fixture.serial + " device usb:9999X transport_id:8"
+    if (failure === "wifi-unauthorized") env.transport.inventory += "\n" + fixture.wifiEndpoint + " unauthorized transport_id:7"
+    const reader = await createJanuaryHardwareReader(
+      {baseline: env.baseline, fixture, legacy: env.legacy, returnUsb: "1234X"},
+      env.run,
+    )
+    await expect(reader.readHardware(fixture, env.legacy.allowedFirmware, env.legacy.allowedAsg, true)).rejects.toThrow()
+    if (failure === "wifi-unauthorized") expect(env.calls.every((argv) => argv[1] === "devices")).toBe(true)
+  }
 })
 
 test("missing or mismatched current identity, firmware, ASG and exact APK stop the empty-property bridge", async () => {

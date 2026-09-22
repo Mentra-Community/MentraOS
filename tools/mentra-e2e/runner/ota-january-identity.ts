@@ -13,6 +13,7 @@ import {
   normalizeFirmware,
   OtaHardwareUnavailable,
   OtaValidationError,
+  selectUsbTransport,
   selectWifiTransport,
 } from "./ota-state"
 
@@ -256,10 +257,17 @@ export async function loadJanuaryIdentityBinding(selected: JanuarySetupEvidence,
 }
 
 export async function createJanuaryHardwareReader(
-  input: {baseline: JanuarySetupEvidence; fixture: OtaRecordingFixture; legacy: LoadedOtaLegacyRoute},
+  input: {
+    baseline: JanuarySetupEvidence
+    fixture: OtaRecordingFixture
+    legacy: LoadedOtaLegacyRoute
+    /** Optional cable selected before the run. Never enable or reconnect ADB here. */
+    returnUsb?: string
+  },
   command: typeof otaCommand = otaCommand,
 ) {
-  const {baseline, fixture, legacy} = structuredClone(input)
+  const {baseline, fixture, legacy, returnUsb} = structuredClone(input)
+  requireProof(returnUsb === undefined || /^[A-Za-z0-9.-]{1,80}$/.test(returnUsb), "INVALID_RETURN_USB_PATH")
   const binding = await loadJanuaryIdentityBinding(baseline, fixture)
   const {bridge} = binding
   requireProof(
@@ -294,7 +302,41 @@ export async function createJanuaryHardwareReader(
     requireProof(fixtureKey(selected) === fixtureKey(fixture), "SELECTED_FIXTURE_CHANGED")
     const startedAt = new Date().toISOString()
     const inventory = () => command(["adb", "devices", "-l"])
-    const transport = selectWifiTransport(await inventory(), fixture.wifiEndpoint!)
+    let transport: string
+    try {
+      transport = selectWifiTransport(await inventory(), fixture.wifiEndpoint!)
+    } catch (error) {
+      // Normal customer firmware can disable Wi-Fi ADB on reboot. A selected
+      // USB cable may observe that return, but cannot inherit the old boot's
+      // empty-MAC exception or hide an unauthorized/ambiguous Wi-Fi transport.
+      if (!(error instanceof OtaHardwareUnavailable) || error.kind !== "transport" || !returnUsb) throw error
+      const usbFixture = {...fixture, wifiEndpoint: undefined, usb: returnUsb}
+      const usbTransport = selectUsbTransport(await inventory(), fixture.serial, returnUsb)
+      const usbShell = (...args: string[]) => command(["adb", "-t", usbTransport, "shell", ...args])
+      requireProof(
+        (await usbShell("cat", "/sys/block/mmcblk0/device/cid")).toLowerCase() === fixture.cid.toLowerCase() &&
+          (await usbShell("getprop", "ro.serialno")) === fixture.serial &&
+          (await usbShell("getprop", "ro.boot.serialno")) === binding.bootSerial,
+        "USB_RETURN_IDENTITY_MISMATCH",
+      )
+      const mac = await usbShell("getprop", "persist.mentra.live.mac")
+      if (mac === "") throw new OtaHardwareUnavailable("boot", "USB return has not reported its Bluetooth identity yet")
+      requireProof(mac.toUpperCase() === fixture.bluetooth.toUpperCase(), "USB_RETURN_BLUETOOTH_MISMATCH")
+      const actual = await readOtaHardware(usbFixture, allowedFirmware, asgVersions, observingActivePass, command)
+      if (!actual.bootId) throw new OtaHardwareUnavailable("boot", "USB return has not reported its boot identity yet")
+      requireProof(
+        UUID.test(actual.bootId) && actual.bootId !== binding.originalBoot && actual.firmware !== JANUARY,
+        "USB_RETURN_MUST_BE_NEW_MODERN_BOOT",
+      )
+      requireProof(
+        (await actual.shell("getprop", "ro.boot.serialno")) === binding.bootSerial &&
+          (await actual.shell("cat", "/proc/sys/kernel/random/boot_id")) === actual.bootId &&
+          actual.transport === usbTransport &&
+          selectUsbTransport(await inventory(), fixture.serial, returnUsb) === actual.transport,
+        "USB_RETURN_CHANGED_DURING_READ",
+      )
+      return actual
+    }
     const shell = async (...args: string[]) => {
       try {
         return await command(["adb", "-t", transport, "shell", ...args])
