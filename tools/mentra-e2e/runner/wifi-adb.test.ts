@@ -8,6 +8,10 @@ import {createWifiAdbSteps, type WifiAdbInputs, type WifiAdbProcesses} from "./w
 import type {LifecycleContext, MutationIntent, MutationStep} from "./lifecycle"
 
 const hash = (value: string) => createHash("sha256").update(value).digest("hex")
+// These fake-device cases still fsync every real command/ownership journal.
+// CI storage takes nearly five seconds for valid runs; allow I/O headroom
+// without changing transport deadlines or removing durability checks.
+const durableIoTest = (name: string, body: () => Promise<void>) => test(name, body, 20_000)
 async function fixture(body: (f: Awaited<ReturnType<typeof setup>>) => Promise<void>) {
   const folder = await realpath(await mkdtemp(join(tmpdir(), "wifi-adb-test-")))
   try {
@@ -116,7 +120,7 @@ async function setup(folder: string) {
   return {folder, inputs, state, calls, writes, runtime, safety, steps, context, intent}
 }
 
-test("enable and restore reuse normal ASG commands exactly once with current identity", () =>
+durableIoTest("enable and restore reuse normal ASG commands exactly once with current identity", () =>
   fixture(async (f) => {
     expect((await f.steps.enable.reconcile(f.context)).status).toBe("settled")
     const owner = f.intent(f.steps.enable, "setup")
@@ -134,9 +138,10 @@ test("enable and restore reuse normal ASG commands exactly once with current ide
     expect(f.state.port).toBe("-1")
     const original = JSON.parse(await readFile(join(f.folder, "wifi-adb/owned-wifi/original.json"), "utf8"))
     expect(original.current.port).toBe("-1")
-  }))
+  }),
+)
 
-test("pre-enabled setting needs only one selected connect, then remains enabled", () =>
+durableIoTest("pre-enabled setting needs only one selected connect, then remains enabled", () =>
   fixture(async (f) => {
     f.state.port = "5555"
     expect((await f.steps.enable.reconcile(f.context)).status).toBe("settled")
@@ -144,9 +149,10 @@ test("pre-enabled setting needs only one selected connect, then remains enabled"
     await f.steps.enable.execute(f.context, owner)
     expect(f.writes).toEqual([["connect", f.inputs.fixture.wifiEndpoint]])
     expect((await f.steps.restore.reconcile(f.context)).status).toBe("satisfied")
-  }))
+  }),
+)
 
-test("USB restoration does not depend on the earlier DHCP address", () =>
+durableIoTest("USB restoration does not depend on the earlier DHCP address", () =>
   fixture(async (f) => {
     await f.steps.enable.reconcile(f.context)
     const enabled = f.intent(f.steps.enable, "setup")
@@ -159,9 +165,10 @@ test("USB restoration does not depend on the earlier DHCP address", () =>
     expect((await f.steps.restore.reconcile(f.context, restore)).status).toBe("satisfied")
     expect(f.state.port).toBe("-1")
     expect(f.writes.filter((a) => a[0] === "connect")).toEqual([["connect", f.inputs.fixture.wifiEndpoint]])
-  }))
+  }),
+)
 
-test("configuration exit error may reconcile from real current state, never resend", () =>
+durableIoTest("configuration exit error may reconcile from real current state, never resend", () =>
   fixture(async (f) => {
     await f.steps.enable.reconcile(f.context)
     f.state.throwAfterBroadcast = true
@@ -171,9 +178,10 @@ test("configuration exit error may reconcile from real current state, never rese
     const recovered = createWifiAdbSteps(f.inputs, f.safety, f.runtime)
     expect((await recovered.enable.reconcile(f.context, owner)).status).toBe("satisfied")
     expect(f.writes.length).toBe(2)
-  }))
+  }),
+)
 
-test("identity failure after original dispatch stays unknown and never connects/repeats", () =>
+durableIoTest("identity failure after original dispatch stays unknown and never connects/repeats", () =>
   fixture(async (f) => {
     await f.steps.enable.reconcile(f.context)
     f.state.dropAfterBroadcast = true
@@ -181,18 +189,20 @@ test("identity failure after original dispatch stays unknown and never connects/
     await expect(f.steps.enable.execute(f.context, owner)).rejects.toThrow("IDENTITY")
     expect((await f.steps.enable.reconcile(f.context, owner)).status).toBe("unknown")
     expect(f.writes.length).toBe(1)
-  }))
+  }),
+)
 
-test("active writer prevents enable", () =>
+durableIoTest("active writer prevents enable", () =>
   fixture(async (f) => {
     f.state.safe = false
     expect((await f.steps.enable.reconcile(f.context)).status).toBe("unknown")
     const owner = f.intent(f.steps.enable, "setup")
     await expect(f.steps.enable.execute(f.context, owner)).rejects.toThrow("Active writer")
     expect(f.writes.length).toBe(0)
-  }))
+  }),
+)
 
-test("active writer prevents restoration without losing the original setting", () =>
+durableIoTest("active writer prevents restoration without losing the original setting", () =>
   fixture(async (f) => {
     await f.steps.enable.reconcile(f.context)
     const enabled = f.intent(f.steps.enable, "setup")
@@ -203,9 +213,10 @@ test("active writer prevents restoration without losing the original setting", (
     await expect(f.steps.restore.execute(f.context, restore)).rejects.toThrow("Active writer")
     expect(f.writes.length).toBe(2)
     expect(f.state.port).toBe("5555")
-  }))
+  }),
+)
 
-test("a new owner cannot adopt a previous dispatched preference change", () =>
+durableIoTest("a new owner cannot adopt a previous dispatched preference change", () =>
   fixture(async (f) => {
     await f.steps.enable.reconcile(f.context)
     const owner = f.intent(f.steps.enable, "setup")
@@ -215,9 +226,10 @@ test("a new owner cannot adopt a previous dispatched preference change", () =>
     expect((await f.steps.enable.reconcile(changed, replaced)).status).toBe("unknown")
     await expect(f.steps.enable.execute(changed, replaced)).rejects.toThrow()
     expect(f.writes.length).toBe(2)
-  }))
+  }),
+)
 
-test("wrong IP or missing full MAC is rejected before any command write", () =>
+durableIoTest("wrong IP or missing full MAC is rejected before any command write", () =>
   fixture(async (f) => {
     f.state.ip = "192.168.10.99"
     expect((await f.steps.enable.reconcile(f.context)).status).toBe("unknown")
@@ -225,16 +237,18 @@ test("wrong IP or missing full MAC is rejected before any command write", () =>
     f.state.mac = ""
     expect((await f.steps.enable.reconcile(f.context)).status).toBe("unknown")
     expect(f.writes.length).toBe(0)
-  }))
+  }),
+)
 
-test("missing original observation with existing setup intent is not a successful restoration", () =>
+durableIoTest("missing original observation with existing setup intent is not a successful restoration", () =>
   fixture(async (f) => {
     f.intent(f.steps.enable, "setup")
     expect((await f.steps.restore.reconcile(f.context)).status).toBe("unknown")
     expect(f.writes.length).toBe(0)
-  }))
+  }),
+)
 
-test("lost lease rejects before adb invocation and changed pinned inputs reject recovery", () =>
+durableIoTest("lost lease rejects before adb invocation and changed pinned inputs reject recovery", () =>
   fixture(async (f) => {
     await writeFile(f.inputs.leasePath, JSON.stringify({pid: process.pid + 1, token: "unowned"}), {mode: 0o600})
     expect((await f.steps.enable.reconcile(f.context)).status).toBe("unknown")
@@ -247,4 +261,5 @@ test("lost lease rejects before adb invocation and changed pinned inputs reject 
       f.runtime,
     )
     expect((await changed.enable.reconcile(f.context)).status).toBe("unknown")
-  }))
+  }),
+)
