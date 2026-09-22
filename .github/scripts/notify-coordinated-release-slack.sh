@@ -140,11 +140,11 @@ play_detail="${PLAY_TRACK:-unknown}"
 if [[ "${UPLOAD_GOOGLE_PLAY:-true}" == "false" ]]; then
   play_detail="dev uploads paused; APK/AAB downloads remain available"
 fi
-android_line="*$(icon "$android_result") Android* - $(label "$android_result") - ${android_detail}${newline}Google Play: ${play_detail}"
+android_line="*$(icon "$android_result") Android* - $(label "$android_result") - ${android_detail}${newline}Android: $(icon "$android_result") $(label "$android_result") · Google Play: ${play_detail}"
 if [[ -n "${PLAY_INSTALL_URL:-}" ]]; then
   android_line+=" - <${PLAY_INSTALL_URL}|Install from Google Play>"
 fi
-ios_line="*$(icon "$ios_result") iOS* - $(label "$ios_result") - ${ios_detail}${newline}TestFlight: ${TESTFLIGHT_GROUP:-unknown}"
+ios_line="*$(icon "$ios_result") iOS* - $(label "$ios_result") - ${ios_detail}${newline}iOS: $(icon "$ios_result") $(label "$ios_result") · TestFlight: ${TESTFLIGHT_GROUP:-unknown}"
 if [[ -n "${TESTFLIGHT_DISTRIBUTION_STATUS:-}" ]]; then
   ios_line+=" - ${TESTFLIGHT_DISTRIBUTION_STATUS}"
 fi
