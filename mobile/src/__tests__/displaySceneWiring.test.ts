@@ -70,7 +70,7 @@ describe("scene requests through arbitration", () => {
       {view: "main", scene: [{type: "text", id: "t", box: {x: 0, y: 0, w: 100, h: 40}, text: "hi"}]},
       (r) => (result = r),
     )
-    expect(result).toEqual({status: "displayed", degraded: false, dropped: []})
+    expect(result).toEqual({status: "displayed", displayToken: expect.any(String), degraded: false, dropped: []})
     const scene = lastScene()
     expect(scene.appId).toBe("com.app.a")
     expect((scene.elements as unknown[]).length).toBe(1)
@@ -167,7 +167,7 @@ describe("scene requests through arbitration", () => {
       (r) => (result = r),
     )
     // Image dropped + reported (G1 renders no images); text rides the legacy path.
-    expect(result).toEqual({status: "displayed", degraded: true, dropped: ["map"]})
+    expect(result).toEqual({status: "displayed", displayToken: expect.any(String), degraded: true, dropped: ["map"]})
     const legacy = mockSentEvents.filter((e) => !e.scene)
     const layout = (legacy[legacy.length - 1] as {layout?: {layoutType?: string; text?: string}}).layout
     expect(layout?.layoutType).toBe("text_wall")

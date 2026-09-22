@@ -174,6 +174,7 @@ jobs:
             --arg coreApiClientId "$ENTRA_CORE_CLIENT_ID" \
             --arg mobileClientId "$ENTRA_MOBILE_CLIENT_ID" \
             --arg workspaceHostname "enterprisedev.mentraglass.com" \
+            --slurpfile reference cloud-v2/deploy/azure/enterprise-reference/mentra-deployment.json \
             '{
               "$schema":"https://schema.management.azure.com/schemas/2019-04-01/deploymentParameters.json#",
               contentVersion:"1.0.0.0",
@@ -190,6 +191,7 @@ jobs:
                 miniappJwtPrivateKey:{value:env.MINIAPP_JWT_PRIVATE_KEY},
                 miniappJwtPublicKey:{value:env.MINIAPP_JWT_PUBLIC_KEY},
                 workspaceHostname:{value:$workspaceHostname},
+                managedMiniapps:{value:$reference[0].miniapps.managed},
                 manageAcrPullRoleAssignment:{value:false}
               }
             }' > "$parameters"
@@ -275,6 +277,7 @@ jobs:
             --arg tenant "$ENTRA_TENANT_ID" \
             --arg mobile "$ENTRA_MOBILE_CLIENT_ID" \
             --arg coreClient "$ENTRA_CORE_CLIENT_ID" \
+            --slurpfile reference cloud-v2/deploy/azure/enterprise-reference/mentra-deployment.json \
             '.schemaVersion == 1
              and (has("releaseIdentity") | not)
              and .services.coreUrl == $core
@@ -288,9 +291,14 @@ jobs:
              and .features.runtimeRealtimeSession == false
              and .features.managedStreams == false
              and .features.nativeMeetings == true
-             and .miniapps.managed == []
+             and .miniapps.managed == $reference[0].miniapps.managed
              and .telemetry == false' \
             <<< "$manifest"
+
+          bundle_url=$(jq -er '.miniapps.managed[] | select(.packageName == "com.mentra.call") | .bundleUrl' <<< "$manifest")
+          bundle_sha=$(jq -er '.miniapps.managed[] | select(.packageName == "com.mentra.call") | .sha256' <<< "$manifest")
+          curl --fail --silent --show-error "$bundle_url" --output "$RUNNER_TEMP/mentra-call.zip"
+          echo "$bundle_sha  $RUNNER_TEMP/mentra-call.zip" | sha256sum --check
 
           curl --fail --silent --show-error --location "$workspace_origin/legal/privacy" >/dev/null
           curl --fail --silent --show-error --location "$workspace_origin/legal/terms" >/dev/null

@@ -391,3 +391,29 @@ describe("validateMeetingVideoSource", () => {
     expect(() => validateMeetingVideoSource({type: "whep", url: 42})).toThrow()
   })
 })
+
+describe("host-owned meeting identity", () => {
+  test("joins without exposing a credential to the miniapp and retains the host identity", async () => {
+    const sent: unknown[] = []
+    const {session} = mockSession(async (payload) => {
+      sent.push(payload)
+      return {state: "connected", muted: false, identityMode: "guest", guestReason: "teams-license-unavailable"}
+    })
+    const {token: _token, ...options} = joinArgs
+    const meeting = new MeetingModule(session)
+    expect(await meeting.join(options)).toMatchObject({identityMode: "guest", guestReason: "teams-license-unavailable"})
+    expect(sent[0]).not.toHaveProperty("token")
+    expect(meeting.state).not.toHaveProperty("token")
+    expect(await meeting.getState()).toMatchObject({identityMode: "guest", guestReason: "teams-license-unavailable"})
+  })
+  test("asks the host for policy before choosing backend-dependent features", async () => {
+    const sent: unknown[] = []
+    const config = {enabled: true, credentialSource: "runtime", externalBackendAllowed: false, managedStreams: false}
+    const {session} = mockSession(async (payload) => {
+      sent.push(payload)
+      return config
+    })
+    expect(await new MeetingModule(session).getConfiguration()).toEqual(config)
+    expect(sent).toEqual([{type: MiniappRequestType.MEETING_GET_CONFIGURATION}])
+  })
+})

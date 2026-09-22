@@ -362,6 +362,12 @@ class MantleManager {
     engine.configure({
       auth: workspaceAuth
         ? {
+            getTeamsToken: async () => {
+              if (deployment.manifest.auth.mode !== "microsoft-entra") {
+                throw new Error("This workspace does not have a Microsoft Entra identity")
+              }
+              return workspaceAuth.getAccessToken({scopes: deployment.manifest.auth.teamsScopes})
+            },
             getSubjectToken: async () => ({
               token: await workspaceAuth.getAccessToken({
                 scopes:

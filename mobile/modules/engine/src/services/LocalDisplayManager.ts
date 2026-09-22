@@ -44,11 +44,13 @@ export interface DisplayPayload {
   scene?: SceneElementInput[]
   durationMs?: number
   includeTextLayout?: boolean
+  ifDisplayToken?: string
 }
 
 /** Outcome delivered to an awaiting render() call (REQUEST_RESULT payload). */
 export interface DisplayRequestResult {
   status: "displayed" | "blocked"
+  displayToken?: string
   degraded?: boolean
   dropped?: string[]
   reason?: string
@@ -113,6 +115,7 @@ class LocalDisplayManager {
   private coreApp: string | null = null
   private coreAppDisplay: ActiveDisplay | null = null
   private currentDisplay: ActiveDisplay | null = null
+  private displayRevision = 0
   private backgroundLock: BackgroundLock | null = null
 
   private bootingApp: BootingApp | null = null
@@ -291,6 +294,25 @@ class LocalDisplayManager {
    * the boot queue (resolved when drained or superseded).
    */
   public request(packageName: string, payload: DisplayPayload, resolve?: DisplayRequestResolver): void {
+    const deliver = resolve
+    resolve = (result) =>
+      deliver?.({
+        ...result,
+        ...(result.status === "displayed" &&
+        payload.view !== "dashboard" &&
+        !isClearPayload(payload) &&
+        this.currentDisplay?.packageName === packageName
+          ? {displayToken: String(this.displayRevision)}
+          : {}),
+      })
+    // Conditional writes never enter the boot queue or affect another view.
+    if (
+      payload.ifDisplayToken !== undefined &&
+      (payload.view === "dashboard" || this.bootingApp || !this.matchesFrame(packageName, payload.ifDisplayToken))
+    ) {
+      resolve({status: "blocked", reason: "display frame changed"})
+      return
+    }
     // Dashboard view: pass straight through (no throttle/arbitration). Local
     // dashboard rendering is currently a stub on the phone anyway.
     if (payload.view === "dashboard") {
@@ -327,7 +349,16 @@ class LocalDisplayManager {
   // Internals — arbitration
   // ===========================================================================
 
+  private matchesFrame(packageName: string, token: string): boolean {
+    return this.currentDisplay?.packageName === packageName && token === String(this.displayRevision)
+  }
+
   private arbitrateAndSend(packageName: string, payload: DisplayPayload, resolve?: DisplayRequestResolver): void {
+    // Recheck at arbitration, before modifying locks or saved core frames.
+    if (payload.ifDisplayToken !== undefined && !this.matchesFrame(packageName, payload.ifDisplayToken)) {
+      resolve?.({status: "blocked", reason: "display frame changed"})
+      return
+    }
     const now = this.now()
 
     // Expire a stale bg lock before arbitrating.
@@ -479,7 +510,7 @@ class LocalDisplayManager {
 
     // If core app fired, refresh the saved snapshot with the actual processed
     // event so restore uses the wrapped text (legacy) / the retained scene.
-    if (packageName === this.coreApp && this.currentDisplay) {
+    if (view === "main" && packageName === this.coreApp && this.currentDisplay?.packageName === packageName) {
       this.coreAppDisplay = {
         packageName,
         processedEvent: this.currentDisplay.processedEvent,
@@ -517,11 +548,11 @@ class LocalDisplayManager {
           {view, layout: result.layout, ...(result.prewrapped ? {_processed: true} : {})},
           expiresAt,
         )
-        if (this.currentDisplay) this.currentDisplay.scene = elements
+        if (view === "main" && this.currentDisplay) this.currentDisplay.scene = elements
       } else {
         // Scene degraded to nothing (e.g. all-image scene on a text-only
-        // device). render() replaces the frame, so nothing means clear.
-        this.sendClear()
+        // device). Clear only the requested view.
+        this.sendClear(view)
       }
       resolve?.({
         status: "displayed",
@@ -532,6 +563,16 @@ class LocalDisplayManager {
       return
     }
 
+    if (view === "dashboard") {
+      resolve?.({
+        status: "displayed",
+        degraded: result.degraded,
+        dropped: result.dropped,
+        ...(includeTextLayout ? {textLayout: result.textLayout} : {}),
+      })
+      return
+    }
+    this.displayRevision++
     this.currentDisplay = {packageName, processedEvent: {}, scene: elements, expiresAt}
     this.clearExpiryTimer()
     if (expiresAt !== null) {
@@ -571,6 +612,9 @@ class LocalDisplayManager {
       console.error(`${LOG_TAG}: native display failed:`, err)
     }
 
+    // Dashboard traffic does not replace or expire the main-view owner.
+    if (rawEvent.view === "dashboard") return
+    this.displayRevision++
     this.currentDisplay = {packageName, processedEvent, expiresAt}
 
     this.clearExpiryTimer()
@@ -612,17 +656,15 @@ class LocalDisplayManager {
     this.restoreDisplay(this.coreAppDisplay)
   }
 
-  private sendClear(): void {
+  private sendClear(view: "main" | "dashboard" = "main"): void {
     const clearEvent: Record<string, unknown> = {
-      view: "main",
+      view,
       layout: {layoutType: "clear_view"},
     }
     this.sendToNative("system.clear", clearEvent, null)
-    this.currentDisplay = null
-    // The glasses main view is now blank: every app's retained scene is
-    // replay-only until it re-renders — diffing against it would skip
-    // "unchanged" elements onto the blank screen.
-    sceneRenderer.markViewStale("main")
+    if (view === "main") this.currentDisplay = null
+    // Only this view is blank; unrelated retained content stays current.
+    sceneRenderer.markViewStale(view)
   }
 
   // ===========================================================================
@@ -701,6 +743,7 @@ class LocalDisplayManager {
     if (saved.scene) {
       const expiresAt = remaining !== undefined ? this.now() + remaining : null
       if (sceneRenderer.replayApp(saved.packageName, "main")) {
+        this.displayRevision++
         this.currentDisplay = {packageName: saved.packageName, processedEvent: {}, scene: saved.scene, expiresAt}
         this.clearExpiryTimer()
         if (expiresAt !== null) {
@@ -743,6 +786,7 @@ class LocalDisplayManager {
       const connected = isGlassesConnected(useGlassesStore.getState().connection)
       if (connected === this.glassesWasConnected) return
       this.glassesWasConnected = connected
+      this.displayRevision++ // In-flight page updates cannot cross a disconnect.
       if (connected) {
         this.replayCurrent()
       }
@@ -762,6 +806,7 @@ class LocalDisplayManager {
 
     console.log(`${LOG_TAG}: replayCurrent(${current.packageName})`)
     if (current.scene) {
+      this.displayRevision++
       if (!sceneRenderer.replayApp(current.packageName, "main")) {
         this.sendNow(
           current.packageName,

@@ -150,7 +150,12 @@ describe("NIMO positioned scene routing", () => {
   test.each(["main", "dashboard"] as const)("retains positioned text, rectangle and PNG in %s", (view) => {
     let result: DisplayRequestResult | undefined
     localDisplayManager.request("com.test.maps", {view, scene: scene()}, (value) => (result = value))
-    expect(result).toEqual({status: "displayed", degraded: false, dropped: []})
+    expect(result).toEqual({
+      status: "displayed",
+      degraded: false,
+      dropped: [],
+      ...(view === "main" ? {displayToken: expect.any(String)} : {}),
+    })
     const frame = lastScene()
     expect(frame.view).toBe(view)
     expect(frame.elements).toHaveLength(3)
@@ -175,9 +180,48 @@ describe("NIMO positioned scene routing", () => {
     localDisplayManager.request("com.test.frame", {view: "main", scene: elements}, (value) => {
       result = value
     })
-    expect(result).toEqual({status: "displayed", degraded: true, dropped: ["text5"]})
+    expect(result).toEqual({status: "displayed", degraded: true, dropped: ["text5"], displayToken: expect.any(String)})
     expect(lastScene().elements).toHaveLength(5)
     expect(lastScene().elements.reduce((sum, el) => sum + el.text!.split("\n").length, 0)).toBe(55)
+  })
+
+  test.each(["NIMO", "Even Realities G1"])("preserves main source and dashboard feedback on %s", (model) => {
+    selectedModel = model
+    const main: SceneElementInput[] = [
+      {type: "text", id: "main", box: {x: 0, y: 0, w: 500, h: 200}, text: "Main content"},
+    ]
+    localDisplayManager.request("com.test.frame", {view: "main", scene: main})
+    let result: DisplayRequestResult | undefined
+    localDisplayManager.request(
+      "com.test.frame",
+      {
+        view: "dashboard",
+        includeTextLayout: true,
+        scene: [
+          {
+            type: "text",
+            id: "dash",
+            box: {x: 0, y: 0, w: 500, h: 200},
+            text: "Dashboard content",
+            style: {maxLines: 2},
+          },
+        ],
+      },
+      (value) => {
+        result = value
+      },
+    )
+    expect(result?.textLayout?.dash.lines[0].text).toBe("Dashboard content")
+    expect(result?.displayToken).toBeUndefined()
+    localDisplayManager.request("com.test.frame", {
+      view: "dashboard",
+      scene: [{type: "image", box: {x: 0, y: 0, w: 10, h: 10}, data: PNG}],
+    })
+    expect(sent.at(-1)?.view).toBe("dashboard")
+    localDisplayManager.replayCurrent()
+    expect(sent.at(-1)?.view).toBe("main")
+    expect(JSON.stringify(sent.at(-1))).toContain("Main content")
+    expect(JSON.stringify(sent.at(-1))).not.toContain("Dashboard content")
   })
 
   test("converts legacy captions into a full logical-canvas text scene", () => {
@@ -231,7 +275,12 @@ describe("NIMO positioned scene routing", () => {
       {view: "main", scene: [{type: "image", id: "oversized", box: {x: 0, y: 0, w: 201, h: 200}, data: PNG}]},
       (value) => (result = value),
     )
-    expect(result).toEqual({status: "displayed", degraded: true, dropped: ["oversized"]})
+    expect(result).toEqual({
+      status: "displayed",
+      degraded: true,
+      dropped: ["oversized"],
+      displayToken: expect.any(String),
+    })
     expect(sent).toHaveLength(2)
     expect(lastScene().elements).toEqual([])
     expect(lastScene().removed).toEqual(["instruction", "outline", "maneuver"])
