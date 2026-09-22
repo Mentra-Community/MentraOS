@@ -674,6 +674,25 @@ class MantleManager {
   }
 
   private async installBundledCall() {
+    const deployment = deploymentStore.getActive()
+    if (deployment.kind === "workspace") {
+      // Managed releases must retain manifest ownership and digest verification;
+      // the consumer binary's ZIP is outside the workspace system-app allowlist.
+      await deploymentManagedMiniappSync.sync(deployment)
+      const entry = deployment.manifest.miniapps.managed.find((item) => item.packageName === mentraCallPackageName)
+      const identity = entry && appRegistry.getReleaseIdentity(entry.packageName, entry.version)
+      if (
+        deploymentStore.getActive() !== deployment ||
+        !entry ||
+        identity?.source !== "deployment_manifest" ||
+        identity.deploymentId !== deployment.manifest.deploymentId ||
+        identity.deploymentOrigin !== deployment.workspaceOrigin ||
+        identity.bundleSha256 !== entry.sha256.toLowerCase()
+      ) {
+        throw new Error("The workspace Call bundle could not be installed and verified")
+      }
+      return
+    }
     const asset = BUNDLED_MINIAPPS.map((module) => Asset.fromModule(module)).find(
       (asset) => parseBundledMiniappName(asset.name)?.packageName === mentraCallPackageName,
     )

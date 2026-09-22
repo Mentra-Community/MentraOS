@@ -9,6 +9,10 @@ import {initI18n} from "@/i18n"
 import mantle from "@/services/MantleManager"
 import builtInMiniappCatalog from "@/services/miniapps/BuiltInMiniappCatalog"
 import {mentraCallPackageName, notifyPackageName} from "@/constants/miniapps"
+import {deploymentStore} from "@/services/deployment/store"
+import {createConsumerDeployment} from "@/services/deployment/officialManifest"
+import type {WorkspaceDeployment} from "@/services/deployment/types"
+import {deploymentManagedMiniappSync} from "@/services/miniapps/deploymentManagedMiniappSync"
 import {
   appRegistry,
   audioPlaybackService,
@@ -666,6 +670,75 @@ describe("MantleManager", () => {
       log.mockRestore()
     }
   })
+
+  it.each([true, false])(
+    "unhides Enterprise Call only after verifying its managed release (verified=%s)",
+    async (verified) => {
+      const consumer = createConsumerDeployment()
+      const entry = {
+        packageName: mentraCallPackageName,
+        version: "2.1.29",
+        bundleUrl: "https://enterprise.example/miniapps/call.zip",
+        sha256: "a".repeat(64),
+      }
+      const workspace: WorkspaceDeployment = {
+        kind: "workspace",
+        source: "manual",
+        activatedAt: "2026-09-22T00:00:00Z",
+        workspaceOrigin: "https://enterprise.example",
+        manifestUrl: "https://enterprise.example/.well-known/mentra-deployment.json",
+        manifest: {
+          ...consumer.manifest,
+          deploymentId: "enterprise",
+          features: {...consumer.manifest.features, nativeMeetings: true},
+          systemMiniapps: {approvedPackageNamesOverride: ["com.mentra.settings"]},
+          miniapps: {configuration: {}, managed: [entry]},
+        },
+      }
+      const originalPlatform = Platform.OS
+      const originalIdentity = appRegistry.getReleaseIdentity
+      const active = jest.spyOn(deploymentStore, "getActive").mockReturnValue(workspace)
+      const sync = jest.spyOn(deploymentManagedMiniappSync, "sync").mockResolvedValue(undefined)
+      appRegistry.getReleaseIdentity = jest.fn(() =>
+        verified
+          ? {
+              source: "deployment_manifest",
+              deploymentId: "enterprise",
+              deploymentOrigin: workspace.workspaceOrigin,
+              bundleSha256: entry.sha256,
+            }
+          : null,
+      )
+      const assets = jest.spyOn(Asset, "fromModule")
+      Object.defineProperty(Platform, "OS", {configurable: true, value: "ios"})
+      const instance = new (mantle.constructor as new () => {
+        setupIosMiniappVisibility: () => void
+        iosMiniappVisibility: Map<string, {reconcile: () => Promise<void>; dispose: () => void}>
+      })()
+      try {
+        await engine.settings.set(SETTINGS.show_mentra_call_ios.key, false)
+        instance.setupIosMiniappVisibility()
+        const visibility = instance.iosMiniappVisibility.get(SETTINGS.show_mentra_call_ios.key)!
+        if (verified) {
+          await visibility.reconcile()
+          expect(engine.miniapps.setHiddenStatus).toHaveBeenCalledWith(mentraCallPackageName, false)
+        } else {
+          await expect(visibility.reconcile()).rejects.toThrow("could not be installed and verified")
+          expect(engine.miniapps.setHiddenStatus).not.toHaveBeenCalledWith(mentraCallPackageName, false)
+        }
+        expect(sync).toHaveBeenCalledWith(workspace)
+        expect(assets).not.toHaveBeenCalled()
+        expect(engine.settings.get(SETTINGS.show_mentra_call_ios.key)).toBe(false)
+      } finally {
+        for (const visibility of instance.iosMiniappVisibility.values()) visibility.dispose()
+        appRegistry.getReleaseIdentity = originalIdentity
+        active.mockRestore()
+        sync.mockRestore()
+        assets.mockRestore()
+        Object.defineProperty(Platform, "OS", {configurable: true, value: originalPlatform})
+      }
+    },
+  )
 
   it("rechecks Call policy after downloading and propagates an install failure", async () => {
     const originalPlatform = Platform.OS

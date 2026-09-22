@@ -1,16 +1,21 @@
-import {useMemo} from "react"
+import {useMemo, useSyncExternalStore} from "react"
 import {SETTINGS, useActiveApps, useApps, useSetting} from "@mentra/engine"
 
-import {shouldHideMiniapp} from "@/constants/miniapps"
+import {shouldHideMiniapp} from "@/services/miniapps/miniappVisibility"
+import {deploymentStore} from "@/services/deployment/store"
+
+const subscribeDeployment = (onChange: () => void) => deploymentStore.subscribe(onChange)
+const getDeployment = () => deploymentStore.getActive()
 
 /** Platform restrictions also apply to All Apps, which ignores home hiding. */
 export const useAvailableApps = () => {
   const apps = useApps()
   const [showIosCall] = useSetting<boolean>(SETTINGS.show_mentra_call_ios.key)
   const [showIosNotify] = useSetting<boolean>(SETTINGS.show_notify_ios.key)
+  const deployment = useSyncExternalStore(subscribeDeployment, getDeployment)
   return useMemo(
-    () => apps.filter((app) => !shouldHideMiniapp(app.packageName, undefined, {showIosCall, showIosNotify})),
-    [apps, showIosCall, showIosNotify],
+    () => apps.filter((app) => !shouldHideMiniapp(app.packageName)),
+    [apps, showIosCall, showIosNotify, deployment],
   )
 }
 

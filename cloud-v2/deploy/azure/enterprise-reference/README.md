@@ -5,13 +5,17 @@ cloud-neutral image and configuration contract is in
 [private-deployment.md](../../private-deployment.md). The Azure template starts the
 same immutable Mentra Cloud image as two Container Apps:
 
-- customer Core with Cosmos DB for MongoDB-compatible persistence; and
+- customer Core with Cosmos DB for MongoDB-compatible persistence and Azure Files for durable report attachments; and
 - meetings-only Runtime with the `acs-teams` provider.
 
 It also creates ACS, a Container Apps environment, pull identity, managed TLS
 for the workspace hostname, and the served deployment manifest. The Runtime
 profile does not start Redis, UDP, cloud audio, camera, Cloudflare, speech,
 maps, Store, or reporting dependencies.
+
+Core's report API is available independently of Runtime and consumer telemetry.
+See [report setup and retrieval](operations.md#reports-and-durable-attachments)
+for the generated read-only credential and attachment-storage lifecycle.
 
 ## Reference identities
 

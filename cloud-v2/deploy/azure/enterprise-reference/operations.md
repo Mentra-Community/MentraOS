@@ -1,5 +1,47 @@
 # Mentra Private Deployment operations
 
+## Reports and durable attachments
+
+Core stores report records in the deployment's Cosmos DB (MongoDB API).
+The Azure setup also creates an Azure Files share and mounts it at
+`/mnt/core-attachments` in Core. `CLOUD_STORAGE_PROVIDER=local` refers to this
+durable mount, not the container's temporary filesystem. Logs and screenshots
+survive Core revision replacement. The share authenticates with an account
+key held by the Container Apps environment, uses encrypted SMB, and has
+seven-day share-delete retention. It uses the storage service's authenticated
+public endpoint, matching this reference deployment's non-VNet topology.
+
+`generate-private-secrets.sh` creates a separate `reportAgentApiToken` for
+read-only report access. When upgrading an existing deployment, add a random
+token (at least 32 URL-safe characters, for example `openssl rand -hex 32`) to
+that existing secret file as `reportAgentApiToken`; preserve every signing key
+and the refresh-token pepper. Store the token in the customer's secret manager.
+Enterprise Dev CI uses the `ENTERPRISE_DEV_REPORT_AGENT_API_TOKEN` GitHub secret.
+The deployment helper and CI verify the authenticated report-reader health route.
+
+The Mentra App feedback confirmation displays the report ID and offers
+**Copy report ID**. Retrieve a known report and its attachments with:
+
+```bash
+export MENTRA_CORE_URL=https://<enterprise-core-host>
+export MENTRA_REPORT_AGENT_TOKEN=<read-only-token-from-secret-manager>
+./scripts/fetch-incident-logs.sh --agent rep_01...
+```
+
+Agent mode requires an explicit Core URL, never probes consumer environments,
+and grants no write, list, or general admin access. Report artifacts are not
+public. Slack notification delivery remains optional and unconfigured by this
+reference setup; report filing and retrieval work without Slack or consumer
+analytics (`telemetry: false`).
+
+Before upgrading a deployment that used temporary local attachment storage,
+copy its existing `.cloud-v2-storage/core/` contents to the new share. Database
+records alone cannot reconstruct attachment bytes lost during earlier restarts.
+
+On iOS, Call listed in `miniapps.managed` with `nativeMeetings: true` is installed
+and made available by the workspace policy. It does not require the consumer
+experimental toggle. Consumer Call visibility remains unchanged.
+
 Image configuration, module/provider values, manifest rules, endpoints, and
 SBOM/provenance verification are defined once in
 [private-deployment.md](../../private-deployment.md). This runbook covers the

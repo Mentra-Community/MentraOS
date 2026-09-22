@@ -40,6 +40,7 @@ openssl genpkey -algorithm ED25519 -out "$TEMP_DIR/miniapp-private.pem" 2>/dev/n
 openssl pkey -in "$TEMP_DIR/miniapp-private.pem" -pubout -out "$TEMP_DIR/miniapp-public.pem" 2>/dev/null
 
 openssl rand -base64 48 | tr -d '\r\n' > "$TEMP_DIR/refresh-token-pepper"
+openssl rand -hex 32 > "$TEMP_DIR/report-agent-api-token"
 key_body "$TEMP_DIR/access-private.pem" > "$TEMP_DIR/access-private.body"
 key_body "$TEMP_DIR/access-public.pem" > "$TEMP_DIR/access-public.body"
 key_body "$TEMP_DIR/miniapp-private.pem" > "$TEMP_DIR/miniapp-private.body"
@@ -60,7 +61,8 @@ jq -n \
   --rawfile mentraJwtPublicKey "$TEMP_DIR/access-public.body" \
   --rawfile miniappJwtPrivateKey "$TEMP_DIR/miniapp-private.body" \
   --rawfile miniappJwtPublicKey "$TEMP_DIR/miniapp-public.body" \
-  '{refreshTokenPepper:$refreshTokenPepper,mentraJwtPrivateKey:$mentraJwtPrivateKey,mentraJwtPublicKey:$mentraJwtPublicKey,miniappJwtPrivateKey:$miniappJwtPrivateKey,miniappJwtPublicKey:$miniappJwtPublicKey}' \
+  --rawfile reportAgentApiToken "$TEMP_DIR/report-agent-api-token" \
+  '{refreshTokenPepper:$refreshTokenPepper,mentraJwtPrivateKey:$mentraJwtPrivateKey,mentraJwtPublicKey:$mentraJwtPublicKey,miniappJwtPrivateKey:$miniappJwtPrivateKey,miniappJwtPublicKey:$miniappJwtPublicKey,reportAgentApiToken:($reportAgentApiToken | rtrimstr("\n"))}' \
   > "$TEMP_OUTPUT"
 chmod 0600 "$TEMP_OUTPUT"
 

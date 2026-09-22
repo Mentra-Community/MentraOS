@@ -22,6 +22,14 @@ param miniappJwtPrivateKey string
 @secure()
 param miniappJwtPublicKey string
 
+@secure()
+@minLength(32)
+@description('Read-only credential for /api/agent/reports. Keep in the deployment secret manager; never put it in the mobile manifest.')
+param reportAgentApiToken string
+
+@description('Durable Core attachment storage account. The default is stable for this resource group.')
+param reportStorageAccountName string = 'mentra${uniqueString(subscription().id, resourceGroup().id)}'
+
 @description('Optional canonical workspace hostname. DNS must point directly to the Container App before enabling it.')
 param workspaceHostname string = ''
 
@@ -139,6 +147,49 @@ resource workspaceCertificate 'Microsoft.App/managedEnvironments/managedCertific
   }
 }
 
+// Reuse Core's filesystem storage provider on a durable Azure Files mount.
+// No attachment bytes or storage keys are exposed by the workspace manifest.
+resource reportStorage 'Microsoft.Storage/storageAccounts@2023-05-01' = {
+  name: reportStorageAccountName
+  location: location
+  kind: 'StorageV2'
+  sku: { name: 'Standard_LRS' }
+  properties: {
+    minimumTlsVersion: 'TLS1_2'
+    supportsHttpsTrafficOnly: true
+    allowBlobPublicAccess: false
+    // The Container Apps AzureFile mount authenticates with an account key.
+    allowSharedKeyAccess: true
+  }
+}
+
+resource reportFileService 'Microsoft.Storage/storageAccounts/fileServices@2023-05-01' = {
+  parent: reportStorage
+  name: 'default'
+  properties: {
+    shareDeleteRetentionPolicy: { enabled: true, days: 7 }
+  }
+}
+
+resource reportFiles 'Microsoft.Storage/storageAccounts/fileServices/shares@2023-05-01' = {
+  parent: reportFileService
+  name: 'core-attachments'
+  properties: { shareQuota: 100, enabledProtocols: 'SMB' }
+}
+
+resource reportMount 'Microsoft.App/managedEnvironments/storages@2024-03-01' = {
+  parent: environment
+  name: 'core-attachments'
+  properties: {
+    azureFile: {
+      accountName: reportStorage.name
+      accountKey: reportStorage.listKeys().keys[0].value
+      shareName: reportFiles.name
+      accessMode: 'ReadWrite'
+    }
+  }
+}
+
 var generatedRuntimeHostname = '${runtimeName}.${environment.properties.defaultDomain}'
 var generatedCoreHostname = '${coreName}.${environment.properties.defaultDomain}'
 var workspaceOrigin = 'https://${empty(workspaceHostname) ? generatedRuntimeHostname : workspaceHostname}'
@@ -229,6 +280,7 @@ resource core 'Microsoft.App/containerApps@2024-03-01' = {
         { name: 'mentra-jwt-public-key', value: mentraJwtPublicKey }
         { name: 'miniapp-jwt-private-key', value: miniappJwtPrivateKey }
         { name: 'miniapp-jwt-public-key', value: miniappJwtPublicKey }
+        { name: 'report-agent-api-token', value: reportAgentApiToken }
       ]
     }
     template: {
@@ -246,6 +298,9 @@ resource core 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'MENTRA_MINIAPP_JWT_PRIVATE_KEY', secretRef: 'miniapp-jwt-private-key' }
             { name: 'MENTRA_MINIAPP_JWT_PUBLIC_KEY', secretRef: 'miniapp-jwt-public-key' }
             { name: 'CLOUD_CORE_ISSUER', value: coreOrigin }
+            { name: 'CLOUD_REPORT_AGENT_API_TOKEN', secretRef: 'report-agent-api-token' }
+            { name: 'CLOUD_STORAGE_PROVIDER', value: 'local' }
+            { name: 'CLOUD_STORAGE_LOCAL_DIR', value: '/mnt/core-attachments' }
             {
               name: 'CLOUD_CORE_OIDC_PROVIDERS'
               value: '[{"id":"workforce","protocol":"oidc","providerKind":"microsoft-entra","tenantId":"${deploymentId}","issuer":"${loginEndpoint}${tenantId}/v2.0","jwksUrl":"${loginEndpoint}${tenantId}/discovery/v2.0/keys","audience":"${coreApiClientId}","subjectClaim":"oid","directoryTenantClaim":"tid","expectedDirectoryTenantId":"${tenantId}","requiredScopes":["mentra.session"],"allowedClientIds":["${mobileClientId}"]}]'
@@ -254,6 +309,7 @@ resource core 'Microsoft.App/containerApps@2024-03-01' = {
             { name: 'SERVICE_NAME', value: 'core-enterprise-reference' }
           ]
           resources: { cpu: json('0.5'), memory: '1Gi' }
+          volumeMounts: [{ volumeName: 'core-attachments', mountPath: '/mnt/core-attachments' }]
           probes: [
             { type: 'Liveness', httpGet: { path: '/healthz', port: 3000 }, initialDelaySeconds: 20, periodSeconds: 10 }
             { type: 'Readiness', httpGet: { path: '/ready', port: 3000 }, initialDelaySeconds: 10, periodSeconds: 5 }
@@ -261,6 +317,7 @@ resource core 'Microsoft.App/containerApps@2024-03-01' = {
         }
       ]
       scale: { minReplicas: 1, maxReplicas: 1 }
+      volumes: [{ name: 'core-attachments', storageType: 'AzureFile', storageName: reportMount.name }]
     }
   }
   dependsOn: [registryPull]

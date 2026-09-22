@@ -27,6 +27,8 @@ on:
         required: true
       ENTERPRISE_DEV_MINIAPP_JWT_PUBLIC_KEY:
         required: true
+      ENTERPRISE_DEV_REPORT_AGENT_API_TOKEN:
+        required: true
     outputs:
       result_artifact:
         value: ${{ jobs.deploy.outputs.result_artifact }}
@@ -161,6 +163,7 @@ jobs:
           MENTRA_JWT_PUBLIC_KEY: ${{ secrets.ENTERPRISE_DEV_MENTRA_JWT_PUBLIC_KEY }}
           MINIAPP_JWT_PRIVATE_KEY: ${{ secrets.ENTERPRISE_DEV_MINIAPP_JWT_PRIVATE_KEY }}
           MINIAPP_JWT_PUBLIC_KEY: ${{ secrets.ENTERPRISE_DEV_MINIAPP_JWT_PUBLIC_KEY }}
+          REPORT_AGENT_API_TOKEN: ${{ secrets.ENTERPRISE_DEV_REPORT_AGENT_API_TOKEN }}
         run: |
           set -euo pipefail
           parameters="$RUNNER_TEMP/private-deployment-dev.parameters.json"
@@ -190,6 +193,7 @@ jobs:
                 mentraJwtPublicKey:{value:env.MENTRA_JWT_PUBLIC_KEY},
                 miniappJwtPrivateKey:{value:env.MINIAPP_JWT_PRIVATE_KEY},
                 miniappJwtPublicKey:{value:env.MINIAPP_JWT_PUBLIC_KEY},
+                reportAgentApiToken:{value:env.REPORT_AGENT_API_TOKEN},
                 workspaceHostname:{value:$workspaceHostname},
                 managedMiniapps:{value:$reference[0].miniapps.managed},
                 manageAcrPullRoleAssignment:{value:false}
@@ -207,6 +211,8 @@ jobs:
       - name: Verify the live enterprise contract
         id: verify
         if: inputs.dry_run != true
+        env:
+          REPORT_AGENT_API_TOKEN: ${{ secrets.ENTERPRISE_DEV_REPORT_AGENT_API_TOKEN }}
         run: |
           set -euo pipefail
           workspace_origin=$(az deployment group show \
@@ -228,6 +234,15 @@ jobs:
             --output tsv)
           [[ "$core_hostname" == "$AZURE_CORE_CONTAINER_APP".*.azurecontainerapps.io ]]
           [[ "$core_origin" == "https://$core_hostname" ]]
+
+          curl --fail --silent --show-error \
+            -H "Authorization: Bearer $REPORT_AGENT_API_TOKEN" \
+            "$core_origin/api/agent/reports/health" | jq -e '.ok == true' >/dev/null
+          az containerapp show --name "$AZURE_CORE_CONTAINER_APP" --resource-group "$AZURE_RESOURCE_GROUP" \
+            --query properties.template --output json | jq -e '
+              any(.volumes[]; .name == "core-attachments" and .storageType == "AzureFile") and
+              any(.containers[].volumeMounts[]; .mountPath == "/mnt/core-attachments")
+            ' >/dev/null
 
           curl_status() {
             curl \
