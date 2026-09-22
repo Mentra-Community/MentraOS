@@ -4,7 +4,7 @@ import {mkdtempSync, readFileSync, rmSync, writeFileSync} from "node:fs"
 import {tmpdir} from "node:os"
 import path from "node:path"
 import test from "node:test"
-import {downloadNames, prepareDownloads, publishDownloads, validateDownloads} from "./coordinated-install-downloads.mjs"
+import {downloadNames, prepareDownloads, publishDownloads, restoreDownloads, validateDownloads} from "./coordinated-install-downloads.mjs"
 import {platformDownloads, otaTargetText} from "./coordinated-downloads-slack.mjs"
 import {createIosRecord} from "./coordinated-mobile-records.mjs"
 
