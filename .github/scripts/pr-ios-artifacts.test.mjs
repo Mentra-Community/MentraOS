@@ -81,6 +81,7 @@ test("publishes installation files before receipt and preserves their bytes on p
   t.after(() => rm(directory, {recursive: true, force: true}))
   const input = structuredClone(receipt)
   input.runAttempt = 1
+  input.app.mobileFingerprint = "d".repeat(64)
   for (const asset of Object.values(input.artifacts)) {
     const bytes = Buffer.from(asset.name)
     await writeFile(path.join(directory, asset.name), bytes)
@@ -100,7 +101,10 @@ test("publishes installation files before receipt and preserves their bytes on p
   const uploaded = []
   const exec = (command, args) => {
     if (command === "gh") return "999\n"
-    uploaded.push(args[args.indexOf("--name") + 1])
+    const assetName = args[args.indexOf("--name") + 1]
+    if (assetName.endsWith(".ipa")) assert.equal(args[args.indexOf("--fingerprint") + 1], input.app.mobileFingerprint)
+    else assert.equal(args.includes("--fingerprint"), false)
+    uploaded.push(assetName)
     return ""
   }
   await publishIosArtifacts(directory, env, {exec})

@@ -1,6 +1,6 @@
 import {createHash} from "node:crypto"
 import {execFileSync} from "node:child_process"
-import {appendFileSync, writeFileSync} from "node:fs"
+import {appendFileSync, readFileSync, writeFileSync} from "node:fs"
 import path from "node:path"
 import {fileURLToPath} from "node:url"
 import {downloadAsset, mergeAssets, readArtifactIndex} from "./release-artifact-storage.mjs"
@@ -14,10 +14,38 @@ export const MOBILE_INPUT_PATHS = [
   "package.json",
   "bun.lock",
   ".github/workflows/mentra-app-android-build.yml",
+  ".github/workflows/mentra-app-ios-build.yml",
   ".github/actions/inject-signing",
   ".github/scripts/pr-mobile-build.mjs",
+  ".github/scripts/prepare-pr-mobile.mjs",
+  ".github/scripts/pr_mobile_config.py",
   ".github/scripts/repackage-pr-apk.py",
 ]
+export const MOBILE_PR_PATHS = [
+  "mobile/**",
+  "cloud-v2/**",
+  "android_core/**",
+  "asg_client/**",
+  "package.json",
+  "bun.lock",
+  ".github/workflows/mentra-app-android-build.yml",
+  ".github/workflows/mentra-asg-client-build.yml",
+  ".github/actions/inject-signing/**",
+  ".github/scripts/pr-mobile-build*",
+  ".github/scripts/pr_mobile_config.py",
+  ".github/scripts/prepare-pr-mobile.mjs",
+  ".github/scripts/repackage-pr-apk*",
+  ".github/scripts/test_repackage_pr_apk.py",
+  ".github/scripts/notify-pr-builds*",
+  ".github/workflows/mentra-app-ios-build.yml",
+  ".github/workflows/reusable-pr-build-notification.yml",
+  ".github/scripts/pr-ios-artifacts*",
+  ".github/scripts/select-pr-asg.mjs",
+  ".github/scripts/compute-asg-build-identity.mjs",
+  ".github/scripts/allocate-asg-version.mjs",
+  ".github/scripts/build-bluetooth-sdk-ota-manifest.mjs",
+]
+
 const packagingKeys = new Set(["EXPO_PUBLIC_ASG_OTA_VERSION_URL"])
 const hash = (value) => createHash("sha256").update(value).digest("hex")
 
@@ -35,12 +63,12 @@ export function fingerprintMobile({tree, env, tools}) {
   return hash(JSON.stringify({schemaVersion: 1, tree, embeddedEnv, tools}))
 }
 
-export function candidateAssets(assets, fingerprint) {
+export function candidateAssets(assets, fingerprint, platform = "android") {
+  const name =
+    platform === "ios" ? /^mentra-ios-iphone-pr-\d+-[a-f0-9]{40}-\d+-\d+\.ipa$/ : /^mobile-pr-\d+-[a-f0-9]{7}\.apk$/
   return assets
     .filter(
-      (asset) =>
-        /^mobile-pr-\d+-[a-f0-9]{7}\.apk$/.test(asset.name) &&
-        new RegExp(`^mobile-v1:${fingerprint}:[a-f0-9]{64}$`).test(asset.label ?? ""),
+      (asset) => name.test(asset.name) && new RegExp(`^mobile-v1:${fingerprint}:[a-f0-9]{64}$`).test(asset.label ?? ""),
     )
     .sort(
       (a, b) =>
@@ -49,8 +77,18 @@ export function candidateAssets(assets, fingerprint) {
     )
 }
 
-export async function selectMobile({github, context, core}) {
-  const fingerprint = process.env.MENTRA_PR_APK_FINGERPRINT
+export async function selectMobile({
+  github,
+  context,
+  core,
+  platform = "android",
+  env = process.env,
+  exec = execFileSync,
+  download = downloadAsset,
+  readIndex = readArtifactIndex,
+}) {
+  const fingerprint = env.MENTRA_PR_MOBILE_FINGERPRINT
+  const candidate = platform === "ios" ? "pr-mobile-candidate.ipa" : "pr-mobile-candidate.apk"
   const repo = context.repo
   const {data: release} = await github.rest.repos.getReleaseByTag({...repo, tag: "pr-builds"})
   const legacy = await github.paginate(github.rest.repos.listReleaseAssets, {
@@ -59,11 +97,11 @@ export async function selectMobile({github, context, core}) {
     per_page: 100,
   })
   const repository = `${repo.owner}/${repo.repo}`
-  const assets = mergeAssets(legacy, (await readArtifactIndex(repository, "pr-builds")).assets)
-  for (const asset of candidateAssets(assets, fingerprint)) {
+  const assets = mergeAssets(legacy, (await readIndex(repository, "pr-builds")).assets)
+  for (const asset of candidateAssets(assets, fingerprint, platform)) {
     try {
       if (String(asset.id).startsWith("r2:")) {
-        await downloadAsset(repository, asset, "pr-mobile-candidate.apk")
+        await download(repository, asset, candidate)
       } else {
         const response = await github.rest.repos.getReleaseAsset({
           ...repo,
@@ -72,41 +110,57 @@ export async function selectMobile({github, context, core}) {
         })
         const bytes = Buffer.from(response.data)
         if (hash(bytes) !== asset.label.split(":")[2]) throw new Error("APK checksum mismatch")
-        writeFileSync("pr-mobile-candidate.apk", bytes)
+        writeFileSync(candidate, bytes)
       }
-      // Also checks the embedded fingerprint and current upload certificate.
-      execFileSync(
+      if (hash(readFileSync(candidate)) !== asset.label.split(":")[2]) throw new Error("Candidate checksum mismatch")
+      // Both platforms verify embedded provenance and the current signing identity.
+      exec(
         "python3",
-        [".github/scripts/repackage-pr-apk.py", "verify-base", "pr-mobile-candidate.apk", fingerprint],
-        {stdio: "inherit"},
+        [
+          platform === "ios" ? "mobile/ci/pr-ios/repackage.py" : ".github/scripts/repackage-pr-apk.py",
+          "verify-base",
+          candidate,
+          fingerprint,
+        ],
+        {stdio: "inherit", env},
       )
       core.setOutput("reused", "true")
-      core.info(`Reusing signed APK ${asset.name}`)
+      core.info(`Reusing signed ${platform} app ${asset.name}`)
       return
     } catch (error) {
       core.warning(`Cannot reuse ${asset.name}: ${error.message}`)
     }
   }
   core.setOutput("reused", "false")
-  core.info("No valid matching signed APK remains; building the app.")
+  core.info("No valid matching signed app remains; building the app.")
 }
 
 if (process.argv[1] && path.resolve(process.argv[1]) === fileURLToPath(import.meta.url)) {
   process.loadEnvFile("mobile/.env")
+  const platform = process.argv[2] || "android"
+  if (!["android", "ios"].includes(platform)) throw new Error("Expected android or ios")
   const tree = execFileSync("git", ["ls-tree", "-r", "HEAD", "--", ...MOBILE_INPUT_PATHS], {encoding: "utf8"})
   const fingerprint = fingerprintMobile({
     tree,
     env: process.env,
     tools: {
+      target: platform,
       node: process.versions.node,
       bun: execFileSync("bun", ["--version"], {encoding: "utf8"}).trim(),
-      java: execFileSync("java", ["--version"], {encoding: "utf8", stdio: ["ignore", "pipe", "pipe"]}).trim(),
+      ...(platform === "ios"
+        ? {
+            xcode: execFileSync("xcodebuild", ["-version"], {encoding: "utf8"}).trim(),
+            sdk: execFileSync("xcrun", ["--sdk", "iphoneos", "--show-sdk-build-version"], {encoding: "utf8"}).trim(),
+          }
+        : {
+            java: execFileSync("java", ["--version"], {encoding: "utf8", stdio: ["ignore", "pipe", "pipe"]}).trim(),
+            androidBuildTools: "36.0.0",
+            abi: "arm64-v8a",
+          }),
       platform: process.platform,
       arch: process.arch,
-      androidBuildTools: "36.0.0",
-      abi: "arm64-v8a",
     },
   })
-  appendFileSync(process.env.GITHUB_ENV, `MENTRA_PR_APK_FINGERPRINT=${fingerprint}\n`)
+  appendFileSync(process.env.GITHUB_ENV, `MENTRA_PR_MOBILE_FINGERPRINT=${fingerprint}\n`)
   console.log(`Mobile build fingerprint: ${fingerprint}`)
 }

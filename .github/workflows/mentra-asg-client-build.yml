@@ -2,10 +2,10 @@ name: MentraOS ASG Client Build
 
 # Pull requests: publish the ASG client a PR mobile build pins for glasses OTA.
 #
-# Every Mobile App Android Build PR APK embeds the OTA manifest URL
+# Every Android PR APK and signed iPhone/Mac PR app embeds the OTA manifest URL
 # https://artifactscdn.mentraglass.com/<repo>/releases/pr-builds/ota-pr-<n>-<head sha>.json
 # and this workflow is the only producer of that manifest, so its pull_request
-# paths must stay a superset of that workflow's. The manifest points at an ASG
+# paths must stay a superset of both mobile workflows'. The manifest points at an ASG
 # client built from the PR's own ASG sources: the `select` job fingerprints
 # those sources exactly like the coordinated release lane and reuses the
 # coordinated artifact when one exists (the common case for PRs that leave
@@ -27,6 +27,8 @@ on:
       - ".github/workflows/mentra-asg-client-build.yml"
       - ".github/actions/inject-signing/**"
       - ".github/scripts/pr-mobile-build*"
+      - ".github/scripts/pr_mobile_config.py"
+      - ".github/scripts/prepare-pr-mobile.mjs"
       - ".github/scripts/repackage-pr-apk*"
       - ".github/scripts/test_repackage_pr_apk.py"
       - ".github/scripts/notify-pr-builds*"

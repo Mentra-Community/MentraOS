@@ -58,6 +58,10 @@ export interface RenderOptions {
   view?: ViewType
   /** Auto-clear after this many ms (same semantics as legacy display options). */
   durationMs?: number
+  /** Update only while this app's accepted main-view frame is still current.
+   * Use the token returned by render() for timers/gestures; a stale token is
+   * blocked without changing retained frames or acquiring the display. */
+  ifDisplayToken?: string
 }
 
 /**
@@ -68,6 +72,9 @@ export interface RenderOptions {
  */
 export interface RenderResult {
   status: "displayed" | "blocked"
+  /** Opaque main-view frame token. Absent on older hosts and clears/dashboard.
+   * Each accepted update returns a new token; do not reuse the old one. */
+  displayToken?: string
   /** True when the host adjusted the scene (clamped boxes, dropped elements, degraded for the device). */
   degraded?: boolean
   /** Ids of elements the host dropped (budget/bounds/device limits) — dropped is never silent. */
@@ -110,6 +117,7 @@ export class DisplayManager {
         view: options.view ?? "main",
         elements,
         durationMs: options.durationMs,
+        ifDisplayToken: options.ifDisplayToken,
       })
       .catch((err) => ({
         status: "blocked" as const,
