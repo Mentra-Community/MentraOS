@@ -757,9 +757,11 @@ jobs:
         if: steps.native-cache.outputs.scope != ''
         uses: actions/cache@v4
         with:
-          # Keep ios/ absent until Expo generates the current native project.
-          # Restoring Pods alone would create an incomplete native project.
-          path: mobile/build/DerivedData
+          # Keep native projects and build graphs fresh. Xcode validates compiler
+          # cache inputs itself; SwiftPM restores only its sources/downloads.
+          path: |
+            mobile/build/CompilationCache
+            mobile/build/DerivedData/SourcePackages
           # Repeated releases of the same source reuse one entry rather than
           # uploading several gigabytes again for each new release number.
           key: coordinated-ios-${{ steps.native-cache.outputs.scope }}-${{ steps.native-cache.outputs.source }}

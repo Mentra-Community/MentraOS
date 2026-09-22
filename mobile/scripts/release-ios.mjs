@@ -189,10 +189,6 @@ if (isCIForSigning) {
 // DerivedData inside the runner workspace makes each build fully isolated. The
 // path is absolute under cwd (mobile/), i.e. under RUNNER_WORKSPACE in CI.
 const derivedDataPath = path.resolve('build/DerivedData');
-const sourceTimes = path.join(derivedDataPath, 'mentra-source-times.json');
-if (process.env.MENTRA_NATIVE_BUILD_CACHE === 'true') {
-  await $({ stdio: 'inherit' })`node scripts/native-build-cache.mjs restore ${sourceTimes}`;
-}
 
 console.log('\n━━━ Step 3.5: Resolving Mapbox SPM packages ━━━');
 
@@ -237,6 +233,11 @@ await withRetry(
     if (process.env.MENTRA_CI_KEYCHAIN) {
       args.push(`OTHER_CODE_SIGN_FLAGS=--keychain ${process.env.MENTRA_CI_KEYCHAIN} --timestamp=none`);
     }
+    if (process.env.MENTRA_NATIVE_BUILD_CACHE === 'true') {
+      args.push('COMPILATION_CACHE_ENABLE_CACHING=YES',
+        `COMPILATION_CACHE_CAS_PATH=${path.resolve('build/CompilationCache')}`,
+        '-showBuildTimingSummary');
+    }
     // Keep the first transient diagnostic even if later parallel compile logs
     // push it out of runXcode's bounded tail.
     let transientEvidence = '';
@@ -261,9 +262,6 @@ if (!existsSync(archivePath)) {
   process.exit(1);
 }
 console.log('Archive created successfully');
-if (process.env.MENTRA_NATIVE_BUILD_CACHE === 'true') {
-  await $({ stdio: 'inherit' })`node scripts/native-build-cache.mjs save ${sourceTimes}`;
-}
 
 // ── Step 5: Export IPA ────────────────────────────────────────────────────────
 
