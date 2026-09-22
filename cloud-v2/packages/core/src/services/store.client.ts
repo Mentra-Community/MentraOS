@@ -20,7 +20,8 @@ export class StoreServiceError extends Error {
 }
 
 export async function verifyStoreDevAttestation(packageName: string, attestation: StoreDevAttestation): Promise<void> {
-  const storeUrl = (process.env.MENTRA_STORE_INTERNAL_URL ?? "http://store:3003").replace(/\/+$/, "")
+  const storeUrl = process.env.MENTRA_STORE_INTERNAL_URL?.trim().replace(/\/+$/, "")
+  if (!storeUrl) throw new StoreServiceError("store_unavailable", "Store service URL is not configured", 503)
   const secret = (process.env.MENTRA_SERVICE_AUTH_SECRET ?? process.env.WORKOS_API_KEY)?.trim()
   if (!secret) throw new StoreServiceError("store_unavailable", "Store service authentication is not configured", 503)
   const body = JSON.stringify({packageName, attestation})

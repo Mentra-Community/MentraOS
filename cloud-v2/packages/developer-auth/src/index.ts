@@ -29,7 +29,7 @@ export async function authenticateWorkosRequest(
   const cookieName = options.sessionCookieName ?? "mentra_console_session"
   const sessionData = getCookie(c, cookieName)
   if (!sessionData) return {authenticated: false, reason: "no_session_cookie_provided"}
-  const workos = new WorkOS(options.apiKey)
+  const workos = new WorkOS(options.apiKey, {clientId: options.clientId})
   const session = workos.userManagement.loadSealedSession({sessionData, cookiePassword: options.cookiePassword})
   const result = await session.authenticate()
   let authenticated: {
@@ -77,7 +77,7 @@ async function authenticateBearer(token: string, options: DeveloperAuthOptions):
     let firstName = typeof verified.payload.first_name === "string" ? verified.payload.first_name : null
     let lastName = typeof verified.payload.last_name === "string" ? verified.payload.last_name : null
     try {
-      const user = await new WorkOS(options.apiKey).userManagement.getUser(id)
+      const user = await new WorkOS(options.apiKey, {clientId: options.clientId}).userManagement.getUser(id)
       email = user.email || email
       firstName = user.firstName ?? firstName
       lastName = user.lastName ?? lastName
