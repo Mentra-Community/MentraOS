@@ -48,13 +48,8 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: "20"
-      - uses: oven-sh/setup-bun@v2
-        with:
-          bun-version: "1.3.14"
-      - name: Verify request selection and durable intake guards
-        run: |
-          node --test .github/scripts/request-e2e-routine.test.mjs
-          bun test tools/mentra-e2e/runner/ci-request.test.ts
+      - name: Verify public request selection
+        run: node --test .github/scripts/request-e2e-routine.test.mjs
       - name: Resolve the selected build without running PR application code
         uses: actions/github-script@v7
         env:

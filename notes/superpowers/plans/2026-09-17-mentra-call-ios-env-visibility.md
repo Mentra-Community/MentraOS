@@ -35,7 +35,7 @@ Expo inlines the variable into JavaScript. Reload Metro's bundle or rebuild an
 installed standalone app after changing it; editing `.env` cannot alter an
 already-installed IPA. No Mac-specific default, server flag or detection bridge
 is needed. Standard fresh-Mac setup and signing are documented in harness PR4069
-under `tools/mentra-e2e/SETUP.md` and the mobile `ios:mac` command.
+in the private [harness setup guide](https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/main/tools/mentra-e2e/SETUP.md) and the mobile `ios:mac` command.
 
 ## Policy and lifecycle
 
@@ -60,8 +60,8 @@ already consumed that version; behavior never relies on rerunning the migration.
    visibility checks create no meeting or glasses stream.
 
 The English routine and compiled flows are in harness PR4069:
-`tools/mentra-e2e/IOS-CALL-VISIBILITY-ROUTINE.md` and
-`tools/mentra-e2e/flows/ios-call-visibility.ts`.
+[English visibility routine](https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/main/tools/mentra-e2e/IOS-CALL-VISIBILITY-ROUTINE.md) and
+[replay source](https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/main/tools/mentra-e2e/flows/ios-call-visibility.ts) in the private harness repository.
 
 ## Recorded evidence
 

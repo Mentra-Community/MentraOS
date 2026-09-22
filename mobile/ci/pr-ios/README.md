@@ -81,8 +81,8 @@ approvals. The installer does not change privacy settings or disable Gatekeeper.
 If a launch approval delays opening, the verified app remains installed; complete
 macOS setup and click **Open Mentra** again.
 
-For repeated automated installations, use the repository's
-[Mac test-host setup](https://github.com/Mentra-Community/MentraOS/blob/dev/tools/mentra-e2e/MAC-CI-SETUP.md). It verifies the
+For repeated automated installations, use the private
+[Mac test-host setup](https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/main/tools/mentra-e2e/MAC-CI-SETUP.md). It verifies the
 selected Actions artifact and invokes a trusted repository installer with a
 pinned preinstalled launcher, without executing the downloaded installer. That
 path supports both the new native-installer ZIP and older ZIPs containing
