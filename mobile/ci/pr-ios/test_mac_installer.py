@@ -41,6 +41,47 @@ class MacInstallerPackagingTests(unittest.TestCase):
     def test_base64_whitespace_is_supported(self):
         self.assertEqual(installer.decode_secret("\n" + base64.b64encode(b"fixture").decode() + "\n"), b"fixture")
 
+    def pem(self, der):
+        return b"-----BEGIN CERTIFICATE-----\n" + base64.b64encode(der) + b"\n-----END CERTIFICATE-----\n"
+
+    def test_intermediate_match_requires_exact_der_bytes(self):
+        expected = b"test-exact-public-certificate"
+        other = b"test-other-public-certificate-with-same-subject"
+        self.assertTrue(installer.contains_certificate(self.pem(other) + self.pem(expected), expected))
+        self.assertFalse(installer.contains_certificate(self.pem(other), expected))
+        self.assertFalse(installer.contains_certificate(b"", expected))
+        for invalid in (b"-----BEGIN CERTIFICATE-----\n", b"-----BEGIN CERTIFICATE-----!bad!-----END CERTIFICATE-----"):
+            with self.assertRaisesRegex(ValueError, "Malformed keychain certificate export"):
+                installer.contains_certificate(invalid, expected)
+
+    def test_existing_exact_intermediate_is_not_imported_again(self):
+        expected = b"test-exact-public-certificate"
+        keychain, certificate = self.root / "job.keychain", self.root / "DeveloperIDG2CA.cer"
+        with patch.object(installer, "run", side_effect=[expected, self.pem(expected)]) as command:
+            installer.ensure_intermediate(keychain, certificate)
+        self.assertEqual(len(command.call_args_list), 2)
+        self.assertEqual(command.call_args_list[1].args, ("security", "find-certificate", "-a", "-p", keychain))
+        self.assertFalse(any("import" in call.args for call in command.call_args_list))
+
+    def test_missing_intermediate_is_imported_and_verified_in_the_exact_job_keychain(self):
+        expected, other = b"test-exact-public-certificate", b"test-other-public-certificate"
+        keychain, certificate = self.root / "job.keychain", self.root / "DeveloperIDG2CA.cer"
+        with patch.object(installer, "run", side_effect=[expected, self.pem(other), b"", self.pem(expected)]) as command:
+            installer.ensure_intermediate(keychain, certificate)
+        self.assertEqual(command.call_args_list[2].args,
+                         ("security", "import", certificate, "-k", keychain, "-T", "/usr/bin/codesign"))
+        self.assertEqual(command.call_args_list[3].args, ("security", "find-certificate", "-a", "-p", keychain))
+
+    def test_intermediate_failures_are_not_treated_as_already_installed(self):
+        expected = b"test-exact-public-certificate"
+        for responses, message in (([RuntimeError("invalid DER")], "invalid DER"),
+                                   ([expected, RuntimeError("keychain denied")], "keychain denied"),
+                                   ([expected, b"", RuntimeError("import denied")], "import denied"),
+                                   ([expected, b"", b"", self.pem(b"different")], "after import")):
+            with self.subTest(message=message), patch.object(installer, "run", side_effect=responses):
+                with self.assertRaisesRegex((ValueError, RuntimeError), message):
+                    installer.ensure_intermediate(self.root / "job.keychain", self.root / "DeveloperIDG2CA.cer")
+
     def signing_environment(self):
         return {"ASC_API_KEY_P8_B64": base64.b64encode(b"test-notary-key").decode(),
                 "ASC_API_KEY_ID": "KEY", "ASC_API_ISSUER_ID": "ISSUER",

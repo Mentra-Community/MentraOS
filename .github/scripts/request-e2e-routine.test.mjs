@@ -103,6 +103,9 @@ function fixture() {
     missingArchive: false,
     prReads: 0,
     changeOnReread: false,
+    baseRef: {ref: "refs/heads/dev", object: {type: "commit", sha: base}},
+    baseReads: 0,
+    changeBaseOnReread: false,
   }
   const github = {
     rest: {
@@ -110,6 +113,15 @@ function fixture() {
         get: async () => ({
           data: state.changeOnReread && state.prReads++ > 0 ? {...pr, head: {...pr.head, sha: "f".repeat(40)}} : pr,
         }),
+      },
+      git: {
+        getRef: async ({ref}) => {
+          assert.equal(ref, "heads/dev")
+          const data = structuredClone(state.baseRef)
+          if (state.changeBaseOnReread && state.baseReads > 0) data.object.sha = "e".repeat(40)
+          state.baseReads++
+          return {data}
+        },
       },
       actions: {listWorkflowRuns: async () => ({data: {workflow_runs: state.runs}}), listJobsForWorkflowRun: () => {}},
       repos: {getCommit: async () => ({data: {sha: merge, parents: state.parents}})},
@@ -162,6 +174,51 @@ test("freezes original build attempt, retained publication and exact raw manifes
   )
   assert.equal(request.trigger.workflowSha, merge)
   assert.match(request.reason, /has not run/)
+})
+
+test("stale PR API and event base SHAs do not replace the actual dev tip", async () => {
+  const f = fixture()
+  f.state.pr.base.sha = "e".repeat(40)
+  f.context.payload.pull_request.base.sha = "f".repeat(40)
+  const request = await f.resolve()
+  assert.equal(request.status, "ready")
+  assert.equal(request.pullRequest.baseSha, base)
+  assert.equal(request.selection.build.baseSha, base)
+  assert.equal(f.state.baseReads, 2)
+})
+
+test("a stale actual dev tip or a concurrent base update never selects an old merge", async () => {
+  const stale = fixture()
+  stale.state.baseRef.object.sha = "e".repeat(40)
+  const staleRequest = await stale.resolve()
+  assert.equal(staleRequest.status, "no-artifact")
+  assert.equal(staleRequest.pullRequest.baseSha, "e".repeat(40))
+  assert.equal(staleRequest.selection, null)
+  assert.match(staleRequest.reason, /current base/)
+  const changed = fixture()
+  changed.state.changeBaseOnReread = true
+  const changedRequest = await changed.resolve()
+  assert.equal(changedRequest.status, "no-artifact")
+  assert.equal(changedRequest.selection, null)
+  assert.match(changedRequest.reason, /changed while resolving/)
+})
+
+test("invalid branch ref identity fails closed instead of falling back to PR base metadata", async () => {
+  for (const change of [
+    (state) => {
+      state.baseRef.ref = "refs/heads/staging"
+    },
+    (state) => {
+      state.baseRef.object.type = "tag"
+    },
+    (state) => {
+      state.baseRef.object.sha = "invalid"
+    },
+  ]) {
+    const f = fixture()
+    change(f.state)
+    await assert.rejects(f.resolve(), /invalid dev branch ref/)
+  }
 })
 
 test("wrong-head runs, missing archives and stale merge bases never become ready", async () => {

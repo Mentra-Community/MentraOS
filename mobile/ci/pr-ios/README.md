@@ -203,7 +203,10 @@ the same `DOPPLER_TOKEN_MOBILE_PRD` service-token path is used. The temporary P1
 file is private and removed immediately after its keychain import.
 
 CI checks private-key access and notarization authentication before building the
-app. It signs only `Install Mentra.app` with Developer ID and hardened runtime,
+app. The downloaded Developer ID intermediate is matched by exact DER bytes
+against certificates in the disposable job keychain. An identical existing
+certificate is reused; a missing certificate is imported and verified again.
+Other keychain/import errors remain fatal. It signs only `Install Mentra.app` with Developer ID and hardened runtime,
 submits that installer to Apple, requires an Accepted result, then staples and
 validates the ticket. The iOS payload remains outside the notarization submission.
 CI also verifies the installer after extracting the final Mac ZIP. Missing

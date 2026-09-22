@@ -74,6 +74,7 @@ export interface RequestEvidence {
   }
   archiveSha256: string
   sourceCommit: {sha: string; parents: {sha: string}[]}
+  currentBaseRef: {ref: string; object: {type: string; sha: string}}
   currentPr: {
     number: number
     state: string
@@ -307,7 +308,7 @@ export function parseRequestTrust(bytes: Uint8Array): RequestTrust {
 /** GitHub API observations come from the worker, never from the request archive. */
 export function assertRequestTrust(request: RoutineRequest, trust: RequestTrust, evidence: RequestEvidence): void {
   const {trigger, pullRequest: selectedPr} = request
-  const {run, artifact, currentPr: pr, sourceCommit} = evidence
+  const {run, artifact, currentPr: pr, sourceCommit, currentBaseRef} = evidence
   requireThat(
     run.repository?.full_name === REQUEST_REPOSITORY &&
       run.head_repository?.full_name === REQUEST_REPOSITORY &&
@@ -330,12 +331,20 @@ export function assertRequestTrust(request: RoutineRequest, trust: RequestTrust,
     "Actions artifact identity or downloaded ZIP digest does not match",
   )
   requireThat(
+    currentBaseRef?.ref === "refs/heads/dev" &&
+      currentBaseRef.object?.type === "commit" &&
+      SHA.test(currentBaseRef.object.sha),
+    "Authenticated dev branch ref is missing or invalid",
+  )
+  const currentBaseSha = currentBaseRef.object.sha
+  requireThat(
     pr.number === selectedPr.number &&
       pr.state === "open" &&
       pr.head.repo.full_name === REQUEST_REPOSITORY &&
       pr.head.sha === selectedPr.headSha &&
-      pr.base.sha === selectedPr.baseSha &&
-      pr.base.ref === "dev",
+      currentBaseSha === selectedPr.baseSha &&
+      pr.base.ref === "dev" &&
+      selectedPr.baseRef === "dev",
     "Request was superseded or no longer targets an eligible PR",
   )
   requireThat(
@@ -344,7 +353,7 @@ export function assertRequestTrust(request: RoutineRequest, trust: RequestTrust,
         entry.kind === trigger.kind &&
         entry.pr === pr.number &&
         entry.headSha === pr.head.sha &&
-        entry.baseSha === pr.base.sha &&
+        entry.baseSha === currentBaseSha &&
         entry.sourceSha === trigger.sha &&
         entry.workflowSha === trigger.workflowSha,
     ),
@@ -363,7 +372,7 @@ export function assertRequestTrust(request: RoutineRequest, trust: RequestTrust,
     )
     requireThat(
       sourceCommit.parents.length === 2 &&
-        sourceCommit.parents[0]?.sha === pr.base.sha &&
+        sourceCommit.parents[0]?.sha === currentBaseSha &&
         sourceCommit.parents[1]?.sha === pr.head.sha,
       "Bootstrap checkout is not the approved base/head merge",
     )

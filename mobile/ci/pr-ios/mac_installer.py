@@ -118,7 +118,35 @@ def decode_secret(value):
     return base64.b64decode("".join(value.split()), validate=True)
 
 
-def configure(keychain, output, env=os.environ):
+def contains_certificate(pem_output, expected_der):
+    """Match certificate bytes, not its potentially shared subject/common name."""
+    blocks = re.findall(rb"-----BEGIN CERTIFICATE-----\s*(.*?)\s*-----END CERTIFICATE-----",
+                        pem_output, re.DOTALL)
+    if pem_output.count(b"-----BEGIN CERTIFICATE-----") != len(blocks):
+        raise ValueError("Malformed keychain certificate export")
+    try:
+        certificates = [base64.b64decode(b"".join(block.split()), validate=True) for block in blocks]
+    except ValueError:
+        raise ValueError("Malformed keychain certificate export") from None
+    return expected_der in certificates
+
+
+def ensure_intermediate(keychain, certificate):
+    # Apple publishes this intermediate as DER. Validate the public certificate
+    # before examining only this job's keychain (never the default search list).
+    expected = run("openssl", "x509", "-inform", "DER", "-in", certificate, "-outform", "DER")
+    if not expected:
+        raise ValueError("Empty Developer ID intermediate certificate")
+    if contains_certificate(run("security", "find-certificate", "-a", "-p", keychain), expected):
+        return
+    run("security", "import", certificate, "-k", keychain, "-T", "/usr/bin/codesign")
+    if not contains_certificate(run("security", "find-certificate", "-a", "-p", keychain), expected):
+        raise ValueError("Developer ID intermediate was not found in the job keychain after import")
+
+
+def configure(keychain, output, env=os.environ, intermediate=None):
+    if intermediate is not None:
+        ensure_intermediate(keychain, intermediate)
     secrets = required_environment(env)
     output.mkdir(parents=True, exist_ok=True)
     private = output / "mac-installer-private"
@@ -241,5 +269,6 @@ if __name__ == "__main__":
     parser.add_argument("mode", choices=["configure"])
     parser.add_argument("--keychain", type=Path, required=True)
     parser.add_argument("--output", type=Path, required=True)
+    parser.add_argument("--intermediate", type=Path, help="Apple Developer ID intermediate certificate in DER format")
     options = parser.parse_args()
-    configure(options.keychain, options.output)
+    configure(options.keychain, options.output, intermediate=options.intermediate)

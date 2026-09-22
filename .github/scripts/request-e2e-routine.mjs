@@ -73,14 +73,14 @@ async function jsonArtifact(url, fetchImpl) {
   return {value: JSON.parse(new TextDecoder("utf-8", {fatal: true}).decode(bytes)), url, sha256: hash(bytes), size}
 }
 
-function prIdentity(pr) {
-  if (!positive(pr.number) || !SHA.test(pr.head?.sha ?? "") || !SHA.test(pr.base?.sha ?? ""))
+function prIdentity(pr, baseSha) {
+  if (!positive(pr.number) || !SHA.test(pr.head?.sha ?? "") || !SHA.test(baseSha))
     throw new Error("GitHub returned incomplete PR identity")
   return {
     number: pr.number,
     url: pr.html_url,
     headSha: pr.head.sha,
-    baseSha: pr.base.sha,
+    baseSha,
     headRepository: pr.head.repo?.full_name ?? null,
     baseRef: pr.base.ref,
   }
@@ -166,7 +166,15 @@ export async function createRoutineRequest({
   )
     throw new Error("Bootstrap request does not match its PR merge checkout")
   const getPr = async () => (await github.rest.pulls.get({...context.repo, pull_number: number})).data
+  // pulls.get().base.sha may lag the branch tip even when GitHub has rebuilt the merge ref.
+  const getBaseSha = async () => {
+    const {data} = await github.rest.git.getRef({...context.repo, ref: "heads/dev"})
+    if (data.ref !== "refs/heads/dev" || data.object?.type !== "commit" || !SHA.test(data.object.sha ?? ""))
+      throw new Error("GitHub returned an invalid dev branch ref")
+    return data.object.sha
+  }
   const pr = await getPr()
+  const baseSha = await getBaseSha()
   const request = {
     schemaVersion: 1,
     kind: "mentra-routine-request",
@@ -175,7 +183,7 @@ export async function createRoutineRequest({
     status: "no-artifact",
     reason: "No eligible published Mac artifact for the current PR revision",
     trigger: {kind: context.eventName, repository, workflow: REQUEST_WORKFLOW, runId: context.runId, ...source},
-    pullRequest: prIdentity(pr),
+    pullRequest: prIdentity(pr, baseSha),
     routine: {
       id: routine,
       reason:
@@ -194,7 +202,7 @@ export async function createRoutineRequest({
   if (
     context.eventName === "pull_request" &&
     (context.payload.pull_request.head.sha !== pr.head.sha ||
-      context.payload.pull_request.base.sha !== pr.base.sha ||
+      context.payload.pull_request.base.ref !== pr.base.ref ||
       !pr.labels?.some((label) => (typeof label === "string" ? label : label.name) === REQUEST_LABEL))
   ) {
     request.reason = "Bootstrap opt-in was removed or its triggering PR revision was superseded"
@@ -243,7 +251,7 @@ export async function createRoutineRequest({
       if (
         commit.sha !== receipt.value.buildSha ||
         commit.parents?.length !== 2 ||
-        commit.parents[0].sha !== pr.base.sha ||
+        commit.parents[0].sha !== baseSha ||
         commit.parents[1].sha !== pr.head.sha
       )
         throw new Error("Mac build is not the current PR head merged with its current base")
@@ -264,7 +272,7 @@ export async function createRoutineRequest({
         app,
         archive,
         otaManifest: {url: ota.url, sha256: ota.sha256, size: ota.size},
-        build: {headSha: pr.head.sha, baseSha: pr.base.sha, buildSha: receipt.value.buildSha},
+        build: {headSha: pr.head.sha, baseSha, buildSha: receipt.value.buildSha},
       }
       candidate.reason = "Verified published Mac receipt, archive availability, OTA pin and merge provenance"
       break
@@ -273,10 +281,13 @@ export async function createRoutineRequest({
     }
   }
   const current = await getPr()
+  const currentBaseSha = await getBaseSha()
   if (
     current.state !== "open" ||
     current.head.sha !== pr.head.sha ||
-    current.base.sha !== pr.base.sha ||
+    current.head.repo?.full_name !== repository ||
+    current.base.ref !== "dev" ||
+    currentBaseSha !== baseSha ||
     (context.eventName === "pull_request" &&
       !current.labels?.some((label) => (typeof label === "string" ? label : label.name) === REQUEST_LABEL))
   ) {

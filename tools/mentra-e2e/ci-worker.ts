@@ -124,9 +124,11 @@ async function inspect(runId: number, attempt: number, trustPath: string) {
     throw new Error("Downloaded request ZIP differs from the authenticated Actions artifact digest")
   const requestBytes = extractRequest(archive)
   const request = parseRoutineRequest(requestBytes)
-  const currentPr = api(`pulls/${request.pullRequest.number}`)
   const sourceCommit = api(`commits/${request.trigger.sha}`)
-  const evidence: RequestEvidence = {run, artifact, archiveSha256, sourceCommit, currentPr}
+  const currentPr = api(`pulls/${request.pullRequest.number}`)
+  // PR base.sha can be stale; only the authenticated branch ref establishes its current tip.
+  const currentBaseRef = api("git/ref/heads/dev")
+  const evidence: RequestEvidence = {run, artifact, archiveSha256, sourceCommit, currentPr, currentBaseRef}
   assertRequestTrust(request, trust, evidence)
   return {request, trust, evidence, requestSha256: sha256(requestBytes)}
 }

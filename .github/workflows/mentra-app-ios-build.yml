@@ -318,9 +318,9 @@ jobs:
           certificate="$RUNNER_TEMP/DeveloperIDG2CA.cer"
           curl --fail --silent --show-error --location --retry 2 \
             "https://www.apple.com/certificateauthority/DeveloperIDG2CA.cer" -o "$certificate"
-          security import "$certificate" -k "$PR_IOS_KEYCHAIN" -T /usr/bin/codesign
           python3 mobile/ci/pr-ios/mac_installer.py configure \
-            --keychain "$PR_IOS_KEYCHAIN" --output mobile/build/pr-ios
+            --keychain "$PR_IOS_KEYCHAIN" --output mobile/build/pr-ios \
+            --intermediate "$certificate"
 
       - name: Fingerprint compiled mobile inputs
         if: env.PR_IOS_SIGNED == 'true'

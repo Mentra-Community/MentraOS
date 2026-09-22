@@ -82,6 +82,7 @@ function fixture() {
     },
     archiveSha256: hash,
     sourceCommit: {sha: source, parents: [{sha: base}, {sha: head}]},
+    currentBaseRef: {ref: "refs/heads/dev", object: {type: "commit", sha: base}},
     currentPr: {
       number: 4136,
       state: "open",
@@ -155,7 +156,7 @@ describe("private CI request intake", () => {
         x.evidence.currentPr.head.sha = "e".repeat(40)
       },
       (x: typeof f) => {
-        x.evidence.currentPr.base.sha = "e".repeat(40)
+        x.evidence.currentBaseRef.object.sha = "e".repeat(40)
       },
       (x: typeof f) => {
         x.evidence.currentPr.labels = []
@@ -172,6 +173,39 @@ describe("private CI request intake", () => {
     ]) {
       const changed = fixture()
       tamper(changed)
+      expect(() => assertRequestTrust(changed.request, changed.trust, changed.evidence)).toThrow()
+    }
+  })
+
+  test("stale PR base metadata is accepted only when the actual dev ref and merge parents match", () => {
+    const f = fixture()
+    f.evidence.currentPr.base.sha = "e".repeat(40)
+    expect(() => assertRequestTrust(f.request, f.trust, f.evidence)).not.toThrow()
+    for (const change of [
+      (x: typeof f) => {
+        x.evidence.currentBaseRef.object.sha = "e".repeat(40)
+      },
+      (x: typeof f) => {
+        x.evidence.currentBaseRef.ref = "refs/heads/staging"
+      },
+      (x: typeof f) => {
+        x.evidence.currentBaseRef.object.type = "tag"
+      },
+      (x: typeof f) => {
+        x.evidence.sourceCommit.parents[0].sha = "e".repeat(40)
+      },
+      (x: typeof f) => {
+        x.trust.entries[0].baseSha = "e".repeat(40)
+      },
+      (x: typeof f) => {
+        x.evidence.currentPr.base.ref = "staging"
+      },
+      (x: typeof f) => {
+        delete (x.evidence as Partial<RequestEvidence>).currentBaseRef
+      },
+    ]) {
+      const changed = structuredClone(f)
+      change(changed)
       expect(() => assertRequestTrust(changed.request, changed.trust, changed.evidence)).toThrow()
     }
   })
