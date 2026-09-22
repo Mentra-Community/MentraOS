@@ -21,6 +21,26 @@ Use the latest SDK version published by Mentra. If a future release note lists a
 
 ## Run
 
+### Foreground Service Lifetime
+
+The host manifest excludes `dataSync` from the SDK service and removes its
+typed permission. SDK `3.2.0-dev.200` or newer honors this override and starts
+with `connectedDevice`, using the existing `CHANGE_WIFI_STATE` permission
+before Bluetooth runtime permission is granted. Microphone, location and media
+playback types remain available under their existing permission checks.
+
+This removes the Android 15 data-sync six-hour timeout path; it does not prove
+the cause of a historical background crash or prevent other Android service
+restrictions. Rebuild and install the native APK for this change to take effect.
+Before release, test a fresh install with permissions denied, granted-permission
+background sessions, reconnect, and service restart on Android 15+.
+
+CI checks the merged manifest, including the published SDK's declarations:
+
+```bash
+python3 scripts/check-foreground-service.py app/build/intermediates/merged_manifests/debug/processDebugManifest/AndroidManifest.xml
+```
+
 ### Android Studio
 
 1. Open this `examples/android` folder in Android Studio.

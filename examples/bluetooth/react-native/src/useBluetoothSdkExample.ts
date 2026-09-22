@@ -233,7 +233,7 @@ export type LedMode = 'Off' | 'Solid' | 'Pulse' | 'Blink';
 type RgbLedAction = 'on' | 'off';
 export type LedColor = 'red' | 'green' | 'blue' | 'orange' | 'white';
 export type PhotoSize = 'low' | 'medium' | 'high' | 'max';
-export type PhotoCompression = 'none' | 'medium' | 'heavy';
+export type PhotoCompression = NonNullable<PhotoRequestParams['compress']>;
 export type PhotoTransferMethod = 'auto' | 'direct' | 'ble';
 export type PhotoDestination = 'phone' | 'cloud' | 'glasses';
 export type PhotoAeExposureDivisor = 2 | 3 | 5;
@@ -266,7 +266,7 @@ type PersistedCloudUrls = {
 };
 export const RGB_LED_COLORS: LedColor[] = ['red', 'green', 'blue', 'orange', 'white'];
 export const PHOTO_SIZES: PhotoSize[] = ['low', 'medium', 'high', 'max'];
-export const PHOTO_COMPRESSIONS: PhotoCompression[] = ['none', 'medium', 'heavy'];
+export const PHOTO_COMPRESSIONS: PhotoCompression[] = ['none', 'low', 'medium', 'high'];
 export const PHOTO_TRANSFER_METHODS: PhotoTransferMethod[] = ['auto', 'direct', 'ble'];
 export const PHOTO_AE_EXPOSURE_DIVISOR_OPTIONS: PhotoAeExposureDivisor[] = [2, 3, 5];
 export const PHOTO_ISO_CAP_OPTIONS: PhotoIsoCap[] = [400, 800, 1600];
@@ -392,6 +392,7 @@ export type BluetoothSdkExampleState = {
   cameraSettingsStatus: string;
   rawJsonExpanded: boolean;
   scanActive: boolean;
+  scanHint: string | null;
   selectedDiscoveredDevice: Device | null;
   selectedScanModel: ScanModel;
   directStreamReceiverRunning: boolean;
@@ -990,6 +991,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
 
   useEffect(() => {
     if (glassesConnected) {
+      if (bluetooth.scan.diagnostic) bluetooth.scan.clear();
       if (!wasConnectedRef.current && photoDestinationRef.current === 'glasses') {
         void prepareGlassesPhotoPreviewAction();
       }
@@ -1105,6 +1107,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       if (!(await ensureAndroidPermissions('connect'))) {
         throw new Error('Bluetooth permissions are required to connect.');
       }
+      await bluetooth.scan.stop();
       if (selectedDiscoveredDevice) {
         await bluetooth.connect(selectedDiscoveredDevice);
         return;
@@ -1126,6 +1129,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       if (!(await ensureAndroidPermissions('connect'))) {
         throw new Error('Bluetooth permissions are required to connect.');
       }
+      await bluetooth.scan.stop();
       await bluetooth.connect(device);
     });
   }
@@ -3106,8 +3110,8 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
       if (!wifi) {
         throw new Error('No connected Wi-Fi network to forget.');
       }
-      const status = await BluetoothSdk.forgetWifiNetwork(wifi.ssid);
-      addEvent('LIVE', `Wi-Fi ${status.state === 'connected' ? status.ssid : status.state}`);
+      const result = await BluetoothSdk.forgetWifiNetwork(wifi.ssid);
+      addEvent('LIVE', `Wi-Fi forget ${result.outcome}: ${result.ssid}`);
     });
   }
 
@@ -3718,6 +3722,7 @@ export function useBluetoothSdkExample(options: BluetoothSdkExampleOptions = {})
     rawJsonExpanded,
     requestWifiScan,
     scanActive,
+    scanHint: bluetooth.scan.diagnostic?.message ?? null,
     selectDiscoveredDevice,
     selectLedColor,
     selectLedMode,

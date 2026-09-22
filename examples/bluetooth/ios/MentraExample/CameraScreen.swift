@@ -7,7 +7,7 @@ import UIKit
 private let photoSizeOptions: [(display: String, size: PhotoSize)] = [
     ("low", .low), ("medium", .medium), ("high", .high), ("max", .max),
 ]
-private let photoCompressionOptions: [PhotoCompression] = [.none, .medium, .heavy]
+private let photoCompressionOptions: [PhotoCompression] = [.none, .low, .medium, .high]
 
 private enum CameraCaptureMode {
     case photo

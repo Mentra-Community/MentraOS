@@ -17,6 +17,7 @@ const baseState: MentraLiveOtaState = {
   currentStep: null,
   error: null,
   firmwareRestarting: false,
+  glassesPackageName: null,
   hotspotArtifactPercent: null,
   hotspotPhase: 'idle',
   hotspotSupported: true,
@@ -42,6 +43,15 @@ function otaState(overrides: Partial<MentraLiveOtaState>): MentraLiveOtaState {
 }
 
 describe('custom OTA presentation', () => {
+  test('explains custom software and allows continuing without an update', () => {
+    const presentation = otaPresentation(otaState({screen: 'unofficial_client'}));
+
+    expect(presentation.title).toBe('Custom Glasses Software');
+    expect(presentation.message).toContain('Automatic updates are disabled');
+    expect(presentation.primary).toEqual({action: 'finish', label: 'Continue'});
+    expect(presentation.secondary).toBeUndefined();
+  });
+
   test('matches the Mentra App checking page copy', () => {
     const presentation = otaPresentation(otaState({screen: 'checking'}));
 

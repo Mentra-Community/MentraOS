@@ -229,6 +229,11 @@ struct DeviceScreen: View {
                     enabled: false,
                     action: {}
                 )
+            } else if model.discoveredDevices.isEmpty, let hint = model.scanHint {
+                VStack(alignment: .leading, spacing: 6) {
+                    Text("Glasses may be in use").font(.subheadline.weight(.semibold))
+                    Text(hint).font(.subheadline).foregroundStyle(AppColor.muted)
+                }
             } else if model.discoveredDevices.isEmpty, hasSavedConnectionTarget(model.bluetoothValues) {
                 TargetDeviceRow(
                     name: savedConnectionTargetName(model.bluetoothValues),

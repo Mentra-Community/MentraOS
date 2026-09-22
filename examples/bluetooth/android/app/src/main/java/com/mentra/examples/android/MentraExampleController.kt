@@ -52,6 +52,8 @@ import com.mentra.bluetoothsdk.PhotoSize
 import com.mentra.bluetoothsdk.RgbLedAction
 import com.mentra.bluetoothsdk.RgbLedColor
 import com.mentra.bluetoothsdk.RgbLedRequest
+import com.mentra.bluetoothsdk.MentraBluetoothScanCallback
+import com.mentra.bluetoothsdk.ScanDiagnostic
 import com.mentra.bluetoothsdk.ScanSession
 import com.mentra.bluetoothsdk.SettingsAckEvent
 import com.mentra.bluetoothsdk.SpeakingStatusEvent
@@ -234,6 +236,7 @@ data class MentraExampleState(
     val bluetoothStatus: PhoneSdkRuntimeState? = null,
     val cameraStatus: String = "Camera: phone receiver will start before capture",
     val discoveredDevices: List<Device> = emptyList(),
+    val scanHint: String? = null,
     val selectedDiscoveredDevice: Device? = null,
     val selectedScanModel: DeviceModel = DeviceModel.MENTRA_LIVE,
     val events: List<ExampleEvent> = listOf(exampleEvent("LIVE", "SDK ready. Scan to discover glasses.")),
@@ -272,7 +275,7 @@ data class MentraExampleState(
     val videoPreviewDetails: VideoPreviewDetails? = null,
     val videoPreviewUrl: String? = null,
     val videoRecording: Boolean = false,
-    val photoCompression: String = "none",
+    val photoCompression: PhotoCompression = PhotoCompression.NONE,
     val photoSize: String = "max",
     val scanMode: Boolean = false,
     val scanAeDivisor: Int = 3,
@@ -484,12 +487,20 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         val model = state.selectedScanModel
         runAction("Scan ${deviceModelLabel(model)}") {
             scanSession?.stop()
-            state = state.copy(discoveredDevices = emptyList(), selectedDiscoveredDevice = null)
-            scanSession = mentraBluetoothSdk.scan(model, 10_000L) { devices ->
-                state = state.copy(
-                    discoveredDevices = devices,
-                )
-            }
+            state = state.copy(discoveredDevices = emptyList(), selectedDiscoveredDevice = null, scanHint = null)
+            scanSession = mentraBluetoothSdk.scan(
+                model = model,
+                timeoutMs = 10_000L,
+                callback = object : MentraBluetoothScanCallback() {
+                    override fun onResults(devices: List<Device>) {
+                        state = state.copy(discoveredDevices = devices, scanHint = if (devices.isEmpty()) state.scanHint else null)
+                    }
+                    override fun onDiagnostic(diagnostic: ScanDiagnostic) {
+                        state = state.copy(scanHint = diagnostic.message)
+                        addEvent("BLE", diagnostic.message)
+                    }
+                },
+            )
         }
     }
 
@@ -503,11 +514,14 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             discoveredDevices = emptyList(),
             selectedDiscoveredDevice = null,
             selectedScanModel = model,
+            scanHint = null,
             lastAction = "Selected scan model: ${deviceModelLabel(model)}",
         )
     }
 
     fun connect() = runAction("Connect") {
+        scanSession?.stop()
+        state = state.copy(scanHint = null)
         val target = state.selectedDiscoveredDevice
         when {
             target != null -> mentraBluetoothSdk.connect(target)
@@ -518,7 +532,8 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     }
 
     fun connect(device: Device) = runAction("Connect ${device.name}") {
-        state = state.copy(selectedDiscoveredDevice = device)
+        scanSession?.stop()
+        state = state.copy(selectedDiscoveredDevice = device, scanHint = null)
         mentraBluetoothSdk.connect(device)
     }
 
@@ -736,7 +751,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         syncScanButtonPresetIfEnabled()
     }
 
-    fun setPhotoCompression(compression: String) {
+    fun setPhotoCompression(compression: PhotoCompression) {
         state = state.copy(photoCompression = compression)
         syncScanButtonPresetIfEnabled()
     }
@@ -886,7 +901,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         // Barcode scan tuning relies on ASG auto metering plus AE divisor / ISO cap.
         state = state.copy(
             photoSize = "max",
-            photoCompression = "none",
+            photoCompression = PhotoCompression.NONE,
             photoExposureManual = false,
             scanAeDivisor = 3,
             scanIsoCap = 800,
@@ -1110,7 +1125,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
             requestId = requestId,
             size = photoSizeToSdk(state.photoSize),
             webhookUrl = webhookUrl,
-            compress = PhotoCompression.fromValue(state.photoCompression),
+            compress = state.photoCompression,
             save = save,
             sound = true,
             exposureTimeNs = if (state.photoExposureManual) state.photoExposureTimeNs.toDouble() else null,
@@ -2004,8 +2019,8 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         requireConnected("forget Wi-Fi network")
         val wifi = connectedWifiStatus(state.glassesStatus)
             ?: throw IllegalStateException("No connected Wi-Fi network to forget.")
-        val status = withContext(Dispatchers.IO) { mentraBluetoothSdk.forgetWifiNetwork(wifi.ssid) }
-        addEvent("LIVE", "Wi-Fi ${summarize(status.values)}")
+        val result = withContext(Dispatchers.IO) { mentraBluetoothSdk.forgetWifiNetwork(wifi.ssid) }
+        addEvent("LIVE", "Wi-Fi forget ${result.outcome.wireValue}: ${result.ssid}")
     }
 
     fun toggleHotspot() = runAction(if (state.hotspotEnabled) "Disable hotspot" else "Enable hotspot") {
@@ -2173,6 +2188,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
         }
         state = state.copy(
             glassesStatus = glasses,
+            scanHint = if (glasses.connected) null else state.scanHint,
             hotspotEnabled = enabledHotspotStatus(glasses) != null,
             mentraLiveVersions = resolveMentraLiveVersions(glasses, latestVersionInfo),
         )
@@ -2205,7 +2221,7 @@ class MentraExampleController(context: Context) : MentraBluetoothSdkCallback(), 
     }
 
     override fun onScanChanged(scan: BluetoothScanState) {
-        state = state.copy(discoveredDevices = scan.devices)
+        state = state.copy(discoveredDevices = scan.devices, scanHint = if (scan.devices.isEmpty()) state.scanHint else null)
     }
 
     override fun onDeviceDiscovered(device: Device) {
@@ -3747,7 +3763,7 @@ fun photoSizeToSdk(size: String): PhotoSize = when (size) {
 }
 
 val photoSizeOptions = listOf("low", "medium", "high", "max")
-val photoCompressionOptions = listOf("none", "medium", "heavy")
+val photoCompressionOptions = PhotoCompression.entries
 
 fun roiPositionLabel(roiPosition: Int): String =
     cameraRoiPositions.firstOrNull { it.second == roiPosition }?.first ?: "Center"
@@ -3755,7 +3771,7 @@ fun roiPositionLabel(roiPosition: Int): String =
 fun cameraSdkCall(
     mode: String,
     size: String,
-    compression: String,
+    compression: PhotoCompression,
     photoDestination: PhotoDestination,
     aeExposureDivisor: Int?,
     isoCap: Int?,
@@ -3816,7 +3832,7 @@ val photo = mentraBluetoothSdk.requestPhoto(
     PhotoRequest(
       size = PhotoSize.${when(size) { "low" -> "LOW"; "high" -> "HIGH"; "max" -> "MAX"; else -> "MEDIUM" }},
       webhookUrl = $webhookLine,$saveLine
-      compress = PhotoCompression.${compression.uppercase(Locale.US)},
+      compress = PhotoCompression.${compression.name},
       sound = true,
       exposureTimeNs = ${if (exposureManual) exposureTimeNs else "null"},
       iso = ${if (exposureManual) iso else "null"},

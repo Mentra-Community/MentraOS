@@ -11,6 +11,21 @@ const manifestSha = "b".repeat(64)
 
 const releaseWorkflow = readFileSync(new URL("../workflows/coordinated-example-release.yml", import.meta.url), "utf8")
 
+test("keeps iOS validation mandatory and packages artifacts only for release or manual runs", () => {
+  const workflow = readFileSync(new URL("../workflows/example-app-builds.yml", import.meta.url), "utf8")
+  const ios = workflow.split("\n  ios:\n")[1].split("\n  macos:\n")[0]
+  const artifactCondition = "if: github.event_name == 'workflow_dispatch' || (github.event.pull_request.head.repo.full_name == github.repository && startsWith(github.head_ref, 'coordinated/'))"
+  for (const name of ["Package unsigned IPA", "Upload IPA artifact"]) {
+    const step = ios.split(`- name: ${name}\n`)[1].split("\n      - name:")[0]
+    assert.ok(step.includes(artifactCondition), `${name} must preserve coordinated-release artifacts`)
+  }
+  for (const name of ["Type check Swift", "Build"]) {
+    const step = ios.split(`- name: ${name}\n`)[1].split("\n      - name:")[0]
+    assert.doesNotMatch(step, /\n\s+if:/, `${name} must run for ordinary PRs`)
+    assert.match(step, /xcodebuild/)
+  }
+})
+
 function payload(identity = "3.1.0-beta.57") {
   const [base, prerelease] = identity.split("-")
   const channel = prerelease?.startsWith("dev.") ? "dev" : prerelease?.startsWith("beta.") ? "beta" : "production"
@@ -65,6 +80,11 @@ test("synchronizes all maintained example manifests", () => {
   mkdirSync(path.join(root, "examples/ios/MentraExample.xcodeproj"), {recursive: true})
   mkdirSync(path.join(root, "examples/react-native"), {recursive: true})
   mkdirSync(path.join(root, "examples/react-native-elevenlabs-audio"), {recursive: true})
+  mkdirSync(path.join(root, "examples/react-native-macos"), {recursive: true})
+  mkdirSync(path.join(root, "examples/macos"), {recursive: true})
+  writeFileSync(path.join(root, "examples/macos/Package.swift"), 'let sdkVersion = "1.0.0"\n')
+  writeFileSync(path.join(root, "examples/react-native-macos/package.json"),
+    JSON.stringify({dependencies: {"@mentra/bluetooth-sdk": "1.0.0"}}))
   writeFileSync(path.join(root, "examples/android/gradle.properties"), "mentraSdkVersion=1.0.0\n")
   writeFileSync(
     path.join(root, "examples/ios/MentraExample.xcodeproj/project.pbxproj"),
@@ -88,6 +108,9 @@ test("synchronizes all maintained example manifests", () => {
     /version = 3\.1\.0-dev\.42/,
   )
   assert.match(readFileSync(path.join(root, "examples/ios/project.yml"), "utf8"), /exactVersion: 3\.1\.0-dev\.42/)
+  assert.match(readFileSync(path.join(root, "examples/macos/Package.swift"), "utf8"), /sdkVersion = "3\.1\.0-dev\.42"/)
+  assert.equal(JSON.parse(readFileSync(path.join(root, "examples/react-native-macos/package.json")))
+    .dependencies["@mentra/bluetooth-sdk"], "3.1.0-dev.42")
   assert.equal(
     JSON.parse(readFileSync(path.join(root, "examples/react-native/package.json"))).dependencies["@mentra/engine"],
     "3.1.0-dev.42",

@@ -9,7 +9,7 @@ Expo Go cannot load the SDK because the package contains native Android and iOS 
 ## Requirements
 
 - Node.js 20+.
-- Xcode 15+ for iOS builds.
+- Xcode 26.2+ for Expo SDK 55 iOS builds.
 - Android Studio / Android SDK and Java 17 for Android builds.
 - A physical phone for Bluetooth, camera, microphone, direct phone photo, and direct phone WebRTC testing.
 - Mentra smart glasses with Bluetooth enabled.
@@ -23,6 +23,10 @@ bun install
 
 The example depends on the exact SDK and Engine versions pinned in
 [`package.json`](./package.json). Those two package versions must match.
+
+`app.config.js` enables the ACS native build plugin when the installed Engine
+includes ACS. It uses Engine's exact dependency for Android desugaring and iOS
+framework setup; older Engine versions without ACS keep the existing config.
 
 Use compatible SDK and Engine versions published by Mentra. When validating
 unreleased SDK changes, use the local source override below so JavaScript,
@@ -38,6 +42,19 @@ bunx expo run:ios
 ```
 
 Run on a physical iPhone for Bluetooth testing. Simulators are useful only for UI and compile checks.
+
+### Signing With Your Own Apple Developer Team
+
+The committed bundle identifier, `com.mentra.bluetoothsdk.example.reactnative`, is registered to Mentra's Apple Developer team. Apple App IDs are globally unique, so automatic signing for a physical-device build fails for any other team with errors such as `Provisioning Profile "iOS Team Provisioning Profile: *" does not support the Access Wi-Fi Information capability`, and the Apple Developer portal refuses to register the identifier. Simulator builds are not affected because they are not signed.
+
+Set `MENTRA_IOS_BUNDLE_ID` to your own reverse-DNS identifier before generating the native project. `app.config.js` applies it on top of `app.json`:
+
+```bash
+MENTRA_IOS_BUNDLE_ID=com.yourname.mentrasdkrn bunx expo prebuild --clean --platform ios
+bunx expo run:ios --device
+```
+
+Xcode then registers the new App ID under your team with the Wi-Fi entitlements the example needs. Leave the variable unset to keep Mentra's identifier for Mentra-owned builds.
 
 The React Native example uses the SDK photo receiver plus local native modules for direct phone receiving:
 
@@ -93,6 +110,30 @@ Do not use `expo run:android` directly; it may install on whatever device Expo p
 Local on-device STT/TTS via Sherpa-ONNX is **not** bundled in the public Android SDK (no-op stubs). Cloud transcription still works. That also avoids the ~54MB GitHub AAR download during Gradle configure.
 
 Day-to-day iteration: prefer `bun run android:dev` after the first successful install.
+
+## Android Foreground Services
+
+This Bluetooth-only host declares `connectedDevice` for the SDK foreground
+service. Its microphone demo receives PCM from the glasses over BLE; it does
+not select Android's phone microphone. It does not run location tasks or play
+media in the background. `withConnectedDeviceForegroundService` overrides the
+SDK service type and removes Expo's unused location task service. Expo audio
+background playback and recording are disabled, and the four unused typed FGS
+permissions are blocked in `app.json`. Ordinary Bluetooth, Wi-Fi, location and
+audio permissions are separate and are not removed by this configuration.
+The existing iOS `audio` background mode is preserved explicitly in `infoPlist`.
+
+The pinned SDK includes Android `ForegroundService` support for the merged
+host manifest at both startup and subsequent type selection. Do not downgrade
+the SDK below `3.2.0-dev.200` while using this configuration: older SDKs try to
+start undeclared service types. Rebuild the native app after changing these
+settings; a JavaScript update cannot change the manifest.
+
+Before release, verify connection/reconnection and permissions on a physical
+Android phone, including app background/resume, glasses microphone recording,
+media playback pause on background, photo transfers, and both OTA transports.
+The retained connected-device service still needs a Google Play declaration
+and demonstration video.
 
 ## SDK Plugin Configuration
 
@@ -183,6 +224,7 @@ Do not use `localhost` in the app. The glasses, phone, and computer must be on a
 - `src/screens/`: Device, Camera, Stream, System, and Console screens.
 - `src/sdkFormat.ts`: shared status/event formatting.
 - `app.json`: permissions, SDK plugin, and Android native-library packaging rules.
+- `app.config.js`: applies `MENTRA_IOS_BUNDLE_ID` on top of `app.json` so third-party teams can sign device builds.
 - `metro.config.js`: package resolution for published installs and local SDK overrides.
 - `modules/mentra-barcode-scanner`: local native module used by this example to scan received photo previews for barcodes.
 - `modules/mentra-video-stream-receiver`: local native module used by this example for Android/iOS direct phone WebRTC preview demos.
