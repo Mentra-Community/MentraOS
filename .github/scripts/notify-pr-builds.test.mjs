@@ -565,9 +565,9 @@ test("requested tests link the exact Mac archive and current-head request withou
     files: [{filename: "mobile/app.config.ts"}],
     currentPr: {...pr, labels: [{name: "routine:day1-ota"}]},
     routineRuns: [
-      {...run, id: 90, head_sha: "d".repeat(40)},
-      {...run, id: 91, head_repository: {full_name: "someone/fork"}},
-      {...run, id: 9, run_attempt: 2, status: "in_progress", conclusion: null},
+      {...run, id: 90, head_sha: "d".repeat(40), pull_requests: [{number: pr.number}]},
+      {...run, id: 91, head_repository: {full_name: "someone/fork"}, pull_requests: [{number: pr.number}]},
+      {...run, id: 9, run_attempt: 2, status: "in_progress", conclusion: null, pull_requests: [{number: pr.number}]},
     ],
   })
   await notifyPrBuilds(h.args)
@@ -594,8 +594,35 @@ test("requested tests link the exact Mac archive and current-head request withou
   assert.equal(h.posts.length, 1, "request completion does not change build-post deduplication")
 })
 
+test("request links reject another PR on the same branch/head and ambiguous or missing associations", async () => {
+  const currentRequest = {...run, id: 9, pull_requests: [{number: pr.number}]}
+  const otherRequest = {...run, id: 99, pull_requests: [{number: pr.number + 1, base: {ref: "staging"}}]}
+  const cases = [
+    {runs: [otherRequest, currentRequest], exact: true},
+    {runs: [otherRequest], exact: false},
+    {runs: [{...run, id: 99}], exact: false},
+    {runs: [{...run, id: 99, pull_requests: []}], exact: false},
+    {runs: [{...run, id: 99, pull_requests: [{number: pr.number}, {number: pr.number + 1}]}], exact: false},
+  ]
+  for (const {runs, exact} of cases) {
+    const h = harness({
+      files: [{filename: "mobile/app.config.ts"}],
+      currentPr: {...pr, labels: [{name: "routine:day1-ota"}]},
+      routineRuns: runs,
+    })
+    await notifyPrBuilds(h.args)
+    const body = JSON.stringify(h.posts[0])
+    assert.doesNotMatch(body, /actions\/runs\/99/)
+    if (exact) assert.match(body, /actions\/runs\/9\/attempts\/1\|Request pipeline/)
+    else assert.match(body, /request-e2e-routine.yml\|Request pipeline \(workflow\)/)
+  }
+})
+
 test("optional request lookup never gates the build post or substitutes another revision", async () => {
-  for (const options of [{routineRuns: [{...run, id: 90, head_sha: "d".repeat(40)}]}, {routineLookupError: true}]) {
+  for (const options of [
+    {routineRuns: [{...run, id: 90, head_sha: "d".repeat(40), pull_requests: [{number: pr.number}]}]},
+    {routineLookupError: true},
+  ]) {
     const h = harness({
       files: [{filename: "mobile/app.config.ts"}],
       currentPr: {...pr, labels: [{name: "routine:day1-ota"}]},

@@ -42,7 +42,8 @@ and opening/backing out of a result. Until a matching result is uploaded, it say
 results to dev Core for this shared link; localhost-only records are not copied
 by merging this PR. The dev admin/Core must include the build-filter support.
 
-The pipeline link selects the latest matching PR-event request for this head.
+The pipeline link selects the latest matching PR-event request for this head
+with an unambiguous Actions association to this PR number.
 If none can be located, **Request pipeline (workflow)** opens the workflow page;
 it does not imply a request exists. This lookup never blocks a ready build post.
 There is no Slack bot or post-editing service: later label changes, completed

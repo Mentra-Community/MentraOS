@@ -186,7 +186,12 @@ async function requestedRoutineLinks({github, context, pr, sha, ios, core}) {
       event: "pull_request",
       per_page: 100,
     })
-    const run = matchingBuildRun(data.workflow_runs, pr, sha)
+    // One branch/head can back several PRs with different base branches. A
+    // request belongs to a PR, so require its unambiguous Actions association.
+    const associated = data.workflow_runs.filter(
+      (run) => run.pull_requests?.length === 1 && run.pull_requests[0]?.number === pr.number,
+    )
+    const run = matchingBuildRun(associated, pr, sha)
     if (
       run &&
       Number.isSafeInteger(run.id) &&
