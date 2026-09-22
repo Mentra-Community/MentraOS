@@ -411,8 +411,22 @@ test("mobile destinations use real TestFlight groups without changing the releas
   assert.match(mobile, /resolve-android-version-code\.mjs/)
   assert.match(
     mobile,
-    /--assets release-container-assets\.json --owner "\$OWNER" --marker-dir android-version-code-marker/,
+    /--assets android-code-registry-assets\.json --owner "\$OWNER" --marker-dir android-version-code-marker/,
   )
+  assert.match(mobile, /RESERVATION_RELEASE_TAG: mentra-coordinated-asg/)
+  assert.match(
+    mobile,
+    /RESERVE: \$\{\{ inputs\.dry_run != true && inputs\.compatibility_lab != true && needs\.prepare\.outputs\.android_assets_exist != 'true'/,
+  )
+  const reservation = mobile.slice(
+    mobile.indexOf("- name: Resolve and reserve the Android version code"),
+    mobile.indexOf("- name: Build signed coordinated APK and AAB"),
+  )
+  assert.match(reservation, /ARTIFACTS_R2_ACCESS_KEY_ID: \$\{\{ secrets\.ARTIFACTS_R2_ACCESS_KEY_ID \}\}/)
+  assert.match(reservation, /"\$tooling\/resolve-android-version-code\.mjs"/)
+  assert.match(reservation, /"\$tooling\/publish-immutable-release-asset\.mjs"/)
+  assert.doesNotMatch(reservation, /node \.github\/scripts\//)
+  assert.match(mobile, /but this release has no immutable Android pair; refusing to treat it as reused/)
   assert.match(coordinator, /--play-track "\$\{\{ steps\.channel\.outputs\.play_track \}\}"/)
   assert.match(mobile, /EXPECTED_BUILD: \$\{\{ steps\.android-code\.outputs\.code \}\}/)
   assert.match(mobile, /--android-build-number "\$\{\{ steps\.android-code\.outputs\.code \}\}"/)

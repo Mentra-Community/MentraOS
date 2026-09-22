@@ -109,9 +109,13 @@ The pipeline therefore uses Play like this:
   the Android build takes **the next code above the track's floor and every
   code already reserved** instead of the family number
   (`resolve-android-version-code.mjs`, run in the Android job before the
-  build); it reserves that code in the release container as
-  `mentra-android-version-code-<code>-<owner>.json` before building, so a run
-  that stops after building keeps its code and its retry finds it. iOS and the
+  build); it reserves that code before building as an owner-bound marker
+  `mentra-android-version-code-<code>-<owner>.json` in the shared ASG release
+  `mentra-coordinated-asg`, the cross-family home of Android numbering, since
+  borrowed codes span families: a run that stops after building keeps its
+  code, no later run in any family takes it, and its retry finds it. A code
+  already on the track counts as this release's own upload only when the
+  release's immutable Android pair exists; otherwise the run stops. iOS and the
   ASG client keep the family number. The plan freezes the Play destination
   (`native.playTrack`), the record and the manifest carry the Android code
   (`native.androidBuildNumber`), and the coordinate check accepts both; plans
