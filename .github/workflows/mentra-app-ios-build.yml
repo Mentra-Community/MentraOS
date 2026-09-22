@@ -374,7 +374,7 @@ jobs:
       - name: Cache Xcode DerivedData (device build)
         if: steps.select-ipa.outputs.reused != 'true'
         id: xcode-derived-cache
-        uses: actions/cache@v4
+        uses: actions/cache/restore@v4
         with:
           path: mobile/ios/build-device
           # DerivedData and SwiftPM artifacts embed absolute workspace paths.
@@ -721,6 +721,20 @@ jobs:
           rm -f mobile/build/pr-ios/mac-signing.json
           python3 mobile/ci/pr-ios/keychain-search.py remove "$PR_IOS_KEYCHAIN"
           security delete-keychain "$PR_IOS_KEYCHAIN"
+
+      - name: Save Xcode DerivedData (best effort)
+        if: >-
+          success() && steps.select-ipa.outputs.reused != 'true' &&
+          steps.xcode-derived-cache.outputs.cache-hit != 'true' &&
+          steps.xcode-derived-cache.outputs.cache-primary-key != ''
+        timeout-minutes: 3
+        continue-on-error: true
+        uses: actions/cache/save@v4
+        with:
+          path: mobile/ios/build-device
+          # Bound this optimization after the signed downloads are safe. Reuse
+          # the restore key even if CocoaPods changed generated files afterward.
+          key: ${{ steps.xcode-derived-cache.outputs.cache-primary-key }}
 
   publish:
     needs: build

@@ -160,11 +160,12 @@ test("Wi-Fi observation verifies the same hardware identity and targets only the
   })
   expect(result.transport).toBe("12")
   expect(calls.filter((args) => args[1] !== "devices").every((args) => args[1] === "-t" && args[2] === "12")).toBe(true)
-  for (const mismatch of [
+  const mismatches: Record<string, string>[] = [
     {"cat /sys/block/mmcblk0/device/cid": "other-cid"},
     {"getprop ro.serialno": "other-serial"},
     {"getprop persist.mentra.live.mac": "AA:00:00:00:00:00"},
-  ])
+  ]
+  for (const mismatch of mismatches)
     await expect(
       readOtaHardware(wifiFixture, [target], [200], false, commands({"devices -l": wifiInventory, ...mismatch})),
     ).rejects.toBeInstanceOf(OtaValidationError)

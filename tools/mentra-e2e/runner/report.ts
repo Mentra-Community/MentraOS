@@ -2,6 +2,7 @@ import {createHash, randomUUID} from "node:crypto"
 import {appendFile, mkdir, readFile, readdir, rmdir, writeFile, open, statfs, unlink} from "node:fs/promises"
 import {homedir} from "node:os"
 import {join, relative, resolve} from "node:path"
+import {verifyBuildManifest} from "./build-manifest"
 import {bin, command, root, type Doctor, type Snapshot} from "./driver"
 import {KEEP_AWAKE_SECONDS, keepAwake} from "./keep-awake"
 import {bundledMiniappArtifacts} from "./miniapp-artifacts"
@@ -99,6 +100,24 @@ export async function acquireLock(folder = join(homedir(), ".cache/mentra-e2e"))
   }
 }
 
+const ARTIFACT_STORAGE_RESERVE = 5 * 1024 ** 3
+const SYSTEM_STORAGE_RESERVE = 20 * 1024 ** 3
+const SYSTEM_DATA_VOLUME = "/System/Volumes/Data"
+
+export function assertCaptureStorage(artifactAvailableBytes: number, systemDataAvailableBytes?: number) {
+  if (!Number.isSafeInteger(artifactAvailableBytes) || artifactAvailableBytes < ARTIFACT_STORAGE_RESERVE)
+    throw new Error(
+      "Recording requires at least 5 GiB free on the artifact volume; macOS can stop capture during disk cache purges",
+    )
+  if (
+    systemDataAvailableBytes !== undefined &&
+    (!Number.isSafeInteger(systemDataAvailableBytes) || systemDataAvailableBytes < SYSTEM_STORAGE_RESERVE)
+  )
+    throw new Error(
+      "Recording requires at least 20 GiB free on the macOS system Data volume; this is an operational margin against capture-stopping cache purges, not a macOS guaranteed threshold",
+    )
+}
+
 export class Report {
   directory = ""
   results: StepResult[] = []
@@ -161,16 +180,14 @@ export class Report {
     console.log(`Artifacts: ${this.directory}`)
     if (buildManifestPath) {
       const manifest = JSON.parse(await readFile(buildManifestPath, "utf8"))
-      if (
-        manifest.configuration !== "Release" ||
-        manifest.bundleId !== doctor.bundleId ||
-        manifest.executableSha256 !== this.metadata.appExecutableHash ||
-        !manifest.javascriptSha256 ||
-        manifest.javascriptSha256 !== this.metadata.appJavascriptHash
+      Object.assign(
+        this.metadata,
+        verifyBuildManifest(manifest, {
+          ...doctor,
+          executableSha256: this.metadata.appExecutableHash,
+          javascriptSha256: this.metadata.appJavascriptHash,
+        }),
       )
-        throw new Error("Build manifest does not match the running Release app's identity and binary/JavaScript hashes")
-      this.metadata.verifiedLocalBuild = manifest
-      this.metadata.installedAppCommit = manifest.sourceStatus === "" ? manifest.sourceCommit : null
       await this.flush()
     }
   }
@@ -178,14 +195,23 @@ export class Report {
   async startVideo() {
     if ((await command<Doctor>({op: "doctor"})).frontmostBundleId === "com.apple.loginwindow")
       throw new Error("The macOS login/lock screen is foreground; unlock this user session before replay")
-    const disk = await statfs(this.directory)
+    const [disk, systemDisk] = await Promise.all([
+      statfs(this.directory),
+      process.platform === "darwin" ? statfs(SYSTEM_DATA_VOLUME) : undefined,
+    ])
     const availableBytes = disk.bavail * disk.bsize
+    const systemAvailableBytes = systemDisk ? systemDisk.bavail * systemDisk.bsize : undefined
     this.metadata.diskAvailableBytes = availableBytes
+    this.metadata.captureStorage = {
+      observedAt: new Date().toISOString(),
+      artifact: {path: this.directory, availableBytes, requiredBytes: ARTIFACT_STORAGE_RESERVE},
+      systemData:
+        systemAvailableBytes === undefined
+          ? null
+          : {path: SYSTEM_DATA_VOLUME, availableBytes: systemAvailableBytes, requiredBytes: SYSTEM_STORAGE_RESERVE},
+    }
     await this.flush()
-    if (availableBytes < 5 * 1024 ** 3)
-      throw new Error(
-        "Recording requires at least 5 GiB free on the artifact volume; macOS can stop capture during disk cache purges",
-      )
+    assertCaptureStorage(availableBytes, systemAvailableBytes)
     this.awake = keepAwake()
     this.metadata.keepAwake = {pid: this.awake.pid, timeoutSeconds: KEEP_AWAKE_SECONDS, released: false}
     this.video = new Video(join(this.directory, "routine.mp4"))
