@@ -100,6 +100,14 @@ Create a fixture JSON with `serial`, physical `usb` path, immutable `cid`,
 and `slot`. Obtain these from the actual device; never copy a previous boot pin
 blindly. Archive the selected manifest's exact bytes in a separate JSON file.
 
+For an intentionally selected Wi-Fi ADB connection, replace `usb` with
+`wifiEndpoint` containing the verified IPv4 address and port. Exactly one transport
+selection is required. The observer never scans IP addresses, enables network ADB,
+or silently switches between USB and Wi-Fi. It resolves the selected endpoint's
+current transport ID and independently checks serial, CID and full Bluetooth MAC
+before accepting versions. This supports January firmware whose USB ADB may not
+return after reboot; an IP address alone never establishes device identity.
+
 From the repository root:
 
 ```sh
@@ -135,12 +143,12 @@ before `MentraLive_20260915.0`. During an active pass, the observer records the
 temporary stock ASG version that can appear during uninstall/reinstall. That
 observation does not authorize another install or final success: those require
 the expected ASG build, and final success still requires the exact target APK
-hash, firmware and fresh BES response. USB, CID and Bluetooth identity checks
+hash, firmware and fresh BES response. Selected transport, CID and Bluetooth identity checks
 remain active throughout.
 
-Polling tolerates only explicitly classified downtime: the expected USB device
+Polling tolerates only explicitly classified downtime: the selected ADB device
 is absent/offline, or a required firmware/ASG value is empty while boot is still
-incomplete. A failed shell read is reconnect downtime only when a fresh USB
+incomplete. A failed shell read is reconnect downtime only when a fresh ADB
 inventory confirms absence/offline status or reconnection with a new transport ID.
 Nonempty malformed or off-route
 firmware, identity mismatches, other command failures and evidence-write failures

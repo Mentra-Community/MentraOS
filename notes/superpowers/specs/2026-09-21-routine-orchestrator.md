@@ -58,6 +58,18 @@ baseline/target/return profiles and artifact digests before setup. Save redacted
 inputs. Do not resolve "latest" during a run or change expected targets when a
 mutable upstream manifest changes.
 
+MTK setup and restoration default to `full-ota`. The normalized selection may
+explicitly request `flash`; record that choice and its prerequisites. Missing full
+OTA inputs must not silently select flashing. Both adapters consume immutable
+artifacts, retain no-resend ownership, and require independent post-boot firmware
+and identity verification. Wi-Fi ADB is an explicitly selected transport with the
+same identity checks, not a weaker fallback.
+
+For method comparisons, retain separate timestamps for artifact download, device
+staging, dispatch, write completion, reboot and final verification. Report total
+dispatch-to-verification alongside write time and disclose observation delays;
+only comparable measured runs can establish which method is faster.
+
 ## Durable execution and ownership
 
 Acquire exclusive local resource locks before fixture reads/mutations. Identify

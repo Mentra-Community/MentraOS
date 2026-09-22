@@ -1,6 +1,6 @@
 import {expect, test} from "bun:test"
 import {observeOtaHardware, OtaCommandError, readOtaHardware} from "./ota-hardware"
-import {OtaHardwareUnavailable, OtaValidationError, selectUsbTransport} from "./ota-state"
+import {OtaHardwareUnavailable, OtaValidationError, selectUsbTransport, selectWifiTransport} from "./ota-state"
 
 const fixture = {serial: "fixture-serial", usb: "fixture-port", cid: "aabb", bluetooth: "AA:BB:CC:DD:EE:FF"}
 const inventory = `List of devices attached\n${fixture.serial} device usb:${fixture.usb} transport_id:9\n`
@@ -146,4 +146,71 @@ test("USB authorization, identity and evidence errors are terminal", async () =>
   ).rejects.toBe(evidenceFailure)
   const inventoryFailure = new OtaCommandError("ADB inventory unavailable")
   await expect(read(commands({"devices -l": inventoryFailure}))).rejects.toBe(inventoryFailure)
+})
+
+const wifiFixture = {...fixture, usb: undefined, wifiEndpoint: "192.168.1.186:5555"}
+const wifiInventory = `${wifiFixture.wifiEndpoint} device transport_id:12\n`
+
+test("Wi-Fi observation verifies the same hardware identity and targets only the selected transport", async () => {
+  const calls: string[][] = []
+  const run = commands({"devices -l": inventory + wifiInventory})
+  const result = await readOtaHardware(wifiFixture, [target], [200], false, async (args) => {
+    calls.push(args)
+    return run(args)
+  })
+  expect(result.transport).toBe("12")
+  expect(calls.filter((args) => args[1] !== "devices").every((args) => args[1] === "-t" && args[2] === "12")).toBe(true)
+  for (const mismatch of [
+    {"cat /sys/block/mmcblk0/device/cid": "other-cid"},
+    {"getprop ro.serialno": "other-serial"},
+    {"getprop persist.mentra.live.mac": "AA:00:00:00:00:00"},
+  ])
+    await expect(
+      readOtaHardware(wifiFixture, [target], [200], false, commands({"devices -l": wifiInventory, ...mismatch})),
+    ).rejects.toBeInstanceOf(OtaValidationError)
+  // A USB match never substitutes for the explicitly selected endpoint.
+  await expect(readOtaHardware(wifiFixture, [target], [200], false, commands())).rejects.toBeInstanceOf(
+    OtaHardwareUnavailable,
+  )
+})
+
+test("Wi-Fi reconnect is observable downtime, but authentication and ambiguous selectors stay terminal", async () => {
+  const failure = new OtaCommandError("Wi-Fi disconnected")
+  for (const nextInventory of ["", wifiInventory.replace("device", "offline"), wifiInventory.replace(":12", ":13")]) {
+    let reads = 0
+    const run = commands({"cat /sys/block/mmcblk0/device/cid": failure})
+    await expect(
+      readOtaHardware(wifiFixture, [target], [200], true, async (args) =>
+        args[1] === "devices" ? (reads++ === 0 ? wifiInventory : nextInventory) : run(args),
+      ),
+    ).rejects.toBeInstanceOf(OtaHardwareUnavailable)
+  }
+  for (const bad of [
+    wifiInventory + wifiInventory,
+    wifiInventory.replace("device", "unauthorized"),
+    wifiInventory.replace("transport_id:12", ""),
+    wifiInventory.replace("transport_id:12", "usb:other transport_id:12"),
+  ])
+    expect(() => selectWifiTransport(bad, wifiFixture.wifiEndpoint)).toThrow(OtaValidationError)
+  for (const endpoint of ["192.168.1.186", "300.1.2.3:5555", "host:5555", "192.168.1.186:0", "192.168.1.186:65536"])
+    expect(() => selectWifiTransport(wifiInventory, endpoint)).toThrow(OtaValidationError)
+  for (const selection of [
+    {...fixture, wifiEndpoint: wifiFixture.wifiEndpoint},
+    {...fixture, usb: undefined},
+  ])
+    await expect(readOtaHardware(selection, [target], [200], false, commands())).rejects.toBeInstanceOf(
+      OtaValidationError,
+    )
+  await expect(
+    readOtaHardware(
+      wifiFixture,
+      [target],
+      [200],
+      true,
+      commands({
+        "devices -l": wifiInventory,
+        "cat /sys/block/mmcblk0/device/cid": failure,
+      }),
+    ),
+  ).rejects.toBe(failure)
 })

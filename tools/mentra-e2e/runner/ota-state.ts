@@ -2,7 +2,10 @@ import type {Snapshot} from "./driver"
 
 export class OtaValidationError extends Error {}
 export class OtaHardwareUnavailable extends Error {
-  constructor(readonly kind: "transport" | "boot", message: string) {
+  constructor(
+    readonly kind: "transport" | "boot",
+    message: string,
+  ) {
     super(message)
   }
 }
@@ -141,6 +144,31 @@ export function selectUsbTransport(inventory: string, serial: string, usb: strin
     throw new OtaValidationError("USB fixture is unauthorized or has no verified USB path")
   const transport = /\btransport_id:(\d+)\b/.exec(parts.join(" "))?.[1]
   if (!transport) throw new OtaValidationError("USB fixture has no transport id")
+  return transport
+}
+
+/** An explicitly selected network endpoint is only a transport; callers must verify device identity. */
+export function selectWifiTransport(inventory: string, endpoint: string): string {
+  const match = /^(\d{1,3}(?:\.\d{1,3}){3}):(\d{1,5})$/.exec(endpoint)
+  if (
+    !match ||
+    match[1].split(".").some((part) => Number(part) > 255) ||
+    Number(match[2]) < 1 ||
+    Number(match[2]) > 65535
+  )
+    throw new OtaValidationError("Expected an explicit IPv4 ADB endpoint with port")
+  const rows = inventory
+    .split("\n")
+    .map((line) => line.trim().split(/\s+/))
+    .filter((parts) => parts[0] === endpoint)
+  if (rows.length === 0) throw new OtaHardwareUnavailable("transport", "Expected Wi-Fi fixture is absent")
+  if (rows.length !== 1) throw new OtaValidationError("Expected Wi-Fi fixture is ambiguous")
+  const parts = rows[0]
+  if (parts[1] === "offline") throw new OtaHardwareUnavailable("transport", "Expected Wi-Fi fixture is offline")
+  if (parts[1] !== "device" || parts.some((part) => part.startsWith("usb:")))
+    throw new OtaValidationError("Wi-Fi fixture is unauthorized or has an unexpected USB path")
+  const transport = /\btransport_id:(\d+)\b/.exec(parts.join(" "))?.[1]
+  if (!transport) throw new OtaValidationError("Wi-Fi fixture has no transport id")
   return transport
 }
 

@@ -5,7 +5,7 @@ import {join} from "node:path"
 import {parseArgs} from "node:util"
 import {buildDriver, command, snapshot, type Doctor, type Snapshot} from "./runner/driver"
 import {freshBesProof, otaFirmwareRoute, normalizeFirmware, otaPage} from "./runner/ota-state"
-import {observeOtaHardware, otaCommand as run, readOtaHardware} from "./runner/ota-hardware"
+import {observeOtaHardware, otaCommand as run, readOtaHardware, type OtaFixture} from "./runner/ota-hardware"
 import {acquireLock, Report} from "./runner/report"
 import {executeSteps} from "./runner/suite"
 
@@ -23,22 +23,20 @@ const {values} = parseArgs({
 })
 for (const key of ["fixture", "manifest", "manifest-url", "build-manifest"] as const)
   if (!values[key]) throw new Error(`Missing --${key}`)
-const fixture = (await Bun.file(values.fixture!).json()) as {
-  serial: string
-  usb: string
-  cid: string
-  bluetooth: string
+const fixture = (await Bun.file(values.fixture!).json()) as OtaFixture & {
   before: {firmware: string; asgVersion: number; bootId: string; slot: string}
 }
 if (
   !fixture.serial ||
   fixture.serial === "0123456789ABCDEF" ||
-  !fixture.usb ||
+  Boolean(fixture.usb) === Boolean(fixture.wifiEndpoint) ||
   !/^[a-f\d]{32}$/i.test(fixture.cid) ||
   !fixture.bluetooth ||
   !fixture.before
 )
-  throw new Error("Fixture needs a real serial, USB path, eMMC CID, Bluetooth address and initial versions")
+  throw new Error(
+    "Fixture needs a real serial, exactly one USB path or verified Wi-Fi endpoint, eMMC CID, Bluetooth address and initial versions",
+  )
 const manifestBytes = await Bun.file(values.manifest!).bytes()
 const manifest = JSON.parse(new TextDecoder().decode(manifestBytes))
 const app = manifest.apps?.["com.mentra.asg_client"]
@@ -157,7 +155,7 @@ async function verifyAppPair() {
       checks: [{selector: {role: "AXGenericElement", contains: "Device info"}}],
     },
     {
-      instruction: "Match the app's device serial and Bluetooth address to the USB fixture.",
+      instruction: "Match the app's device serial and Bluetooth address to the selected fixture.",
       action: {op: "press", selector: {role: "AXGenericElement", contains: "Device info"}},
       checks: [
         {selector: {role: "AXGenericElement", contains: fixture.serial}},
@@ -171,7 +169,7 @@ async function verifyAppPair() {
     },
   ].map((step) => ({...step, id: `OTA-${String(++index).padStart(2, "0")}`, expected: step.instruction}))
   if (!(await executeSteps(steps, {fixture: fixture.serial, email: "", password: ""}, report)))
-    throw new Error("The app's paired device does not match the USB fixture")
+    throw new Error("The app's paired device does not match the selected fixture")
 }
 async function verifyTarget() {
   const identity = await hardware()
@@ -234,7 +232,7 @@ try {
     (before.bootId !== fixture.before.bootId || before.slot !== fixture.before.slot)
   )
     throw new Error("Initial boot or slot differs from the reviewed fixture")
-  await observe("Verify the app's OTA pin and exact USB/Bluetooth fixture before any installation.", await snapshot())
+  await observe("Verify the app's OTA pin and exact fixture identity before any installation.", await snapshot())
   if (!values.resume) {
     const initialPage = otaPage(await snapshot())
     if (initialPage.kind === "offered") {
@@ -343,7 +341,10 @@ try {
             join(hardwareFolder, "timeline.jsonl"),
             JSON.stringify({
               at: new Date().toISOString(),
-              observation: error.kind === "transport" ? "USB unavailable during update" : "Glasses boot in progress",
+              observation:
+                error.kind === "transport"
+                  ? "Selected ADB transport unavailable during update"
+                  : "Glasses boot in progress",
               error: String(error),
             }) + "\n",
             {mode: 0o600},

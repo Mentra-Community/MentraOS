@@ -1,7 +1,8 @@
 # January baseline to selected release: iOS on Mac
 
 Status: preparation and design are in progress. A compact January BES image was
-installed and freshly verified on the authorized lab fixture. January MTK and
+installed and freshly verified on the authorized lab fixture. January MTK factory
+flashing also completed with independent Wi-Fi ADB verification. Full January OTA,
 factory ASG restoration, the complete customer OTA recording and automatic
 teardown are **not yet qualified**. This document does not add a runnable day-one
 command or claim that the existing `ota.ts` handles all January behavior.
@@ -41,12 +42,23 @@ January lab baseline**, not proof of exact factory bootloader behavior. The
 original January raw image is 260 bytes beyond the boundary and must not be used
 over OTA. Do not generalize the accepted transformation to another image.
 
-MTK uses factory flashing now. A future qualified January downgrade OTA may replace
-only this setup adapter once the necessary files exist. Factory images are not a
-target-files archive. Qualify installation order and recovery first: the current
-unattended MTK flasher uses the modern BES `cs_mtkfp` command, absent from January
-BES. A temporary compatible BES followed by MTK flashing, compact January BES and
-factory ASG restoration is a candidate sequence, not a proven procedure.
+Full MTK OTA is the default for setup and restoration. Freeze a signed full OTA
+for the requested target; a missing or unqualified artifact stops preparation
+instead of silently choosing factory flashing. The January 13 target-files archive
+has now been obtained and matched to the factory image set. Building and qualifying
+its signed full OTA remains in progress; target files themselves are not installable.
+
+Factory flashing remains an explicitly selected alternative. Its unattended helper
+uses the modern BES `cs_mtkfp` command, absent from January BES. That option requires
+temporary compatible BES before flashing, then compact January BES and factory ASG
+restoration. Preserve the actual installation method in every result. Never retry
+an interrupted OTA using flashing until its original write is settled and recovery
+is explicitly selected.
+
+Record artifact download, device staging, dispatch, completion/reboot and independent
+target verification timestamps separately for both methods. Compare dispatch to
+verified boot/identity, disclose observer delays, and do not claim that OTA is faster
+until both measured results exist for comparable starting and target states.
 
 PR #4132's build was installed, verified and restored during the Mac host experiment.
 Its effective manifest and legacy deployment policy have since been frozen for
@@ -69,7 +81,7 @@ readiness for this routine.
    glasses identity, power, available storage, host permissions and tool readiness.
    Record current firmware, active ASG hash, slot and boot identity. Require no
    active call, media transfer or firmware operation.
-3. **Establish the January lab baseline.** Use the qualified BES OTA and MTK factory
+3. **Establish the January lab baseline.** Use the qualified BES and full MTK OTA
    setup adapters in their verified order, preserving identity/calibration. Record
    every mutation and any owned clean-data reset. This preparation has its own
    result and must not be presented as the customer upgrade.

@@ -4,6 +4,7 @@ import {
   OtaHardwareUnavailable,
   OtaValidationError,
   selectUsbTransport,
+  selectWifiTransport,
 } from "./ota-state"
 
 export class OtaCommandError extends Error {}
@@ -29,26 +30,34 @@ export async function otaCommand(args: string[]): Promise<string> {
   }
 }
 
-type Fixture = {serial: string; usb: string; cid: string; bluetooth: string}
+export type OtaFixture = {serial: string; usb?: string; wifiEndpoint?: string; cid: string; bluetooth: string}
+
+function selectTransport(inventory: string, fixture: OtaFixture) {
+  if (Boolean(fixture.usb) === Boolean(fixture.wifiEndpoint))
+    throw new OtaValidationError("Select exactly one USB path or verified Wi-Fi endpoint")
+  return fixture.wifiEndpoint
+    ? selectWifiTransport(inventory, fixture.wifiEndpoint)
+    : selectUsbTransport(inventory, fixture.serial, fixture.usb!)
+}
 
 /** A failed shell read is reconnect downtime only when fresh inventory proves a transport change. */
 export async function readOtaHardware(
-  fixture: Fixture,
+  fixture: OtaFixture,
   allowedFirmware: string[],
   asgVersions: number[],
   observingActivePass: boolean,
   run = otaCommand,
 ) {
   const inventory = () => run(["adb", "devices", "-l"])
-  const transport = selectUsbTransport(await inventory(), fixture.serial, fixture.usb)
+  const transport = selectTransport(await inventory(), fixture)
   const shell = async (...args: string[]) => {
     try {
       return await run(["adb", "-t", transport, "shell", ...args])
     } catch (error) {
       if (error instanceof OtaCommandError) {
-        // If it is still connected, this is a command failure, not proven USB downtime.
-        const current = selectUsbTransport(await inventory(), fixture.serial, fixture.usb)
-        if (current !== transport) throw new OtaHardwareUnavailable("transport", "USB fixture reconnected")
+        // If it is still connected, this is a command failure, not proven transport downtime.
+        const current = selectTransport(await inventory(), fixture)
+        if (current !== transport) throw new OtaHardwareUnavailable("transport", "Fixture reconnected")
       }
       throw error
     }

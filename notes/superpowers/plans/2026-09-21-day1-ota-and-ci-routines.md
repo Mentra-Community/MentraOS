@@ -20,8 +20,9 @@ Source of truth:
 ## Completed investigation
 
 - [x] Locate and compare original January BES/MTK factory assets; keep source
-  provenance and hashes locally. January target-files/full downgrade OTA remains
-  unavailable and does not block the factory-flash setup design.
+  provenance and hashes locally. The newly supplied January target-files archive
+  passes all 6,390 entry CRCs and matches the factory partition images. Its signed
+  full downgrade OTA is being prepared separately; the archive is not installable.
 - [x] Confirm the original January BES exceeds the OTA boundary by 260 bytes;
   preserve the existing size gate.
 - [x] Prepare and independently verify the accepted compact BES artifact on the
@@ -88,8 +89,16 @@ Source of truth:
 - [x] Implement recovery that reconciles an unfinished write and never blindly
   resends it; 17 tests cover partial setup, cancellation, process interruption,
   damaged journals and failed restoration.
-- [ ] Qualify MTK factory-flash ordering around January BES's missing `cs_mtkfp`;
-  verify original ASG is active after setup and operational recovery works.
+- [x] Qualify the explicit MTK factory-flash alternative around January BES's
+  missing `cs_mtkfp`: one flash completed 14 image writes and 24 sampled readbacks.
+  USB did not return; read-only Wi-Fi ADB reconciliation verified January MTK and
+  the retained ASG overlay. The original timeout remains in evidence.
+- [x] Add explicitly selected Wi-Fi ADB observation, preserving CID/serial/full
+  Bluetooth identity and fail-closed reconnect classification. Fifteen focused
+  tests and a real read-only January observation pass.
+- [ ] Make qualified full MTK OTA the default for setup/restoration, retaining
+  flashing only by explicit selection. Preserve downgrade-with-wipe behavior,
+  qualify BLE Wi-Fi reprovisioning, and measure both methods to verified boot.
 - [x] Implement frozen manifest parsing, fourteen independent firmware/identity
   assertions and an offline verification CLI (16 focused parser/CLI tests).
   Live adapters must collect those observations; supplied JSON alone cannot
@@ -116,10 +125,27 @@ nine-byte reads with `0x9A` response headers remained incomplete behind the stal
 `23 23 30 00 2e` header (declared length 771,764,259). The owned operation ended
 `authorization_unreconciled`. Its immutable local admin export preserves the
 received-header evidence separately from the absence of a parsed response;
-test remains not run, restoration unverified and the fixture unavailable. Next,
-isolate parser state at the owned framed-to-raw transition and cover the stale
-buffer with a regression test before another owned hardware attempt. This finding
-does not qualify the full January baseline or the customer OTA routine.
+that attempt remains failed and does not qualify the full January baseline.
+
+The subsequent owned transition, with the parser state isolated at admitted raw
+entry, passed on hardware: the first `0x9A` response parsed, all 1,162,826 bytes
+were confirmed and BES `26.9.21.1` verified after a new boot. The observer initially
+rejected the completion event's `verify_boot` field; its error is preserved, and
+separate read-only reconciliation verified the same fixture, exact active APK and
+successful owned version proof without resending. This is a temporary BES setup
+pass only. January MTK was then flashed and independently verified over Wi-Fi ADB.
+Compact January BES transferred and rebooted; its recovery timeout was reconciled
+by a normal ASG-reader restart and fresh legacy version query, without resend.
+The newer ASG overlay was removed, exposing the January system APK (version 27,
+matching the verified original digest). A later ASG27 query did not produce a
+fresh BES version response; that limitation is retained alongside the same-boot
+version proof immediately before the ASG-only revert. The complete customer
+recording and return-profile restoration remain outstanding.
+
+Measured flash timings: dispatch to writes/readbacks completed was 123.974 seconds;
+first independent network boot observation was at 299.785 seconds; complete
+read-only verification was at 579.256 seconds. The latter includes the original
+USB wait and manual observation delay. Full OTA comparison remains pending.
 
 ## CI and results integration
 
