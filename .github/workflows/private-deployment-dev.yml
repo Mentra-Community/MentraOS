@@ -195,6 +195,7 @@ jobs:
                 miniappJwtPublicKey:{value:env.MINIAPP_JWT_PUBLIC_KEY},
                 coreAdminEmails:{value:env.CORE_ADMIN_EMAILS},
                 workspaceHostname:{value:$workspaceHostname},
+                approvedSystemMiniapps:{value:$reference[0].systemMiniapps.approvedPackageNamesOverride},
                 managedMiniapps:{value:$reference[0].miniapps.managed},
                 manageAcrPullRoleAssignment:{value:false}
               }
@@ -297,6 +298,7 @@ jobs:
              and .features.runtimeRealtimeSession == false
              and .features.managedStreams == false
              and .features.nativeMeetings == true
+             and .systemMiniapps == $reference[0].systemMiniapps
              and .miniapps.managed == $reference[0].miniapps.managed
              and .telemetry == false' \
             <<< "$manifest"
