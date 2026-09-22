@@ -1,12 +1,12 @@
 import {describe, expect, test} from "bun:test"
-import {processText, sourceLines} from "./text"
-import {processScene} from "./process"
-import {degradeTextScene} from "./degrade"
-import {NIMO_PROFILE} from "../profiles/nimo"
-import {G2_PROFILE} from "../profiles/g2"
-import {G1_PROFILE} from "../profiles/g1"
-import {Z100_PROFILE} from "../profiles/z100"
-import type {SceneDisplayCapabilities} from "./types"
+import {processText, sourceLines} from "../text"
+import {processScene} from "../process"
+import {degradeTextScene} from "../degrade"
+import {NIMO_PROFILE} from "../../profiles/nimo"
+import {G2_PROFILE} from "../../profiles/g2"
+import {G1_PROFILE} from "../../profiles/g1"
+import {Z100_PROFILE} from "../../profiles/z100"
+import type {SceneDisplayCapabilities} from "../types"
 
 const caps: SceneDisplayCapabilities = {
   width: 500,
