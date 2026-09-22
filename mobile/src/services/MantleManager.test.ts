@@ -807,12 +807,12 @@ describe("MantleManager", () => {
     const instance = new (mantle.constructor as new () => {
       setupIosMiniappVisibility: () => void
       setupSubscriptions: () => Promise<void>
-      installBundledCall: () => Promise<void>
+      prepareIosCall: () => Promise<void>
       subs: Array<{remove: () => void}>
       iosMiniappVisibility: Map<string, {dispose: () => void}>
     })()
     const installCall = jest.fn(async () => {})
-    instance.installBundledCall = installCall
+    instance.prepareIosCall = installCall
     const installNotify = jest.spyOn(builtInMiniappCatalog, "installNotify").mockImplementation(() => {})
     const install = packageName === mentraCallPackageName ? installCall : installNotify
     const otherInstall = packageName === mentraCallPackageName ? installNotify : installCall
