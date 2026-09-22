@@ -1,9 +1,16 @@
 ---
-status: active
+status: archived
 owner: Mentra
 ---
 
 # Mentra Miniapp Store restoration design
+
+> Superseded by [Store integration](../../../cloud-v2/docs/store-integration.md).
+> Store source, Developer Console and moderation now live in the private
+> `miniapp-store` repository. The host has no Store endpoint/profile configuration.
+> Local packing and bundled archives are unsigned by default; Store publication
+> requires signing, and the host preserves an installed publisher's identity.
+> The design below records the earlier proposal, not current requirements.
 
 ## Outcome
 

@@ -1,9 +1,14 @@
 ---
-status: implemented
+status: archived
 owner: Mentra
 ---
 
 # Mentra miniapp bundle signing implementation plan
+
+> Superseded by [Store integration](../../../cloud-v2/docs/store-integration.md).
+> `pack` and local phone release are unsigned by default; bundled miniapps remain
+> unsigned. Store publication requires a signed archive, and installed publisher
+> identity is sticky. The default-signed workflow below is a historical proposal.
 
 > Execution plan for making publisher identity part of every production miniapp
 > bundle before Store installation is enabled.
