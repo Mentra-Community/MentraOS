@@ -10,9 +10,9 @@ cluster:
 
 | Release source                              | Coordinated owner              | Porter app      | Manifest              | Public hosts                                                                                                                     |
 | ------------------------------------------- | ------------------------------ | --------------- | --------------------- | -------------------------------------------------------------------------------------------------------------------------------- |
-| `dev`                                       | `coordinated-release.yml`      | `cloud-dev`     | `porter.dev.yaml`     | `core.dev.us-west-2.mentraglass.com`, `store.dev.us-west-2.mentraglass.com`, `runtime.dev.us-west-2.mentraglass.com`             |
-| `staging`                                   | `coordinated-release.yml`      | `cloud-staging` | `porter.staging.yaml` | `core.staging.us-west-2.mentraglass.com`, `store.staging.us-west-2.mentraglass.com`, `runtime.staging.us-west-2.mentraglass.com` |
-| selected release source contained in `main` | `production-release-cloud.yml` | `cloud-prod`    | `porter.prod.yaml`    | `core.mentraglass.com`, `store.mentraglass.com`, `runtime.mentraglass.com`                                                       |
+| `dev`                                       | `coordinated-release.yml`      | `cloud-dev`     | `porter.dev.yaml`     | `core.dev.us-west-2.mentraglass.com`, `runtime.dev.us-west-2.mentraglass.com`             |
+| `staging`                                   | `coordinated-release.yml`      | `cloud-staging` | `porter.staging.yaml` | `core.staging.us-west-2.mentraglass.com`, `runtime.staging.us-west-2.mentraglass.com` |
+| selected release source contained in `main` | `production-release-cloud.yml` | `cloud-prod`    | `porter.prod.yaml`    | `core.mentraglass.com`, `runtime.mentraglass.com`                                                       |
 
 Both release systems call `reusable-coordinated-cloud-v2.yml`, which is the single
 implementation owner for target resolution, Porter deployment, public health
@@ -33,6 +33,15 @@ attached to the release record.
 explicit shared debugging environment and do not use it as a default test
 target unless the person currently using it agrees.
 
+The Mentra Miniapp Store deploys independently from the private
+[miniapp-store](https://github.com/Mentra-Community/miniapp-store) repository.
+Its `main` branch serves one production catalog, currently at the temporary
+`store.dev.us-west-2.mentraglass.com` backend hostname. Public Cloud V2 builds
+contain no Store service. Core uses the explicitly configured
+`MENTRA_STORE_INTERNAL_URL` for developer attestation verification; it does not
+select a catalog by Core environment. See [Store integration](../../store-integration.md)
+for the service/authentication contract and private deployment ownership.
+
 ## The deploy model
 
 Each Porter app has the same service layout. All services share one Docker
@@ -41,15 +50,14 @@ image — each just runs a different process from it:
 | Service   | Run                                 | HTTP port | UDP port |
 | --------- | ----------------------------------- | --------- | -------- |
 | `core`    | `bun packages/core/src/index.ts`    | 3000      | —        |
-| `store`   | `bun packages/store/src/index.ts`   | 3003      | —        |
 | `runtime` | `bun packages/runtime/src/index.ts` | 3001      | 8000     |
 
 (The proxy service from `packages/proxy/` joins once it has real code.)
 
 This shape is in the environment-specific `porter.*.yaml` manifests. The build is in
 [`docker/Dockerfile`](../../../docker/Dockerfile). Note the share-an-image
-approach — single build, multiple entry points. v1 was monolithic; v2's
-three-process model could have been three Docker images, but one image
+approach — single build, multiple entry points. v1 was monolithic; the Core/Runtime
+processes could have separate Docker images, but one image
 with `run:` overrides is simpler and the cost is negligible (a few extra
 MB per service since they all bundle the same node_modules).
 
@@ -68,29 +76,27 @@ get layer-cached so re-builds are faster).
 
 ## Where do env vars come from?
 
-Three layers, in increasing priority:
+Porter v2 reads application-level `env:` in `porter.*.yaml`, including
+`MENTRA_STORE_INTERNAL_URL`. Service-level `env:` is not applied by the current
+Porter CLI; do not put required configuration there.
 
-1. **Service-level `env:` in `porter.yaml`** — non-secret values like
-   `LOG_STDOUT_JSON=true`, `AUDIO_UDP_PORT=8000`.
-2. **Linked env groups** (referenced in `envGroups:` in `porter.yaml`).
-   We use `cloud-v2-dev-doppler`, `cloud-v2-staging-doppler`, and
-   `cloud-v2-prod-doppler-sync`. See
-   [`doppler/porter-integration.md`](../doppler/porter-integration.md).
-3. **App-level env** (rarely set) — overrides env-group values per-app.
+Linked `envGroups:` supply shared configuration and secrets. We use
+`cloud-v2-dev-doppler`, `cloud-v2-staging-doppler`, and
+`cloud-v2-prod-doppler-sync`; see
+[`doppler/porter-integration.md`](../doppler/porter-integration.md). Existing
+secret-backed entries can override a manifest value, so verify the merged
+environment after a change.
 
-Verify what a pod actually sees:
-
-```bash
-porter env pull --app cloud-dev --merged | grep MENTRA_JWT
-# Shows the merged env, including env-group values
-```
+Use `porter env pull --app cloud-dev --merged --file <secure-local-file>`
+to inspect effective values. The output contains secrets: keep it private and
+out of logs. An exported deployment manifest alone does not show the effective
+environment.
 
 ## Watching a deploy
 
 ```bash
 # Live logs from one service (Ctrl+C to stop)
 porter app logs cloud-dev --service core
-porter app logs cloud-dev --service store
 porter app logs cloud-dev --service runtime
 
 # Historical logs
@@ -172,9 +178,10 @@ just returns "ok" — no work — so liveness can't false-positive under load.
 (Lesson from v1 issue 057.)
 
 The coordinated deployer verifies both paths through every configured public
-Core, Store, and Runtime hostname after `porter apply -w`. Missing DNS, an unhealthy
+Core and Runtime hostname after `porter apply -w`. Missing DNS, an unhealthy
 dependency, or an unready pod fails the cloud job and prevents mobile
-publication. It then reads pod `imageID` values and the Porter pod revision back
+publication. Store health checks belong to the private Store deployment.
+The coordinated deployer then reads pod `imageID` values and the Porter pod revision back
 through read-only `porter kubectl`; those immutable observations are stored in
 `cloud-v2-deployment.json` and copied into the completed release manifest.
 

@@ -1056,7 +1056,10 @@ class AppRegistry {
     // that lack their verified release identity and publisher continuity pin.
     return {
       apply: () => {
-        if (releaseIdentity.publisherKeyFingerprint) {
+        // Development snapshots bypass publisher continuity and must not bind
+        // future releases to a laptop's key. Keep their fingerprint only in
+        // the per-version identity below.
+        if (releaseIdentity.source !== "dev_snapshot" && releaseIdentity.publisherKeyFingerprint) {
           const savedPublisher = storage.save(publisherKey, releaseIdentity.publisherKeyFingerprint)
           if (savedPublisher.is_error()) throw savedPublisher.error
         }

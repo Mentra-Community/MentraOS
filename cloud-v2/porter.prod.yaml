@@ -11,6 +11,8 @@ envGroups:
 
 # Porter applies environment variables at application level.
 env:
+  ADMIN_URL: "https://admin.mentraglass.com"
+  PORTAL_URL: "https://portal.mentraglass.com"
   MENTRA_STORE_INTERNAL_URL: "https://store.dev.us-west-2.mentraglass.com"
 
 build:
@@ -22,9 +24,6 @@ services:
   - name: core
     type: web
     run: bun packages/core/src/index.ts
-    env:
-      ADMIN_URL: "https://admin.mentraglass.com"
-      PORTAL_URL: "https://portal.mentraglass.com"
     port: 3000
     instances: 1
     cpuCores: 0.25

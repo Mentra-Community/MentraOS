@@ -3,9 +3,10 @@
  *
  * A package with no recorded publisher accepts any bundle, signed or not, so a
  * developer carries a signing key only once they have somewhere durable to keep
- * it. The first signed bundle a package accepts records its key, and from then
+ * it. The first signed release a package accepts records its key, and from then
  * on every later update must present the same one — a one-way door, because the
  * signature envelope has no rotation chain.
+ * Development snapshots neither enforce nor change this production pin.
  *
  * Provenance is a separate gate and is always enforced: SYSTEM identity comes
  * from `canInstallMiniappRelease`, never from a signature.
