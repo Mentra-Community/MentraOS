@@ -975,3 +975,15 @@ test("new cache and signing tooling tolerate a frozen source predating the helpe
   const cache = ios.split("      - name: Compute iOS compilation cache scope\n")[1].split("\n      - name:")[0]
   assert.match(cache, /if: steps.cache-support.outputs.supported == 'true'/)
 })
+
+
+test("cache scope receives the generated public runtime environment, including its backend", () => {
+  const source = workflow("reusable-coordinated-mobile.yml")
+  const pattern = source.match(/grep -E '([^']+)' mobile\/\.env/)[1]
+  const input = "EXPO_PUBLIC_BUILD_ENV=staging\nEXPO_PUBLIC_CLOUD_CORE_URL=https://staging.example\nMENTRAOS_PINNED_BUILD_NUMBER=42\nPRIVATE_TOKEN=secret\n"
+  const result = spawnSync("grep", ["-E", pattern], {input, encoding: "utf8"})
+  assert.equal(result.status, 0)
+  assert.match(result.stdout, /EXPO_PUBLIC_BUILD_ENV=staging/)
+  assert.match(result.stdout, /EXPO_PUBLIC_CLOUD_CORE_URL=https:\/\/staging.example/)
+  assert.doesNotMatch(result.stdout, /PRIVATE_TOKEN/)
+})
