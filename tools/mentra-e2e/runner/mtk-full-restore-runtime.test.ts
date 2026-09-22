@@ -251,7 +251,9 @@ test("concrete transfer/helper gate persist original receipts and recovery reads
     h.runtime.reboot({...bound, intent: activation, argv: ["adb", "-t", "7", "reboot"], beforeReboot: gate}),
   ).rejects.toThrow()
   expect((await h.get()).reboots).toBe(1)
-}, 30000)
+  // This crosses transfer, apply, crash recovery and reboot through real fake
+  // subprocesses and fsynced receipts. Linux CI needs more than the Mac's 26s.
+}, 90000)
 
 test("missing verification record fails before payload transfer, and foreign receipt cannot be adopted", async () => {
   const h = await harness()
