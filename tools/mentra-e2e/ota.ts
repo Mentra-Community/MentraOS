@@ -1,17 +1,15 @@
 #!/usr/bin/env bun
-import {createHash} from "node:crypto"
-import {appendFile, chmod, copyFile, mkdir, readFile} from "node:fs/promises"
+import {readFile} from "node:fs/promises"
 import {join, resolve} from "node:path"
 import {parseArgs} from "node:util"
-import {buildDriver, command, snapshot, type Doctor, type Snapshot} from "./runner/driver"
-import {freshBesProof, otaFirmwareRoute, normalizeFirmware, otaPage} from "./runner/ota-state"
-import {observeOtaHardware, otaCommand as run, readOtaHardware, type OtaFixture} from "./runner/ota-hardware"
+import {buildDriver, command, snapshot, type Doctor} from "./runner/driver"
+import {normalizeFirmware, otaPage} from "./runner/ota-state"
+import {otaCommand as run} from "./runner/ota-hardware"
 import {acquireLock, Report} from "./runner/report"
-import {executeSteps} from "./runner/suite"
-import {legacyAppPairChecks, loadLegacyRoute, verifyPublishedLegacyManifests} from "./runner/ota-legacy-route"
+import {loadLegacyRoute, verifyPublishedLegacyManifests} from "./runner/ota-legacy-route"
 import {runLifecycle, type AssertionObservation, type Json, type Reconciliation} from "./runner/lifecycle"
 import {runOtaCustomerSequence, type OtaCustomerProgress} from "./runner/ota-customer-sequence"
-import {otaAudioNotice, otaAudioNoticeStep} from "./runner/ota-audio-notice"
+import {createOtaRecording, otaRecordingSelection, type OtaRecordingFixture} from "./runner/ota-recording"
 
 const {values} = parseArgs({
   args: process.argv.slice(2),
@@ -29,9 +27,7 @@ const {values} = parseArgs({
 })
 for (const key of ["fixture", "manifest", "manifest-url", "build-manifest"] as const)
   if (!values[key]) throw new Error(`Missing --${key}`)
-const fixture = (await Bun.file(values.fixture!).json()) as OtaFixture & {
-  before: {firmware: string; asgVersion: number; bootId: string; slot: string}
-}
+const fixture = (await Bun.file(values.fixture!).json()) as OtaRecordingFixture
 if (
   !fixture.serial ||
   fixture.serial === "0123456789ABCDEF" ||
@@ -44,23 +40,7 @@ if (
     "Fixture needs a real serial, exactly one USB path or verified Wi-Fi endpoint, eMMC CID, Bluetooth address and initial versions",
   )
 const manifestBytes = await Bun.file(values.manifest!).bytes()
-const manifest = JSON.parse(new TextDecoder().decode(manifestBytes))
-const app = manifest.apps?.["com.mentra.asg_client"]
-const target = {
-  asgVersion: app?.versionCode,
-  asgSha256: app?.sha256,
-  firmware: normalizeFirmware(manifest.mtk_full_ota?.end_firmware),
-  bes: manifest.bes_firmware?.version,
-}
-if (
-  !Number.isInteger(target.asgVersion) ||
-  !/^[a-f\d]{64}$/i.test(target.asgSha256 ?? "") ||
-  !target.firmware ||
-  !target.bes
-)
-  throw new Error("Manifest must pin ASG, full MTK fallback and BES targets")
-const manifestSha256 = createHash("sha256").update(manifestBytes).digest("hex")
-let allowedFirmware = otaFirmwareRoute(fixture.before.firmware, target.firmware, manifest.mtk_patches)
+const {manifest, target, manifestSha256} = otaRecordingSelection(fixture, manifestBytes)
 const build = await Bun.file(values["build-manifest"]!).json()
 if (build.otaManifestUrl !== values["manifest-url"])
   throw new Error("Build OTA pin differs from the requested manifest")
@@ -79,9 +59,7 @@ if (values["legacy-route"]) {
     targetAsg: target.asgVersion,
     targetPatches: manifest.mtk_patches,
   })
-  allowedFirmware = legacy.allowedFirmware
 }
-const allowedAsg = legacy?.allowedAsg ?? [fixture.before.asgVersion, target.asgVersion]
 const url = new URL(values["manifest-url"]!)
 if (url.protocol !== "https:" || url.username || url.password || url.hash)
   throw new Error("Expected a public HTTPS manifest URL")
@@ -93,211 +71,28 @@ if (!Number.isFinite(minutes) || minutes <= 0 || minutes > 60) throw new Error("
 await buildDriver()
 const release = await acquireLock()
 const report = new Report("mentra-live-ota", [])
-let logger: ReturnType<typeof Bun.spawn> | undefined
-let loggingTransport = ""
-let logSegment = 0
-let hardwareFolder = ""
+let recording: Awaited<ReturnType<typeof createOtaRecording>> | undefined
 const progress: OtaCustomerProgress = {started: false, installPasses: 0, finished: false}
-let index = 0
-let lastHardware = ""
 
-async function hardware(observingActivePass = false) {
-  const {shell, ...state} = await readOtaHardware(
-    fixture,
-    allowedFirmware,
-    allowedAsg,
-    legacy ? false : observingActivePass,
-  )
-  const {transport, asgVersion, firmware, bootId} = state
-  if (transport !== loggingTransport || !logger || logger.exitCode !== null) {
-    if (logger && logger.exitCode === null) {
-      logger.kill()
-      await logger.exited
-    }
-    const log = join(hardwareFolder, `transport-${transport}-${++logSegment}-private.log`)
-    await Bun.write(log, "")
-    await chmod(log, 0o600)
-    logger = Bun.spawn(["adb", "-t", transport, "logcat", "-v", "epoch", "-T", "1"], {
-      stdout: Bun.file(log),
-      stderr: Bun.file(log + ".stderr"),
-    })
-    loggingTransport = transport
-  }
-  const encoded = JSON.stringify(state)
-  if (encoded !== lastHardware) {
-    await appendFile(
-      join(hardwareFolder, "timeline.jsonl"),
-      JSON.stringify({at: new Date().toISOString(), ...state}) + "\n",
-      {mode: 0o600},
-    )
-    lastHardware = encoded
-    console.log(`Hardware: ASG ${asgVersion}, MTK ${firmware}, boot ${bootId}`)
-  }
-  return {...state, shell}
-}
-async function observe(instruction: string, state: Snapshot, expected = instruction) {
-  const mark = await report.video!.mark()
-  const result = await report.record(
-    {
-      id: `OTA-${String(++index).padStart(2, "0")}`,
-      instruction,
-      expected,
-      status: "passed",
-      durationMs: 0,
-      videoStart: mark,
-      videoEnd: mark,
-      focusBefore: state.frontmostBundleId,
-      focusAfter: state.frontmostBundleId,
-    },
-    state,
-  )
-  if (result.status !== "passed") throw new Error(result.error ?? "OTA observation evidence failed")
-}
-async function press(identifier: string, instruction: string) {
-  const ok = await executeSteps(
-    [
-      {
-        id: `OTA-${String(++index).padStart(2, "0")}`,
-        instruction,
-        expected: "The named control accepts the action; the following observation verifies the resulting state.",
-        action: {op: "press", selector: {identifier, enabled: true}},
-        checks: [{selector: {identifier}, absent: true}],
-        timeoutMs: 15000,
-      },
-    ],
-    {fixture: fixture.serial, email: "", password: ""},
-    report,
-  )
-  if (!ok) throw new Error("OTA UI action failed; do not retry the installation automatically")
-}
-async function verifyAppPair() {
-  const identity = legacy ? await hardware() : undefined
-  const notice = otaAudioNotice(await snapshot())
-  if (notice === "blocked") throw new Error("The glasses audio notice is incomplete or ambiguous")
-  if (notice === "dismissible") {
-    const step = otaAudioNoticeStep(`OTA-${String(++index).padStart(2, "0")}`)
-    if (!(await executeSteps([step], {fixture: fixture.serial, email: "", password: ""}, report)))
-      throw new Error("The glasses audio notice did not close; do not retry its dismissal automatically")
-  }
-  const steps = [
-    {
-      instruction: "Open Settings to identify the app's paired glasses.",
-      action: {op: "press", selector: {identifier: "home.miniapp.com.mentra.settings"}},
-      checks: [{selector: {role: "AXGenericElement", contains: "Device info"}}],
-    },
-    {
-      instruction: legacy
-        ? "Match the app’s full Bluetooth MAC and ASG build to the independently identified glasses."
-        : "Match the app's device serial and Bluetooth address to the selected fixture.",
-      action: {op: "press", selector: {role: "AXGenericElement", contains: "Device info"}},
-      checks: legacy
-        ? legacyAppPairChecks(fixture.bluetooth, identity!.asgVersion)
-        : [
-            {selector: {role: "AXGenericElement", contains: fixture.serial}},
-            {selector: {role: "AXGenericElement", contains: fixture.bluetooth}},
-          ],
-    },
-    {
-      instruction: "Close Device info and return to paired home.",
-      action: {op: "press", selector: {identifier: "miniapp.close"}},
-      checks: [{selector: {identifier: "miniapp.close"}, absent: true}],
-    },
-  ].map((step) => ({...step, id: `OTA-${String(++index).padStart(2, "0")}`, expected: step.instruction}))
-  if (!(await executeSteps(steps, {fixture: fixture.serial, email: "", password: ""}, report)))
-    throw new Error("The app's paired device does not match the selected fixture")
-}
-async function verifyTarget() {
-  if (legacy) await verifyPublishedLegacyManifests(legacy.route.manifests)
-  const identity = await hardware()
-  if (
-    identity.firmware !== target.firmware ||
-    identity.asgVersion !== target.asgVersion ||
-    identity.bootCompleted !== "1"
-  )
-    throw new Error("App completion does not match the installed ASG and MTK targets")
-  // This fixture returned empty tag-filtered dumps while the same live buffer
-  // contained version responses. Bound the raw read, then select proofs locally.
-  const logs = await run(["adb", "-t", identity.transport, "logcat", "-d", "-v", "epoch", "-t", "12000"])
-  const epoch = Number(await identity.shell("date", "+%s"))
-  const proof = freshBesProof(logs, identity.bootId, epoch)
-  if (proof.version !== target.bes) throw new Error(`Expected BES ${target.bes}, received ${proof.version}`)
-  const apk = (await identity.shell("pm", "path", "com.mentra.asg_client")).split("\n")
-  if (apk.length !== 1 || !apk[0].startsWith("package:/")) throw new Error("Installed ASG package path is ambiguous")
-  const hash = (await identity.shell("sha256sum", apk[0].slice(8))).split(/\s+/)[0]
-  if (hash !== target.asgSha256) throw new Error("Installed ASG APK hash differs from the OTA manifest")
-  await Bun.write(join(hardwareFolder, "bes-version-private.log"), logs)
-  await chmod(join(hardwareFolder, "bes-version-private.log"), 0o600)
-  const {shell: _, ...device} = identity
-  await Bun.write(
-    join(hardwareFolder, "verified-target.json"),
-    JSON.stringify({at: new Date().toISOString(), ...device, bes: proof, apkSha256: hash}, null, 2),
-  )
-  await observe(
-    "Verify the actual ASG APK, MTK firmware and fresh BES response match every pinned target.",
-    await snapshot(),
-  )
-}
 try {
   await report.start(await command<Doctor>({op: "doctor"}), JSON.stringify(fixture), values["build-manifest"])
-  hardwareFolder = join(report.directory, "hardware")
-  await mkdir(hardwareFolder, {mode: 0o700})
-  await copyFile(values.manifest!, join(hardwareFolder, "manifest.json"))
-  report.metadata.ota = {
-    url: url.href,
-    manifestSha256,
-    target,
-    allowedFirmware,
-    allowedAsg,
-    legacyRoute: legacy?.route ?? null,
-    scope: legacy
-      ? "customer-upgrade-only; January setup and automatic restoration are not qualified"
-      : "normal-update",
+  recording = await createOtaRecording(report, {
+    fixture,
+    build,
+    manifestBytes,
+    manifestUrl: values["manifest-url"]!,
+    legacy,
     resume: values.resume,
-    nativeAssociationQualified: false,
-  }
+  })
+  const {hardwareFolder, actions} = recording
+  const {hardware, verifyTarget} = actions
   await report.startVideo()
   const customerSequence = () =>
     runOtaCustomerSequence(
       {install: values.install, resume: values.resume, minutes, before: fixture.before, target},
       progress,
       report.metadata,
-      {
-        snapshot,
-        hardware,
-        observe,
-        press,
-        verifyAppPair,
-        verifyTarget,
-        readBesVersion: async (identity) => {
-          const logs = await run(["adb", "-t", identity.transport, "logcat", "-d", "-v", "epoch", "-t", "12000"])
-          return freshBesProof(logs, identity.bootId, Number(await identity.shell("date", "+%s"))).version
-        },
-        executeStep: (step) =>
-          executeSteps(
-            [{...step, id: `OTA-${String(++index).padStart(2, "0")}`}],
-            {fixture: fixture.serial, email: "", password: ""},
-            report,
-          ),
-        verifyPublishedManifests: legacy ? () => verifyPublishedLegacyManifests(legacy!.route.manifests) : undefined,
-        observeHardware: async (observingActivePass) => {
-          await observeOtaHardware(
-            () => hardware(observingActivePass),
-            (error) =>
-              appendFile(
-                join(hardwareFolder, "timeline.jsonl"),
-                JSON.stringify({
-                  at: new Date().toISOString(),
-                  observation:
-                    error.kind === "transport"
-                      ? "Selected ADB transport unavailable during update"
-                      : "Glasses boot in progress",
-                  error: String(error),
-                }) + "\n",
-                {mode: 0o600},
-              ),
-          )
-        },
-      },
+      actions,
     )
   if (!legacy) {
     await customerSequence()
@@ -486,9 +281,6 @@ try {
   console.error(String(error))
   process.exitCode = 1
 } finally {
-  if (logger && logger.exitCode === null) {
-    logger.kill()
-    await logger.exited
-  }
+  await recording?.close()
   await release()
 }
