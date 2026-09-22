@@ -161,6 +161,9 @@ jobs:
           MENTRA_JWT_PUBLIC_KEY: ${{ secrets.ENTERPRISE_DEV_MENTRA_JWT_PUBLIC_KEY }}
           MINIAPP_JWT_PRIVATE_KEY: ${{ secrets.ENTERPRISE_DEV_MINIAPP_JWT_PRIVATE_KEY }}
           MINIAPP_JWT_PUBLIC_KEY: ${{ secrets.ENTERPRISE_DEV_MINIAPP_JWT_PUBLIC_KEY }}
+          TEAMS_GRAPH_CLIENT_ID: ${{ vars.ENTERPRISE_DEV_TEAMS_GRAPH_CLIENT_ID }}
+          TEAMS_GRAPH_ORGANIZER_ID: ${{ vars.ENTERPRISE_DEV_TEAMS_GRAPH_ORGANIZER_ID }}
+          TEAMS_GRAPH_CLIENT_SECRET: ${{ secrets.ENTERPRISE_DEV_TEAMS_GRAPH_CLIENT_SECRET }}
         run: |
           set -euo pipefail
           parameters="$RUNNER_TEMP/private-deployment-dev.parameters.json"
@@ -191,6 +194,9 @@ jobs:
                 miniappJwtPrivateKey:{value:env.MINIAPP_JWT_PRIVATE_KEY},
                 miniappJwtPublicKey:{value:env.MINIAPP_JWT_PUBLIC_KEY},
                 workspaceHostname:{value:$workspaceHostname},
+                teamsGraphClientId:{value:env.TEAMS_GRAPH_CLIENT_ID},
+                teamsGraphClientSecret:{value:env.TEAMS_GRAPH_CLIENT_SECRET},
+                teamsGraphOrganizerId:{value:env.TEAMS_GRAPH_ORGANIZER_ID},
                 managedMiniapps:{value:$reference[0].miniapps.managed},
                 manageAcrPullRoleAssignment:{value:false}
               }

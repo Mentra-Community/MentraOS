@@ -188,6 +188,8 @@ export type {SpeakerModule} from "./modules/speaker"
 export type {
   MeetingModule,
   MeetingJoinOptions,
+  MeetingCreateOptions,
+  CreatedMeeting,
   MeetingConfiguration,
   MeetingIdentityMode,
   MeetingGuestReason,

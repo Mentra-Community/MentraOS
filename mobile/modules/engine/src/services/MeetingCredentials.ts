@@ -1,5 +1,11 @@
 import type {AcsMeetingCredential} from "@mentra/cloud-client"
-import type {MeetingConfiguration, MeetingGuestReason, MeetingIdentityMode} from "@mentra/miniapp"
+import type {
+  CreatedMeeting,
+  MeetingConfiguration,
+  MeetingCreateOptions,
+  MeetingGuestReason,
+  MeetingIdentityMode,
+} from "@mentra/miniapp"
 
 import {getAuth, getConfigValues, isFeatureEnabled} from "../runtime/bootstrap"
 import {cloudClientService} from "./CloudClientService"
@@ -16,7 +22,50 @@ export function meetingConfiguration(): MeetingConfiguration {
     credentialSource: privateMeetings ? "runtime" : "miniapp",
     externalBackendAllowed: !privateMeetings,
     managedStreams: isFeatureEnabled("managedStreams"),
+    creationSource: privateMeetings ? "runtime" : "miniapp",
   }
+}
+
+export async function createMeeting(options: MeetingCreateOptions): Promise<CreatedMeeting> {
+  assertRuntimeCreation()
+  if (
+    options.provider !== "acs-teams" ||
+    (options.subject !== undefined &&
+      (typeof options.subject !== "string" || !options.subject.trim() || options.subject.trim().length > 120)) ||
+    (options.durationMinutes !== undefined &&
+      (!Number.isInteger(options.durationMinutes) || options.durationMinutes < 1 || options.durationMinutes > 1440))
+  ) {
+    throw new Error("Invalid meeting creation options")
+  }
+  const auth = getAuth()
+  const deployment = getConfigValues()
+  const assertCurrent = () => {
+    if (auth !== getAuth() || deployment !== getConfigValues())
+      throw new Error("Deployment changed while creating the meeting")
+  }
+  const teamsToken = auth?.getTeamsToken ? await auth.getTeamsToken() : undefined
+  assertCurrent()
+  const result = await cloudClientService.createTeamsMeeting(
+    {subject: options.subject, durationMinutes: options.durationMinutes},
+    teamsToken,
+  )
+  assertCurrent()
+  return result
+}
+
+export async function retireMeeting(meetingRef: string): Promise<void> {
+  assertRuntimeCreation()
+  if (typeof meetingRef !== "string" || !meetingRef || meetingRef.length > 8192)
+    throw new Error("Invalid meeting ownership reference")
+  const deployment = getConfigValues()
+  await cloudClientService.retireTeamsMeeting(meetingRef)
+  if (deployment !== getConfigValues()) throw new Error("Deployment changed while retiring the meeting")
+}
+
+function assertRuntimeCreation(): void {
+  const config = meetingConfiguration()
+  if (!config.enabled) throw new Error("Native meetings are disabled by this deployment")
+  if (config.creationSource !== "runtime") throw new Error("This deployment uses miniapp-owned meeting creation")
 }
 
 export async function meetingCredential(

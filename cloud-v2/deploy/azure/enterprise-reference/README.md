@@ -90,6 +90,22 @@ removes that file, runs the smoke test, and prints the deployment outputs.
 Import the durable secret file into approved secret management; replacing its
 values is a deliberate session/key rotation, not an ordinary redeploy.
 
+### Teams meeting creation
+
+After completing [Graph consent and Teams access policy](./entra-setup.md#meeting-creation),
+set `teamsGraphClientId` and `teamsGraphOrganizerId` in the public deployment
+configuration and add `teamsGraphClientSecret` to the protected secret file.
+`teamsGraphTenantId` defaults to `tenantId`. Leaving these inputs empty preserves
+join-only server behavior; creation returns a configuration error.
+
+The reference CI deployment reads GitHub variables
+`ENTERPRISE_DEV_TEAMS_GRAPH_CLIENT_ID` and `ENTERPRISE_DEV_TEAMS_GRAPH_ORGANIZER_ID`,
+and secret `ENTERPRISE_DEV_TEAMS_GRAPH_CLIENT_SECRET`. Its Graph tenant is the
+configured Entra tenant. Bicep stores the secret only on Runtime; neither Core
+nor the deployment manifest receives it.
+
+### Custom hostname
+
 For a custom hostname, first deploy without `workspaceHostname`, create a
 DNS-only CNAME to the printed `generatedRuntimeHostname`, and create
 `asuid.<workspace-hostname>` as a TXT record whose value is the printed

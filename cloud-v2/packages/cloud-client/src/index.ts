@@ -16,7 +16,7 @@
 
 // The top-level object. Implemented in ./client by the client agent; re-exported
 // here so the public import is `@mentra/cloud-client`, not a deep path.
-export type { AcsMeetingCredential } from "./modules/runtime/meetings";
+export type { AcsMeetingCredential, CreatedTeamsMeeting } from "./modules/runtime/meetings";
 export { CloudClient } from "./client";
 export { DEFAULT_REFRESH_TOKEN_KEY } from "./modules/auth/token-store";
 
