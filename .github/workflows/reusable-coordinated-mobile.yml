@@ -340,6 +340,14 @@ jobs:
           java-version: "17"
           distribution: temurin
 
+      - name: Restore Gradle dependencies and native task outputs
+        if: inputs.backend_environment != 'prod' && (inputs.dry_run == true || needs.prepare.outputs.android_assets_exist != 'true')
+        uses: gradle/actions/setup-gradle@v4
+        with:
+          cache-read-only: false
+          # Do not persist a signing task's serialized configuration/credentials.
+          cache-encryption-key: ''
+
       - uses: android-actions/setup-android@v3
         with:
           # The action's default list includes the retired `tools` package,
@@ -729,6 +737,23 @@ jobs:
           grep -E '^(EXPO_PUBLIC_|MENTRAOS_NATIVE_MARKETING_VERSION|MENTRAOS_PINNED_BUILD_NUMBER)=' mobile/.env >> "$GITHUB_ENV"
           echo "MENTRA_COORDINATED_RELEASE_CHANNEL=$(jq -er .channel release-intent/release-plan.json)" >> "$GITHUB_ENV"
 
+      - name: Compute iOS compilation cache scope
+        id: native-cache
+        if: inputs.backend_environment != 'prod' && (inputs.dry_run == true || needs.prepare.outputs.ios_asset_exists != 'true')
+        run: node mobile/scripts/native-build-cache.mjs key
+
+      - name: Restore iOS dependencies and compiler outputs
+        if: steps.native-cache.outputs.scope != ''
+        uses: actions/cache@v4
+        with:
+          path: |
+            mobile/ios/Pods
+            mobile/build/DerivedData
+          key: coordinated-ios-${{ steps.native-cache.outputs.scope }}-${{ steps.native-cache.outputs.source }}-${{ github.run_id }}-${{ github.run_attempt }}
+          restore-keys: |
+            coordinated-ios-${{ steps.native-cache.outputs.scope }}-${{ steps.native-cache.outputs.source }}-
+            coordinated-ios-${{ steps.native-cache.outputs.scope }}-
+
       - name: Configure Mapbox SwiftPM credentials
         if: inputs.dry_run == true || needs.prepare.outputs.ios_asset_exists != 'true'
         env:
@@ -787,6 +812,10 @@ jobs:
           echo "MENTRA_CI_KEYCHAIN=$keychain" >> "$GITHUB_ENV"
           echo "MENTRA_CI_KEYCHAIN_PASSWORD=$password" >> "$GITHUB_ENV"
 
+      - name: Verify private signing access before compilation
+        if: inputs.dry_run == true || needs.prepare.outputs.ios_asset_exists != 'true'
+        run: python3 mobile/ci/verify-signing.py "$MENTRA_CI_KEYCHAIN"
+
       - name: Inject App Store Connect API credential
         uses: ./.github/actions/inject-signing
         with:
@@ -809,6 +838,7 @@ jobs:
           SENTRY_ALLOW_FAILURE: "true"
           SENTRY_AUTH_TOKEN: ${{ secrets.SENTRY_AUTH_TOKEN }}
           MENTRA_TESTFLIGHT_INTERNAL_ONLY: ${{ inputs.compatibility_lab }}
+          MENTRA_NATIVE_BUILD_CACHE: ${{ steps.native-cache.outputs.scope != '' }}
         run: |
           security unlock-keychain -p "$MENTRA_CI_KEYCHAIN_PASSWORD" "$MENTRA_CI_KEYCHAIN"
           security set-keychain-settings "$MENTRA_CI_KEYCHAIN"

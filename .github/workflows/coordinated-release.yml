@@ -390,7 +390,8 @@ jobs:
 
   mobile:
     name: Build and distribute MentraOS mobile apps
-    needs: [plan, ota, cloud-v2]
+    # Compilation can overlap deployment; finalize still requires Cloud success.
+    needs: [plan, ota]
     uses: ./.github/workflows/reusable-coordinated-mobile.yml
     with:
       source_commit: ${{ needs.plan.outputs.source_commit }}

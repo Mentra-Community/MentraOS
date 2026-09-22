@@ -1,0 +1,53 @@
+name: Qualify coordinated mobile builds
+
+on:
+  pull_request:
+    types: [labeled, synchronize]
+
+permissions:
+  contents: write
+  actions: read
+
+# Opt-in because these are full signed APK/AAB/IPA builds in addition to PR CI.
+# Nothing in this workflow deploys Cloud, publishes releases or uploads to stores.
+jobs:
+  plan:
+    if: github.event.pull_request.head.repo.full_name == github.repository && contains(github.event.pull_request.labels.*.name, 'qualify-coordinated-mobile')
+    runs-on: ubuntu-latest
+    outputs:
+      source: ${{ steps.plan.outputs.source }}
+      artifact: ${{ steps.plan.outputs.artifact }}
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - name: Prepare a non-publishing release plan
+        id: plan
+        run: |
+          set -euo pipefail
+          source=$(git rev-parse HEAD)
+          node .github/scripts/collect-ota-release-inputs.mjs
+          node .github/scripts/create-release-plan.mjs --branch dev --sequence "$GITHUB_RUN_ATTEMPT" \
+            --native-build-sequence "$GITHUB_RUN_ATTEMPT" --source-commit "$source" --ota-inputs ota-release-inputs.json
+          echo "source=$source" >> "$GITHUB_OUTPUT"
+          echo "artifact=mobile-qualification-plan-$GITHUB_RUN_ID" >> "$GITHUB_OUTPUT"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: mobile-qualification-plan-${{ github.run_id }}
+          path: release-plan.json
+          overwrite: true
+  build:
+    needs: plan
+    uses: ./.github/workflows/reusable-coordinated-mobile.yml
+    with:
+      source_commit: ${{ needs.plan.outputs.source }}
+      release_plan_artifact: ${{ needs.plan.outputs.artifact }}
+      backend_environment: dev
+      play_track: internal
+      testflight_group: Mentra Dev
+      # No store publication or runnable OTA target for qualification intermediates.
+      dry_run: true
+      ota_manifest_url: https://invalid.example/qualification-only.json
+      ota_manifest_sha256: '0000000000000000000000000000000000000000000000000000000000000000'
+    secrets: inherit

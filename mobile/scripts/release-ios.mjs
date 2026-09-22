@@ -1,5 +1,6 @@
 #!/usr/bin/env zx
 
+import {runXcode, signingOnlyFailure} from '../ci/pr-ios/xcode-attempt.mjs';
 import { setBuildEnv } from './set-build-env.mjs';
 import { withRetry, isSPMOrSentryTransientError, writeSummary } from './release-utils.mjs';
 import {
@@ -188,6 +189,10 @@ if (isCIForSigning) {
 // DerivedData inside the runner workspace makes each build fully isolated. The
 // path is absolute under cwd (mobile/), i.e. under RUNNER_WORKSPACE in CI.
 const derivedDataPath = path.resolve('build/DerivedData');
+const sourceTimes = path.join(derivedDataPath, 'mentra-source-times.json');
+if (process.env.MENTRA_NATIVE_BUILD_CACHE === 'true') {
+  await $({ stdio: 'inherit' })`node scripts/native-build-cache.mjs restore ${sourceTimes}`;
+}
 
 console.log('\n━━━ Step 3.5: Resolving Mapbox SPM packages ━━━');
 
@@ -224,11 +229,23 @@ const archivePath = path.resolve('build/Mentra.xcarchive');
 // sourced from .xcode.env.local before it launches Expo/Metro.
 await withRetry(
   'xcodebuild archive',
-  () => {
-    const p = $`xcodebuild archive -workspace ios/Mentra.xcworkspace -scheme Mentra -configuration Release -destination generic/platform=iOS -archivePath ${archivePath} -derivedDataPath ${derivedDataPath} -allowProvisioningUpdates DEVELOPMENT_TEAM=${teamId} SWIFT_STRICT_CONCURRENCY=minimal ${archiveBuildSettings}`;
-    p.stdout.pipe(process.stdout);
-    p.stderr.pipe(process.stderr);
-    return p;
+  async () => {
+    const args = ['archive', '-workspace', 'ios/Mentra.xcworkspace', '-scheme', 'Mentra',
+      '-configuration', 'Release', '-destination', 'generic/platform=iOS', '-archivePath', archivePath,
+      '-derivedDataPath', derivedDataPath, '-allowProvisioningUpdates',
+      `DEVELOPMENT_TEAM=${teamId}`, 'SWIFT_STRICT_CONCURRENCY=minimal', ...archiveBuildSettings];
+    if (process.env.MENTRA_CI_KEYCHAIN) {
+      args.push(`OTHER_CODE_SIGN_FLAGS=--keychain ${process.env.MENTRA_CI_KEYCHAIN} --timestamp=none`);
+    }
+    let result = await runXcode(args, {env: process.env});
+    if (signingOnlyFailure(result) && process.env.MENTRA_CI_KEYCHAIN) {
+      console.log('Retrying signing with existing compiler outputs.');
+      await $({ stdio: 'inherit' })`security unlock-keychain -p ${process.env.MENTRA_CI_KEYCHAIN_PASSWORD} ${process.env.MENTRA_CI_KEYCHAIN}`;
+      result = await runXcode(args, {env: process.env});
+    }
+    if (result.status !== 0 || result.signal) {
+      throw Object.assign(new Error(`iOS archive failed: ${result.status ?? result.signal}`), {stdout: result.output});
+    }
   },
   { shouldRetry: isSPMOrSentryTransientError }
 );
@@ -238,6 +255,9 @@ if (!existsSync(archivePath)) {
   process.exit(1);
 }
 console.log('Archive created successfully');
+if (process.env.MENTRA_NATIVE_BUILD_CACHE === 'true') {
+  await $({ stdio: 'inherit' })`node scripts/native-build-cache.mjs save ${sourceTimes}`;
+}
 
 // ── Step 5: Export IPA ────────────────────────────────────────────────────────
 

@@ -280,7 +280,7 @@ test("stable packages publish from the frozen beta source independently of the m
   )
 })
 
-test("Cloud V2 deploys once per coordinated environment before mobile publication", () => {
+test("Cloud V2 deploys once per environment while mobile builds and gates release completion", () => {
   const coordinator = workflow("coordinated-release.yml")
   const cloud = workflow("reusable-coordinated-cloud-v2.yml")
   const cloudJob = jobBlock(coordinator, "cloud-v2")
@@ -295,7 +295,7 @@ test("Cloud V2 deploys once per coordinated environment before mobile publicatio
   assert.match(cloudJob, /^    needs: plan$/m)
   assert.match(cloudJob, /reusable-coordinated-cloud-v2\.yml/)
   assert.match(cloudJob, /deployment_environment: \$\{\{ needs\.plan\.outputs\.cloud_environment \}\}/)
-  assert.match(mobile, /^    needs: \[plan, ota, cloud-v2\]$/m)
+  assert.match(mobile, /^    needs: \[plan, ota\]$/m)
   assert.match(finalize, /needs\.cloud-v2\.result == 'success'/)
   assert.match(finalize, /--cloud release-input\/cloud-v2\/cloud-v2-deployment\.json/)
   assert.match(notify, /CLOUD_V2_RESULT: \$\{\{ needs\.cloud-v2\.result \}\}/)
