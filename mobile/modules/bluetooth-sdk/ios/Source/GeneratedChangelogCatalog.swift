@@ -2,6 +2,7 @@ import Foundation
 
 /// Generated from /changelogs. Do not edit directly.
 let generatedReleaseChangelogs: [ReleaseChangelog] = [
+    ReleaseChangelog(version: "3.3.0", markdown: "This release is under active development. User-facing changes will be documented as they land."),
     ReleaseChangelog(version: "3.2.1", markdown: "This release is under active development. User-facing changes will be documented as they land."),
     ReleaseChangelog(version: "3.2.0", markdown: "This release is under active development. User-facing changes will be documented as they land.\n\n- Breaking Bluetooth SDK change: `forgetWifiNetwork(ssid)` now returns `WifiForgetResult` instead of `WifiStatusChangeEvent`. Migrate status-only consumers to the semantic `outcome`; the requested network remains `ssid`, while optional post-command connectivity is reported by `connected`, `currentSsid`, and `localIp`."),
     ReleaseChangelog(version: "3.1.1", markdown: "- Improved Google login on iOS.\n- Pairing no longer requires phone microphone access."),
