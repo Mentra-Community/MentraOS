@@ -11,11 +11,6 @@ import org.robolectric.annotation.Config
 @RunWith(RobolectricTestRunner::class)
 @Config(manifest = Config.NONE, sdk = [33])
 class LiveFirmwareUpdaterTest {
-  private fun quietActivity(id: String): Map<String, Any> = mapOf(
-    "schema" to 1, "request_id" to id, "consistent" to true, "admission_held" to false,
-    "updating" to false, "mtk_in_progress" to false, "bes_in_progress" to false,
-    "session" to mapOf("status" to "idle", "restart_pending" to false),
-  )
   private class Harness : AutoCloseable {
     val directory = Files.createTempDirectory("live-firmware-test").toFile()
     var writes = 0
@@ -38,7 +33,7 @@ class LiveFirmwareUpdaterTest {
     assertEquals(1, h.writes); assertTrue(h.updater.ownsDevice)
     val saved = FirmwareJournal("live", h.directory).read()!!
     assertNull(saved.request.manifestUrl); assertNull(saved.request.artifact)
-    assertEquals(setOf("manifestSha256", "startedFromSafe"), saved.request.metadata.keys)
+    assertEquals(setOf("manifestSha256"), saved.request.metadata.keys)
     assertFalse(saved.snapshot.safeToRelease)
     assertThrows(FirmwareUpdaterException::class.java) { h.updater.acknowledge() }
     Unit
@@ -62,76 +57,10 @@ class LiveFirmwareUpdaterTest {
     recovered.reconcile()
     assertEquals(1, h.queries); assertEquals(1, h.writes)
     recovered.status("", "download", "idle", 0, 1)
-    assertFalse(recovered.snapshot.safeToRelease)
-    val activity = quietActivity(recovered.beginStatusQuery())
-    recovered.status("", "download", "idle", 0, 1, activity)
     assertTrue(recovered.snapshot.safeToRelease)
     recovered.acknowledge()
     assertNull(FirmwareJournal("live", h.directory).read())
     assertEquals(1, h.writes)
-  }
-
-  @Test fun quiescenceRequiresEveryOwnerToBeKnownIdleAndAConsistentRead() = Harness().use { h ->
-    h.updater.start(h.request)
-    h.updater.commandSettled(h.token!!, null)
-    val invalid = listOf(
-      "schema" to 2, "consistent" to false, "admission_held" to true, "updating" to true,
-      "mtk_in_progress" to true, "bes_in_progress" to true, "bes_in_progress" to "false",
-      "session" to mapOf("status" to "in_progress", "restart_pending" to false),
-      "session" to mapOf("status" to "idle", "restart_pending" to true),
-      "session" to emptyMap<String, Any>(),
-    )
-    for ((key, value) in invalid) {
-      val activity = quietActivity(h.updater.beginStatusQuery()) + (key to value)
-      h.updater.status("", "download", "idle", 0, 1, activity)
-      assertTrue("Rejected $key=$value", h.updater.ownsDevice)
-    }
-    val missing = quietActivity(h.updater.beginStatusQuery()) - "bes_in_progress"
-    h.updater.status("", "download", "idle", 0, 1, missing)
-    assertTrue(h.updater.ownsDevice)
-  }
-
-  @Test fun staleQueriesCannotReleaseAChangedAttemptOrObservation() = Harness().use { h ->
-    h.updater.start(h.request)
-    h.updater.commandSettled(h.token!!, null)
-    val old = quietActivity(h.updater.beginStatusQuery())
-    h.updater.beginStatusQuery()
-    h.updater.status("", "download", "idle", 0, 1, old)
-    assertTrue(h.updater.ownsDevice)
-    val beforeProgress = quietActivity(h.updater.beginStatusQuery())
-    h.updater.status("new", "download", "in_progress", 10, 1)
-    h.updater.status("", "download", "idle", 0, 1, beforeProgress)
-    assertTrue(h.updater.ownsDevice)
-    val beforeRetry = quietActivity(h.updater.beginStatusQuery())
-    val token = h.updater.commandStarted("https://example.com/retry")
-    h.updater.commandSettled(token, null)
-    h.updater.status("", "download", "idle", 0, 1, beforeRetry)
-    assertTrue(h.updater.ownsDevice)
-    val beforeReconnect = quietActivity(h.updater.beginStatusQuery())
-    h.updater.connectionChanged(2)
-    h.updater.status("", "download", "idle", 0, 2, beforeReconnect)
-    assertTrue(h.updater.ownsDevice)
-    h.updater.status("", "download", "idle", 0, 2, quietActivity(h.updater.beginStatusQuery()))
-    assertFalse(h.updater.ownsDevice)
-  }
-
-  @Test fun idleAfterStartAckCannotReleaseOwnershipBeforeTerminalStatus() = Harness().use { h ->
-    h.updater.status("", "download", "idle", 0, 1)
-    assertFalse(h.updater.ownsDevice)
-    h.updater.start(h.request)
-    h.updater.commandSettled(h.token!!, null)
-    // ASG acknowledges Start before fetching the manifest and creating its session.
-    h.updater.reconcile()
-    h.updater.status("", "download", "idle", 0, 1)
-    assertTrue(h.updater.ownsDevice)
-    assertThrows(FirmwareUpdaterException::class.java) { h.updater.acknowledge() }
-    h.updater.status("new", "download", "in_progress", 10, 1)
-    h.updater.status("", "download", "idle", 0, 1)
-    assertTrue(h.updater.ownsDevice)
-    h.updater.status("new", "install", "complete", 100, 1)
-    assertFalse(h.updater.ownsDevice)
-    h.updater.acknowledge()
-    assertNull(FirmwareJournal("live", h.directory).read())
   }
 
   @Test fun statusBeforeAckAndSidChangePreserveOutcome() = Harness().use { h ->
@@ -148,78 +77,11 @@ class LiveFirmwareUpdaterTest {
     assertNull(FirmwareJournal("live", h.directory).read())
   }
 
-  @Test fun previousTerminalCannotReleaseNewAckedAttemptIncludingColdRecovery() {
-    for (terminal in listOf("complete", "failed")) Harness().use { h ->
-      h.updater.status("previous", "install", "in_progress", 20, 1)
-      h.updater.status("previous", "install", terminal, 100, 1)
-      h.updater.start(h.request)
-      // Cached terminal may arrive before or after the start ACK.
-      assertFalse(h.updater.status("previous", "install", terminal, 100, 1))
-      h.updater.commandSettled(h.token!!, null)
-      assertEquals(1, h.queries)
-      for (value in listOf(h.updater, h.makeUpdater())) {
-        val before = value.snapshot
-        val busy = quietActivity(value.beginStatusQuery()) + ("admission_held" to true)
-        assertFalse(value.status("previous", "install", terminal, 100, 1, busy))
-        assertFalse(value.activity(busy, 1))
-        assertEquals(before, value.snapshot)
-        assertTrue(value.ownsDevice)
-        assertThrows(FirmwareUpdaterException::class.java) { value.acknowledge() }
-      }
-      assertEquals(1, h.writes)
-    }
-  }
-
-  @Test fun ambiguousTerminalCanResolveAsIdleOnlyFromFreshQuietActivity() = Harness().use { h ->
-    h.updater.start(h.request); h.updater.commandSettled(h.token!!, null)
-    val recovered = h.makeUpdater()
-    assertFalse(recovered.status("previous", "install", "complete", 100, 1))
-    assertEquals(1, h.queries)
-    val quiet = quietActivity(recovered.beginStatusQuery())
-    assertTrue(recovered.activity(quiet, 1))
-    assertEquals("idle", recovered.snapshot.phase); assertFalse(recovered.ownsDevice)
-    assertFalse(recovered.activity(quiet, 1))
-    for (terminal in listOf("complete", "failed")) {
-      assertFalse(recovered.status("previous", "install", terminal, 100, 1))
-      assertFalse(recovered.status("", "download", terminal, 100, 1))
-      assertEquals("idle", recovered.snapshot.phase)
-    }
-    assertEquals("idle", h.makeUpdater().snapshot.phase)
-    recovered.acknowledge()
-    assertFalse(recovered.status("previous", "install", "complete", 100, 1))
-    assertEquals("idle", recovered.snapshot.phase)
-    recovered.start(h.request.copy(offerId = "next"))
-    assertFalse(recovered.activity(quiet, 1)); assertTrue(recovered.ownsDevice)
-  }
-
-  @Test fun boundSessionSurvivesRestartAndRejectsOtherTerminalSessions() = Harness().use { h ->
-    h.updater.start(h.request); h.updater.commandSettled(h.token!!, null)
-    h.updater.status("current", "download", "in_progress", 30, 1)
-    val recovered = h.makeUpdater()
-    val diagnostic = quietActivity(recovered.beginStatusQuery())
-    assertFalse(recovered.status("previous", "install", "complete", 100, 1))
-    assertTrue(recovered.ownsDevice)
-    assertTrue(recovered.status("current", "install", "complete", 100, 1))
-    assertFalse(recovered.ownsDevice)
-    assertFalse(recovered.activity(diagnostic, 1))
-    assertEquals("complete", recovered.snapshot.phase)
-  }
-
-  @Test fun busyActivityOverridesEvenBoundTerminalCompletion() = Harness().use { h ->
-    h.updater.start(h.request); h.updater.commandSettled(h.token!!, null)
-    h.updater.status("current", "install", "in_progress", 90, 1)
-    val busy = quietActivity(h.updater.beginStatusQuery()) + ("bes_in_progress" to true)
-    assertFalse(h.updater.status("current", "install", "complete", 100, 1, busy))
-    assertTrue(h.updater.ownsDevice)
-    assertTrue(h.updater.activity(quietActivity(h.updater.beginStatusQuery()), 1))
-    assertEquals("idle", h.updater.snapshot.phase)
-  }
-
   @Test fun preSessionRejectionAndManifestFailureReachCallerBeforeAndAfterAck() {
     for (ackFirst in listOf(false, true)) Harness().use { h ->
       h.updater.start(h.request)
       if (ackFirst) h.updater.commandSettled(h.token!!, null)
-      assertTrue(h.updater.status("", "download", "failed", 0, 1))
+      h.updater.status("", "download", "failed", 0, 1)
       assertEquals("failed", h.updater.snapshot.phase)
       assertEquals(ackFirst, h.updater.snapshot.safeToRelease)
       if (!ackFirst) h.updater.commandSettled(h.token!!, Exception("no start ACK"))
@@ -233,30 +95,8 @@ class LiveFirmwareUpdaterTest {
   @Test fun preSessionFailureSurvivesColdRecoveryOfFirstStart() = Harness().use { h ->
     h.updater.start(h.request); h.updater.commandSettled(h.token!!, null)
     val recovered = h.makeUpdater()
-    assertTrue(recovered.status("", "download", "failed", 0, 1))
+    recovered.status("", "download", "failed", 0, 1)
     assertEquals("failed", recovered.snapshot.phase); assertFalse(recovered.ownsDevice)
-  }
-
-  @Test fun rejectingRetryCannotReleaseTheEarlierUnresolvedAttempt() = Harness().use { h ->
-    h.updater.start(h.request); h.updater.commandSettled(h.token!!, Exception("lost ACK"))
-    val token = h.updater.commandStarted("https://example.com/retry")
-    assertTrue(h.updater.status("", "download", "failed", 0, 1))
-    h.updater.commandSettled(token, Exception("battery rejection, no ACK"))
-    assertEquals("failed", h.updater.snapshot.phase); assertTrue(h.updater.ownsDevice)
-    val recovered = h.makeUpdater()
-    assertTrue(recovered.status("", "download", "failed", 0, 1))
-    assertTrue(recovered.ownsDevice)
-    assertTrue(recovered.activity(quietActivity(recovered.beginStatusQuery()), 1))
-    assertFalse(recovered.ownsDevice)
-  }
-
-  @Test fun transientLegacyTerminalRemainsSupportedButWaitsForPendingCommand() = Harness().use { h ->
-    h.updater.start(h.request)
-    assertTrue(h.updater.status("", "install", "failed", 0, 1, legacyEvent = true))
-    assertFalse(h.updater.snapshot.safeToRelease)
-    h.updater.commandSettled(h.token!!, Exception("late timeout"))
-    assertEquals("failed", h.updater.snapshot.phase); assertFalse(h.updater.ownsDevice)
-    assertTrue(h.makeUpdater().snapshot.safeToRelease)
   }
 
   @Test fun idleDuringPendingStartAndPriorConnectionCannotReleaseOwner() = Harness().use { h ->
@@ -320,4 +160,44 @@ class LiveFirmwareUpdaterTest {
     h.updater.commandSettled(first, null)
     assertEquals("preparing", h.updater.snapshot.phase)
   }
+  @Test fun freshFailureCanReusePreviousCompletedSidWithoutLosingRetry() {
+    for (ackFirst in listOf(false, true)) Harness().use { h ->
+      h.updater.status("previous", "install", "complete", 100, 1)
+      h.updater.start(h.request)
+      if (ackFirst) h.updater.commandSettled(h.token!!, null)
+      // A fresh manifest/clock_skew failure can precede creation of a new ASG SID.
+      h.updater.status("previous", "download", "failed", 0, 1)
+      assertEquals("failed", h.updater.snapshot.phase)
+      assertEquals(ackFirst, h.updater.snapshot.safeToRelease)
+      if (!ackFirst) h.updater.commandSettled(h.token!!, null)
+      assertFalse(h.updater.ownsDevice)
+      assertEquals("failed", h.makeUpdater().snapshot.phase)
+      h.updater.start(h.request)
+      assertEquals(2, h.writes)
+      assertEquals(0, h.queries)
+    }
+  }
+
+  @Test fun legacySessionlessProgressAndFailureRemainVisibleAfterModernProgress() = Harness().use { h ->
+    h.updater.start(h.request)
+    h.updater.status("current", "download", "in_progress", 10, 1)
+    h.updater.status("", "install", "in_progress", 70, 1)
+    h.updater.commandSettled(h.token!!, Exception("lost ACK"))
+    assertEquals("installing", h.updater.snapshot.phase)
+    assertEquals(0.7, h.updater.snapshot.progress!!, 0.0001)
+    assertTrue(h.updater.ownsDevice)
+    h.updater.status("", "install", "failed", 70, 1)
+    assertEquals("failed", h.updater.snapshot.phase)
+    assertFalse(h.updater.ownsDevice)
+  }
+
+  @Test fun progressAfterTerminalBeforeAckKeepsNativeOwnership() = Harness().use { h ->
+    h.updater.start(h.request)
+    h.updater.status("", "download", "idle", 0, 1)
+    h.updater.status("new", "download", "in_progress", 10, 1)
+    h.updater.commandSettled(h.token!!, null)
+    assertTrue(h.updater.ownsDevice)
+    assertEquals("transferring", h.updater.snapshot.phase)
+  }
+
 }

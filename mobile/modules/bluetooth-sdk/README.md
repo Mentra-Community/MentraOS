@@ -587,7 +587,12 @@ updater ID, connection generation and revision. Reopening never implies Start.
 Requests are device-specific: Live accepts a manifest URL, NIMO/AR99 accept
 verified local files. Live's adapter shares the existing native pending-command
 guard and ACK semantics; it does not select releases or recreate Engine's
-multi-pass/reboot logic. OTA events carry originating device/connection context.
+multi-pass/reboot logic. Live status is forwarded under its established protocol:
+sessionless errors and fresh errors reusing a previous glasses SID remain valid.
+The SID is not a phone attempt ID. Native pending commands remain guarded, but
+Live's `safeToRelease` follows legacy status/completion policy; it does not prove
+cross-attempt wire correlation. Engine retains its separate execution policy.
+OTA events carry originating device/connection context.
 Only one execution owner should control a device. Direct low-level Live calls
 retain their explicit semantics and are not automatically enrolled in Engine.
 

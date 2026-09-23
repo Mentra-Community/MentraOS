@@ -1094,13 +1094,7 @@ If `OtaHelper` isn't initialized yet (can happen right after APK install), the h
 
 #### `ota_query_status`
 
-Requests the current OTA session state. ASG replies with `ota_status`; if no session is active, the status is `idle`. An acknowledged Start can still be fetching its manifest at this point.
-
-Optional `include_activity: true` and `request_id` request a read-only worker snapshot.
-It accompanies nonterminal `ota_status`; for terminal status it follows separately as
-`{"type":"ota_activity","activity":{...}}`, preserving the compact reliable completion
-frame. Activity echoes `request_id`; only fresh, consistent, fully quiet worker state
-can resolve ambiguous recovery. Older firmware may omit this optional diagnostic.
+Requests the current OTA session state. ASG replies with `ota_status`; if no session is active, the status is `idle`.
 
 ```json
 {"type": "ota_query_status"}

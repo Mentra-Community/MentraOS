@@ -12,11 +12,7 @@ final class LiveFirmwareUpdater: FirmwareUpdater {
     private var record: FirmwareStartRequest?
     private var commandToken: UUID?
     private var commandRevision = 0
-    private var statusQuery: (id: String, revision: Int)?
     private var terminalRevision: Int?
-    private var needsInspection = false
-    // Dismissing a safe result must not re-admit a delayed result from an unrelated SID.
-    private var hasTransactionHistory = false
     var launch: ((FirmwareStartRequest) throws -> Void)?
     var snapshot: FirmwareUpdateSnapshot {
         state.snapshot
@@ -35,7 +31,6 @@ final class LiveFirmwareUpdater: FirmwareUpdater {
                     throw FirmwareUpdaterError("invalid_journal", "The recovery record belongs to another updater")
                 }
                 record = saved.request
-                hasTransactionHistory = true
                 state.update {
                     let updaterId = $0.updaterId
                     $0 = saved.snapshot; $0.updaterId = updaterId; $0.revision = 0; $0.connectionGeneration = generation
@@ -43,7 +38,6 @@ final class LiveFirmwareUpdater: FirmwareUpdater {
                 }
             }
         } catch {
-            hasTransactionHistory = true
             state.update {
                 $0.phase = "interrupted"; $0.safeToRelease = false; $0.canReconcile = true
                 $0.error = "Firmware recovery information requires a fresh glasses status"
@@ -114,17 +108,14 @@ final class LiveFirmwareUpdater: FirmwareUpdater {
         let digest = SHA256.hash(data: Data(manifestUrl.utf8)).map { String(format: "%02x", $0) }.joined()
         let offerId = request?.offerId ?? digest
         let evidence = FirmwareStartRequest(deviceId: snapshot.deviceId, connectionGeneration: snapshot.connectionGeneration,
-                                            offerId: offerId, kind: "live-observation", metadata: ["manifestSha256": digest, "startedFromSafe": String(snapshot.safeToRelease)])
+                                            offerId: offerId, kind: "live-observation", metadata: ["manifestSha256": digest])
         var next = snapshot
         next.sessionId = UUID().uuidString; next.offerId = offerId; next.phase = "preparing"
         next.safeToRelease = false; next.canReconcile = true; next.error = nil; next.progress = nil
-        next.inventory.removeValue(forKey: "activeGlassesSessionId")
         // Never persist URLs, credentials or multi-pass approval. A saved record only authorizes inspection.
         try journal.write(.init(snapshot: next, request: evidence))
         record = evidence
-        hasTransactionHistory = true
-        statusQuery = nil
-        terminalRevision = nil; needsInspection = false
+        terminalRevision = nil
         let token = UUID(); commandToken = token
         state.update { $0 = next }
         commandRevision = snapshot.revision
@@ -144,88 +135,31 @@ final class LiveFirmwareUpdater: FirmwareUpdater {
         }
         terminalRevision = nil
         persist()
-        if needsInspection { query() }
     }
 
-    /// Correlate ASG's existing read-only activity diagnostics with this exact observation.
-    func beginStatusQuery() -> String {
-        let id = UUID().uuidString
-        statusQuery = (id, snapshot.revision)
-        return id
-    }
-
-    private func confirmsQuiescence(_ activity: [String: Any]?) -> Bool {
-        guard let query = statusQuery, let activity,
-              activity["request_id"] as? String == query.id else { return false }
-        statusQuery = nil
-        guard commandToken == nil, query.revision == snapshot.revision,
-              let session = activity["session"] as? [String: Any],
-              let status = session["status"] as? String,
-              ["idle", "complete", "failed"].contains(status),
-              let schema = activity["schema"] as? NSNumber,
-              CFGetTypeID(schema) != CFBooleanGetTypeID(), schema.doubleValue == 1 else { return false }
-        func flag(_ values: [String: Any], _ key: String, _ expected: Bool) -> Bool {
-            guard let value = values[key] as? NSNumber,
-                  CFGetTypeID(value) == CFBooleanGetTypeID() else { return false }
-            return value.boolValue == expected
-        }
-        return flag(activity, "consistent", true) && flag(activity, "admission_held", false) &&
-            flag(activity, "updating", false) && flag(activity, "mtk_in_progress", false) &&
-            flag(activity, "bes_in_progress", false) && flag(session, "restart_pending", false)
-    }
-
-    func activity(_ activity: [String: Any], generation: Int) -> Bool {
-        ownsDevice && status(sessionId: "", phase: "download", status: "idle", progress: 0, generation: generation, activity: activity)
-    }
-
-    @discardableResult
-    func status(sessionId: String, phase: String, status: String, progress: Int, generation: Int,
-                activity: [String: Any]? = nil, legacyEvent: Bool = false) -> Bool
-    {
-        guard generation == snapshot.connectionGeneration else { return false }
-        // Idle only means ASG has no session to report. It can still be fetching
-        // an acknowledged Start's manifest, including after this phone restarts.
-        // Owned work needs terminal/completion proof or a correlated quiet-worker snapshot.
-        if status == "idle", ownsDevice, !confirmsQuiescence(activity) { return false }
+    /// Preserve Live's existing status semantics; its wire SID is not a phone attempt ID.
+    func status(sessionId: String, phase: String, status: String, progress: Int, generation: Int) {
+        guard generation == snapshot.connectionGeneration else { return }
+        // The established Live flow consumes idle/complete/failed, including sessionless
+        // failures and failures reusing a previous SID. Filtering these loses real errors
+        // and clock recovery. This adapter observes that protocol; it does not strengthen
+        // its cross-attempt correlation guarantees. Engine retains the execution policy.
         let terminal = ["idle", "complete", "failed"].contains(status)
-        // Pre-session failures (battery rejection, manifest fetch) have no SID and are
-        // delivered directly; ota_query_status returns idle rather than replaying them.
-        // A rejected retry cannot prove that an earlier, unresolved attempt stopped.
-        let preSessionFailure = !legacyEvent && ownsDevice && status == "failed" && sessionId.isEmpty &&
-            snapshot.inventory["activeGlassesSessionId"] == nil
-        let canRelease = terminal && (!preSessionFailure || record?.metadata["startedFromSafe"] == "true")
-        if terminal, status != "idle", ownsDevice || hasTransactionHistory,
-           (!legacyEvent && !preSessionFailure && snapshot.inventory["activeGlassesSessionId"] != sessionId) ||
-           (activity != nil && !confirmsQuiescence(activity))
-        {
-            // ASG can retain the previous terminal session while fetching this Start's manifest.
-            // Legacy progress events are transient; modern cached status needs attempt binding.
-            needsInspection = ownsDevice
-            if needsInspection, commandToken == nil, statusQuery == nil { query() }
-            return false
-        }
-        needsInspection = preSessionFailure && !canRelease
-        let safe = canRelease && commandToken == nil
+        let safe = terminal && commandToken == nil
         if !safe, record == nil {
-            // A glasses-owned update can predate this phone process. Persist observation only,
-            // even when this updater did not send its Start command.
             record = FirmwareStartRequest(deviceId: snapshot.deviceId, connectionGeneration: generation,
                                           offerId: "observed-" + UUID().uuidString, kind: "live-observation")
-            hasTransactionHistory = true
         }
         state.update {
             if !safe, $0.sessionId == nil { $0.sessionId = UUID().uuidString; $0.offerId = record?.offerId }
             if !sessionId.isEmpty { $0.inventory["glassesSessionId"] = sessionId }
-            if !terminal { $0.inventory["activeGlassesSessionId"] = sessionId }
             $0.phase = status == "idle" ? "idle" : status == "complete" ? "complete" : status == "failed" ? "failed" : phase == "download" ? "transferring" : "installing"
             $0.safeToRelease = safe; $0.canReconcile = !safe
             $0.progress = Double(max(0, min(100, progress))) / 100
             $0.error = status == "failed" ? "The glasses reported an update failure" : nil
         }
-        terminalRevision = canRelease && !safe ? snapshot.revision : nil
+        terminalRevision = terminal && !safe ? snapshot.revision : nil
         persist()
-        if needsInspection, commandToken == nil { query() }
-        return true
     }
 
     func connectionChanged(generation: Int, disconnected: Bool = false) {
