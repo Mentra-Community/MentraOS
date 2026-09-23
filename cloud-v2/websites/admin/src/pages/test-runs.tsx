@@ -5,6 +5,7 @@ import { Button } from "../components/ui/button";
 import { Input } from "../components/ui/input";
 import { api } from "../lib/api";
 import { TestDispatchPanel } from "./test-dispatches";
+import { readRecordingTimeline, TestRunRecordings } from "./test-run-recordings";
 import { readTestRunLink, testRunAssetPath, type TestRunLink, type TestRunListScope } from "../lib/test-run-links";
 import {
   chapterSeekTime,
@@ -336,6 +337,8 @@ export function TestRunView({
   const selected = initialChapter(run.chapters, stepId);
   const [search, setSearch] = useState("");
   const [mediaError, setMediaError] = useState<string | null>(null);
+  const [recordingSeekSequence, setRecordingSeekSequence] = useState(0);
+  const recordingTimeline = readRecordingTimeline(run.provenance.recordingTimeline, run.assets);
   const video = useRef<HTMLVideoElement>(null);
   const videoAsset = selected
     ? run.assets.find((asset) => asset.assetId === selected.videoAssetId && asset.kind === "video")
@@ -443,6 +446,7 @@ export function TestRunView({
                     aria-current={selected?.id === chapter.id ? "step" : undefined}
                     className={`w-full rounded-xl p-3 text-left ${selected?.id === chapter.id ? "bg-[#edf6f0] ring-1 ring-[#cde4d5]" : "hover:bg-[#f5f7f4]"}`}
                     onClick={() => {
+                      setRecordingSeekSequence(value => value + 1);
                       onStep(chapter.id);
                       if (selected?.id === chapter.id) seek();
                     }}>
@@ -472,7 +476,13 @@ export function TestRunView({
                 The linked step was not found. Showing the first failed or recorded step.
               </p>
             ) : null}
-            {playable && videoAsset ? (
+            {run.provenance.recordingTimeline && !recordingTimeline ? (
+              <p role="status" className="mb-3 text-sm text-[#a64235]">Recording synchronization metadata is invalid. Showing the selected recording independently.</p>
+            ) : null}
+            {recordingTimeline ? (
+              <TestRunRecordings key={run.runId} runId={run.runId} assets={run.assets} timeline={recordingTimeline}
+                selected={selected} seekSequence={recordingSeekSequence} />
+            ) : playable && videoAsset ? (
               <video
                 key={videoAsset.assetId}
                 ref={video}
@@ -501,12 +511,12 @@ export function TestRunView({
                 </p>
               </div>
             )}
-            {mediaError ? (
+            {!recordingTimeline && mediaError ? (
               <p role="alert" className="mt-3 text-sm text-[#a64235]">
                 {mediaError}
               </p>
             ) : null}
-            {videoAsset?.uploaded ? (
+            {!recordingTimeline && videoAsset?.uploaded ? (
               <a
                 href={testRunAssetPath(run.runId, videoAsset.assetId)}
                 download
