@@ -91,7 +91,8 @@ stripped. Nothing is logged per frame; repeated warnings log once and then a cou
 
 Run logs: Android `<external files>/frame-preview/<runId>.ndjson` (`adb pull`), iOS
 `Application Support/frame-preview/<runId>.ndjson`. Lines are `meta`, `status`, `event` and
-`end`; `end` repeats the contract counters.
+`end`; `end` repeats the contract counters. [`tools/`](tools/RUNBOOK.md) holds the script that
+summarises a run and checks two runs against the screening and release-gate limits.
 
 ## Frame protocol
 
