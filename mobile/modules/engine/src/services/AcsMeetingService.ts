@@ -117,6 +117,8 @@ export interface MeetingState {
   guestReason?: "no-entra-identity" | "teams-license-unavailable" | "legacy-credential"
   state: MeetingPhase
   muted: boolean
+  /** Whether Teams receives the glasses camera. Omitted by natives that cannot toggle it. */
+  videoEnabled?: boolean
   error?: string
   meetingUrl?: string
   provider?: "acs-teams"
@@ -404,6 +406,8 @@ type NativeModule = {
   endForEveryone?(): Promise<MeetingState>
   admitParticipant?(participantId: string): Promise<void>
   setMuted(muted: boolean): Promise<MeetingState>
+  /** Stop or resume ACS outgoing video; the call and glasses stream stay up. Absent on older natives. */
+  setVideoEnabled?(enabled: boolean): Promise<MeetingState>
   setAudioSource(source: "glasses" | "phone"): Promise<MeetingState>
   updateVideoSource(whepUrl: string): Promise<void>
   /** Force a WHEP rebuild on the current URL. Absent on natives that predate it. */
@@ -1675,6 +1679,20 @@ class AcsMeetingService {
     return this.lastState
   }
 
+  async setVideoEnabled(packageName: string, enabled: boolean): Promise<MeetingState> {
+    this.assertOwner(packageName)
+    const native = getNative()
+    if (!native?.setVideoEnabled) throw new Error("Turning the camera off needs a newer Mentra App")
+    const state = await native.setVideoEnabled(enabled)
+    this.lastState = {
+      ...this.lastState,
+      ...state,
+      audioSourceReason: this.lastState.audioSourceReason,
+      micTransport: this.micTransport,
+    }
+    return this.lastState
+  }
+
   async updateVideoSource(packageName: string, whepUrl: string): Promise<void> {
     this.assertOwner(packageName)
     const native = getNative()
@@ -1754,6 +1772,7 @@ class AcsMeetingService {
           ...this.identity,
           state: (event.state as MeetingPhase) ?? "idle",
           muted: Boolean(event.muted),
+          ...(typeof event.videoEnabled === "boolean" ? {videoEnabled: event.videoEnabled} : {}),
           error: event.error as string | undefined,
           meetingUrl: event.meetingUrl as string | undefined,
           provider: "acs-teams",
@@ -1787,6 +1806,7 @@ class AcsMeetingService {
         console.log("[AcsMeeting] phase=native-state", {
           state: state.state,
           muted: state.muted,
+          videoEnabled: state.videoEnabled,
           error: state.error,
           audioSource: state.audioSource,
           activeStream: state.activeStream,

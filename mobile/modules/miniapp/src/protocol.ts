@@ -237,6 +237,8 @@ export enum MiniappRequestType {
   /** Admit one waiting participant, when the host has Teams lobby permission. */
   MEETING_ADMIT = "miniapp_meeting_admit",
   MEETING_SET_MUTED = "miniapp_meeting_set_muted",
+  /** Stop or resume the glasses camera the meeting receives, without leaving. */
+  MEETING_SET_VIDEO_ENABLED = "miniapp_meeting_set_video_enabled",
   MEETING_UPDATE_VIDEO_SOURCE = "miniapp_meeting_update_video_source",
   MEETING_GET_STATE = "miniapp_meeting_get_state",
 }

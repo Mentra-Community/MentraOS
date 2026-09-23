@@ -1474,6 +1474,9 @@ class LocalMiniappRuntime {
       case MiniappRequestType.MEETING_SET_MUTED:
         void this.handleMeetingSetMuted(packageName, payload, requestId)
         break
+      case MiniappRequestType.MEETING_SET_VIDEO_ENABLED:
+        void this.handleMeetingSetVideoEnabled(packageName, payload, requestId)
+        break
       case MiniappRequestType.MEETING_UPDATE_VIDEO_SOURCE:
         void this.handleMeetingUpdateVideoSource(packageName, payload, requestId)
         break
@@ -5258,6 +5261,44 @@ class LocalMiniappRuntime {
       this.sendResult(packageName, requestId, false, undefined, {
         code: MiniappErrorCode.INTERNAL,
         message: err instanceof Error ? err.message : "ACS mute failed",
+      })
+    }
+  }
+
+  private async handleMeetingSetVideoEnabled(
+    packageName: string,
+    payload: Record<string, unknown>,
+    requestId?: string,
+  ): Promise<void> {
+    if (typeof payload.enabled !== "boolean") {
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INVALID_ARGUMENT,
+        message: "enabled must be a boolean",
+      })
+      return
+    }
+    const startedAt = Date.now()
+    try {
+      const state = await acsMeetingService.setVideoEnabled(packageName, payload.enabled)
+      softapTrace("meeting_set_video_enabled", {
+        packageName,
+        requestId: requestId ?? "none",
+        requested: payload.enabled,
+        videoEnabled: state.videoEnabled ?? "unknown",
+        durationMs: Date.now() - startedAt,
+      })
+      this.sendResult(packageName, requestId, true, state)
+    } catch (err) {
+      softapTraceFailure("meeting_set_video_enabled", {
+        packageName,
+        requestId: requestId ?? "none",
+        requested: payload.enabled,
+        reason: err instanceof Error ? err.message : String(err),
+        durationMs: Date.now() - startedAt,
+      })
+      this.sendResult(packageName, requestId, false, undefined, {
+        code: MiniappErrorCode.INTERNAL,
+        message: err instanceof Error ? err.message : "ACS camera toggle failed",
       })
     }
   }

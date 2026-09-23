@@ -420,19 +420,37 @@ function LocalMiniappView({
         console.warn(`LocalMiniappView: stream-preview bind for ${packageName} is slow; loading without it`)
         release()
       }, STREAM_PREVIEW_BIND_TIMEOUT_MS)
-      void getStreamPreviewCoordinator()
-        .bindView({packageName, hostViewTag})
-        .then((result) => {
-          BgTimer.clearTimeout(timer)
-          const sourceWasHeld = !released && holdSourceRef.current
-          release()
-          // Only a real document that started loading before the listener existed needs this;
-          // while the source was held, nothing had loaded yet.
-          if (result.installReloadRequired && !sourceWasHeld && webViewRef.current === instance) {
-            getStreamPreviewCoordinator().noteInstallReload(packageName)
-            instance.reload()
-          }
-        })
+      // The native WebView is often not a child of this wrapper on the first tick, and a miss is
+      // permanent: the coordinator keeps that failed binding and every later handshake is refused
+      // as unsupported. Retry while this instance is still the mounted one.
+      const retryDelaysMs = [0, 50, 150, 400, 800]
+      const attempt = (index: number) => {
+        if (released || webViewRef.current !== instance) return
+        const tag = viewShotRef.current ? findNodeHandle(viewShotRef.current) : hostViewTag
+        if (tag == null) {
+          if (index + 1 < retryDelaysMs.length) BgTimer.setTimeout(() => attempt(index + 1), retryDelaysMs[index + 1])
+          return
+        }
+        void getStreamPreviewCoordinator()
+          .bindView({packageName, hostViewTag: tag})
+          .then((result) => {
+            if (webViewRef.current !== instance) return
+            if (!result.available && index + 1 < retryDelaysMs.length) {
+              BgTimer.setTimeout(() => attempt(index + 1), retryDelaysMs[index + 1])
+              return
+            }
+            BgTimer.clearTimeout(timer)
+            const sourceWasHeld = !released && holdSourceRef.current
+            release()
+            // Only a real document that started loading before the listener existed needs this;
+            // while the source was held, nothing had loaded yet.
+            if (result.installReloadRequired && !sourceWasHeld && webViewRef.current === instance) {
+              getStreamPreviewCoordinator().noteInstallReload(packageName)
+              instance.reload()
+            }
+          })
+      }
+      attempt(0)
     },
     [packageName],
   )

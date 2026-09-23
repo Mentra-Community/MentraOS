@@ -482,6 +482,41 @@ describe("AcsMeetingService", () => {
     expect(native.updateVideoSource).not.toHaveBeenCalled()
   })
 
+  test("the camera toggle reaches native only for the owner, and older natives refuse it", async () => {
+    const setVideoEnabled = mock(async (enabled: boolean) => ({
+      state: "connected" as const,
+      muted: false,
+      videoEnabled: enabled,
+    }))
+    const native = {...fakeNative(), setVideoEnabled}
+    setAcsMeetingNativeForTests(native)
+    await expect(acsMeetingService.setVideoEnabled("com.mentra.call", false)).rejects.toThrow(/No active meeting/)
+    await acsMeetingService.join("com.mentra.call", {
+      meetingUrl: "https://teams.microsoft.com/l/meetup-join/x",
+      token: "tok",
+      videoSource: {type: "whep", url: "https://example.com/whep"},
+    })
+    await expect(acsMeetingService.setVideoEnabled("com.other", false)).rejects.toThrow(/does not own/)
+    const state = await acsMeetingService.setVideoEnabled("com.mentra.call", false)
+    expect(setVideoEnabled).toHaveBeenCalledWith(false)
+    expect(state.videoEnabled).toBe(false)
+    // The toggle is ACS-side only; it must not rebuild or repoint the glasses media.
+    expect(native.updateVideoSource).not.toHaveBeenCalled()
+    expect(native.restartVideoSource).not.toHaveBeenCalled()
+    expect(native.leave).not.toHaveBeenCalled()
+    await acsMeetingService.leave("com.mentra.call")
+
+    const older = fakeNative()
+    setAcsMeetingNativeForTests(older)
+    await acsMeetingService.join("com.mentra.call", {
+      meetingUrl: "https://teams.microsoft.com/l/meetup-join/x",
+      token: "tok",
+      videoSource: {type: "whep", url: "https://example.com/whep"},
+    })
+    await expect(acsMeetingService.setVideoEnabled("com.mentra.call", false)).rejects.toThrow(/newer Mentra App/)
+    await acsMeetingService.leave("com.mentra.call")
+  })
+
   test("a phone network change during a live meeting rebuilds the WHEP subscription once", async () => {
     const native = fakeNative()
     setAcsMeetingNativeForTests(native)

@@ -429,6 +429,18 @@ class AcsMeetingModule : Module() {
       session?.setMuted(muted) ?: mapOf("state" to "idle", "muted" to muted)
     }
 
+    AsyncFunction("setVideoEnabled") { enabled: Boolean, promise: Promise ->
+      val meeting = session
+      if (meeting == null) {
+        promise.reject("VIDEO_TOGGLE_FAILED", "No active meeting", null)
+      } else {
+        meeting.setVideoEnabled(enabled) { state, error ->
+          if (error != null) promise.reject("VIDEO_TOGGLE_FAILED", error.message, error)
+          else promise.resolve(state)
+        }
+      }
+    }
+
     AsyncFunction("setAudioSource") { source: String ->
       session?.setAudioSource(source) ?: mapOf("state" to "idle", "muted" to false, "audioSource" to source)
     }
