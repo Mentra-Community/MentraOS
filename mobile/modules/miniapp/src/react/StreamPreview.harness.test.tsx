@@ -18,7 +18,7 @@ import type {StreamPreviewStatus} from "./StreamPreview"
 
 const FIXTURES_DIR = join(import.meta.dir, "../../../frame-preview/fixtures")
 const PORT_NAME = "HarnessPreviewPort"
-const TOKEN = "tok-harness-9c1e77"
+const TOKEN = "preview-test-token"
 
 type Root = {render(node: unknown): void; unmount(): void}
 
