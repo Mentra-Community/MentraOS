@@ -1,7 +1,7 @@
 {
   "name": "@mentra/frame-preview",
   "version": "3.2.1",
-  "description": "Experimental raw decoded-frame preview transport into the miniapp WebView",
+  "description": "Raw decoded-frame preview transport into the miniapp WebView",
   "main": "src/index.ts",
   "react-native": "src/index.ts",
   "types": "src/index.ts",

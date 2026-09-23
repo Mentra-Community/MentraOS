@@ -636,7 +636,7 @@ class AcsMeetingSession(
                 // Preview first, deliberately: the tap must see frames ACS's pacing and
                 // readiness gates would otherwise hide, and it cannot delay or break this call.
                 DecodedFrameTap.offer(planes)
-                frameSender.sendPlanes(planes)
+                if (frameSender.sendPlanes(planes)) DecodedFrameTap.recordAcsSend()
               },
               pcm = { pcm, rate, channels -> feedOutgoingPcm(pcm, rate, channels) },
               config = videoSource.toConfig(),
@@ -659,7 +659,7 @@ class AcsMeetingSession(
           media.attach(
             video = { planes ->
               DecodedFrameTap.offer(planes)
-              frameSender.sendPlanes(planes)
+              if (frameSender.sendPlanes(planes)) DecodedFrameTap.recordAcsSend()
             },
             pcm = { pcm, rate, channels -> feedOutgoingPcm(pcm, rate, channels) },
             config = if (synthetic) SourceConfig("", SourceKind.DIRECT) else videoSource.toConfig(),
