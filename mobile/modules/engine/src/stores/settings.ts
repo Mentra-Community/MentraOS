@@ -472,7 +472,7 @@ export const SETTINGS: Record<string, Setting> = {
     persist: true,
   },
   /*
-   * Mentra Live can power itself off after ~1 minute off the wearer's face
+   * Mentra Live can power itself off after ~20 minutes off the wearer's face
    * (cs_swit type 11). Off unless Super Mode turns it on. Re-pushed on connect,
    * so this default is what a new install sends to the glasses.
    */

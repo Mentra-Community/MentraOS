@@ -31,7 +31,7 @@ function statusLine(status: WearStateEvent | null): {worn: string; timer: string
   return {worn, timer: status.inhibited ? `Powers off in ${remaining} (held)` : `Powers off in ${remaining}`}
 }
 
-/** Super Mode control for the 1-minute unworn shutdown, plus a live readout. */
+/** Super Mode control for the 20-minute unworn shutdown, plus a live readout. */
 export function UnwornPowerOffSetting() {
   const {theme} = useAppTheme()
   const [enabled, setEnabled] = useSetting<boolean>(SETTINGS.auto_power_off_enabled.key)
