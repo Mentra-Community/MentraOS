@@ -1,5 +1,5 @@
 import {isDeepStrictEqual} from "node:util"
-import {COORDINATED_WORKFLOW, resolveCoordinatedSelection, verifyCoordinatedReadyRequest} from "./coordinated-routine-request.mjs"
+import {COORDINATED_WORKFLOW, coordinatedPublicationAttempt, resolveCoordinatedSelection, verifyCoordinatedReadyRequest} from "./coordinated-routine-request.mjs"
 
 export const NIGHTLY_WORKFLOW = ".github/workflows/nightly-device-routines.yml"
 export const NIGHTLY_SEND_STEP = "Send the nightly routine sequence"
@@ -82,10 +82,11 @@ export async function planNightlyRequests({github, context, attempt, fetchImpl =
     let selected
     const rejected = []
     for (const candidate of candidates) {
-      const source = {kind: "coordinated-release", channel, buildRunId: candidate.id, publicationAttempt: candidate.run_attempt}
       try {
+        const publicationAttempt = await coordinatedPublicationAttempt(github, context, candidate)
+        const source = {kind: "coordinated-release", channel, buildRunId: candidate.id, publicationAttempt}
         const publication = await resolveCoordinatedSelection({github, context, source, fetchImpl})
-        selected = {sourceRunId: candidate.id, publicationAttempt: candidate.run_attempt,
+        selected = {sourceRunId: candidate.id, publicationAttempt,
           releaseIdentity: publication.build.releaseIdentity}
         break
       } catch (error) {

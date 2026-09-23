@@ -14,8 +14,13 @@ const positive = (value) => Number.isSafeInteger(value) && value > 0
 const requireThat = (value, message) => { if (!value) throw new Error(message) }
 const pin = ({url, sha256, size}) => ({url, sha256, size})
 
-/** Artifacts belong to a run, so authenticate the actual publication attempt separately. */
-async function requirePublishedAttempt(github, context, run) {
+/** Return the actual finalizer execution, including retained jobs in a later retry. */
+export async function coordinatedPublicationAttempt(github, context, run) {
+  requireThat(positive(run?.id) && positive(run.run_attempt) && run.status === "completed" &&
+    run.path === COORDINATED_WORKFLOW && ["dev", "staging"].includes(run.head_branch) &&
+    ["push", "workflow_dispatch"].includes(run.event) && SHA.test(run.head_sha ?? "") &&
+    run.repository?.full_name === REPOSITORY && run.head_repository?.full_name === REPOSITORY,
+  "Invalid coordinated publication source")
   const jobs = []
   let expected
   for (let page = 1; ; page++) {
@@ -31,16 +36,18 @@ async function requirePublishedAttempt(github, context, run) {
   }
   requireThat(jobs.length === expected && jobs.every(job => positive(job?.id)) &&
     new Set(jobs.map(job => job.id)).size === expected, "Coordinated publication job history is incomplete")
-  const matched = jobs.filter(job => job.name === COORDINATED_FINALIZE_JOB && job.run_attempt === run.run_attempt)
+  const finalizers = jobs.filter(job => job.name === COORDINATED_FINALIZE_JOB)
+  requireThat(finalizers.every(job => positive(job.run_attempt)), "Coordinated finalizer attempt is missing")
+  const effectiveAttempt = Math.max(...finalizers.filter(job => job.run_attempt <= run.run_attempt).map(job => job.run_attempt))
+  const matched = finalizers.filter(job => job.run_attempt === effectiveAttempt)
   requireThat(matched.length === 1 && matched[0].status === "completed" && matched[0].conclusion === "success" &&
     matched[0].steps?.some(step => step.name === COORDINATED_PUBLISH_STEP &&
       step.status === "completed" && step.conclusion === "success"),
   "Selected coordinated attempt did not publish immutable assets; dry runs and retained artifacts are ineligible")
   const published = matched[0]
-  const originalAttempt = Math.min(run.run_attempt, ...jobs.filter(job => job.name === COORDINATED_FINALIZE_JOB &&
+  return Math.min(effectiveAttempt, ...finalizers.filter(job => job.run_attempt <= effectiveAttempt &&
     published.started_at && published.completed_at && job.started_at === published.started_at &&
     job.completed_at === published.completed_at && job.conclusion === published.conclusion).map(job => job.run_attempt))
-  requireThat(originalAttempt === run.run_attempt, "Selected coordinated attempt retains an earlier publication; select its original attempt")
 }
 
 function releaseCoordinates(identity, channel) {
@@ -94,7 +101,9 @@ export async function coordinatedSourceRun(github, context, source) {
   "Selected coordinated workflow attempt does not match the completed source channel")
   // Notification or other downstream failure does not invalidate the independently
   // authenticated publication. The request workflow itself must still succeed.
-  await requirePublishedAttempt(github, context, run)
+  const publicationAttempt = await coordinatedPublicationAttempt(github, context, run)
+  requireThat(publicationAttempt === run.run_attempt,
+    "Selected coordinated attempt retains an earlier publication; select its original attempt")
   const {data: branch} = await github.rest.git.getRef({...context.repo, ref: `heads/${source.channel}`})
   requireThat(branch.ref === `refs/heads/${source.channel}` && branch.object?.type === "commit" && SHA.test(branch.object.sha ?? ""),
     "Missing authenticated release channel ref")

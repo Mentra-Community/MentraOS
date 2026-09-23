@@ -313,9 +313,10 @@ test("marked callbacks never dispatch either member separately, including no-art
 
 test("malformed or foreign markers never downgrade to standalone requests", async () => {
   const f = await sequenceFixture()
-  const mutations = [r => r.sequence = null, r => r.sequence.runId = 0, r => r.sequence.runAttempt = 2,
+  const mutations = [null, false, 0, "", [], {}, "invalid"].map(sequence => r => r.sequence = sequence).concat([
+    r => r.sequence.runId = 0, r => r.sequence.runAttempt = 2,
     r => r.sequence.member = "mentra-call", r => r.sequence.kind = "other", r => r.sequence.extra = true,
-    r => r.schemaVersion = 1, r => r.source.channel = "main", r => r.routine.authorization = "successful-build"]
+    r => r.schemaVersion = 1, r => r.source.channel = "main", r => r.routine.authorization = "successful-build"])
   for (const mutate of mutations) {
     const request = structuredClone(f.requests[0]); mutate(request)
     assert.throws(() => validateNightlyMarker(request), /Invalid nightly/)
@@ -417,4 +418,42 @@ test("duplicate member acknowledgements and duplicate ready coordinates fail clo
   duplicate.members[1].runId = duplicate.members[0].runId
   await assert.rejects(waitForNightlyRequests({...ready.options, sent: duplicate}), /acknowledgements/)
   assert.equal(ready.privateCalls.length, 0)
+})
+
+
+for (const cloned of [false, true]) test(`nightly selects original publication from a successful retained retry (${cloned ? "cloned row" : "original row"})`, async () => {
+  const f = fixture()
+  const finalizer = {...publicationJob(1001, 1), started_at: "2026-09-23T00:01:00Z", completed_at: "2026-09-23T00:02:00Z"}
+  f.state.jobs.set(100, cloned ? [finalizer, {...finalizer, id: 1002, run_attempt: 2}] : [finalizer])
+  const getAttempt = f.options.github.rest.actions.getWorkflowRunAttempt
+  f.options.github.rest.actions.getWorkflowRunAttempt = async input => {
+    if (input.run_id === 100 && input.attempt_number === 1) {
+      f.state.calls.push(["attempt", input])
+      // Its finalizer succeeded before an unrelated job failed; retry 2 is green.
+      return {data: {...f.dev.state.run, run_attempt: 1, conclusion: "failure"}}
+    }
+    return getAttempt(input)
+  }
+  const result = await planNightlyRequests(f.options)
+  assert.deepEqual(result.requests.find(row => row.channel === "dev"), {...plan, publicationAttempt: 1})
+  assert.deepEqual(result.unavailable, [])
+  const reads = f.state.calls.filter(([kind, input]) => kind === "attempt" && input.run_id === 100)
+  assert.ok(reads.length >= 2)
+  assert.ok(reads.every(([, input]) => input.attempt_number === 1))
+  assert.equal(f.state.calls.some(([kind]) => kind === "dispatch"), false)
+})
+
+test("nightly cannot fall back past a newer failed, skipped or ambiguous finalizer", async () => {
+  for (const replacement of [
+    [{...publicationJob(1002, 2), conclusion: "failure"}],
+    [{...publicationJob(1002, 2), conclusion: "skipped"}],
+    [publicationJob(1002, 2), publicationJob(1003, 2)],
+    [{...publicationJob(1002, 2), steps: [{name: COORDINATED_PUBLISH_STEP, status: "completed", conclusion: "skipped"}]}],
+  ]) {
+    const f = fixture()
+    f.state.jobs.set(100, [publicationJob(1001, 1), ...replacement])
+    const result = await planNightlyRequests(f.options)
+    assert.equal(result.requests.some(row => row.channel === "dev"), false)
+    assert.deepEqual(result.unavailable.map(row => row.channel), ["dev"])
+  }
 })
