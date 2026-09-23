@@ -108,7 +108,7 @@ export function TestRunRecordings({ runId, assets, timeline, selected, seekSeque
           {playable ? <>
             <video ref={node => { media.current[track.assetId] = node; }} src={testRunAssetPath(runId, track.assetId)}
               controls={index === 0} muted={index !== 0} playsInline preload="metadata" hidden={!covered}
-              aria-label={`${track.label} recording`} className="w-full rounded-xl bg-[#111217]"
+              aria-label={`${track.label} recording`} className="max-h-[65vh] w-full rounded-xl bg-[#111217] object-contain"
               onLoadedMetadata={event => { const duration = event.currentTarget.duration; setDurations(current => ({ ...current, [track.assetId]: duration })); sync(); }}
               onTimeUpdate={index === 0 ? sync : undefined} onSeeking={index === 0 ? sync : undefined}
               onPlay={index === 0 ? sync : undefined} onPause={index === 0 ? sync : undefined}
