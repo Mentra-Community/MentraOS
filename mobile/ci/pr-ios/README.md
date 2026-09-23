@@ -91,6 +91,29 @@ developer trust and app privacy grants remain host provisioning; notarization
 does not grant Bluetooth. Older ZIPs are unchanged and do not gain notarization
 retroactively.
 
+## Request a recorded UI walkthrough
+
+Add `routine:no-glasses` to a same-repository PR targeting `dev` to request the
+walkthrough on its published Mac build. Wait for the iOS build and Mac artifact
+publication to finish. The request pins the PR revision and archive; a label or
+successful app build alone does not mean the walkthrough passed.
+
+To request it without a label, sign in to the
+[dev admin dashboard](https://admin.dev.mentraglass.com/) and open **Test runs**
+to find **Recorded routines**. Choose **Run routine**, set **Build channel** to **Pull request**,
+enter the PR number and choose **Find builds**. Select the published build after
+checking its commit and publication attempt, choose **UI walkthrough without glasses**,
+then choose **Request routine**. An unavailable build or routine displays the
+reason instead of starting a test.
+
+Follow **Request workflow** and **Worker job** for execution progress. Once the
+result is published, **View recording and evidence** opens the video, English
+step chapters, screenshots and test/cleanup verdicts. When the routine label was
+present at publication, the **View results** link in `#pr-builds` also selects
+results for that exact build. An empty results page
+means no matching result has been uploaded yet; it does not show an older run
+as evidence for the selected PR revision.
+
 ## Compilation reuse
 
 Android and iOS use the same fingerprint/selection and PR configuration contract.
