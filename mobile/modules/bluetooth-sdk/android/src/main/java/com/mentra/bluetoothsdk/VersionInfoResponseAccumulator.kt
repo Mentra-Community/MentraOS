@@ -6,13 +6,14 @@ internal sealed interface VersionInfoAccumulatorOutcome {
     data class Complete(val result: VersionInfoResult) : VersionInfoAccumulatorOutcome
 }
 
-/** One request, explicit modern completion, or the deployed legacy chunk-3 terminal boundary. */
+/** One request, explicit modern completion, or the legacy firmware's terminal chunk. */
 internal class VersionInfoResponseAccumulator(private val expectedRequestId: String) {
     private val values = mutableMapOf<String, Any>()
     private val chunks = mutableMapOf<Int, Map<String, Any>>()
     private var count: Int? = null
     private var sid: String? = null
     private var legacyStarted = false
+    private var legacyTwoChunkResponse = false
     private var completed = false
 
     fun accept(event: Map<String, Any>): VersionInfoAccumulatorOutcome {
@@ -41,10 +42,20 @@ internal class VersionInfoResponseAccumulator(private val expectedRequestId: Str
         if (count != null) return VersionInfoAccumulatorOutcome.Ignored
         when (event[RESPONSE_CHUNK_KEY] as? String ?: "version_info") {
             "version_info" -> { values.clear(); merge(event); return finish() }
-            "version_info_1" -> { values.clear(); legacyStarted = true; merge(event) }
+            "version_info_1" -> {
+                values.clear()
+                legacyStarted = true
+                legacyTwoChunkResponse = event["buildNumber"] == "27"
+                merge(event)
+            }
             "version_info_2" -> {
                 if (!legacyStarted) return VersionInfoAccumulatorOutcome.Ignored
+                // Factory ASG27 sends only chunks 1 and 2. Its second chunk carries the
+                // OTA URL and legacy firmware version; ASG31+ moves firmware to chunk 3.
                 merge(event)
+                if (legacyTwoChunkResponse && values["buildNumber"] == "27" &&
+                    !(event["otaVersionUrl"] as? String).isNullOrBlank()
+                ) return finish()
             }
             "version_info_3" -> {
                 if (!legacyStarted) return VersionInfoAccumulatorOutcome.Ignored

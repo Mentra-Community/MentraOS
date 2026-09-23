@@ -43,6 +43,19 @@ export class S3StorageProvider implements StorageProvider {
   async deleteObject(key: string): Promise<void> {
     await this.client.delete(key);
   }
+
+  async putFile(input: { key: string; path: string; contentType: string }): Promise<void> {
+    await this.client.file(input.key).write(Bun.file(input.path), { type: input.contentType });
+  }
+
+  async statObject(key: string): Promise<{ sizeBytes: number }> {
+    return { sizeBytes: (await this.client.file(key).stat()).size };
+  }
+
+  async streamObject(key: string, range?: { start: number; end: number }): Promise<ReadableStream<Uint8Array>> {
+    const file = this.client.file(key);
+    return (range ? file.slice(range.start, range.end + 1) : file).stream();
+  }
 }
 
 export function createS3StorageProvider(provider: "r2" | "s3" = "r2"): S3StorageProvider {

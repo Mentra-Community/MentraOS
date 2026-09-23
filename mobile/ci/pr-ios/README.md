@@ -44,25 +44,52 @@ phone. Older PR messages that only offer **Download IPA** use this USB method.
 ## Apple Silicon Mac
 
 Requires Apple Silicon, macOS 14 or later (also subject to the app's iOS/macOS
-compatibility requirement), and [Bun](https://bun.sh). Unzip **Mac app**, open
-the `Mentra PR` folder, and run `Install.command`, or from Terminal:
+compatibility requirement), and registration in the build's ad hoc profile.
+New **Install on Mac** links in **#pr-builds** hand the selected build to a
+persistent native installer. Bun, Xcode and Terminal are not required.
 
-```sh
-bun install.mjs --manifest build.json
-```
+**First setup:** use the Mac ZIP download on the installation page, unzip it and
+open **Install Mentra.app** inside the `Mentra PR` folder. If it asks for a folder,
+select that extracted folder. Check the PR/build and click **Install & Open**.
+The installer retains itself in `~/Applications/Install Mentra.app` for later
+links. Complete any normal macOS first-use approvals.
+
+**Later builds:** click **Install on Mac** in **#pr-builds** and allow the browser
+to open the installed Mentra installer if asked. It downloads the selected build
+into its managed cache, verifies it, replaces the Mentra App and opens it. There
+is no new folder to find in Downloads. The page also has an explicit Open button
+if the browser prevents automatic handoff. Old posts remain download-only.
+
+The installer accepts only Mentra PR/build coordinates through `mentra-install:`;
+the link cannot supply an arbitrary download URL or executable. Expired or
+missing builds fail visibly instead of selecting a different build.
 
 The installer checks the profile/device, Apple signature and build hashes,
 normally quits the running app, and installs into
 `~/Applications/Mentra E2E/Mentra.app`. It shares the managed installation used
 by the E2E harness. It preserves account/pairing data and saves the previous
-installation as `previous-installation.zip`. Run with `--no-launch` to install
-without opening the app. Close a running Mentra App only when ready to replace
-it; do not install during a live test or call.
+installation as `previous-installation.zip`. Do not install during a live test or
+call; installation normally closes the running Mentra App before replacement.
 
-No Xcode is required on the Mac for this installation: the launcher is included.
-macOS may require its normal first-use approvals. The installer does not change
-privacy settings or disable Gatekeeper. If a launch approval delays opening,
-the verified app remains installed; approve through macOS and open it again.
+CI signs the native installer with Developer ID, notarizes it with Apple and
+staples its ticket before publishing the ZIP. Its signed manifest identifies the
+exact adjacent iOS app; the iOS app retains its original Apple Distribution
+signature. This removes the old script/helper verification warnings. A normal
+downloaded-app **Open** confirmation can still appear. Mentra's prerelease
+developer trust and Bluetooth or other privacy requests are separate first-use
+approvals. The installer does not change privacy settings or disable Gatekeeper.
+If a launch approval delays opening, the verified app remains installed; complete
+macOS setup and click **Open Mentra** again.
+
+For repeated automated installations, use the private
+[Mac test-host setup](https://github.com/Mentra-Community/Mentra-Automated-Testing/blob/main/tools/mentra-e2e/MAC-CI-SETUP.md). It verifies the
+selected Actions artifact and invokes a trusted repository installer with a
+pinned preinstalled launcher, without executing the downloaded installer. That
+path supports both the new native-installer ZIP and older ZIPs containing
+`Install.command`, `install.mjs` and an ad hoc launcher. Initial prerelease
+developer trust and app privacy grants remain host provisioning; notarization
+does not grant Bluetooth. Older ZIPs are unchanged and do not gain notarization
+retroactively.
 
 ## Compilation reuse
 
@@ -86,6 +113,8 @@ and receipt state whether compilation was reused. A device-only profile refresh
 can reuse compiled code when its capabilities and signing identity still match.
 
 ## Signing setup (maintainer)
+
+### iOS app and registered test devices
 
 The distribution certificate/private key stays in the encrypted
 `Mentra-Community/match-certs` store. PR CI fetches only that existing identity
@@ -120,6 +149,75 @@ New devices require registering them, regenerating the profile, replacing this
 secret and rerunning the build/export. Already downloaded IPAs cannot acquire
 new device authorization. Profile or certificate expiration also requires a
 fresh export. No new certificate per tester is needed.
+
+### Native Mac installer
+
+The native installer needs a **Developer ID Application** certificate and its
+private key for the Mentra Apple team (`T5XXXL6N36`). This is a different identity
+from the iOS Apple Distribution certificate. Find or manage it in
+[Apple Developer → Certificates, Identifiers & Profiles](https://developer.apple.com/account/resources/certificates/list),
+not App Store Connect. Reuse the company's existing Developer ID identity when
+available; CI does not create or revoke certificates.
+
+If the team has no Developer ID Application certificate, the Apple Developer
+Account Holder must create it. Apple's certificate page disables that choice
+for other team members, even when they can manage iOS signing. The holder can
+use a certificate signing request from the Mac that will retain the private key,
+then return the issued public certificate to that Mac for the `.p12` export.
+
+Obtain a password-protected `.p12` export of the certificate **and its private
+key** from the Mac/keychain or secret store that owns that key. A downloaded
+public `.cer` file alone cannot sign the installer. Store the certificate pair in
+Doppler project **`mentra-mobile-client`**, config **`prd`**, through the company
+secret-management process. The existing MentraOS Actions service token
+`DOPPLER_TOKEN_MOBILE_PRD` selects that project/config; the signing step fetches
+only these two named secrets:
+
+| Secret | Purpose |
+| --- | --- |
+| `MAC_INSTALLER_P12_BASE64` | Base64-encoded Developer ID Application certificate and private-key export. |
+| `MAC_INSTALLER_P12_PASSWORD` | Password protecting that `.p12` export. |
+
+Keep the existing notarization credentials in MentraOS Actions secrets:
+
+| Secret | Purpose |
+| --- | --- |
+| `ASC_API_KEY_P8_B64` | Existing App Store Connect API private key, reused for Apple notarization. |
+| `ASC_API_KEY_ID` | Existing API key ID. |
+| `ASC_API_ISSUER_ID` | Existing API key issuer. |
+
+App Store Connect API credentials authenticate notarization; they do not replace
+the Developer ID signing certificate/private key. Keep exports, passwords and API
+keys out of chat, source files, logs and tracked test fixtures. The signing
+configuration uses Python's HTTPS client with Basic service-token authentication
+against Doppler's single-secret endpoint. It rejects redirects, malformed or
+missing values, limits each response to 1 MiB and uses a 20-second socket timeout.
+It never downloads the full config, writes the certificate credentials into
+`mobile/.env`, or exports them to subsequent workflow steps.
+
+Local runs may supply both `MAC_INSTALLER_P12_BASE64` and
+`MAC_INSTALLER_P12_PASSWORD` directly in the process environment instead. If
+either variable is present, both must be nonempty and valid; an incomplete pair
+fails without fetching or mixing in Doppler values. With neither variable set,
+the same `DOPPLER_TOKEN_MOBILE_PRD` service-token path is used. The temporary P12
+file is private and removed immediately after its keychain import.
+
+CI checks private-key access and notarization authentication before building the
+app. The downloaded Developer ID intermediate is matched by exact DER bytes
+against certificates in the disposable job keychain. An identical existing
+certificate is reused; a missing certificate is imported and verified again.
+Other keychain/import errors remain fatal. It signs only `Install Mentra.app` with Developer ID and hardened runtime,
+submits that installer to Apple, requires an Accepted result, then staples and
+validates the ticket. The iOS payload remains outside the notarization submission.
+CI also verifies the installer after extracting the final Mac ZIP. Missing
+credentials or failed notarization stop publication; there is no unsigned
+fallback. The existing Mac artifact name, Slack link and iPhone IPA remain the
+distribution contract.
+
+Qualification status: Developer ID credential provisioning and a real notarized
+CI download still need validation. A locally compiled installer preview verifies
+neither Apple notarization nor first-use Gatekeeper behavior. Keep that distinction
+when reporting test results.
 
 ## Evidence and recovery
 
