@@ -111,7 +111,15 @@ export {
   parseMeetingParticipants,
   validateMeetingVideoSource,
 } from "../modules/meeting"
-export type {StreamModule} from "../modules/stream"
+export type {
+  StreamModule,
+  StreamPreviewOptions,
+  PreviewHandle,
+  PreviewHandleState,
+  PreviewHandleStatus,
+} from "../modules/stream"
+export {PreviewError} from "../modules/stream"
+export type {PreviewErrorCode, PreviewSource, PreviewStatus} from "../protocol"
 export type {SystemModule} from "../modules/system"
 export type {TranscriptionModule} from "../modules/transcription"
 export type {TranslationModule} from "../modules/translation"

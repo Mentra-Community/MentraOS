@@ -92,7 +92,8 @@
             "pages": [
               "app-devs/core-concepts/camera/photos",
               "app-devs/core-concepts/camera/videos",
-              "app-devs/core-concepts/stream"
+              "app-devs/core-concepts/stream",
+              "app-devs/core-concepts/stream-preview"
             ]
           },
           {

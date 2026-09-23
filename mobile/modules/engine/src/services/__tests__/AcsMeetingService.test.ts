@@ -267,6 +267,38 @@ describe("AcsMeetingService", () => {
     setAcsMeetingPhoneNetworkForTests(null)
   })
 
+  test("each meeting has its own instance id, and its release is observable without affecting it", async () => {
+    const native = fakeNative()
+    setAcsMeetingNativeForTests(native)
+    const released: string[] = []
+    const unsubscribeThrowing = acsMeetingService.onMeetingReleased(() => {
+      throw new Error("observer bug")
+    })
+    const unsubscribe = acsMeetingService.onMeetingReleased((id) => released.push(id))
+    expect(acsMeetingService.meetingInstance()).toBeNull()
+    const join = () =>
+      acsMeetingService.join("com.mentra.call", {
+        meetingUrl: "https://teams.microsoft.com/l/meetup-join/x",
+        token: "tok",
+        videoSource: {type: "whep", url: "https://example.com/whep"},
+      })
+    await join()
+    const first = acsMeetingService.meetingInstance()
+    expect(first?.ownerPackage).toBe("com.mentra.call")
+    await acsMeetingService.leave("com.mentra.call")
+    expect(acsMeetingService.meetingInstance()).toBeNull()
+    expect(released).toEqual([first!.instanceId])
+    await join()
+    const second = acsMeetingService.meetingInstance()
+    expect(second!.instanceId).not.toBe(first!.instanceId)
+    // A remote hang-up releases through the native state path, not `leave`.
+    native.emit("onState", {state: "disconnected", muted: false})
+    await flush()
+    expect(released).toEqual([first!.instanceId, second!.instanceId])
+    unsubscribe()
+    unsubscribeThrowing()
+  })
+
   test("a failed native join releases ownership, unbinds listeners, and hangs up native", async () => {
     const native = fakeNative()
     native.join.mockImplementationOnce(async () => {
@@ -448,6 +480,41 @@ describe("AcsMeetingService", () => {
     )
     expect(native.setMuted).not.toHaveBeenCalled()
     expect(native.updateVideoSource).not.toHaveBeenCalled()
+  })
+
+  test("the camera toggle reaches native only for the owner, and older natives refuse it", async () => {
+    const setVideoEnabled = mock(async (enabled: boolean) => ({
+      state: "connected" as const,
+      muted: false,
+      videoEnabled: enabled,
+    }))
+    const native = {...fakeNative(), setVideoEnabled}
+    setAcsMeetingNativeForTests(native)
+    await expect(acsMeetingService.setVideoEnabled("com.mentra.call", false)).rejects.toThrow(/No active meeting/)
+    await acsMeetingService.join("com.mentra.call", {
+      meetingUrl: "https://teams.microsoft.com/l/meetup-join/x",
+      token: "tok",
+      videoSource: {type: "whep", url: "https://example.com/whep"},
+    })
+    await expect(acsMeetingService.setVideoEnabled("com.other", false)).rejects.toThrow(/does not own/)
+    const state = await acsMeetingService.setVideoEnabled("com.mentra.call", false)
+    expect(setVideoEnabled).toHaveBeenCalledWith(false)
+    expect(state.videoEnabled).toBe(false)
+    // The toggle is ACS-side only; it must not rebuild or repoint the glasses media.
+    expect(native.updateVideoSource).not.toHaveBeenCalled()
+    expect(native.restartVideoSource).not.toHaveBeenCalled()
+    expect(native.leave).not.toHaveBeenCalled()
+    await acsMeetingService.leave("com.mentra.call")
+
+    const older = fakeNative()
+    setAcsMeetingNativeForTests(older)
+    await acsMeetingService.join("com.mentra.call", {
+      meetingUrl: "https://teams.microsoft.com/l/meetup-join/x",
+      token: "tok",
+      videoSource: {type: "whep", url: "https://example.com/whep"},
+    })
+    await expect(acsMeetingService.setVideoEnabled("com.mentra.call", false)).rejects.toThrow(/newer Mentra App/)
+    await acsMeetingService.leave("com.mentra.call")
   })
 
   test("a phone network change during a live meeting rebuilds the WHEP subscription once", async () => {
